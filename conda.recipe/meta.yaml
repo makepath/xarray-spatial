@@ -1,0 +1,25 @@
+package:
+  name: xarray-spatial
+  version: 0.0.1
+
+requirements:
+  build:
+    - python
+    - setuptools
+
+  run:
+    - python
+    - xarray
+    - numba
+
+test:
+  requires:
+    - pytest
+    - flake8
+
+  imports:
+    - xarray-spatial
+
+about:
+  home: https://github.com/makepath/xarray-spatial
+  license: New BSD
