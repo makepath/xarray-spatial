@@ -1,13 +1,15 @@
 import numpy as np
+import pandas as pd
 
 from xarray import DataArray
+from .perlin import _perlin
 
-from xarray_spatial.utils import ngjit
 
 # TODO: add optional name parameter `name='terrain'`
 def generate_terrain(canvas, seed=10, zfactor=4000, full_extent=None):
     """
-    Generates a pseudo-random terrain which can be helpful for testing raster functions
+    Generates a pseudo-random terrain which can be helpful
+    for testing raster functions
 
     Parameters
     ----------
@@ -32,7 +34,6 @@ def generate_terrain(canvas, seed=10, zfactor=4000, full_extent=None):
      - https://www.redblobgames.com/maps/terrain-from-noise/
     """
 
-
     def _gen_heights(bumps):
         out = np.zeros(len(bumps))
         for i, b in enumerate(bumps):
@@ -46,9 +47,6 @@ def generate_terrain(canvas, seed=10, zfactor=4000, full_extent=None):
     def _scale(value, old_range, new_range):
         return ((value - old_range[0]) / (old_range[1] - old_range[0])) * (new_range[1] - new_range[0]) + new_range[0]
 
-    if not isinstance(canvas, Canvas):
-        raise TypeError('canvas must be instance type datashader.Canvas')
-
     mercator_extent = (-np.pi * 6378137, -np.pi * 6378137, np.pi * 6378137, np.pi * 6378137)
     crs_extents = {'3857': mercator_extent}
 
@@ -56,7 +54,8 @@ def generate_terrain(canvas, seed=10, zfactor=4000, full_extent=None):
         full_extent = crs_extents[full_extent]
 
     elif full_extent is None:
-        full_extent = (canvas.x_range[0], canvas.y_range[0], canvas.x_range[1], canvas.y_range[1])
+        full_extent = (canvas.x_range[0], canvas.y_range[0],
+                       canvas.x_range[1], canvas.y_range[1])
 
     elif not isinstance(full_extent, (list, tuple)) and len(full_extent) != 4:
         raise TypeError('full_extent must be tuple(4) or str wkid')
@@ -78,14 +77,15 @@ def generate_terrain(canvas, seed=10, zfactor=4000, full_extent=None):
     data *= zfactor
 
     # DataArray coords were coming back different from cvs.points...
-    hack_agg = canvas.points(pd.DataFrame({'x': [],'y': []}), 'x', 'y')
+    hack_agg = canvas.points(pd.DataFrame({'x': [], 'y': []}), 'x', 'y')
     agg = DataArray(data,
                     name='terrain',
                     coords=hack_agg.coords,
                     dims=hack_agg.dims,
-                    attrs={'res':1})
+                    attrs={'res': 1})
 
     return agg
+
 
 def _gen_terrain(width, height, seed, x_range=None, y_range=None):
 
@@ -96,7 +96,7 @@ def _gen_terrain(width, height, seed, x_range=None, y_range=None):
         y_range = (0, 1)
 
     # multiplier, (xfreq, yfreq)
-    NOISE_LAYERS= ((1 / 2**i, (2**i, 2**i)) for i in range(16))
+    NOISE_LAYERS = ((1 / 2**i, (2**i, 2**i)) for i in range(16))
 
     linx = np.linspace(x_range[0], x_range[1], width, endpoint=False)
     liny = np.linspace(y_range[0], y_range[1], height, endpoint=False)
