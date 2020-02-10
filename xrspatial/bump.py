@@ -2,7 +2,7 @@ import numpy as np
 
 from xarray import DataArray
 
-from xarray_spatial.utils import ngjit
+from xrspatial.utils import ngjit
 
 
 # TODO: change parameters to take agg instead of height / width
