@@ -7,6 +7,6 @@ setup(name='xarray-spatial',
       cmdclass=versioneer.get_cmdclass(),
       description='xarray-based spatial analysis tools',
       packages=find_packages(),
-      install_requires=['xarray', 'numba', 'pytest'],
+      install_requires=['xarray', 'numba', 'pandas', 'pytest'],
       zip_safe=False,
       include_package_data=True)
