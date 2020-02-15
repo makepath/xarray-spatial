@@ -14,7 +14,6 @@
 
 :confetti_ball: No GDAL / GEOS Dependency
 
-**Check out user guide** [here](/examples/user-guide.ipynb)
 
 #### Rasters?
 
@@ -40,11 +39,8 @@ pip install xarray-spatial
 ```
 
 ### Usage
-```python
-from xrspatial import hillshade
 
-hillshade_xarray_dataarray = hillshade(my_xarray_dataarray)
-```
+**Check out user guide** [here](/examples/user-guide.ipynb)
 
 ### Dependencies
 
@@ -61,3 +57,8 @@ Wrapping GDAL has a few drawbacks for Python developers and data scientists:
 - GDAL is hard for Python developers/analysts to extend.
 
 With the introduction of projects like numba, Python gained new ways to improve performance without writing C/C++ extensions.
+
+### Contributors
+
+- @brendancol
+- @thuydotm
