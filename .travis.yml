@@ -20,7 +20,7 @@ install:
   - python setup.py develop --no-deps
 
 script:
-    - pytest -sv xrsptial/tests
+    - pytest -sv xrspatial/tests
 
 notifications:
   email: false
