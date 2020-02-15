@@ -9,8 +9,7 @@ requirements:
 
   run:
     - python
-    - xarray
-    - numba
+    - datashader
 
 test:
   requires:
