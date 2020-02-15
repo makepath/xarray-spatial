@@ -29,25 +29,23 @@ OBS_ELEVS = [-1, 0, 1]
 
 TERRAIN_ELEV_AT_VP = [-1, 0, 1]
 
-@pytest.mark.viewshed
+
 def test_viewshed_invalid_x_view():
     OBSERVER_X = xs[0] - 1
     OBSERVER_Y = 0
-    with pytest.raises(Exception) as e_info: # NOQA
+    with pytest.raises(Exception) as e_info:  # NOQA
         viewshed(raster=empty_agg, x=OBSERVER_X, y=OBSERVER_Y,
                  observer_elev=10)
 
 
-@pytest.mark.viewshed
 def test_viewshed_invalid_y_view():
     OBSERVER_X = 0
     OBSERVER_Y = ys[-1] + 1
-    with pytest.raises(Exception) as e_info: # NOQA
+    with pytest.raises(Exception) as e_info:  # NOQA
         viewshed(raster=empty_agg, x=OBSERVER_X, y=OBSERVER_Y,
                  observer_elev=10)
 
 
-@pytest.mark.viewshed
 def test_viewshed_output_properties():
     for obs_elev in OBS_ELEVS:
         OBSERVER_X = xs[0]
@@ -62,7 +60,6 @@ def test_viewshed_output_properties():
         assert type(v.values[0, 0]) == np.float64
 
 
-@pytest.mark.viewshed
 def test_viewshed():
 
     # check if a matrix is symmetric
