@@ -1,4 +1,4 @@
-xarray-spatial: Raster-based Spatial Analysis in Python
+![title](https://via.placeholder.com/150x150.png) xarray-spatial: Raster-based Spatial Analysis in Python
 -------
 
 Rasters are regularly gridded datasets like GeoTIFFs, JPGs, and PNGs.
@@ -15,13 +15,22 @@ In the GIS world, folks use rasters for representing continuous phenomena (e.g. 
 
 ### Installation
 ```bash
+# via conda
 conda install -c makepath xarray-spatial
+
+# via pip
 pip install xarray-spatial
 ```
 
 ### Usage
+```python
+from xrspatial import hillshade
+
+hillshade_xarray_dataarray = hillshade(my_xarray_dataarray)
+```
 
 ### Dependencies
+![title](https://via.placeholder.com/300x400.png)
 <Add dependency graph image here>
 
 ### Notes on GDAL
