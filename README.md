@@ -1,4 +1,4 @@
-![title](https://via.placeholder.com/150x150.png) xarray-spatial: Raster-based Spatial Analysis in Python
+![title](https://via.placeholder.com/75x75.png) xarray-spatial: Raster-based Spatial Analysis in Python
 -------
 
 Rasters are regularly gridded datasets like GeoTIFFs, JPGs, and PNGs.
