@@ -1,0 +1,7 @@
+digraph G {
+"xarray-spatial" -> datashader;
+datashader -> numba;
+datashader -> xarray;
+xarray -> numpy;
+numba -> numpy;
+}
