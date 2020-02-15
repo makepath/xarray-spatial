@@ -1,6 +1,20 @@
-<h1><img src="https://img.fortawesome.com/349cfdf6/logo-fa-free.svg" alt="Font Awesome 5 Free" width="50%">xarray-spatial: Raster-based Spatial Analysis in Python</h1>
+:earth_africa: xarray-spatial: Raster-based Spatial Analysis in Python
+
 [![Build Status](https://travis-ci.org/makepath/xarray-spatial.svg?branch=master)](https://travis-ci.org/makepath/xarray-spatial)
 -------
+:round_pushpin: Fast, Accurate Python library for Raster Operations
+
+:zap: Extensible with [Numba](http://numba.pydata.org/)
+
+:fast_forward: Scalable with [Dask](http://dask.pydata.org)
+
+:earth_africa: Geared towards GIS Professionals
+
+:clipboard: Notebook-friendly
+
+:confetti_ball: No GDAL / GEOS Dependency
+
+#### Rasters?
 
 Rasters are regularly gridded datasets like GeoTIFFs, JPGs, and PNGs.
 
