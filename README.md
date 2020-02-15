@@ -14,6 +14,8 @@
 
 :confetti_ball: No GDAL / GEOS Dependency
 
+**Check out user guide** [here](/examples/user-guide.ipynb)
+
 #### Rasters?
 
 Rasters are regularly gridded datasets like GeoTIFFs, JPGs, and PNGs.
