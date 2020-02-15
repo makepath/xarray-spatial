@@ -1,4 +1,4 @@
-![title](https://via.placeholder.com/75x75.png) xarray-spatial: Raster-based Spatial Analysis in Python
+<h1><img src="https://img.fortawesome.com/349cfdf6/logo-fa-free.svg" alt="Font Awesome 5 Free" width="50%">xarray-spatial: Raster-based Spatial Analysis in Python</h1>
 [![Build Status](https://travis-ci.org/makepath/xarray-spatial.svg?branch=master)](https://travis-ci.org/makepath/xarray-spatial)
 -------
 
