@@ -45,8 +45,10 @@ hillshade_xarray_dataarray = hillshade(my_xarray_dataarray)
 ```
 
 ### Dependencies
-![title](https://via.placeholder.com/300x400.png)
-<Add dependency graph image here>
+
+`xarray-spatial` currently depends on datashader, which will change in the future to only include `xarray`, `numba`. 
+
+![title](dependencies.png)
 
 ### Notes on GDAL
 
