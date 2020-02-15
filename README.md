@@ -8,14 +8,12 @@
 
 :fast_forward: Scalable with [Dask](http://dask.pydata.org)
 
-:earth_africa: Geared towards GIS Professionals
-
-:clipboard: Notebook-friendly
-
 :confetti_ball: No GDAL / GEOS Dependency
 
+:earth_africa: Geared towards GIS Professionals
 
-#### Rasters?
+
+#### Raster-huh?
 
 Rasters are regularly gridded datasets like GeoTIFFs, JPGs, and PNGs.
 
