@@ -37,6 +37,20 @@ conda install -c makepath xarray-spatial
 pip install xarray-spatial
 ```
 
+### Current Spatial Functions:
+-------
+- [Slope] (xrspatial/slope.py)
+- Aspect
+- Curvature
+- Hillshade
+- Normalized Difference Vegetation Index (NDVI)
+- Focal Statistics
+- Zonal Statistics
+- Zonal Cross Tabulate
+- Viewshed
+- Proximity
+- Bump Mapping
+
 ### Usage
 
 ![title](composite_map.gif)
