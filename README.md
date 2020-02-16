@@ -39,6 +39,8 @@ pip install xarray-spatial
 
 ### Usage
 
+![title](composite_map.gif)
+
 **Check out user guide** [here](/examples/user-guide.ipynb)
 
 ### Dependencies
