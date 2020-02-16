@@ -13,6 +13,8 @@
 
 :earth_africa: Geared towards GIS Professionals
 
+-------
+
 `xarray-spatial` implements common raster analysis functions using numba and provides an easy-to-install, easy-to-extend codebase for raster analysis.
 
 `xarray-spatial` is a generalization which fell out of the [datashader project](https://datashader.org/).
@@ -66,13 +68,13 @@ hillshaded_dataarray = hillshade(my_dataarray)
 
 Check out the user guide [here](/examples/user-guide.ipynb)
 
-### Dependencies
+#### Dependencies
 
 `xarray-spatial` currently depends on datashader, which will change in the future to only include `xarray`, `numba`. 
 
 ![title](dependencies.png)
 
-### Notes on GDAL
+#### Notes on GDAL
 
 Within the Python ecosystem, many geospatial libraries interface with GDAL (C++) for raster input / output and analysis (e.g. rasterio, raster-stats). People wrap GDAL because its robust, performant and has decades of great work behind it. Off-loading expensive computations to the C/C++ level has been a key performance strategy for Python libraries (obviously...Python itself is implemented in C).
 
@@ -80,9 +82,9 @@ Wrapping GDAL has a few drawbacks for Python developers and data scientists:
 - GDAL can be a pain to build / install.
 - GDAL is hard for Python developers/analysts to extend.
 
-With the introduction of projects like numba, Python gained new ways to improve performance without writing C/C++ extensions.
+With the introduction of projects like numba, Python gained new ways to improve performance without writing C/C++ extensions. `xarray-spatial` implements algorithmsusing numba and 
 
-### Contributors
+#### Contributors
 
 - @brendancol
 - @thuydotm
