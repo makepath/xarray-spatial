@@ -43,6 +43,7 @@ pip install xarray-spatial
 
 #### Basic Pattern
 ```python
+import xarray as xr
 from xrspatial import hillshade
 
 my_dataarray = xr.DataArray(...)
