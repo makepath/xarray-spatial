@@ -1,3 +1,4 @@
+
 package:
   name: xarray-spatial
   version: 0.0.1
@@ -13,12 +14,10 @@ requirements:
 
 test:
   requires:
-    - pytest
-    - flake8
-
+    - pytest >=2.8.5
   imports:
-    - xarray-spatial
+    - xrspatial
 
 about:
   home: https://github.com/makepath/xarray-spatial
-  license: New BSD
+  license: MIT
