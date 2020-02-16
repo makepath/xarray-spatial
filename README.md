@@ -39,7 +39,7 @@ pip install xarray-spatial
 
 ### Current Spatial Functions:
 -------
-- ![Slope] (xrspatial/slope.py)
+- ![Slope] (/xrspatial/slope.py)
 - Aspect
 - Curvature
 - Hillshade
