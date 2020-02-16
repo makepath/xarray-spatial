@@ -41,7 +41,15 @@ pip install xarray-spatial
 
 ![title](composite_map.gif)
 
-**Check out user guide** [here](/examples/user-guide.ipynb)
+#### Basic Pattern
+```python
+from xrspatial import hillshade
+
+my_dataarray = xr.DataArray(...)
+hillshaded_dataarray = hillshade(my_dataarray)
+```
+
+Check out the user guide [here](/examples/user-guide.ipynb)
 
 ### Dependencies
 
