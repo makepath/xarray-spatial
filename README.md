@@ -4,6 +4,8 @@
 [![Build Status](https://travis-ci.org/makepath/xarray-spatial.svg?branch=master)](https://travis-ci.org/makepath/xarray-spatial)
 [![PyPI version](https://badge.fury.io/py/xarray-spatial.svg)](https://badge.fury.io/py/xarray-spatial)
 -------
+![title](composite_map.gif)
+-------
 :round_pushpin: Fast, Accurate Python library for Raster Operations
 
 :zap: Extensible with [Numba](http://numba.pydata.org/)
@@ -54,9 +56,6 @@ In the GIS world, folks use rasters for representing continuous phenomena (e.g. 
 - [Procedural Terrain Generation](xrspatial/terrain.py)
 
 #### Usage
-Below is an animation showing the use over several tools within `xarray-spatial`.
-
-![title](composite_map.gif)
 
 ##### Basic Pattern
 ```python
