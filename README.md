@@ -13,22 +13,14 @@
 
 :earth_africa: Geared towards GIS Professionals
 
-
-#### Raster-huh?
-
-Rasters are regularly gridded datasets like GeoTIFFs, JPGs, and PNGs.
-
-In the GIS world, folks use rasters for representing continuous phenomena (e.g. elevation, rainfall, distance).   
-
-
 `xarray-spatial` implements common raster analysis functions using numba and provides an easy-to-install, easy-to-extend codebase for raster analysis.
+
+`xarray-spatial` is a generalization which fell out of the [datashader project](https://datashader.org/).
 
 `xarray-spatial` does not depend on GDAL / GEOS, and because of this has limited breadth.  The plan is to implement core raster analysis functions in terminology common to GIS developers / analysts.
 
-`xarray-spatial` is a generalization which fell out of the datashader projects.
 
-
-### Installation
+#### Installation
 ```bash
 # via conda
 conda install -c makepath xarray-spatial
@@ -37,8 +29,13 @@ conda install -c makepath xarray-spatial
 pip install xarray-spatial
 ```
 
-### Current Spatial Functions:
--------
+#### Raster-huh?
+
+Rasters are regularly gridded datasets like GeoTIFFs, JPGs, and PNGs.
+
+In the GIS world, folks use rasters for representing continuous phenomena (e.g. elevation, rainfall, distance).   
+
+#### Current Spatial Functions:
 - [Slope](xrspatial/slope.py)
 - [Aspect](xrspatial/aspect.py)
 - [Curvature](xrspatial/curvature.py)
@@ -50,12 +47,15 @@ pip install xarray-spatial
 - [Viewshed](xrspatial/viewshed.py)
 - [Proximity](xrspatial/proximity.py)
 - [Bump Mapping](xrspatial/bump.py)
+- [Perlin Noise](xrspatial/perlin.py)
+- [Procedural Terrain Generation](xrspatial/terrain.py)
 
-### Usage
+#### Usage
+Below is an animation showing the use over several tools within `xarray-spatial`.
 
 ![title](composite_map.gif)
 
-#### Basic Pattern
+##### Basic Pattern
 ```python
 import xarray as xr
 from xrspatial import hillshade
