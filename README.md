@@ -39,17 +39,17 @@ pip install xarray-spatial
 
 ### Current Spatial Functions:
 -------
-- ![Slope](xrspatial/slope.py)
-- Aspect
-- Curvature
-- Hillshade
-- Normalized Difference Vegetation Index (NDVI)
-- Focal Statistics
-- Zonal Statistics
-- Zonal Cross Tabulate
-- Viewshed
-- Proximity
-- Bump Mapping
+- [Slope](xrspatial/slope.py)
+- [Aspect](xrspatial/aspect.py)
+- [Curvature](xrspatial/curvature.py)
+- [Hillshade](xrspatial/hillshade.py)
+- [Normalized Difference Vegetation Index (NDVI)](xrspatial/ndvi.py)
+- [Focal Statistics](xrspatial/focal.py)
+- [Zonal Statistics](xrspatial/zonal.py)
+- [Zonal Cross Tabulate](xrspatial/zonal.py)
+- [Viewshed](xrspatial/viewshed.py)
+- [Proximity](xrspatial/proximity.py)
+- [Bump Mapping](xrspatial/bump.py)
 
 ### Usage
 
