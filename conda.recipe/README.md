@@ -53,13 +53,13 @@ conda convert --platform linux-64 xarray-spatial-$VERSION*.tar.bz2 -o ../
 conda convert --platform win-64 xarray-spatial-$VERSION*.tar.bz2 -o ../
 ```
 
-Use `anaconda upload` to upload the build to the `bokeh` channel. This requires
+Use `anaconda upload` to upload the build to the `makepath` channel. This requires
 you to be setup on `anaconda.org`, and have the proper credentials to push to
-the bokeh channel.
+the makepath channel.
 
 ```bash
 anaconda login
-anaconda upload $CONDA_DIR/conda-bld/*/datashader-$VERSION*.tar.bz2 -u bokeh
+anaconda upload $CONDA_DIR/conda-bld/*/xarray-spatial-$VERSION*.tar.bz2 -u makepath
 ```
 
 - Write the release notes:
