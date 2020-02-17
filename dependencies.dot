@@ -13,5 +13,9 @@ xarray -> numpy;
 xarray -> "rasterio\n(optional)" -> gdal;
 numba -> numpy;
 pandas -> numpy;
+dask -> pandas;
 "geopandas\n(optional)" -> fiona -> geos;
+"geopandas\n(optional)" -> shapely -> geos;
+
+ "xarray-spatial" [fontcolor=blue fontsize=18 width=0.5 shape=circle style=filled];
 }
