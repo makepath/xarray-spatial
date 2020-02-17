@@ -74,7 +74,7 @@ Check out the user guide [here](/examples/user-guide.ipynb).
 
 #### Dependencies
 
-`xarray-spatial` currently depends on Datashader, but will soon be updated to depend only on `xarray` and `numba`, while still being able to make use Datashader output when available. 
+`xarray-spatial` currently depends on Datashader, but will soon be updated to depend only on `xarray` and `numba`, while still being able to make use of Datashader output when available. 
 
 ![title](dependencies.png)
 
