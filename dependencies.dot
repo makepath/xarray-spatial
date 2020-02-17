@@ -1,7 +1,17 @@
 digraph G {
-"xarray-spatial" -> datashader;
-datashader -> numba;
-datashader -> xarray;
+"xarray-spatial" -> "datashader\n(optional)";
+"xarray-spatial" -> numba;
+"xarray-spatial" -> xarray;
+"xarray-spatial" -> "geopandas\n(optional)";
+"datashader\n(optional)" -> numba;
+"datashader\n(optional)" -> xarray;
+"datashader\n(optional)" -> dask;
+"datashader\n(optional)" -> pandas;
+"datashader\n(optional)" -> spatialpandas;
+xarray -> dask;
 xarray -> numpy;
+xarray -> "rasterio\n(optional)" -> gdal;
 numba -> numpy;
+pandas -> numpy;
+"geopandas\n(optional)" -> fiona -> geos;
 }
