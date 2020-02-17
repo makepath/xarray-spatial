@@ -14,6 +14,8 @@ xarray -> "rasterio\n(optional)" -> gdal;
 numba -> numpy;
 pandas -> numpy;
 dask -> pandas;
+spatialpandas -> pandas;
+spatialpandas -> numba;
 "geopandas\n(optional)" -> fiona -> geos;
 "geopandas\n(optional)" -> shapely -> geos;
 
