@@ -1,4 +1,4 @@
-:earth_africa: xarray-spatial: Raster-based Spatial Analysis in Python
+:earth_africa: xarray-spatial: Raster-Based Spatial Analysis in Python
 -------
 
 [![Build Status](https://travis-ci.org/makepath/xarray-spatial.svg?branch=master)](https://travis-ci.org/makepath/xarray-spatial)
@@ -12,17 +12,17 @@
 
 :fast_forward: Scalable with [Dask](http://dask.pydata.org)
 
-:confetti_ball: No GDAL / GEOS Dependency
+:confetti_ball: Free of GDAL / GEOS Dependencies
 
-:earth_africa: Geared towards GIS Professionals
+:earth_africa: General-Purpose Spatial Processing, Geared Towards GIS Professionals
 
 -------
 
-`xarray-spatial` implements common raster analysis functions using numba and provides an easy-to-install, easy-to-extend codebase for raster analysis.
+`xarray-spatial` implements common raster analysis functions using Numba and provides an easy-to-install, easy-to-extend codebase for raster analysis.
 
-`xarray-spatial` is a generalization which fell out of the [datashader project](https://datashader.org/).
+`xarray-spatial` grew out of the [Datashader project](https://datashader.org/), which provides fast rasterization of vector data (points, lines, polygons, meshes, and rasters) for use with xarray-spatial.
 
-`xarray-spatial` does not depend on GDAL / GEOS, and because of this has limited breadth.  The plan is to implement core raster analysis functions in terminology common to GIS developers / analysts.
+`xarray-spatial` does not depend on GDAL / GEOS, which makes it fully extensible in Python but does limit the breadth of operations that can be covered.  xarray-spatial is meant to include the core raster-analysis functions needed for GIS developers / analysts, implemented independently of the non-Python geo stack.
 
 
 #### Installation
@@ -38,9 +38,9 @@ pip install xarray-spatial
 
 Rasters are regularly gridded datasets like GeoTIFFs, JPGs, and PNGs.
 
-In the GIS world, folks use rasters for representing continuous phenomena (e.g. elevation, rainfall, distance).   
+In the GIS world, rasters are used for representing continuous phenomena (e.g. elevation, rainfall, distance), either directly as numerical values, or as RGB images created for humans to view. Rasters typically have two spatial dimensions, but may have any number of other dimensions (time, type of measurement, etc.)
 
-#### Current Spatial Functions:
+#### Supported Spatial Functions:
 - [Slope](xrspatial/slope.py)
 - [Aspect](xrspatial/aspect.py)
 - [Curvature](xrspatial/curvature.py)
@@ -66,7 +66,7 @@ my_dataarray = xr.DataArray(...)
 hillshaded_dataarray = hillshade(my_dataarray)
 ```
 
-Check out the user guide [here](/examples/user-guide.ipynb)
+Check out the user guide [here](/examples/user-guide.ipynb).
 
 ------
 
@@ -74,21 +74,23 @@ Check out the user guide [here](/examples/user-guide.ipynb)
 
 #### Dependencies
 
-`xarray-spatial` currently depends on datashader, which will change in the future to only include `xarray`, `numba`. 
+`xarray-spatial` currently depends on Datashader, but will soon be updated to depend only on `xarray` and `numba`, while still being able to make use Datashader output when available. 
 
 ![title](dependencies.png)
 
 #### Notes on GDAL
 
-Within the Python ecosystem, many geospatial libraries interface with GDAL (C++) for raster input / output and analysis (e.g. rasterio, raster-stats). People wrap GDAL because its robust, performant and has decades of great work behind it. Off-loading expensive computations to the C/C++ level has been a key performance strategy for Python libraries (obviously...Python itself is implemented in C).
+Within the Python ecosystem, many geospatial libraries interface with the GDAL C++ library for raster and vector input, output, and analysis (e.g. rasterio, rasterstats, geopandas). GDAL is robust, performant, and has decades of great work behind it. For years, off-loading expensive computations to the C/C++ level in this way has been a key performance strategy for Python libraries (obviously...Python itself is implemented in C!).
 
-Wrapping GDAL has a few drawbacks for Python developers and data scientists:
+However, wrapping GDAL has a few drawbacks for Python developers and data scientists:
 - GDAL can be a pain to build / install.
-- GDAL is hard for Python developers/analysts to extend.
+- GDAL is hard for Python developers/analysts to extend, because it requires understanding multiple languages.
+- GDAL's data structures are defined at the C/C++ level, which constrains how they can be accessed from Python.
 
-With the introduction of projects like numba, Python gained new ways to improve performance without writing C/C++ extensions. `xarray-spatial` implements algorithmsusing numba and 
+With the introduction of projects like Numba, Python gained new ways to provide high-performance code directly in Python, without depending on or being constrained by separate C/C++ extensions. `xarray-spatial` implements algorithms using Numba and Dask, making all of its source code available as pure Python without any "black box" barriers that obscure what is going on and prevent full optimization. Projects can make use of the functionality provided by `xarray-spatial` where available, while still using GDAL where required for other tasks.
 
 #### Contributors
 
 - @brendancol
 - @thuydotm
+- @jbednar
