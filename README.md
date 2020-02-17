@@ -68,6 +68,10 @@ hillshaded_dataarray = hillshade(my_dataarray)
 
 Check out the user guide [here](/examples/user-guide.ipynb)
 
+------
+
+![title](composite_map.png)
+
 #### Dependencies
 
 `xarray-spatial` currently depends on datashader, which will change in the future to only include `xarray`, `numba`. 
