@@ -6,7 +6,9 @@ from .perlin import _perlin
 
 
 # TODO: add optional name parameter `name='terrain'`
-def generate_terrain(canvas, seed=10, zfactor=4000, full_extent=None):
+def generate_terrain(x_range=(0, 500), y_range=(0, 500),
+                     width=25, height=30, canvas=None,
+                     seed=10, zfactor=4000, full_extent=None):
     """
     Generates a pseudo-random terrain which can be helpful
     for testing raster functions
@@ -45,7 +47,11 @@ def generate_terrain(canvas, seed=10, zfactor=4000, full_extent=None):
         return out
 
     def _scale(value, old_range, new_range):
-        return ((value - old_range[0]) / (old_range[1] - old_range[0])) * (new_range[1] - new_range[0]) + new_range[0]
+        d = (value - old_range[0]) / (old_range[1] - old_range[0])
+        return d * (new_range[1] - new_range[0]) + new_range[0]
+
+
+
 
     mercator_extent = (-np.pi * 6378137, -np.pi * 6378137, np.pi * 6378137, np.pi * 6378137)
     crs_extents = {'3857': mercator_extent}

@@ -28,7 +28,6 @@ nonzeros_raster = np.count_nonzero(raster_image)
 zeros_raster = width * height - nonzeros_raster
 
 
-@pytest.mark.proximity
 def test_proximity_default():
 
     # DEFAULT SETTINGS
@@ -50,7 +49,6 @@ def test_proximity_default():
     assert nonzeros_raster == zeros_default
 
 
-@pytest.mark.proximity
 def test_proximity_target_value():
 
     # TARGET VALUES SETTING
@@ -69,7 +67,7 @@ def test_proximity_target_value():
 
     assert num_target == tv_zeros
 
-@pytest.mark.proximity
+
 def test_proximity_manhattan():
 
     # distance_metric SETTING
@@ -82,7 +80,7 @@ def test_proximity_manhattan():
     assert dm_proximity.values.shape[0] == height
     assert dm_proximity.values.shape[1] == width
 
-@pytest.mark.proximity
+
 def test_proximity_distance_metric():
 
     # distance_metric SETTING
@@ -96,7 +94,6 @@ def test_proximity_distance_metric():
     assert dm_proximity.values.shape[1] == width
 
 
-@pytest.mark.proximity
 def test_greate_circle_invalid_x_coords():
     y1 = 0
     y2 = 0
@@ -114,7 +111,6 @@ def test_greate_circle_invalid_x_coords():
         assert e_info
 
 
-@pytest.mark.proximity
 def test_proximity_invalid_y_coords():
 
     x1 = 0

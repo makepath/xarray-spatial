@@ -1,0 +1,1 @@
+import xrspatial; xrspatial.test()
