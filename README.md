@@ -76,7 +76,7 @@ Check out the user guide [here](/examples/user-guide.ipynb)
 
 `xarray-spatial` currently depends on datashader, which will change in the future to only include `xarray`, `numba`. 
 
-![title](dependencies.png)
+![title](dependencies.svg)
 
 #### Notes on GDAL
 
