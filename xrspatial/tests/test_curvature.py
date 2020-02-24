@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 import xarray as xr
-from xrspatial.curvature import curvature
+from xrspatial import curvature
 
 
 def test_curvature_invalid_input_raster():

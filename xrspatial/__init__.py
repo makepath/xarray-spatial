@@ -6,6 +6,9 @@ from xrspatial.focal import mean  # noqa
 from xrspatial.hillshade import hillshade  # noqa
 from xrspatial.perlin import perlin  # noqa
 from xrspatial.proximity import proximity  # noqa
+from xrspatial.proximity import great_circle_distance  # noqa
+from xrspatial.proximity import euclidean_distance  # noqa
+from xrspatial.proximity import manhattan_distance  # noqa
 from xrspatial.viewshed import viewshed  # noqa
 from xrspatial.ndvi import ndvi  # noqa
 from xrspatial.zonal import stats as zonal_stats  # noqa
