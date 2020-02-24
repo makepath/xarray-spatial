@@ -11,6 +11,7 @@ from xrspatial.ndvi import ndvi  # noqa
 from xrspatial.zonal import stats as zonal_stats  # noqa
 from xrspatial.zonal import apply as zonal_apply  # noqa
 from xrspatial.zonal import crosstab as zonal_crosstab  # noqa
+from xrspatial.curvature import curvature  # noqa
 
 
 __version__ = '0.0.1'
