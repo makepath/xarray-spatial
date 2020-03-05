@@ -15,11 +15,10 @@ from PIL.Image import fromarray
 __all__ = ['render_tiles', 'MercatorTileDefinition']
 
 
-
-# helpers ---------------------------------------------------------------------
 def _create_dir(path):
 
-    import os, errno
+    import os
+    import errno
 
     try:
         os.makedirs(path)
@@ -40,28 +39,38 @@ def _get_super_tile_min_max(tile_info, load_data_func, rasterize_func):
 def calculate_zoom_level_stats(full_extent, level, load_data_func,
                                rasterize_func,
                                color_ranging_strategy='fullscan'):
+
     if color_ranging_strategy == 'fullscan':
-        b = db.from_sequence(list(gen_super_tiles(full_extent,level)))
-        b = b.map(_get_super_tile_min_max, load_data_func, rasterize_func).flatten()
+        b = db.from_sequence(list(gen_super_tiles(full_extent, level)))
+        b = b.map(_get_super_tile_min_max, load_data_func,
+                  rasterize_func).flatten()
         return dask.compute(b.min(), b.max())
+
+    elif isinstance(color_ranging_strategy, dict):
+        return color_ranging_strategy[level]
+
+    elif isinstance(color_ranging_strategy, tuple):
+        return color_ranging_strategy
+
     else:
         raise ValueError('Invalid color_ranging_strategy option')
 
 
 def render_tiles(full_extent, levels, load_data_func,
                  rasterize_func, shader_func,
-                 post_render_func, output_path, color_ranging_strategy='fullscan'):
+                 post_render_func, output_path,
+                 color_ranging_strategy='fullscan'):
 
-    #TODO: get full extent once at beginning for all levels
+    #  TODO: get full extent once at beginning for all levels
     results = dict()
     for level in levels:
         print('calculating statistics for level {}'.format(level))
         span = calculate_zoom_level_stats(full_extent, level,
                                           load_data_func, rasterize_func,
-                                          color_ranging_strategy='fullscan')
+                                          color_ranging_strategy=color_ranging_strategy)
 
         super_tiles = list(gen_super_tiles(full_extent, level, span))
-        print('rendering {} supertiles for zoom level {} with span={}'.format(len(super_tiles), level, span))
+        print(f'rendering {len(super_tiles)} supertiles for zoom level {level} with span={span}')
         b = db.from_sequence(super_tiles)
         b.map(render_super_tile, output_path, load_data_func, rasterize_func, shader_func, post_render_func).compute()
         results[level] = dict(success=True, stats=span, supertile_count=len(super_tiles))
@@ -91,11 +100,16 @@ def render_super_tile(tile_info, output_path, load_data_func,
     tile_size = tile_info['tile_size']
     level = tile_info['level']
     df = load_data_func(tile_info['x_range'], tile_info['y_range'])
+
+    if df.empty:
+        return
+
     agg = rasterize_func(df, x_range=tile_info['x_range'],
                          y_range=tile_info['y_range'], height=tile_size,
                          width=tile_size)
     ds_img = shader_func(agg, span=tile_info['span'])
     return create_sub_tiles(ds_img, level, tile_info, output_path, post_render_func)
+
 
 def create_sub_tiles(data_array, level, tile_info, output_path, post_render_func=None):
 
@@ -117,9 +131,11 @@ def create_sub_tiles(data_array, level, tile_info, output_path, post_render_func
 
     return renderer.render(data_array, level=level)
 
+
 def invert_y_tile(y, z):
     # Convert from TMS to Google tile y coordinate, and vice versa
-    return (2 ** z) - 1 - y 
+    return (2 ** z) - 1 - y
+
 
 # TODO: change name from source to definition
 class MercatorTileDefinition(object):
@@ -310,7 +326,7 @@ class TileRenderer(object):
         for t in tiles:
             x, y, z, data_extent = t
             dxmin, dymin, dxmax, dymax = data_extent
-            arr = da.loc[{'x':slice(dxmin, dxmax), 'y':slice(dymin, dymax)}]
+            arr = da.loc[{'x': slice(dxmin, dxmax), 'y': slice(dymin, dymax)}]
 
             if 0 in arr.shape:
                 continue
