@@ -1,7 +1,7 @@
 import pytest
 
-from datashader.spatial import proximity
-from datashader.spatial import great_circle_distance
+from xrspatial import proximity
+from xrspatial import great_circle_distance
 import datashader as ds
 
 import numpy as np
