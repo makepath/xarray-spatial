@@ -29,6 +29,7 @@ def _mean(data, excludes):
                 out[y, x] = data[y, x]
     return out
 
+
 # TODO: add optional name parameter `name='mean'`
 def mean(agg, passes=1, excludes=[np.nan]):
     """
@@ -54,6 +55,12 @@ def mean(agg, passes=1, excludes=[np.nan]):
                      dims=agg.dims, coords=agg.coords, attrs=agg.attrs)
 
 
+def _zscores(array):
+    mean = np.nanmean(array)
+    std = np.nanstd(array)
+    return (array - mean) / std
+
+
 def _gen_ellipse_kernel(half_w, half_h):
     # x values of interest
     x = np.linspace(-half_w, half_w, 2 * half_w + 1)
@@ -71,8 +78,9 @@ def _apply_convolution(array, kernel):
     kernel_half_h, kernel_half_w = kernel.shape
     h = int(kernel_half_h / 2)
     w = int(kernel_half_w / 2)
-    # in case the kernel presents a circular filter,
-    # h = w and are the radius of the kernel
+
+    # number of pixels inside the kernel
+    num_pixels = 0
 
     # return of the function
     res = 0
@@ -85,9 +93,11 @@ def _apply_convolution(array, kernel):
         for j in range(-w, w + 1):
             res += array[i, j] * kernel[k_row, k_col]
             k_col += 1
+            if (kernel[k_row, k_col] == 1):
+                num_pixels += 1
         k_row += 1
 
-    return res
+    return res / num_pixels
 
 
 def focal_analysis(raster, shape='circle', radius=1):
@@ -102,8 +112,6 @@ def focal_analysis(raster, shape='circle', radius=1):
             issubclass(raster.values.dtype.type, np.float)):
         raise ValueError(
             "`raster` must be an array of integers or float")
-
-    raster_values = raster.values
 
     cell_size_x = 1
     cell_size_y = 1
@@ -128,11 +136,23 @@ def focal_analysis(raster, shape='circle', radius=1):
         kernel_half_h = int(radius / cell_size_y)
         kernel = _gen_ellipse_kernel(kernel_half_w, kernel_half_h)
 
-    print(cell_size_x, cell_size_y, kernel)
-    # apply kernel to raster values
-    res = stencil(_apply_convolution,
-                  standard_indexing=("kernel",),
-                  neighborhood=((-kernel_half_h, kernel_half_h),
-                                (-kernel_half_w, kernel_half_w)))(raster_values, kernel)
+    # zero padding
+    height, width = raster.shape
+    padded_raster_val = np.zeros((height + 2*kernel_half_h,
+                                  width + 2*kernel_half_w))
+    padded_raster_val[kernel_half_h:height + kernel_half_h,
+                      kernel_half_w:width + kernel_half_w] = raster.values
 
-    return res
+    # apply kernel to raster values
+    padded_res = stencil(_apply_convolution,
+                         standard_indexing=("kernel",),
+                         neighborhood=((-kernel_half_h, kernel_half_h),
+                                       (-kernel_half_w, kernel_half_w)))(padded_raster_val, kernel)
+
+    result = DataArray(padded_res[kernel_half_h:height + kernel_half_h,
+                                  kernel_half_w:width + kernel_half_w],
+                       coords=raster.coords,
+                       dims=raster.dims,
+                       attrs=raster.attrs)
+
+    return result
