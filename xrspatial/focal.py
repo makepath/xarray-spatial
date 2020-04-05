@@ -192,9 +192,9 @@ def _apply_convolution(array, kernel):
         k_col = 0
         for j in range(-w, w + 1):
             res += array[i, j] * kernel[k_row, k_col]
-            k_col += 1
             if (kernel[k_row, k_col] == 1):
                 num_pixels += 1
+            k_col += 1
         k_row += 1
 
     return res / num_pixels
