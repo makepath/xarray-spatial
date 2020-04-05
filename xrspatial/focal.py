@@ -213,6 +213,11 @@ def focal_analysis(raster, shape='circle', radius=1):
         raise ValueError(
             "`raster` must be an array of integers or float")
 
+    # validate shape
+    if shape not in ['circle']:
+        raise ValueError(
+            "kernel shape must be one of the following: \'circle\'")
+
     cell_size_x = 1
     cell_size_y = 1
 
