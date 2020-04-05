@@ -2,6 +2,8 @@ import xarray as xr
 import numpy as np
 
 from xrspatial import mean
+from xrspatial.focal import focal_analysis
+import pytest
 
 
 def _do_sparse_array(data_array):
@@ -51,3 +53,52 @@ def test_mean_transfer_function():
     da_mean[:, 0] = data_random[:, 0]
     da_mean[:, -1] = data_random[:, -1]
     assert abs(da_mean.mean() - data_random.mean()) < 10**-3
+
+
+def test_focal_invalid_input():
+    invalid_raster_type = np.array([0, 1, 2, 3])
+    with pytest.raises(Exception) as e_info:
+        focal_analysis(invalid_raster_type)
+        assert e_info
+
+    invalid_raster_dtype = xr.DataArray(np.array([['cat', 'dog']]))
+    with pytest.raises(Exception) as e_info:
+        focal_analysis(invalid_raster_dtype)
+        assert e_info
+
+    invalid_raster_shape = xr.DataArray(np.array([0, 0]))
+    with pytest.raises(Exception) as e_info:
+        focal_analysis(invalid_raster_shape)
+        assert e_info
+
+    raster = xr.DataArray(np.ones((5, 5)))
+    invalid_kernel_shape = 'line'
+    with pytest.raises(Exception) as e_info:
+        focal_analysis(raster=raster, shape=invalid_kernel_shape)
+        assert e_info
+
+    raster = xr.DataArray(np.ones((5, 5)))
+    invalid_radius = '10 inch'
+    with pytest.raises(Exception) as e_info:
+        focal_analysis(raster=raster, radius=invalid_radius)
+        assert e_info
+
+
+def test_focal_default():
+    raster = xr.DataArray(np.ones((10, 10)), dims=['x', 'y'])
+    raster['x'] = np.linspace(0, 9, 10)
+    raster['y'] = np.linspace(0, 9, 10)
+
+    focal_stats = focal_analysis(raster, radius='1m')
+
+    # check output's properties
+    # output must be an xarray DataArray
+    assert isinstance(focal_stats, xr.DataArray)
+    assert isinstance(focal_stats.values, np.ndarray)
+    # shape, dims, coords, attr preserved
+    assert raster.shape == focal_stats.shape
+    assert raster.dims == focal_stats.dims
+    assert raster.attrs == focal_stats.attrs
+    assert raster.coords == focal_stats.coords
+
+    # TODO: validate output value
