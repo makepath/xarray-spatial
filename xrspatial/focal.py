@@ -1,6 +1,6 @@
 import numpy as np
 from xarray import DataArray
-from xrspatial.utils import ngjit
+from xrspatial.utils import ngjit, lnglat_to_meters
 from numba import stencil
 import re
 
@@ -200,8 +200,53 @@ def _apply_convolution(array, kernel):
     return res / num_pixels
 
 
-def focal_analysis(raster, shape='circle', radius=1):
-    # check raster
+def _calc_cell_size(raster):
+    if 'unit' in raster.attrs:
+        unit = raster.attrs['unit']
+    else:
+        unit = DEFAULT_UNIT
+        print("Raster distance unit not provided. Use meter as default.")
+
+    cell_size_x = 1
+    cell_size_y = 1
+
+    # calculate cell size from input `raster`
+    for dim in raster.dims:
+        if (dim.lower().count('x')) > 0:
+            # dimension of x-coordinates
+            if len(raster[dim]) > 1:
+                cell_size_x = raster[dim].values[1] - raster[dim].values[0]
+        elif (dim.lower().count('y')) > 0:
+            # dimension of y-coordinates
+            if len(raster[dim]) > 1:
+                cell_size_y = raster[dim].values[1] - raster[dim].values[0]
+
+    lon0, lon1, lat0, lat1 = None, None, None, None
+    for dim in raster.dims:
+        if (dim.lower().count('lon')) > 0:
+            # dimension of x-coordinates
+            if len(raster[dim]) > 1:
+                lon0, lon1 = raster[dim].values[0], raster[dim].values[1]
+        elif (dim.lower().count('lat')) > 0:
+            # dimension of y-coordinates
+            if len(raster[dim]) > 1:
+                lat0, lat1 = raster[dim].values[0], raster[dim].values[1]
+
+    # convert lat-lon to meters
+    if (lon0, lon1, lat0, lat1) != (None, None, None, None):
+        mx0, my0 = lnglat_to_meters(lon0, lat0)
+        mx1, my1 = lnglat_to_meters(lon1, lat1)
+        cell_size_x = mx1 - mx0
+        cell_size_y = my1 - my0
+        unit = DEFAULT_UNIT
+
+    sx = Distance(str(cell_size_x) + unit)
+    sy = Distance(str(cell_size_y) + unit)
+    return sx, sy
+
+
+def focal_analysis(raster, shape='circle', radius='10km'):
+    # validate raster
     if not isinstance(raster, DataArray):
         raise TypeError("`raster` must be instance of DataArray")
 
@@ -218,29 +263,9 @@ def focal_analysis(raster, shape='circle', radius=1):
         raise ValueError(
             "kernel shape must be one of the following: \'circle\'")
 
-    cell_size_x = 1
-    cell_size_y = 1
-
-    # calculate cell size from input `raster`
-    for dim in raster.dims:
-        if (dim.lower().count('x')) > 0 or (dim.lower().count('lon')) > 0:
-            # dimension of x-coordinates
-            if len(raster[dim]) > 1:
-                cell_size_x = raster[dim].values[1] - raster[dim].values[0]
-        elif (dim.lower().count('y')) > 0 or (dim.lower().count('lat')) > 0:
-            # dimension of y-coordinates
-            if len(raster[dim]) > 1:
-                cell_size_y = raster[dim].values[1] - raster[dim].values[0]
-
-    # TODO: check coordinate unit, convert from lat-lon to meters
-    if 'unit' in raster.attrs:
-        unit = raster.attrs['unit']
-    else:
-        unit = DEFAULT_UNIT
-        print("Raster distance unit not provided. Use meter as default.")
-
-    sx = Distance(str(cell_size_x) + unit)
-    sy = Distance(str(cell_size_y) + unit)
+    # calculate cell size over the x and y axis
+    sx, sy = _calc_cell_size(raster)
+    # create Distance object of radius
     sr = Distance(str(radius))
 
     # create kernel
@@ -252,8 +277,8 @@ def focal_analysis(raster, shape='circle', radius=1):
 
     # zero padding
     height, width = raster.shape
-    padded_raster_val = np.zeros((height + 2*kernel_half_h,
-                                  width + 2*kernel_half_w))
+    padded_raster_val = np.zeros((height + 2 * kernel_half_h,
+                                  width + 2 * kernel_half_w))
     padded_raster_val[kernel_half_h:height + kernel_half_h,
                       kernel_half_w:width + kernel_half_w] = raster.values
 
