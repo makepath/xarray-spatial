@@ -156,13 +156,52 @@ def test_apply_sum():
                 assert sum_output.values[y, x] < kernel_sum
 
 
-# def test_apply_with_nan():
-#     n, m = 10, 10
-#     raster = xr.DataArray(np.ones((n, m)), dims=['x', 'y'])
-#     raster['x'] = np.linspace(0, n, n)
-#     raster['y'] = np.linspace(0, m, m)
-#
-#     nan_cells = [(i, i) for i in range(n)]
-#     for cell in nan_cells:
-#         raster[cell[0], cell[1]] = np.nan
-#
+def test_apply_with_nan():
+    n, m = 6, 6
+    raster = xr.DataArray(np.ones((n, m)), dims=['x', 'y'])
+    raster['x'] = np.linspace(0, n, n)
+    raster['y'] = np.linspace(0, m, m)
+
+    nan_cells = [(i, i) for i in range(n)]
+    for cell in nan_cells:
+        raster[cell[0], cell[1]] = np.nan
+
+    kernel_1 = Kernel(radius=1)
+    # kernel array = [[1]]
+    sum_output_1 = apply(raster, kernel_1, calc_sum)
+    # np.nansum(np.array([np.nan])) = 0.0
+    expected_out_sum_1 = np.array([[0., 1., 1., 1., 1., 1.],
+                                   [1., 0., 1., 1., 1., 1.],
+                                   [1., 1., 0., 1., 1., 1.],
+                                   [1., 1., 1., 0., 1., 1.],
+                                   [1., 1., 1., 1., 0., 1.],
+                                   [1., 1., 1., 1., 1., 0.]])
+    assert np.all(sum_output_1.values == expected_out_sum_1)
+
+    # np.nanmean(np.array([np.nan])) = nan
+    mean_output_1 = apply(raster, kernel_1, calc_mean)
+    for cell in nan_cells:
+        assert np.isnan(mean_output_1[cell[0], cell[1]])
+    # remaining cells are 1s
+    for i in range(n):
+        for j in range(m):
+            if i != j:
+                assert mean_output_1[i, j] == 1
+
+    kernel_2 = Kernel(radius=2)
+    # kernel array: [[0, 1, 0],
+    #                [1, 1, 1],
+    #                [0, 1, 0]]
+    sum_output_2 = apply(raster, kernel_2, calc_sum)
+    expected_out_sum_2 = np.array([[2., 2., 4., 4., 4., 3.],
+                                   [2., 4., 3., 5., 5., 4.],
+                                   [4., 3., 4., 3., 5., 4.],
+                                   [4., 5., 3., 4., 3., 4.],
+                                   [4., 5., 5., 3., 4., 2.],
+                                   [3., 4., 4., 4., 2., 2.]])
+
+    assert np.all(sum_output_2.values == expected_out_sum_2)
+
+    mean_output_2 = apply(raster, kernel_2, calc_mean)
+    expected_mean_output_2 = np.ones((n, m))
+    assert np.all(mean_output_2.values == expected_mean_output_2)
