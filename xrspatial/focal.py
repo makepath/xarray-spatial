@@ -1,60 +1,16 @@
 import numpy as np
 from xarray import DataArray
 from xrspatial.utils import ngjit, lnglat_to_meters
-from numba import stencil
+from numba import prange
 import re
+import warnings
+
+warnings.simplefilter('default')
 
 DEFAULT_UNIT = 'meter'
 
+
 # TODO: Make convolution more generic with numba first-class functions.
-
-
-@ngjit
-def _mean(data, excludes):
-    out = np.zeros_like(data)
-    rows, cols = data.shape
-    for y in range(1, rows-1):
-        for x in range(1, cols-1):
-
-            exclude = False
-            for ex in excludes:
-                if data[y,x] == ex:
-                    exclude = True
-                    break
-
-            if not exclude:
-                a,b,c,d,e,f,g,h,i = [data[y-1, x-1], data[y, x-1], data[y+1, x-1],
-                                     data[y-1, x],   data[y, x],   data[y+1, x],
-                                     data[y-1, x+1], data[y, x+1], data[y+1, x+1]]
-                out[y, x] = (a+b+c+d+e+f+g+h+i) / 9
-            else:
-                out[y, x] = data[y, x]
-    return out
-
-
-# TODO: add optional name parameter `name='mean'`
-def mean(agg, passes=1, excludes=[np.nan]):
-    """
-    Returns Mean filtered array using a 3x3 window
-
-    Parameters
-    ----------
-    agg : DataArray
-    passes : int, number of times to run mean
-
-    Returns
-    -------
-    data: DataArray
-    """
-    out = None
-    for i in range(passes):
-        if out is None:
-            out = _mean(agg.data, tuple(excludes))
-        else:
-            out = _mean(out, tuple(excludes))
-
-    return DataArray(out, name='mean',
-                     dims=agg.dims, coords=agg.coords, attrs=agg.attrs)
 
 
 def is_number(s):
@@ -92,7 +48,6 @@ class Distance(object):
     def _get_distance_unit(self, s):
         # spit string into numbers and text
         splits = [x for x in re.split(r'(-?\d*\.?\d+)', s) if x != '']
-
         if len(splits) not in [1, 2]:
             raise ValueError("Invalid distance.")
 
@@ -104,6 +59,8 @@ class Distance(object):
             unit = splits[1]
 
         unit = unit.lower()
+        unit = unit.replace(' ', '')
+        print("unit", unit)
         if unit not in self.UNITS:
             raise ValueError(
                 "Invalid value.\n"
@@ -155,51 +112,6 @@ class Distance(object):
         self._convert('KILOMETER')
 
 
-def _zscores(array):
-    mean = np.nanmean(array)
-    std = np.nanstd(array)
-    return (array - mean) / std
-
-
-def _gen_ellipse_kernel(half_w, half_h):
-    # x values of interest
-    x = np.linspace(-half_w, half_w, 2 * half_w + 1)
-    # y values of interest, as a "column" array
-    y = np.linspace(-half_h, half_w, 2 * half_h + 1)[:, None]
-
-    # True for points inside the ellipse
-    # (x / a)^2 + (y / b)^2 <= 1, avoid division to avoid rounding issue
-    ellipse = (x * half_h) ** 2 + (y * half_w) ** 2 <= (half_w * half_h) ** 2
-
-    return ellipse.astype(int)
-
-
-def _apply_convolution(array, kernel):
-    kernel_half_h, kernel_half_w = kernel.shape
-    h = int(kernel_half_h / 2)
-    w = int(kernel_half_w / 2)
-
-    # number of pixels inside the kernel
-    num_pixels = 0
-
-    # return of the function
-    res = 0
-
-    # row id of the kernel
-    k_row = 0
-    for i in range(-h, h + 1):
-        # column id of the kernel
-        k_col = 0
-        for j in range(-w, w + 1):
-            res += array[i, j] * kernel[k_row, k_col]
-            if (kernel[k_row, k_col] == 1):
-                num_pixels += 1
-            k_col += 1
-        k_row += 1
-
-    return res / num_pixels
-
-
 def _calc_cell_size(raster):
     if 'unit' in raster.attrs:
         unit = raster.attrs['unit']
@@ -245,7 +157,146 @@ def _calc_cell_size(raster):
     return sx, sy
 
 
-def focal_analysis(raster, shape='circle', radius='10km'):
+def _gen_ellipse_kernel(half_w, half_h):
+    # x values of interest
+    x = np.linspace(-half_w, half_w, 2 * half_w + 1)
+    # y values of interest, as a "column" array
+    y = np.linspace(-half_h, half_w, 2 * half_h + 1)[:, None]
+
+    # True for points inside the ellipse
+    # (x / a)^2 + (y / b)^2 <= 1, avoid division to avoid rounding issue
+    ellipse = (x * half_h) ** 2 + (y * half_w) ** 2 <= (half_w * half_h) ** 2
+
+    return ellipse.astype(int)
+
+
+class Kernel:
+    def __init__(self, shape='circle', radius=10000):
+        self.shape = shape
+        self.radius = radius
+        self._validate_shape()
+        self._validate_radius()
+
+    def _validate_shape(self):
+        # validate shape
+        if self.shape not in ['circle']:
+            raise ValueError(
+                "Kernel shape must be \'circle\'")
+
+    def _validate_radius(self):
+        # try to convert into Distance object
+        d = Distance(str(self.radius))
+
+    def to_array(self, raster):
+        # calculate cell size over the x and y axis
+        sx, sy = _calc_cell_size(raster)
+        # create Distance object of radius
+        sr = Distance(str(self.radius))
+        if self.shape == 'circle':
+            # convert radius (meter) to pixel
+            kernel_half_w = int(sr.meters / sx.meters)
+            kernel_half_h = int(sr.meters / sy.meters)
+            kernel = _gen_ellipse_kernel(kernel_half_w, kernel_half_h)
+        return kernel
+
+
+@ngjit
+def _mean(data, excludes):
+    out = np.zeros_like(data)
+    rows, cols = data.shape
+    for y in range(1, rows-1):
+        for x in range(1, cols-1):
+
+            exclude = False
+            for ex in excludes:
+                if data[y,x] == ex:
+                    exclude = True
+                    break
+
+            if not exclude:
+                a,b,c,d,e,f,g,h,i = [data[y-1, x-1], data[y, x-1], data[y+1, x-1],
+                                     data[y-1, x],   data[y, x],   data[y+1, x],
+                                     data[y-1, x+1], data[y, x+1], data[y+1, x+1]]
+                out[y, x] = (a+b+c+d+e+f+g+h+i) / 9
+            else:
+                out[y, x] = data[y, x]
+    return out
+
+
+# TODO: add optional name parameter `name='mean'`
+def mean(agg, passes=1, excludes=[np.nan]):
+    """
+    Returns Mean filtered array using a 3x3 window
+
+    Parameters
+    ----------
+    agg : DataArray
+    passes : int, number of times to run mean
+
+    Returns
+    -------
+    data: DataArray
+    """
+    out = None
+    for i in range(passes):
+        if out is None:
+            out = _mean(agg.data, tuple(excludes))
+        else:
+            out = _mean(out, tuple(excludes))
+
+    return DataArray(out, name='mean',
+                     dims=agg.dims, coords=agg.coords, attrs=agg.attrs)
+
+
+@ngjit
+def calc_mean(array):
+    return np.nanmean(array)
+
+
+@ngjit
+def calc_sum(array):
+    return np.nansum(array)
+
+
+@ngjit
+def _calc_std(array):
+    return np.nanstd(array)
+
+
+# @ngjit
+# def _calc_zscores(array):
+#     arr_mean = calc_mean(array)
+#     arr_std = _calc_std(array)
+#     res = np.zeros_like(array, dtype=array.dtype)
+#     for i in prange(h):
+#         for j in prange(w):
+#             res[i, j] = (array[i, j] - arr_mean) / arr_std
+#     return res
+
+
+@ngjit
+def _apply(data, kernel_array, func):
+    out = np.zeros_like(data)
+    rows, cols = data.shape
+    krows, kcols = kernel_array.shape
+    hrows, hcols = int(krows / 2), int(kcols / 2)
+    kernel_values = np.zeros_like(kernel_array, dtype=data.dtype)
+
+    for y in prange(rows):
+        for x in prange(cols):
+            # kernel values are all nans at the beginning of each step
+            kernel_values.fill(np.nan)
+            for ky in range(y - hrows, y + hrows + 1):
+                for kx in range(x - hcols, x + hcols + 1):
+                    if ky >= 0 and kx >= 0:
+                        if ky >= 0 and ky < rows and kx >= 0 and kx < cols:
+                            if kernel_array[ky - (y - hrows), kx - (x - hcols)] == 1:
+                                kernel_values[ky - (y - hrows), kx - (x - hcols)] = data[ky, kx]
+            out[y, x] = func(kernel_values)
+    return out
+
+
+def apply(raster, kernel, func=calc_mean):
     # validate raster
     if not isinstance(raster, DataArray):
         raise TypeError("`raster` must be instance of DataArray")
@@ -258,38 +309,12 @@ def focal_analysis(raster, shape='circle', radius='10km'):
         raise ValueError(
             "`raster` must be an array of integers or float")
 
-    # validate shape
-    if shape not in ['circle']:
-        raise ValueError(
-            "kernel shape must be one of the following: \'circle\'")
-
-    # calculate cell size over the x and y axis
-    sx, sy = _calc_cell_size(raster)
-    # create Distance object of radius
-    sr = Distance(str(radius))
-
-    # create kernel
-    if shape == 'circle':
-        # convert radius (meter) to pixel
-        kernel_half_w = int(sr.meters / sx.meters)
-        kernel_half_h = int(sr.meters / sy.meters)
-        kernel = _gen_ellipse_kernel(kernel_half_w, kernel_half_h)
-
-    # zero padding
-    height, width = raster.shape
-    padded_raster_val = np.zeros((height + 2 * kernel_half_h,
-                                  width + 2 * kernel_half_w))
-    padded_raster_val[kernel_half_h:height + kernel_half_h,
-                      kernel_half_w:width + kernel_half_w] = raster.values
-
+    # create kernel mask array
+    kernel_values = kernel.to_array(raster)
     # apply kernel to raster values
-    padded_res = stencil(_apply_convolution,
-                         standard_indexing=("kernel",),
-                         neighborhood=((-kernel_half_h, kernel_half_h),
-                                       (-kernel_half_w, kernel_half_w)))(padded_raster_val, kernel)
+    out = _apply(raster.values, kernel_values, func)
 
-    result = DataArray(padded_res[kernel_half_h:height + kernel_half_h,
-                                  kernel_half_w:width + kernel_half_w],
+    result = DataArray(out,
                        coords=raster.coords,
                        dims=raster.dims,
                        attrs=raster.attrs)
