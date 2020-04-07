@@ -54,13 +54,13 @@ class Distance(object):
         number = splits[0]
         unit = DEFAULT_UNIT
         if len(splits) == 1:
-            print("Distance unit not provided. Use meter as default.")
+            warnings.warn('Raster distance unit not provided. '
+                          'Use meter as default.', Warning)
         elif len(splits) == 2:
             unit = splits[1]
 
         unit = unit.lower()
         unit = unit.replace(' ', '')
-        print("unit", unit)
         if unit not in self.UNITS:
             raise ValueError(
                 "Invalid value.\n"
@@ -117,7 +117,8 @@ def _calc_cell_size(raster):
         unit = raster.attrs['unit']
     else:
         unit = DEFAULT_UNIT
-        print("Raster distance unit not provided. Use meter as default.")
+        warnings.warn('Raster distance unit not provided. '
+                      'Use meter as default.', Warning)
 
     cell_size_x = 1
     cell_size_y = 1
