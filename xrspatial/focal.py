@@ -168,7 +168,7 @@ def _gen_ellipse_kernel(half_w, half_h):
     # (x / a)^2 + (y / b)^2 <= 1, avoid division to avoid rounding issue
     ellipse = (x * half_h) ** 2 + (y * half_w) ** 2 <= (half_w * half_h) ** 2
 
-    return ellipse.astype(int)
+    return ellipse.astype(float)
 
 
 class Kernel:
@@ -260,19 +260,47 @@ def calc_sum(array):
 
 
 @ngjit
-def _calc_std(array):
-    return np.nanstd(array)
+def calc_zscores(array):
+    arr_mean = np.nanmean(array)
+    arr_std = np.nanstd(array)
+    out = np.zeros_like(array, dtype=array.dtype)
+    h, w = array.shape
+    for i in prange(h):
+        for j in prange(w):
+            out[i, j] = (array[i, j] - arr_mean) / arr_std
+    return out
 
 
-# @ngjit
-# def _calc_zscores(array):
-#     arr_mean = calc_mean(array)
-#     arr_std = _calc_std(array)
-#     res = np.zeros_like(array, dtype=array.dtype)
-#     for i in prange(h):
-#         for j in prange(w):
-#             res[i, j] = (array[i, j] - arr_mean) / arr_std
-#     return res
+@ngjit
+def upper_bound_p_value(zscore):
+    if abs(zscore) >= 2.33:
+        return 0.0099
+    if abs(zscore) >= 1.65:
+        return 0.0495
+    if abs(zscore) >= 1.29:
+        return 0.0985
+    return 1
+
+
+@ngjit
+def _hot_cold(zscore):
+    if zscore > 0:
+        return 1
+    if zscore < 0:
+        return -1
+    return 0
+
+
+@ngjit
+def _confidence(zscore):
+    p_value = upper_bound_p_value(zscore)
+    if abs(zscore) > 2.58 and p_value < 0.01:
+        return 99
+    if abs(zscore) > 1.96 and p_value < 0.05:
+        return 95
+    if abs(zscore) > 1.65 and p_value < 0.1:
+        return 90
+    return 0
 
 
 @ngjit
@@ -315,6 +343,43 @@ def apply(raster, kernel, func=calc_mean):
     # apply kernel to raster values
     out = _apply(raster.values, kernel_values, func)
 
+    result = DataArray(out,
+                       coords=raster.coords,
+                       dims=raster.dims,
+                       attrs=raster.attrs)
+
+    return result
+
+
+@ngjit
+def _hotspots(z_array):
+    out = np.zeros_like(z_array)
+    rows, cols = z_array.shape
+    for y in prange(rows):
+        for x in prange(cols):
+            out[y, x] = _hot_cold(z_array[y, x]) * _confidence(z_array[y, x])
+    return out
+
+
+def hotspots(raster, kernel):
+    # validate raster
+    if not isinstance(raster, DataArray):
+        raise TypeError("`raster` must be instance of DataArray")
+
+    if raster.ndim != 2:
+        raise ValueError("`raster` must be 2D")
+
+    if not (issubclass(raster.values.dtype.type, np.integer) or
+            issubclass(raster.values.dtype.type, np.float)):
+        raise ValueError(
+            "`raster` must be an array of integers or float")
+
+    # create kernel mask array
+    kernel_values = kernel.to_array(raster)
+    # apply kernel to raster values
+    z_array = calc_zscores(raster.values)
+    z_mean = _apply(z_array, kernel_values, calc_mean)
+    out = _hotspots(z_mean)
     result = DataArray(out,
                        coords=raster.coords,
                        dims=raster.dims,
