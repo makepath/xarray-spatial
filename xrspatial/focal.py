@@ -162,7 +162,7 @@ def _gen_ellipse_kernel(half_w, half_h):
     # x values of interest
     x = np.linspace(-half_w, half_w, 2 * half_w + 1)
     # y values of interest, as a "column" array
-    y = np.linspace(-half_h, half_w, 2 * half_h + 1)[:, None]
+    y = np.linspace(-half_h, half_h, 2 * half_h + 1)[:, None]
 
     # True for points inside the ellipse
     # (x / a)^2 + (y / b)^2 <= 1, avoid division to avoid rounding issue
