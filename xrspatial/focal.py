@@ -260,18 +260,6 @@ def calc_sum(array):
 
 
 @ngjit
-def calc_zscores(array):
-    arr_mean = np.nanmean(array)
-    arr_std = np.nanstd(array)
-    out = np.zeros_like(array, dtype=array.dtype)
-    h, w = array.shape
-    for i in prange(h):
-        for j in prange(w):
-            out[i, j] = (array[i, j] - arr_mean) / arr_std
-    return out
-
-
-@ngjit
 def upper_bound_p_value(zscore):
     if abs(zscore) >= 2.33:
         return 0.0099
@@ -377,9 +365,17 @@ def hotspots(raster, kernel):
     # create kernel mask array
     kernel_values = kernel.to_array(raster)
     # apply kernel to raster values
-    z_array = calc_zscores(raster.values)
-    z_mean = _apply(z_array, kernel_values, calc_mean)
-    out = _hotspots(z_mean)
+    mean_array = _apply(raster.values, kernel_values, calc_mean)
+
+    # calculate z-scores
+    global_mean = np.nanmean(raster.values)
+    global_std = np.nanstd(raster.values)
+    if global_std == 0:
+        raise ZeroDivisionError("Standard deviation "
+                                "of the input raster values is 0.")
+    z_array = (mean_array - global_mean) / global_std
+
+    out = _hotspots(z_array)
     result = DataArray(out,
                        coords=raster.coords,
                        dims=raster.dims,
