@@ -1,0 +1,5 @@
+..  _focal:
+
+****
+Focal Statistics
+****
