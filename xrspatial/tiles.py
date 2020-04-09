@@ -11,12 +11,10 @@ import numpy as np
 
 from PIL.Image import fromarray
 
-
 __all__ = ['render_tiles', 'MercatorTileDefinition']
 
 
 def _create_dir(path):
-
     import os
     import errno
 
@@ -39,7 +37,6 @@ def _get_super_tile_min_max(tile_info, load_data_func, rasterize_func):
 def calculate_zoom_level_stats(full_extent, level, load_data_func,
                                rasterize_func,
                                color_ranging_strategy='fullscan'):
-
     if color_ranging_strategy == 'fullscan':
         b = db.from_sequence(list(gen_super_tiles(full_extent, level)))
         b = b.map(_get_super_tile_min_max, load_data_func,
@@ -60,7 +57,6 @@ def render_tiles(full_extent, levels, load_data_func,
                  rasterize_func, shader_func,
                  post_render_func, output_path,
                  color_ranging_strategy='fullscan'):
-
     #  TODO: get full extent once at beginning for all levels
     results = dict()
     for level in levels:
@@ -70,29 +66,34 @@ def render_tiles(full_extent, levels, load_data_func,
                                           color_ranging_strategy=color_ranging_strategy)
 
         super_tiles = list(gen_super_tiles(full_extent, level, span))
-        print(f'rendering {len(super_tiles)} supertiles for zoom level {level} with span={span}')
+        print(f'rendering {len(super_tiles)} supertiles for zoom level {level}'
+              f' with span={span}')
         b = db.from_sequence(super_tiles)
-        b.map(render_super_tile, output_path, load_data_func, rasterize_func, shader_func, post_render_func).compute()
-        results[level] = dict(success=True, stats=span, supertile_count=len(super_tiles))
+        b.map(render_super_tile, output_path, load_data_func, rasterize_func,
+              shader_func, post_render_func).compute()
+        results[level] = dict(success=True, stats=span,
+                              supertile_count=len(super_tiles))
 
     return results
 
 
 def gen_super_tiles(extent, zoom_level, span=None):
     xmin, ymin, xmax, ymax = extent
-    super_tile_size = min(2**4 * 256,
-                         (2 ** zoom_level) * 256)
-    super_tile_def = MercatorTileDefinition(x_range=(xmin, xmax), y_range=(ymin, ymax), tile_size=super_tile_size)
+    super_tile_size = min(2 ** 4 * 256,
+                          (2 ** zoom_level) * 256)
+    super_tile_def = MercatorTileDefinition(x_range=(xmin, xmax),
+                                            y_range=(ymin, ymax),
+                                            tile_size=super_tile_size)
     super_tiles = super_tile_def.get_tiles_by_extent(extent, zoom_level)
     for s in super_tiles:
         st_extent = s[3]
         x_range = (st_extent[0], st_extent[2])
         y_range = (st_extent[1], st_extent[3])
         yield {'level': zoom_level,
-                'x_range': x_range,
-                'y_range': y_range,
-                'tile_size': super_tile_def.tile_size,
-                'span': span}
+               'x_range': x_range,
+               'y_range': y_range,
+               'tile_size': super_tile_def.tile_size,
+               'span': span}
 
 
 def render_super_tile(tile_info, output_path, load_data_func,
@@ -108,11 +109,12 @@ def render_super_tile(tile_info, output_path, load_data_func,
                          y_range=tile_info['y_range'], height=tile_size,
                          width=tile_size)
     ds_img = shader_func(agg, span=tile_info['span'])
-    return create_sub_tiles(ds_img, level, tile_info, output_path, post_render_func)
+    return create_sub_tiles(ds_img, level, tile_info, output_path,
+                            post_render_func)
 
 
-def create_sub_tiles(data_array, level, tile_info, output_path, post_render_func=None):
-
+def create_sub_tiles(data_array, level, tile_info, output_path,
+                     post_render_func=None):
     # validate / createoutput_dir
     _create_dir(output_path)
 
@@ -126,7 +128,8 @@ def create_sub_tiles(data_array, level, tile_info, output_path, post_render_func
         renderer = S3TileRenderer(tile_def, output_location=output_path,
                                   post_render_func=post_render_func)
     else:
-        renderer = FileSystemTileRenderer(tile_def, output_location=output_path,
+        renderer = FileSystemTileRenderer(tile_def,
+                                          output_location=output_path,
                                           post_render_func=post_render_func)
 
     return renderer.render(data_array, level=level)
@@ -146,32 +149,35 @@ class MercatorTileDefinition(object):
     ----------
 
     x_range : tuple
-      full extent of x dimension in data units
+        full extent of x dimension in data units
 
     y_range : tuple
-      full extent of y dimension in data units
+        full extent of y dimension in data units
 
     max_zoom : int
-      A maximum zoom level for the tile layer. This is the most zoomed-in level.
+        A maximum zoom level for the tile layer.
+        This is the most zoomed-in level.
 
     min_zoom : int
-      A minimum zoom level for the tile layer. This is the most zoomed-out level.
+        A minimum zoom level for the tile layer.
+        This is the most zoomed-out level.
 
     max_zoom : int
-      A maximum zoom level for the tile layer. This is the most zoomed-in level.
+        A maximum zoom level for the tile layer.
+        This is the most zoomed-in level.
 
     x_origin_offset : int
-      An x-offset in plot coordinates.
+        An x-offset in plot coordinates.
 
     y_origin_offset : int
-      An y-offset in plot coordinates.
+        An y-offset in plot coordinates.
 
     initial_resolution : int
-      Resolution (plot_units / pixels) of minimum zoom level of tileset
-      projection. None to auto-compute.
+        Resolution (plot_units / pixels) of minimum zoom level of tileset
+        projection. None to auto-compute.
 
     format : int
-      An y-offset in plot coordinates.
+        An y-offset in plot coordinates.
 
     Output
     ------
@@ -179,7 +185,8 @@ class MercatorTileDefinition(object):
 
     '''
 
-    def __init__(self, x_range, y_range, tile_size=256, min_zoom=0, max_zoom=30,
+    def __init__(self, x_range, y_range, tile_size=256,
+                 min_zoom=0, max_zoom=30,
                  x_origin_offset=20037508.34, y_origin_offset=20037508.34,
                  initial_resolution=156543.03392804097):
         self.x_range = x_range
@@ -190,7 +197,8 @@ class MercatorTileDefinition(object):
         self.x_origin_offset = x_origin_offset
         self.y_origin_offset = y_origin_offset
         self.initial_resolution = initial_resolution
-        self._resolutions = [self._get_resolution(z) for z in range(self.min_zoom, self.max_zoom+1)]
+        self._resolutions = [self._get_resolution(z)
+                             for z in range(self.min_zoom, self.max_zoom + 1)]
 
     def to_ogc_tile_metadata(self, output_file_path):
         '''
@@ -198,13 +206,11 @@ class MercatorTileDefinition(object):
         '''
         pass
 
-
     def to_esri_tile_metadata(self, output_file_path):
         '''
         Create ESRI tile metadata JSON
         '''
         pass
-
 
     def is_valid_tile(self, x, y, z):
 
@@ -216,17 +222,14 @@ class MercatorTileDefinition(object):
 
         return True
 
-
     # TODO ngjit?
     def _get_resolution(self, z):
         return self.initial_resolution / (2 ** z)
-
 
     def get_resolution_by_extent(self, extent, height, width):
         x_rs = (extent[2] - extent[0]) / width
         y_rs = (extent[3] - extent[1]) / height
         return [x_rs, y_rs]
-
 
     def get_level_by_extent(self, extent, height, width):
         x_rs = (extent[2] - extent[0]) / width
@@ -242,8 +245,7 @@ class MercatorTileDefinition(object):
                 if i > 0:
                     return i - 1
             i += 1
-        return (i-1)
-
+        return (i - 1)
 
     def pixels_to_meters(self, px, py, level):
         res = self._get_resolution(level)
@@ -251,13 +253,11 @@ class MercatorTileDefinition(object):
         my = (py * res) - self.y_origin_offset
         return (mx, my)
 
-
     def meters_to_pixels(self, mx, my, level):
         res = self._get_resolution(level)
         px = (mx + self.x_origin_offset) / res
         py = (my + self.y_origin_offset) / res
         return (px, py)
-
 
     def pixels_to_tile(self, px, py, level):
         tx = math.ceil(px / self.tile_size)
@@ -266,16 +266,13 @@ class MercatorTileDefinition(object):
         # convert from TMS y coordinate
         return (int(tx), invert_y_tile(int(ty), level))
 
-
     def pixels_to_raster(self, px, py, level):
         map_size = self.tile_size << level
         return (px, map_size - py)
 
-
     def meters_to_tile(self, mx, my, level):
         px, py = self.meters_to_pixels(mx, my, level)
         return self.pixels_to_tile(px, py, level)
-
 
     def get_tiles_by_extent(self, extent, level):
 
@@ -295,11 +292,13 @@ class MercatorTileDefinition(object):
 
         return tiles
 
-
     def get_tile_meters(self, tx, ty, level):
-        ty = invert_y_tile(ty, level) # convert to TMS for conversion to meters
-        xmin, ymin = self.pixels_to_meters(tx * self.tile_size, ty * self.tile_size, level)
-        xmax, ymax = self.pixels_to_meters((tx + 1) * self.tile_size, (ty + 1) * self.tile_size, level)
+        # convert to TMS for conversion to meters
+        ty = invert_y_tile(ty, level)
+        xmin, ymin = self.pixels_to_meters(tx * self.tile_size,
+                                           ty * self.tile_size, level)
+        xmax, ymax = self.pixels_to_meters((tx + 1) * self.tile_size,
+                                           (ty + 1) * self.tile_size, level)
         return (xmin, ymin, xmax, ymax)
 
 
@@ -331,7 +330,8 @@ class TileRenderer(object):
             if 0 in arr.shape:
                 continue
 
-            img = fromarray(np.flip(arr.data, 0), 'RGBA') # flip since y tiles go down (Google map tiles)
+            # flip since y tiles go down (Google map tiles)
+            img = fromarray(np.flip(arr.data, 0), 'RGBA')
 
             if self.post_render_func:
                 extras = dict(x=x, y=y, z=z)
@@ -362,7 +362,8 @@ def tile_previewer(full_extent, tileset_url,
         from bokeh.io import output_file, save
         from os import path
     except ImportError:
-        raise ImportError('conda install bokeh to enable creation of simple tile viewer')
+        raise ImportError('conda install bokeh to enable creation '
+                          'of simple tile viewer')
 
     if output_dir:
         output_file(filename=path.join(output_dir, filename),
@@ -399,12 +400,14 @@ def tile_previewer(full_extent, tileset_url,
 class FileSystemTileRenderer(TileRenderer):
 
     def render(self, da, level):
-        for img, x, y, z in super(FileSystemTileRenderer, self).render(da, level):
+        for img, x, y, z in super(FileSystemTileRenderer, self).render(da,
+                                                                       level):
             tile_file_name = '{}.{}'.format(y, self.tile_format.lower())
             tile_directory = os.path.join(self.output_location, str(z), str(x))
             output_file = os.path.join(tile_directory, tile_file_name)
             _create_dir(tile_directory)
             img.save(output_file, self.tile_format)
+
 
 class S3TileRenderer(TileRenderer):
 
@@ -425,10 +428,14 @@ class S3TileRenderer(TileRenderer):
         client = boto3.client('s3')
         for img, x, y, z in super(S3TileRenderer, self).render(da, level):
             tile_file_name = '{}.{}'.format(y, self.tile_format.lower())
-            key = os.path.join(s3_info.path, str(z), str(x), tile_file_name).lstrip('/')
+            key = os.path.join(s3_info.path,
+                               str(z),
+                               str(x),
+                               tile_file_name).lstrip('/')
             output_buf = BytesIO()
             img.save(output_buf, self.tile_format)
             output_buf.seek(0)
-            client.put_object(Body=output_buf, Bucket=bucket, Key=key, ACL='public-read')
+            client.put_object(Body=output_buf, Bucket=bucket,
+                              Key=key, ACL='public-read')
 
         return 'https://{}.s3.amazonaws.com/{}'.format(bucket, s3_info.path)

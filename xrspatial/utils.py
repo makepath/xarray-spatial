@@ -1,4 +1,5 @@
 import numba as nb
+import numpy as np
 
 ngjit = nb.jit(nopython=True, nogil=True)
 
