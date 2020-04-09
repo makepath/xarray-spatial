@@ -329,7 +329,7 @@ def apply(raster, kernel, func=calc_mean):
     # create kernel mask array
     kernel_values = kernel.to_array(raster)
     # apply kernel to raster values
-    out = _apply(raster.values, kernel_values, func)
+    out = _apply(raster.values.astype(float), kernel_values, func)
 
     result = DataArray(out,
                        coords=raster.coords,
@@ -365,7 +365,7 @@ def hotspots(raster, kernel):
     # create kernel mask array
     kernel_values = kernel.to_array(raster)
     # apply kernel to raster values
-    mean_array = _apply(raster.values, kernel_values, calc_mean)
+    mean_array = _apply(raster.values.astype(float), kernel_values, calc_mean)
 
     # calculate z-scores
     global_mean = np.nanmean(raster.values)
