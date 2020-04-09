@@ -2,7 +2,7 @@ import xarray as xr
 import numpy as np
 
 from xrspatial import mean
-from xrspatial.focal import apply, Kernel, calc_mean, calc_sum
+from xrspatial.focal import apply, Kernel, calc_mean, calc_sum, hotspots
 import pytest
 
 
@@ -205,3 +205,87 @@ def test_apply_with_nan():
     mean_output_2 = apply(raster, kernel_2, calc_mean)
     expected_mean_output_2 = np.ones((n, m))
     assert np.all(mean_output_2.values == expected_mean_output_2)
+
+
+def test_hotspot_invalid():
+    kernel = Kernel(radius=1)
+    invalid_raster_type = np.array([0, 1, 2, 3])
+    with pytest.raises(Exception) as e_info:
+        hotspots(invalid_raster_type, kernel)
+        assert e_info
+
+    invalid_raster_dtype = xr.DataArray(np.array([['cat', 'dog']]))
+    with pytest.raises(Exception) as e_info:
+        hotspots(invalid_raster_dtype, kernel)
+        assert e_info
+
+    invalid_raster_shape = xr.DataArray(np.array([0, 0]))
+    with pytest.raises(Exception) as e_info:
+        hotspots(invalid_raster_shape, kernel)
+        assert e_info
+
+    invalid_raster_std = xr.DataArray(np.ones((10, 10)))
+    # std of the raster is 0
+    with pytest.raises(Exception) as e_info:
+        hotspots(invalid_raster_std, kernel)
+        assert e_info
+
+
+def test_hotspot():
+    n, m = 10, 10
+    raster = xr.DataArray(np.zeros((n, m), dtype=float), dims=['x', 'y'])
+    raster['x'] = np.linspace(0, n, n)
+    raster['y'] = np.linspace(0, m, m)
+
+    all_idx = zip(*np.where(raster.values == 0))
+
+    nan_cells = [(i, i) for i in range(m)]
+    for cell in nan_cells:
+        raster[cell[0], cell[1]] = np.nan
+
+    # add some extreme values
+    hot_region = [(1, 1), (1, 2), (1, 3),
+                  (2, 1), (2, 2), (2, 3),
+                  (3, 1), (3, 2), (3, 3)]
+    cold_region = [(7, 7), (7, 8), (7, 9),
+                   (8, 7), (8, 8), (8, 9),
+                   (9, 7), (9, 8), (9, 9)]
+    for p in hot_region:
+        raster[p[0], p[1]] = 10000
+    for p in cold_region:
+        raster[p[0], p[1]] = -10000
+
+    no_significant_region = [id for id in all_idx if id not in hot_region and
+                             id not in cold_region]
+
+    kernel = Kernel(radius=2)
+    hotspots_output = hotspots(raster, kernel)
+
+    # check output's properties
+    # output must be an xarray DataArray
+    assert isinstance(hotspots_output, xr.DataArray)
+    assert isinstance(hotspots_output.values, np.ndarray)
+    assert issubclass(hotspots_output.values.dtype.type, np.float)
+
+    # shape, dims, coords, attr preserved
+    assert raster.shape == hotspots_output.shape
+    assert raster.dims == hotspots_output.dims
+    assert raster.attrs == hotspots_output.attrs
+    for coord in raster.coords:
+        assert np.all(raster[coord] == hotspots_output[coord])
+
+    # no nan in output
+    assert not np.isnan(np.min(hotspots_output))
+
+    # output of extreme regions are non-zeros
+    # hot spots
+    hot_spot = np.asarray([hotspots_output[p] for p in hot_region])
+    assert np.all(hot_spot >= 0)
+    assert np.sum(hot_spot) > 0
+    # cold spots
+    cold_spot = np.asarray([hotspots_output[p] for p in cold_region])
+    assert np.all(cold_spot <= 0)
+    assert np.sum(cold_spot) < 0
+    # output of no significant regions are 0s
+    no_sign = np.asarray([hotspots_output[p] for p in no_significant_region])
+    assert np.all(no_sign == 0)
