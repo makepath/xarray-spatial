@@ -341,7 +341,7 @@ def apply(raster, kernel, func=calc_mean):
 
 @ngjit
 def _hotspots(z_array):
-    out = np.zeros_like(z_array)
+    out = np.zeros_like(z_array, dtype=np.int8)
     rows, cols = z_array.shape
     for y in prange(rows):
         for x in prange(cols):
@@ -350,6 +350,32 @@ def _hotspots(z_array):
 
 
 def hotspots(raster, kernel):
+    """Identify statistically significant hot spots and cold spots in an input
+    raster. To be a statistically significant hot spot, a feature will have a
+    high value and be surrounded by other features with high values as well.
+    Neighborhood of a feature defined by the input kernel, which currently
+    support a shape of circle and a radius in meters.
+
+    The result should be a raster with the following 7 values:
+    90 for 90% confidence high value cluster
+    95 for 95% confidence high value cluster
+    99 for 99% confidence high value cluster
+    -90 for 90% confidence low value cluster
+    -95 for 95% confidence low value cluster
+    -99 for 99% confidence low value cluster
+    0 for no significance
+
+    Parameters
+    ----------
+    raster: xarray.DataArray
+        Input raster image with shape=(height, width)
+    kernel: Kernel
+
+    Returns
+    -------
+    hotspots: xarray.DataArray
+    """
+
     # validate raster
     if not isinstance(raster, DataArray):
         raise TypeError("`raster` must be instance of DataArray")

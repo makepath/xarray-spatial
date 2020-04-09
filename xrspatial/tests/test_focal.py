@@ -265,7 +265,7 @@ def test_hotspot():
     # output must be an xarray DataArray
     assert isinstance(hotspots_output, xr.DataArray)
     assert isinstance(hotspots_output.values, np.ndarray)
-    assert issubclass(hotspots_output.values.dtype.type, np.float)
+    assert issubclass(hotspots_output.values.dtype.type, np.int8)
 
     # shape, dims, coords, attr preserved
     assert raster.shape == hotspots_output.shape
