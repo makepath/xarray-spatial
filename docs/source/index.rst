@@ -58,6 +58,7 @@ Rasters are regularly gridded datasets like GeoTIFFs, JPGs, and PNGs.
 
 In the GIS world, rasters are used for representing continuous phenomena (e.g. elevation, rainfall, distance), either directly as numerical values, or as RGB images created for humans to view. Rasters typically have two spatial dimensions, but may have any number of other dimensions (time, type of measurement, etc.)
 
+
 Supported Spatial Functions:
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. toctree::
@@ -76,45 +77,6 @@ Supported Spatial Functions:
    bump
    perlin
    procedural
-
-.. :ref:`slope`
-
-.. :ref:`aspect`
-
-.. :ref:`curvature`
-
-.. :ref:`hillshade`
-
-.. :ref:`normalized`
-
-.. :ref:`focal`
-
-.. :ref:`zonal_statistics`
-
-.. :ref:`zonal_cross`
-
-.. :ref:`viewshed`
-
-.. :ref:`proximity`
-
-.. :ref:`bump`
-
-.. :ref:`perlin`
-
-.. :ref:`procedural`
-
-.. * `Aspect <../xrspatial/aspect.py>`_
-.. * `Curvature <xrspatial/curvature.py>`_
-.. * `Hillshade <xrspatial/hillshade.py>`_
-.. * `Normalized Difference Vegetation Index (NDVI) <xrspatial/ndvi.py>`_
-.. * `Focal Statistics <xrspatial/focal.py>`_
-.. * `Zonal Statistics <xrspatial/zonal.py>`_
-.. * `Zonal Cross Tabulate <xrspatial/zonal.py>`_
-.. * `Viewshed <xrspatial/viewshed.py>`_
-.. * `Proximity <xrspatial/proximity.py>`_
-.. * `Bump Mapping <xrspatial/bump.py>`_
-.. * `Perlin Noise <xrspatial/perlin.py>`_
-.. * `Procedural Terrain Generation <xrspatial/terrain.py>`_
 
 Usage
 ~~~~~

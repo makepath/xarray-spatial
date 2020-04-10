@@ -3,3 +3,6 @@
 ****
 Viewshed
 ****
+
+.. automodule::  xrspatial.viewshed
+    :members:
