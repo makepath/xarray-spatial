@@ -1,0 +1,50 @@
+digraph G {
+
+graph [fontname = "helvetica"];
+node [fontname = "helvetica"];
+edge [fontname = "helvetica"];
+
+xarray_spatial -> datashader;
+xarray_spatial -> numba;
+xarray_spatial -> xarray;
+numba -> numpy;
+xarray -> rasterio -> gdal [style=dashed];
+xarray -> numpy;
+xarray -> dask;
+datashader -> numba;
+datashader -> xarray;
+datashader -> dask;
+datashader -> pandas;
+datashader -> spatialpandas;
+datashader -> holoviews [style=dashed];
+pandas -> numpy;
+dask -> pandas;
+spatialpandas -> pandas;
+spatialpandas -> numba;
+spatialpandas -> geopandas [style=dashed];
+geopandas -> rtree -> libspatialindex [style=dashed];
+geopandas -> fiona -> geos [style=dashed];
+geopandas -> shapely -> geos [style=dashed];
+fiona -> shapely [style=dashed];
+
+
+ xarray_spatial [label=<<b>Xarray-Spatial</b><br />(Raster Analysis)> fillcolor=palegreen2 fontsize=20 width=0.5 shape=circle style=filled];
+
+ xarray [label=<<b>Xarray</b><br/>(Labeled-Ndarray)> fillcolor=aquamarine style=filled];
+ datashader [label=<<b>Datashader</b><br />(Rasterization Pipeline)> fillcolor=aquamarine style=filled];
+ dask [label=<<b>Dask</b><br />(Distributed-Ndarray)> fillcolor=aquamarine style=filled href="https://dask.pydata.org"];
+ numpy [label=<<b>Numpy</b><br />(Ndarray)> fillcolor=aquamarine style=filled];
+ numba [label=<<b>Numba</b><br />(JIT Compiler)> fillcolor=aquamarine style=filled];
+ pandas [label=<<b>Pandas</b><br />(Tabular Data)> fillcolor=aquamarine style=filled];
+ spatialpandas [label=<<b>SpatialPandas</b><br />(Geometry-Ndarray)> fillcolor=aquamarine style=filled];
+ rasterio [label=<<b>Rasterio</b><br />(Python Raster I/O)> fillcolor=lemonchiffon style=filled];
+ gdal [label=<<b>GDAL</b><br />(C/C++ Raster I/O)> fillcolor=lemonchiffon style=filled];
+ geos [label=<<b>GEOS</b><br />(C/C++ Vector I/O)> fillcolor=lemonchiffon style=filled];
+ fiona [label=<<b>Fiona</b><br />(Python Vector I/O)> fillcolor=lemonchiffon style=filled];
+ holoviews [label=<<b>HoloViews</b><br/>(Advanced Visualization)> fillcolor=lemonchiffon style=filled];
+ shapely [label=<<b>Shapely</b><br />(Python Geometry)> fillcolor=lemonchiffon style=filled];
+ geopandas [label=<<b>Geopandas</b><br />(GeoDataFrame)> fillcolor=lemonchiffon style=filled];
+ rtree [label=<<b>RTree</b><br />(Python Spatial Index)> fillcolor=lemonchiffon style=filled];
+ libspatialindex [label=<<b>libspatialindex</b><br />(C/C++ Spatial Index)> fillcolor=lemonchiffon style=filled];
+
+}
