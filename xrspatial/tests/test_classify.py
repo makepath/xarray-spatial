@@ -20,4 +20,4 @@ def test_quantile():
     unique_elements, counts_elements = np.unique(quantile_agg.data,
                                                  return_counts=True)
     assert len(unique_elements) == k
-    assert len(counts_elements) == 1
+    assert len(np.unique(counts_elements)) == 1
