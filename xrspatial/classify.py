@@ -115,3 +115,121 @@ def quantile(agg, k=4, name='quantile'):
                      dims=agg.dims,
                      coords=agg.coords,
                      attrs=agg.attrs)
+
+def natural_breaks(values, k=5, init=10):
+    """
+    natural breaks helper function
+
+    Jenks natural breaks is kmeans in one dimension
+
+    Parameters
+    ----------
+
+    values : array
+             (n, 1) values to bin
+
+    k : int
+        Number of classes
+
+    init: int, default:10
+        Number of different solutions to obtain using different centroids. Best solution is returned.
+
+
+    """
+    values = np.array(values)
+    uv = np.unique(values)
+    uvk = len(uv)
+    if uvk < k:
+        print(
+            "Nbreaks Warning: Not enough unique values for k classes (using {} bins)".format(uvk))"
+        k = uvk
+    kres = _kmeans(values, k, n_init=init)
+    sids = kres[-1]  # centroids
+    fit = kres[-2]
+    class_ids = kres[0]
+    cuts = kres[1]
+    return DataArray(_bin(agg.data, sids, class_ids,fit,cuts, np.arange(uvk)),
+                     name=name,
+                     dims=agg.dims,
+                     coords=agg.coords,
+                     attrs=agg.attrs)
+
+
+
+class EqualInterval(MapClassifier):
+    """
+    Equal Interval Classification
+
+    Parameters
+    ----------
+    y : array
+        (n,1), values to classify
+    k : int
+        number of classes required
+
+    Attributes
+    ----------
+    yb      : array
+              (n,1), bin ids for observations,
+              each value is the id of the class the observation belongs to
+              yb[i] = j  for j>=1  if bins[j-1] < y[i] <= bins[j], yb[i] = 0
+              otherwise
+    bins    : array
+              (k,1), the upper bounds of each class
+    k       : int
+              the number of classes
+    counts  : array
+              (k,1), the number of observations falling in each class
+
+    Examples
+    --------
+    >>> import pysal.viz.mapclassify as mc
+    >>> cal = mc.load_example()
+    >>> ei = mc.EqualInterval(cal, k = 5)
+    >>> ei.k
+    5
+    >>> ei.counts
+    array([57,  0,  0,  0,  1])
+    >>> ei.bins
+    array([ 822.394, 1644.658, 2466.922, 3289.186, 4111.45 ])
+
+    Notes
+    -----
+    Intervals defined to have equal width:
+
+    .. math::
+
+        bins_j = min(y)+w*(j+1)
+
+    with :math:`w=\\frac{max(y)-min(j)}{k}`
+    """
+
+    def __init__(self, y, k=K):
+        """
+        see class docstring
+
+        """
+
+        self.k = k
+        MapClassifier.__init__(self, y)
+        self.name = "Equal Interval"
+
+
+    def _set_bins(self):
+        y = self.y
+        k = self.k
+        max_y = max(y)
+        min_y = min(y)
+        rg = max_y - min_y
+        width = rg * 1.0 / k
+        cuts = np.arange(min_y + width, max_y + width, width)
+        if len(cuts) > self.k:  # handle overshooting
+            cuts = cuts[0:k]
+        cuts[-1] = max_y
+        bins = cuts.copy()
+        self.bins = bins
+
+
+
+msg = _dep_message("Equal_Interval", "EqualInterval")
+Equal_Interval = DeprecationHelper(EqualInterval, message=msg)
