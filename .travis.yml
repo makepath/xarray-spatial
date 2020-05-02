@@ -16,7 +16,7 @@ install:
   # Install dependencies
   - conda create -n test-environment python=$TRAVIS_PYTHON_VERSION
   - source activate test-environment
-  - conda install -c conda-forge datashader pytest
+  - conda install -c conda-forge datashader pytest sklearn
   - python setup.py develop --no-deps
 
 script:
