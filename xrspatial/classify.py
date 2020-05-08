@@ -1,17 +1,13 @@
-import numpy as np
-
-from datashader.colors import rgb
-
 import datashader.transfer_functions as tf
+import numpy as np
+import scipy.stats as stats
+from datashader.colors import rgb
 from datashader.utils import ngjit
 from sklearn.cluster import KMeans as KMEANS
 from xarray import DataArray
 
-import scipy.stats as stats
-
 
 def color_values(agg, color_key, alpha=255):
-
     def _convert_color(c):
         r, g, b = rgb(c)
         return np.array([r, g, b, alpha]).astype(np.uint8).view(np.uint32)[0]
@@ -62,7 +58,7 @@ def _bin(data, bins, new_values):
                         val_bin = b
                         break
                 else:
-                    if val > bins[b-1] and val <= bins[b]:
+                    if val > bins[b - 1] and val <= bins[b]:
                         val_bin = b
                         break
 
@@ -156,60 +152,63 @@ def _kmeans(agg, k=5, n_init=10):
     return class_ids, cuts, diffs.sum(), centroids
 
 
-def natural_breaks_helper(agg, number_classes=5, init=10): 
-     
-        """ 
-        natural breaks helper function 
-        Jenks natural breaks is kmeans in one dimension 
-          
-        Parameters 
-        ---------- 
-     
-        agg : xr.DataArray 
-     
-            xarray.DataArray of values to bin 
-        number_classes : int 
-            Number of classes 
-        init: int, default:10 
-            Number of different solutions to obtain using different centroids. Best solution is returned. 
-     
-        Examples 
-        -------- 
-        >>> from xrspatial.classify import natural_breaks 
-        >>> natural_agg = natural_breaks(my_agg)
-        >>> values = np.array([1, 1, 0, 2,4,5,6])
-        >>> val1 =xarray.DataArray(values)
-        >>> In []: xrspatial.natural_breaks(val1)
-        >>> Out[]: 
-        >>> <xarray.DataArray 'natural_breaks' (dim_0: 5)>
-        >>> array([0., 1., 2., 4., 6.])
-        """ 
-        dr_values = np.array(agg.data) 
-        agg_dr = DataArray(dr_values, 
-                           dims=agg.dims, 
-                           coords=agg.coords, 
-                           attrs=agg.attrs) 
-     
-        unique_values = np.unique(dr_values) 
-        unique_num_classes = len(unique_values) 
-        print(unique_num_classes, number_classes) 
-        if unique_num_classes < number_classes: 
-            print('NBreaks Warning: Not enough unique values in array for {} classes'.format(unique_num_classes)) 
-            number_classes = unique_num_classes 
-     
-        kres = _kmeans(agg_dr, number_classes) 
-        sids = kres[-1]  # centroids 
-     
-        fit = kres[-2] 
-     
-        class_ids = kres[0] 
-     
-        cuts = kres[1] 
-        return sids, class_ids, fit, cuts
+def natural_breaks_helper(agg, number_classes=5, init=10):
+    """
+    natural breaks helper function
+    Jenks natural breaks is kmeans in one dimension
+
+    Parameters
+    ----------
+
+    agg : xr.DataArray
+
+        xarray.DataArray of values to bin
+    number_classes : int
+        Number of classes
+    init: int, default:10
+        Number of different solutions to obtain using different centroids. Best solution is returned.
+
+
+    Algorithm References:
+     - https://pysal.org/pysal/_modules/pysal/viz/mapclassify/classifiers.html#NaturalBreaks
+     - https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py
+
+    Examples
+    --------
+    >>> from xrspatial.classify import natural_breaks
+    >>> natural_agg = natural_breaks(my_agg)
+    >>> values = np.array([1, 1, 0, 2,4,5,6])
+    >>> val1 =xarray.DataArray(values)
+    >>> In []: xrspatial.natural_breaks(val1)
+    >>> Out[]:
+    >>> <xarray.DataArray 'natural_breaks' (dim_0: 5)>
+    >>> array([0., 1., 2., 4., 6.])
+    """
+    dr_values = np.array(agg.data)
+    agg_dr = DataArray(dr_values,
+                       dims=agg.dims,
+                       coords=agg.coords,
+                       attrs=agg.attrs)
+
+    unique_values = np.unique(dr_values)
+    unique_num_classes = len(unique_values)
+    print(unique_num_classes, number_classes)
+    if unique_num_classes < number_classes:
+        print('NBreaks Warning: Not enough unique values in array for {} classes'.format(unique_num_classes))
+        number_classes = unique_num_classes
+
+    kres = _kmeans(agg_dr, number_classes)
+    sids = kres[-1]  # centroids
+
+    fit = kres[-2]
+
+    class_ids = kres[0]
+
+    cuts = kres[1]
+    return sids, class_ids, fit, cuts
 
 
 def natural_breaks(agg, name='natural_breaks', k=5, init=10):
-
     agg_copy = agg.copy()
 
     values = np.array(agg_copy.data)
@@ -228,15 +227,10 @@ def natural_breaks(agg, name='natural_breaks', k=5, init=10):
         bins = np.array(res0[-1])
         k = len(bins)
 
-    return DataArray(bins,
-                        name=name,
-                        attrs=agg.attrs,
-                        coords=agg.coords,
-                        dims=agg.dims)
-                                                                                                                                                                 
+    return DataArray(bins, name=name)
+
 
 def equal_interval(agg, k=4, name='equal_interval'):
-    
     """
     Equal Interval Classification
 
@@ -251,6 +245,20 @@ def equal_interval(agg, k=4, name='equal_interval'):
     Returns 
         ------- 
         equal_interval_agg : xr.DataArray 
+
+    Notes:
+    ------
+    Intervals defined to have equal width:
+
+    .. math::
+
+        bins_j = min(y)+w*(j+1)
+
+    with :math:`w=\\frac{max(y)-min(j)}{k}`
+
+    Algorithm References:
+     - https://pysal.org/pysal/_modules/pysal/viz/mapclassify/classifiers.html#EqualInterval
+     - https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py
 
     Examples
     --------
@@ -275,24 +283,18 @@ def equal_interval(agg, k=4, name='equal_interval'):
 
     with :math:`w=\\frac{max(y)-min(j)}{k}`
     """
-    agg_values = np.array(agg.data) 
-    agg_dr = DataArray(agg_values, 
-                           dims=agg.dims, 
-                           coords=agg.coords, 
-                           attrs=agg.attrs) 
-    max_agg = max(agg_values)
-    min_agg = min(agg_values)
+    max_agg = np.max(agg.data)
+    min_agg = np.min(agg.data)
     rg = max_agg - min_agg
     width = rg * 1.0 / k
     cuts = np.arange(min_agg + width, max_agg + width, width)
-    l_cuts= len(cuts)
+    l_cuts = len(cuts)
     if l_cuts > k:
-        print('EqualInterv Warning: Not enough unique values in array for {} classes'.format(l_cuts)),  # handle overshooting
+        print('EqualInterv Warning: Not enough unique values in array for {} classes'.format(
+            l_cuts)),  # handle overshooting
         cuts = cuts[0:k]
     cuts[-1] = max_agg
     bins = cuts.copy()
-    return DataArray(bins,
-                        name=name,
-                        attrs=agg.attrs,
-                        coords=agg.coords,
-                        dims=agg.dims)
+    n_bins = _bin(agg.data, bins, np.arange(l_cuts))
+    return DataArray(n_bins,
+                     name=name)
