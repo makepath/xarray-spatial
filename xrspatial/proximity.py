@@ -75,7 +75,8 @@ def manhattan_distance(x1, x2, y1, y2):
 
 @njit(nogil=True)
 def great_circle_distance(x1, x2, y1, y2, radius=6378137):
-    """Calculate great-circle distance between (x1, y1) and (x2, y2), assuming each point is a longitude, latitude pair.
+    """Calculate great-circle distance between (x1, y1) and (x2, y2),
+     assuming each point is a longitude, latitude pair.
 
     Parameters
     ----------
@@ -109,7 +110,7 @@ def great_circle_distance(x1, x2, y1, y2, radius=6378137):
         raise ValueError('Invalid y-coordinate of the second point.'
                          'Must be in the range [-90, 90]')
 
-    lon1, lat1, lon2, lat2 = (np.radians(y1), np.radians(x1),
+    lat1, lon1, lat2, lon2 = (np.radians(y1), np.radians(x1),
                               np.radians(y2), np.radians(x2))
     dlon = lon2 - lon1
     dlat = lat2 - lat1
@@ -364,8 +365,8 @@ def proximity(raster, target_values=[], distance_metric='EUCLIDEAN'):
     y_coords = raster.coords['y'].values
     x_coords = raster.coords['x'].values
 
-    proximity_img =  _proximity(img, x_coords, y_coords, target_values,
-                                distance_metric)
+    proximity_img = _proximity(img, x_coords, y_coords, target_values,
+                               distance_metric)
 
     result = xarray.DataArray(proximity_img,
                               coords=raster.coords,
