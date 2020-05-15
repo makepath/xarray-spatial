@@ -1,7 +1,7 @@
 import pytest
 
 from xrspatial import proximity
-from xrspatial import great_circle_distance
+from xrspatial import great_circle_distance, manhattan_distance
 import datashader as ds
 
 import numpy as np
@@ -79,9 +79,16 @@ def test_proximity_manhattan():
     assert type(dm_proximity.values[0][0]) == np.float64
     assert dm_proximity.values.shape[0] == height
     assert dm_proximity.values.shape[1] == width
+    # all output values must be in range [0, max_possible_distance]
+    max_possible_distance = manhattan_distance(raster.coords['x'].values[0],
+                                               raster.coords['x'].values[-1],
+                                               raster.coords['y'].values[0],
+                                               raster.coords['y'].values[-1])
+    assert np.nanmax(dm_proximity.values) <= max_possible_distance
+    assert np.nanmin(dm_proximity.values) == 0
 
 
-def test_proximity_distance_metric():
+def test_proximity_great_circle():
 
     # distance_metric SETTING
     dm_proximity = proximity(raster, distance_metric='GREAT_CIRCLE')
@@ -92,6 +99,13 @@ def test_proximity_distance_metric():
     assert type(dm_proximity.values[0][0]) == np.float64
     assert dm_proximity.values.shape[0] == height
     assert dm_proximity.values.shape[1] == width
+    # all output values must be in range [0, max_possible_distance]
+    max_possible_distance = great_circle_distance(raster.coords['x'].values[0],
+                                                  raster.coords['x'].values[-1],
+                                                  raster.coords['y'].values[0],
+                                                  raster.coords['y'].values[-1])
+    assert np.nanmax(dm_proximity.values) <= max_possible_distance
+    assert np.nanmin(dm_proximity.values) == 0
 
 
 def test_greate_circle_invalid_x_coords():
