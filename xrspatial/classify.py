@@ -223,11 +223,12 @@ def natural_breaks(agg, name='natural_breaks', k=5, init=10):
         k = k
     else:
         res0 = natural_breaks_helper(agg_copy, k, init=init)
-        # fit = res0[2]
         bins = np.array(res0[-1])
-        k = len(bins)
-
-    return DataArray(bins, name=name)
+    return DataArray(_bin(agg.data, bins, np.arange(uvk)),
+                    name=name,
+                    coords=agg.coords
+                    dims=agg.dims,
+                    attrs=agg.attrs)
 
 
 def equal_interval(agg, k=4, name='equal_interval'):
@@ -295,6 +296,8 @@ def equal_interval(agg, k=4, name='equal_interval'):
         cuts = cuts[0:k]
     cuts[-1] = max_agg
     bins = cuts.copy()
-    n_bins = _bin(agg.data, bins, np.arange(l_cuts))
-    return DataArray(n_bins,
-                     name=name)
+    return DataArray(_bin(agg.data, bins, np.arange(l_cuts)),
+                    name=name,
+                    coords=agg.coords
+                    dims=agg.dims,
+                    attrs=agg.attrs)
