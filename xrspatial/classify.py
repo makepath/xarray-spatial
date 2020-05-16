@@ -226,7 +226,7 @@ def natural_breaks(agg, name='natural_breaks', k=5, init=10):
         bins = np.array(res0[-1])
     return DataArray(_bin(agg.data, bins, np.arange(uvk)),
                     name=name,
-                    coords=agg.coords
+                    coords=agg.coords,
                     dims=agg.dims,
                     attrs=agg.attrs)
 
@@ -298,6 +298,6 @@ def equal_interval(agg, k=4, name='equal_interval'):
     bins = cuts.copy()
     return DataArray(_bin(agg.data, bins, np.arange(l_cuts)),
                     name=name,
-                    coords=agg.coords
+                    coords=agg.coords,
                     dims=agg.dims,
                     attrs=agg.attrs)
