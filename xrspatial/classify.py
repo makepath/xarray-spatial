@@ -39,13 +39,13 @@ def binary(agg, values, name='binary'):
 
 
 @ngjit
-def _bin(data, bins, new_values):
-    out = np.zeros(data.shape, dtype=new_values.dtype)
+def _bin(data, bins, new_values, nodata=np.nan, dtype=np.float32):
+    out = np.zeros(data.shape, dtype=dtype)
     rows, cols = data.shape
     nbins = len(bins)
     val = None
-    for x in range(0, rows):
-        for y in range(0, cols):
+    for y in range(0, rows):
+        for x in range(0, cols):
             val = data[y, x]
             val_bin = -1
 
@@ -65,10 +65,9 @@ def _bin(data, bins, new_values):
             if val_bin > -1:
                 out[y, x] = new_values[val_bin]
             else:
-                out[y, x] = np.nan
+                out[y, x] = nodata
 
     return out
-
 
 def quantile(agg, k=4, name='quantile'):
     """
@@ -192,25 +191,20 @@ def natural_breaks_helper(agg, number_classes=5, init=10):
 
     unique_values = np.unique(dr_values)
     unique_num_classes = len(unique_values)
-    print(unique_num_classes, number_classes)
     if unique_num_classes < number_classes:
         print('NBreaks Warning: Not enough unique values in array for {} classes'.format(unique_num_classes))
         number_classes = unique_num_classes
 
     kres = _kmeans(agg_dr, number_classes)
     sids = kres[-1]  # centroids
-
     fit = kres[-2]
-
     class_ids = kres[0]
-
     cuts = kres[1]
     return sids, class_ids, fit, cuts
 
 
 def natural_breaks(agg, name='natural_breaks', k=5, init=10):
     agg_copy = agg.copy()
-
     values = np.array(agg_copy.data)
     uv = np.unique(values)
     uvk = len(uv)
@@ -220,7 +214,6 @@ def natural_breaks(agg, name='natural_breaks', k=5, init=10):
         k = uvk
         uv.sort()
         bins = uv
-        k = k
     else:
         res0 = natural_breaks_helper(agg_copy, k, init=init)
         bins = np.array(res0[-1])
