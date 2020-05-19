@@ -37,15 +37,14 @@ def binary(agg, values, name='binary'):
                      coords=agg.coords,
                      attrs=agg.attrs)
 
-
 @ngjit
-def _bin(data, bins, new_values):
-    out = np.zeros(data.shape, dtype=new_values.dtype)
+def _bin(data, bins, new_values, nodata=np.nan, dtype=np.float32):
+    out = np.zeros(data.shape, dtype=dtype)
     rows, cols = data.shape
     nbins = len(bins)
     val = None
-    for x in range(0, rows):
-        for y in range(0, cols):
+    for y in range(0, rows):
+        for x in range(0, cols):
             val = data[y, x]
             val_bin = -1
 
@@ -65,7 +64,7 @@ def _bin(data, bins, new_values):
             if val_bin > -1:
                 out[y, x] = new_values[val_bin]
             else:
-                out[y, x] = np.nan
+                out[y, x] = nodata
 
     return out
 
