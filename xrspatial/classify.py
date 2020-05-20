@@ -284,8 +284,8 @@ def equal_interval(agg, k=4, name='equal_interval'):
 
     with :math:`w=\\frac{max(y)-min(j)}{k}`
     """
-    max_agg = np.max(agg.data)
-    min_agg = np.min(agg.data)
+    max_agg = np.nanmax(agg.data)
+    min_agg = np.nanmin(agg.data)
     rg = max_agg - min_agg
     width = rg * 1.0 / k
     cuts = np.arange(min_agg + width, max_agg + width, width)
