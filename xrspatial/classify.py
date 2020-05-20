@@ -93,13 +93,15 @@ def quantile(agg, k=4, name='quantile'):
     >>> quantile_agg = quantile(my_agg)
     """
 
+
     w = 100.0 / k
     p = np.arange(w, 100 + w, w)
 
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    q = np.array([stats.scoreatpercentile(agg.data, pct) for pct in p])
+    data = agg.data[~np.isnan(agg.data)]
+    q = np.array([stats.scoreatpercentile(data, pct) for pct in p])
     q = np.unique(q)
     k_q = len(q)
 
