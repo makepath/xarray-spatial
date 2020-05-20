@@ -234,25 +234,20 @@ def natural_breaks_helper(agg, number_classes=5, init=10):
 
     unique_values = np.unique(dr_values)
     unique_num_classes = len(unique_values)
-    print(unique_num_classes, number_classes)
     if unique_num_classes < number_classes:
         print('NBreaks Warning: Not enough unique values in array for {} classes'.format(unique_num_classes))
         number_classes = unique_num_classes
 
     kres = _kmeans(agg_dr, number_classes)
     sids = kres[-1]  # centroids
-
     fit = kres[-2]
-
     class_ids = kres[0]
-
     cuts = kres[1]
     return sids, class_ids, fit, cuts
 
 
 def natural_breaks(agg, name='natural_breaks', k=5, init=10):
     agg_copy = agg.copy()
-
     values = np.array(agg_copy.data)
     uv = np.unique(values)
     uvk = len(uv)
@@ -262,14 +257,14 @@ def natural_breaks(agg, name='natural_breaks', k=5, init=10):
         k = uvk
         uv.sort()
         bins = uv
-        k = k
     else:
         res0 = natural_breaks_helper(agg_copy, k, init=init)
-        # fit = res0[2]
         bins = np.array(res0[-1])
-        k = len(bins)
-
-    return DataArray(bins, name=name)
+    return DataArray(_bin(agg.data, bins, np.arange(uvk)),
+                    name=name,
+                    coords=agg.coords,
+                    dims=agg.dims,
+                    attrs=agg.attrs)
 
 
 def equal_interval(agg, k=5, name='equal_interval'):
@@ -337,6 +332,8 @@ def equal_interval(agg, k=5, name='equal_interval'):
         cuts = cuts[0:k]
     cuts[-1] = max_agg
     bins = cuts.copy()
-    n_bins = _bin(agg.data, bins, np.arange(l_cuts))
-    return DataArray(n_bins,
-                     name=name)
+    return DataArray(_bin(agg.data, bins, np.arange(l_cuts)),
+                    name=name,
+                    coords=agg.coords,
+                    dims=agg.dims,
+                    attrs=agg.attrs)
