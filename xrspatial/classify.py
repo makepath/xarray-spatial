@@ -69,7 +69,45 @@ def _bin(data, bins, new_values, nodata=np.nan, dtype=np.float32):
 
     return out
 
-def quantile(agg, k=4, name='quantile'):
+
+def reclassify(agg, bins, new_values, name='reclassify',
+               nodata=np.nan, dtype=np.float32):
+    """
+    Reclassify xr.DataArray to new values based on bins
+
+    Adapted from PySAL:
+    https://pysal.org/pysal/_modules/pysal/viz/mapclassify/classifiers.html#Quantiles
+
+    Parameters
+    ----------
+    agg : xr.DataArray
+        xarray.DataArray of value to classify
+    k : int
+        number of quantiles
+    name : str
+        name of data dim in output xr.DataArray
+
+    Returns
+    -------
+    quantiled_agg : xr.DataArray
+
+    Examples
+    --------
+    >>> from xrspatial.classify import quantile
+    >>> quantile_agg = quantile(my_agg)
+    """
+
+    if len(bins) != len(new_values):
+        raise ValueError('bins and new_values mismatch')
+
+    return DataArray(_bin(agg.data, bins, new_values),
+                     name=name,
+                     dims=agg.dims,
+                     coords=agg.coords,
+                     attrs=agg.attrs)
+
+
+def quantile(agg, k=4, name='quantile', ignore_vals=tuple()):
     """
     Calculates the quantiles for an array
 
@@ -82,6 +120,8 @@ def quantile(agg, k=4, name='quantile'):
         xarray.DataArray of value to classify
     k : int
         number of quantiles
+    name : str
+        name of data dim in output xr.DataArray
 
     Returns
     -------
@@ -93,13 +133,16 @@ def quantile(agg, k=4, name='quantile'):
     >>> quantile_agg = quantile(my_agg)
     """
 
+
     w = 100.0 / k
     p = np.arange(w, 100 + w, w)
 
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    q = np.array([stats.scoreatpercentile(agg.data, pct) for pct in p])
+    data = agg.data[~np.isnan(agg.data) & ~np.isin(agg.data, ignore_vals)]
+
+    q = np.array([stats.scoreatpercentile(data, pct) for pct in p])
     q = np.unique(q)
     k_q = len(q)
 
@@ -224,7 +267,7 @@ def natural_breaks(agg, name='natural_breaks', k=5, init=10):
                     attrs=agg.attrs)
 
 
-def equal_interval(agg, k=4, name='equal_interval'):
+def equal_interval(agg, k=5, name='equal_interval'):
     """
     Equal Interval Classification
 
@@ -277,8 +320,8 @@ def equal_interval(agg, k=4, name='equal_interval'):
 
     with :math:`w=\\frac{max(y)-min(j)}{k}`
     """
-    max_agg = np.max(agg.data)
-    min_agg = np.min(agg.data)
+    max_agg = np.nanmax(agg.data)
+    min_agg = np.nanmin(agg.data)
     rg = max_agg - min_agg
     width = rg * 1.0 / k
     cuts = np.arange(min_agg + width, max_agg + width, width)
