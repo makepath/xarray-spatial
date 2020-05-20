@@ -37,6 +37,7 @@ def binary(agg, values, name='binary'):
                      coords=agg.coords,
                      attrs=agg.attrs)
 
+
 @ngjit
 def _bin(data, bins, new_values, nodata=np.nan, dtype=np.float32):
     out = np.zeros(data.shape, dtype=dtype)
@@ -69,7 +70,44 @@ def _bin(data, bins, new_values, nodata=np.nan, dtype=np.float32):
     return out
 
 
-def quantile(agg, k=4, name='quantile'):
+def reclassify(agg, bins, new_values, name='reclassify',
+               nodata=np.nan, dtype=np.float32):
+    """
+    Reclassify xr.DataArray to new values based on bins
+
+    Adapted from PySAL:
+    https://pysal.org/pysal/_modules/pysal/viz/mapclassify/classifiers.html#Quantiles
+
+    Parameters
+    ----------
+    agg : xr.DataArray
+        xarray.DataArray of value to classify
+    k : int
+        number of quantiles
+    name : str
+        name of data dim in output xr.DataArray
+
+    Returns
+    -------
+    quantiled_agg : xr.DataArray
+
+    Examples
+    --------
+    >>> from xrspatial.classify import quantile
+    >>> quantile_agg = quantile(my_agg)
+    """
+
+    if len(bins) != len(new_values):
+        raise ValueError('bins and new_values mismatch')
+
+    return DataArray(_bin(agg.data, bins, new_values),
+                     name=name,
+                     dims=agg.dims,
+                     coords=agg.coords,
+                     attrs=agg.attrs)
+
+
+def quantile(agg, k=4, name='quantile', ignore_vals=tuple()):
     """
     Calculates the quantiles for an array
 
@@ -82,6 +120,8 @@ def quantile(agg, k=4, name='quantile'):
         xarray.DataArray of value to classify
     k : int
         number of quantiles
+    name : str
+        name of data dim in output xr.DataArray
 
     Returns
     -------
@@ -100,7 +140,8 @@ def quantile(agg, k=4, name='quantile'):
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    data = agg.data[~np.isnan(agg.data)]
+    data = agg.data[~np.isnan(agg.data) & ~np.isin(agg.data, ignore_vals)]
+
     q = np.array([stats.scoreatpercentile(data, pct) for pct in p])
     q = np.unique(q)
     k_q = len(q)
@@ -231,7 +272,7 @@ def natural_breaks(agg, name='natural_breaks', k=5, init=10):
     return DataArray(bins, name=name)
 
 
-def equal_interval(agg, k=4, name='equal_interval'):
+def equal_interval(agg, k=5, name='equal_interval'):
     """
     Equal Interval Classification
 
