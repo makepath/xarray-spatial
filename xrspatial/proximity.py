@@ -238,7 +238,9 @@ def _proximity(img, x_coords, y_coords, target_values, distance_metric):
 
     height, width = img.shape
 
-    max_distance = x_coords[width - 1] + y_coords[height - 1]
+    max_distance = _distance(x_coords[0], x_coords[-1],
+                             y_coords[0], y_coords[-1],
+                             distance_metric)
 
     pan_near_x = np.zeros(width, dtype=np.int64)
     pan_near_y = np.zeros(width, dtype=np.int64)
