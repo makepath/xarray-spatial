@@ -95,3 +95,4 @@ With the introduction of projects like Numba, Python gained new ways to provide 
 - @thuydotm
 - @jbednar
 - @kristinepetrosyan
+- @sjsrey
