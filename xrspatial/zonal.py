@@ -34,7 +34,7 @@ def stats(zones, values, stat_funcs=['mean', 'max', 'min', 'std', 'var']):
         The input value raster contains the input values used in calculating
         the output statistic for each zone.
 
-    stats: list of strings or dictionary<stat_name: function(zone_values)>.
+    stat_funcs: list of strings or dictionary<stat_name: function(zone_values)>.
         Which statistics to calculate for each zone.
         If a list, possible choices are subsets of
             ['mean', 'max', 'min', 'std', 'var']
@@ -66,7 +66,7 @@ def stats(zones, values, stat_funcs=['mean', 'max', 'min', 'std', 'var']):
 
     # custom stat
     >>> custom_stats ={'sum': lambda val: val.sum()}
-    >>> df = stats(zones, values)
+    >>> df = stats(zones, values, stat_funcs=custom_stats)
     >>> df
         sum
     1	21.0
