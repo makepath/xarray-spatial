@@ -21,17 +21,23 @@ def color_values(agg, color_key, alpha=255):
 def _binary(data, values):
     out = np.zeros_like(data)
     rows, cols = data.shape
-    for x in range(0, rows):
-        for y in range(0, cols):
-            if data[y, x] in values:
-                out[y, x] = True
+    for y in range(0, rows):
+        for x in range(0, cols):
+            if np.any(values == data[y, x]):
+                out[y, x] = 1
             else:
-                out[y, x] = False
+                out[y, x] = 0
     return out
 
 
 def binary(agg, values, name='binary'):
-    return DataArray(_binary(agg.data, values),
+
+    if isinstance(values, (list, tuple)):
+        vals = np.array(values)
+    else:
+        vals = values
+
+    return DataArray(_binary(agg.data, vals),
                      name=name,
                      dims=agg.dims,
                      coords=agg.coords,
