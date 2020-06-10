@@ -13,8 +13,8 @@ height = 5
 
 
 df = pd.DataFrame({
-   'x': [-10, -10, -4, -4, 1, 3, 7, 7, 7],
-   'y': [-5, -10, -5, -5, 0, 5, 10, 10, 10]
+   'lat': [-10, -10, -4, -4, 1, 3, 7, 7, 7],
+   'lon': [-5, -10, -5, -5, 0, 5, 10, 10, 10]
 })
 
 cvs = ds.Canvas(plot_width=width,
@@ -22,7 +22,7 @@ cvs = ds.Canvas(plot_width=width,
                 x_range=(-20, 20),
                 y_range=(-20, 20))
 
-raster = cvs.points(df, x='x', y='y')
+raster = cvs.points(df, x='lat', y='lon')
 raster_image = raster.values
 nonzeros_raster = np.count_nonzero(raster_image)
 zeros_raster = width * height - nonzeros_raster
@@ -33,7 +33,7 @@ def test_proximity_default():
     # DEFAULT SETTINGS
     # proximity(img, max_distance=None, target_values=[], dist_units=PIXEL,
     #           nodata=np.nan)
-    default_proximity = proximity(raster)
+    default_proximity = proximity(raster, xcord='lat', ycord='lon')
     default_proximity_img = default_proximity.values
     zeros_default = (default_proximity_img == 0).sum()
 
@@ -54,7 +54,7 @@ def test_proximity_target_value():
     # TARGET VALUES SETTING
     target_values = [2, 3]
     num_target = (raster == 2).sum() + (raster == 3).sum()
-    tv_proximity = proximity(raster, target_values=target_values)
+    tv_proximity = proximity(raster, xcord='lat', ycord='lon', target_values=target_values)
     tv_proximity_img = tv_proximity.values
     tv_zeros = (tv_proximity_img == 0).sum()
 
@@ -71,7 +71,7 @@ def test_proximity_target_value():
 def test_proximity_manhattan():
 
     # distance_metric SETTING
-    dm_proximity = proximity(raster, distance_metric='MANHATTAN')
+    dm_proximity = proximity(raster, 'lat', 'lon', distance_metric='MANHATTAN')
 
     # output must be an xarray DataArray
     assert isinstance(dm_proximity, xa.DataArray)
@@ -80,10 +80,10 @@ def test_proximity_manhattan():
     assert dm_proximity.values.shape[0] == height
     assert dm_proximity.values.shape[1] == width
     # all output values must be in range [0, max_possible_distance]
-    max_possible_distance = manhattan_distance(raster.coords['x'].values[0],
-                                               raster.coords['x'].values[-1],
-                                               raster.coords['y'].values[0],
-                                               raster.coords['y'].values[-1])
+    max_possible_distance = manhattan_distance(raster.coords['lat'].values[0],
+                                               raster.coords['lat'].values[-1],
+                                               raster.coords['lon'].values[0],
+                                               raster.coords['lon'].values[-1])
     assert np.nanmax(dm_proximity.values) <= max_possible_distance
     assert np.nanmin(dm_proximity.values) == 0
 
@@ -91,7 +91,7 @@ def test_proximity_manhattan():
 def test_proximity_great_circle():
 
     # distance_metric SETTING
-    dm_proximity = proximity(raster, distance_metric='GREAT_CIRCLE')
+    dm_proximity = proximity(raster, 'lat', 'lon', distance_metric='GREAT_CIRCLE')
 
     # output must be an xarray DataArray
     assert isinstance(dm_proximity, xa.DataArray)
@@ -100,10 +100,10 @@ def test_proximity_great_circle():
     assert dm_proximity.values.shape[0] == height
     assert dm_proximity.values.shape[1] == width
     # all output values must be in range [0, max_possible_distance]
-    max_possible_distance = great_circle_distance(raster.coords['x'].values[0],
-                                                  raster.coords['x'].values[-1],
-                                                  raster.coords['y'].values[0],
-                                                  raster.coords['y'].values[-1])
+    max_possible_distance = great_circle_distance(raster.coords['lat'].values[0],
+                                                  raster.coords['lat'].values[-1],
+                                                  raster.coords['lon'].values[0],
+                                                  raster.coords['lon'].values[-1])
     assert np.nanmax(dm_proximity.values) <= max_possible_distance
     assert np.nanmin(dm_proximity.values) == 0
 
