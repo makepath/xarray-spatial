@@ -28,6 +28,22 @@ def _horn_slope(data, cellsize_x, cellsize_y):
 
 # TODO: add optional name parameter `name='slope'`
 def slope(agg):
+    """Returns slope of input aggregate in degrees.
+    Parameters
+    ----------
+    agg : DataArray
+    Returns
+    -------
+    data: DataArray
+    Notes:
+    ------
+    Algorithm References:
+     - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm
+     - Burrough, P. A., and McDonell, R. A., 1998.
+      Principles of Geographical Information Systems
+      (Oxford University Press, New York), pp 406
+    """
+
     if not isinstance(agg, DataArray):
         raise TypeError("agg must be instance of DataArray")
 
