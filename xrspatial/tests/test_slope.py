@@ -1,3 +1,4 @@
+import pytest
 import xarray as xr
 import numpy as np
 
@@ -33,11 +34,51 @@ data_random_sparse = _do_sparse_array(data_random)
 data_gaussian = _do_gaussian_array()
 
 
+def test_invalid_res_attr():
+    """
+    Assert 'res' attribute of input xarray
+    """
+    da = xr.DataArray(data_gaussian, attrs={})
+    with pytest.raises(ValueError) as e_info:
+        da_slope = slope(da)
+        assert e_info
+
+    da = xr.DataArray(data_gaussian, attrs={'res': 'any_string'})
+    with pytest.raises(ValueError) as e_info:
+        da_slope = slope(da)
+        assert e_info
+
+    da = xr.DataArray(data_gaussian, attrs={'res': ('str_tuple', 'str_tuple')})
+    with pytest.raises(ValueError) as e_info:
+        da_slope = slope(da)
+        assert e_info
+
+    da = xr.DataArray(data_gaussian, attrs={'res': (1, 2, 3)})
+    with pytest.raises(ValueError) as e_info:
+        da_slope = slope(da)
+        assert e_info
+
+
 def test_slope_transfer_function():
     """
     Assert slope transfer function
     """
     da = xr.DataArray(data_gaussian, attrs={'res': 1})
+    da_slope = slope(da)
+    assert da_slope.dims == da.dims
+    assert da_slope.coords == da.coords
+    assert da_slope.attrs == da.attrs
+    assert da.shape == da_slope.shape
+
+    assert da_slope.sum() > 0
+
+    # In the middle of the array, there is the maximum of the gaussian;
+    # And there the slope must be zero.
+    _imax = np.where(da == da.max())
+    assert da_slope[_imax] == 0
+
+    # same result when cellsize_x = cellsize_y = 1
+    da = xr.DataArray(data_gaussian, attrs={'res': (1.0, 1.0)})
     da_slope = slope(da)
     assert da_slope.dims == da.dims
     assert da_slope.coords == da.coords
