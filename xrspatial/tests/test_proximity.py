@@ -33,7 +33,7 @@ def test_proximity_default():
     # DEFAULT SETTINGS
     # proximity(img, max_distance=None, target_values=[], dist_units=PIXEL,
     #           nodata=np.nan)
-    default_proximity = proximity(raster, xcord='lat', ycord='lon')
+    default_proximity = proximity(raster, x='lat', y='lon')
     default_proximity_img = default_proximity.values
     zeros_default = (default_proximity_img == 0).sum()
 
@@ -54,7 +54,7 @@ def test_proximity_target_value():
     # TARGET VALUES SETTING
     target_values = [2, 3]
     num_target = (raster == 2).sum() + (raster == 3).sum()
-    tv_proximity = proximity(raster, xcord='lat', ycord='lon', target_values=target_values)
+    tv_proximity = proximity(raster, x='lat', y='lon', target_values=target_values)
     tv_proximity_img = tv_proximity.values
     tv_zeros = (tv_proximity_img == 0).sum()
 

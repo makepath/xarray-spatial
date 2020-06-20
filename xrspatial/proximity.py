@@ -318,7 +318,7 @@ def _proximity(img, x_coords, y_coords, target_values, distance_metric):
 
 # ported from
 # https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp
-def proximity(raster, xcord, ycord, target_values=[], distance_metric='EUCLIDEAN'):
+def proximity(raster, x='x', y='y', target_values=[], distance_metric='EUCLIDEAN'):
     """Compute the proximity of all pixels in the image to a set of pixels in
     the source image.
 
@@ -333,6 +333,7 @@ def proximity(raster, xcord, ycord, target_values=[], distance_metric='EUCLIDEAN
     ----------
     raster: xarray.DataArray
         Input raster image with shape=(height, width)
+    x, y: 'x' and 'y' coordinates
     target_values: list
         Target pixel values to measure the distance from.  If this option is
         not provided, proximity will be computed from non-zero pixel values.
@@ -349,10 +350,10 @@ def proximity(raster, xcord, ycord, target_values=[], distance_metric='EUCLIDEAN
     """
 
     raster_dims = raster.dims
-    if raster_dims != (ycord, xcord):
+    if raster_dims != (y, x):
         raise ValueError("In function proximity(). "
                          "raster.coords should be named as coordinates:"
-                         "(%s, %s)".format(ycord, xcord))
+                         "(%s, %s)".format(y, x))
 
     # convert distance metric from string to integer, the correct type
     # of argument for function _distance()
@@ -364,8 +365,8 @@ def proximity(raster, xcord, ycord, target_values=[], distance_metric='EUCLIDEAN
     target_values = np.asarray(target_values).astype(np.uint8)
 
     img = raster.values
-    y_coords = raster.coords[ycord].values
-    x_coords = raster.coords[xcord].values
+    y_coords = raster.coords[y].values
+    x_coords = raster.coords[x].values
 
     proximity_img = _proximity(img, x_coords, y_coords, target_values,
                                distance_metric)
