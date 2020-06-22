@@ -210,15 +210,21 @@ class Kernel:
 def _area_connectivity(data, n=4):
     '''
     '''
-    out = np.zeros_like(data, dtype=np.int64)
+    out = np.zeros_like(data)
     rows, cols = data.shape
     uid = 1
 
-    src_window = np.zeros(shape=(n,), dtype=np.uint8)
-    area_window = np.zeros(shape=(n,), dtype=np.uint8)
+    src_window = np.zeros(shape=(n,), dtype=data.dtype)
+    area_window = np.zeros(shape=(n,), dtype=data.dtype)
 
     for y in range(0, rows):
         for x in range(0, cols):
+
+            val = data[y, x]
+
+            if np.isnan(val):
+                out[y, x] = val
+                continue
 
             if n == 8:
                 src_window[0] = data[max(y-1, 0), max(x-1, 0)]
@@ -250,10 +256,11 @@ def _area_connectivity(data, n=4):
                 area_window[2] = out[min(y+1, rows-1), x]
                 area_window[3] = out[y, min(x+1, cols-1)]
 
-            val = data[y, x]
-
             # check in has matching value in neighborhood
-            neighbor_matches = np.where(src_window == val)[0]
+            rtol = 1e-05
+            atol = 1e-08
+            is_close = np.abs(src_window - val) <= (atol + rtol * np.abs(val))
+            neighbor_matches = np.where(is_close)[0]
 
             if len(neighbor_matches) > 0:
 
@@ -309,8 +316,15 @@ def _area_connectivity(data, n=4):
 
             val = data[y, x]
 
+            if np.isnan(val):
+                continue
+
+
             # check in has matching value in neighborhood
-            neighbor_matches = np.where(src_window == val)[0]
+            rtol = 1e-05
+            atol = 1e-08
+            is_close = np.abs(src_window - val) <= (atol + rtol * np.abs(val))
+            neighbor_matches = np.where(is_close)[0]
 
             # check in has area already assigned
             assigned_values_min = None
