@@ -35,7 +35,7 @@ data_random = np.random.random_sample((100, 100))
 data_random_sparse = _do_sparse_array(data_random)
 data_gaussian = _do_gaussian_array()
 
-def test_regions():
+def test_regions_four_pixel_connectivity():
     arr = np.array([[0, 0, 0, 0],
                     [0, 4, 0, 0],
                     [1, 4, 4, 0],
@@ -46,8 +46,26 @@ def test_regions():
     raster['y'] = np.linspace(0, n, n)
     raster['x'] = np.linspace(0, m, m)
 
-    raster_regions = regions(raster)
+    raster_regions = regions(raster, connections=4)
     assert len(np.unique(raster_regions.data)) == 3
+    assert raster.shape == raster_regions.shape
+
+
+def test_regions_eight_pixel_connectivity():
+    arr = np.array([[1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [0, 0, 0, 1]])
+
+    nrows, ncols = arr.shape
+    raster = xr.DataArray(arr, dims=['y', 'x'])
+    raster['y'] = np.linspace(0, nrows, nrows)
+    raster['x'] = np.linspace(0, ncols, ncols)
+
+    raster_regions = regions(raster, connections=8)
+    print(raster_regions)
+    assert len(np.unique(raster_regions.data)) == 2
     assert raster.shape == raster_regions.shape
 
 
