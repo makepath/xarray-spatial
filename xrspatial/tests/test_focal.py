@@ -7,6 +7,14 @@ from xrspatial.focal import regions
 import pytest
 
 
+def create_test_arr(arr):
+    n, m = arr.shape
+    raster = xr.DataArray(arr, dims=['y', 'x'])
+    raster['y'] = np.linspace(0, n, n)
+    raster['x'] = np.linspace(0, m, m)
+    return raster
+
+
 def _do_sparse_array(data_array):
     import random
     indx = list(zip(*np.where(data_array)))
@@ -42,13 +50,8 @@ def test_regions_four_pixel_connectivity_int():
                     [1, 4, 4, 0],
                     [1, 1, 1, 0],
                     [0, 0, 0, 0]], dtype=np.int64)
-    n, m = arr.shape
-    raster = xr.DataArray(arr, dims=['y', 'x'])
-    raster['y'] = np.linspace(0, n, n)
-    raster['x'] = np.linspace(0, m, m)
-
+    raster = create_test_arr(arr)
     raster_regions = regions(raster, neighborhood=4)
-    print(raster_regions)
     assert len(np.unique(raster_regions.data)) == 3
     assert raster.shape == raster_regions.shape
 
@@ -59,13 +62,8 @@ def test_regions_four_pixel_connectivity_float():
                     [1, 4, 4, 0],
                     [1, 1, 1, 0],
                     [0, 0, 0, 0]], dtype=np.float64)
-    n, m = arr.shape
-    raster = xr.DataArray(arr, dims=['y', 'x'])
-    raster['y'] = np.linspace(0, n, n)
-    raster['x'] = np.linspace(0, m, m)
-
+    raster = create_test_arr(arr)
     raster_regions = regions(raster, neighborhood=4)
-    print(raster_regions)
     assert len(np.unique(raster_regions.data)) == 4
     assert raster.shape == raster_regions.shape
 
@@ -76,14 +74,8 @@ def test_regions_eight_pixel_connectivity_int():
                     [0, 0, 1, 0],
                     [0, 0, 0, 1],
                     [0, 0, 0, 1]], dtype=np.int64)
-
-    nrows, ncols = arr.shape
-    raster = xr.DataArray(arr, dims=['y', 'x'])
-    raster['y'] = np.linspace(0, nrows, nrows)
-    raster['x'] = np.linspace(0, ncols, ncols)
-
+    raster = create_test_arr(arr)
     raster_regions = regions(raster, neighborhood=8)
-    print(raster_regions)
     assert len(np.unique(raster_regions.data)) == 2
     assert raster.shape == raster_regions.shape
 
@@ -94,14 +86,8 @@ def test_regions_eight_pixel_connectivity_float():
                     [0, 0, 1, 0],
                     [0, 0, 0, 1],
                     [0, 0, 0, 1]], dtype=np.float64)
-
-    nrows, ncols = arr.shape
-    raster = xr.DataArray(arr, dims=['y', 'x'])
-    raster['y'] = np.linspace(0, nrows, nrows)
-    raster['x'] = np.linspace(0, ncols, ncols)
-
+    raster = create_test_arr(arr)
     raster_regions = regions(raster, neighborhood=8)
-    print(raster_regions)
     assert len(np.unique(raster_regions.data)) == 3
     assert raster.shape == raster_regions.shape
 
