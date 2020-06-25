@@ -1,9 +1,14 @@
-import numpy as np
-from xarray import DataArray
-from xrspatial.utils import ngjit, lnglat_to_meters
-from numba import prange
+'''Focal Related Utilities'''
 import re
 import warnings
+
+from numba import prange
+import numpy as np
+from xarray import DataArray
+
+from xrspatial.utils import ngjit
+from xrspatial.utils import lnglat_to_meters
+
 
 warnings.simplefilter('default')
 
@@ -11,7 +16,6 @@ DEFAULT_UNIT = 'meter'
 
 
 # TODO: Make convolution more generic with numba first-class functions.
-
 
 def is_number(s):
     try:
@@ -187,6 +191,7 @@ class Kernel:
     def _validate_radius(self):
         # try to convert into Distance object
         d = Distance(str(self.radius))
+        print(d)
 
     def to_array(self, raster):
         # calculate cell size over the x and y axis
@@ -202,6 +207,189 @@ class Kernel:
 
 
 @ngjit
+def _area_connectivity(data, n=4):
+    '''
+    '''
+    out = np.zeros_like(data)
+    rows, cols = data.shape
+    uid = 1
+
+    src_window = np.zeros(shape=(n,), dtype=data.dtype)
+    area_window = np.zeros(shape=(n,), dtype=data.dtype)
+
+    for y in range(0, rows):
+        for x in range(0, cols):
+
+            val = data[y, x]
+
+            if np.isnan(val):
+                out[y, x] = val
+                continue
+
+            if n == 8:
+                src_window[0] = data[max(y-1, 0), max(x-1, 0)]
+                src_window[1] = data[y, max(x-1, 0)]
+                src_window[2] = data[min(y+1, rows-1), max(x-1, 0)]
+                src_window[3] = data[max(y-1, 0), x]
+                src_window[4] = data[min(y+1, rows-1), x]
+                src_window[5] = data[max(y-1, 0), min(x+1, cols-1)]
+                src_window[6] = data[y, min(x+1, cols-1)]
+                src_window[7] = data[min(y+1, rows-1), min(x+1, cols-1)]
+
+                area_window[0] = out[max(y-1, 0), max(x-1, 0)]
+                area_window[1] = out[y, max(x-1, 0)]
+                area_window[2] = out[min(y+1, rows-1), max(x-1, 0)]
+                area_window[3] = out[max(y-1, 0), x]
+                area_window[4] = out[min(y+1, rows-1), x]
+                area_window[5] = out[max(y-1, 0), min(x+1, cols-1)]
+                area_window[6] = out[y, min(x+1, cols-1)]
+                area_window[7] = out[min(y+1, rows-1), min(x+1, cols-1)]
+
+            else:
+                src_window[0] = data[y, max(x-1, 0)]
+                src_window[1] = data[max(y-1, 0), x]
+                src_window[2] = data[min(y+1, rows-1), x]
+                src_window[3] = data[y, min(x+1, cols-1)]
+
+                area_window[0] = out[y, max(x-1, 0)]
+                area_window[1] = out[max(y-1, 0), x]
+                area_window[2] = out[min(y+1, rows-1), x]
+                area_window[3] = out[y, min(x+1, cols-1)]
+
+            # check in has matching value in neighborhood
+            rtol = 1e-05
+            atol = 1e-08
+            is_close = np.abs(src_window - val) <= (atol + rtol * np.abs(val))
+            neighbor_matches = np.where(is_close)[0]
+
+            if len(neighbor_matches) > 0:
+
+                # check in has area already assigned
+                assigned_value = None
+                for j in range(len(neighbor_matches)): # NOQA
+                    area_val = area_window[neighbor_matches[j]]
+                    if area_val > 0:
+                        assigned_value = area_val
+                        break
+
+                if assigned_value is not None:
+                    out[y, x] = assigned_value
+                else:
+                    out[y, x] = uid
+                    uid += 1
+            else:
+                out[y, x] = uid
+                uid += 1
+
+    for y in range(0, rows):
+        for x in range(0, cols):
+
+            if n == 8:
+                src_window[0] = data[max(y-1, 0), max(x-1, 0)]
+                src_window[1] = data[y, max(x-1, 0)]
+                src_window[2] = data[min(y+1, rows-1), max(x-1, 0)]
+                src_window[3] = data[max(y-1, 0), x]
+                src_window[4] = data[min(y+1, rows-1), x]
+                src_window[5] = data[max(y-1, 0), min(x+1, cols-1)]
+                src_window[6] = data[y, min(x+1, cols-1)]
+                src_window[7] = data[min(y+1, rows-1), min(x+1, cols-1)]
+
+                area_window[0] = out[max(y-1, 0), max(x-1, 0)]
+                area_window[1] = out[y, max(x-1, 0)]
+                area_window[2] = out[min(y+1, rows-1), max(x-1, 0)]
+                area_window[3] = out[max(y-1, 0), x]
+                area_window[4] = out[min(y+1, rows-1), x]
+                area_window[5] = out[max(y-1, 0), min(x+1, cols-1)]
+                area_window[6] = out[y, min(x+1, cols-1)]
+                area_window[7] = out[min(y+1, rows-1), min(x+1, cols-1)]
+
+            else:
+                src_window[0] = data[y, max(x-1, 0)]
+                src_window[1] = data[max(y-1, 0), x]
+                src_window[2] = data[min(y+1, rows-1), x]
+                src_window[3] = data[y, min(x+1, cols-1)]
+
+                area_window[0] = out[y, max(x-1, 0)]
+                area_window[1] = out[max(y-1, 0), x]
+                area_window[2] = out[min(y+1, rows-1), x]
+                area_window[3] = out[y, min(x+1, cols-1)]
+
+            val = data[y, x]
+
+            if np.isnan(val):
+                continue
+
+
+            # check in has matching value in neighborhood
+            rtol = 1e-05
+            atol = 1e-08
+            is_close = np.abs(src_window - val) <= (atol + rtol * np.abs(val))
+            neighbor_matches = np.where(is_close)[0]
+
+            # check in has area already assigned
+            assigned_values_min = None
+            for j in range(len(neighbor_matches)):
+                area_val = area_window[neighbor_matches[j]]
+                if assigned_values_min is not None and assigned_values_min != area_val:
+                    if assigned_values_min > area_val:
+
+                        # replace
+                        for y1 in range(0, rows):
+                            for x1 in range(0, cols):
+                                if out[y1, x1] == assigned_values_min:
+                                    out[y1, x1] = area_val
+
+                        assigned_values_min = area_val
+
+                    else:
+                        # replace
+                        for y1 in range(0, rows):
+                            for x1 in range(0, cols):
+                                if out[y1, x1] == area_val:
+                                    out[y1, x1] = assigned_values_min
+
+                elif assigned_values_min is None:
+                    assigned_values_min = area_val
+
+    return out
+
+
+def regions(raster, neighborhood=4, name='regions'):
+    """
+    Create unique regions of raster based on pixel value connectivity.
+    Connectivity can be based on either 4 or 8-pixel neighborhoods.
+    Output raster contain a unique int for each connected region.
+
+    Parameters
+    ----------
+    raster : xr.DataArray
+    connections : int
+      4 or 8 pixel-based connectivity (default: 4)
+    name : str
+      output xr.DataArray.name property
+
+    Returns
+    -------
+    data: DataArray
+
+    Notes
+    -----
+
+    Area Numbering implementing based on:
+      http://spatial-analyst.net/ILWIS/htm/ilwisapp/areanumbering_algorithm.htm
+
+    """
+    if neighborhood not in (4, 8):
+        raise ValueError('`neighborhood` value must be either 4 or 8)')
+
+    out = _area_connectivity(raster.data, n=neighborhood)
+
+    return DataArray(out, name=name,
+                     dims=raster.dims,
+                     coords=raster.coords, attrs=raster.attrs)
+
+
+@ngjit
 def _mean(data, excludes):
     out = np.zeros_like(data)
     rows, cols = data.shape
@@ -210,7 +398,7 @@ def _mean(data, excludes):
 
             exclude = False
             for ex in excludes:
-                if data[y,x] == ex:
+                if data[y, x] == ex:
                     exclude = True
                     break
 
@@ -225,14 +413,17 @@ def _mean(data, excludes):
 
 
 # TODO: add optional name parameter `name='mean'`
-def mean(agg, passes=1, excludes=[np.nan]):
+def mean(agg, passes=1, excludes=[np.nan], name='mean'):
     """
     Returns Mean filtered array using a 3x3 window
 
     Parameters
     ----------
     agg : DataArray
-    passes : int, number of times to run mean
+    passes : int
+      number of times to run mean
+    name : str
+      output xr.DataArray.name property
 
     Returns
     -------
@@ -245,8 +436,8 @@ def mean(agg, passes=1, excludes=[np.nan]):
         else:
             out = _mean(out, tuple(excludes))
 
-    return DataArray(out, name='mean',
-                     dims=agg.dims, coords=agg.coords, attrs=agg.attrs)
+    return DataArray(out, name=name, dims=agg.dims,
+                     coords=agg.coords, attrs=agg.attrs)
 
 
 @ngjit
@@ -307,8 +498,9 @@ def _apply(data, kernel_array, func):
                 for kx in range(x - hcols, x + hcols + 1):
                     if ky >= 0 and kx >= 0:
                         if ky >= 0 and ky < rows and kx >= 0 and kx < cols:
-                            if kernel_array[ky - (y - hrows), kx - (x - hcols)] == 1:
-                                kernel_values[ky - (y - hrows), kx - (x - hcols)] = data[ky, kx]
+                            kyidx, kxidx = ky - (y - hrows), kx - (x - hcols)
+                            if kernel_array[kyidx, kxidx] == 1:
+                                kernel_values[kyidx, kxidx] = data[ky, kx]
             out[y, x] = func(kernel_values)
     return out
 
