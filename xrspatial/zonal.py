@@ -368,14 +368,19 @@ def suggest_zonal_canvas(poly_df, min_pixels=25):
     # but different coordinate ranges?
     x0, y0, x1, y1 = poly_df.iloc[poly_df.area.argmin()]['geometry'].bounds
 
-    # We have: w*h >= min_pixels
-    # and aspect ratio: a = w/h = (x1-x0)/(y1-y0)
-    # Thus, w*w >= min_pixels*(x1-x0)/(y1-y0)
+    # canvas width: canvas_w = poly_w * (xmax - xmin) / (x1 - x0)
+    # canvas height: canvas_h = poly_h * (ymax - ymin) / (y1 - y0)
+    # aspect ratio: canvas_w / canvas_h = (xmax-xmin)/(ymax-ymin)
+    # We have: poly_w * poly_h >= min_pixels
 
-    aspect_ratio = (x1 - x0) / (y1 - y0)
-    w = ceil(sqrt(min_pixels * (x1 - x0) / (y1 - y0)))
-    h = ceil(w / aspect_ratio)
-    canvas_w = int((w * (xmax - xmin) / (x1 - x0)))
-    canvas_h = int((h * (ymax - ymin) / (y1 - y0)))
+    aspect_ratio = (xmax - xmin) / (ymax - ymin)
+    w_ratio = (xmax - xmin) / (x1 - x0)
+    h_ratio = (ymax - ymin) / (y1 - y0)
+
+    # now we have, canvas_w / w_ratio * canvas_h / h_ratio >= min_pixels
+    # Thus,        aspect_ratio*canvas_h**2 / (w_ratio*h_ratio) >= min_pixels
+
+    canvas_h = ceil(sqrt(min_pixels * w_ratio * h_ratio / aspect_ratio))
+    canvas_w = int(aspect_ratio * canvas_h)
 
     return canvas_w, canvas_h
