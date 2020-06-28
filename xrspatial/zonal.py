@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import xarray as xa
 import warnings
+from math import sqrt, ceil
 
 warnings.simplefilter('default')
 
@@ -354,3 +355,27 @@ def apply(zones, values, func):
     values_func = vfunc(zones_mask)
     values.values = remain_mask.data * remain_mask.mask \
         + values_func.data * values_func.mask
+
+
+def suggest_zonal_canvas(poly_df, min_pixels=25):
+    xmin, ymin, xmax, ymax = (poly_df.bounds.minx.min(),
+                              poly_df.bounds.miny.min(),
+                              poly_df.bounds.maxx.max(),
+                              poly_df.bounds.maxy.max())
+
+    # Find polygon that has smallest area in poly_df
+    # Question: What if there are more than one smallest polygons,
+    # but different coordinate ranges?
+    x0, y0, x1, y1 = poly_df.iloc[poly_df.area.argmin()]['geometry'].bounds
+
+    # We have: w*h >= min_pixels
+    # and aspect ratio: a = w/h = (x1-x0)/(y1-y0)
+    # Thus, w*w >= min_pixels*(x1-x0)/(y1-y0)
+
+    aspect_ratio = (x1 - x0) / (y1 - y0)
+    w = ceil(sqrt(min_pixels * (x1 - x0) / (y1 - y0)))
+    h = ceil(w / aspect_ratio)
+    canvas_w = int((w * (xmax - xmin) / (x1 - x0)))
+    canvas_h = int((h * (ymax - ymin) / (y1 - y0)))
+
+    return canvas_w, canvas_h
