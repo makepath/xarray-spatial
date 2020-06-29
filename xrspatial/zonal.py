@@ -14,7 +14,8 @@ def zonal_stats(zones, values,
     return stats(zones, values, stat_funcs)
 
 
-def stats(zones, values, stat_funcs=['mean', 'max', 'min', 'std', 'var']):
+def stats(zones, values, stat_funcs=['mean', 'max', 'min', 'std',
+                                     'var', 'count']):
     """Calculate summary statistics for each zone defined by a zone dataset,
     based on values aggregate.
 
@@ -34,10 +35,10 @@ def stats(zones, values, stat_funcs=['mean', 'max', 'min', 'std', 'var']):
         The input value raster contains the input values used in calculating
         the output statistic for each zone.
 
-    stat_funcs: list of strings or dictionary<stat_name: function(zone_values)>.
+    stat_funcs: list of strings or dictionary<stat_name: func(zone_values)>.
         Which statistics to calculate for each zone.
         If a list, possible choices are subsets of
-            ['mean', 'max', 'min', 'std', 'var']
+            ['mean', 'max', 'min', 'std', 'var', 'count']
         In the dictionary case, all of its values must be callable.
             Function takes only one argument that is the zone values.
             The key become the column name in the output DataFrame.
@@ -144,6 +145,8 @@ def stats(zones, values, stat_funcs=['mean', 'max', 'min', 'std', 'var']):
                     zone_stats.append(zone_values.std())
                 elif stat == 'var':
                     zone_stats.append(zone_values.var())
+                elif stat == 'count':
+                    zone_stats.append(np.ma.count(zone_values))
                 else:
                     err_str = 'Invalid stat name. ' \
                               + '\'' + stat + '\' option not supported.'
