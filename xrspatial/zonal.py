@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 import xarray as xa
+import datashader as ds
+from spatialpandas import GeoDataFrame
 import warnings
 from math import sqrt, ceil
 
@@ -366,7 +368,8 @@ def suggest_zonal_canvas(poly_df, min_pixels=25):
     # Find polygon that has smallest area in poly_df
     # Question: What if there are more than one smallest polygons,
     # but different coordinate ranges?
-    x0, y0, x1, y1 = poly_df.iloc[poly_df.area.argmin()]['geometry'].bounds
+    poly_id = poly_df.area.argmin()
+    x0, y0, x1, y1 = poly_df.iloc[poly_id]['geometry'].bounds
 
     # canvas width: canvas_w = poly_w * (xmax - xmin) / (x1 - x0)
     # canvas height: canvas_h = poly_h * (ymax - ymin) / (y1 - y0)
@@ -383,4 +386,25 @@ def suggest_zonal_canvas(poly_df, min_pixels=25):
     canvas_h = ceil(sqrt(min_pixels * w_ratio * h_ratio / aspect_ratio))
     canvas_w = int(aspect_ratio * canvas_h)
 
-    return canvas_w, canvas_h
+    # try to raster the smallest polygon
+    if aspect_ratio * (y1 - y0) >= x1:
+        poly_yrange = (y0, y1)
+        poly_xrange = (x0, x0 + aspect_ratio * (y1 - y0))
+    else:
+        poly_yrange = (y0, y0 + (x1 - x0) / aspect_ratio)
+        poly_xrange = (x0, x1)
+
+    poly_h = int(canvas_h * (poly_yrange[1] - poly_yrange[0]) / (ymax - ymin))
+    poly_w = int(canvas_w * (poly_xrange[1] - poly_xrange[0]) / (xmax - xmin))
+    cvs = ds.Canvas(x_range=poly_xrange,
+                    y_range=poly_yrange,
+                    plot_height=poly_h,
+                    plot_width=poly_w)
+
+    smallest_poly_df = GeoDataFrame(poly_df.iloc[poly_id: poly_id + 1],
+                                    geometry='geometry')
+    smallest_poly_agg = cvs.polygons(smallest_poly_df, 'geometry')
+    pixel_count = len(np.where(smallest_poly_agg.data==True)[0])
+    multiplier = sqrt(min_pixels / pixel_count)
+
+    return int(multiplier * canvas_w), int(multiplier * canvas_h)
