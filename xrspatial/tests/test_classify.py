@@ -2,12 +2,8 @@ import numpy as np
 import xarray as xr
 
 from xrspatial import equal_interval
-import xrspatial
 from xrspatial import natural_breaks
-
-import os
-path = os.path.abspath(xrspatial.__file__)
-print("THE PATH", path)
+from xrspatial import quantile
 
 
 def test_quantile():
@@ -17,11 +13,8 @@ def test_quantile():
     agg['x'] = np.linspace(0, n, n)
     agg['y'] = np.linspace(0, m, m)
 
-    quantile_agg = equal_interval(agg, k=5)
+    quantile_agg = quantile(agg, k=5)
     assert quantile_agg is not None
-
-    print(quantile_agg)
-    print(quantile_agg.mean())
 
     unique_elements, counts_elements = np.unique(quantile_agg.data,
                                                  return_counts=True)
@@ -39,12 +32,10 @@ def test_natural_breaks():
     natural_breaks_agg = natural_breaks(agg, k=5, init=10)
     assert natural_breaks_agg is not None
 
-    print(natural_breaks_agg)
-    print(natural_breaks_agg.mean())
-
     unique_elements, counts_elements = np.unique(natural_breaks_agg.data,
                                                  return_counts=True)
     assert len(unique_elements) == k
+
 
 def test_small_natural_breaks():
     k = 5
@@ -56,12 +47,10 @@ def test_small_natural_breaks():
     natural_breaks_agg = natural_breaks(agg, k=5, init=10)
     assert natural_breaks_agg is not None
 
-    print(natural_breaks_agg)
-    print(natural_breaks_agg.mean())
-
     unique_elements, counts_elements = np.unique(natural_breaks_agg.data,
-                                                     return_counts=True)
+                                                 return_counts=True)
     assert len(unique_elements) == k
+
 
 def test_equal_interval():
     k = 4
@@ -73,13 +62,11 @@ def test_equal_interval():
     equal_interval_agg = equal_interval(agg, k=4)
     assert equal_interval_agg is not None
 
-    print(equal_interval_agg)
-    print(equal_interval_agg.mean())
-
     unique_elements, counts_elements = np.unique(equal_interval_agg.data,
                                                  return_counts=True)
     assert len(unique_elements) == k
     assert len(np.unique(counts_elements)) == 1
+
 
 def test_small_equal_interval():
     k = 4
@@ -90,9 +77,6 @@ def test_small_equal_interval():
 
     equal_interval_agg = equal_interval(agg, k=4)
     assert equal_interval_agg is not None
-
-    print(equal_interval_agg)
-    print(equal_interval_agg.mean())
 
     unique_elements, counts_elements = np.unique(equal_interval_agg.data,
                                                  return_counts=True)

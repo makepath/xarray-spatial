@@ -33,10 +33,14 @@ zone_mins = [zone_vals_1.min(), zone_vals_2.min(), zone_vals_3.min()]
 zone_stds = [zone_vals_1.std(), zone_vals_2.std(), zone_vals_3.std()]
 zone_vars = [zone_vals_1.var(), zone_vals_2.var(), zone_vals_3.var()]
 
+zone_counts = [np.ma.count(zone_vals_1),
+               np.ma.count(zone_vals_2),
+               np.ma.count(zone_vals_3)]
+
 
 # --------------------------- TEST stats() ------------------------------------
 def test_stats_default():
-    # default stat_funcs=['mean', 'max', 'min', 'std', 'var']
+    # default stat_funcs=['mean', 'max', 'min', 'std', 'var', 'count']
     df = stats(zones=zones, values=values)
 
     assert isinstance(df, pd.DataFrame)
@@ -47,13 +51,14 @@ def test_stats_default():
 
     num_cols = len(df.columns)
     # there are 5 statistics in default setting
-    assert num_cols == 5
+    assert num_cols == 6
 
     assert zone_means == df['mean'].tolist()
     assert zone_maxes == df['max'].tolist()
     assert zone_mins == df['min'].tolist()
     assert zone_stds == df['std'].tolist()
     assert zone_vars == df['var'].tolist()
+    assert zone_counts == df['count'].tolist()
 
 
 def test_stats_custom_stat():
