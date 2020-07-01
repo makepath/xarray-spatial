@@ -7,6 +7,8 @@ from xrspatial import zonal_stats as stats
 from xrspatial import zonal_apply as apply
 from xrspatial import zonal_crosstab as crosstab
 
+from xrspatial.zonal import regions
+
 
 # create valid "zones" and "values" for testing stats()
 zones_val = np.array([[0, 1, 1, 2, 4, 0, 0],
@@ -344,3 +346,59 @@ def test_apply():
     assert (values_val[2, :2] == values_copy.values[2, :2]).all()
     # last element of the last row is nan
     assert np.isnan(values_val[2, 2])
+
+
+def create_test_arr(arr):
+    n, m = arr.shape
+    raster = xa.DataArray(arr, dims=['y', 'x'])
+    raster['y'] = np.linspace(0, n, n)
+    raster['x'] = np.linspace(0, m, m)
+    return raster
+
+
+def test_regions_four_pixel_connectivity_int():
+    arr = np.array([[0, 0, 0, 0],
+                    [0, 4, 0, 0],
+                    [1, 4, 4, 0],
+                    [1, 1, 1, 0],
+                    [0, 0, 0, 0]], dtype=np.int64)
+    raster = create_test_arr(arr)
+    raster_regions = regions(raster, neighborhood=4)
+    assert len(np.unique(raster_regions.data)) == 3
+    assert raster.shape == raster_regions.shape
+
+
+def test_regions_four_pixel_connectivity_float():
+    arr = np.array([[0, 0, 0, np.nan],
+                    [0, 4, 0, 0],
+                    [1, 4, 4, 0],
+                    [1, 1, 1, 0],
+                    [0, 0, 0, 0]], dtype=np.float64)
+    raster = create_test_arr(arr)
+    raster_regions = regions(raster, neighborhood=4)
+    assert len(np.unique(raster_regions.data)) == 4
+    assert raster.shape == raster_regions.shape
+
+
+def test_regions_eight_pixel_connectivity_int():
+    arr = np.array([[1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [0, 0, 0, 1]], dtype=np.int64)
+    raster = create_test_arr(arr)
+    raster_regions = regions(raster, neighborhood=8)
+    assert len(np.unique(raster_regions.data)) == 2
+    assert raster.shape == raster_regions.shape
+
+
+def test_regions_eight_pixel_connectivity_float():
+    arr = np.array([[1, 0, 0, np.nan],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [0, 0, 0, 1]], dtype=np.float64)
+    raster = create_test_arr(arr)
+    raster_regions = regions(raster, neighborhood=8)
+    assert len(np.unique(raster_regions.data)) == 3
+    assert raster.shape == raster_regions.shape

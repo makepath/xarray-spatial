@@ -3,16 +3,7 @@ import numpy as np
 
 from xrspatial import mean
 from xrspatial.focal import apply, Kernel, calc_mean, calc_sum, hotspots
-from xrspatial.focal import regions
 import pytest
-
-
-def create_test_arr(arr):
-    n, m = arr.shape
-    raster = xr.DataArray(arr, dims=['y', 'x'])
-    raster['y'] = np.linspace(0, n, n)
-    raster['x'] = np.linspace(0, m, m)
-    return raster
 
 
 def _do_sparse_array(data_array):
@@ -42,54 +33,6 @@ def _do_gaussian_array():
 data_random = np.random.random_sample((100, 100))
 data_random_sparse = _do_sparse_array(data_random)
 data_gaussian = _do_gaussian_array()
-
-
-def test_regions_four_pixel_connectivity_int():
-    arr = np.array([[0, 0, 0, 0],
-                    [0, 4, 0, 0],
-                    [1, 4, 4, 0],
-                    [1, 1, 1, 0],
-                    [0, 0, 0, 0]], dtype=np.int64)
-    raster = create_test_arr(arr)
-    raster_regions = regions(raster, neighborhood=4)
-    assert len(np.unique(raster_regions.data)) == 3
-    assert raster.shape == raster_regions.shape
-
-
-def test_regions_four_pixel_connectivity_float():
-    arr = np.array([[0, 0, 0, np.nan],
-                    [0, 4, 0, 0],
-                    [1, 4, 4, 0],
-                    [1, 1, 1, 0],
-                    [0, 0, 0, 0]], dtype=np.float64)
-    raster = create_test_arr(arr)
-    raster_regions = regions(raster, neighborhood=4)
-    assert len(np.unique(raster_regions.data)) == 4
-    assert raster.shape == raster_regions.shape
-
-
-def test_regions_eight_pixel_connectivity_int():
-    arr = np.array([[1, 0, 0, 0],
-                    [0, 1, 0, 0],
-                    [0, 0, 1, 0],
-                    [0, 0, 0, 1],
-                    [0, 0, 0, 1]], dtype=np.int64)
-    raster = create_test_arr(arr)
-    raster_regions = regions(raster, neighborhood=8)
-    assert len(np.unique(raster_regions.data)) == 2
-    assert raster.shape == raster_regions.shape
-
-
-def test_regions_eight_pixel_connectivity_float():
-    arr = np.array([[1, 0, 0, np.nan],
-                    [0, 1, 0, 0],
-                    [0, 0, 1, 0],
-                    [0, 0, 0, 1],
-                    [0, 0, 0, 1]], dtype=np.float64)
-    raster = create_test_arr(arr)
-    raster_regions = regions(raster, neighborhood=8)
-    assert len(np.unique(raster_regions.data)) == 3
-    assert raster.shape == raster_regions.shape
 
 
 def test_mean_transfer_function():
