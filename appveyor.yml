@@ -10,6 +10,7 @@ build: off
 
 install:
 - pip install tox
+- pip install versioneer
 
 test_script:
 - tox
