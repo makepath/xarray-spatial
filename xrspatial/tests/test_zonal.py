@@ -7,6 +7,8 @@ from xrspatial import zonal_stats as stats
 from xrspatial import zonal_apply as apply
 from xrspatial import zonal_crosstab as crosstab
 
+from xrspatial.zonal import regions
+
 
 # create valid "zones" and "values" for testing stats()
 zones_val = np.array([[0, 1, 1, 2, 4, 0, 0],
@@ -33,10 +35,14 @@ zone_mins = [zone_vals_1.min(), zone_vals_2.min(), zone_vals_3.min()]
 zone_stds = [zone_vals_1.std(), zone_vals_2.std(), zone_vals_3.std()]
 zone_vars = [zone_vals_1.var(), zone_vals_2.var(), zone_vals_3.var()]
 
+zone_counts = [np.ma.count(zone_vals_1),
+               np.ma.count(zone_vals_2),
+               np.ma.count(zone_vals_3)]
+
 
 # --------------------------- TEST stats() ------------------------------------
 def test_stats_default():
-    # default stat_funcs=['mean', 'max', 'min', 'std', 'var']
+    # default stat_funcs=['mean', 'max', 'min', 'std', 'var', 'count']
     df = stats(zones=zones, values=values)
 
     assert isinstance(df, pd.DataFrame)
@@ -47,13 +53,14 @@ def test_stats_default():
 
     num_cols = len(df.columns)
     # there are 5 statistics in default setting
-    assert num_cols == 5
+    assert num_cols == 6
 
     assert zone_means == df['mean'].tolist()
     assert zone_maxes == df['max'].tolist()
     assert zone_mins == df['min'].tolist()
     assert zone_stds == df['std'].tolist()
     assert zone_vars == df['var'].tolist()
+    assert zone_counts == df['count'].tolist()
 
 
 def test_stats_custom_stat():
@@ -339,3 +346,59 @@ def test_apply():
     assert (values_val[2, :2] == values_copy.values[2, :2]).all()
     # last element of the last row is nan
     assert np.isnan(values_val[2, 2])
+
+
+def create_test_arr(arr):
+    n, m = arr.shape
+    raster = xa.DataArray(arr, dims=['y', 'x'])
+    raster['y'] = np.linspace(0, n, n)
+    raster['x'] = np.linspace(0, m, m)
+    return raster
+
+
+def test_regions_four_pixel_connectivity_int():
+    arr = np.array([[0, 0, 0, 0],
+                    [0, 4, 0, 0],
+                    [1, 4, 4, 0],
+                    [1, 1, 1, 0],
+                    [0, 0, 0, 0]], dtype=np.int64)
+    raster = create_test_arr(arr)
+    raster_regions = regions(raster, neighborhood=4)
+    assert len(np.unique(raster_regions.data)) == 3
+    assert raster.shape == raster_regions.shape
+
+
+def test_regions_four_pixel_connectivity_float():
+    arr = np.array([[0, 0, 0, np.nan],
+                    [0, 4, 0, 0],
+                    [1, 4, 4, 0],
+                    [1, 1, 1, 0],
+                    [0, 0, 0, 0]], dtype=np.float64)
+    raster = create_test_arr(arr)
+    raster_regions = regions(raster, neighborhood=4)
+    assert len(np.unique(raster_regions.data)) == 4
+    assert raster.shape == raster_regions.shape
+
+
+def test_regions_eight_pixel_connectivity_int():
+    arr = np.array([[1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [0, 0, 0, 1]], dtype=np.int64)
+    raster = create_test_arr(arr)
+    raster_regions = regions(raster, neighborhood=8)
+    assert len(np.unique(raster_regions.data)) == 2
+    assert raster.shape == raster_regions.shape
+
+
+def test_regions_eight_pixel_connectivity_float():
+    arr = np.array([[1, 0, 0, np.nan],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [0, 0, 0, 1]], dtype=np.float64)
+    raster = create_test_arr(arr)
+    raster_regions = regions(raster, neighborhood=8)
+    assert len(np.unique(raster_regions.data)) == 3
+    assert raster.shape == raster_regions.shape
