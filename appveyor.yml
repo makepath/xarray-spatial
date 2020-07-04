@@ -13,4 +13,4 @@ install:
   - "%PYTHON%\\python.exe -m pip install -r requirements.txt"
 
 test_script:
-- "%PYTHON\\pytest -s"
+- "%PYTHON%\\pytest -s"
