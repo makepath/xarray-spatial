@@ -9,8 +9,7 @@ environment:
 build: off
 
 install:
-- pip install tox
-- pip install versioneer
+- pip install -r requirements.txt
 
 test_script:
 - tox
