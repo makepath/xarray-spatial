@@ -1,6 +1,6 @@
 appdirs==1.4.4
 attrs==19.3.0
-bokeh==2.1.1
+bokeh>=2.1.1
 certifi==2020.6.20
 chardet==3.0.4
 click==7.1.2
@@ -26,7 +26,7 @@ more-itertools==8.4.0
 msgpack==1.0.0
 multipledispatch==0.6.0
 numba==0.48.0
-numpy==1.19.0
+numpy>=1.19.0
 packaging==20.4
 pandas==1.0.5
 param==1.9.3
@@ -62,6 +62,5 @@ urllib3==1.25.9
 virtualenv==20.0.25
 wcwidth==0.2.5
 xarray==0.15.1
-xarray-spatial==0.0.2
 zict==2.0.0
 zipp==3.1.0
