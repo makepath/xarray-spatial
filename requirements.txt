@@ -1,6 +1,5 @@
 datashader
 xarray
+scikit-learn
 pytest
 tox
-twine==3.1.1
-virtualenv==20.0.25
