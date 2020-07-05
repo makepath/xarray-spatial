@@ -19,7 +19,7 @@ from xrspatial.classify import quantile  # noqa
 from xrspatial.classify import equal_interval  # noqa
 from xrspatial.classify import natural_breaks  # noqa
 
-__version__ = '0.0.2'
+__version__ = '0.0.3'
 
 
 def test():
