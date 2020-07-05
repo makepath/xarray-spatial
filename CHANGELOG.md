@@ -1,3 +1,20 @@
+### Version 0.0.5 - 7/5/2020
+- Changed ndvi.py -> multispectral.py
+- Added arvi (multispectral)
+- Added gci (multispectral)
+- Added savi (multispectral)
+- Added evi (multispectral)
+- Added nbr (multispectral)
+- Added sipi (multispectral)
+- Added `count` to default stats (zonal)
+- Added regions tools (zonal)
+
+### Version 0.0.4 - 7/4/2020
+- Test Release
+
+### Version 0.0.3 - 7/4/2020
+- Test Release
+
 ### Version 0.0.2 - 6/24/2020
 - Add Pixel-based Region Connectivity Tool (#52)
 - Fixes to Proximity Tools (#45, #37, #36)
