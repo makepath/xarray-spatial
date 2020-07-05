@@ -1,7 +1,9 @@
 import xarray as xr
 import numpy as np
+import xarray as xa
 
-from xrspatial import ndvi
+from xrspatial.spectral import ndvi
+from xrspatial.spectral import savi
 
 
 def _do_sparse_array(data_array):
@@ -33,6 +35,13 @@ data_random_sparse = _do_sparse_array(data_random)
 data_gaussian = _do_gaussian_array()
 
 
+def create_test_arr(arr):
+    n, m = arr.shape
+    raster = xa.DataArray(arr, dims=['y', 'x'])
+    raster['y'] = np.linspace(0, n, n)
+    raster['x'] = np.linspace(0, m, m)
+    return raster
+
 def test_ndvi():
     """
     Assert aspect transfer function
@@ -55,3 +64,51 @@ def test_ndvi():
     assert da_ndvi[-1, -1] == 1
     assert da_ndvi[5, 10] == da_ndvi[10, 5] == -0.5
     assert da_ndvi[15, 10] == da_ndvi[10, 15] == 0.5
+
+def test_savi():
+
+    max_val = 2**16 - 1
+
+    arr1 = np.array([[max_val, max_val, max_val, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
+
+    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
+
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+
+    soil_factor = 0.0
+
+    result_savi = savi(nir, red, soil_factor=0.0)
+    result_ndvi = ndvi(nir, red)
+
+    assert result_savi == result_ndvi
+
+    result_savi = savi(nir, red)
+    assert result_savi.dims == nir.dims
+    assert result_savi.coords == nir.coords
+    assert result_savi.attrs == nir.attrs
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
