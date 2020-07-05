@@ -2,8 +2,13 @@ import xarray as xr
 import numpy as np
 import xarray as xa
 
-from xrspatial.spectral import ndvi
-from xrspatial.spectral import savi
+from xrspatial.multispectral import ndvi
+from xrspatial.multispectral import savi
+from xrspatial.multispectral import arvi
+from xrspatial.multispectral import evi
+from xrspatial.multispectral import gci
+from xrspatial.multispectral import sipi
+from xrspatial.multispectral import nbr
 
 
 def _do_sparse_array(data_array):
@@ -42,6 +47,7 @@ def create_test_arr(arr):
     raster['x'] = np.linspace(0, m, m)
     return raster
 
+
 def test_ndvi():
     """
     Assert aspect transfer function
@@ -65,6 +71,7 @@ def test_ndvi():
     assert da_ndvi[5, 10] == da_ndvi[10, 5] == -0.5
     assert da_ndvi[15, 10] == da_ndvi[10, 15] == 0.5
 
+
 def test_savi():
 
     max_val = 2**16 - 1
@@ -84,31 +91,169 @@ def test_savi():
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
 
-    soil_factor = 0.0
-
+    # savi should be same as ndvi at soil_factor=0
     result_savi = savi(nir, red, soil_factor=0.0)
     result_ndvi = ndvi(nir, red)
 
-    assert result_savi == result_ndvi
-
-    result_savi = savi(nir, red)
+    assert (result_savi.data == result_ndvi.data).all()
     assert result_savi.dims == nir.dims
-    assert result_savi.coords == nir.coords
-    assert result_savi.attrs == nir.attrs
+
+    result_savi = savi(nir, red, soil_factor=1.0)
+    assert isinstance(result_savi, xa.DataArray)
+    assert result_savi.dims == nir.dims
 
 
+def test_avri():
+
+    max_val = 2**16 - 1
+
+    arr1 = np.array([[max_val, max_val, max_val, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
+
+    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
+
+    arr3 = np.array([[10.0, 10.0, 10.0, 10.0],
+                     [10.0, max_val, max_val, 10.0],
+                     [10.0, max_val, max_val, 10.0],
+                     [10.0, max_val, max_val, 10.0],
+                     [10.0, 10.0, 10.0, 10.0]], dtype=np.float64)
+
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+    blue = create_test_arr(arr3)
+
+    result = arvi(nir, red, blue)
+
+    assert result.dims == nir.dims
+    assert isinstance(result, xa.DataArray)
+    assert result.dims == nir.dims
 
 
+def test_evi():
+
+    max_val = 2**16 - 1
+
+    arr1 = np.array([[max_val, max_val, max_val, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
+
+    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
+
+    arr3 = np.array([[10.0, 10.0, 10.0, 10.0],
+                     [10.0, max_val, max_val, 10.0],
+                     [10.0, max_val, max_val, 10.0],
+                     [10.0, max_val, max_val, 10.0],
+                     [10.0, 10.0, 10.0, 10.0]], dtype=np.float64)
+
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+    blue = create_test_arr(arr3)
+
+    result = evi(nir, red, blue)
+
+    assert result.dims == nir.dims
+    assert isinstance(result, xa.DataArray)
+    assert result.dims == nir.dims
+
+    # TODO: Test Gain
+    # TODO: Test Soil Factor
+    # TODO: Test C1
+    # TODO: Test C2
 
 
+def test_gci():
+
+    max_val = 2**16 - 1
+
+    arr1 = np.array([[max_val, max_val, max_val, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
+
+    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
+
+    nir = create_test_arr(arr1)
+    green = create_test_arr(arr2)
+
+    result = gci(nir, green)
+
+    assert result.dims == nir.dims
+    assert isinstance(result, xa.DataArray)
+    assert result.dims == nir.dims
 
 
+def test_sipi():
+
+    max_val = 2**16 - 1
+
+    arr1 = np.array([[max_val, max_val, max_val, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
+
+    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
+
+    arr3 = np.array([[10.0, 10.0, 10.0, 10.0],
+                     [10.0, max_val, max_val, 10.0],
+                     [10.0, max_val, max_val, 10.0],
+                     [10.0, max_val, max_val, 10.0],
+                     [10.0, 10.0, 10.0, 10.0]], dtype=np.float64)
+
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+    blue = create_test_arr(arr3)
+
+    result = sipi(nir, red, blue)
+
+    assert result.dims == nir.dims
+    assert isinstance(result, xa.DataArray)
+    assert result.dims == nir.dims
 
 
+def test_nbr():
 
+    max_val = 2**16 - 1
 
+    arr1 = np.array([[max_val, max_val, max_val, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
 
+    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
 
+    nir = create_test_arr(arr1)
+    swir = create_test_arr(arr2)
 
+    result = nbr(nir, swir)
 
-
+    assert result.dims == nir.dims
+    assert isinstance(result, xa.DataArray)
+    assert result.dims == nir.dims
