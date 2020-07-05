@@ -437,22 +437,22 @@ def nbr(nir_agg, swir_agg, name='nbr'):
 
 
 @ngjit
-def normalize_data(agg):
+def normalize_data(agg, pixel_max=255.0):
     out = np.zeros_like(agg)
     min_val = 0
     max_val = 2**16 - 1
     range_val = max_val - min_val
-    col, rows = agg.shape
+    rows, cols = agg.shape
     c = 40
     th = .125
-    for x in range(col):
-        for y in range(rows):
-            val = agg[x, y]
+    for y in range(rows):
+        for x in range(cols):
+            val = agg[y, x]
             norm = (val - min_val) / range_val
 
             # sigmoid contrast enhancement
             norm = 1 / (1 + np.exp(c * (th - norm)))
-            out[x, y] = norm * 255.0
+            out[y, x] = norm * pixel_max
     return out
 
 
