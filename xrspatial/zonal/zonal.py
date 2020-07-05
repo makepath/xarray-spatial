@@ -2,11 +2,14 @@ import warnings
 
 import numpy as np
 import pandas as pd
+
 import xarray as xa
+
 from xarray import DataArray
 
-from xrspatial.utils import ngjit
+from numba import jit
 
+ngjit = jit(nopython=True, nogil=True)
 warnings.simplefilter('default')
 
 
@@ -475,7 +478,6 @@ def _area_connectivity(data, n=4):
 
             if np.isnan(val):
                 continue
-
 
             # check in has matching value in neighborhood
             rtol = 1e-05
