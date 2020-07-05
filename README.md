@@ -49,7 +49,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 - [Aspect](xrspatial/aspect.py)
 - [Curvature](xrspatial/curvature.py)
 - [Hillshade](xrspatial/hillshade.py)
-- [Normalized Difference Vegetation Index (NDVI)](xrspatial/ndvi.py)
+- [Multispectral Tools (NDVI, EVI, NBR, SIPI)](xrspatial/multispectral.py)
 - [Focal Statistics](xrspatial/focal.py)
 - [Zonal Statistics](xrspatial/zonal.py)
 - [Zonal Cross Tabulate](xrspatial/zonal.py)
