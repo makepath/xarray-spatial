@@ -1,0 +1,16 @@
+# appveyor.yml
+---
+environment:
+  matrix:
+    - PYTHON: "C:\\Python36-x64"
+    - PYTHON: "C:\\Python37-x64"
+    - PYTHON: "C:\\Python38-x64"
+
+build: off
+
+install:
+  - "%PYTHON%\\python.exe -m pip install wheel"
+  - "%PYTHON%\\python.exe -m pip install -r requirements.txt"
+
+test_script:
+  - "%PYTHON%\\python.exe -m pytest"

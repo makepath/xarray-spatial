@@ -15,10 +15,11 @@ from xrspatial.viewshed import viewshed  # noqa
 from xrspatial.zonal import apply as zonal_apply  # noqa
 from xrspatial.zonal import crosstab as zonal_crosstab  # noqa
 from xrspatial.zonal import stats as zonal_stats  # noqa
-from xrspatial.classify import quantile
-from xrspatial.classify import equal_interval
-from xrspatial.classify import natural_breaks
-__version__ = '0.0.1'
+from xrspatial.classify import quantile  # noqa
+from xrspatial.classify import equal_interval  # noqa
+from xrspatial.classify import natural_breaks  # noqa
+
+__version__ = '0.0.2'
 
 
 def test():
