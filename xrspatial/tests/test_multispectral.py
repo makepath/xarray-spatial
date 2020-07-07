@@ -2,13 +2,15 @@ import xarray as xr
 import numpy as np
 import xarray as xa
 
-from xrspatial.multispectral import ndvi
-from xrspatial.multispectral import savi
 from xrspatial.multispectral import arvi
 from xrspatial.multispectral import evi
+from xrspatial.multispectral import nbr
+from xrspatial.multispectral import nbr2
+from xrspatial.multispectral import ndmi
+from xrspatial.multispectral import ndvi
+from xrspatial.multispectral import savi
 from xrspatial.multispectral import gci
 from xrspatial.multispectral import sipi
-from xrspatial.multispectral import nbr
 
 
 def _do_sparse_array(data_array):
@@ -253,6 +255,58 @@ def test_nbr():
     swir = create_test_arr(arr2)
 
     result = nbr(nir, swir)
+
+    assert result.dims == nir.dims
+    assert isinstance(result, xa.DataArray)
+    assert result.dims == nir.dims
+
+
+def test_nbr2():
+
+    max_val = 2**16 - 1
+
+    arr1 = np.array([[max_val, max_val, max_val, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
+
+    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
+
+    swir1 = create_test_arr(arr1)
+    swir2 = create_test_arr(arr2)
+
+    result = nbr2(swir1, swir2)
+
+    assert result.dims == swir1.dims
+    assert isinstance(result, xa.DataArray)
+    assert result.dims == swir1.dims
+
+
+def test_ndmi():
+
+    max_val = 2**16 - 1
+
+    arr1 = np.array([[max_val, max_val, max_val, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
+
+    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
+
+    nir = create_test_arr(arr1)
+    swir1 = create_test_arr(arr2)
+
+    result = ndmi(nir, swir1)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)

@@ -16,120 +16,6 @@ def _check_is_dataarray(val, name='value'):
 
 
 @ngjit
-def _ndvi(nir_data, red_data):
-    out = np.zeros_like(nir_data)
-    rows, cols = nir_data.shape
-    for y in range(0, rows):
-        for x in range(0, cols):
-            nir = nir_data[y, x]
-            red = red_data[y, x]
-
-            numerator = nir - red
-            denominator = nir + red
-
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = numerator / denominator
-    return out
-
-
-def ndvi(nir_agg, red_agg, name='ndvi'):
-    """Returns Normalized Difference Vegetation Index (NDVI).
-
-    Parameters
-    ----------
-    nir_agg : DataArray
-        near-infrared band data
-    red_agg : DataArray
-        red band data
-
-    Returns
-    -------
-    data: DataArray
-
-    Notes:
-    ------
-    Algorithm References:
-    http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
-    """
-
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(red_agg, 'red')
-
-    if not red_agg.shape == nir_agg.shape:
-        raise ValueError("red_agg and nir_agg expected to have equal shapes")
-
-    return DataArray(_ndvi(nir_agg.data, red_agg.data),
-                     name='ndvi',
-                     coords=nir_agg.coords,
-                     dims=nir_agg.dims,
-                     attrs=nir_agg.attrs)
-
-
-@ngjit
-def _savi(nir_data, red_data, soil_factor):
-    out = np.zeros_like(nir_data)
-    rows, cols = nir_data.shape
-    for y in range(0, rows):
-        for x in range(0, cols):
-            nir = nir_data[y, x]
-            red = red_data[y, x]
-
-            numerator = nir - red
-
-            soma = nir + red + soil_factor
-            denominator = soma * (1.0 + soil_factor)
-
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = numerator / denominator
-
-    return out
-
-
-def savi(nir_agg, red_agg, soil_factor=1.0, name='savi'):
-    """Returns Soil Adjusted Vegetation Index (SAVI).
-
-    Parameters
-    ----------
-    nir_agg : DataArray
-        near-infrared band data
-
-    red_agg : DataArray
-        red band data
-
-    soil_factor : float
-      soil adjustment factor between -1.0 and 1.0.
-      when set to zero, savi will return the same as ndvi
-
-    Returns
-    -------
-    data: DataArray
-
-    Notes:
-    ------
-    Algorithm References:
-     - https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
-    """
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(red_agg, 'red')
-
-    if not red_agg.shape == nir_agg.shape:
-        raise ValueError("red_agg and nir_agg expected to have equal shapes")
-
-    if soil_factor > 1.0 or soil_factor < -1.0:
-        raise ValueError("soil factor must be between (-1.0, 1.0)")
-
-    return DataArray(_savi(nir_agg.data, red_agg.data, soil_factor),
-                     name=name,
-                     coords=nir_agg.coords,
-                     dims=nir_agg.dims,
-                     attrs=nir_agg.attrs)
-
-
-@ngjit
 def _arvi(nir_data, red_data, blue_data):
     out = np.zeros_like(nir_data)
     rows, cols = nir_data.shape
@@ -325,6 +211,244 @@ def gci(nir_agg, green_agg, name='gci'):
 
 
 @ngjit
+def _normalized_ratio(arr1, arr2):
+    out = np.zeros_like(arr1)
+    rows, cols = arr1.shape
+    for y in range(0, rows):
+        for x in range(0, cols):
+            val1 = arr1[y, x]
+            val2 = arr2[y, x]
+
+            numerator = val1 - val2
+            denominator = val1 + val2
+
+            if denominator == 0.0:
+                continue
+            else:
+                out[y, x] = numerator / denominator
+
+    return out
+
+
+def nbr(nir_agg, swir2_agg, name='nbr'):
+    """Computes Normalized Burn Ratio
+
+    Parameters
+    ----------
+    nir_agg : DataArray
+        near-infrared band
+
+    swir_agg : DataArray
+        shortwave infrared band
+        (Landsat 4-7: Band 6)
+        (Landsat 8: Band 7)
+
+    Returns
+    -------
+    data: DataArray
+
+    Notes:
+    ------
+    Algorithm References:
+    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
+    """
+    _check_is_dataarray(nir_agg, 'near-infrared')
+    _check_is_dataarray(swir2_agg, 'shortwave infrared')
+
+    if not nir_agg.shape == swir2_agg.shape:
+        raise ValueError("input layers expected to have equal shapes")
+
+    arr = _normalized_ratio(nir_agg.data, swir2_agg.data)
+
+    return DataArray(arr,
+                     name=name,
+                     coords=nir_agg.coords,
+                     dims=nir_agg.dims,
+                     attrs=nir_agg.attrs)
+
+
+def nbr2(swir1_agg, swir2_agg, name='nbr'):
+    """Computes Normalized Burn Ratio 2
+
+    "NBR2 modifies the Normalized Burn Ratio (NBR)
+    to highlight water sensitivity in vegetation and
+    may be useful in post-fire recovery studies."
+
+    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+
+    Parameters
+    ----------
+    swir1_agg : DataArray
+        near-infrared band
+        shortwave infrared band
+        (Landsat 4-7: Band 5)
+        (Landsat 8: Band 6)
+
+    swir2_agg : DataArray
+        shortwave infrared band
+        (Landsat 4-7: Band 6)
+        (Landsat 8: Band 7)
+
+    Returns
+    -------
+    data: DataArray
+
+    Notes:
+    ------
+    Algorithm References:
+    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+    """
+    _check_is_dataarray(swir1_agg, 'near-infrared')
+    _check_is_dataarray(swir2_agg, 'shortwave infrared')
+
+    if not swir1_agg.shape == swir2_agg.shape:
+        raise ValueError("input layers expected to have equal shapes")
+
+    arr = _normalized_ratio(swir1_agg.data, swir2_agg.data)
+
+    return DataArray(arr,
+                     name=name,
+                     coords=swir1_agg.coords,
+                     dims=swir1_agg.dims,
+                     attrs=swir1_agg.attrs)
+
+
+def ndvi(nir_agg, red_agg, name='ndvi'):
+    """Returns Normalized Difference Vegetation Index (NDVI).
+
+    Parameters
+    ----------
+    nir_agg : DataArray
+        near-infrared band data
+    red_agg : DataArray
+        red band data
+
+    Returns
+    -------
+    data: DataArray
+
+    Notes:
+    ------
+    Algorithm References:
+    http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
+    """
+
+    _check_is_dataarray(nir_agg, 'near-infrared')
+    _check_is_dataarray(red_agg, 'red')
+
+    if not red_agg.shape == nir_agg.shape:
+        raise ValueError("red_agg and nir_agg expected to have equal shapes")
+
+    return DataArray(_normalized_ratio(nir_agg.data, red_agg.data),
+                     name='ndvi',
+                     coords=nir_agg.coords,
+                     dims=nir_agg.dims,
+                     attrs=nir_agg.attrs)
+
+
+def ndmi(nir_agg, swir1_agg, name='ndmi'):
+    """Computes Normalized Difference Moisture Index
+
+    Parameters
+    ----------
+    nir_agg : DataArray
+        near-infrared band
+        (Landsat 4-7: Band 4)
+        (Landsat 8: Band 5)
+
+    swir1_agg : DataArray
+        shortwave infrared band
+        (Landsat 4-7: Band 5)
+        (Landsat 8: Band 6)
+
+
+    Returns
+    -------
+    data: DataArray
+
+    Notes:
+    ------
+    Algorithm References:
+    https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
+    """
+    _check_is_dataarray(nir_agg, 'near-infrared')
+    _check_is_dataarray(swir1_agg, 'shortwave infrared')
+
+    if not nir_agg.shape == swir1_agg.shape:
+        raise ValueError("input layers expected to have equal shapes")
+
+    arr = _normalized_ratio(nir_agg.data, swir1_agg.data)
+
+    return DataArray(arr,
+                     name=name,
+                     coords=nir_agg.coords,
+                     dims=nir_agg.dims,
+                     attrs=nir_agg.attrs)
+
+
+@ngjit
+def _savi(nir_data, red_data, soil_factor):
+    out = np.zeros_like(nir_data)
+    rows, cols = nir_data.shape
+    for y in range(0, rows):
+        for x in range(0, cols):
+            nir = nir_data[y, x]
+            red = red_data[y, x]
+
+            numerator = nir - red
+
+            soma = nir + red + soil_factor
+            denominator = soma * (1.0 + soil_factor)
+
+            if denominator == 0.0:
+                continue
+            else:
+                out[y, x] = numerator / denominator
+
+    return out
+
+
+def savi(nir_agg, red_agg, soil_factor=1.0, name='savi'):
+    """Returns Soil Adjusted Vegetation Index (SAVI).
+
+    Parameters
+    ----------
+    nir_agg : DataArray
+        near-infrared band data
+
+    red_agg : DataArray
+        red band data
+
+    soil_factor : float
+      soil adjustment factor between -1.0 and 1.0.
+      when set to zero, savi will return the same as ndvi
+
+    Returns
+    -------
+    data: DataArray
+
+    Notes:
+    ------
+    Algorithm References:
+     - https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
+    """
+    _check_is_dataarray(nir_agg, 'near-infrared')
+    _check_is_dataarray(red_agg, 'red')
+
+    if not red_agg.shape == nir_agg.shape:
+        raise ValueError("red_agg and nir_agg expected to have equal shapes")
+
+    if soil_factor > 1.0 or soil_factor < -1.0:
+        raise ValueError("soil factor must be between (-1.0, 1.0)")
+
+    return DataArray(_savi(nir_agg.data, red_agg.data, soil_factor),
+                     name=name,
+                     coords=nir_agg.coords,
+                     dims=nir_agg.dims,
+                     attrs=nir_agg.attrs)
+
+
+@ngjit
 def _sipi(nir_data, red_data, blue_data):
     out = np.zeros_like(nir_data)
     rows, cols = nir_data.shape
@@ -345,7 +469,8 @@ def _sipi(nir_data, red_data, blue_data):
 
 
 def sipi(nir_agg, red_agg, blue_agg, name='sipi'):
-    """Computes Structure Insensitive Pigment Index
+    """Computes Structure Insensitive Pigment Index which helpful
+    in early disease detection
 
     Parameters
     ----------
@@ -382,62 +507,7 @@ def sipi(nir_agg, red_agg, blue_agg, name='sipi'):
 
 
 @ngjit
-def _nbr(nir_data, swir_data):
-    out = np.zeros_like(nir_data)
-    rows, cols = nir_data.shape
-    for y in range(0, rows):
-        for x in range(0, cols):
-            nir = nir_data[y, x]
-            swir = swir_data[y, x]
-
-            numerator = nir - swir
-            denominator = nir + swir
-
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = numerator / denominator
-
-    return out
-
-
-def nbr(nir_agg, swir_agg, name='nbr'):
-    """Computes Normalized Burn Ratio
-
-    Parameters
-    ----------
-    nir_agg : DataArray
-        near-infrared band
-
-    swir_agg : DataArray
-        shortwave infrared band
-
-    Returns
-    -------
-    data: DataArray
-
-    Notes:
-    ------
-    Algorithm References:
-    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
-    """
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(swir_agg, 'shortwave infrared')
-
-    if not nir_agg.shape == swir_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
-
-    arr = _nbr(nir_agg.data, swir_agg.data)
-
-    return DataArray(arr,
-                     name=name,
-                     coords=nir_agg.coords,
-                     dims=nir_agg.dims,
-                     attrs=nir_agg.attrs)
-
-
-@ngjit
-def normalize_data(agg, pixel_max=255.0):
+def _normalize_data(agg, pixel_max=255.0):
     out = np.zeros_like(agg)
     min_val = 0
     max_val = 2**16 - 1
@@ -461,9 +531,9 @@ def bands_to_img(r, g, b, nodata=1):
     r, g, b = [ds.utils.orient_array(img) for img in (r, g, b)]
 
     data = np.zeros((h, w, 4), dtype=np.uint8)
-    data[:, :, 0] = (normalize_data(r)).astype(np.uint8)
-    data[:, :, 1] = (normalize_data(g)).astype(np.uint8)
-    data[:, :, 2] = (normalize_data(b)).astype(np.uint8)
+    data[:, :, 0] = (_normalize_data(r)).astype(np.uint8)
+    data[:, :, 1] = (_normalize_data(g)).astype(np.uint8)
+    data[:, :, 2] = (_normalize_data(b)).astype(np.uint8)
 
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
     data[:, :, 3] = a.astype(np.uint8)
