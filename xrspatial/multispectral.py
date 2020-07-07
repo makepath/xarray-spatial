@@ -507,6 +507,66 @@ def sipi(nir_agg, red_agg, blue_agg, name='sipi'):
 
 
 @ngjit
+def _ebbi(red_data, swir_data, tir_data):
+    out = np.zeros_like(red_data)
+    rows, cols = red_data.shape
+    for y in range(0, rows):
+        for x in range(0, cols):
+            red = red_data[y, x]
+            swir = swir_data[y, x]
+            tir = tir_data[y, x]
+
+            numerator = swir - red
+            denominator = 10 * np.sqrt(swir + tir)
+
+            if denominator == 0.0:
+                continue
+            else:
+                out[y, x] = numerator / denominator
+    return out
+
+
+def ebbi(red_agg, swir_agg, tir_agg, name='ebbi'):
+    """Computes Enhanced Built-Up and Bareness Index
+
+    Parameters
+    ----------
+    red_agg : DataArray
+        red band data
+
+    swir_agg : DataArray
+        shortwave infrared band data
+
+    tir_agg : DataArray
+        thermal infrared band data
+
+    Returns
+    -------
+    data: DataArray
+
+    Notes:
+    ------
+    Algorithm References:
+    https://rdrr.io/cran/LSRS/man/EBBI.html
+    """
+
+    _check_is_dataarray(red_agg, 'red')
+    _check_is_dataarray(swir_agg, 'swir')
+    _check_is_dataarray(tir_agg, 'thermal infrared')
+
+    if not red_agg.shape == swir_agg.shape == tir_agg.shape:
+        raise ValueError("input layers expected to have equal shapes")
+
+    arr = _ebbi(red_agg.data, swir_agg.data, tir_agg.data)
+
+    return DataArray(arr,
+                     name=name,
+                     coords=nir_agg.coords,
+                     dims=nir_agg.dims,
+                     attrs=nir_agg.attrs)
+
+
+@ngjit
 def _normalize_data(agg, pixel_max=255.0):
     out = np.zeros_like(agg)
     min_val = 0
@@ -539,3 +599,4 @@ def bands_to_img(r, g, b, nodata=1):
     data[:, :, 3] = a.astype(np.uint8)
 
     return Image.fromarray(data, 'RGBA')
+
