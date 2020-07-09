@@ -17,6 +17,7 @@ from xrspatial.proximity import euclidean_distance  # noqa
 from xrspatial.proximity import great_circle_distance  # noqa
 from xrspatial.proximity import manhattan_distance  # noqa
 from xrspatial.proximity import proximity  # noqa
+from xrspatial.proximity import allocation  # noqa
 
 from xrspatial.slope import slope  # noqa
 from xrspatial.terrain import generate_terrain  # noqa
