@@ -144,7 +144,6 @@ def _process_proximity_line(source_line, x_coords, y_coords,
                             pan_near_x, pan_near_y, is_forward,
                             line_id, width, max_distance, line_proximity,
                             values, distance_metric):
-
     # Process proximity for a line of pixels in an image
     #
     # source_line: 1d ndarray, input data
@@ -227,8 +226,8 @@ def _process_proximity_line(source_line, x_coords, y_coords,
                 pan_near_y[pixel] = pan_near_y[tr]
 
         # Update our proximity value.
-        if pan_near_x[pixel] != -1 and not np.isnan(source_line[pixel])\
-                and max_distance * max_distance >= near_distance_square\
+        if pan_near_x[pixel] != -1 and not np.isnan(source_line[pixel]) \
+                and max_distance * max_distance >= near_distance_square \
                 and (line_proximity[pixel] < 0 or
                      near_distance_square <
                      line_proximity[pixel] * line_proximity[pixel]):
@@ -265,7 +264,7 @@ def _process_image(img, x_coords, y_coords, target_values,
             scan_line[i] = img[line][i]
 
         line_proximity = np.zeros(width, dtype=np.float64)
-        line_allocation = np.zeros(width, dtype=img.dtype)
+        line_allocation = np.zeros(width, dtype=np.float64)
 
         for i in prange(width):
             line_proximity[i] = -1.0
@@ -285,13 +284,15 @@ def _process_image(img, x_coords, y_coords, target_values,
 
         for i in prange(width):
             img_proximity[line][i] = line_proximity[i]
+            if pan_near_x[i] != -1:
+                line_allocation[i] = img[pan_near_y[i], pan_near_x[i]]
 
     # Loop from bottom to top of the image.
     for i in prange(width):
         pan_near_x[i] = -1
         pan_near_y[i] = -1
 
-    for line in prange(height-1, -1, -1):
+    for line in prange(height - 1, -1, -1):
         # Read first pass proximity.
         for i in prange(width):
             line_proximity[i] = img_proximity[line][i]
@@ -319,7 +320,8 @@ def _process_image(img, x_coords, y_coords, target_values,
                 line_proximity[i] = np.nan
                 line_allocation[i] = np.nan
             else:
-                line_allocation[i] = img[pan_near_y[i], pan_near_x[i]]
+                if pan_near_x[i] != -1:
+                    line_allocation[i] = img[pan_near_y[i], pan_near_x[i]]
 
         for i in prange(width):
             img_proximity[line][i] = line_proximity[i]
