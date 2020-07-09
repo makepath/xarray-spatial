@@ -265,7 +265,7 @@ def _process_image(img, x_coords, y_coords, target_values,
             scan_line[i] = img[line][i]
 
         line_proximity = np.zeros(width, dtype=np.float64)
-        line_allocation = np.zeros(width, dtype=np.float64)
+        line_allocation = np.zeros(width, dtype=img.dtype)
 
         for i in prange(width):
             line_proximity[i] = -1.0
@@ -403,40 +403,11 @@ def proximity(raster, x='x', y='y', target_values=[], distance_metric='EUCLIDEAN
 
 def allocation(raster, x='x', y='y', target_values=[],
                distance_metric='EUCLIDEAN'):
-    """Compute the proximity of all pixels in the image to a set of pixels in
-    the source image.
-
-    This function attempts to compute the proximity of all pixels in the
-    image to a set of pixels in the source image. The following options are
-    used to define the behavior of the function. By default all non-zero pixels
-    in ``raster.values`` will be considered the "target", and all proximities
-    will be computed in pixels.  Note that target pixels are set to the value
-    corresponding to a distance of zero.
-
-    Parameters
-    ----------
-    raster: xarray.DataArray
-        Input raster image with shape=(height, width)
-    x, y: 'x' and 'y' coordinates
-    target_values: list
-        Target pixel values to measure the distance from.  If this option is
-        not provided, proximity will be computed from non-zero pixel values.
-        Currently pixel values are internally processed as integers.
-    distance_metric: string
-        The metric for calculating distance between 2 points.
-        Valid distance_metrics include: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'
-        Default is 'EUCLIDEAN'.
-
-    Returns
-    -------
-    proximity: xarray.DataArray
-        Proximity image with shape=(height, width)
-    """
     allocation_img = _process(raster, x=x, y=y, target_values=target_values,
                               distance_metric=distance_metric,
                               process_mode=ALLOCATION)
-
-    result = xarray.DataArray(allocation_img,
+    # convert to have same type as of input @raster
+    result = xarray.DataArray((allocation_img).astype(raster.dtype),
                               coords=raster.coords,
                               dims=raster.dims,
                               attrs=raster.attrs)
