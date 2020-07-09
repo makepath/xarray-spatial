@@ -8,6 +8,9 @@ GREAT_CIRCLE = 1
 MANHATTAN = 2
 NAN = np.nan
 
+PROXIMITY = 0
+ALLOCATION = 1
+
 
 def _distance_metric_mapping():
 
@@ -234,19 +237,20 @@ def _process_proximity_line(source_line, x_coords, y_coords,
 
 
 @njit(nogil=True)
-def _proximity(img, x_coords, y_coords, target_values, distance_metric):
-
-    height, width = img.shape
-
+def _process_image(img, x_coords, y_coords, target_values,
+                   distance_metric, process_mode):
     max_distance = _distance(x_coords[0], x_coords[-1],
                              y_coords[0], y_coords[-1],
                              distance_metric)
+
+    height, width = img.shape
 
     pan_near_x = np.zeros(width, dtype=np.int64)
     pan_near_y = np.zeros(width, dtype=np.int64)
 
     # output of the function
     img_proximity = np.zeros(shape=(height, width), dtype=np.float64)
+    img_allocation = np.zeros(shape=(height, width), dtype=np.float64)
 
     # Loop from top to bottom of the image.
     for i in prange(width):
@@ -261,8 +265,11 @@ def _proximity(img, x_coords, y_coords, target_values, distance_metric):
             scan_line[i] = img[line][i]
 
         line_proximity = np.zeros(width, dtype=np.float64)
+        line_allocation = np.zeros(width, dtype=np.float64)
+
         for i in prange(width):
             line_proximity[i] = -1.0
+            line_allocation[i] = -1.0
 
         # left to right
         _process_proximity_line(scan_line, x_coords, y_coords,
@@ -310,10 +317,44 @@ def _proximity(img, x_coords, y_coords, target_values, distance_metric):
             if line_proximity[i] < 0 or np.isnan(scan_line[i]):
                 # this corresponds the the nan value of input raster.
                 line_proximity[i] = np.nan
+                line_allocation[i] = np.nan
+            else:
+                line_allocation[i] = img[pan_near_y[i], pan_near_x[i]]
 
         for i in prange(width):
             img_proximity[line][i] = line_proximity[i]
-    return img_proximity
+            img_allocation[line][i] = line_allocation[i]
+
+    if process_mode == PROXIMITY:
+        return img_proximity
+    elif process_mode == ALLOCATION:
+        return img_allocation
+
+
+def _process(raster, x='x', y='y', target_values=[],
+             distance_metric='EUCLIDEAN', process_mode=PROXIMITY):
+
+    raster_dims = raster.dims
+    if raster_dims != (y, x):
+        raise ValueError("raster.coords should be named as coordinates:"
+                         "(%s, %s)".format(y, x))
+
+    # convert distance metric from string to integer, the correct type
+    # of argument for function _distance()
+    distance_metric = DISTANCE_METRICS.get(distance_metric, None)
+
+    if distance_metric is None:
+        distance_metric = DISTANCE_METRICS['EUCLIDEAN']
+
+    target_values = np.asarray(target_values).astype(np.uint8)
+
+    img = raster.values
+    y_coords = raster.coords[y].values
+    x_coords = raster.coords[x].values
+
+    output_img = _process_image(img, x_coords, y_coords, target_values,
+                                distance_metric, process_mode)
+    return output_img
 
 
 # ported from
@@ -349,31 +390,54 @@ def proximity(raster, x='x', y='y', target_values=[], distance_metric='EUCLIDEAN
         Proximity image with shape=(height, width)
     """
 
-    raster_dims = raster.dims
-    if raster_dims != (y, x):
-        raise ValueError("In function proximity(). "
-                         "raster.coords should be named as coordinates:"
-                         "(%s, %s)".format(y, x))
-
-    # convert distance metric from string to integer, the correct type
-    # of argument for function _distance()
-    distance_metric = DISTANCE_METRICS.get(distance_metric, None)
-
-    if distance_metric is None:
-        distance_metric = DISTANCE_METRICS['EUCLIDEAN']
-
-    target_values = np.asarray(target_values).astype(np.uint8)
-
-    img = raster.values
-    y_coords = raster.coords[y].values
-    x_coords = raster.coords[x].values
-
-    proximity_img = _proximity(img, x_coords, y_coords, target_values,
-                               distance_metric)
+    proximity_img = _process(raster, x=x, y=y, target_values=target_values,
+                             distance_metric=distance_metric,
+                             process_mode=PROXIMITY)
 
     result = xarray.DataArray(proximity_img,
                               coords=raster.coords,
                               dims=raster.dims,
                               attrs=raster.attrs)
+    return result
 
+
+def allocation(raster, x='x', y='y', target_values=[],
+               distance_metric='EUCLIDEAN'):
+    """Compute the proximity of all pixels in the image to a set of pixels in
+    the source image.
+
+    This function attempts to compute the proximity of all pixels in the
+    image to a set of pixels in the source image. The following options are
+    used to define the behavior of the function. By default all non-zero pixels
+    in ``raster.values`` will be considered the "target", and all proximities
+    will be computed in pixels.  Note that target pixels are set to the value
+    corresponding to a distance of zero.
+
+    Parameters
+    ----------
+    raster: xarray.DataArray
+        Input raster image with shape=(height, width)
+    x, y: 'x' and 'y' coordinates
+    target_values: list
+        Target pixel values to measure the distance from.  If this option is
+        not provided, proximity will be computed from non-zero pixel values.
+        Currently pixel values are internally processed as integers.
+    distance_metric: string
+        The metric for calculating distance between 2 points.
+        Valid distance_metrics include: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'
+        Default is 'EUCLIDEAN'.
+
+    Returns
+    -------
+    proximity: xarray.DataArray
+        Proximity image with shape=(height, width)
+    """
+    allocation_img = _process(raster, x=x, y=y, target_values=target_values,
+                              distance_metric=distance_metric,
+                              process_mode=ALLOCATION)
+
+    result = xarray.DataArray(allocation_img,
+                              coords=raster.coords,
+                              dims=raster.dims,
+                              attrs=raster.attrs)
     return result
