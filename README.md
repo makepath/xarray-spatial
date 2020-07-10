@@ -75,6 +75,7 @@ Check out the user guide [here](/examples/user-guide.ipynb).
 ------
 
 ![title](composite_map.png)
+![title](makepath-supply-chain-international-shipping.png)
 
 #### Dependencies
 
