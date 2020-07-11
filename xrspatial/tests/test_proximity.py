@@ -22,7 +22,7 @@ cvs = ds.Canvas(plot_width=width,
                 x_range=(-20, 20),
                 y_range=(-20, 20))
 
-raster = cvs.points(df, x='lat', y='lon')
+raster = cvs.points(df, x='lon', y='lat')
 raster_image = raster.values
 nonzeros_raster = np.count_nonzero(raster_image)
 zeros_raster = width * height - nonzeros_raster
@@ -33,7 +33,7 @@ def test_proximity_default():
     # DEFAULT SETTINGS
     # proximity(img, max_distance=None, target_values=[], dist_units=PIXEL,
     #           nodata=np.nan)
-    default_proximity = proximity(raster, x='lat', y='lon')
+    default_proximity = proximity(raster, x='lon', y='lat')
     default_proximity_img = default_proximity.values
     zeros_default = (default_proximity_img == 0).sum()
 
@@ -54,7 +54,7 @@ def test_proximity_target_value():
     # TARGET VALUES SETTING
     target_values = [2, 3]
     num_target = (raster == 2).sum() + (raster == 3).sum()
-    tv_proximity = proximity(raster, x='lat', y='lon', target_values=target_values)
+    tv_proximity = proximity(raster, x='lon', y='lat', target_values=target_values)
     tv_proximity_img = tv_proximity.values
     tv_zeros = (tv_proximity_img == 0).sum()
 
@@ -71,7 +71,7 @@ def test_proximity_target_value():
 def test_proximity_manhattan():
 
     # distance_metric SETTING
-    dm_proximity = proximity(raster, 'lat', 'lon', distance_metric='MANHATTAN')
+    dm_proximity = proximity(raster, 'lon', 'lat', distance_metric='MANHATTAN')
 
     # output must be an xarray DataArray
     assert isinstance(dm_proximity, xa.DataArray)
@@ -91,7 +91,7 @@ def test_proximity_manhattan():
 def test_proximity_great_circle():
 
     # distance_metric SETTING
-    dm_proximity = proximity(raster, 'lat', 'lon', distance_metric='GREAT_CIRCLE')
+    dm_proximity = proximity(raster, 'lon', 'lat', distance_metric='GREAT_CIRCLE')
 
     # output must be an xarray DataArray
     assert isinstance(dm_proximity, xa.DataArray)
