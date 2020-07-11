@@ -1,12 +1,15 @@
 import pytest
 
-from xrspatial import proximity
+from xrspatial import proximity, allocation
 from xrspatial import great_circle_distance, manhattan_distance
+from xrspatial import euclidean_distance
 import datashader as ds
 
 import numpy as np
 import pandas as pd
 import xarray as xa
+
+from math import sqrt
 
 width = 10
 height = 5
@@ -141,3 +144,42 @@ def test_proximity_invalid_y_coords():
     with pytest.raises(Exception) as e_info:
         great_circle_distance(x1, x2, y1, y2)
         assert e_info
+
+
+def test_allocation():
+    raster = (cvs.points(df, x='lon', y='lat', agg=ds.any())).astype(int)
+    idy, idx = np.where(raster.data == 1)
+    # create test raster, all non-zero cells are unique,
+    # this is to test against corresponding proximity
+    for i in range(len(idx)):
+        raster.data[idy[i], idx[i]] = i + 1
+
+    allocation_agg = allocation(raster, x='lon', y='lat')
+    # output must be an xarray DataArray
+    assert isinstance(allocation_agg, xa.DataArray)
+    assert type(allocation_agg.values[0][0]) == raster.dtype
+    assert allocation_agg.shape == raster.shape
+    # targets not specified,
+    # Thus, targets are set to non-zero values of input @raster
+    targets = np.unique(raster.data[np.where(raster.data != 0)])
+    # non-zero cells (a.k.a targets) remain the same
+    for t in targets:
+        ry, rx = np.where(raster.data == t)
+        for y, x in zip(ry, rx):
+            assert allocation_agg.values[y, x] == t
+    # values of allocation output
+    assert (np.unique(allocation_agg.data) == targets).all()
+
+    # check against corresponding proximity
+    proximity_agg = proximity(raster, x='lon', y='lat')
+    xcoords = allocation_agg['lon'].data
+    ycoords = allocation_agg['lat'].data
+
+    for y in range(height):
+        for x in range(width):
+            a = allocation_agg.data[y, x]
+            py, px = np.where(raster.data == a)
+            # non-zero cells in raster are unique, thus len(px)=len(py)=1
+            d = euclidean_distance(xcoords[x], xcoords[px[0]],
+                                   ycoords[y], ycoords[py[0]])
+            assert proximity_agg.data[y, x] == sqrt(d)
