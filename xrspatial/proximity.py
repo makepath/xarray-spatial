@@ -441,6 +441,34 @@ def proximity(raster, x='x', y='y', target_values=[], distance_metric='EUCLIDEAN
 
 def allocation(raster, x='x', y='y', target_values=[],
                distance_metric='EUCLIDEAN'):
+    """Calculates, for all pixels in the input raster, the nearest source
+     based on a set of target values and a distance metric.
+
+    This function attempts to produce the value of nearest feature of all
+    pixels in the image to a set of pixels in the source image. The following
+    options are used to define the behavior of the function. By default all
+    non-zero pixels in ``raster.values`` will be considered as "target", and
+    all allocation will be computed in pixels.
+
+    Parameters
+    ----------
+    raster: xarray.DataArray
+        Input raster image with shape=(height, width)
+    x, y: 'x' and 'y' coordinates
+    target_values: list
+        Target pixel values to measure the distance from. If this option is
+        not provided, allocation will be computed from non-zero pixel values.
+        Currently pixel values are internally processed as integers.
+    distance_metric: string
+        The metric for calculating distance between 2 points.
+        Valid distance_metrics include: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'
+        Default is 'EUCLIDEAN'.
+
+    Returns
+    -------
+    allocation: xarray.DataArray
+        Proximity allocation image with shape=(height, width)
+    """
     allocation_img = _process(raster, x=x, y=y, target_values=target_values,
                               distance_metric=distance_metric,
                               process_mode=ALLOCATION)
