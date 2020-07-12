@@ -197,9 +197,10 @@ def _process_proximity_line(source_line, x_coords, y_coords,
         near_distance_square = max_distance ** 2 * 2.0
         if pan_near_x[pixel] != -1:
             # distance_square
-            dist_sqr = _distance(x_coords[pan_near_x[pixel]], x_coords[pixel],
-                                 y_coords[pan_near_y[pixel]], y_coords[line_id],
-                                 distance_metric)
+            dist = _distance(x_coords[pan_near_x[pixel]], x_coords[pixel],
+                             y_coords[pan_near_y[pixel]], y_coords[line_id],
+                             distance_metric)
+            dist_sqr = dist ** 2
             if dist_sqr < near_distance_square:
                 near_distance_square = dist_sqr
             else:
@@ -209,9 +210,10 @@ def _process_proximity_line(source_line, x_coords, y_coords,
         # Are we near(er) to the closest target to the left (right) pixel?
         last = pixel - step
         if pixel != start and pan_near_x[last] != -1:
-            dist_sqr = _distance(x_coords[pan_near_x[last]], x_coords[pixel],
-                                 y_coords[pan_near_y[last]], y_coords[line_id],
-                                 distance_metric)
+            dist = _distance(x_coords[pan_near_x[last]], x_coords[pixel],
+                             y_coords[pan_near_y[last]], y_coords[line_id],
+                             distance_metric)
+            dist_sqr = dist ** 2
             if dist_sqr < near_distance_square:
                 near_distance_square = dist_sqr
                 pan_near_x[pixel] = pan_near_x[last]
@@ -221,9 +223,10 @@ def _process_proximity_line(source_line, x_coords, y_coords,
         #  topright (bottom left) pixel?
         tr = pixel + step
         if tr != end and pan_near_x[tr] != -1:
-            dist_sqr = _distance(x_coords[pan_near_x[tr]], x_coords[pixel],
-                                 y_coords[pan_near_y[tr]], y_coords[line_id],
-                                 distance_metric)
+            dist = _distance(x_coords[pan_near_x[tr]], x_coords[pixel],
+                             y_coords[pan_near_y[tr]], y_coords[line_id],
+                             distance_metric)
+            dist_sqr = dist ** 2
             if dist_sqr < near_distance_square:
                 near_distance_square = dist_sqr
                 pan_near_x[pixel] = pan_near_x[tr]

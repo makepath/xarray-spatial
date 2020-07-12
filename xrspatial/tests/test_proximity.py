@@ -146,4 +146,4 @@ def test_allocation():
             # non-zero cells in raster are unique, thus len(px)=len(py)=1
             d = euclidean_distance(xcoords[x], xcoords[px[0]],
                                    ycoords[y], ycoords[py[0]])
-            assert proximity_agg.data[y, x] == sqrt(d)
+            assert proximity_agg.data[y, x] == d
