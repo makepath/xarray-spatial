@@ -559,119 +559,89 @@ def _bool_crop(arr, rows_flags, cols_flags):
 def _trim(data, excludes):
 
     rows, cols = data.shape
-    rows_to_skip = np.zeros(rows, dtype=np.bool_)
-    cols_to_skip = np.zeros(cols, dtype=np.bool_)
 
     # find empty top rows
+    top = 0
+    scan_complete = False
     for y in range(rows):
-        scan_complete = False
+
         if scan_complete:
             break
-        else:
-            for x in range(cols):
-                val = data[y, x]
-                is_last = x == cols - 1
-                is_nodata = False
-                for e in excludes:
-                    if e == val:
-                        is_nodata = True
-                        break
-                    else:
-                        continue
 
-                if is_nodata and is_last:
-                    rows_to_skip[y] = True
-                    continue
-                elif is_nodata:
-                    continue
-                else:
-                    scan_complete = True
+        top = y
+        for x in range(cols):
+            val = data[y, x]
+            is_nodata = False
+            for e in excludes:
+                if e == val:
+                    is_nodata = True
                     break
+
+            if not is_nodata:
+                scan_complete = True
+                break
 
     # find empty bottom rows
+    bottom = 0
+    scan_complete = False
     for y in range(rows-1, -1, -1):
-        scan_complete = False
         if scan_complete:
             break
-        else:
-            for x in range(cols):
-                val = data[y, x]
-                is_last = x == cols - 1
-                is_nodata = False
-                for e in excludes:
-                    if e == val:
-                        is_nodata = True
-                        break
-                    else:
-                        continue
-
-                if is_nodata and is_last:
-                    rows_to_skip[y] = True
-                    continue
-                elif is_nodata:
-                    continue
-                else:
-                    scan_complete = True
+        bottom = y
+        for x in range(cols):
+            val = data[y, x]
+            is_nodata = False
+            for e in excludes:
+                if e == val:
+                    is_nodata = True
                     break
+            if not is_nodata:
+                scan_complete = True
+                break
 
     # find empty left cols
+    left = 0
+    scan_complete = False
     for x in range(cols):
-        scan_complete = False
         if scan_complete:
             break
-        else:
-            for y in range(rows):
-                val = data[y, x]
-                is_last = y == rows - 1
-                is_nodata = False
-                for e in excludes:
-                    if e == val:
-                        is_nodata = True
-                        break
-                    else:
-                        continue
-
-                if is_nodata and is_last:
-                    cols_to_skip[x] = True
-                    continue
-                elif is_nodata:
-                    continue
-                else:
-                    scan_complete = True
+        left = x
+        for y in range(rows):
+            val = data[y, x]
+            is_nodata = False
+            for e in excludes:
+                if e == val:
+                    is_nodata = True
                     break
+            if not is_nodata:
+                scan_complete = True
+                break
 
     # find empty right cols
+    right = 0
+    scan_complete = False
     for x in range(cols-1, -1, -1):
-        scan_complete = False
         if scan_complete:
             break
-        else:
-            for y in range(rows):
-                val = data[y, x]
-                is_last = y == rows - 1
-                is_nodata = False
-                for e in excludes:
-                    if e == val:
-                        is_nodata = True
-                        break
-                    else:
-                        continue
-
-                if is_nodata and is_last:
-                    cols_to_skip[x] = True
-                    continue
-                elif is_nodata:
-                    continue
-                else:
-                    scan_complete = True
+        right = x
+        for y in range(rows):
+            val = data[y, x]
+            is_nodata = False
+            for e in excludes:
+                if e == val:
+                    is_nodata = True
                     break
+            if not is_nodata:
+                scan_complete = True
+                break
 
-    return rows_to_skip, cols_to_skip
+    return top, bottom, left, right
 
 
 def trim(raster, values=(np.nan,), name='trim'):
     """
-    Trim edges of raster based values.
+    Trim scans from the edges and eliminates rows / cols
+    which only contain the values supplied.
 
     Parameters
     ----------
@@ -689,8 +659,8 @@ def trim(raster, values=(np.nan,), name='trim'):
     -----
     This operation will change the output size of the raster
     """
-    skip_rows, skip_cols = _trim(raster.data, values)
-    arr = _bool_crop(raster, ~skip_rows, ~skip_cols)
+    top, bottom, left, right = _trim(raster.data, values)
+    arr = raster[top:bottom+1, left:right+1]
     arr.name = name
     return arr
 
@@ -699,104 +669,109 @@ def trim(raster, values=(np.nan,), name='trim'):
 def _crop(data, values):
 
     rows, cols = data.shape
-    rows_to_skip = np.zeros(rows, dtype=np.bool_)
-    cols_to_skip = np.zeros(cols, dtype=np.bool_)
+
+    top = -1
+    bottom = -1
+    left = -1
+    right = -1
 
     # find empty top rows
+    top = 0
+    scan_complete = False
     for y in range(rows):
-        scan_complete = False
+
         if scan_complete:
             break
-        else:
-            for x in range(cols):
-                val = data[y, x]
-                is_last = x == cols - 1
-                for e in values:
-                    if e == val:
-                        scan_complete = True
-                        break
-                    else:
-                        continue
 
-                if scan_complete:
+        top = y
+
+        for x in range(cols):
+            val = data[y, x]
+            for v in values:
+                if v == val:
+                    scan_complete = True
                     break
-                elif is_last:
-                    rows_to_skip[y] = True
+                else:
+                    continue
+
+            if scan_complete:
+                break
 
     # find empty bottom rows
+    bottom = 0
+    scan_complete = False
     for y in range(rows-1, -1, -1):
-        scan_complete = False
+
         if scan_complete:
             break
-        else:
-            for x in range(cols):
-                val = data[y, x]
-                is_last = x == cols - 1
-                for e in values:
-                    if e == val:
-                        scan_complete = True
-                        break
-                    else:
-                        continue
 
-                if scan_complete:
+        bottom = y
+
+        for x in range(cols):
+            val = data[y, x]
+            for e in values:
+                if e == val:
+                    scan_complete = True
                     break
-                elif is_last:
-                    rows_to_skip[y] = True
+                else:
+                    continue
+
+            if scan_complete:
+                break
 
     # find empty left cols
+    left = 0
+    scan_complete = False
     for x in range(cols):
-        scan_complete = False
+
         if scan_complete:
             break
-        else:
-            for y in range(rows):
-                val = data[y, x]
-                is_last = y == rows - 1
-                for e in values:
-                    if e == val:
-                        scan_complete = True
-                        break
-                    else:
-                        continue
 
-                if scan_complete:
+        left = x
+
+        for y in range(rows):
+            val = data[y, x]
+            for e in values:
+                if e == val:
+                    scan_complete = True
                     break
-                elif is_last:
-                    cols_to_skip[x] = True
+                else:
+                    continue
+
+            if scan_complete:
+                break
 
     # find empty right cols
+    right = 0
+    scan_complete = False
     for x in range(cols-1, -1, -1):
-        scan_complete = False
         if scan_complete:
             break
-        else:
-            for y in range(rows):
-                val = data[y, x]
-                is_last = y == rows - 1
-                for e in values:
-                    if e == val:
-                        scan_complete = True
-                        break
-                    else:
-                        continue
-
-                if scan_complete:
+        right = x
+        for y in range(rows):
+            val = data[y, x]
+            for e in values:
+                if e == val:
+                    scan_complete = True
                     break
-                elif is_last:
-                    cols_to_skip[x] = True
+                else:
+                    continue
 
-    return rows_to_skip, cols_to_skip
+            if scan_complete:
+                break
+
+    return top, bottom, left, right
 
 
 def crop(raster, values, name='crop'):
     """
-    Zonal Crop: Scans edges and eliminates rows / cols
+    Crop scans from edges and eliminates rows / cols
     until one of the input values is found.
 
     Parameters
     ----------
     raster : xr.DataArray
+      input raster
     values : list, tuple
        list of zone ids to crop raster
     name : str
@@ -811,7 +786,7 @@ def crop(raster, values, name='crop'):
     This operation will change the output size of the raster
 
     """
-    skip_rows, skip_cols = _crop(raster.data, values)
-    arr = _bool_crop(raster, ~skip_rows, ~skip_cols)
+    top, bottom, left, right = _crop(raster.data, values)
+    arr = raster[top:bottom+1, left:right+1]
     arr.name = name
     return arr
