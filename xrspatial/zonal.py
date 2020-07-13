@@ -763,17 +763,22 @@ def _crop(data, values):
     return top, bottom, left, right
 
 
-def crop(raster, values, name='crop'):
+def crop(zones, values, zones_ids, name='crop'):
     """
     Crop scans from edges and eliminates rows / cols
     until one of the input values is found.
 
     Parameters
     ----------
-    raster : xr.DataArray
-      input raster
-    values : list, tuple
+    zones : xr.DataArray
+      input zone raster
+
+    values : xr.DataArray
+      input values raster
+
+    zones_ids : list, tuple
        list of zone ids to crop raster
+
     name : str
       output xr.DataArray.name property
 
@@ -786,7 +791,7 @@ def crop(raster, values, name='crop'):
     This operation will change the output size of the raster
 
     """
-    top, bottom, left, right = _crop(raster.data, values)
-    arr = raster[top:bottom+1, left:right+1]
+    top, bottom, left, right = _crop(zones.data, zones_ids)
+    arr = values[top:bottom+1, left:right+1]
     arr.name = name
     return arr

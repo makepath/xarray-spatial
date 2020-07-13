@@ -513,7 +513,7 @@ def test_crop():
                     [0, 0, 0, 0]], dtype=np.int64)
 
     raster = create_test_arr(arr)
-    result = crop(raster, values=(1, 3))
+    result = crop(raster, raster, zones_ids=(1, 3))
     assert result.shape == (4, 3)
 
     trimmed_arr = np.array([[4, 0, 3],
@@ -533,7 +533,7 @@ def test_crop_nothing_to_crop():
                     [0, 0, 0, 0]], dtype=np.int64)
 
     raster = create_test_arr(arr)
-    result = crop(raster, values=(0,))
+    result = crop(raster, raster, zones_ids=(0,))
     assert result.shape == arr.shape
     compare = arr == result.data
     assert compare.all()
