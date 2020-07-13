@@ -73,6 +73,9 @@ hillshaded_dataarray = hillshade(my_dataarray)
 Check out the user guide [here](/examples/user-guide.ipynb).
 
 ------
+Check out [Xarray-Spatial on YouTube](https://www.youtube.com/watch?v=z4xrkglmg80)
+------
+
 
 ![title](composite_map.png)
 ![title](makepath-supply-chain-international-shipping.png)
