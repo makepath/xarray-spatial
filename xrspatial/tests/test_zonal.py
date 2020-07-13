@@ -6,6 +6,9 @@ import xarray as xa
 from xrspatial import zonal_stats as stats
 from xrspatial import zonal_apply as apply
 from xrspatial import zonal_crosstab as crosstab
+from xrspatial import trim
+from xrspatial import crop
+
 
 from xrspatial.zonal import regions
 
@@ -402,3 +405,135 @@ def test_regions_eight_pixel_connectivity_float():
     raster_regions = regions(raster, neighborhood=8)
     assert len(np.unique(raster_regions.data)) == 3
     assert raster.shape == raster_regions.shape
+
+
+def test_trim():
+    arr = np.array([[0, 0, 0, 0],
+                    [0, 4, 0, 0],
+                    [0, 4, 4, 0],
+                    [0, 1, 1, 0],
+                    [0, 0, 0, 0]], dtype=np.int64)
+    raster = create_test_arr(arr)
+    trimmed_raster = trim(raster, values=(0,))
+    assert trimmed_raster.shape == (3, 2)
+
+    trimmed_arr = np.array([[4, 0],
+                            [4, 4],
+                            [1, 1]], dtype=np.int64)
+
+    compare = trimmed_arr == trimmed_raster.data
+    assert compare.all()
+
+
+def test_trim_left_top():
+    arr = np.array([[0, 0, 0, 0],
+                    [0, 4, 0, 3],
+                    [0, 4, 4, 3],
+                    [0, 1, 1, 3],
+                    [0, 1, 1, 3]], dtype=np.int64)
+
+    raster = create_test_arr(arr)
+    trimmed_raster = trim(raster, values=(0,))
+    assert trimmed_raster.shape == (4, 3)
+
+    trimmed_arr = np.array([[4, 0, 3],
+                            [4, 4, 3],
+                            [1, 1, 3],
+                            [1, 1, 3]], dtype=np.int64)
+
+    compare = trimmed_arr == trimmed_raster.data
+    assert compare.all()
+
+
+def test_trim_right_top():
+    arr = np.array([[0, 0, 0, 0],
+                    [4, 0, 3, 0],
+                    [4, 4, 3, 0],
+                    [1, 1, 3, 0],
+                    [1, 1, 3, 0]], dtype=np.int64)
+
+    raster = create_test_arr(arr)
+    trimmed_raster = trim(raster, values=(0,))
+    assert trimmed_raster.shape == (4, 3)
+
+    trimmed_arr = np.array([[4, 0, 3],
+                            [4, 4, 3],
+                            [1, 1, 3],
+                            [1, 1, 3]], dtype=np.int64)
+
+    compare = trimmed_arr == trimmed_raster.data
+    assert compare.all()
+
+
+def test_trim_left_bottom():
+    arr = np.array([[4, 0, 3, 0],
+                    [4, 4, 3, 0],
+                    [1, 1, 3, 0],
+                    [1, 1, 3, 0],
+                    [0, 0, 0, 0]], dtype=np.int64)
+
+    raster = create_test_arr(arr)
+    trimmed_raster = trim(raster, values=(0,))
+    assert trimmed_raster.shape == (4, 3)
+
+    trimmed_arr = np.array([[4, 0, 3],
+                            [4, 4, 3],
+                            [1, 1, 3],
+                            [1, 1, 3]], dtype=np.int64)
+
+    compare = trimmed_arr == trimmed_raster.data
+    assert compare.all()
+
+
+def test_trim_right_bottom():
+    arr = np.array([[0, 4, 0, 3],
+                    [0, 4, 4, 3],
+                    [0, 1, 1, 3],
+                    [0, 1, 1, 3],
+                    [0, 0, 0, 0]], dtype=np.int64)
+
+    raster = create_test_arr(arr)
+    trimmed_raster = trim(raster, values=(0,))
+    assert trimmed_raster.shape == (4, 3)
+
+    trimmed_arr = np.array([[4, 0, 3],
+                            [4, 4, 3],
+                            [1, 1, 3],
+                            [1, 1, 3]], dtype=np.int64)
+
+    compare = trimmed_arr == trimmed_raster.data
+    assert compare.all()
+
+
+def test_crop():
+    arr = np.array([[0, 4, 0, 3],
+                    [0, 4, 4, 3],
+                    [0, 1, 1, 3],
+                    [0, 1, 1, 3],
+                    [0, 0, 0, 0]], dtype=np.int64)
+
+    raster = create_test_arr(arr)
+    result = crop(raster, raster, zones_ids=(1, 3))
+    assert result.shape == (4, 3)
+
+    trimmed_arr = np.array([[4, 0, 3],
+                            [4, 4, 3],
+                            [1, 1, 3],
+                            [1, 1, 3]], dtype=np.int64)
+
+    compare = trimmed_arr == result.data
+    assert compare.all()
+
+
+def test_crop_nothing_to_crop():
+    arr = np.array([[0, 4, 0, 3],
+                    [0, 4, 4, 3],
+                    [0, 1, 1, 3],
+                    [0, 1, 1, 3],
+                    [0, 0, 0, 0]], dtype=np.int64)
+
+    raster = create_test_arr(arr)
+    result = crop(raster, raster, zones_ids=(0,))
+    assert result.shape == arr.shape
+    compare = arr == result.data
+    assert compare.all()

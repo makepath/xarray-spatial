@@ -97,9 +97,10 @@ def stats(zones, values, stat_funcs=['mean', 'max', 'min', 'std',
     unique_zones = np.unique(zones_val).astype(int)
 
     num_zones = len(unique_zones)
+
     # do not consider zone with 0s
     if 0 in unique_zones:
-        num_zones = len(unique_zones) - 1
+        num_zones = len(unique_zones) - 1  # NOQA
 
     # mask out all invalid values_val such as: nan, inf
     masked_values = np.ma.masked_invalid(values_val)
@@ -476,7 +477,6 @@ def _area_connectivity(data, n=4):
             if np.isnan(val):
                 continue
 
-
             # check in has matching value in neighborhood
             rtol = 1e-05
             atol = 1e-08
@@ -487,7 +487,8 @@ def _area_connectivity(data, n=4):
             assigned_values_min = None
             for j in range(len(neighbor_matches)):
                 area_val = area_window[neighbor_matches[j]]
-                if assigned_values_min is not None and assigned_values_min != area_val:
+                nn = assigned_values_min is not None
+                if nn and assigned_values_min != area_val:
                     if assigned_values_min > area_val:
 
                         # replace
@@ -544,3 +545,253 @@ def regions(raster, neighborhood=4, name='regions'):
     return DataArray(out, name=name,
                      dims=raster.dims,
                      coords=raster.coords, attrs=raster.attrs)
+
+
+def _bool_crop(arr, rows_flags, cols_flags):
+    top = np.argwhere(rows_flags).flatten()[0]
+    bottom = np.argwhere(rows_flags).flatten()[-1]
+    left = np.argwhere(cols_flags).flatten()[0]
+    right = np.argwhere(cols_flags).flatten()[-1]
+    return arr[top:bottom+1, left:right+1]
+
+
+@ngjit
+def _trim(data, excludes):
+
+    rows, cols = data.shape
+
+    # find empty top rows
+    top = 0
+    scan_complete = False
+    for y in range(rows):
+
+        if scan_complete:
+            break
+
+        top = y
+        for x in range(cols):
+            val = data[y, x]
+            is_nodata = False
+            for e in excludes:
+                if e == val:
+                    is_nodata = True
+                    break
+
+            if not is_nodata:
+                scan_complete = True
+                break
+
+    # find empty bottom rows
+    bottom = 0
+    scan_complete = False
+    for y in range(rows-1, -1, -1):
+        if scan_complete:
+            break
+        bottom = y
+        for x in range(cols):
+            val = data[y, x]
+            is_nodata = False
+            for e in excludes:
+                if e == val:
+                    is_nodata = True
+                    break
+            if not is_nodata:
+                scan_complete = True
+                break
+
+    # find empty left cols
+    left = 0
+    scan_complete = False
+    for x in range(cols):
+        if scan_complete:
+            break
+        left = x
+        for y in range(rows):
+            val = data[y, x]
+            is_nodata = False
+            for e in excludes:
+                if e == val:
+                    is_nodata = True
+                    break
+            if not is_nodata:
+                scan_complete = True
+                break
+
+    # find empty right cols
+    right = 0
+    scan_complete = False
+    for x in range(cols-1, -1, -1):
+        if scan_complete:
+            break
+        right = x
+        for y in range(rows):
+            val = data[y, x]
+            is_nodata = False
+            for e in excludes:
+                if e == val:
+                    is_nodata = True
+                    break
+            if not is_nodata:
+                scan_complete = True
+                break
+
+    return top, bottom, left, right
+
+
+def trim(raster, values=(np.nan,), name='trim'):
+    """
+    Trim scans from the edges and eliminates rows / cols
+    which only contain the values supplied.
+
+    Parameters
+    ----------
+    raster : xr.DataArray
+    values : list, tuple
+       list of zone ids to trim from raster edge
+    name : str
+      output xr.DataArray.name property
+
+    Returns
+    -------
+    data: DataArray
+
+    Notes
+    -----
+    This operation will change the output size of the raster
+    """
+    top, bottom, left, right = _trim(raster.data, values)
+    arr = raster[top:bottom+1, left:right+1]
+    arr.name = name
+    return arr
+
+
+@ngjit
+def _crop(data, values):
+
+    rows, cols = data.shape
+
+    top = -1
+    bottom = -1
+    left = -1
+    right = -1
+
+    # find empty top rows
+    top = 0
+    scan_complete = False
+    for y in range(rows):
+
+        if scan_complete:
+            break
+
+        top = y
+
+        for x in range(cols):
+            val = data[y, x]
+            for v in values:
+                if v == val:
+                    scan_complete = True
+                    break
+                else:
+                    continue
+
+            if scan_complete:
+                break
+
+    # find empty bottom rows
+    bottom = 0
+    scan_complete = False
+    for y in range(rows-1, -1, -1):
+
+        if scan_complete:
+            break
+
+        bottom = y
+
+        for x in range(cols):
+            val = data[y, x]
+            for e in values:
+                if e == val:
+                    scan_complete = True
+                    break
+                else:
+                    continue
+
+            if scan_complete:
+                break
+
+    # find empty left cols
+    left = 0
+    scan_complete = False
+    for x in range(cols):
+
+        if scan_complete:
+            break
+
+        left = x
+
+        for y in range(rows):
+            val = data[y, x]
+            for e in values:
+                if e == val:
+                    scan_complete = True
+                    break
+                else:
+                    continue
+
+            if scan_complete:
+                break
+
+    # find empty right cols
+    right = 0
+    scan_complete = False
+    for x in range(cols-1, -1, -1):
+        if scan_complete:
+            break
+        right = x
+        for y in range(rows):
+            val = data[y, x]
+            for e in values:
+                if e == val:
+                    scan_complete = True
+                    break
+                else:
+                    continue
+
+            if scan_complete:
+                break
+
+    return top, bottom, left, right
+
+
+def crop(zones, values, zones_ids, name='crop'):
+    """
+    Crop scans from edges and eliminates rows / cols
+    until one of the input values is found.
+
+    Parameters
+    ----------
+    zones : xr.DataArray
+      input zone raster
+
+    values : xr.DataArray
+      input values raster
+
+    zones_ids : list, tuple
+       list of zone ids to crop raster
+
+    name : str
+      output xr.DataArray.name property
+
+    Returns
+    -------
+    data: DataArray
+
+    Notes
+    -----
+    This operation will change the output size of the raster
+
+    """
+    top, bottom, left, right = _crop(zones.data, zones_ids)
+    arr = values[top:bottom+1, left:right+1]
+    arr.name = name
+    return arr

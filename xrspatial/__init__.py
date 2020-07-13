@@ -26,6 +26,9 @@ from xrspatial.viewshed import viewshed  # noqa
 from xrspatial.zonal import apply as zonal_apply  # noqa
 from xrspatial.zonal import crosstab as zonal_crosstab  # noqa
 from xrspatial.zonal import stats as zonal_stats  # noqa
+from xrspatial.zonal import regions as regions  # noqa
+from xrspatial.zonal import trim # noqa
+from xrspatial.zonal import crop # noqa
 
 from xrspatial.classify import quantile  # noqa
 from xrspatial.classify import equal_interval  # noqa
