@@ -1,8 +1,10 @@
 import pytest
 
-from xrspatial import proximity, allocation
+from xrspatial import proximity, allocation, direction
 from xrspatial import great_circle_distance, manhattan_distance
 from xrspatial import euclidean_distance
+from xrspatial.proximity import _calc_direction
+
 import datashader as ds
 
 import numpy as np
@@ -39,13 +41,15 @@ def test_great_circle_distance():
 def create_test_raster():
     height, width = 5, 10
     df = pd.DataFrame({
-        'lat': [-10, -10, -4, -4, 1, 3, 7, 7, 7],
-        'lon': [-5, -10, -5, -5, 0, 5, 10, 10, 10]
+        'lat': [-5, -1, -4, 7, 1, 3],
+        'lon': [-5, -1, -5, -5, 0, 5],
+        'id':  [1, 2, 3, 4, 5, 6]
     })
     cvs = ds.Canvas(plot_width=width, plot_height=height,
                     x_range=(-20, 20), y_range=(-20, 20))
 
-    raster = cvs.points(df, x='lon', y='lat')
+    raster = cvs.points(df, x='lon', y='lat', agg=ds.min('id'))
+    raster.data[~np.isfinite(raster.data)] = 0
     return raster
 
 
@@ -56,9 +60,9 @@ def test_proximity():
     default_prox = proximity(raster, x='lon', y='lat')
     # output must be an xarray DataArray
     assert isinstance(default_prox, xa.DataArray)
-    assert isinstance(default_prox.values, np.ndarray)
     assert type(default_prox.values[0][0]) == np.float64
     assert default_prox.shape == raster.shape
+    # in this test case, where no polygon is completely inside another polygon,
     # number of non-zeros (target pixels) in original image
     # must be equal to the number of zeros (target pixels) in proximity matrix
     assert len(np.where(raster.data != 0)[0]) == \
@@ -70,7 +74,6 @@ def test_proximity():
                             target_values=target_values)
     # output must be an xarray DataArray
     assert isinstance(target_prox, xa.DataArray)
-    assert isinstance(target_prox.values, np.ndarray)
     assert type(target_prox.values[0][0]) == np.float64
     assert target_prox.shape == raster.shape
     assert (len(np.where(raster.data == 2)[0]) +
@@ -82,7 +85,6 @@ def test_proximity():
                                distance_metric='MANHATTAN')
     # output must be an xarray DataArray
     assert isinstance(manhattan_prox, xa.DataArray)
-    assert isinstance(manhattan_prox.values, np.ndarray)
     assert type(manhattan_prox.values[0][0]) == np.float64
     assert manhattan_prox.shape == raster.shape
     # all output values must be in range [0, max_possible_dist]
@@ -98,7 +100,6 @@ def test_proximity():
                                   distance_metric='GREAT_CIRCLE')
     # output must be an xarray DataArray
     assert isinstance(great_circle_prox, xa.DataArray)
-    assert isinstance(great_circle_prox.values, np.ndarray)
     assert type(great_circle_prox.values[0][0]) == np.float64
     assert great_circle_prox.shape == raster.shape
     # all output values must be in range [0, max_possible_dist]
@@ -111,12 +112,9 @@ def test_proximity():
 
 
 def test_allocation():
-    raster = create_test_raster()
-    idy, idx = np.where(raster.data != 0)
     # create test raster, all non-zero cells are unique,
     # this is to test against corresponding proximity
-    for i in range(len(idx)):
-        raster.data[idy[i], idx[i]] = i + 1
+    raster = create_test_raster()
 
     allocation_agg = allocation(raster, x='lon', y='lat')
     # output must be an xarray DataArray
