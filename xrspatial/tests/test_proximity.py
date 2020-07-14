@@ -145,3 +145,37 @@ def test_allocation():
             d = euclidean_distance(xcoords[x], xcoords[px[0]],
                                    ycoords[y], ycoords[py[0]])
             assert proximity_agg.data[y, x] == d
+
+
+def test_calc_direction():
+    n = 3
+    x1, y1 = 1, 1
+    output = np.zeros(shape=(n, n))
+    for y2 in range(n):
+        for x2 in range(n):
+            output[y2, x2] = _calc_direction(x2, x1, y2, y1)
+
+    expected_output = np.asarray([[135, 180, 225],
+                                  [90,  0,   270],
+                                  [45,  360, 315]])
+    # set a tolerance of 1e-5
+    tolerance = 1e-5
+    assert (abs(output-expected_output) <= tolerance).all()
+
+
+def test_direction():
+    raster = create_test_raster()
+    direction_agg = direction(raster, x='lon', y='lat')
+
+    # output must be an xarray DataArray
+    assert isinstance(direction_agg, xa.DataArray)
+    assert type(direction_agg.values[0][0]) == np.float
+    assert direction_agg.shape == raster.shape
+    # in this test case, where no polygon is completely inside another polygon,
+    # number of non-zeros (target pixels) in original image
+    # must be equal to the number of zeros (target pixels) in proximity matrix
+    assert len(np.where(raster.data != 0)[0]) == \
+        len(np.where(direction_agg.data == 0)[0])
+    # values are within [0, 360]
+    assert np.min(direction_agg.data) >= 0
+    assert np.max(direction_agg.data) <= 360
