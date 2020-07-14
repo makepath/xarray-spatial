@@ -169,13 +169,33 @@ def test_direction():
 
     # output must be an xarray DataArray
     assert isinstance(direction_agg, xa.DataArray)
-    assert type(direction_agg.values[0][0]) == np.float
+    assert type(direction_agg.values[0][0]) == np.float64
     assert direction_agg.shape == raster.shape
+    assert direction_agg.dims == raster.dims
+    assert direction_agg.attrs == raster.attrs
+    for c in direction_agg.coords:
+        assert (direction_agg[c] == raster.coords[c]).all()
+
     # in this test case, where no polygon is completely inside another polygon,
     # number of non-zeros (target pixels) in original image
     # must be equal to the number of zeros (target pixels) in proximity matrix
     assert len(np.where(raster.data != 0)[0]) == \
         len(np.where(direction_agg.data == 0)[0])
+
     # values are within [0, 360]
     assert np.min(direction_agg.data) >= 0
     assert np.max(direction_agg.data) <= 360
+
+    # test against allocation
+    allocation_agg = allocation(raster, x='lon', y='lat')
+    xcoords = allocation_agg['lon'].data
+    ycoords = allocation_agg['lat'].data
+
+    for y in range(raster.shape[0]):
+        for x in range(raster.shape[1]):
+            a = allocation_agg.data[y, x]
+            py, px = np.where(raster.data == a)
+            # non-zero cells in raster are unique, thus len(px)=len(py)=1
+            d = _calc_direction(xcoords[x], xcoords[px[0]],
+                                ycoords[y], ycoords[py[0]])
+            assert direction_agg.data[y, x] == d
