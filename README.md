@@ -19,12 +19,15 @@
 
 -------
 
+https://github.com/makepath/xarray-spatial/blob/master/blob/master/examples/user-guide.ipynb
+/examples/user-guide.ipynb
+
 | | | | | |
 |:-------------------------:|:-------------------------:|:-------------------------:|:-------------------------:|:-------------------------:|
-|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/0-0.png"></a> | <a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/0-1.png"></a>|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/0-2.png"></a>|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/0-3.png"></a>|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/0-4.png"></a>|
-|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/1-0.png"></a> | <a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/1-1.png"></a>|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/1-2.png"></a>|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/1-3.png"></a>|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/1-4.png"></a>|
-|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/2-0.png"></a> | <a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/2-1.png"></a>|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/2-2.png"></a>|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/2-3.png"></a>|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/2-4.png"></a>|
-|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/3-0.png"></a> | <a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/3-1.png"></a>|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/3-2.png"></a>|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/3-3.png"></a>|<a href="/blob/master/examples/user-guide.ipynb"><img width="1604" src="img/3-4.png"></a>|
+|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/0-0.png"></a> | <a href="/examples/user-guide.ipynb"><img width="1604" src="img/0-1.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/0-2.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/0-3.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/0-4.png"></a>|
+|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-0.png"></a> | <a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-1.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-2.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-3.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-4.png"></a>|
+|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-0.png"></a> | <a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-1.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-2.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-3.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-4.png"></a>|
+|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-0.png"></a> | <a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-1.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-2.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-3.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-4.png"></a>|
 
 `xarray-spatial` implements common raster analysis functions using Numba and provides an easy-to-install, easy-to-extend codebase for raster analysis.
 
