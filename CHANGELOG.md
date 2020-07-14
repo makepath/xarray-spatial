@@ -1,3 +1,12 @@
+### Version 0.0.6 - 7/14/2020
+- Added Proximity Direction (proximity)
+- Added Proximity Allocation (proximity)
+- Added Zonal Crop (zonal)
+- Added Trim (zonal)
+- Added ebbi (multispectral)
+- Added more tests for slope (slope)
+- Added image grid (readme)
+
 ### Version 0.0.5 - 7/5/2020
 - Changed ndvi.py -> multispectral.py
 - Added arvi (multispectral)
