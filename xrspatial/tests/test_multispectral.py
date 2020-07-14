@@ -3,6 +3,7 @@ import numpy as np
 import xarray as xa
 
 from xrspatial.multispectral import arvi
+from xrspatial.multispectral import ebbi
 from xrspatial.multispectral import evi
 from xrspatial.multispectral import nbr
 from xrspatial.multispectral import nbr2
@@ -311,3 +312,35 @@ def test_ndmi():
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
+
+def test_ebbi():
+
+    max_val = 2**16 - 1
+
+    arr1 = np.array([[max_val, max_val, max_val, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
+
+    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
+
+    arr3 = np.array([[10.0, 10.0, 10.0, 10.0],
+                     [10.0, max_val, max_val, 10.0],
+                     [10.0, max_val, max_val, 10.0],
+                     [10.0, max_val, max_val, 10.0],
+                     [10.0, 10.0, 10.0, 10.0]], dtype=np.float64)
+
+    red = create_test_arr(arr1)
+    swir = create_test_arr(arr2)
+    tir = create_test_arr(arr3)
+
+    result = ebbi(red, swir, tir)
+
+    assert result.dims == red.dims
+    assert isinstance(result, xa.DataArray)
+    assert result.dims == red.dims
