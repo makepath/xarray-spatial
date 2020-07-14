@@ -1040,6 +1040,9 @@ def _calculate_angle(event_x, event_y, viewpoint_x, viewpoint_y):
         # between 3rd and 4th quadrant
         return PI * 3.0 / 2.0
 
+    if event_x == viewpoint_x and event_y == viewpoint_y:
+        return 0
+    
     # Calculate angle between (x1, y1) and (x2, y2)
     ang = atan(fabs(event_y - viewpoint_y) / fabs(event_x - viewpoint_x))
 
@@ -1068,7 +1071,6 @@ def _calculate_angle(event_x, event_y, viewpoint_x, viewpoint_y):
         # 4th quadrant
         return PI * 2.0 - ang
 
-    assert event_x == viewpoint_x and event_y == viewpoint_y
     return 0
 
 
