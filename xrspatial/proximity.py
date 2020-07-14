@@ -10,6 +10,7 @@ NAN = np.nan
 
 PROXIMITY = 0
 ALLOCATION = 1
+DIRECTION = 2
 
 
 def _distance_metric_mapping():
@@ -244,6 +245,18 @@ def _process_proximity_line(source_line, x_coords, y_coords,
     return
 
 
+@njit
+def _direction(x1, x2, y1, y2):
+    # Calculate direction from (x1, y1) to a source cell (x2, y2).
+    # The output values are based on compass directions,
+    # 90 to the east, 180 to the south, 270 to the west, and 360 to the north,
+    # with 0 reserved for the source cells
+    x = x1 - x2
+    y = y1 - y2
+    direction = np.arctan2(y, x) * 57.29578
+    return direction
+
+
 @njit(nogil=True)
 def _process_image(img, x_coords, y_coords, target_values,
                    distance_metric, process_mode):
@@ -260,6 +273,7 @@ def _process_image(img, x_coords, y_coords, target_values,
     # output of the function
     img_proximity = np.zeros(shape=(height, width), dtype=np.float64)
     img_allocation = np.zeros(shape=(height, width), dtype=np.float64)
+    img_direction = np.zeros(shape=(height, width), dtype=np.float64)
 
     # Loop from top to bottom of the image.
     for i in prange(width):
@@ -293,6 +307,9 @@ def _process_image(img, x_coords, y_coords, target_values,
         for i in prange(width):
             if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                 img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
+                direction = _direction(x_coords[i], x_coords[nearest_xs[i]],
+                                       y_coords[line], y_coords[nearest_ys[i]])
+                img_direction[line][i] = direction
 
         # right to left
         for i in prange(width):
@@ -309,6 +326,9 @@ def _process_image(img, x_coords, y_coords, target_values,
             img_proximity[line][i] = line_proximity[i]
             if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                 img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
+                direction = _direction(x_coords[i], x_coords[nearest_xs[i]],
+                                       y_coords[line], y_coords[nearest_ys[i]])
+                img_direction[line][i] = direction
 
     # Loop from bottom to top of the image.
     for i in prange(width):
@@ -338,6 +358,9 @@ def _process_image(img, x_coords, y_coords, target_values,
         for i in prange(width):
             if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                 img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
+                direction = _direction(x_coords[i], x_coords[nearest_xs[i]],
+                                       y_coords[line], y_coords[nearest_ys[i]])
+                img_direction[line][i] = direction
 
         # Left to right
         for i in prange(width):
@@ -355,10 +378,15 @@ def _process_image(img, x_coords, y_coords, target_values,
             if line_proximity[i] < 0 or np.isnan(scan_line[i]):
                 # this corresponds the the nan value of input raster.
                 line_proximity[i] = np.nan
-                # TODO: img_allocation[line][i] = np.nan
+                # TODO: in case source cell is nan, what is the value of
+                #  corresponding allocation and direction,
+                #  img_allocation[line][i]? img_direction[line][i]?
             else:
                 if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                     img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
+                    direction = _direction(x_coords[i], x_coords[nearest_xs[i]],
+                                           y_coords[line], y_coords[nearest_ys[i]])
+                    img_direction[line][i] = direction
 
         for i in prange(width):
             img_proximity[line][i] = line_proximity[i]
@@ -367,6 +395,8 @@ def _process_image(img, x_coords, y_coords, target_values,
         return img_proximity
     elif process_mode == ALLOCATION:
         return img_allocation
+    elif process_mode == DIRECTION:
+        return img_direction
 
 
 def _process(raster, x='x', y='y', target_values=[],
@@ -474,6 +504,20 @@ def allocation(raster, x='x', y='y', target_values=[],
                               process_mode=ALLOCATION)
     # convert to have same type as of input @raster
     result = xarray.DataArray((allocation_img).astype(raster.dtype),
+                              coords=raster.coords,
+                              dims=raster.dims,
+                              attrs=raster.attrs)
+    return result
+
+
+def direction(raster, x='x', y='y', target_values=[],
+              distance_metric='EUCLIDEAN'):
+
+    direction_img = _process(raster, x=x, y=y, target_values=target_values,
+                             distance_metric=distance_metric,
+                             process_mode=DIRECTION)
+    # convert to have same type as of input @raster
+    result = xarray.DataArray(direction_img,
                               coords=raster.coords,
                               dims=raster.dims,
                               attrs=raster.attrs)
