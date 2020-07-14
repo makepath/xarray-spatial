@@ -246,15 +246,25 @@ def _process_proximity_line(source_line, x_coords, y_coords,
 
 
 @njit
-def _direction(x1, x2, y1, y2):
+def _calc_direction(x1, x2, y1, y2):
     # Calculate direction from (x1, y1) to a source cell (x2, y2).
     # The output values are based on compass directions,
     # 90 to the east, 180 to the south, 270 to the west, and 360 to the north,
-    # with 0 reserved for the source cells
-    x = x1 - x2
-    y = y1 - y2
-    direction = np.arctan2(y, x) * 57.29578
-    return direction
+    # with 0 reserved for the source cell itself
+
+    if x1 == x2 and y1 == y2:
+        return 0
+
+    x = x2 - x1
+    y = y2 - y1
+    d = np.arctan2(-y, x) * 57.29578
+    if d < 0:
+        d = 90.0 - d
+    elif d > 90.0:
+        d = 360.0 - d + 90.0
+    else:
+        d = 90.0 - d
+    return d
 
 
 @njit(nogil=True)
@@ -307,9 +317,9 @@ def _process_image(img, x_coords, y_coords, target_values,
         for i in prange(width):
             if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                 img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
-                direction = _direction(x_coords[i], x_coords[nearest_xs[i]],
-                                       y_coords[line], y_coords[nearest_ys[i]])
-                img_direction[line][i] = direction
+                d = _calc_direction(x_coords[i], x_coords[nearest_xs[i]],
+                                    y_coords[line], y_coords[nearest_ys[i]])
+                img_direction[line][i] = d
 
         # right to left
         for i in prange(width):
@@ -326,9 +336,9 @@ def _process_image(img, x_coords, y_coords, target_values,
             img_proximity[line][i] = line_proximity[i]
             if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                 img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
-                direction = _direction(x_coords[i], x_coords[nearest_xs[i]],
-                                       y_coords[line], y_coords[nearest_ys[i]])
-                img_direction[line][i] = direction
+                d = _calc_direction(x_coords[i], x_coords[nearest_xs[i]],
+                                    y_coords[line], y_coords[nearest_ys[i]])
+                img_direction[line][i] = d
 
     # Loop from bottom to top of the image.
     for i in prange(width):
@@ -358,9 +368,9 @@ def _process_image(img, x_coords, y_coords, target_values,
         for i in prange(width):
             if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                 img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
-                direction = _direction(x_coords[i], x_coords[nearest_xs[i]],
-                                       y_coords[line], y_coords[nearest_ys[i]])
-                img_direction[line][i] = direction
+                d = _calc_direction(x_coords[i], x_coords[nearest_xs[i]],
+                                    y_coords[line], y_coords[nearest_ys[i]])
+                img_direction[line][i] = d
 
         # Left to right
         for i in prange(width):
@@ -384,9 +394,9 @@ def _process_image(img, x_coords, y_coords, target_values,
             else:
                 if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                     img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
-                    direction = _direction(x_coords[i], x_coords[nearest_xs[i]],
-                                           y_coords[line], y_coords[nearest_ys[i]])
-                    img_direction[line][i] = direction
+                    d = _calc_direction(x_coords[i], x_coords[nearest_xs[i]],
+                                        y_coords[line], y_coords[nearest_ys[i]])
+                    img_direction[line][i] = d
 
         for i in prange(width):
             img_proximity[line][i] = line_proximity[i]
