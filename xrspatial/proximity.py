@@ -281,7 +281,7 @@ def _process_image(img, x_coords, y_coords, target_values,
     pan_near_y = np.zeros(width, dtype=np.int64)
 
     # output of the function
-    img_proximity = np.zeros(shape=(height, width), dtype=np.float64)
+    img_distance = np.zeros(shape=(height, width), dtype=np.float64)
     img_allocation = np.zeros(shape=(height, width), dtype=np.float64)
     img_direction = np.zeros(shape=(height, width), dtype=np.float64)
 
@@ -333,7 +333,7 @@ def _process_image(img, x_coords, y_coords, target_values,
                                 target_values, distance_metric)
 
         for i in prange(width):
-            img_proximity[line][i] = line_proximity[i]
+            img_distance[line][i] = line_proximity[i]
             if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                 img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
                 d = _calc_direction(x_coords[i], x_coords[nearest_xs[i]],
@@ -348,7 +348,7 @@ def _process_image(img, x_coords, y_coords, target_values,
     for line in prange(height - 1, -1, -1):
         # Read first pass proximity.
         for i in prange(width):
-            line_proximity[i] = img_proximity[line][i]
+            line_proximity[i] = img_distance[line][i]
 
         # Read pixel target_values.
         for i in prange(width):
@@ -399,10 +399,10 @@ def _process_image(img, x_coords, y_coords, target_values,
                     img_direction[line][i] = d
 
         for i in prange(width):
-            img_proximity[line][i] = line_proximity[i]
+            img_distance[line][i] = line_proximity[i]
 
     if process_mode == PROXIMITY:
-        return img_proximity
+        return img_distance
     elif process_mode == ALLOCATION:
         return img_allocation
     elif process_mode == DIRECTION:
@@ -522,11 +522,41 @@ def allocation(raster, x='x', y='y', target_values=[],
 
 def direction(raster, x='x', y='y', target_values=[],
               distance_metric='EUCLIDEAN'):
+    """Calculates, for all pixels in the input raster, the direction to
+    nearest source based on a set of target values and a distance metric.
+
+    This function attempts to calculate for each cell, the the direction,
+    in degrees, to the nearest source. The output values are based on compass
+    directions, where 90 is for the east, 180 for the south, 270 for the west,
+    360 for the north, and 0 for the source cell itself.The following
+    options are used to define the behavior of the function. By default all
+    non-zero pixels in ``raster.values`` will be considered as "target", and
+    all allocation will be computed in pixels.
+
+    Parameters
+    ----------
+    raster: xarray.DataArray
+        Input raster image with shape=(height, width)
+    x, y: 'x' and 'y' coordinates
+    target_values: list
+        Target pixel values to measure the distance from. If this option is
+        not provided, allocation will be computed from non-zero pixel values.
+        Currently pixel values are internally processed as integers.
+    distance_metric: string
+        The metric for calculating distance between 2 points.
+        Valid distance_metrics include: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'
+        Default is 'EUCLIDEAN'.
+
+    Returns
+    -------
+    allocation: xarray.DataArray
+        Proximity direction image with shape=(height, width)
+    """
 
     direction_img = _process(raster, x=x, y=y, target_values=target_values,
                              distance_metric=distance_metric,
                              process_mode=DIRECTION)
-    # convert to have same type as of input @raster
+
     result = xarray.DataArray(direction_img,
                               coords=raster.coords,
                               dims=raster.dims,
