@@ -6,7 +6,6 @@ from math import sqrt
 EUCLIDEAN = 0
 GREAT_CIRCLE = 1
 MANHATTAN = 2
-NAN = np.nan
 
 PROXIMITY = 0
 ALLOCATION = 1
@@ -180,7 +179,8 @@ def _process_proximity_line(source_line, x_coords, y_coords,
         is_target = False
         # Is the current pixel a target pixel?
         if n_values == 0:
-            is_target = source_line[pixel] != 0
+            if source_line[pixel] != 0 and np.isfinite(source_line[pixel]):
+                is_target = True
         else:
             for i in prange(n_values):
                 if source_line[pixel] == values[i]:
@@ -385,12 +385,8 @@ def _process_image(img, x_coords, y_coords, target_values,
 
         # final post processing of distances
         for i in prange(width):
-            if line_proximity[i] < 0 or np.isnan(scan_line[i]):
-                # this corresponds the the nan value of input raster.
+            if line_proximity[i] < 0:
                 line_proximity[i] = np.nan
-                # TODO: in case source cell is nan, what is the value of
-                #  corresponding allocation and direction,
-                #  img_allocation[line][i]? img_direction[line][i]?
             else:
                 if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                     img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
