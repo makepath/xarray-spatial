@@ -162,7 +162,42 @@ def stats(zones, values, stat_funcs=['mean', 'max', 'min', 'std',
     return stats_df
 
 
-def _crosstab(zones, values, layer):
+def _crosstab_2d(zones, values):
+    zones_val = zones.values
+    values_val = values.values
+
+    # do not consider zone with 0s
+    unique_zones = np.unique(zones.data[np.where(zones.data != 0)])
+    num_zones = len(unique_zones)
+
+    if num_zones == 0:
+        warnings.warn("No zone in `zones` xarray.")
+
+    # mask out all invalid values_val such as: nan, inf
+    masked_values = np.ma.masked_invalid(values_val)
+
+    # categories
+    cats = np.unique(masked_values[masked_values.mask==False]).data
+
+    # return of the function
+    # columns are categories
+    crosstab_df = pd.DataFrame(columns=cats)
+
+    for zone_id in unique_zones:
+        # get zone values_val
+        zone_values = np.ma.masked_where(zones_val != zone_id, masked_values)
+        zone_cat_counts = np.zeros((len(cats),))
+        for i, cat in enumerate(cats):
+            zone_cat_counts[i] = len(np.where(zone_values == cat)[0])
+        if np.sum(zone_cat_counts) != 0:
+            zone_cat_stats = zone_cat_counts / np.sum(zone_cat_counts)
+        # percentage of each category over the zone
+        crosstab_df.loc[zone_id] = zone_cat_stats
+
+    return crosstab_df
+
+
+def _crosstab_3d(zones, values, layer):
     zones_val = zones.values
     values_val = values.values
 
@@ -273,9 +308,11 @@ def crosstab(zones_agg, values_agg, layer=None):
         raise ValueError("zones_agg must be 2D")
 
     if values_agg.ndim == 3:
-        return _crosstab(zones_agg, values_agg, layer)
+        return _crosstab_3d(zones_agg, values_agg, layer)
+    elif values_agg.ndim == 2:
+        return _crosstab_2d(zones_agg, values_agg)
     else:
-        raise ValueError("values_agg must use 3D coordinates")
+        raise ValueError("values_agg must use either 2D or 3D coordinates.")
 
 
 def apply(zones, values, func):
