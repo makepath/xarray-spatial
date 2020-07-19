@@ -375,7 +375,14 @@ def suggest_zonal_canvas(poly_df, x_range, y_range,
                          crs='Mercator', min_pixels=25):
     """Given a coordinate reference system, a set of polygons with
     corresponding x range and y range, calculate the height and width of canvas
-    so that the smallest polygon is rasterized with at least min pixels.
+    so that the smallest polygon (polygon with smallest area) is rasterized
+    with at least min pixels.
+
+    Currently, we assume that the smallest polygon does not intersect others.
+    One should note that a polygon can have different shapes when it is
+    rasterized in canvases of different size. Thus, we cannot be 100% sure
+    about the actual number of pixels after rasterization. It is recommended to
+    add an additional of 5% to @min_pixels parameter.
 
     Parameters
     ----------
@@ -420,6 +427,14 @@ def suggest_zonal_canvas(poly_df, x_range, y_range,
     >>> min_poly_id = df.area.argmin()
     >>> actual_min_pixels = len(np.where(agg.data==min_poly_id)[0])
     """
+
+    # a polygon can have different shapes when it is rasterized in canvases of
+    # different size. Thus, we cannot be 100% sure about the actual number of
+    # pixels after rasterization.
+
+    # set a tolerance of 2.5 pixels
+    TOLERANCE = 2.5
+    min_pixels = min_pixels + TOLERANCE
 
     full_xrange, full_yrange = get_full_extent(crs)
     xmin, xmax = full_xrange
