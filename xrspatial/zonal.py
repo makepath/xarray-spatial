@@ -371,8 +371,56 @@ def get_full_extent(crs):
     return CRS_CODES[crs]
 
 
-def suggest_zonal_canvas(poly_df, x_range, y_range, crs='Mercator',
-                         min_pixels=25):
+def suggest_zonal_canvas(poly_df, x_range, y_range,
+                         crs='Mercator', min_pixels=25):
+    """Given a coordinate reference system, a set of polygons with
+    corresponding x range and y range, calculate the height and width of canvas
+    so that the smallest polygon is rasterized with at least min pixels.
+
+    Parameters
+    ----------
+    poly_df: geopandas.geodataframe.GeoDataFrame,
+        polygons geo data frame.
+    x_range: tuple or list of 2 numeric elements,
+        The full x extent of the polygon GeoDataFrame
+    y_range: tuple or list of 2 numeric elements,
+        The full y extent of the polygon GeoDataFrame
+    crs: string,
+        Name of the coordinate reference system.
+    min_pixels: int
+        Expected number of pixels of the polygon with smallest area
+        when the whole dataframe is rasterized.
+
+    Returns
+    -------
+    height, width: int, int
+        height and width of the canvas in pixel space
+
+    Examples
+    --------
+    >>> from spatialpandas import GeoDataFrame
+    >>> import geopandas as gpd
+    >>> import datashader as ds
+    >>> df = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
+    >>> df = df.to_crs("EPSG:3857")
+    >>> df['id'] = [i for i in range(len(df.index))]
+    >>> xmin, ymin, xmax, ymax = (df.bounds.minx.min(), df.bounds.miny.min(),
+    ...                           df.bounds.maxx.max(), df.bounds.maxy.max())
+    >>> x_range = (xmin, xmax)
+    >>> y_range = (ymin, ymax)
+    >>> min_pixels = 20
+    >>> height, width = suggest_zonal_canvas(poly_df=df,
+    ...                                      x_range=x_range, y_range=y_range,
+    ...                                      crs='Mercator',
+    ...                                      min_pixels=min_pixels)
+    >>> cvs = ds.Canvas(x_range=x_range, y_range=y_range,
+    ...                 plot_height=height, plot_width=width)
+    >>> spatial_df = GeoDataFrame(df, geometry='geometry')
+    >>> agg = cvs.polygons(spatial_df, 'geometry', agg=ds.max('id'))
+    >>> min_poly_id = df.area.argmin()
+    >>> actual_min_pixels = len(np.where(agg.data==min_poly_id)[0])
+    """
+
     full_xrange, full_yrange = get_full_extent(crs)
     xmin, xmax = full_xrange
     ymin, ymax = full_yrange
