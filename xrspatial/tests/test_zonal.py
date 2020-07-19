@@ -13,7 +13,7 @@ from xrspatial import crop
 from xrspatial.zonal import regions
 
 
-def create_zones_values():
+def stats_create_zones_values():
     # create valid "zones" and "values" for testing stats()
     zones_val = np.array([[0, 1, 1, 2, 4, 0, 0],
                           [0, 0, 1, 1, 2, 1, 4],
@@ -28,7 +28,7 @@ def create_zones_values():
 
 
 def test_stats_default():
-    zones, values = create_zones_values()
+    zones, values = stats_create_zones_values()
 
     unique_values = [1, 2, 4]
     masked_values = np.ma.masked_invalid(values.values)
@@ -95,7 +95,7 @@ def test_stats_default():
 
 # TODO: get this test passing
 def _test_stats_invalid_custom_stat():
-    zones, values = create_zones_values()
+    zones, values = stats_create_zones_values()
 
     def cal_sum(values):
         return values.sum()
@@ -108,7 +108,7 @@ def _test_stats_invalid_custom_stat():
 
 
 def test_stats_invalid_stat_input():
-    zones, values = create_zones_values()
+    zones, values = stats_create_zones_values()
 
     # invalid stats
     custom_stats = ['some_stat']
@@ -176,9 +176,7 @@ def test_crosstab_invalid_input():
         crosstab(zones_agg=zones, values_agg=values, layer=layer)
 
 
-# test case 1: no zones
-# TODO: get this test to not throw warning
-def _test_crosstab_no_zones():
+def test_crosstab_no_zones():
     # create valid `values_agg`
     values_agg = xa.DataArray(np.zeros(24).reshape(2, 3, 4),
                               dims=['lat', 'lon', 'race'])
@@ -197,10 +195,8 @@ def _test_crosstab_no_zones():
     assert len(df.index) == 0
 
 
-# test case 2: no values
-# TODO: get this test to not throw warning
-def _test_crosstab_no_values():
-    # create valid `values_agg` of np.nan and np.inf
+def test_crosstab_no_values():
+    # create valid `values_agg` of 0s
     values_agg = xa.DataArray(np.zeros(24).reshape(2, 3, 4),
                               dims=['lat', 'lon', 'race'])
     values_agg['race'] = ['cat1', 'cat2', 'cat3', 'cat4']
@@ -221,9 +217,9 @@ def _test_crosstab_no_values():
     # number of rows = number of zones
     assert len(df.index) == num_zones
 
-    num_nans = df.isnull().sum().sum()
-    # all are NaN
-    assert num_nans == num_zones * num_cats
+    num_zeros = (df == 0).sum().sum()
+    # all are 0s
+    assert num_zeros == num_zones * num_cats
 
 
 def test_crosstab():
@@ -263,7 +259,6 @@ def test_crosstab():
     assert df['check_sum'][zone_idx[0]] == 1.0
 
 
-# --------------------------- TEST apply() ------------------------------------
 def test_apply_invalid_input():
     def func(x):
         return 0
