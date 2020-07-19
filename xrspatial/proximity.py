@@ -234,7 +234,7 @@ def _process_proximity_line(source_line, x_coords, y_coords,
                 pan_near_y[pixel] = pan_near_y[tr]
 
         # Update our proximity value.
-        if pan_near_x[pixel] != -1 and not np.isnan(source_line[pixel]) \
+        if pan_near_x[pixel] != -1 \
                 and max_distance * max_distance >= near_distance_square \
                 and (line_proximity[pixel] < 0 or
                      near_distance_square <

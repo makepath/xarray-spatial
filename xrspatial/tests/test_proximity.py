@@ -37,9 +37,9 @@ def create_test_raster():
     height, width = 5, 10
     data = np.asarray([[0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
                        [0., 0., 0., 1., 0., 0., 0., 0., 0., 0.],
-                       [0., 0., 0., 3., 2., 5., 6., 0., 0., 0.],
+                       [0., 0., np.inf, 3., 2., 5., 6., 0., 0., 0.],
                        [0., 0., 0., 4., 0., 0., 0., 0., 0., 0.],
-                       [0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]])
+                       [0., 0., 0., 0., 0., 0., np.nan, 0., 0., 0.]])
     _lon = np.linspace(-20, 20, width)
     _lat = np.linspace(-20, 20, height)
 
@@ -61,7 +61,7 @@ def test_proximity():
     # in this test case, where no polygon is completely inside another polygon,
     # number of non-zeros (target pixels) in original image
     # must be equal to the number of zeros (target pixels) in proximity matrix
-    assert len(np.where(raster.data != 0)[0]) == \
+    assert len(np.where((raster.data != 0) & np.isfinite(raster.data))[0]) == \
         len(np.where(default_prox.data == 0)[0])
 
     # TARGET VALUES SETTING
@@ -119,7 +119,8 @@ def test_allocation():
     assert allocation_agg.shape == raster.shape
     # targets not specified,
     # Thus, targets are set to non-zero values of input @raster
-    targets = np.unique(raster.data[np.where(raster.data != 0)])
+    targets = np.unique(raster.data[np.where((raster.data != 0) &
+                                             np.isfinite(raster.data))])
     # non-zero cells (a.k.a targets) remain the same
     for t in targets:
         ry, rx = np.where(raster.data == t)
@@ -175,7 +176,7 @@ def test_direction():
     # in this test case, where no polygon is completely inside another polygon,
     # number of non-zeros (target pixels) in original image
     # must be equal to the number of zeros (target pixels) in proximity matrix
-    assert len(np.where(raster.data != 0)[0]) == \
+    assert len(np.where((raster.data != 0) & np.isfinite(raster.data))[0]) == \
         len(np.where(direction_agg.data == 0)[0])
 
     # values are within [0, 360]
