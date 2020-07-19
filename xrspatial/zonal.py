@@ -92,9 +92,6 @@ def stats(zones, values, stat_funcs=['mean', 'max', 'min', 'std',
 
     # do not consider zone with 0s
     unique_zones = np.unique(zones.data[np.where(zones.data != 0)])
-    num_zones = len(unique_zones)  # NOQA
-    if num_zones == 0:
-        warnings.warn("No zone in `zones` xarray.")
 
     # mask out all invalid values such as: nan, inf
     masked_values = np.ma.masked_invalid(values.data)
@@ -145,9 +142,6 @@ def stats(zones, values, stat_funcs=['mean', 'max', 'min', 'std',
 def _crosstab_2d(zones, values):
     # do not consider zone with 0s
     unique_zones = np.unique(zones.data[np.where(zones.data != 0)])
-    num_zones = len(unique_zones)
-    if num_zones == 0:
-        warnings.warn("No zone in `zones` xarray.")
 
     # mask out all invalid values such as: nan, inf
     masked_values = np.ma.masked_invalid(values.data)
@@ -185,9 +179,6 @@ def _crosstab_3d(zones, values, layer):
 
     # do not consider zone with 0s
     unique_zones = np.unique(zones.data[np.where(zones.data != 0)])
-    num_zones = len(unique_zones)
-    if num_zones == 0:
-        warnings.warn("No zone in `zones` xarray.")
 
     # mask out all invalid values such as: nan, inf
     masked_values = np.ma.masked_invalid(values.data)
@@ -197,21 +188,17 @@ def _crosstab_3d(zones, values, layer):
     crosstab_df = pd.DataFrame(columns=cats)
 
     for zone_id in unique_zones:
-        # do not consider entries in `zones` with id=0 as a zone
-        if zone_id == 0:
-            continue
-
         # get all entries in zones with zone_id
         zone_entries = zones.data == zone_id
         zones_entries_3d = np.repeat(zone_entries[:, :, np.newaxis],
                                      num_cats, axis=-1)
-
         zone_values = zones_entries_3d * masked_values
         zone_cat_stats = [np.sum(zone_cat) for zone_cat in zone_values.T]
         sum_zone_cats = sum(zone_cat_stats)
-
+        if sum_zone_cats != 0:
+            zone_cat_stats = zone_cat_stats / sum_zone_cats
         # percentage of each category over the zone
-        crosstab_df.loc[zone_id] = zone_cat_stats / sum_zone_cats
+        crosstab_df.loc[zone_id] = zone_cat_stats
 
     return crosstab_df
 
