@@ -251,7 +251,7 @@ def crosstab(zones, values, layer=None):
     if zones.ndim != 2:
         raise ValueError("zones must be 2D")
 
-    if zones.shape != values.shape[:-1]:
+    if zones.shape != values.shape[:2]:
         raise ValueError(
             "Incompatible shapes between `zones` and `values`")
 

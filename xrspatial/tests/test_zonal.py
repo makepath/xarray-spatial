@@ -222,7 +222,7 @@ def test_crosstab_no_values():
     assert num_zeros == num_zones * num_cats
 
 
-def test_crosstab():
+def test_crosstab_3d():
     # create valid `values_agg` of np.nan and np.inf
     values_agg = xa.DataArray(np.ones(24).reshape(2, 3, 4),
                               dims=['lat', 'lon', 'race'])
@@ -255,6 +255,36 @@ def test_crosstab():
 
     df['check_sum'] = df.apply(
         lambda r: r['cat1'] + r['cat2'] + r['cat3'] + r['cat4'], axis=1)
+    # sum of a row is 1.0
+    assert df['check_sum'][zone_idx[0]] == 1.0
+
+
+def test_crosstab_2d():
+    values_val = np.asarray([[0, 0, 10, 20],
+                             [0, 0, 0, 10],
+                             [np.inf, 30, 20, 50],
+                             [10, 30, 40, 40],
+                             [10, np.nan, 50, 0]])
+    values_agg = xa.DataArray(values_val, dims=['lat', 'lon'])
+    zones_val = np.asarray([[1, 1, 6, 6],
+                            [1, 1, 6, 6],
+                            [3, 5, 6, 6],
+                            [3, 5, 7, 7],
+                            [3, 7, 7, 0]])
+    zones_agg = xa.DataArray(zones_val, dims=['lat', 'lon'])
+
+    df = crosstab(zones_agg, values_agg)
+
+    num_cats = 6  # 0, 10, 20, 30, 40, 50
+    # number of columns = number of categories
+    assert len(df.columns) == num_cats
+
+    # exclude region with 0 zone id
+    zone_idx = list(set(np.unique(zones_agg.data)) - {0})
+    num_zones = len(zone_idx)
+    # number of rows = number of zones
+    assert len(df.index) == num_zones
+    df.loc[:, 'check_sum'] = df.sum(axis=1)
     # sum of a row is 1.0
     assert df['check_sum'][zone_idx[0]] == 1.0
 
