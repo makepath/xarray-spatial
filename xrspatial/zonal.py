@@ -357,12 +357,25 @@ def apply(zones, values, func):
         + values_func.data * values_func.mask
 
 
-def suggest_zonal_canvas(poly_df, min_pixels=25):
-    # The full extent of x and y from the polygon GeoDataFrame @poly_df
-    xmin, ymin, xmax, ymax = (poly_df.bounds.minx.min(),
-                              poly_df.bounds.miny.min(),
-                              poly_df.bounds.maxx.max(),
-                              poly_df.bounds.maxy.max())
+def get_full_extent(crs):
+    Mercator = (-20e6, 20e6), (-20e6, 20e6)
+    Geographic = (-180, 180), (-90, 90)
+
+    def _crs_code_mapping():
+        CRS_CODES = {}
+        CRS_CODES['Mercator'] = Mercator
+        CRS_CODES['Geographic'] = Geographic
+        return CRS_CODES
+
+    CRS_CODES = _crs_code_mapping()
+    return CRS_CODES[crs]
+
+
+def suggest_zonal_canvas(poly_df, x_range, y_range, crs='Mercator',
+                         min_pixels=25):
+    full_xrange, full_yrange = get_full_extent(crs)
+    xmin, xmax = full_xrange
+    ymin, ymax = full_yrange
 
     aspect_ratio = (xmax - xmin) / (ymax - ymin)
 
@@ -379,10 +392,13 @@ def suggest_zonal_canvas(poly_df, min_pixels=25):
     # total pixels needed
     total_pixels = total_area / pixel_area
 
-    # We have, canvas_h * canvas_w = total_pixels
-    # and,     canvas_w / canvas_h = aspect_ratio
-    # Thus,    aspect_ratio * canvas_h**2 = total_pixels
-    canvas_h = ceil(sqrt(total_pixels / aspect_ratio))
-    canvas_w = ceil(aspect_ratio * canvas_h)
+    # We have, h * w = total_pixels
+    # and,     w / h = aspect_ratio
+    # Thus,    aspect_ratio * h**2 = total_pixels
+    h = sqrt(total_pixels / aspect_ratio)
+    w = aspect_ratio * h
 
-    return canvas_w, canvas_h
+    canvas_h = int(h * (y_range[1] - y_range[0]) / (ymax - ymin))
+    canvas_w = int(w * (x_range[1] - x_range[0]) / (xmax - xmin))
+
+    return canvas_h, canvas_w
