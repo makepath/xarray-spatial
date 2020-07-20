@@ -13,38 +13,39 @@ from xrspatial import crop
 from xrspatial.zonal import regions
 
 
-# create valid "zones" and "values" for testing stats()
-zones_val = np.array([[0, 1, 1, 2, 4, 0, 0],
-                      [0, 0, 1, 1, 2, 1, 4],
-                      [4, 2, 2, 4, 4, 4, 0]])
-zones = xa.DataArray(zones_val)
+def stats_create_zones_values():
+    # create valid "zones" and "values" for testing stats()
+    zones_val = np.array([[0, 1, 1, 2, 4, 0, 0],
+                          [0, 0, 1, 1, 2, 1, 4],
+                          [4, 2, 2, 4, 4, 4, 0]])
+    zones = xa.DataArray(zones_val)
 
-values_val = np.array([[0, 12, 10, 2, 3.25, np.nan, np.nan],
-                       [0, 0, -11, 4, -2.5, np.nan, 7],
-                       [np.nan, 3.5, -9, 4, 2, 0, np.inf]])
-values = xa.DataArray(values_val)
-
-unique_values = [1, 2, 4]
-
-masked_values = np.ma.masked_invalid(values.values)
-
-zone_vals_1 = np.ma.masked_where(zones != 1, masked_values)
-zone_vals_2 = np.ma.masked_where(zones != 2, masked_values)
-zone_vals_3 = np.ma.masked_where(zones != 4, masked_values)
-
-zone_means = [zone_vals_1.mean(), zone_vals_2.mean(), zone_vals_3.mean()]
-zone_maxes = [zone_vals_1.max(), zone_vals_2.max(), zone_vals_3.max()]
-zone_mins = [zone_vals_1.min(), zone_vals_2.min(), zone_vals_3.min()]
-zone_stds = [zone_vals_1.std(), zone_vals_2.std(), zone_vals_3.std()]
-zone_vars = [zone_vals_1.var(), zone_vals_2.var(), zone_vals_3.var()]
-
-zone_counts = [np.ma.count(zone_vals_1),
-               np.ma.count(zone_vals_2),
-               np.ma.count(zone_vals_3)]
+    values_val = np.array([[0, 12, 10, 2, 3.25, np.nan, np.nan],
+                           [0, 0, -11, 4, -2.5, np.nan, 7],
+                           [np.nan, 3.5, -9, 4, 2, 0, np.inf]])
+    values = xa.DataArray(values_val)
+    return zones, values
 
 
-# --------------------------- TEST stats() ------------------------------------
 def test_stats_default():
+    zones, values = stats_create_zones_values()
+
+    unique_values = [1, 2, 4]
+    masked_values = np.ma.masked_invalid(values.values)
+    zone_vals_1 = np.ma.masked_where(zones != 1, masked_values)
+    zone_vals_2 = np.ma.masked_where(zones != 2, masked_values)
+    zone_vals_3 = np.ma.masked_where(zones != 4, masked_values)
+
+    zone_means = [zone_vals_1.mean(), zone_vals_2.mean(), zone_vals_3.mean()]
+    zone_maxes = [zone_vals_1.max(), zone_vals_2.max(), zone_vals_3.max()]
+    zone_mins = [zone_vals_1.min(), zone_vals_2.min(), zone_vals_3.min()]
+    zone_stds = [zone_vals_1.std(), zone_vals_2.std(), zone_vals_3.std()]
+    zone_vars = [zone_vals_1.var(), zone_vals_2.var(), zone_vals_3.var()]
+
+    zone_counts = [np.ma.count(zone_vals_1),
+                   np.ma.count(zone_vals_2),
+                   np.ma.count(zone_vals_3)]
+
     # default stat_funcs=['mean', 'max', 'min', 'std', 'var', 'count']
     df = stats(zones=zones, values=values)
 
@@ -65,9 +66,7 @@ def test_stats_default():
     assert zone_vars == df['var'].tolist()
     assert zone_counts == df['count'].tolist()
 
-
-def test_stats_custom_stat():
-
+    # custom stats
     def cal_sum(values):
         return values.sum()
 
@@ -76,7 +75,6 @@ def test_stats_custom_stat():
 
     zone_sums = [cal_sum(zone_vals_1), cal_sum(zone_vals_2),
                  cal_sum(zone_vals_3)]
-
     zone_double_sums = [cal_double_sum(zone_vals_1),
                         cal_double_sum(zone_vals_2),
                         cal_double_sum(zone_vals_3)]
@@ -85,21 +83,19 @@ def test_stats_custom_stat():
     df = stats(zones=zones, values=values, stat_funcs=custom_stats)
 
     assert isinstance(df, pd.DataFrame)
-
     # indices of the output DataFrame matches the unique values in `zones`
     idx = df.index.tolist()
     assert idx == unique_values
-
     num_cols = len(df.columns)
     # there are 2 statistics
     assert num_cols == 2
-
     assert zone_sums == df['sum'].tolist()
     assert zone_double_sums == df['double sum'].tolist()
 
 
 # TODO: get this test passing
 def _test_stats_invalid_custom_stat():
+    zones, values = stats_create_zones_values()
 
     def cal_sum(values):
         return values.sum()
@@ -111,93 +107,76 @@ def _test_stats_invalid_custom_stat():
         stats(zones=zones, values=values, stat_funcs=custom_stats)
 
 
-def test_stats_invalid_stat_list():
+def test_stats_invalid_stat_input():
+    zones, values = stats_create_zones_values()
+
+    # invalid stats
     custom_stats = ['some_stat']
     with pytest.raises(Exception) as e_info:  # noqa
         stats(zones=zones, values=values, stat_funcs=custom_stats)
 
-
-def test_stats_invalid_zones():
-    zones = xa.DataArray(np.array([1, 2, 0.5]))
-    values = xa.DataArray(np.array([1, 2, 0.5]))
-
-    with pytest.raises(Exception) as e_info:  # noqa
-        stats(zones=zones, values=values)
-
-
-def test_stats_invalid_values():
+    # invalid values:
     zones = xa.DataArray(np.array([1, 2, 0], dtype=np.int))
     values = xa.DataArray(np.array(['apples', 'foobar', 'cowboy']))
-
     with pytest.raises(Exception) as e_info:  # noqa
         stats(zones=zones, values=values)
 
+    # invalid zones
+    zones = xa.DataArray(np.array([1, 2, 0.5]))
+    values = xa.DataArray(np.array([1, 2, 0.5]))
+    with pytest.raises(Exception) as e_info:  # noqa
+        stats(zones=zones, values=values)
 
-def test_stats_mismatch_zones_values_shape():
+    # mismatch shape between zones and values:
     zones = xa.DataArray(np.array([1, 2, 0]))
     values = xa.DataArray(np.array([1, 2, 0, np.nan]))
-
     with pytest.raises(Exception) as e_info:  # noqa
         stats(zones=zones, values=values)
 
 
-# --------------------------- TEST crosstab() ---------------------------------
-
-def test_crosstab_invalid_zones():
-    # invalid dims (must be 2d)
+def test_crosstab_invalid_input():
+    # invalid zones dims (must be 2d)
     zones = xa.DataArray(np.array([1, 2, 0]))
-
     values = xa.DataArray(np.array([[[1, 2, 0.5]]]),
                           dims=['lat', 'lon', 'race'])
     values['race'] = ['cat1', 'cat2', 'cat3']
-
     with pytest.raises(Exception) as e_info:
         crosstab(zones_agg=zones, values_agg=values)
 
-    # invalid values (must be int)
+    # invalid zones dtype (must be int)
     zones = xa.DataArray(np.array([[1, 2, 0.5]]))
     with pytest.raises(Exception) as e_info:  # noqa
         crosstab(zones_agg=zones, values_agg=values)
 
-
-def test_crosstab_invalid_values():
+    # invalid values
     zones = xa.DataArray(np.array([[1, 2, 0]], dtype=np.int))
-
-    # must be either int or float
+    # values must be either int or float
     values = xa.DataArray(np.array([[['apples', 'foobar', 'cowboy']]]),
                           dims=['lat', 'lon', 'race'])
     values['race'] = ['cat1', 'cat2', 'cat3']
-
     with pytest.raises(Exception) as e_info:  # noqa
         crosstab(zones_agg=zones, values_agg=values)
 
-
-def test_crosstab_mismatch_zones_values_shape():
+    # mismatch shape zones and values
     zones = xa.DataArray(np.array([[1, 2]]))
-
     values = xa.DataArray(np.array([[[1, 2, np.nan]]]),
                           dims=['lat', 'lon', 'race'])
     values['race'] = ['cat1', 'cat2', 'cat3']
-
     with pytest.raises(Exception) as e_info:  # noqa
         crosstab(zones_agg=zones, values_agg=values)
 
-
-def test_crosstab_invalid_layer():
+    # invalid layer
     zones = xa.DataArray(np.array([[1, 2]]))
-
     values = xa.DataArray(np.array([[[1, 2, np.nan]]]),
                           dims=['lat', 'lon', 'race'])
     values['race'] = ['cat1', 'cat2', 'cat3']
-
+    # this layer does not exist in values agg
     layer = 'cat'
     with pytest.raises(Exception) as e_info:  # noqa
         crosstab(zones_agg=zones, values_agg=values, layer=layer)
 
 
-# test case 1: no zones
-# TODO: get this test to not throw warning
-def _test_crosstab_no_zones():
+def test_crosstab_no_zones():
     # create valid `values_agg`
     values_agg = xa.DataArray(np.zeros(24).reshape(2, 3, 4),
                               dims=['lat', 'lon', 'race'])
@@ -216,10 +195,8 @@ def _test_crosstab_no_zones():
     assert len(df.index) == 0
 
 
-# test case 2: no values
-# TODO: get this test to not throw warning
-def _test_crosstab_no_values():
-    # create valid `values_agg` of np.nan and np.inf
+def test_crosstab_no_values():
+    # create valid `values_agg` of 0s
     values_agg = xa.DataArray(np.zeros(24).reshape(2, 3, 4),
                               dims=['lat', 'lon', 'race'])
     values_agg['race'] = ['cat1', 'cat2', 'cat3', 'cat4']
@@ -240,12 +217,12 @@ def _test_crosstab_no_values():
     # number of rows = number of zones
     assert len(df.index) == num_zones
 
-    num_nans = df.isnull().sum().sum()
-    # all are NaN
-    assert num_nans == num_zones * num_cats
+    num_zeros = (df == 0).sum().sum()
+    # all are 0s
+    assert num_zeros == num_zones * num_cats
 
 
-def test_crosstab():
+def test_crosstab_3d():
     # create valid `values_agg` of np.nan and np.inf
     values_agg = xa.DataArray(np.ones(24).reshape(2, 3, 4),
                               dims=['lat', 'lon', 'race'])
@@ -282,9 +259,37 @@ def test_crosstab():
     assert df['check_sum'][zone_idx[0]] == 1.0
 
 
-# --------------------------- TEST apply() ------------------------------------
-def test_apply_invalid_agg():
+def test_crosstab_2d():
+    values_val = np.asarray([[0, 0, 10, 20],
+                             [0, 0, 0, 10],
+                             [np.inf, 30, 20, 50],
+                             [10, 30, 40, 40],
+                             [10, np.nan, 50, 0]])
+    values_agg = xa.DataArray(values_val, dims=['lat', 'lon'])
+    zones_val = np.asarray([[1, 1, 6, 6],
+                            [1, 1, 6, 6],
+                            [3, 5, 6, 6],
+                            [3, 5, 7, 7],
+                            [3, 7, 7, 0]])
+    zones_agg = xa.DataArray(zones_val, dims=['lat', 'lon'])
 
+    df = crosstab(zones_agg, values_agg)
+
+    num_cats = 6  # 0, 10, 20, 30, 40, 50
+    # number of columns = number of categories
+    assert len(df.columns) == num_cats
+
+    # exclude region with 0 zone id
+    zone_idx = list(set(np.unique(zones_agg.data)) - {0})
+    num_zones = len(zone_idx)
+    # number of rows = number of zones
+    assert len(df.index) == num_zones
+    df.loc[:, 'check_sum'] = df.sum(axis=1)
+    # sum of a row is 1.0
+    assert df['check_sum'][zone_idx[0]] == 1.0
+
+
+def test_apply_invalid_input():
     def func(x):
         return 0
 
@@ -294,27 +299,27 @@ def test_apply_invalid_agg():
     with pytest.raises(Exception) as e_info:
         apply(zones, values, func)
 
-    # invalid zones values (must be int)
+    # invalid zones data dtype (must be int)
     zones = xa.DataArray(np.array([[1, 2, 0.5]]))
     values = xa.DataArray(np.array([[[1, 2, 0.5]]]))
     with pytest.raises(Exception) as e_info:
         apply(zones, values, func)
 
-    zones = xa.DataArray(np.array([[1, 2, 0]]))
-    # invalid values (must be int or float)
+    # invalid values data dtype (must be int or float)
     values = xa.DataArray(np.array([['apples', 'foobar', 'cowboy']]))
+    zones = xa.DataArray(np.array([[1, 2, 0]]))
     with pytest.raises(Exception) as e_info:
         apply(zones, values, func)
 
-    zones = xa.DataArray(np.array([[1, 2, 0]]))
-    # invalid dim (must be 2d or 3d)
+    # invalid values dim (must be 2d or 3d)
     values = xa.DataArray(np.array([1, 2, 0.5]))
+    zones = xa.DataArray(np.array([[1, 2, 0]]))
     with pytest.raises(Exception) as e_info:
         apply(zones, values, func)
 
     zones = xa.DataArray(np.array([[1, 2, 0], [1, 2, 3]]))
     values = xa.DataArray(np.array([[1, 2, 0.5]]))
-    # mis-match zones.values.shape and values.values.shape
+    # mis-match zones.shape and values.shape
     with pytest.raises(Exception) as e_info:  # noqa
         apply(zones, values, func)
 

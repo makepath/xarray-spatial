@@ -76,68 +76,46 @@ def stats(zones, values, stat_funcs=['mean', 'max', 'min', 'std',
         sum
     1	21.0
     2	13.0
-
     """
 
-    zones_val = zones.values
-    values_val = values.values
-
-    if zones_val.shape != values_val.shape:
+    if zones.shape != values.shape:
         raise ValueError(
             "`zones` and `values` must have same shape")
 
-    if not issubclass(type(zones_val[0, 0]), np.integer):
+    if not issubclass(zones.data.dtype.type, np.integer):
         raise ValueError("`zones` must be an array of integers")
 
-    if not (issubclass(type(values_val[0, 0]), np.integer) or
-            issubclass(type(values_val[0, 0]), np.float)):
+    if not (issubclass(values.data.dtype.type, np.integer) or
+            issubclass(values.data.dtype.type, np.float)):
         raise ValueError(
             "`values` must be an array of integers or floats")
 
-    unique_zones = np.unique(zones_val).astype(int)
-
-    num_zones = len(unique_zones)
-
     # do not consider zone with 0s
-    if 0 in unique_zones:
-        num_zones = len(unique_zones) - 1  # NOQA
+    unique_zones = np.unique(zones.data[np.where(zones.data != 0)])
 
-    # mask out all invalid values_val such as: nan, inf
-    masked_values = np.ma.masked_invalid(values_val)
+    # mask out all invalid values such as: nan, inf
+    masked_values = np.ma.masked_invalid(values.data)
 
     if isinstance(stat_funcs, dict):
         stats_df = pd.DataFrame(columns=[*stat_funcs])
-
         for zone_id in unique_zones:
-            # do not consider 0 pixels as a zone
-            if zone_id == 0:
-                continue
-
-            # get zone values_val
-            zone_values = np.ma.masked_where(zones_val != zone_id,
+            # get zone values
+            zone_values = np.ma.masked_where(zones.data != zone_id,
                                              masked_values)
-
             zone_stats = []
             for stat in stat_funcs:
                 stat_func = stat_funcs.get(stat)
                 if not callable(stat_func):
                     raise ValueError(stat)
                 zone_stats.append(stat_func(zone_values))
-
             stats_df.loc[zone_id] = zone_stats
-
     else:
         stats_df = pd.DataFrame(columns=stat_funcs)
 
         for zone_id in unique_zones:
-            # do not consider 0 pixels as a zone
-            if zone_id == 0:
-                continue
-
-            # get zone values_val
-            zone_values = np.ma.masked_where(zones_val != zone_id,
+            # get zone values
+            zone_values = np.ma.masked_where(zones.data != zone_id,
                                              masked_values)
-
             zone_stats = []
             for stat in stat_funcs:
                 if stat == 'mean':
@@ -156,28 +134,40 @@ def stats(zones, values, stat_funcs=['mean', 'max', 'min', 'std',
                     err_str = 'Invalid stat name. ' \
                               + '\'' + stat + '\' option not supported.'
                     raise ValueError(err_str)
-
             stats_df.loc[zone_id] = zone_stats
 
     return stats_df
 
 
-def _crosstab(zones, values, layer):
-    zones_val = zones.values
-    values_val = values.values
+def _crosstab_2d(zones, values):
+    # do not consider zone with 0s
+    unique_zones = np.unique(zones.data[np.where(zones.data != 0)])
 
-    if zones_val.shape != values_val.shape[:-1]:
-        raise ValueError(
-            "Incompatible shapes between `zones` and `values`")
+    # mask out all invalid values such as: nan, inf
+    masked_values = np.ma.masked_invalid(values.data)
 
-    if not issubclass(type(zones_val[0, 0]), np.integer):
-        raise ValueError("`zones` must be an array of integers")
+    # categories
+    cats = np.unique(masked_values[masked_values.mask==False]).data
 
-    if not issubclass(type(values_val[0, 0, 0]), np.integer) and \
-            not issubclass(type(values_val[0, 0, 0]), np.float):
-        raise ValueError(
-            "`values` must be an array of integers or floats")
+    # return of the function
+    # columns are categories
+    crosstab_df = pd.DataFrame(columns=cats)
 
+    for zone_id in unique_zones:
+        # get zone values
+        zone_values = np.ma.masked_where(zones.data != zone_id, masked_values)
+        zone_cat_counts = np.zeros((len(cats),))
+        for i, cat in enumerate(cats):
+            zone_cat_counts[i] = len(np.where(zone_values == cat)[0])
+        if np.sum(zone_cat_counts) != 0:
+            zone_cat_stats = zone_cat_counts / np.sum(zone_cat_counts)
+        # percentage of each category over the zone
+        crosstab_df.loc[zone_id] = zone_cat_stats
+
+    return crosstab_df
+
+
+def _crosstab_3d(zones, values, layer):
     if layer is None:
         cats = values.indexes[values.dims[-1]].values
     else:
@@ -187,50 +177,39 @@ def _crosstab(zones, values, layer):
 
     num_cats = len(cats)
 
-    unique_zones = np.unique(zones_val).astype(int)
-    num_zones = len(unique_zones)
-
     # do not consider zone with 0s
-    if 0 in unique_zones:
-        num_zones = len(unique_zones) - 1
+    unique_zones = np.unique(zones.data[np.where(zones.data != 0)])
 
-    if num_zones == 0:
-        warnings.warn("No zone in `zones` xarray.")
-
-    # mask out all invalid values_val such as: nan, inf
-    masked_values = np.ma.masked_invalid(values_val)
+    # mask out all invalid values such as: nan, inf
+    masked_values = np.ma.masked_invalid(values.data)
 
     # return of the function
     # columns are categories
     crosstab_df = pd.DataFrame(columns=cats)
 
     for zone_id in unique_zones:
-        # do not consider entries in `zones` with id=0 as a zone
-        if zone_id == 0:
-            continue
-
         # get all entries in zones with zone_id
-        zone_entries = zones_val == zone_id
+        zone_entries = zones.data == zone_id
         zones_entries_3d = np.repeat(zone_entries[:, :, np.newaxis],
                                      num_cats, axis=-1)
-
         zone_values = zones_entries_3d * masked_values
         zone_cat_stats = [np.sum(zone_cat) for zone_cat in zone_values.T]
         sum_zone_cats = sum(zone_cat_stats)
-
+        if sum_zone_cats != 0:
+            zone_cat_stats = zone_cat_stats / sum_zone_cats
         # percentage of each category over the zone
-        crosstab_df.loc[zone_id] = zone_cat_stats / sum_zone_cats
+        crosstab_df.loc[zone_id] = zone_cat_stats
 
     return crosstab_df
 
 
-def crosstab(zones_agg, values_agg, layer=None):
+def crosstab(zones, values, layer=None):
     """Calculate cross-tabulated (categorical stats) areas
     between two datasets: a zone dataset, a value dataset (a value raster).
     Outputs a pandas DataFrame.
 
     Requires a DataArray with a single data dimension, here called the
-    "values_agg", indexed using 3D coordinates.
+    "values", indexed using 3D coordinates.
 
     DataArrays with 3D coordinates are expected to contain values
     distributed over different categories that are indexed by the
@@ -240,20 +219,20 @@ def crosstab(zones_agg, values_agg, layer=None):
 
     Parameters
     ----------
-    zones_agg: xarray.DataArray,
+    zones: xarray.DataArray,
         zones.values is a 2d array of integers.
         A zone is all the cells in a raster that have the same value,
         whether or not they are contiguous. The input zone layer defines
         the shape, values, and locations of the zones. An integer field
         in the zone input is specified to define the zones.
 
-    values_agg: xarray.DataArray,
+    values: xarray.DataArray,
         values.values is a 3d array of integers or floats.
         The input value raster contains the input values used in calculating
         the categorical statistic for each zone.
 
     layer: string (optional)
-        name of the layer inside the `values_agg` DataArray
+        name of the layer inside the `values` DataArray
         for getting the values
     Returns
     -------
@@ -263,19 +242,33 @@ def crosstab(zones_agg, values_agg, layer=None):
         Each entry presents the percentage of the category over the zone.
     """
 
-    if not isinstance(zones_agg, xa.DataArray):
-        raise TypeError("zones_agg must be instance of DataArray")
+    if not isinstance(zones, xa.DataArray):
+        raise TypeError("zones must be instance of DataArray")
 
-    if not isinstance(values_agg, xa.DataArray):
-        raise TypeError("values_agg must be instance of DataArray")
+    if not isinstance(values, xa.DataArray):
+        raise TypeError("values must be instance of DataArray")
 
-    if zones_agg.ndim != 2:
-        raise ValueError("zones_agg must be 2D")
+    if zones.ndim != 2:
+        raise ValueError("zones must be 2D")
 
-    if values_agg.ndim == 3:
-        return _crosstab(zones_agg, values_agg, layer)
+    if zones.shape != values.shape[:2]:
+        raise ValueError(
+            "Incompatible shapes between `zones` and `values`")
+
+    if not issubclass(zones.data.dtype.type, np.integer):
+        raise ValueError("`zones` must be an xarray of integers")
+
+    if not issubclass(values.data.dtype.type, np.integer) and \
+            not issubclass(values.data.dtype.type, np.float):
+        raise ValueError(
+            "`values` must be an xarray of integers or floats")
+
+    if values.ndim == 3:
+        return _crosstab_3d(zones, values, layer)
+    elif values.ndim == 2:
+        return _crosstab_2d(zones, values)
     else:
-        raise ValueError("values_agg must use 3D coordinates")
+        raise ValueError("`values` must use either 2D or 3D coordinates.")
 
 
 def apply(zones, values, func):
@@ -314,22 +307,18 @@ def apply(zones, values, func):
     """
 
     if not isinstance(zones, xa.DataArray):
-        raise TypeError("zones_agg must be instance of DataArray")
+        raise TypeError("zones must be instance of DataArray")
 
     if not isinstance(values, xa.DataArray):
-        raise TypeError("values_agg must be instance of DataArray")
+        raise TypeError("values must be instance of DataArray")
 
     if zones.ndim != 2:
-        raise ValueError("zones_agg must be 2D")
+        raise ValueError("zones must be 2D")
 
     if values.ndim != 2 and values.ndim != 3:
-        raise ValueError("values_agg must be either 2D or 3D coordinates")
+        raise ValueError("values must be either 2D or 3D coordinates")
 
-    # get the value of aggs
-    zones_val = zones.values
-    values_val = values.values
-
-    if zones_val.shape != values_val.shape[:2]:
+    if zones.shape != values.shape[:2]:
         raise ValueError(
             "Incompatible shapes between `zones` and `values`")
 
@@ -342,10 +331,10 @@ def apply(zones, values, func):
             "`values` must be an array of integers or float")
 
     # entries of zone 0 remain the same
-    remain_entries = zones_val == 0
+    remain_entries = zones.data == 0
 
     # entries with a non-zero zone value
-    zones_entries = zones_val != 0
+    zones_entries = zones.data != 0
 
     if len(values.shape) == 3:
         z = values.shape[-1]
@@ -354,8 +343,8 @@ def apply(zones, values, func):
                                    axis=-1)
         zones_entries = np.repeat(zones_entries[:, :, np.newaxis], z, axis=-1)
 
-    remain_mask = np.ma.masked_array(values_val, mask=remain_entries)
-    zones_mask = np.ma.masked_array(values_val, mask=zones_entries)
+    remain_mask = np.ma.masked_array(values.data, mask=remain_entries)
+    zones_mask = np.ma.masked_array(values.data, mask=zones_entries)
 
     # apply func to corresponding `values` of `zones`
     vfunc = np.vectorize(func)

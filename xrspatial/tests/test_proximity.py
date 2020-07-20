@@ -5,13 +5,8 @@ from xrspatial import great_circle_distance, manhattan_distance
 from xrspatial import euclidean_distance
 from xrspatial.proximity import _calc_direction
 
-import datashader as ds
-
 import numpy as np
-import pandas as pd
 import xarray as xa
-
-from math import sqrt
 
 
 def test_great_circle_distance():
@@ -40,16 +35,17 @@ def test_great_circle_distance():
 
 def create_test_raster():
     height, width = 5, 10
-    df = pd.DataFrame({
-        'lat': [-5, -1, -4, 7, 1, 3],
-        'lon': [-5, -1, -5, -5, 0, 5],
-        'id':  [1, 2, 3, 4, 5, 6]
-    })
-    cvs = ds.Canvas(plot_width=width, plot_height=height,
-                    x_range=(-20, 20), y_range=(-20, 20))
+    data = np.asarray([[0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
+                       [0., 0., 0., 1., 0., 0., 0., 0., 0., 0.],
+                       [0., 0., np.inf, 3., 2., 5., 6., 0., 0., 0.],
+                       [0., 0., 0., 4., 0., 0., 0., 0., 0., 0.],
+                       [0., 0., 0., 0., 0., 0., np.nan, 0., 0., 0.]])
+    _lon = np.linspace(-20, 20, width)
+    _lat = np.linspace(-20, 20, height)
 
-    raster = cvs.points(df, x='lon', y='lat', agg=ds.min('id'))
-    raster.data[~np.isfinite(raster.data)] = 0
+    raster = xa.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
     return raster
 
 
@@ -65,7 +61,7 @@ def test_proximity():
     # in this test case, where no polygon is completely inside another polygon,
     # number of non-zeros (target pixels) in original image
     # must be equal to the number of zeros (target pixels) in proximity matrix
-    assert len(np.where(raster.data != 0)[0]) == \
+    assert len(np.where((raster.data != 0) & np.isfinite(raster.data))[0]) == \
         len(np.where(default_prox.data == 0)[0])
 
     # TARGET VALUES SETTING
@@ -123,7 +119,8 @@ def test_allocation():
     assert allocation_agg.shape == raster.shape
     # targets not specified,
     # Thus, targets are set to non-zero values of input @raster
-    targets = np.unique(raster.data[np.where(raster.data != 0)])
+    targets = np.unique(raster.data[np.where((raster.data != 0) &
+                                             np.isfinite(raster.data))])
     # non-zero cells (a.k.a targets) remain the same
     for t in targets:
         ry, rx = np.where(raster.data == t)
@@ -179,7 +176,7 @@ def test_direction():
     # in this test case, where no polygon is completely inside another polygon,
     # number of non-zeros (target pixels) in original image
     # must be equal to the number of zeros (target pixels) in proximity matrix
-    assert len(np.where(raster.data != 0)[0]) == \
+    assert len(np.where((raster.data != 0) & np.isfinite(raster.data))[0]) == \
         len(np.where(direction_agg.data == 0)[0])
 
     # values are within [0, 360]
