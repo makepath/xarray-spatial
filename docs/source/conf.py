@@ -22,10 +22,8 @@ project = u'xarray_spatial'
 copyright = u'2020, Brendan Collins'
 author = u'Brendan Collins'
 
-# The short X.Y version
-version = u''
-# The full version, including alpha/beta/rc tags
-release = u''
+import xrspatial
+version = release = xrspatial.__version__
 
 # -- General configuration ---------------------------------------------------
 

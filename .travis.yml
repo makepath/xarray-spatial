@@ -1,26 +1,48 @@
-language: python
+language: minimal
 sudo: false
-python:
-    - "3.6"
-    - "3.7"
-    - "3.8"
+
+matrix:
+  fast_finish: true
+  include:
+    - name: "python-3.6"
+      env: PY=3.6
+    - name: "python-3.7"
+      env: PY=3.7
+    - name: "python-3.8"
+      env: PY=3.8
+    - name: "tarball"
+      env: PY=3
+
+before_install:
+  # Install miniconda and create TEST env.
+  - |
+    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
+    bash miniconda.sh -b -p $HOME/miniconda
+    export PATH="$HOME/miniconda/bin:$PATH"
+    conda config --set always_yes yes --set changeps1 no --set show_channel_urls true
+    conda update --quiet conda
+    conda config --add channels conda-forge --force
+    conda config --set channel_priority strict
+    conda config --set safety_checks disabled
+    conda create --name TEST python=$PY --file requirements.txt --file requirements-dev.txt
+    source activate TEST
+    conda info --all
 
 install:
-  # Install conda
-  - wget http://repo.continuum.io/miniconda/Miniconda-latest-Linux-x86_64.sh -O miniconda.sh
-  - bash miniconda.sh -b -p $HOME/miniconda
-  - export PATH="$HOME/miniconda/bin:$PATH"
-  - conda config --set always_yes yes --set changeps1 no
-  - conda update conda
-
-  # Install dependencies
-  - conda create -n test-environment python=$TRAVIS_PYTHON_VERSION
-  - source activate test-environment
-  - conda install -c conda-forge datashader pytest scikit-learn
-  - python setup.py develop --no-deps
+  - pip install -e . --no-deps --force-reinstall
 
 script:
-    - pytest -sv xrspatial/tests
+  - |
+    if [[ $TRAVIS_JOB_NAME == python-* ]]; then
+      pytest -sv xrspatial/tests
+    fi
+
+  - |
+    if [[ $TRAVIS_JOB_NAME == 'tarball' ]]; then
+      pip wheel . -w dist --no-deps && \
+      check-manifest --verbose && \
+      twine check dist/*
+    fi
 
 notifications:
   email: false
