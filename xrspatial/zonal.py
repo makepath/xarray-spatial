@@ -7,6 +7,9 @@ from xarray import DataArray
 
 from xrspatial.utils import ngjit
 
+from math import sqrt
+
+
 warnings.simplefilter('default')
 
 
@@ -353,6 +356,101 @@ def apply(zones, values, func):
         + values_func.data * values_func.mask
 
 
+def get_full_extent(crs):
+    Mercator = (-20e6, 20e6), (-20e6, 20e6)
+    Geographic = (-180, 180), (-90, 90)
+
+    def _crs_code_mapping():
+        CRS_CODES = {}
+        CRS_CODES['Mercator'] = Mercator
+        CRS_CODES['Geographic'] = Geographic
+        return CRS_CODES
+
+    CRS_CODES = _crs_code_mapping()
+    return CRS_CODES[crs]
+
+
+def suggest_zonal_canvas(smallest_area, x_range, y_range,
+                         crs='Mercator', min_pixels=25):
+    """Given a coordinate reference system (crs), a set of polygons with
+    corresponding x range and y range, calculate the height and width of canvas
+    so that the smallest polygon (polygon with smallest area) is rasterized
+    with at least min pixels.
+
+    Currently, we assume that the smallest polygon does not intersect others.
+    One should note that a polygon can have different shapes when it is
+    rasterized in canvases of different size. Thus, we cannot 100% guarantee
+    the actual number of pixels after rasterization. It is recommended to add
+    an additional of 5% to @min_pixels parameter.
+
+    Parameters
+    ----------
+    x_range: tuple or list of 2 numeric elements,
+        The full x extent of the polygon GeoDataFrame.
+    y_range: tuple or list of 2 numeric elements,
+        The full y extent of the polygon GeoDataFrame.
+    smallest_area: numeric (float, int)
+        Area of the smallest polygon.
+    crs: string,
+        Name of the coordinate reference system.
+    min_pixels: int
+        Expected number of pixels of the polygon with smallest area
+        when the whole dataframe is rasterized.
+
+    Returns
+    -------
+    height, width: int, int
+        height and width of the canvas in pixel space
+
+    Examples
+    --------
+    >>> from spatialpandas import GeoDataFrame
+    >>> import geopandas as gpd
+    >>> import datashader as ds
+    >>> df = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
+    >>> df = df.to_crs("EPSG:3857")
+    >>> df = df[df.continent != 'Antarctica']
+    >>> df['id'] = [i for i in range(len(df.index))]
+    >>> xmin, ymin, xmax, ymax = (df.bounds.minx.min(), df.bounds.miny.min(),
+    ...                           df.bounds.maxx.max(), df.bounds.maxy.max())
+    >>> x_range = (xmin, xmax)
+    >>> y_range = (ymin, ymax)
+    >>> smallest_area = df.area.min()
+    >>> min_pixels = 20
+    >>> height, width = suggest_zonal_canvas(x_range=x_range, y_range=y_range,
+    ...                                      smallest_area=smallest_area,
+    ...                                      crs='Mercator',
+    ...                                      min_pixels=min_pixels)
+    >>> cvs = ds.Canvas(x_range=x_range, y_range=y_range,
+    ...                 plot_height=height, plot_width=width)
+    >>> spatial_df = GeoDataFrame(df, geometry='geometry')
+    >>> agg = cvs.polygons(spatial_df, 'geometry', agg=ds.max('id'))
+    >>> min_poly_id = df.area.argmin()
+    >>> actual_min_pixels = len(np.where(agg.data==min_poly_id)[0])
+    """
+
+    full_xrange, full_yrange = get_full_extent(crs)
+    xmin, xmax = full_xrange
+    ymin, ymax = full_yrange
+    aspect_ratio = (xmax - xmin) / (ymax - ymin)
+
+    # area that a pixel stands for
+    pixel_area = smallest_area / min_pixels
+    # total_area of whole GeoDataFrame
+    total_area = (xmax - xmin) * (ymax - ymin)
+    # total pixels needed
+    total_pixels = total_area / pixel_area
+    # We have, h * w = total_pixels
+    # and,     w / h = aspect_ratio
+    # Thus,    aspect_ratio * h**2 = total_pixels
+    h = sqrt(total_pixels / aspect_ratio)
+    w = aspect_ratio * h
+    canvas_h = int(h * (y_range[1] - y_range[0]) / (ymax - ymin))
+    canvas_w = int(w * (x_range[1] - x_range[0]) / (xmax - xmin))
+
+    return canvas_h, canvas_w
+
+  
 @ngjit
 def _area_connectivity(data, n=4):
     '''
