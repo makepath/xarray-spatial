@@ -6,6 +6,7 @@ import xarray as xa
 from xrspatial import zonal_stats as stats
 from xrspatial import zonal_apply as apply
 from xrspatial import zonal_crosstab as crosstab
+from xrspatial import suggest_zonal_canvas
 
 
 # create valid "zones" and "values" for testing stats()
@@ -339,3 +340,29 @@ def test_apply():
     assert (values_val[2, :2] == values_copy.values[2, :2]).all()
     # last element of the last row is nan
     assert np.isnan(values_val[2, 2])
+
+
+def test_suggest_zonal_canvas():
+    # crs: Geographic
+    x_range = (0, 20)
+    y_range = (0, 10)
+    smallest_area = 2
+    min_pixels = 2
+    height, width = suggest_zonal_canvas(x_range=x_range, y_range=y_range,
+                                         smallest_area=smallest_area,
+                                         crs='Geographic',
+                                         min_pixels=min_pixels)
+    assert height == 10
+    assert width == 20
+
+    # crs: Mercator
+    x_range = (-1e6, 1e6)
+    y_range = (0, 1e6)
+    smallest_area = 2e9
+    min_pixels = 20
+    height, width = suggest_zonal_canvas(x_range=x_range, y_range=y_range,
+                                         smallest_area=smallest_area,
+                                         crs='Mercator',
+                                         min_pixels=min_pixels)
+    assert height == 100
+    assert width == 200
