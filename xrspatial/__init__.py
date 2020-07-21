@@ -3,23 +3,42 @@ from xrspatial.bump import bump  # noqa
 from xrspatial.curvature import curvature  # noqa
 from xrspatial.focal import mean  # noqa
 from xrspatial.hillshade import hillshade  # noqa
-from xrspatial.ndvi import ndvi  # noqa
+
+from xrspatial.multispectral import ndvi  # noqa
+from xrspatial.multispectral import arvi  # noqa
+from xrspatial.multispectral import savi  # noqa
+from xrspatial.multispectral import nbr  # noqa
+from xrspatial.multispectral import evi  # noqa
+from xrspatial.multispectral import sipi  # noqa
+
 from xrspatial.perlin import perlin  # noqa
+
 from xrspatial.proximity import euclidean_distance  # noqa
 from xrspatial.proximity import great_circle_distance  # noqa
 from xrspatial.proximity import manhattan_distance  # noqa
 from xrspatial.proximity import proximity  # noqa
+from xrspatial.proximity import allocation  # noqa
+from xrspatial.proximity import direction  # noqa
+
 from xrspatial.slope import slope  # noqa
 from xrspatial.terrain import generate_terrain  # noqa
 from xrspatial.viewshed import viewshed  # noqa
+
 from xrspatial.zonal import apply as zonal_apply  # noqa
 from xrspatial.zonal import crosstab as zonal_crosstab  # noqa
 from xrspatial.zonal import stats as zonal_stats  # noqa
+
 from xrspatial.zonal import suggest_zonal_canvas as suggest_zonal_canvas  # noqa
-from xrspatial.classify import quantile
-from xrspatial.classify import equal_interval
-from xrspatial.classify import natural_breaks
-__version__ = '0.0.1'
+
+from xrspatial.zonal import regions as regions  # noqa
+from xrspatial.zonal import trim # noqa
+from xrspatial.zonal import crop # noqa
+
+from xrspatial.classify import quantile  # noqa
+from xrspatial.classify import equal_interval  # noqa
+from xrspatial.classify import natural_breaks  # noqa
+
+__version__ = '0.0.6'
 
 
 def test():
