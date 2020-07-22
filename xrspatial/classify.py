@@ -244,7 +244,7 @@ def natural_breaks_helper(agg, number_classes=5, init=10):
         print('NBreaks Warning: Not enough unique values in array for {} classes'.format(unique_num_classes))
         number_classes = unique_num_classes
 
-    kres = _kmeans(agg_dr, number_classes)
+    kres = _kmeans(agg_dr, number_classes, init)
     sids = kres[-1]  # centroids
     fit = kres[-2]
     class_ids = kres[0]
@@ -267,10 +267,10 @@ def natural_breaks(agg, name='natural_breaks', k=5, init=10):
         res0 = natural_breaks_helper(agg_copy, k, init=init)
         bins = np.array(res0[-1])
     return DataArray(_bin(agg.data, bins, np.arange(uvk)),
-                    name=name,
-                    coords=agg.coords,
-                    dims=agg.dims,
-                    attrs=agg.attrs)
+                     name=name,
+                     coords=agg.coords,
+                     dims=agg.dims,
+                     attrs=agg.attrs)
 
 
 def equal_interval(agg, k=5, name='equal_interval'):
@@ -339,7 +339,7 @@ def equal_interval(agg, k=5, name='equal_interval'):
     cuts[-1] = max_agg
     bins = cuts.copy()
     return DataArray(_bin(agg.data, bins, np.arange(l_cuts)),
-                    name=name,
-                    coords=agg.coords,
-                    dims=agg.dims,
-                    attrs=agg.attrs)
+                     name=name,
+                     coords=agg.coords,
+                     dims=agg.dims,
+                     attrs=agg.attrs)
