@@ -27,7 +27,7 @@ Xarray-Spatial implements common raster analysis functions using Numba and provi
 pip install xarray-spatial
 
 # via conda
-conda install -c makepath xarray-spatial
+conda install -c conda-forge xarray-spatial
 ```
 
 | | | | | |
@@ -113,3 +113,5 @@ With the introduction of projects like Numba, Python gained new ways to provide 
 - @kristinepetrosyan
 - @sjsrey
 - @giancastro
+- @ocefpaf
+- @rsignell-usgs
