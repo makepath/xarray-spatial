@@ -1,3 +1,10 @@
+### Version 0.0.7 - 7/21/2020
+- Added 2D Crosstab (zonal)
+- Added suggest_zonal_canvas (zonal)
+- Added conda-forge build
+- Removed Versioneer
+- Updates to CI/CD
+
 ### Version 0.0.6 - 7/14/2020
 - Added Proximity Direction (proximity)
 - Added Proximity Allocation (proximity)

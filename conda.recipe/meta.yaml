@@ -1,7 +1,7 @@
 
 package:
   name: xarray-spatial
-  version: 0.0.6
+  version: 0.0.7
 
 requirements:
   build:
