@@ -1,3 +1,6 @@
+### Version 0.0.8 - 7/22/2020
+- Fixed missing deps
+
 ### Version 0.0.7 - 7/21/2020
 - Added 2D Crosstab (zonal)
 - Added suggest_zonal_canvas (zonal)
