@@ -1,0 +1,22 @@
+include *.txt
+include *.md
+
+graft xrspatial
+
+prune docs
+prune *.egg-info
+
+global-exclude *.png
+prune conda.recipe
+prune examples
+
+exclude xrspatial/_version.py
+exclude tile_idea.py
+exclude *.yml
+exclude *.enc
+exclude .gitignore
+exclude .isort.cfg
+exclude *.dot
+exclude *.gif
+exclude *.svg
+exclude tox.ini

@@ -11,6 +11,7 @@ build: off
 install:
   - "%PYTHON%\\python.exe -m pip install wheel"
   - "%PYTHON%\\python.exe -m pip install -r requirements.txt"
+  - "%PYTHON%\\python.exe -m pip install -r requirements-dev.txt"
 
 test_script:
   - "%PYTHON%\\python.exe -m pytest"
