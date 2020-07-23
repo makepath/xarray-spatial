@@ -162,14 +162,14 @@ def quantile(agg, k=4, name='quantile', ignore_vals=tuple()):
                      attrs=agg.attrs)
 
 
+@ngjit
 def _jenks_matrices(data, n_classes):
     n_data = data.shape[0]
-    lower_class_limits = np.zeros((n_data+1, n_classes+1), dtype=np.float)
+    lower_class_limits = np.zeros((n_data+1, n_classes+1), dtype=np.float64)
     lower_class_limits[1, 1:n_classes+1] = 1.0
 
-    inf = float('inf')
-    var_combinations = np.zeros((n_data+1, n_classes+1), dtype=np.float)
-    var_combinations[2:n_data+1, 1:n_classes+1] = inf
+    var_combinations = np.zeros((n_data+1, n_classes+1), dtype=np.float64)
+    var_combinations[2:n_data+1, 1:n_classes+1] = np.inf
 
     nl = data.shape[0] + 1
     variance = 0.0
@@ -213,11 +213,11 @@ def _jenks_matrices(data, n_classes):
     return lower_class_limits, var_combinations
 
 
+@ngjit
 def _jenks(data, n_classes):
     # ported from existing cython implementation:
     # https://github.com/perrygeo/jenks/blob/master/jenks.pyx
 
-    data = np.array(data, dtype=np.float)
     data.sort()
 
     lower_class_limits, _ = _jenks_matrices(data, n_classes)
@@ -297,9 +297,9 @@ def equal_interval(agg, k=5, name='equal_interval'):
               number of classes required
 
 
-    Returns 
-        ------- 
-        equal_interval_agg : xr.DataArray 
+    Returns
+        -------
+        equal_interval_agg : xr.DataArray
 
     Notes:
     ------
@@ -317,7 +317,7 @@ def equal_interval(agg, k=5, name='equal_interval'):
 
     Examples
     --------
-   
+
     >>> In []: ei = np.array([1, 1, 0, 2,4,5,6])                                                                                                                        
 
     >>> In []: ei_array =xarray.DataArray(ei)                                                                                                                         
