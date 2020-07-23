@@ -245,15 +245,19 @@ def _kmeans(agg, k=5):
 
 def natural_breaks(agg, name='natural_breaks', k=5):
     """
-    Jenks natural breaks is kmeans in one dimension
+    Calculate Jenks natural breaks (a.k.a kmeans in one dimension)
+    for an input raster xarray.
 
     Parameters
     ----------
-    agg : xr.DataArray
-
+    agg : xarray.DataArray
         xarray.DataArray of values to bin
-    number_classes : int
+    k: int
         Number of classes
+
+    Returns
+    -------
+    natural_breaks_agg: xarray.DataArray
 
     Algorithm References:
      - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks
@@ -261,6 +265,22 @@ def natural_breaks(agg, name='natural_breaks', k=5):
 
     Examples
     --------
+    >>> n, m = 4, 3
+    >>> agg = xr.DataArray(np.arange(n * m).reshape((n, m)), dims=['y', 'x'])
+    >>> agg['y'] = np.linspace(0, n, n)
+    >>> agg['x'] = np.linspace(0, m, m)
+    >>> agg.data
+    array([[ 0,  1,  2],
+           [ 3,  4,  5],
+           [ 6,  7,  8],
+           [ 9, 10, 11]])
+    >>> k = 5
+    >>> natural_breaks_agg = natural_breaks(agg, k=5)
+    >>> natural_breaks_agg.data
+    array([[0., 0., 1.],
+           [1., 2., 2.],
+           [3., 3., 3.],
+           [4., 4., 4.]]
     """
 
     uv = np.unique(agg.data)

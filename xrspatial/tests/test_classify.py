@@ -24,28 +24,19 @@ def test_quantile():
 
 def test_natural_breaks():
     k = 5
-    n, m = 5, 5
-    agg = xr.DataArray(np.arange(n * m).reshape((n, m)), dims=['x', 'y'])
-    agg['x'] = np.linspace(0, n, n)
-    agg['y'] = np.linspace(0, m, m)
-
-    natural_breaks_agg = natural_breaks(agg, k=5)
-    assert natural_breaks_agg is not None
-
-    unique_elements, counts_elements = np.unique(natural_breaks_agg.data,
-                                                 return_counts=True)
-    assert len(unique_elements) == k
-
-
-def test_small_natural_breaks():
-    k = 5
     n, m = 4, 3
-    agg = xr.DataArray(np.arange(n * m).reshape((n, m)), dims=['x', 'y'])
-    agg['x'] = np.linspace(0, n, n)
-    agg['y'] = np.linspace(0, m, m)
+    agg = xr.DataArray(np.arange(n * m).reshape((n, m)), dims=['y', 'x'])
+    agg['y'] = np.linspace(0, n, n)
+    agg['x'] = np.linspace(0, m, m)
 
     natural_breaks_agg = natural_breaks(agg, k=5)
-    assert natural_breaks_agg is not None
+
+    # shape and other attributes remain the same
+    assert agg.shape == natural_breaks_agg.shape
+    assert agg.dims == natural_breaks_agg.dims
+    assert agg.attrs == natural_breaks_agg.attrs
+    for coord in agg.coords:
+        assert np.all(agg[coord] == natural_breaks_agg[coord])
 
     unique_elements, counts_elements = np.unique(natural_breaks_agg.data,
                                                  return_counts=True)
