@@ -212,6 +212,9 @@ def _jenks_matrices(data, n_classes):
 
 
 def _jenks(data, n_classes):
+    # ported from existing cython implementation:
+    # https://github.com/perrygeo/jenks/blob/master/jenks.pyx
+
     if n_classes > len(data):
         return
 
@@ -277,8 +280,8 @@ def natural_breaks_helper(agg, number_classes=5, init=10):
 
 
     Algorithm References:
-     - https://pysal.org/pysal/_modules/pysal/viz/mapclassify/classifiers.html#NaturalBreaks
-     - https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py
+     - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks
+     - https://github.com/perrygeo/jenks/blob/master/jenks.pyx
 
     Examples
     --------
