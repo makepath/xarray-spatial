@@ -3,7 +3,6 @@ import numpy as np
 import scipy.stats as stats
 from datashader.colors import rgb
 from datashader.utils import ngjit
-from sklearn.cluster import KMeans as KMEANS
 from xarray import DataArray
 
 
@@ -139,7 +138,6 @@ def quantile(agg, k=4, name='quantile', ignore_vals=tuple()):
     >>> quantile_agg = quantile(my_agg)
     """
 
-
     w = 100.0 / k
     p = np.arange(w, 100 + w, w)
 
@@ -162,7 +160,83 @@ def quantile(agg, k=4, name='quantile', ignore_vals=tuple()):
                      attrs=agg.attrs)
 
 
-def _kmeans(agg, k=5, n_init=10):
+def _jenks_matrices(data, n_classes):
+    n_data = data.shape[0]
+    lower_class_limits = np.zeros((n_data+1, n_classes+1), dtype=np.float)
+    lower_class_limits[1, 1:n_classes+1] = 1.0
+
+    inf = float('inf')
+    var_combinations = np.zeros((n_data+1, n_classes+1), dtype=np.float)
+    var_combinations[2:n_data+1, 1:n_classes+1] = inf
+
+    nl = data.shape[0] + 1
+    variance = 0.0
+
+    for l in range(2, nl):
+        sum = 0.0
+        sum_squares = 0.0
+        w = 0.0
+
+        for m in range(1, l+1):
+            # `III` originally
+            lower_class_limit = l - m + 1
+            i4 = lower_class_limit - 1
+
+            val = data[i4]
+
+            # here we're estimating variance for each potential classing
+            # of the data, for each potential number of classes. `w`
+            # is the number of data points considered so far.
+            w += 1.0
+
+            # increase the current sum and sum-of-squares
+            sum += val
+            sum_squares += val * val
+
+            # the variance at this point in the sequence is the difference
+            # between the sum of squares and the total x 2, over the number
+            # of samples.
+            variance = sum_squares - (sum * sum) / w
+
+            if i4 != 0:
+                for j in range(2, n_classes+1):
+                    jm1 = j - 1
+                    if var_combinations[l, j] >= (variance + var_combinations[i4, jm1]):
+                        lower_class_limits[l, j] = lower_class_limit
+                        var_combinations[l, j] = variance + var_combinations[i4, jm1]
+
+        lower_class_limits[l, 1] = 1.
+        var_combinations[l, 1] = variance
+
+    return lower_class_limits, var_combinations
+
+
+def _jenks(data, n_classes):
+    if n_classes > len(data):
+        return
+
+    data = np.array(data, dtype=np.float)
+    data.sort()
+
+    lower_class_limits, _ = _jenks_matrices(data, n_classes)
+
+    k = data.shape[0]
+    kclass = [0.] * (n_classes+1)
+    count_num = n_classes
+
+    kclass[n_classes] = data[len(data) - 1]
+    kclass[0] = data[0]
+
+    while count_num > 1:
+        elt = int(lower_class_limits[k][count_num] - 2)
+        kclass[count_num - 1] = data[elt]
+        k = int(lower_class_limits[k][count_num] - 1)
+        count_num -= 1
+
+    return kclass
+
+
+def _kmeans(agg, k=5):
     """
     Helper function to do k-means in one dimension
 
@@ -180,24 +254,9 @@ def _kmeans(agg, k=5, n_init=10):
 
     agg.data = agg.data * 1.0  # KMEANS needs float or double dtype
     agg.data.shape = (-1, 1)
-    result = KMEANS(n_clusters=k, init="k-means++", n_init=n_init).fit(agg.data)
-    class_ids = result.labels_
-    centroids = result.cluster_centers_
-    binning = []
-    for c in range(k):
-        values = agg.data[class_ids == c]
-        binning.append([values.max(), len(values)])
-    binning = np.array(binning)
-    binning = binning[binning[:, 0].argsort()]
-    cuts = binning[:, 0]
+    centroids = _jenks(agg.data, k)
 
-    y_cent = np.zeros_like(agg.data)
-    for c in range(k):
-        y_cent[class_ids == c] = centroids[c]
-    diffs = agg.data - y_cent
-    diffs *= diffs
-
-    return class_ids, cuts, diffs.sum(), centroids
+    return centroids[1:]
 
 
 def natural_breaks_helper(agg, number_classes=5, init=10):
@@ -244,12 +303,8 @@ def natural_breaks_helper(agg, number_classes=5, init=10):
         print('NBreaks Warning: Not enough unique values in array for {} classes'.format(unique_num_classes))
         number_classes = unique_num_classes
 
-    kres = _kmeans(agg_dr, number_classes, init)
-    sids = kres[-1]  # centroids
-    fit = kres[-2]
-    class_ids = kres[0]
-    cuts = kres[1]
-    return sids, class_ids, fit, cuts
+    centroids = _kmeans(agg_dr, number_classes)
+    return centroids
 
 
 def natural_breaks(agg, name='natural_breaks', k=5, init=10):
@@ -265,7 +320,7 @@ def natural_breaks(agg, name='natural_breaks', k=5, init=10):
         bins = uv
     else:
         res0 = natural_breaks_helper(agg_copy, k, init=init)
-        bins = np.array(res0[-1])
+        bins = np.array(res0)
     return DataArray(_bin(agg.data, bins, np.arange(uvk)),
                      name=name,
                      coords=agg.coords,
