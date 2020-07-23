@@ -239,24 +239,7 @@ def _jenks(data, n_classes):
 
 
 def _kmeans(agg, k=5):
-    """
-    Helper function to do k-means in one dimension
-
-    Parameters
-    ----------
-
-    agg     : xr.DataArray
-             xarray.DataArray of value to classify
-    k       : int
-              number of classes to form
-
-    n_init : int, default: 10
-              number of initial  solutions. Best of initial results is returned.
-    """
-
-    agg.data = agg.data * 1.0  # KMEANS needs float or double dtype
-    agg.data.shape = (-1, 1)
-    centroids = _jenks(agg.data, k)
+    centroids = _jenks(agg.data.flatten(), k)
     return centroids[1:]
 
 

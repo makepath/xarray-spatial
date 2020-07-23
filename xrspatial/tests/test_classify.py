@@ -29,7 +29,7 @@ def test_natural_breaks():
     agg['x'] = np.linspace(0, n, n)
     agg['y'] = np.linspace(0, m, m)
 
-    natural_breaks_agg = natural_breaks(agg, k=5, init=10)
+    natural_breaks_agg = natural_breaks(agg, k=5)
     assert natural_breaks_agg is not None
 
     unique_elements, counts_elements = np.unique(natural_breaks_agg.data,
@@ -44,7 +44,7 @@ def test_small_natural_breaks():
     agg['x'] = np.linspace(0, n, n)
     agg['y'] = np.linspace(0, m, m)
 
-    natural_breaks_agg = natural_breaks(agg, k=5, init=10)
+    natural_breaks_agg = natural_breaks(agg, k=5)
     assert natural_breaks_agg is not None
 
     unique_elements, counts_elements = np.unique(natural_breaks_agg.data,
