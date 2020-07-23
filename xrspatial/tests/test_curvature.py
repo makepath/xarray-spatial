@@ -38,7 +38,8 @@ def test_curvature_on_flat_surface():
     assert test_raster1.shape == curv.shape
     assert test_raster1.dims == curv.dims
     assert test_raster1.attrs == curv.attrs
-    assert test_raster1.coords == curv.coords
+    for coord in test_raster1.coords:
+        assert np.all(test_raster1[coord] == curv[coord])
     # curvature of a flat surface is all 0s
     assert np.unique(curv.values) == [0]
 
@@ -61,7 +62,8 @@ def test_curvature_on_convex_surface():
     assert test_raster2.shape == curv.shape
     assert test_raster2.dims == curv.dims
     assert test_raster2.attrs == curv.attrs
-    assert test_raster2.coords == curv.coords
+    for coord in test_raster2.coords:
+        assert np.all(test_raster2[coord] == curv[coord])
 
     # curvature at a cell (i, j) only considers 4 cells:
     # (i-1, j), (i+1, j), (i, j-1), (i, j+1)
@@ -104,7 +106,8 @@ def test_curvature_on_concave_surface():
     assert test_raster3.shape == curv.shape
     assert test_raster3.dims == curv.dims
     assert test_raster3.attrs == curv.attrs
-    assert test_raster3.coords == curv.coords
+    for coord in test_raster3.coords:
+        assert np.all(test_raster3[coord] == curv[coord])
 
     # curvature at a cell (i, j) only considers 4 cells:
     # (i-1, j), (i+1, j), (i, j-1), (i, j+1)

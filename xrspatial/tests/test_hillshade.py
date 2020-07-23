@@ -41,7 +41,8 @@ def test_hillshade():
     da_gaussian = xr.DataArray(data_gaussian)
     da_gaussian_shade = hillshade(da_gaussian)
     assert da_gaussian_shade.dims == da_gaussian.dims
-    assert da_gaussian_shade.coords == da_gaussian.coords
     assert da_gaussian_shade.attrs == da_gaussian.attrs
+    for coord in da_gaussian.coords:
+        assert np.all(da_gaussian_shade[coord] == da_gaussian[coord])
     assert da_gaussian_shade.mean() > 0
     assert da_gaussian_shade[60, 60] > 0

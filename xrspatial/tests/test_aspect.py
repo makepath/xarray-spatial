@@ -42,8 +42,9 @@ def test_aspect_transfer_function():
     da = xr.DataArray(data_gaussian, dims=['y', 'x'], attrs={'res': 1})
     da_aspect = aspect(da)
     assert da_aspect.dims == da.dims
-    assert da_aspect.coords == da.coords
     assert da_aspect.attrs == da.attrs
     assert da.shape == da_aspect.shape
+    for coord in da.coords:
+        assert np.all(da[coord] == da_aspect[coord])
     assert pytest.approx(da_aspect.data.max(), .1) == 360.
     assert pytest.approx(da_aspect.data.min(), .1) == 0.

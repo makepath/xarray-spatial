@@ -66,8 +66,9 @@ def test_ndvi():
     da_ndvi = ndvi(da_nir, da_red)
 
     assert da_ndvi.dims == da_nir.dims
-    assert da_ndvi.coords == da_nir.coords
     assert da_ndvi.attrs == da_nir.attrs
+    for coord in da_nir.coords:
+        assert np.all(da_nir[coord] == da_ndvi[coord])
 
     assert da_ndvi[0, 0] == -1
     assert da_ndvi[-1, -1] == 1
