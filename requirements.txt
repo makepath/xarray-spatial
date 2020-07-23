@@ -1,4 +1,3 @@
 datashader
 xarray
-scikit-learn
 bokeh>2

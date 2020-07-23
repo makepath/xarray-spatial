@@ -66,9 +66,10 @@ def test_slope_transfer_function():
     da = xr.DataArray(data_gaussian, attrs={'res': 1})
     da_slope = slope(da)
     assert da_slope.dims == da.dims
-    assert da_slope.coords == da.coords
     assert da_slope.attrs == da.attrs
     assert da.shape == da_slope.shape
+    for coord in da.coords:
+        assert np.all(da_slope[coord] == da[coord])
 
     assert da_slope.sum() > 0
 
@@ -81,9 +82,10 @@ def test_slope_transfer_function():
     da = xr.DataArray(data_gaussian, attrs={'res': (1.0, 1.0)})
     da_slope = slope(da)
     assert da_slope.dims == da.dims
-    assert da_slope.coords == da.coords
     assert da_slope.attrs == da.attrs
     assert da.shape == da_slope.shape
+    for coord in da.coords:
+        assert np.all(da_slope[coord] == da[coord])
 
     assert da_slope.sum() > 0
 
@@ -122,9 +124,10 @@ def test_slope_against_qgis():
 
     # validate output attributes
     assert xrspatial_slope.dims == small_da.dims
-    assert xrspatial_slope.coords == small_da.coords
     assert xrspatial_slope.attrs == small_da.attrs
     assert xrspatial_slope.shape == small_da.shape
+    for coord in small_da.coords:
+        assert np.all(xrspatial_slope[coord] == small_da[coord])
 
     # validate output values
     # ignore border edges
