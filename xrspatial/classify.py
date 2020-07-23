@@ -4,6 +4,8 @@ import scipy.stats as stats
 from datashader.colors import rgb
 from datashader.utils import ngjit
 from xarray import DataArray
+import warnings
+warnings.simplefilter('default')
 
 
 def color_values(agg, color_key, alpha=255):
@@ -215,9 +217,6 @@ def _jenks(data, n_classes):
     # ported from existing cython implementation:
     # https://github.com/perrygeo/jenks/blob/master/jenks.pyx
 
-    if n_classes > len(data):
-        return
-
     data = np.array(data, dtype=np.float)
     data.sort()
 
@@ -258,26 +257,20 @@ def _kmeans(agg, k=5):
     agg.data = agg.data * 1.0  # KMEANS needs float or double dtype
     agg.data.shape = (-1, 1)
     centroids = _jenks(agg.data, k)
-
     return centroids[1:]
 
 
-def natural_breaks_helper(agg, number_classes=5, init=10):
+def natural_breaks(agg, name='natural_breaks', k=5):
     """
-    natural breaks helper function
     Jenks natural breaks is kmeans in one dimension
 
     Parameters
     ----------
-
     agg : xr.DataArray
 
         xarray.DataArray of values to bin
     number_classes : int
         Number of classes
-    init: int, default:10
-        Number of different solutions to obtain using different centroids. Best solution is returned.
-
 
     Algorithm References:
      - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks
@@ -285,45 +278,23 @@ def natural_breaks_helper(agg, number_classes=5, init=10):
 
     Examples
     --------
-    >>> from xrspatial.classify import natural_breaks
-    >>> natural_agg = natural_breaks(my_agg)
-    >>> values = np.array([1, 1, 0, 2,4,5,6])
-    >>> val1 =xarray.DataArray(values)
-    >>> In []: xrspatial.natural_breaks(val1)
-    >>> Out[]:
-    >>> <xarray.DataArray 'natural_breaks' (dim_0: 5)>
-    >>> array([0., 1., 2., 4., 6.])
     """
-    dr_values = np.array(agg.data)
-    agg_dr = DataArray(dr_values,
-                       dims=agg.dims,
-                       coords=agg.coords,
-                       attrs=agg.attrs)
 
-    unique_values = np.unique(dr_values)
-    unique_num_classes = len(unique_values)
-    if unique_num_classes < number_classes:
-        print('NBreaks Warning: Not enough unique values in array for {} classes'.format(unique_num_classes))
-        number_classes = unique_num_classes
-
-    centroids = _kmeans(agg_dr, number_classes)
-    return centroids
-
-
-def natural_breaks(agg, name='natural_breaks', k=5, init=10):
-    agg_copy = agg.copy()
-    values = np.array(agg_copy.data)
-    uv = np.unique(values)
+    uv = np.unique(agg.data)
     uvk = len(uv)
 
     if uvk < k:
-        print('NBreaks Warning: Not enough unique values in array for {} classes'.format(uvk))
-        k = uvk
+        warnings.warn('natural_breaks Warning: Not enough unique values '
+                      'in data array for {} classes. '
+                      'n_samples={} should be >= n_clusters={}. '
+                      'Using k={} instead.'.format(k, uvk, k, uvk),
+                      Warning)
         uv.sort()
         bins = uv
     else:
-        res0 = natural_breaks_helper(agg_copy, k, init=init)
+        res0 = _kmeans(agg, k)
         bins = np.array(res0)
+
     return DataArray(_bin(agg.data, bins, np.arange(uvk)),
                      name=name,
                      coords=agg.coords,
