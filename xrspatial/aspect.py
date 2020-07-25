@@ -1,6 +1,6 @@
 import numpy as np
-
 from xarray import DataArray
+from math import pi
 
 from xrspatial.utils import ngjit
 
@@ -24,7 +24,7 @@ def _horn_aspect(data):
             dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / 8
             dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / 8
 
-            aspect = np.arctan2(dz_dy, -dz_dx) * 57.29578  # (180 / pi)
+            aspect = np.arctan2(dz_dy, -dz_dx) * 180 / pi
 
             if aspect < 0:
                 out[y, x] = 90.0 - aspect
