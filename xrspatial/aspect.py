@@ -12,14 +12,14 @@ def _horn_aspect(data):
     for y in range(1, rows-1):
         for x in range(1, cols-1):
 
-            a = data[y+1, x-1]
-            b = data[y+1, x]
-            c = data[y+1, x+1]
+            a = data[y-1, x-1]
+            b = data[y-1, x]
+            c = data[y-1, x+1]
             d = data[y, x-1]
             f = data[y, x+1]
-            g = data[y-1, x-1]
-            h = data[y-1, x]
-            i = data[y-1, x+1]
+            g = data[y+1, x-1]
+            h = data[y+1, x]
+            i = data[y+1, x+1]
 
             dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / 8
             dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / 8
