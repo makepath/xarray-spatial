@@ -39,9 +39,10 @@ def test_hillshade():
     Assert Simple Hillshade transfer function
     """
     da_gaussian = xr.DataArray(data_gaussian)
-    da_gaussian_shade = hillshade(da_gaussian)
+    da_gaussian_shade = hillshade(da_gaussian, name='hillshade_agg')
     assert da_gaussian_shade.dims == da_gaussian.dims
     assert da_gaussian_shade.attrs == da_gaussian.attrs
+    assert da_gaussian_shade.name == 'hillshade_agg'
     for coord in da_gaussian.coords:
         assert np.all(da_gaussian_shade[coord] == da_gaussian[coord])
     assert da_gaussian_shade.mean() > 0
