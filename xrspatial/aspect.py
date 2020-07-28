@@ -42,8 +42,7 @@ def _horn_aspect(data):
     return out
 
 
-# TODO: add optional name parameter `name='aspect'`
-def aspect(agg):
+def aspect(agg, name='aspect'):
     """Returns downward slope direction in compass degrees (0 - 360) with 0 at 12 o'clock.
 
     Parameters
@@ -65,7 +64,7 @@ def aspect(agg):
         raise TypeError("agg must be instance of DataArray")
 
     return DataArray(_horn_aspect(agg.data),
-                     name='aspect',
+                     name=name,
                      dims=agg.dims,
                      coords=agg.coords,
                      attrs=agg.attrs)

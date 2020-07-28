@@ -65,6 +65,8 @@ def test_slope_transfer_function():
     """
     da = xr.DataArray(data_gaussian, attrs={'res': 1})
     da_slope = slope(da)
+    # default name
+    assert da_slope.name == 'slope'
     assert da_slope.dims == da.dims
     assert da_slope.attrs == da.attrs
     assert da.shape == da_slope.shape
@@ -120,12 +122,13 @@ def test_slope_against_qgis():
         dtype=np.float32)
 
     # slope by xrspatial
-    xrspatial_slope = slope(small_da)
+    xrspatial_slope = slope(small_da, name='slope_agg')
 
     # validate output attributes
     assert xrspatial_slope.dims == small_da.dims
     assert xrspatial_slope.attrs == small_da.attrs
     assert xrspatial_slope.shape == small_da.shape
+    assert xrspatial_slope.name == 'slope_agg'
     for coord in small_da.coords:
         assert np.all(xrspatial_slope[coord] == small_da[coord])
 

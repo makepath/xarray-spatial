@@ -5,8 +5,7 @@ import numpy as np
 from xarray import DataArray
 
 
-# TODO: add optional name parameter `name='hillshade'`
-def hillshade(agg, azimuth=225, angle_altitude=25):
+def hillshade(agg, azimuth=225, angle_altitude=25, name='hillshade'):
     """Illuminates 2D DataArray from specific azimuth and altitude.
 
     Parameters
@@ -43,5 +42,5 @@ def hillshade(agg, azimuth=225, angle_altitude=25):
     altituderad = angle_altitude*np.pi/180.
     shaded = np.sin(altituderad) * np.sin(slope) + np.cos(altituderad) * np.cos(slope)*np.cos((azimuthrad - np.pi/2.) - aspect)
     data = (shaded + 1) / 2
-    return DataArray(data, name='hillshade', dims=agg.dims,
+    return DataArray(data, name=name, dims=agg.dims,
                      coords=agg.coords, attrs=agg.attrs)

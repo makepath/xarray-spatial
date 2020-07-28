@@ -26,8 +26,7 @@ def _horn_slope(data, cellsize_x, cellsize_y):
     return out
 
 
-# TODO: add optional name parameter `name='slope'`
-def slope(agg):
+def slope(agg, name='slope'):
     """Returns slope of input aggregate in degrees.
     Parameters
     ----------
@@ -48,7 +47,6 @@ def slope(agg):
         raise TypeError("agg must be instance of DataArray")
 
     if not agg.attrs.get('res'):
-        #TODO: maybe monkey-patch a "res" attribute valueing unity is reasonable
         raise ValueError('input xarray must have `res` attr.')
 
     # get cellsize out from 'res' attribute
@@ -67,7 +65,7 @@ def slope(agg):
     slope_agg = _horn_slope(agg.data, cellsize_x, cellsize_y)
 
     return DataArray(slope_agg,
-                     name='slope',
+                     name=name,
                      coords=agg.coords,
                      dims=agg.dims,
                      attrs=agg.attrs)

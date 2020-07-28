@@ -43,6 +43,8 @@ def test_aspect_transfer_function():
     """
     da = xr.DataArray(data_gaussian, dims=['y', 'x'], attrs={'res': 1})
     da_aspect = aspect(da)
+    # default name
+    assert da_aspect.name == 'aspect'
     assert da_aspect.dims == da.dims
     assert da_aspect.attrs == da.attrs
     assert da.shape == da_aspect.shape
@@ -76,12 +78,13 @@ def test_aspect_against_qgis():
         dtype=np.float32)
 
     # aspect by xrspatial
-    xrspatial_aspect = aspect(small_da)
+    xrspatial_aspect = aspect(small_da, name='aspect_agg')
 
     # validate output attributes
     assert xrspatial_aspect.dims == small_da.dims
     assert xrspatial_aspect.attrs == small_da.attrs
     assert xrspatial_aspect.shape == small_da.shape
+    assert xrspatial_aspect.name == 'aspect_agg'
     for coord in small_da.coords:
         assert np.all(xrspatial_aspect[coord] == small_da[coord])
 
