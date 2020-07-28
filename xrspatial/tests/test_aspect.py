@@ -48,32 +48,31 @@ def test_aspect_transfer_function():
     assert da.shape == da_aspect.shape
     for coord in da.coords:
         assert np.all(da[coord] == da_aspect[coord])
-    assert pytest.approx(da_aspect.data.max(), .1) == 360.
-    assert pytest.approx(da_aspect.data.min(), .1) == 0.
+    assert pytest.approx(np.nanmax(da_aspect.data), .1) == 360.
+    assert pytest.approx(np.nanmin(da_aspect.data), .1) == 0.
 
 
 def test_aspect_against_qgis():
     # input data
-    data = np.asarray(
-        [[1432.6542, 1432.4764, 1432.4764, 1432.1207, 1431.9429, np.nan],
-         [1432.6542, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
-         [1432.832, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
-         [1432.832, 1432.6542, 1432.4764, 1432.4764, 1432.1207, np.nan],
-         [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
-         [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
-         [1432.832, 1432.832, 1432.6542, 1432.4764, 1432.4764, np.nan]],
-        dtype=np.float32)
+    data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+                       [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
+                       [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
+                       [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
+                       [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                       [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                       [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
+                      dtype=np.float32)
     small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
 
     # aspect by QGIS
-    qgis_aspect = np.asarray(
-        [[71.56505, 59.033928, 63.436916, 68.19859, np.nan, np.nan],
-         [59.038555, 59.033928, 75.96491, 71.56505, np.nan, np.nan],
-         [63.434948, 81.86675, 81.86675, 75.96375, np.nan, np.nan],
-         [90., 81.87305, 59.033928, 63.436916, np.nan, np.nan],
-         [78.69007, 78.69612, 63.434948, 75.96491, np.nan, np.nan],
-         [71.56505, 63.434948, 78.68401, 81.86675, np.nan, np.nan],
-         [78.69007, 63.434948, 71.56505, 59.033928, np.nan, np.nan]],
+    qgis_aspect = np.asarray([
+        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+        [330.94687, 335.55496, 320.70786, 330.94464, 0., 0.],
+        [333.43494, 333.43494, 329.03394, 341.56897, 0., 18.434948],
+        [338.9621, 338.20062, 341.56506, 0., 0., 45.],
+        [341.56506, 351.8699, 26.56505, 45., -1., 90.],
+        [351.86676, 11.306906, 45., 45., 45., 108.431015]],
         dtype=np.float32)
 
     # aspect by xrspatial
@@ -90,5 +89,13 @@ def test_aspect_against_qgis():
     # ignore border edges
     xrspatial_vals = xrspatial_aspect.values[1:-1, 1:-1]
     qgis_vals = qgis_aspect[1:-1, 1:-1]
-    assert ((xrspatial_vals == qgis_vals) | (
-            np.isnan(xrspatial_vals) & np.isnan(qgis_vals))).all()
+    # set a tolerance of 1e-4
+    # aspect is nan if nan input
+    # aspect is invalid (nan) if slope equals 0
+    # otherwise aspect are from 0 - 360
+    assert ((np.isnan(xrspatial_vals) & np.isnan(qgis_vals)) | (
+            np.isnan(xrspatial_vals) & (qgis_vals == -1)) | (
+            abs(xrspatial_vals - qgis_vals) <= 1e-4)).all()
+
+    assert (np.isnan(xrspatial_vals) | (
+            (0 <= xrspatial_vals) & (xrspatial_vals <= 360))).all()

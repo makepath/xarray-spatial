@@ -1,13 +1,15 @@
 import numpy as np
 from xarray import DataArray
-from math import pi
 
 from xrspatial.utils import ngjit
 
 
+RADIAN = 180 / np.pi
+
+
 @ngjit
 def _horn_aspect(data):
-    out = np.zeros_like(data)
+    out = np.zeros_like(data, dtype=np.float64)
     rows, cols = data.shape
     for y in range(1, rows-1):
         for x in range(1, cols-1):
@@ -24,14 +26,18 @@ def _horn_aspect(data):
             dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / 8
             dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / 8
 
-            aspect = np.arctan2(dz_dy, -dz_dx) * 180 / pi
-
-            if aspect < 0:
-                out[y, x] = 90.0 - aspect
-            elif aspect > 90.0:
-                out[y, x] = 360.0 - aspect + 90.0
+            if dz_dx == 0 and dz_dy == 0:
+                # flat surface, slope = 0, thus invalid aspect
+                out[y, x] = np.nan
             else:
-                out[y, x] = 90.0 - aspect
+                aspect = np.arctan2(dz_dy, -dz_dx) * RADIAN
+                # convert to compass direction values (0-360 degrees)
+                if aspect < 0:
+                    out[y, x] = 90.0 - aspect
+                elif aspect > 90.0:
+                    out[y, x] = 360.0 - aspect + 90.0
+                else:
+                    out[y, x] = 90.0 - aspect
 
     return out
 
