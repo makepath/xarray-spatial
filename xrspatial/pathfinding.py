@@ -109,13 +109,42 @@ def _find_pixel_idx(x, y, xs, ys):
     return py, px
 
 
-def a_star_search(surface, start, end, barriers):
+def a_star_search(surface, start, goal, barriers):
+    """
+    Calculate distance from a starting point to a goal through a surface graph.
+
+    A* is a modification of Dijkstra’s Algorithm that is optimized for
+    a single destination. Dijkstra’s Algorithm can find paths to all locations;
+    A* finds paths to one location, or the closest of several locations.
+    It prioritizes paths that seem to be leading closer to a goal.
+
+    Parameters
+    ----------
+    surface : xarray.DataArray
+        xarray.DataArray of values to bin
+    start: array like object (tuple, list, array, ...) of 2 numeric elements
+        (x, y) or (lon, lat) coordinates of the starting point
+    goal: array like object (tuple, list, array, ...) of 2 numeric elements
+        (x, y) or (lon, lat) coordinates of the goal location
+    barriers: array like object
+        list of values inside the surface which are barriers (cannot cross)
+
+    Returns
+    -------
+    distance: distance from start location to goal location
+    Return -1 if no path found
+
+    Algorithm References:
+    - https://www.redblobgames.com/pathfinding/a-star/implementation.html
+    - https://www.redblobgames.com/pathfinding/a-star/implementation.py
+    """
+
     ys = surface.coords['y']
     xs = surface.coords['x']
 
     # convert starting and ending point from geo coords to pixel coords
     py0, px0 = _find_pixel_idx(start[0], start[1], xs, ys)
-    py1, px1 = _find_pixel_idx(end[0], end[1], xs, ys)
+    py1, px1 = _find_pixel_idx(goal[0], goal[1], xs, ys)
 
     # create a diagram/graph
     height, width = surface.shape
