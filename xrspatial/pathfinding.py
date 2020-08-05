@@ -35,6 +35,7 @@ class SquareGrid:
         return id not in self.walls
 
     def neighbors(self, id):
+        # TODO: should we consider 8 connectivity?
         (x, y) = id
         results = [(x + 1, y), (x, y - 1), (x - 1, y), (x, y + 1)]
         if (x + y) % 2 == 0: results.reverse()  # aesthetics
@@ -159,7 +160,7 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
 
     if surface.dims != (y, x):
         raise ValueError("surface.coords should be named as coordinates:"
-                         "(%s, %s)".format(y, x))
+                         "({}, {})".format(y, x))
 
     y_coords = surface.coords[y].data
     x_coords = surface.coords[x].data
@@ -178,6 +179,9 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
     # convert starting and ending point from geo coords to pixel coords
     py0, px0 = _find_pixel_idx(start[0], start[1], x_coords, y_coords)
     py1, px1 = _find_pixel_idx(goal[0], goal[1], x_coords, y_coords)
+
+    # TODO: what if start and goal are in same cell in image raster?
+    #       Currently, cost = 0 and path is the cell itself
 
     # create a diagram/graph
     height, width = surface.shape
