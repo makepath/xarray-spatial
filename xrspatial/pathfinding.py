@@ -110,11 +110,12 @@ def _find_pixel_idx(x, y, xs, ys):
 def _reconstruct_path(came_from, start, goal):
     current = goal
     path = []
-    while current != start:
-        path.append(current)
-        current = came_from[current]
-    path.append(start)
-    path.reverse()
+    if current in came_from:
+        while current != start:
+            path.append(current)
+            current = came_from[current]
+        path.append(start)
+        path.reverse()
     return path
 
 
