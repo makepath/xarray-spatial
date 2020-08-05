@@ -3,6 +3,10 @@ import collections
 import heapq
 
 
+def _heuristic(x1, y1, x2, y2):
+    return abs(x1 - x2) + abs(y1 - y2)
+
+
 class Queue:
     def __init__(self):
         self.elements = collections.deque()
@@ -38,14 +42,9 @@ class SquareGrid:
         results = filter(self.passable, results)
         return results
 
-
-class GridWithWeights(SquareGrid):
-    def __init__(self, width, height):
-        super().__init__(width, height)
-        self.weights = {}
-
-    def cost(self, from_node, to_node):
-        return self.weights.get(to_node, 1)
+    def cost(self, x_coords, y_coords, from_node, to_node):
+        return _heuristic(x_coords[from_node[1]], y_coords[from_node[0]],
+                          x_coords[to_node[1]], y_coords[to_node[0]])
 
 
 class PriorityQueue:
@@ -62,18 +61,7 @@ class PriorityQueue:
         return heapq.heappop(self.elements)[1]
 
 
-def heuristic(a, b):
-    (x1, y1) = a
-    (x2, y2) = b
-    return abs(x1 - x2) + abs(y1 - y2)
-
-
-# Sample code from https://www.redblobgames.com/pathfinding/a-star/
-# Copyright 2014 Red Blob Games <redblobgames@gmail.com>
-#
-# Feel free to use this code in your own projects, including commercial projects
-# License: Apache v2.0 <http://www.apache.org/licenses/LICENSE-2.0.html>
-def _a_star_search(graph, start, goal):
+def _a_star_search(graph, x_coords, y_coords, start, goal):
     frontier = PriorityQueue()
     frontier.put(start, 0)
     came_from = {}
@@ -88,10 +76,13 @@ def _a_star_search(graph, start, goal):
             break
 
         for next in graph.neighbors(current):
-            new_cost = cost_so_far[current] + graph.cost(current, next)
+            new_cost = cost_so_far[current] + graph.cost(x_coords, y_coords, current, next)
             if next not in cost_so_far or new_cost < cost_so_far[next]:
                 cost_so_far[next] = new_cost
-                priority = new_cost + heuristic(goal, next)
+                priority = new_cost + _heuristic(x_coords[goal[1]],
+                                                 y_coords[goal[0]],
+                                                 x_coords[next[1]],
+                                                 y_coords[next[0]])
                 frontier.put(next, priority)
                 came_from[next] = current
     return came_from, cost_so_far
@@ -165,7 +156,7 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
 
     # create a diagram/graph
     height, width = surface.shape
-    graph = GridWithWeights(height, width)
+    graph = SquareGrid(height, width)
     # all cells have same weight
     graph.weights = {}
 
@@ -176,6 +167,15 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
         for (y, x) in zip(bys, bxs):
             graph.walls.append((y, x))
 
-    came_from, cost_so_far = _a_star_search(graph, (py0, px0), (py1, px1))
+    came_from, cost_so_far = _a_star_search(graph, x_coords, y_coords,
+                                            (py0, px0), (py1, px1))
+
     path = _reconstruct_path(came_from, (py0, px0), (py1, px1))
-    return path
+
+    if (py1, px1) in came_from:
+        cost = cost_so_far[(py1, px1)]
+    else:
+        # return -1 if no path found
+        cost = -1
+
+    return path, cost
