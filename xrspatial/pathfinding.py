@@ -94,9 +94,7 @@ def _a_star_search(graph, start, goal):
                 priority = new_cost + heuristic(goal, next)
                 frontier.put(next, priority)
                 came_from[next] = current
-    if goal not in cost_so_far:
-        return -1
-    return cost_so_far[goal]
+    return came_from, cost_so_far
 
 
 def _find_pixel_idx(x, y, xs, ys):
@@ -107,6 +105,17 @@ def _find_pixel_idx(x, y, xs, ys):
     py = int((y - ys[0]) / cellsize_y)
     px = int((x - xs[0]) / cellsize_x)
     return py, px
+
+
+def _reconstruct_path(came_from, start, goal):
+    current = goal
+    path = []
+    while current != start:
+        path.append(current)
+        current = came_from[current]
+    path.append(start)
+    path.reverse()
+    return path
 
 
 def a_star_search(surface, start, goal, barriers):
@@ -159,5 +168,6 @@ def a_star_search(surface, start, goal, barriers):
         for (y, x) in zip(bys, bxs):
             graph.walls.append((y, x))
 
-    distance = _a_star_search(graph, (py0, px0), (py1, px1))
-    return distance
+    came_from, cost_so_far = _a_star_search(graph, (py0, px0), (py1, px1))
+    path = _reconstruct_path(came_from, (py0, px0), (py1, px1))
+    return path
