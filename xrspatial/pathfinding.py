@@ -4,6 +4,8 @@ import heapq
 
 
 def _heuristic(x1, y1, x2, y2):
+    # function to calculate distance between 2 point
+    # TODO: what if we want to use another distance metric?
     return abs(x1 - x2) + abs(y1 - y2)
 
 
@@ -89,7 +91,7 @@ def _a_star_search(graph, x_coords, y_coords, start, goal):
     return came_from, cost_so_far
 
 
-def _find_pixel_idx(x, y, xs, ys):
+def _find_pixel_id(x, y, xs, ys):
 
     cellsize_y = ys[1] - ys[0]
     cellsize_x = xs[1] - xs[0]
@@ -177,8 +179,8 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
         raise ValueError("goal location outside the surface graph.")
 
     # convert starting and ending point from geo coords to pixel coords
-    py0, px0 = _find_pixel_idx(start[0], start[1], x_coords, y_coords)
-    py1, px1 = _find_pixel_idx(goal[0], goal[1], x_coords, y_coords)
+    py0, px0 = _find_pixel_id(start[0], start[1], x_coords, y_coords)
+    py1, px1 = _find_pixel_id(goal[0], goal[1], x_coords, y_coords)
 
     # TODO: what if start and goal are in same cell in image raster?
     #       Currently, cost = 0 and path is the cell itself
