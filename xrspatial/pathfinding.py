@@ -110,9 +110,23 @@ def _reconstruct_path(came_from, start, goal):
     return path
 
 
+def _is_inside(point, xmin, xmax, epsilon_x, ymin, ymax, epsilon_y):
+    # check if a point at (x, y) is within
+    # range from (xmin - epsilon_x, ymin - epsilon_y)
+    #       to   (xmax + epsilon_x, ymax + epsilon_y)
+
+    x, y = point
+    if (x < xmin - epsilon_x) or x > xmax + epsilon_x:
+        return False
+    if (y < ymin - epsilon_y) or y > ymax + epsilon_y:
+        return False
+    return True
+
+
 def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
     """
     Calculate distance from a starting point to a goal through a surface graph.
+    Starting location and goal location should be within the graph.
 
     A* is a modification of Dijkstra’s Algorithm that is optimized for
     a single destination. Dijkstra’s Algorithm can find paths to all locations;
@@ -149,6 +163,17 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
 
     y_coords = surface.coords[y].data
     x_coords = surface.coords[x].data
+
+    epsilon_x = (x_coords[1] - x_coords[0]) / 2
+    epsilon_y = (y_coords[1] - y_coords[0]) / 2
+    # validate start and goal locations are in the graph
+    if not _is_inside(start, x_coords[0], x_coords[-1], epsilon_x,
+                      y_coords[0], y_coords[-1], epsilon_y):
+        raise ValueError("start location outside the surface graph.")
+
+    if not _is_inside(goal, x_coords[0], x_coords[-1], epsilon_x,
+                      y_coords[0], y_coords[-1], epsilon_y):
+        raise ValueError("goal location outside the surface graph.")
 
     # convert starting and ending point from geo coords to pixel coords
     py0, px0 = _find_pixel_idx(start[0], start[1], x_coords, y_coords)
