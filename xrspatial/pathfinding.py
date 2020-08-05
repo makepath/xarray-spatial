@@ -182,6 +182,7 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
 
     # TODO: what if start and goal are in same cell in image raster?
     #       Currently, cost = 0 and path is the cell itself
+    # TODO: what if they are in same cell and value in the cell is a barrier?
 
     # create a diagram/graph
     height, width = surface.shape

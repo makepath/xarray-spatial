@@ -17,6 +17,7 @@ def test_a_star_search():
     _lat = np.linspace(0, height-1, height)
     agg['lon'] = _lon
     agg['lat'] = _lat
+
     barriers = []
     # no barriers, there always path from a start location to a goal location
     for x0 in _lon:
@@ -33,3 +34,15 @@ def test_a_star_search():
                         # path is the cell itself
                         # with 0 cost
                         assert len(path) == 1 and cost == 0
+
+    barriers = [1]
+    # set pixels with value 1 as barriers,
+    # cannot go from (0, 0) to anywhere since it is bounded by 1s
+    start = (0, 0)
+    for x1 in _lon:
+        for y1 in _lat:
+            goal = (x1, y1)
+            if goal != start:
+                path, cost = a_star_search(agg, start, goal, barriers,
+                                           'lon', 'lat')
+                assert len(path) == 0 and cost == -1
