@@ -118,7 +118,7 @@ def _reconstruct_path(came_from, start, goal):
     return path
 
 
-def a_star_search(surface, start, goal, barriers):
+def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
     """
     Calculate distance from a starting point to a goal through a surface graph.
 
@@ -148,12 +148,19 @@ def a_star_search(surface, start, goal, barriers):
     - https://www.redblobgames.com/pathfinding/a-star/implementation.py
     """
 
-    ys = surface.coords['y']
-    xs = surface.coords['x']
+    if surface.ndim != 2:
+        raise ValueError("surface must be 2D")
+
+    if surface.dims != (y, x):
+        raise ValueError("surface.coords should be named as coordinates:"
+                         "(%s, %s)".format(y, x))
+
+    y_coords = surface.coords[y].data
+    x_coords = surface.coords[x].data
 
     # convert starting and ending point from geo coords to pixel coords
-    py0, px0 = _find_pixel_idx(start[0], start[1], xs, ys)
-    py1, px1 = _find_pixel_idx(goal[0], goal[1], xs, ys)
+    py0, px0 = _find_pixel_idx(start[0], start[1], x_coords, y_coords)
+    py1, px1 = _find_pixel_idx(goal[0], goal[1], x_coords, y_coords)
 
     # create a diagram/graph
     height, width = surface.shape
