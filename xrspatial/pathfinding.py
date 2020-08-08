@@ -1,3 +1,4 @@
+import xarray as xr
 import numpy as np
 import collections
 import heapq
@@ -101,16 +102,21 @@ def _find_pixel_id(x, y, xs, ys):
     return py, px
 
 
-def _reconstruct_path(came_from, start, goal):
+def _reconstruct_path(path_img, came_from, cost_so_far, start, goal):
+    # construct path output image as a 2d array with NaNs for non-path pixels,
+    # and the value of the path pixels being the current cost up to that point
     current = goal
-    path = []
     if current in came_from:
+        # add cost at start
+        y, x = start
+        path_img[y, x] = cost_so_far[start]
+        # add cost along the path
         while current != start:
-            path.append(current)
+            y, x = current
+            # value of a path pixel is the cost up to that point
+            path_img[y, x] = cost_so_far[current]
             current = came_from[current]
-        path.append(start)
-        path.reverse()
-    return path
+    return
 
 
 def _is_inside(point, xmin, xmax, epsilon_x, ymin, ymax, epsilon_y):
@@ -136,6 +142,9 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
     A* finds paths to one location, or the closest of several locations.
     It prioritizes paths that seem to be leading closer to a goal.
 
+    The output is an equal sized Xarray.DataArray with NaNs for non-path pixels,
+    and the value of the path pixels being the current cost up to that point.
+
     Parameters
     ----------
     surface : xarray.DataArray
@@ -149,8 +158,7 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
 
     Returns
     -------
-    distance: distance from start location to goal location
-    Return -1 if no path found
+    path_agg: Xarray.DataArray with same size as input surface raster.
 
     Algorithm References:
     - https://www.redblobgames.com/pathfinding/a-star/implementation.html
@@ -202,12 +210,18 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
     came_from, cost_so_far = _a_star_search(graph, x_coords, y_coords,
                                             (py0, px0), (py1, px1))
 
-    path = _reconstruct_path(came_from, (py0, px0), (py1, px1))
+    # 2d output image that stores the path
+    path_img = np.zeros_like(surface)
+    # first, initialize all cells as np.nans
+    path_img[:, :] = np.nan
 
     if (py1, px1) in came_from:
-        cost = cost_so_far[(py1, px1)]
-    else:
-        # return -1 if no path found
-        cost = -1
+        # a path found
+        _reconstruct_path(path_img, came_from, cost_so_far,
+                          (py0, px0), (py1, px1))
 
-    return path, cost
+    path_agg = xr.DataArray(path_img,
+                            coords=surface.coords,
+                            dims=surface.dims,
+                            attrs=surface.attrs)
+    return path_agg
