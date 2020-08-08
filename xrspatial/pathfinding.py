@@ -102,6 +102,32 @@ def _find_pixel_id(x, y, xs, ys):
     return py, px
 
 
+def _find_valid_pixels(data, barriers):
+    # get valid pixel values in an input image
+    valid_values = set(np.unique(data)) - set(barriers)
+    # idx of all valid pixels
+    valid_pixels = []
+    for v in valid_values:
+        pixel_ys, pixel_xs = np.where(data == v)
+        for i in range(len(pixel_xs)):
+            valid_pixels.append((pixel_ys[i], pixel_xs[i]))
+
+    valid_pixels = np.asarray(valid_pixels)
+    return valid_pixels
+
+
+def _find_nearest_pixel(valid_pixels, py, px):
+    if valid_pixels.size > 0:
+        # there at least some valid pixels that not barriers
+        # pixel id of the input location
+        # TODO: distance by xcoords and ycoords
+        distances = np.sqrt((valid_pixels[:, 0] - py) ** 2 +
+                            (valid_pixels[:, 1] - px) ** 2)
+        nearest_index = np.argmin(distances)
+        return valid_pixels[nearest_index]
+    return (-1, -1)
+
+
 def _reconstruct_path(path_img, came_from, cost_so_far, start, goal):
     # construct path output image as a 2d array with NaNs for non-path pixels,
     # and the value of the path pixels being the current cost up to that point
@@ -132,7 +158,7 @@ def _is_inside(point, xmin, xmax, epsilon_x, ymin, ymax, epsilon_y):
     return True
 
 
-def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
+def a_star_search(surface, start, goal, barriers=[], x='x', y='y', snap=False):
     """
     Calculate distance from a starting point to a goal through a surface graph.
     Starting location and goal location should be within the graph.
@@ -155,7 +181,13 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
         (x, y) or (lon, lat) coordinates of the goal location
     barriers: array like object
         list of values inside the surface which are barriers (cannot cross)
-
+    x: string
+        name of the x coordinate in input surface raster
+    y: string
+        name of the y coordinate in input surface raster
+    snap: bool
+        snap the start and goal locations to the nearest valid value before
+        beginning path finding
     Returns
     -------
     path_agg: Xarray.DataArray with same size as input surface raster.
@@ -186,42 +218,50 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
                       y_coords[0], y_coords[-1], epsilon_y):
         raise ValueError("goal location outside the surface graph.")
 
-    # convert starting and ending point from geo coords to pixel coords
-    py0, px0 = _find_pixel_id(start[0], start[1], x_coords, y_coords)
-    py1, px1 = _find_pixel_id(goal[0], goal[1], x_coords, y_coords)
-
-    # TODO: what if start and goal are in same cell in image raster?
-    #       Currently, cost = 0 and path is the cell itself
-    # TODO: what if they are in same cell and value in the cell is a barrier?
-
-    # create a diagram/graph
-    height, width = surface.shape
-    graph = SquareGrid(height, width)
-    # all cells have same weight
-    graph.weights = {}
-
-    # find all barrier/wall cells
-    graph.walls = []
-    for b in barriers:
-        bys, bxs = np.where(surface.data == b)
-        for (y, x) in zip(bys, bxs):
-            graph.walls.append((y, x))
-
-    came_from, cost_so_far = _a_star_search(graph, x_coords, y_coords,
-                                            (py0, px0), (py1, px1))
-
     # 2d output image that stores the path
     path_img = np.zeros_like(surface, dtype=np.float64)
     # first, initialize all cells as np.nans
     path_img[:, :] = np.nan
 
-    if (py1, px1) in came_from:
-        # a path found
-        _reconstruct_path(path_img, came_from, cost_so_far,
-                          (py0, px0), (py1, px1))
+    # convert starting and ending point from geo coords to pixel coords
+    py0, px0 = _find_pixel_id(start[0], start[1], x_coords, y_coords)
+    py1, px1 = _find_pixel_id(goal[0], goal[1], x_coords, y_coords)
+
+    if snap:
+        valid_pixels = _find_valid_pixels(surface.data, barriers)
+        # find nearest pixel with a valid value
+        py0, px0 = _find_nearest_pixel(valid_pixels, py0, px0)
+        py1, px1 = _find_nearest_pixel(valid_pixels, py1, px1)
+
+    if py0 != -1 or py1 != -1:
+        # TODO: what if start and goal are in same cell in image raster?
+        #       Currently, cost = 0 and path is the cell itself
+        # TODO: what if they are in same cell and value in the cell is a barrier?
+
+        # create a diagram/graph
+        height, width = surface.shape
+        graph = SquareGrid(height, width)
+        # all cells have same weight
+        graph.weights = {}
+
+        # find all barrier/wall cells
+        graph.walls = []
+        for b in barriers:
+            bys, bxs = np.where(surface.data == b)
+            for (y, x) in zip(bys, bxs):
+                graph.walls.append((y, x))
+
+        came_from, cost_so_far = _a_star_search(graph, x_coords, y_coords,
+                                                (py0, px0), (py1, px1))
+
+        if (py1, px1) in came_from:
+            # a path found
+            _reconstruct_path(path_img, came_from, cost_so_far,
+                              (py0, px0), (py1, px1))
 
     path_agg = xr.DataArray(path_img,
                             coords=surface.coords,
                             dims=surface.dims,
                             attrs=surface.attrs)
+
     return path_agg
