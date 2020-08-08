@@ -211,7 +211,7 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y'):
                                             (py0, px0), (py1, px1))
 
     # 2d output image that stores the path
-    path_img = np.zeros_like(surface)
+    path_img = np.zeros_like(surface, dtype=np.float64)
     # first, initialize all cells as np.nans
     path_img[:, :] = np.nan
 
