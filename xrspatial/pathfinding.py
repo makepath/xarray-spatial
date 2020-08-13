@@ -1,7 +1,5 @@
 import xarray as xr
 import numpy as np
-import collections
-import heapq
 
 
 def _heuristic(x1, y1, x2, y2):
@@ -10,86 +8,116 @@ def _heuristic(x1, y1, x2, y2):
     return abs(x1 - x2) + abs(y1 - y2)
 
 
-class Queue:
-    def __init__(self):
-        self.elements = collections.deque()
-
-    def empty(self):
-        return len(self.elements) == 0
-
-    def put(self, x):
-        self.elements.append(x)
-
-    def get(self):
-        return self.elements.popleft()
-
-
-class SquareGrid:
-    def __init__(self, width, height):
-        self.width = width
-        self.height = height
-        self.walls = []
-
-    def in_bounds(self, id):
-        (x, y) = id
-        return 0 <= x < self.width and 0 <= y < self.height
-
-    def passable(self, id):
-        return id not in self.walls
-
-    def neighbors(self, id):
-        # TODO: should we consider 8 connectivity?
-        (x, y) = id
-        results = [(x + 1, y), (x, y - 1), (x - 1, y), (x, y + 1)]
-        if (x + y) % 2 == 0: results.reverse()  # aesthetics
-        results = filter(self.in_bounds, results)
-        results = filter(self.passable, results)
-        return results
-
-    def cost(self, x_coords, y_coords, from_node, to_node):
-        return _heuristic(x_coords[from_node[1]], y_coords[from_node[0]],
-                          x_coords[to_node[1]], y_coords[to_node[0]])
+def _find_min_cost_pixel(cost, is_open):
+    height, width = cost.shape
+    # set min cost to a very big number
+    min_cost = 1000000
+    py = None
+    px = None
+    for i in range(height):
+        for j in range(width):
+            if is_open[i, j] and cost[i, j] < min_cost:
+                min_cost = cost[i, j]
+                py = i
+                px = j
+    return py, px
 
 
-class PriorityQueue:
-    def __init__(self):
-        self.elements = []
+def _find_min_cost_pixel(cost, is_open):
+    height, width = cost.shape
+    # set min cost to a very big number
+    min_cost = 1000000
+    py = None
+    px = None
+    for i in range(height):
+        for j in range(width):
+            if is_open[i, j] and cost[i, j] < min_cost:
+                min_cost = cost[i, j]
+                py = i
+                px = j
+    return py, px
 
-    def empty(self):
-        return len(self.elements) == 0
 
-    def put(self, item, priority):
-        heapq.heappush(self.elements, (priority, item))
+def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
+    # set to x and y pixel id
+    parent_xs = np.ones(data.shape, dtype=int) * -1
+    parent_ys = np.ones(data.shape, dtype=int) * -1
 
-    def get(self):
-        return heapq.heappop(self.elements)[1]
+    # distance between the current node and the start node
+    d_from_start = np.zeros_like(data, dtype=float)
+    # total cost of the node: cost = d_from_start + estimated_d_to_goal
+    # heuristic — estimated distance from the current node to the end node
+    cost = np.zeros_like(data, dtype=float)
 
+    # init cost at start location
+    d_from_start[start_py, start_px] = 0
+    cost[start_py, start_px] = 0
 
-def _a_star_search(graph, x_coords, y_coords, start, goal):
-    frontier = PriorityQueue()
-    frontier.put(start, 0)
-    came_from = {}
-    cost_so_far = {}
-    came_from[start] = None
-    cost_so_far[start] = 0
+    # Initialize both open and closed list all False
+    is_open = np.zeros(data.shape, dtype=bool)
+    is_closed = np.zeros(data.shape, dtype=bool)
 
-    while not frontier.empty():
-        current = frontier.get()
+    # Add the start node to open list
+    is_open[start_py, start_px] = True
 
-        if current == goal:
-            break
+    # 8-connectivity
+    neighbor_xs = [-1, -1, -1, 0, 0, 1, 1, 1]
+    neighbor_ys = [-1, 0, 1, -1, 1, -1, 0, 1]
+    #     neighbor_ys = [0, -1, 1, 0]
+    #     neighbor_xs = [-1, 0, 0, 1]
 
-        for next in graph.neighbors(current):
-            new_cost = cost_so_far[current] + graph.cost(x_coords, y_coords, current, next)
-            if next not in cost_so_far or new_cost < cost_so_far[next]:
-                cost_so_far[next] = new_cost
-                priority = new_cost + _heuristic(x_coords[goal[1]],
-                                                 y_coords[goal[0]],
-                                                 x_coords[next[1]],
-                                                 y_coords[next[0]])
-                frontier.put(next, priority)
-                came_from[next] = current
-    return came_from, cost_so_far
+    height, width = data.shape
+    num_open = np.sum(is_open)
+    while num_open > 0:
+        py, px = _find_min_cost_pixel(cost, is_open)
+        # Pop current off open list, add to closed list
+        is_open[py, px] = False
+        is_closed[py, px] = True
+
+        # Found the goal
+        if (py, px) == (goal_py, goal_px):
+            # reconstruct path
+            reconstruct_path(path_img, parent_ys, parent_xs,
+                             d_from_start, start_py, start_px, goal_py,
+                             goal_px)
+            return
+
+        # Generate children
+        for y, x in zip(neighbor_ys, neighbor_xs):
+            neighbor_y = py + y
+            neighbor_x = px + x
+
+            # Make sure within range
+            if neighbor_y > height - 1 or neighbor_y < 0 \
+                    or neighbor_x > width - 1 or neighbor_x < 0:
+                continue
+
+            # Make sure walkable terrain
+            if data[neighbor_y][neighbor_x] in barriers:
+                continue
+
+            # Child is on the closed list
+            if is_closed[neighbor_y, neighbor_x]:
+                continue
+
+            d = d_from_start[py, px] + 1
+            # Child is already in the open list
+            if is_open[neighbor_y, neighbor_x] and d > d_from_start[neighbor_y, neighbor_x]:
+                continue
+
+            # Create the f, g, and h values
+            d_from_start[neighbor_y, neighbor_x] = d
+            estimated_d_to_goal = _heuristic(neighbor_x, neighbor_y, goal_px,
+                                             goal_py)
+            cost[neighbor_y, neighbor_x] = d_from_start[neighbor_y, neighbor_x] + \
+                estimated_d_to_goal
+            # Add the child to the open list
+            is_open[neighbor_y, neighbor_x] = True
+            parent_ys[neighbor_y, neighbor_x] = py
+            parent_xs[neighbor_y, neighbor_x] = px
+
+        num_open = np.sum(is_open)
+    return
 
 
 def _find_pixel_id(x, y, xs, ys):
@@ -104,7 +132,7 @@ def _find_pixel_id(x, y, xs, ys):
 
 def _find_valid_pixels(data, barriers):
     # get valid pixel values in an input image
-    valid_values = set(np.unique(data)) - set(barriers)
+    valid_values = set(np.unique(~np.isnan(data))) - set(barriers)
     # idx of all valid pixels
     valid_pixels = []
     for v in valid_values:
@@ -128,20 +156,25 @@ def _find_nearest_pixel(valid_pixels, py, px):
     return (-1, -1)
 
 
-def _reconstruct_path(path_img, came_from, cost_so_far, start, goal):
+def reconstruct_path(path_img, parent_ys, parent_xs, cost, start_py, start_px,
+                     goal_py, goal_px):
     # construct path output image as a 2d array with NaNs for non-path pixels,
     # and the value of the path pixels being the current cost up to that point
-    current = goal
-    if current in came_from:
+    current_x = goal_px
+    current_y = goal_py
+
+    if parent_xs[current_y, current_x] != -1 and parent_ys[current_y, current_x] != -1:
+        # exist path from start to goal
         # add cost at start
-        y, x = start
-        path_img[y, x] = cost_so_far[start]
+        path_img[start_py, start_px] = cost[start_py, start_px]
         # add cost along the path
-        while current != start:
-            y, x = current
+        while current_x != -1 or current_y != -1:
             # value of a path pixel is the cost up to that point
-            path_img[y, x] = cost_so_far[current]
-            current = came_from[current]
+            path_img[current_y, current_x] = cost[current_y, current_x]
+            parent_y = parent_ys[current_y, current_x]
+            parent_x = parent_xs[current_y, current_x]
+            current_y = parent_y
+            current_x = parent_x
     return
 
 
@@ -237,27 +270,7 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y', snap=False):
         # TODO: what if start and goal are in same cell in image raster?
         #       Currently, cost = 0 and path is the cell itself
         # TODO: what if they are in same cell and value in the cell is a barrier?
-
-        # create a diagram/graph
-        height, width = surface.shape
-        graph = SquareGrid(height, width)
-        # all cells have same weight
-        graph.weights = {}
-
-        # find all barrier/wall cells
-        graph.walls = []
-        for b in barriers:
-            bys, bxs = np.where(surface.data == b)
-            for (y, x) in zip(bys, bxs):
-                graph.walls.append((y, x))
-
-        came_from, cost_so_far = _a_star_search(graph, x_coords, y_coords,
-                                                (py0, px0), (py1, px1))
-
-        if (py1, px1) in came_from:
-            # a path found
-            _reconstruct_path(path_img, came_from, cost_so_far,
-                              (py0, px0), (py1, px1))
+        astar(surface.data, path_img, py0, px0, py1, px1, barriers)
 
     path_agg = xr.DataArray(path_img,
                             coords=surface.coords,
