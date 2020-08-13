@@ -25,8 +25,8 @@ def test_a_star_search():
             for x1 in _lon:
                 for y1 in _lat:
                     goal = (x1, y1)
-                    path_agg = a_star_search(agg, start, goal, barriers, 'lon',
-                                             'lat')
+                    path_agg = a_star_search(agg, start, goal, barriers,
+                                             'lon', 'lat')
                     assert isinstance(path_agg, xr.DataArray)
                     assert type(path_agg.values[0][0]) == np.float64
                     assert path_agg.shape == agg.shape
@@ -34,8 +34,12 @@ def test_a_star_search():
                     assert path_agg.attrs == agg.attrs
                     for c in path_agg.coords:
                         assert (path_agg[c] == agg.coords[c]).all()
-                    assert np.nanmax(path_agg) >= 0 and np.nanmin(
-                        path_agg) == 0
+                    if start == goal:
+                        assert np.nanmax(path_agg) == 0 and \
+                               np.nanmin(path_agg) == 0
+                    else:
+                        assert np.nanmax(path_agg) > 0 and \
+                               np.nanmin(path_agg) == 0
 
     barriers = [1]
     # set pixels with value 1 as barriers,
@@ -45,8 +49,8 @@ def test_a_star_search():
         for y1 in _lat:
             goal = (x1, y1)
             if goal != start:
-                path_agg = a_star_search(agg, start, goal, barriers, 'lon',
-                                         'lat')
+                path_agg = a_star_search(agg, start, goal, barriers,
+                                         'lon', 'lat')
                 assert isinstance(path_agg, xr.DataArray)
                 assert type(path_agg.values[0][0]) == np.float64
                 assert path_agg.shape == agg.shape
