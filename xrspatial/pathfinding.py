@@ -81,7 +81,8 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
                 continue
 
             # walkable
-            if data[neighbor_y][neighbor_x] in barriers:
+            if np.isnan(data[neighbor_y][neighbor_x]) or \
+                    data[neighbor_y][neighbor_x] in barriers:
                 continue
 
             # check if neighbor is in the closed list
