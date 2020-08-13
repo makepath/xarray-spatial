@@ -1,115 +1,36 @@
 import xarray as xr
 import numpy as np
 
+from xrspatial.utils import ngjit
 
+OPEN = 1
+CLOSE = 2
+
+
+@ngjit
 def _heuristic(x1, y1, x2, y2):
     # function to calculate distance between 2 point
     # TODO: what if we want to use another distance metric?
     return abs(x1 - x2) + abs(y1 - y2)
 
 
+@ngjit
 def _find_min_cost_pixel(cost, is_open):
     height, width = cost.shape
     # set min cost to a very big number
+    py = -1
+    px = -1
     min_cost = 1000000
-    py = None
-    px = None
     for i in range(height):
         for j in range(width):
-            if is_open[i, j] and cost[i, j] < min_cost:
+            if is_open[i, j] == OPEN and cost[i, j] < min_cost:
                 min_cost = cost[i, j]
                 py = i
                 px = j
     return py, px
 
 
-def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
-    # parent of the (i, j) pixel is the pixel at (parent_ys[i, j], parent_xs[i, j])
-    parent_ys = np.ones(data.shape, dtype=int) * -1
-    parent_xs = np.ones(data.shape, dtype=int) * -1
-    # parent of start is itself
-    parent_ys[start_py, start_px] = start_py
-    parent_xs[start_py, start_px] = start_px
-
-    # distance between the current node and the start node
-    d_from_start = np.zeros_like(data, dtype=float)
-    # total cost of the node: cost = d_from_start + estimated_d_to_goal
-    # heuristic — estimated distance from the current node to the end node
-    cost = np.zeros_like(data, dtype=float)
-
-    # initialize both open and closed list all False
-    is_open = np.zeros(data.shape, dtype=bool)
-    is_closed = np.zeros(data.shape, dtype=bool)
-
-    # add the start node to open list
-    is_open[start_py, start_px] = True
-    # init cost at start location
-    d_from_start[start_py, start_px] = 0
-    estimated_distance = _heuristic(start_px, start_py, goal_px, goal_py)
-    cost[start_py, start_px] = d_from_start[start_py, start_px] + estimated_distance
-
-    # 8-connectivity
-    neighbor_xs = [-1, -1, -1, 0, 0, 1, 1, 1]
-    neighbor_ys = [-1, 0, 1, -1, 1, -1, 0, 1]
-    #     neighbor_ys = [0, -1, 1, 0]
-    #     neighbor_xs = [-1, 0, 0, 1]
-
-    height, width = data.shape
-    num_open = np.sum(is_open)
-    while num_open > 0:
-        py, px = _find_min_cost_pixel(cost, is_open)
-        # pop current node off open list, add it to closed list
-        is_open[py, px] = False
-        is_closed[py, px] = True
-
-        # found the goal
-        if (py, px) == (goal_py, goal_px):
-            # reconstruct path
-            reconstruct_path(path_img, parent_ys, parent_xs,
-                             d_from_start, start_py, start_px,
-                             goal_py, goal_px)
-            return
-
-        # visit neighborhood
-        for y, x in zip(neighbor_ys, neighbor_xs):
-            neighbor_y = py + y
-            neighbor_x = px + x
-
-            # neighbor is within the surface image
-            if neighbor_y > height - 1 or neighbor_y < 0 \
-                    or neighbor_x > width - 1 or neighbor_x < 0:
-                continue
-
-            # walkable
-            if np.isnan(data[neighbor_y][neighbor_x]) or \
-                    data[neighbor_y][neighbor_x] in barriers:
-                continue
-
-            # check if neighbor is in the closed list
-            if is_closed[neighbor_y, neighbor_x]:
-                continue
-
-            # distance from start to this neighbor
-            d = d_from_start[py, px] + 1
-            # if neighbor is already in the open list
-            if is_open[neighbor_y, neighbor_x] and d > d_from_start[neighbor_y, neighbor_x]:
-                continue
-
-            # calculate cost
-            d_from_start[neighbor_y, neighbor_x] = d
-            estimated_d_to_goal = _heuristic(neighbor_x, neighbor_y, goal_px,
-                                             goal_py)
-            cost[neighbor_y, neighbor_x] = d_from_start[neighbor_y, neighbor_x] + \
-                estimated_d_to_goal
-            # add neighbor to the open list
-            is_open[neighbor_y, neighbor_x] = True
-            parent_ys[neighbor_y, neighbor_x] = py
-            parent_xs[neighbor_y, neighbor_x] = px
-
-        num_open = np.sum(is_open)
-    return
-
-
+@ngjit
 def _find_pixel_id(x, y, xs, ys):
     cellsize_y = ys[1] - ys[0]
     cellsize_x = xs[1] - xs[0]
@@ -146,8 +67,9 @@ def _find_nearest_pixel(valid_pixels, py, px):
     return (-1, -1)
 
 
-def reconstruct_path(path_img, parent_ys, parent_xs, cost, start_py, start_px,
-                     goal_py, goal_px):
+@ngjit
+def _reconstruct_path(path_img, parent_ys, parent_xs, cost, start_py, start_px,
+                      goal_py, goal_px):
     # construct path output image as a 2d array with NaNs for non-path pixels,
     # and the value of the path pixels being the current cost up to that point
     current_x = goal_px
@@ -168,6 +90,104 @@ def reconstruct_path(path_img, parent_ys, parent_xs, cost, start_py, start_px,
     return
 
 
+@ngjit
+def is_a_wall(cell_value, barriers):
+    for i in barriers:
+        if cell_value == i:
+            return True
+    return False
+
+
+@ngjit
+def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
+    height, width = data.shape
+    # parent of the (i, j) pixel is the pixel at (parent_ys[i, j], parent_xs[i, j])
+    parent_ys = np.ones((height, width), dtype=np.int64) * -1
+    parent_xs = np.ones((height, width), dtype=np.int64) * -1
+
+    # parent of start is itself
+    parent_ys[start_py, start_px] = start_py
+    parent_xs[start_py, start_px] = start_px
+
+    # distance between the current node and the start node
+    d_from_start = np.zeros_like(data, dtype=np.float64)
+    # total cost of the node: cost = d_from_start + estimated_d_to_goal
+    # heuristic — estimated distance from the current node to the end node
+    cost = np.zeros_like(data, dtype=np.float64)
+
+    # initialize both open and closed list all False
+    is_open = np.zeros(data.shape, dtype=np.int64)
+    is_closed = np.zeros(data.shape, dtype=np.int64)
+
+    # add the start node to open list
+    is_open[start_py, start_px] = OPEN
+    # init cost at start location
+    d_from_start[start_py, start_px] = 0
+    estimated_distance = _heuristic(start_px, start_py, goal_px, goal_py)
+    cost[start_py, start_px] = d_from_start[start_py, start_px] + estimated_distance
+
+    # 8-connectivity
+    neighbor_xs = [-1, -1, -1, 0, 0, 1, 1, 1]
+    neighbor_ys = [-1, 0, 1, -1, 1, -1, 0, 1]
+    #     neighbor_ys = [0, -1, 1, 0]
+    #     neighbor_xs = [-1, 0, 0, 1]
+
+    num_open = np.sum(is_open)
+    while num_open > 0:
+        py, px = _find_min_cost_pixel(cost, is_open)
+        # pop current node off open list, add it to closed list
+        is_open[py][px] = 0
+        is_closed[py][px] = CLOSE
+        # found the goal
+        if (py, px) == (goal_py, goal_px):
+            # reconstruct path
+            _reconstruct_path(path_img, parent_ys, parent_xs,
+                              d_from_start, start_py, start_px,
+                              goal_py, goal_px)
+            return
+
+        # visit neighborhood
+        for y, x in zip(neighbor_ys, neighbor_xs):
+            neighbor_y = py + y
+            neighbor_x = px + x
+
+            # neighbor is within the surface image
+            if neighbor_y > height - 1 or neighbor_y < 0 \
+                    or neighbor_x > width - 1 or neighbor_x < 0:
+                continue
+
+            # walkable
+            if np.isnan(data[neighbor_y][neighbor_x]) or \
+                    is_a_wall(data[neighbor_y][neighbor_x], barriers):
+                continue
+
+            # check if neighbor is in the closed list
+            if is_closed[neighbor_y, neighbor_x] == CLOSE:
+                continue
+
+            # distance from start to this neighbor
+            d = d_from_start[py, px] + 1
+            # if neighbor is already in the open list
+            if is_open[neighbor_y, neighbor_x] == OPEN and \
+                    d > d_from_start[neighbor_y, neighbor_x]:
+                continue
+
+            # calculate cost
+            d_from_start[neighbor_y, neighbor_x] = d
+            estimated_d_to_goal = _heuristic(neighbor_x, neighbor_y,
+                                             goal_px, goal_py)
+            cost[neighbor_y, neighbor_x] = d_from_start[neighbor_y, neighbor_x] + \
+                estimated_d_to_goal
+            # add neighbor to the open list
+            is_open[neighbor_y, neighbor_x] = OPEN
+            parent_ys[neighbor_y, neighbor_x] = py
+            parent_xs[neighbor_y, neighbor_x] = px
+
+        num_open = np.sum(is_open)
+    return
+
+
+@ngjit
 def _is_inside(point, xmin, xmax, epsilon_x, ymin, ymax, epsilon_y):
     # check if a point at (x, y) is within
     # range from (xmin - epsilon_x, ymin - epsilon_y)
@@ -259,7 +279,7 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y', snap=False):
         # TODO: what if start and goal are in same cell in image raster?
         #       Currently, cost = 0 and path is the cell itself
         # TODO: what if they are in same cell and value in the cell is a barrier?
-        astar(surface.data, path_img, py0, px0, py1, px1, barriers)
+        astar(surface.data, path_img, py0, px0, py1, px1, np.array(barriers))
 
     path_agg = xr.DataArray(path_img,
                             coords=surface.coords,
