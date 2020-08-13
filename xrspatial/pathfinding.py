@@ -3,9 +3,6 @@ import numpy as np
 
 from xrspatial.utils import ngjit
 
-OPEN = 1
-CLOSE = 2
-
 
 @ngjit
 def _heuristic(x1, y1, x2, y2):
@@ -23,7 +20,7 @@ def _find_min_cost_pixel(cost, is_open):
     min_cost = 1000000
     for i in range(height):
         for j in range(width):
-            if is_open[i, j] == OPEN and cost[i, j] < min_cost:
+            if is_open[i, j] and cost[i, j] < min_cost:
                 min_cost = cost[i, j]
                 py = i
                 px = j
@@ -116,11 +113,11 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
     cost = np.zeros_like(data, dtype=np.float64)
 
     # initialize both open and closed list all False
-    is_open = np.zeros(data.shape, dtype=np.int64)
-    is_closed = np.zeros(data.shape, dtype=np.int64)
+    is_open = np.zeros(data.shape, dtype=np.bool_)
+    is_closed = np.zeros(data.shape, dtype=np.bool_)
 
     # add the start node to open list
-    is_open[start_py, start_px] = OPEN
+    is_open[start_py, start_px] = True
     # init cost at start location
     d_from_start[start_py, start_px] = 0
     estimated_distance = _heuristic(start_px, start_py, goal_px, goal_py)
@@ -137,7 +134,7 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
         py, px = _find_min_cost_pixel(cost, is_open)
         # pop current node off open list, add it to closed list
         is_open[py][px] = 0
-        is_closed[py][px] = CLOSE
+        is_closed[py][px] = True
         # found the goal
         if (py, px) == (goal_py, goal_px):
             # reconstruct path
@@ -162,13 +159,13 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
                 continue
 
             # check if neighbor is in the closed list
-            if is_closed[neighbor_y, neighbor_x] == CLOSE:
+            if is_closed[neighbor_y, neighbor_x]:
                 continue
 
             # distance from start to this neighbor
             d = d_from_start[py, px] + 1
             # if neighbor is already in the open list
-            if is_open[neighbor_y, neighbor_x] == OPEN and \
+            if is_open[neighbor_y, neighbor_x] and \
                     d > d_from_start[neighbor_y, neighbor_x]:
                 continue
 
@@ -179,7 +176,7 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
             cost[neighbor_y, neighbor_x] = d_from_start[neighbor_y, neighbor_x] + \
                 estimated_d_to_goal
             # add neighbor to the open list
-            is_open[neighbor_y, neighbor_x] = OPEN
+            is_open[neighbor_y, neighbor_x] = True
             parent_ys[neighbor_y, neighbor_x] = py
             parent_xs[neighbor_y, neighbor_x] = px
 
