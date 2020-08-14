@@ -4,6 +4,9 @@ import numpy as np
 from xrspatial.utils import ngjit
 
 
+NONE = -1
+
+
 @ngjit
 def _heuristic(x1, y1, x2, y2):
     # function to calculate distance between 2 point
@@ -12,11 +15,11 @@ def _heuristic(x1, y1, x2, y2):
 
 
 @ngjit
-def _find_min_cost_pixel(cost, is_open):
+def _min_cost_pixel_id(cost, is_open):
     height, width = cost.shape
+    py = NONE
+    px = NONE
     # set min cost to a very big number
-    py = -1
-    px = -1
     min_cost = 1000000
     for i in range(height):
         for j in range(width):
@@ -31,7 +34,6 @@ def _find_min_cost_pixel(cost, is_open):
 def _find_pixel_id(x, y, xs, ys):
     cellsize_y = ys[1] - ys[0]
     cellsize_x = xs[1] - xs[0]
-
     py = int((y - ys[0]) / cellsize_y)
     px = int((x - xs[0]) / cellsize_x)
     return py, px
@@ -56,23 +58,25 @@ def _find_nearest_pixel(valid_pixels, py, px):
     if valid_pixels.size > 0:
         # there at least some valid pixels that not barriers
         # pixel id of the input location
-        # TODO: distance by xcoords and ycoords
+        # TODO: distance by xcoords and ycoords?
         distances = np.sqrt((valid_pixels[:, 0] - py) ** 2 +
                             (valid_pixels[:, 1] - px) ** 2)
         nearest_index = np.argmin(distances)
         return valid_pixels[nearest_index]
-    return (-1, -1)
+    # return invalid pixel id if no pixel found
+    return (NONE, NONE)
 
 
 @ngjit
-def _reconstruct_path(path_img, parent_ys, parent_xs, cost, start_py, start_px,
-                      goal_py, goal_px):
+def _reconstruct_path(path_img, parent_ys, parent_xs, cost,
+                      start_py, start_px, goal_py, goal_px):
     # construct path output image as a 2d array with NaNs for non-path pixels,
     # and the value of the path pixels being the current cost up to that point
     current_x = goal_px
     current_y = goal_py
 
-    if parent_xs[current_y, current_x] != -1 and parent_ys[current_y, current_x] != -1:
+    if parent_xs[current_y, current_x] != NONE and \
+            parent_ys[current_y, current_x] != NONE:
         # exist path from start to goal
         # add cost at start
         path_img[start_py, start_px] = cost[start_py, start_px]
@@ -99,8 +103,9 @@ def is_a_wall(cell_value, barriers):
 def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
     height, width = data.shape
     # parent of the (i, j) pixel is the pixel at (parent_ys[i, j], parent_xs[i, j])
-    parent_ys = np.ones((height, width), dtype=np.int64) * -1
-    parent_xs = np.ones((height, width), dtype=np.int64) * -1
+    # first initialize parent of all cells as invalid (NONE, NONE)
+    parent_ys = np.ones((height, width), dtype=np.int64) * NONE
+    parent_xs = np.ones((height, width), dtype=np.int64) * NONE
 
     # parent of start is itself
     parent_ys[start_py, start_px] = start_py
@@ -126,12 +131,13 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
     # 8-connectivity
     neighbor_xs = [-1, -1, -1, 0, 0, 1, 1, 1]
     neighbor_ys = [-1, 0, 1, -1, 1, -1, 0, 1]
-    #     neighbor_ys = [0, -1, 1, 0]
-    #     neighbor_xs = [-1, 0, 0, 1]
+    # 4-connectivity
+    # neighbor_ys = [0, -1, 1, 0]
+    # neighbor_xs = [-1, 0, 0, 1]
 
     num_open = np.sum(is_open)
     while num_open > 0:
-        py, px = _find_min_cost_pixel(cost, is_open)
+        py, px = _min_cost_pixel_id(cost, is_open)
         # pop current node off open list, add it to closed list
         is_open[py][px] = 0
         is_closed[py][px] = True
@@ -272,9 +278,7 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y', snap=False):
         py0, px0 = _find_nearest_pixel(valid_pixels, py0, px0)
         py1, px1 = _find_nearest_pixel(valid_pixels, py1, px1)
 
-    if py0 != -1 or py1 != -1:
-        # TODO: what if start and goal are in same cell in image raster?
-        #       Currently, cost = 0 and path is the cell itself
+    if py0 != NONE or py1 != NONE:
         # TODO: what if they are in same cell and value in the cell is a barrier?
         astar(surface.data, path_img, py0, px0, py1, px1, np.array(barriers))
 
