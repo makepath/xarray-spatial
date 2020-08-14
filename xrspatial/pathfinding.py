@@ -106,8 +106,21 @@ def _reconstruct_path(path_img, parent_ys, parent_xs, cost,
     return
 
 
+def _neighborhood_structure(connectivity=8):
+    if connectivity == 8:
+        # 8-connectivity
+        neighbor_xs = [-1, -1, -1, 0, 0, 1, 1, 1]
+        neighbor_ys = [-1, 0, 1, -1, 1, -1, 0, 1]
+    else:
+        # 4-connectivity
+        neighbor_ys = [0, -1, 1, 0]
+        neighbor_xs = [-1, 0, 0, 1]
+    return np.array(neighbor_ys), np.array(neighbor_xs)
+
+
 @ngjit
-def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
+def astar(data, path_img, start_py, start_px, goal_py, goal_px,
+          barriers, neighbor_ys, neighbor_xs):
     height, width = data.shape
     # parent of the (i, j) pixel is the pixel at (parent_ys[i, j], parent_xs[i, j])
     # first initialize parent of all cells as invalid (NONE, NONE)
@@ -134,13 +147,6 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
     d_from_start[start_py, start_px] = 0
     estimated_distance = _heuristic(start_px, start_py, goal_px, goal_py)
     cost[start_py, start_px] = d_from_start[start_py, start_px] + estimated_distance
-
-    # 8-connectivity
-    neighbor_xs = [-1, -1, -1, 0, 0, 1, 1, 1]
-    neighbor_ys = [-1, 0, 1, -1, 1, -1, 0, 1]
-    # 4-connectivity
-    # neighbor_ys = [0, -1, 1, 0]
-    # neighbor_xs = [-1, 0, 0, 1]
 
     num_open = np.sum(is_open)
     while num_open > 0:
@@ -211,7 +217,7 @@ def _is_inside(point, xmin, xmax, epsilon_x, ymin, ymax, epsilon_y):
 
 
 def a_star_search(surface, start, goal, barriers=[], x='x', y='y',
-                  snap_start=False, snap_goal=False):
+                  connectivity=8, snap_start=False, snap_goal=False):
     """
     Calculate distance from a starting point to a goal through a surface graph.
     Starting location and goal location should be within the graph.
@@ -259,6 +265,9 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y',
         raise ValueError("surface.coords should be named as coordinates:"
                          "({}, {})".format(y, x))
 
+    if connectivity != 4 and connectivity != 8:
+        raise ValueError("Use either 4 or 8-connectivity.")
+
     y_coords = surface.coords[y].data
     x_coords = surface.coords[x].data
 
@@ -292,8 +301,9 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y',
         py1, px1 = _find_nearest_pixel(py1, px1, surface.data, barriers)
 
     if py0 != NONE or py1 != NONE:
-        # TODO: what if they are in same cell and value in the cell is a barrier?
-        astar(surface.data, path_img, py0, px0, py1, px1, np.array(barriers))
+        neighbor_ys, neighbor_xs = _neighborhood_structure(connectivity)
+        astar(surface.data, path_img, py0, px0, py1, px1,
+              np.array(barriers), neighbor_ys, neighbor_xs)
 
     path_agg = xr.DataArray(path_img,
                             coords=surface.coords,
