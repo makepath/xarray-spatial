@@ -9,9 +9,27 @@ NONE = -1
 
 @ngjit
 def _heuristic(x1, y1, x2, y2):
-    # function to calculate distance between 2 point
+    # heuristic to estimate distance between 2 point
     # TODO: what if we want to use another distance metric?
     return abs(x1 - x2) + abs(y1 - y2)
+
+
+@ngjit
+def _is_a_barrier(cell_value, barriers):
+    # nan cell is not walkable
+    if np.isnan(cell_value):
+        return True
+
+    for i in barriers:
+        if cell_value == i:
+            return True
+    return False
+
+
+@ngjit
+def _distance(x1, y1, x2, y2):
+    # distance in pixel space from (y1, x1) to (y2, x2)
+    return np.sqrt((x1 - x2)**2 + (y1 - y2)**2)
 
 
 @ngjit
@@ -20,7 +38,8 @@ def _min_cost_pixel_id(cost, is_open):
     py = NONE
     px = NONE
     # set min cost to a very big number
-    min_cost = 1000000
+    # this value is only an estimation
+    min_cost = (height + width) ** 2
     for i in range(height):
         for j in range(width):
             if is_open[i, j] and cost[i, j] < min_cost:
@@ -39,32 +58,28 @@ def _find_pixel_id(x, y, xs, ys):
     return py, px
 
 
-def _find_valid_pixels(data, barriers):
-    # get valid pixel values in an input image
-    valid_values = set(np.unique(data[~np.isnan(data)])) - set(barriers)
-    # idx of all valid pixels
-    valid_pixels = []
-    for v in valid_values:
-        pixel_ys, pixel_xs = np.where(data == v)
-        for i in range(len(pixel_xs)):
-            valid_pixels.append((pixel_ys[i], pixel_xs[i]))
+@ngjit
+def _find_nearest_pixel(py, px, data, barriers):
+    # if the cell is already valid, return itself
+    if not _is_a_barrier(data[py, px], barriers):
+        return py, px
 
-    valid_pixels = np.asarray(valid_pixels)
+    height, width = data.shape
+    # init min distance as max possible distance
+    min_distance = _distance(0, 0, height - 1, width - 1)
+    # return of the function
+    nearest_y = NONE
+    nearest_x = NONE
+    for y in range(height):
+        for x in range(width):
+            if not _is_a_barrier(data[y, x], barriers):
+                d = _distance(x, y, px, py)
+                if d < min_distance:
+                    min_distance = d
+                    nearest_y = y
+                    nearest_x = x
 
-    return valid_pixels
-
-
-def _find_nearest_pixel(valid_pixels, py, px):
-    if valid_pixels.size > 0:
-        # there at least some valid pixels that not barriers
-        # pixel id of the input location
-        # TODO: distance by xcoords and ycoords?
-        distances = np.sqrt((valid_pixels[:, 0] - py) ** 2 +
-                            (valid_pixels[:, 1] - px) ** 2)
-        nearest_index = np.argmin(distances)
-        return valid_pixels[nearest_index]
-    # return invalid pixel id if no pixel found
-    return (NONE, NONE)
+    return nearest_y, nearest_x
 
 
 @ngjit
@@ -89,14 +104,6 @@ def _reconstruct_path(path_img, parent_ys, parent_xs, cost,
             current_y = parent_y
             current_x = parent_x
     return
-
-
-@ngjit
-def is_a_wall(cell_value, barriers):
-    for i in barriers:
-        if cell_value == i:
-            return True
-    return False
 
 
 @ngjit
@@ -161,7 +168,7 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
 
             # walkable
             if np.isnan(data[neighbor_y][neighbor_x]) or \
-                    is_a_wall(data[neighbor_y][neighbor_x], barriers):
+                    _is_a_barrier(data[neighbor_y][neighbor_x], barriers):
                 continue
 
             # check if neighbor is in the closed list
@@ -169,7 +176,7 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
                 continue
 
             # distance from start to this neighbor
-            d = d_from_start[py, px] + 1
+            d = d_from_start[py, px] + _distance(px, py, neighbor_x, neighbor_y)
             # if neighbor is already in the open list
             if is_open[neighbor_y, neighbor_x] and \
                     d > d_from_start[neighbor_y, neighbor_x]:
@@ -272,11 +279,11 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y', snap=False):
     py0, px0 = _find_pixel_id(start[0], start[1], x_coords, y_coords)
     py1, px1 = _find_pixel_id(goal[0], goal[1], x_coords, y_coords)
 
+    barriers = np.array(barriers)
     if snap:
-        valid_pixels = _find_valid_pixels(surface.data, barriers)
         # find nearest pixel with a valid value
-        py0, px0 = _find_nearest_pixel(valid_pixels, py0, px0)
-        py1, px1 = _find_nearest_pixel(valid_pixels, py1, px1)
+        py0, px0 = _find_nearest_pixel(py0, px0, surface.data, barriers)
+        py1, px1 = _find_nearest_pixel(py1, px1, surface.data, barriers)
 
     if py0 != NONE or py1 != NONE:
         # TODO: what if they are in same cell and value in the cell is a barrier?
