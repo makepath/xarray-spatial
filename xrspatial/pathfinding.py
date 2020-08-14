@@ -3,6 +3,9 @@ import numpy as np
 
 from xrspatial.utils import ngjit
 
+import warnings
+warnings.simplefilter('default')
+
 
 NONE = -1
 
@@ -28,7 +31,7 @@ def _is_not_crossable(cell_value, barriers):
 
 @ngjit
 def _distance(x1, y1, x2, y2):
-    # distance in pixel space from (y1, x1) to (y2, x2)
+    # euclidean distance in pixel space from (y1, x1) to (y2, x2)
     return np.sqrt((x1 - x2)**2 + (y1 - y2)**2)
 
 
@@ -119,10 +122,12 @@ def _neighborhood_structure(connectivity=8):
 
 
 @ngjit
-def astar(data, path_img, start_py, start_px, goal_py, goal_px,
-          barriers, neighbor_ys, neighbor_xs):
+def _a_star_search(data, path_img, start_py, start_px, goal_py, goal_px,
+                   barriers, neighbor_ys, neighbor_xs):
+
     height, width = data.shape
-    # parent of the (i, j) pixel is the pixel at (parent_ys[i, j], parent_xs[i, j])
+    # parent of the (i, j) pixel is the pixel at
+    # (parent_ys[i, j], parent_xs[i, j])
     # first initialize parent of all cells as invalid (NONE, NONE)
     parent_ys = np.ones((height, width), dtype=np.int64) * NONE
     parent_xs = np.ones((height, width), dtype=np.int64) * NONE
@@ -131,9 +136,9 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px,
     parent_ys[start_py, start_px] = start_py
     parent_xs[start_py, start_px] = start_px
 
-    # distance between the current node and the start node
+    # distance from start to the current node
     d_from_start = np.zeros_like(data, dtype=np.float64)
-    # total cost of the node: cost = d_from_start + estimated_d_to_goal
+    # total cost of the node: cost = d_from_start + d_to_goal
     # heuristic — estimated distance from the current node to the end node
     cost = np.zeros_like(data, dtype=np.float64)
 
@@ -145,8 +150,8 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px,
     is_open[start_py, start_px] = True
     # init cost at start location
     d_from_start[start_py, start_px] = 0
-    estimated_distance = _heuristic(start_px, start_py, goal_px, goal_py)
-    cost[start_py, start_px] = d_from_start[start_py, start_px] + estimated_distance
+    cost[start_py, start_px] = d_from_start[start_py, start_px] + \
+        _heuristic(start_px, start_py, goal_px, goal_py)
 
     num_open = np.sum(is_open)
     while num_open > 0:
@@ -181,7 +186,8 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px,
                 continue
 
             # distance from start to this neighbor
-            d = d_from_start[py, px] + _distance(px, py, neighbor_x, neighbor_y)
+            d = d_from_start[py, px] + _distance(px, py,
+                                                 neighbor_x, neighbor_y)
             # if neighbor is already in the open list
             if is_open[neighbor_y, neighbor_x] and \
                     d > d_from_start[neighbor_y, neighbor_x]:
@@ -189,10 +195,9 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px,
 
             # calculate cost
             d_from_start[neighbor_y, neighbor_x] = d
-            estimated_d_to_goal = _heuristic(neighbor_x, neighbor_y,
-                                             goal_px, goal_py)
-            cost[neighbor_y, neighbor_x] = d_from_start[neighbor_y, neighbor_x] + \
-                estimated_d_to_goal
+            d_to_goal = _heuristic(neighbor_x, neighbor_y, goal_px, goal_py)
+            cost[neighbor_y, neighbor_x] = \
+                d_from_start[neighbor_y, neighbor_x] + d_to_goal
             # add neighbor to the open list
             is_open[neighbor_y, neighbor_x] = True
             parent_ys[neighbor_y, neighbor_x] = py
@@ -270,9 +275,9 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y',
 
     y_coords = surface.coords[y].data
     x_coords = surface.coords[x].data
-
     epsilon_x = (x_coords[1] - x_coords[0]) / 2
     epsilon_y = (y_coords[1] - y_coords[0]) / 2
+
     # validate start and goal locations are in the graph
     if not _is_inside(start, x_coords[0], x_coords[-1], epsilon_x,
                       y_coords[0], y_coords[-1], epsilon_y):
@@ -282,28 +287,37 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y',
                       y_coords[0], y_coords[-1], epsilon_y):
         raise ValueError("goal location outside the surface graph.")
 
+    barriers = np.array(barriers)
+
+    # convert starting and ending point from geo coords to pixel coords
+    start_py, start_px = _find_pixel_id(start[0], start[1], x_coords, y_coords)
+    if snap_start:
+        # find nearest valid pixel to the start location
+        start_py, start_px = _find_nearest_pixel(start_py, start_px,
+                                                 surface.data, barriers)
+    if _is_not_crossable(surface.data[start_py, start_px], barriers):
+        warnings.warn('Start at a non crossable pixel', Warning)
+
+    goal_py, goal_px = _find_pixel_id(goal[0], goal[1], x_coords, y_coords)
+    if snap_goal:
+        # find nearest valid pixel to the goal location
+        goal_py, goal_px = _find_nearest_pixel(goal_py, goal_px,
+                                               surface.data, barriers)
+    if _is_not_crossable(surface.data[goal_py, goal_px], barriers):
+        warnings.warn('End at a non crossable pixel', Warning)
+
+    if start_py == NONE or goal_py == NONE:
+        warnings.warn('No valid pixels in input surface', Warning)
+
     # 2d output image that stores the path
     path_img = np.zeros_like(surface, dtype=np.float64)
     # first, initialize all cells as np.nans
     path_img[:, :] = np.nan
 
-    # convert starting and ending point from geo coords to pixel coords
-    py0, px0 = _find_pixel_id(start[0], start[1], x_coords, y_coords)
-    py1, px1 = _find_pixel_id(goal[0], goal[1], x_coords, y_coords)
-
-    barriers = np.array(barriers)
-    if snap_start:
-        # find nearest valid pixel to the start location
-        py0, px0 = _find_nearest_pixel(py0, px0, surface.data, barriers)
-
-    if snap_goal:
-        # find nearest valid pixel to the goal location
-        py1, px1 = _find_nearest_pixel(py1, px1, surface.data, barriers)
-
-    if py0 != NONE or py1 != NONE:
+    if start_py != NONE or goal_py != NONE:
         neighbor_ys, neighbor_xs = _neighborhood_structure(connectivity)
-        astar(surface.data, path_img, py0, px0, py1, px1,
-              np.array(barriers), neighbor_ys, neighbor_xs)
+        _a_star_search(surface.data, path_img, start_py, start_px,
+                       goal_py, goal_px, barriers, neighbor_ys, neighbor_xs)
 
     path_agg = xr.DataArray(path_img,
                             coords=surface.coords,
