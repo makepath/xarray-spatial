@@ -146,12 +146,14 @@ def _a_star_search(data, path_img, start_py, start_px, goal_py, goal_px,
     is_open = np.zeros(data.shape, dtype=np.bool_)
     is_closed = np.zeros(data.shape, dtype=np.bool_)
 
-    # add the start node to open list
-    is_open[start_py, start_px] = True
-    # init cost at start location
-    d_from_start[start_py, start_px] = 0
-    cost[start_py, start_px] = d_from_start[start_py, start_px] + \
-        _heuristic(start_px, start_py, goal_px, goal_py)
+    if not _is_not_crossable(data[start_py, start_px], barriers):
+        # if start node is crossable
+        # add the start node to open list
+        is_open[start_py, start_px] = True
+        # init cost at start location
+        d_from_start[start_py, start_px] = 0
+        cost[start_py, start_px] = d_from_start[start_py, start_px] + \
+            _heuristic(start_px, start_py, goal_px, goal_py)
 
     num_open = np.sum(is_open)
     while num_open > 0:
