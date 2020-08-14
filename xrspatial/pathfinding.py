@@ -15,7 +15,7 @@ def _heuristic(x1, y1, x2, y2):
 
 
 @ngjit
-def _is_a_barrier(cell_value, barriers):
+def _is_not_crossable(cell_value, barriers):
     # nan cell is not walkable
     if np.isnan(cell_value):
         return True
@@ -61,7 +61,7 @@ def _find_pixel_id(x, y, xs, ys):
 @ngjit
 def _find_nearest_pixel(py, px, data, barriers):
     # if the cell is already valid, return itself
-    if not _is_a_barrier(data[py, px], barriers):
+    if not _is_not_crossable(data[py, px], barriers):
         return py, px
 
     height, width = data.shape
@@ -72,7 +72,7 @@ def _find_nearest_pixel(py, px, data, barriers):
     nearest_x = NONE
     for y in range(height):
         for x in range(width):
-            if not _is_a_barrier(data[y, x], barriers):
+            if not _is_not_crossable(data[y, x], barriers):
                 d = _distance(x, y, px, py)
                 if d < min_distance:
                     min_distance = d
@@ -167,8 +167,7 @@ def astar(data, path_img, start_py, start_px, goal_py, goal_px, barriers):
                 continue
 
             # walkable
-            if np.isnan(data[neighbor_y][neighbor_x]) or \
-                    _is_a_barrier(data[neighbor_y][neighbor_x], barriers):
+            if _is_not_crossable(data[neighbor_y][neighbor_x], barriers):
                 continue
 
             # check if neighbor is in the closed list
@@ -211,7 +210,8 @@ def _is_inside(point, xmin, xmax, epsilon_x, ymin, ymax, epsilon_y):
     return True
 
 
-def a_star_search(surface, start, goal, barriers=[], x='x', y='y', snap=False):
+def a_star_search(surface, start, goal, barriers=[], x='x', y='y',
+                  snap_start=False, snap_goal=False):
     """
     Calculate distance from a starting point to a goal through a surface graph.
     Starting location and goal location should be within the graph.
@@ -238,9 +238,12 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y', snap=False):
         name of the x coordinate in input surface raster
     y: string
         name of the y coordinate in input surface raster
-    snap: bool
-        snap the start and goal locations to the nearest valid value before
-        beginning path finding
+    snap_start: bool
+        snap the start location to the nearest valid value before
+        beginning pathfinding
+    snap_goal: bool
+        snap the goal location to the nearest valid value before
+        beginning pathfinding
     Returns
     -------
     path_agg: Xarray.DataArray with same size as input surface raster.
@@ -280,9 +283,12 @@ def a_star_search(surface, start, goal, barriers=[], x='x', y='y', snap=False):
     py1, px1 = _find_pixel_id(goal[0], goal[1], x_coords, y_coords)
 
     barriers = np.array(barriers)
-    if snap:
-        # find nearest pixel with a valid value
+    if snap_start:
+        # find nearest valid pixel to the start location
         py0, px0 = _find_nearest_pixel(py0, px0, surface.data, barriers)
+
+    if snap_goal:
+        # find nearest valid pixel to the goal location
         py1, px1 = _find_nearest_pixel(py1, px1, surface.data, barriers)
 
     if py0 != NONE or py1 != NONE:
