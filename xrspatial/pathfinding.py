@@ -11,13 +11,6 @@ NONE = -1
 
 
 @ngjit
-def _heuristic(x1, y1, x2, y2):
-    # heuristic to estimate distance between 2 point
-    # TODO: what if we want to use another distance metric?
-    return abs(x1 - x2) + abs(y1 - y2)
-
-
-@ngjit
 def _is_not_crossable(cell_value, barriers):
     # nan cell is not walkable
     if np.isnan(cell_value):
@@ -33,6 +26,13 @@ def _is_not_crossable(cell_value, barriers):
 def _distance(x1, y1, x2, y2):
     # euclidean distance in pixel space from (y1, x1) to (y2, x2)
     return np.sqrt((x1 - x2)**2 + (y1 - y2)**2)
+
+
+@ngjit
+def _heuristic(x1, y1, x2, y2):
+    # heuristic to estimate distance between 2 point
+    # TODO: what if we want to use another distance metric?
+    return _distance(x1, y1, x2, y2)
 
 
 @ngjit
