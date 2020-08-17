@@ -36,6 +36,7 @@ conda install -c conda-forge xarray-spatial
 |<a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-0.png"></a> | <a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-1.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-2.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-3.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-4.png"></a>|
 |<a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-0.png"></a> | <a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-1.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-2.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-3.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-4.png"></a>|
 |<a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-0.png"></a> | <a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-1.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-2.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-3.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-4.png"></a>|
+|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/4-0.png"></a> | | | | |
 
 
 `xarray-spatial` grew out of the [Datashader project](https://datashader.org/), which provides fast rasterization of vector data (points, lines, polygons, meshes, and rasters) for use with xarray-spatial.
@@ -66,6 +67,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 - [Bump Mapping](xrspatial/bump.py)
 - [Perlin Noise](xrspatial/perlin.py)
 - [Procedural Terrain Generation](xrspatial/terrain.py)
+- [Pathfinding](xrspatial/pathfinding.py)
 
 #### Usage
 
