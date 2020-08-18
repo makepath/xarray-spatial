@@ -89,7 +89,7 @@ def stats(zones, values, stat_funcs=['mean', 'max', 'min', 'std',
         raise ValueError("`zones` must be an array of integers")
 
     if not (issubclass(values.data.dtype.type, np.integer) or
-            issubclass(values.data.dtype.type, np.float)):
+            issubclass(values.data.dtype.type, np.floating)):
         raise ValueError(
             "`values` must be an array of integers or floats")
 
@@ -262,7 +262,7 @@ def crosstab(zones, values, layer=None):
         raise ValueError("`zones` must be an xarray of integers")
 
     if not issubclass(values.data.dtype.type, np.integer) and \
-            not issubclass(values.data.dtype.type, np.float):
+            not issubclass(values.data.dtype.type, np.floating):
         raise ValueError(
             "`values` must be an xarray of integers or floats")
 
@@ -329,7 +329,7 @@ def apply(zones, values, func):
         raise ValueError("`zones.values` must be an array of integers")
 
     if not (issubclass(values.values.dtype.type, np.integer) or
-            issubclass(values.values.dtype.type, np.float)):
+            issubclass(values.values.dtype.type, np.floating)):
         raise ValueError(
             "`values` must be an array of integers or float")
 
@@ -450,7 +450,7 @@ def suggest_zonal_canvas(smallest_area, x_range, y_range,
 
     return canvas_h, canvas_w
 
-  
+
 @ngjit
 def _area_connectivity(data, n=4):
     '''

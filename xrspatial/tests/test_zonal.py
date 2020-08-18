@@ -94,6 +94,16 @@ def test_stats_default():
     assert zone_double_sums == df['double sum'].tolist()
 
 
+def test_stats_dtypes():
+    zones, values = stats_create_zones_values()
+    values = values.astype(np.float16)
+
+    # default stat_funcs=['mean', 'max', 'min', 'std', 'var', 'count']
+    df = stats(zones=zones, values=values)
+
+    assert isinstance(df, pd.DataFrame)
+
+
 # TODO: get this test passing
 def _test_stats_invalid_custom_stat():
     zones, values = stats_create_zones_values()
@@ -290,6 +300,25 @@ def test_crosstab_2d():
     assert df['check_sum'][zone_idx[0]] == 1.0
 
 
+def test_crosstab_2d_dtypes():
+    values_val = np.asarray([[0, 0, 10, 20],
+                             [0, 0, 0, 10],
+                             [np.inf, 30, 20, 50],
+                             [10, 30, 40, 40],
+                             [10, np.nan, 50, 0]], dtype=np.float16)
+    values_agg = xa.DataArray(values_val, dims=['lat', 'lon'])
+    zones_val = np.asarray([[1, 1, 6, 6],
+                            [1, 1, 6, 6],
+                            [3, 5, 6, 6],
+                            [3, 5, 7, 7],
+                            [3, 7, 7, 0]])
+    zones_agg = xa.DataArray(zones_val, dims=['lat', 'lon'])
+
+    df = crosstab(zones_agg, values_agg)
+
+    assert isinstance(df, pd.DataFrame)
+
+
 def test_apply_invalid_input():
     def func(x):
         return 0
@@ -382,7 +411,7 @@ def test_suggest_zonal_canvas():
     assert height == 100
     assert width == 200
 
-    
+
 def create_test_arr(arr):
     n, m = arr.shape
     raster = xa.DataArray(arr, dims=['y', 'x'])
