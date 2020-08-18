@@ -4,6 +4,9 @@ import scipy.stats as stats
 from datashader.colors import rgb
 from datashader.utils import ngjit
 from xarray import DataArray
+
+from numpy.random import RandomState
+
 import warnings
 warnings.simplefilter('default')
 
@@ -238,12 +241,7 @@ def _jenks(data, n_classes):
     return kclass
 
 
-def _kmeans(agg, k=5):
-    centroids = _jenks(agg.data.flatten(), k)
-    return centroids[1:]
-
-
-def natural_breaks(agg, name='natural_breaks', k=5):
+def natural_breaks(agg, num_sample=None, name='natural_breaks', k=5):
     """
     Calculate Jenks natural breaks (a.k.a kmeans in one dimension)
     for an input raster xarray.
@@ -252,9 +250,14 @@ def natural_breaks(agg, name='natural_breaks', k=5):
     ----------
     agg : xarray.DataArray
         xarray.DataArray of values to bin
+    num_sample: int (optional)
+        Number of sample data points used to fit the model.
+        Natural Breaks (Jenks) classification is indeed O(n²) complexity,
+        where n is the total number of data points, i.e: agg.size
+        When n is large, we should fit the model on a small sub-sample
+        of the data instead of using the whole dataset.
     k: int
         Number of classes
-
     Returns
     -------
     natural_breaks_agg: xarray.DataArray
@@ -283,7 +286,28 @@ def natural_breaks(agg, name='natural_breaks', k=5):
            [4., 4., 4.]]
     """
 
-    uv = np.unique(agg.data)
+    num_data = agg.size
+
+    if num_sample is not None and num_sample < num_data:
+        # randomly select sample from the whole dataset
+        # create a pseudo random number generator
+        generator = RandomState(1234567890)
+        idx = [i for i in range(0, agg.size)]
+        generator.shuffle(idx)
+        sample_idx = idx[:num_sample]
+        sample_data = agg.data.flatten()[sample_idx]
+    else:
+        sample_data = agg.data.flatten()
+
+    # warning if number of total data points to fit the model bigger than 40k
+    if sample_data.size >= 40000:
+        warnings.warn('natural_breaks Warning: Natural break classification '
+                      '(Jenks) has a complexity of O(n^2), '
+                      'your classification with {} data points may take '
+                      'a long time.'.format(sample_data.size),
+                      Warning)
+
+    uv = np.unique(sample_data)
     uvk = len(uv)
 
     if uvk < k:
@@ -295,8 +319,8 @@ def natural_breaks(agg, name='natural_breaks', k=5):
         uv.sort()
         bins = uv
     else:
-        res0 = _kmeans(agg, k)
-        bins = np.array(res0)
+        centroids = _jenks(sample_data, k)
+        bins = np.array(centroids[1:])
 
     return DataArray(_bin(agg.data, bins, np.arange(uvk)),
                      name=name,
