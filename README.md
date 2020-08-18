@@ -119,3 +119,4 @@ With the introduction of projects like Numba, Python gained new ways to provide 
 - @ocefpaf
 - @rsignell-usgs
 - @marcozimmermannpm
+- @jthetzel
