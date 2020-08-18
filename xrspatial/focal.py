@@ -331,7 +331,7 @@ def apply(raster, kernel, func=calc_mean):
         raise ValueError("`raster` must be 2D")
 
     if not (issubclass(raster.values.dtype.type, np.integer) or
-            issubclass(raster.values.dtype.type, np.float)):
+            issubclass(raster.values.dtype.type, np.floating)):
         raise ValueError(
             "`raster` must be an array of integers or float")
 
