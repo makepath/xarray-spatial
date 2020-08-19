@@ -3,7 +3,7 @@ from math import pi as PI
 
 import numpy as np
 import numba as nb
-from numba import jit
+from xrspatial.utils import ngjit
 
 import xarray
 
@@ -58,7 +58,7 @@ CENTER_EVENT = 0
 SMALLEST_GRAD = -9999999999999999999999.0
 
 
-@jit(nb.i8(nb.f8, nb.f8), nopython=True)
+@ngjit
 def _compare(a, b):
     if a < b:
         return -1
@@ -67,7 +67,7 @@ def _compare(a, b):
     return 0
 
 
-@jit(nb.f8(nb.f8[:, :], nb.i8), nopython=True)
+@ngjit
 def _find_value_min_value(tree_vals, node_id):
     return min(tree_vals[node_id][TN_GRAD_0],
                tree_vals[node_id][TN_GRAD_1],
@@ -87,7 +87,7 @@ def _print_tv(tv):
     return
 
 
-@jit(nb.void(nb.f8[:, :], nb.i8[:, :], nb.i8, nb.f8[:], nb.i8), nopython=True)
+@ngjit
 def _create_tree_nodes(tree_vals, tree_nodes, x, val, color=RB_RED):
     # Create a TreeNode using given TreeValue
 
@@ -110,7 +110,7 @@ def _create_tree_nodes(tree_vals, tree_nodes, x, val, color=RB_RED):
     return
 
 
-@jit(nb.i8(nb.i8[:, :], nb.i8), nopython=True)
+@ngjit
 def _tree_minimum(tree_nodes, x):
     while tree_nodes[x][TN_LEFT_ID] != NIL_ID:
         x = tree_nodes[x][TN_LEFT_ID]
@@ -118,7 +118,7 @@ def _tree_minimum(tree_nodes, x):
 
 
 # function used by deletion
-@jit(nb.i8(nb.i8[:, :], nb.i8), nopython=True)
+@ngjit
 def _tree_successor(tree_nodes, x):
     # Find the highest successor of a node in the tree
 
@@ -134,13 +134,13 @@ def _tree_successor(tree_nodes, x):
     return y
 
 
-@jit(nb.f8(nb.f8[:]), nopython=True)
+@ngjit
 def _find_max_value(node_value):
     # Find the max value in the given tree.
     return node_value[TN_MAX_GRAD_ID]
 
 
-@jit(nb.i8(nb.f8[:, :], nb.i8[:, :], nb.i8, nb.i8), nopython=True)
+@ngjit
 def _left_rotate(tree_vals, tree_nodes, root, x):
     # A utility function to left rotate subtree rooted with a node.
 
@@ -197,7 +197,7 @@ def _left_rotate(tree_vals, tree_nodes, root, x):
     return root
 
 
-@jit(nb.i8(nb.f8[:, :], nb.i8[:, :], nb.i8, nb.i8), nopython=True)
+@ngjit
 def _right_rotate(tree_vals, tree_nodes, root, y):
     # A utility function to right rotate subtree rooted with a node.
 
@@ -251,7 +251,7 @@ def _right_rotate(tree_vals, tree_nodes, root, y):
     return root
 
 
-@jit(nb.i8(nb.f8[:, :], nb.i8[:, :], nb.i8, nb.i8), nopython=True)
+@ngjit
 def _rb_insert_fixup(tree_vals, tree_nodes, root, z):
     # Fix red-black tree after insertion. This may change the root pointer.
 
@@ -313,7 +313,7 @@ def _rb_insert_fixup(tree_vals, tree_nodes, root, z):
     return root
 
 
-@jit(nb.i8(nb.f8[:, :], nb.i8[:, :], nb.i8, nb.i8, nb.f8[:]), nopython=True)
+@ngjit
 def _insert_into_tree(tree_vals, tree_nodes, root, node_id, value):
     # Create node and insert it into the tree
     cur_node = root
@@ -367,7 +367,7 @@ def _insert_into_tree(tree_vals, tree_nodes, root, node_id, value):
     return root
 
 
-@jit(nb.i8(nb.f8[:, :], nb.i8[:, :], nb.i8, nb.f8), nopython=True)
+@ngjit
 def _search_for_node(tree_vals, tree_nodes, root, key):
     # Search for a node with a given key.
     cur_node = root
@@ -383,8 +383,7 @@ def _search_for_node(tree_vals, tree_nodes, root, key):
 
 
 # The following is designed for viewshed's algorithm
-@jit(nb.f8(nb.f8[:, :], nb.i8[:, :], nb.i8, nb.f8, nb.f8, nb.f8),
-     nopython=True)
+@ngjit
 def _find_max_value_within_key(tree_vals, tree_nodes, root,
                                max_key, ang, gradient):
     key_node = _search_for_node(tree_vals, tree_nodes, root, max_key)
@@ -469,7 +468,7 @@ def _find_max_value_within_key(tree_vals, tree_nodes, root,
     return max
 
 
-@jit(nb.i8(nb.f8[:, :], nb.i8[:, :], nb.i8, nb.i8), nopython=True)
+@ngjit
 def _rb_delete_fixup(tree_vals, tree_nodes, root, x):
     # Fix the red-black tree after deletion.
     # This may change the root pointer.
@@ -548,8 +547,7 @@ def _rb_delete_fixup(tree_vals, tree_nodes, root, x):
     return root
 
 
-@jit(nb.types.Tuple((nb.i8, nb.i8))(nb.f8[:, :], nb.i8[:, :], nb.i8, nb.f8),
-     nopython=True)
+@ngjit
 def _delete_from_tree(tree_vals, tree_nodes, root, key):
     # Delete the node out of the tree. This may change the root pointer.
 
@@ -711,8 +709,7 @@ def _print_status_node(sn, row, col):
     return
 
 
-@jit(nb.f8(nb.f8[:, :], nb.i8[:, :], nb.i8, nb.f8, nb.f8, nb.f8),
-     nopython=True)
+@ngjit
 def _max_grad_in_status_struct(tree_vals, tree_nodes, root,
                                distance, angle, gradient):
     # Find the node with max Gradient within the distance (from vp)
@@ -732,32 +729,32 @@ def _max_grad_in_status_struct(tree_vals, tree_nodes, root,
                                       distance, angle, gradient)
 
 
-@jit(nb.f8(nb.f8, nb.f8, nb.f8), nopython=True)
+@ngjit
 def _col_to_east(col, window_west, window_ew_res):
     # Column to easting.
     # Converts a column relative to a window to an east coordinate.
     return window_west + col * window_ew_res
 
 
-@jit(nb.f8(nb.f8, nb.f8, nb.f8), nopython=True)
+@ngjit
 def _row_to_north(row, window_north, window_ns_res):
     # Row to northing.
     # Converts a row relative to a window to an north coordinate.
     return window_north - row * window_ns_res
 
 
-@jit(nb.f8(nb.f8), nopython=True)
+@ngjit
 def _radian(x):
     # Convert degree into radian.
     return x * PI / 180.0
 
 
-@jit(nb.f8(nb.f8, nb.f8), nopython=True)
+@ngjit
 def _hypot(x, y):
     return sqrt(x * x + y * y)
 
 
-@jit(nb.f8(nb.f8, nb.f8, nb.f8, nb.f8), nopython=True)
+@ngjit
 def _g_distance(e1, n1, e2, n2):
     # Computes the distance, in meters, from (x1, y1) to (x2, y2)
 
@@ -766,14 +763,13 @@ def _g_distance(e1, n1, e2, n2):
     return factor * _hypot(e1 - e2, n1 - n2)
 
 
-@jit(nb.void(nb.f8[:, :], nb.i8, nb.i8, nb.f8), nopython=True)
+@ngjit
 def _set_visibility(visibility_grid, i, j, value):
     visibility_grid[i][j] = value
     return
 
 
-@jit(nb.types.Tuple((nb.i8, nb.i8))(nb.i8, nb.i8, nb.i8,
-                                    nb.i8, nb.i8), nopython=True)
+@ngjit
 def _calculate_event_row_col(event_type, event_row, event_col,
                              viewpoint_row, viewpoint_col):
     # Calculate the neighbouring of the given event.
@@ -883,8 +879,7 @@ def _calculate_event_row_col(event_type, event_row, event_col,
     return y, x
 
 
-@jit(nb.f8(nb.i8, nb.i8, nb.i8, nb.i8, nb.i8,
-           nb.i8, nb.i8, nb.f8[:, :]), nopython=True)
+@ngjit
 def _calc_event_elev(event_type, event_row, event_col, n_rows, n_cols,
                      viewpoint_row, viewpoint_col, inrast):
     # Calculate ENTER and EXIT event elevation (bilinear interpolation)
@@ -908,8 +903,7 @@ def _calc_event_elev(event_type, event_row, event_col, n_rows, n_cols,
     return event_elev
 
 
-@jit(nb.types.Tuple((nb.f8, nb.f8))(nb.i8, nb.i8, nb.i8,
-                                    nb.i8, nb.i8), nopython=True)
+@ngjit
 def _calc_event_pos(event_type, event_row, event_col,
                     viewpoint_row, viewpoint_col):
     # Calculate the exact position of the given event,
@@ -1030,7 +1024,7 @@ def _calc_event_pos(event_type, event_row, event_col,
     return y, x
 
 
-@jit(nb.f8(nb.f8, nb.f8, nb.i8, nb.i8), nopython=True)
+@ngjit
 def _calculate_angle(event_x, event_y, viewpoint_x, viewpoint_y):
     if viewpoint_x == event_x and viewpoint_y > event_y:
         # between 1st and 2nd quadrant
@@ -1074,8 +1068,7 @@ def _calculate_angle(event_x, event_y, viewpoint_x, viewpoint_y):
     return 0
 
 
-@jit(nb.f8(nb.f8, nb.f8, nb.f8, nb.i8, nb.i8,
-           nb.f8, nb.f8, nb.f8), nopython=True)
+@ngjit
 def _calc_event_grad(row, col, elev, viewpoint_row, viewpoint_col,
                      viewpoint_elev, ew_res, ns_res):
     # Calculate event gradient
@@ -1100,9 +1093,7 @@ def _calc_event_grad(row, col, elev, viewpoint_row, viewpoint_col,
 
 
 # given a StatusNode, fill in its dist2vp and gradient
-@jit(nb.types.Tuple((nb.f8, nb.f8))(nb.i8, nb.i8, nb.f8, nb.i8,
-                                    nb.i8, nb.f8, nb.f8, nb.f8),
-     nopython=True)
+@ngjit
 def _calc_dist_n_grad(status_node_row, status_node_col, elev, viewpoint_row,
                       viewpoint_col, viewpoint_elev, ew_res, ns_res):
     diff_elev = elev - viewpoint_elev
@@ -1126,8 +1117,7 @@ def _calc_dist_n_grad(status_node_row, status_node_col, elev, viewpoint_row,
 
 # ported https://github.com/OSGeo/grass/blob/master/raster/r.viewshed/grass.cpp
 # function _init_event_list_in_memory()
-@jit(nb.void(nb.f8[:, :], nb.f8[:, :], nb.i8, nb.i8,
-             nb.f8[:, :], nb.f8[:, :]), nopython=True)
+@ngjit
 def _init_event_list(event_list, raster, vp_row, vp_col,
                      data, visibility_grid):
     # Initialize and fill all the events for the map into event_list
@@ -1230,7 +1220,7 @@ def _init_event_list(event_list, raster, vp_row, vp_col,
     return
 
 
-@jit(nb.i8(nb.f8[:, :], nb.i8[:, :]), nopython=True)
+@ngjit
 def _create_status_struct(tree_vals, tree_nodes):
     # Create and initialize the status struct.
     # return a Tree object with a dummy root.
@@ -1262,7 +1252,7 @@ def _create_status_struct(tree_vals, tree_nodes):
 #    90 is due horizontal, and 180 is directly above the observer.
 #    If doCurv is set we need to consider the curvature of the
 #    earth */
-@jit(nb.f8(nb.f8, nb.f8, nb.f8), nopython=True)
+@ngjit
 def _get_vertical_ang(viewpoint_elev, distance_to_viewpoint, elev):
     # Find the vertical angle in degrees between the vp
     # and the point represented by the StatusNode
@@ -1282,7 +1272,7 @@ def _get_vertical_ang(viewpoint_elev, distance_to_viewpoint, elev):
     return atan(abs(diff_elev) / sqrt(distance_to_viewpoint)) * 180 / PI + 90
 
 
-@jit(nb.void(nb.f8[:]), nopython=True)
+@ngjit
 def _init_status_node(status_node):
     status_node[TN_KEY_ID] = -1
 
@@ -1313,14 +1303,14 @@ def _print_event(event):
     return
 
 
-@jit(nb.void(nb.i8[:], nb.i8), nopython=True)
+@ngjit
 def _push(stack, item):
     stack[0] += 1
     stack[stack[0]] = item
     return
 
 
-@jit(nb.i8(nb.i8[:]), nopython=True)
+@ngjit
 def _pop(stack):
     item = stack[stack[0]]
     stack[0] -= 1
@@ -1342,9 +1332,7 @@ def _pop(stack):
 # https://github.com/OSGeo/grass/blob/master/raster/r.viewshed/viewshed.cpp
 # function viewshed_in_memory()
 
-@jit(nb.f8[:, :](nb.f8[:, :], nb.i8, nb.i8, nb.f8, nb.f8, nb.f8, nb.f8,
-                 nb.i8[:, :], nb.f8[:, :], nb.f8[:, :], nb.f8[:, :]),
-     nopython=True)
+@ngjit
 def _viewshed(raster, vp_row, vp_col, vp_elev, vp_target, ew_res, ns_res,
               event_rcts, event_aes, data, visibility_grid):
     n_rows, n_cols = raster.shape
