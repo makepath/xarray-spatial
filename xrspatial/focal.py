@@ -7,17 +7,24 @@ import numpy as np
 from xarray import DataArray
 
 from xrspatial.utils import ngjit
-from xrspatial.utils import lnglat_to_meters
-
 
 warnings.simplefilter('default')
 
-DEFAULT_UNIT = 'meter'
-
-
 # TODO: Make convolution more generic with numba first-class functions.
 
-def is_number(s):
+
+DEFAULT_UNIT = 'meter'
+METER = 1
+FOOT = 0.3048
+KILOMETER = 1000
+MILE = 1609.344
+UNITS = {'meter': METER, 'meters': METER, 'm': METER,
+         'feet': FOOT, 'foot': FOOT, 'ft': FOOT,
+         'miles': MILE, 'mls': MILE, 'ml': MILE,
+         'kilometer': KILOMETER, 'kilometers': KILOMETER, 'km': KILOMETER}
+
+
+def _is_numeric(s):
     try:
         float(s)
         return True
@@ -25,103 +32,54 @@ def is_number(s):
         return False
 
 
-# modified from https://stackoverflow.com/questions/3943752/the-dateutil-parser-parse-of-distance-strings
-class Distance(object):
-    METER = 1
-    FOOT = 0.3048
-    KILOMETER = 1000
-    MILE = 1609.344
-    UNITS = {'meter': METER,
-             'meters': METER,
-             'm': METER,
-             'feet': FOOT,
-             'foot': FOOT,
-             'ft': FOOT,
-             'miles': MILE,
-             'mls': MILE,
-             'ml': MILE,
-             'kilometer': KILOMETER,
-             'kilometers': KILOMETER,
-             'km': KILOMETER,
-             }
-
-    def __init__(self, s):
-        self.number, unit = self._get_distance_unit(s)
-        self._convert(unit)
-
-    def _get_distance_unit(self, s):
-        # spit string into numbers and text
-        splits = [x for x in re.split(r'(-?\d*\.?\d+)', s) if x != '']
-        if len(splits) not in [1, 2]:
-            raise ValueError("Invalid distance.")
-
-        number = splits[0]
-        unit = DEFAULT_UNIT
-        if len(splits) == 1:
-            warnings.warn('Raster distance unit not provided. '
-                          'Use meter as default.', Warning)
-        elif len(splits) == 2:
-            unit = splits[1]
-
-        if float(number) <= 0:
-            raise ValueError(
-                "Invalid value.\n"
-                "Distance should be a possitive number \n")
-
-        unit = unit.lower()
-        unit = unit.replace(' ', '')
-        if unit not in self.UNITS:
-            raise ValueError(
-                "Invalid value.\n"
-                "Distance unit should be one of the following: \n"
-                "meter (meter, meters, m),\n"
-                "kilometer (kilometer, kilometers, km),\n"
-                "foot (foot, feet, ft),\n"
-                "mile (mile, miles, ml, mls)")
-        return number, unit
-
-    def _convert(self, unit):
-        self.number = float(self.number)
-        if self.UNITS[unit] != 1:
-            self.number *= self.UNITS[unit]
-
-    @property
-    def meters(self):
-        return self.number
-
-    @meters.setter
-    def meters(self, v):
-        self.number = float(v)
-
-    @property
-    def miles(self):
-        return self.number / self.MILE
-
-    @miles.setter
-    def miles(self, v):
-        self.number = v
-        self._convert('miles')
-
-    @property
-    def feet(self):
-        return self.number / self.FOOT
-
-    @feet.setter
-    def feet(self, v):
-        self.number = v
-        self._convert('feet')
-
-    @property
-    def kilometers(self):
-        return self.number / self.KILOMETER
-
-    @kilometers.setter
-    def kilometers(self, v):
-        self.number = v
-        self._convert('KILOMETER')
+def _to_meters(d, unit):
+    return d * UNITS[unit]
 
 
-def _calc_cell_size(raster):
+def _get_distance(distance_str):
+    # return distance in meters
+
+    # spit string into numbers and text
+    splits = [x for x in re.split(r'(-?\d*\.?\d+)', distance_str) if x != '']
+    if len(splits) not in [1, 2]:
+        raise ValueError("Invalid distance.")
+
+    unit = DEFAULT_UNIT
+    if len(splits) == 1:
+        warnings.warn('Raster distance unit not provided. '
+                      'Use meter as default.', Warning)
+    elif len(splits) == 2:
+        unit = splits[1]
+
+    number = splits[0]
+    if not _is_numeric(number):
+        raise ValueError(
+            "Invalid value.\n"
+            "Distance should be a possitive numeric value.\n")
+
+    distance = float(number)
+    if distance <= 0:
+        raise ValueError(
+            "Invalid value.\n"
+            "Distance should be a possitive.\n")
+
+    unit = unit.lower()
+    unit = unit.replace(' ', '')
+    if unit not in UNITS:
+        raise ValueError(
+            "Invalid value.\n"
+            "Distance unit should be one of the following: \n"
+            "meter (meter, meters, m),\n"
+            "kilometer (kilometer, kilometers, km),\n"
+            "foot (foot, feet, ft),\n"
+            "mile (mile, miles, ml, mls)")
+
+    # convert distance to meters
+    meters = _to_meters(distance, unit)
+    return meters
+
+
+def _calc_cellsize(raster, x='x', y='y'):
     if 'unit' in raster.attrs:
         unit = raster.attrs['unit']
     else:
@@ -129,42 +87,14 @@ def _calc_cell_size(raster):
         warnings.warn('Raster distance unit not provided. '
                       'Use meter as default.', Warning)
 
-    cell_size_x = 1
-    cell_size_y = 1
+    # TODO: check coordinate system
+    #       if in lat-lon, need to convert to meter, lnglat_to_meters
+    cellsize_x = raster.coords[x].data[1] - raster.coords[x].data[0]
+    cellsize_y = raster.coords[y].data[1] - raster.coords[y].data[0]
+    cellsize_x = _to_meters(cellsize_x, unit)
+    cellsize_y = _to_meters(cellsize_y, unit)
 
-    # calculate cell size from input `raster`
-    for dim in raster.dims:
-        if (dim.lower().count('x')) > 0:
-            # dimension of x-coordinates
-            if len(raster[dim]) > 1:
-                cell_size_x = raster[dim].values[1] - raster[dim].values[0]
-        elif (dim.lower().count('y')) > 0:
-            # dimension of y-coordinates
-            if len(raster[dim]) > 1:
-                cell_size_y = raster[dim].values[1] - raster[dim].values[0]
-
-    lon0, lon1, lat0, lat1 = None, None, None, None
-    for dim in raster.dims:
-        if (dim.lower().count('lon')) > 0:
-            # dimension of x-coordinates
-            if len(raster[dim]) > 1:
-                lon0, lon1 = raster[dim].values[0], raster[dim].values[1]
-        elif (dim.lower().count('lat')) > 0:
-            # dimension of y-coordinates
-            if len(raster[dim]) > 1:
-                lat0, lat1 = raster[dim].values[0], raster[dim].values[1]
-
-    # convert lat-lon to meters
-    if (lon0, lon1, lat0, lat1) != (None, None, None, None):
-        mx0, my0 = lnglat_to_meters(lon0, lat0)
-        mx1, my1 = lnglat_to_meters(lon1, lat1)
-        cell_size_x = mx1 - mx0
-        cell_size_y = my1 - my0
-        unit = DEFAULT_UNIT
-
-    sx = Distance(str(cell_size_x) + unit)
-    sy = Distance(str(cell_size_y) + unit)
-    return sx, sy
+    return cellsize_x, cellsize_y
 
 
 def _gen_ellipse_kernel(half_w, half_h):
@@ -176,47 +106,31 @@ def _gen_ellipse_kernel(half_w, half_h):
     # True for points inside the ellipse
     # (x / a)^2 + (y / b)^2 <= 1, avoid division to avoid rounding issue
     ellipse = (x * half_h) ** 2 + (y * half_w) ** 2 <= (half_w * half_h) ** 2
-
     return ellipse.astype(float)
 
 
-class Kernel:
-    def __init__(self, shape='circle', radius=10000):
-        self.shape = shape
-        self.radius = radius
-        self._validate_shape()
-        self._validate_radius()
+def _get_kernel(cellsize_x, cellsize_y, shape='circle', radius=10000):
+    # validate shape
+    if shape not in ['circle']:
+        raise ValueError(
+            "Kernel shape must be \'circle\'")
 
-    def _validate_shape(self):
-        # validate shape
-        if self.shape not in ['circle']:
-            raise ValueError(
-                "Kernel shape must be \'circle\'")
-
-    def _validate_radius(self):
-        # try to convert into Distance object
-        d = Distance(str(self.radius))
-        print(d)
-
-    def to_array(self, raster):
-        # calculate cell size over the x and y axis
-        sx, sy = _calc_cell_size(raster)
-        # create Distance object of radius
-        sr = Distance(str(self.radius))
-        if self.shape == 'circle':
-            # convert radius (meter) to pixel
-            kernel_half_w = int(sr.meters / sx.meters)
-            kernel_half_h = int(sr.meters / sy.meters)
-            kernel = _gen_ellipse_kernel(kernel_half_w, kernel_half_h)
-        return kernel
+    # validate radius, convert radius to meters
+    r = _get_distance(str(radius))
+    if shape == 'circle':
+        # convert radius (meter) to pixel
+        kernel_half_w = int(r / cellsize_x)
+        kernel_half_h = int(r / cellsize_y)
+        kernel = _gen_ellipse_kernel(kernel_half_w, kernel_half_h)
+    return kernel
 
 
 @ngjit
 def _mean(data, excludes):
     out = np.zeros_like(data)
     rows, cols = data.shape
-    for y in range(1, rows-1):
-        for x in range(1, cols-1):
+    for y in range(1, rows - 1):
+        for x in range(1, cols - 1):
 
             exclude = False
             for ex in excludes:
@@ -225,16 +139,20 @@ def _mean(data, excludes):
                     break
 
             if not exclude:
-                a,b,c,d,e,f,g,h,i = [data[y-1, x-1], data[y, x-1], data[y+1, x-1],
-                                     data[y-1, x],   data[y, x],   data[y+1, x],
-                                     data[y-1, x+1], data[y, x+1], data[y+1, x+1]]
-                out[y, x] = (a+b+c+d+e+f+g+h+i) / 9
+                a, b, c, d, e, f, g, h, i = [data[y - 1, x - 1],
+                                             data[y, x - 1],
+                                             data[y + 1, x - 1],
+                                             data[y - 1, x], data[y, x],
+                                             data[y + 1, x],
+                                             data[y - 1, x + 1],
+                                             data[y, x + 1],
+                                             data[y + 1, x + 1]]
+                out[y, x] = (a + b + c + d + e + f + g + h + i) / 9
             else:
                 out[y, x] = data[y, x]
     return out
 
 
-# TODO: add optional name parameter `name='mean'`
 def mean(agg, passes=1, excludes=[np.nan], name='mean'):
     """
     Returns Mean filtered array using a 3x3 window
@@ -327,7 +245,11 @@ def _apply(data, kernel_array, func):
     return out
 
 
-def apply(raster, kernel, func=calc_mean):
+def apply(raster, x='x', y='y', kernel_shape='circle', kernel_radius=10000,
+          func=calc_mean):
+    """
+    """
+
     # validate raster
     if not isinstance(raster, DataArray):
         raise TypeError("`raster` must be instance of DataArray")
@@ -340,10 +262,19 @@ def apply(raster, kernel, func=calc_mean):
         raise ValueError(
             "`raster` must be an array of integers or float")
 
+    raster_dims = raster.dims
+    if raster_dims != (y, x):
+        raise ValueError("raster.coords should be named as coordinates:"
+                         "(%s, %s)".format(y, x))
+
+    # calculate cellsize along the x and y axis
+    cellsize_x, cellsize_y = _calc_cellsize(raster, x=x, y=y)
     # create kernel mask array
-    kernel_values = kernel.to_array(raster)
+    kernel = _get_kernel(cellsize_x, cellsize_y,
+                         shape=kernel_shape, radius=kernel_radius)
+
     # apply kernel to raster values
-    out = _apply(raster.values.astype(float), kernel_values, func)
+    out = _apply(raster.values.astype(float), kernel, func)
 
     result = DataArray(out,
                        coords=raster.coords,
@@ -363,7 +294,7 @@ def _hotspots(z_array):
     return out
 
 
-def hotspots(raster, kernel):
+def hotspots(raster, x='x', y='y', kernel_shape='circle', kernel_radius=10000):
     """Identify statistically significant hot spots and cold spots in an input
     raster. To be a statistically significant hot spot, a feature will have a
     high value and be surrounded by other features with high values as well.
@@ -402,10 +333,19 @@ def hotspots(raster, kernel):
         raise ValueError(
             "`raster` must be an array of integers or float")
 
+    raster_dims = raster.dims
+    if raster_dims != (y, x):
+        raise ValueError("raster.coords should be named as coordinates:"
+                         "(%s, %s)".format(y, x))
+
+    # calculate cellsize along the x and y axis
+    cellsize_x, cellsize_y = _calc_cellsize(raster, x=x, y=y)
     # create kernel mask array
-    kernel_values = kernel.to_array(raster)
+    kernel = _get_kernel(cellsize_x, cellsize_y,
+                         shape=kernel_shape, radius=kernel_radius)
+
     # apply kernel to raster values
-    mean_array = _apply(raster.values.astype(float), kernel_values, calc_mean)
+    mean_array = _apply(raster.values.astype(float), kernel, calc_mean)
 
     # calculate z-scores
     global_mean = np.nanmean(raster.values)
