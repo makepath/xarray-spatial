@@ -63,6 +63,11 @@ class Distance(object):
         elif len(splits) == 2:
             unit = splits[1]
 
+        if float(number) <= 0:
+            raise ValueError(
+                "Invalid value.\n"
+                "Distance should be a possitive number \n")
+
         unit = unit.lower()
         unit = unit.replace(' ', '')
         if unit not in self.UNITS:

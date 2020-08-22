@@ -2,7 +2,6 @@ from math import atan, sqrt, fabs
 from math import pi as PI
 
 import numpy as np
-import numba as nb
 from xrspatial.utils import ngjit
 
 import xarray
