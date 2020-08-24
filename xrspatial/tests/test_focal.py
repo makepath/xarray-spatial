@@ -2,7 +2,7 @@ import xarray as xr
 import numpy as np
 
 from xrspatial import mean
-from xrspatial.focal import apply, Kernel, calc_mean, calc_sum, hotspots
+from xrspatial.focal import apply, calc_mean, calc_sum, hotspots
 import pytest
 
 
@@ -55,120 +55,40 @@ def test_mean_transfer_function():
     assert abs(da_mean.mean() - data_random.mean()) < 10**-3
 
 
-def test_kernel():
-    with pytest.raises(Exception) as e_info:
-        invalid_shape_kernel = Kernel(shape='line')
-
-    with pytest.raises(Exception) as e_info:
-        invalid_radius_kernel = Kernel(radius='10 inch')
-
-
-def test_apply_invalid_input():
-    kernel = Kernel(radius=1)
-    invalid_raster_type = np.array([0, 1, 2, 3])
-    with pytest.raises(Exception) as e_info:
-        apply(invalid_raster_type, kernel)
-        assert e_info
-
-    invalid_raster_dtype = xr.DataArray(np.array([['cat', 'dog']]))
-    with pytest.raises(Exception) as e_info:
-        apply(invalid_raster_dtype, kernel)
-        assert e_info
-
-    invalid_raster_shape = xr.DataArray(np.array([0, 0]))
-    with pytest.raises(Exception) as e_info:
-        apply(invalid_raster_shape, kernel)
-        assert e_info
-
-
-def test_apply_mean():
-    n, m = 10, 15
-    raster = xr.DataArray(np.ones((n, m)), dims=['x', 'y'])
-    raster['x'] = np.linspace(0, n, n)
-    raster['y'] = np.linspace(0, m, m)
-
-    for i in range(m):
-        kernel = Kernel(radius=i)
-        mean_output = apply(raster, kernel)
-
-        # check output's properties
-        # output must be an xarray DataArray
-        assert isinstance(mean_output, xr.DataArray)
-        assert isinstance(mean_output.values, np.ndarray)
-        # shape, dims, coords, attr preserved
-        assert raster.shape == mean_output.shape
-        assert raster.dims == mean_output.dims
-        assert raster.attrs == mean_output.attrs
-        for coord in raster.coords:
-            assert np.all(raster[coord] == mean_output[coord])
-        assert (np.all(mean_output.values == np.ones((n, m))))
-
-
-def test_apply_sum():
-    n, m = 10, 15
-    raster = xr.DataArray(np.ones((n, m)), dims=['x', 'y'])
-    raster['x'] = np.linspace(0, n, n)
-    raster['y'] = np.linspace(0, m, m)
-
-    for i in range(m):
-        kernel = Kernel(radius=i)
-
-        kernel_array = kernel.to_array(raster)
-        krows, kcols = kernel_array.shape
-        hrows, hcols = min(n, int(krows / 2)), min(m, int(kcols / 2))
-
-        sum_output = apply(raster, kernel, calc_sum)
-
-        # check output's properties
-        # output must be an xarray DataArray
-        assert isinstance(sum_output, xr.DataArray)
-        assert isinstance(sum_output.values, np.ndarray)
-        # shape, dims, coords, attr preserved
-        assert raster.shape == sum_output.shape
-        assert raster.dims == sum_output.dims
-        assert raster.attrs == sum_output.attrs
-        for coord in raster.coords:
-            assert np.all(raster[coord] == sum_output[coord])
-
-        kernel_sum = np.sum(kernel_array)
-        raster_sum = np.sum(raster.values)
-        # in case the kernel smaller than the raster
-        # cells that fit the kernel has neighborhood sum equal to sum(kernel)
-        for y in range(hrows, n - hrows):
-            for x in range(hcols, m - hcols):
-                assert sum_output.values[y, x] == min(kernel_sum, raster_sum)
-
-        #  cell in border has sum less than np.sum(kernel)
-        for y in range(hrows):
-            for x in range(m):
-                assert sum_output.values[y, x] < kernel_sum
-
-        for y in range(n-hrows, n):
-            for x in range(m):
-                assert sum_output.values[y, x] < kernel_sum
-
-        for y in range(n):
-            for x in range(hcols):
-                assert sum_output.values[y, x] < kernel_sum
-
-        for y in range(n):
-            for x in range(m-hcols, m):
-                assert sum_output.values[y, x] < kernel_sum
-
-
-def test_apply_with_nan():
+def test_apply():
     n, m = 6, 6
-    raster = xr.DataArray(np.ones((n, m)), dims=['x', 'y'])
+    raster = xr.DataArray(np.ones((n, m)), dims=['y', 'x'])
     raster['x'] = np.linspace(0, n, n)
     raster['y'] = np.linspace(0, m, m)
 
+    # invalid shape
+    with pytest.raises(Exception) as e_info:
+        apply(raster, x='x', y='y', kernel_shape='line')
+        assert e_info
+
+    # invalid radius distance unit
+    with pytest.raises(Exception) as e_info:
+        apply(raster, x='x', y='y', kernel_radius='10 inch')
+        assert e_info
+
+    # non positive distance
+    with pytest.raises(Exception) as e_info:
+        apply(raster, x='x', y='y', kernel_radius=0)
+        assert e_info
+
+    # invalid dims
+    with pytest.raises(Exception) as e_info:
+        apply(raster, x='lon', y='lat')
+        assert e_info
+
+    # test apply() with calc_sum and calc_mean function
+    # add some nan pixels
     nan_cells = [(i, i) for i in range(n)]
     for cell in nan_cells:
         raster[cell[0], cell[1]] = np.nan
 
-    kernel_1 = Kernel(radius=1)
     # kernel array = [[1]]
-    sum_output_1 = apply(raster, kernel_1, calc_sum)
+    sum_output_1 = apply(raster, kernel_radius=1, func=calc_sum)
     # np.nansum(np.array([np.nan])) = 0.0
     expected_out_sum_1 = np.array([[0., 1., 1., 1., 1., 1.],
                                    [1., 0., 1., 1., 1., 1.],
@@ -179,7 +99,7 @@ def test_apply_with_nan():
     assert np.all(sum_output_1.values == expected_out_sum_1)
 
     # np.nanmean(np.array([np.nan])) = nan
-    mean_output_1 = apply(raster, kernel_1, calc_mean)
+    mean_output_1 = apply(raster, kernel_radius=1, func=calc_mean)
     for cell in nan_cells:
         assert np.isnan(mean_output_1[cell[0], cell[1]])
     # remaining cells are 1s
@@ -188,11 +108,10 @@ def test_apply_with_nan():
             if i != j:
                 assert mean_output_1[i, j] == 1
 
-    kernel_2 = Kernel(radius=2)
     # kernel array: [[0, 1, 0],
     #                [1, 1, 1],
     #                [0, 1, 0]]
-    sum_output_2 = apply(raster, kernel_2, calc_sum)
+    sum_output_2 = apply(raster, kernel_radius=2, func=calc_sum)
     expected_out_sum_2 = np.array([[2., 2., 4., 4., 4., 3.],
                                    [2., 4., 3., 5., 5., 4.],
                                    [4., 3., 4., 3., 5., 4.],
@@ -202,38 +121,14 @@ def test_apply_with_nan():
 
     assert np.all(sum_output_2.values == expected_out_sum_2)
 
-    mean_output_2 = apply(raster, kernel_2, calc_mean)
+    mean_output_2 = apply(raster, kernel_radius=2, func=calc_mean)
     expected_mean_output_2 = np.ones((n, m))
     assert np.all(mean_output_2.values == expected_mean_output_2)
 
 
-def test_hotspot_invalid():
-    kernel = Kernel(radius=1)
-    invalid_raster_type = np.array([0, 1, 2, 3])
-    with pytest.raises(Exception) as e_info:
-        hotspots(invalid_raster_type, kernel)
-        assert e_info
-
-    invalid_raster_dtype = xr.DataArray(np.array([['cat', 'dog']]))
-    with pytest.raises(Exception) as e_info:
-        hotspots(invalid_raster_dtype, kernel)
-        assert e_info
-
-    invalid_raster_shape = xr.DataArray(np.array([0, 0]))
-    with pytest.raises(Exception) as e_info:
-        hotspots(invalid_raster_shape, kernel)
-        assert e_info
-
-    invalid_raster_std = xr.DataArray(np.ones((10, 10)))
-    # std of the raster is 0
-    with pytest.raises(Exception) as e_info:
-        hotspots(invalid_raster_std, kernel)
-        assert e_info
-
-
 def test_hotspot():
     n, m = 10, 10
-    raster = xr.DataArray(np.zeros((n, m), dtype=float), dims=['x', 'y'])
+    raster = xr.DataArray(np.zeros((n, m), dtype=float), dims=['y', 'x'])
     raster['x'] = np.linspace(0, n, n)
     raster['y'] = np.linspace(0, m, m)
 
@@ -258,8 +153,7 @@ def test_hotspot():
     no_significant_region = [id for id in all_idx if id not in hot_region and
                              id not in cold_region]
 
-    kernel = Kernel(radius=2)
-    hotspots_output = hotspots(raster, kernel)
+    hotspots_output = hotspots(raster, kernel_radius=2)
 
     # check output's properties
     # output must be an xarray DataArray
