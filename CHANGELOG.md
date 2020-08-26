@@ -1,3 +1,10 @@
+### Version 0.0.9 - 8/26/2020
+- Added A* pathfinding
+- Allow all numpy float data types, not just numpy.float64 (#122)
+- Broke out user-guide into individual notebooks
+- Added num_sample param option to natural_breaks (#123)
+- Removed sklearn dependency
+
 ### Version 0.0.8 - 7/22/2020
 - Fixed missing deps
 
