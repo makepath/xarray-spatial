@@ -109,11 +109,11 @@ def _gen_ellipse_kernel(half_w, half_h):
     return ellipse.astype(float)
 
 
-def _get_kernel(cellsize_x, cellsize_y, shape='circle', radius=10000):
+def _get_kernel(cellsize_x, cellsize_y, shape='circle', radius=10000, r2=None):
     # validate shape
-    if shape not in ['circle']:
+    if shape not in ['circle', 'annulus']:
         raise ValueError(
-            "Kernel shape must be \'circle\'")
+            "Kernel shape must be \'circle\' or \'annulus\'")
 
     # validate radius, convert radius to meters
     r = _get_distance(str(radius))
@@ -122,6 +122,45 @@ def _get_kernel(cellsize_x, cellsize_y, shape='circle', radius=10000):
         kernel_half_w = int(r / cellsize_x)
         kernel_half_h = int(r / cellsize_y)
         kernel = _gen_ellipse_kernel(kernel_half_w, kernel_half_h)
+    elif shape == 'annulus':
+        r2 = _get_distance(str(r2))
+
+        if r2 > r:
+            r_outer = r2
+            r_inner = r
+        else:
+            r_outer = r
+            r_inner = r2
+
+        if r_outer - r_inner < np.sqrt((cellsize_x / 2)**2 + \
+                                       (cellsize_y / 2)**2):
+            warnings.warn('Annulus radii are closer than cellsize distance.',
+                          Warning)
+
+        kernel_half_w_outer = int(r_outer / cellsize_x)
+        kernel_half_h_outer = int(r_outer / cellsize_y)
+        kernel_outer = _gen_ellipse_kernel(kernel_half_w_outer,
+                                           kernel_half_h_outer)
+
+        kernel_half_w_inner = int(r_inner / cellsize_x)
+        kernel_half_h_inner = int(r_inner / cellsize_y)
+        kernel_inner = _gen_ellipse_kernel(kernel_half_w_inner,
+                                           kernel_half_h_inner)
+
+        # Pad kernel_inner to the same shape and centered in kernel_outer
+        pad_vals = np.array(kernel_outer.shape) - np.array(kernel_inner.shape)
+        pad_kernel = np.pad(kernel_inner,
+                            # Pad ((before_rows, after_rows),
+                            #      (before_cols, after_cols))
+                            pad_width=((pad_vals[0] // 2, pad_vals[0] // 2),
+                                       (pad_vals[1] // 2, pad_vals[1] // 2)),
+                            mode='constant',
+                            constant_values=0)
+        # Get annulus by subtracting inner from outer
+        kernel = kernel_outer - pad_kernel
+        # Add focal point back to kernel
+        kernel[kernel.shape[0] // 2, kernel.shape[1] // 2] = 1
+
     return kernel
 
 
@@ -342,7 +381,7 @@ def hotspots(raster, x='x', y='y', kernel_shape='circle', kernel_radius=10000):
     cellsize_x, cellsize_y = _calc_cellsize(raster, x=x, y=y)
     # create kernel mask array
     kernel = _get_kernel(cellsize_x, cellsize_y,
-                         shape=kernel_shape, radius=kernel_radius)
+                         shape=kernel_shape, radius=kernel_radius, r2=r2)
 
     # apply kernel to raster values
     mean_array = _apply(raster.values.astype(float), kernel, calc_mean)
