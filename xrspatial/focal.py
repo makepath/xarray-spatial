@@ -333,7 +333,7 @@ def _hotspots(z_array):
     return out
 
 
-def hotspots(raster, x='x', y='y', kernel_shape='circle', kernel_radius=10000):
+def hotspots(raster, x='x', y='y', kernel_shape='circle', kernel_radius=10000, zscore=False, r2=None):
     """Identify statistically significant hot spots and cold spots in an input
     raster. To be a statistically significant hot spot, a feature will have a
     high value and be surrounded by other features with high values as well.
@@ -354,6 +354,7 @@ def hotspots(raster, x='x', y='y', kernel_shape='circle', kernel_radius=10000):
     raster: xarray.DataArray
         Input raster image with shape=(height, width)
     kernel: Kernel
+    zscore: If True, return z-scores instead of hotspots
 
     Returns
     -------
@@ -394,7 +395,13 @@ def hotspots(raster, x='x', y='y', kernel_shape='circle', kernel_radius=10000):
                                 "of the input raster values is 0.")
     z_array = (mean_array - global_mean) / global_std
 
-    out = _hotspots(z_array)
+    # Return z-scores if desired, otherwise return hotspots
+    # hotspots is default
+    if zscore:
+        out = z_array
+    else:
+        out = _hotspots(z_array)
+
     result = DataArray(out,
                        coords=raster.coords,
                        dims=raster.dims,
