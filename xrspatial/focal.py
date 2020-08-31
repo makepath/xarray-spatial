@@ -94,7 +94,8 @@ def _calc_cellsize(raster, x='x', y='y'):
     cellsize_x = _to_meters(cellsize_x, unit)
     cellsize_y = _to_meters(cellsize_y, unit)
 
-    return cellsize_x, cellsize_y
+    # When converting from lnglat_to_meters, could have negative cellsize in y
+    return cellsize_x, np.abs(cellsize_y)
 
 
 def _gen_ellipse_kernel(half_w, half_h):
