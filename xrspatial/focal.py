@@ -159,8 +159,6 @@ def _get_kernel(cellsize_x, cellsize_y, shape='circle', radius=10000, r2=None):
                             constant_values=0)
         # Get annulus by subtracting inner from outer
         kernel = kernel_outer - pad_kernel
-        # Add focal point back to kernel
-        kernel[kernel.shape[0] // 2, kernel.shape[1] // 2] = 1
 
     return kernel
 
