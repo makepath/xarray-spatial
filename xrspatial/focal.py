@@ -139,15 +139,9 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
         warnings.warn('Annulus radii are closer than cellsize distance.',
                       Warning)
 
-    kernel_half_w_outer = int(r_outer / cellsize_x)
-    kernel_half_h_outer = int(r_outer / cellsize_y)
-    kernel_outer = _gen_ellipse_kernel(kernel_half_w_outer,
-                                       kernel_half_h_outer)
-
-    kernel_half_w_inner = int(r_inner / cellsize_x)
-    kernel_half_h_inner = int(r_inner / cellsize_y)
-    kernel_inner = _gen_ellipse_kernel(kernel_half_w_inner,
-                                       kernel_half_h_inner)
+    # Get the two circular kernels for the annulus
+    kernel_outer = circular_kernel(cellsize_x, cellsize_y, outer_radius)
+    kernel_inner = circular_kernel(cellsize_x, cellsize_y, inner_radius)
 
     # Need to pad kernel_inner to get it the same shape and centered
     # in kernel_outer
