@@ -79,7 +79,7 @@ def _get_distance(distance_str):
     return meters
 
 
-def _calc_cellsize(raster, x='x', y='y'):
+def calc_cellsize(raster, x='x', y='y'):
     if 'unit' in raster.attrs:
         unit = raster.attrs['unit']
     else:
@@ -94,7 +94,8 @@ def _calc_cellsize(raster, x='x', y='y'):
     cellsize_x = _to_meters(cellsize_x, unit)
     cellsize_y = _to_meters(cellsize_y, unit)
 
-    return cellsize_x, cellsize_y
+    # When converting from lnglat_to_meters, could have negative cellsize in y
+    return cellsize_x, np.abs(cellsize_y)
 
 
 def _gen_ellipse_kernel(half_w, half_h):
@@ -109,19 +110,51 @@ def _gen_ellipse_kernel(half_w, half_h):
     return ellipse.astype(float)
 
 
-def _get_kernel(cellsize_x, cellsize_y, shape='circle', radius=10000):
-    # validate shape
-    if shape not in ['circle']:
-        raise ValueError(
-            "Kernel shape must be \'circle\'")
-
+def circular_kernel(cellsize_x, cellsize_y, radius):
     # validate radius, convert radius to meters
     r = _get_distance(str(radius))
-    if shape == 'circle':
-        # convert radius (meter) to pixel
-        kernel_half_w = int(r / cellsize_x)
-        kernel_half_h = int(r / cellsize_y)
-        kernel = _gen_ellipse_kernel(kernel_half_w, kernel_half_h)
+
+    kernel_half_w = int(r / cellsize_x)
+    kernel_half_h = int(r / cellsize_y)
+
+    kernel = _gen_ellipse_kernel(kernel_half_w, kernel_half_h)
+    return kernel
+
+def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
+
+    # validate radii, convert to meters
+    r2 = _get_distance(str(outer_radius))
+    r1 = _get_distance(str(inner_radius))
+
+    # Validate that outer radius is indeed outer radius
+    if r2 > r1:
+        r_outer = r2
+        r_inner = r1
+    else:
+        r_outer = r1
+        r_inner = r2
+
+    if r_outer - r_inner < np.sqrt((cellsize_x / 2)**2 + \
+                                   (cellsize_y / 2)**2):
+        warnings.warn('Annulus radii are closer than cellsize distance.',
+                      Warning)
+
+    # Get the two circular kernels for the annulus
+    kernel_outer = circular_kernel(cellsize_x, cellsize_y, outer_radius)
+    kernel_inner = circular_kernel(cellsize_x, cellsize_y, inner_radius)
+
+    # Need to pad kernel_inner to get it the same shape and centered
+    # in kernel_outer
+    pad_vals = np.array(kernel_outer.shape) - np.array(kernel_inner.shape)
+    pad_kernel = np.pad(kernel_inner,
+                        # Pad ((before_rows, after_rows),
+                        #      (before_cols, after_cols))
+                        pad_width=((pad_vals[0] // 2, pad_vals[0] // 2),
+                                   (pad_vals[1] // 2, pad_vals[1] // 2)),
+                        mode='constant',
+                        constant_values=0)
+    # Get annulus by subtracting inner from outer
+    kernel = kernel_outer - pad_kernel
     return kernel
 
 
@@ -245,8 +278,81 @@ def _apply(data, kernel_array, func):
     return out
 
 
-def apply(raster, x='x', y='y', kernel_shape='circle', kernel_radius=10000,
-          func=calc_mean):
+def _validate_kernel_shape(custom_kernel=None, shape=None, radius=None,
+                           outer_radius=None, inner_radius=None):
+
+
+    if (shape == 'circle' and isinstance(_get_distance(str(radius)), float)):
+        if (custom_kernel is not None or
+            outer_radius is not None or
+            inner_radius is not None):
+             raise ValueError(
+                 "Received additional arguments for kernel creation",
+                 """Circular kernel must be specified by `shape='circle'` and a
+                    valid `radius`.
+                 """
+             )
+    elif (shape == 'annulus' and
+        isinstance(_get_distance(str(outer_radius)), float) and
+        isinstance(_get_distance(str(inner_radius)), float)
+    ):
+        if (custom_kernel is not None or radius is not None):
+             raise ValueError(
+                 "Received additional arguments for kernel creation",
+                 """Annulus kernel must be specified by `shape='annulus'` and a
+                    valid `outer_radius` and `inner_radius`.
+                 """
+             )
+    elif custom_kernel is not None:
+        rows, cols = custom_kernel.shape
+        if (rows % 2 == 0 or cols % 2 == 0):
+            raise ValueError(
+                "Received custom kernel with improper dimensions.",
+                """A custom kernel needs to have an odd shape, the
+                   supplied kernel has {} rows and {} columns.
+                """.format(rows, cols)
+            )
+        if (shape is not None or
+            radius is not None or
+            outer_radius is not None or
+            inner_radius is not None
+        ):
+            raise ValueError(
+                "Received additional arguments for kernel creation.",
+                """A custom kernel needs to be supplied by itself."""
+            )
+    else:
+        raise ValueError(
+            "Did not receive an appropriate kernel declaration",
+            """Valid kernel types are:
+               `shape` \in ('circle', 'annulus')
+               `shape='circle'` with `radius`
+               `shape='annulus'` with `outer_radius` and `inner_radius`
+               `custom_kernel`: a 2D kernel with odd dimensions
+            """
+        )
+
+
+def create_kernel(cellsize_x=None, cellsize_y=None, custom_kernel=None,
+                  shape=None, radius=None,
+                  outer_radius=None, inner_radius=None):
+    # Validate the passed kernel arguments
+    _validate_kernel_shape(custom_kernel, shape, radius,
+                             outer_radius, inner_radius)
+
+    if shape == 'circle':
+        kernel = circular_kernel(cellsize_x, cellsize_y, radius)
+    elif shape == 'annulus':
+        kernel = annulus_kernel(cellsize_x, cellsize_y,
+                                outer_radius, inner_radius)
+    # Ensure that custome kernel is numpy array
+    elif isinstance(custom_kernel, np.ndarray):
+        kernel = custom_kernel
+
+    return kernel
+
+
+def apply(raster, kernel, x='x', y='y', func=calc_mean):
     """
     """
 
@@ -266,12 +372,6 @@ def apply(raster, x='x', y='y', kernel_shape='circle', kernel_radius=10000,
     if raster_dims != (y, x):
         raise ValueError("raster.coords should be named as coordinates:"
                          "(%s, %s)".format(y, x))
-
-    # calculate cellsize along the x and y axis
-    cellsize_x, cellsize_y = _calc_cellsize(raster, x=x, y=y)
-    # create kernel mask array
-    kernel = _get_kernel(cellsize_x, cellsize_y,
-                         shape=kernel_shape, radius=kernel_radius)
 
     # apply kernel to raster values
     out = _apply(raster.values.astype(float), kernel, func)
@@ -294,12 +394,12 @@ def _hotspots(z_array):
     return out
 
 
-def hotspots(raster, x='x', y='y', kernel_shape='circle', kernel_radius=10000):
+def hotspots(raster, kernel, x='x', y='y'):
     """Identify statistically significant hot spots and cold spots in an input
     raster. To be a statistically significant hot spot, a feature will have a
     high value and be surrounded by other features with high values as well.
     Neighborhood of a feature defined by the input kernel, which currently
-    support a shape of circle and a radius in meters.
+    support a shape of circle, annulus, or custom kernel.
 
     The result should be a raster with the following 7 values:
     90 for 90% confidence high value cluster
@@ -329,7 +429,7 @@ def hotspots(raster, x='x', y='y', kernel_shape='circle', kernel_radius=10000):
         raise ValueError("`raster` must be 2D")
 
     if not (issubclass(raster.values.dtype.type, np.integer) or
-            issubclass(raster.values.dtype.type, np.float)):
+            issubclass(raster.values.dtype.type, np.floating)):
         raise ValueError(
             "`raster` must be an array of integers or float")
 
@@ -337,12 +437,6 @@ def hotspots(raster, x='x', y='y', kernel_shape='circle', kernel_radius=10000):
     if raster_dims != (y, x):
         raise ValueError("raster.coords should be named as coordinates:"
                          "(%s, %s)".format(y, x))
-
-    # calculate cellsize along the x and y axis
-    cellsize_x, cellsize_y = _calc_cellsize(raster, x=x, y=y)
-    # create kernel mask array
-    kernel = _get_kernel(cellsize_x, cellsize_y,
-                         shape=kernel_shape, radius=kernel_radius)
 
     # apply kernel to raster values
     mean_array = _apply(raster.values.astype(float), kernel, calc_mean)
@@ -356,6 +450,7 @@ def hotspots(raster, x='x', y='y', kernel_shape='circle', kernel_radius=10000):
     z_array = (mean_array - global_mean) / global_std
 
     out = _hotspots(z_array)
+
     result = DataArray(out,
                        coords=raster.coords,
                        dims=raster.dims,
