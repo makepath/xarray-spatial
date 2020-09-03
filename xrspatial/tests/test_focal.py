@@ -2,7 +2,14 @@ import xarray as xr
 import numpy as np
 
 from xrspatial import mean
-from xrspatial.focal import apply, calc_mean, calc_sum, hotspots
+from xrspatial.focal import (
+    apply,
+    create_kernel,
+    calc_mean,
+    calc_sum,
+    hotspots,
+    calc_cellsize,
+)
 import pytest
 
 
@@ -54,32 +61,50 @@ def test_mean_transfer_function():
     da_mean[:, -1] = data_random[:, -1]
     assert abs(da_mean.mean() - data_random.mean()) < 10**-3
 
+def test_kernel():
+    n, m = 6, 6
+    raster = xr.DataArray(np.ones((n, m)), dims=['y', 'x'])
+    raster['x'] = np.linspace(0, n, n)
+    raster['y'] = np.linspace(0, m, m)
+
+    cellsize_x, cellsize_y = calc_cellsize(raster)
+
+    # Passing extra kernel arguments for `circle`
+    with pytest.raises(Exception) as e_info:
+        create_kernel(cellsize_x, cellsize_y,
+                      shape='circle', radius=2, outer_radius=4)
+        assert e_info
+
+    # Passing extra kernel arguments for `annulus`
+    with pytest.raises(Exception) as e_info:
+        create_kernel(cellsize_x, cellsize_y,
+                      shape='annulus', radius=2, inner_radisu=2, outer_radius=4)
+        assert e_info
+
+    # Passing custom kernel with even dimensions
+    with pytest.raises(Exception) as e_info:
+        create_kernel(cellsize_x, cellsize_y,
+                      custom_kernel=np.ones((2, 2)))
+        assert e_info
+
+    # Invalid kernel shape
+    with pytest.raises(Exception) as e_info:
+        create_kernel(cellsize_x, cellsize_y, shape='line')
+        assert e_info
+
+    # invalid radius distance unit
+    with pytest.raises(Exception) as e_info:
+        create_kernel(cellsize_x, cellsize_y,
+                      shape='circle', radius='10 inch')
+        assert e_info
+
 
 def test_apply():
     n, m = 6, 6
     raster = xr.DataArray(np.ones((n, m)), dims=['y', 'x'])
     raster['x'] = np.linspace(0, n, n)
     raster['y'] = np.linspace(0, m, m)
-
-    # invalid shape
-    with pytest.raises(Exception) as e_info:
-        apply(raster, x='x', y='y', kernel_shape='line')
-        assert e_info
-
-    # invalid radius distance unit
-    with pytest.raises(Exception) as e_info:
-        apply(raster, x='x', y='y', kernel_radius='10 inch')
-        assert e_info
-
-    # non positive distance
-    with pytest.raises(Exception) as e_info:
-        apply(raster, x='x', y='y', kernel_radius=0)
-        assert e_info
-
-    # invalid dims
-    with pytest.raises(Exception) as e_info:
-        apply(raster, x='lon', y='lat')
-        assert e_info
+    cellsize_x, cellsize_y = calc_cellsize(raster)
 
     # test apply() with calc_sum and calc_mean function
     # add some nan pixels
@@ -88,7 +113,8 @@ def test_apply():
         raster[cell[0], cell[1]] = np.nan
 
     # kernel array = [[1]]
-    sum_output_1 = apply(raster, kernel_radius=1, func=calc_sum)
+    kernel = create_kernel(custom_kernel=np.ones((1, 1)))
+    sum_output_1 = apply(raster, kernel, func=calc_sum)
     # np.nansum(np.array([np.nan])) = 0.0
     expected_out_sum_1 = np.array([[0., 1., 1., 1., 1., 1.],
                                    [1., 0., 1., 1., 1., 1.],
@@ -99,7 +125,7 @@ def test_apply():
     assert np.all(sum_output_1.values == expected_out_sum_1)
 
     # np.nanmean(np.array([np.nan])) = nan
-    mean_output_1 = apply(raster, kernel_radius=1, func=calc_mean)
+    mean_output_1 = apply(raster, kernel, func=calc_mean)
     for cell in nan_cells:
         assert np.isnan(mean_output_1[cell[0], cell[1]])
     # remaining cells are 1s
@@ -111,7 +137,9 @@ def test_apply():
     # kernel array: [[0, 1, 0],
     #                [1, 1, 1],
     #                [0, 1, 0]]
-    sum_output_2 = apply(raster, kernel_radius=2, func=calc_sum)
+    kernel = create_kernel(cellsize_x=cellsize_x, cellsize_y=cellsize_y,
+                           shape='circle', radius=2.0)
+    sum_output_2 = apply(raster, kernel, func=calc_sum)
     expected_out_sum_2 = np.array([[2., 2., 4., 4., 4., 3.],
                                    [2., 4., 3., 5., 5., 4.],
                                    [4., 3., 4., 3., 5., 4.],
@@ -121,9 +149,28 @@ def test_apply():
 
     assert np.all(sum_output_2.values == expected_out_sum_2)
 
-    mean_output_2 = apply(raster, kernel_radius=2, func=calc_mean)
+    mean_output_2 = apply(raster, kernel, func=calc_mean)
     expected_mean_output_2 = np.ones((n, m))
     assert np.all(mean_output_2.values == expected_mean_output_2)
+
+    # kernel array: [[0, 1, 0],
+    #                [1, 0, 1],
+    #                [0, 1, 0]]
+    kernel = create_kernel(cellsize_x=cellsize_x, cellsize_y=cellsize_y,
+                           shape='annulus', outer_radius=2.0, inner_radius=0.5)
+    sum_output_3 = apply(raster, kernel, func=calc_sum)
+    expected_out_sum_3 = np.array([[2., 1., 3., 3., 3., 2.],
+                                   [1., 4., 2., 4., 4., 3.],
+                                   [3., 2., 4., 2., 4., 3.],
+                                   [3., 4., 2., 4., 2., 3.],
+                                   [3., 4., 4., 2., 4., 1.],
+                                   [2., 3., 3., 3., 1., 2.]])
+
+    assert np.all(sum_output_3.values == expected_out_sum_3)
+
+    mean_output_3 = apply(raster, kernel, func=calc_mean)
+    expected_mean_output_3 = np.ones((n, m))
+    assert np.all(mean_output_3.values == expected_mean_output_3)
 
 
 def test_hotspot():
@@ -131,6 +178,10 @@ def test_hotspot():
     raster = xr.DataArray(np.zeros((n, m), dtype=float), dims=['y', 'x'])
     raster['x'] = np.linspace(0, n, n)
     raster['y'] = np.linspace(0, m, m)
+    cellsize_x, cellsize_y = calc_cellsize(raster)
+
+    kernel = create_kernel(cellsize_x=cellsize_x, cellsize_y=cellsize_y,
+                           shape="circle", radius=2)
 
     all_idx = zip(*np.where(raster.values == 0))
 
@@ -153,7 +204,7 @@ def test_hotspot():
     no_significant_region = [id for id in all_idx if id not in hot_region and
                              id not in cold_region]
 
-    hotspots_output = hotspots(raster, kernel_radius=2)
+    hotspots_output = hotspots(raster, kernel)
 
     # check output's properties
     # output must be an xarray DataArray
