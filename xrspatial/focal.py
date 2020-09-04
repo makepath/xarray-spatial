@@ -110,6 +110,27 @@ def _gen_ellipse_kernel(half_w, half_h):
     return ellipse.astype(float)
 
 
+def _validate_kernel(kernel):
+    """Validatetes that the kernel is a numpy array and has odd dimensions."""
+
+    if not isinstance(kernel, np.ndarray):
+        raise ValueError(
+            "Received a custom kernel that is not a Numpy array.",
+            """The kernel received was of type {} and needs to be of type `ndarray`
+            """.format(type(kernel))
+        )
+    else:
+        rows, cols = kernel.shape
+
+    if (rows % 2 == 0 or cols % 2 == 0):
+        raise ValueError(
+            "Received custom kernel with improper dimensions.",
+            """A custom kernel needs to have an odd shape, the
+            supplied kernel has {} rows and {} columns.
+            """.format(rows, cols)
+        )
+
+
 def circle_kernel(cellsize_x, cellsize_y, radius):
     # validate radius, convert radius to meters
     r = _get_distance(str(radius))
@@ -159,25 +180,9 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
     return kernel
 
 
-def validate_kernel(kernel):
-    """Validatetes that the custom kernle is a numpy array and has odd dimensions."""
-
-    if not isinstance(kernel, np.ndarray):
-        raise ValueError(
-            "Received a custom kernel that is not a Numpy array.",
-            """The kernel received was of type {} and needs to be of type `ndarray`"""
-        )
-    else:
-        rows, cols = kernel.shape
-
-    if (rows % 2 == 0 or cols % 2 == 0):
-        raise ValueError(
-            "Received custom kernel with improper dimensions.",
-            """A custom kernel needs to have an odd shape, the
-            supplied kernel has {} rows and {} columns.
-            """.format(rows, cols)
-        )
-
+def custom_kernel(kernel):
+    """Validates a custom kernel. If the kernel is valid, returns itself."""
+    _validate_kernel(kernel)
     return kernel
 
 
@@ -322,7 +327,8 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
         raise ValueError("raster.coords should be named as coordinates:"
                          "(%s, %s)".format(y, x))
 
-    kernel = validate_kernel(kernel)
+    # Validate the kernel
+    _validate_kernel(kernel)
 
     # apply kernel to raster values
     out = _apply(raster.values.astype(float), kernel, func)

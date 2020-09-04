@@ -10,7 +10,7 @@ from xrspatial.focal import (
     hotspots,
     circle_kernel,
     annulus_kernel,
-    validate_kernel,
+    _validate_kernel,
 )
 import pytest
 
@@ -82,12 +82,12 @@ def test_kernel():
 
     # Passing custom kernel with even dimensions
     with pytest.raises(Exception) as e_info:
-        validate_kernel(np.ones((2, 2)))
+        _validate_kernel(np.ones((2, 2)))
         assert e_info
 
     # Passing custom kernel of wrong type
     with pytest.raises(Exception) as e_info:
-        validate_kernel([[1, 1, 1]])
+        _validate_kernel([[1, 1, 1]])
         assert e_info
 
 
