@@ -32,11 +32,11 @@ conda install -c conda-forge xarray-spatial
 
 | | | | | |
 |:-------------------------:|:-------------------------:|:-------------------------:|:-------------------------:|:-------------------------:|
-|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/0-0.png"></a> | <a href="/examples/user-guide.ipynb"><img width="1604" src="img/0-1.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/0-2.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/0-3.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/0-4.png"></a>|
-|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-0.png"></a> | <a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-1.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-2.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-3.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/1-4.png"></a>|
-|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-0.png"></a> | <a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-1.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-2.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-3.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/2-4.png"></a>|
-|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-0.png"></a> | <a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-1.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-2.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-3.png"></a>|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/3-4.png"></a>|
-|<a href="/examples/user-guide.ipynb"><img width="1604" src="img/4-0.png"></a> | | | | |
+|<a href="/examples/"><img width="1604" src="img/0-0.png"></a>                           | <a href="/examples/user_guide/2_Proximity.ipynb"><img width="1604" src="img/0-1.png"></a>     |<a href="/examples/user_guide/2_Proximity.ipynb"><img width="1604" src="img/0-2.png"></a>     |<a href="/examples/user_guide/2_Proximity.ipynb"><img width="1604" src="img/0-3.png"></a>     |<a href="/examples/pharmacy-deserts.ipynb"><img width="1604" src="img/0-4.png"></a>|
+|<a href="/examples/user_guide/1_Surface.ipynb"><img width="1604" src="img/1-0.png"></a> | <a href="/examples/user_guide/1_Surface.ipynb"><img width="1604" src="img/1-1.png"></a>       |<a href="/examples/user_guide/1_Surface.ipynb"><img width="1604" src="img/1-2.png"></a>       |<a href="/examples/user_guide/1_Surface.ipynb"><img width="1604" src="img/1-3.png"></a>       |<a href="/examples/pharmacy-deserts.ipynb"><img width="1604" src="img/1-4.png"></a>|
+|<a href="/examples/user_guide/1_Surface.ipynb"><img width="1604" src="img/2-0.png"></a> | <a href="/examples/user_guide/8_Remote_Sensing.ipynb"><img width="1604" src="img/2-1.png"></a>|<a href="/examples/user_guide/8_Remote_Sensing.ipynb"><img width="1604" src="img/2-2.png"></a>|<a href="/examples/user_guide/5_Classification.ipynb"><img width="1604" src="img/2-3.png"></a>|<a href="/examples/pharmacy-deserts.ipynb"><img width="1604" src="img/2-4.png"></a>|
+|<a href="/examples/"><img width="1604" src="img/3-0.png"></a>                           | <a href="/examples/"><img width="1604" src="img/3-1.png"></a>                                 |<a href="/examples/user_guide/5_Classification.ipynb"><img width="1604" src="img/3-2.png"></a>|<a href="/examples/pharmacy-deserts.ipynb"><img width="1604" src="img/3-3.png"></a>|<a href="/examples/"><img width="1604" src="img/3-4.png"></a>|
+|<a href="/examples/Path-finding_City-of-Austin-Road-Network.ipynb"><img width="1604" src="img/4-0.png"></a> | | | | |
 
 
 `xarray-spatial` grew out of the [Datashader project](https://datashader.org/), which provides fast rasterization of vector data (points, lines, polygons, meshes, and rasters) for use with xarray-spatial.
@@ -80,7 +80,7 @@ my_dataarray = xr.DataArray(...)
 hillshaded_dataarray = hillshade(my_dataarray)
 ```
 
-Check out the user guide [here](/examples/user-guide.ipynb).
+Check out the user guide [here](/examples/user_guide/).
 
 ------
 Check out [Xarray-Spatial on YouTube](https://www.youtube.com/watch?v=z4xrkglmg80)
