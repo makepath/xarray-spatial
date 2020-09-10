@@ -4,11 +4,13 @@ import numpy as np
 from xrspatial import mean
 from xrspatial.focal import (
     apply,
-    create_kernel,
+    calc_cellsize,
     calc_mean,
     calc_sum,
     hotspots,
-    calc_cellsize,
+    circle_kernel,
+    annulus_kernel,
+    _validate_kernel,
 )
 import pytest
 
@@ -68,34 +70,24 @@ def test_kernel():
     raster['y'] = np.linspace(0, m, m)
 
     cellsize_x, cellsize_y = calc_cellsize(raster)
-
-    # Passing extra kernel arguments for `circle`
+    # Passing invalid radius units for `circle`
     with pytest.raises(Exception) as e_info:
-        create_kernel(cellsize_x, cellsize_y,
-                      shape='circle', radius=2, outer_radius=4)
+        circle_kernel(cellsize_x, cellsize_y, "10 furlongs")
         assert e_info
 
-    # Passing extra kernel arguments for `annulus`
+    # Passing invalid radius for `annulus`
     with pytest.raises(Exception) as e_info:
-        create_kernel(cellsize_x, cellsize_y,
-                      shape='annulus', radius=2, inner_radisu=2, outer_radius=4)
+        annulus_kernel(cellsize_x, cellsize_y, 4, "2 leagues")
         assert e_info
 
     # Passing custom kernel with even dimensions
     with pytest.raises(Exception) as e_info:
-        create_kernel(cellsize_x, cellsize_y,
-                      custom_kernel=np.ones((2, 2)))
+        _validate_kernel(np.ones((2, 2)))
         assert e_info
 
-    # Invalid kernel shape
+    # Passing custom kernel of wrong type
     with pytest.raises(Exception) as e_info:
-        create_kernel(cellsize_x, cellsize_y, shape='line')
-        assert e_info
-
-    # invalid radius distance unit
-    with pytest.raises(Exception) as e_info:
-        create_kernel(cellsize_x, cellsize_y,
-                      shape='circle', radius='10 inch')
+        _validate_kernel([[1, 1, 1]])
         assert e_info
 
 
@@ -113,7 +105,7 @@ def test_apply():
         raster[cell[0], cell[1]] = np.nan
 
     # kernel array = [[1]]
-    kernel = create_kernel(custom_kernel=np.ones((1, 1)))
+    kernel = np.ones((1, 1))
     sum_output_1 = apply(raster, kernel, func=calc_sum)
     # np.nansum(np.array([np.nan])) = 0.0
     expected_out_sum_1 = np.array([[0., 1., 1., 1., 1., 1.],
@@ -137,8 +129,7 @@ def test_apply():
     # kernel array: [[0, 1, 0],
     #                [1, 1, 1],
     #                [0, 1, 0]]
-    kernel = create_kernel(cellsize_x=cellsize_x, cellsize_y=cellsize_y,
-                           shape='circle', radius=2.0)
+    kernel = circle_kernel(cellsize_x, cellsize_y, 2)
     sum_output_2 = apply(raster, kernel, func=calc_sum)
     expected_out_sum_2 = np.array([[2., 2., 4., 4., 4., 3.],
                                    [2., 4., 3., 5., 5., 4.],
@@ -156,8 +147,7 @@ def test_apply():
     # kernel array: [[0, 1, 0],
     #                [1, 0, 1],
     #                [0, 1, 0]]
-    kernel = create_kernel(cellsize_x=cellsize_x, cellsize_y=cellsize_y,
-                           shape='annulus', outer_radius=2.0, inner_radius=0.5)
+    kernel = annulus_kernel(cellsize_x, cellsize_y, 2.0, 0.5)
     sum_output_3 = apply(raster, kernel, func=calc_sum)
     expected_out_sum_3 = np.array([[2., 1., 3., 3., 3., 2.],
                                    [1., 4., 2., 4., 4., 3.],
@@ -180,8 +170,7 @@ def test_hotspot():
     raster['y'] = np.linspace(0, m, m)
     cellsize_x, cellsize_y = calc_cellsize(raster)
 
-    kernel = create_kernel(cellsize_x=cellsize_x, cellsize_y=cellsize_y,
-                           shape="circle", radius=2)
+    kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
 
     all_idx = zip(*np.where(raster.values == 0))
 
