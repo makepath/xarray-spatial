@@ -1,7 +1,15 @@
+### Version 0.1.0 - 9/10/2020
+- Moved kernel creation to name-specific functions. (#127)
+- Separated the validate and custom kernel functions. (focal)
+- Added annulus focal kernel (#126) (focal)
+- Added outputting of z-scores from hotspots tool (focal)
+- Changed type checking to use np.floating (focal)
+- Added tests for refactored focal statistics (focal)
+
 ### Version 0.0.9 - 8/26/2020
 - Added A* pathfinding
 - Allow all numpy float data types, not just numpy.float64 (#122)
-- Broke out user-guide into individual notebooks
+- Broke out user-guide into individual notebooks  (examples)
 - Added num_sample param option to natural_breaks (#123)
 - Removed sklearn dependency
 
@@ -57,7 +65,6 @@
 - Added experimental `curvature` analysis tool (Getis-Ord Gi*)
 - Added support for creating WMTS tilesets (moved out of datashader)
 - Added contributor code of conduct
-
 
 ### Version 0.0.1 - 2/15/2020
 - First public release available on GitHub and PyPI.
