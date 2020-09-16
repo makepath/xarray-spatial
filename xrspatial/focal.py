@@ -7,6 +7,7 @@ import numpy as np
 from xarray import DataArray
 
 from xrspatial.utils import ngjit
+from xrspatial.convolution import convolve_2d
 
 warnings.simplefilter('default')
 
@@ -396,7 +397,7 @@ def hotspots(raster, kernel, x='x', y='y'):
                          "(%s, %s)".format(y, x))
 
     # apply kernel to raster values
-    mean_array = _apply(raster.values.astype(float), kernel, calc_mean)
+    mean_array = convolve_2d(raster.values, kernel / kernel.sum(), pad=True)
 
     # calculate z-scores
     global_mean = np.nanmean(raster.values)
