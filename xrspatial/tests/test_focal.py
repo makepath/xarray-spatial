@@ -2,8 +2,8 @@ import xarray as xr
 import numpy as np
 
 from xrspatial import mean
+from xrspatial.convolution import convolve_2d
 from xrspatial.focal import (
-    apply,
     calc_cellsize,
     calc_mean,
     calc_sum,
@@ -91,14 +91,13 @@ def test_kernel():
         assert e_info
 
 
-def test_apply():
+def test_convolution():
     n, m = 6, 6
     raster = xr.DataArray(np.ones((n, m)), dims=['y', 'x'])
     raster['x'] = np.linspace(0, n, n)
     raster['y'] = np.linspace(0, m, m)
     cellsize_x, cellsize_y = calc_cellsize(raster)
 
-    # test apply() with calc_sum and calc_mean function
     # add some nan pixels
     nan_cells = [(i, i) for i in range(n)]
     for cell in nan_cells:
@@ -106,7 +105,7 @@ def test_apply():
 
     # kernel array = [[1]]
     kernel = np.ones((1, 1))
-    sum_output_1 = apply(raster, kernel, func=calc_sum)
+    sum_output_1 = convolve_2d(raster.values, kernel)
     # np.nansum(np.array([np.nan])) = 0.0
     expected_out_sum_1 = np.array([[0., 1., 1., 1., 1., 1.],
                                    [1., 0., 1., 1., 1., 1.],
@@ -114,10 +113,11 @@ def test_apply():
                                    [1., 1., 1., 0., 1., 1.],
                                    [1., 1., 1., 1., 0., 1.],
                                    [1., 1., 1., 1., 1., 0.]])
-    assert np.all(sum_output_1.values == expected_out_sum_1)
+    # Convolution will return np.nan, so convert nan to 0
+    assert np.all(np.nan_to_num(expected_out_sum_1) == expected_out_sum_1)
 
     # np.nanmean(np.array([np.nan])) = nan
-    mean_output_1 = apply(raster, kernel, func=calc_mean)
+    mean_output_1 = convolve_2d(raster.values, kernel / kernel.sum())
     for cell in nan_cells:
         assert np.isnan(mean_output_1[cell[0], cell[1]])
     # remaining cells are 1s
@@ -130,7 +130,7 @@ def test_apply():
     #                [1, 1, 1],
     #                [0, 1, 0]]
     kernel = circle_kernel(cellsize_x, cellsize_y, 2)
-    sum_output_2 = apply(raster, kernel, func=calc_sum)
+    sum_output_2 = convolve_2d(np.nan_to_num(raster.values), kernel, pad=False)
     expected_out_sum_2 = np.array([[2., 2., 4., 4., 4., 3.],
                                    [2., 4., 3., 5., 5., 4.],
                                    [4., 3., 4., 3., 5., 4.],
@@ -138,17 +138,17 @@ def test_apply():
                                    [4., 5., 5., 3., 4., 2.],
                                    [3., 4., 4., 4., 2., 2.]])
 
-    assert np.all(sum_output_2.values == expected_out_sum_2)
+    assert np.all(sum_output_2 == expected_out_sum_2)
 
-    mean_output_2 = apply(raster, kernel, func=calc_mean)
+    mean_output_2 = convolve_2d(np.ones((n, m)), kernel / kernel.sum(), pad=True)
     expected_mean_output_2 = np.ones((n, m))
-    assert np.all(mean_output_2.values == expected_mean_output_2)
+    assert np.all(mean_output_2 == expected_mean_output_2)
 
     # kernel array: [[0, 1, 0],
     #                [1, 0, 1],
     #                [0, 1, 0]]
     kernel = annulus_kernel(cellsize_x, cellsize_y, 2.0, 0.5)
-    sum_output_3 = apply(raster, kernel, func=calc_sum)
+    sum_output_3 = convolve_2d(np.nan_to_num(raster.values), kernel, pad=False)
     expected_out_sum_3 = np.array([[2., 1., 3., 3., 3., 2.],
                                    [1., 4., 2., 4., 4., 3.],
                                    [3., 2., 4., 2., 4., 3.],
@@ -156,11 +156,11 @@ def test_apply():
                                    [3., 4., 4., 2., 4., 1.],
                                    [2., 3., 3., 3., 1., 2.]])
 
-    assert np.all(sum_output_3.values == expected_out_sum_3)
+    assert np.all(sum_output_3 == expected_out_sum_3)
 
-    mean_output_3 = apply(raster, kernel, func=calc_mean)
+    mean_output_3 = convolve_2d(np.ones((n, m)), kernel / kernel.sum(), pad=True)
     expected_mean_output_3 = np.ones((n, m))
-    assert np.all(mean_output_3.values == expected_mean_output_3)
+    assert np.all(mean_output_3 == expected_mean_output_3)
 
 
 def test_hotspot():
