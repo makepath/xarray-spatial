@@ -1,3 +1,7 @@
+### Version 0.1.1 - 10/21/2020
+- Added convolution module for use in focal statistics. (#131)
+- Added example notebook for focal statistics and convolution modules.
+
 ### Version 0.1.0 - 9/10/2020
 - Moved kernel creation to name-specific functions. (#127)
 - Separated the validate and custom kernel functions. (focal)
