@@ -1,8 +1,22 @@
 import numba as nb
 import numpy as np
 
+from numba import cuda
+
 
 ngjit = nb.jit(nopython=True, nogil=True)
+
+
+def has_cuda():
+    """Check for supported CUDA device. If none found, return False"""
+    local_cuda = False
+    try:
+        cuda.cudadrv.devices.gpus.current
+        local_cuda = True
+    except cuda.cudadrv.error.CudaSupportError:
+        local_cuda = False
+
+    return local_cuda
 
 
 def lnglat_to_meters(longitude, latitude):
