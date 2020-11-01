@@ -53,21 +53,25 @@ Rasters are regularly gridded datasets like GeoTIFFs, JPGs, and PNGs.
 
 In the GIS world, rasters are used for representing continuous phenomena (e.g. elevation, rainfall, distance), either directly as numerical values, or as RGB images created for humans to view. Rasters typically have two spatial dimensions, but may have any number of other dimensions (time, type of measurement, etc.)
 
-#### Supported Spatial Functions:
-- [Slope](xrspatial/slope.py)
-- [Aspect](xrspatial/aspect.py)
-- [Curvature](xrspatial/curvature.py)
-- [Hillshade](xrspatial/hillshade.py)
-- [Multispectral Tools (NDVI, EVI, NBR, SIPI)](xrspatial/multispectral.py)
-- [Focal Statistics](xrspatial/focal.py)
-- [Zonal Statistics](xrspatial/zonal.py)
-- [Zonal Cross Tabulate](xrspatial/zonal.py)
-- [Viewshed](xrspatial/viewshed.py)
-- [Proximity](xrspatial/proximity.py)
-- [Bump Mapping](xrspatial/bump.py)
-- [Perlin Noise](xrspatial/perlin.py)
-- [Procedural Terrain Generation](xrspatial/terrain.py)
-- [Pathfinding](xrspatial/pathfinding.py)
+#### Supported Spatial Functions
+
+| Tool           | Supports xr.DataArary | Supports xr.Dataset   | Stability | GPU Support | 
+|----------------|---------------|---------------|----------------|-----------|
+| [Slope](xrspatial/slope.py) | YES  |  NO | Stable | YES
+| [Aspect](xrspatial/aspect.py) | YES  |   NO | Stable | NO
+| [Curvature](xrspatial/curvature.py) | YES   | NO | Stable | NO
+| [Hillshade](xrspatial/hillshade.py) | YES   | NO | Stable | NO
+| [Multispectral Tools (NDVI, EVI, NBR, SIPI)](xrspatial/multispectral.py) | YES   | NO | Stable | NO
+| [Focal Statistics](xrspatial/focal.py) | YES   | NO | Stable | YES
+| [Zonal Statistics](xrspatial/zonal.py) | YES   | NO | Stable | NO
+| [Zonal Cross Tabulate](xrspatial/zonal.py) | YES   | NO | Stable | NO
+| [Viewshed](xrspatial/viewshed.py) | YES   | NO | Stable | NO
+| [Proximity](xrspatial/proximity.py) | YES   | NO | Stable | NO
+| [Bump Mapping](xrspatial/bump.py) | YES   | NO | Stable | NO
+| [Perlin Noise](xrspatial/perlin.py) | YES   | NO | Stable | NO
+| [Procedural Terrain Generation](xrspatial/terrain.py | YES   | NO | Stable | NO
+| [Pathfinding](xrspatial/pathfinding.py | YES   | NO | Stable | NO
+
 
 #### Usage
 
