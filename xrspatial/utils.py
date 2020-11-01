@@ -1,8 +1,60 @@
+from math import ceil
 import numba as nb
 import numpy as np
 
+from numba import cuda
+
+try:
+    import cupy
+    if cupy.result_type is np.result_type:
+        # Workaround until cupy release of https://github.com/cupy/cupy/pull/2249
+        # Without this, cupy.histogram raises an error that cupy.result_type
+        # is not defined.
+        cupy.result_type = lambda *args: np.result_type(
+            *[arg.dtype if isinstance(arg, cupy.ndarray) else arg
+              for arg in args]
+        )
+except:
+    cupy = None
+
 
 ngjit = nb.jit(nopython=True, nogil=True)
+
+
+def has_cuda():
+    """Check for supported CUDA device. If none found, return False"""
+    local_cuda = False
+    try:
+        cuda.cudadrv.devices.gpus.current
+        local_cuda = True
+    except cuda.cudadrv.error.CudaSupportError:
+        local_cuda = False
+
+    return local_cuda
+
+
+def cuda_args(shape):
+    """
+    Compute the blocks-per-grid and threads-per-block parameters for use when
+    invoking cuda kernels
+    Parameters
+    ----------
+    shape: int or tuple of ints
+        The shape of the input array that the kernel will parallelize over
+    Returns
+    -------
+    tuple
+        Tuple of (blocks_per_grid, threads_per_block)
+    """
+    if isinstance(shape, int):
+        shape = (shape,)
+
+    max_threads = cuda.get_current_device().MAX_THREADS_PER_BLOCK
+    # Note: We divide max_threads by 2.0 to leave room for the registers
+    threads_per_block = int(ceil(max_threads / 2.0) ** (1.0 / len(shape)))
+    tpb = (threads_per_block,) * len(shape)
+    bpg = tuple(int(ceil(d / threads_per_block)) for d in shape)
+    return bpg, tpb
 
 
 def lnglat_to_meters(longitude, latitude):

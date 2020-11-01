@@ -1,17 +1,10 @@
-import datashader.transfer_functions._cuda_utils as cu
 from numba import cuda, float32, int32, prange, jit
+
 from xrspatial.utils import ngjit
+from xrspatial.utils import has_cuda
+from xrspatial.utils import cuda_args
+
 import numpy as np
-
-def _cuda_present():
-    """Check for supported CUDA device. If none found, return False"""
-    try:
-        cuda.cudadrv.devices.gpus.current
-        local_cuda = True
-    except cuda.cudadrv.error.CudaSupportError:
-        local_cuda = False
-
-    return local_cuda
 
 
 def convolve_2d(image, kernel, pad=True, use_cuda=True):
@@ -37,8 +30,8 @@ def convolve_2d(image, kernel, pad=True, use_cuda=True):
     padded_image = np.pad(image, pad_width=pad_width, mode="reflect")
     result = np.empty_like(padded_image)
 
-    if _cuda_present() and use_cuda:
-        griddim, blockdim = cu.cuda_args(padded_image.shape)
+    if has_cuda() and use_cuda:
+        griddim, blockdim = cuda_args(padded_image.shape)
         _convolve_2d_cuda[griddim, blockdim](result, kernel, padded_image)
     else:
         result = _convolve_2d(kernel, padded_image)

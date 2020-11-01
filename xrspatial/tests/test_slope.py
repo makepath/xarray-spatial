@@ -1,3 +1,4 @@
+
 import pytest
 import xarray as xr
 import numpy as np
@@ -122,6 +123,49 @@ def test_slope_against_qgis():
         dtype=np.float32)
 
     # slope by xrspatial
+    xrspatial_slope = slope(small_da, name='slope_agg', use_cuda=False)
+
+    # validate output attributes
+    assert xrspatial_slope.dims == small_da.dims
+    assert xrspatial_slope.attrs == small_da.attrs
+    assert xrspatial_slope.shape == small_da.shape
+    assert xrspatial_slope.name == 'slope_agg'
+    for coord in small_da.coords:
+        assert np.all(xrspatial_slope[coord] == small_da[coord])
+
+    # validate output values
+    # ignore border edges
+    xrspatial_vals = xrspatial_slope.values[1:-1, 1:-1]
+    qgis_vals = qgis_slope[1:-1, 1:-1]
+    assert (np.isclose(xrspatial_vals, qgis_vals, equal_nan=True).all() | (
+                np.isnan(xrspatial_vals) & np.isnan(qgis_vals))).all()
+
+
+def test_slope_against_qgis_gpu():
+    # input data
+    data = np.asarray(
+        [[1432.6542, 1432.4764, 1432.4764, 1432.1207, 1431.9429, np.nan],
+         [1432.6542, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
+         [1432.832, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
+         [1432.832, 1432.6542, 1432.4764, 1432.4764, 1432.1207, np.nan],
+         [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
+         [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
+         [1432.832, 1432.832, 1432.6542, 1432.4764, 1432.4764, np.nan]],
+        dtype=np.float32)
+    small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+
+    # slope by QGIS
+    qgis_slope = np.asarray(
+        [[0.8052942, 0.742317, 1.1390567, 1.3716657, np.nan, np.nan],
+         [0.74258685, 0.742317, 1.0500116, 1.2082565, np.nan, np.nan],
+         [0.56964326, 0.9002944, 0.9002944, 1.0502871, np.nan, np.nan],
+         [0.5095078, 0.9003686, 0.742317, 1.1390567, np.nan, np.nan],
+         [0.6494868, 0.64938396, 0.5692523, 1.0500116, np.nan, np.nan],
+         [0.80557066, 0.56964326, 0.64914393, 0.9002944, np.nan, np.nan],
+         [0.6494868, 0.56964326, 0.8052942, 0.742317, np.nan, np.nan]],
+        dtype=np.float32)
+
+    # slope by xrspatial
     xrspatial_slope = slope(small_da, name='slope_agg')
 
     # validate output attributes
@@ -136,5 +180,5 @@ def test_slope_against_qgis():
     # ignore border edges
     xrspatial_vals = xrspatial_slope.values[1:-1, 1:-1]
     qgis_vals = qgis_slope[1:-1, 1:-1]
-    assert ((xrspatial_vals == qgis_vals) | (
+    assert (np.isclose(xrspatial_vals, qgis_vals, equal_nan=True).all() | (
                 np.isnan(xrspatial_vals) & np.isnan(qgis_vals))).all()
