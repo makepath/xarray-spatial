@@ -67,9 +67,13 @@ def slope(agg, name='slope', use_cuda=True):
     Parameters
     ----------
     agg : DataArray
+    name : str - name property of output xr.DataArray
+    use_cuda : bool - use CUDA device if available
+
     Returns
     -------
     data: DataArray
+
     Notes:
     ------
     Algorithm References:
