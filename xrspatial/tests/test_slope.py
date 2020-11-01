@@ -1,3 +1,4 @@
+
 import pytest
 import xarray as xr
 import numpy as np
@@ -136,5 +137,5 @@ def test_slope_against_qgis():
     # ignore border edges
     xrspatial_vals = xrspatial_slope.values[1:-1, 1:-1]
     qgis_vals = qgis_slope[1:-1, 1:-1]
-    assert ((xrspatial_vals == qgis_vals) | (
+    assert (np.isclose(xrspatial_vals, qgis_vals, equal_nan=True).all() | (
                 np.isnan(xrspatial_vals) & np.isnan(qgis_vals))).all()
