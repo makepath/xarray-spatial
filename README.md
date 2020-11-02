@@ -55,8 +55,8 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 #### Supported Spatial Functions
 
-| Tool           | Supports xr.DataArary | Supports xr.Dataset   | Stability | GPU Support | 
-|----------------|---------------|---------------|----------------|-----------|
+| Tool           | Input xr.DataArary | Inputxr.Dataset   | Stability | CUDA | 
+|----------------|:---------------:|:---------------:|:----------------:|:-----------:|
 | [Slope](xrspatial/slope.py) | YES  |  NO | Stable | YES
 | [Aspect](xrspatial/aspect.py) | YES  |   NO | Stable | NO
 | [Curvature](xrspatial/curvature.py) | YES   | NO | Stable | NO
@@ -69,8 +69,8 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Proximity](xrspatial/proximity.py) | YES   | NO | Stable | NO
 | [Bump Mapping](xrspatial/bump.py) | YES   | NO | Stable | NO
 | [Perlin Noise](xrspatial/perlin.py) | YES   | NO | Stable | NO
-| [Procedural Terrain Generation](xrspatial/terrain.py | YES   | NO | Stable | NO
-| [Pathfinding](xrspatial/pathfinding.py | YES   | NO | Stable | NO
+| [Procedural Terrain Generation](xrspatial/terrain.py) | YES   | NO | Stable | NO
+| [Pathfinding](xrspatial/pathfinding.py) | YES   | NO | Stable | NO
 
 
 #### Usage
