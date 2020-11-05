@@ -1,5 +1,6 @@
 from math import atan
 import numpy as np
+import numba as nb
 
 from numba import cuda
 
@@ -58,11 +59,9 @@ def _horn_slope_cuda(arr, cellsize_x_arr, cellsize_y_arr, out):
         out[i, j] = _gpu_slope(arr[i-di:i+di+1, j-dj:j+dj+1],
                                cellsize_x_arr,
                                cellsize_y_arr)
-    else:
-        out[i, j] = np.nan
 
 
-def slope(agg, name='slope', use_cuda=True):
+def slope(agg, name='slope', use_cuda=True, pad=True):
     """Returns slope of input aggregate in degrees.
     Parameters
     ----------
@@ -103,16 +102,31 @@ def slope(agg, name='slope', use_cuda=True):
                          ' or a tuple of numeric values.')
     
     if has_cuda() and use_cuda:
-        cellsize_x_arr =  np.array([float(cellsize_x)], dtype='f8')
-        cellsize_y_arr =  np.array([float(cellsize_y)], dtype='f8')
+        cellsize_x_arr = np.array([float(cellsize_x)], dtype='f8')
+        cellsize_y_arr = np.array([float(cellsize_y)], dtype='f8')
 
-        griddim, blockdim = cuda_args(agg.data.shape)
-        slope_agg = np.zeros(agg.data.shape, dtype='f8')
-        _horn_slope_cuda[griddim, blockdim](agg.data,
+        if pad:
+            pad_rows = 3 // 2
+            pad_cols = 3 // 2
+            pad_width = ((pad_rows, pad_rows),
+                        (pad_cols, pad_cols))
+        else:
+            # If padding is not desired, set pads to 0
+            pad_rows = 0
+            pad_cols = 0
+            pad_width = 0
+
+        slope_data = np.pad(agg.data, pad_width=pad_width, mode="reflect")
+
+        griddim, blockdim = cuda_args(slope_data.shape)
+        slope_agg = np.empty(slope_data.shape, dtype='f4')
+        slope_agg[:] = np.nan
+        _horn_slope_cuda[griddim, blockdim](slope_data,
                                             cellsize_x_arr,
                                             cellsize_y_arr,
                                             slope_agg)
-        pass
+        if pad:
+            slope_agg = slope_agg[pad_rows:-pad_rows, pad_cols:-pad_cols]
     else:
         slope_agg = _horn_slope(agg.data, cellsize_x, cellsize_y)
 

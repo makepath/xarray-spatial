@@ -166,7 +166,7 @@ def test_slope_against_qgis_gpu():
         dtype=np.float32)
 
     # slope by xrspatial
-    xrspatial_slope = slope(small_da, name='slope_agg')
+    xrspatial_slope = slope(small_da, name='slope_agg', use_cuda=True)
 
     # validate output attributes
     assert xrspatial_slope.dims == small_da.dims
