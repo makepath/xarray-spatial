@@ -75,8 +75,8 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | [multispectral.py](xrspatial/multispectral.py) | YES | NO | Stable | NO | n/a |
 | [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | [multispectral.py](xrspatial/multispectral.py) | YES | NO | Stable | NO | n/a |
 | [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | [multispectral.py](xrspatial/multispectral.py) | YES | NO | Stable | NO | n/a |
-| [Pathfinding](xrspatial/pathfinding.py) | [bump.py](xrspatial/pathfinding.py) | YES | NO | Stable | NO | n/a |
-| [Perlin Noise](xrspatial/perlin.py) | [bump.py](xrspatial/perlin.py) | YES | NO | Stable | NO | n/a |
+| [Pathfinding](xrspatial/pathfinding.py) | [pathfinding.py](xrspatial/pathfinding.py) | YES | NO | Stable | NO | n/a |
+| [Perlin Noise](xrspatial/perlin.py) | [perlin.py](xrspatial/perlin.py) | YES | NO | Stable | NO | n/a |
 | [Allocation](xrspatial/proximity.py) | [proximity.py](xrspatial/proximity.py) | YES | NO | Stable | NO | n/a |
 | [Direction](xrspatial/proximity.py) | [proximity.py](xrspatial/proximity.py) | YES | NO | Stable | NO | n/a |
 | [Proximity](xrspatial/proximity.py) | [proximity.py](xrspatial/proximity.py) | YES | NO | Stable | NO | n/a |
