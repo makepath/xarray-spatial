@@ -61,7 +61,7 @@ def _horn_slope_cuda(arr, cellsize_x_arr, cellsize_y_arr, out):
                                cellsize_y_arr)
 
 
-def slope(agg, name='slope', use_cuda=True, pad=True):
+def slope(agg, name='slope', use_cuda=True, pad=True, use_cupy=True):
     """Returns slope of input aggregate in degrees.
     Parameters
     ----------
@@ -102,8 +102,8 @@ def slope(agg, name='slope', use_cuda=True, pad=True):
                          ' or a tuple of numeric values.')
     
     if has_cuda() and use_cuda:
-        cellsize_x_arr = np.array([float(cellsize_x)], dtype='f8')
-        cellsize_y_arr = np.array([float(cellsize_y)], dtype='f8')
+        cellsize_x_arr = np.array([float(cellsize_x)], dtype='f4')
+        cellsize_y_arr = np.array([float(cellsize_y)], dtype='f4')
 
         if pad:
             pad_rows = 3 // 2
@@ -121,6 +121,11 @@ def slope(agg, name='slope', use_cuda=True, pad=True):
         griddim, blockdim = cuda_args(slope_data.shape)
         slope_agg = np.empty(slope_data.shape, dtype='f4')
         slope_agg[:] = np.nan
+
+        if use_cupy:
+            import cupy
+            slope_agg = cupy.asarray(slope_agg)
+
         _horn_slope_cuda[griddim, blockdim](slope_data,
                                             cellsize_x_arr,
                                             cellsize_y_arr,
