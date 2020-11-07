@@ -81,7 +81,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Direction](xrspatial/proximity.py) | [proximity.py](xrspatial/proximity.py) | YES | NO  | NO | n/a |
 | [Proximity](xrspatial/proximity.py) | [proximity.py](xrspatial/proximity.py) | YES | NO  | NO | n/a |
 | [Slope](xrspatial/slope.py) | [slope.py](xrspatial/slope.py) | YES  | NO  | YES | n/a |
-| [Terrain Generation](xrspatial/terrain.py) | [bump.py](xrspatial/terrain.py) | YES | NO  | NO | n/a |
+| [Terrain Generation](xrspatial/terrain.py) | [terrain.py](xrspatial/terrain.py) | YES | NO  | NO | n/a |
 | [Viewshed](xrspatial/viewshed.py) | [viewshed.py](xrspatial/viewshed.py) | YES | NO  | NO | n/a |
 | [Apply](xrspatial/zonal.py) | [zonal.py](xrspatial/zonal.py) | YES | NO  | NO | n/a |
 | [Crop](xrspatial/zonal.py) | [zonal.py](xrspatial/zonal.py) | YES | NO  | NO | n/a |
