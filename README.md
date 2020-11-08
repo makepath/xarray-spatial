@@ -59,6 +59,10 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 |:-----|:------:|:----------------------:|:--------------------:|:-------------------:|:--------------------:|
 | [Aspect](xrspatial/aspect.py) | [aspect.py](xrspatial/aspect.py) | YES | NO | NO | n/a |
 | [Bump Mapping](xrspatial/bump.py) | [bump.py](xrspatial/bump.py) | YES | NO | NO | n/a |
+| [Equal Interval](xrspatial/classify.py) | [classify.py](xrspatial/classify.py) | YES | NO | NO | n/a |
+| [Natural Breaks](xrspatial/classify.py) | [classify.py](xrspatial/classify.py) | YES | NO | NO | n/a |
+| [Reclassify](xrspatial/classify.py) | [classify.py](xrspatial/classify.py) | YES | NO | NO | n/a |
+| [Quantile](xrspatial/classify.py) | [classify.py](xrspatial/classify.py) | YES | NO | NO | n/a |
 | [Curvature](xrspatial/curvature.py) |[curvature.py](xrspatial/curvature.py) | YES | NO | NO | n/a |
 | [Apply](xrspatial/focal.py) | [focal.py](xrspatial/focal.py) | YES | NO | NO | n/a |
 | [Hotspots](xrspatial/focal.py) | [focal.py](xrspatial/focal.py) | YES | NO | NO | n/a |
