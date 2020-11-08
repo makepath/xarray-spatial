@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from xrspatial import aspect
+from xrspatial.utils import doesnt_have_cuda
 
 
 def _do_sparse_array(data_array):
@@ -51,7 +52,7 @@ def test_aspect_transfer_function():
     for coord in da.coords:
         assert np.all(da[coord] == da_aspect[coord])
     assert pytest.approx(np.nanmax(da_aspect.data), .1) == 360.
-    assert pytest.approx(np.nanmin(da_aspect.data), .1) == 0.
+    assert pytest.approx(np.nanmin(da_aspect.data), .1) == -1.
 
 
 def test_aspect_against_qgis():
@@ -198,9 +199,9 @@ def test_aspect_against_qgis():
     assert ((np.isnan(xrspatial_vals) & np.isnan(qgis_vals)) | (
             np.isnan(xrspatial_vals) & (qgis_vals == -1)) | (
             abs(xrspatial_vals - qgis_vals) <= 1e-4)).all()
-
+    
     assert (np.isnan(xrspatial_vals) | (
-            (0 <= xrspatial_vals) & (xrspatial_vals <= 360))).all()
+            (0 <= xrspatial_vals) & (xrspatial_vals <= 360) | (xrspatial_vals == -1))).all()
 
 def test_aspect_against_qgis_gpu():
     # input data
