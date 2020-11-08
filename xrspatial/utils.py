@@ -33,6 +33,10 @@ def has_cuda():
     return local_cuda
 
 
+def doesnt_have_cuda():
+    return not has_cuda()
+
+
 def cuda_args(shape):
     """
     Compute the blocks-per-grid and threads-per-block parameters for use when

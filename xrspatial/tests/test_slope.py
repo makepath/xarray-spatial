@@ -4,6 +4,7 @@ import xarray as xr
 import numpy as np
 
 from xrspatial import slope
+from xrspatial.utils import doesnt_have_cuda
 
 
 def _do_sparse_array(data_array):
@@ -141,6 +142,7 @@ def test_slope_against_qgis():
                 np.isnan(xrspatial_vals) & np.isnan(qgis_vals))).all()
 
 
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_slope_against_qgis_gpu():
     # input data
     data = np.asarray(
@@ -166,7 +168,7 @@ def test_slope_against_qgis_gpu():
         dtype=np.float32)
 
     # slope by xrspatial
-    xrspatial_slope = slope(small_da, name='slope_agg')
+    xrspatial_slope = slope(small_da, name='slope_agg', use_cuda=True)
 
     # validate output attributes
     assert xrspatial_slope.dims == small_da.dims
@@ -182,3 +184,25 @@ def test_slope_against_qgis_gpu():
     qgis_vals = qgis_slope[1:-1, 1:-1]
     assert (np.isclose(xrspatial_vals, qgis_vals, equal_nan=True).all() | (
                 np.isnan(xrspatial_vals) & np.isnan(qgis_vals))).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_slope_gpu_equals_cpu():
+
+    # input data
+    data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+                       [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
+                       [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
+                       [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
+                       [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                       [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                       [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
+                      dtype=np.float32)
+
+    small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+
+    # aspect by xrspatial
+    cpu = slope(small_da, name='aspect_agg', use_cuda=False)
+    gpu = slope(small_da, name='aspect_agg', use_cuda=True)
+
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
