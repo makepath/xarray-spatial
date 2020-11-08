@@ -1,6 +1,9 @@
+import pytest
 import xarray as xr
 import numpy as np
 import xarray as xa
+
+from xrspatial.utils import doesnt_have_cuda
 
 from xrspatial.multispectral import arvi
 from xrspatial.multispectral import ebbi
@@ -96,15 +99,40 @@ def test_savi():
     red = create_test_arr(arr2)
 
     # savi should be same as ndvi at soil_factor=0
-    result_savi = savi(nir, red, soil_factor=0.0)
+    result_savi = savi(nir, red, soil_factor=0.0, use_cuda=False)
     result_ndvi = ndvi(nir, red)
 
-    assert (result_savi.data == result_ndvi.data).all()
+    assert np.isclose(result_savi.data, result_ndvi.data, equal_nan=True).all()
     assert result_savi.dims == nir.dims
 
     result_savi = savi(nir, red, soil_factor=1.0)
     assert isinstance(result_savi, xa.DataArray)
     assert result_savi.dims == nir.dims
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_savi_cpu_equals_gpu():
+    max_val = 2**16 - 1
+
+    arr1 = np.array([[max_val, max_val, max_val, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, 1000.0, 1000.0, max_val],
+                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
+
+    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, max_val, max_val, 100.0],
+                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
+
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+
+    # savi should be same as ndvi at soil_factor=0
+    cpu = savi(nir, red, soil_factor=0.0, use_cuda=False)
+    gpu = savi(nir, red, soil_factor=0.0, use_cuda=True)
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
 def test_avri():

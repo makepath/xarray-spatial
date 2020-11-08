@@ -1,4 +1,7 @@
 import numpy as np
+import numba as nb
+
+from numba import cuda
 
 import datashader as ds
 
@@ -6,6 +9,8 @@ from PIL import Image
 
 from xarray import DataArray
 
+from xrspatial.utils import has_cuda
+from xrspatial.utils import cuda_args
 from xrspatial.utils import ngjit
 
 
@@ -408,7 +413,19 @@ def _savi(nir_data, red_data, soil_factor):
     return out
 
 
-def savi(nir_agg, red_agg, soil_factor=1.0, name='savi'):
+@cuda.jit
+def _savi_gpu(nir_data, red_data, soil_factor, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+        nir = nir_data[y, x]
+        red = red_data[y, x]
+        numerator = nir - red
+        soma = nir + red + soil_factor
+        denominator = soma * (1.0 + soil_factor)
+        out[y, x] = numerator / denominator
+
+
+def savi(nir_agg, red_agg, soil_factor=1.0, name='savi', use_cuda=True, use_cupy=True):
     """Returns Soil Adjusted Vegetation Index (SAVI).
 
     Parameters
@@ -441,7 +458,26 @@ def savi(nir_agg, red_agg, soil_factor=1.0, name='savi'):
     if soil_factor > 1.0 or soil_factor < -1.0:
         raise ValueError("soil factor must be between (-1.0, 1.0)")
 
-    return DataArray(_savi(nir_agg.data, red_agg.data, soil_factor),
+    nir_data = nir_agg.data
+    red_data = red_agg.data
+
+    if has_cuda() and use_cuda:
+        griddim, blockdim = cuda_args(nir_data.shape)
+        out = np.empty(nir_data.shape, dtype='f4')
+        out[:] = np.nan
+
+        if use_cupy:
+            import cupy
+            out = cupy.asarray(out)
+
+        _savi_gpu[griddim, blockdim](nir_data,
+                                     red_data,
+                                     soil_factor,
+                                     out)
+    else:
+        out = _savi(nir_agg.data, red_agg.data, soil_factor)
+
+    return DataArray(out,
                      name=name,
                      coords=nir_agg.coords,
                      dims=nir_agg.dims,
