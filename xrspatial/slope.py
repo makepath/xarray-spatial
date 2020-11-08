@@ -14,6 +14,7 @@ from xrspatial.utils import cuda_args
 @ngjit
 def _horn_slope(data, cellsize_x, cellsize_y):
     out = np.zeros_like(data)
+    out[:] = np.nan
     rows, cols = data.shape
     for y in range(1, rows-1):
         for x in range(1, cols-1):
@@ -56,8 +57,8 @@ def _horn_slope_cuda(arr, cellsize_x_arr, cellsize_y_arr, out):
     i, j = cuda.grid(2)
     di = 1
     dj = 1
-    if (i-di >= 0 and i+di < out.shape[0] and 
-        j-dj >= 0 and j+dj < out.shape[1]):
+    if (i-di >= 1 and i+di < out.shape[0] - 1 and 
+        j-dj >= 1 and j+dj < out.shape[1] - 1):
         out[i, j] = _gpu_slope(arr[i-di:i+di+1, j-dj:j+dj+1],
                                cellsize_x_arr,
                                cellsize_y_arr)

@@ -253,7 +253,7 @@ def test_aspect_against_qgis_gpu():
     #        (0. <= xrspatial_vals) & (xrspatial_vals <= 360.))).all()
 
 
-def test_aspect_against_gpu_equals_cpu():
+def test_aspect_gpu_equals_cpu():
 
     # input data
     data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
