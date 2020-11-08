@@ -17,6 +17,7 @@ RADIAN = 180 / np.pi
 @ngjit
 def _horn_aspect(data):
     out = np.zeros_like(data, dtype=np.float64)
+    out[:] = np.nan
     rows, cols = data.shape
     for y in range(1, rows-1):
         for x in range(1, cols-1):
@@ -35,7 +36,7 @@ def _horn_aspect(data):
 
             if dz_dx == 0 and dz_dy == 0:
                 # flat surface, slope = 0, thus invalid aspect
-                out[y, x] = np.nan
+                out[y, x] = -1.
             else:
                 aspect = np.arctan2(dz_dy, -dz_dx) * RADIAN
                 # convert to compass direction values (0-360 degrees)
@@ -81,7 +82,7 @@ def _gpu_aspect(arr):
         else:
             aspect = ninety - aspect
     
-    if aspect > nb.float32(359.999):
+    if aspect > nb.float32(359.999):  # lame float equality check...
         return nb.float32(0.)
     else:
         return aspect
@@ -93,9 +94,10 @@ def _horn_aspect_cuda(arr, out):
     i, j = cuda.grid(2)
     di = 1
     dj = 1
-    if (i-di >= 0 and i+di < out.shape[0] and 
-        j-dj >= 0 and j+dj < out.shape[1]):
+    if (i-di >= 1 and i+di < out.shape[0] - 1 and 
+        j-dj >= 1 and j+dj < out.shape[1] - 1):
         out[i, j] = _gpu_aspect(arr[i-di:i+di+1, j-dj:j+dj+1])
+
 
 
 def aspect(agg, name='aspect', use_cuda=True, pad=True, use_cupy=True):
