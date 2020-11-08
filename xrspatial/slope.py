@@ -43,10 +43,12 @@ def _gpu_slope(arr, cellsize_x, cellsize_y):
     h = arr[0, 1]
     i = arr[0, 2]
 
-    dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / (8 * cellsize_x[0])
-    dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / (8 * cellsize_y[0])
-    p = (dz_dx * dz_dx + dz_dy * dz_dy) ** .5
-    return atan(p) * 57.29578
+    two = nb.int32(2.)  # reducing size to int8 causes wrong results
+
+    dz_dx = ((c + two * f + i) - (a + two * d + g)) / (nb.float32(8.) * cellsize_x[0])
+    dz_dy = ((g + two * h + i) - (a + two * b + c)) / (nb.float32(8.) * cellsize_y[0])
+    p = (dz_dx * dz_dx + dz_dy * dz_dy) ** nb.float32(.5)
+    return atan(p) * nb.float32(57.29578)
 
 
 @cuda.jit
