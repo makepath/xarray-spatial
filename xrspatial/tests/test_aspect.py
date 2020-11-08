@@ -253,6 +253,7 @@ def test_aspect_against_qgis_gpu():
     #        (0. <= xrspatial_vals) & (xrspatial_vals <= 360.))).all()
 
 
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_aspect_gpu_equals_cpu():
 
     # input data
@@ -273,6 +274,8 @@ def test_aspect_gpu_equals_cpu():
 
     assert np.isclose(xrspatial_aspect_cpu, xrspatial_aspect_gpu, equal_nan=True).all()
 
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_aspect_against_qgis_gpu():
     # input data
     data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],

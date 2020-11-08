@@ -4,6 +4,7 @@ import xarray as xr
 import numpy as np
 
 from xrspatial import slope
+from xrspatial.utils import doesnt_have_cuda
 
 
 def _do_sparse_array(data_array):
@@ -141,6 +142,7 @@ def test_slope_against_qgis():
                 np.isnan(xrspatial_vals) & np.isnan(qgis_vals))).all()
 
 
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_slope_against_qgis_gpu():
     # input data
     data = np.asarray(
@@ -184,6 +186,7 @@ def test_slope_against_qgis_gpu():
                 np.isnan(xrspatial_vals) & np.isnan(qgis_vals))).all()
 
 
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_slope_gpu_equals_cpu():
 
     # input data
