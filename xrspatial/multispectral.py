@@ -1,3 +1,4 @@
+from math import sqrt
 import numpy as np
 import numba as nb
 
@@ -41,7 +42,7 @@ def _arvi(nir_data, red_data, blue_data):
     return out
 
 
-def arvi(nir_agg, red_agg, blue_agg, name='arvi'):
+def arvi(nir_agg, red_agg, blue_agg, name='arvi', use_cuda=True, use_cupy=True):
     """Computes Atmospherically Resistant Vegetation Index
 
     Parameters
@@ -100,7 +101,7 @@ def _evi(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
 
 
 def evi(nir_agg, red_agg, blue_agg, c1=6.0, c2=7.5, soil_factor=1.0, gain=2.5,
-        name='evi'):
+        name='evi', use_cuda=True, use_cupy=True):
     """Computes Enhanced Vegetation Index
 
     Parameters
@@ -180,7 +181,7 @@ def _gci(nir_data, green_data):
     return out
 
 
-def gci(nir_agg, green_agg, name='gci'):
+def gci(nir_agg, green_agg, name='gci', use_cuda=True, use_cupy=True):
     """Computes Green Chlorophyll Index
 
     Parameters
@@ -235,7 +236,7 @@ def _normalized_ratio(arr1, arr2):
     return out
 
 
-def nbr(nir_agg, swir2_agg, name='nbr'):
+def nbr(nir_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
     """Computes Normalized Burn Ratio
 
     Parameters
@@ -263,16 +264,16 @@ def nbr(nir_agg, swir2_agg, name='nbr'):
     if not nir_agg.shape == swir2_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
 
-    arr = _normalized_ratio(nir_agg.data, swir2_agg.data)
+    out = _run_normalized_ratio(nir_agg.data, swir2_agg.data, use_cuda=use_cuda, use_cupy=use_cupy)
 
-    return DataArray(arr,
+    return DataArray(out,
                      name=name,
                      coords=nir_agg.coords,
                      dims=nir_agg.dims,
                      attrs=nir_agg.attrs)
 
 
-def nbr2(swir1_agg, swir2_agg, name='nbr'):
+def nbr2(swir1_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
     """Computes Normalized Burn Ratio 2
 
     "NBR2 modifies the Normalized Burn Ratio (NBR)
@@ -309,16 +310,16 @@ def nbr2(swir1_agg, swir2_agg, name='nbr'):
     if not swir1_agg.shape == swir2_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
 
-    arr = _normalized_ratio(swir1_agg.data, swir2_agg.data)
+    out = _run_normalized_ratio(swir1_agg.data, swir2_agg.data, use_cuda=use_cuda, use_cupy=use_cupy)
 
-    return DataArray(arr,
+    return DataArray(out,
                      name=name,
                      coords=swir1_agg.coords,
                      dims=swir1_agg.dims,
                      attrs=swir1_agg.attrs)
 
 
-def ndvi(nir_agg, red_agg, name='ndvi'):
+def ndvi(nir_agg, red_agg, name='ndvi', use_cuda=True, use_cupy=True):
     """Returns Normalized Difference Vegetation Index (NDVI).
 
     Parameters
@@ -344,14 +345,34 @@ def ndvi(nir_agg, red_agg, name='ndvi'):
     if not red_agg.shape == nir_agg.shape:
         raise ValueError("red_agg and nir_agg expected to have equal shapes")
 
-    return DataArray(_normalized_ratio(nir_agg.data, red_agg.data),
+    out = _run_normalized_ratio(nir_agg.data, red_agg.data, use_cuda=use_cuda, use_cupy=use_cupy)
+
+    return DataArray(out,
                      name='ndvi',
                      coords=nir_agg.coords,
                      dims=nir_agg.dims,
                      attrs=nir_agg.attrs)
 
 
-def ndmi(nir_agg, swir1_agg, name='ndmi'):
+def _run_normalized_ratio(arr1, arr2, use_cuda=True, use_cupy=True):
+
+    if has_cuda() and use_cuda:
+        griddim, blockdim = cuda_args(arr1.shape)
+        out = np.empty(arr1.shape, dtype='f4')
+        out[:] = np.nan
+
+        if use_cupy:
+            import cupy
+            out = cupy.asarray(out)
+
+        _normalized_ratio_gpu[griddim, blockdim](arr1, arr2, out)
+    else:
+        out = _normalized_ratio(arr1, arr2)
+    
+    return out
+
+
+def ndmi(nir_agg, swir1_agg, name='ndmi', use_cuda=True, use_cupy=True):
     """Computes Normalized Difference Moisture Index
 
     Parameters
@@ -382,9 +403,12 @@ def ndmi(nir_agg, swir1_agg, name='ndmi'):
     if not nir_agg.shape == swir1_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
 
-    arr = _normalized_ratio(nir_agg.data, swir1_agg.data)
+    nir_data = nir_agg.data
+    swir1_data = swir1_agg.data
 
-    return DataArray(arr,
+    out = _run_normalized_ratio(nir_data, swir1_data, use_cuda=use_cuda, use_cupy=use_cupy)
+
+    return DataArray(out,
                      name=name,
                      coords=nir_agg.coords,
                      dims=nir_agg.dims,
@@ -414,15 +438,30 @@ def _savi(nir_data, red_data, soil_factor):
 
 
 @cuda.jit
+def _normalized_ratio_gpu(arr1, arr2, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+        val1 = arr1[y, x]
+        val2 = arr2[y, x]
+        numerator = val1 - val2
+        denominator = val1 + val2
+        out[y, x] = numerator / denominator
+
+
+@cuda.jit
 def _savi_gpu(nir_data, red_data, soil_factor, out):
     y, x = cuda.grid(2)
     if y < out.shape[0] and x < out.shape[1]:
         nir = nir_data[y, x]
         red = red_data[y, x]
         numerator = nir - red
-        soma = nir + red + soil_factor
-        denominator = soma * (1.0 + soil_factor)
-        out[y, x] = numerator / denominator
+        soma = nir + red + soil_factor[0]
+        denominator = soma * (nb.float32(1.0) + soil_factor[0])
+
+        if denominator == 0.0:
+            out[y, x] = np.nan
+        else:
+            out[y, x] = numerator / denominator
 
 
 def savi(nir_agg, red_agg, soil_factor=1.0, name='savi', use_cuda=True, use_cupy=True):
@@ -463,6 +502,8 @@ def savi(nir_agg, red_agg, soil_factor=1.0, name='savi', use_cuda=True, use_cupy
 
     if has_cuda() and use_cuda:
         griddim, blockdim = cuda_args(nir_data.shape)
+        soil_factor_arr = np.array([float(soil_factor)], dtype='f4')
+
         out = np.empty(nir_data.shape, dtype='f4')
         out[:] = np.nan
 
@@ -472,7 +513,7 @@ def savi(nir_agg, red_agg, soil_factor=1.0, name='savi', use_cuda=True, use_cupy
 
         _savi_gpu[griddim, blockdim](nir_data,
                                      red_data,
-                                     soil_factor,
+                                     soil_factor_arr,
                                      out)
     else:
         out = _savi(nir_agg.data, red_agg.data, soil_factor)
@@ -504,7 +545,24 @@ def _sipi(nir_data, red_data, blue_data):
     return out
 
 
-def sipi(nir_agg, red_agg, blue_agg, name='sipi'):
+@cuda.jit
+def _sipi_gpu(nir_data, red_data, blue_data, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+        nir = nir_data[y, x]
+        red = red_data[y, x]
+        blue = blue_data[y, x]
+
+        numerator = nir - blue
+        denominator = nir - red
+
+        if denominator == 0.0:
+            out[y, x] = np.nan
+        else:
+            out[y, x] = numerator / denominator
+
+
+def sipi(nir_agg, red_agg, blue_agg, name='sipi', use_cuda=True, use_cupy=True):
     """Computes Structure Insensitive Pigment Index which helpful
     in early disease detection
 
@@ -533,13 +591,32 @@ def sipi(nir_agg, red_agg, blue_agg, name='sipi'):
     if not red_agg.shape == nir_agg.shape == blue_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
 
-    arr = _sipi(nir_agg.data, red_agg.data, blue_agg.data)
+    nir_data = nir_agg.data
+    red_data = red_agg.data
+    blue_data = blue_agg.data
 
-    return DataArray(arr,
+    if has_cuda() and use_cuda:
+        griddim, blockdim = cuda_args(nir_data.shape)
+        out = np.empty(nir_data.shape, dtype='f4')
+        out[:] = np.nan
+
+        if use_cupy:
+            import cupy
+            out = cupy.asarray(out)
+
+        _sipi_gpu[griddim, blockdim](nir_data,
+                                     red_data,
+                                     blue_data,
+                                     out)
+    else:
+        out = _sipi(nir_data, red_data, blue_data)
+
+    return DataArray(out,
                      name=name,
                      coords=nir_agg.coords,
                      dims=nir_agg.dims,
                      attrs=nir_agg.attrs)
+
 
 @ngjit
 def _ebbi(red_data, swir_data, tir_data):
@@ -561,7 +638,21 @@ def _ebbi(red_data, swir_data, tir_data):
     return out
 
 
-def ebbi(red_agg, swir_agg, tir_agg, name='ebbi'):
+@cuda.jit
+def _ebbi_gpu(red_data, swir_data, tir_data, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+
+        red = red_data[y, x]
+        swir = swir_data[y, x]
+        tir = tir_data[y, x]
+
+        numerator = swir - red
+        denominator = nb.int64(10) * sqrt(swir + tir)
+        out[y, x] = numerator / denominator
+
+
+def ebbi(red_agg, swir_agg, tir_agg, name='ebbi', use_cuda=True, use_cupy=True):
     """Computes Enhanced Built-Up and Bareness Index
     Parameters
     ----------
@@ -587,9 +678,27 @@ def ebbi(red_agg, swir_agg, tir_agg, name='ebbi'):
     if not red_agg.shape == swir_agg.shape == tir_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
 
-    arr = _ebbi(red_agg.data, swir_agg.data, tir_agg.data)
+    red_data = red_agg.data
+    swir_data = swir_agg.data
+    tir_data = tir_agg.data
 
-    return DataArray(arr,
+    if has_cuda() and use_cuda:
+        griddim, blockdim = cuda_args(red_data.shape)
+        out = np.empty(red_data.shape, dtype='f4')
+        out[:] = np.nan
+
+        if use_cupy:
+            import cupy
+            out = cupy.asarray(out)
+
+        _sipi_gpu[griddim, blockdim](red_data,
+                                     swir_data,
+                                     tir_data,
+                                     out)
+    else:
+        out = _sipi(red_data, swir_data, tir_data)
+
+    return DataArray(out,
                      name=name,
                      coords=red_agg.coords,
                      dims=red_agg.dims,

@@ -17,6 +17,27 @@ from xrspatial.multispectral import gci
 from xrspatial.multispectral import sipi
 
 
+max_val = 2**16 - 1
+
+arr1 = np.array([[max_val, max_val, max_val, max_val],
+                    [max_val, 1000.0, 1000.0, max_val],
+                    [max_val, 1000.0, 1000.0, max_val],
+                    [max_val, 1000.0, 1000.0, max_val],
+                    [max_val, max_val, max_val, max_val]], dtype=np.float64)
+
+arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
+                    [100.0, max_val, max_val, 100.0],
+                    [100.0, max_val, max_val, 100.0],
+                    [100.0, max_val, max_val, 100.0],
+                    [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
+
+arr3 = np.array([[10.0, 10.0, 10.0, 10.0],
+                    [10.0, max_val, max_val, 10.0],
+                    [10.0, max_val, max_val, 10.0],
+                    [10.0, max_val, max_val, 10.0],
+                    [10.0, 10.0, 10.0, 10.0]], dtype=np.float64)
+
+
 def _do_sparse_array(data_array):
     import random
     indx = list(zip(*np.where(data_array)))
@@ -63,10 +84,10 @@ def test_ndvi():
     red = a*b
     nir = (a*b)[::-1, ::-1]
 
-    da_red = xr.DataArray(red, dims=['y', 'x'])
     da_nir = xr.DataArray(nir, dims=['y', 'x'])
+    da_red = xr.DataArray(red, dims=['y', 'x'])
 
-    da_ndvi = ndvi(da_nir, da_red)
+    da_ndvi = ndvi(da_nir, da_red, use_cuda=False)
 
     assert da_ndvi.dims == da_nir.dims
     assert da_ndvi.attrs == da_nir.attrs
@@ -79,28 +100,24 @@ def test_ndvi():
     assert da_ndvi[15, 10] == da_ndvi[10, 15] == 0.5
 
 
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_ndvi_cpu_equals_gpu():
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+
+    # savi should be same as ndvi at soil_factor=0
+    cpu = savi(nir, red, use_cuda=False)
+    gpu = savi(nir, red, use_cuda=True)
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
+
+
 def test_savi():
-
-    max_val = 2**16 - 1
-
-    arr1 = np.array([[max_val, max_val, max_val, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
-
-    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
-
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
 
     # savi should be same as ndvi at soil_factor=0
     result_savi = savi(nir, red, soil_factor=0.0, use_cuda=False)
-    result_ndvi = ndvi(nir, red)
+    result_ndvi = ndvi(nir, red, use_cuda=False)
 
     assert np.isclose(result_savi.data, result_ndvi.data, equal_nan=True).all()
     assert result_savi.dims == nir.dims
@@ -112,20 +129,6 @@ def test_savi():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_savi_cpu_equals_gpu():
-    max_val = 2**16 - 1
-
-    arr1 = np.array([[max_val, max_val, max_val, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
-
-    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
-
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
 
@@ -136,65 +139,32 @@ def test_savi_cpu_equals_gpu():
 
 
 def test_avri():
-
-    max_val = 2**16 - 1
-
-    arr1 = np.array([[max_val, max_val, max_val, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
-
-    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
-
-    arr3 = np.array([[10.0, 10.0, 10.0, 10.0],
-                     [10.0, max_val, max_val, 10.0],
-                     [10.0, max_val, max_val, 10.0],
-                     [10.0, max_val, max_val, 10.0],
-                     [10.0, 10.0, 10.0, 10.0]], dtype=np.float64)
-
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
 
-    result = arvi(nir, red, blue)
+    result = arvi(nir, red, blue, use_cuda=False)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
 
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_avri_cpu_equals_gpu():
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+    blue = create_test_arr(arr3)
+    cpu = arvi(nir, red, blue, use_cuda=False)
+    gpu = arvi(nir, red, blue, use_cuda=True)
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
+
 
 def test_evi():
-
-    max_val = 2**16 - 1
-
-    arr1 = np.array([[max_val, max_val, max_val, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
-
-    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
-
-    arr3 = np.array([[10.0, 10.0, 10.0, 10.0],
-                     [10.0, max_val, max_val, 10.0],
-                     [10.0, max_val, max_val, 10.0],
-                     [10.0, max_val, max_val, 10.0],
-                     [10.0, 10.0, 10.0, 10.0]], dtype=np.float64)
-
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
 
-    result = evi(nir, red, blue)
+    result = evi(nir, red, blue, use_cuda=False)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
@@ -206,170 +176,142 @@ def test_evi():
     # TODO: Test C2
 
 
-def test_gci():
-
-    max_val = 2**16 - 1
-
-    arr1 = np.array([[max_val, max_val, max_val, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
-
-    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
-
-    nir = create_test_arr(arr1)
-    green = create_test_arr(arr2)
-
-    result = gci(nir, green)
-
-    assert result.dims == nir.dims
-    assert isinstance(result, xa.DataArray)
-    assert result.dims == nir.dims
-
-
-def test_sipi():
-
-    max_val = 2**16 - 1
-
-    arr1 = np.array([[max_val, max_val, max_val, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
-
-    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
-
-    arr3 = np.array([[10.0, 10.0, 10.0, 10.0],
-                     [10.0, max_val, max_val, 10.0],
-                     [10.0, max_val, max_val, 10.0],
-                     [10.0, max_val, max_val, 10.0],
-                     [10.0, 10.0, 10.0, 10.0]], dtype=np.float64)
-
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_evi_cpu_equals_gpu():
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
 
-    result = sipi(nir, red, blue)
+    cpu = evi(nir, red, blue, use_cuda=False)
+    gpu = evi(nir, red, blue, use_cuda=True)
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
+
+
+def test_gci():
+    nir = create_test_arr(arr1)
+    green = create_test_arr(arr2)
+
+    result = gci(nir, green, use_cuda=False)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_gci_cpu_equals_gpu():
+    nir = create_test_arr(arr1)
+    green = create_test_arr(arr2)
+
+    cpu = gci(nir, green, use_cuda=False)
+    gpu = gci(nir, green, use_cuda=True)
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
+
+
+def test_sipi():
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+    blue = create_test_arr(arr3)
+
+    result = sipi(nir, red, blue, use_cuda=False)
+
+    assert result.dims == nir.dims
+    assert isinstance(result, xa.DataArray)
+    assert result.dims == nir.dims
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_sipi_cpu_equals_gpu():
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+    blue = create_test_arr(arr3)
+
+    cpu = sipi(nir, red, blue, use_cuda=False)
+    gpu = sipi(nir, red, blue, use_cuda=True)
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
 def test_nbr():
-
-    max_val = 2**16 - 1
-
-    arr1 = np.array([[max_val, max_val, max_val, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
-
-    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
-
     nir = create_test_arr(arr1)
     swir = create_test_arr(arr2)
 
-    result = nbr(nir, swir)
+    result = nbr(nir, swir, use_cuda=False)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_nbr_cpu_equals_gpu():
+    nir = create_test_arr(arr1)
+    swir = create_test_arr(arr2)
+
+    cpu = nbr(nir, swir, use_cuda=False)
+    gpu = nbr(nir, swir, use_cuda=True)
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
 def test_nbr2():
-
-    max_val = 2**16 - 1
-
-    arr1 = np.array([[max_val, max_val, max_val, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
-
-    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
-
     swir1 = create_test_arr(arr1)
     swir2 = create_test_arr(arr2)
 
-    result = nbr2(swir1, swir2)
+    result = nbr2(swir1, swir2, use_cuda=False)
 
     assert result.dims == swir1.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == swir1.dims
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_nbr2_cpu_equals_gpu():
+    swir1 = create_test_arr(arr1)
+    swir2 = create_test_arr(arr2)
+
+    cpu = nbr2(swir1, swir2, use_cuda=False)
+    gpu = nbr2(swir1, swir2, use_cuda=True)
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
 def test_ndmi():
-
-    max_val = 2**16 - 1
-
-    arr1 = np.array([[max_val, max_val, max_val, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
-
-    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
-
     nir = create_test_arr(arr1)
     swir1 = create_test_arr(arr2)
 
-    result = ndmi(nir, swir1)
+    result = ndmi(nir, swir1, use_cuda=False)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
 
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_ndmi_cpu_equals_gpu():
+    nir = create_test_arr(arr1)
+    swir = create_test_arr(arr2)
+
+    cpu = ndmi(nir, swir, use_cuda=False)
+    gpu = ndmi(nir, swir, use_cuda=True)
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
+
+
 def test_ebbi():
-
-    max_val = 2**16 - 1
-
-    arr1 = np.array([[max_val, max_val, max_val, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, 1000.0, 1000.0, max_val],
-                     [max_val, max_val, max_val, max_val]], dtype=np.float64)
-
-    arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, max_val, max_val, 100.0],
-                     [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
-
-    arr3 = np.array([[10.0, 10.0, 10.0, 10.0],
-                     [10.0, max_val, max_val, 10.0],
-                     [10.0, max_val, max_val, 10.0],
-                     [10.0, max_val, max_val, 10.0],
-                     [10.0, 10.0, 10.0, 10.0]], dtype=np.float64)
-
     red = create_test_arr(arr1)
     swir = create_test_arr(arr2)
     tir = create_test_arr(arr3)
 
-    result = ebbi(red, swir, tir)
+    result = ebbi(red, swir, tir, use_cuda=False)
 
     assert result.dims == red.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == red.dims
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_ebbi_cpu_equals_gpu():
+    red = create_test_arr(arr1)
+    swir = create_test_arr(arr2)
+    tir = create_test_arr(arr3)
+
+    cpu = ebbi(red, swir, tir, use_cuda=False)
+    gpu = ebbi(red, swir, tir, use_cuda=True)
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
