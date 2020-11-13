@@ -201,7 +201,7 @@ def test_slope_gpu_equals_cpu():
 
     small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
 
-    # aspect by xrspatial
+    # slope by xrspatial
     cpu = slope(small_da, use_cuda=False)
     gpu = slope(small_da, use_cuda=True)
 
