@@ -107,6 +107,12 @@ def curvature(agg, name='curvature', use_cuda=True, use_cupy=True):
         matrix_E = kernel_E(agg_values)
 
         curv_agg = _horn_curvature(matrix_D, matrix_E)
+        # TODO: handle border edge effect
+        # currently, set borders to np.nan
+        curv_agg[0, :] = np.nan
+        curv_agg[-1, :] = np.nan
+        curv_agg[:, 0] = np.nan
+        curv_agg[:, -1] = np.nan
 
     curv_agg = curv_agg / (cellsize * cellsize)
 
