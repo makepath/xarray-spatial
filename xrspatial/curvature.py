@@ -1,4 +1,3 @@
-import numba as nb
 import numpy as np
 import xarray as xr
 from numba import stencil, vectorize
@@ -38,12 +37,12 @@ def _horn_curvature_cuda(arr, out):
     i, j = cuda.grid(2)
     di = 1
     dj = 1
-    if (i - di >= 1 and i + di < out.shape[0] - 1 and
-            j - dj >= 1 and j + dj < out.shape[1] - 1):
+    if (i - di >= 0 and i + di <= out.shape[0] - 1 and
+            j - dj >= 0 and j + dj <= out.shape[1] - 1):
         out[i, j] = _gpu_curvature(arr[i - di:i + di + 1, j - dj:j + dj + 1])
 
 
-def curvature(agg, name='curvature', use_cuda=True, pad=True, use_cupy=True):
+def curvature(agg, name='curvature', use_cuda=True, use_cupy=True):
     """Compute the curvature (second derivatives) of a agg surface.
 
     Parameters
@@ -87,16 +86,9 @@ def curvature(agg, name='curvature', use_cuda=True, pad=True, use_cupy=True):
     cellsize = (cellsize_x + cellsize_y) / 2
 
     if has_cuda() and use_cuda:
-        if pad:
-            pad_rows = 3 // 2
-            pad_cols = 3 // 2
-            pad_width = ((pad_rows, pad_rows),
-                         (pad_cols, pad_cols))
-        else:
-            # If padding is not desired, set pads to 0
-            pad_rows = 0
-            pad_cols = 0
-            pad_width = 0
+        # TODO: add padding
+        # padding is not desired, set pads to 0
+        pad_width = 0
 
         curv_data = np.pad(agg.data, pad_width=pad_width, mode="reflect")
 
@@ -109,21 +101,19 @@ def curvature(agg, name='curvature', use_cuda=True, pad=True, use_cupy=True):
             curv_agg = cupy.asarray(curv_agg)
 
         _horn_curvature_cuda[griddim, blockdim](curv_data, curv_agg)
-        
-        if pad:
-            curv_agg = curv_agg[pad_rows:-pad_rows, pad_cols:-pad_cols]
 
     else:
         matrix_D = kernel_D(agg_values)
         matrix_E = kernel_E(agg_values)
+
         curv_agg = _horn_curvature(matrix_D, matrix_E)
 
     curv_agg = curv_agg / (cellsize * cellsize)
 
     result = xr.DataArray(curv_agg,
-                             name=name,
-                             coords=agg.coords,
-                             dims=agg.dims,
-                             attrs=agg.attrs)
+                          name=name,
+                          coords=agg.coords,
+                          dims=agg.dims,
+                          attrs=agg.attrs)
 
     return result
