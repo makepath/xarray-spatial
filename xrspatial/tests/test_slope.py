@@ -202,7 +202,7 @@ def test_slope_gpu_equals_cpu():
     small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
 
     # aspect by xrspatial
-    cpu = slope(small_da, name='aspect_agg', use_cuda=False)
-    gpu = slope(small_da, name='aspect_agg', use_cuda=True)
+    cpu = slope(small_da, use_cuda=False)
+    gpu = slope(small_da, use_cuda=True)
 
     assert np.isclose(cpu, gpu, equal_nan=True).all()

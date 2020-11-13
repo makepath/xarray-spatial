@@ -112,7 +112,7 @@ def slope(agg, name='slope', use_cuda=True, pad=True, use_cupy=True):
             pad_rows = 3 // 2
             pad_cols = 3 // 2
             pad_width = ((pad_rows, pad_rows),
-                        (pad_cols, pad_cols))
+                         (pad_cols, pad_cols))
         else:
             # If padding is not desired, set pads to 0
             pad_rows = 0

@@ -1,6 +1,12 @@
+import numba as nb
 import numpy as np
 import xarray as xr
 from numba import stencil, vectorize
+
+from numba import cuda
+
+from xrspatial.utils import has_cuda
+from xrspatial.utils import cuda_args
 
 
 @stencil
@@ -14,61 +20,110 @@ def kernel_E(arr):
 
 
 @vectorize(["float64(float64, float64)"], nopython=True, target="parallel")
-def _curvature(matrix_D, matrix_E):
+def _horn_curvature(matrix_D, matrix_E):
     curv = -2 * (matrix_D + matrix_E) * 100
     return curv
 
 
-def curvature(raster):
-    """Compute the curvature (second derivatives) of a raster surface.
+@cuda.jit(device=True)
+def _gpu_curvature(arr):
+    d = (arr[1, 0] + arr[1, 2]) / 2 - arr[1, 1]
+    e = (arr[0, 1] + arr[2, 1]) / 2 - arr[1, 1]
+    curv = -2 * (d + e) * 100
+    return curv
+
+
+@cuda.jit
+def _horn_curvature_cuda(arr, out):
+    i, j = cuda.grid(2)
+    di = 1
+    dj = 1
+    if (i - di >= 1 and i + di < out.shape[0] - 1 and
+            j - dj >= 1 and j + dj < out.shape[1] - 1):
+        out[i, j] = _gpu_curvature(arr[i - di:i + di + 1, j - dj:j + dj + 1])
+
+
+def curvature(agg, name='curvature', use_cuda=True, pad=True, use_cupy=True):
+    """Compute the curvature (second derivatives) of a agg surface.
 
     Parameters
     ----------
-    raster: xarray.DataArray
-        2D input raster image with shape=(height, width)
+    agg: xarray.xr.DataArray
+        2D input agg image with shape=(height, width)
 
     Returns
     -------
-    curvature: xarray.DataArray
+    curvature: xarray.xr.DataArray
         Curvature image with shape=(height, width)
     """
 
-    if not isinstance(raster, xr.DataArray):
-        raise TypeError("`raster` must be instance of DataArray")
+    if not isinstance(agg, xr.DataArray):
+        raise TypeError("`agg` must be instance of xr.DataArray")
 
-    if raster.ndim != 2:
-        raise ValueError("`raster` must be 2D")
+    if agg.ndim != 2:
+        raise ValueError("`agg` must be 2D")
 
-    if not (issubclass(raster.values.dtype.type, np.integer) or
-            issubclass(raster.values.dtype.type, np.floating)):
+    if not (issubclass(agg.values.dtype.type, np.integer) or
+            issubclass(agg.values.dtype.type, np.floating)):
         raise ValueError(
-            "`raster` must be an array of integers or float")
+            "`agg` must be an array of integers or float")
 
-    raster_values = raster.values
+    agg_values = agg.values
 
-    cell_size_x = 1
-    cell_size_y = 1
+    cellsize_x = 1
+    cellsize_y = 1
 
-    # calculate cell size from input `raster`
-    for dim in raster.dims:
+    # calculate cell size from input `agg`
+    for dim in agg.dims:
         if (dim.lower().count('x')) > 0 or (dim.lower().count('lon')) > 0:
             # dimension of x-coordinates
-            if len(raster[dim]) > 1:
-                cell_size_x = raster[dim].values[1] - raster[dim].values[0]
+            if len(agg[dim]) > 1:
+                cellsize_x = agg[dim].values[1] - agg[dim].values[0]
         elif (dim.lower().count('y')) > 0 or (dim.lower().count('lat')) > 0:
             # dimension of y-coordinates
-            if len(raster[dim]) > 1:
-                cell_size_y = raster[dim].values[1] - raster[dim].values[0]
+            if len(agg[dim]) > 1:
+                cellsize_y = agg[dim].values[1] - agg[dim].values[0]
 
-    cell_size = (cell_size_x + cell_size_y) / 2
+    cellsize = (cellsize_x + cellsize_y) / 2
 
-    matrix_D = kernel_D(raster_values)
-    matrix_E = kernel_E(raster_values)
+    if has_cuda() and use_cuda:
+        if pad:
+            pad_rows = 3 // 2
+            pad_cols = 3 // 2
+            pad_width = ((pad_rows, pad_rows),
+                         (pad_cols, pad_cols))
+        else:
+            # If padding is not desired, set pads to 0
+            pad_rows = 0
+            pad_cols = 0
+            pad_width = 0
 
-    curvature_values = _curvature(matrix_D, matrix_E) / (cell_size * cell_size)
-    result = xr.DataArray(curvature_values,
-                          coords=raster.coords,
-                          dims=raster.dims,
-                          attrs=raster.attrs)
+        curv_data = np.pad(agg.data, pad_width=pad_width, mode="reflect")
+
+        griddim, blockdim = cuda_args(curv_data.shape)
+        curv_agg = np.empty(curv_data.shape, dtype='f4')
+        curv_agg[:] = np.nan
+
+        if use_cupy:
+            import cupy
+            curv_agg = cupy.asarray(curv_agg)
+
+        _horn_curvature_cuda[griddim, blockdim](curv_data, curv_agg)
+        
+        if pad:
+            curv_agg = curv_agg[pad_rows:-pad_rows, pad_cols:-pad_cols]
+
+    else:
+        matrix_D = kernel_D(agg_values)
+        matrix_E = kernel_E(agg_values)
+        curv_agg = _horn_curvature(matrix_D, matrix_E)
+
+    curv_agg = curv_agg / (cellsize * cellsize)
+
+    result = xr.DataArray(curv_agg,
+                             name=name,
+                             coords=agg.coords,
+                             dims=agg.dims,
+                             attrs=agg.attrs)
 
     return result
