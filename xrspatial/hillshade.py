@@ -11,19 +11,12 @@ def hillshade(agg, azimuth=225, angle_altitude=25, name='hillshade'):
     Parameters
     ----------
     agg : DataArray
-    altitude : int, optional (default: 30)
+    angle_altitude : int, optional (default: 30)
         Altitude angle of the sun specified in degrees.
     azimuth : int, optional (default: 315)
         The angle between the north vector and the perpendicular projection
         of the light source down onto the horizon specified in degrees.
-    cmap : list of colors or matplotlib.colors.Colormap, optional
-        The colormap to use. Can be either a list of colors (in any of the
-        formats described above), or a matplotlib colormap object.
-        Default is `["lightgray", "black"]`
-    alpha : int, optional
-        Value between 0 - 255 representing the alpha value of pixels which contain
-        data (i.e. non-nan values). Regardless of this value, `NaN` values are
-        set to fully transparent.
+    name: str, name of output aggregate
 
     Returns
     -------
