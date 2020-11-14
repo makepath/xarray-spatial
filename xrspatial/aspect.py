@@ -3,6 +3,8 @@ from math import pi
 import numpy as np
 import numba as nb
 
+import dask.array as da
+
 from numba import cuda
 
 from xarray import DataArray
@@ -147,7 +149,12 @@ def aspect(agg, name='aspect', use_cuda=True, pad=True, use_cupy=True):
         _horn_aspect_cuda[griddim, blockdim](data, out)
         if pad:
             out = out[pad_rows:-pad_rows, pad_cols:-pad_cols]
-        
+
+    elif isinstance(agg.data, da.Array):
+        out = agg.data.map_overlap(_horn_aspect,
+                                   depth=(1, 1),
+                                   boundary=np.nan,
+                                   meta=np.array(()))
     else:
         out = _horn_aspect(agg.data)
 
