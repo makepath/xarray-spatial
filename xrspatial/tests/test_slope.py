@@ -1,7 +1,8 @@
-
 import pytest
 import xarray as xr
 import numpy as np
+
+import dask.array as da
 
 from xrspatial import slope
 from xrspatial.utils import doesnt_have_cuda
@@ -34,6 +35,17 @@ def _do_gaussian_array():
 data_random = np.random.random_sample((100, 100))
 data_random_sparse = _do_sparse_array(data_random)
 data_gaussian = _do_gaussian_array()
+
+# slope by QGIS
+qgis_slope = np.asarray(
+    [[0.8052942, 0.742317, 1.1390567, 1.3716657, np.nan, np.nan],
+     [0.74258685, 0.742317, 1.0500116, 1.2082565, np.nan, np.nan],
+     [0.56964326, 0.9002944, 0.9002944, 1.0502871, np.nan, np.nan],
+     [0.5095078, 0.9003686, 0.742317, 1.1390567, np.nan, np.nan],
+     [0.6494868, 0.64938396, 0.5692523, 1.0500116, np.nan, np.nan],
+     [0.80557066, 0.56964326, 0.64914393, 0.9002944, np.nan, np.nan],
+     [0.6494868, 0.56964326, 0.8052942, 0.742317, np.nan, np.nan]],
+    dtype=np.float32)
 
 
 def test_invalid_res_attr():
@@ -111,17 +123,6 @@ def test_slope_against_qgis():
          [1432.832, 1432.832, 1432.6542, 1432.4764, 1432.4764, np.nan]],
         dtype=np.float32)
     small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
-
-    # slope by QGIS
-    qgis_slope = np.asarray(
-        [[0.8052942, 0.742317, 1.1390567, 1.3716657, np.nan, np.nan],
-         [0.74258685, 0.742317, 1.0500116, 1.2082565, np.nan, np.nan],
-         [0.56964326, 0.9002944, 0.9002944, 1.0502871, np.nan, np.nan],
-         [0.5095078, 0.9003686, 0.742317, 1.1390567, np.nan, np.nan],
-         [0.6494868, 0.64938396, 0.5692523, 1.0500116, np.nan, np.nan],
-         [0.80557066, 0.56964326, 0.64914393, 0.9002944, np.nan, np.nan],
-         [0.6494868, 0.56964326, 0.8052942, 0.742317, np.nan, np.nan]],
-        dtype=np.float32)
 
     # slope by xrspatial
     xrspatial_slope = slope(small_da, name='slope_agg', use_cuda=False)
@@ -206,3 +207,98 @@ def test_slope_gpu_equals_cpu():
     gpu = slope(small_da, name='aspect_agg', use_cuda=True)
 
     assert np.isclose(cpu, gpu, equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_slope_gpu_equals_cpu():
+
+    # input data
+    data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+                       [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
+                       [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
+                       [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
+                       [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                       [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                       [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
+                      dtype=np.float32)
+
+    small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+
+    # aspect by xrspatial
+    cpu = slope(small_da, name='aspect_agg', use_cuda=False)
+    gpu = slope(small_da, name='aspect_agg', use_cuda=True)
+
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
+
+
+def test_slope_numpy_equals_dask():
+
+    # input data
+    data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+                       [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
+                       [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
+                       [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
+                       [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                       [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                       [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
+                      dtype=np.float32)
+
+    small_numpy_based_data_array = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+    small_das_based_data_array = xr.DataArray(da.from_array(data, chunks=(3, 3)),
+                                              attrs={'res': (10.0, 10.0)})
+
+    numpy_slope = slope(small_numpy_based_data_array, name='numpy_slope', use_cuda=False)
+    dask_slope = slope(small_das_based_data_array, name='dask_slope', use_cuda=False)
+    dask_slope.data = dask_slope.data.compute()
+
+    assert np.isclose(numpy_slope, dask_slope, equal_nan=True).all()
+
+
+def test_slope_with_dask_array():
+
+    import dask.array as da
+
+    # input data
+    data = np.asarray(
+        [[1432.6542, 1432.4764, 1432.4764, 1432.1207, 1431.9429, np.nan],
+         [1432.6542, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
+         [1432.832, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
+         [1432.832, 1432.6542, 1432.4764, 1432.4764, 1432.1207, np.nan],
+         [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
+         [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
+         [1432.832, 1432.832, 1432.6542, 1432.4764, 1432.4764, np.nan]],
+        dtype=np.float32)
+
+    data = da.from_array(data, chunks=(3, 3))
+    small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+
+    # slope by xrspatial
+    xrspatial_slope = slope(small_da, name='slope_agg', use_cuda=False)
+    xrspatial_slope.data = xrspatial_slope.data.compute()
+
+    # slope by QGIS
+    qgis_slope = np.asarray(
+        [[0.8052942, 0.742317, 1.1390567, 1.3716657, np.nan, np.nan],
+         [0.74258685, 0.742317, 1.0500116, 1.2082565, np.nan, np.nan],
+         [0.56964326, 0.9002944, 0.9002944, 1.0502871, np.nan, np.nan],
+         [0.5095078, 0.9003686, 0.742317, 1.1390567, np.nan, np.nan],
+         [0.6494868, 0.64938396, 0.5692523, 1.0500116, np.nan, np.nan],
+         [0.80557066, 0.56964326, 0.64914393, 0.9002944, np.nan, np.nan],
+         [0.6494868, 0.56964326, 0.8052942, 0.742317, np.nan, np.nan]],
+        dtype=np.float32)
+
+
+    # validate output attributes
+    assert xrspatial_slope.dims == small_da.dims
+    assert xrspatial_slope.attrs == small_da.attrs
+    assert xrspatial_slope.shape == small_da.shape
+    assert xrspatial_slope.name == 'slope_agg'
+    for coord in small_da.coords:
+        assert np.all(xrspatial_slope[coord] == small_da[coord])
+
+    # validate output values
+    # ignore border edges
+    xrspatial_vals = xrspatial_slope.values[1:-1, 1:-1]
+    qgis_vals = qgis_slope[1:-1, 1:-1]
+    assert (np.isclose(xrspatial_vals, qgis_vals, equal_nan=True).all() | (
+                np.isnan(xrspatial_vals) & np.isnan(qgis_vals))).all()

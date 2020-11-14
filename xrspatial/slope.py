@@ -1,8 +1,14 @@
+from functools import partial
 from math import atan
-import numpy as np
-import numba as nb
 
+import dask
+import dask.array as da
+
+import numba as nb
 from numba import cuda
+
+import numpy as np
+
 
 from xarray import DataArray
 
@@ -50,6 +56,7 @@ def _gpu_slope(arr, cellsize_x, cellsize_y):
     dz_dy = ((g + two * h + i) - (a + two * b + c)) / (nb.float32(8.) * cellsize_y[0])
     p = (dz_dx * dz_dx + dz_dy * dz_dy) ** nb.float32(.5)
     return atan(p) * nb.float32(57.29578)
+
 
 
 @cuda.jit
@@ -103,7 +110,8 @@ def slope(agg, name='slope', use_cuda=True, pad=True, use_cupy=True):
     else:
         raise ValueError('`res` attr of input xarray must be a numeric'
                          ' or a tuple of numeric values.')
-    
+
+
     if has_cuda() and use_cuda:
         cellsize_x_arr = np.array([float(cellsize_x)], dtype='f4')
         cellsize_y_arr = np.array([float(cellsize_y)], dtype='f4')
@@ -135,6 +143,15 @@ def slope(agg, name='slope', use_cuda=True, pad=True, use_cupy=True):
                                             slope_agg)
         if pad:
             slope_agg = slope_agg[pad_rows:-pad_rows, pad_cols:-pad_cols]
+
+    elif isinstance(agg.data, da.Array):
+
+        _func = partial(_horn_slope, cellsize_x=cellsize_x, cellsize_y=cellsize_y)
+        slope_agg = agg.data.map_overlap(_func,
+                                         depth=(1, 1),
+                                         boundary=np.nan,
+                                         meta=np.array(()))
+
     else:
         slope_agg = _horn_slope(agg.data, cellsize_x, cellsize_y)
 
