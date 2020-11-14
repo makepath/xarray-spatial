@@ -1,7 +1,6 @@
 from functools import partial
 from math import atan
 
-import dask
 import dask.array as da
 
 import numba as nb
@@ -15,6 +14,12 @@ from xarray import DataArray
 from xrspatial.utils import ngjit
 from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
+
+try:
+    import cupy
+except ImportError:
+    class cupy(object):
+        ndarray = False
 
 
 @ngjit
@@ -112,37 +117,27 @@ def slope(agg, name='slope', use_cuda=True, pad=True, use_cupy=True):
                          ' or a tuple of numeric values.')
 
 
-    if has_cuda() and use_cuda:
+    if has_cuda() and isinstance(agg.data, cupy.ndarray):
         cellsize_x_arr = np.array([float(cellsize_x)], dtype='f4')
         cellsize_y_arr = np.array([float(cellsize_y)], dtype='f4')
 
-        if pad:
-            pad_rows = 3 // 2
-            pad_cols = 3 // 2
-            pad_width = ((pad_rows, pad_rows),
-                        (pad_cols, pad_cols))
-        else:
-            # If padding is not desired, set pads to 0
-            pad_rows = 0
-            pad_cols = 0
-            pad_width = 0
+        pad_rows = 3 // 2
+        pad_cols = 3 // 2
+        pad_width = ((pad_rows, pad_rows),
+                    (pad_cols, pad_cols))
 
         slope_data = np.pad(agg.data, pad_width=pad_width, mode="reflect")
 
         griddim, blockdim = cuda_args(slope_data.shape)
         slope_agg = np.empty(slope_data.shape, dtype='f4')
         slope_agg[:] = np.nan
-
-        if use_cupy:
-            import cupy
-            slope_agg = cupy.asarray(slope_agg)
+        slope_agg = cupy.asarray(slope_agg)
 
         _horn_slope_cuda[griddim, blockdim](slope_data,
                                             cellsize_x_arr,
                                             cellsize_y_arr,
                                             slope_agg)
-        if pad:
-            slope_agg = slope_agg[pad_rows:-pad_rows, pad_cols:-pad_cols]
+        slope_agg = slope_agg[pad_rows:-pad_rows, pad_cols:-pad_cols]
 
     elif isinstance(agg.data, da.Array):
 
