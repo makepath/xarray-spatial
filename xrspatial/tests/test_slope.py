@@ -125,7 +125,7 @@ def test_slope_against_qgis():
     small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
 
     # slope by xrspatial
-    xrspatial_slope = slope(small_da, name='slope_agg', use_cuda=False)
+    xrspatial_slope = slope(small_da, name='slope_agg')
 
     # validate output attributes
     assert xrspatial_slope.dims == small_da.dims
@@ -145,6 +145,9 @@ def test_slope_against_qgis():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_slope_against_qgis_gpu():
+
+    import cupy
+
     # input data
     data = np.asarray(
         [[1432.6542, 1432.4764, 1432.4764, 1432.1207, 1431.9429, np.nan],
@@ -156,6 +159,7 @@ def test_slope_against_qgis_gpu():
          [1432.832, 1432.832, 1432.6542, 1432.4764, 1432.4764, np.nan]],
         dtype=np.float32)
     small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+    small_da_cupy = xr.DataArray(cupy.asarray(data), attrs={'res': (10.0, 10.0)})
 
     # slope by QGIS
     qgis_slope = np.asarray(
@@ -169,13 +173,12 @@ def test_slope_against_qgis_gpu():
         dtype=np.float32)
 
     # slope by xrspatial
-    xrspatial_slope = slope(small_da, name='slope_agg', use_cuda=True)
+    xrspatial_slope = slope(small_da_cupy, name='slope_cupy')
 
     # validate output attributes
     assert xrspatial_slope.dims == small_da.dims
     assert xrspatial_slope.attrs == small_da.attrs
     assert xrspatial_slope.shape == small_da.shape
-    assert xrspatial_slope.name == 'slope_agg'
     for coord in small_da.coords:
         assert np.all(xrspatial_slope[coord] == small_da[coord])
 
@@ -190,6 +193,8 @@ def test_slope_against_qgis_gpu():
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_slope_gpu_equals_cpu():
 
+    import cupy
+
     # input data
     data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
                        [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
@@ -201,16 +206,22 @@ def test_slope_gpu_equals_cpu():
                       dtype=np.float32)
 
     small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+    cpu = slope(small_da, name='numpy_result')
 
-    # aspect by xrspatial
-    cpu = slope(small_da, name='aspect_agg', use_cuda=False)
-    gpu = slope(small_da, name='aspect_agg', use_cuda=True)
+    small_da_cupy = xr.DataArray(cupy.asarray(data), attrs={'res': (10.0, 10.0)})
+    gpu = slope(small_da_cupy, name='cupy_result')
 
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_slope_gpu_equals_cpu():
+def _dask_cupy_equals_numpy_cpu():
+
+    # NOTE: Dask + GPU code paths don't currently work because of
+    # dask casting cupy arrays to numpy arrays during
+    # https://github.com/dask/dask/issues/4842
+
+    import cupy
 
     # input data
     data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
@@ -221,12 +232,14 @@ def test_slope_gpu_equals_cpu():
                        [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
                        [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
                       dtype=np.float32)
+    cupy_data = cupy.asarray(data)
+    dask_cupy_data = da.from_array(cupy_data, chunks=(3, 3))
 
     small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+    cpu = slope(small_da, name='numpy_result')
 
-    # aspect by xrspatial
-    cpu = slope(small_da, name='aspect_agg', use_cuda=False)
-    gpu = slope(small_da, name='aspect_agg', use_cuda=True)
+    small_dask_cupy = xr.DataArray(dask_cupy_data, attrs={'res': (10.0, 10.0)})
+    gpu = slope(small_dask_cupy, name='cupy_result')
 
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
@@ -247,8 +260,8 @@ def test_slope_numpy_equals_dask():
     small_das_based_data_array = xr.DataArray(da.from_array(data, chunks=(3, 3)),
                                               attrs={'res': (10.0, 10.0)})
 
-    numpy_slope = slope(small_numpy_based_data_array, name='numpy_slope', use_cuda=False)
-    dask_slope = slope(small_das_based_data_array, name='dask_slope', use_cuda=False)
+    numpy_slope = slope(small_numpy_based_data_array, name='numpy_slope')
+    dask_slope = slope(small_das_based_data_array, name='dask_slope')
     dask_slope.data = dask_slope.data.compute()
 
     assert np.isclose(numpy_slope, dask_slope, equal_nan=True).all()
@@ -273,7 +286,7 @@ def test_slope_with_dask_array():
     small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
 
     # slope by xrspatial
-    xrspatial_slope = slope(small_da, name='slope_agg', use_cuda=False)
+    xrspatial_slope = slope(small_da, name='slope_agg')
     xrspatial_slope.data = xrspatial_slope.data.compute()
 
     # slope by QGIS
