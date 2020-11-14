@@ -3,6 +3,8 @@ import numpy as np
 
 from xrspatial import hillshade
 
+import dask.array as da
+
 
 def _do_sparse_array(data_array):
     import random
@@ -29,6 +31,7 @@ def _do_gaussian_array():
 #
 # -----
 
+
 data_random = np.random.random_sample((100, 100))
 data_random_sparse = _do_sparse_array(data_random)
 data_gaussian = _do_gaussian_array()
@@ -47,3 +50,29 @@ def test_hillshade():
         assert np.all(da_gaussian_shade[coord] == da_gaussian[coord])
     assert da_gaussian_shade.mean() > 0
     assert da_gaussian_shade[60, 60] > 0
+
+
+def test_numpy_equals_dask():
+
+    # input data
+    data = np.asarray(
+        [[1432.6542, 1432.4764, 1432.4764, 1432.1207, 1431.9429, np.nan],
+         [1432.6542, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
+         [1432.832, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
+         [1432.832, 1432.6542, 1432.4764, 1432.4764, 1432.1207, np.nan],
+         [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
+         [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
+         [1432.832, 1432.832, 1432.6542, 1432.4764, 1432.4764, np.nan]],
+        dtype=np.float32)
+
+    attrs = {'res': (10.0, 10.0)}
+
+    small_numpy_based_data_array = xr.DataArray(data, attrs=attrs)
+    dask_data = da.from_array(data, chunks=(3, 3))
+    small_das_based_data_array = xr.DataArray(dask_data, attrs=attrs)
+
+    numpy_result = hillshade(small_numpy_based_data_array, name='numpy')
+    dask_result = hillshade(small_das_based_data_array, name='dask')
+    dask_result.data = dask_result.data.compute()
+
+    assert np.isclose(numpy_result, dask_result, equal_nan=True).all()
