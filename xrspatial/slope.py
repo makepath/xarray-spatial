@@ -1,5 +1,14 @@
+# std lib
 from functools import partial
 from math import atan
+from typing import Union
+
+# 3rd-party
+try:
+    import cupy
+except ImportError:
+    class cupy(object):
+        ndarray = False
 
 import dask.array as da
 
@@ -7,23 +16,17 @@ import numba as nb
 from numba import cuda
 
 import numpy as np
+import xarray as xr
 
-
-from xarray import DataArray
-
-from xrspatial.utils import ngjit
-from xrspatial.utils import has_cuda
+# local modules
 from xrspatial.utils import cuda_args
-
-try:
-    import cupy
-except ImportError:
-    class cupy(object):
-        ndarray = False
-
+from xrspatial.utils import get_dataarray_resolution
+from xrspatial.utils import has_cuda
+from xrspatial.utils import ngjit
+from xrspatial.utils import is_cupy_backed
 
 @ngjit
-def _horn_slope(data, cellsize_x, cellsize_y):
+def _cpu(data, cellsize_x, cellsize_y):
     out = np.zeros_like(data)
     out[:] = np.nan
     rows, cols = data.shape
@@ -44,8 +47,29 @@ def _horn_slope(data, cellsize_x, cellsize_y):
     return out
 
 
+def _run_numpy(data:np.ndarray,
+               cellsize_x:Union[int, float],
+               cellsize_y:Union[int, float]) -> np.ndarray:
+    out = _cpu(data, cellsize_x, cellsize_y)
+    return out
+
+
+def _run_dask_numpy(data:da.Array,
+                   cellsize_x:Union[int, float],
+                   cellsize_y:Union[int, float]) -> da.Array:
+    _func = partial(_cpu,
+                    cellsize_x=cellsize_x,
+                    cellsize_y=cellsize_y)
+
+    out = data.map_overlap(_func,
+                           depth=(1, 1),
+                           boundary=np.nan,
+                           meta=np.array(()))
+    return out
+
+
 @cuda.jit(device=True)
-def _gpu_slope(arr, cellsize_x, cellsize_y):
+def _gpu(arr, cellsize_x, cellsize_y):
     a = arr[2, 0]
     b = arr[2, 1]
     c = arr[2, 2]
@@ -64,53 +88,23 @@ def _gpu_slope(arr, cellsize_x, cellsize_y):
 
 
 @cuda.jit
-def _horn_slope_cuda(arr, cellsize_x_arr, cellsize_y_arr, out):
+def _run_gpu(arr, cellsize_x_arr, cellsize_y_arr, out):
     i, j = cuda.grid(2)
     di = 1
     dj = 1
     if (i-di >= 1 and i+di < out.shape[0] - 1 and 
         j-dj >= 1 and j+dj < out.shape[1] - 1):
-        out[i, j] = _gpu_slope(arr[i-di:i+di+1, j-dj:j+dj+1],
-                               cellsize_x_arr,
-                               cellsize_y_arr)
+        out[i, j] = _gpu(arr[i-di:i+di+1, j-dj:j+dj+1],
+                         cellsize_x_arr,
+                         cellsize_y_arr)
 
 
-def _run_dask_numpy(agg, cellsize_x, cellsize_y):
-    _func = partial(_horn_slope,
-                    cellsize_x=cellsize_x,
-                    cellsize_y=cellsize_y)
+def _run_cupy(data: cupy.ndarray,
+              cellsize_x: Union[int, float],
+              cellsize_y: Union[int, float]) -> cupy.ndarray:
 
-    out = agg.data.map_overlap(_func,
-                                depth=(1, 1),
-                                boundary=np.nan,
-                                meta=np.array(()))
-    return out
-
-
-def _run_numpy(agg, cellsize_x, cellsize_y):
-    out = _horn_slope(agg.data, cellsize_x, cellsize_y)
-    return out
-
-
-def _run_dask_cupy(agg, cellsize_x, cellsize_y):
-
-    raise NotImplementedError('Upstream bug in dask prevents cupy backed arrays')
-
-    _func = partial(_run_cupy,
-                    cellsize_x=cellsize_x,
-                    cellsize_y=cellsize_y)
-
-    out = agg.data.map_overlap(_func,
-                               depth=(1, 1),
-                               boundary=np.nan,
-                               dtype=cupy.float32,
-                               meta=cupy.array(()))
-    return out
-
-
-def _run_cupy(data, cellsize_x, cellsize_y):
-    cellsize_x_arr = np.array([float(cellsize_x)], dtype='f4')
-    cellsize_y_arr = np.array([float(cellsize_y)], dtype='f4')
+    cellsize_x_arr = cupy.array([float(cellsize_x)], dtype='f4')
+    cellsize_y_arr = cupy.array([float(cellsize_y)], dtype='f4')
 
     pad_rows = 3 // 2
     pad_cols = 3 // 2
@@ -121,26 +115,46 @@ def _run_cupy(data, cellsize_x, cellsize_y):
 
     griddim, blockdim = cuda_args(slope_data.shape)
     slope_agg = cupy.empty(slope_data.shape, dtype='f4')
-    slope_agg[:] = np.nan
+    slope_agg[:] = cupy.nan
 
-    _horn_slope_cuda[griddim, blockdim](slope_data,
-                                        cellsize_x_arr,
-                                        cellsize_y_arr,
-                                        slope_agg)
+    _run_gpu[griddim, blockdim](slope_data,
+                                cellsize_x_arr,
+                                cellsize_y_arr,
+                                slope_agg)
     out = slope_agg[pad_rows:-pad_rows, pad_cols:-pad_cols]
     return out
 
 
-def slope(agg, name='slope'):
+def _run_dask_cupy(data:da.Array,
+                   cellsize_x:Union[int, float],
+                   cellsize_y:Union[int, float]) -> da.Array:
+
+    msg = 'Upstream bug in dask prevents cupy backed arrays'
+    raise NotImplementedError(msg)
+
+    _func = partial(_run_cupy,
+                    cellsize_x=cellsize_x,
+                    cellsize_y=cellsize_y)
+
+    out = data.map_overlap(_func,
+                           depth=(1, 1),
+                           boundary=cupy.nan,
+                           dtype=cupy.float32,
+                           meta=cupy.array(()))
+    return out
+
+
+def slope(agg:xr.DataArray, name: str='slope') -> xr.DataArray:
     """Returns slope of input aggregate in degrees.
+
     Parameters
     ----------
-    agg : DataArray
+    agg : xr.DataArray
     name : str - name property of output xr.DataArray
 
     Returns
     -------
-    data: DataArray
+    data: xr.DataArray
 
     Notes:
     ------
@@ -151,47 +165,29 @@ def slope(agg, name='slope'):
       (Oxford University Press, New York), pp 406
     """
 
-    if not isinstance(agg, DataArray):
-        raise TypeError("agg must be instance of DataArray")
+    cellsize_x, cellsize_y = get_dataarray_resolution(agg)
 
-    if not agg.attrs.get('res'):
-        raise ValueError('input xarray must have `res` attr.')
-
-    # get cellsize out from 'res' attribute
-    cellsize = agg.attrs.get('res')
-    if isinstance(cellsize, tuple) and len(cellsize) == 2 \
-            and isinstance(cellsize[0], (int, float)) \
-            and isinstance(cellsize[1], (int, float)):
-        cellsize_x, cellsize_y = cellsize
-    elif isinstance(cellsize, (int, float)):
-        cellsize_x = cellsize
-        cellsize_y = cellsize
-    else:
-        raise ValueError('`res` attr of input xarray must be a numeric'
-                         ' or a tuple of numeric values.')
-
-    if isinstance(agg.data, da.Array):
-
-        # dask + cupy case
-        is_cupy = type(agg.data._meta).__module__.split('.')[0] == 'cupy'
-
-        if has_cuda() and is_cupy:
-            out = _run_dask_cupy(agg, cellsize_x, cellsize_y)
-
-        # dask + numpy case
-        else:
-            out = _run_dask_numpy(agg, cellsize_x, cellsize_y)
+    # numpy case
+    if isinstance(agg.data, np.ndarray):
+        out = _run_numpy(agg.data, cellsize_x, cellsize_y)
 
     # cupy case
     elif has_cuda() and isinstance(agg.data, cupy.ndarray):
         out = _run_cupy(agg.data, cellsize_x, cellsize_y)
 
-    # numpy case
-    else:
-        out = _run_numpy(agg, cellsize_x, cellsize_y)
+    # dask + cupy case
+    elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
+        out = _run_dask_cupy(agg.data, cellsize_x, cellsize_y)
+    
+    # dask + numpy case
+    elif isinstance(agg.data, da.Array):
+        out = _run_dask_numpy(agg.data, cellsize_x, cellsize_y)
 
-    return DataArray(out,
-                     name=name,
-                     coords=agg.coords,
-                     dims=agg.dims,
-                     attrs=agg.attrs)
+    else:
+        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
+
+    return xr.DataArray(out,
+                        name=name,
+                        coords=agg.coords,
+                        dims=agg.dims,
+                        attrs=agg.attrs)
