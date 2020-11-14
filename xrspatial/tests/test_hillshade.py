@@ -1,6 +1,8 @@
+import pytest
 import xarray as xr
 import numpy as np
 
+from xrspatial.utils import doesnt_have_cuda
 from xrspatial import hillshade
 
 
@@ -47,3 +49,24 @@ def test_hillshade():
         assert np.all(da_gaussian_shade[coord] == da_gaussian[coord])
     assert da_gaussian_shade.mean() > 0
     assert da_gaussian_shade[60, 60] > 0
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_hillshade_gpu_equals_cpu():
+
+    # input data
+    data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+                       [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
+                       [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
+                       [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
+                       [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                       [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                       [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
+                      dtype=np.float32)
+
+    small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+
+    cpu = hillshade(small_da, name='aspect_agg', use_cuda=False)
+    gpu = hillshade(small_da, name='aspect_agg', use_cuda=True)
+
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
