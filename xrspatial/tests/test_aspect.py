@@ -1,6 +1,7 @@
-import xarray as xr
+import dask.array as da
 import numpy as np
 import pytest
+import xarray as xr
 
 from xrspatial import aspect
 from xrspatial.utils import doesnt_have_cuda
@@ -326,3 +327,26 @@ def test_aspect_against_qgis_gpu():
 
     #assert (np.isnan(xrspatial_vals) | (
     #        (0. <= xrspatial_vals) & (xrspatial_vals <= 360.))).all()
+
+
+def test_numpy_equals_dask():
+
+    # input data
+    data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+                       [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
+                       [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
+                       [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
+                       [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                       [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                       [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
+                      dtype=np.float32)
+
+    small_numpy_based_data_array = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+    small_das_based_data_array = xr.DataArray(da.from_array(data, chunks=(2, 2)),
+                                              attrs={'res': (10.0, 10.0)})
+
+    numpy_result = aspect(small_numpy_based_data_array, name='numpy_slope', use_cuda=False)
+    dask_result = aspect(small_das_based_data_array, name='dask_slope', use_cuda=False)
+    dask_result.data = dask_result.data.compute()
+
+    assert np.isclose(numpy_result, dask_result, equal_nan=True).all()
