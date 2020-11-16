@@ -6,6 +6,7 @@
 [![PyPI version](https://badge.fury.io/py/xarray-spatial.svg)](https://badge.fury.io/py/xarray-spatial)
 [![Downloads](https://img.shields.io/pypi/dm/xarray-spatial.svg)]()
 [![License](https://img.shields.io/pypi/l/xarray-spatial.svg)]()
+[![History of OS GIS Timeline](img/featured-badge-gh.svg)](https://makepath.com/history-of-open-source-gis/)
 
 
 -------
