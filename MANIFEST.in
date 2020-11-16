@@ -9,6 +9,7 @@ prune *.egg-info
 global-exclude *.png
 prune conda.recipe
 prune examples
+prune img
 
 exclude xrspatial/_version.py
 exclude tile_idea.py
