@@ -64,7 +64,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 #### Supported Spatial Functions with Supported Inputs
 
-| Name / Module | Numpy-backed xr.DataArray | Dask-backed xr.DataArray | Cupy-backed GPU xr.DataArray | Dask-based GPU xr.DataArray |
+| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Aspect / aspect.py](xrspatial/aspect.py) | YES | NO | YES | NO |
 | [Bump Mapping / bump.py](xrspatial/bump.py) | YES | NO | NO | NO |
