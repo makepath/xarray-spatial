@@ -88,7 +88,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Normalized Difference Vegetation Index (NDVI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
 | [Soil Adjusted Vegetation Index (SAVI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
 | [Structure Insensitive Pigment Index (SIPI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
-| [Pathfinding / pathfinding.py](xrspatial/pathfinding.py) | YES | NO  | NO | NO |
+| [A* Pathfinging / pathfinding.py](xrspatial/pathfinding.py) | YES | NO  | NO | NO |
 | [Perlin Noise / perlin.py](xrspatial/perlin.py) | YES | NO  | NO | NO |
 | [Allocation / proximity.py](xrspatial/proximity.py) | YES | NO  | NO | NO |
 | [Direction / proximity.py](xrspatial/proximity.py) | YES | NO  | NO | NO |
