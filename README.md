@@ -62,9 +62,9 @@ Rasters are regularly gridded datasets like GeoTIFFs, JPGs, and PNGs.
 
 In the GIS world, rasters are used for representing continuous phenomena (e.g. elevation, rainfall, distance), either directly as numerical values, or as RGB images created for humans to view. Rasters typically have two spatial dimensions, but may have any number of other dimensions (time, type of measurement, etc.)
 
-#### Supported Spatial Functions
+#### Supported Spatial Functions with Supported Inputs
 
-| Name / Module | xr.DataArary Support | xr.Dataset Support | GPU Support (CUDA)| Dask Support|
+| Name / Module | Numpy-backed xr.DataArray | Dask-backed xr.DataArray | Cupy-backed GPU xr.DataArray | Dask-based GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Aspect / aspect.py](xrspatial/aspect.py) | YES | NO | YES | NO |
 | [Bump Mapping / bump.py](xrspatial/bump.py) | YES | NO | NO | NO |
@@ -77,7 +77,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Hotspots / focal.py](xrspatial/focal.py) | YES | NO | NO | NO |
 | [Mean / focal.py](xrspatial/focal.py) | YES | NO  | NO | NO |
 | [Focal Statistics / focal.py](xrspatial/focal.py) | YES | NO  | YES | NO |
-| [Hillshade / hillshade.py](xrspatial/hillshade.py) | YES | NO  | NO | YES |
+| [Hillshade / hillshade.py](xrspatial/hillshade.py) | YES | YES  | NO | NO |
 | [Atmospherically Resistant Vegetation Index (ARVI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
 | [Enhanced Built-Up and Bareness Index (EBBI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
 | [Enhanced Vegetation Index (EVI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
@@ -93,7 +93,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Allocation / proximity.py](xrspatial/proximity.py) | YES | NO  | NO | NO |
 | [Direction / proximity.py](xrspatial/proximity.py) | YES | NO  | NO | NO |
 | [Proximity / proximity.py](xrspatial/proximity.py) | YES | NO  | NO | NO |
-| [Slope / slope.py](xrspatial/slope.py) | YES  | NO  | YES | YES |
+| [Slope / slope.py](xrspatial/slope.py) | YES  | YES  | YES | NO |
 | [Terrain Generation / terrain.py](xrspatial/terrain.py) | YES | NO  | NO | NO |
 | [Viewshed / viewshed.py](xrspatial/viewshed.py) | YES | NO  | NO | NO |
 | [Apply / zonal.py](xrspatial/zonal.py) | YES | NO  | NO | NO |
