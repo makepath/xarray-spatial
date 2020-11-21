@@ -1,6 +1,9 @@
 import pandas as pd
 import requests
 
+import xarray as xr
+from xrspatial.utils import doesnt_have_arcpy
+
 
 def featureset_to_dataframe(featureset, convert_geometry=False,
                             use_aliases=False):
@@ -57,3 +60,23 @@ def query_layer(layer, where, token=None, outFields='*', chunkSize=100,
         featureset['features'] = []
 
     return featureset
+
+
+def arcpy_to_xarray(arcpy_raster) -> xr.DataArray:
+    '''
+    https://pro.arcgis.com/en/pro-app/arcpy/functions/rastertonumpyarray-function.htm
+    '''
+    raise NotImplementedError('Not currently implemented')
+
+    if doesnt_have_arcpy():
+        raise ImportError('To use this function you must have access to arcpy')
+
+
+def xarray_to_arcpy(raster: xr.DataArray):
+    '''
+    https://pro.arcgis.com/en/pro-app/arcpy/functions/numpyarraytoraster-function.htm
+    '''
+    raise NotImplementedError('Not currently implemented')
+
+    if doesnt_have_arcpy():
+        raise ImportError('To use this function you must have access to arcpy')

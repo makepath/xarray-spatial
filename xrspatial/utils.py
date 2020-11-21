@@ -38,6 +38,19 @@ def doesnt_have_cuda():
     return not has_cuda()
 
 
+def has_arcpy():
+    """Check for arcpy support. If none found, return False"""
+    try:
+        import arcpy
+        return True
+    except ImportError:
+        return False
+
+
+def doesnt_have_arcpy():
+    return not has_arcpy()
+
+
 def cuda_args(shape):
     """
     Compute the blocks-per-grid and threads-per-block parameters for use when
