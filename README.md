@@ -4,6 +4,15 @@
 [![Build Status](https://travis-ci.org/makepath/xarray-spatial.svg?branch=master)](https://travis-ci.org/makepath/xarray-spatial)
 [![Build status](https://ci.appveyor.com/api/projects/status/4aco2mfbk14vds77?svg=true)](https://ci.appveyor.com/project/brendancol/xarray-spatial)
 [![PyPI version](https://badge.fury.io/py/xarray-spatial.svg)](https://badge.fury.io/py/xarray-spatial)
+[![Downloads](https://img.shields.io/pypi/dm/xarray-spatial.svg)]()
+[![License](https://img.shields.io/pypi/l/xarray-spatial.svg)]()
+
+-------
+
+
+[![History of OS GIS Timeline](img/featured-badge-gh.svg)](https://makepath.com/history-of-open-source-gis/)
+
+
 -------
 ![title](composite_map.gif)
 -------
@@ -53,46 +62,46 @@ Rasters are regularly gridded datasets like GeoTIFFs, JPGs, and PNGs.
 
 In the GIS world, rasters are used for representing continuous phenomena (e.g. elevation, rainfall, distance), either directly as numerical values, or as RGB images created for humans to view. Rasters typically have two spatial dimensions, but may have any number of other dimensions (time, type of measurement, etc.)
 
-#### Supported Spatial Functions
+#### Supported Spatial Functions with Supported Inputs
 
-| Name | Module | xr.DataArary Supported | xr.Dataset Supported | GPU Supported (CUDA)|
-|:-----|:------:|:----------------------:|:--------------------:|:-------------------:|
-| [Aspect](xrspatial/aspect.py) | [aspect.py](xrspatial/aspect.py) | YES | NO | NO |
-| [Bump Mapping](xrspatial/bump.py) | [bump.py](xrspatial/bump.py) | YES | NO | NO |
-| [Equal Interval](xrspatial/classify.py) | [classify.py](xrspatial/classify.py) | YES | NO | NO |
-| [Natural Breaks](xrspatial/classify.py) | [classify.py](xrspatial/classify.py) | YES | NO | NO |
-| [Reclassify](xrspatial/classify.py) | [classify.py](xrspatial/classify.py) | YES | NO | NO |
-| [Quantile](xrspatial/classify.py) | [classify.py](xrspatial/classify.py) | YES | NO | NO |
-| [Curvature](xrspatial/curvature.py) |[curvature.py](xrspatial/curvature.py) | YES | NO | NO |
-| [Apply](xrspatial/focal.py) | [focal.py](xrspatial/focal.py) | YES | NO | NO |
-| [Hotspots](xrspatial/focal.py) | [focal.py](xrspatial/focal.py) | YES | NO | NO |
-| [Mean](xrspatial/focal.py) | [focal.py](xrspatial/focal.py) | YES | NO  | NO |
-| [Focal Statistics](xrspatial/focal.py) | [focal.py](xrspatial/focal.py) | YES | NO  | YES |
-| [Hillshade](xrspatial/hillshade.py) | [hillshade.py](xrspatial/hillshade.py) | YES | NO  | NO |
-| [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | [multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES |
-| [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | [multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES |
-| [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | [multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES |
-| [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | [multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES |
-| [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | [multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES |
-| [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | [multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES |
-| [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | [multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES |
-| [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | [multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES |
-| [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | [multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES |
-| [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | [multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES |
-| [Pathfinding](xrspatial/pathfinding.py) | [pathfinding.py](xrspatial/pathfinding.py) | YES | NO  | NO |
-| [Perlin Noise](xrspatial/perlin.py) | [perlin.py](xrspatial/perlin.py) | YES | NO  | NO |
-| [Allocation](xrspatial/proximity.py) | [proximity.py](xrspatial/proximity.py) | YES | NO  | NO |
-| [Direction](xrspatial/proximity.py) | [proximity.py](xrspatial/proximity.py) | YES | NO  | NO |
-| [Proximity](xrspatial/proximity.py) | [proximity.py](xrspatial/proximity.py) | YES | NO  | NO |
-| [Slope](xrspatial/slope.py) | [slope.py](xrspatial/slope.py) | YES  | NO  | YES |
-| [Terrain Generation](xrspatial/terrain.py) | [terrain.py](xrspatial/terrain.py) | YES | NO  | NO |
-| [Viewshed](xrspatial/viewshed.py) | [viewshed.py](xrspatial/viewshed.py) | YES | NO  | NO |
-| [Apply](xrspatial/zonal.py) | [zonal.py](xrspatial/zonal.py) | YES | NO  | NO |
-| [Crop](xrspatial/zonal.py) | [zonal.py](xrspatial/zonal.py) | YES | NO  | NO |
-| [Regions](xrspatial/zonal.py) | [zonal.py](xrspatial/zonal.py) | YES | NO  | NO |
-| [Trim](xrspatial/zonal.py) | [zonal.py](xrspatial/zonal.py) | YES | NO  | NO |
-| [Zonal Statistics](xrspatial/zonal.py) | [zonal.py](xrspatial/zonal.py) | YES | NO  | NO |
-| [Zonal Cross Tabulate](xrspatial/zonal.py) | [zonal.py](xrspatial/zonal.py) | YES | NO  | NO |
+| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Aspect / aspect.py](xrspatial/aspect.py) | YES | NO | YES | NO |
+| [Bump Mapping / bump.py](xrspatial/bump.py) | YES | NO | NO | NO |
+| [Equal Interval / classify.py](xrspatial/classify.py) | YES | NO | NO | NO |
+| [Natural Breaks / classify.py](xrspatial/classify.py) | YES | NO | NO | NO |
+| [Reclassify / classify.py](xrspatial/classify.py) | YES | NO | NO | NO |
+| [Quantile / classify.py](xrspatial/classify.py) | YES | NO | NO | NO |
+| [Curvature / curvature.py](xrspatial/curvature.py) | YES | NO | NO | NO |
+| [Apply / focal.py](xrspatial/focal.py) | YES | NO | NO | NO |
+| [Hotspots / focal.py](xrspatial/focal.py) | YES | NO | NO | NO |
+| [Mean / focal.py](xrspatial/focal.py) | YES | NO  | NO | NO |
+| [Focal Statistics / focal.py](xrspatial/focal.py) | YES | NO  | YES | NO |
+| [Hillshade / hillshade.py](xrspatial/hillshade.py) | YES | YES  | NO | NO |
+| [Atmospherically Resistant Vegetation Index (ARVI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
+| [Enhanced Built-Up and Bareness Index (EBBI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
+| [Enhanced Vegetation Index (EVI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
+| [Green Chlorophyll Index (GCI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
+| [Normalized Burn Ratio (NBR) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
+| [Normalized Burn Ratio 2 (NBR2) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
+| [Normalized Difference Moisture Index (NDMI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
+| [Normalized Difference Vegetation Index (NDVI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
+| [Soil Adjusted Vegetation Index (SAVI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
+| [Structure Insensitive Pigment Index (SIPI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
+| [A* Pathfinging / pathfinding.py](xrspatial/pathfinding.py) | YES | NO  | NO | NO |
+| [Perlin Noise / perlin.py](xrspatial/perlin.py) | YES | NO  | NO | NO |
+| [Allocation / proximity.py](xrspatial/proximity.py) | YES | NO  | NO | NO |
+| [Direction / proximity.py](xrspatial/proximity.py) | YES | NO  | NO | NO |
+| [Proximity / proximity.py](xrspatial/proximity.py) | YES | NO  | NO | NO |
+| [Slope / slope.py](xrspatial/slope.py) | YES  | YES  | YES | NO |
+| [Terrain Generation / terrain.py](xrspatial/terrain.py) | YES | NO  | NO | NO |
+| [Viewshed / viewshed.py](xrspatial/viewshed.py) | YES | NO  | NO | NO |
+| [Apply / zonal.py](xrspatial/zonal.py) | YES | NO  | NO | NO |
+| [Crop / zonal.py](xrspatial/zonal.py) | YES | NO  | NO | NO |
+| [Regions / zonal.py](xrspatial/zonal.py) | YES | NO  | NO | NO |
+| [Trim / zonal.py](xrspatial/zonal.py) | YES | NO  | NO | NO |
+| [Zonal Statistics / zonal.py](xrspatial/zonal.py) | YES | NO  | NO | NO |
+| [Zonal Cross Tabulate / zonal.py](xrspatial/zonal.py) | YES | NO  | NO | NO |
 
 
 #### Usage
