@@ -1,25 +1,18 @@
 import pytest
 import numpy as np
 import xarray as xr
+
 from xrspatial import curvature
 from xrspatial.utils import doesnt_have_cuda
 
-
-def test_curvature_invalid_input_raster():
-    invalid_raster_type = np.array([0, 1, 2, 3])
-    with pytest.raises(Exception) as e_info:
-        curvature(invalid_raster_type)
-        assert e_info
-
-    invalid_raster_dtype = xr.DataArray(np.array([['cat', 'dog']]))
-    with pytest.raises(Exception) as e_info:
-        curvature(invalid_raster_dtype)
-        assert e_info
-
-    invalid_raster_shape = xr.DataArray(np.array([0, 0]))
-    with pytest.raises(Exception) as e_info:
-        curvature(invalid_raster_shape)
-        assert e_info
+elevation = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+                        [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
+                        [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
+                        [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
+                        [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                        [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                        [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
+                       dtype=np.float32)
 
 
 def test_curvature_on_flat_surface():
@@ -29,7 +22,7 @@ def test_curvature_on_flat_surface():
                           [0, 0, 0, 0, 0],
                           [0, 0, 0, 0, 0],
                           [0, 0, 0, 0, 0]])
-    test_raster1 = xr.DataArray(test_arr1)
+    test_raster1 = xr.DataArray(test_arr1, attrs={'res': (1, 1)})
     curv = curvature(test_raster1)
 
     # output must be an xarray DataArray
@@ -61,7 +54,7 @@ def test_curvature_on_convex_surface():
                           [0, 0, 0, 0, 0],
                           [0, 0, 0, 0, 0]])
 
-    test_raster2 = xr.DataArray(test_arr2)
+    test_raster2 = xr.DataArray(test_arr2, attrs={'res': (1, 1)})
     curv = curvature(test_raster2)
 
     # output must be an xarray DataArray
@@ -112,7 +105,7 @@ def test_curvature_on_concave_surface():
                           [0, 0, 0, 0, 0],
                           [0, 0, 0, 0, 0]])
 
-    test_raster3 = xr.DataArray(test_arr3)
+    test_raster3 = xr.DataArray(test_arr3, attrs={'res': (1, 1)})
     curv = curvature(test_raster3)
 
     # output must be an xarray DataArray
@@ -157,19 +150,15 @@ def test_curvature_on_concave_surface():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_curvature_gpu_equals_cpu():
-    # input data
-    data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-                       [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
-                       [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
-                       [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
-                       [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-                       [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-                       [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
-                      dtype=np.float32)
 
-    small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+    import cupy
 
-    cpu = curvature(small_da, use_cuda=False)
-    gpu = curvature(small_da, use_cuda=True)
+    small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    cpu = curvature(small_da, name='numpy_result')
+
+    small_da_cupy = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    gpu = curvature(small_da_cupy, name='cupy_result')
+
+    assert isinstance(gpu.data, cupy.ndarray)
 
     assert np.isclose(cpu, gpu, equal_nan=True).all()
