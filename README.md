@@ -64,20 +64,27 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 #### Supported Spatial Functions with Supported Inputs
 
+##### Classification
 | Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Aspect / aspect.py](xrspatial/aspect.py) | YES | NO | YES | NO |
-| [Bump Mapping / bump.py](xrspatial/bump.py) | YES | NO | NO | NO |
 | [Equal Interval / classify.py](xrspatial/classify.py) | YES | NO | NO | NO |
 | [Natural Breaks / classify.py](xrspatial/classify.py) | YES | NO | NO | NO |
 | [Reclassify / classify.py](xrspatial/classify.py) | YES | NO | NO | NO |
 | [Quantile / classify.py](xrspatial/classify.py) | YES | NO | NO | NO |
-| [Curvature / curvature.py](xrspatial/curvature.py) | YES | NO | NO | NO |
+
+
+##### Focal
+| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Apply / focal.py](xrspatial/focal.py) | YES | NO | NO | NO |
 | [Hotspots / focal.py](xrspatial/focal.py) | YES | NO | NO | NO |
 | [Mean / focal.py](xrspatial/focal.py) | YES | NO  | NO | NO |
 | [Focal Statistics / focal.py](xrspatial/focal.py) | YES | NO  | YES | NO |
-| [Hillshade / hillshade.py](xrspatial/hillshade.py) | YES | YES  | NO | NO |
+
+
+##### Multispectral
+| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Atmospherically Resistant Vegetation Index (ARVI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
 | [Enhanced Built-Up and Bareness Index (EBBI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
 | [Enhanced Vegetation Index (EVI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
@@ -88,14 +95,43 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Normalized Difference Vegetation Index (NDVI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
 | [Soil Adjusted Vegetation Index (SAVI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
 | [Structure Insensitive Pigment Index (SIPI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
-| [A* Pathfinging / pathfinding.py](xrspatial/pathfinding.py) | YES | NO  | NO | NO |
+
+
+##### Misc.
+| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Perlin Noise / perlin.py](xrspatial/perlin.py) | YES | NO  | NO | NO |
+| [Bump Mapping / bump.py](xrspatial/bump.py) | YES | NO | NO | NO |
+
+
+##### Pathfinding
+| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [A* Pathfinging / pathfinding.py](xrspatial/pathfinding.py) | YES | NO  | NO | NO |
+
+
+##### Proximity
+| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Allocation / proximity.py](xrspatial/proximity.py) | YES | NO  | NO | NO |
 | [Direction / proximity.py](xrspatial/proximity.py) | YES | NO  | NO | NO |
 | [Proximity / proximity.py](xrspatial/proximity.py) | YES | NO  | NO | NO |
+
+
+##### Surface
+| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Aspect / aspect.py](xrspatial/aspect.py) | YES | NO | YES | NO |
+| [Curvature / curvature.py](xrspatial/curvature.py) | YES | NO | NO | NO |
+| [Hillshade / hillshade.py](xrspatial/hillshade.py) | YES | YES  | NO | NO |
 | [Slope / slope.py](xrspatial/slope.py) | YES  | YES  | YES | NO |
 | [Terrain Generation / terrain.py](xrspatial/terrain.py) | YES | NO  | NO | NO |
 | [Viewshed / viewshed.py](xrspatial/viewshed.py) | YES | NO  | NO | NO |
+
+
+##### Zonal
+| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Apply / zonal.py](xrspatial/zonal.py) | YES | NO  | NO | NO |
 | [Crop / zonal.py](xrspatial/zonal.py) | YES | NO  | NO | NO |
 | [Regions / zonal.py](xrspatial/zonal.py) | YES | NO  | NO | NO |
