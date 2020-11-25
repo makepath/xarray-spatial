@@ -67,7 +67,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 ##### **Classification**
 -------
 
-| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+| Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Equal Interval](xrspatial/classify.py) | YES | NO | NO | NO |
 | [Natural Breaks](xrspatial/classify.py) | YES | NO | NO | NO |
@@ -78,7 +78,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 ##### **Focal**
 -------
 
-| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+| Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Apply](xrspatial/focal.py) | YES | NO | NO | NO |
 | [Hotspots](xrspatial/focal.py) | YES | NO | NO | NO |
@@ -89,7 +89,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 ##### **Multispectral**
 -------
 
-| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+| Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | YES | NO  | YES | NO |
 | [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | YES | NO  | YES | NO |
@@ -107,7 +107,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 ##### **Pathfinding**
 ----------
 
-| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+| Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [A* Pathfinging](xrspatial/pathfinding.py) | YES | NO  | NO | NO |
 
@@ -115,7 +115,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 ##### **Proximity**
 --------
 
-| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+| Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Allocation](xrspatial/proximity.py) | YES | NO  | NO | NO |
 | [Direction](xrspatial/proximity.py) | YES | NO  | NO | NO |
@@ -125,7 +125,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 ##### **Surface**
 -----------
 
-| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+| Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Aspect](xrspatial/aspect.py) | YES | NO | YES | NO |
 | [Curvature](xrspatial/curvature.py) | YES | NO | NO | NO |
@@ -140,7 +140,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 ##### **Zonal**
 -----------
 
-| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+| Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Apply](xrspatial/zonal.py) | YES | NO  | NO | NO |
 | [Crop](xrspatial/zonal.py) | YES | NO  | NO | NO |
