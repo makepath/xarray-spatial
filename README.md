@@ -64,7 +64,9 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 #### Supported Spatial Functions with Supported Inputs
 
-##### Classification
+##### **Classification**
+-------
+
 | Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Equal Interval / classify.py](xrspatial/classify.py) | YES | NO | NO | NO |
@@ -73,7 +75,9 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Quantile / classify.py](xrspatial/classify.py) | YES | NO | NO | NO |
 
 
-##### Focal
+##### **Focal**
+-------
+
 | Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Apply / focal.py](xrspatial/focal.py) | YES | NO | NO | NO |
@@ -82,7 +86,9 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Focal Statistics / focal.py](xrspatial/focal.py) | YES | NO  | YES | NO |
 
 
-##### Multispectral
+##### **Multispectral**
+-------
+
 | Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Atmospherically Resistant Vegetation Index (ARVI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
@@ -97,20 +103,18 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Structure Insensitive Pigment Index (SIPI) / multispectral.py](xrspatial/multispectral.py) | YES | NO  | YES | NO |
 
 
-##### Misc.
-| Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Perlin Noise / perlin.py](xrspatial/perlin.py) | YES | NO  | NO | NO |
-| [Bump Mapping / bump.py](xrspatial/bump.py) | YES | NO | NO | NO |
 
+##### **Pathfinding**
+----------
 
-##### Pathfinding
 | Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [A* Pathfinging / pathfinding.py](xrspatial/pathfinding.py) | YES | NO  | NO | NO |
 
 
-##### Proximity
+##### **Proximity**
+--------
+
 | Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Allocation / proximity.py](xrspatial/proximity.py) | YES | NO  | NO | NO |
@@ -118,7 +122,9 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Proximity / proximity.py](xrspatial/proximity.py) | YES | NO  | NO | NO |
 
 
-##### Surface
+##### **Surface**
+-----------
+
 | Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Aspect / aspect.py](xrspatial/aspect.py) | YES | NO | YES | NO |
@@ -127,9 +133,13 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Slope / slope.py](xrspatial/slope.py) | YES  | YES  | YES | NO |
 | [Terrain Generation / terrain.py](xrspatial/terrain.py) | YES | NO  | NO | NO |
 | [Viewshed / viewshed.py](xrspatial/viewshed.py) | YES | NO  | NO | NO |
+| [Perlin Noise / perlin.py](xrspatial/perlin.py) | YES | NO  | NO | NO |
+| [Bump Mapping / bump.py](xrspatial/bump.py) | YES | NO | NO | NO |
 
 
-##### Zonal
+##### **Zonal**
+-----------
+
 | Name / Module | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Apply / zonal.py](xrspatial/zonal.py) | YES | NO  | NO | NO |
