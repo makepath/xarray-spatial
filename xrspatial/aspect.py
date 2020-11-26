@@ -3,21 +3,31 @@ from math import pi
 import numpy as np
 import numba as nb
 
+from functools import partial 
+
 import dask.array as da
 
 from numba import cuda
 
+import xarray as xr
 from xarray import DataArray
 
 from xrspatial.utils import ngjit
 from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
 
+# 3rd-party
+try:
+    import cupy
+except ImportError:
+    class cupy(object):
+        ndarray = False
+
 RADIAN = 180 / np.pi
 
 
 @ngjit
-def _horn_aspect(data):
+def _cpu(data):
     out = np.zeros_like(data, dtype=np.float64)
     out[:] = np.nan
     rows, cols = data.shape
@@ -53,7 +63,7 @@ def _horn_aspect(data):
 
 
 @cuda.jit(device=True)
-def _gpu_aspect(arr):
+def _gpu(arr):
 
     a = arr[0, 0]
     b = arr[0, 1]
@@ -91,7 +101,7 @@ def _gpu_aspect(arr):
 
 
 @cuda.jit
-def _horn_aspect_cuda(arr, out):
+def _run_gpu(arr, out):
     minus_one = nb.float32(-1.)
     i, j = cuda.grid(2)
     di = 1
@@ -101,8 +111,60 @@ def _horn_aspect_cuda(arr, out):
         out[i, j] = _gpu_aspect(arr[i-di:i+di+1, j-dj:j+dj+1])
 
 
+def _run_cupy(data: cupy.ndarray) -> cupy.ndarray:
 
-def aspect(agg, name='aspect', use_cuda=True, pad=True, use_cupy=True):
+    pad_rows = 3 // 2
+    pad_cols = 3 // 2
+    pad_width = ((pad_rows, pad_rows),
+                (pad_cols, pad_cols))
+
+    _data = np.pad(data, pad_width=pad_width, mode="reflect")
+
+    griddim, blockdim = cuda_args(_data.shape)
+    agg = cupy.empty(_data.shape, dtype='f4')
+    agg[:] = cupy.nan
+
+    _run_gpu[griddim, blockdim](_data,
+                                cellsize_x_arr,
+                                cellsize_y_arr,
+                                agg)
+    out = agg[pad_rows:-pad_rows, pad_cols:-pad_cols]
+    return out
+
+
+def _run_dask_cupy(data:da.Array) -> da.Array:
+
+    msg = 'Upstream bug in dask prevents cupy backed arrays'
+    raise NotImplementedError(msg)
+
+    _func = partial(_run_cupy,
+                    cellsize_x=cellsize_x,
+                    cellsize_y=cellsize_y)
+
+    out = data.map_overlap(_func,
+                           depth=(1, 1),
+                           boundary=cupy.nan,
+                           dtype=cupy.float32,
+                           meta=cupy.array(()))
+    return out
+
+
+def _run_numpy(data:np.ndarray)-> np.ndarray:
+    out = _cpu(data)
+    return out
+
+
+def _run_dask_numpy(data:da.Array) -> da.Array:
+    _func = partial(_cpu)
+
+    out = data.map_overlap(_func,
+                           depth=(1, 1),
+                           boundary=np.nan,
+                           meta=np.array(()))
+    return out
+
+
+def aspect(agg: xr.DataArray, name:str ='aspect'):
     """Returns downward slope direction in compass degrees (0 - 360) with 0 at 12 o'clock.
 
     Parameters
@@ -120,46 +182,27 @@ def aspect(agg, name='aspect', use_cuda=True, pad=True, use_cupy=True):
      - Burrough, P. A., and McDonell, R. A., 1998. Principles of Geographical Information Systems (Oxford University Press, New York), pp 406
     """
 
-    if not isinstance(agg, DataArray):
-        raise TypeError("agg must be instance of DataArray")
+    # numpy case
+    if isinstance(agg.data, np.ndarray):
+        out = _run_numpy(agg.data)
 
-    if has_cuda() and use_cuda:
+    # cupy case
+    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
+        out = _run_cupy(agg.data)
 
-        if pad:
-            pad_rows = 3 // 2
-            pad_cols = 3 // 2
-            pad_width = ((pad_rows, pad_rows),
-                        (pad_cols, pad_cols))
-        else:
-            # If padding is not desired, set pads to 0
-            pad_rows = 0
-            pad_cols = 0
-            pad_width = 0
-
-        data = np.pad(agg.data, pad_width=pad_width, mode="reflect")
-
-        griddim, blockdim = cuda_args(data.shape)
-        out = np.empty(data.shape, dtype='f4')
-        out[:] = np.nan
-
-        if use_cupy:
-            import cupy
-            out = cupy.asarray(out)
-
-        _horn_aspect_cuda[griddim, blockdim](data, out)
-        if pad:
-            out = out[pad_rows:-pad_rows, pad_cols:-pad_cols]
-
+    # dask + cupy case
+    elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
+        out = _run_dask_cupy(agg.data)
+    
+    # dask + numpy case
     elif isinstance(agg.data, da.Array):
-        out = agg.data.map_overlap(_horn_aspect,
-                                   depth=(1, 1),
-                                   boundary=np.nan,
-                                   meta=np.array(()))
-    else:
-        out = _horn_aspect(agg.data)
+        out = _run_dask_numpy(agg.data)
 
-    return DataArray(out,
-                     name=name,
-                     dims=agg.dims,
-                     coords=agg.coords,
-                     attrs=agg.attrs)
+    else:
+        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
+
+    return xr.DataArray(out,
+                        name=name,
+                        coords=agg.coords,
+                        dims=agg.dims,
+                        attrs=agg.attrs)

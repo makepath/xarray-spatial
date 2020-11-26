@@ -44,7 +44,7 @@ def test_aspect_transfer_function():
     Assert aspect transfer function
     """
     da = xr.DataArray(data_gaussian, dims=['y', 'x'], attrs={'res': 1})
-    da_aspect = aspect(da, use_cuda=False)
+    da_aspect = aspect(da)
     # default name
     assert da_aspect.name == 'aspect'
     assert da_aspect.dims == da.dims
@@ -80,7 +80,7 @@ def test_aspect_against_qgis():
         dtype=np.float32)
 
     # aspect by xrspatial
-    xrspatial_aspect = aspect(small_da, name='aspect_agg', use_cuda=False)
+    xrspatial_aspect = aspect(small_da, name='aspect_agg')
 
     # validate output attributes
     assert xrspatial_aspect.dims == small_da.dims
@@ -179,7 +179,7 @@ def test_aspect_against_qgis():
         dtype=np.float32)
 
     # aspect by xrspatial
-    xrspatial_aspect = aspect(small_da, name='aspect_agg', use_cuda=False)
+    xrspatial_aspect = aspect(small_da, name='aspect_agg')
 
     # validate output attributes
     assert xrspatial_aspect.dims == small_da.dims
@@ -204,7 +204,11 @@ def test_aspect_against_qgis():
     assert (np.isnan(xrspatial_vals) | (
             (0 <= xrspatial_vals) & (xrspatial_vals <= 360) | (xrspatial_vals == -1))).all()
 
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_aspect_against_qgis_gpu():
+    import cupy
+
     # input data
     data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
                        [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
@@ -214,7 +218,9 @@ def test_aspect_against_qgis_gpu():
                        [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
                        [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
                       dtype=np.float32)
+
     small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+    small_da_cupy = xr.DataArray(cupy.asarray(data), attrs={'res': (10.0, 10.0)})
 
     # aspect by QGIS
     qgis_aspect = np.asarray([
@@ -228,8 +234,7 @@ def test_aspect_against_qgis_gpu():
         dtype=np.float32)
 
     # aspect by xrspatial
-    # xrspatial_aspect = aspect(small_da, name='aspect_agg', use_cuda=True)
-    xrspatial_aspect = aspect(small_da, name='aspect_agg', use_cuda=True)
+    xrspatial_aspect = aspect(small_da_cupy, name='aspect_agg')
 
     # validate output attributes
     assert xrspatial_aspect.dims == small_da.dims
@@ -258,6 +263,8 @@ def test_aspect_against_qgis_gpu():
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_aspect_gpu_equals_cpu():
 
+    import cupy
+
     # input data
     data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
                        [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
@@ -269,10 +276,11 @@ def test_aspect_gpu_equals_cpu():
                       dtype=np.float32)
 
     small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+    small_da_cupy = xr.DataArray(cupy.asarray(data), attrs={'res': (10.0, 10.0)})
 
     # aspect by xrspatial
-    xrspatial_aspect_cpu = aspect(small_da, name='aspect_agg', use_cuda=False)
-    xrspatial_aspect_gpu = aspect(small_da, name='aspect_agg', use_cuda=True)
+    xrspatial_aspect_cpu = aspect(small_da, name='aspect_agg')
+    xrspatial_aspect_gpu = aspect(small_da_cupy, name='aspect_agg')
 
     assert np.isclose(xrspatial_aspect_cpu, xrspatial_aspect_gpu, equal_nan=True).all()
 
@@ -289,6 +297,7 @@ def test_aspect_against_qgis_gpu():
                        [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
                       dtype=np.float32)
     small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+    small_da_cupy = xr.DataArray(cupy.asarray(data), attrs={'res': (10.0, 10.0)})
 
     # aspect by QGIS
     qgis_aspect = np.asarray([
@@ -302,8 +311,7 @@ def test_aspect_against_qgis_gpu():
         dtype=np.float32)
 
     # aspect by xrspatial
-    # xrspatial_aspect = aspect(small_da, name='aspect_agg', use_cuda=True)
-    xrspatial_aspect = aspect(small_da, name='aspect_agg', use_cuda=True)
+    xrspatial_aspect = aspect(small_da_cupy, name='aspect_agg')
 
     # validate output attributes
     assert xrspatial_aspect.dims == small_da.dims
@@ -345,8 +353,8 @@ def test_numpy_equals_dask():
     small_das_based_data_array = xr.DataArray(da.from_array(data, chunks=(2, 2)),
                                               attrs={'res': (10.0, 10.0)})
 
-    numpy_result = aspect(small_numpy_based_data_array, name='numpy_slope', use_cuda=False)
-    dask_result = aspect(small_das_based_data_array, name='dask_slope', use_cuda=False)
+    numpy_result = aspect(small_numpy_based_data_array, name='numpy_slope')
+    dask_result = aspect(small_das_based_data_array, name='dask_slope')
     dask_result.data = dask_result.data.compute()
 
     assert np.isclose(numpy_result, dask_result, equal_nan=True).all()
