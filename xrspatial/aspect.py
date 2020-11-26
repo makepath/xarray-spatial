@@ -15,6 +15,8 @@ from xarray import DataArray
 from xrspatial.utils import ngjit
 from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
+from xrspatial.utils import is_cupy_backed
+
 
 # 3rd-party
 try:
@@ -102,13 +104,12 @@ def _gpu(arr):
 
 @cuda.jit
 def _run_gpu(arr, out):
-    minus_one = nb.float32(-1.)
     i, j = cuda.grid(2)
     di = 1
     dj = 1
     if (i-di >= 1 and i+di < out.shape[0] - 1 and 
         j-dj >= 1 and j+dj < out.shape[1] - 1):
-        out[i, j] = _gpu_aspect(arr[i-di:i+di+1, j-dj:j+dj+1])
+        out[i, j] = _gpu(arr[i-di:i+di+1, j-dj:j+dj+1])
 
 
 def _run_cupy(data: cupy.ndarray) -> cupy.ndarray:
@@ -124,10 +125,7 @@ def _run_cupy(data: cupy.ndarray) -> cupy.ndarray:
     agg = cupy.empty(_data.shape, dtype='f4')
     agg[:] = cupy.nan
 
-    _run_gpu[griddim, blockdim](_data,
-                                cellsize_x_arr,
-                                cellsize_y_arr,
-                                agg)
+    _run_gpu[griddim, blockdim](_data, agg)
     out = agg[pad_rows:-pad_rows, pad_cols:-pad_cols]
     return out
 
@@ -137,9 +135,9 @@ def _run_dask_cupy(data:da.Array) -> da.Array:
     msg = 'Upstream bug in dask prevents cupy backed arrays'
     raise NotImplementedError(msg)
 
-    _func = partial(_run_cupy,
-                    cellsize_x=cellsize_x,
-                    cellsize_y=cellsize_y)
+    # add any func args
+    # TODO: probably needs cellsize args
+    _func = partial(_run_cupy)
 
     out = data.map_overlap(_func,
                            depth=(1, 1),
