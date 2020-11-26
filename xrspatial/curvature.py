@@ -93,7 +93,7 @@ def _run_cupy(data: cupy.ndarray,
     return out
 
 
-def curvature(agg, name='curvature', use_cuda=True, use_cupy=True):
+def curvature(agg, name='curvature'):
     """Compute the curvature (second derivatives) of a agg surface.
 
     Parameters
