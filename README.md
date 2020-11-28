@@ -14,7 +14,7 @@
 
 
 -------
-![title](composite_map.gif)
+![title](img/composite_map.gif)
 -------
 :round_pushpin: Fast, Accurate Python library for Raster Operations
 
@@ -169,14 +169,14 @@ Check out [Xarray-Spatial on YouTube](https://www.youtube.com/watch?v=z4xrkglmg8
 ------
 
 
-![title](composite_map.png)
-![title](makepath-supply-chain-international-shipping.png)
+![title](img/composite_map.png)
+![title](img/makepath-supply-chain-international-shipping.png)
 
 #### Dependencies
 
 `xarray-spatial` currently depends on Datashader, but will soon be updated to depend only on `xarray` and `numba`, while still being able to make use of Datashader output when available. 
 
-![title](dependencies.svg)
+![title](img/dependencies.svg)
 
 #### Notes on GDAL
 
