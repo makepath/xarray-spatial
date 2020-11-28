@@ -64,7 +64,9 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 #### Supported Spatial Functions with Supported Inputs
 
-##### **Classification**
+-------
+
+### **Classification**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
@@ -75,7 +77,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 -------
 
-##### **Focal**
+### **Focal**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
@@ -86,7 +88,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 -------
 
-##### **Multispectral**
+### **Multispectral**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
@@ -104,7 +106,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 -------
 
 
-##### **Pathfinding**
+### **Pathfinding**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
@@ -112,7 +114,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 ----------
 
-##### **Proximity**
+### **Proximity**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
@@ -122,7 +124,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 --------
 
-##### **Surface**
+### **Surface**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
@@ -137,7 +139,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 -----------
 
-##### **Zonal**
+### **Zonal**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
