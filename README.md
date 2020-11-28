@@ -68,10 +68,10 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Equal Interval](xrspatial/classify.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO | NO | NO |
-| [Natural Breaks](xrspatial/classify.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO | NO | NO |
-| [Reclassify](xrspatial/classify.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO | NO | NO |
-| [Quantile](xrspatial/classify.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO | NO | NO |
+| [Equal Interval](xrspatial/classify.py) | ✅️ | NO | NO | NO |
+| [Natural Breaks](xrspatial/classify.py) | ✅️ | NO | NO | NO |
+| [Reclassify](xrspatial/classify.py) | ✅️ | NO | NO | NO |
+| [Quantile](xrspatial/classify.py) | ✅️ | NO | NO | NO |
 
 -------
 
@@ -79,10 +79,10 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Apply](xrspatial/focal.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO | NO | NO |
-| [Hotspots](xrspatial/focal.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO | NO | NO |
-| [Mean](xrspatial/focal.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
-| [Focal Statistics](xrspatial/focal.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO |
+| [Apply](xrspatial/focal.py) | ✅️ | NO | NO | NO |
+| [Hotspots](xrspatial/focal.py) | ✅️ | NO | NO | NO |
+| [Mean](xrspatial/focal.py) | ✅️ | NO  | NO | NO |
+| [Focal Statistics](xrspatial/focal.py) | ✅️ | NO  | ✅️ | NO |
 
 -------
 
@@ -90,16 +90,16 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO |
-| [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO |
-| [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO |
-| [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO |
-| [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO |
-| [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO |
-| [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO |
-| [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO |
-| [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO |
-| [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO |
+| [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | ✅️ | NO  | ✅️ | NO |
+| [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | ✅️ | NO  | ✅️ | NO |
+| [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | ✅️ | NO  | ✅️ | NO |
+| [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | ✅️ | NO  | ✅️ | NO |
+| [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | ✅️ | NO  | ✅️ | NO |
+| [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | ✅️ | NO  | ✅️ | NO |
+| [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | ✅️ | NO  | ✅️ | NO |
+| [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | ✅️ | NO  | ✅️ | NO |
+| [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | ✅️ | NO  | ✅️ | NO |
+| [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | ✅️ | NO  | ✅️ | NO |
 
 -------
 
@@ -108,7 +108,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [A* Pathfinging](xrspatial/pathfinding.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
+| [A* Pathfinging](xrspatial/pathfinding.py) | ✅️ | NO  | NO | NO |
 
 ----------
 
@@ -116,9 +116,9 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Allocation](xrspatial/proximity.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
-| [Direction](xrspatial/proximity.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
-| [Proximity](xrspatial/proximity.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
+| [Allocation](xrspatial/proximity.py) | ✅️ | NO  | NO | NO |
+| [Direction](xrspatial/proximity.py) | ✅️ | NO  | NO | NO |
+| [Proximity](xrspatial/proximity.py) | ✅️ | NO  | NO | NO |
 
 --------
 
@@ -126,14 +126,14 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Aspect](xrspatial/aspect.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO |
-| [Curvature](xrspatial/curvature.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO | NO | NO |
-| [Hillshade](xrspatial/hillshade.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji>  | NO | NO |
-| [Slope](xrspatial/slope.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji>  | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji>  | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO |
-| [Terrain Generation](xrspatial/terrain.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
-| [Viewshed](xrspatial/viewshed.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
-| [Perlin Noise](xrspatial/perlin.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
-| [Bump Mapping](xrspatial/bump.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO | NO | NO |
+| [Aspect](xrspatial/aspect.py) | ✅️ | ✅️ | ✅️ | NO |
+| [Curvature](xrspatial/curvature.py) | ✅️ | NO | NO | NO |
+| [Hillshade](xrspatial/hillshade.py) | ✅️ | ✅️  | NO | NO |
+| [Slope](xrspatial/slope.py) | ✅️  | ✅️  | ✅️ | NO |
+| [Terrain Generation](xrspatial/terrain.py) | ✅️ | NO  | NO | NO |
+| [Viewshed](xrspatial/viewshed.py) | ✅️ | NO  | NO | NO |
+| [Perlin Noise](xrspatial/perlin.py) | ✅️ | NO  | NO | NO |
+| [Bump Mapping](xrspatial/bump.py) | ✅️ | NO | NO | NO |
 
 -----------
 
@@ -141,12 +141,12 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Apply](xrspatial/zonal.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
-| [Crop](xrspatial/zonal.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
-| [Regions](xrspatial/zonal.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
-| [Trim](xrspatial/zonal.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
-| [Zonal Statistics](xrspatial/zonal.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
-| [Zonal Cross Tabulate](xrspatial/zonal.py) | <g-emoji class="g-emoji" alias="white_check_mark" fallback-src="https://github.githubassets.com/images/icons/emoji/unicode/2705.png"></g-emoji> | NO  | NO | NO |
+| [Apply](xrspatial/zonal.py) | ✅️ | NO  | NO | NO |
+| [Crop](xrspatial/zonal.py) | ✅️ | NO  | NO | NO |
+| [Regions](xrspatial/zonal.py) | ✅️ | NO  | NO | NO |
+| [Trim](xrspatial/zonal.py) | ✅️ | NO  | NO | NO |
+| [Zonal Statistics](xrspatial/zonal.py) | ✅️ | NO  | NO | NO |
+| [Zonal Cross Tabulate](xrspatial/zonal.py) | ✅️ | NO  | NO | NO |
 
 
 #### Usage
