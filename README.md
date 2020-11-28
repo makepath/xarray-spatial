@@ -14,7 +14,7 @@
 
 
 -------
-![title](composite_map.gif)
+![title](img/composite_map.gif)
 -------
 :round_pushpin: Fast, Accurate Python library for Raster Operations
 
@@ -64,89 +64,91 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 #### Supported Spatial Functions with Supported Inputs
 
-##### **Classification**
+-------
+
+### **Classification**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Equal Interval](xrspatial/classify.py) | YES | NO | NO | NO |
-| [Natural Breaks](xrspatial/classify.py) | YES | NO | NO | NO |
-| [Reclassify](xrspatial/classify.py) | YES | NO | NO | NO |
-| [Quantile](xrspatial/classify.py) | YES | NO | NO | NO |
+| [Equal Interval](xrspatial/classify.py) | ✅️ | ❌ | ❌ | ❌ |
+| [Natural Breaks](xrspatial/classify.py) | ✅️ | ❌ | ❌ | ❌ |
+| [Reclassify](xrspatial/classify.py) | ✅️ | ❌ | ❌ | ❌ |
+| [Quantile](xrspatial/classify.py) | ✅️ | ❌ | ❌ | ❌ |
 
 -------
 
-##### **Focal**
+### **Focal**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Apply](xrspatial/focal.py) | YES | NO | NO | NO |
-| [Hotspots](xrspatial/focal.py) | YES | NO | NO | NO |
-| [Mean](xrspatial/focal.py) | YES | NO  | NO | NO |
-| [Focal Statistics](xrspatial/focal.py) | YES | NO  | YES | NO |
+| [Apply](xrspatial/focal.py) | ✅️ | ❌ | ❌ | ❌ |
+| [Hotspots](xrspatial/focal.py) | ✅️ | ❌ | ❌ | ❌ |
+| [Mean](xrspatial/focal.py) | ✅️ | ❌  | ❌ | ❌ |
+| [Focal Statistics](xrspatial/focal.py) | ✅️ | ❌  | ✅️ | ❌ |
 
 -------
 
-##### **Multispectral**
+### **Multispectral**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | YES | NO  | YES | NO |
-| [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | YES | NO  | YES | NO |
-| [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | YES | NO  | YES | NO |
-| [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | YES | NO  | YES | NO |
-| [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | YES | NO  | YES | NO |
-| [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | YES | NO  | YES | NO |
-| [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | YES | NO  | YES | NO |
-| [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | YES | NO  | YES | NO |
-| [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | YES | NO  | YES | NO |
-| [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | YES | NO  | YES | NO |
+| [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
+| [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
+| [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
+| [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
+| [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
+| [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
+| [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
+| [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
+| [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
+| [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
 
 -------
 
 
-##### **Pathfinding**
+### **Pathfinding**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [A* Pathfinging](xrspatial/pathfinding.py) | YES | NO  | NO | NO |
+| [A* Pathfinging](xrspatial/pathfinding.py) | ✅️ | ❌  | ❌ | ❌ |
 
 ----------
 
-##### **Proximity**
+### **Proximity**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Allocation](xrspatial/proximity.py) | YES | NO  | NO | NO |
-| [Direction](xrspatial/proximity.py) | YES | NO  | NO | NO |
-| [Proximity](xrspatial/proximity.py) | YES | NO  | NO | NO |
+| [Allocation](xrspatial/proximity.py) | ✅️ | ❌  | ❌ | ❌ |
+| [Direction](xrspatial/proximity.py) | ✅️ | ❌  | ❌ | ❌ |
+| [Proximity](xrspatial/proximity.py) | ✅️ | ❌  | ❌ | ❌ |
 
 --------
 
-##### **Surface**
+### **Surface**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Aspect](xrspatial/aspect.py) | YES | YES | YES | NO |
-| [Curvature](xrspatial/curvature.py) | YES | NO | NO | NO |
-| [Hillshade](xrspatial/hillshade.py) | YES | YES  | NO | NO |
-| [Slope](xrspatial/slope.py) | YES  | YES  | YES | NO |
-| [Terrain Generation](xrspatial/terrain.py) | YES | NO  | NO | NO |
-| [Viewshed](xrspatial/viewshed.py) | YES | NO  | NO | NO |
-| [Perlin Noise](xrspatial/perlin.py) | YES | NO  | NO | NO |
-| [Bump Mapping](xrspatial/bump.py) | YES | NO | NO | NO |
+| [Aspect](xrspatial/aspect.py) | ✅️ | ✅️ | ✅️ | ⚠️ |
+| [Curvature](xrspatial/curvature.py) | ✅️ | ❌ | ❌ | ⚠️  |
+| [Hillshade](xrspatial/hillshade.py) | ✅️ | ✅️  | ❌ | ❌ |
+| [Slope](xrspatial/slope.py) | ✅️  | ✅️  | ✅️ | ⚠️  |
+| [Terrain Generation](xrspatial/terrain.py) | ✅️ | ❌  | ❌ | ❌ |
+| [Viewshed](xrspatial/viewshed.py) | ✅️ | ❌  | ❌ | ❌ |
+| [Perlin Noise](xrspatial/perlin.py) | ✅️ | ❌  | ❌ | ❌ |
+| [Bump Mapping](xrspatial/bump.py) | ✅️ | ❌ | ❌ | ❌ |
 
 -----------
 
-##### **Zonal**
+### **Zonal**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Apply](xrspatial/zonal.py) | YES | NO  | NO | NO |
-| [Crop](xrspatial/zonal.py) | YES | NO  | NO | NO |
-| [Regions](xrspatial/zonal.py) | YES | NO  | NO | NO |
-| [Trim](xrspatial/zonal.py) | YES | NO  | NO | NO |
-| [Zonal Statistics](xrspatial/zonal.py) | YES | NO  | NO | NO |
-| [Zonal Cross Tabulate](xrspatial/zonal.py) | YES | NO  | NO | NO |
+| [Apply](xrspatial/zonal.py) | ✅️ | ❌  | ❌ | ❌ |
+| [Crop](xrspatial/zonal.py) | ✅️ | ❌  | ❌ | ❌ |
+| [Regions](xrspatial/zonal.py) | ✅️ | ❌  | ❌ | ❌ |
+| [Trim](xrspatial/zonal.py) | ✅️ | ❌  | ❌ | ❌ |
+| [Zonal Statistics](xrspatial/zonal.py) | ✅️ | ❌  | ❌ | ❌ |
+| [Zonal Cross Tabulate](xrspatial/zonal.py) | ✅️ | ❌  | ❌ | ❌ |
 
 
 #### Usage
@@ -167,14 +169,14 @@ Check out [Xarray-Spatial on YouTube](https://www.youtube.com/watch?v=z4xrkglmg8
 ------
 
 
-![title](composite_map.png)
-![title](makepath-supply-chain-international-shipping.png)
+![title](img/composite_map.png)
+![title](img/makepath-supply-chain-international-shipping.png)
 
 #### Dependencies
 
 `xarray-spatial` currently depends on Datashader, but will soon be updated to depend only on `xarray` and `numba`, while still being able to make use of Datashader output when available. 
 
-![title](dependencies.svg)
+![title](img/dependencies.svg)
 
 #### Notes on GDAL
 
