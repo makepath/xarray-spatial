@@ -166,7 +166,7 @@ def test_curvature_gpu_equals_cpu():
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
-def test_slope_numpy_equals_dask():
+def test_curvature_numpy_equals_dask():
 
     small_numpy_based_data_array = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
     small_das_based_data_array = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
