@@ -107,26 +107,17 @@ def _run_gpu(arr, out):
     i, j = cuda.grid(2)
     di = 1
     dj = 1
-    if (i-di >= 1 and i+di < out.shape[0] - 1 and 
-        j-dj >= 1 and j+dj < out.shape[1] - 1):
+    if (i-di >= 0 and i+di < out.shape[0] and
+        j-dj >= 0 and j+dj < out.shape[1]):
         out[i, j] = _gpu(arr[i-di:i+di+1, j-dj:j+dj+1])
 
 
 def _run_cupy(data: cupy.ndarray) -> cupy.ndarray:
 
-    pad_rows = 3 // 2
-    pad_cols = 3 // 2
-    pad_width = ((pad_rows, pad_rows),
-                (pad_cols, pad_cols))
-
-    _data = np.pad(data, pad_width=pad_width, mode="reflect")
-
-    griddim, blockdim = cuda_args(_data.shape)
-    agg = cupy.empty(_data.shape, dtype='f4')
-    agg[:] = cupy.nan
-
-    _run_gpu[griddim, blockdim](_data, agg)
-    out = agg[pad_rows:-pad_rows, pad_cols:-pad_cols]
+    griddim, blockdim = cuda_args(data.shape)
+    out = cupy.empty(data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _run_gpu[griddim, blockdim](data, out)
     return out
 
 

@@ -9,13 +9,13 @@ from xrspatial.utils import is_cupy_backed
 
 
 INPUT_DATA = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-                    [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
-                    [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
-                    [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
-                    [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-                    [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-                    [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
-                    dtype=np.float32)
+                         [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
+                         [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
+                         [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
+                         [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                         [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+                         [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
+                        dtype=np.float32)
 
 QGIS_OUTPUT = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
                           [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
@@ -50,16 +50,16 @@ def test_numpy_equals_qgis():
     # aspect is nan if nan input
     # aspect is invalid (nan) if slope equals 0
     # otherwise aspect are from 0 - 360
-    assert ((np.isnan(xrspatial_vals) & np.isnan(qgis_vals)) | (
-            np.isnan(xrspatial_vals) & (qgis_vals == -1)) | (
-            abs(xrspatial_vals - qgis_vals) <= 1e-4)).all()
+    assert np.isclose(xrspatial_vals, qgis_vals, equal_nan=True).all()
 
 
 def test_numpy_equals_dask():
-    small_numpy_based_data_array = xr.DataArray(INPUT_DATA,
-                                                attrs={'res': (10.0, 10.0)})
-    small_dask_based_data_array = xr.DataArray(da.from_array(INPUT_DATA, chunks=(2, 2)),
-                                              attrs={'res': (10.0, 10.0)})
+    small_numpy_based_data_array = xr.DataArray(
+        INPUT_DATA, attrs={'res': (10.0, 10.0)}
+    )
+    small_dask_based_data_array = xr.DataArray(
+        da.from_array(INPUT_DATA, chunks=(2, 2)), attrs={'res': (10.0, 10.0)}
+    )
 
     numpy_result = aspect(small_numpy_based_data_array, name='numpy_result')
     dask_result = aspect(small_dask_based_data_array, name='dask_result')
@@ -124,7 +124,7 @@ def _numpy_equals_dask_cupy():
     dask_cupy_data = da.from_array(cupy_data, chunks=(3, 3))
 
     small_da = xr.DataArray(INPUT_DATA, attrs={'res': (10.0, 10.0)})
-    cpu = slope(small_da, name='numpy_result')
+    cpu = aspect(small_da, name='numpy_result')
 
     small_dask_cupy = xr.DataArray(dask_cupy_data, attrs={'res': (10.0, 10.0)})
     gpu = aspect(small_dask_cupy, name='cupy_result')
