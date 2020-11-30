@@ -2,6 +2,8 @@ import pytest
 import numpy as np
 import xarray as xr
 
+import dask.array as da
+
 from xrspatial import curvature
 from xrspatial.utils import doesnt_have_cuda
 
@@ -162,3 +164,18 @@ def test_curvature_gpu_equals_cpu():
     assert isinstance(gpu.data, cupy.ndarray)
 
     assert np.isclose(cpu, gpu, equal_nan=True).all()
+
+
+def test_slope_numpy_equals_dask():
+
+    small_numpy_based_data_array = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    small_das_based_data_array = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
+                                              attrs={'res': (10.0, 10.0)})
+
+    numpy_curvature = curvature(small_numpy_based_data_array, name='numpy_curvature')
+    dask_curvature = curvature(small_das_based_data_array, name='dask_curvature')
+    assert isinstance(dask_curvature.data, da.Array)
+
+    dask_curvature.data = dask_curvature.data.compute()
+
+    assert np.isclose(numpy_curvature, dask_curvature, equal_nan=True).all()

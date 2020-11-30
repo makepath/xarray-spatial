@@ -1,6 +1,5 @@
 # std lib
 from functools import partial
-from math import atan
 from typing import Union
 
 # 3rd-party
@@ -12,8 +11,7 @@ except ImportError:
 
 import dask.array as da
 
-import numba as nb
-from numba import cuda, stencil, vectorize
+from numba import cuda
 
 import numpy as np
 import xarray as xr
@@ -26,37 +24,35 @@ from xrspatial.utils import ngjit
 from xrspatial.utils import is_cupy_backed
 
 
-@stencil
-def kernel_D(arr):
-    return (arr[0, -1] + arr[0, 1]) / 2 - arr[0, 0]
-
-
-@stencil
-def kernel_E(arr):
-    return (arr[-1, 0] + arr[1, 0]) / 2 - arr[0, 0]
-
-
-@vectorize(["float64(float64, float64)"], nopython=True, target="parallel")
-def _cpu(matrix_D, matrix_E):
-    curv = -2 * (matrix_D + matrix_E) * 100
-    return curv
+@ngjit
+def _cpu(data, cellsize):
+    out = np.empty(data.shape, np.float64)
+    out[:, :] = np.nan
+    rows, cols = data.shape
+    for y in range(1, rows - 1):
+        for x in range(1, cols - 1):
+            d = (data[y + 1, x] + data[y - 1, x]) / 2 - data[y, x]
+            e = (data[y, x + 1] + data[y, x - 1]) / 2 - data[y, x]
+            out[y, x] = -2 * (d + e) * 100 / (cellsize * cellsize)
+    return out
 
 
 def _run_numpy(data: np.ndarray,
                cellsize: Union[int, float]) -> np.ndarray:
-    matrix_D = kernel_D(data)
-    matrix_E = kernel_E(data)
-
-    out = _cpu(matrix_D, matrix_E)
-
     # TODO: handle border edge effect
-    # currently, set borders to np.nan
-    out[0, :] = np.nan
-    out[-1, :] = np.nan
-    out[:, 0] = np.nan
-    out[:, -1] = np.nan
-    out = out / (cellsize * cellsize)
+    out = _cpu(data, cellsize)
+    return out
 
+
+def _run_dask_numpy(data: da.Array,
+                    cellsize: Union[int, float]) -> da.Array:
+    _func = partial(_cpu,
+                    cellsize=cellsize)
+
+    out = data.map_overlap(_func,
+                           depth=(1, 1),
+                           boundary=np.nan,
+                           meta=np.array(()))
     return out
 
 
@@ -93,6 +89,12 @@ def _run_cupy(data: cupy.ndarray,
     return out
 
 
+def _run_dask_cupy(data: da.Array,
+                   cellsize: Union[int, float]) -> da.Array:
+    msg = 'Upstream bug in dask prevents cupy backed arrays'
+    raise NotImplementedError(msg)
+
+
 def curvature(agg, name='curvature'):
     """Compute the curvature (second derivatives) of a agg surface.
 
@@ -117,6 +119,17 @@ def curvature(agg, name='curvature'):
     # cupy case
     elif has_cuda() and isinstance(agg.data, cupy.ndarray):
         out = _run_cupy(agg.data, cellsize)
+
+    # dask + numpy case
+    elif isinstance(agg.data, da.Array):
+        out = _run_dask_numpy(agg.data, cellsize)
+
+    # dask + cupy case
+    elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
+        out = _run_dask_cupy(agg.data, cellsize)
+
+    else:
+        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
 
     return xr.DataArray(out,
                         name=name,
