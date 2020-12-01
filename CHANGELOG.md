@@ -14,7 +14,8 @@
 - Fixed aspect cupy: nan edge effect, remove numpy padding that cause TypeError(#160)
 - Updated README with Supported Spatial Features Table
 - Added badge for open source gis timeline
-- Add GPU Support for Multispectral tools (#148)
+- Added GPU Support for Multispectral tools (#148)
+- Added Python 3.9 to Test Suite
 
 ### Version 0.1.1 - 10/21/2020
 - Added convolution module for use in focal statistics. (#131)
