@@ -80,14 +80,10 @@ def _gpu(arr, cellsize_x, cellsize_y):
     h = arr[0, 1]
     i = arr[0, 2]
 
-    two = nb.int32(2.)  # reducing size to int8 causes wrong results
-
-    dz_dx = ((c + two * f + i) - (a + two * d + g)) / (
-                nb.float32(8.) * cellsize_x[0])
-    dz_dy = ((g + two * h + i) - (a + two * b + c)) / (
-                nb.float32(8.) * cellsize_y[0])
-    p = (dz_dx * dz_dx + dz_dy * dz_dy) ** nb.float32(.5)
-    return atan(p) * nb.float32(57.29578)
+    dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / (8 * cellsize_x[0])
+    dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / (8 * cellsize_y[0])
+    p = (dz_dx * dz_dx + dz_dy * dz_dy) ** 0.5
+    return atan(p) * 57.29578
 
 
 @cuda.jit
@@ -95,8 +91,8 @@ def _run_gpu(arr, cellsize_x_arr, cellsize_y_arr, out):
     i, j = cuda.grid(2)
     di = 1
     dj = 1
-    if (i - di >= 1 and i + di < out.shape[0] - 1 and
-            j - dj >= 1 and j + dj < out.shape[1] - 1):
+    if (i - di >= 0 and i + di < out.shape[0] and
+            j - dj >= 0 and j + dj < out.shape[1]):
         out[i, j] = _gpu(arr[i - di:i + di + 1, j - dj:j + dj + 1],
                          cellsize_x_arr,
                          cellsize_y_arr)
@@ -108,22 +104,14 @@ def _run_cupy(data: cupy.ndarray,
     cellsize_x_arr = cupy.array([float(cellsize_x)], dtype='f4')
     cellsize_y_arr = cupy.array([float(cellsize_y)], dtype='f4')
 
-    pad_rows = 3 // 2
-    pad_cols = 3 // 2
-    pad_width = ((pad_rows, pad_rows),
-                 (pad_cols, pad_cols))
+    griddim, blockdim = cuda_args(data.shape)
+    out = cupy.empty(data.shape, dtype='f4')
+    out[:] = cupy.nan
 
-    slope_data = np.pad(data, pad_width=pad_width, mode="reflect")
-
-    griddim, blockdim = cuda_args(slope_data.shape)
-    slope_agg = cupy.empty(slope_data.shape, dtype='f4')
-    slope_agg[:] = cupy.nan
-
-    _run_gpu[griddim, blockdim](slope_data,
+    _run_gpu[griddim, blockdim](data,
                                 cellsize_x_arr,
                                 cellsize_y_arr,
-                                slope_agg)
-    out = slope_agg[pad_rows:-pad_rows, pad_cols:-pad_cols]
+                                out)
     return out
 
 
