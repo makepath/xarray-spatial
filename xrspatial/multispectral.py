@@ -9,16 +9,19 @@ import datashader as ds
 from PIL import Image
 
 from xarray import DataArray
+import dask.array as da
 
-from xrspatial.utils import has_cuda
+# 3rd-party
+try:
+    import cupy
+except ImportError:
+    class cupy(object):
+        ndarray = False
+
 from xrspatial.utils import cuda_args
+from xrspatial.utils import has_cuda
+from xrspatial.utils import is_dask_cupy
 from xrspatial.utils import ngjit
-
-
-def _check_is_dataarray(val, name='value'):
-    if not isinstance(val, DataArray):
-        msg = "{} must be instance of DataArray".format(name)
-        raise TypeError(msg)
 
 
 @ngjit
@@ -42,7 +45,8 @@ def _arvi(nir_data, red_data, blue_data):
     return out
 
 
-def arvi(nir_agg, red_agg, blue_agg, name='arvi', use_cuda=True, use_cupy=True):
+def arvi(nir_agg: DataArray, red_agg: DataArray,
+         blue_agg: DataArray, name='arvi'):
     """Computes Atmospherically Resistant Vegetation Index
 
     Parameters
@@ -65,9 +69,6 @@ def arvi(nir_agg, red_agg, blue_agg, name='arvi', use_cuda=True, use_cupy=True):
     Algorithm References:
     https://modis.gsfc.nasa.gov/sci_team/pubs/abstract_new.php?id=03667
     """
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(red_agg, 'red')
-    _check_is_dataarray(blue_agg, 'blue')
 
     if not red_agg.shape == nir_agg.shape == blue_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
@@ -100,8 +101,8 @@ def _evi(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
     return out
 
 
-def evi(nir_agg, red_agg, blue_agg, c1=6.0, c2=7.5, soil_factor=1.0, gain=2.5,
-        name='evi', use_cuda=True, use_cupy=True):
+def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
+        c1=6.0, c2=7.5, soil_factor=1.0, gain=2.5, name='evi'):
     """Computes Enhanced Vegetation Index
 
     Parameters
@@ -136,9 +137,6 @@ def evi(nir_agg, red_agg, blue_agg, c1=6.0, c2=7.5, soil_factor=1.0, gain=2.5,
     Algorithm References:
     https://en.wikipedia.org/wiki/Enhanced_vegetation_index
     """
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(red_agg, 'red')
-    _check_is_dataarray(blue_agg, 'blue')
 
     if not red_agg.shape == nir_agg.shape == blue_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
@@ -181,7 +179,7 @@ def _gci(nir_data, green_data):
     return out
 
 
-def gci(nir_agg, green_agg, name='gci', use_cuda=True, use_cupy=True):
+def gci(nir_agg: DataArray, green_agg: DataArray, name='gci'):
     """Computes Green Chlorophyll Index
 
     Parameters
@@ -201,8 +199,6 @@ def gci(nir_agg, green_agg, name='gci', use_cuda=True, use_cupy=True):
     Algorithm References:
     https://en.wikipedia.org/wiki/Enhanced_vegetation_index
     """
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(green_agg, 'green')
 
     if not nir_agg.shape == green_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
@@ -216,27 +212,9 @@ def gci(nir_agg, green_agg, name='gci', use_cuda=True, use_cupy=True):
                      attrs=nir_agg.attrs)
 
 
-@ngjit
-def _normalized_ratio(arr1, arr2):
-    out = np.zeros_like(arr1)
-    rows, cols = arr1.shape
-    for y in range(0, rows):
-        for x in range(0, cols):
-            val1 = arr1[y, x]
-            val2 = arr2[y, x]
-
-            numerator = val1 - val2
-            denominator = val1 + val2
-
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = numerator / denominator
-
-    return out
 
 
-def nbr(nir_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
+def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     """Computes Normalized Burn Ratio
 
     Parameters
@@ -258,13 +236,11 @@ def nbr(nir_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
     Algorithm References:
     https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
     """
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(swir2_agg, 'shortwave infrared')
 
     if not nir_agg.shape == swir2_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
 
-    out = _run_normalized_ratio(nir_agg.data, swir2_agg.data, use_cuda=use_cuda, use_cupy=use_cupy)
+    out = _run_normalized_ratio(nir_agg, swir2_agg)
 
     return DataArray(out,
                      name=name,
@@ -273,7 +249,7 @@ def nbr(nir_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
                      attrs=nir_agg.attrs)
 
 
-def nbr2(swir1_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
+def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     """Computes Normalized Burn Ratio 2
 
     "NBR2 modifies the Normalized Burn Ratio (NBR)
@@ -304,13 +280,11 @@ def nbr2(swir1_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
     Algorithm References:
     https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
     """
-    _check_is_dataarray(swir1_agg, 'near-infrared')
-    _check_is_dataarray(swir2_agg, 'shortwave infrared')
 
     if not swir1_agg.shape == swir2_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
 
-    out = _run_normalized_ratio(swir1_agg.data, swir2_agg.data, use_cuda=use_cuda, use_cupy=use_cupy)
+    out = _run_normalized_ratio(swir1_agg, swir2_agg)
 
     return DataArray(out,
                      name=name,
@@ -319,7 +293,7 @@ def nbr2(swir1_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
                      attrs=swir1_agg.attrs)
 
 
-def ndvi(nir_agg, red_agg, name='ndvi', use_cuda=True, use_cupy=True):
+def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
     """Returns Normalized Difference Vegetation Index (NDVI).
 
     Parameters
@@ -339,40 +313,50 @@ def ndvi(nir_agg, red_agg, name='ndvi', use_cuda=True, use_cupy=True):
     http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
     """
 
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(red_agg, 'red')
-
     if not red_agg.shape == nir_agg.shape:
         raise ValueError("red_agg and nir_agg expected to have equal shapes")
 
-    out = _run_normalized_ratio(nir_agg.data, red_agg.data, use_cuda=use_cuda, use_cupy=use_cupy)
+    out = _run_normalized_ratio(nir_agg, red_agg)
 
     return DataArray(out,
-                     name='ndvi',
+                     name=name,
                      coords=nir_agg.coords,
                      dims=nir_agg.dims,
                      attrs=nir_agg.attrs)
 
 
-def _run_normalized_ratio(arr1, arr2, use_cuda=True, use_cupy=True):
+def _run_normalized_ratio(arr1: DataArray, arr2: DataArray):
 
-    if has_cuda() and use_cuda:
-        griddim, blockdim = cuda_args(arr1.shape)
-        out = np.empty(arr1.shape, dtype='f4')
-        out[:] = np.nan
+    # check same types
+    if not isinstance(arr1.data, type(arr2.data)):
+        msg = ('input arrays in multisectral tools must be same type \n\n'
+               '{} != {}\n\n'
+               '------------').format(type(arr1.data), type(arr2.data))
+        raise TypeError(msg)
 
-        if use_cupy:
-            import cupy
-            out = cupy.asarray(out)
+    # numpy case
+    if isinstance(arr1.data, np.ndarray):
+        out = _normalized_ratio_cpu(arr1.data, arr2.data)
 
-        _normalized_ratio_gpu[griddim, blockdim](arr1, arr2, out)
+    # cupy case
+    elif has_cuda() and isinstance(arr1.data, cupy.ndarray):
+        out = _run_normalized_ratio_cupy(arr1.data, arr2.data)
+
+    # dask + cupy case
+    elif has_cuda() and is_dask_cupy(arr1):
+        out = _run_normalized_ratio_dask_cupy(arr1.data, arr2.data)
+
+    # dask + numpy case
+    elif isinstance(arr1.data, da.Array):
+        out = _run_normalized_ratio_dask(arr1.data, arr2.data)
+
     else:
-        out = _normalized_ratio(arr1, arr2)
-    
+        raise TypeError('Unsupported Array Type: {}'.format(type(arr1.data)))
+
     return out
 
 
-def ndmi(nir_agg, swir1_agg, name='ndmi', use_cuda=True, use_cupy=True):
+def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi', use_cuda=True, use_cupy=True):
     """Computes Normalized Difference Moisture Index
 
     Parameters
@@ -397,16 +381,11 @@ def ndmi(nir_agg, swir1_agg, name='ndmi', use_cuda=True, use_cupy=True):
     Algorithm References:
     https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
     """
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(swir1_agg, 'shortwave infrared')
 
     if not nir_agg.shape == swir1_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
 
-    nir_data = nir_agg.data
-    swir1_data = swir1_agg.data
-
-    out = _run_normalized_ratio(nir_data, swir1_data, use_cuda=use_cuda, use_cupy=use_cupy)
+    out = _run_normalized_ratio(nir_agg, swir1_agg)
 
     return DataArray(out,
                      name=name,
@@ -437,6 +416,32 @@ def _savi(nir_data, red_data, soil_factor):
     return out
 
 
+@ngjit
+def _normalized_ratio_cpu(arr1, arr2):
+    out = np.zeros_like(arr1)
+    rows, cols = arr1.shape
+    for y in range(0, rows):
+        for x in range(0, cols):
+            val1 = arr1[y, x]
+            val2 = arr2[y, x]
+
+            numerator = val1 - val2
+            denominator = val1 + val2
+
+            if denominator == 0.0:
+                continue
+            else:
+                out[y, x] = numerator / denominator
+
+    return out
+
+
+def _run_normalized_ratio_dask(arr1, arr2):
+    out = da.map_blocks(_normalized_ratio_cpu, arr1, arr2,
+                        meta=np.array(()))
+    return out
+
+
 @cuda.jit
 def _normalized_ratio_gpu(arr1, arr2, out):
     y, x = cuda.grid(2)
@@ -446,6 +451,26 @@ def _normalized_ratio_gpu(arr1, arr2, out):
         numerator = val1 - val2
         denominator = val1 + val2
         out[y, x] = numerator / denominator
+
+
+def _run_normalized_ratio_cupy(arr1, arr2):
+
+    import cupy
+
+    griddim, blockdim = cuda_args(arr1.shape)
+    out = cupy.empty(arr1.shape, dtype='f4')
+    out[:] = cupy.nan
+
+    return _normalized_ratio_gpu[griddim, blockdim](arr1, arr2, out)
+
+
+def _run_normalized_ratio_dask_cupy(arr1, arr2):
+
+    import cupy
+
+    out = da.map_blocks(_run_normalized_ratio_cupy, arr1, arr2,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
 
 
 @cuda.jit
@@ -464,7 +489,7 @@ def _savi_gpu(nir_data, red_data, soil_factor, out):
             out[y, x] = numerator / denominator
 
 
-def savi(nir_agg, red_agg, soil_factor=1.0, name='savi', use_cuda=True, use_cupy=True):
+def savi(nir_agg: DataArray, red_agg: DataArray, soil_factor=1.0, name='savi', use_cuda=True, use_cupy=True):
     """Returns Soil Adjusted Vegetation Index (SAVI).
 
     Parameters
@@ -488,9 +513,6 @@ def savi(nir_agg, red_agg, soil_factor=1.0, name='savi', use_cuda=True, use_cupy
     Algorithm References:
      - https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
     """
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(red_agg, 'red')
-
     if not red_agg.shape == nir_agg.shape:
         raise ValueError("red_agg and nir_agg expected to have equal shapes")
 
@@ -562,7 +584,7 @@ def _sipi_gpu(nir_data, red_data, blue_data, out):
             out[y, x] = numerator / denominator
 
 
-def sipi(nir_agg, red_agg, blue_agg, name='sipi', use_cuda=True, use_cupy=True):
+def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray, name='sipi', use_cuda=True, use_cupy=True):
     """Computes Structure Insensitive Pigment Index which helpful
     in early disease detection
 
@@ -583,10 +605,6 @@ def sipi(nir_agg, red_agg, blue_agg, name='sipi', use_cuda=True, use_cupy=True):
     Algorithm References:
     https://en.wikipedia.org/wiki/Enhanced_vegetation_index
     """
-
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(red_agg, 'red')
-    _check_is_dataarray(blue_agg, 'blue')
 
     if not red_agg.shape == nir_agg.shape == blue_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
@@ -652,7 +670,7 @@ def _ebbi_gpu(red_data, swir_data, tir_data, out):
         out[y, x] = numerator / denominator
 
 
-def ebbi(red_agg, swir_agg, tir_agg, name='ebbi', use_cuda=True, use_cupy=True):
+def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray, name='ebbi', use_cuda=True, use_cupy=True):
     """Computes Enhanced Built-Up and Bareness Index
     Parameters
     ----------
@@ -670,10 +688,6 @@ def ebbi(red_agg, swir_agg, tir_agg, name='ebbi', use_cuda=True, use_cupy=True):
     Algorithm References:
     https://rdrr.io/cran/LSRS/man/EBBI.html
     """
-
-    _check_is_dataarray(red_agg, 'red')
-    _check_is_dataarray(swir_agg, 'swir')
-    _check_is_dataarray(tir_agg, 'thermal infrared')
 
     if not red_agg.shape == swir_agg.shape == tir_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
@@ -703,6 +717,7 @@ def ebbi(red_agg, swir_agg, tir_agg, name='ebbi', use_cuda=True, use_cupy=True):
                      coords=red_agg.coords,
                      dims=red_agg.dims,
                      attrs=red_agg.attrs)
+
 
 @ngjit
 def _normalize_data(agg, pixel_max=255.0):

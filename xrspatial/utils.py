@@ -3,6 +3,8 @@ import numba as nb
 import numpy as np
 import xarray as xr
 
+import dask.array as da
+
 from numba import cuda
 
 try:
@@ -64,6 +66,10 @@ def cuda_args(shape):
 
 def is_cupy_backed(agg: xr.DataArray):
     return type(agg.data._meta).__module__.split('.')[0] == 'cupy'
+
+
+def is_dask_cupy(agg: xr.DataArray):
+    return isinstance(agg.data, da.Array) and is_cupy_backed(agg)
 
 
 def calc_res(raster):

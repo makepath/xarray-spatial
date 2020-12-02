@@ -3,7 +3,10 @@ import xarray as xr
 import numpy as np
 import xarray as xa
 
+import dask.array as da
+
 from xrspatial.utils import doesnt_have_cuda
+from xrspatial.utils import is_dask_cupy
 
 from xrspatial.multispectral import arvi
 from xrspatial.multispectral import ebbi
@@ -20,22 +23,23 @@ from xrspatial.multispectral import sipi
 max_val = 2**16 - 1
 
 arr1 = np.array([[max_val, max_val, max_val, max_val],
-                    [max_val, 1000.0, 1000.0, max_val],
-                    [max_val, 1000.0, 1000.0, max_val],
-                    [max_val, 1000.0, 1000.0, max_val],
-                    [max_val, max_val, max_val, max_val]], dtype=np.float64)
+                 [max_val, 1000.0, 1000.0, max_val],
+                 [max_val, 1000.0, 1000.0, max_val],
+                 [max_val, 1000.0, 1000.0, max_val],
+                 [max_val, max_val, max_val, max_val]], dtype=np.float64)
+
 
 arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
-                    [100.0, max_val, max_val, 100.0],
-                    [100.0, max_val, max_val, 100.0],
-                    [100.0, max_val, max_val, 100.0],
-                    [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
+                 [100.0, max_val, max_val, 100.0],
+                 [100.0, max_val, max_val, 100.0],
+                 [100.0, max_val, max_val, 100.0],
+                 [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
 
 arr3 = np.array([[10.0, 10.0, 10.0, 10.0],
-                    [10.0, max_val, max_val, 10.0],
-                    [10.0, max_val, max_val, 10.0],
-                    [10.0, max_val, max_val, 10.0],
-                    [10.0, 10.0, 10.0, 10.0]], dtype=np.float64)
+                 [10.0, max_val, max_val, 10.0],
+                 [10.0, max_val, max_val, 10.0],
+                 [10.0, max_val, max_val, 10.0],
+                 [10.0, 10.0, 10.0, 10.0]], dtype=np.float64)
 
 
 def _do_sparse_array(data_array):
@@ -75,7 +79,7 @@ def create_test_arr(arr):
     return raster
 
 
-def test_ndvi():
+def test_ndvi_numpy_contains_valid_values():
     """
     Assert aspect transfer function
     """
@@ -87,7 +91,7 @@ def test_ndvi():
     da_nir = xr.DataArray(nir, dims=['y', 'x'])
     da_red = xr.DataArray(red, dims=['y', 'x'])
 
-    da_ndvi = ndvi(da_nir, da_red, use_cuda=False)
+    da_ndvi = ndvi(da_nir, da_red)
 
     assert da_ndvi.dims == da_nir.dims
     assert da_ndvi.attrs == da_nir.attrs
@@ -100,15 +104,73 @@ def test_ndvi():
     assert da_ndvi[15, 10] == da_ndvi[10, 15] == 0.5
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_ndvi_cpu_equals_gpu():
+def test_ndvi_dask_equals_numpy():
+
+    # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
+    numpy_result = ndvi(nir, red)
 
-    # savi should be same as ndvi at soil_factor=0
-    cpu = savi(nir, red, use_cuda=False)
-    gpu = savi(nir, red, use_cuda=True)
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    # dask cpu version
+    nir_dask = create_test_arr(arr1)
+    nir_dask.data = da.from_array(nir_dask.data, chunks=(3, 3))
+
+    red_dask = create_test_arr(arr2)
+    red_dask.data = da.from_array(red_dask.data, chunks=(3, 3))
+
+    dask_result = ndvi(nir_dask, red_dask)
+    assert isinstance(dask_result.data, da.Array)
+
+    dask_result.data = dask_result.data.compute()
+    assert np.isclose(numpy_result, dask_result, equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_ndvi_cupy_equals_numpy():
+
+    import cupy
+
+    # vanilla numpy version
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+    numpy_result = ndvi(nir, red)
+
+    # cupy
+    nir_dask = create_test_arr(arr1)
+    nir_dask.data = cupy.asarray(nir_dask.data)
+
+    red_dask = create_test_arr(arr2)
+    red_dask.data = cupy.asarray(red_dask.data)
+
+    test_result = ndvi(nir_dask, red_dask)
+    assert isinstance(test_result.data, cupy.ndarray)
+
+    test_result.data = test_result.data.compute()
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_ndvi_dask_cupy_equals_numpy():
+
+    import cupy
+
+    # vanilla numpy version
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+    numpy_result = ndvi(nir, red)
+
+    # dask + cupy
+    nir_dask = create_test_arr(arr1)
+    nir_dask.data = da.from_array(cupy.asarray(nir_dask.data), chunks=(3, 3))
+
+    red_dask = create_test_arr(arr2)
+    red_dask.data = da.from_array(cupy.asarray(red_dask.data), chunks=(3, 3))
+
+    test_result = ndvi(nir_dask, red_dask)
+    assert is_dask_cupy(test_result)
+
+    test_result.data = test_result.data.compute()
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
 
 
 def test_savi():
@@ -116,8 +178,8 @@ def test_savi():
     red = create_test_arr(arr2)
 
     # savi should be same as ndvi at soil_factor=0
-    result_savi = savi(nir, red, soil_factor=0.0, use_cuda=False)
-    result_ndvi = ndvi(nir, red, use_cuda=False)
+    result_savi = savi(nir, red, soil_factor=0.0)
+    result_ndvi = ndvi(nir, red)
 
     assert np.isclose(result_savi.data, result_ndvi.data, equal_nan=True).all()
     assert result_savi.dims == nir.dims
@@ -133,8 +195,8 @@ def test_savi_cpu_equals_gpu():
     red = create_test_arr(arr2)
 
     # savi should be same as ndvi at soil_factor=0
-    cpu = savi(nir, red, soil_factor=0.0, use_cuda=False)
-    gpu = savi(nir, red, soil_factor=0.0, use_cuda=True)
+    cpu = savi(nir, red, soil_factor=0.0)
+    gpu = savi(nir, red, soil_factor=0.0)
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
@@ -143,19 +205,20 @@ def test_avri():
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
 
-    result = arvi(nir, red, blue, use_cuda=False)
+    result = arvi(nir, red, blue)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
+
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_avri_cpu_equals_gpu():
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
-    cpu = arvi(nir, red, blue, use_cuda=False)
-    gpu = arvi(nir, red, blue, use_cuda=True)
+    cpu = arvi(nir, red, blue)
+    gpu = arvi(nir, red, blue)
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
@@ -164,7 +227,7 @@ def test_evi():
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
 
-    result = evi(nir, red, blue, use_cuda=False)
+    result = evi(nir, red, blue)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
@@ -182,8 +245,8 @@ def test_evi_cpu_equals_gpu():
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
 
-    cpu = evi(nir, red, blue, use_cuda=False)
-    gpu = evi(nir, red, blue, use_cuda=True)
+    cpu = evi(nir, red, blue)
+    gpu = evi(nir, red, blue)
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
@@ -191,7 +254,7 @@ def test_gci():
     nir = create_test_arr(arr1)
     green = create_test_arr(arr2)
 
-    result = gci(nir, green, use_cuda=False)
+    result = gci(nir, green)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
@@ -203,8 +266,8 @@ def test_gci_cpu_equals_gpu():
     nir = create_test_arr(arr1)
     green = create_test_arr(arr2)
 
-    cpu = gci(nir, green, use_cuda=False)
-    gpu = gci(nir, green, use_cuda=True)
+    cpu = gci(nir, green)
+    gpu = gci(nir, green)
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
@@ -213,7 +276,7 @@ def test_sipi():
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
 
-    result = sipi(nir, red, blue, use_cuda=False)
+    result = sipi(nir, red, blue)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
@@ -226,8 +289,8 @@ def test_sipi_cpu_equals_gpu():
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
 
-    cpu = sipi(nir, red, blue, use_cuda=False)
-    gpu = sipi(nir, red, blue, use_cuda=True)
+    cpu = sipi(nir, red, blue)
+    gpu = sipi(nir, red, blue)
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
@@ -235,7 +298,7 @@ def test_nbr():
     nir = create_test_arr(arr1)
     swir = create_test_arr(arr2)
 
-    result = nbr(nir, swir, use_cuda=False)
+    result = nbr(nir, swir)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
@@ -247,8 +310,8 @@ def test_nbr_cpu_equals_gpu():
     nir = create_test_arr(arr1)
     swir = create_test_arr(arr2)
 
-    cpu = nbr(nir, swir, use_cuda=False)
-    gpu = nbr(nir, swir, use_cuda=True)
+    cpu = nbr(nir, swir)
+    gpu = nbr(nir, swir)
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
@@ -256,7 +319,7 @@ def test_nbr2():
     swir1 = create_test_arr(arr1)
     swir2 = create_test_arr(arr2)
 
-    result = nbr2(swir1, swir2, use_cuda=False)
+    result = nbr2(swir1, swir2)
 
     assert result.dims == swir1.dims
     assert isinstance(result, xa.DataArray)
@@ -268,8 +331,8 @@ def test_nbr2_cpu_equals_gpu():
     swir1 = create_test_arr(arr1)
     swir2 = create_test_arr(arr2)
 
-    cpu = nbr2(swir1, swir2, use_cuda=False)
-    gpu = nbr2(swir1, swir2, use_cuda=True)
+    cpu = nbr2(swir1, swir2)
+    gpu = nbr2(swir1, swir2)
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
@@ -277,7 +340,7 @@ def test_ndmi():
     nir = create_test_arr(arr1)
     swir1 = create_test_arr(arr2)
 
-    result = ndmi(nir, swir1, use_cuda=False)
+    result = ndmi(nir, swir1)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
@@ -289,8 +352,8 @@ def test_ndmi_cpu_equals_gpu():
     nir = create_test_arr(arr1)
     swir = create_test_arr(arr2)
 
-    cpu = ndmi(nir, swir, use_cuda=False)
-    gpu = ndmi(nir, swir, use_cuda=True)
+    cpu = ndmi(nir, swir)
+    gpu = ndmi(nir, swir)
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
@@ -299,7 +362,7 @@ def test_ebbi():
     swir = create_test_arr(arr2)
     tir = create_test_arr(arr3)
 
-    result = ebbi(red, swir, tir, use_cuda=False)
+    result = ebbi(red, swir, tir)
 
     assert result.dims == red.dims
     assert isinstance(result, xa.DataArray)
@@ -312,6 +375,6 @@ def test_ebbi_cpu_equals_gpu():
     swir = create_test_arr(arr2)
     tir = create_test_arr(arr3)
 
-    cpu = ebbi(red, swir, tir, use_cuda=False)
-    gpu = ebbi(red, swir, tir, use_cuda=True)
+    cpu = ebbi(red, swir, tir)
+    gpu = ebbi(red, swir, tir)
     assert np.isclose(cpu, gpu, equal_nan=True).all()
