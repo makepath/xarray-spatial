@@ -88,7 +88,7 @@ def get_dataarray_resolution(agg: xr.DataArray):
 
     # get cellsize out from 'res' attribute
     cellsize = agg.attrs.get('res')
-    if isinstance(cellsize, (tuple, np.ndarray)) and len(cellsize) == 2 \
+    if isinstance(cellsize, (tuple, np.ndarray, list)) and len(cellsize) == 2 \
             and isinstance(cellsize[0], (int, float)) \
             and isinstance(cellsize[1], (int, float)):
         cellsize_x, cellsize_y = cellsize
