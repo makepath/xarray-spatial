@@ -1,6 +1,7 @@
 from math import ceil
 import numba as nb
 import numpy as np
+import xarray as xr
 
 from numba import cuda
 
@@ -59,6 +60,48 @@ def cuda_args(shape):
     tpb = (threads_per_block,) * len(shape)
     bpg = tuple(int(ceil(d / threads_per_block)) for d in shape)
     return bpg, tpb
+
+
+def is_cupy_backed(agg: xr.DataArray):
+    return type(agg.data._meta).__module__.split('.')[0] == 'cupy'
+
+
+def calc_res(raster):
+    """Calculate the resolution of xarray.DataArray raster and return it as the
+    two-tuple (xres, yres).
+
+    Notes
+    -----
+
+    Sourced from datashader.utils
+    """
+    h, w = raster.shape[-2:]
+    ydim, xdim = raster.dims[-2:]
+    xcoords = raster[xdim].values
+    ycoords = raster[ydim].values
+    xres = (xcoords[-1] - xcoords[0]) / (w - 1)
+    yres = (ycoords[0] - ycoords[-1]) / (h - 1)
+    return xres, yres
+
+
+def get_dataarray_resolution(agg: xr.DataArray):
+
+    if not agg.attrs.get('res'):
+        raise ValueError('input xarray must have `res` attr.')
+
+    # get cellsize out from 'res' attribute
+    cellsize = agg.attrs.get('res')
+    if isinstance(cellsize, tuple) and len(cellsize) == 2 \
+            and isinstance(cellsize[0], (int, float)) \
+            and isinstance(cellsize[1], (int, float)):
+        cellsize_x, cellsize_y = cellsize
+    elif isinstance(cellsize, (int, float)):
+        cellsize_x = cellsize
+        cellsize_y = cellsize
+    else:
+        cellsize_x, cellsize_y = calc_res(agg)
+    
+    return cellsize_x, cellsize_y
 
 
 def lnglat_to_meters(longitude, latitude):

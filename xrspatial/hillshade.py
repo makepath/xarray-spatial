@@ -1,45 +1,45 @@
-from __future__ import division, absolute_import
-from math import sqrt
+from functools import partial
 
 import numpy as np
 
 from xarray import DataArray
-from numba import cuda
 
-from xrspatial.utils import has_cuda
-from xrspatial.utils import cuda_args
+import dask.array as da
 
 
-@cuda.jit
-def _gpu_calc(x, y, out):
-    i, j = cuda.grid(2)
-    if i < out.shape[0] and j < out.shape[1]:
-        out[i, j] = sqrt(x[i, j] * x[i, j] + y[i, j] * y[i, j])
+def _hillshade(data, azimuth=225, angle_altitude=25):
+    azimuth = 360.0 - azimuth
+    x, y = np.gradient(data)
+    slope = np.pi/2. - np.arctan(np.sqrt(x*x + y*y))
+    aspect = np.arctan2(-x, y)
+    azimuthrad = azimuth*np.pi/180.
+    altituderad = angle_altitude*np.pi/180.
+    shaded = np.sin(altituderad) * np.sin(slope) + np.cos(altituderad) * np.cos(slope)*np.cos((azimuthrad - np.pi/2.) - aspect)
+    result = (shaded + 1) / 2
+    result[(0, -1), :] = np.nan
+    result[:, (0, -1)] = np.nan
+    return data
 
 
-@cuda.jit
-def _gpu_cos_part(cos_altituderad, cos_slope, cos_aspect, out):
-    i, j = cuda.grid(2)
-    if i < out.shape[0] and j < out.shape[1]:
-        out[i, j] = cos_altituderad * cos_slope[i, j] * cos_aspect[i, j]
-
-
-def hillshade(agg, azimuth=225, angle_altitude=25, name='hillshade',
-              use_cuda=True, use_cupy=True):
-    """
-    Illuminates 2D DataArray from specific azimuth and altitude.
+def hillshade(agg, azimuth=225, angle_altitude=25, name='hillshade'):
+    """Illuminates 2D DataArray from specific azimuth and altitude.
 
     Parameters
     ----------
     agg : DataArray
-    angle_altitude : int, optional (default: 25)
+    altitude : int, optional (default: 30)
         Altitude angle of the sun specified in degrees.
-    azimuth : int, optional (default: 225)
+    azimuth : int, optional (default: 315)
         The angle between the north vector and the perpendicular projection
         of the light source down onto the horizon specified in degrees.
-    name: str, name of output aggregate
-    use_cuda: bool
-    use_cupy: bool
+    cmap : list of colors or matplotlib.colors.Colormap, optional
+        The colormap to use. Can be either a list of colors (in any of the
+        formats described above), or a matplotlib colormap object.
+        Default is `["lightgray", "black"]`
+    alpha : int, optional
+        Value between 0 - 255 representing the alpha value of pixels which contain
+        data (i.e. non-nan values). Regardless of this value, `NaN` values are
+        set to fully transparent.
 
     Returns
     -------
@@ -51,52 +51,14 @@ def hillshade(agg, azimuth=225, angle_altitude=25, name='hillshade',
      - http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html
     """
 
-    data = agg.data
-    x, y = np.gradient(data)
-
-    altituderad = angle_altitude * np.pi / 180.
-    sin_altituderad = np.sin(altituderad)
-    cos_altituderad = np.cos(altituderad)
-
-    if has_cuda() and use_cuda:
-        griddim, blockdim = cuda_args(data.shape)
-        arctan_part = np.empty(data.shape, dtype='f4')
-        arctan_part[:] = np.nan
-
-        if use_cupy:
-            import cupy
-            arctan_part = cupy.asarray(arctan_part)
-
-        _gpu_calc[griddim, blockdim](x, y, arctan_part)
+    if isinstance(agg.data, da.Array):
+        _func = partial(_hillshade, azimuth=azimuth, angle_altitude=angle_altitude)
+        out = agg.data.map_overlap(_func,
+                                   depth=(1, 1),
+                                   boundary=np.nan,
+                                   meta=np.array(()))
     else:
-        arctan_part = np.sqrt(x * x + y * y)
+        out = _hillshade(agg.data, azimuth, angle_altitude)
 
-    slope = np.pi / 2. - np.arctan(arctan_part)
-    sin_slope = np.sin(slope)
-    sin_part = sin_altituderad * sin_slope
-
-    azimuthrad = (360.0 - azimuth) * np.pi / 180.
-    aspect = (azimuthrad - np.pi / 2.) - np.arctan2(-x, y)
-    cos_aspect = np.cos(aspect)
-    cos_slope = np.cos(slope)
-
-    if has_cuda() and use_cuda:
-        griddim, blockdim = cuda_args(data.shape)
-        cos_part = np.empty(data.shape, dtype='f4')
-        cos_part[:] = np.nan
-        if use_cupy:
-            cos_part = cupy.asarray(cos_part)
-
-        _gpu_cos_part[griddim, blockdim](cos_altituderad, cos_slope,
-                                         cos_aspect, cos_part)
-    else:
-        cos_part = cos_altituderad * cos_slope * cos_aspect
-
-    shaded = sin_part + cos_part
-    out = (shaded + 1) / 2
-
-    return DataArray(out,
-                     name=name,
-                     coords=agg.coords,
-                     dims=agg.dims,
-                     attrs=agg.attrs)
+    return DataArray(out, name=name, dims=agg.dims,
+                     coords=agg.coords, attrs=agg.attrs)

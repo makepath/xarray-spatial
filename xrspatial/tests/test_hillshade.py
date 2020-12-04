@@ -1,9 +1,9 @@
-import pytest
 import xarray as xr
 import numpy as np
 
-from xrspatial.utils import doesnt_have_cuda
 from xrspatial import hillshade
+
+import dask.array as da
 
 
 def _do_sparse_array(data_array):
@@ -31,6 +31,7 @@ def _do_gaussian_array():
 #
 # -----
 
+
 data_random = np.random.random_sample((100, 100))
 data_random_sparse = _do_sparse_array(data_random)
 data_gaussian = _do_gaussian_array()
@@ -51,22 +52,27 @@ def test_hillshade():
     assert da_gaussian_shade[60, 60] > 0
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_hillshade_gpu_equals_cpu():
+def test_numpy_equals_dask():
 
     # input data
-    data = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-                       [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
-                       [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
-                       [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
-                       [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-                       [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-                       [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
-                      dtype=np.float32)
+    data = np.asarray(
+        [[1432.6542, 1432.4764, 1432.4764, 1432.1207, 1431.9429, np.nan],
+         [1432.6542, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
+         [1432.832, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
+         [1432.832, 1432.6542, 1432.4764, 1432.4764, 1432.1207, np.nan],
+         [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
+         [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
+         [1432.832, 1432.832, 1432.6542, 1432.4764, 1432.4764, np.nan]],
+        dtype=np.float32)
 
-    small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+    attrs = {'res': (10.0, 10.0)}
 
-    cpu = hillshade(small_da, name='aspect_agg', use_cuda=False)
-    gpu = hillshade(small_da, name='aspect_agg', use_cuda=True)
+    small_numpy_based_data_array = xr.DataArray(data, attrs=attrs)
+    dask_data = da.from_array(data, chunks=(3, 3))
+    small_das_based_data_array = xr.DataArray(dask_data, attrs=attrs)
 
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    numpy_result = hillshade(small_numpy_based_data_array, name='numpy')
+    dask_result = hillshade(small_das_based_data_array, name='dask')
+    dask_result.data = dask_result.data.compute()
+
+    assert np.isclose(numpy_result, dask_result, equal_nan=True).all()

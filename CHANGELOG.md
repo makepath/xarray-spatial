@@ -1,3 +1,22 @@
+## Xarray-Spatial Changelog
+-----------
+
+
+### Version 0.1.2 - 12/1/2020
+
+- Added GPU support for curvature (#150)
+- Added dask.Array support for curvature (#150)
+- Added GPU support for aspect (#156)
+- Added dask.Array support for aspect (#156)
+- Added GPU support for slope (#152)
+- Added dask.Array support for slope (#152)
+- Fixed slope cupy: nan edge effect, remove numpy padding that cause TypeError (#160)
+- Fixed aspect cupy: nan edge effect, remove numpy padding that cause TypeError(#160)
+- Updated README with Supported Spatial Features Table
+- Added badge for open source gis timeline
+- Added GPU Support for Multispectral tools (#148)
+- Added Python 3.9 to Test Suite
+
 ### Version 0.1.1 - 10/21/2020
 - Added convolution module for use in focal statistics. (#131)
 - Added example notebook for focal statistics and convolution modules.
