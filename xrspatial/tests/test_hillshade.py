@@ -1,9 +1,22 @@
+import pytest
 import xarray as xr
 import numpy as np
 
-from xrspatial import hillshade
-
 import dask.array as da
+
+from xrspatial import hillshade
+from xrspatial.utils import doesnt_have_cuda
+
+
+elevation = np.asarray(
+    [[1432.6542, 1432.4764, 1432.4764, 1432.1207, 1431.9429, np.nan],
+     [1432.6542, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
+     [1432.832, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
+     [1432.832, 1432.6542, 1432.4764, 1432.4764, 1432.1207, np.nan],
+     [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
+     [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
+     [1432.832, 1432.832, 1432.6542, 1432.4764, 1432.4764, np.nan]],
+    dtype=np.float32)
 
 
 def _do_sparse_array(data_array):
@@ -53,22 +66,10 @@ def test_hillshade():
 
 
 def test_numpy_equals_dask():
-
-    # input data
-    data = np.asarray(
-        [[1432.6542, 1432.4764, 1432.4764, 1432.1207, 1431.9429, np.nan],
-         [1432.6542, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
-         [1432.832, 1432.6542, 1432.4764, 1432.2986, 1432.1207, np.nan],
-         [1432.832, 1432.6542, 1432.4764, 1432.4764, 1432.1207, np.nan],
-         [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
-         [1432.832, 1432.6542, 1432.6542, 1432.4764, 1432.2986, np.nan],
-         [1432.832, 1432.832, 1432.6542, 1432.4764, 1432.4764, np.nan]],
-        dtype=np.float32)
-
     attrs = {'res': (10.0, 10.0)}
 
-    small_numpy_based_data_array = xr.DataArray(data, attrs=attrs)
-    dask_data = da.from_array(data, chunks=(3, 3))
+    small_numpy_based_data_array = xr.DataArray(elevation, attrs=attrs)
+    dask_data = da.from_array(elevation, chunks=(3, 3))
     small_das_based_data_array = xr.DataArray(dask_data, attrs=attrs)
 
     numpy_result = hillshade(small_numpy_based_data_array, name='numpy')
@@ -76,3 +77,19 @@ def test_numpy_equals_dask():
     dask_result.data = dask_result.data.compute()
 
     assert np.isclose(numpy_result, dask_result, equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_hillshade_gpu_equals_cpu():
+
+    import cupy
+
+    small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    cpu = hillshade(small_da, name='numpy_result')
+
+    small_da_cupy = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    gpu = hillshade(small_da_cupy, name='cupy_result')
+
+    assert isinstance(gpu.data, cupy.ndarray)
+
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
