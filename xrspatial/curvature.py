@@ -120,13 +120,13 @@ def curvature(agg, name='curvature'):
     elif has_cuda() and isinstance(agg.data, cupy.ndarray):
         out = _run_cupy(agg.data, cellsize)
 
-    # dask + numpy case
-    elif isinstance(agg.data, da.Array):
-        out = _run_dask_numpy(agg.data, cellsize)
-
     # dask + cupy case
     elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
         out = _run_dask_cupy(agg.data, cellsize)
+
+    # dask + numpy case
+    elif isinstance(agg.data, da.Array):
+        out = _run_dask_numpy(agg.data, cellsize)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
