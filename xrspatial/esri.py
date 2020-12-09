@@ -66,10 +66,26 @@ def arcpy_to_xarray(arcpy_raster) -> xr.DataArray:
     '''
     https://pro.arcgis.com/en/pro-app/arcpy/functions/rastertonumpyarray-function.htm
     '''
-    raise NotImplementedError('Not currently implemented')
+    #raise NotImplementedError('Not currently implemented')
 
     if doesnt_have_arcpy():
         raise ImportError('To use this function you must have access to arcpy')
+
+    cellWSize = arcpy_raster.meanCellWidth
+    cellHSize = arcpy_raster.meanCellHeight
+    noDataValue = arcpy_raster.noDataValue
+
+    #mdInfo = inRas.mdinfo
+    arr = arcpy.RasterToNumPyArray(inRas,nodata_to_value=noDataValue)
+
+    #missing coords 
+    resultDA = DataArray(arr,
+        name = inRas.name,
+        #coords = hack_agg.coords,
+        dims = ['y','x'],
+        attrs = {'res': 1, 'pixel width': cellWSize, 'pixel height': cellHSize, 'no data': noDataValue})
+
+    return (resultDA)
 
 
 def xarray_to_arcpy(raster: xr.DataArray):
