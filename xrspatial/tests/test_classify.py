@@ -1,9 +1,46 @@
-import numpy as np
-import xarray as xr
+import pytest
 
+import xarray as xr
+import numpy as np
+
+import dask.array as da
+
+from xrspatial.utils import doesnt_have_cuda
 from xrspatial import equal_interval
 from xrspatial import natural_breaks
 from xrspatial import quantile
+from xrspatial import reclassify
+
+
+def test_reclassify():
+    n, m = 5, 5
+    agg = xr.DataArray(np.arange(n * m).reshape((n, m)), dims=['x', 'y'])
+    agg['x'] = np.linspace(0, n, n)
+    agg['y'] = np.linspace(0, m, m)
+
+    reclassify_agg = reclassify(agg, bins=[5, 10, 26], new_values=[1, 2, 3])
+    assert reclassify_agg is not None
+
+    unique_elements, counts_elements = np.unique(reclassify_agg.data,
+                                                 return_counts=True)
+    assert len(unique_elements) == 3
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_reclassify_cpu_equals_gpu():
+
+    import cupy
+
+    n, m = 5, 5
+    elevation = np.arange(n * m).reshape((n, m))
+    small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    cpu = reclassify(small_da, name='numpy_result', bins=[5, 10, 26], new_values=[1, 2, 3])
+
+    small_da_cupy = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    gpu = reclassify(small_da_cupy, name='cupy_result', bins=[5, 10, 26], new_values=[1, 2, 3])
+    assert isinstance(gpu.data, cupy.ndarray)
+
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
 def test_quantile():
