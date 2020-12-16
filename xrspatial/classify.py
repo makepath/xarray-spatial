@@ -54,7 +54,7 @@ def binary(agg, values, name='binary'):
 
 
 @ngjit
-def _cpu_bin(data, bins, new_values, nodata):
+def _cpu_bin(data, bins, new_values):
     out = np.zeros(data.shape, dtype=np.float32)
     out[:, :] = np.nan
     rows, cols = data.shape
@@ -80,27 +80,26 @@ def _cpu_bin(data, bins, new_values, nodata):
             if val_bin > -1:
                 out[y, x] = new_values[val_bin]
             else:
-                out[y, x] = nodata
+                out[y, x] = np.nan
 
     return out
 
 
-def _run_numpy_bin(data, bins, new_values, nodata=np.nan):
-    out = _cpu_bin(data, bins, new_values, nodata)
+def _run_numpy_bin(data, bins, new_values):
+    out = _cpu_bin(data, bins, new_values)
     return out
 
 
-def _run_dask_numpy_bin(data, bins, new_values, nodata=np.nan):
+def _run_dask_numpy_bin(data, bins, new_values):
     _func = partial(_run_numpy_bin,
                     bins=bins,
-                    new_values=new_values,
-                    nodata=nodata)
+                    new_values=new_values)
 
     out = data.map_blocks(_func)
     return out
 
 
-def reclassify(agg, bins, new_values, name='reclassify', nodata=np.nan):
+def reclassify(agg, bins, new_values, name='reclassify'):
     """
     Reclassify xr.DataArray to new values based on bins
 
@@ -132,11 +131,11 @@ def reclassify(agg, bins, new_values, name='reclassify', nodata=np.nan):
                          'Should have same length.')
 
     if isinstance(agg.data, np.ndarray):
-        out = _run_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values), nodata)
+        out = _run_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
 
     # dask + numpy case
     elif isinstance(agg.data, da.Array):
-        out = _run_dask_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values), nodata)
+        out = _run_dask_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
