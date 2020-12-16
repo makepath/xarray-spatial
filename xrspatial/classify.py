@@ -53,7 +53,6 @@ def _bin(data, bins, new_values, nodata=np.nan, dtype=np.float32):
     out = np.zeros(data.shape, dtype=dtype)
     rows, cols = data.shape
     nbins = len(bins)
-    val = None
     for y in range(0, rows):
         for x in range(0, cols):
             val = data[y, x]
@@ -80,8 +79,7 @@ def _bin(data, bins, new_values, nodata=np.nan, dtype=np.float32):
     return out
 
 
-def reclassify(agg, bins, new_values, name='reclassify',
-               nodata=np.nan, dtype=np.float32):
+def reclassify(agg, bins, new_values, name='reclassify'):
     """
     Reclassify xr.DataArray to new values based on bins
 
@@ -90,21 +88,22 @@ def reclassify(agg, bins, new_values, name='reclassify',
 
     Parameters
     ----------
-    agg : xr.DataArray
+    agg: xr.DataArray
         xarray.DataArray of value to classify
-    k : int
-        number of quantiles
+    bins: array-like object
+        values to bin
+    new_values: array-like object
     name : str
-        name of data dim in output xr.DataArray
+        name of output aggregate
 
     Returns
     -------
-    quantiled_agg : xr.DataArray
+    reclassified_agg : xr.DataArray
 
     Examples
     --------
-    >>> from xrspatial.classify import quantile
-    >>> quantile_agg = quantile(my_agg)
+    >>> from xrspatial.classify import reclassify
+    >>> reclassify_agg = reclassify(my_agg)
     """
 
     if len(bins) != len(new_values):
@@ -131,7 +130,7 @@ def quantile(agg, k=4, name='quantile', ignore_vals=tuple()):
     k : int
         number of quantiles
     name : str
-        name of data dim in output xr.DataArray
+        name of output aggregate
 
     Returns
     -------
@@ -258,6 +257,9 @@ def natural_breaks(agg, num_sample=None, name='natural_breaks', k=5):
         of the data instead of using the whole dataset.
     k: int
         Number of classes
+    name : str
+        name of output aggregate
+
     Returns
     -------
     natural_breaks_agg: xarray.DataArray
@@ -339,14 +341,13 @@ def equal_interval(agg, k=5, name='equal_interval'):
              xarray.DataArray of value to classify
     k       : int
               number of classes required
-
+    name : str
+        name of output aggregate
 
     Returns
-        -------
         equal_interval_agg : xr.DataArray
 
     Notes:
-    ------
     Intervals defined to have equal width:
 
     .. math::
@@ -370,18 +371,8 @@ def equal_interval(agg, k=5, name='equal_interval'):
     >>> Out[]: 
     <xarray.DataArray 'equal_interval' (dim_0: 4)>
     array([1.5, 3. , 4.5, 6. ])
-
-
-    Notes
-    -----
-    Intervals defined to have equal width:
-
-    .. math::
-
-        bins_j = min(y)+w*(j+1)
-
-    with :math:`w=\\frac{max(y)-min(j)}{k}`
     """
+
     max_agg = np.nanmax(agg.data)
     min_agg = np.nanmin(agg.data)
     rg = max_agg - min_agg
