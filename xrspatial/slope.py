@@ -28,7 +28,7 @@ from xrspatial.utils import is_cupy_backed
 
 @ngjit
 def _cpu(data, cellsize_x, cellsize_y):
-    out = np.zeros_like(data)
+    out = np.zeros_like(data, dtype=np.float32)
     out[:] = np.nan
     rows, cols = data.shape
     for y in range(1, rows - 1):
