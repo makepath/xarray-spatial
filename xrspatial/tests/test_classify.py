@@ -43,6 +43,29 @@ def test_reclassify_cpu_equals_gpu():
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
+def test_reclassify_numpy_equals_dask():
+
+    n, m = 5, 5
+    elevation = np.arange(n * m).reshape((n, m))
+
+    small_numpy_based_data_array = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    small_das_based_data_array = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
+                                              attrs={'res': (10.0, 10.0)})
+
+    numpy_reclassify = reclassify(small_numpy_based_data_array,
+                                  bins=[5, 10, 26], new_values=[1, 2, 3],
+                                  name='numpy_reclassify')
+    dask_reclassify = reclassify(small_das_based_data_array,
+                                 bins=[5, 10, 26], new_values=[1, 2, 3],
+                                 name='dask_reclassify')
+
+    assert isinstance(dask_reclassify.data, da.Array)
+
+    dask_reclassify.data = dask_reclassify.data.compute()
+
+    assert np.isclose(numpy_reclassify, dask_reclassify, equal_nan=True).all()
+
+
 def test_quantile():
     k = 5
     n, m = 5, 5

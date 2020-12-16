@@ -160,6 +160,11 @@ def _run_cupy_bin(data, bins, new_values):
     return out
 
 
+def _run_dask_cupy_bin(data, bins, new_values):
+    msg = 'Upstream bug in dask prevents cupy backed arrays'
+    raise NotImplementedError(msg)
+
+
 def reclassify(agg, bins, new_values, name='reclassify'):
     """
     Reclassify xr.DataArray to new values based on bins
@@ -197,6 +202,10 @@ def reclassify(agg, bins, new_values, name='reclassify'):
     # cupy case
     elif has_cuda() and isinstance(agg.data, cupy.ndarray):
         out = _run_cupy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
+
+    # dask + cupy case
+    elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
+        out = _run_dask_cupy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
 
     # dask + numpy case
     elif isinstance(agg.data, da.Array):
