@@ -1,6 +1,13 @@
 from functools import partial
 from typing import Union
 
+# 3rd-party
+try:
+    import cupy
+except ImportError:
+    class cupy(object):
+        ndarray = False
+
 import datashader.transfer_functions as tf
 import numpy as np
 import scipy.stats as stats
@@ -8,9 +15,16 @@ from datashader.colors import rgb
 from datashader.utils import ngjit
 from xarray import DataArray
 
+from numba import cuda
 import dask.array as da
 
 from numpy.random import RandomState
+
+from xrspatial.utils import cuda_args
+from xrspatial.utils import get_dataarray_resolution
+from xrspatial.utils import has_cuda
+from xrspatial.utils import ngjit
+from xrspatial.utils import is_cupy_backed
 
 import warnings
 warnings.simplefilter('default')
@@ -99,6 +113,53 @@ def _run_dask_numpy_bin(data, bins, new_values):
     return out
 
 
+@cuda.jit(device=True)
+def _gpu_bin(data, bins, new_values):
+    nbins = len(bins)
+    val = data[0, 0]
+    val_bin = -1
+
+    # find bin
+    for b in range(0, nbins):
+
+        # first bin
+        if b == 0:
+            if val <= bins[b]:
+                val_bin = b
+                break
+        else:
+            if val > bins[b - 1] and val <= bins[b]:
+                val_bin = b
+                break
+
+    if val_bin > -1:
+        out = new_values[val_bin]
+    else:
+        out = np.nan
+
+    return out
+
+
+@cuda.jit
+def _run_gpu_bin(data, bins, new_values, out):
+    i, j = cuda.grid(2)
+    if (i >= 0 and i < out.shape[0] and j >= 0 and j < out.shape[1]):
+        out[i, j] = _gpu_bin(data[i:i+1, j:j+1], bins, new_values)
+
+
+def _run_cupy_bin(data, bins, new_values):
+    bins_cupy = cupy.array(bins, dtype='f4')
+    new_values_cupy = cupy.array(new_values, dtype='f4')
+    out = cupy.empty(data.shape, dtype='f4')
+    out[:] = cupy.nan
+    griddim, blockdim = cuda_args(data.shape)
+    _run_gpu_bin[griddim, blockdim](data,
+                                    bins_cupy,
+                                    new_values_cupy,
+                                    out)
+    return out
+
+
 def reclassify(agg, bins, new_values, name='reclassify'):
     """
     Reclassify xr.DataArray to new values based on bins
@@ -132,6 +193,10 @@ def reclassify(agg, bins, new_values, name='reclassify'):
 
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
+
+    # cupy case
+    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
+        out = _run_cupy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
 
     # dask + numpy case
     elif isinstance(agg.data, da.Array):
