@@ -1,9 +1,14 @@
+from functools import partial
+from typing import Union
+
 import datashader.transfer_functions as tf
 import numpy as np
 import scipy.stats as stats
 from datashader.colors import rgb
 from datashader.utils import ngjit
 from xarray import DataArray
+
+import dask.array as da
 
 from numpy.random import RandomState
 
@@ -49,8 +54,9 @@ def binary(agg, values, name='binary'):
 
 
 @ngjit
-def _bin(data, bins, new_values, nodata=np.nan, dtype=np.float32):
-    out = np.zeros(data.shape, dtype=dtype)
+def _cpu_bin(data, bins, new_values, nodata):
+    out = np.zeros(data.shape, dtype=np.float32)
+    out[:, :] = np.nan
     rows, cols = data.shape
     nbins = len(bins)
     for y in range(0, rows):
@@ -79,7 +85,22 @@ def _bin(data, bins, new_values, nodata=np.nan, dtype=np.float32):
     return out
 
 
-def reclassify(agg, bins, new_values, name='reclassify'):
+def _run_numpy_bin(data, bins, new_values, nodata=np.nan):
+    out = _cpu_bin(data, bins, new_values, nodata)
+    return out
+
+
+def _run_dask_numpy_bin(data, bins, new_values, nodata=np.nan):
+    _func = partial(_run_numpy_bin,
+                    bins=bins,
+                    new_values=new_values,
+                    nodata=nodata)
+
+    out = data.map_blocks(_func)
+    return out
+
+
+def reclassify(agg, bins, new_values, name='reclassify', nodata=np.nan):
     """
     Reclassify xr.DataArray to new values based on bins
 
@@ -107,9 +128,20 @@ def reclassify(agg, bins, new_values, name='reclassify'):
     """
 
     if len(bins) != len(new_values):
-        raise ValueError('bins and new_values mismatch')
+        raise ValueError('bins and new_values mismatch.'
+                         'Should have same length.')
 
-    return DataArray(_bin(agg.data, bins, new_values),
+    if isinstance(agg.data, np.ndarray):
+        out = _run_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values), nodata)
+
+    # dask + numpy case
+    elif isinstance(agg.data, da.Array):
+        out = _run_dask_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values), nodata)
+
+    else:
+        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
+
+    return DataArray(out,
                      name=name,
                      dims=agg.dims,
                      coords=agg.coords,
@@ -157,7 +189,7 @@ def quantile(agg, k=4, name='quantile', ignore_vals=tuple()):
     if k_q < k:
         print("Quantile Warning: Not enough unique values for k classes (using {} bins)".format(k_q))
 
-    return DataArray(_bin(agg.data, q, np.arange(k_q)),
+    return DataArray(_run_numpy_bin(agg.data, q, np.arange(k_q)),
                      name=name,
                      dims=agg.dims,
                      coords=agg.coords,
@@ -324,7 +356,7 @@ def natural_breaks(agg, num_sample=None, name='natural_breaks', k=5):
         centroids = _jenks(sample_data, k)
         bins = np.array(centroids[1:])
 
-    return DataArray(_bin(agg.data, bins, np.arange(uvk)),
+    return DataArray(_run_numpy_bin(agg.data, bins, np.arange(uvk)),
                      name=name,
                      coords=agg.coords,
                      dims=agg.dims,
@@ -363,12 +395,12 @@ def equal_interval(agg, k=5, name='equal_interval'):
     Examples
     --------
 
-    >>> In []: ei = np.array([1, 1, 0, 2,4,5,6])                                                                                                                        
+    >>> In []: ei = np.array([1, 1, 0, 2,4,5,6])
 
-    >>> In []: ei_array =xarray.DataArray(ei)                                                                                                                         
+    >>> In []: ei_array =xarray.DataArray(ei)
 
-    >>> In []: xrspatial.equal_interval(ei_array)                                                                                                                     
-    >>> Out[]: 
+    >>> In []: xrspatial.equal_interval(ei_array)
+    >>> Out[]:
     <xarray.DataArray 'equal_interval' (dim_0: 4)>
     array([1.5, 3. , 4.5, 6. ])
     """
@@ -385,7 +417,7 @@ def equal_interval(agg, k=5, name='equal_interval'):
         cuts = cuts[0:k]
     cuts[-1] = max_agg
     bins = cuts.copy()
-    return DataArray(_bin(agg.data, bins, np.arange(l_cuts)),
+    return DataArray(_run_numpy_bin(agg.data, bins, np.arange(l_cuts)),
                      name=name,
                      coords=agg.coords,
                      dims=agg.dims,
