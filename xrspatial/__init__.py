@@ -35,6 +35,7 @@ from xrspatial.zonal import trim # noqa
 from xrspatial.zonal import crop # noqa
 
 from xrspatial.classify import quantile  # noqa
+from xrspatial.classify import reclassify  # noqa
 from xrspatial.classify import equal_interval  # noqa
 from xrspatial.classify import natural_breaks  # noqa
 
