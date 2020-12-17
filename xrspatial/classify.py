@@ -10,9 +10,7 @@ except ImportError:
 
 import datashader.transfer_functions as tf
 import numpy as np
-import scipy.stats as stats
 from datashader.colors import rgb
-from datashader.utils import ngjit
 from xarray import DataArray
 
 from numba import cuda
@@ -234,7 +232,7 @@ def _run_cpu_quantile(agg, k):
 
     data = agg.data[~np.isnan(agg.data)]
 
-    q = np.array([stats.scoreatpercentile(data, pct) for pct in p])
+    q = np.array([np.percentile(data, pct) for pct in p])
     q = np.unique(q)
     return q
 
@@ -248,8 +246,7 @@ def _run_cupy_quantile(agg, k):
 
     data = agg.data[~cupy.isnan(agg.data)]
 
-    q = cupy.array(
-        [stats.scoreatpercentile(data.get(), pct) for pct in p.get()])
+    q = cupy.array([cupy.percentile(data, pct) for pct in p])
     q = cupy.unique(q)
     return q
 
