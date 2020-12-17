@@ -12,18 +12,29 @@ from xrspatial import quantile
 from xrspatial import reclassify
 
 
-def test_reclassify():
+def test_reclassify_cpu():
+    bins = [10, 20, 30]
+    new_values = [1, 2, 3]
+
     n, m = 5, 5
-    agg = xr.DataArray(np.arange(n * m).reshape((n, m)), dims=['x', 'y'])
-    agg['x'] = np.linspace(0, n, n)
-    agg['y'] = np.linspace(0, m, m)
-
-    reclassify_agg = reclassify(agg, bins=[5, 10, 26], new_values=[1, 2, 3])
-    assert reclassify_agg is not None
-
-    unique_elements, counts_elements = np.unique(reclassify_agg.data,
+    elevation = np.arange(n * m).reshape((n, m))
+    # numpy
+    numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    numpy_reclassify = reclassify(numpy_agg, bins=bins, new_values=new_values,
+                                  name='numpy_reclassify')
+    unique_elements, counts_elements = np.unique(numpy_reclassify.data,
                                                  return_counts=True)
     assert len(unique_elements) == 3
+
+    # dask + numpy
+    dask_numpy_agg = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
+                                  attrs={'res': (10.0, 10.0)})
+    dask_reclassify = reclassify(dask_numpy_agg, bins=bins,
+                                 new_values=new_values, name='dask_reclassify')
+    assert isinstance(dask_reclassify.data, da.Array)
+
+    dask_reclassify.data = dask_reclassify.data.compute()
+    assert np.isclose(numpy_reclassify, dask_reclassify, equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -31,57 +42,27 @@ def test_reclassify_cpu_equals_gpu():
 
     import cupy
 
-    n, m = 5, 5
-    elevation = np.arange(n * m).reshape((n, m))
-    small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-    cpu = reclassify(small_da, name='numpy_result', bins=[5, 10, 26], new_values=[1, 2, 3])
-
-    small_da_cupy = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
-    gpu = reclassify(small_da_cupy, name='cupy_result', bins=[5, 10, 26], new_values=[1, 2, 3])
-    assert isinstance(gpu.data, cupy.ndarray)
-
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
-
-
-def test_reclassify_numpy_equals_dask():
+    bins = [10, 20, 30]
+    new_values = [1, 2, 3]
 
     n, m = 5, 5
     elevation = np.arange(n * m).reshape((n, m))
-
-    small_numpy_based_data_array = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-    small_das_based_data_array = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
-                                              attrs={'res': (10.0, 10.0)})
-
-    numpy_reclassify = reclassify(small_numpy_based_data_array,
-                                  bins=[5, 10, 26], new_values=[1, 2, 3],
-                                  name='numpy_reclassify')
-    dask_reclassify = reclassify(small_das_based_data_array,
-                                 bins=[5, 10, 26], new_values=[1, 2, 3],
-                                 name='dask_reclassify')
-
-    assert isinstance(dask_reclassify.data, da.Array)
-
-    dask_reclassify.data = dask_reclassify.data.compute()
-
-    assert np.isclose(numpy_reclassify, dask_reclassify, equal_nan=True).all()
-
-
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_reclassify_dask_cupy_equals_numpy():
-    import cupy
 
     # vanilla numpy version
-    n, m = 5, 5
-    elevation = np.arange(n * m).reshape((n, m))
-    small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-    cpu = reclassify(small_da, name='numpy_result', bins=[5, 10, 26], new_values=[1, 2, 3])
+    numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    cpu = reclassify(numpy_agg, name='numpy_result', bins=bins, new_values=new_values)
+
+    # cupy
+    cupy_agg = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    gpu = reclassify(cupy_agg, name='cupy_result', bins=bins, new_values=new_values)
+    assert isinstance(gpu.data, cupy.ndarray)
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
 
     # dask + cupy
-    small_da_cupy = xr.DataArray(cupy.asarray(elevation),
-                                 attrs={'res': (10.0, 10.0)})
-    small_da_cupy.data = da.from_array(small_da_cupy.data, chunks=(3, 3))
-    dask_gpu = reclassify(small_da_cupy, name='dask_cupy_result',
-                          bins=[5, 10, 26], new_values=[1, 2, 3])
+    dask_cupy_agg = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    dask_cupy_agg.data = da.from_array(dask_cupy_agg.data, chunks=(3, 3))
+    dask_gpu = reclassify(dask_cupy_agg, name='dask_cupy_result',
+                          bins=bins, new_values=new_values)
     assert isinstance(dask_gpu.data, da.Array) and is_cupy_backed(dask_gpu)
 
     dask_gpu.data = dask_gpu.data.compute()
