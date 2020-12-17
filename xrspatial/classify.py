@@ -225,6 +225,53 @@ def reclassify(agg, bins, new_values, name='reclassify'):
                      attrs=agg.attrs)
 
 
+def _run_numpy_quantile(agg, k):
+    w = 100.0 / k
+    p = np.arange(w, 100 + w, w)
+
+    if p[-1] > 100.0:
+        p[-1] = 100.0
+
+    data = agg.data[~np.isnan(agg.data)]
+
+    q = np.array([stats.scoreatpercentile(data, pct) for pct in p])
+    q = np.unique(q)
+    k_q = len(q)
+
+    if k_q < k:
+        print(
+            "Quantile Warning: Not enough unique values for k classes (using {} bins)".format(
+                k_q))
+        k = k_q
+
+    out = _run_numpy_bin(agg.data, q, np.arange(k))
+    return out
+
+
+def _run_cupy_quantile(agg, k):
+    w = 100.0 / k
+    p = cupy.arange(w, 100 + w, w)
+
+    if p[-1] > 100.0:
+        p[-1] = 100.0
+
+    data = agg.data[~cupy.isnan(agg.data)]
+
+    q = cupy.array(
+        [stats.scoreatpercentile(data.get(), pct) for pct in p.get()])
+    q = cupy.unique(q)
+    k_q = len(q)
+
+    if k_q < k:
+        print(
+            "Quantile Warning: Not enough unique values for k classes (using {} bins)".format(
+                k_q))
+        k = k_q
+
+    out = _run_cupy_bin(agg.data, q, cupy.arange(k))
+    return out
+
+
 def quantile(agg, k=4, name='quantile'):
     """
     Calculates the quantiles for an array
@@ -251,23 +298,15 @@ def quantile(agg, k=4, name='quantile'):
     >>> quantile_agg = quantile(my_agg)
     """
 
-    w = 100.0 / k
-    p = np.arange(w, 100 + w, w)
+    # numpy case
+    if isinstance(agg.data, np.ndarray):
+        out = _run_numpy_quantile(agg, k)
 
-    if p[-1] > 100.0:
-        p[-1] = 100.0
+    # cupy case
+    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
+        out = _run_cupy_quantile(agg, k)
 
-    data = agg.data[~np.isnan(agg.data)]
-
-    q = np.array([stats.scoreatpercentile(data, pct) for pct in p])
-    q = np.unique(q)
-    k_q = len(q)
-
-    if k_q < k:
-        print("Quantile Warning: Not enough unique values for k classes (using {} bins)".format(k_q))
-        k = k_q
-
-    return DataArray(_bin(agg.data, q, np.arange(k)),
+    return DataArray(out,
                      name=name,
                      dims=agg.dims,
                      coords=agg.coords,
