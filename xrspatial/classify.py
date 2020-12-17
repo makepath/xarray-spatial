@@ -163,6 +163,30 @@ def _run_dask_cupy_bin(data, bins_cupy, new_values_cupy):
     return out
 
 
+def _bin(agg, bins, new_values):
+    # numpy case
+    if isinstance(agg.data, np.ndarray):
+        out = _run_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
+
+    # cupy case
+    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
+        bins_cupy = cupy.asarray(bins, dtype='f4')
+        new_values_cupy = cupy.asarray(new_values, dtype='f4')
+        out = _run_cupy_bin(agg.data, bins_cupy, new_values_cupy)
+
+    # dask + cupy case
+    elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
+        bins_cupy = cupy.asarray(bins, dtype='f4')
+        new_values_cupy = cupy.asarray(new_values, dtype='f4')
+        out = _run_dask_cupy_bin(agg.data, bins_cupy, new_values_cupy)
+
+    # dask + numpy case
+    elif isinstance(agg.data, da.Array):
+        out = _run_dask_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
+
+    return out
+
+
 def reclassify(agg, bins, new_values, name='reclassify'):
     """
     Reclassify xr.DataArray to new values based on bins
@@ -193,26 +217,7 @@ def reclassify(agg, bins, new_values, name='reclassify'):
     if len(bins) != len(new_values):
         raise ValueError('bins and new_values mismatch.'
                          'Should have same length.')
-
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        out = _run_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
-
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        bins_cupy = cupy.asarray(bins, dtype='f4')
-        new_values_cupy = cupy.asarray(new_values, dtype='f4')
-        out = _run_cupy_bin(agg.data, bins_cupy, new_values_cupy)
-
-    # dask + cupy case
-    elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
-        bins_cupy = cupy.asarray(bins, dtype='f4')
-        new_values_cupy = cupy.asarray(new_values, dtype='f4')
-        out = _run_dask_cupy_bin(agg.data, bins_cupy, new_values_cupy)
-
-    # dask + numpy case
-    elif isinstance(agg.data, da.Array):
-        out = _run_dask_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
+    out = _bin(agg, bins, new_values)
     return DataArray(out,
                      name=name,
                      dims=agg.dims,
