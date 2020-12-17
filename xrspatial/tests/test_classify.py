@@ -72,13 +72,10 @@ def test_reclassify_cpu_equals_gpu():
 def test_quantile_cpu():
     k = 5
     n, m = 5, 5
-    numpy_agg = xr.DataArray(np.arange(n * m).reshape((n, m)), dims=['x', 'y'])
-    numpy_agg['x'] = np.linspace(0, n, n)
-    numpy_agg['y'] = np.linspace(0, m, m)
+    elevation = np.arange(n * m).reshape((n, m))
+    numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
 
     quantile_agg = quantile(numpy_agg, k=5)
-    assert quantile_agg is not None
-
     unique_elements, counts_elements = np.unique(quantile_agg.data,
                                                  return_counts=True)
     assert len(unique_elements) == k

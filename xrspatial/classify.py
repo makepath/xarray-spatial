@@ -225,7 +225,7 @@ def reclassify(agg, bins, new_values, name='reclassify'):
                      attrs=agg.attrs)
 
 
-def _run_numpy_quantile(agg, k):
+def _run_cpu_quantile(agg, k):
     w = 100.0 / k
     p = np.arange(w, 100 + w, w)
 
@@ -236,16 +236,7 @@ def _run_numpy_quantile(agg, k):
 
     q = np.array([stats.scoreatpercentile(data, pct) for pct in p])
     q = np.unique(q)
-    k_q = len(q)
-
-    if k_q < k:
-        print(
-            "Quantile Warning: Not enough unique values for k classes (using {} bins)".format(
-                k_q))
-        k = k_q
-
-    out = _run_numpy_bin(agg.data, q, np.arange(k))
-    return out
+    return q
 
 
 def _run_cupy_quantile(agg, k):
@@ -260,16 +251,18 @@ def _run_cupy_quantile(agg, k):
     q = cupy.array(
         [stats.scoreatpercentile(data.get(), pct) for pct in p.get()])
     q = cupy.unique(q)
-    k_q = len(q)
+    return q
 
-    if k_q < k:
-        print(
-            "Quantile Warning: Not enough unique values for k classes (using {} bins)".format(
-                k_q))
-        k = k_q
 
-    out = _run_cupy_bin(agg.data, q, cupy.arange(k))
-    return out
+def _quantile(agg, k):
+    # numpy case
+    if isinstance(agg.data, np.ndarray):
+        q = _run_cpu_quantile(agg, k)
+
+    # cupy case
+    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
+        q = _run_cupy_quantile(agg, k)
+    return q
 
 
 def quantile(agg, k=4, name='quantile'):
@@ -298,13 +291,13 @@ def quantile(agg, k=4, name='quantile'):
     >>> quantile_agg = quantile(my_agg)
     """
 
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        out = _run_numpy_quantile(agg, k)
+    q = _quantile(agg, k)
+    k_q = len(q)
+    if k_q < k:
+        print("Quantile Warning: Not enough unique values for k classes (using {} bins)".format(k_q))
+        k = k_q
 
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _run_cupy_quantile(agg, k)
+    out = _bin(agg.data, bins=q, new_values=np.arange(k))
 
     return DataArray(out,
                      name=name,
