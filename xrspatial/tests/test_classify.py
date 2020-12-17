@@ -5,7 +5,7 @@ import numpy as np
 
 import dask.array as da
 
-from xrspatial.utils import doesnt_have_cuda
+from xrspatial.utils import doesnt_have_cuda, is_cupy_backed
 from xrspatial import equal_interval
 from xrspatial import natural_breaks
 from xrspatial import quantile
@@ -64,6 +64,28 @@ def test_reclassify_numpy_equals_dask():
     dask_reclassify.data = dask_reclassify.data.compute()
 
     assert np.isclose(numpy_reclassify, dask_reclassify, equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_reclassify_dask_cupy_equals_numpy():
+    import cupy
+
+    # vanilla numpy version
+    n, m = 5, 5
+    elevation = np.arange(n * m).reshape((n, m))
+    small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    cpu = reclassify(small_da, name='numpy_result', bins=[5, 10, 26], new_values=[1, 2, 3])
+
+    # dask + cupy
+    small_da_cupy = xr.DataArray(cupy.asarray(elevation),
+                                 attrs={'res': (10.0, 10.0)})
+    small_da_cupy.data = da.from_array(small_da_cupy.data, chunks=(3, 3))
+    dask_gpu = reclassify(small_da_cupy, name='dask_cupy_result',
+                          bins=[5, 10, 26], new_values=[1, 2, 3])
+    assert isinstance(dask_gpu.data, da.Array) and is_cupy_backed(dask_gpu)
+
+    dask_gpu.data = dask_gpu.data.compute()
+    assert np.isclose(cpu, dask_gpu, equal_nan=True).all()
 
 
 def test_quantile():

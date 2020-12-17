@@ -21,7 +21,6 @@ import dask.array as da
 from numpy.random import RandomState
 
 from xrspatial.utils import cuda_args
-from xrspatial.utils import get_dataarray_resolution
 from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
 from xrspatial.utils import is_cupy_backed
@@ -147,9 +146,7 @@ def _run_gpu_bin(data, bins, new_values, out):
         out[i, j] = _gpu_bin(data[i:i+1, j:j+1], bins, new_values)
 
 
-def _run_cupy_bin(data, bins, new_values):
-    bins_cupy = cupy.array(bins, dtype='f4')
-    new_values_cupy = cupy.array(new_values, dtype='f4')
+def _run_cupy_bin(data, bins_cupy, new_values_cupy):
     out = cupy.empty(data.shape, dtype='f4')
     out[:] = cupy.nan
     griddim, blockdim = cuda_args(data.shape)
@@ -160,9 +157,10 @@ def _run_cupy_bin(data, bins, new_values):
     return out
 
 
-def _run_dask_cupy_bin(data, bins, new_values):
-    msg = 'Upstream bug in dask prevents cupy backed arrays'
-    raise NotImplementedError(msg)
+def _run_dask_cupy_bin(data, bins_cupy, new_values_cupy):
+    out = data.map_blocks(lambda da: _run_cupy_bin(da, bins_cupy, new_values_cupy),
+                          meta=cupy.array(()))
+    return out
 
 
 def reclassify(agg, bins, new_values, name='reclassify'):
@@ -196,24 +194,25 @@ def reclassify(agg, bins, new_values, name='reclassify'):
         raise ValueError('bins and new_values mismatch.'
                          'Should have same length.')
 
+    # numpy case
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
 
     # cupy case
     elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _run_cupy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
+        bins_cupy = cupy.asarray(bins, dtype='f4')
+        new_values_cupy = cupy.asarray(new_values, dtype='f4')
+        out = _run_cupy_bin(agg.data, bins_cupy, new_values_cupy)
 
     # dask + cupy case
     elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
-        out = _run_dask_cupy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
+        bins_cupy = cupy.asarray(bins, dtype='f4')
+        new_values_cupy = cupy.asarray(new_values, dtype='f4')
+        out = _run_dask_cupy_bin(agg.data, bins_cupy, new_values_cupy)
 
     # dask + numpy case
     elif isinstance(agg.data, da.Array):
         out = _run_dask_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
-
     return DataArray(out,
                      name=name,
                      dims=agg.dims,
