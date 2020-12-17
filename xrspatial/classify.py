@@ -225,12 +225,12 @@ def reclassify(agg, bins, new_values, name='reclassify'):
                      attrs=agg.attrs)
 
 
-def quantile(agg, k=4, name='quantile', ignore_vals=tuple()):
+def quantile(agg, k=4, name='quantile'):
     """
     Calculates the quantiles for an array
 
     Adapted from PySAL:
-    https://pysal.org/pysal/_modules/pysal/viz/mapclassify/classifiers.html#Quantiles
+    https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles
 
     Parameters
     ----------
@@ -257,7 +257,7 @@ def quantile(agg, k=4, name='quantile', ignore_vals=tuple()):
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    data = agg.data[~np.isnan(agg.data) & ~np.isin(agg.data, ignore_vals)]
+    data = agg.data[~np.isnan(agg.data)]
 
     q = np.array([stats.scoreatpercentile(data, pct) for pct in p])
     q = np.unique(q)
@@ -265,8 +265,9 @@ def quantile(agg, k=4, name='quantile', ignore_vals=tuple()):
 
     if k_q < k:
         print("Quantile Warning: Not enough unique values for k classes (using {} bins)".format(k_q))
+        k = k_q
 
-    return DataArray(_bin(agg.data, q, np.arange(k_q)),
+    return DataArray(_bin(agg.data, q, np.arange(k)),
                      name=name,
                      dims=agg.dims,
                      coords=agg.coords,
