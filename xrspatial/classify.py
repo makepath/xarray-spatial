@@ -163,26 +163,26 @@ def _run_dask_cupy_bin(data, bins_cupy, new_values_cupy):
     return out
 
 
-def _bin(agg, bins, new_values):
+def _bin(data, bins, new_values):
     # numpy case
-    if isinstance(agg.data, np.ndarray):
-        out = _run_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
+    if isinstance(data, np.ndarray):
+        out = _run_numpy_bin(data, np.asarray(bins), np.asarray(new_values))
 
     # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
+    elif has_cuda() and isinstance(data, cupy.ndarray):
         bins_cupy = cupy.asarray(bins, dtype='f4')
         new_values_cupy = cupy.asarray(new_values, dtype='f4')
-        out = _run_cupy_bin(agg.data, bins_cupy, new_values_cupy)
+        out = _run_cupy_bin(data, bins_cupy, new_values_cupy)
 
     # dask + cupy case
-    elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
+    elif has_cuda() and isinstance(data, da.Array) and type(data._meta).__module__.split('.')[0] == 'cupy':
         bins_cupy = cupy.asarray(bins, dtype='f4')
         new_values_cupy = cupy.asarray(new_values, dtype='f4')
-        out = _run_dask_cupy_bin(agg.data, bins_cupy, new_values_cupy)
+        out = _run_dask_cupy_bin(data, bins_cupy, new_values_cupy)
 
     # dask + numpy case
-    elif isinstance(agg.data, da.Array):
-        out = _run_dask_numpy_bin(agg.data, np.asarray(bins), np.asarray(new_values))
+    elif isinstance(data, da.Array):
+        out = _run_dask_numpy_bin(data, np.asarray(bins), np.asarray(new_values))
 
     return out
 
@@ -217,7 +217,7 @@ def reclassify(agg, bins, new_values, name='reclassify'):
     if len(bins) != len(new_values):
         raise ValueError('bins and new_values mismatch.'
                          'Should have same length.')
-    out = _bin(agg, bins, new_values)
+    out = _bin(agg.data, bins, new_values)
     return DataArray(out,
                      name=name,
                      dims=agg.dims,
@@ -266,7 +266,7 @@ def quantile(agg, k=4, name='quantile', ignore_vals=tuple()):
     if k_q < k:
         print("Quantile Warning: Not enough unique values for k classes (using {} bins)".format(k_q))
 
-    return DataArray(_run_numpy_bin(agg.data, q, np.arange(k_q)),
+    return DataArray(_bin(agg.data, q, np.arange(k_q)),
                      name=name,
                      dims=agg.dims,
                      coords=agg.coords,
