@@ -252,13 +252,17 @@ def _run_cupy_quantile(agg, k):
 
 
 def _quantile(agg, k):
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
+    # cupy case,
+    if has_cuda() and isinstance(agg.data, cupy.ndarray):
+        q = _run_cupy_quantile(agg, k)
+
+    # numpy case, dask+numpy case
+    elif isinstance(agg.data, np.ndarray) or isinstance(agg.data, da.Array):
         q = _run_cpu_quantile(agg, k)
 
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        q = _run_cupy_quantile(agg, k)
+    else:
+        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
+
     return q
 
 

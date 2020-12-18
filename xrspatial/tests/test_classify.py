@@ -73,13 +73,23 @@ def test_quantile_cpu():
     k = 5
     n, m = 5, 5
     elevation = np.arange(n * m).reshape((n, m))
+    # numpy
     numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    numpy_quantile = quantile(numpy_agg, k=5)
 
-    quantile_agg = quantile(numpy_agg, k=5)
-    unique_elements, counts_elements = np.unique(quantile_agg.data,
+    unique_elements, counts_elements = np.unique(numpy_quantile.data,
                                                  return_counts=True)
     assert len(unique_elements) == k
     assert len(np.unique(counts_elements)) == 1
+    assert np.unique(counts_elements)[0] == 5
+
+    # dask + numpy
+    dask_numpy_agg = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
+                                  attrs={'res': (10.0, 10.0)})
+    dask_quantile = quantile(dask_numpy_agg, k=k)
+    dask_quantile.data = dask_quantile.data.compute()
+    assert np.isclose(numpy_quantile, dask_quantile, equal_nan=True).all()
+
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
