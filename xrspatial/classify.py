@@ -320,7 +320,7 @@ def quantile(agg, k=4, name='quantile'):
     """
 
     q = _quantile(agg, k)
-    k_q = len(q)
+    k_q = q.shape[0]
     if k_q < k:
         print("Quantile Warning: Not enough unique values for k classes (using {} bins)".format(k_q))
         k = k_q
