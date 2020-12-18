@@ -79,6 +79,7 @@ def test_quantile_cpu():
 
     unique_elements, counts_elements = np.unique(numpy_quantile.data,
                                                  return_counts=True)
+    assert isinstance(numpy_quantile.data, np.ndarray)
     assert len(unique_elements) == k
     assert len(np.unique(counts_elements)) == 1
     assert np.unique(counts_elements)[0] == 5
@@ -87,9 +88,15 @@ def test_quantile_cpu():
     dask_numpy_agg = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
                                   attrs={'res': (10.0, 10.0)})
     dask_quantile = quantile(dask_numpy_agg, k=k)
-    dask_quantile.data = dask_quantile.data.compute()
-    assert np.isclose(numpy_quantile, dask_quantile, equal_nan=True).all()
+    assert isinstance(dask_quantile.data, da.Array)
 
+    #     Note that dask's percentile algorithm is approximate, while numpy's is exact.
+    #     This may cause some differences between results of vanilla numpy and
+    #     dask version of the input agg.
+    #     https://github.com/dask/dask/issues/3099
+    #     This assertion may fail
+    # dask_quantile = dask_quantile.compute()
+    # assert np.isclose(numpy_quantile, dask_quantile, equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
