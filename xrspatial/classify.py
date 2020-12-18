@@ -224,7 +224,7 @@ def reclassify(agg, bins, new_values, name='reclassify'):
 
 
 def _run_cpu_quantile(data, k):
-    w = int(100.0 / k)
+    w = 100.0 / k
     p = np.arange(w, 100 + w, w)
 
     if p[-1] > 100.0:
@@ -236,19 +236,19 @@ def _run_cpu_quantile(data, k):
 
 
 def _run_dask_numpy_quantile(data, k):
-    w = int(100.0 / k)
-    p = np.arange(w, 100 + w, w)
+    w = 100.0 / k
+    p = da.arange(w, 100 + w, w)
 
     if p[-1] > 100.0:
         p[-1] = 100.0
 
     q = da.percentile(data.flatten(), p)
-    q = np.unique(q)
+    q = da.unique(q)
     return q
 
 
 def _run_cupy_quantile(data, k):
-    w = int(100.0 / k)
+    w = 100.0 / k
     p = cupy.arange(w, 100 + w, w)
 
     if p[-1] > 100.0:
@@ -320,8 +320,6 @@ def quantile(agg, k=4, name='quantile'):
     """
 
     q = _quantile(agg, k)
-    print("q", q)
-    print(len(q))
     k_q = len(q)
     if k_q < k:
         print("Quantile Warning: Not enough unique values for k classes (using {} bins)".format(k_q))
