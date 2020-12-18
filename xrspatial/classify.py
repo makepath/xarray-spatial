@@ -259,14 +259,24 @@ def _run_cupy_quantile(data, k):
     return q
 
 
+def _run_dask_cupy_quantile(data, k):
+    msg = 'Currently percentile calculation has not been supported for Dask array backed by CuPy.' \
+          'See issue at https://github.com/dask/dask/issues/6942'
+    raise NotImplementedError(msg)
+
+
 def _quantile(agg, k):
+    # numpy case
+    if isinstance(agg.data, np.ndarray):
+        q = _run_cpu_quantile(agg.data, k)
+
     # cupy case
-    if has_cuda() and isinstance(agg.data, cupy.ndarray):
+    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
         q = _run_cupy_quantile(agg.data, k)
 
-    # numpy case
-    elif isinstance(agg.data, np.ndarray):
-        q = _run_cpu_quantile(agg.data, k)
+    # dask + cupy case
+    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
+        q = _run_dask_cupy_quantile(agg.data, k)
 
     # dask + numpy case
     elif isinstance(agg.data, da.Array):
