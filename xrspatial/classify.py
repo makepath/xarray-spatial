@@ -223,42 +223,54 @@ def reclassify(agg, bins, new_values, name='reclassify'):
                      attrs=agg.attrs)
 
 
-def _run_cpu_quantile(agg, k):
+def _run_cpu_quantile(data, k):
     w = 100.0 / k
     p = np.arange(w, 100 + w, w)
 
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    data = agg.data[~np.isnan(agg.data)]
-
-    q = np.array([np.percentile(data, pct) for pct in p])
+    q = np.percentile(data, p)
     q = np.unique(q)
     return q
 
 
-def _run_cupy_quantile(agg, k):
+def _run_dask_numpy_quantile(data, k):
+    w = 100.0 / k
+    p = np.arange(w, 100 + w, w)
+
+    if p[-1] > 100.0:
+        p[-1] = 100.0
+
+    q = da.percentile(data.flatten(), p)
+    q = np.unique(q)
+    return q
+
+
+def _run_cupy_quantile(data, k):
     w = 100.0 / k
     p = cupy.arange(w, 100 + w, w)
 
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    data = agg.data[~cupy.isnan(agg.data)]
-
-    q = cupy.array([cupy.percentile(data, pct) for pct in p])
+    q = cupy.percentile(data, p)
     q = cupy.unique(q)
     return q
 
 
 def _quantile(agg, k):
-    # cupy case,
+    # cupy case
     if has_cuda() and isinstance(agg.data, cupy.ndarray):
-        q = _run_cupy_quantile(agg, k)
+        q = _run_cupy_quantile(agg.data, k)
 
-    # numpy case, dask+numpy case
-    elif isinstance(agg.data, np.ndarray) or isinstance(agg.data, da.Array):
-        q = _run_cpu_quantile(agg, k)
+    # numpy case
+    elif isinstance(agg.data, np.ndarray):
+        q = _run_cpu_quantile(agg.data, k)
+
+    # dask + numpy case
+    elif isinstance(agg.data, da.Array):
+        q = _run_dask_numpy_quantile(agg.data, k)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
@@ -272,6 +284,11 @@ def quantile(agg, k=4, name='quantile'):
 
     Adapted from PySAL:
     https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles
+
+    Note that dask's percentile algorithm is approximate, while numpy's is exact.
+    This may cause some differences between results of vanilla numpy and
+    dask version of the input agg.
+    https://github.com/dask/dask/issues/3099
 
     Parameters
     ----------
