@@ -275,7 +275,7 @@ def _quantile(agg, k):
         q = _run_cupy_quantile(agg.data, k)
 
     # dask + cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
+    elif has_cuda() and isinstance(agg.data, cupy.ndarray) and is_cupy_backed(agg):
         q = _run_dask_cupy_quantile(agg.data, k)
 
     # dask + numpy case
@@ -320,6 +320,7 @@ def quantile(agg, k=4, name='quantile'):
     """
 
     q = _quantile(agg, k)
+    print("q", q)
     k_q = len(q)
     if k_q < k:
         print("Quantile Warning: Not enough unique values for k classes (using {} bins)".format(k_q))
