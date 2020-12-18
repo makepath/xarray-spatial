@@ -224,7 +224,7 @@ def reclassify(agg, bins, new_values, name='reclassify'):
 
 
 def _run_cpu_quantile(data, k):
-    w = 100.0 / k
+    w = int(100.0 / k)
     p = np.arange(w, 100 + w, w)
 
     if p[-1] > 100.0:
@@ -236,7 +236,7 @@ def _run_cpu_quantile(data, k):
 
 
 def _run_dask_numpy_quantile(data, k):
-    w = 100.0 / k
+    w = int(100.0 / k)
     p = np.arange(w, 100 + w, w)
 
     if p[-1] > 100.0:
@@ -248,7 +248,7 @@ def _run_dask_numpy_quantile(data, k):
 
 
 def _run_cupy_quantile(data, k):
-    w = 100.0 / k
+    w = int(100.0 / k)
     p = cupy.arange(w, 100 + w, w)
 
     if p[-1] > 100.0:
@@ -529,7 +529,7 @@ def equal_interval(agg, k=5, name='equal_interval'):
     with :math:`w=\\frac{max(y)-min(j)}{k}`
 
     Algorithm References:
-     - https://pysal.org/pysal/_modules/pysal/viz/mapclassify/classifiers.html#EqualInterval
+     - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval
      - https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py
 
     Examples
