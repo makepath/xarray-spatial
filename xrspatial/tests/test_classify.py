@@ -141,33 +141,15 @@ def test_natural_breaks():
     assert len(unique_elements) == k
 
 
-def test_equal_interval():
-    k = 4
-    n, m = 4, 4
-    agg = xr.DataArray(np.arange(n * m).reshape((n, m)), dims=['x', 'y'])
-    agg['x'] = np.linspace(0, n, n)
-    agg['y'] = np.linspace(0, m, m)
+def test_equal_interval_cpu():
+    k = 5
+    n, m = 5, 5
+    elevation = np.arange(n * m).reshape((n, m))
+    # numpy
+    numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    numpy_ei = equal_interval(numpy_agg, k=5)
 
-    equal_interval_agg = equal_interval(agg, k=4)
-    assert equal_interval_agg is not None
-
-    unique_elements, counts_elements = np.unique(equal_interval_agg.data,
+    unique_elements, counts_elements = np.unique(numpy_ei.data,
                                                  return_counts=True)
+    assert isinstance(numpy_ei.data, np.ndarray)
     assert len(unique_elements) == k
-    assert len(np.unique(counts_elements)) == 1
-
-
-def test_small_equal_interval():
-    k = 4
-    n, m = 3, 2
-    agg = xr.DataArray(np.arange(n * m).reshape((n, m)), dims=['x', 'y'])
-    agg['x'] = np.linspace(0, n, n)
-    agg['y'] = np.linspace(0, m, m)
-
-    equal_interval_agg = equal_interval(agg, k=4)
-    assert equal_interval_agg is not None
-
-    unique_elements, counts_elements = np.unique(equal_interval_agg.data,
-                                                 return_counts=True)
-    assert len(unique_elements) == k
-    assert len(np.unique(counts_elements)) == n-1

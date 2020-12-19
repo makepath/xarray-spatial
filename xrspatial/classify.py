@@ -501,6 +501,21 @@ def natural_breaks(agg, num_sample=None, name='natural_breaks', k=5):
                      attrs=agg.attrs)
 
 
+def _run_numpy_equal_interval(data, k):
+    max_data = np.nanmax(data)
+    min_data = np.nanmin(data)
+    rg = max_data - min_data
+    width = rg * 1.0 / k
+    cuts = np.arange(min_data + width, max_data + width, width)
+    l_cuts = len(cuts)
+    if l_cuts > k:
+        # handle overshooting
+        cuts = cuts[0:k]
+    cuts[-1] = max_data
+    out = _run_numpy_bin(data, cuts, np.arange(l_cuts))
+    return out
+
+
 def equal_interval(agg, k=5, name='equal_interval'):
     """
     Equal Interval Classification
@@ -543,19 +558,11 @@ def equal_interval(agg, k=5, name='equal_interval'):
     array([1.5, 3. , 4.5, 6. ])
     """
 
-    max_agg = np.nanmax(agg.data)
-    min_agg = np.nanmin(agg.data)
-    rg = max_agg - min_agg
-    width = rg * 1.0 / k
-    cuts = np.arange(min_agg + width, max_agg + width, width)
-    l_cuts = len(cuts)
-    if l_cuts > k:
-        print('EqualInterv Warning: Not enough unique values in array for {} classes'.format(
-            l_cuts)),  # handle overshooting
-        cuts = cuts[0:k]
-    cuts[-1] = max_agg
-    bins = cuts.copy()
-    return DataArray(_run_numpy_bin(agg.data, bins, np.arange(l_cuts)),
+    # numpy case
+    if isinstance(agg.data, np.ndarray):
+        out = _run_numpy_equal_interval(agg.data, k)
+
+    return DataArray(out,
                      name=name,
                      coords=agg.coords,
                      dims=agg.dims,
