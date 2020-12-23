@@ -516,6 +516,20 @@ def _run_numpy_equal_interval(data, k):
     return out
 
 
+def _run_cupy_equal_interval(data, k):
+    max_data = cupy.nanmax(data)
+    min_data = cupy.nanmin(data)
+    width = (max_data - min_data) / k
+    cuts = cupy.arange(min_data.get() + width.get(), max_data.get() + width.get(), width.get())
+    l_cuts = cuts.shape[0]
+    if l_cuts > k:
+        # handle overshooting
+        cuts = cuts[0:k]
+    cuts[-1] = max_data
+    out = _bin(data, cuts, cupy.arange(l_cuts))
+    return out
+
+
 def equal_interval(agg, k=5, name='equal_interval'):
     """
     Equal Interval Classification
@@ -561,6 +575,13 @@ def equal_interval(agg, k=5, name='equal_interval'):
     # numpy case
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy_equal_interval(agg.data, k)
+
+    # cupy case
+    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
+        out = _run_cupy_equal_interval(agg.data, k)
+
+    else:
+        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
 
     return DataArray(out,
                      name=name,

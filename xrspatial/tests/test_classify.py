@@ -153,3 +153,21 @@ def test_equal_interval_cpu():
                                                  return_counts=True)
     assert isinstance(numpy_ei.data, np.ndarray)
     assert len(unique_elements) == k
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_equal_interval_cpu_equals_gpu():
+
+    import cupy
+
+    n, m = 5, 5
+    elevation = np.arange(n * m).reshape((n, m))
+    small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    cpu = equal_interval(small_da, k=5)
+
+    small_da_cupy = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    gpu = equal_interval(small_da_cupy, 5)
+    assert isinstance(gpu.data, cupy.ndarray)
+
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
+
