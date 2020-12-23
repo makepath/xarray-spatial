@@ -516,6 +516,21 @@ def _run_numpy_equal_interval(data, k):
     return out
 
 
+def _run_dask_numpy_equal_interval(data, k):
+    max_data = da.nanmax(data)
+    min_data = da.nanmin(data)
+    width = (max_data - min_data) / k
+    cuts = da.arange(min_data + width, max_data + width, width)
+    l_cuts = cuts.shape[0]
+    if l_cuts > k:
+        # handle overshooting
+        cuts = cuts[0:k]
+    # work around to assign cuts[-1] = max_data
+    bins = da.concatenate([cuts[:k-1], [max_data]])
+    out = _bin(data, bins, np.arange(l_cuts))
+    return out
+
+
 def _run_cupy_equal_interval(data, k):
     max_data = cupy.nanmax(data)
     min_data = cupy.nanmin(data)
@@ -579,6 +594,10 @@ def equal_interval(agg, k=5, name='equal_interval'):
     # cupy case
     elif has_cuda() and isinstance(agg.data, cupy.ndarray):
         out = _run_cupy_equal_interval(agg.data, k)
+
+    # dask + numpy case
+    elif isinstance(agg.data, da.Array):
+        out = _run_dask_numpy_equal_interval(agg.data, k)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))

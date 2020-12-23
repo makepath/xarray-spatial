@@ -154,6 +154,15 @@ def test_equal_interval_cpu():
     assert isinstance(numpy_ei.data, np.ndarray)
     assert len(unique_elements) == k
 
+    # dask + numpy
+    dask_numpy_agg = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
+                                  attrs={'res': (10.0, 10.0)})
+    dask_ei = equal_interval(dask_numpy_agg, k=k, name='dask_reclassify')
+    assert isinstance(dask_ei.data, da.Array)
+
+    dask_ei.data = dask_ei.data.compute()
+    assert np.isclose(numpy_ei, dask_ei, equal_nan=True).all()
+
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_equal_interval_cpu_equals_gpu():
