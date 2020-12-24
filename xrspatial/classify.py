@@ -545,6 +545,11 @@ def _run_cupy_equal_interval(data, k):
     return out
 
 
+def _run_dask_cupy_equal_interval(data, k):
+    msg = 'Not yet supported.'
+    raise NotImplementedError(msg)
+
+
 def equal_interval(agg, k=5, name='equal_interval'):
     """
     Equal Interval Classification
@@ -594,6 +599,10 @@ def equal_interval(agg, k=5, name='equal_interval'):
     # cupy case
     elif has_cuda() and isinstance(agg.data, cupy.ndarray):
         out = _run_cupy_equal_interval(agg.data, k)
+
+    # dask + cupy case
+    elif has_cuda() and isinstance(agg.data, cupy.ndarray) and is_cupy_backed(agg):
+        out = _run_dask_cupy_equal_interval(agg.data, k)
 
     # dask + numpy case
     elif isinstance(agg.data, da.Array):
