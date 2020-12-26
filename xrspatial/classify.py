@@ -335,13 +335,13 @@ def quantile(agg, k=4, name='quantile'):
 
 
 @ngjit
-def _jenks_matrices(data, n_classes):
+def _run_numpy_jenks_matrices(data, n_classes):
     n_data = data.shape[0]
-    lower_class_limits = np.zeros((n_data+1, n_classes+1), dtype=np.float64)
-    lower_class_limits[1, 1:n_classes+1] = 1.0
+    lower_class_limits = np.zeros((n_data + 1, n_classes + 1), dtype=np.float64)
+    lower_class_limits[1, 1:n_classes + 1] = 1.0
 
-    var_combinations = np.zeros((n_data+1, n_classes+1), dtype=np.float64)
-    var_combinations[2:n_data+1, 1:n_classes+1] = np.inf
+    var_combinations = np.zeros((n_data + 1, n_classes + 1), dtype=np.float64)
+    var_combinations[2:n_data + 1, 1:n_classes + 1] = np.inf
 
     nl = data.shape[0] + 1
     variance = 0.0
@@ -351,7 +351,7 @@ def _jenks_matrices(data, n_classes):
         sum_squares = 0.0
         w = 0.0
 
-        for m in range(1, l+1):
+        for m in range(1, l + 1):
             # `III` originally
             lower_class_limit = l - m + 1
             i4 = lower_class_limit - 1
@@ -373,7 +373,7 @@ def _jenks_matrices(data, n_classes):
             variance = sum_squares - (sum * sum) / w
 
             if i4 != 0:
-                for j in range(2, n_classes+1):
+                for j in range(2, n_classes + 1):
                     jm1 = j - 1
                     if var_combinations[l, j] >= (variance + var_combinations[i4, jm1]):
                         lower_class_limits[l, j] = lower_class_limit
@@ -386,16 +386,16 @@ def _jenks_matrices(data, n_classes):
 
 
 @ngjit
-def _jenks(data, n_classes):
+def _run_numpy_jenks(data, n_classes):
     # ported from existing cython implementation:
     # https://github.com/perrygeo/jenks/blob/master/jenks.pyx
 
     data.sort()
 
-    lower_class_limits, _ = _jenks_matrices(data, n_classes)
+    lower_class_limits, _ = _run_numpy_jenks_matrices(data, n_classes)
 
     k = data.shape[0]
-    kclass = [0.] * (n_classes+1)
+    kclass = [0.] * (n_classes + 1)
     count_num = n_classes
 
     kclass[n_classes] = data[len(data) - 1]
@@ -408,6 +408,47 @@ def _jenks(data, n_classes):
         count_num -= 1
 
     return kclass
+
+
+def _run_numpy_natural_break(data, num_sample, k):
+    num_data = data.size
+
+    if num_sample is not None and num_sample < num_data:
+        # randomly select sample from the whole dataset
+        # create a pseudo random number generator
+        generator = RandomState(1234567890)
+        idx = [i for i in range(0, data.size)]
+        generator.shuffle(idx)
+        sample_idx = idx[:num_sample]
+        sample_data = data.flatten()[sample_idx]
+    else:
+        sample_data = data.flatten()
+
+    # warning if number of total data points to fit the model bigger than 40k
+    if sample_data.size >= 40000:
+        warnings.warn('natural_breaks Warning: Natural break classification '
+                      '(Jenks) has a complexity of O(n^2), '
+                      'your classification with {} data points may take '
+                      'a long time.'.format(sample_data.size),
+                      Warning)
+
+    uv = np.unique(sample_data)
+    uvk = len(uv)
+
+    if uvk < k:
+        warnings.warn('natural_breaks Warning: Not enough unique values '
+                      'in data array for {} classes. '
+                      'n_samples={} should be >= n_clusters={}. '
+                      'Using k={} instead.'.format(k, uvk, k, uvk),
+                      Warning)
+        uv.sort()
+        bins = uv
+    else:
+        centroids = _run_numpy_jenks(sample_data, k)
+        bins = np.array(centroids[1:])
+
+    out = _bin(data, bins, np.arange(uvk))
+    return out
 
 
 def natural_breaks(agg, num_sample=None, name='natural_breaks', k=5):
@@ -458,43 +499,14 @@ def natural_breaks(agg, num_sample=None, name='natural_breaks', k=5):
            [4., 4., 4.]]
     """
 
-    num_data = agg.size
+    # numpy case
+    if isinstance(agg.data, np.ndarray):
+        out = _run_numpy_natural_break(agg.data, num_sample, k)
 
-    if num_sample is not None and num_sample < num_data:
-        # randomly select sample from the whole dataset
-        # create a pseudo random number generator
-        generator = RandomState(1234567890)
-        idx = [i for i in range(0, agg.size)]
-        generator.shuffle(idx)
-        sample_idx = idx[:num_sample]
-        sample_data = agg.data.flatten()[sample_idx]
     else:
-        sample_data = agg.data.flatten()
+        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
 
-    # warning if number of total data points to fit the model bigger than 40k
-    if sample_data.size >= 40000:
-        warnings.warn('natural_breaks Warning: Natural break classification '
-                      '(Jenks) has a complexity of O(n^2), '
-                      'your classification with {} data points may take '
-                      'a long time.'.format(sample_data.size),
-                      Warning)
-
-    uv = np.unique(sample_data)
-    uvk = len(uv)
-
-    if uvk < k:
-        warnings.warn('natural_breaks Warning: Not enough unique values '
-                      'in data array for {} classes. '
-                      'n_samples={} should be >= n_clusters={}. '
-                      'Using k={} instead.'.format(k, uvk, k, uvk),
-                      Warning)
-        uv.sort()
-        bins = uv
-    else:
-        centroids = _jenks(sample_data, k)
-        bins = np.array(centroids[1:])
-
-    return DataArray(_run_numpy_bin(agg.data, bins, np.arange(uvk)),
+    return DataArray(out,
                      name=name,
                      coords=agg.coords,
                      dims=agg.dims,
