@@ -162,8 +162,7 @@ def test_ndvi_dask_cupy_equals_numpy():
     assert np.isclose(numpy_result, test_result, equal_nan=True).all()
 
 # SAVI -------------
-
-def test_savi_numpy_contains_valid_values():
+def test_savi_numpy():
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
 
@@ -183,40 +182,57 @@ def test_savi_dask_equals_numpy():
     # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
-    numpy_result = ndvi(nir, red)
+    numpy_result = savi(nir, red)
 
     # dask 
     nir_dask = create_test_arr(arr1, backend='dask')
     red_dask = create_test_arr(arr2, backend='dask')
-
     test_result = savi(nir_dask, red_dask)
-    assert isinstance(test_result.data, da.Array)
 
+    assert isinstance(test_result.data, da.Array)
     test_result.data = test_result.data.compute()
     assert np.isclose(numpy_result, test_result, equal_nan=True).all()
-    pass
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_savi_cupy_equals_numpy():
+
+    import cupy
+
+    # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
+    numpy_result = savi(nir, red)
 
-    # savi should be same as ndvi at soil_factor=0
-    cpu = savi(nir, red, soil_factor=0.0)
-    gpu = savi(nir, red, soil_factor=0.0)
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    # dask + cupy
+    nir_cupy = create_test_arr(arr1, backend='cupy')
+    red_cupy = create_test_arr(arr2, backend='cupy')
+    test_result = savi(nir_cupy, red_cupy)
+
+    assert isinstance(test_result.data, cupy.ndarray)
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
 
 def test_savi_dask_cupy_equals_numpy():
-    pass
+
+    import cupy
+
+    # vanilla numpy version
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+    numpy_result = savi(nir, red)
+
+    # dask + cupy
+    nir_dask_cupy = create_test_arr(arr1, backend='dask+cupy')
+    red_dask_cupy = create_test_arr(arr2, backend='dask+cupy')
+    test_result = savi(nir_dask_cupy, red_dask_cupy)
+
+    assert is_dask_cupy(test_result)
+    test_result.data = test_result.data.compute()
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
 
 # AVRI -------------
-# START HERE AND FINISH TESTS FOR AVRI!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# def test_avri_numpy_contains_valid_values():
-# def test_avri_dask_equals_numpy():
-# def test_avri_cupy_equals_numpy():
-# def test_avri_dask_cupy_equals_numpy():
-
 def test_avri_numpy():
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)

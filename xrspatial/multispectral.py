@@ -456,28 +456,6 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
 
 
 @ngjit
-def _savi(nir_data, red_data, soil_factor):
-    out = np.zeros_like(nir_data)
-    rows, cols = nir_data.shape
-    for y in range(0, rows):
-        for x in range(0, cols):
-            nir = nir_data[y, x]
-            red = red_data[y, x]
-
-            numerator = nir - red
-
-            soma = nir + red + soil_factor
-            denominator = soma * (1.0 + soil_factor)
-
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = numerator / denominator
-
-    return out
-
-
-@ngjit
 def _normalized_ratio_cpu(arr1, arr2):
     out = np.zeros_like(arr1)
     rows, cols = arr1.shape
@@ -534,6 +512,21 @@ def _run_normalized_ratio_dask_cupy(arr1, arr2):
     return out
 
 
+@ngjit
+def _savi_cpu(nir_data, red_data, soil_factor):
+    out = np.zeros_like(nir_data)
+    rows, cols = nir_data.shape
+    for y in range(0, rows):
+        for x in range(0, cols):
+            nir = nir_data[y, x]
+            red = red_data[y, x]
+            numerator = nir - red
+            soma = nir + red + soil_factor
+            denominator = soma * (1.0 + soil_factor)
+            out[y, x] = numerator / denominator
+
+    return out
+
 @cuda.jit
 def _savi_gpu(nir_data, red_data, soil_factor, out):
     y, x = cuda.grid(2)
@@ -541,13 +534,35 @@ def _savi_gpu(nir_data, red_data, soil_factor, out):
         nir = nir_data[y, x]
         red = red_data[y, x]
         numerator = nir - red
-        soma = nir + red + soil_factor[0]
-        denominator = soma * (nb.float32(1.0) + soil_factor[0])
+        soma = nir + red + soil_factor
+        denominator = soma * (nb.float32(1.0) + soil_factor)
+        out[y, x] = numerator / denominator
 
-        if denominator == 0.0:
-            out[y, x] = np.nan
-        else:
-            out[y, x] = numerator / denominator
+
+def _savi_dask(nir_data, red_data, soil_factor):
+    out = da.map_blocks(_savi_cpu, nir_data, red_data, soil_factor,
+                        meta=np.array(()))
+    return out
+
+
+def _savi_cupy(nir_data, red_data, soil_factor):
+
+    import cupy
+
+    griddim, blockdim = cuda_args(nir_data.shape)
+    out = cupy.empty(nir_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _savi_gpu[griddim, blockdim](nir_data, red_data, soil_factor, out)
+    return out
+
+
+def _savi_dask_cupy(nir_data, red_data, soil_factor):
+
+    import cupy
+
+    out = da.map_blocks(_savi_cupy, nir_data, red_data, soil_factor,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
 
 
 def savi(nir_agg: DataArray, red_agg: DataArray, soil_factor:float=1.0, name:str='savi'):
@@ -574,32 +589,21 @@ def savi(nir_agg: DataArray, red_agg: DataArray, soil_factor:float=1.0, name:str
     Algorithm References:
      - https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
     """
-    if not red_agg.shape == nir_agg.shape:
-        raise ValueError("red_agg and nir_agg expected to have equal shapes")
 
-    if soil_factor > 1.0 or soil_factor < -1.0:
-        raise ValueError("soil factor must be between (-1.0, 1.0)")
+    validate_arrays(red_agg, nir_agg)
+
+    if not -1.0 <= soil_factor <= 1.0:
+        raise ValueError("soil factor must be between [-1.0, 1.0]")
 
     nir_data = nir_agg.data
     red_data = red_agg.data
 
-    if has_cuda() and use_cuda:
-        griddim, blockdim = cuda_args(nir_data.shape)
-        soil_factor_arr = np.array([float(soil_factor)], dtype='f4')
-
-        out = np.empty(nir_data.shape, dtype='f4')
-        out[:] = np.nan
-
-        if use_cupy:
-            import cupy
-            out = cupy.asarray(out)
-
-        _savi_gpu[griddim, blockdim](nir_data,
-                                     red_data,
-                                     soil_factor_arr,
-                                     out)
-    else:
-        out = _savi(nir_agg.data, red_agg.data, soil_factor)
+    mapper = ArrayTypeFunctionMapping(numpy_func=_savi_cpu,
+                                      dask_func=_savi_dask,
+                                      cupy_func=_savi_cupy,
+                                      dask_cupy_func=_savi_dask_cupy)
+    
+    out = mapper(red_agg)(nir_agg.data, red_agg.data, soil_factor)
 
     return DataArray(out,
                      name=name,
