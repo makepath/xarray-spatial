@@ -68,11 +68,11 @@ def create_test_arr(arr, backend='numpy'):
         raster['x'] = np.linspace(0, x, x)
         return raster
 
-    if has_cuda() and 'cupy' in back:
+    if has_cuda() and 'cupy' in backend:
         import cupy
         raster.data = cupy.asarray(raster.data)
 
-    if 'dask' in back:
+    if 'dask' in backend:
         raster.data = da.from_array(raster.data, chunks=(3, 3))
 
     return raster
@@ -133,13 +133,11 @@ def test_ndvi_cupy_equals_numpy():
     numpy_result = ndvi(nir, red)
 
     # cupy
-    nir_dask = create_test_arr(arr1, backend='cupy')
-    red_dask = create_test_arr(arr2, backend='cupy')
-    test_result = ndvi(nir_dask, red_dask)
+    nir_cupy = create_test_arr(arr1, backend='cupy')
+    red_cupy = create_test_arr(arr2, backend='cupy')
+    test_result = ndvi(nir_cupy, red_cupy)
 
     assert isinstance(test_result.data, cupy.ndarray)
-
-    test_result.data = test_result.data.compute()
     assert np.isclose(numpy_result, test_result, equal_nan=True).all()
 
 
@@ -213,12 +211,13 @@ def test_savi_dask_cupy_equals_numpy():
     pass
 
 # AVRI -------------
+# START HERE AND FINISH TESTS FOR AVRI!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 # def test_avri_numpy_contains_valid_values():
 # def test_avri_dask_equals_numpy():
 # def test_avri_cupy_equals_numpy():
 # def test_avri_dask_cupy_equals_numpy():
 
-def test_avri():
+def test_avri_numpy():
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
@@ -230,14 +229,68 @@ def test_avri():
     assert result.dims == nir.dims
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_avri_cpu_equals_gpu():
+def test_avri_dask_equals_numpy():
+
+    # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
-    cpu = arvi(nir, red, blue)
-    gpu = arvi(nir, red, blue)
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    numpy_result = arvi(nir, red, blue)
+
+    # dask 
+    nir_dask = create_test_arr(arr1, backend='dask')
+    red_dask = create_test_arr(arr2, backend='dask')
+    blue_dask = create_test_arr(arr3, backend='dask')
+    test_result = arvi(nir_dask, red_dask, blue_dask)
+
+    assert isinstance(test_result.data, da.Array)
+    test_result.data = test_result.data.compute()
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_avri_cupy_equals_numpy():
+
+    import cupy
+
+    # vanilla numpy version
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+    blue = create_test_arr(arr3)
+    numpy_result = arvi(nir, red, blue)
+
+    # cupy
+    nir_cupy = create_test_arr(arr1, backend='cupy')
+    red_cupy = create_test_arr(arr2, backend='cupy')
+    blue_cupy = create_test_arr(arr3, backend='cupy')
+    test_result = arvi(nir_cupy, red_cupy, blue_cupy)
+
+    assert isinstance(test_result.data, cupy.ndarray)
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_avri_dask_cupy_equals_numpy():
+
+    import cupy
+
+    # vanilla numpy version
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+    blue = create_test_arr(arr3)
+    numpy_result = arvi(nir, red, blue)
+
+    # dask + cupy
+    nir_dask_cupy = create_test_arr(arr1, backend='dask+cupy')
+    red_dask_cupy = create_test_arr(arr2, backend='dask+cupy')
+    blue_dask_cupy = create_test_arr(arr3, backend='dask+cupy')
+    test_result = arvi(nir_dask_cupy, red_dask_cupy, blue_dask_cupy)
+
+    assert is_dask_cupy(test_result)
+
+    test_result.data = test_result.data.compute()
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
 
 # EVI -------------
 # def test_evi_numpy_contains_valid_values():

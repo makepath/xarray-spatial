@@ -11,6 +11,10 @@ from PIL import Image
 from xarray import DataArray
 import dask.array as da
 
+from xrspatial.utils import cuda_args
+from xrspatial.utils import ngjit
+from xrspatial.utils import ArrayTypeFunctionMapping
+
 # 3rd-party
 try:
     import cupy
@@ -18,30 +22,58 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-from xrspatial.utils import cuda_args
-from xrspatial.utils import has_cuda
-from xrspatial.utils import is_dask_cupy
-from xrspatial.utils import ngjit
-
 
 @ngjit
-def _arvi(nir_data, red_data, blue_data):
+def _avri_cpu(nir_data, red_data, blue_data):
     out = np.zeros_like(nir_data)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
-
             nir = nir_data[y, x]
             red = red_data[y, x]
             blue = blue_data[y, x]
-
             numerator = (nir - (2.0 * red) + blue)
             denominator = (nir + (2.0 * red) + blue)
+            out[y, x] = numerator / denominator
 
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = numerator / denominator
+    return out
+
+
+def _arvi_dask(nir_data, red_data, blue_data):
+    out = da.map_blocks(_avri_cpu, nir_data, red_data, blue_data,
+                        meta=np.array(()))
+    return out
+
+
+@cuda.jit
+def _arvi_gpu(nir_data, red_data, blue_data, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+        nir = nir_data[y, x]
+        red = red_data[y, x]
+        blue = blue_data[y, x]
+        numerator = (nir - (2.0 * red) + blue)
+        denominator = (nir + (2.0 * red) + blue)
+        out[y, x] = numerator / denominator
+
+
+def _arvi_cupy(nir_data, red_data, blue_data):
+
+    import cupy
+
+    griddim, blockdim = cuda_args(nir_data.shape)
+    out = cupy.empty(nir_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _arvi_gpu[griddim, blockdim](nir_data, red_data, blue_data, out)
+    return out
+
+
+def _arvi_dask_cupy(nir_data, red_data, blue_data):
+
+    import cupy
+
+    out = da.map_blocks(_arvi_cupy, nir_data, red_data, blue_data,
+                        dtype=cupy.float32, meta=cupy.array(()))
     return out
 
 
@@ -69,11 +101,16 @@ def arvi(nir_agg: DataArray, red_agg: DataArray,
     Algorithm References:
     https://modis.gsfc.nasa.gov/sci_team/pubs/abstract_new.php?id=03667
     """
+    validate_arrays(red_agg, nir_agg, blue_agg)
 
-    if not red_agg.shape == nir_agg.shape == blue_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
+    mapper = ArrayTypeFunctionMapping(numpy_func=_avri_cpu,
+                                      dask_func=_arvi_dask,
+                                      cupy_func=_arvi_cupy,
+                                      dask_cupy_func=_arvi_dask_cupy)
 
-    return DataArray(_arvi(nir_agg.data, red_agg.data, blue_agg.data),
+    out = mapper(red_agg)(nir_agg.data, red_agg.data, blue_agg.data)
+
+    return DataArray(out,
                      name=name,
                      coords=nir_agg.coords,
                      dims=nir_agg.dims,
@@ -293,6 +330,22 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr'):
                      attrs=swir1_agg.attrs)
 
 
+def validate_arrays(*arrays):
+
+    if len(arrays) < 2:
+        raise ValueError('validate_arrays() input must contain 2 or more arrays')
+
+    first_array = arrays[0]
+    for i in range(1, len(arrays)):
+
+        if not first_array.data.shape == arrays[i].data.shape:
+            raise ValueError("input arrays must have equal shapes")
+
+        if not type(first_array.data) == type(arrays[i].data):
+            raise ValueError("input arrays must have same type")
+
+
+
 def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
     """Returns Normalized Difference Vegetation Index (NDVI).
 
@@ -313,10 +366,14 @@ def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
     http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
     """
 
-    if not red_agg.shape == nir_agg.shape:
-        raise ValueError("red_agg and nir_agg expected to have equal shapes")
+    validate_arrays(red_agg, nir_agg)
 
-    out = _run_normalized_ratio(nir_agg, red_agg)
+    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
+                                      dask_func=_run_normalized_ratio_dask,
+                                      cupy_func=_run_normalized_ratio_cupy,
+                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    
+    out = mapper(red_agg)(nir_agg.data, red_agg.data)
 
     return DataArray(out,
                      name=name,
@@ -334,13 +391,13 @@ def _run_normalized_ratio(arr1: DataArray, arr2: DataArray):
                '------------').format(type(arr1.data), type(arr2.data))
         raise TypeError(msg)
 
-    # numpy case
-    if isinstance(arr1.data, np.ndarray):
-        out = _normalized_ratio_cpu(arr1.data, arr2.data)
-
     # cupy case
-    elif has_cuda() and isinstance(arr1.data, cupy.ndarray):
+    if has_cuda() and isinstance(arr1.data, cupy.ndarray):
         out = _run_normalized_ratio_cupy(arr1.data, arr2.data)
+
+    # numpy case
+    elif isinstance(arr1.data, np.ndarray):
+        out = _normalized_ratio_cpu(arr1.data, arr2.data)
 
     # dask + cupy case
     elif has_cuda() and is_dask_cupy(arr1):
@@ -356,7 +413,7 @@ def _run_normalized_ratio(arr1: DataArray, arr2: DataArray):
     return out
 
 
-def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi', use_cuda=True, use_cupy=True):
+def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
     """Computes Normalized Difference Moisture Index
 
     Parameters
@@ -382,10 +439,14 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi', use_cuda=True, u
     https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
     """
 
-    if not nir_agg.shape == swir1_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
+    validate_arrays(red_agg, swir1_agg)
 
-    out = _run_normalized_ratio(nir_agg, swir1_agg)
+    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
+                                      dask_func=_run_normalized_ratio_dask,
+                                      cupy_func=_run_normalized_ratio_cupy,
+                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    
+    out = mapper(nir_agg)(nir_agg.data, swir1_agg.data)
 
     return DataArray(out,
                      name=name,
@@ -460,8 +521,8 @@ def _run_normalized_ratio_cupy(arr1, arr2):
     griddim, blockdim = cuda_args(arr1.shape)
     out = cupy.empty(arr1.shape, dtype='f4')
     out[:] = cupy.nan
-
-    return _normalized_ratio_gpu[griddim, blockdim](arr1, arr2, out)
+    _normalized_ratio_gpu[griddim, blockdim](arr1, arr2, out)
+    return out
 
 
 def _run_normalized_ratio_dask_cupy(arr1, arr2):
@@ -489,7 +550,7 @@ def _savi_gpu(nir_data, red_data, soil_factor, out):
             out[y, x] = numerator / denominator
 
 
-def savi(nir_agg: DataArray, red_agg: DataArray, soil_factor=1.0, name='savi', use_cuda=True, use_cupy=True):
+def savi(nir_agg: DataArray, red_agg: DataArray, soil_factor:float=1.0, name:str='savi'):
     """Returns Soil Adjusted Vegetation Index (SAVI).
 
     Parameters

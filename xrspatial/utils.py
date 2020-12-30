@@ -72,6 +72,36 @@ def is_dask_cupy(agg: xr.DataArray):
     return isinstance(agg.data, da.Array) and is_cupy_backed(agg)
 
 
+class ArrayTypeFunctionMapping(object):
+
+    def __init__(self, numpy_func, cupy_func, dask_func, dask_cupy_func):
+        self.numpy_func = numpy_func
+        self.cupy_func = cupy_func
+        self.dask_func = dask_func
+        self.dask_cupy_func = dask_cupy_func
+    
+    def __call__(self, arr):
+
+        # cupy case
+        if has_cuda() and isinstance(arr.data, cupy.ndarray):
+            return self.cupy_func
+
+        # numpy case
+        elif isinstance(arr.data, np.ndarray):
+            return self.numpy_func
+
+        # dask + cupy case
+        elif has_cuda() and is_dask_cupy(arr):
+            return self.dask_cupy_func
+
+        # dask + numpy case
+        elif isinstance(arr.data, da.Array):
+            return self.dask_func
+
+        else:
+            raise TypeError('Unsupported Array Type: {}'.format(type(arr)))
+
+
 def calc_res(raster):
     """Calculate the resolution of xarray.DataArray raster and return it as the
     two-tuple (xres, yres).
