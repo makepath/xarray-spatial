@@ -14,6 +14,8 @@ import dask.array as da
 from xrspatial.utils import cuda_args
 from xrspatial.utils import ngjit
 from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import validate_arrays
+
 
 # 3rd-party
 try:
@@ -39,12 +41,6 @@ def _avri_cpu(nir_data, red_data, blue_data):
     return out
 
 
-def _arvi_dask(nir_data, red_data, blue_data):
-    out = da.map_blocks(_avri_cpu, nir_data, red_data, blue_data,
-                        meta=np.array(()))
-    return out
-
-
 @cuda.jit
 def _arvi_gpu(nir_data, red_data, blue_data, out):
     y, x = cuda.grid(2)
@@ -55,6 +51,12 @@ def _arvi_gpu(nir_data, red_data, blue_data, out):
         numerator = (nir - (2.0 * red) + blue)
         denominator = (nir + (2.0 * red) + blue)
         out[y, x] = numerator / denominator
+
+
+def _arvi_dask(nir_data, red_data, blue_data):
+    out = da.map_blocks(_avri_cpu, nir_data, red_data, blue_data,
+                        meta=np.array(()))
+    return out
 
 
 def _arvi_cupy(nir_data, red_data, blue_data):
@@ -77,8 +79,7 @@ def _arvi_dask_cupy(nir_data, red_data, blue_data):
     return out
 
 
-def arvi(nir_agg: DataArray, red_agg: DataArray,
-         blue_agg: DataArray, name='arvi'):
+def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray, name='arvi'):
     """Computes Atmospherically Resistant Vegetation Index
 
     Parameters
@@ -408,23 +409,6 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr'):
                      coords=swir1_agg.coords,
                      dims=swir1_agg.dims,
                      attrs=swir1_agg.attrs)
-
-
-
-def validate_arrays(*arrays):
-
-    if len(arrays) < 2:
-        raise ValueError('validate_arrays() input must contain 2 or more arrays')
-
-    first_array = arrays[0]
-    for i in range(1, len(arrays)):
-
-        if not first_array.data.shape == arrays[i].data.shape:
-            raise ValueError("input arrays must have equal shapes")
-
-        if not type(first_array.data) == type(arrays[i].data):
-            raise ValueError("input arrays must have same type")
-
 
 
 # NDVI -------------

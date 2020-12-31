@@ -102,6 +102,21 @@ class ArrayTypeFunctionMapping(object):
             raise TypeError('Unsupported Array Type: {}'.format(type(arr)))
 
 
+def validate_arrays(*arrays):
+
+    if len(arrays) < 2:
+        raise ValueError('validate_arrays() input must contain 2 or more arrays')
+
+    first_array = arrays[0]
+    for i in range(1, len(arrays)):
+
+        if not first_array.data.shape == arrays[i].data.shape:
+            raise ValueError("input arrays must have equal shapes")
+
+        if not type(first_array.data) == type(arrays[i].data):
+            raise ValueError("input arrays must have same type")
+
+
 def calc_res(raster):
     """Calculate the resolution of xarray.DataArray raster and return it as the
     two-tuple (xres, yres).
