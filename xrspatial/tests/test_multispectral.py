@@ -389,12 +389,7 @@ def test_evi_dask_cupy_equals_numpy():
 
 
 # GCI -------------
-# def test_gci_numpy_contains_valid_values():
-# def test_gci_dask_equals_numpy():
-# def test_gci_cupy_equals_numpy():
-# def test_gci_dask_cupy_equals_numpy():
-
-def test_gci():
+def test_gci_numpy():
     nir = create_test_arr(arr1)
     green = create_test_arr(arr2)
 
@@ -404,15 +399,62 @@ def test_gci():
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
 
+def test_gci_dask_equals_numpy():
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_gci_cpu_equals_gpu():
+    # vanilla numpy version
     nir = create_test_arr(arr1)
     green = create_test_arr(arr2)
+    numpy_result = gci(nir, green)
 
-    cpu = gci(nir, green)
-    gpu = gci(nir, green)
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    # dask 
+    nir_dask = create_test_arr(arr1, backend='dask')
+    green_dask = create_test_arr(arr2, backend='dask')
+    test_result = gci(nir_dask, green_dask)
+
+    assert isinstance(test_result.data, da.Array)
+    test_result.data = test_result.data.compute()
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Dgcice not Available")
+def test_gci_cupy_equals_numpy():
+
+    import cupy
+
+    # vanilla numpy version
+    nir = create_test_arr(arr1)
+    green = create_test_arr(arr2)
+    numpy_result = gci(nir, green)
+
+    # cupy
+    nir_cupy = create_test_arr(arr1, backend='cupy')
+    green_cupy = create_test_arr(arr2, backend='cupy')
+    test_result = gci(nir_cupy, green_cupy)
+
+    assert isinstance(test_result.data, cupy.ndarray)
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Dgcice not Available")
+def test_gci_dask_cupy_equals_numpy():
+
+    import cupy
+
+    # vanilla numpy version
+    nir = create_test_arr(arr1)
+    green = create_test_arr(arr2)
+    numpy_result = gci(nir, green)
+
+    # dask + cupy
+    nir_dask_cupy = create_test_arr(arr1, backend='dask+cupy')
+    green_dask_cupy = create_test_arr(arr2, backend='dask+cupy')
+    test_result = gci(nir_dask_cupy, green_dask_cupy)
+
+    assert is_dask_cupy(test_result)
+
+    test_result.data = test_result.data.compute()
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
 
 # SIPI -------------
 # def test_sipi_numpy_contains_valid_values():

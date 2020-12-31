@@ -240,19 +240,50 @@ def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
                      attrs=nir_agg.attrs)
 
 
+# GCI -------------
 @ngjit
-def _gci(nir_data, green_data):
+def _gci_cpu(nir_data, green_data):
     out = np.zeros_like(nir_data)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
             nir = nir_data[y, x]
             green = green_data[y, x]
+            out[y, x] = nir / green - 1
+    return out
 
-            if green == 0.0:
-                continue
-            else:
-                out[y, x] = nir / green - 1
+
+@cuda.jit
+def _gci_gpu(nir_data, green_data, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+        nir = nir_data[y, x]
+        green = green_data[y, x]
+        out[y, x] = nir / green - 1
+
+
+def _gci_dask(nir_data, green_data):
+    out = da.map_blocks(_gci_cpu, nir_data, green_data, meta=np.array(()))
+    return out
+
+
+def _gci_cupy(nir_data, green_data):
+
+    import cupy
+
+    griddim, blockdim = cuda_args(nir_data.shape)
+    out = cupy.empty(nir_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _gci_gpu[griddim, blockdim](nir_data, green_data, out)
+    return out
+
+
+def _gci_dask_cupy(nir_data, green_data):
+
+    import cupy
+
+    out = da.map_blocks(_gci_cupy, nir_data, green_data,
+                        dtype=cupy.float32, meta=cupy.array(()))
     return out
 
 
@@ -276,19 +307,20 @@ def gci(nir_agg: DataArray, green_agg: DataArray, name='gci'):
     Algorithm References:
     https://en.wikipedia.org/wiki/Enhanced_vegetation_index
     """
+    validate_arrays(nir_agg, green_agg)
 
-    if not nir_agg.shape == green_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
+    mapper = ArrayTypeFunctionMapping(numpy_func=_gci_cpu,
+                                      dask_func=_gci_dask,
+                                      cupy_func=_gci_cupy,
+                                      dask_cupy_func=_gci_dask_cupy)
+    
+    out = mapper(nir_agg)(nir_agg.data, green_agg.data)
 
-    arr = _gci(nir_agg.data, green_agg.data)
-
-    return DataArray(arr,
+    return DataArray(out,
                      name=name,
                      coords=nir_agg.coords,
                      dims=nir_agg.dims,
                      attrs=nir_agg.attrs)
-
-
 
 
 def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
