@@ -117,24 +117,58 @@ def arvi(nir_agg: DataArray, red_agg: DataArray,
                      attrs=nir_agg.attrs)
 
 
+# EVI -------------
 @ngjit
-def _evi(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
+def _evi_cpu(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
     out = np.zeros_like(nir_data)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
-
             nir = nir_data[y, x]
             red = red_data[y, x]
             blue = blue_data[y, x]
-
             numerator = nir - red
             denominator = nir + c1 * red - c2 * blue + soil_factor
+            out[y, x] = gain * (numerator / denominator)
+    return out
 
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = gain * (numerator / denominator)
+
+@cuda.jit
+def _evi_gpu(nir_data, red_data, blue_data, c1, c2, soil_factor, gain, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+        nir = nir_data[y, x]
+        red = red_data[y, x]
+        blue = blue_data[y, x]
+        numerator = nir - red
+        denominator = nir + c1 * red - c2 * blue + soil_factor
+        out[y, x] = gain * (numerator / denominator)
+
+
+def _evi_dask(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
+    out = da.map_blocks(_evi_cpu, nir_data, red_data, blue_data,
+                        c1, c2, soil_factor, gain, meta=np.array(()))
+    return out
+
+
+def _evi_cupy(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
+
+    import cupy
+
+    griddim, blockdim = cuda_args(nir_data.shape)
+    out = cupy.empty(nir_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _evi_gpu[griddim, blockdim](nir_data, red_data, blue_data, c1, c2, soil_factor, gain, out)
+    return out
+
+
+def _evi_dask_cupy(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
+
+    import cupy
+
+    out = da.map_blocks(_evi_cupy, nir_data, red_data, blue_data,
+                        c1, c2, soil_factor, gain,
+                        dtype=cupy.float32, meta=cupy.array(()))
     return out
 
 
@@ -160,7 +194,7 @@ def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
         second coefficients of the aerosol resistance term
 
     soil_factor : float (default=1.0)
-      soil adjustment factor between -1.0 and 1.0.
+      soil adjustment factor [-1.0, 1.0] used to adjust canopy background
 
     gain : float (default=2.5)
       amplitude adjustment factor
@@ -185,15 +219,21 @@ def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
         raise ValueError("c2 must be numeric")
 
     if soil_factor > 1.0 or soil_factor < -1.0:
-        raise ValueError("soil factor must be between (-1.0, 1.0)")
+        raise ValueError("soil factor must be between [-1.0, 1.0]")
 
     if gain < 0:
         raise ValueError("gain must be greater than 0")
 
-    arr = _evi(nir_agg.data, red_agg.data, blue_agg.data, c1, c2,
-               soil_factor, gain)
+    validate_arrays(nir_agg, red_agg, blue_agg)
 
-    return DataArray(arr,
+    mapper = ArrayTypeFunctionMapping(numpy_func=_evi_cpu,
+                                      dask_func=_evi_dask,
+                                      cupy_func=_evi_cupy,
+                                      dask_cupy_func=_evi_dask_cupy)
+    
+    out = mapper(red_agg)(nir_agg.data, red_agg.data, blue_agg.data, c1, c2, soil_factor, gain)
+
+    return DataArray(out,
                      name=name,
                      coords=nir_agg.coords,
                      dims=nir_agg.dims,
