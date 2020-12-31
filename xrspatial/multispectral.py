@@ -323,6 +323,7 @@ def gci(nir_agg: DataArray, green_agg: DataArray, name='gci'):
                      attrs=nir_agg.attrs)
 
 
+# NBR -------------
 def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     """Computes Normalized Burn Ratio
 
@@ -346,10 +347,14 @@ def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
     """
 
-    if not nir_agg.shape == swir2_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
+    validate_arrays(nir_agg, swir2_agg)
 
-    out = _run_normalized_ratio(nir_agg, swir2_agg)
+    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
+                                      dask_func=_run_normalized_ratio_dask,
+                                      cupy_func=_run_normalized_ratio_cupy,
+                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    
+    out = mapper(nir_agg)(nir_agg.data, swir2_agg.data)
 
     return DataArray(out,
                      name=name,
@@ -389,17 +394,21 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     Algorithm References:
     https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
     """
+    validate_arrays(swir1_agg, swir2_agg)
 
-    if not swir1_agg.shape == swir2_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
-
-    out = _run_normalized_ratio(swir1_agg, swir2_agg)
+    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
+                                      dask_func=_run_normalized_ratio_dask,
+                                      cupy_func=_run_normalized_ratio_cupy,
+                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    
+    out = mapper(swir1_agg)(swir1_agg.data, swir2_agg.data)
 
     return DataArray(out,
                      name=name,
                      coords=swir1_agg.coords,
                      dims=swir1_agg.dims,
                      attrs=swir1_agg.attrs)
+
 
 
 def validate_arrays(*arrays):
@@ -454,37 +463,6 @@ def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
                      attrs=nir_agg.attrs)
 
 
-def _run_normalized_ratio(arr1: DataArray, arr2: DataArray):
-
-    # check same types
-    if not isinstance(arr1.data, type(arr2.data)):
-        msg = ('input arrays in multisectral tools must be same type \n\n'
-               '{} != {}\n\n'
-               '------------').format(type(arr1.data), type(arr2.data))
-        raise TypeError(msg)
-
-    # cupy case
-    if has_cuda() and isinstance(arr1.data, cupy.ndarray):
-        out = _run_normalized_ratio_cupy(arr1.data, arr2.data)
-
-    # numpy case
-    elif isinstance(arr1.data, np.ndarray):
-        out = _normalized_ratio_cpu(arr1.data, arr2.data)
-
-    # dask + cupy case
-    elif has_cuda() and is_dask_cupy(arr1):
-        out = _run_normalized_ratio_dask_cupy(arr1.data, arr2.data)
-
-    # dask + numpy case
-    elif isinstance(arr1.data, da.Array):
-        out = _run_normalized_ratio_dask(arr1.data, arr2.data)
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(arr1.data)))
-
-    return out
-
-
 def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
     """Computes Normalized Difference Moisture Index
 
@@ -511,7 +489,7 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
     https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
     """
 
-    validate_arrays(red_agg, swir1_agg)
+    validate_arrays(nir_agg, swir1_agg)
 
     mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
                                       dask_func=_run_normalized_ratio_dask,
