@@ -427,6 +427,7 @@ def validate_arrays(*arrays):
 
 
 
+# NDVI -------------
 def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
     """Returns Normalized Difference Vegetation Index (NDVI).
 
@@ -463,6 +464,7 @@ def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
                      attrs=nir_agg.attrs)
 
 
+# NDMI -------------
 def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
     """Computes Normalized Difference Moisture Index
 
@@ -615,6 +617,7 @@ def _savi_dask_cupy(nir_data, red_data, soil_factor):
     return out
 
 
+# SAVI -------------
 def savi(nir_agg: DataArray, red_agg: DataArray, soil_factor:float=1.0, name:str='savi'):
     """Returns Soil Adjusted Vegetation Index (SAVI).
 
@@ -662,8 +665,9 @@ def savi(nir_agg: DataArray, red_agg: DataArray, soil_factor:float=1.0, name:str
                      attrs=nir_agg.attrs)
 
 
+# SIPI -------------
 @ngjit
-def _sipi(nir_data, red_data, blue_data):
+def _sipi_cpu(nir_data, red_data, blue_data):
     out = np.zeros_like(nir_data)
     rows, cols = nir_data.shape
     for y in range(0, rows):
@@ -671,14 +675,9 @@ def _sipi(nir_data, red_data, blue_data):
             nir = nir_data[y, x]
             red = red_data[y, x]
             blue = blue_data[y, x]
-
             numerator = nir - blue
             denominator = nir - red
-
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = numerator / denominator
+            out[y, x] = numerator / denominator
     return out
 
 
@@ -689,17 +688,38 @@ def _sipi_gpu(nir_data, red_data, blue_data, out):
         nir = nir_data[y, x]
         red = red_data[y, x]
         blue = blue_data[y, x]
-
         numerator = nir - blue
         denominator = nir - red
-
-        if denominator == 0.0:
-            out[y, x] = np.nan
-        else:
-            out[y, x] = numerator / denominator
+        out[y, x] = numerator / denominator
 
 
-def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray, name='sipi', use_cuda=True, use_cupy=True):
+def _sipi_dask(nir_data, red_data, blue_data):
+    out = da.map_blocks(_sipi_cpu, nir_data, red_data, blue_data,
+                        meta=np.array(()))
+    return out
+
+
+def _sipi_cupy(nir_data, red_data, blue_data):
+
+    import cupy
+
+    griddim, blockdim = cuda_args(nir_data.shape)
+    out = cupy.empty(nir_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _sipi_gpu[griddim, blockdim](nir_data, red_data, blue_data, out)
+    return out
+
+
+def _sipi_dask_cupy(nir_data, red_data, blue_data):
+
+    import cupy
+
+    out = da.map_blocks(_sipi_cupy, nir_data, red_data, blue_data,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
+
+
+def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray, name='sipi'):
     """Computes Structure Insensitive Pigment Index which helpful
     in early disease detection
 
@@ -721,28 +741,14 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray, name='sipi
     https://en.wikipedia.org/wiki/Enhanced_vegetation_index
     """
 
-    if not red_agg.shape == nir_agg.shape == blue_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
+    validate_arrays(red_agg, nir_agg, blue_agg)
 
-    nir_data = nir_agg.data
-    red_data = red_agg.data
-    blue_data = blue_agg.data
-
-    if has_cuda() and use_cuda:
-        griddim, blockdim = cuda_args(nir_data.shape)
-        out = np.empty(nir_data.shape, dtype='f4')
-        out[:] = np.nan
-
-        if use_cupy:
-            import cupy
-            out = cupy.asarray(out)
-
-        _sipi_gpu[griddim, blockdim](nir_data,
-                                     red_data,
-                                     blue_data,
-                                     out)
-    else:
-        out = _sipi(nir_data, red_data, blue_data)
+    mapper = ArrayTypeFunctionMapping(numpy_func=_sipi_cpu,
+                                      dask_func=_sipi_dask,
+                                      cupy_func=_sipi_cupy,
+                                      dask_cupy_func=_sipi_dask_cupy)
+    
+    out = mapper(red_agg)(nir_agg.data, red_agg.data, blue_agg.data)
 
     return DataArray(out,
                      name=name,
@@ -751,8 +757,9 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray, name='sipi
                      attrs=nir_agg.attrs)
 
 
+# EBBI -------------
 @ngjit
-def _ebbi(red_data, swir_data, tir_data):
+def _ebbi_cpu(red_data, swir_data, tir_data):
     out = np.zeros_like(red_data)
     rows, cols = red_data.shape
     for y in range(0, rows):
@@ -760,14 +767,9 @@ def _ebbi(red_data, swir_data, tir_data):
             red = red_data[y, x]
             swir = swir_data[y, x]
             tir = tir_data[y, x]
-
             numerator = swir - red
             denominator = 10 * np.sqrt(swir + tir)
-
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = numerator / denominator
+            out[y, x] = numerator / denominator
     return out
 
 
@@ -775,18 +777,43 @@ def _ebbi(red_data, swir_data, tir_data):
 def _ebbi_gpu(red_data, swir_data, tir_data, out):
     y, x = cuda.grid(2)
     if y < out.shape[0] and x < out.shape[1]:
-
         red = red_data[y, x]
         swir = swir_data[y, x]
         tir = tir_data[y, x]
-
         numerator = swir - red
         denominator = nb.int64(10) * sqrt(swir + tir)
         out[y, x] = numerator / denominator
 
 
-def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray, name='ebbi', use_cuda=True, use_cupy=True):
+def _ebbi_dask(red_data, swir_data, tir_data):
+    out = da.map_blocks(_ebbi_cpu, red_data, swir_data, tir_data,
+                        meta=np.array(()))
+    return out
+
+
+def _ebbi_cupy(red_data, swir_data, tir_data):
+
+    import cupy
+
+    griddim, blockdim = cuda_args(red_data.shape)
+    out = cupy.empty(red_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _ebbi_gpu[griddim, blockdim](red_data, swir_data, tir_data, out)
+    return out
+
+
+def _ebbi_dask_cupy(red_data, swir_data, tir_data):
+
+    import cupy
+
+    out = da.map_blocks(_ebbi_cupy, red_data, swir_data, tir_data,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
+
+
+def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray, name='ebbi'):
     """Computes Enhanced Built-Up and Bareness Index
+
     Parameters
     ----------
     red_agg : DataArray
@@ -795,37 +822,24 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray, name='ebbi
         shortwave infrared band data
     tir_agg : DataArray
         thermal infrared band data
+
     Returns
     -------
     data: DataArray
+
     Notes:
     ------
     Algorithm References:
     https://rdrr.io/cran/LSRS/man/EBBI.html
     """
+    validate_arrays(red_agg, swir_agg, tir_agg)
 
-    if not red_agg.shape == swir_agg.shape == tir_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
-
-    red_data = red_agg.data
-    swir_data = swir_agg.data
-    tir_data = tir_agg.data
-
-    if has_cuda() and use_cuda:
-        griddim, blockdim = cuda_args(red_data.shape)
-        out = np.empty(red_data.shape, dtype='f4')
-        out[:] = np.nan
-
-        if use_cupy:
-            import cupy
-            out = cupy.asarray(out)
-
-        _sipi_gpu[griddim, blockdim](red_data,
-                                     swir_data,
-                                     tir_data,
-                                     out)
-    else:
-        out = _sipi(red_data, swir_data, tir_data)
+    mapper = ArrayTypeFunctionMapping(numpy_func=_ebbi_cpu,
+                                      dask_func=_ebbi_dask,
+                                      cupy_func=_ebbi_cupy,
+                                      dask_cupy_func=_ebbi_dask_cupy)
+    
+    out = mapper(red_agg)(red_agg.data, swir_agg.data, tir_agg.data)
 
     return DataArray(out,
                      name=name,

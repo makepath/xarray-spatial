@@ -457,12 +457,7 @@ def test_gci_dask_cupy_equals_numpy():
 
 
 # SIPI -------------
-# def test_sipi_numpy_contains_valid_values():
-# def test_sipi_dask_equals_numpy():
-# def test_sipi_cupy_equals_numpy():
-# def test_sipi_dask_cupy_equals_numpy():
-
-def test_sipi():
+def test_sipi_numpy():
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
@@ -474,15 +469,67 @@ def test_sipi():
     assert result.dims == nir.dims
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_sipi_cpu_equals_gpu():
+def test_sipi_dask_equals_numpy():
+
+    # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
+    numpy_result = sipi(nir, red, blue)
 
-    cpu = sipi(nir, red, blue)
-    gpu = sipi(nir, red, blue)
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    # dask 
+    nir_dask = create_test_arr(arr1, backend='dask')
+    red_dask = create_test_arr(arr2, backend='dask')
+    blue_dask = create_test_arr(arr3, backend='dask')
+    test_result = sipi(nir_dask, red_dask, blue_dask)
+
+    assert isinstance(test_result.data, da.Array)
+    test_result.data = test_result.data.compute()
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_sipi_cupy_equals_numpy():
+
+    import cupy
+
+    # vanilla numpy version
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+    blue = create_test_arr(arr3)
+    numpy_result = sipi(nir, red, blue)
+
+    # cupy
+    nir_dask = create_test_arr(arr1, backend='cupy')
+    red_dask = create_test_arr(arr2, backend='cupy')
+    blue_dask = create_test_arr(arr3, backend='cupy')
+    test_result = sipi(nir_dask, red_dask, blue_dask)
+
+    assert isinstance(test_result.data, cupy.ndarray)
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_sipi_dask_cupy_equals_numpy():
+
+    import cupy
+
+    # vanilla numpy version
+    nir = create_test_arr(arr1)
+    red = create_test_arr(arr2)
+    blue = create_test_arr(arr3)
+    numpy_result = sipi(nir, red, blue)
+
+    # dask + cupy
+    nir_dask_cupy = create_test_arr(arr1, backend='dask+cupy')
+    red_dask_cupy = create_test_arr(arr2, backend='dask+cupy')
+    blue_dask_cupy = create_test_arr(arr3, backend='dask+cupy')
+    test_result = sipi(nir_dask_cupy, red_dask_cupy, blue_dask_cupy)
+
+    assert is_dask_cupy(test_result)
+    test_result.data = test_result.data.compute()
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
 
 # NBR -------------
 def test_nbr_numpy():
@@ -493,6 +540,7 @@ def test_nbr_numpy():
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
+
 
 def test_nbr_dask_equals_numpy():
 
@@ -562,6 +610,7 @@ def test_nbr2_numpy():
     assert isinstance(result, xa.DataArray)
     assert result.dims == swir1.dims
 
+
 def test_nbr2_dask_equals_numpy():
 
     # vanilla numpy version
@@ -614,9 +663,9 @@ def test_nbr2_dask_cupy_equals_numpy():
     test_result = nbr2(swir1_dask_cupy, swir2_dask_cupy)
 
     assert is_dask_cupy(test_result)
-
     test_result.data = test_result.data.compute()
     assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
 
 # NDMI -------------
 def test_ndmi_numpy():
@@ -682,35 +731,79 @@ def test_ndmi_dask_cupy_equals_numpy():
     test_result = ndmi(nir_dask_cupy, swir1_dask_cupy)
 
     assert is_dask_cupy(test_result)
-
     test_result.data = test_result.data.compute()
     assert np.isclose(numpy_result, test_result, equal_nan=True).all()
 
 
 # EBBI -------------
-# def test_ebbi_numpy_contains_valid_values():
-# def test_ebbi_dask_equals_numpy():
-# def test_ebbi_cupy_equals_numpy():
-# def test_ebbi_dask_cupy_equals_numpy():
-
-def test_ebbi():
+def test_ebbi_numpy():
     red = create_test_arr(arr1)
     swir = create_test_arr(arr2)
     tir = create_test_arr(arr3)
+    numpy_result = ebbi(red, swir, tir)
 
-    result = ebbi(red, swir, tir)
+    assert numpy_result.dims == red.dims
+    assert isinstance(numpy_result, xa.DataArray)
+    assert numpy_result.dims == red.dims
 
-    assert result.dims == red.dims
-    assert isinstance(result, xa.DataArray)
-    assert result.dims == red.dims
+
+def test_ebbi_dask_equals_numpy():
+
+    # vanilla numpy version
+    red = create_test_arr(arr1)
+    swir = create_test_arr(arr2)
+    tir = create_test_arr(arr3)
+    numpy_result = ebbi(red, swir, tir)
+
+    # dask 
+    red_dask = create_test_arr(arr1, backend='dask')
+    swir_dask = create_test_arr(arr2, backend='dask')
+    tir_dask = create_test_arr(arr3, backend='dask')
+    test_result = ebbi(red_dask, swir_dask, tir_dask)
+
+    assert isinstance(test_result.data, da.Array)
+    test_result.data = test_result.data.compute()
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_ebbi_cpu_equals_gpu():
+def test_ebbi_cupy_equals_numpy():
+
+    import cupy
+
+    # vanilla numpy version
     red = create_test_arr(arr1)
     swir = create_test_arr(arr2)
     tir = create_test_arr(arr3)
+    numpy_result = ebbi(red, swir, tir)
 
-    cpu = ebbi(red, swir, tir)
-    gpu = ebbi(red, swir, tir)
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    # cupy
+    red_dask = create_test_arr(arr1, backend='cupy')
+    swir_dask = create_test_arr(arr2, backend='cupy')
+    tir_dask = create_test_arr(arr3, backend='cupy')
+    test_result = ebbi(red_dask, swir_dask, tir_dask)
+
+    assert isinstance(test_result.data, cupy.ndarray)
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_ebbi_dask_cupy_equals_numpy():
+
+    import cupy
+
+    # vanilla numpy version
+    red = create_test_arr(arr1)
+    swir = create_test_arr(arr2)
+    tir = create_test_arr(arr3)
+    numpy_result = ebbi(red, swir, tir)
+
+    # dask + cupy
+    red_dask_cupy = create_test_arr(arr1, backend='dask+cupy')
+    swir_dask_cupy = create_test_arr(arr2, backend='dask+cupy')
+    tir_dask_cupy = create_test_arr(arr3, backend='dask+cupy')
+    test_result = ebbi(red_dask_cupy, swir_dask_cupy, tir_dask_cupy)
+
+    assert is_dask_cupy(test_result)
+    test_result.data = test_result.data.compute()
+    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
