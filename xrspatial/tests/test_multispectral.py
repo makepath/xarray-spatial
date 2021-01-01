@@ -213,6 +213,7 @@ def test_savi_cupy_equals_numpy():
     assert np.isclose(numpy_result, test_result, equal_nan=True).all()
 
 
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_savi_dask_cupy_equals_numpy():
 
     import cupy
