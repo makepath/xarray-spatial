@@ -67,8 +67,10 @@ Supported Spatial Functions:
    slope
    aspect
    curvature
+   classify
    hillshade
    normalized
+   multispectral
    focal
    zonal_statistics
    zonal_cross
@@ -77,6 +79,13 @@ Supported Spatial Functions:
    bump
    perlin
    procedural
+   convolution
+   esri
+   pathfinding
+   terrain
+   tiles
+   utils
+
 
 Usage
 ~~~~~
