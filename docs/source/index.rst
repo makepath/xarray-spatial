@@ -80,7 +80,6 @@ Supported Spatial Functions:
    perlin
    procedural
    convolution
-   esri
    pathfinding
    terrain
    tiles
