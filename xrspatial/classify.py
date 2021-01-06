@@ -451,6 +451,116 @@ def _run_numpy_natural_break(data, num_sample, k):
     return out
 
 
+def _run_cupy_jenks_matrices(data, n_classes):
+    n_data = data.shape[0]
+    lower_class_limits = cupy.zeros((n_data + 1, n_classes + 1), dtype='f4')
+    lower_class_limits[1, 1:n_classes + 1] = 1.0
+
+    var_combinations = cupy.zeros((n_data + 1, n_classes + 1), dtype='f4')
+    var_combinations[2:n_data + 1, 1:n_classes + 1] = cupy.inf
+
+    nl = data.shape[0] + 1
+    variance = 0.0
+
+    for l in range(2, nl):
+        sum = 0.0
+        sum_squares = 0.0
+        w = 0.0
+
+        for m in range(1, l + 1):
+            # `III` originally
+            lower_class_limit = l - m + 1
+            i4 = lower_class_limit - 1
+
+            val = data[i4]
+
+            # here we're estimating variance for each potential classing
+            # of the data, for each potential number of classes. `w`
+            # is the number of data points considered so far.
+            w += 1.0
+
+            # increase the current sum and sum-of-squares
+            sum += val
+            sum_squares += val * val
+
+            # the variance at this point in the sequence is the difference
+            # between the sum of squares and the total x 2, over the number
+            # of samples.
+            variance = sum_squares - (sum * sum) / w
+
+            if i4 != 0:
+                for j in range(2, n_classes + 1):
+                    jm1 = j - 1
+                    if var_combinations[l, j] >= (variance + var_combinations[i4, jm1]):
+                        lower_class_limits[l, j] = lower_class_limit
+                        var_combinations[l, j] = variance + var_combinations[i4, jm1]
+
+        lower_class_limits[l, 1] = 1.
+        var_combinations[l, 1] = variance
+
+    return lower_class_limits, var_combinations
+
+
+def _run_cupy_jenks(data, n_classes):
+    data.sort()
+
+    lower_class_limits, _ = _run_cupy_jenks_matrices(data, n_classes)
+
+    k = data.shape[0]
+    kclass = [0.] * (n_classes + 1)
+    count_num = n_classes
+
+    kclass[n_classes] = data[len(data) - 1]
+    kclass[0] = data[0]
+
+    while count_num > 1:
+        elt = int(lower_class_limits[k][count_num] - 2)
+        kclass[count_num - 1] = data[elt]
+        k = int(lower_class_limits[k][count_num] - 1)
+        count_num -= 1
+
+    return kclass
+
+
+def _run_cupy_natural_break(data, num_sample, k):
+    num_data = data.size
+
+    if num_sample is not None and num_sample < num_data:
+        generator = cupy.random.RandomState(1234567890)
+        idx = [i for i in range(0, data.size)]
+        generator.shuffle(idx)
+        sample_idx = idx[:num_sample]
+        sample_data = data.flatten()[sample_idx]
+    else:
+        sample_data = data.flatten()
+
+    # warning if number of total data points to fit the model bigger than 40k
+    if sample_data.size >= 40000:
+        warnings.warn('natural_breaks Warning: Natural break classification '
+                      '(Jenks) has a complexity of O(n^2), '
+                      'your classification with {} data points may take '
+                      'a long time.'.format(sample_data.size),
+                      Warning)
+
+    uv = cupy.unique(sample_data)
+    uvk = len(uv)
+
+    if uvk < k:
+        warnings.warn('natural_breaks Warning: Not enough unique values '
+                      'in data array for {} classes. '
+                      'n_samples={} should be >= n_clusters={}. '
+                      'Using k={} instead.'.format(k, uvk, k, uvk),
+                      Warning)
+        uv.sort()
+        bins = uv
+    else:
+        centroids = _run_cupy_jenks(sample_data, k)
+        bins = cupy.array(centroids[1:])
+
+    out = _bin(data, bins, cupy.arange(uvk))
+    return out
+
+
 def natural_breaks(agg, num_sample=None, name='natural_breaks', k=5):
     """
     Calculate Jenks natural breaks (a.k.a kmeans in one dimension)
@@ -502,6 +612,10 @@ def natural_breaks(agg, num_sample=None, name='natural_breaks', k=5):
     # numpy case
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy_natural_break(agg.data, num_sample, k)
+
+    # cupy case
+    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
+        out = _run_cupy_natural_break(agg.data, num_sample, k)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))

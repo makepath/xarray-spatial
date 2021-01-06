@@ -120,7 +120,7 @@ def test_quantile_cpu_equals_gpu():
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
-def test_natural_breaks():
+def test_natural_breaks_cpu():
     k = 5
     n, m = 4, 3
     agg = xr.DataArray(np.arange(n * m).reshape((n, m)), dims=['y', 'x'])
@@ -139,6 +139,27 @@ def test_natural_breaks():
     unique_elements, counts_elements = np.unique(natural_breaks_agg.data,
                                                  return_counts=True)
     assert len(unique_elements) == k
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_natural_breaks_cpu_equals_gpu():
+
+    import cupy
+
+    k = 5
+    n, m = 5, 5
+    elevation = np.arange(n * m).reshape((n, m))
+
+    # vanilla numpy version
+    numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    cpu = natural_breaks(numpy_agg, name='numpy_result')
+
+    # cupy
+    cupy_agg = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    gpu = natural_breaks(cupy_agg, name='cupy_result')
+
+    assert isinstance(gpu.data, cupy.ndarray)
+    assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
 def test_equal_interval_cpu():
