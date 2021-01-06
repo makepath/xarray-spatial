@@ -70,10 +70,10 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Equal Interval](xrspatial/classify.py) | ✅️ |  |  |  |
-| [Natural Breaks](xrspatial/classify.py) | ✅️ |  |  |  |
-| [Reclassify](xrspatial/classify.py) | ✅️ |  |  |  |
-| [Quantile](xrspatial/classify.py) | ✅️ |  |  |  |
+| [Equal Interval](xrspatial/classify.py) | ✅️ | ✅ | ✅ |  |
+| [Natural Breaks](xrspatial/classify.py) | ✅️ |  | ✅ |  |
+| [Reclassify](xrspatial/classify.py) | ✅️ | ✅ | ✅ | ✅ |
+| [Quantile](xrspatial/classify.py) | ✅️ | ✅ | ✅ |  |
 
 -------
 
