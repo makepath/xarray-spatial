@@ -25,22 +25,21 @@ from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
 from xrspatial.utils import is_cupy_backed
 
-
 @ngjit
 def _cpu(data, cellsize_x, cellsize_y):
     out = np.zeros_like(data)
     out[:] = np.nan
     rows, cols = data.shape
-    for y in range(1, rows - 1):
-        for x in range(1, cols - 1):
-            a = data[y + 1, x - 1]
-            b = data[y + 1, x]
-            c = data[y + 1, x + 1]
-            d = data[y, x - 1]
-            f = data[y, x + 1]
-            g = data[y - 1, x - 1]
-            h = data[y - 1, x]
-            i = data[y - 1, x + 1]
+    for y in range(1, rows-1):
+        for x in range(1, cols-1):
+            a = data[y+1, x-1]
+            b = data[y+1, x]
+            c = data[y+1, x+1]
+            d = data[y, x-1]
+            f = data[y, x+1]
+            g = data[y-1, x-1]
+            h = data[y-1, x]
+            i = data[y-1, x+1]
             dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / (8 * cellsize_x)
             dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / (8 * cellsize_y)
             p = (dz_dx * dz_dx + dz_dy * dz_dy) ** .5
@@ -48,16 +47,16 @@ def _cpu(data, cellsize_x, cellsize_y):
     return out
 
 
-def _run_numpy(data: np.ndarray,
-               cellsize_x: Union[int, float],
-               cellsize_y: Union[int, float]) -> np.ndarray:
+def _run_numpy(data:np.ndarray,
+               cellsize_x:Union[int, float],
+               cellsize_y:Union[int, float]) -> np.ndarray:
     out = _cpu(data, cellsize_x, cellsize_y)
     return out
 
 
-def _run_dask_numpy(data: da.Array,
-                    cellsize_x: Union[int, float],
-                    cellsize_y: Union[int, float]) -> da.Array:
+def _run_dask_numpy(data:da.Array,
+                   cellsize_x:Union[int, float],
+                   cellsize_y:Union[int, float]) -> da.Array:
     _func = partial(_cpu,
                     cellsize_x=cellsize_x,
                     cellsize_y=cellsize_y)
@@ -80,10 +79,12 @@ def _gpu(arr, cellsize_x, cellsize_y):
     h = arr[0, 1]
     i = arr[0, 2]
 
-    dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / (8 * cellsize_x[0])
-    dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / (8 * cellsize_y[0])
-    p = (dz_dx * dz_dx + dz_dy * dz_dy) ** 0.5
-    return atan(p) * 57.29578
+    two = nb.int32(2.)  # reducing size to int8 causes wrong results
+
+    dz_dx = ((c + two * f + i) - (a + two * d + g)) / (nb.float32(8.) * cellsize_x[0])
+    dz_dy = ((g + two * h + i) - (a + two * b + c)) / (nb.float32(8.) * cellsize_y[0])
+    p = (dz_dx * dz_dx + dz_dy * dz_dy) ** nb.float32(.5)
+    return atan(p) * nb.float32(57.29578)
 
 
 @cuda.jit
@@ -91,9 +92,9 @@ def _run_gpu(arr, cellsize_x_arr, cellsize_y_arr, out):
     i, j = cuda.grid(2)
     di = 1
     dj = 1
-    if (i - di >= 0 and i + di < out.shape[0] and
-            j - dj >= 0 and j + dj < out.shape[1]):
-        out[i, j] = _gpu(arr[i - di:i + di + 1, j - dj:j + dj + 1],
+    if (i-di >= 1 and i+di < out.shape[0] - 1 and 
+        j-dj >= 1 and j+dj < out.shape[1] - 1):
+        out[i, j] = _gpu(arr[i-di:i+di+1, j-dj:j+dj+1],
                          cellsize_x_arr,
                          cellsize_y_arr)
 
@@ -101,23 +102,33 @@ def _run_gpu(arr, cellsize_x_arr, cellsize_y_arr, out):
 def _run_cupy(data: cupy.ndarray,
               cellsize_x: Union[int, float],
               cellsize_y: Union[int, float]) -> cupy.ndarray:
+
     cellsize_x_arr = cupy.array([float(cellsize_x)], dtype='f4')
     cellsize_y_arr = cupy.array([float(cellsize_y)], dtype='f4')
 
-    griddim, blockdim = cuda_args(data.shape)
-    out = cupy.empty(data.shape, dtype='f4')
-    out[:] = cupy.nan
+    pad_rows = 3 // 2
+    pad_cols = 3 // 2
+    pad_width = ((pad_rows, pad_rows),
+                (pad_cols, pad_cols))
 
-    _run_gpu[griddim, blockdim](data,
+    slope_data = np.pad(data, pad_width=pad_width, mode="reflect")
+
+    griddim, blockdim = cuda_args(slope_data.shape)
+    slope_agg = cupy.empty(slope_data.shape, dtype='f4')
+    slope_agg[:] = cupy.nan
+
+    _run_gpu[griddim, blockdim](slope_data,
                                 cellsize_x_arr,
                                 cellsize_y_arr,
-                                out)
+                                slope_agg)
+    out = slope_agg[pad_rows:-pad_rows, pad_cols:-pad_cols]
     return out
 
 
-def _run_dask_cupy(data: da.Array,
-                   cellsize_x: Union[int, float],
-                   cellsize_y: Union[int, float]) -> da.Array:
+def _run_dask_cupy(data:da.Array,
+                   cellsize_x:Union[int, float],
+                   cellsize_y:Union[int, float]) -> da.Array:
+
     msg = 'Upstream bug in dask prevents cupy backed arrays'
     raise NotImplementedError(msg)
 
@@ -133,7 +144,7 @@ def _run_dask_cupy(data: da.Array,
     return out
 
 
-def slope(agg: xr.DataArray, name: str = 'slope') -> xr.DataArray:
+def slope(agg:xr.DataArray, name: str='slope') -> xr.DataArray:
     """Returns slope of input aggregate in degrees.
 
     Parameters
@@ -167,7 +178,7 @@ def slope(agg: xr.DataArray, name: str = 'slope') -> xr.DataArray:
     # dask + cupy case
     elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
         out = _run_dask_cupy(agg.data, cellsize_x, cellsize_y)
-
+    
     # dask + numpy case
     elif isinstance(agg.data, da.Array):
         out = _run_dask_numpy(agg.data, cellsize_x, cellsize_y)
