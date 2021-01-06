@@ -45,7 +45,7 @@ conda install -c conda-forge xarray-spatial
 |<a href="/examples/user_guide/1_Surface.ipynb"><img width="1604" src="img/1-0.png"></a> | <a href="/examples/user_guide/1_Surface.ipynb"><img width="1604" src="img/1-1.png"></a>       |<a href="/examples/user_guide/1_Surface.ipynb"><img width="1604" src="img/1-2.png"></a>       |<a href="/examples/user_guide/1_Surface.ipynb"><img width="1604" src="img/1-3.png"></a>       |<a href="/examples/pharmacy-deserts.ipynb"><img width="1604" src="img/1-4.png"></a>|
 |<a href="/examples/user_guide/1_Surface.ipynb"><img width="1604" src="img/2-0.png"></a> | <a href="/examples/user_guide/8_Remote_Sensing.ipynb"><img width="1604" src="img/2-1.png"></a>|<a href="/examples/user_guide/8_Remote_Sensing.ipynb"><img width="1604" src="img/2-2.png"></a>|<a href="/examples/user_guide/5_Classification.ipynb"><img width="1604" src="img/2-3.png"></a>|<a href="/examples/pharmacy-deserts.ipynb"><img width="1604" src="img/2-4.png"></a>|
 |<a href="/examples/"><img width="1604" src="img/3-0.png"></a>                           | <a href="/examples/"><img width="1604" src="img/3-1.png"></a>                                 |<a href="/examples/user_guide/5_Classification.ipynb"><img width="1604" src="img/3-2.png"></a>|<a href="/examples/pharmacy-deserts.ipynb"><img width="1604" src="img/3-3.png"></a>|<a href="/examples/"><img width="1604" src="img/3-4.png"></a>|
-|<a href="/examples/Path-finding_City-of-Austin-Road-Network.ipynb"><img width="1604" src="img/4-0.png"></a> | | | | |
+|<a href="/examples/Path-finding_City-of-Austin-Road-Network.ipynb"><img width="1604" src="img/4-0.png"></a> |<a href="/examples/user_guide/1_Surface.ipynb#Hillshade"><img width="1604" src="img/4-1.png"></a> | <a href="/examples/user_guide/1_Surface.ipynb#Hillshade"><img width="1604" src="img/4-2.png"></a>| <a href="/examples/user_guide/1_Surface.ipynb#Slope"><img width="1604" src="img/4-3.png"></a>| <a href="/examples/pharmacy-deserts.ipynb#Create-a-%22Distance-to-Nearest-Pharmacy%22-Layer-&-Classify-into-5-Groups"><img width="1604" src="img/4-4.png"></a>|
 
 
 `xarray-spatial` grew out of the [Datashader project](https://datashader.org/), which provides fast rasterization of vector data (points, lines, polygons, meshes, and rasters) for use with xarray-spatial.
@@ -70,10 +70,10 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Equal Interval](xrspatial/classify.py) | ✅️ | ❌ | ❌ | ❌ |
-| [Natural Breaks](xrspatial/classify.py) | ✅️ | ❌ | ❌ | ❌ |
-| [Reclassify](xrspatial/classify.py) | ✅️ | ❌ | ❌ | ❌ |
-| [Quantile](xrspatial/classify.py) | ✅️ | ❌ | ❌ | ❌ |
+| [Equal Interval](xrspatial/classify.py) | ✅️ |  |  |  |
+| [Natural Breaks](xrspatial/classify.py) | ✅️ |  |  |  |
+| [Reclassify](xrspatial/classify.py) | ✅️ |  |  |  |
+| [Quantile](xrspatial/classify.py) | ✅️ |  |  |  |
 
 -------
 
@@ -81,10 +81,10 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Apply](xrspatial/focal.py) | ✅️ | ❌ | ❌ | ❌ |
-| [Hotspots](xrspatial/focal.py) | ✅️ | ❌ | ❌ | ❌ |
-| [Mean](xrspatial/focal.py) | ✅️ | ❌  | ❌ | ❌ |
-| [Focal Statistics](xrspatial/focal.py) | ✅️ | ❌  | ✅️ | ❌ |
+| [Apply](xrspatial/focal.py) | ✅️ |  |  |  |
+| [Hotspots](xrspatial/focal.py) | ✅️ | |  |  |
+| [Mean](xrspatial/focal.py) | ✅️ |  | | |
+| [Focal Statistics](xrspatial/focal.py) | ✅️ | | ✅️ | |
 
 -------
 
@@ -92,16 +92,16 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
-| [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
-| [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
-| [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
-| [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
-| [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
-| [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
-| [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
-| [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
-| [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | ✅️ | ❌  | ✅️ | ❌ |
+| [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
+| [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
+| [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
+| [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
+| [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
+| [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
+| [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
+| [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | ✅️ | | ✅️ | |
+| [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | ✅️ | | ✅️ | |
+| [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
 
 -------
 
@@ -110,7 +110,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [A* Pathfinding](xrspatial/pathfinding.py) | ✅️ | ❌  | ❌ | ❌ |
+| [A* Pathfinding](xrspatial/pathfinding.py) | ✅️ |  | | |
 
 ----------
 
@@ -118,9 +118,9 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Allocation](xrspatial/proximity.py) | ✅️ | ❌  | ❌ | ❌ |
-| [Direction](xrspatial/proximity.py) | ✅️ | ❌  | ❌ | ❌ |
-| [Proximity](xrspatial/proximity.py) | ✅️ | ❌  | ❌ | ❌ |
+| [Allocation](xrspatial/proximity.py) | ✅️ |  | | |
+| [Direction](xrspatial/proximity.py) | ✅️ |  | | |
+| [Proximity](xrspatial/proximity.py) | ✅️ |  | | |
 
 --------
 
@@ -129,13 +129,13 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Aspect](xrspatial/aspect.py) | ✅️ | ✅️ | ✅️ | ⚠️ |
-| [Curvature](xrspatial/curvature.py) | ✅️ | ❌ | ❌ | ⚠️  |
-| [Hillshade](xrspatial/hillshade.py) | ✅️ | ✅️  | ❌ | ❌ |
+| [Curvature](xrspatial/curvature.py) | ✅️ | | | ⚠️  |
+| [Hillshade](xrspatial/hillshade.py) | ✅️ | ✅️  | | |
 | [Slope](xrspatial/slope.py) | ✅️  | ✅️  | ✅️ | ⚠️  |
-| [Terrain Generation](xrspatial/terrain.py) | ✅️ | ❌  | ❌ | ❌ |
-| [Viewshed](xrspatial/viewshed.py) | ✅️ | ❌  | ❌ | ❌ |
-| [Perlin Noise](xrspatial/perlin.py) | ✅️ | ❌  | ❌ | ❌ |
-| [Bump Mapping](xrspatial/bump.py) | ✅️ | ❌ | ❌ | ❌ |
+| [Terrain Generation](xrspatial/terrain.py) | ✅️ |  | | |
+| [Viewshed](xrspatial/viewshed.py) | ✅️ |  | | |
+| [Perlin Noise](xrspatial/perlin.py) | ✅️ |  | | |
+| [Bump Mapping](xrspatial/bump.py) | ✅️ | | | |
 
 -----------
 
@@ -143,12 +143,12 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Apply](xrspatial/zonal.py) | ✅️ | ❌  | ❌ | ❌ |
-| [Crop](xrspatial/zonal.py) | ✅️ | ❌  | ❌ | ❌ |
-| [Regions](xrspatial/zonal.py) | ✅️ | ❌  | ❌ | ❌ |
-| [Trim](xrspatial/zonal.py) | ✅️ | ❌  | ❌ | ❌ |
-| [Zonal Statistics](xrspatial/zonal.py) | ✅️ | ❌  | ❌ | ❌ |
-| [Zonal Cross Tabulate](xrspatial/zonal.py) | ✅️ | ❌  | ❌ | ❌ |
+| [Apply](xrspatial/zonal.py) | ✅️ |  | | |
+| [Crop](xrspatial/zonal.py) | ✅️ | | | |
+| [Regions](xrspatial/zonal.py) | ✅️ |  | | |
+| [Trim](xrspatial/zonal.py) | ✅️ |  | | |
+| [Zonal Statistics](xrspatial/zonal.py) | ✅️ | | | |
+| [Zonal Cross Tabulate](xrspatial/zonal.py) | ✅️ | | | |
 
 
 #### Usage
@@ -203,3 +203,4 @@ With the introduction of projects like Numba, Python gained new ways to provide 
 - @marcozimmermannpm
 - @jthetzel
 - @chase-dwelle
+- @SAN154
