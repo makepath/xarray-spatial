@@ -63,7 +63,10 @@ def cuda_args(shape):
 
 
 def is_cupy_backed(agg: xr.DataArray):
-    return type(agg.data._meta).__module__.split('.')[0] == 'cupy'
+    try:
+        return type(agg.data._meta).__module__.split('.')[0] == 'cupy'
+    except AttributeError:
+        return False
 
 
 def calc_res(raster):
