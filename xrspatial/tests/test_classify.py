@@ -12,14 +12,18 @@ from xrspatial import quantile
 from xrspatial import reclassify
 
 
+n, m = 5, 5
+elevation = np.arange(n * m).reshape((n, m))
+numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+dask_numpy_agg = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
+                              attrs={'res': (10.0, 10.0)})
+
+
 def test_reclassify_cpu():
     bins = [10, 20, 30]
     new_values = [1, 2, 3]
 
-    n, m = 5, 5
-    elevation = np.arange(n * m).reshape((n, m))
     # numpy
-    numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
     numpy_reclassify = reclassify(numpy_agg, bins=bins, new_values=new_values,
                                   name='numpy_reclassify')
     unique_elements, counts_elements = np.unique(numpy_reclassify.data,
@@ -27,8 +31,6 @@ def test_reclassify_cpu():
     assert len(unique_elements) == 3
 
     # dask + numpy
-    dask_numpy_agg = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
-                                  attrs={'res': (10.0, 10.0)})
     dask_reclassify = reclassify(dask_numpy_agg, bins=bins,
                                  new_values=new_values, name='dask_reclassify')
     assert isinstance(dask_reclassify.data, da.Array)
@@ -45,11 +47,7 @@ def test_reclassify_cpu_equals_gpu():
     bins = [10, 20, 30]
     new_values = [1, 2, 3]
 
-    n, m = 5, 5
-    elevation = np.arange(n * m).reshape((n, m))
-
     # vanilla numpy version
-    numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
     cpu = reclassify(numpy_agg, name='numpy_result', bins=bins, new_values=new_values)
 
     # cupy
@@ -71,11 +69,9 @@ def test_reclassify_cpu_equals_gpu():
 
 def test_quantile_cpu():
     k = 5
-    n, m = 5, 5
-    elevation = np.arange(n * m).reshape((n, m))
+
     # numpy
-    numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-    numpy_quantile = quantile(numpy_agg, k=5)
+    numpy_quantile = quantile(numpy_agg, k=k)
 
     unique_elements, counts_elements = np.unique(numpy_quantile.data,
                                                  return_counts=True)
@@ -85,8 +81,6 @@ def test_quantile_cpu():
     assert np.unique(counts_elements)[0] == 5
 
     # dask + numpy
-    dask_numpy_agg = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
-                                  attrs={'res': (10.0, 10.0)})
     dask_quantile = quantile(dask_numpy_agg, k=k)
     assert isinstance(dask_quantile.data, da.Array)
 
@@ -105,11 +99,8 @@ def test_quantile_cpu_equals_gpu():
     import cupy
 
     k = 5
-    n, m = 5, 5
-    elevation = np.arange(n * m).reshape((n, m))
 
     # vanilla numpy version
-    numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
     cpu = quantile(numpy_agg, k=k, name='numpy_result')
 
     # cupy
@@ -122,21 +113,18 @@ def test_quantile_cpu_equals_gpu():
 
 def test_natural_breaks_cpu():
     k = 5
-    n, m = 4, 3
-    agg = xr.DataArray(np.arange(n * m).reshape((n, m)), dims=['y', 'x'])
-    agg['y'] = np.linspace(0, n, n)
-    agg['x'] = np.linspace(0, m, m)
 
-    natural_breaks_agg = natural_breaks(agg, k=5)
+    # vanilla numpy
+    numpy_natural_breaks = natural_breaks(numpy_agg, k=k)
 
     # shape and other attributes remain the same
-    assert agg.shape == natural_breaks_agg.shape
-    assert agg.dims == natural_breaks_agg.dims
-    assert agg.attrs == natural_breaks_agg.attrs
-    for coord in agg.coords:
-        assert np.all(agg[coord] == natural_breaks_agg[coord])
+    assert numpy_agg.shape == numpy_natural_breaks.shape
+    assert numpy_agg.dims == numpy_natural_breaks.dims
+    assert numpy_agg.attrs == numpy_natural_breaks.attrs
+    for coord in numpy_agg.coords:
+        assert np.all(numpy_agg[coord] == numpy_natural_breaks[coord])
 
-    unique_elements, counts_elements = np.unique(natural_breaks_agg.data,
+    unique_elements, counts_elements = np.unique(numpy_natural_breaks.data,
                                                  return_counts=True)
     assert len(unique_elements) == k
 
@@ -147,16 +135,13 @@ def test_natural_breaks_cpu_equals_gpu():
     import cupy
 
     k = 5
-    n, m = 5, 5
-    elevation = np.arange(n * m).reshape((n, m))
 
     # vanilla numpy version
-    numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-    cpu = natural_breaks(numpy_agg, name='numpy_result')
+    cpu = natural_breaks(numpy_agg, k=k, name='numpy_result')
 
     # cupy
     cupy_agg = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
-    gpu = natural_breaks(cupy_agg, name='cupy_result')
+    gpu = natural_breaks(cupy_agg, k=k, name='cupy_result')
 
     assert isinstance(gpu.data, cupy.ndarray)
     assert np.isclose(cpu, gpu, equal_nan=True).all()
@@ -164,10 +149,7 @@ def test_natural_breaks_cpu_equals_gpu():
 
 def test_equal_interval_cpu():
     k = 5
-    n, m = 5, 5
-    elevation = np.arange(n * m).reshape((n, m))
     # numpy
-    numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
     numpy_ei = equal_interval(numpy_agg, k=5)
 
     unique_elements, counts_elements = np.unique(numpy_ei.data,
@@ -176,8 +158,6 @@ def test_equal_interval_cpu():
     assert len(unique_elements) == k
 
     # dask + numpy
-    dask_numpy_agg = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
-                                  attrs={'res': (10.0, 10.0)})
     dask_ei = equal_interval(dask_numpy_agg, k=k, name='dask_reclassify')
     assert isinstance(dask_ei.data, da.Array)
 
@@ -190,13 +170,14 @@ def test_equal_interval_cpu_equals_gpu():
 
     import cupy
 
-    n, m = 5, 5
-    elevation = np.arange(n * m).reshape((n, m))
-    small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-    cpu = equal_interval(small_da, k=5)
+    k = 5
 
-    small_da_cupy = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
-    gpu = equal_interval(small_da_cupy, 5)
+    # numpy
+    cpu = equal_interval(numpy_agg, k=k)
+
+    # cupy
+    cupy_agg = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    gpu = equal_interval(cupy_agg, k=k)
     assert isinstance(gpu.data, cupy.ndarray)
 
     assert np.isclose(cpu, gpu, equal_nan=True).all()
