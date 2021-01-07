@@ -92,22 +92,19 @@ def reclassify(agg, bins, new_values, name='reclassify',
     ----------
     agg : xr.DataArray
         xarray.DataArray of value to classify
-    bins: int
-        number of class intervals
-    new_values: int
-        new values to reclassify to
+    k : int
+        number of quantiles
     name : str
         name of data dim in output xr.DataArray
-    nodata: set the no data value (default np.nan)
 
     Returns
     -------
-    reclassified : xr.DataArray
+    quantiled_agg : xr.DataArray
 
     Examples
     --------
-    >>> from xrspatial.classify import reclassify
-    >>> reclasified = reclassify(my_agg)
+    >>> from xrspatial.classify import quantile
+    >>> quantile_agg = quantile(my_agg)
     """
 
     if len(bins) != len(new_values):
@@ -132,7 +129,7 @@ def quantile(agg, k=4, name='quantile', ignore_vals=tuple()):
     agg : xr.DataArray
         xarray.DataArray of value to classify
     k : int
-        number of quantiles (default 4)
+        number of quantiles
     name : str
         name of data dim in output xr.DataArray
 
@@ -260,7 +257,7 @@ def natural_breaks(agg, num_sample=None, name='natural_breaks', k=5):
         When n is large, we should fit the model on a small sub-sample
         of the data instead of using the whole dataset.
     k: int
-        Number of classes (default 5)
+        Number of classes
     Returns
     -------
     natural_breaks_agg: xarray.DataArray
@@ -341,7 +338,7 @@ def equal_interval(agg, k=5, name='equal_interval'):
     agg     : xr.DataArray
              xarray.DataArray of value to classify
     k       : int
-              number of classes required (default 5)
+              number of classes required
 
 
     Returns
