@@ -159,6 +159,7 @@ def aspect(agg: xr.DataArray, name:str ='aspect'):
     Parameters
     ----------
     agg : DataArray
+    name : str - name property of output xr.DataArray
 
     Returns
     -------

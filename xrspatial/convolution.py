@@ -11,6 +11,27 @@ def convolve_2d(image, kernel, pad=True, use_cuda=True):
     """Function to call the 2D convolution via Numba.
     The Numba convolution function does not account for an edge so
     if we wish to take this into account, will pad the image array.
+
+    Parameters
+    ----------
+    image : xr.DataArray
+        imput array
+    kernel : int
+        input kernel
+    pad : Boolean (default: True)
+        
+    use_cuda: Boolean (default: True)
+        Enable GPU usage
+
+    Returns
+    -------
+    convolved_agg : xr.DataArray
+
+    Examples
+    --------
+    >>> from xrspatial.classify import quantile
+    >>> quantile_agg = quantile(my_agg)
+
     """
     # Don't allow padding on (1, 1) kernel
     if (kernel.shape[0] == 1 and kernel.shape[1] == 1):

@@ -129,7 +129,7 @@ def quantile(agg, k=4, name='quantile', ignore_vals=tuple()):
     agg : xr.DataArray
         xarray.DataArray of value to classify
     k : int
-        number of quantiles
+        number of quantiles (default: 4)
     name : str
         name of data dim in output xr.DataArray
 
@@ -257,7 +257,14 @@ def natural_breaks(agg, num_sample=None, name='natural_breaks', k=5):
         When n is large, we should fit the model on a small sub-sample
         of the data instead of using the whole dataset.
     k: int
+<<<<<<< Updated upstream
         Number of classes
+=======
+        Number of classes (default: 5)
+    name : str
+        name of output aggregate
+
+>>>>>>> Stashed changes
     Returns
     -------
     natural_breaks_agg: xarray.DataArray
@@ -338,8 +345,14 @@ def equal_interval(agg, k=5, name='equal_interval'):
     agg     : xr.DataArray
              xarray.DataArray of value to classify
     k       : int
+<<<<<<< Updated upstream
               number of classes required
 
+=======
+              number of classes required (default: 5)
+     name : str
+        name of output aggregate
+>>>>>>> Stashed changes
 
     Returns
         -------

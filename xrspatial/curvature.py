@@ -103,6 +103,10 @@ def curvature(agg, name='curvature'):
     agg: xarray.xr.DataArray
         2D input agg image with shape=(height, width)
 
+    name : str
+        name property of output xr.DataArray
+    
+
     Returns
     -------
     curvature: xarray.xr.DataArray

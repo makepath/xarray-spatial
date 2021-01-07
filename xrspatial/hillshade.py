@@ -107,11 +107,13 @@ def hillshade(agg, azimuth=225, angle_altitude=25, name='hillshade'):
     Parameters
     ----------
     agg : DataArray
-    altitude : int, optional (default: 30)
+    altitude : int, optional (default: 25)
         Altitude angle of the sun specified in degrees.
-    azimuth : int, optional (default: 315)
+    azimuth : int, optional (default: 225)
         The angle between the north vector and the perpendicular projection
         of the light source down onto the horizon specified in degrees.
+    name : str
+        name property of output xr.DataArray
 
     Returns
     -------

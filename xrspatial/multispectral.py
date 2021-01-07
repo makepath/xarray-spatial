@@ -56,6 +56,15 @@ def arvi(nir_agg, red_agg, blue_agg, name='arvi', use_cuda=True, use_cupy=True):
     blue_agg : DataArray
         blue band data
 
+    name : str
+        name property of output xr.DataArray
+    
+    use_cuda : Bool (default: True)
+        enable GPU 
+
+    use_cupy: Bool (default: True)
+        enable cupy
+
     Returns
     -------
     data: DataArray
@@ -127,6 +136,15 @@ def evi(nir_agg, red_agg, blue_agg, c1=6.0, c2=7.5, soil_factor=1.0, gain=2.5,
     gain : float (default=2.5)
       amplitude adjustment factor
 
+    name : str
+        name property of output xr.DataArray
+    
+    use_cuda : Bool (default: True)
+        enable GPU 
+
+    use_cupy: Bool (default: True)
+        enable cupy
+
     Returns
     -------
     data: DataArray
@@ -192,6 +210,15 @@ def gci(nir_agg, green_agg, name='gci', use_cuda=True, use_cupy=True):
     green_agg : DataArray
         green band data
 
+    name : str
+        name property of output xr.DataArray
+    
+    use_cuda : Bool (default: True)
+        enable GPU 
+
+    use_cupy: Bool (default: True)
+        enable cupy
+
     Returns
     -------
     data: DataArray
@@ -249,6 +276,15 @@ def nbr(nir_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
         (Landsat 4-7: Band 6)
         (Landsat 8: Band 7)
 
+    name : str
+        name property of output xr.DataArray
+    
+    use_cuda : Bool (default: True)
+        enable GPU 
+
+    use_cupy: Bool (default: True)
+        enable cupy
+
     Returns
     -------
     data: DataArray
@@ -295,6 +331,15 @@ def nbr2(swir1_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
         (Landsat 4-7: Band 6)
         (Landsat 8: Band 7)
 
+    name : str
+        name property of output xr.DataArray
+    
+    use_cuda : Bool (default: True)
+        enable GPU 
+
+    use_cupy: Bool (default: True)
+        enable cupy
+
     Returns
     -------
     data: DataArray
@@ -326,8 +371,19 @@ def ndvi(nir_agg, red_agg, name='ndvi', use_cuda=True, use_cupy=True):
     ----------
     nir_agg : DataArray
         near-infrared band data
+
     red_agg : DataArray
         red band data
+
+    name : str
+        name property of output xr.DataArray
+    
+    use_cuda : Bool (default: True)
+        enable GPU 
+
+    use_cupy: Bool (default: True)
+        enable cupy
+
 
     Returns
     -------
@@ -386,6 +442,15 @@ def ndmi(nir_agg, swir1_agg, name='ndmi', use_cuda=True, use_cupy=True):
         shortwave infrared band
         (Landsat 4-7: Band 5)
         (Landsat 8: Band 6)
+
+    name : str
+        name property of output xr.DataArray
+    
+    use_cuda : Bool (default: True)
+        enable GPU 
+
+    use_cupy: Bool (default: True)
+        enable cupy
 
 
     Returns
@@ -478,6 +543,15 @@ def savi(nir_agg, red_agg, soil_factor=1.0, name='savi', use_cuda=True, use_cupy
     soil_factor : float
       soil adjustment factor between -1.0 and 1.0.
       when set to zero, savi will return the same as ndvi
+
+    name : str
+        name property of output xr.DataArray
+    
+    use_cuda : Bool (default: True)
+        enable GPU 
+
+    use_cupy: Bool (default: True)
+        enable cupy
 
     Returns
     -------
@@ -574,6 +648,15 @@ def sipi(nir_agg, red_agg, blue_agg, name='sipi', use_cuda=True, use_cupy=True):
     green_agg : DataArray
         green band data
 
+    name : str
+        name property of output xr.DataArray
+    
+    use_cuda : Bool (default: True)
+        enable GPU 
+
+    use_cupy: Bool (default: True)
+        enable cupy
+
     Returns
     -------
     data: DataArray
@@ -658,10 +741,22 @@ def ebbi(red_agg, swir_agg, tir_agg, name='ebbi', use_cuda=True, use_cupy=True):
     ----------
     red_agg : DataArray
         red band data
+
     swir_agg : DataArray
         shortwave infrared band data
+
     tir_agg : DataArray
         thermal infrared band data
+
+    name : str
+        name property of output xr.DataArray
+    
+    use_cuda : Bool (default: True)
+        enable GPU 
+
+    use_cupy: Bool (default: True)
+        enable cupy
+
     Returns
     -------
     data: DataArray

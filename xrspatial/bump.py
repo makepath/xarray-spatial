@@ -16,7 +16,7 @@ def bump(width, height, count=None, height_func=None, spread=1):
     height : int
     count : int (defaults: w * h / 10)
     height_func : function which takes x, y and returns a height value
-    spread : tuple boundaries
+    spread : tuple boundaries (default: 1)
 
     Returns
     -------

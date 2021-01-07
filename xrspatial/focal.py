@@ -222,10 +222,13 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
     Parameters
     ----------
     agg : DataArray
-    passes : int
-      number of times to run mean
+    passes : int 
+        number of times to run mean (default: 1)
+    excludes: 
+        values to exclude (default: np.nan)
+
     name : str
-      output xr.DataArray.name property
+        output xr.DataArray.name property
 
     Returns
     -------
@@ -373,6 +376,10 @@ def hotspots(raster, kernel, x='x', y='y'):
     raster: xarray.DataArray
         Input raster image with shape=(height, width)
     kernel: Kernel
+    x: int
+        raster width
+    y: int
+        raster height
 
     Returns
     -------
