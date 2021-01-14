@@ -197,7 +197,7 @@ def aspect(agg: xr.DataArray, name:str ='aspect'):
            [        nan, 92.64254529,         nan],
            [        nan,         nan,         nan]])
     Dimensions without coordinates: dim_0, dim_1
-    # Value of 92.64254529 means cell [1,1] faces the SE direction.
+    # Value of 92.64254529 means cell [1,1] faces the East.
 
     Terrain Example: https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
     """
