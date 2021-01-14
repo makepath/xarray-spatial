@@ -154,21 +154,52 @@ def _run_dask_numpy(data:da.Array) -> da.Array:
 
 
 def aspect(agg: xr.DataArray, name:str ='aspect'):
-    """Returns downward slope direction in compass degrees (0 - 360) with 0 at 12 o'clock.
+    """Calculates, for all cells in the array, the downward slope direction of each cell 
+        based on the elevation of its neighbors in a 3x3 grid. The value is measured 
+        clockwise in degrees with 0 and 360 at due north. Flat areas are given a value of -1.
 
     Parameters
     ----------
     agg : DataArray
+        Numpy, CuPy, Dask, or CuPy GPU data array with agg.data = elevation
 
     Returns
-    -------
+    ----------
     data: DataArray
+        Numpy, CuPy, Dask, or CuPy GPU data array with agg.out = aspect
 
     Notes:
-    ------
+    ----------
     Algorithm References:
      - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm#ESRI_SECTION1_4198691F8852475A9F4BC71246579FAA
      - Burrough, P. A., and McDonell, R. A., 1998. Principles of Geographical Information Systems (Oxford University Press, New York), pp 406
+    
+    Examples
+    ----------
+    Imports
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> import xrspatial
+
+    Single Cell
+    >>> elevation = np.array([[101, 92, 85], [101, 92, 85], [101, 91, 84]])
+    >>> elev_array = xr.DataArray(elevation)
+    >>> elev_array
+    <xarray.DataArray (dim_0: 3, dim_1: 3)>
+    array([[101,  92,  85],
+           [101,  92,  85],
+           [101,  91,  84]])
+    Dimensions without coordinates: dim_0, dim_1
+    >>> aspect = xrspatial.aspect(elev_array)
+    >>> aspect
+    <xarray.DataArray 'aspect' (dim_0: 3, dim_1: 3)>
+    array([[        nan,         nan,         nan],
+           [        nan, 92.64254529,         nan],
+           [        nan,         nan,         nan]])
+    Dimensions without coordinates: dim_0, dim_1
+    # Value of 92.64254529 means cell [1,1] faces the SE direction.
+
+    Terrain Example: https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
     """
 
     # numpy case
