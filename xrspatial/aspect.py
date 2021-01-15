@@ -155,60 +155,64 @@ def _run_dask_numpy(data:da.Array) -> da.Array:
 
 def aspect(agg: xr.DataArray, name:str ='aspect'):
     """
-    Calculates, for all cells in the array, the downward slope direction of each cell based on the elevation of its neighbors in a 3x3 grid. 
-    The value is measured clockwise in degrees with 0 and 360 at due north. Flat areas are given a value of -1. Values along the edges are not calculated.
+Calculates, for all cells in the array, the downward slope direction of each cell based on the elevation of its neighbors in a 3x3 grid. 
+The value is measured clockwise in degrees with 0 and 360 at due north. Flat areas are given a value of -1. 
+Values along the edges are not calculated.
 
-    Parameters
-    ----------
+Parameters:
+----------
     agg : xarray.DataArray
         The data dimension of the input aggregate (agg) is a 2D array of elevation values.
         It can be a NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
 
-    Returns
-    ----------
+Returns:
+----------
     data: DataArray
         The data dimension of the output is a 2D array, of the same type as the input, of calculated aspect values.
         All other input attributes are preserved.
-    Notes:
-    ----------
+
+Notes:
+----------
     Algorithm References:
-     - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm#ESRI_SECTION1_4198691F8852475A9F4BC71246579FAA
-     - Burrough, P. A., and McDonell, R. A., 1998. Principles of Geographical Information Systems (Oxford University Press, New York), pp 406
-    
-    Examples
-    ----------
-    >>> # Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> import xrspatial
+        - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm#ESRI_SECTION1_4198691F8852475A9F4BC71246579FAA
 
-    >>> # Create Elevation DataArray
-    >>> agg = xr.DataArray(np.array([[0, 1, 0, 0],
-                                    [1, 1, 0, 0],
-                                    [0, 1, 2, 2],
-                                    [1, 0, 2, 0],
-                                    [0, 2, 2, 2]]),
-                            dims = ["lat", "lon"])
-    >>> height, width = agg.shape
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> agg["lon"] = _lon
-    >>> agg["lat"] = _lat
+        - Burrough, P. A., and McDonell, R. A., 1998. Principles of Geographical Information Systems (Oxford University Press, New York), pp 406
 
-    >>> # Create Aspect DataArray
-    >>> aspect = xrspatial.aspect(agg)
-    >>> aspect
-    <xarray.DataArray 'aspect' (lat: 5, lon: 4)>
-    array([[         nan,          nan,          nan,          nan],
-           [         nan,   0.        ,  18.43494882,          nan],
-           [         nan, 270.        , 341.56505118,          nan],
-           [         nan, 288.43494882, 315.        ,          nan],
-           [         nan,          nan,          nan,          nan]])
-    Coordinates:
-    * lon      (lon) float64 0.0 1.0 2.0 3.0
-    * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+Examples:
+----------
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     import xrspatial
 
-    Terrain Example: https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
+    Create Elevation DataArray
+>>>     agg = xr.DataArray(np.array([[0, 1, 0, 0],
+>>>                                  [1, 1, 0, 0],
+>>>                                  [0, 1, 2, 2],
+>>>                                  [1, 0, 2, 0],
+>>>                                  [0, 2, 2, 2]]),
+>>>                           dims = ["lat", "lon"])
+>>>     height, width = agg.shape
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     agg["lon"] = _lon
+>>>     agg["lat"] = _lat
+
+    Create Aspect DataArray
+>>>     aspect = xrspatial.aspect(agg)
+>>>     print(aspect)
+
+<xarray.DataArray 'aspect' (lat: 5, lon: 4)>
+array([[         nan,          nan,          nan,          nan],
+        [         nan,   0.        ,  18.43494882,          nan],
+        [         nan, 270.        , 341.56505118,          nan],
+        [         nan, 288.43494882, 315.        ,          nan],
+        [         nan,          nan,          nan,          nan]])
+Coordinates:
+* lon      (lon) float64 0.0 1.0 2.0 3.0
+* lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+
+Terrain Example: https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
     """
 
     # numpy case
