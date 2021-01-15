@@ -202,15 +202,15 @@ Examples:
 >>>     aspect = xrspatial.aspect(agg)
 >>>     print(aspect)
 
-<xarray.DataArray 'aspect' (lat: 5, lon: 4)>
-array([[         nan,          nan,          nan,          nan],
-        [         nan,   0.        ,  18.43494882,          nan],
-        [         nan, 270.        , 341.56505118,          nan],
-        [         nan, 288.43494882, 315.        ,          nan],
-        [         nan,          nan,          nan,          nan]])
-Coordinates:
-* lon      (lon) float64 0.0 1.0 2.0 3.0
-* lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+    <xarray.DataArray 'aspect' (lat: 5, lon: 4)>
+    array([[         nan,          nan,          nan,          nan],
+            [         nan,   0.        ,  18.43494882,          nan],
+            [         nan, 270.        , 341.56505118,          nan],
+            [         nan, 288.43494882, 315.        ,          nan],
+            [         nan,          nan,          nan,          nan]])
+    Coordinates:
+    * lon      (lon) float64 0.0 1.0 2.0 3.0
+    * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
 
 Terrain Example: https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
     """
