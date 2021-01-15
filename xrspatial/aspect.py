@@ -154,7 +154,8 @@ def _run_dask_numpy(data:da.Array) -> da.Array:
 
 
 def aspect(agg: xr.DataArray, name:str ='aspect'):
-    """Calculates, for all cells in the array, the downward slope direction of each cell based on the elevation of its neighbors in a 3x3 grid. 
+    """
+    Calculates, for all cells in the array, the downward slope direction of each cell based on the elevation of its neighbors in a 3x3 grid. 
     The value is measured clockwise in degrees with 0 and 360 at due north. Flat areas are given a value of -1. Values along the edges are not calculated.
 
     Parameters
