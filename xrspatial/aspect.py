@@ -157,17 +157,19 @@ def aspect(agg: xr.DataArray, name:str ='aspect'):
     """Calculates, for all cells in the array, the downward slope direction of each cell 
         based on the elevation of its neighbors in a 3x3 grid. The value is measured 
         clockwise in degrees with 0 and 360 at due north. Flat areas are given a value of -1.
+        Values along the edges are not calculated.
 
     Parameters
     ----------
-    agg : DataArray
-        Numpy, CuPy, Dask, or CuPy GPU data array with agg.data = elevation
+    agg : xarray.DataArray
+        The data dimension of the input aggregate (agg) is a 2D array of elevation values.
+        It can be a NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
 
     Returns
     ----------
     data: DataArray
-        Numpy, CuPy, Dask, or CuPy GPU data array with agg.out = aspect
-
+        The data dimension of the output is a 2D array, of the same type as the input, of calculated aspect values.
+        All other input attributes are preserved.
     Notes:
     ----------
     Algorithm References:
@@ -176,28 +178,36 @@ def aspect(agg: xr.DataArray, name:str ='aspect'):
     
     Examples
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
 
-    Single Cell
-    >>> elevation = np.array([[101, 92, 85], [101, 92, 85], [101, 91, 84]])
-    >>> elev_array = xr.DataArray(elevation)
-    >>> elev_array
-    <xarray.DataArray (dim_0: 3, dim_1: 3)>
-    array([[101,  92,  85],
-           [101,  92,  85],
-           [101,  91,  84]])
-    Dimensions without coordinates: dim_0, dim_1
-    >>> aspect = xrspatial.aspect(elev_array)
+    >>> # Create Elevation DataArray
+    >>> agg = xr.DataArray(np.array([[0, 1, 0, 0],
+                                    [1, 1, 0, 0],
+                                    [0, 1, 2, 2],
+                                    [1, 0, 2, 0],
+                                    [0, 2, 2, 2]]),
+                            dims = ["lat", "lon"])
+    >>> height, width = agg.shape
+    >>> _lon = np.linspace(0, width - 1, width)
+    >>> _lat = np.linspace(0, height - 1, height)
+    >>> agg["lon"] = _lon
+    >>> agg["lat"] = _lat
+
+    >>> # Create Aspect DataArray
+    >>> aspect = xrspatial.aspect(agg)
     >>> aspect
-    <xarray.DataArray 'aspect' (dim_0: 3, dim_1: 3)>
-    array([[        nan,         nan,         nan],
-           [        nan, 92.64254529,         nan],
-           [        nan,         nan,         nan]])
-    Dimensions without coordinates: dim_0, dim_1
-    # Value of 92.64254529 means cell [1,1] faces the East.
+    <xarray.DataArray 'aspect' (lat: 5, lon: 4)>
+    array([[         nan,          nan,          nan,          nan],
+           [         nan,   0.        ,  18.43494882,          nan],
+           [         nan, 270.        , 341.56505118,          nan],
+           [         nan, 288.43494882, 315.        ,          nan],
+           [         nan,          nan,          nan,          nan]])
+    Coordinates:
+    * lon      (lon) float64 0.0 1.0 2.0 3.0
+    * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
 
     Terrain Example: https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
     """
