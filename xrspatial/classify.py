@@ -290,33 +290,84 @@ def _quantile(agg, k):
 
 def quantile(agg, k=4, name='quantile'):
     """
-    Calculates the quantiles for an array
+Calculates the quantiles for array (agg) by distributing the values into groups that contain
+an equal number of values. The number of quantiles produced is based on (k) with a default value
+of 4. The result is an xarray.DataArray.
 
+Parameters:
+----------
+    agg: xarray.DataArray
+        The data dimension of the input aggregate (agg) is a 2D array of values to be classified.
+        It can be a NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
+    k: int
+        The number of quantiles to be produced, default = 4.
+    name: str
+        The name of the output aggregate array.
+Returns:
+----------
+    quantiled_agg: xarray.DataArray
+        The data dimension of the output is a 2D array, of the same type as the input, of calculated aspect values.
+        All other input attributes are preserved.
+Notes:
+----------
     Adapted from PySAL:
-    https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles
-
+        - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles
+    
     Note that dask's percentile algorithm is approximate, while numpy's is exact.
-    This may cause some differences between results of vanilla numpy and
-    dask version of the input agg.
-    https://github.com/dask/dask/issues/3099
+    This may cause some differences between results of vanilla numpy and dask version of the input agg.
+        - https://github.com/dask/dask/issues/3099
+Examples:
+----------  
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     from xrspatial.classify import quantile
 
-    Parameters
-    ----------
-    agg : xr.DataArray
-        xarray.DataArray of value to classify
-    k : int
-        number of quantiles
-    name : str
-        name of output aggregate
+    Create DataArray
+>>>     np.random.seed(0)
+>>>     agg = xr.DataArray(np.random.rand(4,4), 
+                                dims = ["lat", "lon"])
+>>>     height, width = agg.shape
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     agg["lon"] = _lon
+>>>     agg["lat"] = _lat
+>>>     print(agg)
 
-    Returns
-    -------
-    quantiled_agg : xr.DataArray
+    <xarray.DataArray (lat: 4, lon: 4)>
+    array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
+           [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
+           [0.96366276, 0.38344152, 0.79172504, 0.52889492],
+            [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
+    Coordinates:
+    * lon      (lon) float64 0.0 1.0 2.0 3.0
+    * lat      (lat) float64 0.0 1.0 2.0 3.0
 
-    Examples
-    --------
-    >>> from xrspatial.classify import quantile
-    >>> quantile_agg = quantile(my_agg)
+    Create Quantile Aggregate
+>>>     quantile_agg = quantile(agg)
+>>>     print(quantile_agg)
+
+    <xarray.DataArray 'quantile' (lat: 4, lon: 4)>
+    array([[1., 2., 2., 1.],
+           [0., 2., 1., 3.],
+           [3., 0., 3., 1.],
+           [2., 3., 0., 0.]], dtype=float32)
+    Coordinates:
+    * lon      (lon) float64 0.0 1.0 2.0 3.0
+    * lat      (lat) float64 0.0 1.0 2.0 3.0
+
+    With k quantiles
+>>>     quantile_agg = quantile(agg, k = 6, name = "Six Quantiles")
+>>>     print(quantile_agg)    
+
+    <xarray.DataArray 'Six Quantiles' (lat: 4, lon: 4)>
+    array([[2., 4., 3., 2.],
+           [1., 3., 1., 5.],
+           [5., 0., 4., 1.],
+           [3., 5., 0., 0.]], dtype=float32)
+    Coordinates:
+    * lon      (lon) float64 0.0 1.0 2.0 3.0
+    * lat      (lat) float64 0.0 1.0 2.0 3.0
     """
 
     q = _quantile(agg, k)
