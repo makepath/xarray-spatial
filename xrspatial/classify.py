@@ -290,7 +290,7 @@ def _quantile(agg, k):
 
 def quantile(agg, k=4, name='quantile'):
     """
-Calculates the quantiles for array (agg) by distributing the values into groups that contain
+Groups data for array (agg) into quantiles by distributing the values into groups that contain
 an equal number of values. The number of quantiles produced is based on (k) with a default value
 of 4. The result is an xarray.DataArray.
 
