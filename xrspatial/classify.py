@@ -187,29 +187,68 @@ def _bin(data, bins, new_values):
 
 def reclassify(agg, bins, new_values, name='reclassify'):
     """
-    Reclassify xr.DataArray to new values based on bins
+Reclassifies data for array (agg) into new values based on bins.
 
-    Adapted from PySAL:
-    https://pysal.org/pysal/_modules/pysal/viz/mapclassify/classifiers.html#Quantiles
-
-    Parameters
-    ----------
-    agg: xr.DataArray
-        xarray.DataArray of value to classify
+Parameters:
+----------
+    agg: xarray.DataArray
+        - 2D array of values to be reclassified.
     bins: array-like object
-        values to bin
+        - Values or ranges of values to be changed.
     new_values: array-like object
-    name : str
-        name of output aggregate
+        - New values for each bin.
+    name: str
+        - Name of output aggregate.
 
-    Returns
-    -------
-    reclassified_agg : xr.DataArray
+Returns:
+----------
+    reclassified_agg : xarray.DataArray
+        - 2D array of new values.
 
-    Examples
-    --------
-    >>> from xrspatial.classify import reclassify
-    >>> reclassify_agg = reclassify(my_agg)
+Notes:
+----------
+    Adapted from PySal:
+        - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html
+
+Examples:
+----------
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     from xrspatial.classify import reclassify
+
+    Create Initial DataArray
+>>>     np.random.seed(1)
+>>>     agg = xr.DataArray(np.random.randint(2, 8, (4, 4)), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = agg.shape
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     _lat = np.linspace(0, height - 1, height)    
+>>>     agg["lon"] = _lon
+>>>     agg["lat"] = _lat   
+>>>     print(agg)             
+<xarray.DataArray (lat: 4, lon: 4)>
+array([[7, 5, 6, 2],
+       [3, 5, 7, 2],
+       [2, 3, 6, 7],
+       [6, 3, 4, 6]])
+Coordinates:
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+
+    Reclassify
+>>>     bins = list(range(2, 8))
+>>>     new_val = list(range(20, 80, 10))
+>>>     reclassify_agg = reclassify(agg, bins, new_val)
+>>>     print(reclassify_agg)
+<xarray.DataArray 'reclassify' (lat: 4, lon: 4)>
+array([[70., 50., 60., 20.],
+       [30., 50., 70., 20.],
+       [20., 30., 60., 70.],
+       [60., 30., 40., 60.]], dtype=float32)
+Coordinates:
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
     """
 
     if len(bins) != len(new_values):
@@ -297,17 +336,17 @@ of 4. The result is an xarray.DataArray.
 Parameters:
 ----------
     agg: xarray.DataArray
-        The data dimension of the input aggregate (agg) is a 2D array of values to be classified.
-        It can be a NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
+       - 2D array of values to bin:
+       - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
     k: int
-        The number of quantiles to be produced, default = 4.
+       - Number of quantiles to be produced, default = 4.
     name: str
-        The name of the output aggregate array.
+        - Name of the output aggregate array.
 Returns:
 ----------
     quantiled_agg: xarray.DataArray
-        The data dimension of the output is a 2D array, of the same type as the input, of calculated aspect values.
-        All other input attributes are preserved.
+        - 2D array, of the same type as the input, of quantile allocations.
+        - All other input attributes are preserved.
 Notes:
 ----------
     Adapted from PySAL:
@@ -328,10 +367,10 @@ Examples:
 >>>     agg = xr.DataArray(np.random.rand(4,4), 
                                 dims = ["lat", "lon"])
 >>>     height, width = agg.shape
->>>     _lon = np.linspace(0, width - 1, width)
 >>>     _lat = np.linspace(0, height - 1, height)
->>>     agg["lon"] = _lon
+>>>     _lon = np.linspace(0, width - 1, width)
 >>>     agg["lat"] = _lat
+>>>     agg["lon"] = _lon
 >>>     print(agg)
 
     <xarray.DataArray (lat: 4, lon: 4)>
@@ -614,50 +653,75 @@ def _run_cupy_natural_break(data, num_sample, k):
 
 def natural_breaks(agg, num_sample=None, name='natural_breaks', k=5):
     """
-    Calculate Jenks natural breaks (a.k.a kmeans in one dimension)
-    for an input raster xarray.
+Groups data for array (agg) by distributing values using the Jenks Natural Breaks or k-means
+clustering method. Values are grouped so that similar values are placed in the same group and 
+space between groups is maximized. The result is an xarray.DataArray.
 
-    Parameters
-    ----------
-    agg : xarray.DataArray
-        xarray.DataArray of values to bin
+Parameters:
+----------
+    agg: xarray.DataArray
+        - 2D array of values to bin.
+       - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
     num_sample: int (optional)
-        Number of sample data points used to fit the model.
-        Natural Breaks (Jenks) classification is indeed O(n²) complexity,
-        where n is the total number of data points, i.e: agg.size
-        When n is large, we should fit the model on a small sub-sample
-        of the data instead of using the whole dataset.
+        - Number of sample data points used to fit the model.
+        - Natural Breaks (Jenks) classification is indeed O(n²) complexity,
+          where n is the total number of data points, i.e: agg.size
+        - When n is large, we should fit the model on a small sub-sample
+          of the data instead of using the whole dataset.
     k: int
-        Number of classes
-    name : str
-        name of output aggregate
+        Number of classes to be produced.
+    name: str
+        Name of output aggregate.
 
-    Returns
-    -------
+Returns:
+----------
     natural_breaks_agg: xarray.DataArray
+        - 2D array, of the same type as the input, of class allocations.
 
-    Algorithm References:
-     - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks
-     - https://github.com/perrygeo/jenks/blob/master/jenks.pyx
+Algorithm References:
+    Map Classify
+        - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks
+    perrygeo
+    - https://github.com/perrygeo/jenks/blob/master/jenks.pyx
 
-    Examples
-    --------
-    >>> n, m = 4, 3
-    >>> agg = xr.DataArray(np.arange(n * m).reshape((n, m)), dims=['y', 'x'])
-    >>> agg['y'] = np.linspace(0, n, n)
-    >>> agg['x'] = np.linspace(0, m, m)
-    >>> agg.data
-    array([[ 0,  1,  2],
-           [ 3,  4,  5],
-           [ 6,  7,  8],
-           [ 9, 10, 11]])
-    >>> k = 5
-    >>> natural_breaks_agg = natural_breaks(agg, k=5)
-    >>> natural_breaks_agg.data
-    array([[0., 0., 1.],
-           [1., 2., 2.],
-           [3., 3., 3.],
-           [4., 4., 4.]]
+Examples:
+----------
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     from xrspatial.classify import natural_breaks
+
+    Create DataArray
+>>>     np.random.seed(0)
+>>>     agg = xr.DataArray(np.random.rand(4,4), 
+                                dims = ["lat", "lon"])
+>>>     height, width = agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     agg["lat"] = _lat
+>>>     agg["lon"] = _lon
+>>>     print(agg)
+
+    <xarray.DataArray (lat: 4, lon: 4)>
+    array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
+           [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
+           [0.96366276, 0.38344152, 0.79172504, 0.52889492],
+            [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
+    Coordinates:
+    * lon      (lon) float64 0.0 1.0 2.0 3.0
+    * lat      (lat) float64 0.0 1.0 2.0 3.0
+
+Create Natural Breaks Aggregate
+>>>     natural_breaks_agg = natural_breaks(agg, k = 5)
+>>>     print(natural_breaks_agg)
+<xarray.DataArray 'natural_breaks' (lat: 4, lon: 4)>
+array([[2., 3., 2., 2.],
+       [1., 2., 1., 4.],
+       [4., 1., 3., 2.],
+       [2., 4., 0., 0.]], dtype=float32)
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
 
     # numpy case

@@ -161,15 +161,15 @@ Values along the edges are not calculated.
 
 Parameters:
 ----------
-    agg : xarray.DataArray
-        The data dimension of the input aggregate (agg) is a 2D array of elevation values.
-        It can be a NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
+    agg: xarray.DataArray
+        - 2D array of elevation values:
+        - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
 
 Returns:
 ----------
-    data: DataArray
-        The data dimension of the output is a 2D array, of the same type as the input, of calculated aspect values.
-        All other input attributes are preserved.
+    data: xarray.DataArray
+        - 2D array, of the same type as the input, of calculated aspect values.
+        - All other input attributes are preserved.
 
 Notes:
 ----------

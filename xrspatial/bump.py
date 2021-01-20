@@ -14,19 +14,19 @@ Bumps of number "count" are applied over the area "width" x "height".
 
 Parameters:
 ----------
-    width : int
-        The total width, in pixels, of the image.
+    width: int
+        - Total width, in pixels, of the image.
 
-    height : int
-        The total height, in pixels, of the image.
+    height: int
+        - Total height, in pixels, of the image.
 
-    count : int (defaults: w * h / 10)
-        The number of bumps to generate.
+    count: int (defaults: w * h / 10)
+        - Number of bumps to generate.
 
-    height_func : function which takes x, y and returns a height value
-        The function used to apply varying bump heights to different elevations.
+    height_func: function which takes x, y and returns a height value
+        - Function used to apply varying bump heights to different elevations.
 
-    spread : tuple boundaries
+    spread: tuple boundaries
 
 Returns:
 ----------
