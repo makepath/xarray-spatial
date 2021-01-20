@@ -43,7 +43,6 @@ Examples:
 >>>     import numpy as np
 >>>     import datashader as ds
 >>>     from datashader.transfer_functions import shade
->>>     from datashader.transfer_functions import stack
 
     Generate Terrain
 >>>     from xrspatial import generate_terrain
@@ -88,6 +87,9 @@ Examples:
     Dimensions without coordinates: y, x
     Attributes:
         res:      1
+
+    Terrrain Example:
+        - https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
     """
 
     linx = range(width)
