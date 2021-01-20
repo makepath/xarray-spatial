@@ -43,27 +43,31 @@ def _arvi(nir_data, red_data, blue_data):
 
 
 def arvi(nir_agg, red_agg, blue_agg, name='arvi', use_cuda=True, use_cupy=True):
-    """Computes Atmospherically Resistant Vegetation Index
+    """
+Computes Atmospherically Resistant Vegetation Index
 
-    Parameters
-    ----------
-    nir_agg : DataArray
-        near-infrared band data
+Parameters:
+----------
+    nir_agg: DataArray
+        - near-infrared band data
+    red_agg: DataArray
+        - red band data
+    blue_agg: DataArray
+        - blue band data
+    name: String
+        - Name of output DataArray.
 
-    red_agg : DataArray
-        red band data
-
-    blue_agg : DataArray
-        blue band data
-
-    Returns
-    -------
+Returns:
+----------
     data: DataArray
 
-    Notes:
-    ------
+Notes:
+----------
     Algorithm References:
-    https://modis.gsfc.nasa.gov/sci_team/pubs/abstract_new.php?id=03667
+        - https://modis.gsfc.nasa.gov/sci_team/pubs/abstract_new.php?id=03667
+
+Examples:
+----------
     """
     _check_is_dataarray(nir_agg, 'near-infrared')
     _check_is_dataarray(red_agg, 'red')

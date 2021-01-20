@@ -164,6 +164,8 @@ Parameters:
     agg: xarray.DataArray
         - 2D array of elevation values:
         - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
+    name: String, optional (default = aspect)
+        - Name of ouput DataArray.
 
 Returns:
 ----------
@@ -175,7 +177,6 @@ Notes:
 ----------
     Algorithm References:
         - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm#ESRI_SECTION1_4198691F8852475A9F4BC71246579FAA
-
         - Burrough, P. A., and McDonell, R. A., 1998. Principles of Geographical Information Systems (Oxford University Press, New York), pp 406
 
 Examples:

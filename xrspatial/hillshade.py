@@ -102,25 +102,32 @@ def _run_dask_cupy(data, azimuth, angle_altitude):
 
 
 def hillshade(agg, azimuth=225, angle_altitude=25, name='hillshade'):
-    """Illuminates 2D DataArray from specific azimuth and altitude.
-
-    Parameters
-    ----------
+    """
+Calculates, for all cells in the array, an illumination value of each cell based on illumination
+from a specific azimuth and altitude.
+Parameters:
+----------
     agg : DataArray
+        - 2D array of elevation values:
+        - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.        
     altitude : int, optional (default: 30)
-        Altitude angle of the sun specified in degrees.
+        - Altitude angle of the sun specified in degrees.
     azimuth : int, optional (default: 315)
-        The angle between the north vector and the perpendicular projection
-        of the light source down onto the horizon specified in degrees.
+        - The angle between the north vector and the perpendicular projection
+          of the light source down onto the horizon specified in degrees.
 
-    Returns
-    -------
-    Datashader Image
+Returns:
+----------
+    data: xarray.DataArray
+        - 2D array, of the same type as the input, of calculated illumination values.
 
-    Notes:
-    ------
+Notes:
+----------
     Algorithm References:
-     - http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html
+        - http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html
+Examples:
+----------
+
     """
 
     # numpy case

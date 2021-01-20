@@ -16,21 +16,19 @@ Parameters:
 ----------
     width: int
         - Total width, in pixels, of the image.
-
     height: int
         - Total height, in pixels, of the image.
-
     count: int (defaults: w * h / 10)
         - Number of bumps to generate.
-
     height_func: function which takes x, y and returns a height value
         - Function used to apply varying bump heights to different elevations.
-
-    spread: tuple boundaries
+    spread: tuple boundaries, optional (default = 1)
+        - 
 
 Returns:
 ----------
     bumpmap: xarray.DataArray
+        - 2D DataArray of calculated bump heights
 
 Notes:
 ----------

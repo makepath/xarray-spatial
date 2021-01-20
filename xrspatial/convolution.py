@@ -8,9 +8,35 @@ import numpy as np
 
 
 def convolve_2d(image, kernel, pad=True, use_cuda=True):
-    """Function to call the 2D convolution via Numba.
-    The Numba convolution function does not account for an edge so
-    if we wish to take this into account, will pad the image array.
+    """
+Calculates, for all inner cells of an array, the 2D convolution of each cell via Numba. To account for edge cells,
+a pad can be added to the image array. Convolution is frequently used for image processing, such as smoothing, 
+sharpening, and edge detection of images by elimatig spurious data or enhancing features in the data.
+
+Parameters:
+----------
+    image: xarray.DataArray
+        - 2D array of values to processed and padded.
+    kernel: array-like object
+        - Impulse kernel, determines area to apply impulse function for each cell.
+    pad: Boolean
+        - To compute edges set to True.
+    use-cuda: Boolean
+        - For parallel computing set to True.
+
+Returns: 
+----------
+    convolve_agg: xarray.DataArray
+        - 2D array representation of the impulse function.
+        - All other unput attributes are preserverd.
+Notes:
+----------
+    Algorithm References:
+        - 
+
+Examples:
+
+----------
     """
     # Don't allow padding on (1, 1) kernel
     if (kernel.shape[0] == 1 and kernel.shape[1] == 1):

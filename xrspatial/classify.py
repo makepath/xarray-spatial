@@ -194,12 +194,11 @@ Parameters:
     agg: xarray.DataArray
         - 2D array of values to be reclassified.
         - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
-
     bins: array-like object
         - Values or ranges of values to be changed.
     new_values: array-like object
         - New values for each bin.
-    name: str
+    name: str, optional (default = reclassify)
         - Name of output aggregate.
 
 Returns:
@@ -339,11 +338,11 @@ of 4. The result is an xarray.DataArray.
 Parameters:
 ----------
     agg: xarray.DataArray
-       - 2D array of values to bin:
-       - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
+        - 2D array of values to bin:
+        - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
     k: int
-       - Number of quantiles to be produced, default = 4.
-    name: str
+        - Number of quantiles to be produced, default = 4.
+    name: str, optional (default = quantile)
         - Name of the output aggregate array.
 Returns:
 ----------
@@ -671,10 +670,10 @@ Parameters:
           where n is the total number of data points, i.e: agg.size
         - When n is large, we should fit the model on a small sub-sample
           of the data instead of using the whole dataset.
-    k: int
-        Number of classes to be produced.
-    name: str
-        Name of output aggregate.
+    k: int (default = 5)
+        - Number of classes to be produced.
+    name: str, optional (default = natural_breaks)
+        - Name of output aggregate.
 
 Returns:
 ----------
@@ -796,21 +795,26 @@ def _run_dask_cupy_equal_interval(data, k):
 
 def equal_interval(agg, k=5, name='equal_interval'):
     """
-    Equal Interval Classification
+Equal Interval Classification
+Groups data for array (agg) by distributing values into at equal intervals. The result is an xarray.DataArray.
 
-    Parameters
-    ----------
-    agg     : xr.DataArray
-             xarray.DataArray of value to classify
-    k       : int
-              number of classes required
-    name : str
-        name of output aggregate
+Parameters:
+----------
+    agg: xarray.DataArray
+        - 2D array of values to bin.
+        - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
+    k: int
+        - Number of classes to be produced.
+    name: str, optional (default = equal_interval)
+        - Name of output aggregate.
 
-    Returns
-        equal_interval_agg : xr.DataArray
+Returns:
+----------
+    equal_interval_agg: xarray.DataArray
+        - 2D array, of the same type as the input, of class allocations.
 
-    Notes:
+Notes:
+----------
     Intervals defined to have equal width:
 
     .. math::
@@ -820,20 +824,49 @@ def equal_interval(agg, k=5, name='equal_interval'):
     with :math:`w=\\frac{max(y)-min(j)}{k}`
 
     Algorithm References:
-     - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval
-     - https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py
+        PySal
+        - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval
+        SciKit
+        - https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py
 
-    Examples
-    --------
+Examples:
+----------
+    Imports
+>>>    
+>>>    import numpy as np
+>>>    import xarray as xr
+>>>    from xrspatial.classify import equal_interval, natural_breaks
 
-    >>> In []: ei = np.array([1, 1, 0, 2,4,5,6])
-
-    >>> In []: ei_array =xarray.DataArray(ei)
-
-    >>> In []: xrspatial.equal_interval(ei_array)
-    >>> Out[]:
-    <xarray.DataArray 'equal_interval' (dim_0: 4)>
-    array([1.5, 3. , 4.5, 6. ])
+    Create Initial DataArray
+>>>     np.random.seed(1)
+>>>     agg = xr.DataArray(np.random.randint(2, 8, (4, 4)), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = agg.shape
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     _lat = np.linspace(0, height - 1, height)    
+>>>     agg["lon"] = _lon
+>>>     agg["lat"] = _lat   
+>>>     print(agg)             
+<xarray.DataArray (lat: 4, lon: 4)>
+array([[7, 5, 6, 2],
+       [3, 5, 7, 2],
+       [2, 3, 6, 7],
+       [6, 3, 4, 6]])
+Coordinates:
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  
+    Create Equal Interval DataArray
+>>>    equal_interval_agg = equal_interval(agg, k = 5)
+>>>    print(equal_interval_agg)
+<xarray.DataArray 'equal_interval' (lat: 4, lon: 4)>
+array([[4., 2., 3., 0.],
+       [0., 2., 4., 0.],
+       [0., 0., 3., 4.],
+       [3., 0., 1., 3.]], dtype=float32)
+Coordinates:
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
     """
 
     # numpy case
