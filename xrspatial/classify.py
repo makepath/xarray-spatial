@@ -193,6 +193,8 @@ Parameters:
 ----------
     agg: xarray.DataArray
         - 2D array of values to be reclassified.
+        - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
+
     bins: array-like object
         - Values or ranges of values to be changed.
     new_values: array-like object
@@ -204,6 +206,7 @@ Returns:
 ----------
     reclassified_agg : xarray.DataArray
         - 2D array of new values.
+        - All other input attributes are preserved.
 
 Notes:
 ----------
