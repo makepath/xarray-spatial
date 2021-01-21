@@ -201,7 +201,7 @@ Parameters:
     gain: float (default = 2.5)
         - Amplitude adjustment factor.
     name: String, optional (default = "evi")
-        - Name of output DataArray
+        - Name of output DataArray.
     use_cuda: Boolean, optional (default = True)
         - 
     use_cupy: Boolean, optional (default = True)
@@ -346,10 +346,11 @@ the physiological state of vegetation and plant health.
 Parameters:
 ----------
     nir_agg: xarray. DataArray
-        2D array of near-infrared band data.
+        - 2D array of near-infrared band data.
     green_agg: DataArray
-        2D array of green band data.
+        - 2D array of green band data.
     name: String, optional (default = "gci")
+        - Name of output DataArray
     use_cuda: Boolean, optional (default = True)
         - 
     use_cupy: Boolean, optional (default = True)
@@ -462,26 +463,91 @@ def _normalized_ratio(arr1, arr2):
 
 
 def nbr(nir_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
-    """Computes Normalized Burn Ratio
+    """
+Computes Normalized Burn Ratio. Used to identify burned areas and provide a measure of burn
+severity.
 
-    Parameters
-    ----------
-    nir_agg : DataArray
-        near-infrared band
+Parameters:
+----------
+    nir_agg: xarray.DataArray
+        - 2D array of near-infrared band data.
+    swir_agg: xarray.DataArray
+        - 2D array of shortwave infrared band data.
+        - (Landsat 4-7: Band 6)
+        - (Landsat 8: Band 7)
+    name: String, optional (default = "nbr")
+        - Name of output DataArray.
+    use_cuda: Boolean (default = "True")
+        - 
+    use_cupy: Boolean (default = "True")
+        -
 
-    swir_agg : DataArray
-        shortwave infrared band
-        (Landsat 4-7: Band 6)
-        (Landsat 8: Band 7)
-
-    Returns
-    -------
-    data: DataArray
-
-    Notes:
-    ------
+Returns:
+----------
+    data: xarray.DataArray
+        - 2D array, of the same type as the input, of calculated gci values.
+        - All other input attributes are preserved.
+Notes:
+----------
     Algorithm References:
-    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
+        - https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
+
+Examples:
+----------
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     import xrspatial
+    Create Sample Band Data
+>>>     np.random.seed(0)
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = nir_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     nir_agg["lat"] = _lat
+>>>     nir_agg["lon"] = _lon
+
+>>>     np.random.seed(4)
+>>>     swir2_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = swir2_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     swir2_agg["lat"] = _lat
+>>>     swir2_agg["lon"] = _lon
+
+>>>     print(nir_agg, swir2_agg)
+<xarray.DataArray (lat: 4, lon: 4)>
+array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
+       [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
+       [0.96366276, 0.38344152, 0.79172504, 0.52889492],
+       [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+array([[0.96702984, 0.54723225, 0.97268436, 0.71481599],
+       [0.69772882, 0.2160895 , 0.97627445, 0.00623026],
+       [0.25298236, 0.43479153, 0.77938292, 0.19768507],
+       [0.86299324, 0.98340068, 0.16384224, 0.59733394]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
+    Create NBR DataArray
+>>>     data = xrspatial.multispectral.gci(nir_agg, swir2_agg)
+>>>     print(data)
+<xarray.DataArray 'gci' (lat: 4, lon: 4)>
+array([[-4.32475109e-01,  3.06921088e-01, -3.80309378e-01,
+        -2.37729447e-01],
+       [-3.92808804e-01,  1.98901208e+00, -5.51778489e-01,
+         1.42135870e+02],
+       [ 2.80920927e+00, -1.18102607e-01,  1.58357541e-02,
+         1.67544184e+00],
+       [-3.41774028e-01, -5.87797428e-02, -5.66436240e-01,
+        -8.54136366e-01]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
     _check_is_dataarray(nir_agg, 'near-infrared')
     _check_is_dataarray(swir2_agg, 'shortwave infrared')
