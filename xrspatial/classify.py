@@ -795,7 +795,6 @@ def _run_dask_cupy_equal_interval(data, k):
 
 def equal_interval(agg, k=5, name='equal_interval'):
     """
-Equal Interval Classification
 Groups data for array (agg) by distributing values into at equal intervals. The result is an xarray.DataArray.
 
 Parameters:

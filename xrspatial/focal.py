@@ -81,6 +81,31 @@ def _get_distance(distance_str):
 
 
 def calc_cellsize(raster, x='x', y='y'):
+    """
+Calculates cell size of an array based on its attributes. Default = meters. If lat-lon units are converted to meters.
+Parameters:
+----------
+    raster: xarray.DataArray
+        - 2D array of input values.
+    x: String (Default = "x")
+        - Name of input x-axis.
+    y: String (Default = "y")
+        - Name of input y-axis
+
+Returns:
+----------
+    cellsize_x: Int
+        - Size of cells in x direction.
+    cellsize_y: Int
+        - Size of cells in y direction.
+
+Notes:
+----------
+
+Examples:
+----------
+
+    """
     if 'unit' in raster.attrs:
         unit = raster.attrs['unit']
     else:
