@@ -44,7 +44,8 @@ def _arvi(nir_data, red_data, blue_data):
 
 def arvi(nir_agg, red_agg, blue_agg, name='arvi', use_cuda=True, use_cupy=True):
     """
-Computes Atmospherically Resistant Vegetation Index.
+Computes Atmospherically Resistant Vegetation Index. Allows for molecular and ozone correction
+with no further need for aerosol correction, except for dust conditions.
 
 Parameters:
 ----------
@@ -104,6 +105,7 @@ Examples:
 >>>     _lon = np.linspace(0, width - 1, width)
 >>>     blue_agg["lat"] = _lat
 >>>     blue_agg["lon"] = _lon
+
 >>>     print(nir_agg, red_agg, blue_agg)
  <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
@@ -128,8 +130,8 @@ Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
   * lon      (lon) float64 0.0 1.0 2.0 3.0
 
-    Create ARVI
->>>     data = xrspatial.arvi(nir_agg, red_agg, blue_agg)
+    Create ARVI DataArray
+>>>     data = xrspatial.multispectral.arvi(nir_agg, red_agg, blue_agg)
 >>>     print(data)
 <xarray.DataArray 'arvi' (lat: 4, lon: 4)>
 array([[ 0.08288985, -0.32062735,  0.99960309,  0.23695335],
@@ -179,7 +181,8 @@ def _evi(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
 def evi(nir_agg, red_agg, blue_agg, c1=6.0, c2=7.5, soil_factor=1.0, gain=2.5,
         name='evi', use_cuda=True, use_cupy=True):
     """
-Computes Enhanced Vegetation Index.
+Computes Enhanced Vegetation Index. Allows for importved sensitivity in high biomass regions,
+de-coupling of the canopy background signal and reduction of atmospheric influences.
 
 Parameters:
 ----------
@@ -197,11 +200,17 @@ Parameters:
         - Soil adjustment factor between -1.0 and 1.0.
     gain: float (default = 2.5)
         - Amplitude adjustment factor.
+    name: String, optional (default = "evi")
+        - Name of output DataArray
+    use_cuda: Boolean, optional (default = True)
+        - 
+    use_cupy: Boolean, optional (default = True)
+        - 
 
 Returns:
 ----------
     data: DataArray
-        - 2D array, of the same type as the input, of calculated arvi values.
+        - 2D array, of the same type as the input, of calculated evi values.
         - All other input attributes are preserved.
 
 Notes:
@@ -243,6 +252,7 @@ Examples:
 >>>     _lon = np.linspace(0, width - 1, width)
 >>>     blue_agg["lat"] = _lat
 >>>     blue_agg["lon"] = _lon
+
 >>>     print(nir_agg, red_agg, blue_agg)
  <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
@@ -267,8 +277,8 @@ Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
   * lon      (lon) float64 0.0 1.0 2.0 3.0
 
-    Create EVI
->>>     data = xrspatial.evi(nir_agg, red_agg, blue_agg)
+    Create EVI DataArray
+>>>     data = xrspatial.multispectral.evi(nir_agg, red_agg, blue_agg)
 >>>     print(data)
 <xarray.DataArray 'evi' (lat: 4, lon: 4)>
 array([[ 4.21876564e-01, -2.19724452e-03, -5.98098914e-01,
@@ -329,24 +339,92 @@ def _gci(nir_data, green_data):
 
 
 def gci(nir_agg, green_agg, name='gci', use_cuda=True, use_cupy=True):
-    """Computes Green Chlorophyll Index
+    """
+Computes Green Chlorophyll Index. Used to estimate the content of leaf chorophyll and predict
+the physiological state of vegetation and plant health.
 
-    Parameters
-    ----------
-    nir_agg : DataArray
-        near-infrared band data
+Parameters:
+----------
+    nir_agg: xarray. DataArray
+        2D array of near-infrared band data.
+    green_agg: DataArray
+        2D array of green band data.
+    name: String, optional (default = "gci")
+    use_cuda: Boolean, optional (default = True)
+        - 
+    use_cupy: Boolean, optional (default = True)
+        - 
 
-    green_agg : DataArray
-        green band data
+Returns:
+----------
+    data: xarray.DataArray
+        - 2D array, of the same type as the input, of calculated gci values.
+        - All other input attributes are preserved.
 
-    Returns
-    -------
-    data: DataArray
-
-    Notes:
-    ------
+Notes:
+----------
     Algorithm References:
-    https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+        - https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+Examples:
+----------
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     import xrspatial
+
+    Create Sample Band Data
+>>>     np.random.seed(0)
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = nir_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     nir_agg["lat"] = _lat
+>>>     nir_agg["lon"] = _lon
+
+>>>     np.random.seed(3)
+>>>     green_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = green_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     green_agg["lat"] = _lat
+>>>     green_agg["lon"] = _lon
+
+
+
+>>>     print(nir_agg, green_agg)
+<xarray.DataArray (lat: 4, lon: 4)>
+array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
+       [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
+       [0.96366276, 0.38344152, 0.79172504, 0.52889492],
+       [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+array([[0.5507979 , 0.70814782, 0.29090474, 0.51082761],
+       [0.89294695, 0.89629309, 0.12558531, 0.20724288],
+       [0.0514672 , 0.44080984, 0.02987621, 0.45683322],
+       [0.64914405, 0.27848728, 0.6762549 , 0.59086282]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
+
+    Create GCI DataArray
+>>>     data = xrspatial.multispectral.gci(nir_agg, green_agg)
+>>>     print(data)
+<xarray.DataArray 'gci' (lat: 4, lon: 4)>
+array([[-3.60277089e-03,  9.94360715e-03,  1.07203010e+00,
+         6.66674578e-02],
+       [-5.25554349e-01, -2.79371758e-01,  2.48438213e+00,
+         3.30303328e+00],
+       [ 1.77238221e+01, -1.30143021e-01,  2.55001824e+01,
+         1.57741801e-01],
+       [-1.24932959e-01,  2.32365855e+00, -8.94956683e-01,
+        -8.52538868e-01]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
     _check_is_dataarray(nir_agg, 'near-infrared')
     _check_is_dataarray(green_agg, 'green')
