@@ -534,17 +534,13 @@ Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
   * lon      (lon) float64 0.0 1.0 2.0 3.0
     Create NBR DataArray
->>>     data = xrspatial.multispectral.gci(nir_agg, swir2_agg)
+>>>     data = xrspatial.multispectral.nbr(nir_agg, swir2_agg)
 >>>     print(data)
-<xarray.DataArray 'gci' (lat: 4, lon: 4)>
-array([[-4.32475109e-01,  3.06921088e-01, -3.80309378e-01,
-        -2.37729447e-01],
-       [-3.92808804e-01,  1.98901208e+00, -5.51778489e-01,
-         1.42135870e+02],
-       [ 2.80920927e+00, -1.18102607e-01,  1.58357541e-02,
-         1.67544184e+00],
-       [-3.41774028e-01, -5.87797428e-02, -5.66436240e-01,
-        -8.54136366e-01]])
+<xarray.DataArray 'nbr' (lat: 4, lon: 4)>
+array([[-0.2758968 ,  0.1330436 , -0.23480372, -0.13489952],
+       [-0.24440702,  0.49862273, -0.38100421,  0.9861242 ],
+       [ 0.58413122, -0.0627572 ,  0.00785568,  0.45584774],
+       [-0.20610824, -0.03027979, -0.39512455, -0.74540839]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
   * lon      (lon) float64 0.0 1.0 2.0 3.0
@@ -565,35 +561,94 @@ Coordinates:
 
 
 def nbr2(swir1_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
-    """Computes Normalized Burn Ratio 2
+    """
+Computes Modified Normalized Burn Ratio. Used to highlight water sensitivity in vegetation and
+may be useful in post-fire recovery studies.
 
-    "NBR2 modifies the Normalized Burn Ratio (NBR)
-    to highlight water sensitivity in vegetation and
-    may be useful in post-fire recovery studies."
+Parameters:
+----------
+    swir1_agg: xarray.DataArray
+        - 2D array of near-infrared band data.
+        - shortwave infrared band
+        - (Landsat 4-7: Band 5)
+        - (Landsat 8: Band 6)
 
-    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+    swir2_agg: xarray.DataArray
+        - 2D array of shortwave infrared band data.
+        - (Landsat 4-7: Band 6)
+        - (Landsat 8: Band 7)
+    name: String, optional (default = "nbr2")
+        - Name of output DataArray.
+    use_cuda: Boolean (default = "True")
+        - 
+    use_cupy: Boolean (default = "True")
+        -
 
-    Parameters
-    ----------
-    swir1_agg : DataArray
-        near-infrared band
-        shortwave infrared band
-        (Landsat 4-7: Band 5)
-        (Landsat 8: Band 6)
+Returns
+----------
+    data: xarray.DataArray
+        - 2D array, of the same type as the input, of calculated gci values.
+        - All other input attributes are preserved.
 
-    swir2_agg : DataArray
-        shortwave infrared band
-        (Landsat 4-7: Band 6)
-        (Landsat 8: Band 7)
-
-    Returns
-    -------
-    data: DataArray
-
-    Notes:
-    ------
+Notes:
+----------
     Algorithm References:
-    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+        - https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+    Index Reference:
+        - https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+
+Examples:
+----------
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     import xrspatial
+    Create Sample Band Data
+>>>     np.random.seed(5)
+>>>     swir1_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                            dims = ["lat", "lon"])
+>>>     height, width = swir1_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     swir1_agg["lat"] = _lat
+>>>     swir1_agg["lon"] = _lon
+
+>>>     np.random.seed(4)
+>>>     swir2_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = swir2_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     swir2_agg["lat"] = _lat
+>>>     swir2_agg["lon"] = _lon
+
+>>>     print(swir1_agg, swir2_agg)
+<xarray.DataArray (lat: 4, lon: 4)>
+array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
+       [0.48841119, 0.61174386, 0.76590786, 0.51841799],
+       [0.2968005 , 0.18772123, 0.08074127, 0.7384403 ],
+       [0.44130922, 0.15830987, 0.87993703, 0.27408646]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+array([[0.96702984, 0.54723225, 0.97268436, 0.71481599],
+       [0.69772882, 0.2160895 , 0.97627445, 0.00623026],
+       [0.25298236, 0.43479153, 0.77938292, 0.19768507],
+       [0.86299324, 0.98340068, 0.16384224, 0.59733394]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
+    Create NBR DataArray
+>>>     data = xrspatial.multispectral.nbr2(swir1_agg, swir2_agg)
+>>>     print(data)
+<xarray.DataArray 'nbr' (lat: 4, lon: 4)>
+array([[-0.62659567,  0.22814397, -0.64945135,  0.12476525],
+       [-0.17646958,  0.47793963, -0.1207489 ,  0.97624978],
+       [ 0.07970081, -0.39689195, -0.81225672,  0.57765256],
+       [-0.32330232, -0.7226795 ,  0.6860596 , -0.37094321]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
     _check_is_dataarray(swir1_agg, 'near-infrared')
     _check_is_dataarray(swir2_agg, 'shortwave infrared')
