@@ -127,6 +127,47 @@ Notes:
         - http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html
 Examples:
 ----------
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     import xrspatial
+
+    Create Initial DataArray
+>>>     agg = xr.DataArray(np.array([[0, 1, 0, 0],
+>>>                                  [1, 1, 0, 0],
+>>>                                  [0, 1, 2, 2],
+>>>                                  [1, 0, 2, 0],
+>>>                                  [0, 2, 2, 2]]),
+>>>                           dims = ["lat", "lon"])
+>>>     height, width = agg.shape
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     agg["lon"] = _lon
+>>>     agg["lat"] = _lat
+>>>     print(agg)
+<xarray.DataArray (lat: 5, lon: 4)>
+array([[0, 1, 0, 0],
+       [1, 1, 0, 0],
+       [0, 1, 2, 2],
+       [1, 0, 2, 0],
+       [0, 2, 2, 2]])
+Coordinates:
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
+  * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+
+Create Hillshade DataArray
+>>>     hillshade = xrspatial.hillshade(agg)
+>>>     print(hillshade)
+<xarray.DataArray 'hillshade' (lat: 5, lon: 4)>
+array([[       nan,        nan,        nan,        nan],
+       [       nan, 0.54570079, 0.32044456,        nan],
+       [       nan, 0.96130094, 0.53406336,        nan],
+       [       nan, 0.67253318, 0.71130913,        nan],
+       [       nan,        nan,        nan,        nan]])
+Coordinates:
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
+  * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+
 
     """
 
