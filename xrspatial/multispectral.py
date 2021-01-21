@@ -44,7 +44,7 @@ def _arvi(nir_data, red_data, blue_data):
 
 def arvi(nir_agg, red_agg, blue_agg, name='arvi', use_cuda=True, use_cupy=True):
     """
-Computes Atmospherically Resistant Vegetation Index
+Computes Atmospherically Resistant Vegetation Index.
 
 Parameters:
 ----------
@@ -128,7 +128,7 @@ Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
   * lon      (lon) float64 0.0 1.0 2.0 3.0
 
-    Create Data
+    Create ARVI
 >>>     data = xrspatial.arvi(nir_agg, red_agg, blue_agg)
 >>>     print(data)
 <xarray.DataArray 'arvi' (lat: 4, lon: 4)>
@@ -178,39 +178,110 @@ def _evi(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
 
 def evi(nir_agg, red_agg, blue_agg, c1=6.0, c2=7.5, soil_factor=1.0, gain=2.5,
         name='evi', use_cuda=True, use_cupy=True):
-    """Computes Enhanced Vegetation Index
+    """
+Computes Enhanced Vegetation Index.
 
-    Parameters
-    ----------
-    nir_agg : DataArray
-        near-infrared band data
+Parameters:
+----------
+    nir_agg: xarray.DataArray
+        - 2D array of near-infrared band data.
+    red_agg: xarray.DataArray
+        - 2D array of red band data.
+    blue_agg: xarray.DataArray
+        - 2D array of blue band data.
+    c1: Float (default = 6.0)
+        - First coefficient of the aerosol resistance term.
+    c2: Float (default = 7.5)
+        - Second coefficients of the aerosol resistance term.
+    soil_factor: Float (default = 1.0)
+        - Soil adjustment factor between -1.0 and 1.0.
+    gain: float (default = 2.5)
+        - Amplitude adjustment factor.
 
-    red_agg : DataArray
-        red band data
-
-    blue_agg : DataArray
-        blue band data
-
-    c1 : float (default=6.0)
-        first coefficient of the aerosol resistance term
-
-    c2 : float (default=7.5)
-        second coefficients of the aerosol resistance term
-
-    soil_factor : float (default=1.0)
-      soil adjustment factor between -1.0 and 1.0.
-
-    gain : float (default=2.5)
-      amplitude adjustment factor
-
-    Returns
-    -------
+Returns:
+----------
     data: DataArray
+        - 2D array, of the same type as the input, of calculated arvi values.
+        - All other input attributes are preserved.
 
-    Notes:
-    ------
+Notes:
+----------
     Algorithm References:
-    https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+        - https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+
+Examples:
+----------
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     import xrspatial
+
+    Create Sample Band Data
+>>>     np.random.seed(0)
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = nir_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     nir_agg["lat"] = _lat
+>>>     nir_agg["lon"] = _lon
+
+>>>     np.random.seed(1)
+>>>     red_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = red_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     red_agg["lat"] = _lat
+>>>     red_agg["lon"] = _lon
+
+>>>     np.random.seed(2)
+>>>     blue_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = blue_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     blue_agg["lat"] = _lat
+>>>     blue_agg["lon"] = _lon
+>>>     print(nir_agg, red_agg, blue_agg)
+ <xarray.DataArray (lat: 4, lon: 4)>
+array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
+       [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
+       [0.96366276, 0.38344152, 0.79172504, 0.52889492],
+       [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
+       [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
+       [3.96767474e-01, 5.38816734e-01, 4.19194514e-01, 6.85219500e-01],
+       [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+array([[0.4359949 , 0.02592623, 0.54966248, 0.43532239],
+       [0.4203678 , 0.33033482, 0.20464863, 0.61927097],
+       [0.29965467, 0.26682728, 0.62113383, 0.52914209],
+       [0.13457995, 0.51357812, 0.18443987, 0.78533515]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
+
+    Create EVI
+>>>     data = xrspatial.evi(nir_agg, red_agg, blue_agg)
+>>>     print(data)
+<xarray.DataArray 'evi' (lat: 4, lon: 4)>
+array([[ 4.21876564e-01, -2.19724452e-03, -5.98098914e-01,
+         6.45351400e+00],
+       [-8.15782552e-01, -4.98545103e+00,  6.15826250e-01,
+        -2.00992194e+00],
+       [ 6.75886740e-01, -1.48534469e-01, -2.64873586e+00,
+        -2.33788375e-01],
+       [ 5.09116426e-01,  3.55121123e-02, -7.37617269e-01,
+         1.86948381e+00]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
     _check_is_dataarray(nir_agg, 'near-infrared')
     _check_is_dataarray(red_agg, 'red')
