@@ -5,9 +5,10 @@ from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
 
 import numpy as np
+import xarray as xr
 
 
-def convolve_2d(image, kernel, pad=True, use_cuda=True):
+def convolve_2d(image: xr.DataArray, kernel, pad=True, use_cuda=True):
     """
 Calculates, for all inner cells of an array, the 2D convolution of each cell via Numba. To account for edge cells,
 a pad can be added to the image array. Convolution is frequently used for image processing, such as smoothing, 

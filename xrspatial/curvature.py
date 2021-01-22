@@ -23,6 +23,8 @@ from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
 from xrspatial.utils import is_cupy_backed
 
+from typing import Optional
+
 
 @ngjit
 def _cpu(data, cellsize):
@@ -95,7 +97,7 @@ def _run_dask_cupy(data: da.Array,
     raise NotImplementedError(msg)
 
 
-def curvature(agg, name='curvature'):
+def curvature(agg: xr.DataArray, name: Optional[str] = 'curvature') -> xr.DataArray:
     """
 Calculates, for all cells in the array, the curvature (second derivative) of each cell based on
 the elevation of its neighbors in a 3x3 grid. A positive curvature indicates the surface is upwardly
@@ -109,6 +111,8 @@ Parameters:
         - 2D array of elevation values with shape = (height, width)
         - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
         - Must contain "res" attribute.
+    name: str (default = "curvature")
+        - Name of output DataArray.
 
 Returns:
 ----------

@@ -17,6 +17,7 @@ from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
 from xrspatial.utils import is_cupy_backed
 
+from typing import Optional
 
 # 3rd-party
 try:
@@ -153,7 +154,7 @@ def _run_dask_numpy(data:da.Array) -> da.Array:
     return out
 
 
-def aspect(agg: xr.DataArray, name: str ='aspect') -> xr.DataArray:
+def aspect(agg: xr.DataArray, name: Optional[str] ='aspect') -> xr.DataArray:
     """
 Calculates, for all cells in the array, the downward slope direction of each cell based on the elevation of its neighbors in a 3x3 grid. 
 The value is measured clockwise in degrees with 0 and 360 at due north. Flat areas are given a value of -1. 
@@ -164,7 +165,7 @@ Parameters:
     agg: xarray.DataArray
         - 2D array of elevation values:
         - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
-    name: String, optional (default = aspect)
+    name: str, optional (default = "aspect")
         - Name of ouput DataArray.
 
 Returns:

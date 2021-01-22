@@ -14,6 +14,10 @@ from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
 from xrspatial.utils import ngjit
 
+import xarray as xr
+
+from typing import Optional
+
 
 def _check_is_dataarray(val, name='value'):
     if not isinstance(val, DataArray):
@@ -42,7 +46,7 @@ def _arvi(nir_data, red_data, blue_data):
     return out
 
 
-def arvi(nir_agg, red_agg, blue_agg, name='arvi', use_cuda=True, use_cupy=True):
+def arvi(nir_agg: xr.DataArray, red_agg: xr.DataArray, blue_agg: xr.DataArray, name: Optional[str] = 'arvi', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
     """
 Computes Atmospherically Resistant Vegetation Index. Allows for molecular and ozone correction
 with no further need for aerosol correction, except for dust conditions.
@@ -51,15 +55,15 @@ Parameters:
 ----------
     nir_agg: xarray.DataArray
         - 2D array of near-infrared band data.
-    red_agg: DataArray
+    red_agg: xarray.DataArray
         - 2D array of red band data.
-    blue_agg: DataArray
+    blue_agg: xarray.DataArray
         - 2D array of blue band data.
-    name: String, optional (default = "arvi")
+    name: str, optional (default = "arvi")
         - Name of output DataArray.
-    use_cuda: Boolean, optional (default = True)
+    use_cuda: bool, optional (default = True)
         - 
-    use_cupy: Boolean, optional (default = True)
+    use_cupy: bool, optional (default = True)
         - 
 
 Returns:
@@ -178,8 +182,8 @@ def _evi(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
     return out
 
 
-def evi(nir_agg, red_agg, blue_agg, c1=6.0, c2=7.5, soil_factor=1.0, gain=2.5,
-        name='evi', use_cuda=True, use_cupy=True):
+def evi(nir_agg: xr.DataArray, red_agg: xr.DataArray, blue_agg: xr.DataArray, c1: float = 6.0, c2: float = 7.5, soil_factor: float = 1.0, gain: float = 2.5,
+        name: Optional[str] = 'evi', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
     """
 Computes Enhanced Vegetation Index. Allows for importved sensitivity in high biomass regions,
 de-coupling of the canopy background signal and reduction of atmospheric influences.
@@ -192,24 +196,24 @@ Parameters:
         - 2D array of red band data.
     blue_agg: xarray.DataArray
         - 2D array of blue band data.
-    c1: Float (default = 6.0)
+    c1: float (default = 6.0)
         - First coefficient of the aerosol resistance term.
-    c2: Float (default = 7.5)
+    c2: float (default = 7.5)
         - Second coefficients of the aerosol resistance term.
-    soil_factor: Float (default = 1.0)
+    soil_factor: float (default = 1.0)
         - Soil adjustment factor between -1.0 and 1.0.
     gain: float (default = 2.5)
         - Amplitude adjustment factor.
-    name: String, optional (default = "evi")
+    name: str, optional (default = "evi")
         - Name of output DataArray.
-    use_cuda: Boolean, optional (default = True)
+    use_cuda: bool, optional (default = True)
         - 
-    use_cupy: Boolean, optional (default = True)
+    use_cupy: bool, optional (default = True)
         - 
 
 Returns:
 ----------
-    data: DataArray
+    data: xarray.DataArray
         - 2D array, of the same type as the input, of calculated evi values.
         - All other input attributes are preserved.
 
@@ -338,22 +342,22 @@ def _gci(nir_data, green_data):
     return out
 
 
-def gci(nir_agg, green_agg, name='gci', use_cuda=True, use_cupy=True):
+def gci(nir_agg: xr.DataArray, green_agg: xr.DataArray, name: Optional[str] = 'gci', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
     """
 Computes Green Chlorophyll Index. Used to estimate the content of leaf chorophyll and predict
 the physiological state of vegetation and plant health.
 
 Parameters:
 ----------
-    nir_agg: xarray. DataArray
+    nir_agg: xarray.DataArray
         - 2D array of near-infrared band data.
-    green_agg: DataArray
+    green_agg: xarray.DataArray
         - 2D array of green band data.
-    name: String, optional (default = "gci")
+    name: str, optional (default = "gci")
         - Name of output DataArray
-    use_cuda: Boolean, optional (default = True)
+    use_cuda: bool, optional (default = True)
         - 
-    use_cupy: Boolean, optional (default = True)
+    use_cupy: bool, optional (default = True)
         - 
 
 Returns:
@@ -462,7 +466,7 @@ def _normalized_ratio(arr1, arr2):
     return out
 
 
-def nbr(nir_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
+def nbr(nir_agg: xr.DataArray, swir2_agg: xr.DataArray, name: Optional[str] = 'nbr', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
     """
 Computes Normalized Burn Ratio. Used to identify burned areas and provide a measure of burn
 severity.
@@ -475,11 +479,11 @@ Parameters:
         - 2D array of shortwave infrared band data.
         - (Landsat 4-7: Band 6)
         - (Landsat 8: Band 7)
-    name: String, optional (default = "nbr")
+    name: str, optional (default = "nbr")
         - Name of output DataArray.
-    use_cuda: Boolean (default = "True")
+    use_cuda: bool (default = "True")
         - 
-    use_cupy: Boolean (default = "True")
+    use_cupy: bool (default = "True")
         -
 
 Returns:
@@ -560,7 +564,7 @@ Coordinates:
                      attrs=nir_agg.attrs)
 
 
-def nbr2(swir1_agg, swir2_agg, name='nbr', use_cuda=True, use_cupy=True):
+def nbr2(swir1_agg: xr.DataArray, swir2_agg: xr.DataArray, name: Optional[str] = 'nbr', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
     """
 Computes Modified Normalized Burn Ratio. Used to highlight water sensitivity in vegetation and
 may be useful in post-fire recovery studies.
@@ -577,11 +581,11 @@ Parameters:
         - 2D array of shortwave infrared band data.
         - (Landsat 4-7: Band 6)
         - (Landsat 8: Band 7)
-    name: String, optional (default = "nbr2")
+    name: str, optional (default = "nbr2")
         - Name of output DataArray.
-    use_cuda: Boolean (default = "True")
+    use_cuda: bool (default = "True")
         - 
-    use_cupy: Boolean (default = "True")
+    use_cupy: bool (default = "True")
         -
 
 Returns

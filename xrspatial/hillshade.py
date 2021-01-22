@@ -22,6 +22,8 @@ from xrspatial.utils import cuda_args
 from xrspatial.utils import has_cuda
 from xrspatial.utils import is_cupy_backed
 
+from typing import Optional
+
 
 def _run_numpy(data, azimuth=225, angle_altitude=25):
     azimuth = 360.0 - azimuth
@@ -101,20 +103,22 @@ def _run_dask_cupy(data, azimuth, angle_altitude):
     raise NotImplementedError(msg)
 
 
-def hillshade(agg, azimuth=225, angle_altitude=25, name='hillshade'):
+def hillshade(agg: xr.DataArray, azimuth: int = 225, angle_altitude: int = 25, name: Optional[str] = 'hillshade') -> xr.DataArray:
     """
 Calculates, for all cells in the array, an illumination value of each cell based on illumination
 from a specific azimuth and altitude.
 Parameters:
 ----------
-    agg : DataArray
+    agg: xarray.DataArray
         - 2D array of elevation values:
         - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.        
-    altitude : int, optional (default: 30)
+    altitude: int (default: 30)
         - Altitude angle of the sun specified in degrees.
-    azimuth : int, optional (default: 315)
+    azimuth: int (default: 315)
         - The angle between the north vector and the perpendicular projection
           of the light source down onto the horizon specified in degrees.
+    name: str, optional (default = "hillshade")
+        - Name of output DataArray.
 
 Returns:
 ----------

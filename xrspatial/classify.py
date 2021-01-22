@@ -1,5 +1,6 @@
 from functools import partial
 from typing import Union
+import xarray as xr
 
 # 3rd-party
 try:
@@ -25,6 +26,8 @@ from xrspatial.utils import is_cupy_backed
 
 import warnings
 warnings.simplefilter('default')
+
+from typing import List, Optional
 
 
 def color_values(agg, color_key, alpha=255):
@@ -185,7 +188,7 @@ def _bin(data, bins, new_values):
     return out
 
 
-def reclassify(agg, bins, new_values, name='reclassify'):
+def reclassify(agg: xr.DataArray, bins: List[int], new_values: List[int], name: Optional[str] = 'reclassify') -> xr.DataArray:
     """
 Reclassifies data for array (agg) into new values based on bins.
 
@@ -198,7 +201,7 @@ Parameters:
         - Values or ranges of values to be changed.
     new_values: array-like object
         - New values for each bin.
-    name: str, optional (default = reclassify)
+    name: str, optional (default = "reclassify")
         - Name of output aggregate.
 
 Returns:
@@ -329,7 +332,7 @@ def _quantile(agg, k):
     return q
 
 
-def quantile(agg, k=4, name='quantile'):
+def quantile(agg: xr.DataArray, k: int = 4, name: Optional[str] = 'quantile') -> xr.DataArray:
     """
 Groups data for array (agg) into quantiles by distributing the values into groups that contain
 an equal number of values. The number of quantiles produced is based on (k) with a default value
@@ -342,7 +345,7 @@ Parameters:
         - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
     k: int
         - Number of quantiles to be produced, default = 4.
-    name: str, optional (default = quantile)
+    name: str, optional (default = "quantile")
         - Name of the output aggregate array.
 Returns:
 ----------
@@ -653,7 +656,7 @@ def _run_cupy_natural_break(data, num_sample, k):
     return out
 
 
-def natural_breaks(agg, num_sample=None, name='natural_breaks', k=5):
+def natural_breaks(agg: xr.DataArray, num_sample: Optional[int] = None, name: Optional[str] = 'natural_breaks', k: int = 5) -> xr.DataArray:
     """
 Groups data for array (agg) by distributing values using the Jenks Natural Breaks or k-means
 clustering method. Values are grouped so that similar values are placed in the same group and 
@@ -663,7 +666,7 @@ Parameters:
 ----------
     agg: xarray.DataArray
         - 2D array of values to bin.
-       - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
+        - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
     num_sample: int (optional)
         - Number of sample data points used to fit the model.
         - Natural Breaks (Jenks) classification is indeed O(n²) complexity,
@@ -672,7 +675,7 @@ Parameters:
           of the data instead of using the whole dataset.
     k: int (default = 5)
         - Number of classes to be produced.
-    name: str, optional (default = natural_breaks)
+    name: str, optional (default = "natural_breaks")
         - Name of output aggregate.
 
 Returns:
@@ -793,7 +796,7 @@ def _run_dask_cupy_equal_interval(data, k):
     raise NotImplementedError(msg)
 
 
-def equal_interval(agg, k=5, name='equal_interval'):
+def equal_interval(agg: xr.DataArray, k: int = 5, name: Optional[str] = 'equal_interval') -> xr.DataArray:
     """
 Groups data for array (agg) by distributing values into at equal intervals. The result is an xarray.DataArray.
 
@@ -804,7 +807,7 @@ Parameters:
         - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
     k: int
         - Number of classes to be produced.
-    name: str, optional (default = equal_interval)
+    name: str, optional (default = "equal_interval")
         - Name of output aggregate.
 
 Returns:
