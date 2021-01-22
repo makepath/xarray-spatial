@@ -118,14 +118,16 @@ array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
        [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+ <xarray.DataArray (lat: 4, lon: 4)>
 array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
        [3.96767474e-01, 5.38816734e-01, 4.19194514e-01, 6.85219500e-01],
        [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.4359949 , 0.02592623, 0.54966248, 0.43532239],
        [0.4203678 , 0.33033482, 0.20464863, 0.61927097],
        [0.29965467, 0.26682728, 0.62113383, 0.52914209],
@@ -265,14 +267,16 @@ array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
        [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+ <xarray.DataArray (lat: 4, lon: 4)>
 array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
        [3.96767474e-01, 5.38816734e-01, 4.19194514e-01, 6.85219500e-01],
        [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+ <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.4359949 , 0.02592623, 0.54966248, 0.43532239],
        [0.4203678 , 0.33033482, 0.20464863, 0.61927097],
        [0.29965467, 0.26682728, 0.62113383, 0.52914209],
@@ -406,7 +410,8 @@ array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
        [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+ <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.5507979 , 0.70814782, 0.29090474, 0.51082761],
        [0.89294695, 0.89629309, 0.12558531, 0.20724288],
        [0.0514672 , 0.44080984, 0.02987621, 0.45683322],
@@ -529,7 +534,8 @@ array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
        [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+ <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.96702984, 0.54723225, 0.97268436, 0.71481599],
        [0.69772882, 0.2160895 , 0.97627445, 0.00623026],
        [0.25298236, 0.43479153, 0.77938292, 0.19768507],
@@ -634,7 +640,8 @@ array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
        [0.44130922, 0.15830987, 0.87993703, 0.27408646]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+<xarray.DataArray (lat: 4, lon: 4)>
 array([[0.96702984, 0.54723225, 0.97268436, 0.71481599],
        [0.69772882, 0.2160895 , 0.97627445, 0.00623026],
        [0.25298236, 0.43479153, 0.77938292, 0.19768507],
@@ -730,14 +737,15 @@ array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
        [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+<xarray.DataArray (lat: 4, lon: 4)>
 array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
        [3.96767474e-01, 5.38816734e-01, 4.19194514e-01, 6.85219500e-01],
        [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
 
     Create NDVI DataArray
 >>>     data = xrspatial.multispectral.ndvi(nir_agg, red_agg)
@@ -785,30 +793,93 @@ def _run_normalized_ratio(arr1, arr2, use_cuda=True, use_cupy=True):
     return out
 
 
-def ndmi(nir_agg, swir1_agg, name='ndmi', use_cuda=True, use_cupy=True):
-    """Computes Normalized Difference Moisture Index
+def ndmi(nir_agg: xr.DataArray, swir1_agg: xr.DataArray, name: Optional[str] = 'ndmi', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
+    """
+Computes Normalized Difference Moisture Index (NDMI). Used to determine vegetation water content.
 
-    Parameters
-    ----------
-    nir_agg : DataArray
-        near-infrared band
-        (Landsat 4-7: Band 4)
-        (Landsat 8: Band 5)
+Parameters:
+----------
+    nir_agg: xarray.DataArray
+        - 2D array of near-infrared band data.
+        - (Landsat 4-7: Band 4)
+        - (Landsat 8: Band 5)
+    swir1_agg: xarray.DataArray
+        - 2D array of shortwave infrared band data.
+        - (Landsat 4-7: Band 5)
+        - (Landsat 8: Band 6)
+    name: str, optional (default ="ndmi")
+        - Name of output DataArray.
+    use_cuda: bool (default = True)
+        - 
+    use_cupy: bool (default = True)
+        - 
 
-    swir1_agg : DataArray
-        shortwave infrared band
-        (Landsat 4-7: Band 5)
-        (Landsat 8: Band 6)
+Returns:
+----------
+    data: xarray.DataArray
+        - 2D array, of the same type as the input, of calculated gci values.
+        - All other input attributes are preserved.
 
-
-    Returns
-    -------
-    data: DataArray
-
-    Notes:
-    ------
+Notes:
+----------
     Algorithm References:
-    https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
+        - https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
+
+Examples:
+----------
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     import xrspatial
+
+    Create Sample Band Data
+>>>     np.random.seed(0)
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = nir_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     nir_agg["lat"] = _lat
+>>>     nir_agg["lon"] = _lon
+
+>>>     np.random.seed(5)
+>>>     swir1_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                            dims = ["lat", "lon"])
+>>>     height, width = swir1_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     swir1_agg["lat"] = _lat
+>>>     swir1_agg["lon"] = _lon
+
+>>> print(nir_agg, swir1_agg)
+ <xarray.DataArray (lat: 4, lon: 4)>
+array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
+       [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
+       [0.96366276, 0.38344152, 0.79172504, 0.52889492],
+       [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+<xarray.DataArray (lat: 4, lon: 4)>
+array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
+       [0.48841119, 0.61174386, 0.76590786, 0.51841799],
+       [0.2968005 , 0.18772123, 0.08074127, 0.7384403 ],
+       [0.44130922, 0.15830987, 0.87993703, 0.27408646]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+
+    Create NDMI DataArray
+>>>     data = xrspatial.multispectral.ndmi(nir_agg, swir1_agg)
+>>>     print(data)
+<xarray.DataArray 'ndmi' (lat: 4, lon: 4)>
+array([[ 0.4239978 , -0.09807732,  0.48925604, -0.25536675],
+       [-0.07099968,  0.02715428, -0.27280597,  0.26475493],
+       [ 0.52906124,  0.34266992,  0.81491258, -0.16534329],
+       [ 0.12556087,  0.70789018, -0.85060343, -0.51757753]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
     _check_is_dataarray(nir_agg, 'near-infrared')
     _check_is_dataarray(swir1_agg, 'shortwave infrared')
