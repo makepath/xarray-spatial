@@ -27,23 +27,42 @@ DISTANCE_METRICS = _distance_metric_mapping()
 
 
 @njit(nogil=True)
-def euclidean_distance(x1, x2, y1, y2):
-    """Calculate Euclidean distance between (x1, y1) and (x2, y2).
+def euclidean_distance(x1: float, x2: float, y1: float, y2: float) -> float:
+    """
+Calculates Euclidean (straight line) distance between (x1, y1) and (x2, y2).
 
-    Parameters
-    ----------
-    x1 : float
-         x-coordinate of the first point.
+Parameters:
+----------
+    x1: float
+        - x-coordinate of the first point.
     x2: float
-        x-coordinate of the second point.
+        - x-coordinate of the second point.
     y1: float
-        y-coordinate of the first point.
+        - y-coordinate of the first point.
     y2: float
-        y-coordinate of the second point.
+        - y-coordinate of the second point.
 
-    Returns
-    -------
+Returns:
+----------
     distance: float
+        - Euclidean distance between two points.
+
+Notes:
+----------
+    Algorithm References:
+        - https://en.wikipedia.org/wiki/Euclidean_distance#:~:text=In%20mathematics%2C%20the%20Euclidean%20distance,being%20called%20the%20Pythagorean%20distance.
+
+Examples:
+----------
+    Imports
+>>>     from xrspatial import euclidean_distance
+>>>     point_a = (142.32, 23.23)
+>>>     point_b = (312.54, 432.01)
+
+    Calculate Euclidean Distance
+>>>     dist = euclidean_distance(point_a[0], point_b[0], point_a[1], point_b[1])
+>>>     print(dist)
+442.80462599209596
     """
 
     x = x1 - x2
@@ -52,23 +71,42 @@ def euclidean_distance(x1, x2, y1, y2):
 
 
 @njit(nogil=True)
-def manhattan_distance(x1, x2, y1, y2):
-    """Calculate Manhattan distance between (x1, y1) and (x2, y2).
+def manhattan_distance(x1: float, x2: float, y1: float, y2: float) -> float:
+    """
+Calculates Manhattan distance (sum of distance in x and y directions) between (x1, y1) and (x2, y2).
 
-    Parameters
-    ----------
-    x1 : float
-         x-coordinate of the first point.
+Parameters:
+----------
+    x1: float
+        - x-coordinate of the first point.
     x2: float
-        x-coordinate of the second point.
+        - x-coordinate of the second point.
     y1: float
-        y-coordinate of the first point.
+        - y-coordinate of the first point.
     y2: float
-        y-coordinate of the second point.
+        - y-coordinate of the second point.
 
-    Returns
-    -------
+Returns:
+----------
     distance: float
+        - Manhattan distance between two points.
+
+Notes:
+----------
+    Algorithm References:
+        - https://en.wikipedia.org/wiki/Taxicab_geometry
+
+Examples:
+----------
+    Imports
+>>>     from xrspatial import manhattan_distance
+>>>     point_a = (142.32, 23.23)
+>>>     point_b = (312.54, 432.01)
+
+    Calculate Euclidean Distance
+>>>     dist = manhattan_distance(point_a[0], point_b[0], point_a[1], point_b[1])
+>>>     print(dist)
+196075.9368
     """
 
     x = x1 - x2
@@ -77,24 +115,44 @@ def manhattan_distance(x1, x2, y1, y2):
 
 
 @njit(nogil=True)
-def great_circle_distance(x1, x2, y1, y2, radius=6378137):
-    """Calculate great-circle distance between (x1, y1) and (x2, y2),
-     assuming each point is a longitude, latitude pair.
+def great_circle_distance(x1: float, x2: float, y1: float, y2: float, radius: float = 6378137):
+    """
+Calculates great-circle (orthodromic/spherical) distance between (x1, y1) and (x2, y2), assuming each point is a longitude, latitude pair.
 
-    Parameters
-    ----------
-    x1 : float
-         x-coordinate (latitude) of the first point.
-    x2: float
-        x-coordinate (latitude) of the second point.
-    y1: float
-        y-coordinate (longitude) of the first point.
-    y2: float
-        y-coordinate (longitude) of the second point.
+Parameters:
+----------
+    x1: float (between -180 and 180)
+        - x-coordinate (latitude) of the first point.
+    x2: float (between -180 and 180)
+        - x-coordinate (latitude) of the second point.
+    y1: float (between -90 and 90)
+        - y-coordinate (longitude) of the first point.
+    y2: float (between -90 and 90)
+        - y-coordinate (longitude) of the second point.
+    radius: float (default = 6378137)
+        - Radius of sphere (earth).
 
-    Returns
-    -------
+Returns:
+----------
     distance: float
+        - Great-Circle distance between two points.
+
+Notes:
+----------
+    Algorithm References:
+        - https://en.wikipedia.org/wiki/Great-circle_distance#:~:text=The%20great%2Dcircle%20distance%2C%20orthodromic,line%20through%20the%20sphere's%20interior).
+
+Examples:
+----------
+    Imports
+>>>     from xrspatial import great_circle_distance
+>>>     point_a = (123.2, 82.32)
+>>>     point_b = (178.0, 65.09)
+
+    Calculate Euclidean Distance
+>>>     dist = great_circle_distance(point_a[0], point_b[0], point_a[1], point_b[1])
+>>>     print(dist)
+2378290.489801402
     """
 
     if x1 > 180 or x1 < -180:
