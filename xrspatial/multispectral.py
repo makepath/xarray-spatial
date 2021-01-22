@@ -1283,23 +1283,108 @@ def _ebbi_gpu(red_data, swir_data, tir_data, out):
         out[y, x] = numerator / denominator
 
 
-def ebbi(red_agg, swir_agg, tir_agg, name='ebbi', use_cuda=True, use_cupy=True):
-    """Computes Enhanced Built-Up and Bareness Index
-    Parameters
-    ----------
-    red_agg : DataArray
-        red band data
-    swir_agg : DataArray
-        shortwave infrared band data
-    tir_agg : DataArray
-        thermal infrared band data
-    Returns
-    -------
-    data: DataArray
-    Notes:
-    ------
+def ebbi(red_agg: xr.DataArray, swir_agg: xr.DataArray, tir_agg: xr.DataArray, name: Optional[str] = 'ebbi', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
+    """
+Computes Enhanced Built-Up and Bareness Index (EBBI) which 
+allows for easily distinguishing between built-up and bare land areas.
+
+Parameters:
+----------
+    red_agg: xarray.DataArray
+        - 2D array of red band data.
+    swir_agg: xarray.DataArray
+        - 2D array of shortwave infrared band data.
+    tir_agg: xarray.DataArray
+        - 2D array of thermal infrared band data.
+    name: str, optional (default = "ebbi")
+        - Name of output DataArray.
+    use_cuda: bool, optional (default = True)
+        - 
+    use_cupy: bool, optional (default = True)
+        - 
+
+Returns:
+----------
+    data: xarray.DataArray
+        - 2D array, of the same type as the input, of calculated arvi values.
+        - All other input attributes are preserved.
+        
+Notes:
+----------
     Algorithm References:
-    https://rdrr.io/cran/LSRS/man/EBBI.html
+        - https://rdrr.io/cran/LSRS/man/EBBI.html
+        
+Examples:
+----------
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     import xrspatial
+
+    Create Sample Band Data
+>>>     np.random.seed(1)
+>>>     red_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = red_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     red_agg["lat"] = _lat
+>>>     red_agg["lon"] = _lon
+
+>>>     np.random.seed(5)
+>>>     swir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                            dims = ["lat", "lon"])
+>>>     height, width = swir_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     swir_agg["lat"] = _lat
+>>>     swir_agg["lon"] = _lon
+
+>>>     np.random.seed(6)
+>>>     tir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                            dims = ["lat", "lon"])
+>>>     height, width = tir_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     tir_agg["lat"] = _lat
+>>>     tir_agg["lon"] = _lon
+
+>>> print(red_agg, swir_agg, tir_agg)
+<xarray.DataArray (lat: 4, lon: 4)>
+array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
+       [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
+       [3.96767474e-01, 5.38816734e-01, 4.19194514e-01, 6.85219500e-01],
+       [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+ <xarray.DataArray (lat: 4, lon: 4)>
+array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
+       [0.48841119, 0.61174386, 0.76590786, 0.51841799],
+       [0.2968005 , 0.18772123, 0.08074127, 0.7384403 ],
+       [0.44130922, 0.15830987, 0.87993703, 0.27408646]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+ <xarray.DataArray (lat: 4, lon: 4)>
+array([[0.89286015, 0.33197981, 0.82122912, 0.04169663],
+       [0.10765668, 0.59505206, 0.52981736, 0.41880743],
+       [0.33540785, 0.62251943, 0.43814143, 0.73588211],
+       [0.51803641, 0.5788586 , 0.6453551 , 0.99022427]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
+    Create EBBI DataArray
+>>>     data = xrspatial.multispectral.ebbi(red_agg, swir_agg, tir_agg)
+>>>     print(data)
+<xarray.DataArray 'ebbi' (lat: 4, lon: 4)>
+array([[-2.43983486, -2.58194492,  3.97432599, -0.42291921],
+       [-0.11444052,  0.96786363,  0.59269999,  0.42374096],
+       [ 0.61379897, -0.23840436, -0.05598088,  0.95193251],
+       [ 1.32393891,  0.41574839,  0.72484653, -0.80669034]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
 
     _check_is_dataarray(red_agg, 'red')
