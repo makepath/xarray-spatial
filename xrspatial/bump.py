@@ -1,12 +1,17 @@
 import numpy as np
 
+import xarray as xr
+
 from xarray import DataArray
 
 from xrspatial.utils import ngjit
 
+from typing import List, Set, Dict, Tuple, Optional, Callable
+
+
 
 # TODO: change parameters to take agg instead of height / width
-def bump(width, height, count=None, height_func=None, spread=1):
+def bump(width: int, height: int, count: Optional[int] = None, height_func: Optional[Callable[xr.DataArray, xr.DataArray, tuple, int]] = None, spread: int = 1):
     """
 Generate a simple bump map to simulate the appearance of land features. 
 Using a user-defined height function, determines at what elevation a specific bump height is acceptable.
