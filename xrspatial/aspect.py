@@ -153,7 +153,7 @@ def _run_dask_numpy(data:da.Array) -> da.Array:
     return out
 
 
-def aspect(agg: xr.DataArray, name:str ='aspect') -> xr.DataArray:
+def aspect(agg: xr.DataArray, name: str ='aspect') -> xr.DataArray:
     """
 Calculates, for all cells in the array, the downward slope direction of each cell based on the elevation of its neighbors in a 3x3 grid. 
 The value is measured clockwise in degrees with 0 and 360 at due north. Flat areas are given a value of -1. 
@@ -240,4 +240,3 @@ Terrain Example: https://makepath.github.io/xarray-spatial/assets/examples/user-
                         coords=agg.coords,
                         dims=agg.dims,
                         attrs=agg.attrs)
-
