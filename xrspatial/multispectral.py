@@ -948,29 +948,90 @@ def _savi_gpu(nir_data, red_data, soil_factor, out):
             out[y, x] = numerator / denominator
 
 
-def savi(nir_agg, red_agg, soil_factor=1.0, name='savi', use_cuda=True, use_cupy=True):
-    """Returns Soil Adjusted Vegetation Index (SAVI).
+def savi(nir_agg: xr.DataArray, red_agg: xr.DataArray, soil_factor: float = 1.0, name: Optional[str] = 'savi', use_cuda: bool = True, use_cupy: bool = True):
+    """
+Computes Soil Adjusted Vegetation Index (SAVI). Used to determine if a cell contains living vegetation
+while minimizing soil brightness.
 
-    Parameters
-    ----------
-    nir_agg : DataArray
-        near-infrared band data
+Parameters:
+----------
+    nir_agg: xarray.DataArray
+        - 2D array of near-infrared band data.
+    red_agg: xarray.DataArray
+        - 2D array red band data.
+    soil_factor: float (default = 1.0)
+        - soil adjustment factor between -1.0 and 1.0.
+        - when set to zero, savi will return the same as ndvi
+    name: str, optional (default ="savi")
+        - Name of output DataArray.
+    use_cuda: bool (default = True)
+        - 
+    use_cupy: bool (default = True)
+        - 
 
-    red_agg : DataArray
-        red band data
+Returns:
+----------
+    data: xarray.DataArray
+        - 2D array, of the same type as the input, of calculated gci values.
+        - All other input attributes are preserved.
 
-    soil_factor : float
-      soil adjustment factor between -1.0 and 1.0.
-      when set to zero, savi will return the same as ndvi
-
-    Returns
-    -------
-    data: DataArray
-
-    Notes:
-    ------
+Notes:
+----------
     Algorithm References:
-     - https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
+        - https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     import xrspatial
+
+    Create Sample Band Data
+>>>     np.random.seed(0)
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = nir_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     nir_agg["lat"] = _lat
+>>>     nir_agg["lon"] = _lon
+
+>>>     np.random.seed(1)
+>>>     red_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = red_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     red_agg["lat"] = _lat
+>>>     red_agg["lon"] = _lon
+
+>>>     print(nir_agg, red_agg)
+ <xarray.DataArray (lat: 4, lon: 4)>
+array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
+       [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
+       [0.96366276, 0.38344152, 0.79172504, 0.52889492],
+       [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+<xarray.DataArray (lat: 4, lon: 4)>
+array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
+       [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
+       [3.96767474e-01, 5.38816734e-01, 4.19194514e-01, 6.85219500e-01],
+       [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+
+    Create SAVI DataArray
+>>>     data = xrspatial.multispectral.savi(nir_agg, red_agg)
+>>>     print(data)
+<xarray.DataArray 'savi' (lat: 4, lon: 4)>
+array([[ 0.03352048, -0.00105422,  0.1879897 ,  0.06565303],
+       [ 0.0881613 ,  0.1592294 ,  0.07738627,  0.12206768],
+       [ 0.12008304, -0.04041476,  0.08424787, -0.03530183],
+       [ 0.10256501,  0.0084672 ,  0.01986868, -0.16594768]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
     _check_is_dataarray(nir_agg, 'near-infrared')
     _check_is_dataarray(red_agg, 'red')
