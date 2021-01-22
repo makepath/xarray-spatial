@@ -588,7 +588,7 @@ Parameters:
     use_cupy: bool (default = "True")
         -
 
-Returns
+Returns:
 ----------
     data: xarray.DataArray
         - 2D array, of the same type as the input, of calculated gci values.
@@ -669,24 +669,87 @@ Coordinates:
                      attrs=swir1_agg.attrs)
 
 
-def ndvi(nir_agg, red_agg, name='ndvi', use_cuda=True, use_cupy=True):
-    """Returns Normalized Difference Vegetation Index (NDVI).
+def ndvi(nir_agg: xr.DataArray, red_agg: xr.DataArray, name: Optional[str] = 'ndvi', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
+    """
+Computes Normalized Difference Vegetation Index (NDVI). Used to determine if a cell contains live green vegetation.
 
-    Parameters
-    ----------
-    nir_agg : DataArray
-        near-infrared band data
-    red_agg : DataArray
-        red band data
+Parameters:
+----------
+    nir_agg: xarray.DataArray
+        - 2D array of near-infrared band data.
+    red_agg: xarray.DataArray
+        - 2D array red band data.
+    name: str, optional (default ="ndvi")
+        - Name of output DataArray.
+    use_cuda: bool (default = True)
+        - 
+    use_cupy: bool (default = True)
+        - 
 
-    Returns
-    -------
-    data: DataArray
-
-    Notes:
-    ------
+Returns:
+----------
+    data: xarray.DataArray
+        - 2D array, of the same type as the input, of calculated gci values.
+        - All other input attributes are preserved.
+Notes:
+----------
     Algorithm References:
-    http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
+        - http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
+
+Examples:
+----------
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     import xrspatial
+
+    Create Sample Band Data
+>>>     np.random.seed(0)
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = nir_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     nir_agg["lat"] = _lat
+>>>     nir_agg["lon"] = _lon
+
+>>>     np.random.seed(1)
+>>>     red_agg = xr.DataArray(np.random.rand(4,4), 
+>>>                             dims = ["lat", "lon"])
+>>>     height, width = red_agg.shape
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     red_agg["lat"] = _lat
+>>>     red_agg["lon"] = _lon
+
+>>>     print(nir_agg, red_agg)
+ <xarray.DataArray (lat: 4, lon: 4)>
+array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
+       [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
+       [0.96366276, 0.38344152, 0.79172504, 0.52889492],
+       [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
+       [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
+       [3.96767474e-01, 5.38816734e-01, 4.19194514e-01, 6.85219500e-01],
+       [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0 <xarray.DataArray (lat: 4, lon: 4)>
+
+    Create NDVI DataArray
+>>>     data = xrspatial.multispectral.ndvi(nir_agg, red_agg)
+>>>     print(data)
+<xarray.DataArray 'ndvi' (lat: 4, lon: 4)>
+array([[ 0.13645336, -0.0035772 ,  0.99962057,  0.28629143],
+       [ 0.4854378 ,  0.74983879,  0.40286613,  0.44144297],
+       [ 0.41670295, -0.16847257,  0.30764267, -0.12875605],
+       [ 0.4706716 ,  0.02632302,  0.44347537, -0.76998504]])
+Coordinates:
+  * lat      (lat) float64 0.0 1.0 2.0 3.0
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
 
     _check_is_dataarray(nir_agg, 'near-infrared')
