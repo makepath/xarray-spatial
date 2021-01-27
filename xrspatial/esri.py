@@ -2,6 +2,34 @@ import pandas as pd
 import requests
 
 
+def export_map(service_url, xmin, ymin, xmax, ymax, height=400, width=400):
+    '''
+    Parameters
+    ----------
+
+    Returns
+    -------
+
+    Notes
+    -----
+
+    '''
+    params = {}
+    params['bbox'] = '{},{},{},{}'.format(xmin, ymin, xmax, ymax)
+    params['size'] = '{},{}'.format(width, height)
+    params['format'] = 'png32'
+    params['transparent'] = 'true'
+
+    params['f'] = 'json'
+    json_response = requests.get(service_url, params=params)
+
+    params['f'] = 'image'
+    response = requests.get(service_url, params=params)
+    source_img = Image.open(cStringIO.StringIO(response.content))
+    return source_img, json_response.json()['extent']
+
+
+
 def featureset_to_dataframe(featureset, convert_geometry=False,
                             use_aliases=False):
     items = [x['attributes'] for x in featureset['features']]
