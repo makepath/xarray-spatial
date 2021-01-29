@@ -4,8 +4,6 @@ import numba as nb
 
 from numba import cuda
 
-import datashader as ds
-
 from PIL import Image
 
 from xarray import DataArray
@@ -27,7 +25,7 @@ except ImportError:
 
 @ngjit
 def _avri_cpu(nir_data, red_data, blue_data):
-    out = np.zeros_like(nir_data)
+    out = np.zeros_like(nir_data, dtype='f4')
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -79,7 +77,8 @@ def _arvi_dask_cupy(nir_data, red_data, blue_data):
     return out
 
 
-def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray, name='arvi'):
+def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
+         name='arvi'):
     """Computes Atmospherically Resistant Vegetation Index
 
     Parameters
@@ -121,7 +120,7 @@ def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray, name='arvi
 # EVI -------------
 @ngjit
 def _evi_cpu(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
-    out = np.zeros_like(nir_data)
+    out = np.zeros_like(nir_data, dtype='f4')
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -159,7 +158,8 @@ def _evi_cupy(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
     griddim, blockdim = cuda_args(nir_data.shape)
     out = cupy.empty(nir_data.shape, dtype='f4')
     out[:] = cupy.nan
-    _evi_gpu[griddim, blockdim](nir_data, red_data, blue_data, c1, c2, soil_factor, gain, out)
+    args = (nir_data, red_data, blue_data, c1, c2, soil_factor, gain, out)
+    _evi_gpu[griddim, blockdim](*args)
     return out
 
 
@@ -231,8 +231,9 @@ def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
                                       dask_func=_evi_dask,
                                       cupy_func=_evi_cupy,
                                       dask_cupy_func=_evi_dask_cupy)
-    
-    out = mapper(red_agg)(nir_agg.data, red_agg.data, blue_agg.data, c1, c2, soil_factor, gain)
+
+    out = mapper(red_agg)(nir_agg.data, red_agg.data, blue_agg.data, c1, c2,
+                          soil_factor, gain)
 
     return DataArray(out,
                      name=name,
@@ -244,7 +245,7 @@ def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
 # GCI -------------
 @ngjit
 def _gci_cpu(nir_data, green_data):
-    out = np.zeros_like(nir_data)
+    out = np.zeros_like(nir_data, dtype='f4')
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -314,7 +315,7 @@ def gci(nir_agg: DataArray, green_agg: DataArray, name='gci'):
                                       dask_func=_gci_dask,
                                       cupy_func=_gci_cupy,
                                       dask_cupy_func=_gci_dask_cupy)
-    
+
     out = mapper(nir_agg)(nir_agg.data, green_agg.data)
 
     return DataArray(out,
@@ -354,7 +355,7 @@ def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
                                       dask_func=_run_normalized_ratio_dask,
                                       cupy_func=_run_normalized_ratio_cupy,
                                       dask_cupy_func=_run_normalized_ratio_dask_cupy)
-    
+
     out = mapper(nir_agg)(nir_agg.data, swir2_agg.data)
 
     return DataArray(out,
@@ -401,7 +402,7 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr'):
                                       dask_func=_run_normalized_ratio_dask,
                                       cupy_func=_run_normalized_ratio_cupy,
                                       dask_cupy_func=_run_normalized_ratio_dask_cupy)
-    
+
     out = mapper(swir1_agg)(swir1_agg.data, swir2_agg.data)
 
     return DataArray(out,
@@ -432,14 +433,14 @@ def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
     http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
     """
 
-    validate_arrays(red_agg, nir_agg)
+    validate_arrays(nir_agg, red_agg)
 
     mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
                                       dask_func=_run_normalized_ratio_dask,
                                       cupy_func=_run_normalized_ratio_cupy,
                                       dask_cupy_func=_run_normalized_ratio_dask_cupy)
-    
-    out = mapper(red_agg)(nir_agg.data, red_agg.data)
+
+    out = mapper(nir_agg)(nir_agg.data, red_agg.data)
 
     return DataArray(out,
                      name=name,
@@ -481,7 +482,7 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
                                       dask_func=_run_normalized_ratio_dask,
                                       cupy_func=_run_normalized_ratio_cupy,
                                       dask_cupy_func=_run_normalized_ratio_dask_cupy)
-    
+
     out = mapper(nir_agg)(nir_agg.data, swir1_agg.data)
 
     return DataArray(out,
@@ -493,13 +494,12 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
 
 @ngjit
 def _normalized_ratio_cpu(arr1, arr2):
-    out = np.zeros_like(arr1)
+    out = np.zeros_like(arr1, dtype='f4')
     rows, cols = arr1.shape
     for y in range(0, rows):
         for x in range(0, cols):
             val1 = arr1[y, x]
             val2 = arr2[y, x]
-
             numerator = val1 - val2
             denominator = val1 + val2
 
@@ -550,7 +550,7 @@ def _run_normalized_ratio_dask_cupy(arr1, arr2):
 
 @ngjit
 def _savi_cpu(nir_data, red_data, soil_factor):
-    out = np.zeros_like(nir_data)
+    out = np.zeros_like(nir_data, dtype='f4')
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -562,6 +562,7 @@ def _savi_cpu(nir_data, red_data, soil_factor):
             out[y, x] = numerator / denominator
 
     return out
+
 
 @cuda.jit
 def _savi_gpu(nir_data, red_data, soil_factor, out):
@@ -602,7 +603,8 @@ def _savi_dask_cupy(nir_data, red_data, soil_factor):
 
 
 # SAVI -------------
-def savi(nir_agg: DataArray, red_agg: DataArray, soil_factor:float=1.0, name:str='savi'):
+def savi(nir_agg: DataArray, red_agg: DataArray,
+         soil_factor: float = 1.0, name: str = 'savi'):
     """Returns Soil Adjusted Vegetation Index (SAVI).
 
     Parameters
@@ -632,14 +634,11 @@ def savi(nir_agg: DataArray, red_agg: DataArray, soil_factor:float=1.0, name:str
     if not -1.0 <= soil_factor <= 1.0:
         raise ValueError("soil factor must be between [-1.0, 1.0]")
 
-    nir_data = nir_agg.data
-    red_data = red_agg.data
-
     mapper = ArrayTypeFunctionMapping(numpy_func=_savi_cpu,
                                       dask_func=_savi_dask,
                                       cupy_func=_savi_cupy,
                                       dask_cupy_func=_savi_dask_cupy)
-    
+
     out = mapper(red_agg)(nir_agg.data, red_agg.data, soil_factor)
 
     return DataArray(out,
@@ -652,7 +651,7 @@ def savi(nir_agg: DataArray, red_agg: DataArray, soil_factor:float=1.0, name:str
 # SIPI -------------
 @ngjit
 def _sipi_cpu(nir_data, red_data, blue_data):
-    out = np.zeros_like(nir_data)
+    out = np.zeros_like(nir_data, dtype='f4')
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -703,7 +702,8 @@ def _sipi_dask_cupy(nir_data, red_data, blue_data):
     return out
 
 
-def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray, name='sipi'):
+def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
+         name='sipi'):
     """Computes Structure Insensitive Pigment Index which helpful
     in early disease detection
 
@@ -731,7 +731,7 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray, name='sipi
                                       dask_func=_sipi_dask,
                                       cupy_func=_sipi_cupy,
                                       dask_cupy_func=_sipi_dask_cupy)
-    
+
     out = mapper(red_agg)(nir_agg.data, red_agg.data, blue_agg.data)
 
     return DataArray(out,
@@ -744,7 +744,7 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray, name='sipi
 # EBBI -------------
 @ngjit
 def _ebbi_cpu(red_data, swir_data, tir_data):
-    out = np.zeros_like(red_data)
+    out = np.zeros_like(red_data, dtype='f4')
     rows, cols = red_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -795,7 +795,8 @@ def _ebbi_dask_cupy(red_data, swir_data, tir_data):
     return out
 
 
-def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray, name='ebbi'):
+def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
+         name='ebbi'):
     """Computes Enhanced Built-Up and Bareness Index
 
     Parameters
@@ -822,7 +823,7 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray, name='ebbi
                                       dask_func=_ebbi_dask,
                                       cupy_func=_ebbi_cupy,
                                       dask_cupy_func=_ebbi_dask_cupy)
-    
+
     out = mapper(red_agg)(red_agg.data, swir_agg.data, tir_agg.data)
 
     return DataArray(out,
@@ -852,9 +853,8 @@ def _normalize_data(agg, pixel_max=255.0):
     return out
 
 
-def bands_to_img(r, g, b, nodata=1):
+def true_color(r, g, b, nodata=1):
     h, w = r.shape
-    r, g, b = [ds.utils.orient_array(img) for img in (r, g, b)]
 
     data = np.zeros((h, w, 4), dtype=np.uint8)
     data[:, :, 0] = (_normalize_data(r)).astype(np.uint8)
