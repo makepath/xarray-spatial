@@ -493,6 +493,8 @@ def _process(raster, x='x', y='y', target_values=[],
 # https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp
 def proximity(raster: xr.DataArray, x: str = 'x', y: str = 'y', target_values: list = [], 
                                         distance_metric: str = 'EUCLIDEAN') -> xr.DataArray:
+
+
     """
 Computes the proximity of all pixels in the image to a set of pixels in the source image 
 based on Euclidean, Great-Circle or Manhattan distance.
@@ -532,7 +534,29 @@ Notes:
 
 Example:
 ----------
+    Imports
+>>>     from xrspatial import proximity
+>>>     import pandas as pd
 
+    Load Data and Create Canvas
+>>>     df = pd.Dataframe({
+>>>         'x': [-13, -11, -5, 4, 9, 11, 18, 6],
+>>>         'y': [-13, -5, 0, 10, 7, 2, 5, -5]
+>>>     })
+>>>     cvs = ds.Canvas(plot_width=800, plot_height=600,
+>>>                     x_range=(-20, 20), y_range-(-20,20))
+
+    Create Proximity Aggregate
+>>>     points_agg = cvs.points(df, x='x', y='y')
+>>>     points_shaded = dynspread(shade(points_agg, cmap=['salmon',  'salmon']),
+>>>                               threshold=1,
+>>>                               max_px=5)
+>>>     set_background(points_shaded, 'black')
+
+    Create Proximity Grid for All Non-Zero Values
+>>>     proximity_agg = proximity(points_agg)
+>>>     stack(shade(proximity_agg, cmap=['darkturquoise', 'black'], how='linear'),
+>>>           points_shaded)
     """
 
     proximity_img = _process(raster, x=x, y=y, target_values=target_values,
