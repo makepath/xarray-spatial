@@ -145,6 +145,8 @@ class MercatorTileDefinition(object):
     ''' Implementation of mercator tile source
     In general, tile sources are used as a required input for ``TileRenderer``.
 
+    .. depreciated
+
     Parameters
     ----------
 

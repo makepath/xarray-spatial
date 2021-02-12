@@ -537,6 +537,11 @@ Example:
     Imports
 >>>     from xrspatial import proximity
 >>>     import pandas as pd
+>>>     from datashader.transfer_functions import shade
+>>>     from datashader.transfer_functions import stack
+>>>     from datashader.transfer_functions import dynspread
+>>>     from datashader.transfer_functions import set_background
+>>>     from datashader.colors import Elevation
 
     Load Data and Create Canvas
 >>>     df = pd.Dataframe({
