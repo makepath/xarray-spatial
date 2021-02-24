@@ -1,5 +1,8 @@
+from functools import partial
+
 import re
 import numpy as np
+import dask.array as da
 
 import warnings
 warnings.simplefilter('default')
@@ -174,7 +177,7 @@ def custom_kernel(kernel):
 
 
 @jit(nopython=True, nogil=True, parallel=True)
-def _convolve_2d_cpu(data, kernel):
+def _convolve_2d_numpy(data, kernel):
     """Apply kernel to data image."""
 
     # TODO: handle nan
@@ -202,6 +205,17 @@ def _convolve_2d_cpu(data, kernel):
                     num += kernel[iii, jjj] * data[ii, jj]
             out[i, j] = num
 
+    return out
+
+
+def _convolve_2d_dask_numpy(data, kernel):
+    pad_h = kernel.shape[0] // 2
+    pad_w = kernel.shape[1] // 2
+    _func = partial(_convolve_2d_numpy, kernel=kernel)
+    out = data.map_overlap(_func,
+                           depth=(pad_h, pad_w),
+                           boundary=np.nan,
+                           meta=np.array(()))
     return out
 
 
@@ -257,11 +271,15 @@ def convolve_2d(data, kernel):
 
     # numpy case
     if isinstance(data, np.ndarray):
-        out = _convolve_2d_cpu(data, kernel)
+        out = _convolve_2d_numpy(data, kernel)
 
     # cupy case
     elif has_cuda() and isinstance(data, cupy.ndarray):
         out = _convolve_2d_gpu(data, kernel)
+
+    # dask + numpy case
+    elif isinstance(data, da.Array):
+        out = _convolve_2d_dask_numpy(data, kernel)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(data)))

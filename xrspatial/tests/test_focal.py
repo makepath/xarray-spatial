@@ -98,22 +98,27 @@ def test_kernel():
 
 def test_convolution():
     data = convolve_2d_data
+    dask_data = da.from_array(data, chunks=(3, 3))
 
     kernel1 = np.ones((1, 1))
-    output_1 = convolve_2d(data, kernel1)
+    numpy_output_1 = convolve_2d(data, kernel1)
     expected_output_1 = np.array([[0., 1., 1., 1., 1., 1.],
                                   [1., 0., 1., 1., 1., 1.],
                                   [1., 1., 0., 1., 1., 1.],
                                   [1., 1., 1., np.nan, 1., 1.],
                                   [1., 1., 1., 1., 0., 1.],
                                   [1., 1., 1., 1., 1., 0.]])
-    assert isinstance(output_1, np.ndarray)
-    assert np.isclose(output_1, expected_output_1, equal_nan=True).all()
+    assert isinstance(numpy_output_1, np.ndarray)
+    assert np.isclose(numpy_output_1, expected_output_1, equal_nan=True).all()
+
+    dask_output_1 = convolve_2d(dask_data, kernel1)
+    assert isinstance(dask_output_1, da.Array)
+    assert np.isclose(dask_output_1.compute(), expected_output_1, equal_nan=True).all()
 
     kernel2 = np.array([[0, 1, 0],
                         [1, 1, 1],
                         [0, 1, 0]])
-    output_2 = convolve_2d(data, kernel2)
+    numpy_output_2 = convolve_2d(data, kernel2)
     expected_output_2 = np.array([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
                                   [np.nan, 4., 3., 5., 5., np.nan],
                                   [np.nan, 3., np.nan, np.nan, np.nan, np.nan],
@@ -122,13 +127,17 @@ def test_convolution():
                                   [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]])
     # kernel2 is of 3x3, thus the border edge is 1 cell long.
     # currently, ignoring border edge (i.e values in edges are all nans)
-    assert isinstance(output_2, np.ndarray)
-    assert np.isclose(output_2, expected_output_2, equal_nan=True).all()
+    assert isinstance(numpy_output_2, np.ndarray)
+    assert np.isclose(numpy_output_2, expected_output_2, equal_nan=True).all()
+
+    dask_output_2 = convolve_2d(dask_data, kernel2)
+    assert isinstance(dask_output_2, da.Array)
+    assert np.isclose(dask_output_2.compute(), expected_output_2, equal_nan=True).all()
 
     kernel3 = np.array([[0, 1, 0],
                         [1, 0, 1],
                         [0, 1, 0]])
-    output_3 = convolve_2d(data, kernel3)
+    numpy_output_3 = convolve_2d(data, kernel3)
     expected_output_3 = np.array([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
                                   [np.nan, 4., 2., 4., 4., np.nan],
                                   [np.nan, 2., np.nan, np.nan, np.nan, np.nan],
@@ -137,8 +146,12 @@ def test_convolution():
                                   [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]])
     # kernel3 is of 3x3, thus the border edge is 1 cell long.
     # currently, ignoring border edge (i.e values in edges are all nans)
-    assert isinstance(output_3, np.ndarray)
-    assert np.isclose(output_3, expected_output_3, equal_nan=True).all()
+    assert isinstance(numpy_output_3, np.ndarray)
+    assert np.isclose(numpy_output_3, expected_output_3, equal_nan=True).all()
+
+    dask_output_3 = convolve_2d(dask_data, kernel3)
+    assert isinstance(dask_output_3, da.Array)
+    assert np.isclose(dask_output_3.compute(), expected_output_3, equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
