@@ -255,12 +255,17 @@ def _convolve_2d_cuda(data, kernel, out):
     out[i, j] = s
 
 
-def _convolve_2d_gpu(data, kernel):
+def _convolve_2d_cupy(data, kernel):
     out = cupy.empty(data.shape, dtype='f4')
     out[:, :] = cupy.nan
     griddim, blockdim = cuda_args(data.shape)
     _convolve_2d_cuda[griddim, blockdim](data, kernel, cupy.asarray(out))
     return out
+
+
+def _convolve_2d_dask_cupy(data, kernel):
+    msg = 'Upstream bug in dask prevents cupy backed arrays'
+    raise NotImplementedError(msg)
 
 
 def convolve_2d(data, kernel):
@@ -275,7 +280,12 @@ def convolve_2d(data, kernel):
 
     # cupy case
     elif has_cuda() and isinstance(data, cupy.ndarray):
-        out = _convolve_2d_gpu(data, kernel)
+        out = _convolve_2d_cupy(data, kernel)
+
+    # dask + cupy case
+    elif has_cuda() and isinstance(data, da.Array) and \
+            type(data._meta).__module__.split('.')[0] == 'cupy':
+        out = _convolve_2d_dask_cupy(data, kernel)
 
     # dask + numpy case
     elif isinstance(data, da.Array):
