@@ -224,7 +224,7 @@ def hotspots(raster, kernel, x='x', y='y'):
                          "(%s, %s)".format(y, x))
 
     # apply kernel to raster values
-    mean_array = convolve_2d(raster.values, kernel / kernel.sum(), pad=True)
+    mean_array = convolve_2d(raster.values, kernel / kernel.sum())
 
     # calculate z-scores
     global_mean = np.nanmean(raster.values)
