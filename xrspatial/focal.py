@@ -6,8 +6,8 @@ from numba import prange
 import numpy as np
 from xarray import DataArray
 
-from xrspatial.utils import ngjit, get_dataarray_resolution
-from xrspatial.convolution import convolve_2d
+from xrspatial.utils import ngjit
+from xrspatial.convolution import convolve_2d, _validate_kernel
 
 warnings.simplefilter('default')
 
