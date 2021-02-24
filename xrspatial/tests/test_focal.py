@@ -185,6 +185,11 @@ def test_2d_convolution_gpu_equals_cpu():
     assert isinstance(output_cupy3, cupy.ndarray)
     assert np.isclose(output_numpy3, output_cupy3.get(), equal_nan=True).all()
 
+    # dask + cupy case not implemented
+    dask_cupy_agg = xr.DataArray(da.from_array(cupy.asarray(data), chunks=(3, 3)))
+    with pytest.raises(NotImplementedError) as e_info:
+        convolve_2d(dask_cupy_agg.data, kernel3)
+        assert e_info
 
 # def test_hotspot():
 #     n, m = 10, 10
