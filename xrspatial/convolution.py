@@ -4,7 +4,7 @@ import numpy as np
 import warnings
 warnings.simplefilter('default')
 
-from numba import cuda, float32, int32, prange, jit
+from numba import cuda, float32, prange, jit
 
 from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args

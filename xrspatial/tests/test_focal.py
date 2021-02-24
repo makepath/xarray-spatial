@@ -72,6 +72,30 @@ convolve_2d_data = np.array([[0., 1., 1., 1., 1., 1.],
                              [1., 1., 1., 1., 1., 0.]])
 
 
+def test_kernel():
+    data = convolve_2d_data
+    m, n = data.shape
+    agg = xr.DataArray(data, dims=['y', 'x'])
+    agg['x'] = np.linspace(0, n, n)
+    agg['y'] = np.linspace(0, m, m)
+
+    cellsize_x, cellsize_y = cellsize(agg)
+
+    kernel1 = circle_kernel(cellsize_x, cellsize_y, 2)
+    expected_kernel1 = np.array([[0, 1, 0],
+                                 [1, 1, 1],
+                                 [0, 1, 0]])
+    assert isinstance(kernel1, np.ndarray)
+    assert np.isclose(kernel1, expected_kernel1, equal_nan=True).all()
+
+    kernel2 = annulus_kernel(cellsize_x, cellsize_y, 2, 0.5)
+    expected_kernel2 = np.array([[0, 1, 0],
+                                 [1, 0, 1],
+                                 [0, 1, 0]])
+    assert isinstance(kernel2, np.ndarray)
+    assert np.isclose(kernel2, expected_kernel2, equal_nan=True).all()
+
+
 def test_convolution():
     data = convolve_2d_data
 
