@@ -1,5 +1,10 @@
+import pytest
 import xarray as xr
 import numpy as np
+
+import dask.array as da
+
+from xrspatial.utils import doesnt_have_cuda
 
 from xrspatial import mean
 from xrspatial.focal import hotspots
@@ -59,35 +64,32 @@ def test_mean_transfer_function():
     assert abs(da_mean.mean() - data_random.mean()) < 10**-3
 
 
-def test_convolution():
-    data = np.array([[0., 1., 1., 1., 1., 1.],
-                     [1., 0., 1., 1., 1., 1.],
-                     [1., 1., 0., 1., 1., 1.],
-                     [1., 1., 1., np.nan, 1., 1.],
-                     [1., 1., 1., 1., 0., 1.],
-                     [1., 1., 1., 1., 1., 0.]])
-    m, n = data.shape
-    raster = xr.DataArray(data, dims=['y', 'x'])
-    raster['x'] = np.linspace(0, n, n)
-    raster['y'] = np.linspace(0, m, m)
-    cellsize_x, cellsize_y = calc_cellsize(raster)
+convolve_2d_data = np.array([[0., 1., 1., 1., 1., 1.],
+                             [1., 0., 1., 1., 1., 1.],
+                             [1., 1., 0., 1., 1., 1.],
+                             [1., 1., 1., np.nan, 1., 1.],
+                             [1., 1., 1., 1., 0., 1.],
+                             [1., 1., 1., 1., 1., 0.]])
 
-    # kernel array = [[1]]
+
+def test_convolution():
+    data = convolve_2d_data
+
     kernel1 = np.ones((1, 1))
-    output_1 = convolve_2d(raster.data, kernel1)
+    output_1 = convolve_2d(data, kernel1)
     expected_output_1 = np.array([[0., 1., 1., 1., 1., 1.],
                                   [1., 0., 1., 1., 1., 1.],
                                   [1., 1., 0., 1., 1., 1.],
                                   [1., 1., 1., np.nan, 1., 1.],
                                   [1., 1., 1., 1., 0., 1.],
                                   [1., 1., 1., 1., 1., 0.]])
+    assert isinstance(output_1, np.ndarray)
     assert np.isclose(output_1, expected_output_1, equal_nan=True).all()
 
-    # kernel array: [[0, 1, 0],
-    #                [1, 1, 1],
-    #                [0, 1, 0]]
-    kernel2 = circle_kernel(cellsize_x, cellsize_y, 2)
-    output_2 = convolve_2d(raster.data, kernel2)
+    kernel2 = np.array([[0, 1, 0],
+                        [1, 1, 1],
+                        [0, 1, 0]])
+    output_2 = convolve_2d(data, kernel2)
     expected_output_2 = np.array([[0., 0., 0., 0., 0., 0.],
                                   [0., 4., 3., 5., 5., 0.],
                                   [0., 3., np.nan, np.nan, np.nan, 0.],
@@ -96,22 +98,55 @@ def test_convolution():
                                   [0., 0., 0., 0., 0., 0.]])
     # kernel2 is of 3x3, thus the border edge is 1 cell long.
     # currently, ignoring border edge (i.e values in edges are all 0s)
+    assert isinstance(output_2, np.ndarray)
     assert np.isclose(output_2, expected_output_2, equal_nan=True).all()
 
-    # kernel array: [[0, 1, 0],
-    #                [1, 0, 1],
-    #                [0, 1, 0]]
-    kernel3 = annulus_kernel(cellsize_x, cellsize_y, 2.0, 0.5)
-    output_3 = convolve_2d(np.nan_to_num(raster.values), kernel3)
+    kernel3 = np.array([[0, 1, 0],
+                        [1, 0, 1],
+                        [0, 1, 0]])
+    output_3 = convolve_2d(data, kernel3)
     expected_output_3 = np.array([[0., 0., 0., 0., 0., 0.],
                                   [0., 4., 2., 4., 4., 0.],
-                                  [0., 2., 4., 2., 4., 0.],
-                                  [0., 4., 2., 4., 2., 0.],
-                                  [0., 4., 4., 2., 4., 0.],
+                                  [0., 2., np.nan, np.nan, np.nan, 0.],
+                                  [0., 4., np.nan, np.nan, np.nan, 0.],
+                                  [0., 4., np.nan, np.nan, np.nan, 0.],
                                   [0., 0., 0., 0., 0., 0.]])
     # kernel3 is of 3x3, thus the border edge is 1 cell long.
     # currently, ignoring border edge (i.e values in edges are all 0s)
+    assert isinstance(output_3, np.ndarray)
     assert np.isclose(output_3, expected_output_3, equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_2d_convolution_gpu_equals_cpu():
+
+    import cupy
+
+    data = convolve_2d_data
+    numpy_agg = xr.DataArray(data)
+    cupy_agg = xr.DataArray(cupy.asarray(data))
+
+    kernel1 = np.ones((1, 1))
+    output_numpy1 = convolve_2d(numpy_agg.data, kernel1)
+    output_cupy1 = convolve_2d(cupy_agg.data, kernel1)
+    assert isinstance(output_cupy1, cupy.ndarray)
+    assert np.isclose(output_numpy1, output_cupy1.get(), equal_nan=True).all()
+
+    kernel2 = np.array([[0, 1, 0],
+                        [1, 1, 1],
+                        [0, 1, 0]])
+    output_numpy2 = convolve_2d(numpy_agg.data, kernel2)
+    output_cupy2 = convolve_2d(cupy_agg.data, kernel2)
+    assert isinstance(output_cupy2, cupy.ndarray)
+    assert np.isclose(output_numpy2, output_cupy2.get(), equal_nan=True).all()
+
+    kernel3 = np.array([[0, 1, 0],
+                        [1, 0, 1],
+                        [0, 1, 0]])
+    output_numpy3 = convolve_2d(numpy_agg.data, kernel3)
+    output_cupy3 = convolve_2d(cupy_agg.data, kernel3)
+    assert isinstance(output_cupy3, cupy.ndarray)
+    assert np.isclose(output_numpy3, output_cupy3.get(), equal_nan=True).all()
 
 
 # def test_hotspot():
