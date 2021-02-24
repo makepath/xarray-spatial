@@ -1,5 +1,4 @@
 '''Focal Related Utilities'''
-import re
 import warnings
 
 from numba import prange
@@ -7,7 +6,7 @@ import numpy as np
 from xarray import DataArray
 
 from xrspatial.utils import ngjit
-from xrspatial.convolution import convolve_2d, _validate_kernel
+from xrspatial.convolution import convolve_2d, custom_kernel
 
 warnings.simplefilter('default')
 
@@ -156,7 +155,7 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
                          "(%s, %s)".format(y, x))
 
     # Validate the kernel
-    _validate_kernel(kernel)
+    kernel = custom_kernel(kernel)
 
     # apply kernel to raster values
     out = _apply(raster.values.astype(float), kernel, func)

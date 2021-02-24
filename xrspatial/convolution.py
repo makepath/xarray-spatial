@@ -79,7 +79,7 @@ def _get_distance(distance_str):
     return meters
 
 
-def calc_cellsize(raster):
+def cellsize(raster):
     if 'unit' in raster.attrs:
         unit = raster.attrs['unit']
     else:
@@ -95,7 +95,7 @@ def calc_cellsize(raster):
     return cellsize_x, np.abs(cellsize_y)
 
 
-def _gen_ellipse_kernel(half_w, half_h):
+def _ellipse_kernel(half_w, half_h):
     # x values of interest
     x = np.linspace(-half_w, half_w, 2 * half_w + 1)
     # y values of interest, as a "column" array
@@ -107,27 +107,6 @@ def _gen_ellipse_kernel(half_w, half_h):
     return ellipse.astype(float)
 
 
-def _validate_kernel(kernel):
-    """Validatetes that the kernel is a numpy array and has odd dimensions."""
-
-    if not isinstance(kernel, np.ndarray):
-        raise ValueError(
-            "Received a custom kernel that is not a Numpy array.",
-            """The kernel received was of type {} and needs to be of type `ndarray`
-            """.format(type(kernel))
-        )
-    else:
-        rows, cols = kernel.shape
-
-    if (rows % 2 == 0 or cols % 2 == 0):
-        raise ValueError(
-            "Received custom kernel with improper dimensions.",
-            """A custom kernel needs to have an odd shape, the
-            supplied kernel has {} rows and {} columns.
-            """.format(rows, cols)
-        )
-
-
 def circle_kernel(cellsize_x, cellsize_y, radius):
     # validate radius, convert radius to meters
     r = _get_distance(str(radius))
@@ -135,7 +114,7 @@ def circle_kernel(cellsize_x, cellsize_y, radius):
     kernel_half_w = int(r / cellsize_x)
     kernel_half_h = int(r / cellsize_y)
 
-    kernel = _gen_ellipse_kernel(kernel_half_w, kernel_half_h)
+    kernel = _ellipse_kernel(kernel_half_w, kernel_half_h)
     return kernel
 
 
@@ -154,8 +133,7 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
         r_inner = r2
 
     if r_outer - r_inner < np.sqrt((cellsize_x / 2)**2 + (cellsize_y / 2)**2):
-        warnings.warn('Annulus radii are closer than cellsize distance.',
-                      Warning)
+        warnings.warn('Annulus radii are closer than cellsize distance.', Warning)
 
     # Get the two circular kernels for the annulus
     kernel_outer = circle_kernel(cellsize_x, cellsize_y, outer_radius)
@@ -178,7 +156,20 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
 
 def custom_kernel(kernel):
     """Validates a custom kernel. If the kernel is valid, returns itself."""
-    _validate_kernel(kernel)
+
+    if not isinstance(kernel, np.ndarray):
+        raise ValueError(
+            "Received a custom kernel that is not a Numpy array.",
+            "The kernel received was of type {} and needs to be of type `ndarray`".format(type(kernel))
+        )
+    else:
+        rows, cols = kernel.shape
+
+    if (rows % 2 == 0 or cols % 2 == 0):
+        raise ValueError(
+            "Received custom kernel with improper dimensions.",
+            "A custom kernel needs to have an odd shape, the supplied kernel has {} rows and {} columns.".format(rows, cols)
+        )
     return kernel
 
 
@@ -244,7 +235,7 @@ def _convolve_2d_cuda(data, kernel, out):
         for l in range(kernel.shape[1]):
             i_k = i - k + delta_rows
             j_l = j - l + delta_cols
-            # (-4-) Check if (i_k, j_k) coordinates are inside the array:
+            # (-4-) Check if (i_k, j_l) coordinates are inside the array:
             if (i_k >= 0) and (i_k < data_rows) and (j_l >= 0) and (j_l < data_cols):
                 s += kernel[k, l] * data[i_k, j_l]
     out[i, j] = s

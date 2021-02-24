@@ -9,7 +9,7 @@ from xrspatial.utils import doesnt_have_cuda
 from xrspatial import mean
 from xrspatial.focal import hotspots
 from xrspatial.convolution import (
-    convolve_2d, calc_cellsize, _validate_kernel,
+    convolve_2d, cellsize,
     circle_kernel, annulus_kernel,
 )
 import pytest
@@ -154,7 +154,7 @@ def test_2d_convolution_gpu_equals_cpu():
 #     raster = xr.DataArray(np.zeros((n, m), dtype=float), dims=['y', 'x'])
 #     raster['x'] = np.linspace(0, n, n)
 #     raster['y'] = np.linspace(0, m, m)
-#     cellsize_x, cellsize_y = calc_cellsize(raster)
+#     cellsize_x, cellsize_y = cellsize(raster)
 #
 #     kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
 #
