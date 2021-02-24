@@ -2,15 +2,10 @@ import xarray as xr
 import numpy as np
 
 from xrspatial import mean
-from xrspatial.convolution import convolve_2d
-from xrspatial.focal import (
-    calc_cellsize,
-    calc_mean,
-    calc_sum,
-    hotspots,
-    circle_kernel,
-    annulus_kernel,
-    _validate_kernel,
+from xrspatial.focal import hotspots
+from xrspatial.convolution import (
+    convolve_2d, calc_cellsize, _validate_kernel,
+    circle_kernel, annulus_kernel,
 )
 import pytest
 
