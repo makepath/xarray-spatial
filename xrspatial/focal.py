@@ -6,7 +6,7 @@ from numba import prange
 import numpy as np
 from xarray import DataArray
 
-from xrspatial.utils import ngjit
+from xrspatial.utils import ngjit, get_dataarray_resolution
 from xrspatial.convolution import convolve_2d
 
 warnings.simplefilter('default')
@@ -54,21 +54,16 @@ def _get_distance(distance_str):
 
     number = splits[0]
     if not _is_numeric(number):
-        raise ValueError(
-            "Invalid value.\n"
-            "Distance should be a possitive numeric value.\n")
+        raise ValueError("Distance should be a positive numeric value.\n")
 
     distance = float(number)
     if distance <= 0:
-        raise ValueError(
-            "Invalid value.\n"
-            "Distance should be a possitive.\n")
+        raise ValueError("Distance should be a positive.\n")
 
     unit = unit.lower()
     unit = unit.replace(' ', '')
     if unit not in UNITS:
         raise ValueError(
-            "Invalid value.\n"
             "Distance unit should be one of the following: \n"
             "meter (meter, meters, m),\n"
             "kilometer (kilometer, kilometers, km),\n"
@@ -80,7 +75,7 @@ def _get_distance(distance_str):
     return meters
 
 
-def calc_cellsize(raster, x='x', y='y'):
+def calc_cellsize(raster):
     if 'unit' in raster.attrs:
         unit = raster.attrs['unit']
     else:
@@ -88,10 +83,7 @@ def calc_cellsize(raster, x='x', y='y'):
         warnings.warn('Raster distance unit not provided. '
                       'Use meter as default.', Warning)
 
-    # TODO: check coordinate system
-    #       if in lat-lon, need to convert to meter, lnglat_to_meters
-    cellsize_x = raster.coords[x].data[1] - raster.coords[x].data[0]
-    cellsize_y = raster.coords[y].data[1] - raster.coords[y].data[0]
+    cellsize_x, cellsize_y = get_dataarray_resolution(raster)
     cellsize_x = _to_meters(cellsize_x, unit)
     cellsize_y = _to_meters(cellsize_y, unit)
 
