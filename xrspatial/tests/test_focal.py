@@ -90,14 +90,14 @@ def test_convolution():
                         [1, 1, 1],
                         [0, 1, 0]])
     output_2 = convolve_2d(data, kernel2)
-    expected_output_2 = np.array([[0., 0., 0., 0., 0., 0.],
-                                  [0., 4., 3., 5., 5., 0.],
-                                  [0., 3., np.nan, np.nan, np.nan, 0.],
-                                  [0., 5., np.nan, np.nan, np.nan, 0.],
-                                  [0., 5., np.nan, np.nan, np.nan, 0.],
-                                  [0., 0., 0., 0., 0., 0.]])
+    expected_output_2 = np.array([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+                                  [np.nan, 4., 3., 5., 5., np.nan],
+                                  [np.nan, 3., np.nan, np.nan, np.nan, np.nan],
+                                  [np.nan, 5., np.nan, np.nan, np.nan, np.nan],
+                                  [np.nan, 5., np.nan, np.nan, np.nan, np.nan],
+                                  [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]])
     # kernel2 is of 3x3, thus the border edge is 1 cell long.
-    # currently, ignoring border edge (i.e values in edges are all 0s)
+    # currently, ignoring border edge (i.e values in edges are all nans)
     assert isinstance(output_2, np.ndarray)
     assert np.isclose(output_2, expected_output_2, equal_nan=True).all()
 
@@ -105,14 +105,14 @@ def test_convolution():
                         [1, 0, 1],
                         [0, 1, 0]])
     output_3 = convolve_2d(data, kernel3)
-    expected_output_3 = np.array([[0., 0., 0., 0., 0., 0.],
-                                  [0., 4., 2., 4., 4., 0.],
-                                  [0., 2., np.nan, np.nan, np.nan, 0.],
-                                  [0., 4., np.nan, np.nan, np.nan, 0.],
-                                  [0., 4., np.nan, np.nan, np.nan, 0.],
-                                  [0., 0., 0., 0., 0., 0.]])
+    expected_output_3 = np.array([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+                                  [np.nan, 4., 2., 4., 4., np.nan],
+                                  [np.nan, 2., np.nan, np.nan, np.nan, np.nan],
+                                  [np.nan, 4., np.nan, np.nan, np.nan, np.nan],
+                                  [np.nan, 4., np.nan, np.nan, np.nan, np.nan],
+                                  [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]])
     # kernel3 is of 3x3, thus the border edge is 1 cell long.
-    # currently, ignoring border edge (i.e values in edges are all 0s)
+    # currently, ignoring border edge (i.e values in edges are all nans)
     assert isinstance(output_3, np.ndarray)
     assert np.isclose(output_3, expected_output_3, equal_nan=True).all()
 

@@ -195,8 +195,8 @@ def _convolve_2d_cpu(data, kernel):
     wkx = nkx // 2
     wky = nky // 2
 
-    result = np.zeros(data.shape, dtype=float32)
-
+    out = np.zeros(data.shape, dtype=float32)
+    out[:, :] = np.nan
     for i in prange(wkx, nx-wkx):
         iimin = max(i - wkx, 0)
         iimax = min(i + wkx + 1, nx)
@@ -209,14 +209,14 @@ def _convolve_2d_cpu(data, kernel):
                 for jj in range(jjmin, jjmax, 1):
                     jjj = wky + jj - j
                     num += kernel[iii, jjj] * data[ii, jj]
-            result[i, j] = num
+            out[i, j] = num
 
-    return result
+    return out
 
 
 # https://www.vincent-lunot.com/post/an-introduction-to-cuda-in-python-part-3/
 @cuda.jit
-def _convolve_2d_cuda(data, kernel, result):
+def _convolve_2d_cuda(data, kernel, out):
     # expect a 2D grid and 2D blocks,
     # a kernel with odd numbers of rows and columns, (-1-)
     # a grayscale image
@@ -224,18 +224,19 @@ def _convolve_2d_cuda(data, kernel, result):
     # (-2-) 2D coordinates of the current thread:
     i, j = cuda.grid(2)
 
-    # (-3-) if the thread coordinates are outside of the data image, we ignore the thread:
-    data_rows, data_cols = data.shape
-    if (i >= data_rows) or (j >= data_cols):
-        return
-
-    # To compute the result at coordinates (i, j), we need to use delta_rows rows of the array
+    # To compute the out at coordinates (i, j), we need to use delta_rows rows of the array
     # before and after the i_th row,
     # as well as delta_cols columns of the array before and after the j_th column:
     delta_rows = kernel.shape[0] // 2
     delta_cols = kernel.shape[1] // 2
 
-    # The result at coordinates (i, j) is equal to
+    data_rows, data_cols = data.shape
+    # (-3-) if the thread coordinates are outside of the data image, we ignore the thread
+    # currently, if the thread coordinates are in the edges, we ignore the thread
+    if i < delta_rows or i >= data_rows - delta_rows or j < delta_cols or j >= data_cols - delta_cols:
+        return
+
+    # The out at coordinates (i, j) is equal to
     # sum_{k, l} kernel[k, l] * data[i - k + delta_rows, j - l + delta_cols]
     # with k and l going through the whole kernel array:
     s = 0
@@ -246,14 +247,15 @@ def _convolve_2d_cuda(data, kernel, result):
             # (-4-) Check if (i_k, j_k) coordinates are inside the array:
             if (i_k >= 0) and (i_k < data_rows) and (j_l >= 0) and (j_l < data_cols):
                 s += kernel[k, l] * data[i_k, j_l]
-    result[i, j] = s
+    out[i, j] = s
 
 
 def _convolve_2d_gpu(data, kernel):
-    result = cupy.empty_like(data)
+    out = cupy.empty(data.shape, dtype='f4')
+    out[:, :] = cupy.nan
     griddim, blockdim = cuda_args(data.shape)
-    _convolve_2d_cuda[griddim, blockdim](data, kernel, result)
-    return result
+    _convolve_2d_cuda[griddim, blockdim](data, kernel, cupy.asarray(out))
+    return out
 
 
 def convolve_2d(data, kernel):
