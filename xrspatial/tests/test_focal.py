@@ -212,7 +212,7 @@ def test_apply():
     from xrspatial.utils import ngjit
 
     @ngjit
-    def func(x):
+    def func_zero(x):
         return 0
 
     data = np.array([[0,   1,  2,  3,  4,  5],
@@ -226,9 +226,18 @@ def test_apply():
 
     # numpy case
     numpy_agg = xr.DataArray(data)
-    numpy_apply = apply(numpy_agg, kernel, func=func)
+    numpy_apply = apply(numpy_agg, kernel, func_zero)
     assert isinstance(numpy_apply.data, np.ndarray)
+    assert numpy_agg.shape == numpy_apply.shape
     assert np.count_nonzero(numpy_apply.data) == 0
+
+    # dask + numpy case
+    dask_numpy_agg = xr.DataArray(da.from_array(data, chunks=(3, 3)))
+    dask_numpy_apply = apply(dask_numpy_agg, kernel, func_zero)
+    assert isinstance(dask_numpy_apply.data, da.Array)
+
+    # both output same results
+    assert np.isclose(numpy_apply, dask_numpy_apply.compute(), equal_nan=True).all()
 
 
 # def test_hotspot():

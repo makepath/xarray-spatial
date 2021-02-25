@@ -209,12 +209,12 @@ def _confidence(zscore):
 
 
 @ngjit
-def _apply_numpy(data, kernel_array, func):
+def _apply_numpy(data, kernel, func):
     out = np.zeros_like(data)
     rows, cols = data.shape
-    krows, kcols = kernel_array.shape
+    krows, kcols = kernel.shape
     hrows, hcols = int(krows / 2), int(kcols / 2)
-    kernel_values = np.zeros_like(kernel_array, dtype=data.dtype)
+    kernel_values = np.zeros_like(kernel, dtype=data.dtype)
 
     for y in prange(rows):
         for x in prange(cols):
@@ -224,16 +224,33 @@ def _apply_numpy(data, kernel_array, func):
                 for kx in range(x - hcols, x + hcols + 1):
                     if ky >= 0 and ky < rows and kx >= 0 and kx < cols:
                         kyidx, kxidx = ky - (y - hrows), kx - (x - hcols)
-                        if kernel_array[kyidx, kxidx] == 1:
+                        if kernel[kyidx, kxidx] == 1:
                             kernel_values[kyidx, kxidx] = data[ky, kx]
             out[y, x] = func(kernel_values)
     return out
 
 
-def _apply(data, kernel_array, func):
+def _apply_dask_numpy(data, kernel, func):
+    _func = partial(_apply_numpy, kernel=kernel, func=func)
+
+    pad_h = kernel.shape[0] // 2
+    pad_w = kernel.shape[1] // 2
+
+    out = data.map_overlap(_func,
+                           depth=(pad_h, pad_w),
+                           boundary=np.nan,
+                           meta=np.array(()))
+    return out
+
+
+def _apply(data, kernel, func):
     # numpy case
     if isinstance(data, np.ndarray):
-        out = _apply_numpy(data, kernel_array, func)
+        out = _apply_numpy(data, kernel, func)
+
+    # dask + numpy case
+    elif isinstance(data, da.Array):
+        out = _apply_dask_numpy(data, kernel, func)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(data)))
