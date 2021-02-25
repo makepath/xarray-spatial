@@ -7,6 +7,14 @@ import numpy as np
 from xarray import DataArray
 import dask.array as da
 
+from numba import cuda
+
+try:
+    import cupy
+except ImportError:
+    class cupy(object):
+        ndarray = False
+
 from xrspatial.utils import ngjit
 from xrspatial.convolution import convolve_2d, custom_kernel
 
@@ -16,16 +24,25 @@ warnings.simplefilter('default')
 
 
 @ngjit
+def _equal(x, y):
+    if x == y or (np.isnan(x) and np.isnan(y)):
+        return True
+    return False
+
+
+@ngjit
 def _mean_numpy(data, excludes):
+    # TODO: exclude nans
     out = np.zeros_like(data)
     out[:, :] = np.nan
     rows, cols = data.shape
+
     for y in range(1, rows - 1):
         for x in range(1, cols - 1):
 
             exclude = False
             for ex in excludes:
-                if data[y, x] == ex:
+                if _equal(data[y, x], ex):
                     exclude = True
                     break
 
