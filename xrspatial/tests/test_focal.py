@@ -39,7 +39,7 @@ def _do_gaussian_array():
     return gaussian
 
 
-data_random = np.random.random_sample((5, 5))
+data_random = np.random.random_sample((100, 100))
 data_random_sparse = _do_sparse_array(data_random)
 data_gaussian = _do_gaussian_array()
 
@@ -58,6 +58,11 @@ def test_mean_transfer_function():
     # both output same results
     assert np.isclose(numpy_mean, dask_numpy_mean.compute(), equal_nan=True).all()
     assert numpy_agg.shape == numpy_mean.shape
+
+    import cupy
+    cupy_agg = xr.DataArray(cupy.asarray(data_random))
+    cupy_mean = mean(cupy_agg)
+    assert np.isclose(numpy_mean, cupy_mean.data.get(), equal_nan=True).all()
 
 
 convolve_2d_data = np.array([[0., 1., 1., 1., 1., 1.],

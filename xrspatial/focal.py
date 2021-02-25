@@ -2,6 +2,8 @@
 from functools import partial
 import warnings
 
+from math import isnan
+
 from numba import prange
 import numpy as np
 from xarray import DataArray
@@ -15,6 +17,8 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
+from xrspatial.utils import cuda_args
+from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
 from xrspatial.convolution import convolve_2d, custom_kernel
 
@@ -24,7 +28,7 @@ warnings.simplefilter('default')
 
 
 @ngjit
-def _equal(x, y):
+def _equal_numpy(x, y):
     if x == y or (np.isnan(x) and np.isnan(y)):
         return True
     return False
@@ -32,7 +36,7 @@ def _equal(x, y):
 
 @ngjit
 def _mean_numpy(data, excludes):
-    # TODO: exclude nans
+    # TODO: exclude nans, what if nans in the kernel?
     out = np.zeros_like(data)
     out[:, :] = np.nan
     rows, cols = data.shape
@@ -42,7 +46,7 @@ def _mean_numpy(data, excludes):
 
             exclude = False
             for ex in excludes:
-                if _equal(data[y, x], ex):
+                if _equal_numpy(data[y, x], ex):
                     exclude = True
                     break
 
@@ -61,6 +65,41 @@ def _mean_numpy(data, excludes):
     return out
 
 
+@cuda.jit(device=True)
+def _kernel_mean_gpu(data):
+    return (data[-1, -1] + data[-1, 0] + data[-1, 1]
+            + data[0, -1] + data[0, 0] + data[0, 1]
+            + data[1, -1] + data[1, 0] + data[1, 1]) / 9
+
+
+@cuda.jit
+def _mean_gpu(data, excludes, out):
+    i, j = cuda.grid(2)
+    di = 1
+    dj = 1
+
+    for ex in excludes:
+        if (data[i, j] == ex) or (isnan(data[i, j]) and isnan(ex)):
+            out[i, j] = data[i, j]
+            return
+
+    if (i - di >= 0 and i + di <= out.shape[0] - 1 and
+            j - dj >= 0 and j + dj <= out.shape[1] - 1):
+        out[i, j] = _kernel_mean_gpu(data[i-1:i+2, j-1:j+2])
+
+
+def _mean_cupy(data, excludes):
+    out = cupy.zeros_like(data)
+    out[:, :] = cupy.nan
+    griddim, blockdim = cuda_args(data.shape)
+    out = cupy.empty(data.shape, dtype='f4')
+    out[:] = cupy.nan
+
+    _mean_gpu[griddim, blockdim](data, cupy.asarray(excludes), out)
+
+    return out
+
+
 def _mean_dask_numpy(data, excludes):
     _func = partial(_mean_numpy, excludes=excludes)
     out = data.map_overlap(_func,
@@ -74,6 +113,10 @@ def _mean(data, excludes):
     # numpy case
     if isinstance(data, np.ndarray):
         out = _mean_numpy(data.astype(np.float), excludes)
+
+    # cupy case
+    elif has_cuda() and isinstance(data, cupy.ndarray):
+        out = _mean_cupy(data, excludes)
 
     # dask + numpy case
     elif isinstance(data, da.Array):
