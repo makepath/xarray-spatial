@@ -9,14 +9,13 @@ import numpy as np
 from xarray import DataArray
 import dask.array as da
 
-from numba import cuda
-
 try:
     import cupy
 except ImportError:
     class cupy(object):
         ndarray = False
 
+from numba import cuda
 from xrspatial.utils import cuda_args
 from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
@@ -243,10 +242,49 @@ def _apply_dask_numpy(data, kernel, func):
     return out
 
 
+def _apply_cupy(data, kernel, func):
+
+    out = cupy.zeros(data.shape, dtype=data.dtype)
+    out[:] = cupy.nan
+
+    rows, cols = data.shape
+    krows, kcols = kernel.shape
+    hrows, hcols = int(krows / 2), int(kcols / 2)
+    kernel_values = cupy.zeros_like(kernel, dtype=data.dtype)
+
+    for y in prange(rows):
+        for x in prange(cols):
+            # kernel values are all nans at the beginning of each step
+            kernel_values.fill(np.nan)
+            for ky in range(y - hrows, y + hrows + 1):
+                for kx in range(x - hcols, x + hcols + 1):
+                    if ky >= 0 and ky < rows and kx >= 0 and kx < cols:
+                        kyidx, kxidx = ky - (y - hrows), kx - (x - hcols)
+                        if kernel[kyidx, kxidx] == 1:
+                            kernel_values[kyidx, kxidx] = data[ky, kx]
+            out[y, x] = func(kernel_values)
+
+    return out
+
+
+def _apply_dask_cupy(data, kernel, func):
+    msg = 'Upstream bug in dask prevents cupy backed arrays'
+    raise NotImplementedError(msg)
+
+
 def _apply(data, kernel, func):
     # numpy case
     if isinstance(data, np.ndarray):
         out = _apply_numpy(data, kernel, func)
+
+    # cupy case
+    elif has_cuda() and isinstance(data, cupy.ndarray):
+        out = _apply_cupy(data, cupy.asarray(kernel), func)
+
+    # dask + cupy case
+    elif has_cuda() and isinstance(data, da.Array) and \
+            type(data._meta).__module__.split('.')[0] == 'cupy':
+        out = _apply_dask_cupy(data, cupy.asarray(kernel), func)
 
     # dask + numpy case
     elif isinstance(data, da.Array):
@@ -268,11 +306,6 @@ def apply(raster, kernel, func=calc_mean):
 
     if raster.ndim != 2:
         raise ValueError("`raster` must be 2D")
-
-    if not (issubclass(raster.values.dtype.type, np.integer) or
-            issubclass(raster.values.dtype.type, np.floating)):
-        raise ValueError(
-            "`raster` must be an array of integers or float")
 
     # Validate the kernel
     kernel = custom_kernel(kernel)

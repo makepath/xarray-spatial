@@ -5,6 +5,7 @@ import numpy as np
 import dask.array as da
 
 from xrspatial.utils import doesnt_have_cuda
+from xrspatial.utils import ngjit
 
 from xrspatial import mean
 from xrspatial.focal import hotspots, apply
@@ -207,37 +208,59 @@ def test_2d_convolution_gpu_equals_cpu():
         assert e_info
 
 
-def test_apply():
+data_apply = np.array([[0, 1, 2, 3, 4, 5],
+                       [6, 7, 8, 9, 10, 11],
+                       [12, 13, 14, 15, 16, 17],
+                       [18, 19, 20, 21, 22, 23]])
 
-    from xrspatial.utils import ngjit
+kernel_apply = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
 
+
+def test_apply_cpu():
     @ngjit
-    def func_zero(x):
+    def func_zero_cpu(x):
         return 0
 
-    data = np.array([[0,   1,  2,  3,  4,  5],
-                     [6,   7,  8,  9, 10, 11],
-                     [12, 13, 14, 15, 16, 17],
-                     [18, 19, 20, 21, 22, 23]])
-
-    kernel = np.array([[0, 1, 0],
-                       [1, 0, 1],
-                       [0, 1, 0]])
-
     # numpy case
-    numpy_agg = xr.DataArray(data)
-    numpy_apply = apply(numpy_agg, kernel, func_zero)
+    numpy_agg = xr.DataArray(data_apply)
+    numpy_apply = apply(numpy_agg, kernel_apply, func_zero_cpu)
     assert isinstance(numpy_apply.data, np.ndarray)
     assert numpy_agg.shape == numpy_apply.shape
     assert np.count_nonzero(numpy_apply.data) == 0
 
     # dask + numpy case
-    dask_numpy_agg = xr.DataArray(da.from_array(data, chunks=(3, 3)))
-    dask_numpy_apply = apply(dask_numpy_agg, kernel, func_zero)
+    dask_numpy_agg = xr.DataArray(da.from_array(data_apply, chunks=(3, 3)))
+    dask_numpy_apply = apply(dask_numpy_agg, kernel_apply, func_zero_cpu)
     assert isinstance(dask_numpy_apply.data, da.Array)
 
     # both output same results
     assert np.isclose(numpy_apply, dask_numpy_apply.compute(), equal_nan=True).all()
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_apply_gpu_equals_gpu():
+    def func_zero(x):
+        return 0
+
+    @ngjit
+    def func_zero_cpu(x):
+        return 0
+
+    # cupy case
+    import cupy
+    cupy_agg = xr.DataArray(cupy.asarray(data_apply))
+    cupy_apply = apply(cupy_agg, kernel_apply, func_zero)
+    assert isinstance(cupy_apply.data, cupy.ndarray)
+    # numpy case
+    numpy_agg = xr.DataArray(data_apply)
+    numpy_apply = apply(numpy_agg, kernel_apply, func_zero_cpu)
+    assert np.isclose(numpy_apply, cupy_apply.data.get(), equal_nan=True).all()
+
+    # dask + cupy case not implemented
+    dask_cupy_agg = xr.DataArray(da.from_array(cupy.asarray(data_apply), chunks=(3, 3)))
+    with pytest.raises(NotImplementedError) as e_info:
+        apply(dask_cupy_agg, kernel_apply, func_zero)
+        assert e_info
 
 
 # def test_hotspot():
