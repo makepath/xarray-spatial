@@ -44,7 +44,7 @@ data_random_sparse = _do_sparse_array(data_random)
 data_gaussian = _do_gaussian_array()
 
 
-def test_mean_transfer_function():
+def test_mean_transfer_function_cpu():
     # numpy case
     numpy_agg = xr.DataArray(data_random)
     numpy_mean = mean(numpy_agg)
@@ -59,10 +59,28 @@ def test_mean_transfer_function():
     assert np.isclose(numpy_mean, dask_numpy_mean.compute(), equal_nan=True).all()
     assert numpy_agg.shape == numpy_mean.shape
 
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_mean_transfer_function_gpu_equals_cpu():
+
     import cupy
+
+    # cupy case
     cupy_agg = xr.DataArray(cupy.asarray(data_random))
     cupy_mean = mean(cupy_agg)
+    assert isinstance(cupy_mean.data, cupy.ndarray)
+
+    # numpy case
+    numpy_agg = xr.DataArray(data_random)
+    numpy_mean = mean(numpy_agg)
+
     assert np.isclose(numpy_mean, cupy_mean.data.get(), equal_nan=True).all()
+
+    # dask + cupy case not implemented
+    dask_cupy_agg = xr.DataArray(da.from_array(cupy.asarray(data_random), chunks=(3, 3)))
+    with pytest.raises(NotImplementedError) as e_info:
+        mean(dask_cupy_agg)
+        assert e_info
 
 
 convolve_2d_data = np.array([[0., 1., 1., 1., 1., 1.],

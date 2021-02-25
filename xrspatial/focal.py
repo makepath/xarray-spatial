@@ -65,6 +65,15 @@ def _mean_numpy(data, excludes):
     return out
 
 
+def _mean_dask_numpy(data, excludes):
+    _func = partial(_mean_numpy, excludes=excludes)
+    out = data.map_overlap(_func,
+                           depth=(1, 1),
+                           boundary=np.nan,
+                           meta=np.array(()))
+    return out
+
+
 @cuda.jit(device=True)
 def _kernel_mean_gpu(data):
     return (data[-1, -1] + data[-1, 0] + data[-1, 1]
@@ -100,13 +109,9 @@ def _mean_cupy(data, excludes):
     return out
 
 
-def _mean_dask_numpy(data, excludes):
-    _func = partial(_mean_numpy, excludes=excludes)
-    out = data.map_overlap(_func,
-                           depth=(1, 1),
-                           boundary=np.nan,
-                           meta=np.array(()))
-    return out
+def _mean_dask_cupy(data, excludes):
+    msg = 'Upstream bug in dask prevents cupy backed arrays'
+    raise NotImplementedError(msg)
 
 
 def _mean(data, excludes):
@@ -116,7 +121,12 @@ def _mean(data, excludes):
 
     # cupy case
     elif has_cuda() and isinstance(data, cupy.ndarray):
-        out = _mean_cupy(data, excludes)
+        out = _mean_cupy(data.astype(cupy.float), excludes)
+
+    # dask + cupy case
+    elif has_cuda() and isinstance(data, da.Array) and \
+            type(data._meta).__module__.split('.')[0] == 'cupy':
+        out = _mean_dask_cupy(data.astype(cupy.float), excludes)
 
     # dask + numpy case
     elif isinstance(data, da.Array):
