@@ -341,19 +341,20 @@ def _calc_hotspots_numpy(z_array):
 
 
 def _hotspots_numpy(raster, kernel):
-    if not (issubclass(raster.values.dtype.type, np.integer) or
-            issubclass(raster.values.dtype.type, np.floating)):
-        raise ValueError(
-            "`raster` must be an array of integers or float")
+    if not (issubclass(raster.data.dtype.type, np.integer) or
+            issubclass(raster.data.dtype.type, np.floating)):
+        raise ValueError("data type must be integer or float")
 
     # apply kernel to raster values
-    mean_array = convolve_2d(raster.values, kernel / kernel.sum())
+    mean_array = convolve_2d(raster.data, kernel / kernel.sum())
 
     # calculate z-scores
-    global_mean = np.nanmean(raster.values)
-    global_std = np.nanstd(raster.values)
+    global_mean = np.nanmean(raster.data)
+    global_std = np.nanstd(raster.data)
     if global_std == 0:
-        raise ZeroDivisionError("Standard deviation of the input raster values is 0.")
+        raise ZeroDivisionError(
+            "Standard deviation of the input raster values is 0."
+        )
     z_array = (mean_array - global_mean) / global_std
 
     out = _calc_hotspots_numpy(z_array)

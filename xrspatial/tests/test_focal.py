@@ -265,18 +265,13 @@ def test_apply_gpu_equals_gpu():
 
 def test_hotspot():
     n, m = 10, 10
-    raster = xr.DataArray(np.zeros((n, m), dtype=float), dims=['y', 'x'])
-    raster['x'] = np.linspace(0, n, n)
-    raster['y'] = np.linspace(0, m, m)
-    cellsize_x, cellsize_y = cellsize(raster)
+    data = np.zeros((n, m), dtype=float)
 
-    kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
-
-    all_idx = zip(*np.where(raster.values == 0))
+    all_idx = zip(*np.where(data == 0))
 
     nan_cells = [(i, i) for i in range(m)]
     for cell in nan_cells:
-        raster[cell[0], cell[1]] = np.nan
+        data[cell[0], cell[1]] = np.nan
 
     # add some extreme values
     hot_region = [(1, 1), (1, 2), (1, 3),
@@ -286,9 +281,16 @@ def test_hotspot():
                    (8, 7), (8, 8), (8, 9),
                    (9, 7), (9, 8), (9, 9)]
     for p in hot_region:
-        raster[p[0], p[1]] = 10000
+        data[p[0], p[1]] = 10000
     for p in cold_region:
-        raster[p[0], p[1]] = -10000
+        data[p[0], p[1]] = -10000
+
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    raster['x'] = np.linspace(0, n, n)
+    raster['y'] = np.linspace(0, m, m)
+    cellsize_x, cellsize_y = cellsize(raster)
+
+    kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
 
     no_significant_region = [id for id in all_idx if id not in hot_region and
                              id not in cold_region]
