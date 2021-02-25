@@ -1,9 +1,11 @@
 '''Focal Related Utilities'''
+from functools import partial
 import warnings
 
 from numba import prange
 import numpy as np
 from xarray import DataArray
+import dask.array as da
 
 from xrspatial.utils import ngjit
 from xrspatial.convolution import convolve_2d, custom_kernel
@@ -16,6 +18,7 @@ warnings.simplefilter('default')
 @ngjit
 def _mean_numpy(data, excludes):
     out = np.zeros_like(data)
+    out[:, :] = np.nan
     rows, cols = data.shape
     for y in range(1, rows - 1):
         for x in range(1, cols - 1):
@@ -41,10 +44,23 @@ def _mean_numpy(data, excludes):
     return out
 
 
+def _mean_dask_numpy(data, excludes):
+    _func = partial(_mean_numpy, excludes=excludes)
+    out = data.map_overlap(_func,
+                           depth=(1, 1),
+                           boundary=np.nan,
+                           meta=np.array(()))
+    return out
+
+
 def _mean(data, excludes):
     # numpy case
     if isinstance(data, np.ndarray):
-        out = _mean_numpy(data, excludes)
+        out = _mean_numpy(data.astype(np.float), excludes)
+
+    # dask + numpy case
+    elif isinstance(data, da.Array):
+        out = _mean_dask_numpy(data.astype(np.float), excludes)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(data)))
@@ -54,7 +70,8 @@ def _mean(data, excludes):
 
 def mean(agg, passes=1, excludes=[np.nan], name='mean'):
     """
-    Returns Mean filtered array using a 3x3 window
+    Returns Mean filtered array using a 3x3 window.
+    Default behaviour to 'mean' is to pad the borders with nans
 
     Parameters
     ----------

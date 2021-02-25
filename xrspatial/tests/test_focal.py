@@ -39,29 +39,25 @@ def _do_gaussian_array():
     return gaussian
 
 
-data_random = np.random.random_sample((100, 100))
+data_random = np.random.random_sample((5, 5))
 data_random_sparse = _do_sparse_array(data_random)
 data_gaussian = _do_gaussian_array()
 
 
 def test_mean_transfer_function():
-    da = xr.DataArray(data_random)
-    da_mean = mean(da)
-    assert da.shape == da_mean.shape
+    # numpy case
+    numpy_agg = xr.DataArray(data_random)
+    numpy_mean = mean(numpy_agg)
+    assert isinstance(numpy_mean.data, np.ndarray)
 
-    # Overall mean value should be the same as the original array.
-    # Considering the default behaviour to 'mean' is to pad the borders
-    # with zeros, the mean value of the filtered array will be slightly
-    # smaller (considering 'data_random' is positive).
-    assert da_mean.mean() <= data_random.mean()
+    # dask + numpy case
+    dask_numpy_agg = xr.DataArray(da.from_array(data_random, chunks=(3, 3)))
+    dask_numpy_mean = mean(dask_numpy_agg)
+    assert isinstance(dask_numpy_mean.data, da.Array)
 
-    # And if we pad the borders with the original values, we should have a
-    # 'mean' filtered array with _mean_ value very similar to the original one.
-    da_mean[0, :] = data_random[0, :]
-    da_mean[-1, :] = data_random[-1, :]
-    da_mean[:, 0] = data_random[:, 0]
-    da_mean[:, -1] = data_random[:, -1]
-    assert abs(da_mean.mean() - data_random.mean()) < 10**-3
+    # both output same results
+    assert np.isclose(numpy_mean, dask_numpy_mean.compute(), equal_nan=True).all()
+    assert numpy_agg.shape == numpy_mean.shape
 
 
 convolve_2d_data = np.array([[0., 1., 1., 1., 1., 1.],
