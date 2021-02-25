@@ -209,7 +209,7 @@ def _confidence(zscore):
 
 
 @ngjit
-def _apply(data, kernel_array, func):
+def _apply_numpy(data, kernel_array, func):
     out = np.zeros_like(data)
     rows, cols = data.shape
     krows, kcols = kernel_array.shape
@@ -222,16 +222,26 @@ def _apply(data, kernel_array, func):
             kernel_values.fill(np.nan)
             for ky in range(y - hrows, y + hrows + 1):
                 for kx in range(x - hcols, x + hcols + 1):
-                    if ky >= 0 and kx >= 0:
-                        if ky >= 0 and ky < rows and kx >= 0 and kx < cols:
-                            kyidx, kxidx = ky - (y - hrows), kx - (x - hcols)
-                            if kernel_array[kyidx, kxidx] == 1:
-                                kernel_values[kyidx, kxidx] = data[ky, kx]
+                    if ky >= 0 and ky < rows and kx >= 0 and kx < cols:
+                        kyidx, kxidx = ky - (y - hrows), kx - (x - hcols)
+                        if kernel_array[kyidx, kxidx] == 1:
+                            kernel_values[kyidx, kxidx] = data[ky, kx]
             out[y, x] = func(kernel_values)
     return out
 
 
-def apply(raster, kernel, x='x', y='y', func=calc_mean):
+def _apply(data, kernel_array, func):
+    # numpy case
+    if isinstance(data, np.ndarray):
+        out = _apply_numpy(data, kernel_array, func)
+
+    else:
+        raise TypeError('Unsupported Array Type: {}'.format(type(data)))
+
+    return out
+
+
+def apply(raster, kernel, func=calc_mean):
     """
     """
 
@@ -247,16 +257,11 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
         raise ValueError(
             "`raster` must be an array of integers or float")
 
-    raster_dims = raster.dims
-    if raster_dims != (y, x):
-        raise ValueError("raster.coords should be named as coordinates:"
-                         "(%s, %s)".format(y, x))
-
     # Validate the kernel
     kernel = custom_kernel(kernel)
 
     # apply kernel to raster values
-    out = _apply(raster.values.astype(float), kernel, func)
+    out = _apply(raster.data.astype(float), kernel, func)
 
     result = DataArray(out,
                        coords=raster.coords,

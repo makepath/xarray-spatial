@@ -7,12 +7,8 @@ import dask.array as da
 from xrspatial.utils import doesnt_have_cuda
 
 from xrspatial import mean
-from xrspatial.focal import hotspots
-from xrspatial.convolution import (
-    convolve_2d, cellsize,
-    circle_kernel, annulus_kernel,
-)
-import pytest
+from xrspatial.focal import hotspots, apply
+from xrspatial.convolution import convolve_2d, cellsize, circle_kernel, annulus_kernel
 
 
 def _do_sparse_array(data_array):
@@ -209,6 +205,31 @@ def test_2d_convolution_gpu_equals_cpu():
     with pytest.raises(NotImplementedError) as e_info:
         convolve_2d(dask_cupy_agg.data, kernel3)
         assert e_info
+
+
+def test_apply():
+
+    from xrspatial.utils import ngjit
+
+    @ngjit
+    def func(x):
+        return 0
+
+    data = np.array([[0,   1,  2,  3,  4,  5],
+                     [6,   7,  8,  9, 10, 11],
+                     [12, 13, 14, 15, 16, 17],
+                     [18, 19, 20, 21, 22, 23]])
+
+    kernel = np.array([[0, 1, 0],
+                       [1, 0, 1],
+                       [0, 1, 0]])
+
+    # numpy case
+    numpy_agg = xr.DataArray(data)
+    numpy_apply = apply(numpy_agg, kernel, func=func)
+    assert isinstance(numpy_apply.data, np.ndarray)
+    assert np.count_nonzero(numpy_apply.data) == 0
+
 
 # def test_hotspot():
 #     n, m = 10, 10
