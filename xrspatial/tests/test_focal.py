@@ -263,63 +263,63 @@ def test_apply_gpu_equals_gpu():
         assert e_info
 
 
-# def test_hotspot():
-#     n, m = 10, 10
-#     raster = xr.DataArray(np.zeros((n, m), dtype=float), dims=['y', 'x'])
-#     raster['x'] = np.linspace(0, n, n)
-#     raster['y'] = np.linspace(0, m, m)
-#     cellsize_x, cellsize_y = cellsize(raster)
-#
-#     kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
-#
-#     all_idx = zip(*np.where(raster.values == 0))
-#
-#     nan_cells = [(i, i) for i in range(m)]
-#     for cell in nan_cells:
-#         raster[cell[0], cell[1]] = np.nan
-#
-#     # add some extreme values
-#     hot_region = [(1, 1), (1, 2), (1, 3),
-#                   (2, 1), (2, 2), (2, 3),
-#                   (3, 1), (3, 2), (3, 3)]
-#     cold_region = [(7, 7), (7, 8), (7, 9),
-#                    (8, 7), (8, 8), (8, 9),
-#                    (9, 7), (9, 8), (9, 9)]
-#     for p in hot_region:
-#         raster[p[0], p[1]] = 10000
-#     for p in cold_region:
-#         raster[p[0], p[1]] = -10000
-#
-#     no_significant_region = [id for id in all_idx if id not in hot_region and
-#                              id not in cold_region]
-#
-#     hotspots_output = hotspots(raster, kernel)
-#
-#     # check output's properties
-#     # output must be an xarray DataArray
-#     assert isinstance(hotspots_output, xr.DataArray)
-#     assert isinstance(hotspots_output.values, np.ndarray)
-#     assert issubclass(hotspots_output.values.dtype.type, np.int8)
-#
-#     # shape, dims, coords, attr preserved
-#     assert raster.shape == hotspots_output.shape
-#     assert raster.dims == hotspots_output.dims
-#     assert raster.attrs == hotspots_output.attrs
-#     for coord in raster.coords:
-#         assert np.all(raster[coord] == hotspots_output[coord])
-#
-#     # no nan in output
-#     assert not np.isnan(np.min(hotspots_output))
-#
-#     # output of extreme regions are non-zeros
-#     # hot spots
-#     hot_spot = np.asarray([hotspots_output[p] for p in hot_region])
-#     assert np.all(hot_spot >= 0)
-#     assert np.sum(hot_spot) > 0
-#     # cold spots
-#     cold_spot = np.asarray([hotspots_output[p] for p in cold_region])
-#     assert np.all(cold_spot <= 0)
-#     assert np.sum(cold_spot) < 0
-#     # output of no significant regions are 0s
-#     no_sign = np.asarray([hotspots_output[p] for p in no_significant_region])
-#     assert np.all(no_sign == 0)
+def test_hotspot():
+    n, m = 10, 10
+    raster = xr.DataArray(np.zeros((n, m), dtype=float), dims=['y', 'x'])
+    raster['x'] = np.linspace(0, n, n)
+    raster['y'] = np.linspace(0, m, m)
+    cellsize_x, cellsize_y = cellsize(raster)
+
+    kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
+
+    all_idx = zip(*np.where(raster.values == 0))
+
+    nan_cells = [(i, i) for i in range(m)]
+    for cell in nan_cells:
+        raster[cell[0], cell[1]] = np.nan
+
+    # add some extreme values
+    hot_region = [(1, 1), (1, 2), (1, 3),
+                  (2, 1), (2, 2), (2, 3),
+                  (3, 1), (3, 2), (3, 3)]
+    cold_region = [(7, 7), (7, 8), (7, 9),
+                   (8, 7), (8, 8), (8, 9),
+                   (9, 7), (9, 8), (9, 9)]
+    for p in hot_region:
+        raster[p[0], p[1]] = 10000
+    for p in cold_region:
+        raster[p[0], p[1]] = -10000
+
+    no_significant_region = [id for id in all_idx if id not in hot_region and
+                             id not in cold_region]
+
+    hotspots_output = hotspots(raster, kernel)
+
+    # check output's properties
+    # output must be an xarray DataArray
+    assert isinstance(hotspots_output, xr.DataArray)
+    assert isinstance(hotspots_output.values, np.ndarray)
+    assert issubclass(hotspots_output.values.dtype.type, np.int8)
+
+    # shape, dims, coords, attr preserved
+    assert raster.shape == hotspots_output.shape
+    assert raster.dims == hotspots_output.dims
+    assert raster.attrs == hotspots_output.attrs
+    for coord in raster.coords:
+        assert np.all(raster[coord] == hotspots_output[coord])
+
+    # no nan in output
+    assert not np.isnan(np.min(hotspots_output))
+
+    # output of extreme regions are non-zeros
+    # hot spots
+    hot_spot = np.asarray([hotspots_output[p] for p in hot_region])
+    assert np.all(hot_spot >= 0)
+    assert np.sum(hot_spot) > 0
+    # cold spots
+    cold_spot = np.asarray([hotspots_output[p] for p in cold_region])
+    assert np.all(cold_spot <= 0)
+    assert np.sum(cold_spot) < 0
+    # output of no significant regions are 0s
+    no_sign = np.asarray([hotspots_output[p] for p in no_significant_region])
+    assert np.all(no_sign == 0)

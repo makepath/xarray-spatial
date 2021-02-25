@@ -176,38 +176,6 @@ def calc_sum(array):
 
 
 @ngjit
-def upper_bound_p_value(zscore):
-    if abs(zscore) >= 2.33:
-        return 0.0099
-    if abs(zscore) >= 1.65:
-        return 0.0495
-    if abs(zscore) >= 1.29:
-        return 0.0985
-    return 1
-
-
-@ngjit
-def _hot_cold(zscore):
-    if zscore > 0:
-        return 1
-    if zscore < 0:
-        return -1
-    return 0
-
-
-@ngjit
-def _confidence(zscore):
-    p_value = upper_bound_p_value(zscore)
-    if abs(zscore) > 2.58 and p_value < 0.01:
-        return 99
-    if abs(zscore) > 1.96 and p_value < 0.05:
-        return 95
-    if abs(zscore) > 1.65 and p_value < 0.1:
-        return 90
-    return 0
-
-
-@ngjit
 def _apply_numpy(data, kernel, func):
     out = np.zeros_like(data)
     rows, cols = data.shape
@@ -275,10 +243,17 @@ def _apply_dask_cupy(data, kernel, func):
 def _apply(data, kernel, func):
     # numpy case
     if isinstance(data, np.ndarray):
+        if not (issubclass(data.dtype.type, np.integer) or
+                issubclass(data.dtype.type, np.floating)):
+            raise ValueError("data type must be integer or float")
+
         out = _apply_numpy(data, kernel, func)
 
     # cupy case
     elif has_cuda() and isinstance(data, cupy.ndarray):
+        if not (issubclass(data.dtype.type, cupy.integer) or
+                issubclass(data.dtype.type, cupy.floating)):
+            raise ValueError("data type must be integer or float")
         out = _apply_cupy(data, cupy.asarray(kernel), func)
 
     # dask + cupy case
@@ -311,6 +286,8 @@ def apply(raster, kernel, func=calc_mean):
     kernel = custom_kernel(kernel)
 
     # apply kernel to raster values
+    # if raster is a numpy or dask with numpy backed data array,
+    # the function func must be a @ngjit
     out = _apply(raster.data.astype(float), kernel, func)
 
     result = DataArray(out,
@@ -322,7 +299,39 @@ def apply(raster, kernel, func=calc_mean):
 
 
 @ngjit
-def _hotspots(z_array):
+def upper_bound_p_value(zscore):
+    if abs(zscore) >= 2.33:
+        return 0.0099
+    if abs(zscore) >= 1.65:
+        return 0.0495
+    if abs(zscore) >= 1.29:
+        return 0.0985
+    return 1
+
+
+@ngjit
+def _hot_cold(zscore):
+    if zscore > 0:
+        return 1
+    if zscore < 0:
+        return -1
+    return 0
+
+
+@ngjit
+def _confidence(zscore):
+    p_value = upper_bound_p_value(zscore)
+    if abs(zscore) > 2.58 and p_value < 0.01:
+        return 99
+    if abs(zscore) > 1.96 and p_value < 0.05:
+        return 95
+    if abs(zscore) > 1.65 and p_value < 0.1:
+        return 90
+    return 0
+
+
+@ngjit
+def _calc_hotspots_numpy(z_array):
     out = np.zeros_like(z_array, dtype=np.int8)
     rows, cols = z_array.shape
     for y in prange(rows):
@@ -331,7 +340,27 @@ def _hotspots(z_array):
     return out
 
 
-def hotspots(raster, kernel, x='x', y='y'):
+def _hotspots_numpy(raster, kernel):
+    if not (issubclass(raster.values.dtype.type, np.integer) or
+            issubclass(raster.values.dtype.type, np.floating)):
+        raise ValueError(
+            "`raster` must be an array of integers or float")
+
+    # apply kernel to raster values
+    mean_array = convolve_2d(raster.values, kernel / kernel.sum())
+
+    # calculate z-scores
+    global_mean = np.nanmean(raster.values)
+    global_std = np.nanstd(raster.values)
+    if global_std == 0:
+        raise ZeroDivisionError("Standard deviation of the input raster values is 0.")
+    z_array = (mean_array - global_mean) / global_std
+
+    out = _calc_hotspots_numpy(z_array)
+    return out
+
+
+def hotspots(raster, kernel):
     """Identify statistically significant hot spots and cold spots in an input
     raster. To be a statistically significant hot spot, a feature will have a
     high value and be surrounded by other features with high values as well.
@@ -365,30 +394,15 @@ def hotspots(raster, kernel, x='x', y='y'):
     if raster.ndim != 2:
         raise ValueError("`raster` must be 2D")
 
-    if not (issubclass(raster.values.dtype.type, np.integer) or
-            issubclass(raster.values.dtype.type, np.floating)):
-        raise ValueError(
-            "`raster` must be an array of integers or float")
+    # numpy case
+    if isinstance(raster.data, np.ndarray):
+        out = _hotspots_numpy(raster, kernel)
 
-    raster_dims = raster.dims
-    if raster_dims != (y, x):
-        raise ValueError("raster.coords should be named as coordinates: (%s, %s)".format(y, x))
+    else:
+        raise TypeError('Unsupported Array Type: {}'.format(type(raster.data)))
 
-    # apply kernel to raster values
-    mean_array = convolve_2d(raster.values, kernel / kernel.sum())
+    return DataArray(out,
+                     coords=raster.coords,
+                     dims=raster.dims,
+                     attrs=raster.attrs)
 
-    # calculate z-scores
-    global_mean = np.nanmean(raster.values)
-    global_std = np.nanstd(raster.values)
-    if global_std == 0:
-        raise ZeroDivisionError("Standard deviation of the input raster values is 0.")
-    z_array = (mean_array - global_mean) / global_std
-
-    out = _hotspots(z_array)
-
-    result = DataArray(out,
-                       coords=raster.coords,
-                       dims=raster.dims,
-                       attrs=raster.attrs)
-
-    return result
