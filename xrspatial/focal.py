@@ -14,7 +14,7 @@ warnings.simplefilter('default')
 
 
 @ngjit
-def _mean(data, excludes):
+def _mean_numpy(data, excludes):
     out = np.zeros_like(data)
     rows, cols = data.shape
     for y in range(1, rows - 1):
@@ -41,6 +41,17 @@ def _mean(data, excludes):
     return out
 
 
+def _mean(data, excludes):
+    # numpy case
+    if isinstance(data, np.ndarray):
+        out = _mean_numpy(data, excludes)
+
+    else:
+        raise TypeError('Unsupported Array Type: {}'.format(type(data)))
+
+    return out
+
+
 def mean(agg, passes=1, excludes=[np.nan], name='mean'):
     """
     Returns Mean filtered array using a 3x3 window
@@ -57,15 +68,15 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
     -------
     data: DataArray
     """
-    out = None
+    out = agg.data
     for i in range(passes):
-        if out is None:
-            out = _mean(agg.data, tuple(excludes))
-        else:
-            out = _mean(out, tuple(excludes))
+        out = _mean(out, tuple(excludes))
 
-    return DataArray(out, name=name, dims=agg.dims,
-                     coords=agg.coords, attrs=agg.attrs)
+    return DataArray(out,
+                     name=name,
+                     dims=agg.dims,
+                     coords=agg.coords,
+                     attrs=agg.attrs)
 
 
 @ngjit
@@ -219,8 +230,7 @@ def hotspots(raster, kernel, x='x', y='y'):
 
     raster_dims = raster.dims
     if raster_dims != (y, x):
-        raise ValueError("raster.coords should be named as coordinates:"
-                         "(%s, %s)".format(y, x))
+        raise ValueError("raster.coords should be named as coordinates: (%s, %s)".format(y, x))
 
     # apply kernel to raster values
     mean_array = convolve_2d(raster.values, kernel / kernel.sum())
@@ -229,8 +239,7 @@ def hotspots(raster, kernel, x='x', y='y'):
     global_mean = np.nanmean(raster.values)
     global_std = np.nanstd(raster.values)
     if global_std == 0:
-        raise ZeroDivisionError("Standard deviation "
-                                "of the input raster values is 0.")
+        raise ZeroDivisionError("Standard deviation of the input raster values is 0.")
     z_array = (mean_array - global_mean) / global_std
 
     out = _hotspots(z_array)
