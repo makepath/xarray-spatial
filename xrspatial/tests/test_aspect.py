@@ -8,22 +8,36 @@ from xrspatial.utils import doesnt_have_cuda
 from xrspatial.utils import is_cupy_backed
 
 
-INPUT_DATA = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-                         [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
-                         [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
-                         [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
-                         [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-                         [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-                         [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
+INPUT_DATA = np.asarray([[np.nan, np.nan, np.nan,
+                          np.nan, np.nan, np.nan],
+                         [1584.8767, 1584.8767, 1585.0546,
+                          1585.2324, 1585.2324, 1585.2324],
+                         [1585.0546, 1585.0546, 1585.2324,
+                          1585.588, 1585.588, 1585.588],
+                         [1585.2324, 1585.4102, 1585.588,
+                          1585.588, 1585.588, 1585.588],
+                         [1585.588, 1585.588, 1585.7659,
+                          1585.7659, 1585.7659, 1585.7659],
+                         [1585.7659, 1585.9437, 1585.7659,
+                          1585.7659, 1585.7659, 1585.7659],
+                         [1585.9437, 1585.9437, 1585.9437,
+                         1585.7659, 1585.7659, 1585.7659]],
                         dtype=np.float32)
 
-QGIS_OUTPUT = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-                          [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-                          [330.94687, 335.55496, 320.70786, 330.94464, 0., 0.],
-                          [333.43494, 333.43494, 329.03394, 341.56897, 0., 18.434948],
-                          [338.9621, 338.20062, 341.56506, 0., 0., 45.],
-                          [341.56506, 351.8699, 26.56505, 45., -1., 90.],
-                          [351.86676, 11.306906, 45., 45., 45., 108.431015]], dtype=np.float32)
+QGIS_OUTPUT = np.asarray([[np.nan, np.nan, np.nan,
+                           np.nan, np.nan, np.nan],
+                          [np.nan, np.nan, np.nan,
+                           np.nan, np.nan, np.nan],
+                          [330.94687, 335.55496, 320.70786,
+                           330.94464, 0., 0.],
+                          [333.43494, 333.43494, 329.03394,
+                           341.56897, 0., 18.434948],
+                          [338.9621, 338.20062, 341.56506,
+                           0., 0., 45.],
+                          [341.56506, 351.8699, 26.56505,
+                           45., -1., 90.],
+                          [351.86676, 11.306906, 45.,
+                           45., 45., 108.431015]], dtype=np.float32)
 
 
 def test_numpy_equals_qgis():
@@ -62,7 +76,8 @@ def test_numpy_equals_dask():
     )
 
     numpy_result = aspect(small_numpy_based_data_array, name='numpy_result')
-    dask_result = aspect(small_dask_based_data_array, name='dask_result')
+    dask_result = aspect(small_dask_based_data_array,
+                         name='dask_result')
 
     assert isinstance(dask_result.data, da.Array)
 
@@ -76,7 +91,8 @@ def test_numpy_equals_cupy():
     import cupy
 
     small_da = xr.DataArray(INPUT_DATA, attrs={'res': (10.0, 10.0)})
-    small_da_cupy = xr.DataArray(cupy.asarray(INPUT_DATA), attrs={'res': (10.0, 10.0)})
+    small_da_cupy = xr.DataArray(cupy.asarray(INPUT_DATA),
+                                 attrs={'res': (10.0, 10.0)})
 
     # aspect by xrspatial
     cpu = aspect(small_da, name='aspect_agg')
@@ -92,7 +108,8 @@ def test_cupy_equals_qgis():
     import cupy
 
     small_da = xr.DataArray(INPUT_DATA, attrs={'res': (10.0, 10.0)})
-    small_da_cupy = xr.DataArray(cupy.asarray(INPUT_DATA), attrs={'res': (10.0, 10.0)})
+    small_da_cupy = xr.DataArray(cupy.asarray(INPUT_DATA),
+                                 attrs={'res': (10.0, 10.0)})
     xrspatial_aspect = aspect(small_da_cupy, name='aspect_agg')
 
     # validate output attributes

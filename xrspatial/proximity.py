@@ -21,6 +21,7 @@ def _distance_metric_mapping():
 
     return DISTANCE_METRICS
 
+
 # create dictionary to map distance metric presented by string and the
 # corresponding metric presented by integer.
 DISTANCE_METRICS = _distance_metric_mapping()
@@ -60,7 +61,8 @@ Examples:
 >>>     point_b = (312.54, 432.01)
 
     Calculate Euclidean Distance
->>>     dist = euclidean_distance(point_a[0], point_b[0], point_a[1], point_b[1])
+>>>     dist = euclidean_distance(point_a[0], point_b[0],
+                                  point_a[1], point_b[1])
 >>>     print(dist)
 442.80462599209596
     """
@@ -71,9 +73,11 @@ Examples:
 
 
 @njit(nogil=True)
-def manhattan_distance(x1: float, x2: float, y1: float, y2: float) -> float:
+def manhattan_distance(x1: float, x2: float,
+                       y1: float, y2: float) -> float:
     """
-Calculates Manhattan distance (sum of distance in x and y directions) between (x1, y1) and (x2, y2).
+Calculates Manhattan distance (sum of distance in x and
+y directions) between (x1, y1) and (x2, y2).
 
 Parameters:
 ----------
@@ -104,7 +108,8 @@ Examples:
 >>>     point_b = (312.54, 432.01)
 
     Calculate Euclidean Distance
->>>     dist = manhattan_distance(point_a[0], point_b[0], point_a[1], point_b[1])
+>>>     dist = manhattan_distance(point_a[0], point_b[0],
+                                  point_a[1], point_b[1])
 >>>     print(dist)
 196075.9368
     """
@@ -115,9 +120,12 @@ Examples:
 
 
 @njit(nogil=True)
-def great_circle_distance(x1: float, x2: float, y1: float, y2: float, radius: float = 6378137) -> float:
+def great_circle_distance(x1: float, x2: float,
+                          y1: float, y2: float,
+                          radius: float = 6378137) -> float:
     """
-Calculates great-circle (orthodromic/spherical) distance between (x1, y1) and (x2, y2), assuming each point is a longitude, latitude pair.
+Calculates great-circle (orthodromic/spherical) distance between
+(x1, y1) and (x2, y2), assuming each point is a longitude, latitude pair.
 
 Parameters:
 ----------
@@ -150,7 +158,8 @@ Examples:
 >>>     point_b = (178.0, 65.09)
 
     Calculate Euclidean Distance
->>>     dist = great_circle_distance(point_a[0], point_b[0], point_a[1], point_b[1])
+>>>     dist = great_circle_distance(point_a[0], point_b[0],
+                                     point_a[1], point_b[1])
 >>>     print(dist)
 2378290.489801402
     """
@@ -211,16 +220,19 @@ def _process_proximity_line(source_line, x_coords, y_coords,
     # pan_near_y:  1d ndarray
     # is_forward: boolean, will we loop forward through pixel?
     # line_id: np.int64, index of the source_line in the image
-    # width: np.int64, image width. It is the number of pixels in the
-    #                source_line
+    # width: np.int64, image width. It is the number of
+    #                  pixels in the source_line
     # max_distance: np.float64, maximum distance considered.
-    # line_proximity: 1d numpy array of type np.float64,
-    #                         calculated proximity from source_line
+    # line_proximity: 1d numpy array of type
+    #                 np.float64, calculated proximity from
+    #                 source_line
     # values: 1d numpy array of type np.uint8,
-    #                 A list of target pixel values to measure the distance from.
-    #                 If this option is not provided proximity will be computed
-    #                 from non-zero pixel values.
-    #                 Currently pixel values are internally processed as integers
+    #                 A list of target pixel
+    #                 values to measure the distance from. If
+    #                 this option is not provided proximity will
+    #                 be computed from non-zero pixel values.
+    #                 Currently pixel values are internally
+    #                 processed as integers
     # Return: 1d numpy array of type np.float64.
     #          Corresponding proximity of source_line.
 
@@ -447,9 +459,12 @@ def _process_image(img, x_coords, y_coords, target_values,
                 line_proximity[i] = np.nan
             else:
                 if nearest_xs[i] != -1 and line_proximity[i] >= 0:
-                    img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
-                    d = _calc_direction(x_coords[i], x_coords[nearest_xs[i]],
-                                        y_coords[line], y_coords[nearest_ys[i]])
+                    img_allocation[line][i] = img[nearest_ys[i],
+                                                  nearest_xs[i]]
+                    d = _calc_direction(x_coords[i],
+                                        x_coords[nearest_xs[i]],
+                                        y_coords[line],
+                                        y_coords[nearest_ys[i]])
                     img_direction[line][i] = d
 
         for i in prange(width):
@@ -491,31 +506,38 @@ def _process(raster, x='x', y='y', target_values=[],
 
 # ported from
 # https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp
-def proximity(raster: xr.DataArray, x: str = 'x', y: str = 'y', target_values: list = [], 
-                                        distance_metric: str = 'EUCLIDEAN') -> xr.DataArray:
-
+def proximity(raster: xr.DataArray,
+              x: str = 'x',
+              y: str = 'y',
+              target_values: list = [],
+              distance_metric: str = 'EUCLIDEAN') -> xr.DataArray:
 
     """
-Computes the proximity of all pixels in the image to a set of pixels in the source image 
-based on Euclidean, Great-Circle or Manhattan distance.
+Computes the proximity of all pixels in the image
+to a set of pixels in the source image based on
+Euclidean, Great-Circle or Manhattan distance.
 
-This function attempts to compute the proximity of all pixels in the image to a set of pixels 
-in the source image. The following options are used to define the behavior of the function. 
-By default all non-zero pixels in ``raster.values`` will be considered the "target", and all 
-proximities will be computed in pixels.  Note that target pixels are set to the value 
-corresponding to a distance of zero.
+This function attempts to compute the proximity
+of all pixels in the image to a set of pixels in
+the source image. The following options are used
+to define the behavior of the function. By default
+all non-zero pixels in ``raster.values`` will be
+considered the "target", and all proximities will
+be computed in pixels. Note that target pixels
+are set to the value corresponding to a distance of zero.
 
 Parameters:
 ----------
     raster: xarray.DataArray
         - 2D array image with shape = (height, width)
     x: str (default = "x")
-        - Name of x-coordinates. 
+        - Name of x-coordinates.
     y: str (default = "y")
         - Name of y-coordinates.
     target_values: list
         - Target pixel values to measure the distance from.
-        - If this option is not provided, proximity will be computed from non-zero pixel values.
+        - If this option is not provided,
+          proximity will be computed from non-zero pixel values.
         - Currently pixel values are internally processed as integers.
     distance_metric: str (default = "EUCLIDEAN")
         - The metric for calculating distance between 2 points.
@@ -524,7 +546,8 @@ Parameters:
 Returns:
 ----------
     proximity: xarray.DataArray
-        - 2D proximity array, of the same type as the input, with shape = (height, width)
+        - 2D proximity array, of the same type
+          as the input, with shape = (height, width)
         - All other input attributes are preserved.
 
 Notes:
@@ -553,59 +576,80 @@ Example:
 
     Create Proximity Aggregate
 >>>     points_agg = cvs.points(df, x='x', y='y')
->>>     points_shaded = dynspread(shade(points_agg, cmap=['salmon',  'salmon']),
->>>                               threshold=1,
->>>                               max_px=5)
+>>>     points_shaded = dynspread(shade(points_agg,
+                                        cmap=['salmon',  'salmon']),
+                                        threshold=1,
+                                        max_px=5)
 >>>     set_background(points_shaded, 'black')
 
     Create Proximity Grid for All Non-Zero Values
 >>>     proximity_agg = proximity(points_agg)
->>>     stack(shade(proximity_agg, cmap=['darkturquoise', 'black'], how='linear'),
+>>>     stack(shade(proximity_agg, cmap=['darkturquoise',
+                                         'black'], how='linear'),
 >>>           points_shaded)
     """
 
-    proximity_img = _process(raster, x=x, y=y, target_values=target_values,
+    proximity_img = _process(raster,
+                             x=x,
+                             y=y,
+                             target_values=target_values,
                              distance_metric=distance_metric,
                              process_mode=PROXIMITY)
 
     result = xr.DataArray(proximity_img,
-                              coords=raster.coords,
-                              dims=raster.dims,
-                              attrs=raster.attrs)
+                          coords=raster.coords,
+                          dims=raster.dims,
+                          attrs=raster.attrs)
     return result
 
 
-def allocation(raster: xr.DataArray, x: str = 'x', y: str = 'y', target_values: list = [],
+def allocation(raster: xr.DataArray,
+               x: str = 'x',
+               y: str = 'y',
+               target_values: list = [],
                distance_metric: str = 'EUCLIDEAN'):
     """
-Calculates, for all pixels in the input raster, the nearest source based on a set of 
-target values and a distance metric.
+Calculates, for all pixels in the input raster,
+the nearest source based on a set of target
+values and a distance metric.
 
-This function attempts to produce the value of nearest feature of all pixels in the 
-image to a set of pixels in the source image. The following options are used to define 
-the behavior of the function. By default all non-zero pixels in ``raster.values`` will 
-be considered as "target", and all allocation will be computed in pixels.
+This function attempts to produce the value of
+nearest feature of all pixels in the image to
+a set of pixels in the source image. The following
+options are used to define the behavior of the
+function. By default all non-zero pixels in
+``raster.values`` will be considered as
+"target", and all allocation will be computed
+in pixels.
 
 Parameters:
 ----------
     raster: xarray.DataArray
-        - 2D array image with shape = (height, width)
+        - 2D array image with
+          shape = (height, width)
     x: str (default = "x")
-        - Name of x-coordinates. 
+        - Name of x-coordinates.
     y: str (default = "y")
         - Name of y-coordinates.
     target_values: list
-        - Target pixel values to measure the distance from. 
-        - If this option is not provided, allocation will be computed from non-zero pixel values.
-        - Currently pixel values are internally processed as integers.
+        - Target pixel values to
+          measure the distance from.
+        - If this option is not provided,
+          allocation will be computed from
+          non-zero pixel values.
+        - Currently pixel values are internally
+          processed as integers.
     distance_metric: str (default = "EUCLIDEAN")
-        - The metric for calculating distance between 2 points.
-        - Valid distance_metrics: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'
+        - The metric for calculating distance
+          between 2 points.
+        - Valid distance_metrics: 'EUCLIDEAN',
+          'GREAT_CIRCLE', and 'MANHATTAN'
 
 Returns:
 ----------
     allocation: xarray.DataArray
-        - 2D proximity allocation array, of the same type as the input, with shape = (height, width)
+        - 2D proximity allocation array, of the
+          same type as the input, with shape = (height, width)
         - All other input attributes are preserved.
 
 Notes:
@@ -616,26 +660,38 @@ Notes:
 Examples:
 ----------
     """
-    allocation_img = _process(raster, x=x, y=y, target_values=target_values,
+    allocation_img = _process(raster,
+                              x=x,
+                              y=y,
+                              target_values=target_values,
                               distance_metric=distance_metric,
                               process_mode=ALLOCATION)
     # convert to have same type as of input @raster
     result = xr.DataArray((allocation_img).astype(raster.dtype),
-                              coords=raster.coords,
-                              dims=raster.dims,
-                              attrs=raster.attrs)
+                          coords=raster.coords,
+                          dims=raster.dims,
+                          attrs=raster.attrs)
     return result
 
 
-def direction(raster: xr.DataArray, x: str = 'x', y: str = 'y', target_values: list = [],
+def direction(raster: xr.DataArray,
+              x: str = 'x',
+              y: str = 'y',
+              target_values: list = [],
               distance_metric: str = 'EUCLIDEAN'):
     """
-Calculates, for all pixels in the input raster, the direction to
-nearest source based on a set of target values and a distance metric.
+Calculates, for all pixels in the input raster,
+the direction to nearest source based on a set
+of target values and a distance metric.
 
-This function attempts to calculate for each cell, the the direction, in degrees, to the nearest source. The output values are based on compass
-directions, where 90 is for the east, 180 for the south, 270 for the west, 360 for the north, and 0 for the source cell itself. The following
-options are used to define the behavior of the function. By default all non-zero pixels in ``raster.values`` will be considered as "target", and 
+This function attempts to calculate for each cell,
+the the direction, in degrees, to the nearest source.
+The output values are based on compass directions,
+where 90 is for the east, 180 for the south, 270 for
+the west, 360 for the north, and 0 for the source cell
+itself. The following options are used to define the
+behavior of the function. By default all non-zero pixels
+in ``raster.values`` will be considered as "target", and
 all allocation will be computed in pixels.
 
 Parameters:
@@ -643,22 +699,26 @@ Parameters:
     raster: xarray.DataArray
         - 2D array image with shape = (height, width)
     x: str (default = "x")
-        - Name of x-coordinates. 
+        - Name of x-coordinates.
     y: str (default = "y")
         - Name of y-coordinates.
     target_values: list
-        - Target pixel values to measure the distance from. 
-        - If this option is not provided, allocation will be computed from non-zero pixel values.
-        - Currently pixel values are internally processed as integers.
+        - Target pixel values to measure the distance from.
+        - If this option is not provided, allocation will
+          be computed from non-zero pixel values.
+        - Currently pixel values are internally processed
+          as integers.
     distance_metric: str (default = "EUCLIDEAN")
         - The metric for calculating distance between 2 points.
-        - Valid distance_metrics: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'
+        - Valid distance_metrics: 'EUCLIDEAN',
+          'GREAT_CIRCLE', and 'MANHATTAN'
 
 Returns:
 ----------
     allocation: xarray.DataArray
-        - 2D proximity direction array, of the same type as the input, with shape = (height, width)
-        - All other input attributes are preserved.    
+        - 2D proximity direction array, of the same type
+          as the input, with shape = (height, width)
+        - All other input attributes are preserved.
 
 Notes:
 ---------
@@ -669,12 +729,15 @@ Examples:
 ----------
     """
 
-    direction_img = _process(raster, x=x, y=y, target_values=target_values,
+    direction_img = _process(raster,
+                             x=x,
+                             y=y,
+                             target_values=target_values,
                              distance_metric=distance_metric,
                              process_mode=DIRECTION)
 
     result = xr.DataArray(direction_img,
-                              coords=raster.coords,
-                              dims=raster.dims,
-                              attrs=raster.attrs)
+                          coords=raster.coords,
+                          dims=raster.dims,
+                          attrs=raster.attrs)
     return result

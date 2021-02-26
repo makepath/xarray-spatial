@@ -7,13 +7,20 @@ import dask.array as da
 from xrspatial import curvature
 from xrspatial.utils import doesnt_have_cuda
 
-elevation = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-                        [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
-                        [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
-                        [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
-                        [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-                        [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-                        [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
+elevation = np.asarray([[np.nan, np.nan, np.nan,
+                         np.nan, np.nan, np.nan],
+                        [1584.8767, 1584.8767, 1585.0546,
+                         1585.2324, 1585.2324, 1585.2324],
+                        [1585.0546, 1585.0546, 1585.2324,
+                         1585.588, 1585.588, 1585.588],
+                        [1585.2324, 1585.4102, 1585.588,
+                         1585.588, 1585.588, 1585.588],
+                        [1585.588, 1585.588, 1585.7659,
+                         1585.7659, 1585.7659, 1585.7659],
+                        [1585.7659, 1585.9437, 1585.7659,
+                         1585.7659, 1585.7659, 1585.7659],
+                        [1585.9437, 1585.9437, 1585.9437,
+                         1585.7659, 1585.7659, 1585.7659]],
                        dtype=np.float32)
 
 
@@ -158,7 +165,8 @@ def test_curvature_gpu_equals_cpu():
     small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
     cpu = curvature(small_da, name='numpy_result')
 
-    small_da_cupy = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    small_da_cupy = xr.DataArray(cupy.asarray(elevation),
+                                 attrs={'res': (10.0, 10.0)})
     gpu = curvature(small_da_cupy, name='cupy_result')
 
     assert isinstance(gpu.data, cupy.ndarray)
@@ -167,13 +175,16 @@ def test_curvature_gpu_equals_cpu():
 
 
 def test_curvature_numpy_equals_dask():
-
-    small_numpy_based_data_array = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-    small_das_based_data_array = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
+    small_numpy_based_data_array = xr.DataArray(elevation,
+                                                attrs={'res': (10.0, 10.0)})
+    small_das_based_data_array = xr.DataArray(da.from_array(elevation,
+                                              chunks=(3, 3)),
                                               attrs={'res': (10.0, 10.0)})
 
-    numpy_curvature = curvature(small_numpy_based_data_array, name='numpy_curvature')
-    dask_curvature = curvature(small_das_based_data_array, name='dask_curvature')
+    numpy_curvature = curvature(small_numpy_based_data_array,
+                                name='numpy_curvature')
+    dask_curvature = curvature(small_das_based_data_array,
+                               name='dask_curvature')
     assert isinstance(dask_curvature.data, da.Array)
 
     dask_curvature.data = dask_curvature.data.compute()

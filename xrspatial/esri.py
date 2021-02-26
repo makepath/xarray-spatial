@@ -5,19 +5,15 @@ import requests
 def featureset_to_dataframe(featureset, convert_geometry=False,
                             use_aliases=False):
     """
-
 Parameters:
 ----------
-    featureset: 
-        - 
+    featureset:
     convert_geometry: Boolean
-        - 
     use_aliases: Boolean
-        - 
 
 Returns:
 ----------
-    dataframe: 
+    dataframe:
 
 Notes:
 ----------

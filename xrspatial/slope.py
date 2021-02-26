@@ -12,7 +12,6 @@ except ImportError:
 
 import dask.array as da
 
-import numba as nb
 from numba import cuda
 
 import numpy as np

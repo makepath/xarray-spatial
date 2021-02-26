@@ -82,7 +82,9 @@ def _get_distance(distance_str):
 
 def calc_cellsize(raster, x='x', y='y'):
     """
-Calculates cell size of an array based on its attributes. Default = meters. If lat-lon units are converted to meters.
+Calculates cell size of an array based on its attributes.
+Default = meters. If lat-lon units are converted to meters.
+
 Parameters:
 ----------
     raster: xarray.DataArray
@@ -182,7 +184,7 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
         r_outer = r1
         r_inner = r2
 
-    if r_outer - r_inner < np.sqrt((cellsize_x / 2)**2 + \
+    if r_outer - r_inner < np.sqrt((cellsize_x / 2)**2 +
                                    (cellsize_y / 2)**2):
         warnings.warn('Annulus radii are closer than cellsize distance.',
                       Warning)

@@ -50,10 +50,8 @@ def generate_terrain(x_range=(0, 500), y_range=(0, 500),
         d = (value - old_range[0]) / (old_range[1] - old_range[0])
         return d * (new_range[1] - new_range[0]) + new_range[0]
 
-
-
-
-    mercator_extent = (-np.pi * 6378137, -np.pi * 6378137, np.pi * 6378137, np.pi * 6378137)
+    mercator_extent = (-np.pi * 6378137, -np.pi * 6378137,
+                       np.pi * 6378137, np.pi * 6378137)
     crs_extents = {'3857': mercator_extent}
 
     if isinstance(full_extent, str):

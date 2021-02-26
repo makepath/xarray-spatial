@@ -20,22 +20,22 @@ from xrspatial.multispectral import sipi
 max_val = 2**16 - 1
 
 arr1 = np.array([[max_val, max_val, max_val, max_val],
-                    [max_val, 1000.0, 1000.0, max_val],
-                    [max_val, 1000.0, 1000.0, max_val],
-                    [max_val, 1000.0, 1000.0, max_val],
-                    [max_val, max_val, max_val, max_val]], dtype=np.float64)
+                 [max_val, 1000.0, 1000.0, max_val],
+                 [max_val, 1000.0, 1000.0, max_val],
+                 [max_val, 1000.0, 1000.0, max_val],
+                 [max_val, max_val, max_val, max_val]], dtype=np.float64)
 
 arr2 = np.array([[100.0, 100.0, 100.0, 100.0],
-                    [100.0, max_val, max_val, 100.0],
-                    [100.0, max_val, max_val, 100.0],
-                    [100.0, max_val, max_val, 100.0],
-                    [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
+                 [100.0, max_val, max_val, 100.0],
+                 [100.0, max_val, max_val, 100.0],
+                 [100.0, max_val, max_val, 100.0],
+                 [100.0, 100.0, 100.0, 100.0]], dtype=np.float64)
 
 arr3 = np.array([[10.0, 10.0, 10.0, 10.0],
-                    [10.0, max_val, max_val, 10.0],
-                    [10.0, max_val, max_val, 10.0],
-                    [10.0, max_val, max_val, 10.0],
-                    [10.0, 10.0, 10.0, 10.0]], dtype=np.float64)
+                 [10.0, max_val, max_val, 10.0],
+                 [10.0, max_val, max_val, 10.0],
+                 [10.0, max_val, max_val, 10.0],
+                 [10.0, 10.0, 10.0, 10.0]], dtype=np.float64)
 
 
 def _do_sparse_array(data_array):
@@ -148,6 +148,7 @@ def test_avri():
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
+
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_avri_cpu_equals_gpu():

@@ -150,7 +150,7 @@ def _crosstab_2d(zones, values):
     masked_values = np.ma.masked_invalid(values.data)
 
     # categories
-    cats = np.unique(masked_values[masked_values.mask==False]).data
+    cats = np.unique(masked_values[masked_values.mask == False]).data
 
     # return of the function
     # columns are categories

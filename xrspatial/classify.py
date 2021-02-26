@@ -1,5 +1,4 @@
 from functools import partial
-from typing import Union
 import xarray as xr
 
 # 3rd-party
@@ -24,10 +23,11 @@ from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
 from xrspatial.utils import is_cupy_backed
 
+from typing import List, Optional
+
+
 import warnings
 warnings.simplefilter('default')
-
-from typing import List, Optional
 
 
 def color_values(agg, color_key, alpha=255):
@@ -159,7 +159,8 @@ def _run_cupy_bin(data, bins_cupy, new_values_cupy):
 
 
 def _run_dask_cupy_bin(data, bins_cupy, new_values_cupy):
-    out = data.map_blocks(lambda da: _run_cupy_bin(da, bins_cupy, new_values_cupy),
+    out = data.map_blocks(lambda da:
+                          _run_cupy_bin(da, bins_cupy, new_values_cupy),
                           meta=cupy.array(()))
     return out
 
@@ -176,19 +177,24 @@ def _bin(data, bins, new_values):
         out = _run_cupy_bin(data, bins_cupy, new_values_cupy)
 
     # dask + cupy case
-    elif has_cuda() and isinstance(data, da.Array) and type(data._meta).__module__.split('.')[0] == 'cupy':
+    elif has_cuda() and isinstance(data, da.Array) and \
+            type(data._meta).__module__.split('.')[0] == 'cupy':
         bins_cupy = cupy.asarray(bins, dtype='f4')
         new_values_cupy = cupy.asarray(new_values, dtype='f4')
         out = _run_dask_cupy_bin(data, bins_cupy, new_values_cupy)
 
     # dask + numpy case
     elif isinstance(data, da.Array):
-        out = _run_dask_numpy_bin(data, np.asarray(bins), np.asarray(new_values))
+        out = _run_dask_numpy_bin(data, np.asarray(bins),
+                                  np.asarray(new_values))
 
     return out
 
 
-def reclassify(agg: xr.DataArray, bins: List[int], new_values: List[int], name: Optional[str] = 'reclassify') -> xr.DataArray:
+def reclassify(agg: xr.DataArray,
+               bins: List[int],
+               new_values: List[int],
+               name: Optional[str] = 'reclassify') -> xr.DataArray:
     """
 Reclassifies data for array (agg) into new values based on bins.
 
@@ -224,14 +230,14 @@ Examples:
 
     Create Initial DataArray
 >>>     np.random.seed(1)
->>>     agg = xr.DataArray(np.random.randint(2, 8, (4, 4)), 
+>>>     agg = xr.DataArray(np.random.randint(2, 8, (4, 4)),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = agg.shape
 >>>     _lon = np.linspace(0, width - 1, width)
->>>     _lat = np.linspace(0, height - 1, height)    
+>>>     _lat = np.linspace(0, height - 1, height)
 >>>     agg["lon"] = _lon
->>>     agg["lat"] = _lat   
->>>     print(agg)             
+>>>     agg["lat"] = _lat
+>>>     print(agg)
 <xarray.DataArray (lat: 4, lon: 4)>
 array([[7, 5, 6, 2],
        [3, 5, 7, 2],
@@ -304,7 +310,8 @@ def _run_cupy_quantile(data, k):
 
 
 def _run_dask_cupy_quantile(data, k):
-    msg = 'Currently percentile calculation has not been supported for Dask array backed by CuPy.' \
+    msg = 'Currently percentile calculation has not' \
+          'been supported for Dask array backed by CuPy.' \
           'See issue at https://github.com/dask/dask/issues/6942'
     raise NotImplementedError(msg)
 
@@ -319,7 +326,9 @@ def _quantile(agg, k):
         q = _run_cupy_quantile(agg.data, k)
 
     # dask + cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray) and is_cupy_backed(agg):
+    elif has_cuda() and \
+        isinstance(agg.data, cupy.ndarray) and \
+            is_cupy_backed(agg):
         q = _run_dask_cupy_quantile(agg.data, k)
 
     # dask + numpy case
@@ -332,10 +341,13 @@ def _quantile(agg, k):
     return q
 
 
-def quantile(agg: xr.DataArray, k: int = 4, name: Optional[str] = 'quantile') -> xr.DataArray:
+def quantile(agg: xr.DataArray,
+             k: int = 4,
+             name: Optional[str] = 'quantile') -> xr.DataArray:
     """
-Groups data for array (agg) into quantiles by distributing the values into groups that contain
-an equal number of values. The number of quantiles produced is based on (k) with a default value
+Groups data for array (agg) into quantiles by distributing
+the values into groups that contain an equal number of values.
+The number of quantiles produced is based on (k) with a default value
 of 4. The result is an xarray.DataArray.
 
 Parameters:
@@ -356,12 +368,13 @@ Notes:
 ----------
     Adapted from PySAL:
         - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles
-    
-    Note that dask's percentile algorithm is approximate, while numpy's is exact.
-    This may cause some differences between results of vanilla numpy and dask version of the input agg.
+
+    Note that dask's percentile algorithm is approximate,
+    while numpy's is exact. This may cause some differences
+    between results of vanilla numpy and dask version of the input agg.
         - https://github.com/dask/dask/issues/3099
 Examples:
-----------  
+----------
     Imports
 >>>     import numpy as np
 >>>     import xarray as xr
@@ -369,7 +382,7 @@ Examples:
 
     Create DataArray
 >>>     np.random.seed(0)
->>>     agg = xr.DataArray(np.random.rand(4,4), 
+>>>     agg = xr.DataArray(np.random.rand(4,4),
                                 dims = ["lat", "lon"])
 >>>     height, width = agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -402,7 +415,7 @@ Examples:
 
     With k quantiles
 >>>     quantile_agg = quantile(agg, k = 6, name = "Six Quantiles")
->>>     print(quantile_agg)    
+>>>     print(quantile_agg)
 
     <xarray.DataArray 'Six Quantiles' (lat: 4, lon: 4)>
     array([[2., 4., 3., 2.],
@@ -417,7 +430,8 @@ Examples:
     q = _quantile(agg, k)
     k_q = q.shape[0]
     if k_q < k:
-        print("Quantile Warning: Not enough unique values for k classes (using {} bins)".format(k_q))
+        print("Quantile Warning: Not enough unique values"
+              "for k classes (using {} bins)".format(k_q))
         k = k_q
 
     out = _bin(agg.data, bins=q, new_values=np.arange(k))
@@ -432,7 +446,8 @@ Examples:
 @ngjit
 def _run_numpy_jenks_matrices(data, n_classes):
     n_data = data.shape[0]
-    lower_class_limits = np.zeros((n_data + 1, n_classes + 1), dtype=np.float64)
+    lower_class_limits = np.zeros((n_data + 1, n_classes + 1),
+                                  dtype=np.float64)
     lower_class_limits[1, 1:n_classes + 1] = 1.0
 
     var_combinations = np.zeros((n_data + 1, n_classes + 1), dtype=np.float64)
@@ -470,9 +485,11 @@ def _run_numpy_jenks_matrices(data, n_classes):
             if i4 != 0:
                 for j in range(2, n_classes + 1):
                     jm1 = j - 1
-                    if var_combinations[l, j] >= (variance + var_combinations[i4, jm1]):
+                    if var_combinations[l, j] >= \
+                            (variance + var_combinations[i4, jm1]):
                         lower_class_limits[l, j] = lower_class_limit
-                        var_combinations[l, j] = variance + var_combinations[i4, jm1]
+                        var_combinations[l, j] = variance + \
+                            var_combinations[i4, jm1]
 
         lower_class_limits[l, 1] = 1.
         var_combinations[l, 1] = variance
@@ -586,9 +603,11 @@ def _run_cupy_jenks_matrices(data, n_classes):
             if i4 != 0:
                 for j in range(2, n_classes + 1):
                     jm1 = j - 1
-                    if var_combinations[l, j] >= (variance + var_combinations[i4, jm1]):
+                    if var_combinations[l, j] >= \
+                            (variance + var_combinations[i4, jm1]):
                         lower_class_limits[l, j] = lower_class_limit
-                        var_combinations[l, j] = variance + var_combinations[i4, jm1]
+                        var_combinations[l, j] = variance + \
+                            var_combinations[i4, jm1]
 
         lower_class_limits[l, 1] = 1.
         var_combinations[l, 1] = variance
@@ -656,11 +675,17 @@ def _run_cupy_natural_break(data, num_sample, k):
     return out
 
 
-def natural_breaks(agg: xr.DataArray, num_sample: Optional[int] = None, name: Optional[str] = 'natural_breaks', k: int = 5) -> xr.DataArray:
+def natural_breaks(agg: xr.DataArray,
+                   num_sample: Optional[int] = None,
+                   name: Optional[str] = 'natural_breaks',
+                   k: int = 5) -> xr.DataArray:
     """
-Groups data for array (agg) by distributing values using the Jenks Natural Breaks or k-means
-clustering method. Values are grouped so that similar values are placed in the same group and 
-space between groups is maximized. The result is an xarray.DataArray.
+Groups data for array (agg) by distributing
+values using the Jenks Natural Breaks or k-means
+clustering method. Values are grouped so that
+similar values are placed in the same group and
+space between groups is maximized.
+The result is an xarray.DataArray.
 
 Parameters:
 ----------
@@ -698,7 +723,7 @@ Examples:
 
     Create DataArray
 >>>     np.random.seed(0)
->>>     agg = xr.DataArray(np.random.rand(4,4), 
+>>>     agg = xr.DataArray(np.random.rand(4,4),
                                 dims = ["lat", "lon"])
 >>>     height, width = agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -781,7 +806,9 @@ def _run_cupy_equal_interval(data, k):
     max_data = cupy.nanmax(data)
     min_data = cupy.nanmin(data)
     width = (max_data - min_data) / k
-    cuts = cupy.arange(min_data.get() + width.get(), max_data.get() + width.get(), width.get())
+    cuts = cupy.arange(min_data.get() +
+                       width.get(), max_data.get() +
+                       width.get(), width.get())
     l_cuts = cuts.shape[0]
     if l_cuts > k:
         # handle overshooting
@@ -796,9 +823,12 @@ def _run_dask_cupy_equal_interval(data, k):
     raise NotImplementedError(msg)
 
 
-def equal_interval(agg: xr.DataArray, k: int = 5, name: Optional[str] = 'equal_interval') -> xr.DataArray:
+def equal_interval(agg: xr.DataArray,
+                   k: int = 5,
+                   name: Optional[str] = 'equal_interval') -> xr.DataArray:
     """
-Groups data for array (agg) by distributing values into at equal intervals. The result is an xarray.DataArray.
+Groups data for array (agg) by distributing values into at equal intervals.
+The result is an xarray.DataArray.
 
 Parameters:
 ----------
@@ -834,21 +864,20 @@ Notes:
 Examples:
 ----------
     Imports
->>>    
 >>>    import numpy as np
 >>>    import xarray as xr
 >>>    from xrspatial.classify import equal_interval, natural_breaks
 
     Create Initial DataArray
 >>>     np.random.seed(1)
->>>     agg = xr.DataArray(np.random.randint(2, 8, (4, 4)), 
+>>>     agg = xr.DataArray(np.random.randint(2, 8, (4, 4)),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = agg.shape
 >>>     _lon = np.linspace(0, width - 1, width)
->>>     _lat = np.linspace(0, height - 1, height)    
+>>>     _lat = np.linspace(0, height - 1, height)
 >>>     agg["lon"] = _lon
->>>     agg["lat"] = _lat   
->>>     print(agg)             
+>>>     agg["lat"] = _lat
+>>>     print(agg)
 <xarray.DataArray (lat: 4, lon: 4)>
 array([[7, 5, 6, 2],
        [3, 5, 7, 2],
@@ -857,7 +886,7 @@ array([[7, 5, 6, 2],
 Coordinates:
   * lon      (lon) float64 0.0 1.0 2.0 3.0
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  
+
     Create Equal Interval DataArray
 >>>    equal_interval_agg = equal_interval(agg, k = 5)
 >>>    print(equal_interval_agg)
@@ -880,7 +909,9 @@ Coordinates:
         out = _run_cupy_equal_interval(agg.data, k)
 
     # dask + cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray) and is_cupy_backed(agg):
+    elif has_cuda() and \
+            isinstance(agg.data, cupy.ndarray) and \
+            is_cupy_backed(agg):
         out = _run_dask_cupy_equal_interval(agg.data, k)
 
     # dask + numpy case

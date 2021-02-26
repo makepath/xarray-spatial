@@ -5,15 +5,17 @@ from xarray import DataArray
 
 from xrspatial.utils import ngjit
 
-from typing import Optional, Callable
-
-
+from typing import Optional
 
 # TODO: change parameters to take agg instead of height / width
-def bump(width: int, height: int, count: Optional[int] = None, height_func = None, spread: int = 1) -> xr.DataArray:
+
+
+def bump(width: int, height: int, count: Optional[int] = None,
+         height_func=None, spread: int = 1) -> xr.DataArray:
     """
-Generate a simple bump map to simulate the appearance of land features. 
-Using a user-defined height function, determines at what elevation a specific bump height is acceptable.
+Generate a simple bump map to simulate the appearance of land features.
+Using a user-defined height function, determines at what elevation a
+specific bump height is acceptable.
 Bumps of number "count" are applied over the area "width" x "height".
 
 Parameters:
@@ -27,7 +29,6 @@ Parameters:
     height_func: function which takes x, y and returns a height value
         - Function used to apply varying bump heights to different elevations.
     spread: tuple boundaries (default = 1)
-        - 
 
 Returns:
 ----------
@@ -52,7 +53,8 @@ Examples:
 >>>     W = 800
 >>>     H = 600
 
->>>     cvs = ds.Canvas(plot_width = W, plot_height = H, x_range = (-20e6, 20e6), y_range = (-20e6, 20e6))
+>>>     cvs = ds.Canvas(plot_width = W, plot_height = H,
+                        x_range = (-20e6, 20e6), y_range = (-20e6, 20e6))
 >>>     terrain = generate_terrain(canvas=cvs)
 
     Create Height Function
@@ -74,8 +76,16 @@ Examples:
     Create Bump Map
 >>>     bump_count = 10000
 >>>     src = terrain.data
->>>     bumps = bump(W, H, count = bump_count, height_func = partial(heights, src = src, src_range = (1000, 1300), height = 5))
->>>     bumps += bump(W, H, count = bump_count//2, height_func = partial(heights, src = src, src_range = (1300, 1700), height = 20))
+>>>     bumps = bump(W, H, count = bump_count,
+                     height_func = partial(heights,
+                                           src = src,
+                                           src_range = (1000, 1300),
+                                           height = 5))
+>>>     bumps += bump(W, H, count = bump_count//2,
+                     height_func = partial(heights,
+                                           src = src,
+                                           src_range = (1300, 1700),
+                                           height = 20))
 >>>     print(bumps)
 
     <xarray.DataArray (y: 600, x: 800)>
@@ -127,7 +137,7 @@ def _finish_bump(width, height, locs, heights, spread):
         if s > 0:
             for nx in range(max(x - spread, 0), min(x + spread, width)):
                 for ny in range(max(y - spread, 0), min(y + spread, height)):
-                    d2 = (nx - x) * (nx - x) + (ny -  y) * (ny - y)
+                    d2 = (nx - x) * (nx - x) + (ny - y) * (ny - y)
                     if d2 <= s:
-                        out[ny, nx] = out[ny,nx] + (out[y, x] * (d2 / s))
+                        out[ny, nx] = out[ny, nx] + (out[y, x] * (d2 / s))
     return out

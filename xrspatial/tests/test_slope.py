@@ -39,12 +39,18 @@ qgis_slope = np.asarray(
     dtype=np.float32)
 
 elevation2 = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-                         [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
-                         [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
-                         [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
-                         [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-                         [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-                         [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
+                         [1584.8767, 1584.8767, 1585.0546,
+                          1585.2324, 1585.2324, 1585.2324],
+                         [1585.0546, 1585.0546, 1585.2324,
+                          1585.588, 1585.588, 1585.588],
+                         [1585.2324, 1585.4102, 1585.588,
+                          1585.588, 1585.588, 1585.588],
+                         [1585.588, 1585.588, 1585.7659,
+                          1585.7659, 1585.7659, 1585.7659],
+                         [1585.7659, 1585.9437, 1585.7659,
+                          1585.7659, 1585.7659, 1585.7659],
+                         [1585.9437, 1585.9437, 1585.9437,
+                          1585.7659, 1585.7659, 1585.7659]],
                         dtype=np.float32)
 
 
@@ -71,13 +77,15 @@ def test_slope_against_qgis():
                 np.isnan(xrspatial_vals) & np.isnan(qgis_vals))).all()
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@pytest.mark.skipif(doesnt_have_cuda(),
+                    reason="CUDA Device not Available")
 def test_slope_against_qgis_gpu():
 
     import cupy
 
     small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-    small_da_cupy = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    small_da_cupy = xr.DataArray(cupy.asarray(elevation),
+                                 attrs={'res': (10.0, 10.0)})
     xrspatial_slope = slope(small_da_cupy, name='slope_cupy')
 
     # validate output attributes
@@ -95,7 +103,8 @@ def test_slope_against_qgis_gpu():
                 np.isnan(xrspatial_vals) & np.isnan(qgis_vals))).all()
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@pytest.mark.skipif(doesnt_have_cuda(),
+                    reason="CUDA Device not Available")
 def test_slope_gpu_equals_cpu():
 
     import cupy
@@ -103,7 +112,8 @@ def test_slope_gpu_equals_cpu():
     small_da = xr.DataArray(elevation2, attrs={'res': (10.0, 10.0)})
     cpu = slope(small_da, name='numpy_result')
 
-    small_da_cupy = xr.DataArray(cupy.asarray(elevation2), attrs={'res': (10.0, 10.0)})
+    small_da_cupy = xr.DataArray(cupy.asarray(elevation2),
+                                 attrs={'res': (10.0, 10.0)})
     gpu = slope(small_da_cupy, name='cupy_result')
     assert isinstance(gpu.data, cupy.ndarray)
 
@@ -125,16 +135,18 @@ def _dask_cupy_equals_numpy_cpu():
     small_da = xr.DataArray(elevation2, attrs={'res': (10.0, 10.0)})
     cpu = slope(small_da, name='numpy_result')
 
-    small_dask_cupy = xr.DataArray(dask_cupy_data, attrs={'res': (10.0, 10.0)})
+    small_dask_cupy = xr.DataArray(dask_cupy_data,
+                                   attrs={'res': (10.0, 10.0)})
     gpu = slope(small_dask_cupy, name='cupy_result')
 
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
 
 def test_slope_numpy_equals_dask():
-
-    small_numpy_based_data_array = xr.DataArray(elevation2, attrs={'res': (10.0, 10.0)})
-    small_das_based_data_array = xr.DataArray(da.from_array(elevation2, chunks=(3, 3)),
+    small_numpy_based_data_array = xr.DataArray(elevation2,
+                                                attrs={'res': (10.0, 10.0)})
+    small_das_based_data_array = xr.DataArray(da.from_array(elevation2,
+                                              chunks=(3, 3)),
                                               attrs={'res': (10.0, 10.0)})
 
     numpy_slope = slope(small_numpy_based_data_array, name='numpy_slope')

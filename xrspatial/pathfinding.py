@@ -223,19 +223,30 @@ def _is_inside(point, xmin, xmax, epsilon_x, ymin, ymax, epsilon_y):
     return True
 
 
-def a_star_search(surface, start, goal, barriers=[], x='x', y='y',
-                  connectivity=8, snap_start=False, snap_goal=False):
+def a_star_search(surface,
+                  start,
+                  goal,
+                  barriers=[],
+                  x='x',
+                  y='y',
+                  connectivity=8,
+                  snap_start=False,
+                  snap_goal=False):
     """
-    Calculate distance from a starting point to a goal through a surface graph.
-    Starting location and goal location should be within the graph.
+Calculate distance from a starting point to a
+goal through a surface graph. Starting location
+and goal location should be within the graph.
 
-    A* is a modification of Dijkstra’s Algorithm that is optimized for
-    a single destination. Dijkstra’s Algorithm can find paths to all locations;
-    A* finds paths to one location, or the closest of several locations.
-    It prioritizes paths that seem to be leading closer to a goal.
+A* is a modification of Dijkstra’s Algorithm
+that is optimized for a single destination.
+Dijkstra’s Algorithm can find paths to all
+locations; A* finds paths to one location,
+or the closest of several locations. It prioritizes
+paths that seem to be leading closer to a goal.
 
-    The output is an equal sized Xarray.DataArray with NaNs for non-path pixels,
-    and the value of the path pixels being the current cost up to that point.
+The output is an equal sized Xarray.DataArray
+with NaNs for non-path pixels, and the value
+of the path pixels being the current cost up to that point.
 
     Parameters
     ----------

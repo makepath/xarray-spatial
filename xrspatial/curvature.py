@@ -97,11 +97,15 @@ def _run_dask_cupy(data: da.Array,
     raise NotImplementedError(msg)
 
 
-def curvature(agg: xr.DataArray, name: Optional[str] = 'curvature') -> xr.DataArray:
+def curvature(agg: xr.DataArray,
+              name: Optional[str] = 'curvature') -> xr.DataArray:
     """
-Calculates, for all cells in the array, the curvature (second derivative) of each cell based on
-the elevation of its neighbors in a 3x3 grid. A positive curvature indicates the surface is upwardly
-convex. A negative value indicates it is upwardly concave. A value of 0 indicates a flat surface.
+Calculates, for all cells in the array, the curvature
+(second derivative) of each cell based on the elevation
+of its neighbors in a 3x3 grid. A positive curvature
+indicates the surface is upwardly convex. A negative
+value indicates it is upwardly concave. A value of 0
+indicates a flat surface.
 
 Units of the curvature output raster are one hundredth (1/100) of a z-unit.
 
@@ -117,7 +121,8 @@ Parameters:
 Returns:
 ----------
     curvature: xarray.DataArray
-        - 2D array, of the same type as the input, of calculated curvature values with shape = (height, width)
+        - 2D array, of the same type as the input,
+          of calculated curvature values with shape = (height, width)
         - All other input attributes are preserved.
 
 Notes:

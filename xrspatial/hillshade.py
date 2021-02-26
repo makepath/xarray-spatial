@@ -1,7 +1,6 @@
 # std lib
 from functools import partial
 from math import sqrt
-from typing import Union
 
 # 3rd-party
 try:
@@ -32,7 +31,9 @@ def _run_numpy(data, azimuth=225, angle_altitude=25):
     aspect = np.arctan2(-x, y)
     azimuthrad = azimuth*np.pi/180.
     altituderad = angle_altitude*np.pi/180.
-    shaded = np.sin(altituderad) * np.sin(slope) + np.cos(altituderad) * np.cos(slope)*np.cos((azimuthrad - np.pi/2.) - aspect)
+    shaded = np.sin(altituderad) * np.sin(slope) + \
+        np.cos(altituderad) * np.cos(slope) * \
+        np.cos((azimuthrad - np.pi/2.) - aspect)
     result = (shaded + 1) / 2
     result[(0, -1), :] = np.nan
     result[:, (0, -1)] = np.nan
@@ -103,15 +104,20 @@ def _run_dask_cupy(data, azimuth, angle_altitude):
     raise NotImplementedError(msg)
 
 
-def hillshade(agg: xr.DataArray, azimuth: int = 225, angle_altitude: int = 25, name: Optional[str] = 'hillshade') -> xr.DataArray:
+def hillshade(agg: xr.DataArray,
+              azimuth: int = 225,
+              angle_altitude: int = 25,
+              name: Optional[str] = 'hillshade') -> xr.DataArray:
     """
-Calculates, for all cells in the array, an illumination value of each cell based on illumination
-from a specific azimuth and altitude.
+Calculates, for all cells in the array, an illumination
+value of each cell based on illumination from a specific
+azimuth and altitude.
+
 Parameters:
 ----------
     agg: xarray.DataArray
         - 2D array of elevation values:
-        - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.        
+        - NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
     altitude: int (default: 30)
         - Altitude angle of the sun specified in degrees.
     azimuth: int (default: 315)
@@ -123,7 +129,8 @@ Parameters:
 Returns:
 ----------
     data: xarray.DataArray
-        - 2D array, of the same type as the input, of calculated illumination values.
+        - 2D array, of the same type as the input,
+          of calculated illumination values.
 
 Notes:
 ----------

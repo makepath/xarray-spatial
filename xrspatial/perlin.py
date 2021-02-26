@@ -50,22 +50,22 @@ def _fade(t):
 
 @ngjit
 def _gradient(h, x, y):
-    vectors = np.array([[0,1],[0,-1],[1,0],[-1,0]])
+    vectors = np.array([[0, 1], [0, -1], [1, 0], [-1, 0]])
     dim_ = h.shape
     out = np.zeros(dim_)
     for j in range(dim_[1]):
         for i in range(dim_[0]):
-            f = np.mod(h[i,j], 4)
+            f = np.mod(h[i, j], 4)
             g = vectors[f]
-            out[i,j] = g[0] * x[i,j] + g[1] * y[i,j]
+            out[i, j] = g[0] * x[i, j] + g[1] * y[i, j]
     return out
 
 
 def _perlin(x, y, seed=0):
     np.random.seed(seed)
-    p = np.arange(2**20,dtype=int)
+    p = np.arange(2**20, dtype=int)
     np.random.shuffle(p)
-    p = np.stack([p,p]).flatten()
+    p = np.stack([p, p]).flatten()
 
     # coordinates of the top-left
     xi = x.astype(int)

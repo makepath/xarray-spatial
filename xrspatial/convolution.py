@@ -1,6 +1,5 @@
-from numba import cuda, float32, int32, prange, jit
+from numba import cuda, float32, prange, jit
 
-from xrspatial.utils import ngjit
 from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
 
@@ -10,22 +9,25 @@ import xarray as xr
 
 def convolve_2d(image: xr.DataArray, kernel, pad=True, use_cuda=True):
     """
-Calculates, for all inner cells of an array, the 2D convolution of each cell via Numba. To account for edge cells,
-a pad can be added to the image array. Convolution is frequently used for image processing, such as smoothing, 
-sharpening, and edge detection of images by elimatig spurious data or enhancing features in the data.
+Calculates, for all inner cells of an array, the 2D convolution of
+each cell via Numba. To account for edge cells, a pad can be added
+to the image array. Convolution is frequently used for image
+processing, such as smoothing, sharpening, and edge detection of
+images by elimatig spurious data or enhancing features in the data.
 
 Parameters:
 ----------
     image: xarray.DataArray
         - 2D array of values to processed and padded.
     kernel: array-like object
-        - Impulse kernel, determines area to apply impulse function for each cell.
+        - Impulse kernel, determines area to apply
+          impulse function for each cell.
     pad: Boolean
         - To compute edges set to True.
     use-cuda: Boolean
         - For parallel computing set to True.
 
-Returns: 
+Returns:
 ----------
     convolve_agg: xarray.DataArray
         - 2D array representation of the impulse function.
@@ -33,7 +35,6 @@ Returns:
 Notes:
 ----------
     Algorithm References:
-        - 
 
 Examples:
 
@@ -112,14 +113,16 @@ def _convolve_2d_cuda(result, kernel, image):
     # (-2-) 2D coordinates of the current thread:
     i, j = cuda.grid(2)
 
-    # (-3-) if the thread coordinates are outside of the image, we ignore the thread:
+    # (-3-) if the thread coordinates are outside of the image,
+    # we ignore the thread:
     image_rows, image_cols = image.shape
     if (i >= image_rows) or (j >= image_cols):
         return
 
-    # To compute the result at coordinates (i, j), we need to use delta_rows rows of the image
-    # before and after the i_th row,
-    # as well as delta_cols columns of the image before and after the j_th column:
+    # To compute the result at coordinates (i, j), we need to
+    # use delta_rows rows of the image before and after the
+    # i_th row, as well as delta_cols columns of the image
+    # before and after the j_th column:
     delta_rows = kernel.shape[0] // 2
     delta_cols = kernel.shape[1] // 2
 
@@ -131,7 +134,9 @@ def _convolve_2d_cuda(result, kernel, image):
         for l in range(kernel.shape[1]):
             i_k = i - k + delta_rows
             j_l = j - l + delta_cols
-            # (-4-) Check if (i_k, j_k) coordinates are inside the image:
-            if (i_k >= 0) and (i_k < image_rows) and (j_l >= 0) and (j_l < image_cols):
+            # (-4-) Check if (i_k, j_k)
+            # coordinates are inside the image:
+            if (i_k >= 0) and (i_k < image_rows) and \
+                    (j_l >= 0) and (j_l < image_cols):
                 s += kernel[k, l] * image[i_k, j_l]
     result[i, j] = s

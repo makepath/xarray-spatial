@@ -46,10 +46,16 @@ def _arvi(nir_data, red_data, blue_data):
     return out
 
 
-def arvi(nir_agg: xr.DataArray, red_agg: xr.DataArray, blue_agg: xr.DataArray, name: Optional[str] = 'arvi', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
+def arvi(nir_agg: xr.DataArray,
+         red_agg: xr.DataArray,
+         blue_agg: xr.DataArray,
+         name: Optional[str] = 'arvi',
+         use_cuda: bool = True,
+         use_cupy: bool = True) -> xr.DataArray:
     """
-Computes Atmospherically Resistant Vegetation Index. Allows for molecular and ozone correction
-with no further need for aerosol correction, except for dust conditions.
+Computes Atmospherically Resistant Vegetation Index.
+Allows for molecular and ozone correction with no further
+need for aerosol correction, except for dust conditions.
 
 Parameters:
 ----------
@@ -62,9 +68,7 @@ Parameters:
     name: str, optional (default = "arvi")
         - Name of output DataArray.
     use_cuda: bool, optional (default = True)
-        - 
     use_cupy: bool, optional (default = True)
-        - 
 
 Returns:
 ----------
@@ -85,7 +89,7 @@ Examples:
 
     Create Sample Band Data
 >>>     np.random.seed(0)
->>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = nir_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -94,7 +98,7 @@ Examples:
 >>>     nir_agg["lon"] = _lon
 
 >>>     np.random.seed(1)
->>>     red_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     red_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = red_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -103,7 +107,7 @@ Examples:
 >>>     red_agg["lon"] = _lon
 
 >>>     np.random.seed(2)
->>>     blue_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     blue_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = blue_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -119,7 +123,7 @@ array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
        [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
  <xarray.DataArray (lat: 4, lon: 4)>
 array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
@@ -127,7 +131,7 @@ array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
   <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.4359949 , 0.02592623, 0.54966248, 0.43532239],
        [0.4203678 , 0.33033482, 0.20464863, 0.61927097],
@@ -185,11 +189,20 @@ def _evi(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
     return out
 
 
-def evi(nir_agg: xr.DataArray, red_agg: xr.DataArray, blue_agg: xr.DataArray, c1: float = 6.0, c2: float = 7.5, soil_factor: float = 1.0, gain: float = 2.5,
-        name: Optional[str] = 'evi', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
+def evi(nir_agg: xr.DataArray,
+        red_agg: xr.DataArray,
+        blue_agg: xr.DataArray,
+        c1: float = 6.0,
+        c2: float = 7.5,
+        soil_factor: float = 1.0,
+        gain: float = 2.5,
+        name: Optional[str] = 'evi',
+        use_cuda: bool = True,
+        use_cupy: bool = True) -> xr.DataArray:
     """
-Computes Enhanced Vegetation Index. Allows for importved sensitivity in high biomass regions,
-de-coupling of the canopy background signal and reduction of atmospheric influences.
+Computes Enhanced Vegetation Index. Allows for importved
+sensitivity in high biomass regions, de-coupling of the
+canopy background signal and reduction of atmospheric influences.
 
 Parameters:
 ----------
@@ -210,9 +223,7 @@ Parameters:
     name: str, optional (default = "evi")
         - Name of output DataArray.
     use_cuda: bool, optional (default = True)
-        - 
     use_cupy: bool, optional (default = True)
-        - 
 
 Returns:
 ----------
@@ -234,7 +245,7 @@ Examples:
 
     Create Sample Band Data
 >>>     np.random.seed(0)
->>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = nir_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -243,7 +254,7 @@ Examples:
 >>>     nir_agg["lon"] = _lon
 
 >>>     np.random.seed(1)
->>>     red_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     red_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = red_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -252,7 +263,7 @@ Examples:
 >>>     red_agg["lon"] = _lon
 
 >>>     np.random.seed(2)
->>>     blue_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     blue_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = blue_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -268,7 +279,7 @@ array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
        [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
  <xarray.DataArray (lat: 4, lon: 4)>
 array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
@@ -276,7 +287,7 @@ array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
  <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.4359949 , 0.02592623, 0.54966248, 0.43532239],
        [0.4203678 , 0.33033482, 0.20464863, 0.61927097],
@@ -347,10 +358,15 @@ def _gci(nir_data, green_data):
     return out
 
 
-def gci(nir_agg: xr.DataArray, green_agg: xr.DataArray, name: Optional[str] = 'gci', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
+def gci(nir_agg: xr.DataArray,
+        green_agg: xr.DataArray,
+        name: Optional[str] = 'gci',
+        use_cuda: bool = True,
+        use_cupy: bool = True) -> xr.DataArray:
     """
-Computes Green Chlorophyll Index. Used to estimate the content of leaf chorophyll and predict
-the physiological state of vegetation and plant health.
+Computes Green Chlorophyll Index. Used to estimate
+the content of leaf chorophyll and predict the
+physiological state of vegetation and plant health.
 
 Parameters:
 ----------
@@ -361,9 +377,7 @@ Parameters:
     name: str, optional (default = "gci")
         - Name of output DataArray
     use_cuda: bool, optional (default = True)
-        - 
     use_cupy: bool, optional (default = True)
-        - 
 
 Returns:
 ----------
@@ -384,7 +398,7 @@ Examples:
 
     Create Sample Band Data
 >>>     np.random.seed(0)
->>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = nir_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -393,7 +407,7 @@ Examples:
 >>>     nir_agg["lon"] = _lon
 
 >>>     np.random.seed(3)
->>>     green_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     green_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = green_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -411,7 +425,7 @@ array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
        [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
  <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.5507979 , 0.70814782, 0.29090474, 0.51082761],
        [0.89294695, 0.89629309, 0.12558531, 0.20724288],
@@ -472,10 +486,13 @@ def _normalized_ratio(arr1, arr2):
     return out
 
 
-def nbr(nir_agg: xr.DataArray, swir2_agg: xr.DataArray, name: Optional[str] = 'nbr', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
+def nbr(nir_agg: xr.DataArray,
+        swir2_agg: xr.DataArray,
+        name: Optional[str] = 'nbr',
+        use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
     """
-Computes Normalized Burn Ratio. Used to identify burned areas and provide a measure of burn
-severity.
+Computes Normalized Burn Ratio. Used to identify
+burned areas and provide a measure of burn severity.
 
 Parameters:
 ----------
@@ -488,9 +505,7 @@ Parameters:
     name: str, optional (default = "nbr")
         - Name of output DataArray.
     use_cuda: bool (default = "True")
-        - 
     use_cupy: bool (default = "True")
-        -
 
 Returns:
 ----------
@@ -510,7 +525,7 @@ Examples:
 >>>     import xrspatial
     Create Sample Band Data
 >>>     np.random.seed(0)
->>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = nir_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -519,7 +534,7 @@ Examples:
 >>>     nir_agg["lon"] = _lon
 
 >>>     np.random.seed(4)
->>>     swir2_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     swir2_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = swir2_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -535,7 +550,7 @@ array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
        [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
  <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.96702984, 0.54723225, 0.97268436, 0.71481599],
        [0.69772882, 0.2160895 , 0.97627445, 0.00623026],
@@ -562,7 +577,8 @@ Coordinates:
     if not nir_agg.shape == swir2_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
 
-    out = _run_normalized_ratio(nir_agg.data, swir2_agg.data, use_cuda=use_cuda, use_cupy=use_cupy)
+    out = _run_normalized_ratio(nir_agg.data, swir2_agg.data,
+                                use_cuda=use_cuda, use_cupy=use_cupy)
 
     return DataArray(out,
                      name=name,
@@ -571,10 +587,15 @@ Coordinates:
                      attrs=nir_agg.attrs)
 
 
-def nbr2(swir1_agg: xr.DataArray, swir2_agg: xr.DataArray, name: Optional[str] = 'nbr', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
+def nbr2(swir1_agg: xr.DataArray,
+         swir2_agg: xr.DataArray,
+         name: Optional[str] = 'nbr',
+         use_cuda: bool = True,
+         use_cupy: bool = True) -> xr.DataArray:
     """
-Computes Modified Normalized Burn Ratio. Used to highlight water sensitivity in vegetation and
-may be useful in post-fire recovery studies.
+Computes Modified Normalized Burn Ratio.
+Used to highlight water sensitivity in vegetation
+and may be useful in post-fire recovery studies.
 
 Parameters:
 ----------
@@ -591,14 +612,13 @@ Parameters:
     name: str, optional (default = "nbr2")
         - Name of output DataArray.
     use_cuda: bool (default = "True")
-        - 
     use_cupy: bool (default = "True")
-        -
 
 Returns:
 ----------
     data: xarray.DataArray
-        - 2D array, of the same type as the input, of calculated gci values.
+        - 2D array, of the same type as the input,
+          of calculated gci values.
         - All other input attributes are preserved.
 
 Notes:
@@ -616,7 +636,7 @@ Examples:
 >>>     import xrspatial
     Create Sample Band Data
 >>>     np.random.seed(5)
->>>     swir1_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     swir1_agg = xr.DataArray(np.random.rand(4,4),
 >>>                            dims = ["lat", "lon"])
 >>>     height, width = swir1_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -625,7 +645,7 @@ Examples:
 >>>     swir1_agg["lon"] = _lon
 
 >>>     np.random.seed(4)
->>>     swir2_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     swir2_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = swir2_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -641,7 +661,7 @@ array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
        [0.44130922, 0.15830987, 0.87993703, 0.27408646]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
 <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.96702984, 0.54723225, 0.97268436, 0.71481599],
        [0.69772882, 0.2160895 , 0.97627445, 0.00623026],
@@ -668,7 +688,8 @@ Coordinates:
     if not swir1_agg.shape == swir2_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
 
-    out = _run_normalized_ratio(swir1_agg.data, swir2_agg.data, use_cuda=use_cuda, use_cupy=use_cupy)
+    out = _run_normalized_ratio(swir1_agg.data, swir2_agg.data,
+                                use_cuda=use_cuda, use_cupy=use_cupy)
 
     return DataArray(out,
                      name=name,
@@ -677,9 +698,14 @@ Coordinates:
                      attrs=swir1_agg.attrs)
 
 
-def ndvi(nir_agg: xr.DataArray, red_agg: xr.DataArray, name: Optional[str] = 'ndvi', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
+def ndvi(nir_agg: xr.DataArray,
+         red_agg: xr.DataArray,
+         name: Optional[str] = 'ndvi',
+         use_cuda: bool = True,
+         use_cupy: bool = True) -> xr.DataArray:
     """
-Computes Normalized Difference Vegetation Index (NDVI). Used to determine if a cell contains live green vegetation.
+Computes Normalized Difference Vegetation Index (NDVI).
+Used to determine if a cell contains live green vegetation.
 
 Parameters:
 ----------
@@ -690,14 +716,13 @@ Parameters:
     name: str, optional (default ="ndvi")
         - Name of output DataArray.
     use_cuda: bool (default = True)
-        - 
     use_cupy: bool (default = True)
-        - 
 
 Returns:
 ----------
     data: xarray.DataArray
-        - 2D array, of the same type as the input, of calculated gci values.
+        - 2D array, of the same type as the input,
+          of calculated gci values.
         - All other input attributes are preserved.
 Notes:
 ----------
@@ -713,7 +738,7 @@ Examples:
 
     Create Sample Band Data
 >>>     np.random.seed(0)
->>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = nir_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -722,7 +747,7 @@ Examples:
 >>>     nir_agg["lon"] = _lon
 
 >>>     np.random.seed(1)
->>>     red_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     red_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = red_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -738,7 +763,7 @@ array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
        [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
 <xarray.DataArray (lat: 4, lon: 4)>
 array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
@@ -746,7 +771,7 @@ array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
 
     Create NDVI DataArray
 >>>     data = xrspatial.multispectral.ndvi(nir_agg, red_agg)
@@ -767,7 +792,8 @@ Coordinates:
     if not red_agg.shape == nir_agg.shape:
         raise ValueError("red_agg and nir_agg expected to have equal shapes")
 
-    out = _run_normalized_ratio(nir_agg.data, red_agg.data, use_cuda=use_cuda, use_cupy=use_cupy)
+    out = _run_normalized_ratio(nir_agg.data, red_agg.data,
+                                use_cuda=use_cuda, use_cupy=use_cupy)
 
     return DataArray(out,
                      name='ndvi',
@@ -790,13 +816,17 @@ def _run_normalized_ratio(arr1, arr2, use_cuda=True, use_cupy=True):
         _normalized_ratio_gpu[griddim, blockdim](arr1, arr2, out)
     else:
         out = _normalized_ratio(arr1, arr2)
-    
     return out
 
 
-def ndmi(nir_agg: xr.DataArray, swir1_agg: xr.DataArray, name: Optional[str] = 'ndmi', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
+def ndmi(nir_agg: xr.DataArray,
+         swir1_agg: xr.DataArray,
+         name: Optional[str] = 'ndmi',
+         use_cuda: bool = True,
+         use_cupy: bool = True) -> xr.DataArray:
     """
-Computes Normalized Difference Moisture Index (NDMI). Used to determine vegetation water content.
+Computes Normalized Difference Moisture Index (NDMI).
+Used to determine vegetation water content.
 
 Parameters:
 ----------
@@ -811,9 +841,7 @@ Parameters:
     name: str, optional (default ="ndmi")
         - Name of output DataArray.
     use_cuda: bool (default = True)
-        - 
     use_cupy: bool (default = True)
-        - 
 
 Returns:
 ----------
@@ -835,7 +863,7 @@ Examples:
 
     Create Sample Band Data
 >>>     np.random.seed(0)
->>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = nir_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -844,7 +872,7 @@ Examples:
 >>>     nir_agg["lon"] = _lon
 
 >>>     np.random.seed(5)
->>>     swir1_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     swir1_agg = xr.DataArray(np.random.rand(4,4),
 >>>                            dims = ["lat", "lon"])
 >>>     height, width = swir1_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -860,7 +888,7 @@ array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
        [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
 <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
        [0.48841119, 0.61174386, 0.76590786, 0.51841799],
@@ -868,7 +896,7 @@ array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
        [0.44130922, 0.15830987, 0.87993703, 0.27408646]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
 
     Create NDMI DataArray
 >>>     data = xrspatial.multispectral.ndmi(nir_agg, swir1_agg)
@@ -891,7 +919,8 @@ Coordinates:
     nir_data = nir_agg.data
     swir1_data = swir1_agg.data
 
-    out = _run_normalized_ratio(nir_data, swir1_data, use_cuda=use_cuda, use_cupy=use_cupy)
+    out = _run_normalized_ratio(nir_data, swir1_data,
+                                use_cuda=use_cuda, use_cupy=use_cupy)
 
     return DataArray(out,
                      name=name,
@@ -949,10 +978,16 @@ def _savi_gpu(nir_data, red_data, soil_factor, out):
             out[y, x] = numerator / denominator
 
 
-def savi(nir_agg: xr.DataArray, red_agg: xr.DataArray, soil_factor: float = 1.0, name: Optional[str] = 'savi', use_cuda: bool = True, use_cupy: bool = True):
+def savi(nir_agg: xr.DataArray,
+         red_agg: xr.DataArray,
+         soil_factor: float = 1.0,
+         name: Optional[str] = 'savi',
+         use_cuda: bool = True,
+         use_cupy: bool = True):
     """
-Computes Soil Adjusted Vegetation Index (SAVI). Used to determine if a cell contains living vegetation
-while minimizing soil brightness.
+Computes Soil Adjusted Vegetation Index (SAVI).
+Used to determine if a cell contains living
+vegetation while minimizing soil brightness.
 
 Parameters:
 ----------
@@ -966,9 +1001,7 @@ Parameters:
     name: str, optional (default ="savi")
         - Name of output DataArray.
     use_cuda: bool (default = True)
-        - 
     use_cupy: bool (default = True)
-        - 
 
 Returns:
 ----------
@@ -987,7 +1020,7 @@ Notes:
 
     Create Sample Band Data
 >>>     np.random.seed(0)
->>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = nir_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -996,7 +1029,7 @@ Notes:
 >>>     nir_agg["lon"] = _lon
 
 >>>     np.random.seed(1)
->>>     red_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     red_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = red_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -1012,7 +1045,7 @@ array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
        [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
 <xarray.DataArray (lat: 4, lon: 4)>
 array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
@@ -1020,7 +1053,7 @@ array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
 
     Create SAVI DataArray
 >>>     data = xrspatial.multispectral.savi(nir_agg, red_agg)
@@ -1108,9 +1141,15 @@ def _sipi_gpu(nir_data, red_data, blue_data, out):
             out[y, x] = numerator / denominator
 
 
-def sipi(nir_agg: xr.DataArray, red_agg: xr.DataArray, blue_agg: xr.DataArray, name: Optional[str] = 'sipi', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
+def sipi(nir_agg: xr.DataArray,
+         red_agg: xr.DataArray,
+         blue_agg: xr.DataArray,
+         name: Optional[str] = 'sipi',
+         use_cuda: bool = True,
+         use_cupy: bool = True) -> xr.DataArray:
     """
-Computes Structure Insensitive Pigment Index (SIPI) which is helpful in early disease detection in vegetation.
+Computes Structure Insensitive Pigment Index (SIPI)
+which is helpful in early disease detection in vegetation.
 
 Parameters:
 ----------
@@ -1123,9 +1162,7 @@ Parameters:
     name: str, optional (default = "arvi")
         - Name of output DataArray.
     use_cuda: bool, optional (default = True)
-        - 
     use_cupy: bool, optional (default = True)
-        - 
 
 Returns:
 ----------
@@ -1146,7 +1183,7 @@ Examples:
 
     Create Sample Band Data
 >>>     np.random.seed(0)
->>>     nir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     nir_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = nir_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -1155,7 +1192,7 @@ Examples:
 >>>     nir_agg["lon"] = _lon
 
 >>>     np.random.seed(1)
->>>     red_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     red_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = red_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -1164,7 +1201,7 @@ Examples:
 >>>     red_agg["lon"] = _lon
 
 >>>     np.random.seed(2)
->>>     blue_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     blue_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = blue_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -1180,7 +1217,7 @@ array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
        [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
  <xarray.DataArray (lat: 4, lon: 4)>
 array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
@@ -1188,7 +1225,7 @@ array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
   <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.4359949 , 0.02592623, 0.54966248, 0.43532239],
        [0.4203678 , 0.33033482, 0.20464863, 0.61927097],
@@ -1283,9 +1320,14 @@ def _ebbi_gpu(red_data, swir_data, tir_data, out):
         out[y, x] = numerator / denominator
 
 
-def ebbi(red_agg: xr.DataArray, swir_agg: xr.DataArray, tir_agg: xr.DataArray, name: Optional[str] = 'ebbi', use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
+def ebbi(red_agg: xr.DataArray,
+         swir_agg: xr.DataArray,
+         tir_agg: xr.DataArray,
+         name: Optional[str] = 'ebbi',
+         use_cuda: bool = True,
+         use_cupy: bool = True) -> xr.DataArray:
     """
-Computes Enhanced Built-Up and Bareness Index (EBBI) which 
+Computes Enhanced Built-Up and Bareness Index (EBBI) which
 allows for easily distinguishing between built-up and bare land areas.
 
 Parameters:
@@ -1299,21 +1341,20 @@ Parameters:
     name: str, optional (default = "ebbi")
         - Name of output DataArray.
     use_cuda: bool, optional (default = True)
-        - 
     use_cupy: bool, optional (default = True)
-        - 
 
 Returns:
 ----------
     data: xarray.DataArray
-        - 2D array, of the same type as the input, of calculated arvi values.
-        - All other input attributes are preserved.
-        
+        - 2D array, of the same type as the input,
+          of calculated arvi values.
+        - All other input attributes are preserved
+
 Notes:
 ----------
     Algorithm References:
         - https://rdrr.io/cran/LSRS/man/EBBI.html
-        
+
 Examples:
 ----------
     Imports
@@ -1323,7 +1364,7 @@ Examples:
 
     Create Sample Band Data
 >>>     np.random.seed(1)
->>>     red_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     red_agg = xr.DataArray(np.random.rand(4,4),
 >>>                             dims = ["lat", "lon"])
 >>>     height, width = red_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -1332,7 +1373,7 @@ Examples:
 >>>     red_agg["lon"] = _lon
 
 >>>     np.random.seed(5)
->>>     swir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     swir_agg = xr.DataArray(np.random.rand(4,4),
 >>>                            dims = ["lat", "lon"])
 >>>     height, width = swir_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -1341,7 +1382,7 @@ Examples:
 >>>     swir_agg["lon"] = _lon
 
 >>>     np.random.seed(6)
->>>     tir_agg = xr.DataArray(np.random.rand(4,4), 
+>>>     tir_agg = xr.DataArray(np.random.rand(4,4),
 >>>                            dims = ["lat", "lon"])
 >>>     height, width = tir_agg.shape
 >>>     _lat = np.linspace(0, height - 1, height)
@@ -1357,7 +1398,7 @@ array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
        [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
  <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
        [0.48841119, 0.61174386, 0.76590786, 0.51841799],
@@ -1365,7 +1406,7 @@ array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
        [0.44130922, 0.15830987, 0.87993703, 0.27408646]])
 Coordinates:
   * lat      (lat) float64 0.0 1.0 2.0 3.0
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 
+  * lon      (lon) float64 0.0 1.0 2.0 3.0
  <xarray.DataArray (lat: 4, lon: 4)>
 array([[0.89286015, 0.33197981, 0.82122912, 0.04169663],
        [0.10765668, 0.59505206, 0.52981736, 0.41880743],
@@ -1419,6 +1460,7 @@ Coordinates:
                      coords=red_agg.coords,
                      dims=red_agg.dims,
                      attrs=red_agg.attrs)
+
 
 @ngjit
 def _normalize_data(agg, pixel_max=255.0):

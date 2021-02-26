@@ -61,9 +61,12 @@ def render_tiles(full_extent, levels, load_data_func,
     results = dict()
     for level in levels:
         print('calculating statistics for level {}'.format(level))
-        span = calculate_zoom_level_stats(full_extent, level,
-                                          load_data_func, rasterize_func,
-                                          color_ranging_strategy=color_ranging_strategy)
+        span = calculate_zoom_level_stats(full_extent,
+                                          level,
+                                          load_data_func,
+                                          rasterize_func,
+                                          color_ranging_strategy =
+                                          color_ranging_strategy)
 
         super_tiles = list(gen_super_tiles(full_extent, level, span))
         print(f'rendering {len(super_tiles)} supertiles for zoom level {level}'
@@ -278,9 +281,11 @@ class MercatorTileDefinition(object):
 
     def get_tiles_by_extent(self, extent, level):
 
-        # unpack extent and convert to tile coordinates
+        # unpack extent and convert
+        # to tile coordinates
         xmin, ymin, xmax, ymax = extent
-        # note y coordinates are reversed since they are in opposite direction to meters
+        # note y coordinates are reversed since
+        # they are in opposite direction to meters
         txmin, tymax = self.meters_to_tile(xmin, ymin, level)
         txmax, tymin = self.meters_to_tile(xmax, ymax, level)
 

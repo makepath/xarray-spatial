@@ -8,7 +8,8 @@ from numba import cuda
 try:
     import cupy
     if cupy.result_type is np.result_type:
-        # Workaround until cupy release of https://github.com/cupy/cupy/pull/2249
+        # Workaround until cupy release of
+        # https://github.com/cupy/cupy/pull/2249
         # Without this, cupy.histogram raises an error that cupy.result_type
         # is not defined.
         cupy.result_type = lambda *args: np.result_type(
@@ -100,7 +101,7 @@ def get_dataarray_resolution(agg: xr.DataArray):
         cellsize_y = cellsize
     else:
         cellsize_x, cellsize_y = calc_res(agg)
-    
+
     return cellsize_x, cellsize_y
 
 
@@ -118,8 +119,11 @@ def lnglat_to_meters(longitude, latitude):
 
     easting, northing = lnglat_to_meters(np.array([-74]),np.array([40.71]))
 
-    df=pandas.DataFrame(dict(longitude=np.array([-74]),latitude=np.array([40.71])))
-    df.loc[:, 'longitude'], df.loc[:, 'latitude'] = lnglat_to_meters(df.longitude,df.latitude)
+    df = pandas.DataFrame(dict(longitude=np.array([-74]),
+                               latitude=np.array([40.71])))
+    df.loc[:, 'longitude'],
+    df.loc[:, 'latitude'] = lnglat_to_meters(df.longitude,
+                                             df.latitude)
     """
     if isinstance(longitude, (list, tuple)):
         longitude = np.array(longitude)
@@ -128,7 +132,8 @@ def lnglat_to_meters(longitude, latitude):
 
     origin_shift = np.pi * 6378137
     easting = longitude * origin_shift / 180.0
-    northing = np.log(np.tan((90 + latitude) * np.pi / 360.0)) * origin_shift / np.pi
+    northing = np.log(np.tan((90 + latitude) * np.pi / 360.0)) * \
+        origin_shift / np.pi
     return (easting, northing)
 
 
