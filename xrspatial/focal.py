@@ -299,44 +299,39 @@ def apply(raster, kernel, func=calc_mean):
 
 
 @ngjit
-def upper_bound_p_value(zscore):
-    if abs(zscore) >= 2.33:
-        return 0.0099
-    if abs(zscore) >= 1.65:
-        return 0.0495
-    if abs(zscore) >= 1.29:
-        return 0.0985
-    return 1
-
-
-@ngjit
-def _hot_cold(zscore):
-    if zscore > 0:
-        return 1
-    if zscore < 0:
-        return -1
-    return 0
-
-
-@ngjit
-def _confidence(zscore):
-    p_value = upper_bound_p_value(zscore)
-    if abs(zscore) > 2.58 and p_value < 0.01:
-        return 99
-    if abs(zscore) > 1.96 and p_value < 0.05:
-        return 95
-    if abs(zscore) > 1.65 and p_value < 0.1:
-        return 90
-    return 0
-
-
-@ngjit
 def _calc_hotspots_numpy(z_array):
     out = np.zeros_like(z_array, dtype=np.int8)
     rows, cols = z_array.shape
+
     for y in prange(rows):
         for x in prange(cols):
-            out[y, x] = _hot_cold(z_array[y, x]) * _confidence(z_array[y, x])
+            zscore = z_array[y, x]
+
+            # find p value
+            p_value = 1.0
+            if abs(zscore) >= 2.33:
+                p_value = 0.0099
+            elif abs(zscore) >= 1.65:
+                p_value = 0.0495
+            elif abs(zscore) >= 1.29:
+                p_value = 0.0985
+
+            # confidence
+            confidence = 0
+            if abs(zscore) > 2.58 and p_value < 0.01:
+                confidence = 99
+            elif abs(zscore) > 1.96 and p_value < 0.05:
+                confidence = 95
+            elif abs(zscore) > 1.65 and p_value < 0.1:
+                confidence = 90
+
+            hot_cold = 0
+            if zscore > 0:
+                hot_cold = 1
+            elif zscore < 0:
+                hot_cold = -1
+
+            out[y, x] = hot_cold * confidence
     return out
 
 
@@ -358,6 +353,36 @@ def _hotspots_numpy(raster, kernel):
     z_array = (mean_array - global_mean) / global_std
 
     out = _calc_hotspots_numpy(z_array)
+    return out
+
+
+def _calc_hotspots_cupy(z_array):
+    out = cupy.zeros_like(z_array, dtype=cupy.int8)
+    rows, cols = z_array.shape
+    for y in prange(rows):
+        for x in prange(cols):
+            out[y, x] = _hot_cold(z_array[y, x]) * _confidence(z_array[y, x])
+    return out
+
+
+def _hotspots_cupy(raster, kernel):
+    if not (issubclass(raster.data.dtype.type, cupy.integer) or
+            issubclass(raster.data.dtype.type, cupy.floating)):
+        raise ValueError("data type must be integer or float")
+
+    # apply kernel to raster values
+    mean_array = convolve_2d(raster.data, kernel / kernel.sum())
+
+    # calculate z-scores
+    global_mean = cupy.nanmean(raster.data)
+    global_std = cupy.nanstd(raster.data)
+    if global_std == 0:
+        raise ZeroDivisionError(
+            "Standard deviation of the input raster values is 0."
+        )
+    z_array = (mean_array - global_mean) / global_std
+
+    out = _calc_hotspots_cupy(z_array)
     return out
 
 
@@ -398,6 +423,10 @@ def hotspots(raster, kernel):
     # numpy case
     if isinstance(raster.data, np.ndarray):
         out = _hotspots_numpy(raster, kernel)
+
+    # cupy case
+    elif has_cuda() and isinstance(raster.data, cupy.ndarray):
+        out = _hotspots_cupy(raster, kernel)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(raster.data)))
