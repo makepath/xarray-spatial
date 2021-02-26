@@ -356,6 +356,31 @@ def _hotspots_numpy(raster, kernel):
     return out
 
 
+def _hotspots_dask_numpy(raster, kernel):
+
+    # apply kernel to raster values
+    mean_array = convolve_2d(raster.data, kernel / kernel.sum())
+
+    # calculate z-scores
+    global_mean = da.nanmean(raster.data)
+    global_std = da.nanstd(raster.data)
+    if global_std == 0:
+        raise ZeroDivisionError(
+            "Standard deviation of the input raster values is 0."
+        )
+    z_array = (mean_array - global_mean) / global_std
+
+    _func = partial(_calc_hotspots_numpy)
+    pad_h = kernel.shape[0] // 2
+    pad_w = kernel.shape[1] // 2
+
+    out = z_array.map_overlap(_func,
+                              depth=(pad_h, pad_w),
+                              boundary=np.nan,
+                              meta=np.array(()))
+    return out
+
+
 def _calc_hotspots_cupy(z_array):
     out = cupy.zeros_like(z_array, dtype=cupy.int8)
     rows, cols = z_array.shape
@@ -454,6 +479,10 @@ def hotspots(raster, kernel):
     # cupy case
     elif has_cuda() and isinstance(raster.data, cupy.ndarray):
         out = _hotspots_cupy(raster, kernel)
+
+    # dask + numpy case
+    elif isinstance(raster.data, da.Array):
+        out = _hotspots_dask_numpy(raster, kernel)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(raster.data)))

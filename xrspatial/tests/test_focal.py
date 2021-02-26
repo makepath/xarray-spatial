@@ -263,7 +263,6 @@ def test_apply_gpu_equals_gpu():
         assert e_info
 
 
-
 def test_hotspot():
     n, m = 10, 10
     data = np.zeros((n, m), dtype=float)
@@ -296,7 +295,18 @@ def test_hotspot():
     no_significant_region = [id for id in all_idx if id not in hot_region and
                              id not in cold_region]
 
+    # numpy case
     numpy_hotspots = hotspots(numpy_agg, kernel)
+
+    # dask + numpy
+    dask_numpy_agg = xr.DataArray(da.from_array(data, chunks=(3, 3)))
+    dask_numpy_hotspots = hotspots(dask_numpy_agg, kernel)
+
+    assert isinstance(dask_numpy_hotspots.data, da.Array)
+
+    # both output same results
+    assert np.isclose(numpy_hotspots.data, dask_numpy_hotspots.data.compute(),
+                      equal_nan=True).all()
 
     # check output's properties
     # output must be an xarray DataArray
@@ -355,9 +365,10 @@ def test_hotspot_gpu_equals_cpu():
 
     cellsize_x, cellsize_y = cellsize(numpy_agg)
     kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
-
+    # numpy case
     numpy_hotspots = hotspots(numpy_agg, kernel)
 
+    # cupy case
     import cupy
 
     cupy_agg = xr.DataArray(cupy.asarray(data))
