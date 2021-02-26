@@ -376,3 +376,9 @@ def test_hotspot_gpu_equals_cpu():
 
     assert isinstance(cupy_hotspots.data, cupy.ndarray)
     assert np.isclose(numpy_hotspots, cupy_hotspots.data.get(), equal_nan=True).all()
+
+    # dask + cupy case not implemented
+    dask_cupy_agg = xr.DataArray(da.from_array(cupy.asarray(data), chunks=(3, 3)))
+    with pytest.raises(NotImplementedError) as e_info:
+        hotspots(dask_cupy_agg, kernel)
+        assert e_info

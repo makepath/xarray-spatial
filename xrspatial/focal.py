@@ -18,6 +18,7 @@ except ImportError:
 from numba import cuda
 from xrspatial.utils import cuda_args
 from xrspatial.utils import has_cuda
+from xrspatial.utils import is_cupy_backed
 from xrspatial.utils import ngjit
 from xrspatial.convolution import convolve_2d, custom_kernel
 
@@ -479,6 +480,10 @@ def hotspots(raster, kernel):
     # cupy case
     elif has_cuda() and isinstance(raster.data, cupy.ndarray):
         out = _hotspots_cupy(raster, kernel)
+
+    # dask + cupy case
+    elif has_cuda() and isinstance(raster.data, da.Array) and is_cupy_backed(raster):
+        raise NotImplementedError()
 
     # dask + numpy case
     elif isinstance(raster.data, da.Array):
