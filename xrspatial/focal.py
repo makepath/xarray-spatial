@@ -359,9 +359,36 @@ def _hotspots_numpy(raster, kernel):
 def _calc_hotspots_cupy(z_array):
     out = cupy.zeros_like(z_array, dtype=cupy.int8)
     rows, cols = z_array.shape
+
     for y in prange(rows):
         for x in prange(cols):
-            out[y, x] = _hot_cold(z_array[y, x]) * _confidence(z_array[y, x])
+            zscore = z_array[y, x]
+
+            # find p value
+            p_value = 1.0
+            if abs(zscore) >= 2.33:
+                p_value = 0.0099
+            elif abs(zscore) >= 1.65:
+                p_value = 0.0495
+            elif abs(zscore) >= 1.29:
+                p_value = 0.0985
+
+            # confidence
+            confidence = 0
+            if abs(zscore) > 2.58 and p_value < 0.01:
+                confidence = 99
+            elif abs(zscore) > 1.96 and p_value < 0.05:
+                confidence = 95
+            elif abs(zscore) > 1.65 and p_value < 0.1:
+                confidence = 90
+
+            hot_cold = 0
+            if zscore > 0:
+                hot_cold = 1
+            elif zscore < 0:
+                hot_cold = -1
+
+            out[y, x] = hot_cold * confidence
     return out
 
 

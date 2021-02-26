@@ -263,6 +263,7 @@ def test_apply_gpu_equals_gpu():
         assert e_info
 
 
+
 def test_hotspot():
     n, m = 10, 10
     data = np.zeros((n, m), dtype=float)
@@ -285,43 +286,82 @@ def test_hotspot():
     for p in cold_region:
         data[p[0], p[1]] = -10000
 
-    raster = xr.DataArray(data, dims=['y', 'x'])
-    raster['x'] = np.linspace(0, n, n)
-    raster['y'] = np.linspace(0, m, m)
-    cellsize_x, cellsize_y = cellsize(raster)
+    numpy_agg = xr.DataArray(data, dims=['y', 'x'])
+    numpy_agg['x'] = np.linspace(0, n, n)
+    numpy_agg['y'] = np.linspace(0, m, m)
+    cellsize_x, cellsize_y = cellsize(numpy_agg)
 
     kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
 
     no_significant_region = [id for id in all_idx if id not in hot_region and
                              id not in cold_region]
 
-    hotspots_output = hotspots(raster, kernel)
+    numpy_hotspots = hotspots(numpy_agg, kernel)
 
     # check output's properties
     # output must be an xarray DataArray
-    assert isinstance(hotspots_output, xr.DataArray)
-    assert isinstance(hotspots_output.values, np.ndarray)
-    assert issubclass(hotspots_output.values.dtype.type, np.int8)
+    assert isinstance(numpy_hotspots, xr.DataArray)
+    assert isinstance(numpy_hotspots.values, np.ndarray)
+    assert issubclass(numpy_hotspots.values.dtype.type, np.int8)
 
     # shape, dims, coords, attr preserved
-    assert raster.shape == hotspots_output.shape
-    assert raster.dims == hotspots_output.dims
-    assert raster.attrs == hotspots_output.attrs
-    for coord in raster.coords:
-        assert np.all(raster[coord] == hotspots_output[coord])
+    assert numpy_agg.shape == numpy_hotspots.shape
+    assert numpy_agg.dims == numpy_hotspots.dims
+    assert numpy_agg.attrs == numpy_hotspots.attrs
+    for coord in numpy_agg.coords:
+        assert np.all(numpy_agg[coord] == numpy_hotspots[coord])
 
     # no nan in output
-    assert not np.isnan(np.min(hotspots_output))
+    assert not np.isnan(np.min(numpy_hotspots))
 
     # output of extreme regions are non-zeros
     # hot spots
-    hot_spot = np.asarray([hotspots_output[p] for p in hot_region])
+    hot_spot = np.asarray([numpy_hotspots[p] for p in hot_region])
     assert np.all(hot_spot >= 0)
     assert np.sum(hot_spot) > 0
     # cold spots
-    cold_spot = np.asarray([hotspots_output[p] for p in cold_region])
+    cold_spot = np.asarray([numpy_hotspots[p] for p in cold_region])
     assert np.all(cold_spot <= 0)
     assert np.sum(cold_spot) < 0
     # output of no significant regions are 0s
-    no_sign = np.asarray([hotspots_output[p] for p in no_significant_region])
+    no_sign = np.asarray([numpy_hotspots[p] for p in no_significant_region])
     assert np.all(no_sign == 0)
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_hotspot_gpu_equals_cpu():
+    n, m = 10, 10
+    data = np.zeros((n, m), dtype=float)
+
+    nan_cells = [(i, i) for i in range(m)]
+    for cell in nan_cells:
+        data[cell[0], cell[1]] = np.nan
+
+    # add some extreme values
+    hot_region = [(1, 1), (1, 2), (1, 3),
+                  (2, 1), (2, 2), (2, 3),
+                  (3, 1), (3, 2), (3, 3)]
+    cold_region = [(7, 7), (7, 8), (7, 9),
+                   (8, 7), (8, 8), (8, 9),
+                   (9, 7), (9, 8), (9, 9)]
+    for p in hot_region:
+        data[p[0], p[1]] = 10000
+    for p in cold_region:
+        data[p[0], p[1]] = -10000
+
+    numpy_agg = xr.DataArray(data, dims=['y', 'x'])
+    numpy_agg['x'] = np.linspace(0, n, n)
+    numpy_agg['y'] = np.linspace(0, m, m)
+
+    cellsize_x, cellsize_y = cellsize(numpy_agg)
+    kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
+
+    numpy_hotspots = hotspots(numpy_agg, kernel)
+
+    import cupy
+
+    cupy_agg = xr.DataArray(cupy.asarray(data))
+    cupy_hotspots = hotspots(cupy_agg, kernel)
+
+    assert isinstance(cupy_hotspots.data, cupy.ndarray)
+    assert np.isclose(numpy_hotspots, cupy_hotspots.data.get(), equal_nan=True).all()
