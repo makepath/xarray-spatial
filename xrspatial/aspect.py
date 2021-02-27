@@ -152,7 +152,8 @@ def _run_dask_numpy(data: da.Array) -> da.Array:
     return out
 
 
-def aspect(agg: xr.DataArray, name: Optional[str] = 'aspect') -> xr.DataArray:
+def aspect(agg: xr.DataArray,
+           name: Optional[str] = 'aspect') -> xr.DataArray:
     """
 Calculates, for all cells in the array,
 the downward slope direction of each cell

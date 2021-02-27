@@ -7,7 +7,10 @@ import numpy as np
 import xarray as xr
 
 
-def convolve_2d(image: xr.DataArray, kernel, pad=True, use_cuda=True):
+def convolve_2d(image: xr.DataArray,
+                kernel,
+                pad=True,
+                use_cuda=True) -> xr.DataArray:
     """
 Calculates, for all inner cells of an array, the 2D convolution of
 each cell via Numba. To account for edge cells, a pad can be added
@@ -37,8 +40,40 @@ Notes:
     Algorithm References:
 
 Examples:
-
 ----------
+    Imports
+>>>     import numpy as np
+>>>     import xarray as xr
+>>>     from xrspatial import convolution, focal
+
+    Create Data Array
+>>>     agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
+>>>                                  [0, 0, 2, 4, 0, 8, 0],
+>>>                                  [0, 2, 2, 4, 6, 8, 0],
+>>>                                  [0, 4, 4, 4, 6, 8, 0],
+>>>                                  [0, 6, 6, 6, 6, 8, 0],
+>>>                                  [0, 8, 8, 8, 8, 8, 0],
+>>>                                  [0, 0, 0, 0, 0, 0, 0]]),
+>>>                         dims = ["lat", "lon"],
+>>>                         attrs = dict(res = 1))
+>>>     height, width = agg.shape
+>>>     _lon = np.linspace(0, width - 1, width)
+>>>     _lat = np.linspace(0, height - 1, height)
+>>>     agg["lon"] = _lon
+>>>     agg["lat"] = _lat
+
+    Create Kernel
+>>>     kernel = focal.circle_kernel(1, 1, 1)
+
+    Create Convolution Data Array
+>>>     print(convolution.convolve_2d(agg, kernel))
+[[ 0.  0.  4.  8.  0. 16.  0.]
+ [ 0.  4.  8. 10. 18. 16. 16.]
+ [ 4.  8. 14. 20. 24. 30. 16.]
+ [ 8. 16. 20. 24. 30. 30. 16.]
+ [12. 24. 30. 30. 34. 30. 16.]
+ [16. 22. 30. 30. 30. 24. 16.]
+ [ 0. 16. 16. 16. 16. 16.  0.]]
     """
     # Don't allow padding on (1, 1) kernel
     if (kernel.shape[0] == 1 and kernel.shape[1] == 1):

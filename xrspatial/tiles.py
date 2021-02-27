@@ -145,6 +145,8 @@ def invert_y_tile(y, z):
 
 # TODO: change name from source to definition
 class MercatorTileDefinition(object):
+    warnings.warn('\'MercatorTileDefinition\' is deprecated.,
+                DeprecationWarning)
     ''' Implementation of mercator tile source
     In general, tile sources are used as a required input for ``TileRenderer``.
 

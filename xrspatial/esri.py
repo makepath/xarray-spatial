@@ -2,7 +2,8 @@ import pandas as pd
 import requests
 
 
-def featureset_to_dataframe(featureset, convert_geometry=False,
+def featureset_to_dataframe(featureset,
+                            convert_geometry=False,
                             use_aliases=False):
     """
 Parameters:

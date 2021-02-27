@@ -39,18 +39,20 @@ def doesnt_have_cuda():
     return not has_cuda()
 
 
-def cuda_args(shape):
+def cuda_args(shape) -> tuple:
     """
-    Compute the blocks-per-grid and threads-per-block parameters for use when
-    invoking cuda kernels
-    Parameters
-    ----------
+Compute the blocks-per-grid and threads-per-block parameters for use when
+invoking cuda kernels.
+
+Parameters:
+----------
     shape: int or tuple of ints
-        The shape of the input array that the kernel will parallelize over
-    Returns
-    -------
+        - The shape of the input array that the kernel will parallelize over.
+
+Returns:
+----------
     tuple
-        Tuple of (blocks_per_grid, threads_per_block)
+        - Tuple of (blocks_per_grid, threads_per_block)
     """
     if isinstance(shape, int):
         shape = (shape,)
@@ -70,13 +72,23 @@ def is_cupy_backed(agg: xr.DataArray):
         return False
 
 
-def calc_res(raster):
-    """Calculate the resolution of xarray.DataArray raster and return it as the
-    two-tuple (xres, yres).
+def calc_res(raster: xr.DataArray) -> tuple:
+    """
+Calculate the resolution of xarray.DataArray raster and return it as the
+two-tuple (xres, yres).
 
-    Notes
-    -----
+Parameters:
+----------
+    raster: xarray.DataArray
+        - Input raster.
 
+Returns:
+----------
+    tuple
+        - Tuple of (x-resolution, y-resolution)
+
+Notes:
+----------
     Sourced from datashader.utils
     """
     h, w = raster.shape[-2:]
@@ -88,7 +100,20 @@ def calc_res(raster):
     return xres, yres
 
 
-def get_dataarray_resolution(agg: xr.DataArray):
+def get_dataarray_resolution(agg: xr.DataArray) -> tuple:
+    """
+Calculate resolution of xarray.DataArray.
+
+Parameters:
+----------
+    agg: xarray.DataArray
+        - Input raster.
+
+Returns:
+----------
+    tuple
+        - Tuple of (x cell size, y cell size)
+    """
 
     # get cellsize out from 'res' attribute
     cellsize = agg.attrs.get('res')
@@ -105,25 +130,39 @@ def get_dataarray_resolution(agg: xr.DataArray):
     return cellsize_x, cellsize_y
 
 
-def lnglat_to_meters(longitude, latitude):
+def lnglat_to_meters(longitude: float, latitude: float) -> tuple:
     """
-    Projects the given (longitude, latitude) values into Web Mercator
-    coordinates (meters East of Greenwich and meters North of the Equator).
+Projects the given (longitude, latitude) values into Web Mercator
+coordinates (meters East of Greenwich and meters North of the Equator).
 
-    Longitude and latitude can be provided as scalars, Pandas columns,
-    or Numpy arrays, and will be returned in the same form.  Lists
-    or tuples will be converted to Numpy arrays.
+Longitude and latitude can be provided as scalars, Pandas columns,
+or Numpy arrays, and will be returned in the same form.  Lists
+or tuples will be converted to Numpy arrays.
 
-    Examples:
-    easting, northing = lnglat_to_meters(-40.71,74)
+Parameters:
+----------
+    latitude: float
+        - Input latitude.
+    longitude: float
+        - Input longitude.
 
-    easting, northing = lnglat_to_meters(np.array([-74]),np.array([40.71]))
+Returns:
+----------
+    tuple
+        - Tuple of (easting, northing)
 
-    df = pandas.DataFrame(dict(longitude=np.array([-74]),
-                               latitude=np.array([40.71])))
-    df.loc[:, 'longitude'],
-    df.loc[:, 'latitude'] = lnglat_to_meters(df.longitude,
-                                             df.latitude)
+Examples:
+----------
+>>>     easting, northing = lnglat_to_meters(-40.71,74)
+
+>>>     easting, northing = lnglat_to_meters(np.array([-74]),
+>>>                                          np.array([40.71]))
+
+>>>     df = pandas.DataFrame(dict(longitude=np.array([-74]),
+>>>                                latitude=np.array([40.71])))
+>>>     df.loc[:, 'longitude'],
+>>>     df.loc[:, 'latitude'] = lnglat_to_meters(df.longitude,
+>>>                                              df.latitude)
     """
     if isinstance(longitude, (list, tuple)):
         longitude = np.array(longitude)
@@ -137,31 +176,32 @@ def lnglat_to_meters(longitude, latitude):
     return (easting, northing)
 
 
-def height_implied_by_aspect_ratio(W, X, Y):
+def height_implied_by_aspect_ratio(W, X, Y) -> int:
     """
-    Utility function for calculating height (in pixels)
-    which is implied by a width, x-range, and y-range.
-    Simple ratios are used to maintain aspect ratio.
+Utility function for calculating height (in pixels)
+which is implied by a width, x-range, and y-range.
+Simple ratios are used to maintain aspect ratio.
 
-    Parameters
-    ----------
+Parameters:
+----------
     W: int
-      width in pixel
+        - width in pixel
     X: tuple(xmin, xmax)
-      x-range in data units
+        - x-range in data units
     Y: tuple(xmin, xmax)
-      x-range in data units
+        - x-range in data units
 
-    Returns
-    -------
+Returns:
+----------
     H: int
-      height in pixels
+        - height in pixels
 
-    Example
-    -------
-    plot_width = 1000
-    x_range = (0,35
-    y_range = (0, 70)
-    plot_height = height_implied_by_aspect_ratio(plot_width, x_range, y_range)
+Examples:
+----------
+>>>     plot_width = 1000
+>>>     x_range = (0,35
+>>>     y_range = (0, 70)
+>>>     plot_height = height_implied_by_aspect_ratio(plot_width,
+                                                     x_range, y_range)
     """
     return int((W * (Y[1] - Y[0])) / (X[1] - X[0]))

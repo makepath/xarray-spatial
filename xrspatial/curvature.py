@@ -135,7 +135,7 @@ Examples:
     Imports
 >>>     import numpy as np
 >>>     import xarray as xr
->>>     import xrspatial
+>>>     from xrspatial import curvature
 
     Create Initial DataArray
 >>>     agg = xr.DataArray(np.array([[0, 1, 0, 0],
@@ -166,8 +166,7 @@ Attributes:
     res:      1
 
     Create Curvature DataArray
->>>     curv = xrspatial.curvature(agg)
->>>     print(curv)
+>>>     print(curvature(agg))
 <xarray.DataArray 'curvature' (lat: 5, lon: 4)>
 array([[  nan,   nan,   nan,   nan],
        [  nan,  100., -300.,   nan],
