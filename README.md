@@ -81,10 +81,10 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Apply](xrspatial/focal.py) | ✅️ |  |  |  |
-| [Hotspots](xrspatial/focal.py) | ✅️ | |  |  |
-| [Mean](xrspatial/focal.py) | ✅️ |  | | |
-| [Focal Statistics](xrspatial/focal.py) | ✅️ | | ✅️ | |
+| [Apply](xrspatial/focal.py) | ✅️ | ✅️ | ✅️ |  |
+| [Hotspots](xrspatial/focal.py) | ✅️ | ✅️ | ✅️ |  |
+| [Mean](xrspatial/focal.py) | ✅️ | ✅️ | ✅️ | |
+| [Focal Statistics](xrspatial/focal.py) | ✅️ | ✅️ | ✅️ | |
 
 -------
 
