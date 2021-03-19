@@ -24,8 +24,8 @@ except ImportError:
 
 
 @ngjit
-def _avri_cpu(nir_data, red_data, blue_data):
-    out = np.zeros_like(nir_data, dtype='f4')
+def _arvi_cpu(nir_data, red_data, blue_data):
+    out = np.zeros(nir_data.shape, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -52,15 +52,12 @@ def _arvi_gpu(nir_data, red_data, blue_data, out):
 
 
 def _arvi_dask(nir_data, red_data, blue_data):
-    out = da.map_blocks(_avri_cpu, nir_data, red_data, blue_data,
+    out = da.map_blocks(_arvi_cpu, nir_data, red_data, blue_data,
                         meta=np.array(()))
     return out
 
 
 def _arvi_cupy(nir_data, red_data, blue_data):
-
-    import cupy
-
     griddim, blockdim = cuda_args(nir_data.shape)
     out = cupy.empty(nir_data.shape, dtype='f4')
     out[:] = cupy.nan
@@ -69,9 +66,6 @@ def _arvi_cupy(nir_data, red_data, blue_data):
 
 
 def _arvi_dask_cupy(nir_data, red_data, blue_data):
-
-    import cupy
-
     out = da.map_blocks(_arvi_cupy, nir_data, red_data, blue_data,
                         dtype=cupy.float32, meta=cupy.array(()))
     return out
@@ -103,7 +97,7 @@ def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     """
     validate_arrays(red_agg, nir_agg, blue_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_avri_cpu,
+    mapper = ArrayTypeFunctionMapping(numpy_func=_arvi_cpu,
                                       dask_func=_arvi_dask,
                                       cupy_func=_arvi_cupy,
                                       dask_cupy_func=_arvi_dask_cupy)
