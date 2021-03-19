@@ -114,7 +114,7 @@ def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
 # EVI -------------
 @ngjit
 def _evi_cpu(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
-    out = np.zeros_like(nir_data, dtype='f4')
+    out = np.zeros(nir_data.shape, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -146,9 +146,6 @@ def _evi_dask(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
 
 
 def _evi_cupy(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
-
-    import cupy
-
     griddim, blockdim = cuda_args(nir_data.shape)
     out = cupy.empty(nir_data.shape, dtype='f4')
     out[:] = cupy.nan
@@ -158,9 +155,6 @@ def _evi_cupy(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
 
 
 def _evi_dask_cupy(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
-
-    import cupy
-
     out = da.map_blocks(_evi_cupy, nir_data, red_data, blue_data,
                         c1, c2, soil_factor, gain,
                         dtype=cupy.float32, meta=cupy.array(()))
@@ -239,7 +233,7 @@ def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
 # GCI -------------
 @ngjit
 def _gci_cpu(nir_data, green_data):
-    out = np.zeros_like(nir_data, dtype='f4')
+    out = np.zeros(nir_data.shape, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -488,7 +482,7 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
 
 @ngjit
 def _normalized_ratio_cpu(arr1, arr2):
-    out = np.zeros_like(arr1, dtype='f4')
+    out = np.zeros(arr1.shape, dtype=np.float32)
     rows, cols = arr1.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -544,7 +538,7 @@ def _run_normalized_ratio_dask_cupy(arr1, arr2):
 
 @ngjit
 def _savi_cpu(nir_data, red_data, soil_factor):
-    out = np.zeros_like(nir_data, dtype='f4')
+    out = np.zeros(nir_data.shape, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -645,7 +639,7 @@ def savi(nir_agg: DataArray, red_agg: DataArray,
 # SIPI -------------
 @ngjit
 def _sipi_cpu(nir_data, red_data, blue_data):
-    out = np.zeros_like(nir_data, dtype='f4')
+    out = np.zeros(nir_data.shape, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -738,7 +732,7 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
 # EBBI -------------
 @ngjit
 def _ebbi_cpu(red_data, swir_data, tir_data):
-    out = np.zeros_like(red_data, dtype='f4')
+    out = np.zeros(red_data, dtype=np.float32)
     rows, cols = red_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
