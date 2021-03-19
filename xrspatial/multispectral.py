@@ -258,9 +258,6 @@ def _gci_dask(nir_data, green_data):
 
 
 def _gci_cupy(nir_data, green_data):
-
-    import cupy
-
     griddim, blockdim = cuda_args(nir_data.shape)
     out = cupy.empty(nir_data.shape, dtype='f4')
     out[:] = cupy.nan
@@ -269,9 +266,6 @@ def _gci_cupy(nir_data, green_data):
 
 
 def _gci_dask_cupy(nir_data, green_data):
-
-    import cupy
-
     out = da.map_blocks(_gci_cupy, nir_data, green_data,
                         dtype=cupy.float32, meta=cupy.array(()))
     return out
@@ -517,9 +511,6 @@ def _normalized_ratio_gpu(arr1, arr2, out):
 
 
 def _run_normalized_ratio_cupy(arr1, arr2):
-
-    import cupy
-
     griddim, blockdim = cuda_args(arr1.shape)
     out = cupy.empty(arr1.shape, dtype='f4')
     out[:] = cupy.nan
@@ -528,9 +519,6 @@ def _run_normalized_ratio_cupy(arr1, arr2):
 
 
 def _run_normalized_ratio_dask_cupy(arr1, arr2):
-
-    import cupy
-
     out = da.map_blocks(_run_normalized_ratio_cupy, arr1, arr2,
                         dtype=cupy.float32, meta=cupy.array(()))
     return out
@@ -571,9 +559,6 @@ def _savi_dask(nir_data, red_data, soil_factor):
 
 
 def _savi_cupy(nir_data, red_data, soil_factor):
-
-    import cupy
-
     griddim, blockdim = cuda_args(nir_data.shape)
     out = cupy.empty(nir_data.shape, dtype='f4')
     out[:] = cupy.nan
@@ -582,9 +567,6 @@ def _savi_cupy(nir_data, red_data, soil_factor):
 
 
 def _savi_dask_cupy(nir_data, red_data, soil_factor):
-
-    import cupy
-
     out = da.map_blocks(_savi_cupy, nir_data, red_data, soil_factor,
                         dtype=cupy.float32, meta=cupy.array(()))
     return out
@@ -671,9 +653,6 @@ def _sipi_dask(nir_data, red_data, blue_data):
 
 
 def _sipi_cupy(nir_data, red_data, blue_data):
-
-    import cupy
-
     griddim, blockdim = cuda_args(nir_data.shape)
     out = cupy.empty(nir_data.shape, dtype='f4')
     out[:] = cupy.nan
@@ -682,9 +661,6 @@ def _sipi_cupy(nir_data, red_data, blue_data):
 
 
 def _sipi_dask_cupy(nir_data, red_data, blue_data):
-
-    import cupy
-
     out = da.map_blocks(_sipi_cupy, nir_data, red_data, blue_data,
                         dtype=cupy.float32, meta=cupy.array(()))
     return out
@@ -732,7 +708,7 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
 # EBBI -------------
 @ngjit
 def _ebbi_cpu(red_data, swir_data, tir_data):
-    out = np.zeros(red_data, dtype=np.float32)
+    out = np.zeros(red_data.shape, dtype=np.float32)
     rows, cols = red_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -764,9 +740,6 @@ def _ebbi_dask(red_data, swir_data, tir_data):
 
 
 def _ebbi_cupy(red_data, swir_data, tir_data):
-
-    import cupy
-
     griddim, blockdim = cuda_args(red_data.shape)
     out = cupy.empty(red_data.shape, dtype='f4')
     out[:] = cupy.nan
@@ -775,9 +748,6 @@ def _ebbi_cupy(red_data, swir_data, tir_data):
 
 
 def _ebbi_dask_cupy(red_data, swir_data, tir_data):
-
-    import cupy
-
     out = da.map_blocks(_ebbi_cupy, red_data, swir_data, tir_data,
                         dtype=cupy.float32, meta=cupy.array(()))
     return out
