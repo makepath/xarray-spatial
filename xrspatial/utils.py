@@ -82,13 +82,13 @@ class ArrayTypeFunctionMapping(object):
     
     def __call__(self, arr):
 
-        # cupy case
-        if has_cuda() and isinstance(arr.data, cupy.ndarray):
-            return self.cupy_func
-
         # numpy case
-        elif isinstance(arr.data, np.ndarray):
+        if isinstance(arr.data, np.ndarray):
             return self.numpy_func
+
+        # cupy case
+        elif has_cuda() and isinstance(arr.data, cupy.ndarray):
+            return self.cupy_func
 
         # dask + cupy case
         elif has_cuda() and is_dask_cupy(arr):
