@@ -815,9 +815,9 @@ def true_color(r, g, b, nodata=1):
     h, w = r.shape
 
     data = np.zeros((h, w, 4), dtype=np.uint8)
-    data[:, :, 0] = (_normalize_data(r)).astype(np.uint8)
-    data[:, :, 1] = (_normalize_data(g)).astype(np.uint8)
-    data[:, :, 2] = (_normalize_data(b)).astype(np.uint8)
+    data[:, :, 0] = (_normalize_data(r.data)).astype(np.uint8)
+    data[:, :, 1] = (_normalize_data(g.data)).astype(np.uint8)
+    data[:, :, 2] = (_normalize_data(b.data)).astype(np.uint8)
 
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
     data[:, :, 3] = a.astype(np.uint8)
