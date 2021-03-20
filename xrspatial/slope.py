@@ -23,7 +23,7 @@ from xrspatial.utils import cuda_args
 from xrspatial.utils import get_dataarray_resolution
 from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
-from xrspatial.utils import is_cupy_backed
+from xrspatial.utils import is_dask_cupy
 
 
 @ngjit
@@ -165,7 +165,7 @@ def slope(agg: xr.DataArray, name: str = 'slope') -> xr.DataArray:
         out = _run_cupy(agg.data, cellsize_x, cellsize_y)
 
     # dask + cupy case
-    elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
+    elif has_cuda() and is_dask_cupy(agg):
         out = _run_dask_cupy(agg.data, cellsize_x, cellsize_y)
 
     # dask + numpy case

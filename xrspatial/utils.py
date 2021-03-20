@@ -3,6 +3,8 @@ import numba as nb
 import numpy as np
 import xarray as xr
 
+import dask.array as da
+
 from numba import cuda
 
 try:
@@ -67,6 +69,55 @@ def is_cupy_backed(agg: xr.DataArray):
         return type(agg.data._meta).__module__.split('.')[0] == 'cupy'
     except AttributeError:
         return False
+
+
+def is_dask_cupy(agg: xr.DataArray):
+    return isinstance(agg.data, da.Array) and is_cupy_backed(agg)
+
+
+class ArrayTypeFunctionMapping(object):
+
+    def __init__(self, numpy_func, cupy_func, dask_func, dask_cupy_func):
+        self.numpy_func = numpy_func
+        self.cupy_func = cupy_func
+        self.dask_func = dask_func
+        self.dask_cupy_func = dask_cupy_func
+    
+    def __call__(self, arr):
+
+        # numpy case
+        if isinstance(arr.data, np.ndarray):
+            return self.numpy_func
+
+        # cupy case
+        elif has_cuda() and isinstance(arr.data, cupy.ndarray):
+            return self.cupy_func
+
+        # dask + cupy case
+        elif has_cuda() and is_dask_cupy(arr):
+            return self.dask_cupy_func
+
+        # dask + numpy case
+        elif isinstance(arr.data, da.Array):
+            return self.dask_func
+
+        else:
+            raise TypeError('Unsupported Array Type: {}'.format(type(arr)))
+
+
+def validate_arrays(*arrays):
+
+    if len(arrays) < 2:
+        raise ValueError('validate_arrays() input must contain 2 or more arrays')
+
+    first_array = arrays[0]
+    for i in range(1, len(arrays)):
+
+        if not first_array.data.shape == arrays[i].data.shape:
+            raise ValueError("input arrays must have equal shapes")
+
+        if not type(first_array.data) == type(arrays[i].data):
+            raise ValueError("input arrays must have same type")
 
 
 def calc_res(raster):
