@@ -1,0 +1,7 @@
+---
+
+data:
+  - url: https://mp-xrspatial-examples.s3.us-east-2.amazonaws.com/Kroger_addresses_3.csv
+    title: 'Sample kroger data in aws'
+    files:
+      - Kroger_addresses_3.csv
