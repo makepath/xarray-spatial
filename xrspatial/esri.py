@@ -6,21 +6,21 @@ def featureset_to_dataframe(featureset,
                             convert_geometry=False,
                             use_aliases=False):
     """
-Parameters:
-----------
+    Parameters:
+    ----------
     featureset:
     convert_geometry: Boolean
     use_aliases: Boolean
 
-Returns:
-----------
+    Returns:
+    ----------
     dataframe:
 
-Notes:
-----------
+    Notes:
+    ----------
 
-Examples:
-----------
+    Examples:
+    ----------
     """
     items = [x['attributes'] for x in featureset['features']]
     df = pd.DataFrame(items)

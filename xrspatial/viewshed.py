@@ -331,8 +331,8 @@ def _insert_into_tree(tree_vals, tree_nodes, root, node_id, value):
             next_node = tree_nodes[cur_node][TN_RIGHT_ID]
 
     # create a new node
-    #   //and place it at the right place
-    #   //created node is RED by default */
+    #   and place it at the right place
+    #   created node is RED by default
     _create_tree_nodes(tree_vals, tree_nodes, node_id, value, color=RB_RED)
     next_node = node_id
 
@@ -1507,77 +1507,30 @@ def viewshed(raster: xarray.DataArray,
              observer_elev: float = OBS_ELEV,
              target_elev: float = TARGET_ELEV) -> xarray.DataArray:
     """
-Calculate viewshed of a raster (the visible cells in the raster)
-for the given viewpoint (observer) location.
+    Calculate viewshed of a raster (the visible cells in the raster)
+    for the given viewpoint (observer) location.
 
-Parameters:
-----------
+    Parameters:
+    ----------
     raster: xarray.DataArray
-        - Input raster image.
+        Input raster image.
     x: int, float
-        - x-coordinate in data space of observer location.
+        x-coordinate in data space of observer location.
     y: int, float
-        - y-coordinate in data space of observer location.
+        y-coordinate in data space of observer location.
     observer_elev: float
-        - Observer elevation above the terrain.
+        Observer elevation above the terrain.
     target_elev: float
-        - Target elevation offset above the terrain.
+        Target elevation offset above the terrain.
 
-Returns:
-----------
+    Returns:
+    ----------
     viewshed: xarray.DataArray
-        - A cell x in the visibility grid is recorded as follows:
-          If it is invisible, then x is set to INVISIBLE.
-          If it is visible,  then x is set to the vertical angle w.r.t
-          the viewpoint.
-
-Examples:
-----------
-    Imports
->>>     import datashader as ds
->>>     import numpy as np
->>>     import pandas as pd
->>>     from datashader.transfer_functions import dynspread, shade, stack
->>>     from xrspatial import viewshed, hillshade
-
-    Create Canvas
->>>     canvas = ds.Canvas(plot_width=800, plot_height=600,
->>>                        x_range=(-20, 20), y_range=(-20, 20))
-
-    Create Terrain Data Frame
->>>     normal_df = pd.DataFrame({
->>>         'x': np.random.normal(.5, 1, 10000000),
->>>         'y': np.random.normal(.5, 1, 10000000)
->>>     })
->>>     normal_agg = canvas.points(normal_df, 'x', 'y')
->>>     normal_agg.values = normal_agg.values.astype("float64")
->>>     normal_shaded = shade(normal_agg)
-
-    Create Observer DataFrame
->>>     OBSERVER_X = -12.5
->>>     OBSERVER_Y = 10
-
->>>     observer_df = pd.DataFrame({'x': [OBSERVER_X], 'y': [OBSERVER_Y]})
->>>     observer_agg = canvas.points(observer_df, 'x', 'y')
->>>     observer_shaded = dynspread(shade(observer_agg, cmap=['orange']),
->>>                                 threshold=1, max_px=4)
-
-    Create Illumination Aggregate from Normal
->>>     normal_illuminated = hillshade(normal_agg)
->>>     normal_illuminated_shaded = shade(normal_illuminated,
->>>                                       cmap=['black', 'white'],
->>>                                       alpha=128, how='linear')
->>>     stack(normal_illuminated_shaded, observer_shaded)
-
-    Create Illumination Aggregate from Observer
->>>     %time view = viewshed(normal_agg,
->>>                           x=OBSERVER_X, y=OBSERVER_Y)
-
->>>     view_shaded = shade(view, cmap=['white', 'red'],
->>>                         alpha=128, how='linear')
-
->>>     stack(normal_illuminated_shaded, observer_shaded, view_shaded)
+        A cell x in the visibility grid is recorded as follows:
+        If it is invisible, then x is set to INVISIBLE.
+        If it is visible,  then x is set to the vertical angle w.r.t the viewpoint.
     """
+
     height, width = raster.shape
 
     y_coords = raster.indexes.get('y').values

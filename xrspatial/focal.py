@@ -87,49 +87,50 @@ def calc_cellsize(raster: xr.DataArray,
                   x: str = 'x',
                   y: str = 'y') -> tuple:
     """
-Calculates cell size of an array based on its attributes.
-Default = meters. If lat-lon units are converted to meters.
+    Calculates cell size of an array based on its attributes.
+    Default = meters. If lat-lon units are converted to meters.
 
-Parameters:
-----------
+    Parameters:
+    ----------
     raster: xarray.DataArray
-        - 2D array of input values.
+        2D array of input values.
     x: str (Default = "x")
-        - Name of input x-axis.
+        Name of input x-axis.
     y: str (Default = "y")
-        - Name of input y-axis
+        Name of input y-axis
 
-Returns:
-----------
-    cellsize_x: int
-        - Size of cells in x direction.
-    cellsize_y: int
-        - Size of cells in y direction.
+    Returns:
+    ----------
+    cellsize_x: float
+        Size of cells in x direction.
+    cellsize_y: float
+        Size of cells in y direction.
 
-Notes:
-----------
+    Notes:
+    ----------
 
-Examples:
------------
+    Examples:
+    -----------
     Imports
->>>     import numpy as np
->>>     import xarray as xr
->>>     from xrspatial import focal
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> from xrspatial import focal
 
     Create Data Array
->>>     np.random.seed(0)
->>>     agg = xr.DataArray(np.random.rand(4,4),
-                           dims = ["lat", "lon"])
->>>     height, width = nir_agg.shape
->>>     _lat = np.linspace(0, height - 1, height)
->>>     _lon = np.linspace(0, width - 1, width)
->>>     nir_agg["lat"] = _lat
->>>     nir_agg["lon"] = _lon
+    >>> np.random.seed(0)
+    >>> agg = xr.DataArray(np.random.rand(4,4),
+                               dims = ["lat", "lon"])
+    >>> height, width = nir_agg.shape
+    >>> _lat = np.linspace(0, height - 1, height)
+    >>> _lon = np.linspace(0, width - 1, width)
+    >>> nir_agg["lat"] = _lat
+    >>> nir_agg["lon"] = _lon
 
     Calculate Cell Size
->>>     focal.calc_cellsize(agg, 'lon', 'lat')
-(1, 1)
+    >>> focal.calc_cellsize(agg, 'lon', 'lat')
+    (1, 1)
     """
+
     if 'unit' in raster.attrs:
         unit = raster.attrs['unit']
     else:
@@ -185,43 +186,43 @@ def circle_kernel(cellsize_x: int,
                   cellsize_y: int,
                   radius: int) -> np.array:
     """
-Generates a circular kernel of a given cellsize and radius.
+    Generates a circular kernel of a given cellsize and radius.
 
-Parameters:
-----------
+    Parameters:
+    ----------
     cellsize_x: int
-        - Cell size of output kernel in x direction.
+        Cell size of output kernel in x direction.
     cellsize_y: int
-        - Cell size of output kernel in y direction.
+        Cell size of output kernel in y direction.
     radius: int
-        - Radius of output kernel.
+        Radius of output kernel.
 
-Returns:
-----------
+    Returns:
+    ----------
     kernel: NumPy Array
-        - 2D array where values of 1 indicate the kernel.
+        2D array where values of 1 indicate the kernel.
 
-Examples:
-----------
-    Imports
->>>     import numpy as np
->>>     import xarray as xr
->>>     from xrspatial import focal
+    Examples:
+    ----------
+        Imports
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> from xrspatial import focal
 
-    Create Kernels
->>>     focal.circle_kernel(1, 1, 3)
-array([[0., 0., 0., 1., 0., 0., 0.],
-       [0., 1., 1., 1., 1., 1., 0.],
-       [0., 1., 1., 1., 1., 1., 0.],
-       [1., 1., 1., 1., 1., 1., 1.],
-       [0., 1., 1., 1., 1., 1., 0.],
-       [0., 1., 1., 1., 1., 1., 0.],
-       [0., 0., 0., 1., 0., 0., 0.]])
+        Create Kernels
+    >>> focal.circle_kernel(1, 1, 3)
+    array([[0., 0., 0., 1., 0., 0., 0.],
+           [0., 1., 1., 1., 1., 1., 0.],
+           [0., 1., 1., 1., 1., 1., 0.],
+           [1., 1., 1., 1., 1., 1., 1.],
+           [0., 1., 1., 1., 1., 1., 0.],
+           [0., 1., 1., 1., 1., 1., 0.],
+           [0., 0., 0., 1., 0., 0., 0.]])
 
->>>     focal.circle_kernel(1, 2, 3)
-array([[0., 0., 0., 1., 0., 0., 0.],
-       [1., 1., 1., 1., 1., 1., 1.],
-       [0., 0., 0., 1., 0., 0., 0.]])
+    >>> focal.circle_kernel(1, 2, 3)
+    array([[0., 0., 0., 1., 0., 0., 0.],
+           [1., 1., 1., 1., 1., 1., 1.],
+           [0., 0., 0., 1., 0., 0., 0.]])
     """
     # validate radius, convert radius to meters
     r = _get_distance(str(radius))
@@ -238,48 +239,49 @@ def annulus_kernel(cellsize_x: int,
                    outer_radius: int,
                    inner_radius: int) -> np.array:
     """
-Generates a annulus (ring-shaped) kernel of a given cellsize and radius.
+    Generates a annulus (ring-shaped) kernel of a given cellsize and radius.
 
-Parameters:
-----------
+    Parameters:
+    ----------
     cellsize_x: int
-        - Cell size of output kernel in x direction.
+        Cell size of output kernel in x direction.
     cellsize_y: int
-        - Cell size of output kernel in y direction.
+        Cell size of output kernel in y direction.
     outer_radius: int
-        - Outer ring radius of output kernel.
+        Outer ring radius of output kernel.
     inner_radius: int
-        - Inner circle radius of output kernel.
+        Inner circle radius of output kernel.
 
-Returns:
-----------
+    Returns:
+    ----------
     kernel: NumPy Array
-        - 2D array where values of 1 indicate the kernel.
+        2D array of 0s and 1s where values of 1 indicate the kernel.
 
-Examples:
-----------
+    Examples:
+    ----------
     Imports
->>>     import numpy as np
->>>     import xarray as xr
->>>     from xrspatial import focal
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> from xrspatial import focal
 
     Create Kernels
->>>     focal.annulus_kernel(1, 1, 3, 1)
-array([[0., 0., 0., 1., 0., 0., 0.],
-       [0., 1., 1., 1., 1., 1., 0.],
-       [0., 1., 1., 0., 1., 1., 0.],
-       [1., 1., 0., 0., 0., 1., 1.],
-       [0., 1., 1., 0., 1., 1., 0.],
-       [0., 1., 1., 1., 1., 1., 0.],
-       [0., 0., 0., 1., 0., 0., 0.]])
+    >>> focal.annulus_kernel(1, 1, 3, 1)
+    array([[0., 0., 0., 1., 0., 0., 0.],
+           [0., 1., 1., 1., 1., 1., 0.],
+           [0., 1., 1., 0., 1., 1., 0.],
+           [1., 1., 0., 0., 0., 1., 1.],
+           [0., 1., 1., 0., 1., 1., 0.],
+           [0., 1., 1., 1., 1., 1., 0.],
+           [0., 0., 0., 1., 0., 0., 0.]])
 
->>>   focal.annulus_kernel(1, 2, 5, 2)
-array([[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
-       [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-       [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
-       [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-       [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
+    >>> focal.annulus_kernel(1, 2, 5, 2)
+    array([[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
+           [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+           [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
+           [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+           [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
     """
+
     # validate radii, convert to meters
     r2 = _get_distance(str(outer_radius))
     r1 = _get_distance(str(inner_radius))
@@ -355,46 +357,46 @@ def mean(agg: xr.DataArray,
          excludes: list = [np.nan],
          name: Optional[str] = 'mean') -> xr.DataArray:
     """
-Returns Mean filtered array using a 3x3 window.
+    Returns Mean filtered array using a 3x3 window.
 
-Parameters:
-----------
+    Parameters:
+    ----------
     agg : xarray.DataArray
-        - 2D array of input values to be filtered.
+        2D array of input values to be filtered.
     passes : int (default = 1)
-        - Number of times to run mean.
+        Number of times to run mean.
     name : str, optional (default = 'mean')
-        - output xr.DataArray.name property
+        output xr.DataArray.name property
 
-Returns:
-----------
+    Returns:
+    ----------
     data: xarray.DataArray
-        - 2D array of filtered values.
+        2D array of filtered values.
 
-Examples:
-----------
+    Examples:
+    ----------
     Imports
->>>     import numpy as np
->>>     import xarray as xr
->>>     from xrspatial import focal
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> from xrspatial import focal
 
     Create Data Array
->>>     np.random.seed(0)
->>>     agg = xr.DataArray(np.random.rand(4,4),
-                           dims = ["lat", "lon"])
->>>     height, width = nir_agg.shape
->>>     _lat = np.linspace(0, height - 1, height)
->>>     _lon = np.linspace(0, width - 1, width)
->>>     nir_agg["lat"] = _lat
->>>     nir_agg["lon"] = _lon
+    >>> np.random.seed(0)
+    >>> agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
+    >>> height, width = nir_agg.shape
+    >>> _lat = np.linspace(0, height - 1, height)
+    >>> _lon = np.linspace(0, width - 1, width)
+    >>> nir_agg["lat"] = _lat
+    >>> nir_agg["lon"] = _lon
 
     Calculate Mean
->>>     focal.mean(agg)
-array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
-       [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
-       [0.96366276, 0.38344152, 0.79172504, 0.52889492],
-       [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
+    >>> focal.mean(agg)
+    array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
+           [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
+           [0.96366276, 0.38344152, 0.79172504, 0.52889492],
+           [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
     """
+
     out = None
     for i in range(passes):
         if out is None:
@@ -521,71 +523,71 @@ def hotspots(raster: xr.DataArray,
              x: Optional[str] = 'x',
              y: Optional[str] = 'y') -> xr.DataArray:
     """
-Identify statistically significant hot spots and cold spots in an input
-raster. To be a statistically significant hot spot, a feature will have a
-high value and be surrounded by other features with high values as well.
-Neighborhood of a feature defined by the input kernel, which currently
-support a shape of circle, annulus, or custom kernel.
+    Identify statistically significant hot spots and cold spots in an input
+    raster. To be a statistically significant hot spot, a feature will have a
+    high value and be surrounded by other features with high values as well.
+    Neighborhood of a feature defined by the input kernel, which currently
+    support a shape of circle, annulus, or custom kernel.
 
-The result should be a raster with the following 7 values:
-     90 for 90% confidence high value cluster
-     95 for 95% confidence high value cluster
-     99 for 99% confidence high value cluster
-    -90 for 90% confidence low value cluster
-    -95 for 95% confidence low value cluster
-    -99 for 99% confidence low value cluster
-     0 for no significance
+    The result should be a raster with the following 7 values:
+         90 for 90% confidence high value cluster
+         95 for 95% confidence high value cluster
+         99 for 99% confidence high value cluster
+        -90 for 90% confidence low value cluster
+        -95 for 95% confidence low value cluster
+        -99 for 99% confidence low value cluster
+         0 for no significance
 
-Parameters:
-----------
+    Parameters:
+    ----------
     raster: xarray.DataArray
-        - 2D Input raster image with shape = (height, width).
+        2D Input raster image with shape = (height, width).
     kernel: Numpy Array
-        - 2D array where values of 1 indicate the kernel.
+        2D array where values of 1 indicate the kernel.
 
-Returns:
-----------
-    hotspots: xarray.DataArray
-        - 2D array of hotspots with values indicating confidence level.
+    Returns:
+    ----------
+    xarray.DataArray
+        2D array of hotspots with values indicating confidence level.
 
-Examples:
-----------
-    Imports
->>>     import numpy as np
->>>     import xarray as xr
->>>     from xrspatial import focal
+    Examples:
+    ----------
+        Imports
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> from xrspatial import focal
 
     Create Data Array
->>>     agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
->>>                                  [0, 0, 0, 0, 0, 0, 0],
->>>                                  [0, 0, 10, 10, 10, 0, 0],
->>>                                  [0, 0, 10, 10, 10, 0, 0],
->>>                                  [0, 0, 10, 10, 10, 0, 0],
->>>                                  [0, 0, 0, 0, 0, 0, 0],
->>>                                  [0, 0, 0, 0, 0, 0, 0]]),
->>>                                  dims = ["lat", "lon"])
->>>     height, width = agg.shape
->>>     _lon = np.linspace(0, width - 1, width)
->>>     _lat = np.linspace(0, height - 1, height)
->>>     agg["lon"] = _lon
->>>     agg["lat"] = _lat
+    >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
+    >>>                              [0, 0, 0, 0, 0, 0, 0],
+    >>>                              [0, 0, 10, 10, 10, 0, 0],
+    >>>                              [0, 0, 10, 10, 10, 0, 0],
+    >>>                              [0, 0, 10, 10, 10, 0, 0],
+    >>>                              [0, 0, 0, 0, 0, 0, 0],
+    >>>                              [0, 0, 0, 0, 0, 0, 0]]),
+    >>>                              dims = ["lat", "lon"])
+    >>> height, width = agg.shape
+    >>> _lon = np.linspace(0, width - 1, width)
+    >>> _lat = np.linspace(0, height - 1, height)
+    >>> agg["lon"] = _lon
+    >>> agg["lat"] = _lat
 
-    Create Kernel
->>>     kernel = focal.circle_kernel(1, 1, 1)
+        Create Kernel
+    >>> kernel = focal.circle_kernel(1, 1, 1)
 
-    Create Hotspot Data Array
->>>     focal.hotspots(agg, kernel, x = 'lon', y = 'lat')
-<xarray.DataArray (lat: 7, lon: 7)>
-array([[ 0,  0,  0,  0,  0,  0,  0],
-       [ 0,  0,  0,  0,  0,  0,  0],
-       [ 0,  0,  0,  0,  0,  0,  0],
-       [ 0,  0,  0, 95,  0,  0,  0],
-       [ 0,  0,  0,  0,  0,  0,  0],
-       [ 0,  0,  0,  0,  0,  0,  0],
-       [ 0,  0,  0,  0,  0,  0,  0]], dtype=int8)
-Coordinates:
-  * lon      (lon) float64 0.0 1.0 2.0 3.0 4.0 5.0 6.0
-  * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0 5.0 6.0
+        Create Hotspot Data Array
+    >>> focal.hotspots(agg, kernel, x = 'lon', y = 'lat')
+    <xarray.DataArray (lat: 7, lon: 7)>
+    array([[ 0,  0,  0,  0,  0,  0,  0],
+           [ 0,  0,  0,  0,  0,  0,  0],
+           [ 0,  0,  0,  0,  0,  0,  0],
+           [ 0,  0,  0, 95,  0,  0,  0],
+           [ 0,  0,  0,  0,  0,  0,  0],
+           [ 0,  0,  0,  0,  0,  0,  0],
+           [ 0,  0,  0,  0,  0,  0,  0]], dtype=int8)
+    Coordinates:
+      * lon      (lon) float64 0.0 1.0 2.0 3.0 4.0 5.0 6.0
+      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0 5.0 6.0
     """
 
     # validate raster

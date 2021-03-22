@@ -18,74 +18,69 @@ def generate_terrain(x_range: tuple = (0, 500),
                      zfactor: int = 4000,
                      full_extent: Optional[str] = None) -> xr.DataArray:
     """
-Generates a pseudo-random terrain which can be helpful
-for testing raster functions
-
-Parameters:
-----------
+    Generates a pseudo-random terrain which can be helpful
+    for testing raster functions
+    
+    Parameters:
+    ----------
     x_range: tuple (default = (0, 500))
-        - Range of x values.
+        Range of x values.
     x_range: tuple (default = (0, 500))
-        - Range of y values.
+        Range of y values.
     width: int (default = 25)
-        - Width of output data array in pixels.
+        Width of output data array in pixels.
     height: int (default = 30)
-        - Height of output data array in pixels.
+        Height of output data array in pixels.
     canvas: ds.Canvas (default = None)
-        - Instance for passing output dimensions / ranges
+        Instance for passing output dimensions / ranges
     seed: int (default = 10)
-        - Seed for random number generator.
+        Seed for random number generator.
     zfactor: int (default = 4000)
-        - Multipler for z values.
+        Multipler for z values.
     full_extent: str, optional (default = None)
-        - bbox<xmin, ymin, xmax, ymax>
-        - full extent of coordinate system.
+        bbox<xmin, ymin, xmax, ymax>. Full extent of coordinate system.
 
-Returns:
-----------
+    Returns:
+    ----------
     terrain: xarray.DataArray
-        - 2D array of generated terrain.
+        2D array of generated terrain.
 
-Notes:
-----------
+    Notes:
+    ----------
     Algorithm References:
         - This was inspired by Michael McHugh's 2016 PyCon Canada talk:
           https://www.youtube.com/watch?v=O33YV4ooHSo
         - https://www.redblobgames.com/maps/terrain-from-noise/
 
-Examples:
-----------
+    Examples:
+    ----------
     Imports
->>>     import datashader as ds
->>>     from datashader.transfer_functions import shade
->>>     from xrspatial import generate_terrain
+    >>> import datashader as ds
+    >>> from datashader.transfer_functions import shade
+    >>> from xrspatial import generate_terrain
 
     Create Canvas
->>>     cvs = ds.Canvas(plot_width=800,
->>>                     plot_height=600,
->>>                     x_range=(-20e6, 20e6),
->>>                     y_range=(-20e6, 20e6))
+    >>> cvs = ds.Canvas(plot_width=800,
+    >>>                 plot_height=600,
+    >>>                 x_range=(-20e6, 20e6),
+    >>>                 y_range=(-20e6, 20e6))
 
     Generate Terrain Data Array
->>>     terrain = generate_terrain(canvas = cvs)
->>>     print(terrain)
-<xarray.DataArray 'terrain' (y: 600, x: 800)>
-array([[0., 0., 0., ..., 0., 0., 0.],
-       [0., 0., 0., ..., 0., 0., 0.],
-       [0., 0., 0., ..., 0., 0., 0.],
-       ...,
-       [0., 0., 0., ..., 0., 0., 0.],
-       [0., 0., 0., ..., 0., 0., 0.],
-       [0., 0., 0., ..., 0., 0., 0.]])
-Coordinates:
-  * x        (x) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
-  * y        (y) float64 -1.997e+07 -1.99e+07 -1.983e+07 ... 1.99e+07 1.997e+07
-Attributes:
-    res:      1
-
-    Shade Data Array
->>>     shade(terrain, cmap=['black', 'white'], how='linear')
-
+    >>> terrain = generate_terrain(canvas = cvs)
+    >>> print(terrain)
+    <xarray.DataArray 'terrain' (y: 600, x: 800)>
+    array([[0., 0., 0., ..., 0., 0., 0.],
+           [0., 0., 0., ..., 0., 0., 0.],
+           [0., 0., 0., ..., 0., 0., 0.],
+           ...,
+           [0., 0., 0., ..., 0., 0., 0.],
+           [0., 0., 0., ..., 0., 0., 0.],
+           [0., 0., 0., ..., 0., 0., 0.]])
+    Coordinates:
+      * x        (x) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+      * y        (y) float64 -1.997e+07 -1.99e+07 -1.983e+07 ... 1.99e+07 1.997e+07
+    Attributes:
+        res:      1
     """
 
     def _gen_heights(bumps):
