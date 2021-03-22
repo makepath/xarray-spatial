@@ -2,19 +2,10 @@
 
 package:
   name: xarray-spatial
-  version: 2.7
+  version: 0.1.2
 
 source:
   path: ..
-build:
-#   noarch: python
-#   script: python setup.py install --single-version-externally-managed --record=record.txt
-  entry_points:
-    {% for group,epoints in sdata.get("entry_points",{}).items() %}
-    {% for entry_point in epoints %}
-    - {{ entry_point }}
-    {% endfor %}
-    {% endfor %}
   
 requirements:
   host:
@@ -23,20 +14,17 @@ requirements:
     - pyct
   run:
     - python
-    - numpy
-    - numba
-    - dask
-    - xarray
-    - pandas
-    - pillow
-    - requests
-    - datashader
-    - pyct
-    - scipy
-
+    {% for dep in sdata.get('install_requires', {}) %}
+    - {{ dep }}
+    {% endfor %}
+    
+# will need extras_require['tests'] once those are added
 test:
   requires:
     - pytest >=2.8.5
+    # {% for dep in sdata['extras_require']['tests'] %}
+    # - {{ dep }}
+    # {% endfor %}
   imports:
     - xrspatial
 

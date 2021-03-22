@@ -1,9 +1,16 @@
 import os, sys
 import shutil
-from setuptools import find_packages, setup
+from setuptools import setup
+import pkg_resources
+
 # build dependencies
 import pyct.build
+
+# dependencies
+
+# datashader first, then pyct unless pyct version compatible with ds is specified
 # spatialpandas may not be required in final pharmacy_desert version
+# pyct may not be necessary in the future
 install_requires = [
     'dask',
     'datashader',
@@ -16,16 +23,23 @@ install_requires = [
     'xarray',
     'pyct',
     ]
+
 examples = [
   'spatialpandas',
 ]
+
+# still needs tests dependencies and examples_extra if needed
 extras_require = {
   'examples': examples,
 }
 
+# not sure what else needed
 extras_require['doc'] = extras_require['examples'] + ['numpydoc']
 
 extras_require['all'] = sorted(set(sum(extras_require.values(), [])))
+
+
+# metadata for setuptools
 
 setup_args = dict(
   name='xarray-spatial',
@@ -37,23 +51,21 @@ setup_args = dict(
   description='xarray-based spatial analysis tools',
   install_requires=install_requires,
   extras_require=extras_require,
+  # tests_require=extras_require['tests'],
   zip_safe=False,
   classifiers=["Programming Language :: Python :: 3",
                "License :: OSI Approved :: MIT License",
                "Operating System :: OS Independent"],
-  include_package_data=True,
   packages=['xrspatial',
             'xrspatial.tests'
             ],
+  include_package_data=True,
   entry_points={
     'console_scripts': [
       'xrspatial = xrspatial.__main__:main'
     ]
   },
 )
-
-
-
 
 if __name__ == '__main__':
   example_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
