@@ -1,16 +1,76 @@
-from numba import cuda, float32, int32, prange, jit
+from numba import cuda, float32, prange, jit
 
-from xrspatial.utils import ngjit
 from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
 
 import numpy as np
+import xarray as xr
 
 
-def convolve_2d(image, kernel, pad=True, use_cuda=True):
-    """Function to call the 2D convolution via Numba.
-    The Numba convolution function does not account for an edge so
-    if we wish to take this into account, will pad the image array.
+def convolve_2d(image: xr.DataArray,
+                kernel,
+                pad=True,
+                use_cuda=True) -> xr.DataArray:
+    """
+    Calculates, for all inner cells of an array, the 2D convolution of
+    each cell via Numba. To account for edge cells, a pad can be added
+    to the image array. Convolution is frequently used for image
+    processing, such as smoothing, sharpening, and edge detection of
+    images by elimatig spurious data or enhancing features in the data.
+
+    Parameters:
+    ----------
+    image: xarray.DataArray
+        2D array of values to processed and padded.
+    kernel: array-like object
+        Impulse kernel, determines area to apply
+        impulse function for each cell.
+    pad: Boolean
+        To compute edges set to True.
+    use-cuda: Boolean
+        For parallel computing set to True.
+
+    Returns:
+    ----------
+    convolve_agg: xarray.DataArray
+        2D array representation of the impulse function.
+        All other input attributes are preserverd.
+    
+    Examples:
+    ----------
+    Imports
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> from xrspatial import convolution, focal
+
+    Create Data Array
+    >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
+    >>>                              [0, 0, 2, 4, 0, 8, 0],
+    >>>                              [0, 2, 2, 4, 6, 8, 0],
+    >>>                              [0, 4, 4, 4, 6, 8, 0],
+    >>>                              [0, 6, 6, 6, 6, 8, 0],
+    >>>                              [0, 8, 8, 8, 8, 8, 0],
+    >>>                              [0, 0, 0, 0, 0, 0, 0]]),
+    >>>                     dims = ["lat", "lon"],
+    >>>                     attrs = dict(res = 1))
+    >>> height, width = agg.shape
+    >>> _lon = np.linspace(0, width - 1, width)
+    >>> _lat = np.linspace(0, height - 1, height)
+    >>> agg["lon"] = _lon
+    >>> agg["lat"] = _lat
+
+        Create Kernel
+    >>> kernel = focal.circle_kernel(1, 1, 1)
+
+        Create Convolution Data Array
+    >>> print(convolution.convolve_2d(agg, kernel))
+    [[ 0.  0.  4.  8.  0. 16.  0.]
+     [ 0.  4.  8. 10. 18. 16. 16.]
+     [ 4.  8. 14. 20. 24. 30. 16.]
+     [ 8. 16. 20. 24. 30. 30. 16.]
+     [12. 24. 30. 30. 34. 30. 16.]
+     [16. 22. 30. 30. 30. 24. 16.]
+     [ 0. 16. 16. 16. 16. 16.  0.]]
     """
     # Don't allow padding on (1, 1) kernel
     if (kernel.shape[0] == 1 and kernel.shape[1] == 1):
@@ -85,14 +145,16 @@ def _convolve_2d_cuda(result, kernel, image):
     # (-2-) 2D coordinates of the current thread:
     i, j = cuda.grid(2)
 
-    # (-3-) if the thread coordinates are outside of the image, we ignore the thread:
+    # (-3-) if the thread coordinates are outside of the image,
+    # we ignore the thread:
     image_rows, image_cols = image.shape
     if (i >= image_rows) or (j >= image_cols):
         return
 
-    # To compute the result at coordinates (i, j), we need to use delta_rows rows of the image
-    # before and after the i_th row,
-    # as well as delta_cols columns of the image before and after the j_th column:
+    # To compute the result at coordinates (i, j), we need to
+    # use delta_rows rows of the image before and after the
+    # i_th row, as well as delta_cols columns of the image
+    # before and after the j_th column:
     delta_rows = kernel.shape[0] // 2
     delta_cols = kernel.shape[1] // 2
 
@@ -104,7 +166,9 @@ def _convolve_2d_cuda(result, kernel, image):
         for l in range(kernel.shape[1]):
             i_k = i - k + delta_rows
             j_l = j - l + delta_cols
-            # (-4-) Check if (i_k, j_k) coordinates are inside the image:
-            if (i_k >= 0) and (i_k < image_rows) and (j_l >= 0) and (j_l < image_cols):
+            # (-4-) Check if (i_k, j_k)
+            # coordinates are inside the image:
+            if (i_k >= 0) and (i_k < image_rows) and \
+                    (j_l >= 0) and (j_l < image_cols):
                 s += kernel[k, l] * image[i_k, j_l]
     result[i, j] = s

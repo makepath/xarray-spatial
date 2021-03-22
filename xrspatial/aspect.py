@@ -1,22 +1,21 @@
 from math import atan2
-from math import pi
 import numpy as np
 import numba as nb
 
-from functools import partial 
+from functools import partial
 
 import dask.array as da
 
 from numba import cuda
 
 import xarray as xr
-from xarray import DataArray
 
 from xrspatial.utils import ngjit
 from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
 from xrspatial.utils import is_cupy_backed
 
+from typing import Optional
 
 # 3rd-party
 try:
@@ -95,7 +94,7 @@ def _gpu(arr):
             aspect = nb.float32(360.0) - aspect + ninety
         else:
             aspect = ninety - aspect
-    
+
     if aspect > nb.float32(359.999):  # lame float equality check...
         return nb.float32(0.)
     else:
@@ -107,13 +106,14 @@ def _run_gpu(arr, out):
     i, j = cuda.grid(2)
     di = 1
     dj = 1
-    if (i-di >= 0 and i+di < out.shape[0] and
-        j-dj >= 0 and j+dj < out.shape[1]):
+    if (i-di >= 0 and
+        i+di < out.shape[0] and
+            j-dj >= 0 and
+            j+dj < out.shape[1]):
         out[i, j] = _gpu(arr[i-di:i+di+1, j-dj:j+dj+1])
 
 
 def _run_cupy(data: cupy.ndarray) -> cupy.ndarray:
-
     griddim, blockdim = cuda_args(data.shape)
     out = cupy.empty(data.shape, dtype='f4')
     out[:] = cupy.nan
@@ -121,8 +121,7 @@ def _run_cupy(data: cupy.ndarray) -> cupy.ndarray:
     return out
 
 
-def _run_dask_cupy(data:da.Array) -> da.Array:
-
+def _run_dask_cupy(data: da.Array) -> da.Array:
     msg = 'Upstream bug in dask prevents cupy backed arrays'
     raise NotImplementedError(msg)
 
@@ -138,12 +137,12 @@ def _run_dask_cupy(data:da.Array) -> da.Array:
     return out
 
 
-def _run_numpy(data:np.ndarray)-> np.ndarray:
+def _run_numpy(data: np.ndarray) -> np.ndarray:
     out = _cpu(data)
     return out
 
 
-def _run_dask_numpy(data:da.Array) -> da.Array:
+def _run_dask_numpy(data: da.Array) -> da.Array:
     _func = partial(_cpu)
 
     out = data.map_overlap(_func,
@@ -153,22 +152,72 @@ def _run_dask_numpy(data:da.Array) -> da.Array:
     return out
 
 
-def aspect(agg: xr.DataArray, name:str ='aspect'):
-    """Returns downward slope direction in compass degrees (0 - 360) with 0 at 12 o'clock.
+def aspect(agg: xr.DataArray,
+           name: Optional[str] = 'aspect') -> xr.DataArray:
+    """
+    Calculates, for all cells in the array,
+    the downward slope direction of each cell
+    based on the elevation of its neighbors in a 3x3 grid.
+    The value is measured clockwise in degrees with 0 and 360 at due north.
+    Flat areas are given a value of -1.
+    Values along the edges are not calculated.
 
-    Parameters
+    Parameters:
     ----------
-    agg : DataArray
+    agg: xarray.DataArray
+        2D array of elevation values. NumPy, CuPy, NumPy-backed Dask,
+        or Cupy-backed Dask array.
+    name: str, optional (default = "aspect")
+        Name of ouput DataArray.
 
-    Returns
-    -------
-    data: DataArray
+    Returns:
+    ----------
+    xarray.DataArray
+        2D array, of the same type as the input, of calculated aspect values.
+        All other input attributes are preserved.
 
     Notes:
-    ------
+    ----------
     Algorithm References:
-     - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm#ESRI_SECTION1_4198691F8852475A9F4BC71246579FAA
-     - Burrough, P. A., and McDonell, R. A., 1998. Principles of Geographical Information Systems (Oxford University Press, New York), pp 406
+        - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm#ESRI_SECTION1_4198691F8852475A9F4BC71246579FAA
+        - Burrough, P. A., and McDonell, R. A., 1998.
+          Principles of Geographical Information Systems
+          (Oxford University Press, New York), pp 406
+
+    Examples:
+    ----------
+    Imports
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> import xrspatial
+
+    Create Elevation DataArray
+    >>> agg = xr.DataArray(np.array([[0, 1, 0, 0],
+    >>>                              [1, 1, 0, 0],
+    >>>                              [0, 1, 2, 2],
+    >>>                              [1, 0, 2, 0],
+    >>>                              [0, 2, 2, 2]]),
+    >>>                    dims = ["lat", "lon"])
+    >>> height, width = agg.shape
+    >>> _lon = np.linspace(0, width - 1, width)
+    >>> _lat = np.linspace(0, height - 1, height)
+    >>> agg["lon"] = _lon
+    >>> agg["lat"] = _lat
+
+    Create Aspect DataArray
+    >>> aspect = xrspatial.aspect(agg)
+    >>> print(aspect)
+    <xarray.DataArray 'aspect' (lat: 5, lon: 4)>
+    array([[nan,  nan,  nan,  nan],
+           [nan,   0.,  18.43494882,  nan],
+           [nan, 270., 341.56505118,  nan],
+           [nan, 288.43494882, 315.,  nan],
+           [nan,  nan,  nan,  nan]])
+    Coordinates:
+    * lon      (lon) float64 0.0 1.0 2.0 3.0
+    * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+
+    Terrain Example: https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
     """
 
     # numpy case
@@ -182,7 +231,7 @@ def aspect(agg: xr.DataArray, name:str ='aspect'):
     # dask + cupy case
     elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
         out = _run_dask_cupy(agg.data)
-    
+
     # dask + numpy case
     elif isinstance(agg.data, da.Array):
         out = _run_dask_numpy(agg.data)

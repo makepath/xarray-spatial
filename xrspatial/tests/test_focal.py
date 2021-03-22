@@ -5,8 +5,6 @@ from xrspatial import mean
 from xrspatial.convolution import convolve_2d
 from xrspatial.focal import (
     calc_cellsize,
-    calc_mean,
-    calc_sum,
     hotspots,
     circle_kernel,
     annulus_kernel,
@@ -62,6 +60,7 @@ def test_mean_transfer_function():
     da_mean[:, 0] = data_random[:, 0]
     da_mean[:, -1] = data_random[:, -1]
     assert abs(da_mean.mean() - data_random.mean()) < 10**-3
+
 
 def test_kernel():
     n, m = 6, 6
@@ -140,7 +139,9 @@ def test_convolution():
 
     assert np.all(sum_output_2 == expected_out_sum_2)
 
-    mean_output_2 = convolve_2d(np.ones((n, m)), kernel / kernel.sum(), pad=True)
+    mean_output_2 = convolve_2d(np.ones((n, m)),
+                                kernel / kernel.sum(),
+                                pad=True)
     expected_mean_output_2 = np.ones((n, m))
     assert np.all(mean_output_2 == expected_mean_output_2)
 
@@ -158,7 +159,9 @@ def test_convolution():
 
     assert np.all(sum_output_3 == expected_out_sum_3)
 
-    mean_output_3 = convolve_2d(np.ones((n, m)), kernel / kernel.sum(), pad=True)
+    mean_output_3 = convolve_2d(np.ones((n, m)),
+                                kernel / kernel.sum(),
+                                pad=True)
     expected_mean_output_3 = np.ones((n, m))
     assert np.all(mean_output_3 == expected_mean_output_3)
 

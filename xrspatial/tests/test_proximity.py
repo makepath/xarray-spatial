@@ -20,7 +20,7 @@ def test_great_circle_distance():
     with pytest.raises(Exception) as e_info:
         great_circle_distance(x1, x3, y1, y3)
         assert e_info
-        
+
     # invalid y_coord
     y1, x1 = 0, 0
     y2, x2 = -91, 0
