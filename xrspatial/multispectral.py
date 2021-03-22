@@ -4,81 +4,97 @@ import numba as nb
 
 from numba import cuda
 
-import datashader as ds
-
 from PIL import Image
 
 from xarray import DataArray
+import dask.array as da
 
-from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
 from xrspatial.utils import ngjit
+from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import validate_arrays
 
-import xarray as xr
-
-from typing import Optional
-
-
-def _check_is_dataarray(val, name='value'):
-    if not isinstance(val, DataArray):
-        msg = "{} must be instance of DataArray".format(name)
-        raise TypeError(msg)
+# 3rd-party
+try:
+    import cupy
+except ImportError:
+    class cupy(object):
+        ndarray = False
 
 
 @ngjit
-def _arvi(nir_data, red_data, blue_data):
-    out = np.zeros_like(nir_data)
+def _arvi_cpu(nir_data, red_data, blue_data):
+    out = np.zeros(nir_data.shape, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
-
             nir = nir_data[y, x]
             red = red_data[y, x]
             blue = blue_data[y, x]
-
             numerator = (nir - (2.0 * red) + blue)
             denominator = (nir + (2.0 * red) + blue)
+            out[y, x] = numerator / denominator
 
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = numerator / denominator
     return out
 
 
-def arvi(nir_agg: xr.DataArray,
-         red_agg: xr.DataArray,
-         blue_agg: xr.DataArray,
-         name: Optional[str] = 'arvi',
-         use_cuda: bool = True,
-         use_cupy: bool = True) -> xr.DataArray:
+@cuda.jit
+def _arvi_gpu(nir_data, red_data, blue_data, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+        nir = nir_data[y, x]
+        red = red_data[y, x]
+        blue = blue_data[y, x]
+        numerator = (nir - (2.0 * red) + blue)
+        denominator = (nir + (2.0 * red) + blue)
+        out[y, x] = numerator / denominator
+
+
+def _arvi_dask(nir_data, red_data, blue_data):
+    out = da.map_blocks(_arvi_cpu, nir_data, red_data, blue_data,
+                        meta=np.array(()))
+    return out
+
+
+def _arvi_cupy(nir_data, red_data, blue_data):
+    griddim, blockdim = cuda_args(nir_data.shape)
+    out = cupy.empty(nir_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _arvi_gpu[griddim, blockdim](nir_data, red_data, blue_data, out)
+    return out
+
+
+def _arvi_dask_cupy(nir_data, red_data, blue_data):
+    out = da.map_blocks(_arvi_cupy, nir_data, red_data, blue_data,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
+
+
+def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
+         name='arvi'):
     """
     Computes Atmospherically Resistant Vegetation Index.
     Allows for molecular and ozone correction with no further
     need for aerosol correction, except for dust conditions.
 
-    Parameters:
+    Parameters
     ----------
-    nir_agg: xarray.DataArray
-        2D array of near-infrared band data.
-    red_agg: xarray.DataArray
-        2D array of red band data.
-    blue_agg: xarray.DataArray
-        2D array of blue band data.
-    name: str, optional (default = "arvi")
-        Name of output DataArray.
-    use_cuda: bool, optional (default = True)
-    use_cupy: bool, optional (default = True)
-
-    Returns:
+    nir_agg : DataArray
+        near-infrared band data
+    red_agg : DataArray
+        red band data
+    blue_agg : DataArray
+        blue band data
+    Returns
     ----------
-    data: xarray.DataArray
+    xarray.DataArray
         2D array, of the same type as the input, of calculated arvi values.
         All other input attributes are preserved.
+
     Notes:
     ----------
     Algorithm References:
-        https://modis.gsfc.nasa.gov/sci_team/pubs/abstract_new.php?id=03667
+    https://modis.gsfc.nasa.gov/sci_team/pubs/abstract_new.php?id=03667
 
     Examples:
     ----------
@@ -103,7 +119,7 @@ def arvi(nir_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> red_agg["lat"] = _lat
     >>> red_agg["lon"] = _lon
-    
+
     >>> np.random.seed(2)
     >>> blue_agg = xr.DataArray(np.random.rand(4,4),
     >>> dims = ["lat", "lon"])
@@ -152,51 +168,74 @@ def arvi(nir_agg: xr.DataArray,
       * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
 
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(red_agg, 'red')
-    _check_is_dataarray(blue_agg, 'blue')
+    validate_arrays(red_agg, nir_agg, blue_agg)
 
-    if not red_agg.shape == nir_agg.shape == blue_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
+    mapper = ArrayTypeFunctionMapping(numpy_func=_arvi_cpu,
+                                      dask_func=_arvi_dask,
+                                      cupy_func=_arvi_cupy,
+                                      dask_cupy_func=_arvi_dask_cupy)
 
-    return DataArray(_arvi(nir_agg.data, red_agg.data, blue_agg.data),
+    out = mapper(red_agg)(nir_agg.data, red_agg.data, blue_agg.data)
+
+    return DataArray(out,
                      name=name,
                      coords=nir_agg.coords,
                      dims=nir_agg.dims,
                      attrs=nir_agg.attrs)
 
 
+# EVI ----------
 @ngjit
-def _evi(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
-    out = np.zeros_like(nir_data)
+def _evi_cpu(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
+    out = np.zeros(nir_data.shape, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
-
             nir = nir_data[y, x]
             red = red_data[y, x]
             blue = blue_data[y, x]
-
             numerator = nir - red
             denominator = nir + c1 * red - c2 * blue + soil_factor
-
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = gain * (numerator / denominator)
+            out[y, x] = gain * (numerator / denominator)
     return out
 
 
-def evi(nir_agg: xr.DataArray,
-        red_agg: xr.DataArray,
-        blue_agg: xr.DataArray,
-        c1: float = 6.0,
-        c2: float = 7.5,
-        soil_factor: float = 1.0,
-        gain: float = 2.5,
-        name: Optional[str] = 'evi',
-        use_cuda: bool = True,
-        use_cupy: bool = True) -> xr.DataArray:
+@cuda.jit
+def _evi_gpu(nir_data, red_data, blue_data, c1, c2, soil_factor, gain, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+        nir = nir_data[y, x]
+        red = red_data[y, x]
+        blue = blue_data[y, x]
+        numerator = nir - red
+        denominator = nir + c1 * red - c2 * blue + soil_factor
+        out[y, x] = gain * (numerator / denominator)
+
+
+def _evi_dask(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
+    out = da.map_blocks(_evi_cpu, nir_data, red_data, blue_data,
+                        c1, c2, soil_factor, gain, meta=np.array(()))
+    return out
+
+
+def _evi_cupy(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
+    griddim, blockdim = cuda_args(nir_data.shape)
+    out = cupy.empty(nir_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    args = (nir_data, red_data, blue_data, c1, c2, soil_factor, gain, out)
+    _evi_gpu[griddim, blockdim](*args)
+    return out
+
+
+def _evi_dask_cupy(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
+    out = da.map_blocks(_evi_cupy, nir_data, red_data, blue_data,
+                        c1, c2, soil_factor, gain,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
+
+
+def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
+        c1=6.0, c2=7.5, soil_factor=1.0, gain=2.5, name='evi'):
     """
     Computes Enhanced Vegetation Index. Allows for importved
     sensitivity in high biomass regions, de-coupling of the
@@ -220,21 +259,19 @@ def evi(nir_agg: xr.DataArray,
         Amplitude adjustment factor.
     name: str, optional (default = "evi")
         Name of output DataArray.
-    use_cuda: bool, optional (default = True)
-    use_cupy: bool, optional (default = True)
 
-    Returns:
+    Returns
     ----------
-    data: xarray.DataArray
+    xarray.DataArray
         2D array, of the same type as the input, of calculated evi values.
         All other input attributes are preserved.
 
     Notes:
     ----------
     Algorithm References:
-        https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+    https://en.wikipedia.org/wiki/Enhanced_vegetation_index
 
-    Examples:
+        Examples:
     ----------
     Imports
     >>> import numpy as np
@@ -307,11 +344,8 @@ def evi(nir_agg: xr.DataArray,
     Coordinates:
     * lat      (lat) float64 0.0 1.0 2.0 3.0
     * lon      (lon) float64 0.0 1.0 2.0 3.0
+
     """
-    
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(red_agg, 'red')
-    _check_is_dataarray(blue_agg, 'blue')
 
     if not red_agg.shape == nir_agg.shape == blue_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
@@ -323,42 +357,70 @@ def evi(nir_agg: xr.DataArray,
         raise ValueError("c2 must be numeric")
 
     if soil_factor > 1.0 or soil_factor < -1.0:
-        raise ValueError("soil factor must be between (-1.0, 1.0)")
+        raise ValueError("soil factor must be between [-1.0, 1.0]")
 
     if gain < 0:
         raise ValueError("gain must be greater than 0")
 
-    arr = _evi(nir_agg.data, red_agg.data, blue_agg.data, c1, c2,
-               soil_factor, gain)
+    validate_arrays(nir_agg, red_agg, blue_agg)
 
-    return DataArray(arr,
+    mapper = ArrayTypeFunctionMapping(numpy_func=_evi_cpu,
+                                      dask_func=_evi_dask,
+                                      cupy_func=_evi_cupy,
+                                      dask_cupy_func=_evi_dask_cupy)
+
+    out = mapper(red_agg)(nir_agg.data, red_agg.data, blue_agg.data, c1, c2,
+                          soil_factor, gain)
+
+    return DataArray(out,
                      name=name,
                      coords=nir_agg.coords,
                      dims=nir_agg.dims,
                      attrs=nir_agg.attrs)
 
 
+# GCI ----------
 @ngjit
-def _gci(nir_data, green_data):
-    out = np.zeros_like(nir_data)
+def _gci_cpu(nir_data, green_data):
+    out = np.zeros(nir_data.shape, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
             nir = nir_data[y, x]
             green = green_data[y, x]
-
-            if green == 0.0:
-                continue
-            else:
-                out[y, x] = nir / green - 1
+            out[y, x] = nir / green - 1
     return out
 
 
-def gci(nir_agg: xr.DataArray,
-        green_agg: xr.DataArray,
-        name: Optional[str] = 'gci',
-        use_cuda: bool = True,
-        use_cupy: bool = True) -> xr.DataArray:
+@cuda.jit
+def _gci_gpu(nir_data, green_data, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+        nir = nir_data[y, x]
+        green = green_data[y, x]
+        out[y, x] = nir / green - 1
+
+
+def _gci_dask(nir_data, green_data):
+    out = da.map_blocks(_gci_cpu, nir_data, green_data, meta=np.array(()))
+    return out
+
+
+def _gci_cupy(nir_data, green_data):
+    griddim, blockdim = cuda_args(nir_data.shape)
+    out = cupy.empty(nir_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _gci_gpu[griddim, blockdim](nir_data, green_data, out)
+    return out
+
+
+def _gci_dask_cupy(nir_data, green_data):
+    out = da.map_blocks(_gci_cupy, nir_data, green_data,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
+
+
+def gci(nir_agg: DataArray, green_agg: DataArray, name='gci'):
     """
     Computes Green Chlorophyll Index. Used to estimate
     the content of leaf chorophyll and predict the
@@ -372,8 +434,6 @@ def gci(nir_agg: xr.DataArray,
         2D array of green band data.
     name: str, optional (default = "gci")
         Name of output DataArray
-    use_cuda: bool, optional (default = True)
-    use_cupy: bool, optional (default = True)
 
     Returns:
     ----------
@@ -385,7 +445,7 @@ def gci(nir_agg: xr.DataArray,
     ----------
     Algorithm References:
         https://en.wikipedia.org/wiki/Enhanced_vegetation_index
-        
+
     Examples:
     ----------
     Imports
@@ -446,73 +506,49 @@ def gci(nir_agg: xr.DataArray,
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
-    
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(green_agg, 'green')
 
-    if not nir_agg.shape == green_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
+    validate_arrays(nir_agg, green_agg)
 
-    arr = _gci(nir_agg.data, green_agg.data)
+    mapper = ArrayTypeFunctionMapping(numpy_func=_gci_cpu,
+                                      dask_func=_gci_dask,
+                                      cupy_func=_gci_cupy,
+                                      dask_cupy_func=_gci_dask_cupy)
 
-    return DataArray(arr,
+    out = mapper(nir_agg)(nir_agg.data, green_agg.data)
+
+    return DataArray(out,
                      name=name,
                      coords=nir_agg.coords,
                      dims=nir_agg.dims,
                      attrs=nir_agg.attrs)
 
 
-@ngjit
-def _normalized_ratio(arr1, arr2):
-    out = np.zeros_like(arr1)
-    rows, cols = arr1.shape
-    for y in range(0, rows):
-        for x in range(0, cols):
-            val1 = arr1[y, x]
-            val2 = arr2[y, x]
-
-            numerator = val1 - val2
-            denominator = val1 + val2
-
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = numerator / denominator
-
-    return out
-
-
-def nbr(nir_agg: xr.DataArray,
-        swir2_agg: xr.DataArray,
-        name: Optional[str] = 'nbr',
-        use_cuda: bool = True, use_cupy: bool = True) -> xr.DataArray:
+# NBR ----------
+def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     """
     Computes Normalized Burn Ratio. Used to identify
     burned areas and provide a measure of burn severity.
-    
-    Parameters:
+
+    Parameters
     ----------
-    nir_agg: xarray.DataArray
-        2D array of near-infrared band data.
-    swir_agg: xarray.DataArray
-        2D array of shortwave infrared band data.
+    nir_agg : DataArray
+        near-infrared band
+    swir_agg : DataArray
+        shortwave infrared band
         (Landsat 4-7: Band 6)
         (Landsat 8: Band 7)
-    name: str, optional (default = "nbr")
-        Name of output DataArray.
-    use_cuda: bool (default = "True")
-    use_cupy: bool (default = "True")
-    
-    Returns:
+
+    Returns
     ----------
     xarray.DataArray
         2D array, of the same type as the input, of calculated gci values.
         All other input attributes are preserved.
+
     Notes:
     ----------
     Algorithm References:
-        https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
-    
+    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
+
     Examples:
     ----------
     Imports
@@ -528,7 +564,7 @@ def nbr(nir_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> nir_agg["lat"] = _lat
     >>> nir_agg["lon"] = _lon
-    
+
     >>> np.random.seed(4)
     >>> swir2_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
     >>> height, width = swir2_agg.shape
@@ -536,7 +572,7 @@ def nbr(nir_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> swir2_agg["lat"] = _lat
     >>> swir2_agg["lon"] = _lon
-    
+
     >>> print(nir_agg, swir2_agg)
     <xarray.DataArray (lat: 4, lon: 4)>
     array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
@@ -566,15 +602,15 @@ def nbr(nir_agg: xr.DataArray,
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
-    
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(swir2_agg, 'shortwave infrared')
 
-    if not nir_agg.shape == swir2_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
+    validate_arrays(nir_agg, swir2_agg)
 
-    out = _run_normalized_ratio(nir_agg.data, swir2_agg.data,
-                                use_cuda=use_cuda, use_cupy=use_cupy)
+    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
+                                      dask_func=_run_normalized_ratio_dask,
+                                      cupy_func=_run_normalized_ratio_cupy,
+                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+
+    out = mapper(nir_agg)(nir_agg.data, swir2_agg.data)
 
     return DataArray(out,
                      name=name,
@@ -583,46 +619,33 @@ def nbr(nir_agg: xr.DataArray,
                      attrs=nir_agg.attrs)
 
 
-def nbr2(swir1_agg: xr.DataArray,
-         swir2_agg: xr.DataArray,
-         name: Optional[str] = 'nbr',
-         use_cuda: bool = True,
-         use_cupy: bool = True) -> xr.DataArray:
+def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     """
-    Computes Modified Normalized Burn Ratio.
-    Used to highlight water sensitivity in vegetation
-    and may be useful in post-fire recovery studies.
-    
-    Parameters:
+    Computes Normalized Burn Ratio 2
+    "NBR2 modifies the Normalized Burn Ratio (NBR)
+    to highlight water sensitivity in vegetation and
+    may be useful in post-fire recovery studies."
+    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+    Parameters
     ----------
-    swir1_agg: xarray.DataArray
-        2D array of near-infrared band data.
+    swir1_agg : DataArray
+        near-infrared band
         shortwave infrared band
         (Landsat 4-7: Band 5)
         (Landsat 8: Band 6)
-
-    swir2_agg: xarray.DataArray
-        2D array of shortwave infrared band data.
+    swir2_agg : DataArray
+        shortwave infrared band
         (Landsat 4-7: Band 6)
         (Landsat 8: Band 7)
-    name: str, optional (default = "nbr2")
-        Name of output DataArray.
-    use_cuda: bool (default = "True")
-    use_cupy: bool (default = "True")
-
-    Returns:
+    Returns
     ----------
-    xarray.DataArray
-        2D array, of the same type as the input, of calculated gci values.
-        All other input attributes are preserved.
+    data: DataArray
 
     Notes:
     ----------
     Algorithm References:
-        https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
-    Index Reference:
-        https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
-    
+    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+
     Examples:
     ----------
     Imports
@@ -638,7 +661,7 @@ def nbr2(swir1_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> swir1_agg["lat"] = _lat
     >>> swir1_agg["lon"] = _lon
-    
+
     >>> np.random.seed(4)
     >>> swir2_agg = xr.DataArray(np.random.rand(4,4),
     >>>     dims = ["lat", "lon"])
@@ -647,7 +670,7 @@ def nbr2(swir1_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> swir2_agg["lat"] = _lat
     >>> swir2_agg["lon"] = _lon
-    
+
     >>> print(swir1_agg, swir2_agg)
     <xarray.DataArray (lat: 4, lon: 4)>
     array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
@@ -678,14 +701,14 @@ def nbr2(swir1_agg: xr.DataArray,
       * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
 
-    _check_is_dataarray(swir1_agg, 'near-infrared')
-    _check_is_dataarray(swir2_agg, 'shortwave infrared')
+    validate_arrays(swir1_agg, swir2_agg)
 
-    if not swir1_agg.shape == swir2_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
+    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
+                                      dask_func=_run_normalized_ratio_dask,
+                                      cupy_func=_run_normalized_ratio_cupy,
+                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
 
-    out = _run_normalized_ratio(swir1_agg.data, swir2_agg.data,
-                                use_cuda=use_cuda, use_cupy=use_cupy)
+    out = mapper(swir1_agg)(swir1_agg.data, swir2_agg.data)
 
     return DataArray(out,
                      name=name,
@@ -694,15 +717,12 @@ def nbr2(swir1_agg: xr.DataArray,
                      attrs=swir1_agg.attrs)
 
 
-def ndvi(nir_agg: xr.DataArray,
-         red_agg: xr.DataArray,
-         name: Optional[str] = 'ndvi',
-         use_cuda: bool = True,
-         use_cupy: bool = True) -> xr.DataArray:
+# NDVI ----------
+def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
     """
-    Computes Normalized Difference Vegetation Index (NDVI).
+        Computes Normalized Difference Vegetation Index (NDVI).
     Used to determine if a cell contains live green vegetation.
-    
+
     Parameters:
     ----------
     nir_agg: xarray.DataArray
@@ -711,10 +731,8 @@ def ndvi(nir_agg: xr.DataArray,
         2D array red band data.
     name: str, optional (default ="ndvi")
         Name of output DataArray.
-    use_cuda: bool (default = True)
-    use_cupy: bool (default = True)
-    
-    Returns:
+
+    Returns
     ----------
     xarray.DataArray
         2D array, of the same type as the input, of calculated gci values.
@@ -723,15 +741,15 @@ def ndvi(nir_agg: xr.DataArray,
     Notes:
     ----------
     Algorithm References:
-        http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
+    http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
 
-    Examples:
+        Examples:
     ----------
     Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
-    
+
     Create Sample Band Data
     >>> np.random.seed(0)
     >>> nir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
@@ -740,7 +758,7 @@ def ndvi(nir_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> nir_agg["lat"] = _lat
     >>> nir_agg["lon"] = _lon
-    
+
     >>> np.random.seed(1)
     >>> red_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
     >>> height, width = red_agg.shape
@@ -748,7 +766,7 @@ def ndvi(nir_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> red_agg["lat"] = _lat
     >>> red_agg["lon"] = _lon
-    
+
     >>> print(nir_agg, red_agg)
     <xarray.DataArray (lat: 4, lon: 4)>
     array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
@@ -766,7 +784,7 @@ def ndvi(nir_agg: xr.DataArray,
     Coordinates:
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
-    
+
     Create NDVI DataArray
     >>> data = xrspatial.multispectral.ndvi(nir_agg, red_agg)
     >>> print(data)
@@ -780,73 +798,51 @@ def ndvi(nir_agg: xr.DataArray,
       * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
 
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(red_agg, 'red')
+    validate_arrays(nir_agg, red_agg)
 
-    if not red_agg.shape == nir_agg.shape:
-        raise ValueError("red_agg and nir_agg expected to have equal shapes")
+    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
+                                      dask_func=_run_normalized_ratio_dask,
+                                      cupy_func=_run_normalized_ratio_cupy,
+                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
 
-    out = _run_normalized_ratio(nir_agg.data, red_agg.data,
-                                use_cuda=use_cuda, use_cupy=use_cupy)
+    out = mapper(nir_agg)(nir_agg.data, red_agg.data)
 
     return DataArray(out,
-                     name='ndvi',
+                     name=name,
                      coords=nir_agg.coords,
                      dims=nir_agg.dims,
                      attrs=nir_agg.attrs)
 
 
-def _run_normalized_ratio(arr1, arr2, use_cuda=True, use_cupy=True):
-
-    if has_cuda() and use_cuda:
-        griddim, blockdim = cuda_args(arr1.shape)
-        out = np.empty(arr1.shape, dtype='f4')
-        out[:] = np.nan
-
-        if use_cupy:
-            import cupy
-            out = cupy.asarray(out)
-
-        _normalized_ratio_gpu[griddim, blockdim](arr1, arr2, out)
-    else:
-        out = _normalized_ratio(arr1, arr2)
-    return out
-
-
-def ndmi(nir_agg: xr.DataArray,
-         swir1_agg: xr.DataArray,
-         name: Optional[str] = 'ndmi',
-         use_cuda: bool = True,
-         use_cupy: bool = True) -> xr.DataArray:
+# NDMI ----------
+def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
     """
-    Computes Normalized Difference Moisture Index (NDMI).
+    Computes Normalized Difference Moisture Index.
     Used to determine vegetation water content.
-    
-    Parameters:
+
+    Parameters
     ----------
-    nir_agg: xarray.DataArray
-        2D array of near-infrared band data.
+    nir_agg : DataArray
+        near-infrared band
         (Landsat 4-7: Band 4)
         (Landsat 8: Band 5)
-    swir1_agg: xarray.DataArray
-        2D array of shortwave infrared band data.
+    swir1_agg : DataArray
+        shortwave infrared band
         (Landsat 4-7: Band 5)
         (Landsat 8: Band 6)
     name: str, optional (default ="ndmi")
         Name of output DataArray.
-    use_cuda: bool (default = True)
-    use_cupy: bool (default = True)
-    
-    Returns:
+
+    Returns
     ----------
     xarray.DataArray
         2D array, of the same type as the input, of calculated gci values.
         All other input attributes are preserved.
-    
+
     Notes:
     ----------
     Algorithm References:
-        https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
+    https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
 
     Examples:
     ----------
@@ -854,7 +850,7 @@ def ndmi(nir_agg: xr.DataArray,
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
-    
+
     Create Sample Band Data
     >>> np.random.seed(0)
     >>> nir_agg = xr.DataArray(np.random.rand(4,4),
@@ -864,7 +860,7 @@ def ndmi(nir_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> nir_agg["lat"] = _lat
     >>> nir_agg["lon"] = _lon
-    
+
     >>> np.random.seed(5)
     >>> swir1_agg = xr.DataArray(np.random.rand(4,4),
     >>>            dims = ["lat", "lon"])
@@ -873,7 +869,7 @@ def ndmi(nir_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> swir1_agg["lat"] = _lat
     >>> swir1_agg["lon"] = _lon
-    
+
     >>> print(nir_agg, swir1_agg)
     <xarray.DataArray (lat: 4, lon: 4)>
     array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
@@ -891,7 +887,7 @@ def ndmi(nir_agg: xr.DataArray,
     Coordinates:
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
-    
+
     Create NDMI DataArray
     >>> data = xrspatial.multispectral.ndmi(nir_agg, swir1_agg)
     >>> print(data)
@@ -904,18 +900,15 @@ def ndmi(nir_agg: xr.DataArray,
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
-    
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(swir1_agg, 'shortwave infrared')
 
-    if not nir_agg.shape == swir1_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
+    validate_arrays(nir_agg, swir1_agg)
 
-    nir_data = nir_agg.data
-    swir1_data = swir1_agg.data
+    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
+                                      dask_func=_run_normalized_ratio_dask,
+                                      cupy_func=_run_normalized_ratio_cupy,
+                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
 
-    out = _run_normalized_ratio(nir_data, swir1_data,
-                                use_cuda=use_cuda, use_cupy=use_cupy)
+    out = mapper(nir_agg)(nir_agg.data, swir1_agg.data)
 
     return DataArray(out,
                      name=name,
@@ -925,24 +918,27 @@ def ndmi(nir_agg: xr.DataArray,
 
 
 @ngjit
-def _savi(nir_data, red_data, soil_factor):
-    out = np.zeros_like(nir_data)
-    rows, cols = nir_data.shape
+def _normalized_ratio_cpu(arr1, arr2):
+    out = np.zeros(arr1.shape, dtype=np.float32)
+    rows, cols = arr1.shape
     for y in range(0, rows):
         for x in range(0, cols):
-            nir = nir_data[y, x]
-            red = red_data[y, x]
-
-            numerator = nir - red
-
-            soma = nir + red + soil_factor
-            denominator = soma * (1.0 + soil_factor)
+            val1 = arr1[y, x]
+            val2 = arr2[y, x]
+            numerator = val1 - val2
+            denominator = val1 + val2
 
             if denominator == 0.0:
                 continue
             else:
                 out[y, x] = numerator / denominator
 
+    return out
+
+
+def _run_normalized_ratio_dask(arr1, arr2):
+    out = da.map_blocks(_normalized_ratio_cpu, arr1, arr2,
+                        meta=np.array(()))
     return out
 
 
@@ -957,6 +953,36 @@ def _normalized_ratio_gpu(arr1, arr2, out):
         out[y, x] = numerator / denominator
 
 
+def _run_normalized_ratio_cupy(arr1, arr2):
+    griddim, blockdim = cuda_args(arr1.shape)
+    out = cupy.empty(arr1.shape, dtype='f4')
+    out[:] = cupy.nan
+    _normalized_ratio_gpu[griddim, blockdim](arr1, arr2, out)
+    return out
+
+
+def _run_normalized_ratio_dask_cupy(arr1, arr2):
+    out = da.map_blocks(_run_normalized_ratio_cupy, arr1, arr2,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
+
+
+@ngjit
+def _savi_cpu(nir_data, red_data, soil_factor):
+    out = np.zeros(nir_data.shape, dtype=np.float32)
+    rows, cols = nir_data.shape
+    for y in range(0, rows):
+        for x in range(0, cols):
+            nir = nir_data[y, x]
+            red = red_data[y, x]
+            numerator = nir - red
+            soma = nir + red + soil_factor
+            denominator = soma * (1.0 + soil_factor)
+            out[y, x] = numerator / denominator
+
+    return out
+
+
 @cuda.jit
 def _savi_gpu(nir_data, red_data, soil_factor, out):
     y, x = cuda.grid(2)
@@ -964,56 +990,69 @@ def _savi_gpu(nir_data, red_data, soil_factor, out):
         nir = nir_data[y, x]
         red = red_data[y, x]
         numerator = nir - red
-        soma = nir + red + soil_factor[0]
-        denominator = soma * (nb.float32(1.0) + soil_factor[0])
-
-        if denominator == 0.0:
-            out[y, x] = np.nan
-        else:
-            out[y, x] = numerator / denominator
+        soma = nir + red + soil_factor
+        denominator = soma * (nb.float32(1.0) + soil_factor)
+        out[y, x] = numerator / denominator
 
 
-def savi(nir_agg: xr.DataArray,
-         red_agg: xr.DataArray,
-         soil_factor: float = 1.0,
-         name: Optional[str] = 'savi',
-         use_cuda: bool = True,
-         use_cupy: bool = True):
+def _savi_dask(nir_data, red_data, soil_factor):
+    out = da.map_blocks(_savi_cpu, nir_data, red_data, soil_factor,
+                        meta=np.array(()))
+    return out
+
+
+def _savi_cupy(nir_data, red_data, soil_factor):
+    griddim, blockdim = cuda_args(nir_data.shape)
+    out = cupy.empty(nir_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _savi_gpu[griddim, blockdim](nir_data, red_data, soil_factor, out)
+    return out
+
+
+def _savi_dask_cupy(nir_data, red_data, soil_factor):
+    out = da.map_blocks(_savi_cupy, nir_data, red_data, soil_factor,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
+
+
+# SAVI ----------
+def savi(nir_agg: DataArray, red_agg: DataArray,
+         soil_factor: float = 1.0, name: str = 'savi'):
     """
     Computes Soil Adjusted Vegetation Index (SAVI).
     Used to determine if a cell contains living
     vegetation while minimizing soil brightness.
-    
-    Parameters:
+
+    Parameters
     ----------
-    nir_agg: xarray.DataArray
-        2D array of near-infrared band data.
-    red_agg: xarray.DataArray
-        2D array red band data.
-    soil_factor: float (default = 1.0)
+    nir_agg : DataArray
+        near-infrared band data
+    red_agg : DataArray
+        red band data
+    soil_factor : float
         soil adjustment factor between -1.0 and 1.0.
         when set to zero, savi will return the same as ndvi
     name: str, optional (default ="savi")
         Name of output DataArray.
-    use_cuda: bool (default = True)
-    use_cupy: bool (default = True)
-    
-    Returns:
+
+    Returns
     ----------
     xarray.DataArray
         2D array, of the same type as the input, of calculated gci values.
         All other input attributes are preserved.
-    
+
     Notes:
     ----------
     Algorithm References:
-        https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
-        
+     - https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
+
+    Examples
+    ----------
     Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
-    
+
     Create Sample Band Data
     >>> np.random.seed(0)
     >>> nir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
@@ -1022,7 +1061,7 @@ def savi(nir_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> nir_agg["lat"] = _lat
     >>> nir_agg["lon"] = _lon
-    
+
     >>> np.random.seed(1)
     >>> red_agg = xr.DataArray(np.random.rand(4,4),
     >>>                 dims = ["lat", "lon"])
@@ -1031,7 +1070,7 @@ def savi(nir_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> red_agg["lat"] = _lat
     >>> red_agg["lon"] = _lon
-    
+
     >>> print(nir_agg, red_agg)
     <xarray.DataArray (lat: 4, lon: 4)>
     array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
@@ -1049,7 +1088,7 @@ def savi(nir_agg: xr.DataArray,
     Coordinates:
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
-    
+
         Create SAVI DataArray
     >>> data = xrspatial.multispectral.savi(nir_agg, red_agg)
     >>> print(data)
@@ -1062,36 +1101,18 @@ def savi(nir_agg: xr.DataArray,
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
-    
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(red_agg, 'red')
 
-    if not red_agg.shape == nir_agg.shape:
-        raise ValueError("red_agg and nir_agg expected to have equal shapes")
+    validate_arrays(red_agg, nir_agg)
 
-    if soil_factor > 1.0 or soil_factor < -1.0:
-        raise ValueError("soil factor must be between (-1.0, 1.0)")
+    if not -1.0 <= soil_factor <= 1.0:
+        raise ValueError("soil factor must be between [-1.0, 1.0]")
 
-    nir_data = nir_agg.data
-    red_data = red_agg.data
+    mapper = ArrayTypeFunctionMapping(numpy_func=_savi_cpu,
+                                      dask_func=_savi_dask,
+                                      cupy_func=_savi_cupy,
+                                      dask_cupy_func=_savi_dask_cupy)
 
-    if has_cuda() and use_cuda:
-        griddim, blockdim = cuda_args(nir_data.shape)
-        soil_factor_arr = np.array([float(soil_factor)], dtype='f4')
-
-        out = np.empty(nir_data.shape, dtype='f4')
-        out[:] = np.nan
-
-        if use_cupy:
-            import cupy
-            out = cupy.asarray(out)
-
-        _savi_gpu[griddim, blockdim](nir_data,
-                                     red_data,
-                                     soil_factor_arr,
-                                     out)
-    else:
-        out = _savi(nir_agg.data, red_agg.data, soil_factor)
+    out = mapper(red_agg)(nir_agg.data, red_agg.data, soil_factor)
 
     return DataArray(out,
                      name=name,
@@ -1100,23 +1121,19 @@ def savi(nir_agg: xr.DataArray,
                      attrs=nir_agg.attrs)
 
 
+# SIPI ----------
 @ngjit
-def _sipi(nir_data, red_data, blue_data):
-    out = np.zeros_like(nir_data)
+def _sipi_cpu(nir_data, red_data, blue_data):
+    out = np.zeros(nir_data.shape, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
             nir = nir_data[y, x]
             red = red_data[y, x]
             blue = blue_data[y, x]
-
             numerator = nir - blue
             denominator = nir - red
-
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = numerator / denominator
+            out[y, x] = numerator / denominator
     return out
 
 
@@ -1127,27 +1144,38 @@ def _sipi_gpu(nir_data, red_data, blue_data, out):
         nir = nir_data[y, x]
         red = red_data[y, x]
         blue = blue_data[y, x]
-
         numerator = nir - blue
         denominator = nir - red
-
-        if denominator == 0.0:
-            out[y, x] = np.nan
-        else:
-            out[y, x] = numerator / denominator
+        out[y, x] = numerator / denominator
 
 
-def sipi(nir_agg: xr.DataArray,
-         red_agg: xr.DataArray,
-         blue_agg: xr.DataArray,
-         name: Optional[str] = 'sipi',
-         use_cuda: bool = True,
-         use_cupy: bool = True) -> xr.DataArray:
+def _sipi_dask(nir_data, red_data, blue_data):
+    out = da.map_blocks(_sipi_cpu, nir_data, red_data, blue_data,
+                        meta=np.array(()))
+    return out
+
+
+def _sipi_cupy(nir_data, red_data, blue_data):
+    griddim, blockdim = cuda_args(nir_data.shape)
+    out = cupy.empty(nir_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _sipi_gpu[griddim, blockdim](nir_data, red_data, blue_data, out)
+    return out
+
+
+def _sipi_dask_cupy(nir_data, red_data, blue_data):
+    out = da.map_blocks(_sipi_cupy, nir_data, red_data, blue_data,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
+
+
+def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
+         name='sipi'):
     """
-    Computes Structure Insensitive Pigment Index (SIPI)
-    which is helpful in early disease detection in vegetation.
-    
-    Parameters:
+    Computes Structure Insensitive Pigment Index which helpful
+    in early disease detection in vegetation.
+
+    Parameters
     ----------
     nir_agg: xarray.DataArray
         2D array of near-infrared band data.
@@ -1157,27 +1185,25 @@ def sipi(nir_agg: xr.DataArray,
         2D array of blue band data.
     name: str, optional (default = "arvi")
         Name of output DataArray.
-    use_cuda: bool, optional (default = True)
-    use_cupy: bool, optional (default = True)
-    
-    Returns:
+
+    Returns
     ----------
-    xarray.DataArray
-        2D array, of the same type as the input, of calculated arvi values.
+     xarray.DataArray
+        2D array, of the same type as the input, of calculated sipi values.
         All other input attributes are preserved.
-        
+
     Notes:
     ----------
     Algorithm References:
-        https://en.wikipedia.org/wiki/Enhanced_vegetation_index
-    
+    https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+
     Examples:
     ----------
     Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
-    
+
     Create Sample Band Data
     >>> np.random.seed(0)
     >>> nir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
@@ -1186,7 +1212,7 @@ def sipi(nir_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> nir_agg["lat"] = _lat
     >>> nir_agg["lon"] = _lon
-    
+
     >>> np.random.seed(1)
     >>> red_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
     >>> height, width = red_agg.shape
@@ -1194,7 +1220,7 @@ def sipi(nir_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> red_agg["lat"] = _lat
     >>> red_agg["lon"] = _lon
-    
+
     >>> np.random.seed(2)
     >>> blue_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
     >>> height, width = blue_agg.shape
@@ -1202,7 +1228,7 @@ def sipi(nir_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> blue_agg["lat"] = _lat
     >>> blue_agg["lon"] = _lon
-    
+
     >>> print(nir_agg, red_agg, blue_agg)
     <xarray.DataArray (lat: 4, lon: 4)>
     array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
@@ -1228,7 +1254,7 @@ def sipi(nir_agg: xr.DataArray,
     Coordinates:
     * lat      (lat) float64 0.0 1.0 2.0 3.0
     * lon      (lon) float64 0.0 1.0 2.0 3.0
-    
+
     Create ARVI DataArray
     >>> data = xrspatial.multispectral.sipi(nir_agg, red_agg, blue_agg)
     >>> print(data)
@@ -1244,34 +1270,17 @@ def sipi(nir_agg: xr.DataArray,
     Coordinates:
     * lat      (lat) float64 0.0 1.0 2.0 3.0
     * lon      (lon) float64 0.0 1.0 2.0 3.0
+
     """
 
-    _check_is_dataarray(nir_agg, 'near-infrared')
-    _check_is_dataarray(red_agg, 'red')
-    _check_is_dataarray(blue_agg, 'blue')
+    validate_arrays(red_agg, nir_agg, blue_agg)
 
-    if not red_agg.shape == nir_agg.shape == blue_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
+    mapper = ArrayTypeFunctionMapping(numpy_func=_sipi_cpu,
+                                      dask_func=_sipi_dask,
+                                      cupy_func=_sipi_cupy,
+                                      dask_cupy_func=_sipi_dask_cupy)
 
-    nir_data = nir_agg.data
-    red_data = red_agg.data
-    blue_data = blue_agg.data
-
-    if has_cuda() and use_cuda:
-        griddim, blockdim = cuda_args(nir_data.shape)
-        out = np.empty(nir_data.shape, dtype='f4')
-        out[:] = np.nan
-
-        if use_cupy:
-            import cupy
-            out = cupy.asarray(out)
-
-        _sipi_gpu[griddim, blockdim](nir_data,
-                                     red_data,
-                                     blue_data,
-                                     out)
-    else:
-        out = _sipi(nir_data, red_data, blue_data)
+    out = mapper(red_agg)(nir_agg.data, red_agg.data, blue_agg.data)
 
     return DataArray(out,
                      name=name,
@@ -1280,23 +1289,19 @@ def sipi(nir_agg: xr.DataArray,
                      attrs=nir_agg.attrs)
 
 
+# EBBI ----------
 @ngjit
-def _ebbi(red_data, swir_data, tir_data):
-    out = np.zeros_like(red_data)
+def _ebbi_cpu(red_data, swir_data, tir_data):
+    out = np.zeros(red_data.shape, dtype=np.float32)
     rows, cols = red_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
             red = red_data[y, x]
             swir = swir_data[y, x]
             tir = tir_data[y, x]
-
             numerator = swir - red
             denominator = 10 * np.sqrt(swir + tir)
-
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = numerator / denominator
+            out[y, x] = numerator / denominator
     return out
 
 
@@ -1304,26 +1309,40 @@ def _ebbi(red_data, swir_data, tir_data):
 def _ebbi_gpu(red_data, swir_data, tir_data, out):
     y, x = cuda.grid(2)
     if y < out.shape[0] and x < out.shape[1]:
-
         red = red_data[y, x]
         swir = swir_data[y, x]
         tir = tir_data[y, x]
-
         numerator = swir - red
         denominator = nb.int64(10) * sqrt(swir + tir)
         out[y, x] = numerator / denominator
 
 
-def ebbi(red_agg: xr.DataArray,
-         swir_agg: xr.DataArray,
-         tir_agg: xr.DataArray,
-         name: Optional[str] = 'ebbi',
-         use_cuda: bool = True,
-         use_cupy: bool = True) -> xr.DataArray:
+def _ebbi_dask(red_data, swir_data, tir_data):
+    out = da.map_blocks(_ebbi_cpu, red_data, swir_data, tir_data,
+                        meta=np.array(()))
+    return out
+
+
+def _ebbi_cupy(red_data, swir_data, tir_data):
+    griddim, blockdim = cuda_args(red_data.shape)
+    out = cupy.empty(red_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _ebbi_gpu[griddim, blockdim](red_data, swir_data, tir_data, out)
+    return out
+
+
+def _ebbi_dask_cupy(red_data, swir_data, tir_data):
+    out = da.map_blocks(_ebbi_cupy, red_data, swir_data, tir_data,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
+
+
+def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
+         name='ebbi'):
     """
     Computes Enhanced Built-Up and Bareness Index (EBBI) which
     allows for easily distinguishing between built-up and bare land areas.
-    
+
     Parameters:
     ----------
     red_agg: xarray.DataArray
@@ -1334,27 +1353,25 @@ def ebbi(red_agg: xr.DataArray,
         2D array of thermal infrared band data.
     name: str, optional (default = "ebbi")
         Name of output DataArray.
-    use_cuda: bool, optional (default = True)
-    use_cupy: bool, optional (default = True)
 
-    Returns:
+    Returns
     ----------
     xarray.DataArray
         2D array, of the same type as the input of calculated arvi values.
         All other input attributes are preserved
-    
+
     Notes:
     ----------
     Algorithm References:
         https://rdrr.io/cran/LSRS/man/EBBI.html
-    
+
     Examples:
     ----------
     Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
-    
+
     Create Sample Band Data
     >>> np.random.seed(1)
     >>> red_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
@@ -1363,7 +1380,7 @@ def ebbi(red_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> red_agg["lat"] = _lat
     >>> red_agg["lon"] = _lon
-    
+
     >>> np.random.seed(5)
     >>> swir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
     >>> height, width = swir_agg.shape
@@ -1371,7 +1388,7 @@ def ebbi(red_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> swir_agg["lat"] = _lat
     >>> swir_agg["lon"] = _lon
-    
+
     >>> np.random.seed(6)
     >>> tir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
     >>> height, width = tir_agg.shape
@@ -1379,7 +1396,7 @@ def ebbi(red_agg: xr.DataArray,
     >>> _lon = np.linspace(0, width - 1, width)
     >>> tir_agg["lat"] = _lat
     >>> tir_agg["lon"] = _lon
-    
+
     >>> print(red_agg, swir_agg, tir_agg)
     <xarray.DataArray (lat: 4, lon: 4)>
     array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
@@ -1418,32 +1435,14 @@ def ebbi(red_agg: xr.DataArray,
       * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
 
-    _check_is_dataarray(red_agg, 'red')
-    _check_is_dataarray(swir_agg, 'swir')
-    _check_is_dataarray(tir_agg, 'thermal infrared')
+    validate_arrays(red_agg, swir_agg, tir_agg)
 
-    if not red_agg.shape == swir_agg.shape == tir_agg.shape:
-        raise ValueError("input layers expected to have equal shapes")
+    mapper = ArrayTypeFunctionMapping(numpy_func=_ebbi_cpu,
+                                      dask_func=_ebbi_dask,
+                                      cupy_func=_ebbi_cupy,
+                                      dask_cupy_func=_ebbi_dask_cupy)
 
-    red_data = red_agg.data
-    swir_data = swir_agg.data
-    tir_data = tir_agg.data
-
-    if has_cuda() and use_cuda:
-        griddim, blockdim = cuda_args(red_data.shape)
-        out = np.empty(red_data.shape, dtype='f4')
-        out[:] = np.nan
-
-        if use_cupy:
-            import cupy
-            out = cupy.asarray(out)
-
-        _sipi_gpu[griddim, blockdim](red_data,
-                                     swir_data,
-                                     tir_data,
-                                     out)
-    else:
-        out = _sipi(red_data, swir_data, tir_data)
+    out = mapper(red_agg)(red_agg.data, swir_agg.data, tir_agg.data)
 
     return DataArray(out,
                      name=name,
@@ -1456,7 +1455,7 @@ def ebbi(red_agg: xr.DataArray,
 def _normalize_data(agg, pixel_max=255.0):
     out = np.zeros_like(agg)
     min_val = 0
-    max_val = 2**16 - 1
+    max_val = 2 ** 16 - 1
     range_val = max_val - min_val
     rows, cols = agg.shape
     c = 40
@@ -1472,14 +1471,13 @@ def _normalize_data(agg, pixel_max=255.0):
     return out
 
 
-def bands_to_img(r, g, b, nodata=1):
+def true_color(r, g, b, nodata=1):
     h, w = r.shape
-    r, g, b = [ds.utils.orient_array(img) for img in (r, g, b)]
 
     data = np.zeros((h, w, 4), dtype=np.uint8)
-    data[:, :, 0] = (_normalize_data(r)).astype(np.uint8)
-    data[:, :, 1] = (_normalize_data(g)).astype(np.uint8)
-    data[:, :, 2] = (_normalize_data(b)).astype(np.uint8)
+    data[:, :, 0] = (_normalize_data(r.data)).astype(np.uint8)
+    data[:, :, 1] = (_normalize_data(g.data)).astype(np.uint8)
+    data[:, :, 2] = (_normalize_data(b.data)).astype(np.uint8)
 
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
     data[:, :, 3] = a.astype(np.uint8)

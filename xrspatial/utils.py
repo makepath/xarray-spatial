@@ -3,13 +3,15 @@ import numba as nb
 import numpy as np
 import xarray as xr
 
+import dask.array as da
+
 from numba import cuda
 
 try:
     import cupy
+
     if cupy.result_type is np.result_type:
-        # Workaround until cupy release of
-        # https://github.com/cupy/cupy/pull/2249
+        # Workaround until cupy release of https://github.com/cupy/cupy/pull/2249
         # Without this, cupy.histogram raises an error that cupy.result_type
         # is not defined.
         cupy.result_type = lambda *args: np.result_type(
@@ -18,7 +20,6 @@ try:
         )
 except:
     cupy = None
-
 
 ngjit = nb.jit(nopython=True, nogil=True)
 
@@ -39,22 +40,21 @@ def doesnt_have_cuda():
     return not has_cuda()
 
 
-def cuda_args(shape) -> tuple:
+def cuda_args(shape):
     """
     Compute the blocks-per-grid and threads-per-block parameters for use when
-    invoking cuda kernels.
-    
-    Parameters:
+    invoking cuda kernels
+
+    Parameters
     ----------
     shape: int or tuple of ints
-        The shape of the input array that the kernel will parallelize over.
+        The shape of the input array that the kernel will parallelize over
 
-    Returns:
-    ----------
+    Returns
+    -------
     tuple
         Tuple of (blocks_per_grid, threads_per_block)
     """
-    
     if isinstance(shape, int):
         shape = (shape,)
 
@@ -73,11 +73,59 @@ def is_cupy_backed(agg: xr.DataArray):
         return False
 
 
-def calc_res(raster: xr.DataArray) -> tuple:
-    """
-    Calculate the resolution of xarray.DataArray raster and return it as the
+def is_dask_cupy(agg: xr.DataArray):
+    return isinstance(agg.data, da.Array) and is_cupy_backed(agg)
+
+
+class ArrayTypeFunctionMapping(object):
+
+    def __init__(self, numpy_func, cupy_func, dask_func, dask_cupy_func):
+        self.numpy_func = numpy_func
+        self.cupy_func = cupy_func
+        self.dask_func = dask_func
+        self.dask_cupy_func = dask_cupy_func
+
+    def __call__(self, arr):
+
+        # numpy case
+        if isinstance(arr.data, np.ndarray):
+            return self.numpy_func
+
+        # cupy case
+        elif has_cuda() and isinstance(arr.data, cupy.ndarray):
+            return self.cupy_func
+
+        # dask + cupy case
+        elif has_cuda() and is_dask_cupy(arr):
+            return self.dask_cupy_func
+
+        # dask + numpy case
+        elif isinstance(arr.data, da.Array):
+            return self.dask_func
+
+        else:
+            raise TypeError('Unsupported Array Type: {}'.format(type(arr)))
+
+
+def validate_arrays(*arrays):
+    if len(arrays) < 2:
+        raise ValueError(
+            'validate_arrays() input must contain 2 or more arrays')
+
+    first_array = arrays[0]
+    for i in range(1, len(arrays)):
+
+        if not first_array.data.shape == arrays[i].data.shape:
+            raise ValueError("input arrays must have equal shapes")
+
+        if not type(first_array.data) == type(arrays[i].data):
+            raise ValueError("input arrays must have same type")
+
+
+def calc_res(raster):
+    """Calculate the resolution of xarray.DataArray raster and return it as the
     two-tuple (xres, yres).
-    
+
     Parameters:
     ----------
     raster: xarray.DataArray
@@ -92,7 +140,7 @@ def calc_res(raster: xr.DataArray) -> tuple:
     ----------
     Sourced from datashader.utils
     """
-    
+
     h, w = raster.shape[-2:]
     ydim, xdim = raster.dims[-2:]
     xcoords = raster[xdim].values
@@ -102,10 +150,10 @@ def calc_res(raster: xr.DataArray) -> tuple:
     return xres, yres
 
 
-def get_dataarray_resolution(agg: xr.DataArray) -> tuple:
+def get_dataarray_resolution(agg: xr.DataArray):
     """
     Calculate resolution of xarray.DataArray.
-    
+
     Parameters:
     ----------
     agg: xarray.DataArray
@@ -132,15 +180,15 @@ def get_dataarray_resolution(agg: xr.DataArray) -> tuple:
     return cellsize_x, cellsize_y
 
 
-def lnglat_to_meters(longitude: float, latitude: float) -> tuple:
+def lnglat_to_meters(longitude, latitude):
     """
     Projects the given (longitude, latitude) values into Web Mercator
     coordinates (meters East of Greenwich and meters North of the Equator).
-    
+
     Longitude and latitude can be provided as scalars, Pandas columns,
     or Numpy arrays, and will be returned in the same form.  Lists
     or tuples will be converted to Numpy arrays.
-    
+
     Parameters:
     ----------
     latitude: float
@@ -170,25 +218,25 @@ def lnglat_to_meters(longitude: float, latitude: float) -> tuple:
 
     origin_shift = np.pi * 6378137
     easting = longitude * origin_shift / 180.0
-    northing = np.log(np.tan((90 + latitude) * np.pi / 360.0)) * \
-        origin_shift / np.pi
+    northing = np.log(
+        np.tan((90 + latitude) * np.pi / 360.0)) * origin_shift / np.pi
     return (easting, northing)
 
 
-def height_implied_by_aspect_ratio(W, X, Y) -> int:
+def height_implied_by_aspect_ratio(W, X, Y):
     """
     Utility function for calculating height (in pixels)
     which is implied by a width, x-range, and y-range.
     Simple ratios are used to maintain aspect ratio.
 
-    Parameters:
+    Parameters
     ----------
     W: int
-        width in pixel
+      width in pixel
     X: tuple(xmin, xmax)
-        x-range in data units
+      x-range in data units
     Y: tuple(xmin, xmax)
-        x-range in data units
+      x-range in data units
 
     Returns:
     ----------

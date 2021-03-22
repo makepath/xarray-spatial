@@ -13,7 +13,6 @@ DIRECTION = 2
 
 
 def _distance_metric_mapping():
-
     DISTANCE_METRICS = {}
     DISTANCE_METRICS['EUCLIDEAN'] = EUCLIDEAN
     DISTANCE_METRICS['GREAT_CIRCLE'] = GREAT_CIRCLE
@@ -31,7 +30,7 @@ DISTANCE_METRICS = _distance_metric_mapping()
 def euclidean_distance(x1: float, x2: float, y1: float, y2: float) -> float:
     """
     Calculates Euclidean (straight line) distance between (x1, y1) and (x2, y2).
-    
+
     Parameters:
     ----------
     x1: float
@@ -181,7 +180,7 @@ def great_circle_distance(x1: float, x2: float,
                               np.radians(y2), np.radians(x2))
     dlon = lon2 - lon1
     dlat = lat2 - lat1
-    a = np.sin(dlat / 2.0) ** 2 +\
+    a = np.sin(dlat / 2.0) ** 2 + \
         np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
 
     # earth radius: 6378137
@@ -190,7 +189,6 @@ def great_circle_distance(x1: float, x2: float,
 
 @njit(nogil=True)
 def _distance(x1, x2, y1, y2, metric):
-
     if metric == EUCLIDEAN:
         return euclidean_distance(x1, x2, y1, y2)
 
@@ -209,7 +207,6 @@ def _process_proximity_line(source_line, x_coords, y_coords,
                             line_id, width, max_distance, line_proximity,
                             nearest_xs, nearest_ys,
                             values, distance_metric):
-
     # Process proximity for a line of pixels in an image
     #
     # source_line: 1d ndarray, input data
@@ -337,7 +334,6 @@ def _calc_direction(x1, x2, y1, y2):
 @njit(nogil=True)
 def _process_image(img, x_coords, y_coords, target_values,
                    distance_metric, process_mode):
-
     max_distance = _distance(x_coords[0], x_coords[-1],
                              y_coords[0], y_coords[-1],
                              distance_metric)
@@ -477,7 +473,6 @@ def _process_image(img, x_coords, y_coords, target_values,
 
 def _process(raster, x='x', y='y', target_values=[],
              distance_metric='EUCLIDEAN', process_mode=PROXIMITY):
-
     raster_dims = raster.dims
     if raster_dims != (y, x):
         raise ValueError("raster.coords should be named as coordinates:"
@@ -508,7 +503,6 @@ def proximity(raster: xr.DataArray,
               y: str = 'y',
               target_values: list = [],
               distance_metric: str = 'EUCLIDEAN') -> xr.DataArray:
-
     """
     Computes the proximity of all pixels in the image
     to a set of pixels in the source image based on
