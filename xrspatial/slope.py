@@ -147,7 +147,7 @@ def slope(agg: xr.DataArray,
     Returns:
     ---------
     xarray.DataArray
-        2D array, of the same type as the input, of calculated arvi values.
+        2D array, of the same type as the input, of calculated slope values.
         All other input attributes are preserved.
 
     Notes:

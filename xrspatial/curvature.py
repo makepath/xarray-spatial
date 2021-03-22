@@ -112,7 +112,7 @@ def curvature(agg: xr.DataArray,
     Parameters:
     ----------
     agg: xarray.DataArray
-        2D array of elevation values with shape = (height, width)
+        2D array of elevation values
         NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
         Must contain "res" attribute.
     name: str (default = "curvature")
@@ -121,8 +121,7 @@ def curvature(agg: xr.DataArray,
     Returns:
     ----------
     curvature: xarray.DataArray
-        2D array, of the same type as the input,
-        of calculated curvature values with shape = (height, width)
+        2D array, of the same type as the input, of calculated curvature values
         All other input attributes are preserved.
 
     Notes:
@@ -143,8 +142,8 @@ def curvature(agg: xr.DataArray,
     >>>                              [0, 1, 2, 2],
     >>>                              [1, 0, 2, 0],
     >>>                              [0, 2, 2, 2]]),
-    >>>                       dims = ["lat", "lon"],
-    >>>                       attrs = dict(res = 1))
+    >>>                    dims = ["lat", "lon"],
+    >>>                    attrs = dict(res = 1))
     >>> height, width = agg.shape
     >>> _lon = np.linspace(0, width - 1, width)
     >>> _lat = np.linspace(0, height - 1, height)

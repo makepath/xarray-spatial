@@ -562,7 +562,7 @@ def proximity(raster: xr.DataArray,
     >>>     'y': [-13, -5, 0, 10, 7, 2, 5, -5]
     >>> })
     >>> cvs = ds.Canvas(plot_width=800, plot_height=600,
-    >>>                 x_range=(-20, 20), y_range-(-20,20))
+    >>>                 x_range=(-20, 20), y_range=(-20,20))
 
     Create Proximity Aggregate
     >>> points_agg = cvs.points(df, x='x', y='y')

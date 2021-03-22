@@ -224,6 +224,7 @@ def circle_kernel(cellsize_x: int,
            [1., 1., 1., 1., 1., 1., 1.],
            [0., 0., 0., 1., 0., 0., 0.]])
     """
+
     # validate radius, convert radius to meters
     r = _get_distance(str(radius))
 

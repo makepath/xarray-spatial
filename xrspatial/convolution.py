@@ -34,7 +34,7 @@ def convolve_2d(image: xr.DataArray,
     ----------
     convolve_agg: xarray.DataArray
         2D array representation of the impulse function.
-        All other unput attributes are preserverd.
+        All other input attributes are preserverd.
     
     Examples:
     ----------

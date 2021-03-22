@@ -230,7 +230,7 @@ def reclassify(agg: xr.DataArray,
     Create Initial DataArray
     >>> np.random.seed(1)
     >>> agg = xr.DataArray(np.random.randint(2, 8, (4, 4)),
-    >>>                 dims = ["lat", "lon"])
+    >>>                    dims = ["lat", "lon"])
     >>> height, width = agg.shape
     >>> _lon = np.linspace(0, width - 1, width)
     >>> _lat = np.linspace(0, height - 1, height)

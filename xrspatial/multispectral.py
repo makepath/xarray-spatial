@@ -85,6 +85,9 @@ def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
         red band data
     blue_agg : DataArray
         blue band data
+    name: str, optional (default = "arvi")
+        Name of output DataArray
+
     Returns
     ----------
     xarray.DataArray
@@ -537,11 +540,13 @@ def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
         shortwave infrared band
         (Landsat 4-7: Band 6)
         (Landsat 8: Band 7)
+    name: str, optional (default = "nbr")
+        Name of output DataArray
 
     Returns
     ----------
     xarray.DataArray
-        2D array, of the same type as the input, of calculated gci values.
+        2D array, of the same type as the input, of calculated nbr values.
         All other input attributes are preserved.
 
     Notes:
@@ -619,7 +624,7 @@ def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
                      attrs=nir_agg.attrs)
 
 
-def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr'):
+def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr2'):
     """
     Computes Normalized Burn Ratio 2
     "NBR2 modifies the Normalized Burn Ratio (NBR)
@@ -637,6 +642,9 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr'):
         shortwave infrared band
         (Landsat 4-7: Band 6)
         (Landsat 8: Band 7)
+    name: str, optional (default = "nbr2")
+        Name of output DataArray
+
     Returns
     ----------
     data: DataArray
@@ -735,7 +743,7 @@ def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
     Returns
     ----------
     xarray.DataArray
-        2D array, of the same type as the input, of calculated gci values.
+        2D array, of the same type as the input, of calculated ndvi values.
         All other input attributes are preserved.
 
     Notes:
@@ -836,7 +844,7 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
     Returns
     ----------
     xarray.DataArray
-        2D array, of the same type as the input, of calculated gci values.
+        2D array, of the same type as the input, of calculated ndmi values.
         All other input attributes are preserved.
 
     Notes:
@@ -1038,7 +1046,7 @@ def savi(nir_agg: DataArray, red_agg: DataArray,
     Returns
     ----------
     xarray.DataArray
-        2D array, of the same type as the input, of calculated gci values.
+        2D array, of the same type as the input, of calculated savi values.
         All other input attributes are preserved.
 
     Notes:
@@ -1183,7 +1191,7 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
         2D array of red band data.
     blue_agg: xarray.DataArray
         2D array of blue band data.
-    name: str, optional (default = "arvi")
+    name: str, optional (default = "sipi")
         Name of output DataArray.
 
     Returns
@@ -1357,7 +1365,7 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
     Returns
     ----------
     xarray.DataArray
-        2D array, of the same type as the input of calculated arvi values.
+        2D array, of the same type as the input of calculated ebbi values.
         All other input attributes are preserved
 
     Notes:
