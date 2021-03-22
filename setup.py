@@ -10,7 +10,7 @@ import pyct.build
 
 # datashader first, then pyct unless pyct version compatible with ds is specified
 # spatialpandas may not be required in final pharmacy_desert version
-# pyct may not be necessary in the future
+# pyct may not be required after pyctdev is released
 install_requires = [
     'dask',
     'datashader',
@@ -33,7 +33,7 @@ extras_require = {
   'examples': examples,
 }
 
-# not sure what else needed
+# additional doc dependencies may be needed
 extras_require['doc'] = extras_require['examples'] + ['numpydoc']
 
 extras_require['all'] = sorted(set(sum(extras_require.values(), [])))

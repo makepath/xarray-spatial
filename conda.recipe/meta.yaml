@@ -17,8 +17,8 @@ requirements:
     {% for dep in sdata.get('install_requires', {}) %}
     - {{ dep }}
     {% endfor %}
-    
-# will need extras_require['tests'] once those are added
+
+# will need the extras_require['tests'] deps below once those are added in setup.py
 test:
   requires:
     - pytest >=2.8.5
