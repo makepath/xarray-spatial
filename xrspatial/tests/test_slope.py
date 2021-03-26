@@ -1,4 +1,6 @@
 import pytest
+import pyproj
+from pyproj.crs import CRS
 import xarray as xr
 import numpy as np
 
@@ -51,14 +53,16 @@ elevation2 = np.asarray([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
 def test_slope_against_qgis():
 
     small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-
+    _add_crs_on_xr_DataArray(small_da)
     # slope by xrspatial
     xrspatial_slope = slope(small_da, name='slope_agg')
-
+    
     # validate output attributes
     assert xrspatial_slope.dims == small_da.dims
     assert xrspatial_slope.attrs == small_da.attrs
     assert xrspatial_slope.shape == small_da.shape
+    assert xrspatial_slope.rio.crs == small_da.rio.crs
+    assert xrspatial_slope.rio.nodata == small_da.rio.nodata
     assert xrspatial_slope.name == 'slope_agg'
     for coord in small_da.coords:
         assert np.all(xrspatial_slope[coord] == small_da[coord])
@@ -171,3 +175,7 @@ def test_slope_with_dask_array():
     qgis_vals = qgis_slope[1:-1, 1:-1]
     assert (np.isclose(xrspatial_vals, qgis_vals, equal_nan=True).all() | (
                 np.isnan(xrspatial_vals) & np.isnan(qgis_vals))).all()
+
+def _add_crs_to_xr_DataArray(xda):
+    xda.attrs['nodata'] = 0
+    xda.rio.write_crs(input_crs=4326, grid_mapping_name='spatial_ref', inplace=True)
