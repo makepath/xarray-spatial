@@ -28,8 +28,11 @@ examples = [
   'spatialpandas',
 ]
 
-# still needs tests dependencies and examples_extra if needed
+# Additional tests dependencies and examples_extra may be needed in the future
 extras_require = {
+  'tests': [
+    'pytest',
+  ],
   'examples': examples,
 }
 
@@ -37,7 +40,6 @@ extras_require = {
 extras_require['doc'] = extras_require['examples'] + ['numpydoc']
 
 extras_require['all'] = sorted(set(sum(extras_require.values(), [])))
-
 
 # metadata for setuptools
 
@@ -51,7 +53,7 @@ setup_args = dict(
   description='xarray-based spatial analysis tools',
   install_requires=install_requires,
   extras_require=extras_require,
-  # tests_require=extras_require['tests'],
+  tests_require=extras_require['tests'],
   zip_safe=False,
   classifiers=["Programming Language :: Python :: 3",
                "License :: OSI Approved :: MIT License",
