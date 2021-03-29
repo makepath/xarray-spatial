@@ -1,0 +1,27 @@
+name: Upload Docs To Azure Blob Storage
+on:
+  push:
+    branches:
+      - master
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - uses: actions/setup-dotnet@v1
+        with:
+          dotnet-version: '3.0.100'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install setuptools wheel sphinx sphinx_rtd_theme
+      - name: Build
+        run: |
+          pip install .
+          make -C docs html
+      - uses: lauchacarro/Azure-Storage-Action@v1.0
+        with:
+          enabled-static-website: 'true'
+          folder: 'docs/build/html'
+          index-document: 'index.html'
+          connection-string: ${{ secrets.CONNECTION_STRING }}
