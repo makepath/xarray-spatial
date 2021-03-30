@@ -3,8 +3,7 @@
 set -e
 set -x
 
-BLD_DIR=`pwd`
-
+BLD_DIR='pwd'
 SRC_DIR=$RECIPE_DIR/..
 pushd $SRC_DIR
 
