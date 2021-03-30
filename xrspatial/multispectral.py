@@ -83,10 +83,13 @@ def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     ----------
     nir_agg : DataArray
         near-infrared band data
+        (Sentinel 2: Band 8)
     red_agg : DataArray
         red band data
+        (Sentinel 2: Band 4)
     blue_agg : DataArray
         blue band data
+        (Sentinel 2: Band 2)
     name: str, optional (default = "arvi")
         Name of output DataArray
 
@@ -252,10 +255,13 @@ def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     ----------
     nir_agg: xarray.DataArray
         2D array of near-infrared band data.
+        (Sentinel 2: Band 8)
     red_agg: xarray.DataArray
         2D array of red band data.
+        (Sentinel 2: Band 4)
     blue_agg: xarray.DataArray
         2D array of blue band data.
+        (Sentinel 2: Band 2)
     c1: float (default = 6.0)
         First coefficient of the aerosol resistance term.
     c2: float (default = 7.5)
@@ -439,8 +445,10 @@ def gci(nir_agg: DataArray, green_agg: DataArray, name='gci'):
     ----------
     nir_agg: xarray.DataArray
         2D array of near-infrared band data.
+        (Sentinel 2: Band 8)
     green_agg: xarray.DataArray
         2D array of green band data.
+        (Sentinel 2: Band 3)
     name: str, optional (default = "gci")
         Name of output DataArray
 
@@ -542,8 +550,10 @@ def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     ----------
     nir_agg : DataArray
         near-infrared band
-    swir_agg : DataArray
+        (Sentinel 2: Band 8)
+    swir2_agg : DataArray
         shortwave infrared band
+        (Sentinel 2: Band 12)
         (Landsat 4-7: Band 6)
         (Landsat 8: Band 7)
     name: str, optional (default = "nbr")
@@ -642,9 +652,11 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr2'):
     swir1_agg : DataArray
         near-infrared band
         shortwave infrared band
+        (Sentinel 2: Band 11)
         (Landsat 4-7: Band 5)
         (Landsat 8: Band 6)
     swir2_agg : DataArray
+        (Sentinel 2: Band 12)
         shortwave infrared band
         (Landsat 4-7: Band 6)
         (Landsat 8: Band 7)
@@ -741,8 +753,10 @@ def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
     ----------
     nir_agg: xarray.DataArray
         2D array of near-infrared band data.
+        (Sentinel 2: Band 8)
     red_agg: xarray.DataArray
         2D array red band data.
+        (Sentinel 2: Band 4)
     name: str, optional (default ="ndvi")
         Name of output DataArray.
 
@@ -838,10 +852,12 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
     ----------
     nir_agg : DataArray
         near-infrared band
+        (Sentinel 2: Band 8)
         (Landsat 4-7: Band 4)
         (Landsat 8: Band 5)
     swir1_agg : DataArray
         shortwave infrared band
+        (Sentinel 2: Band 11)
         (Landsat 4-7: Band 5)
         (Landsat 8: Band 6)
     name: str, optional (default ="ndmi")
@@ -1044,8 +1060,10 @@ def savi(nir_agg: DataArray, red_agg: DataArray,
     ----------
     nir_agg : DataArray
         near-infrared band data
+        (Sentinel 2: Band 8)
     red_agg : DataArray
         red band data
+        (Sentinel 2: Band 4)
     soil_factor : float
         soil adjustment factor between -1.0 and 1.0.
         when set to zero, savi will return the same as ndvi
@@ -1198,10 +1216,13 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     ----------
     nir_agg: xarray.DataArray
         2D array of near-infrared band data.
+        (Sentinel 2: Band 8)
     red_agg: xarray.DataArray
         2D array of red band data.
+        (Sentinel 2: Band 4)
     blue_agg: xarray.DataArray
         2D array of blue band data.
+        (Sentinel 2: Band 2)
     name: str, optional (default = "sipi")
         Name of output DataArray.
 
@@ -1368,8 +1389,10 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
     ----------
     red_agg: xarray.DataArray
         2D array of red band data.
+        (Sentinel 2: Band 4)
     swir_agg: xarray.DataArray
         2D array of shortwave infrared band data.
+        (Sentinel 2: Band 11)
     tir_agg: xarray.DataArray
         2D array of thermal infrared band data.
     name: str, optional (default = "ebbi")
@@ -1495,6 +1518,25 @@ def _normalize_data(agg, pixel_max=255.0):
 
 
 def true_color(r, g, b, nodata=1):
+    """
+    Create true color image from 3 bands red, green and blue
+    Parameters:
+    ----------
+    r: xarray.DataArray
+        2D array of red band data.
+        (Sentinel 2: Band 4)
+    g: xarray.DataArray
+        2D array of green band data.
+        (Sentinel 2: Band 3)
+    b: xarray.DataArray
+        2D array of blue band data.
+        (Sentinel 2: Band 2)
+
+    Returns
+    ----------
+    PIL Image
+    """
+
     h, w = r.shape
 
     data = np.zeros((h, w, 4), dtype=np.uint8)
