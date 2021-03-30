@@ -85,14 +85,18 @@ def test_slope_against_qgis_gpu():
     import cupy
 
     small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da)
     small_da_cupy = xr.DataArray(cupy.asarray(elevation),
                                  attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da_cupy)
     xrspatial_slope = slope(small_da_cupy, name='slope_cupy')
 
     # validate output attributes
     assert xrspatial_slope.dims == small_da.dims
     assert xrspatial_slope.attrs == small_da.attrs
     assert xrspatial_slope.shape == small_da.shape
+    assert xrspatial_slope.rio.crs == small_da.rio.crs
+    assert xrspatial_slope.rio.nodata == small_da.rio.nodata
     for coord in small_da.coords:
         assert np.all(xrspatial_slope[coord] == small_da[coord])
 
@@ -111,10 +115,12 @@ def test_slope_gpu_equals_cpu():
     import cupy
 
     small_da = xr.DataArray(elevation2, attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da)
     cpu = slope(small_da, name='numpy_result')
 
     small_da_cupy = xr.DataArray(cupy.asarray(elevation2),
                                  attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da_cupy)
     gpu = slope(small_da_cupy, name='cupy_result')
     assert isinstance(gpu.data, cupy.ndarray)
 
@@ -134,10 +140,12 @@ def _dask_cupy_equals_numpy_cpu():
     dask_cupy_data = da.from_array(cupy_data, chunks=(3, 3))
 
     small_da = xr.DataArray(elevation2, attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da)
     cpu = slope(small_da, name='numpy_result')
 
     small_dask_cupy = xr.DataArray(dask_cupy_data,
                                    attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_dask_cupy)
     gpu = slope(small_dask_cupy, name='cupy_result')
 
     assert np.isclose(cpu, gpu, equal_nan=True).all()
@@ -146,9 +154,12 @@ def _dask_cupy_equals_numpy_cpu():
 def test_slope_numpy_equals_dask():
     small_numpy_based_data_array = xr.DataArray(elevation2,
                                                 attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_numpy_based_data_array)
+
     small_das_based_data_array = xr.DataArray(da.from_array(elevation2,
                                               chunks=(3, 3)),
                                               attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_das_based_data_array)
 
     numpy_slope = slope(small_numpy_based_data_array, name='numpy_slope')
     dask_slope = slope(small_das_based_data_array, name='dask_slope')
@@ -165,6 +176,7 @@ def test_slope_with_dask_array():
 
     data = da.from_array(elevation, chunks=(3, 3))
     small_da = xr.DataArray(data, attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da)
 
     # slope by xrspatial
     xrspatial_slope = slope(small_da, name='slope_agg')
@@ -174,6 +186,8 @@ def test_slope_with_dask_array():
     assert xrspatial_slope.dims == small_da.dims
     assert xrspatial_slope.attrs == small_da.attrs
     assert xrspatial_slope.shape == small_da.shape
+    assert xrspatial_slope.rio.crs == small_da.rio.crs
+    assert xrspatial_slope.rio.nodata == small_da.rio.nodata
     assert xrspatial_slope.name == 'slope_agg'
     for coord in small_da.coords:
         assert np.all(xrspatial_slope[coord] == small_da[coord])
