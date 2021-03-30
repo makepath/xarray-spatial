@@ -2,6 +2,7 @@ import dask.array as da
 import numpy as np
 import pytest
 import xarray as xr
+import rioxarray
 
 from xrspatial import aspect
 from xrspatial.utils import doesnt_have_cuda
@@ -33,12 +34,15 @@ QGIS_OUTPUT = np.asarray([
 def test_numpy_equals_qgis():
 
     small_da = xr.DataArray(INPUT_DATA, attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da)
     xrspatial_aspect = aspect(small_da, name='numpy_aspect')
 
     # validate output attributes
     assert xrspatial_aspect.dims == small_da.dims
     assert xrspatial_aspect.attrs == small_da.attrs
     assert xrspatial_aspect.shape == small_da.shape
+    assert xrspatial_aspect.rio.crs == small_da.rio.crs
+    assert xrspatial_aspect.rio.nodata == small_da.rio.nodata
     assert xrspatial_aspect.name == 'numpy_aspect'
     for coord in small_da.coords:
         assert np.all(xrspatial_aspect[coord] == small_da[coord])
@@ -61,9 +65,12 @@ def test_numpy_equals_dask():
     small_numpy_based_data_array = xr.DataArray(
         INPUT_DATA, attrs={'res': (10.0, 10.0)}
     )
+    _add_crs_to_xr_DataArray(small_numpy_based_data_array)
+
     small_dask_based_data_array = xr.DataArray(
         da.from_array(INPUT_DATA, chunks=(2, 2)), attrs={'res': (10.0, 10.0)}
     )
+    _add_crs_to_xr_DataArray(small_dask_based_data_array)
 
     numpy_result = aspect(small_numpy_based_data_array, name='numpy_result')
     dask_result = aspect(small_dask_based_data_array,
@@ -81,8 +88,11 @@ def test_numpy_equals_cupy():
     import cupy
 
     small_da = xr.DataArray(INPUT_DATA, attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da)
+
     small_da_cupy = xr.DataArray(cupy.asarray(INPUT_DATA),
                                  attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da_cupy)
 
     # aspect by xrspatial
     cpu = aspect(small_da, name='aspect_agg')
@@ -98,14 +108,18 @@ def test_cupy_equals_qgis():
     import cupy
 
     small_da = xr.DataArray(INPUT_DATA, attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da)
     small_da_cupy = xr.DataArray(cupy.asarray(INPUT_DATA),
                                  attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da_cupy)
     xrspatial_aspect = aspect(small_da_cupy, name='aspect_agg')
 
     # validate output attributes
     assert xrspatial_aspect.dims == small_da.dims
     assert xrspatial_aspect.attrs == small_da.attrs
     assert xrspatial_aspect.shape == small_da.shape
+    assert xrspatial_aspect.rio.crs == small_da.rio.crs
+    assert xrspatial_aspect.rio.nodata == small_da.rio.nodata
     assert xrspatial_aspect.name == 'aspect_agg'
     for coord in small_da.coords:
         assert np.all(xrspatial_aspect[coord] == small_da[coord])
@@ -131,10 +145,16 @@ def _numpy_equals_dask_cupy():
     dask_cupy_data = da.from_array(cupy_data, chunks=(3, 3))
 
     small_da = xr.DataArray(INPUT_DATA, attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da)
     cpu = aspect(small_da, name='numpy_result')
 
     small_dask_cupy = xr.DataArray(dask_cupy_data, attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_dask_cupy)
     gpu = aspect(small_dask_cupy, name='cupy_result')
 
     assert is_cupy_backed(gpu)
     assert np.isclose(cpu, gpu, equal_nan=True).all()
+
+def _add_crs_to_xr_DataArray(xda):
+    xda.attrs['nodata'] = 0
+    xda.rio.write_crs(input_crs=4326, grid_mapping_name='spatial_ref', inplace=True)

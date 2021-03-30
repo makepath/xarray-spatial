@@ -1,6 +1,5 @@
 import pytest
-import pyproj
-from pyproj.crs import CRS
+import rioxarray
 import xarray as xr
 import numpy as np
 
@@ -56,7 +55,7 @@ elevation2 = np.asarray([
 def test_slope_against_qgis():
 
     small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-    _add_crs_on_xr_DataArray(small_da)
+    _add_crs_to_xr_DataArray(small_da)
     # slope by xrspatial
     xrspatial_slope = slope(small_da, name='slope_agg')
     
