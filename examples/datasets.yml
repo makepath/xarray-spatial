@@ -1,0 +1,15 @@
+---
+
+data:
+  - url: https://xarrayspatial.blob.core.windows.net/examples-data/facilities.csv
+    title: 'Pharmacy Facilities Data'
+    files:
+      - facilities.csv
+  - url: https://xarrayspatial.blob.core.windows.net/examples-data/USA_Block_Groups-shp.zip/USA_Block_Groups.shp
+    title: 'USA Block Groups Shapefile'
+    files:
+      - USA_Block_Groups.shp
+  - url: https://xarrayspatial.blob.core.windows.net/examples-data/USA_Counties-shp.zip/USA_Counties.shp
+    title: 'USA Counties Shapefile'
+    files:
+      - USA_Counties.shp

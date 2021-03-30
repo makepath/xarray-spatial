@@ -23,6 +23,8 @@ from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
 from xrspatial.utils import is_cupy_backed
 
+from typing import Optional
+
 
 @ngjit
 def _cpu(data, cellsize):
@@ -95,18 +97,84 @@ def _run_dask_cupy(data: da.Array,
     raise NotImplementedError(msg)
 
 
-def curvature(agg, name='curvature'):
-    """Compute the curvature (second derivatives) of a agg surface.
+def curvature(agg: xr.DataArray,
+              name: Optional[str] = 'curvature') -> xr.DataArray:
+    """
+    Calculates, for all cells in the array, the curvature
+    (second derivative) of each cell based on the elevation
+    of its neighbors in a 3x3 grid. A positive curvature
+    indicates the surface is upwardly convex. A negative
+    value indicates it is upwardly concave. A value of 0
+    indicates a flat surface.
 
-    Parameters
+    Units of the curvature output raster are one hundredth (1/100) of a z-unit.
+
+    Parameters:
     ----------
-    agg: xarray.xr.DataArray
-        2D input agg image with shape=(height, width)
+    agg: xarray.DataArray
+        2D array of elevation values
+        NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
+        Must contain "res" attribute.
+    name: str (default = "curvature")
+        Name of output DataArray.
 
-    Returns
-    -------
-    curvature: xarray.xr.DataArray
-        Curvature image with shape=(height, width)
+    Returns:
+    ----------
+    curvature: xarray.DataArray
+        2D array, of the same type as the input, of calculated curvature values
+        All other input attributes are preserved.
+
+    Notes:
+    ----------
+    Algorithm References:
+        - https://pro.arcgis.com/en/pro-app/latest/tool-reference/spatial-analyst/how-curvature-works.htm
+
+    Examples:
+    ----------
+    Imports
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> from xrspatial import curvature
+
+        Create Initial DataArray
+    >>> agg = xr.DataArray(np.array([[0, 1, 0, 0],
+    >>>                              [1, 1, 0, 0],
+    >>>                              [0, 1, 2, 2],
+    >>>                              [1, 0, 2, 0],
+    >>>                              [0, 2, 2, 2]]),
+    >>>                    dims = ["lat", "lon"],
+    >>>                    attrs = dict(res = 1))
+    >>> height, width = agg.shape
+    >>> _lon = np.linspace(0, width - 1, width)
+    >>> _lat = np.linspace(0, height - 1, height)
+    >>> agg["lon"] = _lon
+    >>> agg["lat"] = _lat
+    >>> print(agg)
+    <xarray.DataArray (lat: 5, lon: 4)>
+    array([[0, 1, 0, 0],
+           [1, 1, 0, 0],
+           [0, 1, 2, 2],
+           [1, 0, 2, 0],
+           [0, 2, 2, 2]])
+    Coordinates:
+      * lon      (lon) float64 0.0 1.0 2.0 3.0
+      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+    Attributes:
+        res:      1
+
+    Create Curvature DataArray
+    >>> print(curvature(agg))
+    <xarray.DataArray 'curvature' (lat: 5, lon: 4)>
+    array([[  nan,   nan,   nan,   nan],
+           [  nan,  100., -300.,   nan],
+           [  nan,  100.,  300.,   nan],
+           [  nan, -600.,  400.,   nan],
+           [  nan,   nan,   nan,   nan]])
+    Coordinates:
+      * lon      (lon) float64 0.0 1.0 2.0 3.0
+      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+    Attributes:
+        res:      1
     """
 
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)

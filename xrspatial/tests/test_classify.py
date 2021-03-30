@@ -48,16 +48,24 @@ def test_reclassify_cpu_equals_gpu():
     new_values = [1, 2, 3]
 
     # vanilla numpy version
-    cpu = reclassify(numpy_agg, name='numpy_result', bins=bins, new_values=new_values)
+    cpu = reclassify(numpy_agg,
+                     name='numpy_result',
+                     bins=bins,
+                     new_values=new_values)
 
     # cupy
-    cupy_agg = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
-    gpu = reclassify(cupy_agg, name='cupy_result', bins=bins, new_values=new_values)
+    cupy_agg = xr.DataArray(cupy.asarray(elevation),
+                            attrs={'res': (10.0, 10.0)})
+    gpu = reclassify(cupy_agg,
+                     name='cupy_result',
+                     bins=bins,
+                     new_values=new_values)
     assert isinstance(gpu.data, cupy.ndarray)
     assert np.isclose(cpu, gpu, equal_nan=True).all()
 
     # dask + cupy
-    dask_cupy_agg = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    dask_cupy_agg = xr.DataArray(cupy.asarray(elevation),
+                                 attrs={'res': (10.0, 10.0)})
     dask_cupy_agg.data = da.from_array(dask_cupy_agg.data, chunks=(3, 3))
     dask_gpu = reclassify(dask_cupy_agg, name='dask_cupy_result',
                           bins=bins, new_values=new_values)
@@ -84,8 +92,10 @@ def test_quantile_cpu():
     dask_quantile = quantile(dask_numpy_agg, k=k)
     assert isinstance(dask_quantile.data, da.Array)
 
-    #     Note that dask's percentile algorithm is approximate, while numpy's is exact.
-    #     This may cause some differences between results of vanilla numpy and
+    #     Note that dask's percentile algorithm is
+    #     approximate, while numpy's is exact.
+    #     This may cause some differences between
+    #     results of vanilla numpy and
     #     dask version of the input agg.
     #     https://github.com/dask/dask/issues/3099
     #     This assertion may fail
@@ -104,7 +114,8 @@ def test_quantile_cpu_equals_gpu():
     cpu = quantile(numpy_agg, k=k, name='numpy_result')
 
     # cupy
-    cupy_agg = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    cupy_agg = xr.DataArray(cupy.asarray(elevation),
+                            attrs={'res': (10.0, 10.0)})
     gpu = quantile(cupy_agg, k=k, name='cupy_result')
 
     assert isinstance(gpu.data, cupy.ndarray)
@@ -140,7 +151,8 @@ def test_natural_breaks_cpu_equals_gpu():
     cpu = natural_breaks(numpy_agg, k=k, name='numpy_result')
 
     # cupy
-    cupy_agg = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    cupy_agg = xr.DataArray(cupy.asarray(elevation),
+                            attrs={'res': (10.0, 10.0)})
     gpu = natural_breaks(cupy_agg, k=k, name='cupy_result')
 
     assert isinstance(gpu.data, cupy.ndarray)
@@ -176,9 +188,9 @@ def test_equal_interval_cpu_equals_gpu():
     cpu = equal_interval(numpy_agg, k=k)
 
     # cupy
-    cupy_agg = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    cupy_agg = xr.DataArray(cupy.asarray(elevation),
+                            attrs={'res': (10.0, 10.0)})
     gpu = equal_interval(cupy_agg, k=k)
     assert isinstance(gpu.data, cupy.ndarray)
 
     assert np.isclose(cpu, gpu, equal_nan=True).all()
-

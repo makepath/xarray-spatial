@@ -3,6 +3,8 @@ import numpy as np
 
 from xrspatial.utils import ngjit
 
+from typing import Union, Optional
+
 import warnings
 warnings.simplefilter('default')
 
@@ -223,47 +225,94 @@ def _is_inside(point, xmin, xmax, epsilon_x, ymin, ymax, epsilon_y):
     return True
 
 
-def a_star_search(surface, start, goal, barriers=[], x='x', y='y',
-                  connectivity=8, snap_start=False, snap_goal=False):
+def a_star_search(surface: xr.DataArray,
+                  start: Union[tuple, list, np.array],
+                  goal: Union[tuple, list, np.array],
+                  barriers: list = [],
+                  x: Optional[str] = 'x',
+                  y: Optional[str] = 'y',
+                  connectivity: int = 8,
+                  snap_start: bool = False,
+                  snap_goal: bool = False) -> xr.DataArray:
     """
-    Calculate distance from a starting point to a goal through a surface graph.
-    Starting location and goal location should be within the graph.
-
-    A* is a modification of Dijkstra’s Algorithm that is optimized for
-    a single destination. Dijkstra’s Algorithm can find paths to all locations;
-    A* finds paths to one location, or the closest of several locations.
-    It prioritizes paths that seem to be leading closer to a goal.
-
-    The output is an equal sized Xarray.DataArray with NaNs for non-path pixels,
-    and the value of the path pixels being the current cost up to that point.
-
-    Parameters
+    Calculate distance from a starting point to a
+    goal through a surface graph. Starting location
+    and goal location should be within the graph.
+    
+    A* is a modification of Dijkstra’s Algorithm
+    that is optimized for a single destination.
+    Dijkstra’s Algorithm can find paths to all
+    locations; A* finds paths to one location,
+    or the closest of several locations. It prioritizes
+    paths that seem to be leading closer to a goal.
+    
+    The output is an equal sized Xarray.DataArray
+    with NaNs for non-path pixels, and the value
+    of the path pixels being the current cost up to that point.
+    
+    Parameters:
     ----------
-    surface : xarray.DataArray
-        xarray.DataArray of values to bin
+    surface: xarray.DataArray
+        2D array of values to bin
     start: array like object (tuple, list, array, ...) of 2 numeric elements
         (x, y) or (lon, lat) coordinates of the starting point
     goal: array like object (tuple, list, array, ...) of 2 numeric elements
         (x, y) or (lon, lat) coordinates of the goal location
-    barriers: array like object
+    barriers: array like object (default = [])
         list of values inside the surface which are barriers (cannot cross)
-    x: string
+    x: str (default = 'x)
         name of the x coordinate in input surface raster
-    y: string
+    y: str (default = 'x')
         name of the y coordinate in input surface raster
-    snap_start: bool
-        snap the start location to the nearest valid value before
-        beginning pathfinding
-    snap_goal: bool
-        snap the goal location to the nearest valid value before
-        beginning pathfinding
-    Returns
-    -------
-    path_agg: Xarray.DataArray with same size as input surface raster.
+    connectivity: int (default = 8)
+    snap_start: bool (default = False)
+        snap the start location to the nearest valid value before beginning pathfinding
+    snap_goal: bool (default = False)
+        snap the goal location to the nearest valid value before beginning pathfinding
+        
+    Returns:
+    ----------
+    path_agg: Xarray.DataArray
+        2D array, of the same type as the input surface raster.
+        All other input attributes are preserved.
 
+    Notes:
+    ----------
     Algorithm References:
-    - https://www.redblobgames.com/pathfinding/a-star/implementation.html
-    - https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
+        - https://www.redblobgames.com/pathfinding/a-star/implementation.html
+        - https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
+
+    Examples:
+    ----------
+    Imports
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> from xrspatial import pathfinding
+
+    Create Surface Data Array
+    >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0],
+    >>>                              [0, 0, 0, 0, 0],
+    >>>                              [0, 0, 0, 0, 0],
+    >>>                              [0, 0, 0, 0, 0],
+    >>>                              [0, 0, 0, 0, 0]]),
+    >>>                    dims = ["lat", "lon"])
+    >>> height, width = agg.shape
+    >>> _lon = np.linspace(0, width - 1, width)
+    >>> _lat = np.linspace(0, height - 1, height)
+    >>> agg["lon"] = _lon
+    >>> agg["lat"] = _lat
+
+    Create Path Data Array
+    >>> print(pathfinding.a_star_search(agg, (0,0), (4,4), x = 'lon', y = 'lat'))
+    <xarray.DataArray (lat: 5, lon: 5)>
+    array([[0.        , nan, nan, nan, nan],
+           [nan, 1.41421356, nan, nan, nan],
+           [nan, nan, 2.82842712, nan, nan],
+           [nan, nan, nan, 4.24264069, nan],
+           [nan, nan, nan, nan, 5.65685425]])
+    Coordinates:
+      * lon      (lon) float64 0.0 1.0 2.0 3.0 4.0
+      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
     """
 
     if surface.ndim != 2:

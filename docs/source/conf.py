@@ -14,6 +14,8 @@
 #
 import os
 import sys
+import xrspatial
+
 sys.path.insert(0, os.path.abspath('../..'))
 
 # -- Project information -----------------------------------------------------
@@ -22,7 +24,6 @@ project = u'xarray_spatial'
 copyright = u'2020, Brendan Collins'
 author = u'Brendan Collins'
 
-import xrspatial
 version = release = xrspatial.__version__
 
 # -- General configuration ---------------------------------------------------
@@ -34,8 +35,8 @@ version = release = xrspatial.__version__
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-extensions = [ 
-# 'recommonmark'
+extensions = [
+    # 'recommonmark'
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
