@@ -1,6 +1,7 @@
 import pytest
 import numpy as np
 import xarray as xr
+import rioxarray
 
 import dask.array as da
 
@@ -27,6 +28,7 @@ def test_curvature_on_flat_surface():
                           [0, 0, 0, 0, 0],
                           [0, 0, 0, 0, 0]])
     test_raster1 = xr.DataArray(test_arr1, attrs={'res': (1, 1)})
+    _add_crs_to_xr_DataArray(test_raster1)
     curv = curvature(test_raster1)
 
     # output must be an xarray DataArray
@@ -36,6 +38,8 @@ def test_curvature_on_flat_surface():
     assert test_raster1.shape == curv.shape
     assert test_raster1.dims == curv.dims
     assert test_raster1.attrs == curv.attrs
+    assert test_raster1.rio.crs == curv.rio.crs
+    assert test_raster1.rio.nodata == curv.rio.nodata
     for coord in test_raster1.coords:
         assert np.all(test_raster1[coord] == curv[coord])
 
@@ -59,6 +63,7 @@ def test_curvature_on_convex_surface():
                           [0, 0, 0, 0, 0]])
 
     test_raster2 = xr.DataArray(test_arr2, attrs={'res': (1, 1)})
+    _add_crs_to_xr_DataArray(test_raster2)
     curv = curvature(test_raster2)
 
     # output must be an xarray DataArray
@@ -68,6 +73,8 @@ def test_curvature_on_convex_surface():
     assert test_raster2.shape == curv.shape
     assert test_raster2.dims == curv.dims
     assert test_raster2.attrs == curv.attrs
+    assert test_raster2.rio.crs == curv.rio.crs
+    assert test_raster2.rio.nodata == curv.rio.nodata
     for coord in test_raster2.coords:
         assert np.all(test_raster2[coord] == curv[coord])
 
@@ -110,6 +117,7 @@ def test_curvature_on_concave_surface():
                           [0, 0, 0, 0, 0]])
 
     test_raster3 = xr.DataArray(test_arr3, attrs={'res': (1, 1)})
+    _add_crs_to_xr_DataArray(test_raster3)
     curv = curvature(test_raster3)
 
     # output must be an xarray DataArray
@@ -119,6 +127,8 @@ def test_curvature_on_concave_surface():
     assert test_raster3.shape == curv.shape
     assert test_raster3.dims == curv.dims
     assert test_raster3.attrs == curv.attrs
+    assert test_raster3.rio.crs == curv.rio.crs
+    assert test_raster3.rio.nodata == curv.rio.nodata
     for coord in test_raster3.coords:
         assert np.all(test_raster3[coord] == curv[coord])
 
@@ -158,10 +168,13 @@ def test_curvature_gpu_equals_cpu():
     import cupy
 
     small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da)
     cpu = curvature(small_da, name='numpy_result')
 
     small_da_cupy = xr.DataArray(cupy.asarray(elevation),
                                  attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da_cupy)
+
     gpu = curvature(small_da_cupy, name='cupy_result')
 
     assert isinstance(gpu.data, cupy.ndarray)
@@ -172,9 +185,11 @@ def test_curvature_gpu_equals_cpu():
 def test_curvature_numpy_equals_dask():
     small_numpy_based_data_array = xr.DataArray(elevation,
                                                 attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_numpy_based_data_array)
     small_das_based_data_array = xr.DataArray(da.from_array(elevation,
                                               chunks=(3, 3)),
                                               attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_das_based_data_array)
 
     numpy_curvature = curvature(small_numpy_based_data_array,
                                 name='numpy_curvature')
@@ -185,3 +200,7 @@ def test_curvature_numpy_equals_dask():
     dask_curvature.data = dask_curvature.data.compute()
 
     assert np.isclose(numpy_curvature, dask_curvature, equal_nan=True).all()
+
+def _add_crs_to_xr_DataArray(xda):
+    xda.attrs['nodata'] = 0
+    xda.rio.write_crs(input_crs=4326, grid_mapping_name='spatial_ref', inplace=True)
