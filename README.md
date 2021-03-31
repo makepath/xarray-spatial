@@ -70,10 +70,10 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Equal Interval](xrspatial/classify.py) | ✅️ | ✅ | ✅ |  |
-| [Natural Breaks](xrspatial/classify.py) | ✅️ |  | ✅ |  |
-| [Reclassify](xrspatial/classify.py) | ✅️ | ✅ | ✅ | ✅ |
-| [Quantile](xrspatial/classify.py) | ✅️ | ✅ | ✅ |  |
+| [Equal Interval](xrspatial/classify.py) |✅️ |✅ | ✅ |✅️ |
+| [Natural Breaks](xrspatial/classify.py) |✅️ |✅ | ✅ |✅️ |
+| [Reclassify](xrspatial/classify.py) |✅️ |✅ | ✅ |✅ |
+| [Quantile](xrspatial/classify.py) |✅️ | ✅ |✅ |✅️|
 
 -------
 
@@ -92,16 +92,16 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | ✅️ | | ✅️ | |
-| [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | ✅️ | | ✅️ | |
-| [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
+| [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | ✅️ |✅️  | ✅️ |✅️ |
+| [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
 
 -------
 
