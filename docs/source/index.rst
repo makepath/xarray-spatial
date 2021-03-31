@@ -83,7 +83,7 @@ Dependencies
 
 
 .. image:: ./_static/img/dependencies.svg
-   :target: dependencies.svg
+   :target: ./_static/img/dependencies.svg
    :alt: title
 
 
