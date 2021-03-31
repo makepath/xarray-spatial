@@ -1,39 +1,86 @@
 import numpy as np
 import pandas as pd
+import datashader as ds
+from typing import Optional
+import xarray as xr
 
 from xarray import DataArray
 from .perlin import _perlin
 
 
 # TODO: add optional name parameter `name='terrain'`
-def generate_terrain(x_range=(0, 500), y_range=(0, 500),
-                     width=25, height=30, canvas=None,
-                     seed=10, zfactor=4000, full_extent=None):
+def generate_terrain(x_range: tuple = (0, 500),
+                     y_range: tuple = (0, 500),
+                     width: int = 25,
+                     height: int = 30,
+                     canvas: ds.Canvas = None,
+                     seed: int = 10,
+                     zfactor: int = 4000,
+                     full_extent: Optional[str] = None) -> xr.DataArray:
     """
     Generates a pseudo-random terrain which can be helpful
     for testing raster functions
-
-    Parameters
+    
+    Parameters:
     ----------
-    canvas : ds.Canvas instance for passing output dimensions / ranges
+    x_range: tuple (default = (0, 500))
+        Range of x values.
+    x_range: tuple (default = (0, 500))
+        Range of y values.
+    width: int (default = 25)
+        Width of output data array in pixels.
+    height: int (default = 30)
+        Height of output data array in pixels.
+    canvas: ds.Canvas (default = None)
+        Instance for passing output dimensions / ranges
+    seed: int (default = 10)
+        Seed for random number generator.
+    zfactor: int (default = 4000)
+        Multipler for z values.
+    full_extent: str, optional (default = None)
+        bbox<xmin, ymin, xmax, ymax>. Full extent of coordinate system.
 
-    seed : seed for random number generator
-
-    zfactor : used as multipler for z values
-
-    full_extent : optional string, bbox<xmin, ymin, xmax, ymax>
-      full extent of coordinate system.
-
-    Returns
-    -------
-    terrain: DataArray
+    Returns:
+    ----------
+    terrain: xarray.DataArray
+        2D array of generated terrain.
 
     Notes:
-    ------
+    ----------
     Algorithm References:
-     - This was inspired by Michael McHugh's 2016 PyCon Canada talk:
-       https://www.youtube.com/watch?v=O33YV4ooHSo
-     - https://www.redblobgames.com/maps/terrain-from-noise/
+        - This was inspired by Michael McHugh's 2016 PyCon Canada talk:
+          https://www.youtube.com/watch?v=O33YV4ooHSo
+        - https://www.redblobgames.com/maps/terrain-from-noise/
+
+    Examples:
+    ----------
+    Imports
+    >>> import datashader as ds
+    >>> from datashader.transfer_functions import shade
+    >>> from xrspatial import generate_terrain
+
+    Create Canvas
+    >>> cvs = ds.Canvas(plot_width=800,
+    >>>                 plot_height=600,
+    >>>                 x_range=(-20e6, 20e6),
+    >>>                 y_range=(-20e6, 20e6))
+
+    Generate Terrain Data Array
+    >>> terrain = generate_terrain(canvas = cvs)
+    >>> print(terrain)
+    <xarray.DataArray 'terrain' (y: 600, x: 800)>
+    array([[0., 0., 0., ..., 0., 0., 0.],
+           [0., 0., 0., ..., 0., 0., 0.],
+           [0., 0., 0., ..., 0., 0., 0.],
+           ...,
+           [0., 0., 0., ..., 0., 0., 0.],
+           [0., 0., 0., ..., 0., 0., 0.],
+           [0., 0., 0., ..., 0., 0., 0.]])
+    Coordinates:
+      * x        (x) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+      * y        (y) float64 -1.997e+07 -1.99e+07 -1.983e+07 ... 1.99e+07 1.997e+07
+    Attributes:
+        res:      1
     """
 
     def _gen_heights(bumps):
@@ -50,10 +97,8 @@ def generate_terrain(x_range=(0, 500), y_range=(0, 500),
         d = (value - old_range[0]) / (old_range[1] - old_range[0])
         return d * (new_range[1] - new_range[0]) + new_range[0]
 
-
-
-
-    mercator_extent = (-np.pi * 6378137, -np.pi * 6378137, np.pi * 6378137, np.pi * 6378137)
+    mercator_extent = (-np.pi * 6378137, -np.pi * 6378137,
+                       np.pi * 6378137, np.pi * 6378137)
     crs_extents = {'3857': mercator_extent}
 
     if isinstance(full_extent, str):

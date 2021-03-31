@@ -61,9 +61,12 @@ def render_tiles(full_extent, levels, load_data_func,
     results = dict()
     for level in levels:
         print('calculating statistics for level {}'.format(level))
-        span = calculate_zoom_level_stats(full_extent, level,
-                                          load_data_func, rasterize_func,
-                                          color_ranging_strategy=color_ranging_strategy)
+        span = calculate_zoom_level_stats(full_extent,
+                                          level,
+                                          load_data_func,
+                                          rasterize_func,
+                                          color_ranging_strategy =
+                                          color_ranging_strategy)
 
         super_tiles = list(gen_super_tiles(full_extent, level, span))
         print(f'rendering {len(super_tiles)} supertiles for zoom level {level}'
@@ -142,8 +145,11 @@ def invert_y_tile(y, z):
 
 # TODO: change name from source to definition
 class MercatorTileDefinition(object):
-    ''' Implementation of mercator tile source
+
+    """ Implementation of mercator tile source
     In general, tile sources are used as a required input for ``TileRenderer``.
+
+    .. depreciated
 
     Parameters
     ----------
@@ -183,7 +189,7 @@ class MercatorTileDefinition(object):
     ------
     tileScheme: MercatorTileSource
 
-    '''
+    """
 
     def __init__(self, x_range, y_range, tile_size=256,
                  min_zoom=0, max_zoom=30,
@@ -201,15 +207,15 @@ class MercatorTileDefinition(object):
                              for z in range(self.min_zoom, self.max_zoom + 1)]
 
     def to_ogc_tile_metadata(self, output_file_path):
-        '''
+        """
         Create OGC tile metadata XML
-        '''
+        """
         pass
 
     def to_esri_tile_metadata(self, output_file_path):
-        '''
+        """
         Create ESRI tile metadata JSON
-        '''
+        """
         pass
 
     def is_valid_tile(self, x, y, z):
@@ -276,9 +282,11 @@ class MercatorTileDefinition(object):
 
     def get_tiles_by_extent(self, extent, level):
 
-        # unpack extent and convert to tile coordinates
+        # unpack extent and convert
+        # to tile coordinates
         xmin, ymin, xmax, ymax = extent
-        # note y coordinates are reversed since they are in opposite direction to meters
+        # note y coordinates are reversed since
+        # they are in opposite direction to meters
         txmin, tymax = self.meters_to_tile(xmin, ymin, level)
         txmax, tymin = self.meters_to_tile(xmax, ymax, level)
 
@@ -347,14 +355,15 @@ def tile_previewer(full_extent, tileset_url,
                    min_zoom=0, max_zoom=40,
                    height=None, width=None,
                    **kwargs):
-    '''Helper function for creating a simple Bokeh figure with
+    """
+    Helper function for creating a simple Bokeh figure with
     a WMTS Tile Source.
 
     Notes
     -----
-    - if you don't supply height / width, stretch_both sizing_mode is used.
-    - supply an output_dir to write figure to disk.
-    '''
+        - if you don't supply height / width, stretch_both sizing_mode is used.
+        - supply an output_dir to write figure to disk.
+    """
 
     try:
         from bokeh.plotting import figure

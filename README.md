@@ -204,3 +204,5 @@ With the introduction of projects like Numba, Python gained new ways to provide 
 - @jthetzel
 - @chase-dwelle
 - @SAN154
+- @SapirLastimoza-Dooley
+- @lex-c

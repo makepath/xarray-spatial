@@ -12,7 +12,6 @@ except ImportError:
 
 import dask.array as da
 
-import numba as nb
 from numba import cuda
 
 import numpy as np
@@ -23,7 +22,7 @@ from xrspatial.utils import cuda_args
 from xrspatial.utils import get_dataarray_resolution
 from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
-from xrspatial.utils import is_cupy_backed
+from xrspatial.utils import is_dask_cupy
 
 
 @ngjit
@@ -133,25 +132,69 @@ def _run_dask_cupy(data: da.Array,
     return out
 
 
-def slope(agg: xr.DataArray, name: str = 'slope') -> xr.DataArray:
-    """Returns slope of input aggregate in degrees.
+def slope(agg: xr.DataArray,
+          name: str = 'slope') -> xr.DataArray:
+    """
+    Returns slope of input aggregate in degrees.
+    
+    Parameters:
+    ---------
+    agg: xarray.DataArray
+        2D array of elevation band data.
+    name: str, optional (default = 'slope')
+        name property of output xarray.DataArray
 
-    Parameters
-    ----------
-    agg : xr.DataArray
-    name : str - name property of output xr.DataArray
-
-    Returns
-    -------
-    data: xr.DataArray
+    Returns:
+    ---------
+    xarray.DataArray
+        2D array, of the same type as the input, of calculated slope values.
+        All other input attributes are preserved.
 
     Notes:
-    ------
+    ---------
     Algorithm References:
-     - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm
-     - Burrough, P. A., and McDonell, R. A., 1998.
-      Principles of Geographical Information Systems
-      (Oxford University Press, New York), pp 406
+        - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm
+        - Burrough, P. A., and McDonell, R. A., 1998.
+          Principles of Geographical Information Systems
+          (Oxford University Press, New York), pp 406
+    Examples:
+    ---------
+    Imports
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> from xrspatial import slope
+
+    Create Data Array
+    >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
+    >>>                              [0, 0, 2, 4, 0, 8, 0],
+    >>>                              [0, 2, 2, 4, 6, 8, 0],
+    >>>                              [0, 4, 4, 4, 6, 8, 0],
+    >>>                              [0, 6, 6, 6, 6, 8, 0],
+    >>>                              [0, 8, 8, 8, 8, 8, 0],
+    >>>                              [0, 0, 0, 0, 0, 0, 0]]),
+    >>>                     dims = ["lat", "lon"],
+    >>>                     attrs = dict(res = 1))
+    >>> height, width = agg.shape
+    >>> _lon = np.linspace(0, width - 1, width)
+    >>> _lat = np.linspace(0, height - 1, height)
+    >>> agg["lon"] = _lon
+    >>> agg["lat"] = _lat
+
+    Create Slope Data Array
+    >>> print(slope(agg))
+    <xarray.DataArray 'slope' (lat: 7, lon: 7)>
+    array([[ 0,  0,  0,  0,  0,  0,  0],
+           [ 0, 46, 60, 63, 73, 70,  0],
+           [ 0, 60, 54, 54, 68, 67,  0],
+           [ 0, 68, 60, 54, 60, 71,  0],
+           [ 0, 73, 63, 60, 54, 72,  0],
+           [ 0, 74, 71, 71, 72, 75,  0],
+           [ 0,  0,  0,  0,  0,  0,  0]])
+    Coordinates:
+      * lon      (lon) float64 0.0 1.0 2.0 3.0 4.0 5.0 6.0
+      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0 5.0 6.0
+    Attributes:
+        res:      1
     """
 
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
@@ -165,7 +208,7 @@ def slope(agg: xr.DataArray, name: str = 'slope') -> xr.DataArray:
         out = _run_cupy(agg.data, cellsize_x, cellsize_y)
 
     # dask + cupy case
-    elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
+    elif has_cuda() and is_dask_cupy(agg):
         out = _run_dask_cupy(agg.data, cellsize_x, cellsize_y)
 
     # dask + numpy case
