@@ -33,7 +33,8 @@ def _arvi_cpu(nir_data, red_data, blue_data):
             blue = blue_data[y, x]
             numerator = (nir - (2.0 * red) + blue)
             denominator = (nir + (2.0 * red) + blue)
-            out[y, x] = numerator / denominator
+            if denominator != 0.0:
+                out[y, x] = numerator / denominator
 
     return out
 
@@ -47,7 +48,8 @@ def _arvi_gpu(nir_data, red_data, blue_data, out):
         blue = blue_data[y, x]
         numerator = (nir - (2.0 * red) + blue)
         denominator = (nir + (2.0 * red) + blue)
-        out[y, x] = numerator / denominator
+        if denominator != 0.0:
+            out[y, x] = numerator / denominator
 
 
 def _arvi_dask(nir_data, red_data, blue_data):
@@ -199,7 +201,8 @@ def _evi_cpu(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
             blue = blue_data[y, x]
             numerator = nir - red
             denominator = nir + c1 * red - c2 * blue + soil_factor
-            out[y, x] = gain * (numerator / denominator)
+            if denominator != 0.0:
+                out[y, x] = gain * (numerator / denominator)
     return out
 
 
@@ -212,7 +215,8 @@ def _evi_gpu(nir_data, red_data, blue_data, c1, c2, soil_factor, gain, out):
         blue = blue_data[y, x]
         numerator = nir - red
         denominator = nir + c1 * red - c2 * blue + soil_factor
-        out[y, x] = gain * (numerator / denominator)
+        if denominator != 0.0:
+            out[y, x] = gain * (numerator / denominator)
 
 
 def _evi_dask(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
@@ -391,7 +395,8 @@ def _gci_cpu(nir_data, green_data):
         for x in range(0, cols):
             nir = nir_data[y, x]
             green = green_data[y, x]
-            out[y, x] = nir / green - 1
+            if green - 1 != 0:
+                out[y, x] = nir / green - 1
     return out
 
 
@@ -401,7 +406,8 @@ def _gci_gpu(nir_data, green_data, out):
     if y < out.shape[0] and x < out.shape[1]:
         nir = nir_data[y, x]
         green = green_data[y, x]
-        out[y, x] = nir / green - 1
+        if green - 1 != 0:
+            out[y, x] = nir / green - 1
 
 
 def _gci_dask(nir_data, green_data):
@@ -728,7 +734,7 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr2'):
 # NDVI ----------
 def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
     """
-        Computes Normalized Difference Vegetation Index (NDVI).
+    Computes Normalized Difference Vegetation Index (NDVI).
     Used to determine if a cell contains live green vegetation.
 
     Parameters:
@@ -958,7 +964,8 @@ def _normalized_ratio_gpu(arr1, arr2, out):
         val2 = arr2[y, x]
         numerator = val1 - val2
         denominator = val1 + val2
-        out[y, x] = numerator / denominator
+        if denominator != 0.0:
+            out[y, x] = numerator / denominator
 
 
 def _run_normalized_ratio_cupy(arr1, arr2):
@@ -986,7 +993,8 @@ def _savi_cpu(nir_data, red_data, soil_factor):
             numerator = nir - red
             soma = nir + red + soil_factor
             denominator = soma * (1.0 + soil_factor)
-            out[y, x] = numerator / denominator
+            if denominator != 0.0:
+                out[y, x] = numerator / denominator
 
     return out
 
@@ -1000,7 +1008,8 @@ def _savi_gpu(nir_data, red_data, soil_factor, out):
         numerator = nir - red
         soma = nir + red + soil_factor
         denominator = soma * (nb.float32(1.0) + soil_factor)
-        out[y, x] = numerator / denominator
+        if denominator != 0.0:
+            out[y, x] = numerator / denominator
 
 
 def _savi_dask(nir_data, red_data, soil_factor):
@@ -1141,7 +1150,8 @@ def _sipi_cpu(nir_data, red_data, blue_data):
             blue = blue_data[y, x]
             numerator = nir - blue
             denominator = nir - red
-            out[y, x] = numerator / denominator
+            if denominator != 0.0:
+                out[y, x] = numerator / denominator
     return out
 
 
@@ -1154,7 +1164,8 @@ def _sipi_gpu(nir_data, red_data, blue_data, out):
         blue = blue_data[y, x]
         numerator = nir - blue
         denominator = nir - red
-        out[y, x] = numerator / denominator
+        if denominator != 0.0:
+            out[y, x] = numerator / denominator
 
 
 def _sipi_dask(nir_data, red_data, blue_data):
@@ -1309,7 +1320,8 @@ def _ebbi_cpu(red_data, swir_data, tir_data):
             tir = tir_data[y, x]
             numerator = swir - red
             denominator = 10 * np.sqrt(swir + tir)
-            out[y, x] = numerator / denominator
+            if denominator != 0.0:
+                out[y, x] = numerator / denominator
     return out
 
 
@@ -1322,7 +1334,8 @@ def _ebbi_gpu(red_data, swir_data, tir_data, out):
         tir = tir_data[y, x]
         numerator = swir - red
         denominator = nb.int64(10) * sqrt(swir + tir)
-        out[y, x] = numerator / denominator
+        if denominator != 0.0:
+            out[y, x] = numerator / denominator
 
 
 def _ebbi_dask(red_data, swir_data, tir_data):
@@ -1468,14 +1481,16 @@ def _normalize_data(agg, pixel_max=255.0):
     rows, cols = agg.shape
     c = 40
     th = .125
-    for y in range(rows):
-        for x in range(cols):
-            val = agg[y, x]
-            norm = (val - min_val) / range_val
+    # check range_val to avoid dividing by zero
+    if range_val != 0:
+        for y in range(rows):
+            for x in range(cols):
+                val = agg[y, x]
+                norm = (val - min_val) / range_val
 
-            # sigmoid contrast enhancement
-            norm = 1 / (1 + np.exp(c * (th - norm)))
-            out[y, x] = norm * pixel_max
+                # sigmoid contrast enhancement
+                norm = 1 / (1 + np.exp(c * (th - norm)))
+                out[y, x] = norm * pixel_max
     return out
 
 
