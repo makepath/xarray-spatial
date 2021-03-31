@@ -1,8 +1,7 @@
 name: Upload Docs To Azure Blob Storage
 on:
-  push:
-    branches:
-      - master
+  release:
+    types: [published]
 jobs:
   upload:
     runs-on: ubuntu-latest
