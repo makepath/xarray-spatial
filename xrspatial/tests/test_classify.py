@@ -2,6 +2,7 @@ import pytest
 
 import xarray as xr
 import numpy as np
+import rioxarray
 
 import dask.array as da
 
@@ -11,13 +12,17 @@ from xrspatial import natural_breaks
 from xrspatial import quantile
 from xrspatial import reclassify
 
+def _add_crs_to_xr_DataArray(xda):
+    xda.attrs['nodata'] = 0
+    xda.rio.write_crs(input_crs=4326, grid_mapping_name='spatial_ref', inplace=True)
 
 n, m = 5, 5
 elevation = np.arange(n * m).reshape((n, m))
 numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+_add_crs_to_xr_DataArray(numpy_agg)
 dask_numpy_agg = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
                               attrs={'res': (10.0, 10.0)})
-
+_add_crs_to_xr_DataArray(dask_numpy_agg)
 
 def test_reclassify_cpu():
     bins = [10, 20, 30]
@@ -56,6 +61,8 @@ def test_reclassify_cpu_equals_gpu():
     # cupy
     cupy_agg = xr.DataArray(cupy.asarray(elevation),
                             attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(cupy_agg)
+
     gpu = reclassify(cupy_agg,
                      name='cupy_result',
                      bins=bins,
@@ -66,6 +73,7 @@ def test_reclassify_cpu_equals_gpu():
     # dask + cupy
     dask_cupy_agg = xr.DataArray(cupy.asarray(elevation),
                                  attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(dask_cupy_agg)
     dask_cupy_agg.data = da.from_array(dask_cupy_agg.data, chunks=(3, 3))
     dask_gpu = reclassify(dask_cupy_agg, name='dask_cupy_result',
                           bins=bins, new_values=new_values)
@@ -116,6 +124,7 @@ def test_quantile_cpu_equals_gpu():
     # cupy
     cupy_agg = xr.DataArray(cupy.asarray(elevation),
                             attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(cupy_agg)
     gpu = quantile(cupy_agg, k=k, name='cupy_result')
 
     assert isinstance(gpu.data, cupy.ndarray)
@@ -132,6 +141,8 @@ def test_natural_breaks_cpu():
     assert numpy_agg.shape == numpy_natural_breaks.shape
     assert numpy_agg.dims == numpy_natural_breaks.dims
     assert numpy_agg.attrs == numpy_natural_breaks.attrs
+    assert numpy_agg.rio.crs == numpy_natural_breaks.rio.crs
+    assert numpy_agg.rio.nodata == numpy_natural_breaks.rio.nodata
     for coord in numpy_agg.coords:
         assert np.all(numpy_agg[coord] == numpy_natural_breaks[coord])
 
@@ -153,6 +164,7 @@ def test_natural_breaks_cpu_equals_gpu():
     # cupy
     cupy_agg = xr.DataArray(cupy.asarray(elevation),
                             attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(cupy_agg)
     gpu = natural_breaks(cupy_agg, k=k, name='cupy_result')
 
     assert isinstance(gpu.data, cupy.ndarray)
@@ -190,6 +202,7 @@ def test_equal_interval_cpu_equals_gpu():
     # cupy
     cupy_agg = xr.DataArray(cupy.asarray(elevation),
                             attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(cupy_agg)
     gpu = equal_interval(cupy_agg, k=k)
     assert isinstance(gpu.data, cupy.ndarray)
 

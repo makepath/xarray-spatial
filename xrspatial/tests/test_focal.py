@@ -1,6 +1,7 @@
 import xarray as xr
 import numpy as np
 
+
 from xrspatial import mean
 from xrspatial.convolution import convolve_2d
 from xrspatial.focal import (
