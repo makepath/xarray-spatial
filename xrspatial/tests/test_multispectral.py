@@ -1,7 +1,7 @@
 import pytest
 import xarray as xr
 import numpy as np
-import xarray as xa
+import rioxarray
 
 import dask.array as da
 
@@ -61,7 +61,8 @@ data_gaussian = _do_gaussian_array()
 def create_test_arr(arr, backend='numpy'):
 
     y, x = arr.shape
-    raster = xa.DataArray(arr, dims=['y', 'x'])
+    raster = xr.DataArray(arr, dims=['y', 'x'])
+    _add_crs_to_xr_DataArray(raster)
 
     if backend == 'numpy':
         raster['y'] = np.linspace(0, y, y)
@@ -89,12 +90,16 @@ def test_ndvi_numpy_contains_valid_values():
     nir = (a*b)[::-1, ::-1]
 
     da_nir = xr.DataArray(nir, dims=['y', 'x'])
+    _add_crs_to_xr_DataArray(da_nir)
     da_red = xr.DataArray(red, dims=['y', 'x'])
+    _add_crs_to_xr_DataArray(da_red)
 
     da_ndvi = ndvi(da_nir, da_red)
 
     assert da_ndvi.dims == da_nir.dims
     assert da_ndvi.attrs == da_nir.attrs
+    assert da_ndvi.rio.crs == da_nir.rio.crs
+    assert da_ndvi.rio.nodata == da_nir.rio.nodata
     for coord in da_nir.coords:
         assert np.all(da_nir[coord] == da_ndvi[coord])
 
@@ -808,3 +813,7 @@ def test_ebbi_dask_cupy_equals_numpy():
     assert is_dask_cupy(test_result)
     test_result.data = test_result.data.compute()
     assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
+def _add_crs_to_xr_DataArray(xda):
+    xda.attrs['nodata'] = 0
+    xda.rio.write_crs(input_crs=4326, grid_mapping_name='spatial_ref', inplace=True)
