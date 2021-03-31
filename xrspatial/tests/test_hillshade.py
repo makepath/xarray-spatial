@@ -1,6 +1,7 @@
 import pytest
 import xarray as xr
 import numpy as np
+import rioxarray
 
 import dask.array as da
 
@@ -55,9 +56,12 @@ def test_hillshade():
     Assert Simple Hillshade transfer function
     """
     da_gaussian = xr.DataArray(data_gaussian)
+    _add_crs_to_xr_DataArray(da_gaussian)
     da_gaussian_shade = hillshade(da_gaussian, name='hillshade_agg')
     assert da_gaussian_shade.dims == da_gaussian.dims
     assert da_gaussian_shade.attrs == da_gaussian.attrs
+    assert da_gaussian_shade.rio.crs == da_gaussian.rio.crs
+    assert da_gaussian_shade.rio.nodata == da_gaussian.rio.nodata
     assert da_gaussian_shade.name == 'hillshade_agg'
     for coord in da_gaussian.coords:
         assert np.all(da_gaussian_shade[coord] == da_gaussian[coord])
@@ -69,8 +73,10 @@ def test_numpy_equals_dask():
     attrs = {'res': (10.0, 10.0)}
 
     small_numpy_based_data_array = xr.DataArray(elevation, attrs=attrs)
+    _add_crs_to_xr_DataArray(small_numpy_based_data_array)
     dask_data = da.from_array(elevation, chunks=(3, 3))
     small_das_based_data_array = xr.DataArray(dask_data, attrs=attrs)
+    _add_crs_to_xr_DataArray(small_das_based_data_array)
 
     numpy_result = hillshade(small_numpy_based_data_array, name='numpy')
     dask_result = hillshade(small_das_based_data_array, name='dask')
@@ -85,12 +91,18 @@ def test_hillshade_gpu_equals_cpu():
     import cupy
 
     small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da)
     cpu = hillshade(small_da, name='numpy_result')
 
     small_da_cupy = xr.DataArray(cupy.asarray(elevation),
                                  attrs={'res': (10.0, 10.0)})
+    _add_crs_to_xr_DataArray(small_da_cupy)
     gpu = hillshade(small_da_cupy, name='cupy_result')
 
     assert isinstance(gpu.data, cupy.ndarray)
 
     assert np.isclose(cpu, gpu, equal_nan=True).all()
+
+def _add_crs_to_xr_DataArray(xda):
+    xda.attrs['nodata'] = 0
+    xda.rio.write_crs(input_crs=4326, grid_mapping_name='spatial_ref', inplace=True)
