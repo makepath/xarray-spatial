@@ -30,7 +30,7 @@
 
 Xarray-Spatial implements common raster analysis functions using Numba and provides an easy-to-install, easy-to-extend codebase for raster analysis.
 
-#### Installation
+### Installation
 ```bash
 # via pip
 pip install xarray-spatial
@@ -38,6 +38,18 @@ pip install xarray-spatial
 # via conda
 conda install -c conda-forge xarray-spatial
 ```
+
+### Dowloading our starter examples and data
+Once you have xarray-spatial installed in your environment, you can use one of the following in your terminal (with the environment active) to download our examples and/or sample data into your local directory. 
+
+```xrspatial examples``` : Download the examples notebooks and the data used.  
+
+```xrspatial copy-examples``` : Download the examples notebooks but not the data. Note: you won't be able to run many of the examples.  
+
+```xrspatial fetch-data``` : Download just the data and not the notebooks.
+
+In all the above, the command will download and store the files into your current directory inside a folder named 'xrspatial-examples'.
+
 
 | | | | | |
 |:-------------------------:|:-------------------------:|:-------------------------:|:-------------------------:|:-------------------------:|
