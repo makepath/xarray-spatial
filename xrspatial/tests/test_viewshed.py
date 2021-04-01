@@ -24,7 +24,7 @@ empty_agg = canvas.points(empty_df, 'x', 'y')
 
 # coordinates
 xs = empty_agg.coords['x'].values
-ys = empty_agg.coords['x'].values
+ys = empty_agg.coords['y'].values
 
 # define some values for observer's elevation to test
 OBS_ELEVS = [-1, 0, 1]
@@ -49,25 +49,26 @@ def test_viewshed_invalid_y_view():
 
 
 def test_viewshed_output_properties():
+
     # add crs for tests
-    empty_agg = _add_EPSG4326_crs_to_da(empty_agg)
+    empty_agg_crs = _add_EPSG4326_crs_to_da(empty_agg)
 
     for obs_elev in OBS_ELEVS:
         OBSERVER_X = xs[0]
         OBSERVER_Y = ys[0]
-        v = viewshed(raster=empty_agg, x=OBSERVER_X, y=OBSERVER_Y,
+        v = viewshed(raster=empty_agg_crs, x=OBSERVER_X, y=OBSERVER_Y,
                      observer_elev=obs_elev)
 
-        assert v.shape[0] == empty_agg.shape[0]
-        assert v.shape[1] == empty_agg.shape[1]
+        assert v.shape[0] == empty_agg_crs.shape[0]
+        assert v.shape[1] == empty_agg_crs.shape[1]
         assert isinstance(v, xa.DataArray)
         assert isinstance(v.values, np.ndarray)
         assert type(v.values[0, 0]) == np.float64
 
         # crs tests
-        assert v.attrs == empty_agg.attrs
-        for coord in empty_agg.coords:
-            assert np.all(v[coord] == empty_agg[coord])
+        assert v.attrs == empty_agg_crs.attrs
+        for coord in empty_agg_crs.coords:
+            assert np.all(v[coord] == empty_agg_crs[coord])
 
 
 def test_viewshed():
