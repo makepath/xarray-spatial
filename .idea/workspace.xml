@@ -4,11 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="4ef26d6e-6804-4c2b-a47c-ad3967618aee" name="Default Changelist" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/xrspatial/tests/_crs.py" beforeDir="false" afterPath="$PROJECT_DIR$/xrspatial/tests/_crs.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/xrspatial/tests/test_curvature.py" beforeDir="false" afterPath="$PROJECT_DIR$/xrspatial/tests/test_curvature.py" afterDir="false" />
-    </list>
+    <list default="true" id="4ef26d6e-6804-4c2b-a47c-ad3967618aee" name="Default Changelist" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -95,10 +91,10 @@
       <screen x="0" y="25" width="1440" height="875" />
     </state>
     <state x="229" y="25" key="SettingsEditor/0.25.1440.875@0.25.1440.875" timestamp="1617244881659" />
-    <state x="720" y="25" width="720" height="875" key="dock-window-1" timestamp="1617251205585">
+    <state x="720" y="25" width="720" height="875" key="dock-window-1" timestamp="1617295989127">
       <screen x="0" y="25" width="1440" height="875" />
     </state>
-    <state x="720" y="25" width="720" height="875" key="dock-window-1/0.25.1440.875@0.25.1440.875" timestamp="1617251205585" />
+    <state x="720" y="25" width="720" height="875" key="dock-window-1/0.25.1440.875@0.25.1440.875" timestamp="1617295989127" />
     <state width="600" height="428" key="javadoc.popup" timestamp="1617236847583">
       <screen x="0" y="25" width="1440" height="875" />
     </state>
