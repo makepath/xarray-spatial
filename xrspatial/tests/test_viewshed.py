@@ -4,6 +4,8 @@ import pytest
 import datashader as ds
 from xrspatial import viewshed
 
+from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
+
 import numpy as np
 import pandas as pd
 
@@ -47,6 +49,9 @@ def test_viewshed_invalid_y_view():
 
 
 def test_viewshed_output_properties():
+    # add crs for tests
+    empty_agg = _add_EPSG4326_crs_to_da(empty_agg)
+
     for obs_elev in OBS_ELEVS:
         OBSERVER_X = xs[0]
         OBSERVER_Y = ys[0]
@@ -58,6 +63,11 @@ def test_viewshed_output_properties():
         assert isinstance(v, xa.DataArray)
         assert isinstance(v.values, np.ndarray)
         assert type(v.values[0, 0]) == np.float64
+
+        # crs tests
+        assert v.attrs == empty_agg.attrs
+        for coord in empty_agg.coords:
+            assert np.all(v[coord] == empty_agg[coord])
 
 
 def test_viewshed():

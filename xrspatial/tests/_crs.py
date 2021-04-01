@@ -18,6 +18,11 @@ spatial_ref_attrs_EPSG4326 = {
 spatial_ref_coords_da = xr.DataArray(0, attrs=spatial_ref_attrs_EPSG4326)
 
 def _add_EPSG4326_crs_to_da(da, res=(10.0, 10.0)):
+        """
+        Takes in an xarray.DataArray and return a new DataArray with the same data and with EPSG4326 specific crs attrs and coords.
+        Attrs from the original DataArray are not preserved in the returned one.
+        Coords are preserved.
+        """
         crs_da = xr.DataArray(np.empty_like(da.data))
         crs_da.data = da.data
         crs_attrs['res'] = res
