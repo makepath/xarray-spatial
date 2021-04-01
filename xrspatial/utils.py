@@ -2,6 +2,7 @@ from math import ceil
 import numba as nb
 import numpy as np
 import xarray as xr
+import datashader.transfer_functions as tf
 
 import dask.array as da
 
@@ -11,14 +12,14 @@ try:
     import cupy
 
     if cupy.result_type is np.result_type:
-        # Workaround until cupy release of https://github.com/cupy/cupy/pull/2249
+        # hack until cupy release of https://github.com/cupy/cupy/pull/2249
         # Without this, cupy.histogram raises an error that cupy.result_type
         # is not defined.
         cupy.result_type = lambda *args: np.result_type(
             *[arg.dtype if isinstance(arg, cupy.ndarray) else arg
               for arg in args]
         )
-except:
+except ImportError:
     cupy = None
 
 ngjit = nb.jit(nopython=True, nogil=True)
@@ -251,3 +252,14 @@ def height_implied_by_aspect_ratio(W, X, Y):
     """
 
     return int((W * (Y[1] - Y[0])) / (X[1] - X[0]))
+
+
+def bands_to_img(r, g, b, nodata=1):
+    h, w = r.shape
+    data = np.zeros((h, w, 4), dtype=np.uint8)
+    data[:, :, 0] = (r).astype(np.uint8)
+    data[:, :, 1] = (g).astype(np.uint8)
+    data[:, :, 2] = (b).astype(np.uint8)
+    a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
+    data[:, :, 3] = a.astype(np.uint8)
+    return tf.Image.fromarray(data, 'RGBA')

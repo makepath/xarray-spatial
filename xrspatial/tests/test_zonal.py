@@ -10,6 +10,8 @@ from xrspatial import suggest_zonal_canvas
 from xrspatial import trim
 from xrspatial import crop
 
+from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
+
 
 from xrspatial.zonal import regions
 
@@ -370,11 +372,19 @@ def test_apply():
                            [6, 7, np.nan]])
     values = xa.DataArray(values_val)
 
+    # add crs for tests
+    values = _add_EPSG4326_crs_to_da(values)
+
     values_copy = values.copy()
     apply(zones, values, func)
 
     # agg.shape remains the same
     assert values.shape == values_copy.shape
+
+    # crs tests
+    assert values.attrs == values_copy.attrs
+    for coord in values_copy.coords:
+        assert np.all(values[coord] == values_copy[coord])
 
     values_val = values.values
     # values within zones are all 0s
@@ -427,9 +437,18 @@ def test_regions_four_pixel_connectivity_int():
                     [1, 1, 1, 0],
                     [0, 0, 0, 0]], dtype=np.int64)
     raster = create_test_arr(arr)
+
+    # add crs for tests
+    raster = _add_EPSG4326_crs_to_da(raster)
+
     raster_regions = regions(raster, neighborhood=4)
     assert len(np.unique(raster_regions.data)) == 3
     assert raster.shape == raster_regions.shape
+
+    # crs tests
+    assert raster_regions.attrs == raster.attrs
+    for coord in raster.coords:
+        assert np.all(raster_regions[coord] == raster[coord])
 
 
 def test_regions_four_pixel_connectivity_float():
@@ -475,8 +494,17 @@ def test_trim():
                     [0, 1, 1, 0],
                     [0, 0, 0, 0]], dtype=np.int64)
     raster = create_test_arr(arr)
+
+    # add crs for tests
+    raster = _add_EPSG4326_crs_to_da(raster)
+
     trimmed_raster = trim(raster, values=(0,))
     assert trimmed_raster.shape == (3, 2)
+
+    # crs tests
+    assert trimmed_raster.attrs == raster.attrs
+    for coord in raster.coords:
+        assert np.all(trimmed_raster[coord] == raster[coord])
 
     trimmed_arr = np.array([[4, 0],
                             [4, 4],
@@ -574,8 +602,17 @@ def test_crop():
                     [0, 0, 0, 0]], dtype=np.int64)
 
     raster = create_test_arr(arr)
+
+    # add crs for tests
+    raster = _add_EPSG4326_crs_to_da(raster)
+
     result = crop(raster, raster, zones_ids=(1, 3))
     assert result.shape == (4, 3)
+
+    # crs tests
+    assert result.attrs == raster.attrs
+    for coord in raster.coords:
+        assert np.all(result[coord] == raster[coord])
 
     trimmed_arr = np.array([[4, 0, 3],
                             [4, 4, 3],
