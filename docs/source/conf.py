@@ -35,7 +35,7 @@ version = release = xrspatial.__version__
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
-    # 'recommonmark'
+    'sphinx_panels',
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
@@ -82,7 +82,10 @@ html_logo = '_static/img/Xarray-Spatial-logo.svg'
 # further.  For a list of options available for each theme, see the
 # documentation.
 #
-html_theme_options = {}
+html_theme_options = {
+    "external_links": [],
+    "github_url": "https://github.com/makepath/xarray-spatial",
+}
 
 html_context = {
     'css_files': ['_static/css/styles.css'],
