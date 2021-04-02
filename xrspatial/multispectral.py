@@ -1498,8 +1498,8 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
 @ngjit
 def _normalize_data(agg, pixel_max=255.0):
     out = np.zeros_like(agg)
-    min_val = 0
-    max_val = 2 ** 16 - 1
+    min_val = np.nanmin(agg)
+    max_val = np.nanmax(agg)
     range_val = max_val - min_val
     rows, cols = agg.shape
     c = 40
@@ -1512,7 +1512,7 @@ def _normalize_data(agg, pixel_max=255.0):
                 norm = (val - min_val) / range_val
 
                 # sigmoid contrast enhancement
-                norm = 1 / (1 + np.exp(c * (th - norm)))
+                # norm = 1 / (1 + np.exp(c * (th - norm)))
                 out[y, x] = norm * pixel_max
     return out
 
