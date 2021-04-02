@@ -175,3 +175,42 @@ Description Band
         --tw-text-opacity: 1;
         color: rgba(255, 255, 255, var(--tw-text-opacity));
     }
+    /*
+Header
+================
+*/
+    
+    #navbar-main {
+        background-color: #F1F1F1!important;
+        border-bottom: 3px solid #16255F;
+    }
+    /*
+Body
+================
+*/
+    
+    body {
+        background-color: #FAFAFA;
+        color: #353D46;
+    }
+    /*
+Left side bar
+================
+*/
+    
+    .form-control {
+        background-color: #FAFAFA;
+    }
+    /*
+Headings
+================
+*/
+    
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+        color: #062161;
+    }
