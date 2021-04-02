@@ -3,8 +3,37 @@
   <component name="AutoImportSettings">
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
+  <component name="BranchesTreeState">
+    <expand>
+      <path>
+        <item name="ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="LOCAL_ROOT" type="e8cecc67:BranchNodeDescriptor" />
+      </path>
+      <path>
+        <item name="ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="REMOTE_ROOT" type="e8cecc67:BranchNodeDescriptor" />
+      </path>
+      <path>
+        <item name="ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="REMOTE_ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="GROUP_NODE:origin" type="e8cecc67:BranchNodeDescriptor" />
+      </path>
+      <path>
+        <item name="ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="REMOTE_ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="GROUP_NODE:upstream" type="e8cecc67:BranchNodeDescriptor" />
+      </path>
+    </expand>
+    <select />
+  </component>
   <component name="ChangeListManager">
-    <list default="true" id="4ef26d6e-6804-4c2b-a47c-ad3967618aee" name="Default Changelist" comment="" />
+    <list default="true" id="4ef26d6e-6804-4c2b-a47c-ad3967618aee" name="Default Changelist" comment="">
+      <change afterPath="$PROJECT_DIR$/xrspatial/tests/Untitled.ipynb" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/examples/user_guide/1_Surface.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/examples/user_guide/1_Surface.ipynb" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xrspatial/tests/test_compare_qgis.py" beforeDir="false" afterPath="$PROJECT_DIR$/xrspatial/tests/test_compare_qgis.py" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -62,6 +91,18 @@
     </task>
     <servers />
   </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+    <option name="oldMeFiltersMigrated" value="true" />
+  </component>
   <component name="WindowStateProjectService">
     <state x="0" y="120" key="#com.intellij.execution.impl.EditConfigurationsDialog" timestamp="1617250709702">
       <screen x="0" y="25" width="1440" height="875" />
@@ -71,30 +112,30 @@
       <screen x="0" y="25" width="1440" height="875" />
     </state>
     <state x="206" y="220" key="FileChooserDialogImpl/0.25.1440.875@0.25.1440.875" timestamp="1617248712339" />
-    <state width="1419" height="228" key="GridCell.Tab.0.bottom" timestamp="1617250287976">
+    <state width="697" height="227" key="GridCell.Tab.0.bottom" timestamp="1617299566072">
       <screen x="0" y="25" width="1440" height="875" />
     </state>
-    <state width="1419" height="228" key="GridCell.Tab.0.bottom/0.25.1440.875@0.25.1440.875" timestamp="1617250287976" />
-    <state width="1419" height="228" key="GridCell.Tab.0.center" timestamp="1617250287974">
+    <state width="697" height="227" key="GridCell.Tab.0.bottom/0.25.1440.875@0.25.1440.875" timestamp="1617299566072" />
+    <state width="697" height="227" key="GridCell.Tab.0.center" timestamp="1617299566071">
       <screen x="0" y="25" width="1440" height="875" />
     </state>
-    <state width="1419" height="228" key="GridCell.Tab.0.center/0.25.1440.875@0.25.1440.875" timestamp="1617250287974" />
-    <state width="1419" height="228" key="GridCell.Tab.0.left" timestamp="1617250287973">
+    <state width="697" height="227" key="GridCell.Tab.0.center/0.25.1440.875@0.25.1440.875" timestamp="1617299566071" />
+    <state width="697" height="227" key="GridCell.Tab.0.left" timestamp="1617299566070">
       <screen x="0" y="25" width="1440" height="875" />
     </state>
-    <state width="1419" height="228" key="GridCell.Tab.0.left/0.25.1440.875@0.25.1440.875" timestamp="1617250287973" />
-    <state width="1419" height="228" key="GridCell.Tab.0.right" timestamp="1617250287974">
+    <state width="697" height="227" key="GridCell.Tab.0.left/0.25.1440.875@0.25.1440.875" timestamp="1617299566070" />
+    <state width="697" height="227" key="GridCell.Tab.0.right" timestamp="1617299566072">
       <screen x="0" y="25" width="1440" height="875" />
     </state>
-    <state width="1419" height="228" key="GridCell.Tab.0.right/0.25.1440.875@0.25.1440.875" timestamp="1617250287974" />
+    <state width="697" height="227" key="GridCell.Tab.0.right/0.25.1440.875@0.25.1440.875" timestamp="1617299566072" />
     <state x="229" y="25" key="SettingsEditor" timestamp="1617244881659">
       <screen x="0" y="25" width="1440" height="875" />
     </state>
     <state x="229" y="25" key="SettingsEditor/0.25.1440.875@0.25.1440.875" timestamp="1617244881659" />
-    <state x="720" y="25" width="720" height="875" key="dock-window-1" timestamp="1617295989127">
+    <state x="720" y="25" width="720" height="875" key="dock-window-1" timestamp="1617380524756">
       <screen x="0" y="25" width="1440" height="875" />
     </state>
-    <state x="720" y="25" width="720" height="875" key="dock-window-1/0.25.1440.875@0.25.1440.875" timestamp="1617295989127" />
+    <state x="720" y="25" width="720" height="875" key="dock-window-1/0.25.1440.875@0.25.1440.875" timestamp="1617380524756" />
     <state width="600" height="428" key="javadoc.popup" timestamp="1617236847583">
       <screen x="0" y="25" width="1440" height="875" />
     </state>
