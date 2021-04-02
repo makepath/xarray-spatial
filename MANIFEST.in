@@ -10,6 +10,8 @@ global-exclude *.png
 prune conda.recipe
 prune examples
 prune img
+prune .github
+prune .idea
 
 exclude xrspatial/_version.py
 exclude xrspatial/__pycache__/*
