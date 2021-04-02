@@ -6,60 +6,70 @@ Multispectral
 
 Atmospherically Resistant Vegetation Index (ARVI)
 =================================================
-xrspatial.multispectral.arvi
-----------------------------
-.. autofunction::  xrspatial.multispectral.arvi
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.arvi
 
 Enhanced Built=Up and Bareness Index (EBBI)
 ===========================================
-xrspatial.multispectral.ebbi
-----------------------------
-.. autofunction::  xrspatial.multispectral.ebbi
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.ebbi
 
 Enhanced Vegetation Index (EVI)
 ===============================
-xrspatial.multispectral.evi
----------------------------
-.. autofunction::  xrspatial.multispectral.evi
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.evi
 
 Green Chlorophyll Index (GCI)
 =============================
-xrspatial.multispectral.gci
----------------------------
-.. autofunction::  xrspatial.multispectral.gci
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.gci
 
 Normalized Burn Ratio (NBR)
 ===========================
-xrspatial.multispectral.nbr
----------------------------
-.. autofunction::  xrspatial.multispectral.nbr
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.nbr
 
 Normalized Burn Ratio 2 (NBR2)
 ==============================
-xrspatial.multispectral.nbr2
-----------------------------
-.. autofunction::  xrspatial.multispectral.nbr2
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.nbr2
 
 Normalized Difference Moisture Index (NDMI)
 ===========================================
-xrspatial.multispectral.ndmi
-----------------------------
-.. autofunction::  xrspatial.multispectral.ndmi
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.ndmi
 
 Normalized Difference Vegetation Index (NDVI)
 =============================================
-xrspatial.multispectral.ndvi
-----------------------------
-.. autofunction::  xrspatial.multispectral.ndvi
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.ndvi
 
 Soil Adjusted Vegetation Index (SAVI)
 =====================================
-xrspatial.multispectral.savi
-----------------------------
-.. autofunction::  xrspatial.multispectral.savi
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.savi
 
 Structure Insensitive Pigment Index (SIPI)
 ==========================================
-xrspatial.multispectral.sipi
-----------------------------
-.. autofunction::  xrspatial.multispectral.sipi
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.sipi
