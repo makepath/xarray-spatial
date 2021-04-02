@@ -6,24 +6,28 @@ Classification
 
 Equal Interval
 ==============
-xrspatial.classify.equal_interval
----------------------------------
-.. autofunction::  xrspatial.classify.equal_interval
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.classify.equal_interval
 
 Natural Breaks
 ==============
-xrspatial.classify.natural_breaks
----------------------------------
-.. autofunction::  xrspatial.classify.natural_breaks
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.classify.natural_breaks
 
 Reclassify
 ==========
-xrspatial.classify.reclassify
------------------------------
-.. autofunction::  xrspatial.classify.reclassify
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.classify.reclassify
 
 Quantile
 ========
-xrspatial.classify.quantile
----------------------------
-.. autofunction::  xrspatial.classify.quantile
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.classify.quantile

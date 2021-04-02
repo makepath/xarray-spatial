@@ -6,48 +6,56 @@ Surface
 
 Aspect
 ======
-xrspatial.aspect.aspect
------------------------
-.. autofunction::  xrspatial.aspect.aspect
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.aspect.aspect
 
 Curvature
 =========
-xrspatial.curvature.curvature
------------------------------
-.. autofunction::  xrspatial.curvature.curvature
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.curvature.curvature
 
 Hillshade
 =========
-xrspatial.hillshade.hillshade
------------------------------
-.. autofunction::  xrspatial.hillshade.hillshade
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.hillshade.hillshade
 
 Slope
 =====
-xrspatial.slope.slope
----------------------
-.. autofunction::  xrspatial.slope.slope
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.slope.slope
 
 Terrain Generation
 ==================
-xrspatial.terrain.generate_terrain
-----------------------------------
-.. autofunction::  xrspatial.terrain.generate_terrain
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.terrain.generate_terrain
 
 Viewshed
 ========
-xrspatial.viewshed.viewshed
----------------------------
-.. autofunction::  xrspatial.viewshed.viewshed
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.viewshed.viewshed
 
 Perlin Noise
 ============
-xrspatial.perlin.perlin
------------------------
-.. autofunction::  xrspatial.perlin.perlin
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.perlin.perlin
 
 Bump Mapping
 ============
-xrspatial.bump.bump
--------------------
-.. autofunction::  xrspatial.bump.bump
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.bump.bump

@@ -24,8 +24,8 @@ Dependencies
 ``xarray-spatial`` currently depends on Datashader, but will soon be updated to depend only on ``xarray`` and ``numba``\ , while still being able to make use of Datashader output when available. 
 
 
-.. image:: ./_static/img/dependencies.svg
-   :target: ./_static/img/dependencies.svg
+.. image:: ../_static/img/dependencies.svg
+   :target: ../_static/img/dependencies.svg
    :alt: title
 
 
