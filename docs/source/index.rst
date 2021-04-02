@@ -17,9 +17,86 @@ xarray-spatial does not depend on GDAL / GEOS, which makes it fully extensible i
 
 -------
 
-.. raw:: html
-   :file: _templates/examples.html
+.. panels::
+   :body: examples-item
+   :container: container-fluid examples-container
+   :column: examples-card
 
+   ---
+   .. image:: _static/img/0-0.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples
+   ---
+   .. image:: _static/img/0-1.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/2_Proximity.ipynb
+   ---
+   .. image:: _static/img/0-2.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/2_Proximity.ipynb
+   ---
+   .. image:: _static/img/0-3.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/2_Proximity.ipynb
+   ---
+   .. image:: _static/img/0-4.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/pharmacy-deserts.ipynb
+   ---
+   .. image:: _static/img/1-0.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/1_Surface.ipynb
+   ---
+   .. image:: _static/img/1-1.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/1_Surface.ipynb
+   ---
+   .. image:: _static/img/1-2.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/1_Surface.ipynb
+   ---
+   .. image:: _static/img/1-3.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/1_Surface.ipynb
+   ---
+   .. image:: _static/img/1-4.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/pharmacy-deserts.ipynb
+   ---
+   .. image:: _static/img/2-0.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/1_Surface.ipynb
+   ---
+   .. image:: _static/img/2-1.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/8_Remote_Sensing.ipynb
+   ---
+   .. image:: _static/img/2-2.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/8_Remote_Sensing.ipynb
+   ---
+   .. image:: _static/img/2-3.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/5_Classification.ipynb
+   ---
+   .. image:: _static/img/2-4.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/pharmacy-deserts.ipynb
+   ---
+   .. image:: _static/img/3-0.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples
+   ---
+   .. image:: _static/img/3-1.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples
+   ---
+   .. image:: _static/img/3-2.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/5_Classification.ipynb
+   ---
+   .. image:: _static/img/3-3.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/pharmacy-deserts.ipynb
+   ---
+   .. image:: _static/img/3-4.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples
+   ---
+   .. image:: _static/img/4-0.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/Path-finding_City-of-Austin-Road-Network.ipynb
+   ---
+   .. image:: _static/img/4-1.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/1_Surface.ipynb#Hillshade
+   ---
+   .. image:: _static/img/4-2.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/1_Surface.ipynb#Hillshade
+   ---
+   .. image:: _static/img/4-3.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/user_guide/1_Surface.ipynb#Slope
+   ---
+   .. image:: _static/img/4-4.png
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/pharmacy-deserts.ipynb#Create-a-%22Distance-to-Nearest-Pharmacy%22-Layer-&-Classify-into-5-Groups
 
 .. toctree::
    :maxdepth: 3
