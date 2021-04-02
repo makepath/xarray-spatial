@@ -13,7 +13,7 @@ xarray-spatial does not depend on GDAL / GEOS, which makes it fully extensible i
 -------
 
 .. raw:: html
-   :file: _templates/description_band.html
+   :file: _templates/description_panel.html
 
 -------
 
