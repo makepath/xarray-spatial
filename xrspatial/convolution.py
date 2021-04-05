@@ -16,61 +16,62 @@ def convolve_2d(image: xr.DataArray,
     each cell via Numba. To account for edge cells, a pad can be added
     to the image array. Convolution is frequently used for image
     processing, such as smoothing, sharpening, and edge detection of
-    images by elimatig spurious data or enhancing features in the data.
+    images by eliminating spurious data or enhancing features in the data.
 
-    Parameters:
+    Parameters
     ----------
-    image: xarray.DataArray
+    image : xarray.DataArray
         2D array of values to processed and padded.
-    kernel: array-like object
-        Impulse kernel, determines area to apply
-        impulse function for each cell.
-    pad: Boolean
+    kernel : array-like object
+        Impulse kernel, determines area to apply impulse function for
+        each cell.
+    pad : bool, default = True
         To compute edges set to True.
-    use-cuda: Boolean
+    use-cuda : bool, default = True
         For parallel computing set to True.
 
-    Returns:
-    ----------
-    convolve_agg: xarray.DataArray
+    Returns
+    -------
+    convolve_agg : xarray.DataArray, of same type as `image`.
         2D array representation of the impulse function.
         All other input attributes are preserverd.
     
-    Examples:
-    ----------
-    Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import convolution, focal
+    Example
+    -------
 
-    Create Data Array
-    >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
-    >>>                              [0, 0, 2, 4, 0, 8, 0],
-    >>>                              [0, 2, 2, 4, 6, 8, 0],
-    >>>                              [0, 4, 4, 4, 6, 8, 0],
-    >>>                              [0, 6, 6, 6, 6, 8, 0],
-    >>>                              [0, 8, 8, 8, 8, 8, 0],
-    >>>                              [0, 0, 0, 0, 0, 0, 0]]),
-    >>>                     dims = ["lat", "lon"],
-    >>>                     attrs = dict(res = 1))
-    >>> height, width = agg.shape
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> agg["lon"] = _lon
-    >>> agg["lat"] = _lat
+    >>>     # Imports
+    >>>     import numpy as np
+    >>>     import xarray as xr
+    >>>     from xrspatial import convolution, focal
 
-        Create Kernel
-    >>> kernel = focal.circle_kernel(1, 1, 1)
+    >>>     # Create Data Array
+    >>>     agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
+    >>>                                  [0, 0, 2, 4, 0, 8, 0],
+    >>>                                  [0, 2, 2, 4, 6, 8, 0],
+    >>>                                  [0, 4, 4, 4, 6, 8, 0],
+    >>>                                  [0, 6, 6, 6, 6, 8, 0],
+    >>>                                  [0, 8, 8, 8, 8, 8, 0],
+    >>>                                  [0, 0, 0, 0, 0, 0, 0]]),
+    >>>                         dims = ["lat", "lon"],
+    >>>                         attrs = dict(res = 1))
+    >>>     height, width = agg.shape
+    >>>     _lon = np.linspace(0, width - 1, width)
+    >>>     _lat = np.linspace(0, height - 1, height)
+    >>>     agg["lon"] = _lon
+    >>>     agg["lat"] = _lat
 
-        Create Convolution Data Array
-    >>> print(convolution.convolve_2d(agg, kernel))
-    [[ 0.  0.  4.  8.  0. 16.  0.]
-     [ 0.  4.  8. 10. 18. 16. 16.]
-     [ 4.  8. 14. 20. 24. 30. 16.]
-     [ 8. 16. 20. 24. 30. 30. 16.]
-     [12. 24. 30. 30. 34. 30. 16.]
-     [16. 22. 30. 30. 30. 24. 16.]
-     [ 0. 16. 16. 16. 16. 16.  0.]]
+    >>>     # Create Kernel
+    >>>     kernel = focal.circle_kernel(1, 1, 1)
+
+    >>>     # Create Convolution Data Array
+    >>>     print(convolution.convolve_2d(agg, kernel))
+            [[ 0.  0.  4.  8.  0. 16.  0.]
+            [ 0.  4.  8. 10. 18. 16. 16.]
+            [ 4.  8. 14. 20. 24. 30. 16.]
+            [ 8. 16. 20. 24. 30. 30. 16.]
+            [12. 24. 30. 30. 34. 30. 16.]
+            [16. 22. 30. 30. 30. 24. 16.]
+            [ 0. 16. 16. 16. 16. 16.  0.]]
     """
     # Don't allow padding on (1, 1) kernel
     if (kernel.shape[0] == 1 and kernel.shape[1] == 1):
