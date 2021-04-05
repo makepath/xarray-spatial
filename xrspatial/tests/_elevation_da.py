@@ -11546,7 +11546,7 @@ coord_x_np = np.asarray([-179.66666667, -179.        , -178.33333333, -177.66666
         169.66666667,  170.33333333,  171.        ,  171.66666667,
         172.33333333,  173.        ,  173.66666667,  174.33333333,
         175.        ,  175.66666667,  176.33333333,  177.        ,
-        177.66666667,  178.33333333,  179.        ,  179.66666667] ,dtype=np.float64)
+        177.66666667,  178.33333333,  179.        ,  179.66666667 ] ,dtype=np.float64)
 
 
 coords_spatial_ref_attrs = {
@@ -11559,7 +11559,8 @@ coords_spatial_ref_attrs = {
     'prime_meridian_name': 'Greenwich',
     'geographic_crs_name': 'WGS 84',
     'grid_mapping_name': 'latitude_longitude',
-    'spatial_ref': 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],AXIS["Latitude",NORTH],AXIS["Longitude",EAST],AUTHORITY["EPSG","4326"]]', 'GeoTransform': '-180.0 0.6666666666666666 0.0 90.0 0.0 -0.6666666666666666'
+    'spatial_ref': 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],AXIS["Latitude",NORTH],AXIS["Longitude",EAST],AUTHORITY["EPSG","4326"]]',
+    'GeoTransform': '-180.0 0.6666666666666666 0.0 90.0 0.0 -0.6666666666666666'
 }
 
 attrs = {

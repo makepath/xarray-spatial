@@ -9,6 +9,9 @@ from xrspatial.utils import is_cupy_backed
 
 from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
 
+from xrspatial.tests._elevation_da import elevation_da
+from xrspatial.tests._qgis_results._qgis_aspect import qgis_aspect_da
+
 INPUT_DATA = np.asarray([
     [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
     [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
@@ -30,6 +33,12 @@ QGIS_OUTPUT = np.asarray([
     [351.86676, 11.306906, 45., 45., 45., 108.431015]], dtype=np.float32
 )
 
+def test_earth_dem_numpy_against_qgis():
+    xrs_aspect = aspect(elevation_da)
+    # convert -1 from flat areas to match nan's in qgis
+    xrs_aspect.data = np.where(xrs_aspect.data == -1, np.nan, xrs_aspect.data)
+    # absolute tolerance (atol) needs to be increased because of the small values in aspect
+    assert np.isclose(xrs_aspect.data, qgis_aspect_da.data, equal_nan=True, atol=1e-7).all()
 
 def test_numpy_equals_qgis():
 

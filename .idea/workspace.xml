@@ -28,11 +28,14 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="4ef26d6e-6804-4c2b-a47c-ad3967618aee" name="Default Changelist" comment="">
-      <change afterPath="$PROJECT_DIR$/xrspatial/tests/Untitled.ipynb" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/xrspatial/tests/_qgis_results/_qgis_aspect.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/xrspatial/tests/_qgis_results/_qgis_slope.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/examples/user_guide/1_Surface.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/examples/user_guide/1_Surface.ipynb" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/xrspatial/tests/test_compare_qgis.py" beforeDir="false" afterPath="$PROJECT_DIR$/xrspatial/tests/test_compare_qgis.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xrspatial/tests/Untitled.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/xrspatial/tests/Untitled.ipynb" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xrspatial/tests/_elevation_da.py" beforeDir="false" afterPath="$PROJECT_DIR$/xrspatial/tests/_elevation_da.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xrspatial/tests/_qgis_results.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/xrspatial/tests/test_aspect.py" beforeDir="false" afterPath="$PROJECT_DIR$/xrspatial/tests/test_aspect.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/xrspatial/tests/test_slope.py" beforeDir="false" afterPath="$PROJECT_DIR$/xrspatial/tests/test_slope.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -46,14 +49,21 @@
     <setting file="file://$PROJECT_DIR$/xrspatial/tests/test_aspect.py" root0="SKIP_HIGHLIGHTING" />
   </component>
   <component name="ProjectId" id="1qXkPX0QRuAvjC8pkMlVt1Xgtme" />
+  <component name="ProjectLevelVcsManager" settingsEditedManually="true" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
   <component name="PropertiesComponent">
     <property name="RunOnceActivity.OpenProjectViewOnStart" value="true" />
-    <property name="last_opened_file_path" value="$PROJECT_DIR$" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$/xrspatial/tests" />
     <property name="settings.editor.selected.configurable" value="preferences.lookFeel" />
+  </component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/xrspatial/tests" />
+      <recent name="$PROJECT_DIR$/img" />
+    </key>
   </component>
   <component name="RunManager">
     <configuration name="Doctest reclassify" type="tests" factoryName="Doctests" temporary="true" nameIsGenerated="true">

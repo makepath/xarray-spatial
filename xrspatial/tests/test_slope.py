@@ -9,6 +9,8 @@ from xrspatial.utils import doesnt_have_cuda
 
 from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
 
+from xrspatial.tests._elevation_da import elevation_da
+from xrspatial.tests._qgis_results._qgis_slope import qgis_slope_da
 
 # Test Data -----------------------------------------------------------------
 
@@ -52,6 +54,9 @@ elevation2 = np.asarray([
     dtype=np.float32
 )
 
+def test_earth_dem_slope_against_qgis():
+    xrs_slope = slope(elevation_da)
+    assert np.isclose(xrs_slope.data, qgis_slope_da.data, equal_nan=True).all()
 
 def test_slope_against_qgis():
 
