@@ -138,12 +138,12 @@ def hillshade(agg: xr.DataArray,
         
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
 
-    Create Initial DataArray
+    >>> # Create Initial DataArray
     >>> agg = xr.DataArray(np.array([[0, 1, 0, 0],
     >>>                              [1, 1, 0, 0],
     >>>                              [0, 1, 2, 2],
@@ -166,7 +166,7 @@ def hillshade(agg: xr.DataArray,
       * lon      (lon) float64 0.0 1.0 2.0 3.0
       * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
 
-    Create Hillshade DataArray
+    >>> # Create Hillshade DataArray
     >>> hillshade = xrspatial.hillshade(agg)
     >>> print(hillshade)
     <xarray.DataArray 'hillshade' (lat: 5, lon: 4)>

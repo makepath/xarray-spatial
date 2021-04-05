@@ -222,12 +222,12 @@ def reclassify(agg: xr.DataArray,
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> from xrspatial.classify import reclassify
 
-    Create Initial DataArray
+    >>> # Create Initial DataArray
     >>> np.random.seed(1)
     >>> agg = xr.DataArray(np.random.randint(2, 8, (4, 4)),
     >>>                    dims = ["lat", "lon"])
@@ -246,7 +246,7 @@ def reclassify(agg: xr.DataArray,
       * lon      (lon) float64 0.0 1.0 2.0 3.0
       * lat      (lat) float64 0.0 1.0 2.0 3.0
 
-    Reclassify
+    >>> # Reclassify
     >>> bins = list(range(2, 8))
     >>> new_val = list(range(20, 80, 10))
     >>> reclassify_agg = reclassify(agg, bins, new_val)
@@ -377,12 +377,12 @@ def quantile(agg: xr.DataArray,
         
     Examples:
     ----------
-        Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> from xrspatial.classify import quantile
 
-        Create DataArray
+    >>> # Create DataArray
     >>> np.random.seed(0)
     >>> agg = xr.DataArray(np.random.rand(4,4),
                                     dims = ["lat", "lon"])
@@ -401,7 +401,7 @@ def quantile(agg: xr.DataArray,
     * lon      (lon) float64 0.0 1.0 2.0 3.0
     * lat      (lat) float64 0.0 1.0 2.0 3.0
 
-    Create Quantile Aggregate
+    >>> # Create Quantile Aggregate
     >>> quantile_agg = quantile(agg)
     >>> print(quantile_agg)
     <xarray.DataArray 'quantile' (lat: 4, lon: 4)>
@@ -413,7 +413,7 @@ def quantile(agg: xr.DataArray,
     * lon      (lon) float64 0.0 1.0 2.0 3.0
     * lat      (lat) float64 0.0 1.0 2.0 3.0
 
-    With k quantiles
+    >>> # With k quantiles
     >>> quantile_agg = quantile(agg, k = 6, name = "Six Quantiles")
     >>> print(quantile_agg)
     <xarray.DataArray 'Six Quantiles' (lat: 4, lon: 4)>
@@ -709,19 +709,19 @@ def natural_breaks(agg: xr.DataArray,
 
     Algorithm References:
     ----------
-    Map Classify
+    Map Classify:
         - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks
-    perrygeo
-    - https://github.com/perrygeo/jenks/blob/master/jenks.pyx
+    perrygeo:
+        - https://github.com/perrygeo/jenks/blob/master/jenks.pyx
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> from xrspatial.classify import natural_breaks
 
-    Create DataArray
+    >>> # Create DataArray
     >>> np.random.seed(0)
     >>> agg = xr.DataArray(np.random.rand(4,4),
                                     dims = ["lat", "lon"])
@@ -740,7 +740,7 @@ def natural_breaks(agg: xr.DataArray,
     * lon      (lon) float64 0.0 1.0 2.0 3.0
     * lat      (lat) float64 0.0 1.0 2.0 3.0
 
-    Create Natural Breaks Aggregate
+    >>> # Create Natural Breaks Aggregate
     >>> natural_breaks_agg = natural_breaks(agg, k = 5)
     >>> print(natural_breaks_agg)
     <xarray.DataArray 'natural_breaks' (lat: 4, lon: 4)>
@@ -846,21 +846,23 @@ def equal_interval(agg: xr.DataArray,
 
     Notes:
     ----------
-    Intervals defined to have equal width:
+        Intervals defined to have equal width.
 
     Algorithm References:
     ----------
-    PySal: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval
-    SciKit: https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py
+        PySal:
+            https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval
+        SciKit:
+            https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> from xrspatial.classify import equal_interval, natural_breaks
 
-        Create Initial DataArray
+    >>> # Create Initial DataArray
     >>> np.random.seed(1)
     >>> agg = xr.DataArray(np.random.randint(2, 8, (4, 4)),
     >>>                    dims = ["lat", "lon"])
@@ -879,7 +881,7 @@ def equal_interval(agg: xr.DataArray,
       * lon      (lon) float64 0.0 1.0 2.0 3.0
       * lat      (lat) float64 0.0 1.0 2.0 3.0
 
-    Create Equal Interval DataArray
+    >>> # Create Equal Interval DataArray
     >>> equal_interval_agg = equal_interval(agg, k = 5)
     >>> print(equal_interval_agg)
     <xarray.DataArray 'equal_interval' (lat: 4, lon: 4)>

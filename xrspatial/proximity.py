@@ -54,12 +54,12 @@ def euclidean_distance(x1: float, x2: float, y1: float, y2: float) -> float:
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> from xrspatial import euclidean_distance
     >>> point_a = (142.32, 23.23)
     >>> point_b = (312.54, 432.01)
 
-    Calculate Euclidean Distance
+    >>> # Calculate Euclidean Distance
     >>> dist = euclidean_distance(point_a[0], point_b[0], point_a[1], point_b[1])
     >>> print(dist)
     442.80462599209596
@@ -100,12 +100,12 @@ def manhattan_distance(x1: float, x2: float,
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> from xrspatial import manhattan_distance
     >>> point_a = (142.32, 23.23)
     >>> point_b = (312.54, 432.01)
 
-    Calculate Euclidean Distance
+    >>> # Calculate Euclidean Distance
     >>> dist = manhattan_distance(point_a[0], point_b[0], point_a[1], point_b[1])
     >>> print(dist)
     196075.9368
@@ -149,12 +149,12 @@ def great_circle_distance(x1: float, x2: float,
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> from xrspatial import great_circle_distance
     >>> point_a = (123.2, 82.32)
     >>> point_b = (178.0, 65.09)
 
-    Calculate Euclidean Distance
+    >>> # Calculate Euclidean Distance
     >>> dist = great_circle_distance(point_a[0], point_b[0], point_a[1], point_b[1])
     >>> print(dist)
     2378290.489801402
@@ -547,7 +547,7 @@ def proximity(raster: xr.DataArray,
 
     Example:
     ----------
-    Imports
+    >>> # Imports
     >>> from xrspatial import proximity
     >>> import pandas as pd
     >>> from datashader.transfer_functions import shade
@@ -556,7 +556,7 @@ def proximity(raster: xr.DataArray,
     >>> from datashader.transfer_functions import set_background
     >>> from datashader.colors import Elevation
 
-    Load Data and Create Canvas
+    >>> # Load Data and Create Canvas
     >>> df = pd.Dataframe({
     >>>     'x': [-13, -11, -5, 4, 9, 11, 18, 6],
     >>>     'y': [-13, -5, 0, 10, 7, 2, 5, -5]
@@ -564,7 +564,7 @@ def proximity(raster: xr.DataArray,
     >>> cvs = ds.Canvas(plot_width=800, plot_height=600,
     >>>                 x_range=(-20, 20), y_range=(-20,20))
 
-    Create Proximity Aggregate
+    >>> # Create Proximity Aggregate
     >>> points_agg = cvs.points(df, x='x', y='y')
     >>> points_shaded = dynspread(shade(points_agg,
     >>>                                 cmap=['salmon',  'salmon']),
@@ -572,7 +572,7 @@ def proximity(raster: xr.DataArray,
     >>>                                 max_px=5)
     >>> set_background(points_shaded, 'black')
 
-    Create Proximity Grid for All Non-Zero Values
+    >>> # Create Proximity Grid for All Non-Zero Values
     >>> proximity_agg = proximity(points_agg)
     >>> stack(shade(proximity_agg, cmap=['darkturquoise', 'black'], how='linear'),
     >>>       points_shaded)

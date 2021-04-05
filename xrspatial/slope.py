@@ -159,12 +159,12 @@ def slope(agg: xr.DataArray,
           (Oxford University Press, New York), pp 406
     Examples:
     ---------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> from xrspatial import slope
 
-    Create Data Array
+    >>> # Create Data Array
     >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
     >>>                              [0, 0, 2, 4, 0, 8, 0],
     >>>                              [0, 2, 2, 4, 6, 8, 0],
@@ -180,7 +180,7 @@ def slope(agg: xr.DataArray,
     >>> agg["lon"] = _lon
     >>> agg["lat"] = _lat
 
-    Create Slope Data Array
+    >>> # Create Slope Data Array
     >>> print(slope(agg))
     <xarray.DataArray 'slope' (lat: 7, lon: 7)>
     array([[ 0,  0,  0,  0,  0,  0,  0],

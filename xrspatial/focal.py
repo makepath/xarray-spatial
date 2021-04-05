@@ -111,12 +111,12 @@ def calc_cellsize(raster: xr.DataArray,
 
     Examples:
     -----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> from xrspatial import focal
 
-    Create Data Array
+    >>> # Create Data Array
     >>> np.random.seed(0)
     >>> agg = xr.DataArray(np.random.rand(4,4),
                                dims = ["lat", "lon"])
@@ -126,7 +126,7 @@ def calc_cellsize(raster: xr.DataArray,
     >>> nir_agg["lat"] = _lat
     >>> nir_agg["lon"] = _lon
 
-    Calculate Cell Size
+    >>> # Calculate Cell Size
     >>> focal.calc_cellsize(agg, 'lon', 'lat')
     (1, 1)
     """
@@ -204,12 +204,12 @@ def circle_kernel(cellsize_x: int,
 
     Examples:
     ----------
-        Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> from xrspatial import focal
 
-        Create Kernels
+    >>> # Create Kernels
     >>> focal.circle_kernel(1, 1, 3)
     array([[0., 0., 0., 1., 0., 0., 0.],
            [0., 1., 1., 1., 1., 1., 0.],
@@ -260,12 +260,12 @@ def annulus_kernel(cellsize_x: int,
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> from xrspatial import focal
 
-    Create Kernels
+    >>> # Create Kernels
     >>> focal.annulus_kernel(1, 1, 3, 1)
     array([[0., 0., 0., 1., 0., 0., 0.],
            [0., 1., 1., 1., 1., 1., 0.],
@@ -376,12 +376,12 @@ def mean(agg: xr.DataArray,
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> from xrspatial import focal
 
-    Create Data Array
+    >>> # Create Data Array
     >>> np.random.seed(0)
     >>> agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
     >>> height, width = nir_agg.shape
@@ -390,7 +390,7 @@ def mean(agg: xr.DataArray,
     >>> nir_agg["lat"] = _lat
     >>> nir_agg["lon"] = _lon
 
-    Calculate Mean
+    >>> # Calculate Mean
     >>> focal.mean(agg)
     array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
            [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
@@ -553,12 +553,12 @@ def hotspots(raster: xr.DataArray,
 
     Examples:
     ----------
-        Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> from xrspatial import focal
 
-    Create Data Array
+    >>> # Create Data Array
     >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
     >>>                              [0, 0, 0, 0, 0, 0, 0],
     >>>                              [0, 0, 10, 10, 10, 0, 0],
@@ -573,10 +573,10 @@ def hotspots(raster: xr.DataArray,
     >>> agg["lon"] = _lon
     >>> agg["lat"] = _lat
 
-        Create Kernel
+    >>> # Create Kernel
     >>> kernel = focal.circle_kernel(1, 1, 1)
 
-        Create Hotspot Data Array
+    >>> # Create Hotspot Data Array
     >>> focal.hotspots(agg, kernel, x = 'lon', y = 'lat')
     <xarray.DataArray (lat: 7, lon: 7)>
     array([[ 0,  0,  0,  0,  0,  0,  0],

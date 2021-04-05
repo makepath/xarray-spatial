@@ -164,6 +164,7 @@ def aspect(agg: xr.DataArray,
 
     Parameters:
     ----------
+
     agg: xarray.DataArray
         2D array of elevation values. NumPy, CuPy, NumPy-backed Dask,
         or Cupy-backed Dask array.
@@ -186,12 +187,12 @@ def aspect(agg: xr.DataArray,
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
 
-    Create Elevation DataArray
+    >>> # Create Elevation DataArray
     >>> agg = xr.DataArray(np.array([[0, 1, 0, 0],
     >>>                              [1, 1, 0, 0],
     >>>                              [0, 1, 2, 2],
@@ -204,7 +205,7 @@ def aspect(agg: xr.DataArray,
     >>> agg["lon"] = _lon
     >>> agg["lat"] = _lat
 
-    Create Aspect DataArray
+    >>> # Create Aspect DataArray
     >>> aspect = xrspatial.aspect(agg)
     >>> print(aspect)
     <xarray.DataArray 'aspect' (lat: 5, lon: 4)>
@@ -217,7 +218,7 @@ def aspect(agg: xr.DataArray,
     * lon      (lon) float64 0.0 1.0 2.0 3.0
     * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
 
-    Terrain Example: https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
+    >>> # Terrain Example: https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
     """
 
     # numpy case

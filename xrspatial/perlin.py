@@ -39,12 +39,12 @@ def perlin(width: int,
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> from xrspatial import perlin
 
-    Generate Perlin Aggregate
+    >>> # Generate Perlin Aggregate
     >>> print(perlin(5, 5))
     <xarray.DataArray (y: 5, x: 5)>
     array([[0.38502038, 0.3235394 , 0.13230299, 0.02275815, 0.13502038],

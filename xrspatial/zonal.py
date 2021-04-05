@@ -59,14 +59,14 @@ def stats(zones: xr.DataArray,
     >>>                       [3, np.nan, 20, 10]])
     >>> values = xarray.DataArray(values_val)
 
-    # default setting
+    >>> # default setting
     >>> df = stats(zones, values)
     >>> df
         mean	max 	min 	std     	var
     1	7.0 	20.0	-1.0	9.273618	86.00
     2	6.5	    10.0   	3.0	    3.500000	12.25
 
-    # custom stat
+    >>> # custom stat
     >>> custom_stats ={'sum': lambda val: val.sum()}
     >>> df = stats(zones, values, stat_funcs=custom_stats)
     >>> df
@@ -409,7 +409,7 @@ def suggest_zonal_canvas(smallest_area: Union[int, float],
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> from spatialpandas import GeoDataFrame
     >>> import geopandas as gpd
     >>> import datashader as ds
@@ -419,17 +419,17 @@ def suggest_zonal_canvas(smallest_area: Union[int, float],
     >>> df = df[df.continent != 'Antarctica']
     >>> df['id'] = [i for i in range(len(df.index))]
     >>> xmin, ymin, xmax, ymax = (df.bounds.minx.min(), df.bounds.miny.min(),
-...                               df.bounds.maxx.max(), df.bounds.maxy.max())
+    >>>                           df.bounds.maxx.max(), df.bounds.maxy.max())
     >>> x_range = (xmin, xmax)
     >>> y_range = (ymin, ymax)
     >>> smallest_area = df.area.min()
     >>> min_pixels = 20
     >>> height, width = suggest_zonal_canvas(x_range=x_range, y_range=y_range,
-...                                          smallest_area=smallest_area,
-...                                          crs='Mercator',
-...                                          min_pixels=min_pixels)
+    >>>                                      smallest_area=smallest_area,
+    >>>                                      crs='Mercator',
+    >>>                                      min_pixels=min_pixels)
     >>> cvs = ds.Canvas(x_range=x_range, y_range=y_range,
-...                     plot_height=height, plot_width=width)
+    >>>                 plot_height=height, plot_width=width)
     >>> spatial_df = GeoDataFrame(df, geometry='geometry')
     >>> agg = cvs.polygons(spatial_df, 'geometry', agg=ds.max('id'))
     >>> min_poly_id = df.area.argmin()

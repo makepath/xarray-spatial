@@ -284,12 +284,12 @@ def a_star_search(surface: xr.DataArray,
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> from xrspatial import pathfinding
 
-    Create Surface Data Array
+    >>> # Create Surface Data Array
     >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0],
     >>>                              [0, 0, 0, 0, 0],
     >>>                              [0, 0, 0, 0, 0],
@@ -302,7 +302,7 @@ def a_star_search(surface: xr.DataArray,
     >>> agg["lon"] = _lon
     >>> agg["lat"] = _lat
 
-    Create Path Data Array
+    >>> # Create Path Data Array
     >>> print(pathfinding.a_star_search(agg, (0,0), (4,4), x = 'lon', y = 'lat'))
     <xarray.DataArray (lat: 5, lon: 5)>
     array([[0.        , nan, nan, nan, nan],

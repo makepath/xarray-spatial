@@ -127,16 +127,16 @@ def curvature(agg: xr.DataArray,
     Notes:
     ----------
     Algorithm References:
-        - https://pro.arcgis.com/en/pro-app/latest/tool-reference/spatial-analyst/how-curvature-works.htm
+        https://pro.arcgis.com/en/pro-app/latest/tool-reference/spatial-analyst/how-curvature-works.htm
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> from xrspatial import curvature
 
-        Create Initial DataArray
+    >>> # Create Initial DataArray
     >>> agg = xr.DataArray(np.array([[0, 1, 0, 0],
     >>>                              [1, 1, 0, 0],
     >>>                              [0, 1, 2, 2],
@@ -162,7 +162,7 @@ def curvature(agg: xr.DataArray,
     Attributes:
         res:      1
 
-    Create Curvature DataArray
+    >>> # Create Curvature DataArray
     >>> print(curvature(agg))
     <xarray.DataArray 'curvature' (lat: 5, lon: 4)>
     array([[  nan,   nan,   nan,   nan],

@@ -57,28 +57,29 @@ def bump(width: int, height: int, count: Optional[int] = None,
     ----------
     Algorithm References:
         - http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf
+    Terrrain Example:
+        - https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import datashader as ds
     >>> from datashader.transfer_functions import shade
-
-    Generate Terrain
-    >>> from xrspatial import generate_terrain
-
-    >>> W = 800
-    >>> H = 600
-
-    >>> cvs = ds.Canvas(plot_width = W, plot_height = H,
-                            x_range = (-20e6, 20e6), y_range = (-20e6, 20e6))
-    >>> terrain = generate_terrain(canvas=cvs)
-
-    Create Height Function
     >>> from functools import partial
     >>> from xrspatial import bump
 
+    >>> # Generate Terrain
+    >>> from xrspatial import generate_terrain
+    >>> W = 800
+    >>> H = 600
+    >>> cvs = ds.Canvas(plot_width = W,
+    >>>                 plot_height = H,
+    >>>                 x_range = (-20e6, 20e6),
+    >>>                 y_range = (-20e6, 20e6))
+    >>> terrain = generate_terrain(canvas=cvs)
+
+    >>> # Create Height Function
     >>> def heights(locations, src, src_range, height=20):
     >>>     num_bumps = locations.shape[0]
     >>>     out = np.zeros(num_bumps, dtype=np.uint16)
@@ -91,34 +92,32 @@ def bump(width: int, height: int, count: Optional[int] = None,
     >>>             out[r] = height
     >>>    return out
 
-    Create Bump Map
+    >>> # Create Bump Map
     >>> bump_count = 10000
     >>> src = terrain.data
     >>> bumps = bump(W, H, count = bump_count,
-                     height_func = partial(heights,
-                                           src = src,
-                                           src_range = (1000, 1300),
-                                           height = 5))
+    >>>              height_func = partial(heights,
+    >>>                                    src = src,
+    >>>                                    src_range = (1000, 1300),
+    >>>                                    height = 5))
     >>> bumps += bump(W, H, count = bump_count//2,
-                     height_func = partial(heights,
-                                           src = src,
-                                           src_range = (1300, 1700),
-                                           height = 20))
+    >>>              height_func = partial(heights,
+    >>>                                    src = src,
+    >>>                                    src_range = (1300, 1700),
+    >>>                                    height = 20))
     >>> print(bumps)
-    <xarray.DataArray (y: 600, x: 800)>
-    array([[0., 0., 0., ..., 0., 0., 0.],
-           [0., 0., 0., ..., 0., 0., 0.],
-           [0., 0., 0., ..., 0., 0., 0.],
-           ...,
-           [0., 0., 0., ..., 0., 0., 0.],
-           [0., 0., 0., ..., 0., 0., 0.],
-           [0., 0., 0., ..., 0., 0., 0.]])
-    Dimensions without coordinates: y, x
-    Attributes:
-        res:      1
-
-    Terrrain Example:
-        - https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
+    ... <xarray.DataArray (y: 600, x: 800)>
+    ... array([[0., 0., 0., ..., 0., 0., 0.],
+    ...        [0., 0., 0., ..., 0., 0., 0.],
+    ...        [0., 0., 0., ..., 0., 0., 0.],
+    ...        ...,
+    ...        [0., 0., 0., ..., 0., 0., 0.],
+    ...        [0., 0., 0., ..., 0., 0., 0.],
+    >>>        [0., 0., 0., ..., 0., 0., 0.]])
+    >>> Dimensions without coordinates: y, x
+    >>> Attributes:
+    >>>     res: 1
+        
     """
 
     linx = range(width)

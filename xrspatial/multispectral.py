@@ -79,7 +79,7 @@ def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     Allows for molecular and ozone correction with no further
     need for aerosol correction, except for dust conditions.
 
-    Parameters
+    Parameters:
     ----------
     nir_agg : DataArray
         near-infrared band data
@@ -90,7 +90,7 @@ def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     name: str, optional (default = "arvi")
         Name of output DataArray
 
-    Returns
+    Returns:
     ----------
     xarray.DataArray
         2D array, of the same type as the input, of calculated arvi values.
@@ -99,16 +99,16 @@ def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     Notes:
     ----------
     Algorithm References:
-    https://modis.gsfc.nasa.gov/sci_team/pubs/abstract_new.php?id=03667
+        https://modis.gsfc.nasa.gov/sci_team/pubs/abstract_new.php?id=03667
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
 
-        Create Sample Band Data
+    >>> # Create Sample Band Data
     >>> np.random.seed(0)
     >>> nir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
     >>> height, width = nir_agg.shape
@@ -160,7 +160,7 @@ def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
 
-    Create ARVI DataArray
+    >>> # Create ARVI DataArray
     >>> data = xrspatial.multispectral.arvi(nir_agg, red_agg, blue_agg)
     >>> print(data)
     <xarray.DataArray 'arvi' (lat: 4, lon: 4)>
@@ -267,7 +267,7 @@ def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     name: str, optional (default = "evi")
         Name of output DataArray.
 
-    Returns
+    Returns:
     ----------
     xarray.DataArray
         2D array, of the same type as the input, of calculated evi values.
@@ -276,16 +276,16 @@ def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     Notes:
     ----------
     Algorithm References:
-    https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+        https://en.wikipedia.org/wiki/Enhanced_vegetation_index
 
-        Examples:
+    Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
 
-    Create Sample Band Data
+    >>> # Create Sample Band Data
     >>> np.random.seed(0)
     >>> nir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
     >>> height, width = nir_agg.shape
@@ -336,18 +336,14 @@ def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     * lat      (lat) float64 0.0 1.0 2.0 3.0
     * lon      (lon) float64 0.0 1.0 2.0 3.0
 
-    Create EVI DataArray
+    >>> # Create EVI DataArray
     >>> data = xrspatial.multispectral.evi(nir_agg, red_agg, blue_agg)
     >>> print(data)
     <xarray.DataArray 'evi' (lat: 4, lon: 4)>
-    array([[ 4.21876564e-01, -2.19724452e-03, -5.98098914e-01,
-         6.45351400e+00],
-       [-8.15782552e-01, -4.98545103e+00,  6.15826250e-01,
-        -2.00992194e+00],
-       [ 6.75886740e-01, -1.48534469e-01, -2.64873586e+00,
-        -2.33788375e-01],
-       [ 5.09116426e-01,  3.55121123e-02, -7.37617269e-01,
-         1.86948381e+00]])
+    array([[ 4.21876564e-01, -2.19724452e-03, -5.98098914e-01, 6.45351400e+00],
+       [-8.15782552e-01, -4.98545103e+00,  6.15826250e-01, -2.00992194e+00],
+       [ 6.75886740e-01, -1.48534469e-01, -2.64873586e+00, -2.33788375e-01],
+       [ 5.09116426e-01,  3.55121123e-02, -7.37617269e-01, 1.86948381e+00]])
     Coordinates:
     * lat      (lat) float64 0.0 1.0 2.0 3.0
     * lon      (lon) float64 0.0 1.0 2.0 3.0
@@ -457,12 +453,12 @@ def gci(nir_agg: DataArray, green_agg: DataArray, name='gci'):
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
 
-    Create Sample Band Data
+    >>> # Create Sample Band Data
     >>> np.random.seed(0)
     >>> nir_agg = xr.DataArray(np.random.rand(4,4),
     >>> dims = ["lat", "lon"])
@@ -499,7 +495,7 @@ def gci(nir_agg: DataArray, green_agg: DataArray, name='gci'):
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
 
-    Create GCI DataArray
+    >>> # Create GCI DataArray
     >>> data = xrspatial.multispectral.gci(nir_agg, green_agg)
     >>> print(data)
     <xarray.DataArray 'gci' (lat: 4, lon: 4)>
@@ -538,7 +534,7 @@ def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     Computes Normalized Burn Ratio. Used to identify
     burned areas and provide a measure of burn severity.
 
-    Parameters
+    Parameters:
     ----------
     nir_agg : DataArray
         near-infrared band
@@ -549,7 +545,7 @@ def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     name: str, optional (default = "nbr")
         Name of output DataArray
 
-    Returns
+    Returns:
     ----------
     xarray.DataArray
         2D array, of the same type as the input, of calculated nbr values.
@@ -558,15 +554,16 @@ def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     Notes:
     ----------
     Algorithm References:
-    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
+        https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
-    Create Sample Band Data
+
+    >>> # Create Sample Band Data
     >>> np.random.seed(0)
     >>> nir_agg = xr.DataArray(np.random.rand(4,4),
     >>> dims = ["lat", "lon"])
@@ -601,7 +598,8 @@ def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     Coordinates:
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
-        Create NBR DataArray
+
+    >>> # Create NBR DataArray
     >>> data = xrspatial.multispectral.nbr(nir_agg, swir2_agg)
     >>> print(data)
     <xarray.DataArray 'nbr' (lat: 4, lon: 4)>
@@ -637,7 +635,8 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr2'):
     to highlight water sensitivity in vegetation and
     may be useful in post-fire recovery studies."
     https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
-    Parameters
+
+    Parameters:
     ----------
     swir1_agg : DataArray
         near-infrared band
@@ -651,22 +650,25 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr2'):
     name: str, optional (default = "nbr2")
         Name of output DataArray
 
-    Returns
+    Returns:
     ----------
     data: DataArray
+        2D array, of the same type as the input, of calculated nbr2 values.
+        All other input attributes are preserved.
 
     Notes:
     ----------
     Algorithm References:
-    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+        https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
-    Create Sample Band Data
+
+    >>> # Create Sample Band Data
     >>> np.random.seed(5)
     >>> swir1_agg = xr.DataArray(np.random.rand(4,4),
     >>>    dims = ["lat", "lon"])
@@ -702,7 +704,8 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr2'):
     Coordinates:
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
-        Create NBR DataArray
+    
+    >>> # Create NBR DataArray
     >>> data = xrspatial.multispectral.nbr2(swir1_agg, swir2_agg)
     >>> print(data)
     <xarray.DataArray 'nbr' (lat: 4, lon: 4)>
@@ -746,7 +749,7 @@ def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
     name: str, optional (default ="ndvi")
         Name of output DataArray.
 
-    Returns
+    Returns:
     ----------
     xarray.DataArray
         2D array, of the same type as the input, of calculated ndvi values.
@@ -755,16 +758,16 @@ def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
     Notes:
     ----------
     Algorithm References:
-    http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
+        http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
 
-        Examples:
+    Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
 
-    Create Sample Band Data
+    >>> # Create Sample Band Data
     >>> np.random.seed(0)
     >>> nir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
     >>> height, width = nir_agg.shape
@@ -799,7 +802,7 @@ def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
 
-    Create NDVI DataArray
+    >>> # Create NDVI DataArray
     >>> data = xrspatial.multispectral.ndvi(nir_agg, red_agg)
     >>> print(data)
     <xarray.DataArray 'ndvi' (lat: 4, lon: 4)>
@@ -834,7 +837,7 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
     Computes Normalized Difference Moisture Index.
     Used to determine vegetation water content.
 
-    Parameters
+    Parameters:
     ----------
     nir_agg : DataArray
         near-infrared band
@@ -847,7 +850,7 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
     name: str, optional (default ="ndmi")
         Name of output DataArray.
 
-    Returns
+    Returns:
     ----------
     xarray.DataArray
         2D array, of the same type as the input, of calculated ndmi values.
@@ -856,16 +859,16 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
     Notes:
     ----------
     Algorithm References:
-    https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
+        https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
 
-    Create Sample Band Data
+    >>> # Create Sample Band Data
     >>> np.random.seed(0)
     >>> nir_agg = xr.DataArray(np.random.rand(4,4),
     >>>             dims = ["lat", "lon"])
@@ -902,7 +905,7 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
 
-    Create NDMI DataArray
+    >>> # Create NDMI DataArray
     >>> data = xrspatial.multispectral.ndmi(nir_agg, swir1_agg)
     >>> print(data)
     <xarray.DataArray 'ndmi' (lat: 4, lon: 4)>
@@ -1040,7 +1043,7 @@ def savi(nir_agg: DataArray, red_agg: DataArray,
     Used to determine if a cell contains living
     vegetation while minimizing soil brightness.
 
-    Parameters
+    Parameters:
     ----------
     nir_agg : DataArray
         near-infrared band data
@@ -1052,7 +1055,7 @@ def savi(nir_agg: DataArray, red_agg: DataArray,
     name: str, optional (default ="savi")
         Name of output DataArray.
 
-    Returns
+    Returns:
     ----------
     xarray.DataArray
         2D array, of the same type as the input, of calculated savi values.
@@ -1061,16 +1064,16 @@ def savi(nir_agg: DataArray, red_agg: DataArray,
     Notes:
     ----------
     Algorithm References:
-     - https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
+        https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
 
     Examples
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
 
-    Create Sample Band Data
+    >>> # Create Sample Band Data
     >>> np.random.seed(0)
     >>> nir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
     >>> height, width = nir_agg.shape
@@ -1106,7 +1109,7 @@ def savi(nir_agg: DataArray, red_agg: DataArray,
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
 
-        Create SAVI DataArray
+    >>> # Create SAVI DataArray
     >>> data = xrspatial.multispectral.savi(nir_agg, red_agg)
     >>> print(data)
     <xarray.DataArray 'savi' (lat: 4, lon: 4)>
@@ -1194,7 +1197,7 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     Computes Structure Insensitive Pigment Index which helpful
     in early disease detection in vegetation.
 
-    Parameters
+    Parameters:
     ----------
     nir_agg: xarray.DataArray
         2D array of near-infrared band data.
@@ -1205,7 +1208,7 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     name: str, optional (default = "sipi")
         Name of output DataArray.
 
-    Returns
+    Returns:
     ----------
      xarray.DataArray
         2D array, of the same type as the input, of calculated sipi values.
@@ -1214,16 +1217,16 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     Notes:
     ----------
     Algorithm References:
-    https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+        https://en.wikipedia.org/wiki/Enhanced_vegetation_index
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
 
-    Create Sample Band Data
+    >>> # Create Sample Band Data
     >>> np.random.seed(0)
     >>> nir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
     >>> height, width = nir_agg.shape
@@ -1274,7 +1277,7 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     * lat      (lat) float64 0.0 1.0 2.0 3.0
     * lon      (lon) float64 0.0 1.0 2.0 3.0
 
-    Create ARVI DataArray
+    >>> # Create ARVI DataArray
     >>> data = xrspatial.multispectral.sipi(nir_agg, red_agg, blue_agg)
     >>> print(data)
     <xarray.DataArray 'sipi' (lat: 4, lon: 4)>
@@ -1375,7 +1378,7 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
     name: str, optional (default = "ebbi")
         Name of output DataArray.
 
-    Returns
+    Returns:
     ----------
     xarray.DataArray
         2D array, of the same type as the input of calculated ebbi values.
@@ -1388,12 +1391,12 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
 
     Examples:
     ----------
-    Imports
+    >>> # Imports
     >>> import numpy as np
     >>> import xarray as xr
     >>> import xrspatial
 
-    Create Sample Band Data
+    >>> # Create Sample Band Data
     >>> np.random.seed(1)
     >>> red_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
     >>> height, width = red_agg.shape
@@ -1443,7 +1446,8 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
     Coordinates:
       * lat      (lat) float64 0.0 1.0 2.0 3.0
       * lon      (lon) float64 0.0 1.0 2.0 3.0
-        Create EBBI DataArray
+
+    >>> # Create EBBI DataArray
     >>> data = xrspatial.multispectral.ebbi(red_agg, swir_agg, tir_agg)
     >>> print(data)
     <xarray.DataArray 'ebbi' (lat: 4, lon: 4)>
