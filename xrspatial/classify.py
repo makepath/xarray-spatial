@@ -357,8 +357,7 @@ def quantile(agg: xr.DataArray,
     k : int, default = 4
         Number of quantiles to be produced.
     name : str, default = "quantile"
-        Name of the output aggregate array.
-        
+        Name of the output aggregate array.        
     Returns
     -------
     quantile_agg : xarray.DataArray, of the same type as `agg`.

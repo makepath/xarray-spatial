@@ -29,8 +29,11 @@ def _finish_bump(width, height, locs, heights, spread):
     return out
 
 
-def bump(width: int, height: int, count: Optional[int] = None,
-         height_func=None, spread: int = 1) -> xr.DataArray:
+def bump(width: int,
+        height: int,
+        count: Optional[int] = None,
+        height_func = None,
+        spread: int = 1) -> xr.DataArray:
     """Generate a simple bump map to simulate the appearance of land features.
 
     Using a user-defined height function, determines at what elevation a

@@ -127,18 +127,17 @@ def calc_res(raster):
     """Calculate the resolution of xarray.DataArray raster and return it as the
     two-tuple (xres, yres).
 
-    Parameters:
+    Parameters
     ----------
-    raster: xarray.DataArray
+    raster: xr.DataArray
         Input raster.
-
-    Returns:
-    ----------
+    Returns
+    -------
     tuple
         Tuple of (x-resolution, y-resolution)
 
-    Notes:
-    ----------
+    Notes
+    -----
     Sourced from datashader.utils
     """
 
@@ -190,26 +189,25 @@ def lnglat_to_meters(longitude, latitude):
     or Numpy arrays, and will be returned in the same form.  Lists
     or tuples will be converted to Numpy arrays.
 
-    Parameters:
+    Parameters
     ----------
     latitude: float
         Input latitude.
     longitude: float
         Input longitude.
-
-    Returns:
-    ----------
+    Returns
+    -------
     Tuple of (easting, northing)
 
-    Examples:
-    ----------
-    >>> easting, northing = lnglat_to_meters(-40.71,74)
-    >>> easting, northing = lnglat_to_meters(np.array([-74]),
-    >>>                                      np.array([40.71]))
-    >>> df = pandas.DataFrame(dict(longitude=np.array([-74]),
-    >>>                            latitude=np.array([40.71])))
-    >>> df.loc[:, 'longitude'], df.loc[:, 'latitude'] = lnglat_to_meters(
-    >>>     df.longitude, df.latitude)
+    Example
+    -------
+    >>>     easting, northing = lnglat_to_meters(-40.71,74)
+    >>>     easting, northing = lnglat_to_meters(np.array([-74]),
+    >>>                                          np.array([40.71]))
+    >>>     df = pandas.DataFrame(dict(longitude=np.array([-74]),
+    >>>                                latitude=np.array([40.71])))
+    >>>     df.loc[:, 'longitude'], df.loc[:, 'latitude'] = lnglat_to_meters(
+    >>>         df.longitude, df.latitude)
     """
 
     if isinstance(longitude, (list, tuple)):
@@ -238,17 +236,16 @@ def height_implied_by_aspect_ratio(W, X, Y):
       x-range in data units
     Y: tuple(xmin, xmax)
       x-range in data units
-
-    Returns:
-    ----------
+    Returns
+    -------
     height in pixels
 
-    Examples:
-    ----------
-    >>> plot_width = 1000
-    >>> x_range = (0,35
-    >>> y_range = (0, 70)
-    >>> plot_height = height_implied_by_aspect_ratio(plot_width, x_range, y_range)
+    Example
+    -------
+    >>>     plot_width = 1000
+    >>>     x_range = (0,35
+    >>>     y_range = (0, 70)
+    >>>     plot_height = height_implied_by_aspect_ratio(plot_width, x_range, y_range)
     """
 
     return int((W * (Y[1] - Y[0])) / (X[1] - X[0]))

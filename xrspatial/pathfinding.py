@@ -235,84 +235,84 @@ def a_star_search(surface: xr.DataArray,
                   snap_start: bool = False,
                   snap_goal: bool = False) -> xr.DataArray:
     """
-    Calculate distance from a starting point to a
-    goal through a surface graph. Starting location
-    and goal location should be within the graph.
+    Calculates, for all inner cells of an array, the 2D convolution of
+    Calculate distance from a starting point to a goal through a surface
+    graph. Starting location and goal location should be within the graph.
     
-    A* is a modification of Dijkstra’s Algorithm
-    that is optimized for a single destination.
-    Dijkstra’s Algorithm can find paths to all
-    locations; A* finds paths to one location,
-    or the closest of several locations. It prioritizes
-    paths that seem to be leading closer to a goal.
+    A* is a modification of Dijkstra’s Algorithm that is optimized for
+    a single destination. Dijkstra’s Algorithm can find paths to all
+    locations; A* finds paths to one location,or the closest of several
+    locations. It prioritizes paths that seem to be leading closer to
+    a goal.
     
-    The output is an equal sized Xarray.DataArray
-    with NaNs for non-path pixels, and the value
-    of the path pixels being the current cost up to that point.
+    The output is an equal sized Xarray.DataArray with NaNs for non-path
+    pixels, and the value of the path pixels being the current cost up
+    to that point.
     
-    Parameters:
+    Parameters
     ----------
-    surface: xarray.DataArray
-        2D array of values to bin
-    start: array like object (tuple, list, array, ...) of 2 numeric elements
-        (x, y) or (lon, lat) coordinates of the starting point
-    goal: array like object (tuple, list, array, ...) of 2 numeric elements
-        (x, y) or (lon, lat) coordinates of the goal location
-    barriers: array like object (default = [])
-        list of values inside the surface which are barriers (cannot cross)
-    x: str (default = 'x)
-        name of the x coordinate in input surface raster
-    y: str (default = 'x')
-        name of the y coordinate in input surface raster
-    connectivity: int (default = 8)
-    snap_start: bool (default = False)
-        snap the start location to the nearest valid value before beginning pathfinding
-    snap_goal: bool (default = False)
-        snap the goal location to the nearest valid value before beginning pathfinding
-        
-    Returns:
-    ----------
-    path_agg: Xarray.DataArray
-        2D array, of the same type as the input surface raster.
+    surface : xr.DataArray
+        2D array of values to bin.
+    start : array-like object of 2 numeric elements
+        (x, y) or (lon, lat) coordinates of the starting point.
+    goal : array like object of 2 numeric elements
+        (x, y) or (lon, lat) coordinates of the goal location.
+    barriers : array like object, default = []
+        List of values inside the surface which are barriers (cannot cross).
+    x : str, default = 'x'
+        Name of the x coordinate in input surface raster.
+    y: str, default = 'x'
+        Name of the y coordinate in input surface raster.
+    connectivity : int, default = 8
+    snap_start: bool, default = False
+        Snap the start location to the nearest valid value before
+        beginning pathfinding.
+    snap_goal: bool, default = False
+        Snap the goal location to the nearest valid value before
+        beginning pathfinding.
+    Returns
+    -------
+    path_agg: xr.DataArray of the same type as `surface`.
+        2D array of pathfinding values.
         All other input attributes are preserved.
 
-    Notes:
-    ----------
-    Algorithm References:
+    Notes
+    -----
+    Algorithm References
         - https://www.redblobgames.com/pathfinding/a-star/implementation.html
         - https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
 
-    Examples:
-    ----------
-    >>> # Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import pathfinding
+    Example
+    -------
+    >>>     # Imports
+    >>>     import numpy as np
+    >>>     import xarray as xr
+    >>>     from xrspatial import pathfinding
 
-    >>> # Create Surface Data Array
-    >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0],
-    >>>                              [0, 0, 0, 0, 0],
-    >>>                              [0, 0, 0, 0, 0],
-    >>>                              [0, 0, 0, 0, 0],
-    >>>                              [0, 0, 0, 0, 0]]),
-    >>>                    dims = ["lat", "lon"])
-    >>> height, width = agg.shape
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> agg["lon"] = _lon
-    >>> agg["lat"] = _lat
+    >>>     # Create Surface Data Array
+    >>>     agg = xr.DataArray(np.array([[0, 0, 0, 0, 0],
+    >>>                                  [0, 0, 0, 0, 0],
+    >>>                                  [0, 0, 0, 0, 0],
+    >>>                                  [0, 0, 0, 0, 0],
+    >>>                                  [0, 0, 0, 0, 0]]),
+    >>>                        dims = ["lat", "lon"])
+    >>>     height, width = agg.shape
+    >>>     _lon = np.linspace(0, width - 1, width)
+    >>>     _lat = np.linspace(0, height - 1, height)
+    >>>     agg["lon"] = _lon
+    >>>     agg["lat"] = _lat
 
-    >>> # Create Path Data Array
-    >>> print(pathfinding.a_star_search(agg, (0,0), (4,4), x = 'lon', y = 'lat'))
+    >>>     # Create Path Data Array
+    >>>     print(pathfinding.a_star_search(agg, (0,0), (4,4), x = 'lon', y = 'lat'))
     <xarray.DataArray (lat: 5, lon: 5)>
-    array([[0.        , nan, nan, nan, nan],
-           [nan, 1.41421356, nan, nan, nan],
-           [nan, nan, 2.82842712, nan, nan],
-           [nan, nan, nan, 4.24264069, nan],
-           [nan, nan, nan, nan, 5.65685425]])
-    Coordinates:
-      * lon      (lon) float64 0.0 1.0 2.0 3.0 4.0
-      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+            array([[0.        , nan, nan, nan, nan],
+                   [nan, 1.41421356, nan, nan, nan],
+                   [nan, nan, 2.82842712, nan, nan],
+                   [nan, nan, nan, 4.24264069, nan],
+                   [nan, nan, nan, nan, 5.65685425]])
+            Coordinates:
+              * lon      (lon) float64 0.0 1.0 2.0 3.0 4.0
+              * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
     """
 
     if surface.ndim != 2:

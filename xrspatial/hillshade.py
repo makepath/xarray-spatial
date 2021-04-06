@@ -109,75 +109,74 @@ def hillshade(agg: xr.DataArray,
               angle_altitude: int = 25,
               name: Optional[str] = 'hillshade') -> xr.DataArray:
     """
-    Calculates, for all cells in the array, an illumination
-    value of each cell based on illumination from a specific
-    azimuth and altitude.
+    Calculates, for all cells in the array, an illumination value of each
+    cell based on illumination from a specific azimuth and altitude.
 
-    Parameters:
+    Parameters
     ----------
-    agg: xarray.DataArray
-        2D array of elevation values:
-        NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
-    altitude: int (default: 30)
+    agg : xarray.DataArray
+        2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
+        of elevation values.
+    altitude : int, default = 25
         Altitude angle of the sun specified in degrees.
-    azimuth: int (default: 315)
+    azimuth : int, default = 225
         The angle between the north vector and the perpendicular projection
         of the light source down onto the horizon specified in degrees.
-    name: str, optional (default = "hillshade")
+    name : str, default = "hillshade"
         Name of output DataArray.
 
-    Returns:
-    ----------
-    data: xarray.DataArray
-        2D array, of the same type as the input of calculated illumination values.
+    Returns
+    -------
+    hillshade_agg : xarray.DataArray, of same type as `agg`
+        2D aggregate array of illumination values.
 
-    Notes:
-    ----------
-    Algorithm References:
-        http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html
+    Notes
+    -----
+    Algorithm References
+        - http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html
         
-    Examples:
-    ----------
-    >>> # Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> import xrspatial
+    Example
+    -------
+    >>>     # Imports
+    >>>     import numpy as np
+    >>>     import xarray as xr
+    >>>     import xrspatial
 
-    >>> # Create Initial DataArray
-    >>> agg = xr.DataArray(np.array([[0, 1, 0, 0],
-    >>>                              [1, 1, 0, 0],
-    >>>                              [0, 1, 2, 2],
-    >>>                              [1, 0, 2, 0],
-    >>>                              [0, 2, 2, 2]]),
-    >>>                       dims = ["lat", "lon"])
-    >>> height, width = agg.shape
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> agg["lon"] = _lon
-    >>> agg["lat"] = _lat
-    >>> print(agg)
-    <xarray.DataArray (lat: 5, lon: 4)>
-    array([[0, 1, 0, 0],
-           [1, 1, 0, 0],
-           [0, 1, 2, 2],
-           [1, 0, 2, 0],
-           [0, 2, 2, 2]])
-    Coordinates:
-      * lon      (lon) float64 0.0 1.0 2.0 3.0
-      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+    >>>     # Create Initial DataArray
+    >>>     agg = xr.DataArray(np.array([[0, 1, 0, 0],
+    >>>                                  [1, 1, 0, 0],
+    >>>                                  [0, 1, 2, 2],
+    >>>                                  [1, 0, 2, 0],
+    >>>                                  [0, 2, 2, 2]]),
+    >>>                           dims = ["lat", "lon"])
+    >>>     height, width = agg.shape
+    >>>     _lon = np.linspace(0, width - 1, width)
+    >>>     _lat = np.linspace(0, height - 1, height)
+    >>>     agg["lon"] = _lon
+    >>>     agg["lat"] = _lat
+    >>>     print(agg)
+            <xarray.DataArray (lat: 5, lon: 4)>
+            array([[0, 1, 0, 0],
+                   [1, 1, 0, 0],
+                   [0, 1, 2, 2],
+                   [1, 0, 2, 0],
+                   [0, 2, 2, 2]])
+            Coordinates:
+            * lon      (lon) float64 0.0 1.0 2.0 3.0
+            * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
 
-    >>> # Create Hillshade DataArray
-    >>> hillshade = xrspatial.hillshade(agg)
-    >>> print(hillshade)
-    <xarray.DataArray 'hillshade' (lat: 5, lon: 4)>
-    array([[       nan,        nan,        nan,        nan],
-           [       nan, 0.54570079, 0.32044456,        nan],
-           [       nan, 0.96130094, 0.53406336,        nan],
-           [       nan, 0.67253318, 0.71130913,        nan],
-           [       nan,        nan,        nan,        nan]])
-    Coordinates:
-      * lon      (lon) float64 0.0 1.0 2.0 3.0
-      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+    >>>     # Create Hillshade DataArray
+    >>>     hillshade = xrspatial.hillshade(agg)
+    >>>     print(hillshade)
+            <xarray.DataArray 'hillshade' (lat: 5, lon: 4)>
+            array([[       nan,        nan,        nan,        nan],
+                   [       nan, 0.54570079, 0.32044456,        nan],
+                   [       nan, 0.96130094, 0.53406336,        nan],
+                   [       nan, 0.67253318, 0.71130913,        nan],
+                   [       nan,        nan,        nan,        nan]])
+            Coordinates:
+            * lon      (lon) float64 0.0 1.0 2.0 3.0
+            * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
     """
 
     # numpy case

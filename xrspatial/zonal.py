@@ -21,21 +21,21 @@ def stats(zones: xr.DataArray,
     
     A single output value is computed for every zone in the input zone dataset.
     
-    Parameters:
+    Parameters
     ----------
-    zones: xarray.DataArray,
+    zones : xr.DataArray,
         zones.values is a 2d array of integers.
         A zone is all the cells in a raster that have the same value,
         whether or not they are contiguous. The input zone layer defines
         the shape, values, and locations of the zones. An integer field
         in the zone input is specified to define the zones.
 
-    values: xarray.DataArray,
+    values : xr.DataArray,
         values.values is a 2d array of integers or floats.
         The input value raster contains the input values used in calculating
         the output statistic for each zone.
 
-    stat_funcs: list of strings or dictionary<stat_name: func(zone_values)>.
+    stat_funcs : list of strings or dictionary<stat_name: func(zone_values)>.
                 (default = ['mean', 'max', 'min', 'std', 'var', 'count'])
         Which statistics to calculate for each zone.
         If a list, possible choices are subsets of
@@ -43,36 +43,35 @@ def stats(zones: xr.DataArray,
         In the dictionary case, all of its values must be callable.
         Function takes only one argument that is the zone values.
         The key become the column name in the output DataFrame.
-
-    Returns:
-    ----------
-    stats_df: pandas.DataFrame
+    Returns
+    -------
+    stats_df : pandas.DataFrame
         A pandas DataFrame where each column is a statistic and each row
         is a zone with zone id.
 
-    Examples:
-    --------
-    >>> zones_val = np.array([[1, 1, 0, 2],
-    >>>                      [0, 2, 1, 2]])
-    >>> zones = xarray.DataArray(zones_val)
-    >>> values_val = np.array([[2, -1, 5, 3],
-    >>>                       [3, np.nan, 20, 10]])
-    >>> values = xarray.DataArray(values_val)
+    Example
+    -------
+    >>>     zones_val = np.array([[1, 1, 0, 2],
+    >>>                          [0, 2, 1, 2]])
+    >>>     zones = xarray.DataArray(zones_val)
+    >>>     values_val = np.array([[2, -1, 5, 3],
+    >>>                           [3, np.nan, 20, 10]])
+    >>>     values = xarray.DataArray(values_val)
 
-    >>> # default setting
-    >>> df = stats(zones, values)
-    >>> df
-        mean	max 	min 	std     	var
-    1	7.0 	20.0	-1.0	9.273618	86.00
-    2	6.5	    10.0   	3.0	    3.500000	12.25
+    >>>     # default setting
+    >>>     df = stats(zones, values)
+    >>>     df
+                mean	max 	min 	std     	var
+            1	7.0 	20.0	-1.0	9.273618	86.00
+            2	6.5	    10.0   	3.0	    3.500000	12.25
 
-    >>> # custom stat
-    >>> custom_stats ={'sum': lambda val: val.sum()}
-    >>> df = stats(zones, values, stat_funcs=custom_stats)
-    >>> df
-        sum
-    1	21.0
-    2	13.0
+    >>>     # custom stat
+    >>>     custom_stats ={'sum': lambda val: val.sum()}
+    >>>     df = stats(zones, values, stat_funcs=custom_stats)
+    >>>     df
+                sum
+            1	21.0
+            2	13.0
     """
 
     if zones.shape != values.shape:
@@ -217,26 +216,25 @@ def crosstab(zones: xr.DataArray,
     2D-coordinate case if collapsed across the categories (e.g. if one
     did ``aggc.sum(dim='cat')`` for a categorical dimension ``cat``).
 
-    Parameters:
+    Parameters
     ----------
-    zones: xarray.DataArray,
+    zones : xr.DataArray,
         zones.values is a 2d array of integers.
         A zone is all the cells in a raster that have the same value,
         whether or not they are contiguous. The input zone layer defines
         the shape, values, and locations of the zones. An integer field
         in the zone input is specified to define the zones.
 
-    values: xarray.DataArray,
+    values : xr.DataArray,
         values.values is a 3d array of integers or floats.
         The input value raster contains the input values used in calculating
         the categorical statistic for each zone.
 
-    layer: str, optional (default = None)
+    layer: str, default = None
         name of the layer inside the `values` DataArray for getting the values.
-
-    Returns:
-    ----------
-    crosstab_df: pandas.DataFrame
+    Returns
+    -------
+    crosstab_df : pandas.DataFrame
         A pandas DataFrame where each column is a categorical value
         and each row is a zone with zone id.
         Each entry presents the percentage of the category over the zone.
@@ -278,36 +276,36 @@ def apply(zones: xr.DataArray,
     Apply a function to the `values` agg within zones in `zones` agg.
     Change the agg content.
 
-    Parameters:
+    Parameters
     ----------
-    zones: xarray.DataArray,
+    zones : xr.DataArray,
         - zones.values is a 2d array of integers.
         - A zone is all the cells in a raster that have the same value,
           whether or not they are contiguous. The input zone layer defines
           the shape, values, and locations of the zones. An integer field
           in the zone input is specified to define the zones.
-    agg: xarray.DataArray,
+    agg : xr.DataArray,
         - agg.values is either a 2D or 3D array of integers or floats.
         - The input value raster.
     func: callable function to apply.
 
-    Returns:
-    ----------
+    Returns
+    -------
         None
 
-    Examples:
-    --------
-    >>> zones_val = np.array([[1, 1, 0, 2],
-    >>>                       [0, 2, 1, 2]])
-    >>> zones = xarray.DataArray(zones_val)
-    >>> values_val = np.array([[2, -1, 5, 3],
-    >>>                   [3, np.nan, 20, 10]])
-    >>> agg = xarray.DataArray(values_val)
-    >>> func = lambda x: 0
-    >>> apply(zones, agg, func)
-    >>> agg
-    >>> array([[0, 0, 5, 0],
-    >>>        [3, 0, 0, 0]])
+    Example
+    -------
+    >>>     zones_val = np.array([[1, 1, 0, 2],
+    >>>                           [0, 2, 1, 2]])
+    >>>     zones = xarray.DataArray(zones_val)
+    >>>     values_val = np.array([[2, -1, 5, 3],
+    >>>                            [3, np.nan, 20, 10]])
+    >>>     agg = xarray.DataArray(values_val)
+    >>>     func = lambda x: 0
+    >>>     apply(zones, agg, func)
+    >>>     agg
+            array([[0, 0, 5, 0],
+                   [3, 0, 0, 0]])
     """
 
     if not isinstance(zones, xr.DataArray):
@@ -388,52 +386,52 @@ def suggest_zonal_canvas(smallest_area: Union[int, float],
     the actual number of pixels after rasterization. It is recommended to add
     an additional of 5% to @min_pixels parameter.
 
-    Parameters:
+    Parameters
     ----------
-    x_range: tuple or list of 2 numeric elements,
+    x_range : tuple or list of 2 numeric elements,
         The full x extent of the polygon GeoDataFrame.
-    y_range: tuple or list of 2 numeric elements,
+    y_range : tuple or list of 2 numeric elements,
         The full y extent of the polygon GeoDataFrame.
-    smallest_area: numeric (float, int)
+    smallest_area : numeric (float, int)
         Area of the smallest polygon.
-    crs: str (default = 'Mercator)
+    crs : str, default = 'Mercator'
         Name of the coordinate reference system.
-    min_pixels: int (default = 25)
+    min_pixels : int, default = 25
         Expected number of pixels of the polygon with smallest area
         when the whole dataframe is rasterized.
 
-    Returns:
-    ----------
+    Returns
+    -------
     height, width: int, int
         height and width of the canvas in pixel space
 
-    Examples:
-    ----------
-    >>> # Imports
-    >>> from spatialpandas import GeoDataFrame
-    >>> import geopandas as gpd
-    >>> import datashader as ds
+    Example
+    -------
+    >>>     # Imports
+    >>>     from spatialpandas import GeoDataFrame
+    >>>     import geopandas as gpd
+    >>>     import datashader as ds
 
-    >>> df = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
-    >>> df = df.to_crs("EPSG:3857")
-    >>> df = df[df.continent != 'Antarctica']
-    >>> df['id'] = [i for i in range(len(df.index))]
-    >>> xmin, ymin, xmax, ymax = (df.bounds.minx.min(), df.bounds.miny.min(),
-    >>>                           df.bounds.maxx.max(), df.bounds.maxy.max())
-    >>> x_range = (xmin, xmax)
-    >>> y_range = (ymin, ymax)
-    >>> smallest_area = df.area.min()
-    >>> min_pixels = 20
-    >>> height, width = suggest_zonal_canvas(x_range=x_range, y_range=y_range,
-    >>>                                      smallest_area=smallest_area,
-    >>>                                      crs='Mercator',
-    >>>                                      min_pixels=min_pixels)
-    >>> cvs = ds.Canvas(x_range=x_range, y_range=y_range,
+    >>>     df = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
+    >>>     df = df.to_crs("EPSG:3857")
+    >>>     df = df[df.continent != 'Antarctica']
+    >>>     df['id'] = [i for i in range(len(df.index))]
+    >>>     xmin, ymin, xmax, ymax = (df.bounds.minx.min(), df.bounds.miny.min(),
+    >>>                               df.bounds.maxx.max(), df.bounds.maxy.max())
+    >>>     x_range = (xmin, xmax)
+    >>>     y_range = (ymin, ymax)
+    >>>     smallest_area = df.area.min()
+    >>>     min_pixels = 20
+    >>>     height, width = suggest_zonal_canvas(x_range=x_range, y_range=y_range,
+    >>>                                          smallest_area=smallest_area,
+    >>>                                          crs='Mercator',
+    >>>                                          min_pixels=min_pixels)
+    >>>     cvs = ds.Canvas(x_range=x_range, y_range=y_range,
     >>>                 plot_height=height, plot_width=width)
-    >>> spatial_df = GeoDataFrame(df, geometry='geometry')
-    >>> agg = cvs.polygons(spatial_df, 'geometry', agg=ds.max('id'))
-    >>> min_poly_id = df.area.argmin()
-    >>> actual_min_pixels = len(np.where(agg.data==min_poly_id)[0])
+    >>>     spatial_df = GeoDataFrame(df, geometry='geometry')
+    >>>     agg = cvs.polygons(spatial_df, 'geometry', agg=ds.max('id'))
+    >>>     min_poly_id = df.area.argmin()
+    >>>     actual_min_pixels = len(np.where(agg.data==min_poly_id)[0])
     """
 
     full_xrange, full_yrange = get_full_extent(crs)
@@ -612,20 +610,19 @@ def regions(raster: xr.DataArray,
     Connectivity can be based on either 4 or 8-pixel neighborhoods.
     Output raster contain a unique int for each connected region.
 
-    Parameters:
+    Parameters
     ----------
-    raster : xarray.DataArray
-    connections : int (default = 4)
+    raster : xr.DataArray
+    connections : int, default = 4
         4 or 8 pixel-based connectivity
-    name: str (default = 'regions)
+    name: str, default = 'regions'
         output xr.DataArray.name property
+    Returns
+    -------
+    regions_agg : xarray.DataArray
 
-    Returns:
-    ----------
-    xarray.DataArray
-
-    Notes:
-    ----------
+    Notes
+    -----
     Area Numbering implementing based on:
         - http://spatial-analyst.net/ILWIS/htm/ilwisapp/areanumbering_algorithm.htm
     """
@@ -738,20 +735,20 @@ def trim(raster: xr.DataArray,
     Trim scans from the edges and eliminates rows / cols
     which only contain the values supplied.
 
-    Parameters:
+    Parameters
     ----------
-    raster: xarray.DataArray
+    raster: xr.DataArray
     values: list, tuple (default = (np.nan))
         list of zone ids to trim from raster edge
-    name: str (default = 'trim')
+    name: str, default = 'trim'
         output xr.DataArray.name property
 
-    Returns:
-    ----------
-    xarray.DataArray
+    Returns
+    -------
+    trim_agg : xarray.DataArray
 
-    Notes:
-    ----------
+    Notes
+    -----
     This operation will change the output size of the raster
     """
 
@@ -867,26 +864,26 @@ def crop(zones: xr.DataArray,
     Crop scans from edges and eliminates rows / cols
     until one of the input values is found.
 
-    Parameters:
+    Parameters
     ----------
-    zones : xarray.DataArray
+    zones : xr.DataArray
         input zone raster
 
-    values: xarray.DataArray
+    values: xr.DataArray
         input values raster
 
     zones_ids : list, tuple
         list of zone ids to crop raster
 
-    name: str (default = 'crop')
+    name: str, default = 'crop'
         output xr.DataArray.name property
 
-    Returns:
-    ----------
-    xarray.DataArray
+    Returns
+    -------
+    crop_agg : xarray.DataArray
 
-    Notes:
-    ----------
+    Notes
+    -----
     This operation will change the output size of the raster
     """
 

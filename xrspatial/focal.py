@@ -363,9 +363,9 @@ def mean(agg: xr.DataArray,
     ----------
     agg : xarray.DataArray
         2D array of input values to be filtered.
-    passes : int (default = 1)
+    passes : int, default = 1
         Number of times to run mean.
-    name : str, optional (default = 'mean')
+    name : str, default = 'mean'
         output xr.DataArray.name property
 
     Returns

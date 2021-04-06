@@ -1510,21 +1510,21 @@ def viewshed(raster: xarray.DataArray,
     Calculate viewshed of a raster (the visible cells in the raster)
     for the given viewpoint (observer) location.
 
-    Parameters:
+    Parameters
     ----------
-    raster: xarray.DataArray
+    raster : xr.DataArray
         Input raster image.
-    x: int, float
+    x : int, float
         x-coordinate in data space of observer location.
-    y: int, float
+    y : int, float
         y-coordinate in data space of observer location.
-    observer_elev: float
+    observer_elev : float
         Observer elevation above the terrain.
-    target_elev: float
+    target_elev : float
         Target elevation offset above the terrain.
 
-    Returns:
-    ----------
+    Returns
+    -------
     viewshed: xarray.DataArray
         A cell x in the visibility grid is recorded as follows:
         If it is invisible, then x is set to INVISIBLE.
