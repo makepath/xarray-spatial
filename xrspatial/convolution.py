@@ -10,7 +10,7 @@ import xarray as xr
 def convolve_2d(image: xr.DataArray,
                 kernel,
                 pad=True,
-                use_cuda=True) -> xr.DataArray:
+                use_cuda=True) -> np.ndarray:
     """
     Calculates, for all inner cells of an array, the 2D convolution of
     each cell via Numba. To account for edge cells, a pad can be added
@@ -32,9 +32,8 @@ def convolve_2d(image: xr.DataArray,
 
     Returns
     -------
-    convolve_agg : xarray.DataArray, of same type as `image`.
+    convolve_agg : numpy.ndarray
         2D array representation of the impulse function.
-        All other input attributes are preserverd.
     
     Example
     -------

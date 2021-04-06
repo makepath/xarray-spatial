@@ -76,7 +76,6 @@ def bump(width: int,
     >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
 
     >>>     print(agg)
-
     ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
     ...     [480000 values with dtype=float64]
     ...     Coordinates:
@@ -123,7 +122,6 @@ def bump(width: int,
     >>>                                         height = 20))
 
     >>>     print(bump_agg)
-
     ...     array([[0., 0., 0., ..., 0., 0., 0.],
     ...            [0., 0., 0., ..., 0., 0., 0.],
     ...            [0., 0., 0., ..., 0., 0., 0.],

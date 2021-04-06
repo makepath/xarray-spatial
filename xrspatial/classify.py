@@ -232,7 +232,6 @@ def reclassify(agg: xr.DataArray,
     >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
 
     >>>     print(agg)
-
     ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
     ...     [480000 values with dtype=float64]
     ...     Coordinates:
@@ -250,7 +249,6 @@ def reclassify(agg: xr.DataArray,
     >>>     reclass_agg = reclassify(agg, bins, new_val)
 
     >>>     print(reclass_agg)
-
     ...     <xarray.DataArray 'reclassify' (lon: 600, lat: 800)>
     ...     array([[1000., 1000., 1000., ..., 1000., 1000., 1000.],
     ...            [1000., 1000., 1000., ..., 1000., 1000., 1000.],
@@ -727,14 +725,13 @@ def natural_breaks(agg: xr.DataArray,
     >>>     agg = xr.open_dataarray('./data/example_terrain.nc')
 
     >>>     print(agg)
-
     ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
     ...     [480000 values with dtype=float64]
     ...     Coordinates:
     ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
     ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
     ...     Attributes:
-     ...        res:            1
+    ...        res:            1
     ...         Description:    Elevation
     ...         Max Elevation:  1000
     ...         units:          meters
@@ -856,7 +853,6 @@ def equal_interval(agg: xr.DataArray,
     >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
 
     >>>     print(agg)
-
     ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
     ...     [480000 values with dtype=float64]
     ...     Coordinates:
@@ -872,7 +868,6 @@ def equal_interval(agg: xr.DataArray,
     >>>     equal_interval_agg = equal_interval(agg, k = 5)
 
     >>>     print(equal_interval_agg)
-
     ...     <xarray.DataArray 'equal_interval' (lon: 600, lat: 800)>
     ...     array([[0., 0., 0., ..., 0., 0., 0.],
     ...            [0., 0., 0., ..., 0., 0., 0.],

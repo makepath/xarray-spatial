@@ -136,47 +136,49 @@ def hillshade(agg: xr.DataArray,
         - http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html
         
     Example
-    -------
-    >>>     # Imports
-    >>>     import numpy as np
+    >>>     # Imports 
     >>>     import xarray as xr
-    >>>     import xrspatial
+    >>>     from xrspatial import hillshade
 
-    >>>     # Create Initial DataArray
-    >>>     agg = xr.DataArray(np.array([[0, 1, 0, 0],
-    >>>                                  [1, 1, 0, 0],
-    >>>                                  [0, 1, 2, 2],
-    >>>                                  [1, 0, 2, 0],
-    >>>                                  [0, 2, 2, 2]]),
-    >>>                           dims = ["lat", "lon"])
-    >>>     height, width = agg.shape
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     agg["lon"] = _lon
-    >>>     agg["lat"] = _lat
+    >>>     # Open Example DataArray
+    >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
+
     >>>     print(agg)
-            <xarray.DataArray (lat: 5, lon: 4)>
-            array([[0, 1, 0, 0],
-                   [1, 1, 0, 0],
-                   [0, 1, 2, 2],
-                   [1, 0, 2, 0],
-                   [0, 2, 2, 2]])
-            Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
+    ...     [480000 values with dtype=float64]
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
 
-    >>>     # Create Hillshade DataArray
-    >>>     hillshade = xrspatial.hillshade(agg)
-    >>>     print(hillshade)
-            <xarray.DataArray 'hillshade' (lat: 5, lon: 4)>
-            array([[       nan,        nan,        nan,        nan],
-                   [       nan, 0.54570079, 0.32044456,        nan],
-                   [       nan, 0.96130094, 0.53406336,        nan],
-                   [       nan, 0.67253318, 0.71130913,        nan],
-                   [       nan,        nan,        nan,        nan]])
-            Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+    >>>     # Create Hillshade Aggregate Array
+    >>>     hillshade_agg = hillshade(agg)
+
+    >>>     print(hillshade_agg)
+    ...     <xarray.DataArray 'hillshade' (lon: 600, lat: 800)>
+    ...     array([[0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            ...,
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.]])
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
+
+    >>>     # View In A Jupyter Notebook
+    >>>     from datashader.transfer_functions import shade
+    >>>     shade(hillshade_agg, cmap=['gray', 'white'], how='linear')
     """
 
     # numpy case

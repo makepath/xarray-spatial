@@ -195,7 +195,6 @@ def aspect(agg: xr.DataArray,
     >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
 
     >>>     print(agg)
-
     ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
     ...     array([[0., 0., 0., ..., 0., 0., 0.],
     ...            [0., 0., 0., ..., 0., 0., 0.],
@@ -217,7 +216,6 @@ def aspect(agg: xr.DataArray,
     >>>     aspect_agg = aspect(agg)
 
     >>>     print(aspect_agg)
-
     ...     <xarray.DataArray 'aspect' (lon: 600, lat: 800)>
     ...     array([[nan, nan, nan, ..., nan, nan, nan],
     ...            [nan, -1., -1., ..., -1., -1., nan],

@@ -110,24 +110,30 @@ def calc_cellsize(raster: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
+# Imports 
     >>>     import xarray as xr
-    >>>     from xrspatial import focal
+    >>>     from xrspatial.focal import calc_cellsize
 
-    >>>     # Create Data Array
-    >>>     np.random.seed(0)
-    >>>     agg = xr.DataArray(np.random.rand(4,4),
-    >>>                            dims = ["lat", "lon"])
-    >>>     height, width = nir_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     nir_agg["lat"] = _lat
-    >>>     nir_agg["lon"] = _lon
+    >>>     # Open Example DataArray
+    >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
+
+    >>>     print(agg)
+    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
+    ...     [480000 values with dtype=float64]
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
 
     >>>     # Calculate Cell Size
-    >>>     focal.calc_cellsize(agg, 'lon', 'lat')
-            (1, 1)
+    >>>     cellsize = calc_cellsize(agg, 'lon', 'lat')
+
+    >>>     print(cellsize)
+    ...     (66666.66666666791, 50000.0)
     """
 
     if 'unit' in raster.attrs:
@@ -203,25 +209,27 @@ def circle_kernel(cellsize_x: int,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
+# Imports 
     >>>     import xarray as xr
-    >>>     from xrspatial import focal
+    >>>     from xrspatial.focal import circle_kernel
 
-    >>>     # Create Kernels
-    >>>     focal.circle_kernel(1, 1, 3)
-            array([[0., 0., 0., 1., 0., 0., 0.],
-                   [0., 1., 1., 1., 1., 1., 0.],
-                   [0., 1., 1., 1., 1., 1., 0.],
-                   [1., 1., 1., 1., 1., 1., 1.],
-                   [0., 1., 1., 1., 1., 1., 0.],
-                   [0., 1., 1., 1., 1., 1., 0.],
-                   [0., 0., 0., 1., 0., 0., 0.]])
+    >>>     # Create Kernel
+    >>>     kernel = circle_kernel(1, 1, 3)
 
-    >>>     focal.circle_kernel(1, 2, 3)
-            array([[0., 0., 0., 1., 0., 0., 0.],
-                   [1., 1., 1., 1., 1., 1., 1.],
-                   [0., 0., 0., 1., 0., 0., 0.]])
+    >>>     print(kernel)
+    ...     [[0. 0. 0. 1. 0. 0. 0.]
+     ...     [0. 1. 1. 1. 1. 1. 0.]
+     ...     [0. 1. 1. 1. 1. 1. 0.]
+     ...     [1. 1. 1. 1. 1. 1. 1.]
+     ...     [0. 1. 1. 1. 1. 1. 0.]
+     ...     [0. 1. 1. 1. 1. 1. 0.]
+     ...     [0. 0. 0. 1. 0. 0. 0.]]
+    >>>     kernel = circle_kernel(1, 2, 3)
+
+    >>>     print(kernel)
+    ...     [[0. 0. 0. 1. 0. 0. 0.]
+    ...      [1. 1. 1. 1. 1. 1. 1.]
+    ...      [0. 0. 0. 1. 0. 0. 0.]]
     """
 
     # validate radius, convert radius to meters
@@ -260,26 +268,29 @@ def annulus_kernel(cellsize_x: int,
     Example
     -------
     >>>     # Imports
-    >>>     import numpy as np
     >>>     import xarray as xr
-    >>>     from xrspatial import focal
+    >>>     from xrspatial.focal import annulus_kernel
 
-    >>>     # Create Kernels
-    >>>     focal.annulus_kernel(1, 1, 3, 1)
-            array([[0., 0., 0., 1., 0., 0., 0.],
-                   [0., 1., 1., 1., 1., 1., 0.],
-                   [0., 1., 1., 0., 1., 1., 0.],
-                   [1., 1., 0., 0., 0., 1., 1.],
-                   [0., 1., 1., 0., 1., 1., 0.],
-                   [0., 1., 1., 1., 1., 1., 0.],
-                   [0., 0., 0., 1., 0., 0., 0.]])
+    >>>     # Create Kernel
+    >>>     kernel = annulus_kernel(1, 1, 3, 1)
 
-    >>>     focal.annulus_kernel(1, 2, 5, 2)
-            array([[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
-                   [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-                   [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
-                   [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-                   [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
+    >>>     print(kernel)
+    ...     [[0., 0., 0., 1., 0., 0., 0.],
+    ...      [0., 1., 1., 1., 1., 1., 0.],
+    ...      [0., 1., 1., 0., 1., 1., 0.],
+    ...      [1., 1., 0., 0., 0., 1., 1.],
+    ...      [0., 1., 1., 0., 1., 1., 0.],
+    ...      [0., 1., 1., 1., 1., 1., 0.],
+    ...      [0., 0., 0., 1., 0., 0., 0.]]
+
+    >>>     kernel = annulus_kernel(1, 2, 5, 2)
+
+    >>>     print(kernel)
+    ...     [[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
+    ...      [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+    ...      [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
+    ...      [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+    ...      [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
     """
 
     # validate radii, convert to meters
@@ -375,26 +386,49 @@ def mean(agg: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
+    >>>     # Imports 
     >>>     import xarray as xr
-    >>>     from xrspatial import focal
+    >>>     from xrspatial.focal import mean
 
-    >>>     # Create Data Array
-    >>>     np.random.seed(0)
-    >>>     agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
-    >>>     height, width = nir_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     nir_agg["lat"] = _lat
-    >>>     nir_agg["lon"] = _lon
+    >>>     # Open Example DataArray
+    >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
+
+    >>>     print(agg)
+    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
+    ...     [480000 values with dtype=float64]
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
 
     >>>     # Calculate Mean
-    >>>     focal.mean(agg)
-            array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
-                [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
-                [0.96366276, 0.38344152, 0.79172504, 0.52889492],
-                [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
+    >>>     mean_agg = mean(agg)
+
+    >>>     print(mean_agg)
+    ...     <xarray.DataArray 'mean' (lon: 600, lat: 800)>
+    ...     array([[0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            ...,
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.]])
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
+
+    >>>     # View In A Jupyter Notebook
+    >>>     from datashader.transfer_functions import shade
+    >>>     shade(agg)
     """
 
     out = None
@@ -552,42 +586,75 @@ def hotspots(raster: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
+# Imports 
     >>>     import xarray as xr
-    >>>     from xrspatial import focal
+    >>>     from xrspatial.focal import hotspots, circle_kernel
 
-    >>>     # Create Data Array
-    >>>     agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
-    >>>                                  [0, 0, 0, 0, 0, 0, 0],
-    >>>                                  [0, 0, 10, 10, 10, 0, 0],
-    >>>                                  [0, 0, 10, 10, 10, 0, 0],
-    >>>                                  [0, 0, 10, 10, 10, 0, 0],
-    >>>                                  [0, 0, 0, 0, 0, 0, 0],
-    >>>                                  [0, 0, 0, 0, 0, 0, 0]]),
-    >>>                                  dims = ["lat", "lon"])
-    >>>     height, width = agg.shape
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     agg["lon"] = _lon
-    >>>     agg["lat"] = _lat
+    >>>     # Open Example DataArray
+    >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
+
+    >>>     print(agg)
+    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
+    ...     [480000 values with dtype=float64]
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
 
     >>>     # Create Kernel
-    >>>     kernel = focal.circle_kernel(1, 1, 1)
+    >>>     kernel = focal.circle_kernel(10, 10, 100)
 
-    >>>     # Create Hotspot Data Array
-    >>>     focal.hotspots(agg, kernel, x = 'lon', y = 'lat')
-            <xarray.DataArray (lat: 7, lon: 7)>
-            array([[ 0,  0,  0,  0,  0,  0,  0],
-                   [ 0,  0,  0,  0,  0,  0,  0],
-                   [ 0,  0,  0,  0,  0,  0,  0],
-                   [ 0,  0,  0, 95,  0,  0,  0],
-                   [ 0,  0,  0,  0,  0,  0,  0],
-                   [ 0,  0,  0,  0,  0,  0,  0],
-                   [ 0,  0,  0,  0,  0,  0,  0]], dtype=int8)
-            Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0 4.0 5.0 6.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0 5.0 6.0
+    >>>     print(kernel)
+    ...     [[0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 1. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0.]
+    ...      [0. 0. 0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0. 0. 0.]
+    ...      [0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0.]
+    ...      [0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0.]
+    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
+    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
+    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
+    ...      [0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0.]
+    ...      [0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0.]
+    ...      [0. 0. 0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0. 0. 0.]
+    ...      [0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 1. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0.]]
+
+    >>>     # Create Hotspots Aggregate Array
+    >>>     hotspots_agg = hotspots(agg, kernel, x = 'lat', y = 'lon')
+
+    >>>     print(hotspots_agg)
+    ...     <xarray.DataArray (lon: 600, lat: 800)>
+    ...     array([[0, 0, 0, ..., 0, 0, 0],
+    ...            [0, 0, 0, ..., 0, 0, 0],
+    ...            [0, 0, 0, ..., 0, 0, 0],
+    ...            ...,
+    ...            [0, 0, 0, ..., 0, 0, 0],
+    ...         ...            [0, 0, 0, ..., 0, 0, 0],
+    ...            [0, 0, 0, ..., 0, 0, 0]], dtype=int8)
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
+
+    >>>     # View In A Jupyter Notebook
+    >>>     from datashader.transfer_functions import shade
+    >>>     shade(hotspots_agg)
     """
 
     # validate raster

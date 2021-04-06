@@ -139,7 +139,6 @@ def curvature(agg: xr.DataArray,
     >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
 
     >>>     print(agg)
-
     ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
     ...     [480000 values with dtype=float64]
     ...     Coordinates:
@@ -155,7 +154,6 @@ def curvature(agg: xr.DataArray,
     >>>     curvature_agg = curvature(agg)
 
     >>>     print(curvature_agg)
-
     ...     <xarray.DataArray 'curvature' (lon: 600, lat: 800)>
     ...     array([[nan, nan, nan, ..., nan, nan, nan],
     ...            [nan, -0., -0., ..., -0., -0., nan],
