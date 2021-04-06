@@ -1496,24 +1496,47 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
 
 
 @ngjit
-def _normalize_data(agg, pixel_max=255.0):
-    out = np.zeros_like(agg)
-    min_val = np.nanmin(agg)
-    max_val = np.nanmax(agg)
+def _normalize_data_cpu(data, pixel_max):
+    out = np.zeros_like(data)
+    min_val = np.nanmin(data)
+    max_val = np.nanmax(data)
     range_val = max_val - min_val
-    rows, cols = agg.shape
+    rows, cols = data.shape
     c = 40
     th = .125
     # check range_val to avoid dividing by zero
     if range_val != 0:
         for y in range(rows):
             for x in range(cols):
-                val = agg[y, x]
+                val = data[y, x]
                 norm = (val - min_val) / range_val
 
                 # sigmoid contrast enhancement
                 # norm = 1 / (1 + np.exp(c * (th - norm)))
                 out[y, x] = norm * pixel_max
+    return out
+
+
+def _normalize_data_dask(data, pixel_max):
+    out = da.map_blocks(_normalize_data_cpu, data, pixel_max,
+                        meta=np.array(()))
+    return out
+
+
+def _normalize_data_cupy(data, pixel_max):
+    raise NotImplementedError('Not Implemented')
+
+
+def _normalize_data_dask_cupy(data, pixel_max):
+    raise NotImplementedError('Not Implemented')
+
+
+def _normalize_data(agg, pixel_max=255.0):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_normalize_data_cpu,
+                                      dask_func=_normalize_data_dask,
+                                      cupy_func=_normalize_data_cupy,
+                                      dask_cupy_func=_normalize_data_dask_cupy)
+    out = mapper(agg)(agg.data, pixel_max)
     return out
 
 
@@ -1540,9 +1563,9 @@ def true_color(r, g, b, nodata=1):
     h, w = r.shape
 
     data = np.zeros((h, w, 4), dtype=np.uint8)
-    data[:, :, 0] = (_normalize_data(r.data)).astype(np.uint8)
-    data[:, :, 1] = (_normalize_data(g.data)).astype(np.uint8)
-    data[:, :, 2] = (_normalize_data(b.data)).astype(np.uint8)
+    data[:, :, 0] = (_normalize_data(r)).astype(np.uint8)
+    data[:, :, 1] = (_normalize_data(g)).astype(np.uint8)
+    data[:, :, 2] = (_normalize_data(b)).astype(np.uint8)
 
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
     data[:, :, 3] = a.astype(np.uint8)
