@@ -73,7 +73,7 @@ def bump(width: int,
     >>>     from functools import partial
 
     >>>     # Open Example DataArray
-    >>>     agg = xr.open_dataarray('./data/example_terrain.nc')
+    >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
 
     >>>     print(agg)
 

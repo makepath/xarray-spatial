@@ -229,7 +229,7 @@ def reclassify(agg: xr.DataArray,
     >>>     from xrspatial.classify import reclassify
 
     >>>     # Open Example DataArray
-    >>>     agg = xr.open_dataarray('./data/example_terrain.nc')
+    >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
 
     >>>     print(agg)
 
@@ -391,7 +391,7 @@ def quantile(agg: xr.DataArray,
     >>>     from xrspatial.classify import quantile
 
     >>>     # Open Example DataArray
-    >>>     agg = xr.open_dataarray('./data/example_terrain.nc')
+    >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
 
     >>>     print(agg)
     ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
@@ -719,41 +719,16 @@ def natural_breaks(agg: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
-    >>>     import xarray as xr
-    >>>     from xrspatial.classify import natural_breaks
+# Imports 
+import xarray as xr
+from xrspatial.classify import natural_breaks
 
-    >>>     # Create DataArray
-    >>>     np.random.seed(0)
-    >>>     agg = xr.DataArray(np.random.rand(4,4),
-    >>>                                 dims = ["lat", "lon"])
-    >>>     height, width = agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     agg["lat"] = _lat
-    >>>     agg["lon"] = _lon
-    >>>     print(agg)
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
-                [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
-                [0.96366276, 0.38344152, 0.79172504, 0.52889492],
-                    [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
-            Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0
+# Open Example DataArray
+agg = xr.open_dataarray('./data/example_terrain.nc')
 
-    >>>     # Create Natural Breaks Aggregate
-    >>>     natural_breaks_agg = natural_breaks(agg, k = 5)
-    >>>     print(natural_breaks_agg)
-            <xarray.DataArray 'natural_breaks' (lat: 4, lon: 4)>
-            array([[2., 3., 2., 2.],
-                [1., 2., 1., 4.],
-                [4., 1., 3., 2.],
-                [2., 4., 0., 0.]], dtype=float32)
-            Coordinates:
-            * lat      (lat) float64 0.0 1.0 2.0 3.0
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
+print(agg)
+
+
     """
 
     # numpy case
