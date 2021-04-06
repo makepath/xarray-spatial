@@ -195,15 +195,23 @@ def aspect(agg: xr.DataArray,
     >>>     agg = xr.open_dataarray('./data/example_terrain.nc')
     >>>     print(agg)
 
+
     >>>     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
-    >>>     [480000 values with dtype=float64]
+    >>>     array([[0., 0., 0., ..., 0., 0., 0.],
+    >>>            [0., 0., 0., ..., 0., 0., 0.],
+    >>>            [0., 0., 0., ..., 0., 0., 0.],
+    >>>            ...,
+    >>>            [0., 0., 0., ..., 0., 0., 0.],
+    >>>            [0., 0., 0., ..., 0., 0., 0.],
+    >>>            [0., 0., 0., ..., 0., 0., 0.]])
     >>>     Coordinates:
     >>>       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
     >>>       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
     >>>     Attributes:
-    >>>         res:          1
-    >>>         Description:  Elevation
-    >>>         units:        meters
+    >>>         res:            1
+    >>>         Description:    Elevation
+    >>>         Max Elevation:  1000
+    >>>         units:          meters
 
     >>>     # Create Aspect DataArray
     >>>     aspect_agg = aspect(agg)
@@ -223,7 +231,9 @@ def aspect(agg: xr.DataArray,
     >>>     Attributes:
     >>>         res:          1
     >>>         Description:  Elevation
+    >>>         Max Elevation:  1000
     >>>         units:        meters
+
 
     >>>     # To view in a Jupyter Notebook
     >>>     from datashader.transfer_functions import shade
