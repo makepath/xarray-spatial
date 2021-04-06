@@ -188,35 +188,47 @@ def aspect(agg: xr.DataArray,
     Example
     -------
     >>>     # Imports
-    >>>     import numpy as np
     >>>     import xarray as xr
-    >>>     import xrspatial
+    >>>     from xrspatial import aspect
 
-    >>>     # Create Elevation DataArray
-    >>>     agg = xr.DataArray(np.array([[0, 1, 0, 0],
-    >>>                                  [1, 1, 0, 0],
-    >>>                                  [0, 1, 2, 2],
-    >>>                                  [1, 0, 2, 0],
-    >>>                                  [0, 2, 2, 2]]),
-    >>>                        dims = ["lat", "lon"])
-    >>>     height, width = agg.shape
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     agg["lon"] = _lon
-    >>>     agg["lat"] = _lat
+    >>>     # Open Example DataArray
+    >>>     agg = xr.open_dataarray('./data/example_terrain.nc')
+    >>>     print(agg)
+
+            <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
+            [480000 values with dtype=float64]
+            Coordinates:
+              * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+              * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+            Attributes:
+                res:          1
+                Description:  Elevation
+                units:        meters
 
     >>>     # Create Aspect DataArray
-    >>>     aspect = xrspatial.aspect(agg)
-    >>>     print(aspect)
-            <xarray.DataArray 'aspect' (lat: 5, lon: 4)>
-            array([[nan,  nan,  nan,  nan],
-                [nan,   0.,  18.43494882,  nan],
-                [nan, 270., 341.56505118,  nan],
-                [nan, 288.43494882, 315.,  nan],
-                [nan,  nan,  nan,  nan]])
+    >>>     aspect_agg = aspect(agg)
+    >>>     print(aspect_agg)
+
+            <xarray.DataArray 'aspect' (lon: 600, lat: 800)>
+            array([[nan, nan, nan, ..., nan, nan, nan],
+                   [nan, -1., -1., ..., -1., -1., nan],
+                   [nan, -1., -1., ..., -1., -1., nan],
+                   ...,
+                   [nan, -1., -1., ..., -1., -1., nan],
+                   [nan, -1., -1., ..., -1., -1., nan],
+                   [nan, nan, nan, ..., nan, nan, nan]])
             Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+              * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+              * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+            Attributes:
+                res:          1
+                Description:  Elevation
+                units:        meters
+
+    >>>     # To view in a Jupyter Notebook
+    >>>     from datashader.transfer_functions import shade
+    >>>     shade(aspect_agg) 
+
     """
 
     # numpy case
