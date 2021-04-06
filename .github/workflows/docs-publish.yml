@@ -28,5 +28,5 @@ jobs:
         with:
           enabled-static-website: 'true'
           folder: 'docs/build/html'
-          index-document: 'master/index.html'
+          index-document: 'index.html'
           connection-string: ${{ secrets.CONNECTION_STRING }}
