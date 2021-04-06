@@ -1,6 +1,19 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.1.3 - 4/5/2020
+
+- Added band_to_img utils func
+- Added download-examples CLI command for all notebooks (#241)
+- Added band_to_img utils func
+- docs enhancements
+- GPU and dask support for multispectral tools
+- GPU and Dask support for classify module (#168)
+- Fixed savi dask cupy test skip
+- Moved validate_arrays to utils
+- Added GPU support for hillshade (#151)
+- Added CLI for examples data
+- Improved Sphinx docs / theme
 
 ### Version 0.1.2 - 12/1/2020
 
