@@ -1,7 +1,7 @@
 ## Xarray-Spatial Changelog
 -----------
 
-### Version 0.1.3 - 3/31/2020
+### Version 0.1.3 - 4/5/2020
 
 - Added band_to_img utils func
 - Added download-examples CLI command for all notebooks (#241)
