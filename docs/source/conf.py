@@ -13,6 +13,7 @@
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
 import os
+import json
 import sys
 sys.path.insert(0, os.path.abspath('../..'))
 
@@ -40,6 +41,7 @@ extensions = [
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
     'sphinx.ext.autosummary',
+    'sphinx_multiversion',
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -75,9 +77,23 @@ pygments_style = None
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'pydata_sphinx_theme'
+if os.getenv('THEME') == 'sphinx_rtd_theme':
+    html_theme = 'sphinx_rtd_theme'
+else:
+    html_theme = 'pydata_sphinx_theme'
 
 html_logo = '_static/img/Xarray-Spatial-logo.svg'
+
+# sphinx-multiversion config
+smv_branch_whitelist = 'master'
+if os.getenv('THEME') == 'sphinx_rtd_theme':
+    smv_tag_whitelist = r'^v([0]\.[1]\.[0-2]|[0]\.[0]\.[0-9])'
+else:
+    smv_tag_whitelist = r'^v([0-9]\.[1]\.[3-9]|[1-9]\.[0-9]\.[0-9])'
+
+# Load releases
+with open("releases.json") as f:
+    releases = json.load(f)
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
@@ -90,6 +106,7 @@ html_theme_options = {
 
 html_context = {
     'css_files': ['_static/css/styles.css'],
+    'releases': [(release, url) for release, url in releases.items()],
 }
 
 autosummary_generate = True

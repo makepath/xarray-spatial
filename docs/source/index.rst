@@ -99,7 +99,7 @@ xarray-spatial does not depend on GDAL / GEOS, which makes it fully extensible i
       :target: https://github.com/makepath/xarray-spatial/blob/master/examples/pharmacy-deserts.ipynb#Create-a-%22Distance-to-Nearest-Pharmacy%22-Layer-&-Classify-into-5-Groups
 
 .. toctree::
-   :maxdepth: 3
+   :maxdepth: 1
    :hidden:
    :titlesonly:
 

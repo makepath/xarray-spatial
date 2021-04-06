@@ -13,7 +13,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install setuptools wheel sphinx pydata_sphinx_theme sphinx-panels
+          pip install setuptools \
+                      wheel \
+                      sphinx \
+                      pydata_sphinx_theme \
+                      sphinx-panels \
+                      multiversion \
+                      sphinx_rtd_theme
       - name: Build
         run: |
           pip install .
@@ -22,5 +28,5 @@ jobs:
         with:
           enabled-static-website: 'true'
           folder: 'docs/build/html'
-          index-document: 'index.html'
+          index-document: 'master/index.html'
           connection-string: ${{ secrets.CONNECTION_STRING }}
