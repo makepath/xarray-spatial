@@ -8,12 +8,10 @@ prune *.egg-info
 
 global-exclude *.png
 prune conda.recipe
-prune examples
 prune img
 
 exclude xrspatial/_version.py
 exclude xrspatial/__pycache__/*
-exclude xrspatial/examples/*
 exclude xrspatial/examples/user_guide/*
 exclude xrspatial/examples/user_guide_idea/*
 exclude tile_idea.py
