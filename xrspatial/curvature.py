@@ -131,50 +131,51 @@ def curvature(agg: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
+    >>>     # Imports 
     >>>     import xarray as xr
     >>>     from xrspatial import curvature
 
-    >>>     # Create Initial DataArray
-    >>>     agg = xr.DataArray(np.array([[0, 1, 0, 0],
-    >>>                                  [1, 1, 0, 0],
-    >>>                                  [0, 1, 2, 2],
-    >>>                                  [1, 0, 2, 0],
-    >>>                                  [0, 2, 2, 2]]),
-    >>>                        dims = ["lat", "lon"],
-    >>>                        attrs = dict(res = 1))
-    >>>     height, width = agg.shape
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     agg["lon"] = _lon
-    >>>     agg["lat"] = _lat
-    >>>     print(agg)
-            <xarray.DataArray (lat: 5, lon: 4)>
-            array([[0, 1, 0, 0],
-                [1, 1, 0, 0],
-                [0, 1, 2, 2],
-                [1, 0, 2, 0],
-                [0, 2, 2, 2]])
-            Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
-            Attributes:
-                res:      1
+    >>>     # Open Example DataArray
+    >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
 
-    >>>     # Create Curvature DataArray
-    >>>     print(curvature(agg))
-            <xarray.DataArray 'curvature' (lat: 5, lon: 4)>
-            array([[  nan,   nan,   nan,   nan],
-                [  nan,  100., -300.,   nan],
-                [  nan,  100.,  300.,   nan],
-                [  nan, -600.,  400.,   nan],
-                [  nan,   nan,   nan,   nan]])
-            Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
-            Attributes:
-                res:      1
+    >>>     print(agg)
+
+    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
+    ...     [480000 values with dtype=float64]
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
+
+    >>>     # Create Curvature Aggregate Array
+    >>>     curvature_agg = curvature(agg)
+
+    >>>     print(curvature_agg)
+
+    ...     <xarray.DataArray 'curvature' (lon: 600, lat: 800)>
+    ...     array([[nan, nan, nan, ..., nan, nan, nan],
+    ...            [nan, -0., -0., ..., -0., -0., nan],
+    ...            [nan, -0., -0., ..., -0., -0., nan],
+    ...            ...,
+    ...            [nan, -0., -0., ..., -0., -0., nan],
+    ...            [nan, -0., -0., ..., -0., -0., nan],
+    ...            [nan, nan, nan, ..., nan, nan, nan]])
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
+
+    >>>     # View In A Jupyter Notebook
+    >>>     from datashader.transfer_functions import shade
+    >>>     shade(curvature_agg)
     """
 
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
