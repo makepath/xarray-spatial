@@ -85,6 +85,7 @@ def bump(width: int,
     >>>     Attributes:
     >>>         res:          1
     >>>         Description:  Elevation
+    >>>         Max Elevation:  1000
     >>>         units:        meters
 
     >>>     # Create Height Function
