@@ -67,26 +67,30 @@ def bump(width: int,
     Example
     -------
     >>>     # Imports
-    >>>     import numpy as np
-    >>>     import datashader as ds
-    >>>     from datashader.transfer_functions import shade
-    >>>     from functools import partial
+    >>>     import xarray as xr
     >>>     from xrspatial import bump
+    >>>     import numpy as np
+    >>>     from functools import partial
 
-    >>>     # Generate Terrain
-    >>>     from xrspatial import generate_terrain
-    >>>     W = 800
-    >>>     H = 600
-    >>>     cvs = ds.Canvas(plot_width = W,
-    >>>                     plot_height = H,
-    >>>                     x_range = (-20e6, 20e6),
-    >>>                     y_range = (-20e6, 20e6))
-    >>>     terrain = generate_terrain(canvas=cvs)
+    >>>     # Open Example DataArray
+    >>>     agg = xr.open_dataarray('./data/example_terrain.nc')
+
+    >>>     print(agg)
+
+    >>>     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
+    >>>     [480000 values with dtype=float64]
+    >>>     Coordinates:
+    >>>       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    >>>       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    >>>     Attributes:
+    >>>         res:          1
+    >>>         Description:  Elevation
+    >>>         units:        meters
 
     >>>     # Create Height Function
-    >>>     def heights(locations, src, src_range, height=20):
+    >>>     def heights(locations, src, src_range, height = 20):
     >>>         num_bumps = locations.shape[0]
-    >>>         out = np.zeros(num_bumps, dtype=np.uint16)
+    >>>         out = np.zeros(num_bumps, dtype = np.uint16)
     >>>         for r in range(0, num_bumps):
     >>>             loc = locations[r]
     >>>             x = loc[0]
@@ -94,33 +98,44 @@ def bump(width: int,
     >>>             val = src[y, x]
     >>>             if val >= src_range[0] and val < src_range[1]:
     >>>                 out[r] = height
-    >>>        return out
+    >>>         return out
 
-    >>>     # Create Bump Map
+    >>>     # Create Bump Map Aggregate 
     >>>     bump_count = 10000
-    >>>     src = terrain.data
-    >>>     bumps = bump(W, H, count = bump_count,
-    >>>                  height_func = partial(heights,
-    >>>                                        src = src,
-    >>>                                        src_range = (1000, 1300),
-    >>>                                        height = 5))
-    >>>     bumps += bump(W, H, count = bump_count//2,
-    >>>                  height_func = partial(heights,
-    >>>                                        src = src,
-    >>>                                        src_range = (1300, 1700),
-    >>>                                        height = 20))
-    >>>     print(bumps)
-            <xarray.DataArray (y: 600, x: 800)>
-            array([[0., 0., 0., ..., 0., 0., 0.],
-                [0., 0., 0., ..., 0., 0., 0.],
-                [0., 0., 0., ..., 0., 0., 0.],
-                ...,
-                [0., 0., 0., ..., 0., 0., 0.],
-                [0., 0., 0., ..., 0., 0., 0.],
-                [0., 0., 0., ..., 0., 0., 0.]])
-            Dimensions without coordinates: y, x
-            Attributes:
-                res: 1   
+    >>>     src = agg.data
+
+    >>>     # Short Bumps Between 300-500m
+    >>>     bump_agg = bump(agg.shape[1],
+    >>>                     agg.shape[0],
+    >>>                     count = bump_count,
+    >>>                     height_func = partial(heights,
+    >>>                                           src = src,
+    >>>                                           src_range = (300, 500),
+    >>>                                           height = 5))
+    >>>     # Tall Bumps Between 500-800m
+    >>>     bump_agg += bump(agg.shape[1],
+    >>>                   agg.shape[0],
+    >>>                   count = bump_count//2,
+    >>>                   height_func = partial(heights,
+    >>>                                         src = src,
+    >>>                                         src_range = (500, 800),
+    >>>                                         height = 20))
+
+    >>>     print(bump_agg)
+    >>>     array([[0., 0., 0., ..., 0., 0., 0.],
+    >>>            [0., 0., 0., ..., 0., 0., 0.],
+    >>>            [0., 0., 0., ..., 0., 0., 0.],
+    >>>            ...,
+    >>>            [0., 0., 0., ..., 0., 0., 0.],
+    >>>            [0., 0., 0., ..., 0., 0., 0.],
+    >>>            [0., 0., 0., ..., 0., 0., 0.]])
+    >>>     Dimensions without coordinates: y, x
+    >>>     Attributes:
+    >>>         res:      1
+
+    >>>     # To View In a Jupyter Notebook
+    >>>     from datashader.transfer_functions import shade
+    >>>     shade(bump_agg)
     """
 
     linx = range(width)
