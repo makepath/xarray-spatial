@@ -386,53 +386,49 @@ def quantile(agg: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
+    >>>     # Imports 
     >>>     import xarray as xr
     >>>     from xrspatial.classify import quantile
 
-    >>>     # Create DataArray
-    >>>     np.random.seed(0)
-    >>>     agg = xr.DataArray(np.random.rand(4,4),
-    >>>                                 dims = ["lat", "lon"])
-    >>>     height, width = agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     agg["lat"] = _lat
-    >>>     agg["lon"] = _lon
+    >>>     # Open Example DataArray
+    >>>     agg = xr.open_dataarray('./data/example_terrain.nc')
+
     >>>     print(agg)
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
-                [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
-                [0.96366276, 0.38344152, 0.79172504, 0.52889492],
-                    [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
-            Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0
+    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
+    ...     [480000 values with dtype=float64]
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
 
-    >>>     # Create Quantile Aggregate
+    >>>     # Create Quantiled Aggregate Array
     >>>     quantile_agg = quantile(agg)
-    >>>     print(quantile_agg)
-            <xarray.DataArray 'quantile' (lat: 4, lon: 4)>
-            array([[1., 2., 2., 1.],
-                [0., 2., 1., 3.],
-                [3., 0., 3., 1.],
-                [2., 3., 0., 0.]], dtype=float32)
-            Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0
 
-    >>>     # With k quantiles
-    >>>     quantile_agg = quantile(agg, k = 6, name = "Six Quantiles")
     >>>     print(quantile_agg)
-            <xarray.DataArray 'Six Quantiles' (lat: 4, lon: 4)>
-            array([[2., 4., 3., 2.],
-                [1., 3., 1., 5.],
-                [5., 0., 4., 1.],
-                [3., 5., 0., 0.]], dtype=float32)
-            Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0
+    ...     <xarray.DataArray 'quantile' (lon: 600, lat: 800)>
+    ...     array([[0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            ...,
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.]], dtype=float32)
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
+
+    >>>     # View In A Jupyter Notebook
+    >>>     from datashader.transfer_functions import shade
+    >>>     shade(quantile_agg)
     """
 
     q = _quantile(agg, k)
