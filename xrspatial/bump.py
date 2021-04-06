@@ -77,16 +77,16 @@ def bump(width: int,
 
     >>>     print(agg)
 
-    >>>     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
-    >>>     [480000 values with dtype=float64]
-    >>>     Coordinates:
-    >>>       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
-    >>>       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
-    >>>     Attributes:
-    >>>         res:          1
-    >>>         Description:  Elevation
-    >>>         Max Elevation:  1000
-    >>>         units:        meters
+    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
+    ...     [480000 values with dtype=float64]
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:          1
+    ...         Description:  Elevation
+    ...         Max Elevation:  1000
+    ...         units:        meters
 
     >>>     # Create Height Function
     >>>     def heights(locations, src, src_range, height = 20):
@@ -101,7 +101,7 @@ def bump(width: int,
     >>>                 out[r] = height
     >>>         return out
 
-    >>>     # Create Bump Map Aggregate 
+    >>>     # Create Bump Map Aggregate Array
     >>>     bump_count = 10000
     >>>     src = agg.data
 
@@ -123,16 +123,17 @@ def bump(width: int,
     >>>                                         height = 20))
 
     >>>     print(bump_agg)
-    >>>     array([[0., 0., 0., ..., 0., 0., 0.],
-    >>>            [0., 0., 0., ..., 0., 0., 0.],
-    >>>            [0., 0., 0., ..., 0., 0., 0.],
-    >>>            ...,
-    >>>            [0., 0., 0., ..., 0., 0., 0.],
-    >>>            [0., 0., 0., ..., 0., 0., 0.],
-    >>>            [0., 0., 0., ..., 0., 0., 0.]])
-    >>>     Dimensions without coordinates: y, x
-    >>>     Attributes:
-    >>>         res:      1
+
+    ...     array([[0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            ...,
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.]])
+    ...     Dimensions without coordinates: y, x
+    ...     Attributes:
+    ...         res:      1
 
     >>>     # To View In a Jupyter Notebook
     >>>     from datashader.transfer_functions import shade

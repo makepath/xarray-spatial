@@ -224,43 +224,53 @@ def reclassify(agg: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
+    >>>     # Imports 
     >>>     import xarray as xr
     >>>     from xrspatial.classify import reclassify
 
-    >>>     # Create Initial DataArray
-    >>>     np.random.seed(1)
-    >>>     agg = xr.DataArray(np.random.randint(2, 8, (4, 4)),
-    >>>                        dims = ["lat", "lon"])
-    >>>     height, width = agg.shape
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     agg["lon"] = _lon
-    >>>     agg["lat"] = _lat
-    >>>     print(agg)
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[7, 5, 6, 2],
-                [3, 5, 7, 2],
-                [2, 3, 6, 7],
-                [6, 3, 4, 6]])
-            Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0
+    >>>     # Open Example DataArray
+    >>>     agg = xr.open_dataarray('./data/example_terrain.nc')
 
-    >>>     # Reclassify
-    >>>     bins = list(range(2, 8))
-    >>>     new_val = list(range(20, 80, 10))
-    >>>     reclassify_agg = reclassify(agg, bins, new_val)
-    >>>     print(reclassify_agg)
-            <xarray.DataArray 'reclassify' (lat: 4, lon: 4)>
-            array([[70., 50., 60., 20.],
-                [30., 50., 70., 20.],
-                [20., 30., 60., 70.],
-                [60., 30., 40., 60.]], dtype=float32)
-            Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0
+    >>>     print(agg)
+
+    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
+    ...     [480000 values with dtype=float64]
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
+
+    >>>     # Create Reclassified Aggregate Array
+    >>>     bins = list(range(0, 1000))
+    >>>     new_val = list(range(1000, 2000))
+    >>>     reclass_agg = reclassify(agg, bins, new_val)
+
+    >>>     print(reclass_agg)
+
+    ...     <xarray.DataArray 'reclassify' (lon: 600, lat: 800)>
+    ...     array([[1000., 1000., 1000., ..., 1000., 1000., 1000.],
+    ...            [1000., 1000., 1000., ..., 1000., 1000., 1000.],
+    ...            [1000., 1000., 1000., ..., 1000., 1000., 1000.],
+    ...            ...,
+    ...            [1000., 1000., 1000., ..., 1000., 1000., 1000.],
+    ...            [1000., 1000., 1000., ..., 1000., 1000., 1000.],
+    ...            [1000., 1000., 1000., ..., 1000., 1000., 1000.]], dtype=float32)
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
+
+    >>>     # View In A Jupyter Notebook
+    >>>     from datashader.transfer_functions import shade
+    >>>     shade(reclass_agg)
     """
 
     if len(bins) != len(new_values):
