@@ -719,16 +719,33 @@ def natural_breaks(agg: xr.DataArray,
 
     Example
     -------
-# Imports 
-import xarray as xr
-from xrspatial.classify import natural_breaks
+    >>>     # Imports 
+    >>>     import xarray as xr
+    >>>     from xrspatial.classify import natural_breaks
 
-# Open Example DataArray
-agg = xr.open_dataarray('./data/example_terrain.nc')
+    >>>     # Open Example DataArray
+    >>>     agg = xr.open_dataarray('./data/example_terrain.nc')
 
-print(agg)
+    >>>     print(agg)
 
+    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
+    ...     [480000 values with dtype=float64]
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+     ...        res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
 
+    >>>     # Create Natural Breaks Aggregate Array
+    >>>     natural_breaks_agg = natural_breaks(agg, k = 20) # This make take a long time
+    >>>     print(natural_breaks_agg)
+
+    >>>     # View In A Jupyter Notebook
+    >>>     from datashader.transfer_functions import shade
+    >>>     shade(natural_breaks_agg)
     """
 
     # numpy case
@@ -831,41 +848,51 @@ def equal_interval(agg: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
+    >>>     # Imports 
     >>>     import xarray as xr
-    >>>     from xrspatial.classify import equal_interval, natural_breaks
+    >>>     from xrspatial.classify import equal_interval
 
-    >>>     # Create Initial DataArray
-    >>>     np.random.seed(1)
-    >>>     agg = xr.DataArray(np.random.randint(2, 8, (4, 4)),
-    >>>                        dims = ["lat", "lon"])
-    >>>     height, width = agg.shape
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     agg["lon"] = _lon
-    >>>     agg["lat"] = _lat
+    >>>     # Open Example DataArray
+    >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
+
     >>>     print(agg)
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[7, 5, 6, 2],
-                [3, 5, 7, 2],
-                [2, 3, 6, 7],
-                [6, 3, 4, 6]])
-            Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0
 
-    >>>     # Create Equal Interval DataArray
+    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
+    ...     [480000 values with dtype=float64]
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
+
+    >>>     # Create Quantiled Aggregate Array
     >>>     equal_interval_agg = equal_interval(agg, k = 5)
+
     >>>     print(equal_interval_agg)
-            <xarray.DataArray 'equal_interval' (lat: 4, lon: 4)>
-            array([[4., 2., 3., 0.],
-                [0., 2., 4., 0.],
-                [0., 0., 3., 4.],
-                [3., 0., 1., 3.]], dtype=float32)
-            Coordinates:
-            * lon      (lon) float64 0.0 1.0 2.0 3.0
-            * lat      (lat) float64 0.0 1.0 2.0 3.0
+
+    ...     <xarray.DataArray 'equal_interval' (lon: 600, lat: 800)>
+    ...     array([[0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            ...,
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.],
+    ...            [0., 0., 0., ..., 0., 0., 0.]], dtype=float32)
+    ...     Coordinates:
+    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  1000
+    ...         units:          meters
+
+    >>>     # View In A Jupyter Notebook
+    >>>     from datashader.transfer_functions import shade
+    >>>     shade(equal_interval_agg)
     """
 
     # numpy case
