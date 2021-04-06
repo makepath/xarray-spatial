@@ -12,6 +12,10 @@ prune examples
 prune img
 
 exclude xrspatial/_version.py
+exclude xrspatial/__pycache__/*
+exclude xrspatial/examples/*
+exclude xrspatial/examples/user_guide/*
+exclude xrspatial/examples/user_guide_idea/*
 exclude tile_idea.py
 exclude *.yml
 exclude *.enc
@@ -21,3 +25,4 @@ exclude *.dot
 exclude *.gif
 exclude *.svg
 exclude tox.ini
+exclude test_examples_cli.py

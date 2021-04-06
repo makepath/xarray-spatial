@@ -1,1 +1,2 @@
-import xrspatial; xrspatial.test()
+import xrspatial
+xrspatial.test()

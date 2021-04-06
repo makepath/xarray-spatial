@@ -111,6 +111,46 @@ def _ellipse_kernel(half_w, half_h):
 
 
 def circle_kernel(cellsize_x, cellsize_y, radius):
+    """
+    Generates a circular kernel of a given cellsize and radius.
+
+    Parameters:
+    ----------
+    cellsize_x: int
+        Cell size of output kernel in x direction.
+    cellsize_y: int
+        Cell size of output kernel in y direction.
+    radius: int
+        Radius of output kernel.
+
+    Returns:
+    ----------
+    kernel: NumPy Array
+        2D array where values of 1 indicate the kernel.
+
+    Examples:
+    ----------
+        Imports
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> from xrspatial import focal
+
+        Create Kernels
+    >>> focal.circle_kernel(1, 1, 3)
+    array([[0., 0., 0., 1., 0., 0., 0.],
+           [0., 1., 1., 1., 1., 1., 0.],
+           [0., 1., 1., 1., 1., 1., 0.],
+           [1., 1., 1., 1., 1., 1., 1.],
+           [0., 1., 1., 1., 1., 1., 0.],
+           [0., 1., 1., 1., 1., 1., 0.],
+           [0., 0., 0., 1., 0., 0., 0.]])
+
+    >>> focal.circle_kernel(1, 2, 3)
+    array([[0., 0., 0., 1., 0., 0., 0.],
+           [1., 1., 1., 1., 1., 1., 1.],
+           [0., 0., 0., 1., 0., 0., 0.]])
+    """
+
     # validate radius, convert radius to meters
     r = _get_distance(str(radius))
 
@@ -122,6 +162,49 @@ def circle_kernel(cellsize_x, cellsize_y, radius):
 
 
 def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
+    """
+    Generates a annulus (ring-shaped) kernel of a given cellsize and radius.
+
+    Parameters:
+    ----------
+    cellsize_x: int
+        Cell size of output kernel in x direction.
+    cellsize_y: int
+        Cell size of output kernel in y direction.
+    outer_radius: int
+        Outer ring radius of output kernel.
+    inner_radius: int
+        Inner circle radius of output kernel.
+
+    Returns:
+    ----------
+    kernel: NumPy Array
+        2D array of 0s and 1s where values of 1 indicate the kernel.
+
+    Examples:
+    ----------
+    Imports
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> from xrspatial import focal
+
+    Create Kernels
+    >>> focal.annulus_kernel(1, 1, 3, 1)
+    array([[0., 0., 0., 1., 0., 0., 0.],
+           [0., 1., 1., 1., 1., 1., 0.],
+           [0., 1., 1., 0., 1., 1., 0.],
+           [1., 1., 0., 0., 0., 1., 1.],
+           [0., 1., 1., 0., 1., 1., 0.],
+           [0., 1., 1., 1., 1., 1., 0.],
+           [0., 0., 0., 1., 0., 0., 0.]])
+
+    >>> focal.annulus_kernel(1, 2, 5, 2)
+    array([[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
+           [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+           [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
+           [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+           [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
+    """
 
     # validate radii, convert to meters
     r2 = _get_distance(str(outer_radius))
@@ -158,7 +241,9 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
 
 
 def custom_kernel(kernel):
-    """Validates a custom kernel. If the kernel is valid, returns itself."""
+    """
+    Validates a custom kernel. If the kernel is valid, returns itself.
+    """
 
     if not isinstance(kernel, np.ndarray):
         raise ValueError(
@@ -269,9 +354,66 @@ def _convolve_2d_dask_cupy(data, kernel):
 
 
 def convolve_2d(data, kernel):
-    """Function to call the 2D convolution via Numba.
-    The Numba convolution function does not account for an edge so
-    if we wish to take this into account, will pad the data array.
+    """
+    Calculates, for all inner cells of an array, the 2D convolution of
+    each cell via Numba. To account for edge cells, a pad can be added
+    to the image array. Convolution is frequently used for image
+    processing, such as smoothing, sharpening, and edge detection of
+    images by elimatig spurious data or enhancing features in the data.
+
+    Parameters:
+    ----------
+    image: xarray.DataArray
+        2D array of values to processed and padded.
+    kernel: array-like object
+        Impulse kernel, determines area to apply
+        impulse function for each cell.
+    pad: Boolean
+        To compute edges set to True.
+    use-cuda: Boolean
+        For parallel computing set to True.
+
+    Returns:
+    ----------
+    convolve_agg: xarray.DataArray
+        2D array representation of the impulse function.
+        All other input attributes are preserverd.
+
+    Examples:
+    ----------
+    Imports
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> from xrspatial import convolution, focal
+
+    Create Data Array
+    >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
+    >>>                              [0, 0, 2, 4, 0, 8, 0],
+    >>>                              [0, 2, 2, 4, 6, 8, 0],
+    >>>                              [0, 4, 4, 4, 6, 8, 0],
+    >>>                              [0, 6, 6, 6, 6, 8, 0],
+    >>>                              [0, 8, 8, 8, 8, 8, 0],
+    >>>                              [0, 0, 0, 0, 0, 0, 0]]),
+    >>>                     dims = ["lat", "lon"],
+    >>>                     attrs = dict(res = 1))
+    >>> height, width = agg.shape
+    >>> _lon = np.linspace(0, width - 1, width)
+    >>> _lat = np.linspace(0, height - 1, height)
+    >>> agg["lon"] = _lon
+    >>> agg["lat"] = _lat
+
+        Create Kernel
+    >>> kernel = focal.circle_kernel(1, 1, 1)
+
+        Create Convolution Data Array
+    >>> print(convolution.convolve_2d(agg, kernel))
+    [[ 0.  0.  4.  8.  0. 16.  0.]
+     [ 0.  4.  8. 10. 18. 16. 16.]
+     [ 4.  8. 14. 20. 24. 30. 16.]
+     [ 8. 16. 20. 24. 30. 30. 16.]
+     [12. 24. 30. 30. 34. 30. 16.]
+     [16. 22. 30. 30. 30. 24. 16.]
+     [ 0. 16. 16. 16. 16. 16.  0.]]
     """
 
     # numpy case

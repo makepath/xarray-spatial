@@ -87,7 +87,8 @@ def test_hillshade_gpu_equals_cpu():
     small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
     cpu = hillshade(small_da, name='numpy_result')
 
-    small_da_cupy = xr.DataArray(cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
+    small_da_cupy = xr.DataArray(cupy.asarray(elevation),
+                                 attrs={'res': (10.0, 10.0)})
     gpu = hillshade(small_da_cupy, name='cupy_result')
 
     assert isinstance(gpu.data, cupy.ndarray)

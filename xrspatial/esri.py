@@ -2,8 +2,26 @@ import pandas as pd
 import requests
 
 
-def featureset_to_dataframe(featureset, convert_geometry=False,
+def featureset_to_dataframe(featureset,
+                            convert_geometry=False,
                             use_aliases=False):
+    """
+    Parameters:
+    ----------
+    featureset:
+    convert_geometry: Boolean
+    use_aliases: Boolean
+
+    Returns:
+    ----------
+    dataframe:
+
+    Notes:
+    ----------
+
+    Examples:
+    ----------
+    """
     items = [x['attributes'] for x in featureset['features']]
     df = pd.DataFrame(items)
     if use_aliases and featureset.get('fieldAliases'):

@@ -1,5 +1,6 @@
 from math import atan, sqrt, fabs
 from math import pi as PI
+from typing import Union
 
 import numpy as np
 from xrspatial.utils import ngjit
@@ -330,8 +331,8 @@ def _insert_into_tree(tree_vals, tree_nodes, root, node_id, value):
             next_node = tree_nodes[cur_node][TN_RIGHT_ID]
 
     # create a new node
-    #   //and place it at the right place
-    #   //created node is RED by default */
+    #   and place it at the right place
+    #   created node is RED by default
     _create_tree_nodes(tree_vals, tree_nodes, node_id, value, color=RB_RED)
     next_node = node_id
 
@@ -1035,7 +1036,7 @@ def _calculate_angle(event_x, event_y, viewpoint_x, viewpoint_y):
 
     if event_x == viewpoint_x and event_y == viewpoint_y:
         return 0
-    
+
     # Calculate angle between (x1, y1) and (x2, y2)
     ang = atan(fabs(event_y - viewpoint_y) / fabs(event_x - viewpoint_x))
 
@@ -1500,32 +1501,36 @@ def _viewshed(raster, vp_row, vp_col, vp_elev, vp_target, ew_res, ns_res,
     return visibility_grid
 
 
-def viewshed(raster, x, y, observer_elev=OBS_ELEV, target_elev=TARGET_ELEV):
-    """Calculate viewshed of a raster (the visible cells in the raster)
+def viewshed(raster: xarray.DataArray,
+             x: Union[int, float],
+             y: Union[int, float],
+             observer_elev: float = OBS_ELEV,
+             target_elev: float = TARGET_ELEV) -> xarray.DataArray:
+    """
+    Calculate viewshed of a raster (the visible cells in the raster)
     for the given viewpoint (observer) location.
 
-    Parameters
+    Parameters:
     ----------
     raster: xarray.DataArray
         Input raster image.
     x: int, float
-        x-coordinate in data space of observer location
+        x-coordinate in data space of observer location.
     y: int, float
-        y-coordinate in data space of observer location
+        y-coordinate in data space of observer location.
     observer_elev: float
         Observer elevation above the terrain.
     target_elev: float
         Target elevation offset above the terrain.
 
-
-    Returns
-    -------
+    Returns:
+    ----------
     viewshed: xarray.DataArray
-             A cell x in the visibility grid is recorded as follows:
-                If it is invisible, then x is set to INVISIBLE.
-                If it is visible,  then x is set to the vertical angle w.r.t
-                the viewpoint.
+        A cell x in the visibility grid is recorded as follows:
+        If it is invisible, then x is set to INVISIBLE.
+        If it is visible,  then x is set to the vertical angle w.r.t the viewpoint.
     """
+
     height, width = raster.shape
 
     y_coords = raster.indexes.get('y').values
