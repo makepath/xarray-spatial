@@ -1496,14 +1496,10 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
 
 
 @ngjit
-def _normalize_data_cpu(data, pixel_max):
+def _normalize_data_cpu(data, min_val, max_val, pixel_max):
     out = np.zeros_like(data)
-    min_val = np.nanmin(data)
-    max_val = np.nanmax(data)
     range_val = max_val - min_val
     rows, cols = data.shape
-    c = 40
-    th = .125
     # check range_val to avoid dividing by zero
     if range_val != 0:
         for y in range(rows):
@@ -1517,22 +1513,31 @@ def _normalize_data_cpu(data, pixel_max):
     return out
 
 
+def _normalize_data_numpy(data, pixel_max):
+    min_val = np.nanmin(data)
+    max_val = np.nanmax(data)
+    out = _normalize_data_cpu(data, min_val, max_val, pixel_max)
+    return out
+
+
 def _normalize_data_dask(data, pixel_max):
-    out = da.map_blocks(_normalize_data_cpu, data, pixel_max,
+    min_val = da.nanmin(data)
+    max_val = da.nanmax(data)
+    out = da.map_blocks(_normalize_data_cpu, data, min_val, max_val, pixel_max,
                         meta=np.array(()))
     return out
 
 
 def _normalize_data_cupy(data, pixel_max):
-    raise NotImplementedError('Not Implemented')
+    raise NotImplementedError('Not Supported')
 
 
 def _normalize_data_dask_cupy(data, pixel_max):
-    raise NotImplementedError('Not Implemented')
+    raise NotImplementedError('Not Supported')
 
 
 def _normalize_data(agg, pixel_max=255.0):
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalize_data_cpu,
+    mapper = ArrayTypeFunctionMapping(numpy_func=_normalize_data_numpy,
                                       dask_func=_normalize_data_dask,
                                       cupy_func=_normalize_data_cupy,
                                       dask_cupy_func=_normalize_data_dask_cupy)

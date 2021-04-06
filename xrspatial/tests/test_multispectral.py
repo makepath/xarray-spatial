@@ -19,6 +19,7 @@ from xrspatial.multispectral import ndvi
 from xrspatial.multispectral import savi
 from xrspatial.multispectral import gci
 from xrspatial.multispectral import sipi
+from xrspatial.multispectral import true_color
 
 
 max_val = 2**16 - 1
@@ -808,3 +809,21 @@ def test_ebbi_dask_cupy_equals_numpy():
     assert is_dask_cupy(test_result)
     test_result.data = test_result.data.compute()
     assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
+
+def test_true_color_cpu():
+    # vanilla numpy version
+    red = create_test_arr(arr1)
+    green = create_test_arr(arr2)
+    blue = create_test_arr(arr3)
+    numpy_result = true_color(red, green, blue)
+
+    # dask
+    red_dask = create_test_arr(arr1, backend='dask')
+    green_dask = create_test_arr(arr2, backend='dask')
+    blue_dask = create_test_arr(arr3, backend='dask')
+    dask_result = true_color(red_dask, green_dask, blue_dask)
+
+    assert np.isclose(
+        np.asarray(numpy_result), np.asarray(dask_result), equal_nan=True
+    ).all()
