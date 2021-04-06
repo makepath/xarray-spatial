@@ -4,6 +4,9 @@ pushd %~dp0
 
 REM Command file for Sphinx documentation
 
+if "%SPHINXBUILD%" == "" (
+	set SPHINXBUILD=sphinx-build
+)
 set SOURCEDIR=source
 set BUILDDIR=build
 
@@ -29,6 +32,7 @@ if "%1" == "html" (
 
 	set THEME=pydata_sphinx_theme
 	sphinx-multiversion %SOURCEDIR% %BUILDDIR%\html
+	%SPHINXBUILD% -M %1 %SOURCEDIR% %BUILDDIR% %SPHINXOPTS%
 
 	if errorlevel 1 exit /b 1
 	echo.
