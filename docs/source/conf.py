@@ -84,6 +84,8 @@ else:
 
 html_logo = '_static/img/Xarray-Spatial-logo.svg'
 
+html_favicon = '_static/img/favicon.ico'
+
 # sphinx-multiversion config
 smv_branch_whitelist = 'master'
 if os.getenv('THEME') == 'sphinx_rtd_theme':
