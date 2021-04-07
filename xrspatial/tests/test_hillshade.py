@@ -7,6 +7,10 @@ import dask.array as da
 from xrspatial import hillshade
 from xrspatial.utils import doesnt_have_cuda
 
+from xrspatial.tests._earth_elevation_da import earth_elevation
+
+earth_elevation_window = earth_elevation[50:100,100:150]
+
 
 elevation = np.asarray(
     [[1432.6542, 1432.4764, 1432.4764, 1432.1207, 1431.9429, np.nan],
