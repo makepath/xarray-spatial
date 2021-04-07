@@ -7,6 +7,9 @@ import dask.array as da
 from xrspatial import slope
 from xrspatial.utils import doesnt_have_cuda
 
+from xrspatial.tests._earth_elevation_da import earth_elevation
+from xrspatial.tests._qgis_results.qgis_slope import earth_qgis_slope
+
 
 # Test Data -----------------------------------------------------------------
 
@@ -50,6 +53,11 @@ elevation2 = np.asarray([
     dtype=np.float32
 )
 
+def test_earth_dem_slope_against_qgis():
+
+    xrspatial_slope = slope(earth_elevation)
+
+    assert (np.isclose(xrspatial_slope.data, earth_qgis_slope.data, equal_nan=True).all())
 
 def test_slope_against_qgis():
 

@@ -7,6 +7,8 @@ from xrspatial import aspect
 from xrspatial.utils import doesnt_have_cuda
 from xrspatial.utils import is_cupy_backed
 
+from xrspatial.tests._earth_elevation_da import earth_elevation
+from xrspatial.tests._qgis_results.qgis_aspect import earth_qgis_aspect
 
 INPUT_DATA = np.asarray([
     [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
@@ -29,6 +31,15 @@ QGIS_OUTPUT = np.asarray([
     [351.86676, 11.306906, 45., 45., 45., 108.431015]], dtype=np.float32
 )
 
+def test_earth_dem_numpy_equals_qgis():
+
+    xrspatial_aspect = aspect(earth_elevation)
+
+    # need to convert -1 for flat areas to nan to match transformed qgis output
+    xrspatial_aspect.data = np.where(xrspatial_aspect.data == -1, np.nan, xrspatial_aspect.data)
+
+    # need to increase absolute tolerance because of low floating point values
+    assert (np.isclose(xrspatial_aspect, earth_qgis_aspect, equal_nan=True, atol=1e-7).all())
 
 def test_numpy_equals_qgis():
 
