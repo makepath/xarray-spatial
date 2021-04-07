@@ -12385,6 +12385,4 @@ attrs = {
 earth_elevation = xr.DataArray(elevation_np, attrs=attrs, dims=['y', 'x'])
 earth_elevation['y'] = coord_y_np
 earth_elevation['x'] = coord_x_np
-earth_elevation = earth_elevation.assign_coords(band=np.asarray(1, dtype=np.int64))
-earth_elevation = earth_elevation.expand_dims('band')
 earth_elevation['spatial_ref'] = xr.DataArray(np.asarray(0, dtype=np.int64), attrs=coords_spatial_ref_attrs)
