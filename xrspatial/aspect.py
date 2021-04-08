@@ -161,7 +161,7 @@ def aspect(agg: xr.DataArray,
     The value is measured clockwise in degrees with 0 and 360 at due
     north. Flat areas are given a value of -1. Values along the edges
     are not calculated.
-
+  
     Parameters
     ----------
     agg : xarray.DataArray
@@ -187,56 +187,69 @@ def aspect(agg: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import xarray as xr
-    >>>     from xrspatial import aspect
+    >>>     import datashader as ds
+    >>>     from xrspatial import generate_terrain, aspect
+    >>>     from datashader.transfer_functions import shade, stack
+    >>>     from datashader.colors import Elevation
 
-    >>>     # Open Example DataArray
-    >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
+    >>>     # Generate an example terrain
+    >>>     W = 500
+    >>>     H = 300
+    >>>     cvs = ds.Canvas(plot_width = W,
+    ...                     plot_height = H,
+    ...                     x_range = (-20e6, 20e6),
+    ...                     y_range = (-20e6, 20e6))
+    >>>     terrain_agg = generate_terrain(canvas = cvs)
+    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
+    ...                                           'Max Elevation': '3000',
+    ...                                           'units': 'meters'})
+    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+    >>>     terrain_agg = terrain_agg.rename('example_terrain')
+    >>>     print(terrain_agg[200:203, 200:202])
+            <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
+            array([[1264.02249454, 1261.94748873],
+                   [1285.37061171, 1282.48046696],
+                   [1306.02305679, 1303.40657515]])
+            Coordinates:
+              * lon      (lon) float64 -3.96e+06 -3.88e+06
+              * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+            Attributes:
+                res:            1
+                Description:    Elevation
+                Max Elevation:  3000
+                units:          meters
 
-    >>>     print(agg)
-    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
-    ...     array([[0., 0., 0., ..., 0., 0., 0.],
-    ...            [0., 0., 0., ..., 0., 0., 0.],
-    ...            [0., 0., 0., ..., 0., 0., 0.],
-    ...            ...,
-    ...            [0., 0., 0., ..., 0., 0., 0.],
-    ...            [0., 0., 0., ..., 0., 0., 0.],
-    ...            [0., 0., 0., ..., 0., 0., 0.]])
-    ...     Coordinates:
-    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
-    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  1000
-    ...         units:          meters
+    >>>     # Shade image using DataShader
+    >>>     terrain_img = shade(agg = terrain_agg,
+    ...                         cmap = Elevation,
+    ...                         how = 'linear')
+    >>>     terrain_img
 
     >>>     # Create Aspect Aggregate Array
-    >>>     aspect_agg = aspect(agg)
+    >>>     aspect_agg = aspect(terrain_agg)
+    >>>     print(aspect_agg[200:203, 200:202])
+            <xarray.DataArray 'aspect' (lat: 3, lon: 2)>
+            array([[ 8.18582638,  8.04675084],
+                   [ 5.49302641,  9.86625477],
+                   [12.04270534, 16.87079619]])
+            Coordinates:
+              * lon      (lon) float64 -3.96e+06 -3.88e+06
+              * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+            Attributes:
+                res:            1
+                Description:    Elevation
+                Max Elevation:  3000
+                units:          meters
 
-    >>>     print(aspect_agg)
-    ...     <xarray.DataArray 'aspect' (lon: 600, lat: 800)>
-    ...     array([[nan, nan, nan, ..., nan, nan, nan],
-    ...            [nan, -1., -1., ..., -1., -1., nan],
-    ...            [nan, -1., -1., ..., -1., -1., nan],
-    ...            ...,
-    ...            [nan, -1., -1., ..., -1., -1., nan],
-    ...            [nan, -1., -1., ..., -1., -1., nan],
-    ...            [nan, nan, nan, ..., nan, nan, nan]])
-    ...     Coordinates:
-    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
-    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
-    ...     Attributes:
-    ...         res:          1
-    ...         Description:  Elevation
-    ...         Max Elevation:  1000
-    ...         units:        meters
+    >>>     # Shade image using DataShader
+    >>>     aspect_img = shade(agg = aspect_agg,
+    ...                        cmap = ['darkblue', 'blue',
+    ...                                'lightblue', 'white'],
+    ...                        how = 'linear',
+    ...                        alpha = 100)
+    >>>     aspect_img
 
-
-    >>>     # To view in a Jupyter Notebook
-    >>>     from datashader.transfer_functions import shade
-    >>>     shade(aspect_agg) 
+    >>>     stack(terrain_img, aspect_img)
 
     """
 
