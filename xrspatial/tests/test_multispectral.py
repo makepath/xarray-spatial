@@ -843,9 +843,9 @@ def test_ratio_cpu():
     agg2_dask = create_test_arr(arr2, backend='dask')
 
     dask_result = ratio(agg1_dask, agg2_dask)
-    assert isinstance(dask_result.data, da.Array)
+    assert isinstance(dask_result, da.Array)
 
-    dask_result.data = dask_result.data.compute()
+    dask_result = dask_result.compute()
     assert np.isclose(numpy_result, dask_result, equal_nan=True).all()
 
 
@@ -864,7 +864,7 @@ def test_ratio_gpu():
     agg2_cupy = create_test_arr(arr2, backend='cupy')
     cupy_result = ratio(agg1_cupy, agg2_cupy)
 
-    assert isinstance(cupy_result.data, cupy.ndarray)
+    assert isinstance(cupy_result, cupy.ndarray)
     assert np.isclose(numpy_result, cupy_result, equal_nan=True).all()
 
     # dask + cupy
@@ -872,7 +872,8 @@ def test_ratio_gpu():
     agg2_dask_cupy = create_test_arr(arr2, backend='dask+cupy')
     dask_cupy_result = ratio(agg1_dask_cupy, agg2_dask_cupy)
 
-    assert is_dask_cupy(dask_cupy_result)
+    assert isinstance(dask_cupy_result, da.Array)
+    assert type(dask_cupy_result._meta).__module__.split('.')[0] == 'cupy'
 
-    dask_cupy_result.data = dask_cupy_result.data.compute()
+    dask_cupy_result = dask_cupy_result.compute()
     assert np.isclose(numpy_result, dask_cupy_result, equal_nan=True).all()
