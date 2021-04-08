@@ -1576,3 +1576,79 @@ def true_color(r, g, b, nodata=1):
     data[:, :, 3] = a.astype(np.uint8)
 
     return Image.fromarray(data, 'RGBA')
+
+
+def ndsi(green_agg: DataArray, swir1_agg: DataArray, name='ndsi'):
+    """
+    """
+    validate_arrays(green_agg, swir1_agg)
+
+    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
+                                      dask_func=_run_normalized_ratio_dask,
+                                      cupy_func=_run_normalized_ratio_cupy,
+                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+
+    out = mapper(green_agg)(green_agg.data, swir1_agg.data)
+
+    return DataArray(out,
+                     name=name,
+                     coords=green_agg.coords,
+                     dims=green_agg.dims,
+                     attrs=green_agg.attrs)
+
+@ngjit
+def _ratio_cpu(arr1, arr2):
+    out = np.zeros(arr1.shape, dtype=np.float32)
+    rows, cols = arr1.shape
+    for y in range(0, rows):
+        for x in range(0, cols):
+            numerator = arr1[y, x]
+            denominator = arr2[y, x]
+            if denominator == 0.0:
+                continue
+            else:
+                out[y, x] = numerator / denominator
+    return out
+
+
+def _ratio_dask(arr1, arr2):
+    out = da.map_blocks(_ratio_cpu, arr1, arr2,
+                        meta=np.array(()))
+    return out
+
+
+@cuda.jit
+def _ratio_gpu(arr1, arr2, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+        numerator = arr1[y, x]
+        denominator = arr2[y, x]
+        if denominator != 0.0:
+            out[y, x] = numerator / denominator
+
+
+def _ratio_cupy(arr1, arr2):
+    griddim, blockdim = cuda_args(arr1.shape)
+    out = cupy.empty(arr1.shape, dtype='f4')
+    out[:] = cupy.nan
+    _ratio_gpu[griddim, blockdim](arr1, arr2, out)
+    return out
+
+
+def _ratio_dask_cupy(arr1, arr2):
+    out = da.map_blocks(_ratio_cupy, arr1, arr2,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
+
+
+def ratio(agg1, agg2, name='ratio'):
+    validate_arrays(agg1, agg2)
+    mapper = ArrayTypeFunctionMapping(numpy_func=_ratio_cpu,
+                                      dask_func=_ratio_dask,
+                                      cupy_func=_ratio_cupy,
+                                      dask_cupy_func=_ratio_dask_cupy)
+    out = mapper(agg1)(agg1.data, agg2.data)
+    return out
+
+
+
