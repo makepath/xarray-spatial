@@ -1684,8 +1684,9 @@ def _thresholding_numpy(data, lower, upper):
 
 
 def _thresholding_dask(data, lower, upper):
-    out = da.map_blocks(_thresholding_numpy, data, lower, upper,
+    out = da.map_blocks(_thresholding_cpu, data, lower, upper,
                         meta=np.array(()))
+    out = _normalize_data_dask(out, pixel_max=1.0)
     return out
 
 
