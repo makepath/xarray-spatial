@@ -1,3 +1,4 @@
+check-manifest
 pytest
 setuptools_scm
 tox
