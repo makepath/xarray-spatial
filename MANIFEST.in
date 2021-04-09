@@ -31,6 +31,7 @@ exclude *.gif
 exclude *.svg
 exclude tox.ini
 exclude test_examples_cli.py
+include *.yml
 
 include examples/*.ipynb
 include *.yml
