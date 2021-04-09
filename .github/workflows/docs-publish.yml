@@ -18,7 +18,7 @@ jobs:
                       sphinx \
                       pydata_sphinx_theme \
                       sphinx-panels \
-                      multiversion \
+                      sphinx-multiversion \
                       sphinx_rtd_theme
       - name: Build
         run: |
