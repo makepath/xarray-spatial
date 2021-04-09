@@ -1596,6 +1596,7 @@ def ndsi(green_agg: DataArray, swir1_agg: DataArray, name='ndsi'):
                      dims=green_agg.dims,
                      attrs=green_agg.attrs)
 
+
 @ngjit
 def _ratio_cpu(arr1, arr2):
     out = np.zeros(arr1.shape, dtype=np.float32)
@@ -1642,13 +1643,124 @@ def _ratio_dask_cupy(arr1, arr2):
 
 
 def ratio(agg1, agg2, name='ratio'):
+
+    # calculate ratio agg1.data / agg2.data
+
     validate_arrays(agg1, agg2)
     mapper = ArrayTypeFunctionMapping(numpy_func=_ratio_cpu,
                                       dask_func=_ratio_dask,
                                       cupy_func=_ratio_cupy,
                                       dask_cupy_func=_ratio_dask_cupy)
     out = mapper(agg1)(agg1.data, agg2.data)
+    return DataArray(out,
+                     name=name,
+                     coords=agg1.coords,
+                     dims=agg1.dims,
+                     attrs=agg1.attrs)
+
+
+@ngjit
+def _thresholding_cpu(data, lower, upper):
+    out = np.zeros_like(data)
+    rows, cols = out.shape
+    for y in range(rows):
+        for x in range(cols):
+            if data[y, x] < lower:
+                out[y, x] = 0
+            elif data[y, x] > upper:
+                out[y, x] = upper
+            else:
+                out[y, x] = data[y, x]
     return out
 
+
+def _thresholding_numpy(data, lower, upper):
+    out = _thresholding_cpu(data, lower, upper)
+    out = _normalize_data_numpy(out, pixel_max=1.0)
+    # TODO: handle nans?
+    # replace nans with nan_value
+    # out[~np.isfinite(out)] = nan_value
+    return out
+
+
+def _thresholding_dask(data, lower, upper):
+    out = da.map_blocks(_thresholding_numpy, data, lower, upper,
+                        meta=np.array(()))
+    return out
+
+
+def _thresholding_cupy(data, lower, upper):
+    raise NotImplementedError('Not Supported')
+
+
+def _thresholding_dask_cupy(data, lower, upper):
+    raise NotImplementedError('Not Supported')
+
+
+def _thresholding(agg, lower, upper):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_thresholding_numpy,
+                                      dask_func=_thresholding_dask,
+                                      cupy_func=_thresholding_cupy,
+                                      dask_cupy_func=_thresholding_dask_cupy)
+    out = mapper(agg)(agg.data, lower, upper)
+    return out
+
+
+def drop_clouds(red, green, blue, nir, swir1, name='drop_clouds'):
+    """
+    Algorithm references:
+    - https://earth.esa.int/c/document_library/get_file?folderId=349490&name=DLFE-4518.pdf
+    - https://sentinels.copernicus.eu/web/sentinel/technical-guides/sentinel-2-msi/level-2a/algorithm
+
+    """
+
+    # step 1a: _thresholding_numpy red
+    lower_red = 0.07
+    upper_red = 0.25
+    normalized_red = _normalize_data(red, pixel_max=1.)
+    prob_red = _thresholding(DataArray(normalized_red), lower_red, upper_red)
+
+    # step 1b: Normalised Difference Snow Index (NDSI)
+    lower_ndsi = -0.24
+    upper_ndsi = 0.16
+    _ndsi = ndsi(green, swir1)
+    prob_ndsi = _thresholding(_ndsi, lower_ndsi, upper_ndsi)
+
+    # step 3: NDVI
+    lower_ndiv = 0.36
+    upper_ndvi = 0.4
+    _ndvi = ndvi(nir, red)
+    prob_ndvi = 1 - _thresholding(_ndvi, lower_ndiv, upper_ndvi)
+
+    # step 4: Ratio Band 8 / Band 3 for senescing vegetation
+    lower_ng = 1.5
+    upper_ng = 2.5
+    ratio_ng = ratio(nir, green)
+    prob_ng = 1 - _thresholding(ratio_ng, lower_ng, upper_ng)
+
+    # step 5: Ratio Band 2 / Band 11 for soils and water bodies
+    ratio_bs = ratio(blue, swir1)
+    # Pass 1 for soils detection
+    lower_bs1 = 0.55
+    upper_bs1 = 0.8
+    prob_bs1 = _thresholding(ratio_bs, lower_bs1, upper_bs1)
+    # Pass 2 for water bodies detection
+    lower_bs2 = 2.0
+    upper_bs2 = 4.0
+    prob_bs2 = 1 - _thresholding(ratio_bs, lower_bs2, upper_bs2)
+
+    # step 6: Ratio Band 8 / band 11 for rocks and sands in deserts
+    lower_ns = 0.9
+    upper_ns = 1.1
+    ratio_ns = ratio(nir, swir1)
+    prob_ns = _thresholding(ratio_ns, lower_ns, upper_ns)
+
+    out = prob_red * prob_ndsi * prob_ndvi * prob_ng * prob_bs1 * prob_bs2 * prob_ns
+
+    return DataArray(out,
+                     name=name,
+                     coords=red.coords,
+                     dims=red.dims,
+                     attrs=red.attrs)
 
 
