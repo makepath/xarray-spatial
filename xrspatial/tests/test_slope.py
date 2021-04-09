@@ -7,8 +7,6 @@ import dask.array as da
 from xrspatial import slope
 from xrspatial.utils import doesnt_have_cuda
 
-from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
-
 
 # Test Data -----------------------------------------------------------------
 
@@ -57,13 +55,10 @@ def test_slope_against_qgis():
 
     small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
 
-    # add crs for tests
-    small_da = _add_EPSG4326_crs_to_da(small_da)
-
     # slope by xrspatial
     xrspatial_slope = slope(small_da, name='slope_agg')
 
-    # validate output attributes and coords, including crs preservation
+    # validate output attributes
     assert xrspatial_slope.dims == small_da.dims
     assert xrspatial_slope.attrs == small_da.attrs
     assert xrspatial_slope.shape == small_da.shape
