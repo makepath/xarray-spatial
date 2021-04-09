@@ -71,7 +71,7 @@ setup_args = dict(
 
 if __name__ == '__main__':
   example_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
-                                              'xrspatial', 'examples')
+                                              'xarray-spatial', 'examples')
   if 'develop' not in sys.argv:
     pyct.build.examples(example_path, __file__, force=True)
   setup(**setup_args)
