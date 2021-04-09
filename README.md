@@ -30,7 +30,7 @@
 
 Xarray-Spatial implements common raster analysis functions using Numba and provides an easy-to-install, easy-to-extend codebase for raster analysis.
 
-#### Installation
+### Installation
 ```bash
 # via pip
 pip install xarray-spatial
@@ -38,6 +38,18 @@ pip install xarray-spatial
 # via conda
 conda install -c conda-forge xarray-spatial
 ```
+
+### Dowloading our starter examples and data
+Once you have xarray-spatial installed in your environment, you can use one of the following in your terminal (with the environment active) to download our examples and/or sample data into your local directory. 
+
+```xrspatial examples``` : Download the examples notebooks and the data used.  
+
+```xrspatial copy-examples``` : Download the examples notebooks but not the data. Note: you won't be able to run many of the examples.  
+
+```xrspatial fetch-data``` : Download just the data and not the notebooks.
+
+In all the above, the command will download and store the files into your current directory inside a folder named 'xrspatial-examples'.
+
 
 | | | | | |
 |:-------------------------:|:-------------------------:|:-------------------------:|:-------------------------:|:-------------------------:|
@@ -70,10 +82,10 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Equal Interval](xrspatial/classify.py) | ✅️ | ✅ | ✅ |  |
-| [Natural Breaks](xrspatial/classify.py) | ✅️ |  | ✅ |  |
-| [Reclassify](xrspatial/classify.py) | ✅️ | ✅ | ✅ | ✅ |
-| [Quantile](xrspatial/classify.py) | ✅️ | ✅ | ✅ |  |
+| [Equal Interval](xrspatial/classify.py) |✅️ |✅ | ✅ |✅️ |
+| [Natural Breaks](xrspatial/classify.py) |✅️ |✅ | ✅ |✅️ |
+| [Reclassify](xrspatial/classify.py) |✅️ |✅ | ✅ |✅ |
+| [Quantile](xrspatial/classify.py) |✅️ | ✅ |✅ |✅️|
 
 -------
 
@@ -92,16 +104,16 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
-| [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | ✅️ | | ✅️ | |
-| [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | ✅️ | | ✅️ | |
-| [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | ✅️ |  | ✅️ | |
+| [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | ✅️ |✅️  | ✅️ |✅️ |
+| [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
 
 -------
 
@@ -165,9 +177,6 @@ hillshaded_dataarray = hillshade(my_dataarray)
 Check out the user guide [here](/examples/user_guide/).
 
 ------
-Check out [Xarray-Spatial on YouTube](https://www.youtube.com/watch?v=z4xrkglmg80)
-------
-
 
 ![title](img/composite_map.png)
 ![title](img/makepath-supply-chain-international-shipping.png)
@@ -205,3 +214,4 @@ With the introduction of projects like Numba, Python gained new ways to provide 
 - @chase-dwelle
 - @SAN154
 - @SapirLastimoza-Dooley
+- @lex-c
