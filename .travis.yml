@@ -27,7 +27,6 @@ before_install:
     conda create --name TEST python=$PY --file requirements.txt --file requirements-dev.txt
     source activate TEST
     conda info --all
-    sudo apt-get install -y python-logilab-common
 
 install:
   - pip install -e . --no-deps --force-reinstall
