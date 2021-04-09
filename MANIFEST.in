@@ -27,6 +27,7 @@ exclude *.gif
 exclude *.svg
 exclude tox.ini
 exclude test_examples_cli.py
+exclude MANIFEST.in
 
 recursive-include examples *.gif
 recursive-include examples *.ipynb
