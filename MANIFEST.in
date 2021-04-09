@@ -11,14 +11,14 @@ prune conda.recipe
 prune img
 prune .idea
 
+include xrspatial/examples/*
+include xrspatial/examples/user_guide/*
+
 exclude examples/.ipynb_checkpoints/*
 exclude xrspatial/_version.py
 exclude xrspatial/__pycache__/*
-exclude xrspatial/examples/*
-exclude xrspatial/examples/user_guide/*
 exclude xrspatial/examples/user_guide_idea/*
 exclude tile_idea.py
-exclude *.yml
 exclude *.enc
 exclude .gitignore
 exclude .isort.cfg
