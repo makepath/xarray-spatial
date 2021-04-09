@@ -1,10 +1,5 @@
 check-manifest
-pydata_sphinx_theme
 pytest
-sphinx
-sphinx-multiversion
-sphinx-panels
-sphinx_rtd_theme
 setuptools_scm
 tox
 twine
