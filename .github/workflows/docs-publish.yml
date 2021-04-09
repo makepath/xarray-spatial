@@ -13,7 +13,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install setuptools wheel sphinx sphinx_rtd_theme
+          pip install setuptools \
+                      wheel \
+                      sphinx \
+                      pydata_sphinx_theme \
+                      sphinx-panels \
+                      sphinx-multiversion \
+                      sphinx_rtd_theme
       - name: Build
         run: |
           pip install .
