@@ -1,6 +1,13 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.1.5 - 4/8/2020
+- CLI examples bug fixed
+
+### Version 0.1.4 - 4/8/2020
+- Sphinx doc fixes
+- CLI bug fixed in 0.1.5
+
 ### Version 0.1.3 - 4/5/2020
 
 - Added band_to_img utils func
