@@ -21,7 +21,7 @@ install_requires = [
     'requests',
     'scipy',
     'xarray',
-    'pyct',
+    'pyct <=0.4.6',
     ]
 
 examples = [

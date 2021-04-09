@@ -8,9 +8,10 @@ prune *.egg-info
 
 global-exclude *.png
 prune conda.recipe
-prune examples
 prune img
+prune .idea
 
+exclude examples/.ipynb_checkpoints/*
 exclude xrspatial/_version.py
 exclude xrspatial/__pycache__/*
 exclude xrspatial/examples/*
@@ -26,3 +27,8 @@ exclude *.gif
 exclude *.svg
 exclude tox.ini
 exclude test_examples_cli.py
+
+recursive-include examples *.gif
+recursive-include examples *.ipynb
+recursive-include examples *.py
+recursive-include examples *.yml
