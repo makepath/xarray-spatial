@@ -7,8 +7,6 @@ import dask.array as da
 from xrspatial import curvature
 from xrspatial.utils import doesnt_have_cuda
 
-from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
-
 elevation = np.asarray([
     [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
     [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
@@ -28,17 +26,13 @@ def test_curvature_on_flat_surface():
                           [0, 0, 0, 0, 0],
                           [0, 0, 0, 0, 0],
                           [0, 0, 0, 0, 0]])
-    test_raster1 = xr.DataArray(test_arr1)
-
-    # add crs for tests
-    test_raster1 = _add_EPSG4326_crs_to_da(test_raster1, res=(1, 1))
-
+    test_raster1 = xr.DataArray(test_arr1, attrs={'res': (1, 1)})
     curv = curvature(test_raster1)
 
     # output must be an xarray DataArray
     assert isinstance(curv, xr.DataArray)
     assert isinstance(curv.values, np.ndarray)
-    # shape, dims, coords, attr preserved, including crs
+    # shape, dims, coords, attr preserved
     assert test_raster1.shape == curv.shape
     assert test_raster1.dims == curv.dims
     assert test_raster1.attrs == curv.attrs
