@@ -3,6 +3,8 @@ import xarray as xr
 
 from xrspatial import a_star_search
 
+from xrspatial.utils import add_crs_metadata
+
 
 def test_a_star_search():
     agg = xr.DataArray(np.array([[0, 1, 0, 0],
@@ -11,6 +13,9 @@ def test_a_star_search():
                                  [1, 0, 2, 0],
                                  [0, 2, 2, 2]]),
                        dims=['lat', 'lon'])
+
+    # add crs for tests
+    agg = add_crs_metadata(agg)
 
     height, width = agg.shape
     _lon = np.linspace(0, width - 1, width)

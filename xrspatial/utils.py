@@ -263,3 +263,54 @@ def bands_to_img(r, g, b, nodata=1):
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
     data[:, :, 3] = a.astype(np.uint8)
     return tf.Image.fromarray(data, 'RGBA')
+
+
+spatial_ref_attrs = dict(
+    EPSG4326={
+        'crs_wkt': 'GEOGCRS["WGS 84",DATUM["World Geodetic System 1984",'
+                   'ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT['
+                   '"metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",'
+                   '0.0174532925199433]],CS[ellipsoidal,2],AXIS["geodetic '
+                   'latitude (Lat)",north,ORDER[1],ANGLEUNIT["degree",'
+                   '0.0174532925199433]],AXIS["geodetic longitude (Lon)",'
+                   'east,ORDER[2],ANGLEUNIT["degree",0.0174532925199433]],'
+                   'ID["EPSG",4326]]',
+        'semi_major_axis': 6378137.0,
+        'semi_minor_axis': 6356752.314245179,
+        'inverse_flattening': 298.257223563,
+        'reference_ellipsoid_name': 'WGS 84',
+        'longitude_of_prime_meridian': 0.0,
+        'prime_meridian_name': 'Greenwich',
+        'geographic_crs_name': 'WGS 84',
+        'grid_mapping_name': 'latitude_longitude',
+        'spatial_ref': 'GEOGCRS["WGS 84",DATUM["World Geodetic System 1984",'
+                       'ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT['
+                       '"metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT['
+                       '"degree",0.0174532925199433]],CS[ellipsoidal,2],'
+                       'AXIS["geodetic latitude (Lat)",north,ORDER[1],'
+                       'ANGLEUNIT["degree",0.0174532925199433]],'
+                       'AXIS["geodetic longitude (Lon)",east,ORDER[2],'
+                       'ANGLEUNIT["degree",0.0174532925199433]],ID["EPSG",'
+                       '4326]] '
+    }
+)
+
+
+def add_crs_metadata(da, res=(10.0, 10.0), nodata=0.0, crs='EPSG4326'):
+    """
+        Takes in an xarray.DataArray and return a new DataArray
+        with the same data and with EPSG4326 specific crs attrs and coords.
+        Attrs from the original DataArray are not preserved
+        in the returned one and coords are preserved.
+    """
+    crs_da = xr.DataArray(np.empty_like(da.data), dims=da.dims)
+    crs_da.data = da.data
+    crs_attrs = {'grid_mapping': 'spatial_ref'}
+    crs_attrs['res'] = res
+    crs_attrs['nodata'] = nodata
+    crs_da.attrs = crs_attrs
+    for coord in da.coords:
+        crs_da[coord] = da[coord]
+    spatial_ref_coords = xr.DataArray(0, attrs=spatial_ref_attrs[crs])
+    crs_da.coords['spatial_ref'] = spatial_ref_coords
+    return crs_da

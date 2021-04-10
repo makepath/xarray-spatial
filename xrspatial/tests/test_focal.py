@@ -5,11 +5,15 @@ from xrspatial import mean
 from xrspatial.convolution import convolve_2d
 from xrspatial.focal import (
     calc_cellsize,
+    apply,
     hotspots,
     circle_kernel,
     annulus_kernel,
     _validate_kernel,
 )
+
+from xrspatial.utils import add_crs_metadata
+
 import pytest
 
 
@@ -44,8 +48,17 @@ data_gaussian = _do_gaussian_array()
 
 def test_mean_transfer_function():
     da = xr.DataArray(data_random)
+
+    # add crs for tests
+    da = add_crs_metadata(da)
+
     da_mean = mean(da)
     assert da.shape == da_mean.shape
+
+    # crs tests
+    assert da_mean.attrs == da.attrs
+    for coord in da.coords:
+        assert np.all(da_mean[coord] == da[coord])
 
     # Overall mean value should be the same as the original array.
     # Considering the default behaviour to 'mean' is to pad the borders
@@ -90,9 +103,39 @@ def test_kernel():
         assert e_info
 
 
+def test_apply_crs():
+    n, m = 6, 6
+    raster = xr.DataArray(np.ones((n, m)), dims=['y', 'x'])
+
+    # add crs
+    raster = add_crs_metadata(raster, res=(1, 1))
+
+    raster['x'] = np.linspace(0, n, n)
+    raster['y'] = np.linspace(0, m, m)
+    cellsize_x, cellsize_y = calc_cellsize(raster)
+
+    # add some nan pixels
+    nan_cells = [(i, i) for i in range(n)]
+    for cell in nan_cells:
+        raster[cell[0], cell[1]] = np.nan
+
+    # kernel array = [[1]]
+    kernel = np.ones((1, 1))
+
+    raster_apply = apply(raster, kernel)
+
+    assert raster_apply.attrs == raster.attrs
+    for coord in raster.coords:
+        assert np.all(raster_apply[coord] == raster[coord])
+
+
 def test_convolution():
     n, m = 6, 6
     raster = xr.DataArray(np.ones((n, m)), dims=['y', 'x'])
+
+    # add crs for tests
+    raster = add_crs_metadata(raster)
+
     raster['x'] = np.linspace(0, n, n)
     raster['y'] = np.linspace(0, m, m)
     cellsize_x, cellsize_y = calc_cellsize(raster)
@@ -114,6 +157,11 @@ def test_convolution():
                                    [1., 1., 1., 1., 1., 0.]])
     # Convolution will return np.nan, so convert nan to 0
     assert np.all(np.nan_to_num(expected_out_sum_1) == expected_out_sum_1)
+
+    # crs tests: hold for edit to convolve_2d to return xarray.DataArray
+    # assert sum_output_1.attrs == raster.attrs
+    # for coord in raster.coords:
+    #     assert np.all(sum_output_1[coord] == raster[coord])
 
     # np.nanmean(np.array([np.nan])) = nan
     mean_output_1 = convolve_2d(raster.values, kernel / kernel.sum())
@@ -169,6 +217,10 @@ def test_convolution():
 def test_hotspot():
     n, m = 10, 10
     raster = xr.DataArray(np.zeros((n, m), dtype=float), dims=['y', 'x'])
+
+    # add crs for tests
+    raster = add_crs_metadata(raster)
+
     raster['x'] = np.linspace(0, n, n)
     raster['y'] = np.linspace(0, m, m)
     cellsize_x, cellsize_y = calc_cellsize(raster)
@@ -204,7 +256,7 @@ def test_hotspot():
     assert isinstance(hotspots_output.values, np.ndarray)
     assert issubclass(hotspots_output.values.dtype.type, np.int8)
 
-    # shape, dims, coords, attr preserved
+    # shape, dims, coords, attr preserved, including crs
     assert raster.shape == hotspots_output.shape
     assert raster.dims == hotspots_output.dims
     assert raster.attrs == hotspots_output.attrs

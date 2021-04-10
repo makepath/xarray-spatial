@@ -6,7 +6,7 @@ import xarray as xr
 from xrspatial import aspect
 from xrspatial.utils import doesnt_have_cuda
 from xrspatial.utils import is_cupy_backed
-
+from xrspatial.utils import add_crs_metadata
 
 INPUT_DATA = np.asarray([
     [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
@@ -32,10 +32,14 @@ QGIS_OUTPUT = np.asarray([
 
 def test_numpy_equals_qgis():
 
-    small_da = xr.DataArray(INPUT_DATA, attrs={'res': (10.0, 10.0)})
+    small_da = xr.DataArray(INPUT_DATA)
+
+    # add crs for tests
+    small_da = add_crs_metadata(small_da)
+
     xrspatial_aspect = aspect(small_da, name='numpy_aspect')
 
-    # validate output attributes
+    # validate output attributes and coords including crs
     assert xrspatial_aspect.dims == small_da.dims
     assert xrspatial_aspect.attrs == small_da.attrs
     assert xrspatial_aspect.shape == small_da.shape

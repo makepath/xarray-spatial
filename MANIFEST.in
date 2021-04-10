@@ -9,6 +9,7 @@ prune *.egg-info
 global-exclude *.png
 prune conda.recipe
 prune img
+prune .github
 prune .idea
 
 include xrspatial/examples/*
@@ -16,7 +17,13 @@ include xrspatial/examples/user_guide/*
 
 exclude examples/.ipynb_checkpoints/*
 exclude xrspatial/_version.py
+exclude xrspatial/.DS_Store
 exclude xrspatial/__pycache__/*
+exclude xrspatial/tests/.DS_Store
+exclude xrspatial/tests/__pycache__/*
+exclude xrspatial/tests/_qgis_results/__pycache__/*
+exclude xrspatial/examples/*
+exclude xrspatial/examples/user_guide/*
 exclude xrspatial/examples/user_guide_idea/*
 exclude tile_idea.py
 exclude *.enc

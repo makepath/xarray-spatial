@@ -6,7 +6,7 @@ import dask.array as da
 
 from xrspatial import hillshade
 from xrspatial.utils import doesnt_have_cuda
-
+from xrspatial.utils import add_crs_metadata
 
 elevation = np.asarray(
     [[1432.6542, 1432.4764, 1432.4764, 1432.1207, 1431.9429, np.nan],
@@ -55,7 +55,13 @@ def test_hillshade():
     Assert Simple Hillshade transfer function
     """
     da_gaussian = xr.DataArray(data_gaussian)
+
+    # add crs for tests
+    da_gaussian = add_crs_metadata(da_gaussian)
+
     da_gaussian_shade = hillshade(da_gaussian, name='hillshade_agg')
+
+    # test preservation of attrs and coords, including crs
     assert da_gaussian_shade.dims == da_gaussian.dims
     assert da_gaussian_shade.attrs == da_gaussian.attrs
     assert da_gaussian_shade.name == 'hillshade_agg'
