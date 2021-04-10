@@ -1,0 +1,18 @@
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="{{ _('Versions') }}">
+    <div class="deprecated-warning">
+        The documentation on this page refers to a PREVIOUS VERSION. For the latest release, go to <a
+            href="https://xarray-spatial.org/">https://xarray-spatial.org/</a></div>
+    <span class="rst-current-version" data-toggle="rst-current-version">
+        <span class="fa fa-book"> Versions</span>
+        <span class="fa fa-caret-down"></span>
+    </span>
+    <div class="rst-other-versions">
+        <dl>
+            <dt>{{ _('Versions') }}</dt>
+            {% for release in releases %}
+            <dd><a class="dropdown-item" href="{{ release[1] }}">{{ release[0] }}</a></dd>
+            {% endfor %}
+        </dl>
+        <dl>
+    </div>
+</div>
