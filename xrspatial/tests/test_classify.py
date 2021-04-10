@@ -27,7 +27,8 @@ def test_reclassify_cpu():
     # add crs for tests
     numpy_agg_crs = add_crs_metadata(numpy_agg)
 
-    numpy_reclassify = reclassify(numpy_agg_crs, bins=bins, new_values=new_values,
+    numpy_reclassify = reclassify(numpy_agg_crs, bins=bins,
+                                  new_values=new_values,
                                   name='numpy_reclassify')
     unique_elements, counts_elements = np.unique(numpy_reclassify.data,
                                                  return_counts=True)
@@ -149,7 +150,8 @@ def test_natural_breaks_cpu():
 
     numpy_natural_breaks = natural_breaks(numpy_agg_crs, k=k)
 
-    # shape and other attributes remain the same, as well as coords, including crs
+    # shape and other attributes remain the same, as well as coords,
+    # including crs
     assert numpy_agg_crs.shape == numpy_natural_breaks.shape
     assert numpy_agg_crs.dims == numpy_natural_breaks.dims
     assert numpy_agg_crs.attrs == numpy_natural_breaks.attrs

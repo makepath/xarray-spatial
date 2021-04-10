@@ -166,6 +166,7 @@ def test_ndvi_dask_cupy_equals_numpy():
     test_result.data = test_result.data.compute()
     assert np.isclose(numpy_result, test_result, equal_nan=True).all()
 
+
 # SAVI -------------
 def test_savi_numpy():
     nir = create_test_arr(arr1)
@@ -253,7 +254,8 @@ def test_arvi_numpy():
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
 
-    #add crs for tests (nir dims, attrs, coords are the ones arvi function sets on the return DataArray)
+    # add crs for tests (nir dims, attrs, coords are the ones arvi function
+    # sets on the return DataArray)
     nir = add_crs_metadata(nir)
 
     result = arvi(nir, red, blue)
@@ -262,7 +264,7 @@ def test_arvi_numpy():
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
 
-    #crs tests
+    # crs tests
     assert result.attrs == nir.attrs
     for coord in nir.coords:
         assert np.all(result[coord] == nir[coord])
@@ -356,6 +358,7 @@ def test_evi_numpy():
     for coord in nir.coords:
         assert np.all(result[coord] == nir[coord])
 
+
 def test_evi_dask_equals_numpy():
 
     # vanilla numpy version
@@ -439,6 +442,7 @@ def test_gci_numpy():
     for coord in nir.coords:
         assert np.all(result[coord] == nir[coord])
 
+
 def test_gci_dask_equals_numpy():
 
     # vanilla numpy version
@@ -516,6 +520,7 @@ def test_sipi_numpy():
     assert result.attrs == nir.attrs
     for coord in nir.coords:
         assert np.all(result[coord] == nir[coord])
+
 
 def test_sipi_dask_equals_numpy():
 
@@ -676,6 +681,7 @@ def test_nbr2_numpy():
     for coord in swir1.coords:
         assert np.all(result[coord] == swir1[coord])
 
+
 def test_nbr2_dask_equals_numpy():
 
     # vanilla numpy version
@@ -828,6 +834,7 @@ def test_ebbi_numpy():
     assert numpy_result.attrs == red.attrs
     for coord in red.coords:
         assert np.all(numpy_result[coord] == red[coord])
+
 
 def test_ebbi_dask_equals_numpy():
 

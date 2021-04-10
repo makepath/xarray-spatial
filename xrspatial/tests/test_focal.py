@@ -102,6 +102,7 @@ def test_kernel():
         _validate_kernel([[1, 1, 1]])
         assert e_info
 
+
 def test_apply_crs():
     n, m = 6, 6
     raster = xr.DataArray(np.ones((n, m)), dims=['y', 'x'])
@@ -126,6 +127,7 @@ def test_apply_crs():
     assert raster_apply.attrs == raster.attrs
     for coord in raster.coords:
         assert np.all(raster_apply[coord] == raster[coord])
+
 
 def test_convolution():
     n, m = 6, 6

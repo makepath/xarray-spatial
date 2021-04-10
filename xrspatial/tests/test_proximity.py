@@ -188,7 +188,8 @@ def test_direction():
 
     direction_agg = direction(raster, x='lon', y='lat')
 
-    # output must be an xarray DataArray, and attrs and coords must be preserved, including crs
+    # output must be an xarray DataArray, and attrs and coords must be
+    # preserved, including crs
     assert isinstance(direction_agg, xa.DataArray)
     assert type(direction_agg.values[0][0]) == np.float64
     assert direction_agg.shape == raster.shape
