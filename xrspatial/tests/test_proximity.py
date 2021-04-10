@@ -5,7 +5,7 @@ from xrspatial import great_circle_distance, manhattan_distance
 from xrspatial import euclidean_distance
 from xrspatial.proximity import _calc_direction
 
-from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
+from xrspatial.utils import add_crs_metadata
 
 import numpy as np
 import xarray as xa
@@ -55,7 +55,7 @@ def test_proximity():
     raster = create_test_raster()
 
     # add crs for tests
-    raster_for_default = _add_EPSG4326_crs_to_da(raster)
+    raster_for_default = add_crs_metadata(raster)
 
     # DEFAULT SETTINGS
     default_prox = proximity(raster_for_default, x='lon', y='lat')
@@ -124,7 +124,7 @@ def test_allocation():
     raster = create_test_raster()
 
     # add crs for tests
-    raster = _add_EPSG4326_crs_to_da(raster)
+    raster = add_crs_metadata(raster)
 
     allocation_agg = allocation(raster, x='lon', y='lat')
     # output must be an xarray DataArray
@@ -184,7 +184,7 @@ def test_direction():
     raster = create_test_raster()
 
     # add crs for tests
-    raster = _add_EPSG4326_crs_to_da(raster)
+    raster = add_crs_metadata(raster)
 
     direction_agg = direction(raster, x='lon', y='lat')
 

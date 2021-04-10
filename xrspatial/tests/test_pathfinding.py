@@ -3,7 +3,7 @@ import xarray as xr
 
 from xrspatial import a_star_search
 
-from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
+from xrspatial.utils import add_crs_metadata
 
 
 def test_a_star_search():
@@ -15,7 +15,7 @@ def test_a_star_search():
                        dims=['lat', 'lon'])
 
     # add crs for tests
-    agg = _add_EPSG4326_crs_to_da(agg)
+    agg = add_crs_metadata(agg)
 
     height, width = agg.shape
     _lon = np.linspace(0, width - 1, width)

@@ -5,14 +5,11 @@ import numpy as np
 
 import dask.array as da
 
-from xrspatial.utils import doesnt_have_cuda, is_cupy_backed
+from xrspatial.utils import doesnt_have_cuda, is_cupy_backed, add_crs_metadata
 from xrspatial import equal_interval
 from xrspatial import natural_breaks
 from xrspatial import quantile
 from xrspatial import reclassify
-
-from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
-
 
 n, m = 5, 5
 elevation = np.arange(n * m).reshape((n, m))
@@ -28,7 +25,7 @@ def test_reclassify_cpu():
     # numpy
 
     # add crs for tests
-    numpy_agg_crs = _add_EPSG4326_crs_to_da(numpy_agg)
+    numpy_agg_crs = add_crs_metadata(numpy_agg)
 
     numpy_reclassify = reclassify(numpy_agg_crs, bins=bins, new_values=new_values,
                                   name='numpy_reclassify')
@@ -92,7 +89,7 @@ def test_quantile_cpu():
     # numpy
 
     # add crs for tests
-    numpy_agg_crs = _add_EPSG4326_crs_to_da(numpy_agg)
+    numpy_agg_crs = add_crs_metadata(numpy_agg)
 
     numpy_quantile = quantile(numpy_agg_crs, k=k)
 
@@ -148,7 +145,7 @@ def test_natural_breaks_cpu():
     # vanilla numpy
 
     # add crs for tests
-    numpy_agg_crs = _add_EPSG4326_crs_to_da(numpy_agg)
+    numpy_agg_crs = add_crs_metadata(numpy_agg)
 
     numpy_natural_breaks = natural_breaks(numpy_agg_crs, k=k)
 
@@ -188,7 +185,7 @@ def test_equal_interval_cpu():
     # numpy
 
     # add crs for tests
-    numpy_agg_crs = _add_EPSG4326_crs_to_da(numpy_agg)
+    numpy_agg_crs = add_crs_metadata(numpy_agg)
 
     numpy_ei = equal_interval(numpy_agg_crs, k=5)
 

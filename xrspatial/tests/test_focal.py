@@ -12,7 +12,7 @@ from xrspatial.focal import (
     _validate_kernel,
 )
 
-from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
+from xrspatial.utils import add_crs_metadata
 
 import pytest
 
@@ -50,7 +50,7 @@ def test_mean_transfer_function():
     da = xr.DataArray(data_random)
 
     # add crs for tests
-    da = _add_EPSG4326_crs_to_da(da)
+    da = add_crs_metadata(da)
 
     da_mean = mean(da)
     assert da.shape == da_mean.shape
@@ -107,7 +107,7 @@ def test_apply_crs():
     raster = xr.DataArray(np.ones((n, m)), dims=['y', 'x'])
 
     # add crs
-    raster = _add_EPSG4326_crs_to_da(raster, res=(1, 1))
+    raster = add_crs_metadata(raster, res=(1, 1))
 
     raster['x'] = np.linspace(0, n, n)
     raster['y'] = np.linspace(0, m, m)
@@ -132,7 +132,7 @@ def test_convolution():
     raster = xr.DataArray(np.ones((n, m)), dims=['y', 'x'])
 
     # add crs for tests
-    raster = _add_EPSG4326_crs_to_da(raster)
+    raster = add_crs_metadata(raster)
 
     raster['x'] = np.linspace(0, n, n)
     raster['y'] = np.linspace(0, m, m)
@@ -217,7 +217,7 @@ def test_hotspot():
     raster = xr.DataArray(np.zeros((n, m), dtype=float), dims=['y', 'x'])
 
     # add crs for tests
-    raster = _add_EPSG4326_crs_to_da(raster)
+    raster = add_crs_metadata(raster)
 
     raster['x'] = np.linspace(0, n, n)
     raster['y'] = np.linspace(0, m, m)

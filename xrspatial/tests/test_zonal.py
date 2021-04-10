@@ -10,8 +10,7 @@ from xrspatial import suggest_zonal_canvas
 from xrspatial import trim
 from xrspatial import crop
 
-from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
-
+from xrspatial.utils import add_crs_metadata
 
 from xrspatial.zonal import regions
 
@@ -373,7 +372,7 @@ def test_apply():
     values = xa.DataArray(values_val)
 
     # add crs for tests
-    values = _add_EPSG4326_crs_to_da(values)
+    values = add_crs_metadata(values)
 
     values_copy = values.copy()
     apply(zones, values, func)
@@ -439,7 +438,7 @@ def test_regions_four_pixel_connectivity_int():
     raster = create_test_arr(arr)
 
     # add crs for tests
-    raster = _add_EPSG4326_crs_to_da(raster)
+    raster = add_crs_metadata(raster)
 
     raster_regions = regions(raster, neighborhood=4)
     assert len(np.unique(raster_regions.data)) == 3
@@ -496,7 +495,7 @@ def test_trim():
     raster = create_test_arr(arr)
 
     # add crs for tests
-    raster = _add_EPSG4326_crs_to_da(raster)
+    raster = add_crs_metadata(raster)
 
     trimmed_raster = trim(raster, values=(0,))
     assert trimmed_raster.shape == (3, 2)
@@ -604,7 +603,7 @@ def test_crop():
     raster = create_test_arr(arr)
 
     # add crs for tests
-    raster = _add_EPSG4326_crs_to_da(raster)
+    raster = add_crs_metadata(raster)
 
     result = crop(raster, raster, zones_ids=(1, 3))
     assert result.shape == (4, 3)

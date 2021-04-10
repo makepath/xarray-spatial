@@ -8,6 +8,7 @@ import dask.array as da
 from xrspatial.utils import has_cuda
 from xrspatial.utils import doesnt_have_cuda
 from xrspatial.utils import is_dask_cupy
+from xrspatial.utils import add_crs_metadata
 
 from xrspatial.multispectral import arvi
 from xrspatial.multispectral import ebbi
@@ -19,8 +20,6 @@ from xrspatial.multispectral import ndvi
 from xrspatial.multispectral import savi
 from xrspatial.multispectral import gci
 from xrspatial.multispectral import sipi
-
-from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
 
 max_val = 2**16 - 1
 
@@ -92,7 +91,7 @@ def test_ndvi_numpy_contains_valid_values():
     da_nir = xr.DataArray(nir, dims=['y', 'x'])
 
     # add crs for tests
-    da_nir = _add_EPSG4326_crs_to_da(da_nir)
+    da_nir = add_crs_metadata(da_nir)
 
     da_red = xr.DataArray(red, dims=['y', 'x'])
 
@@ -172,7 +171,7 @@ def test_savi_numpy():
     nir = create_test_arr(arr1)
 
     # add crs for tests
-    nir = _add_EPSG4326_crs_to_da(nir)
+    nir = add_crs_metadata(nir)
 
     red = create_test_arr(arr2)
 
@@ -255,7 +254,7 @@ def test_arvi_numpy():
     blue = create_test_arr(arr3)
 
     #add crs for tests (nir dims, attrs, coords are the ones arvi function sets on the return DataArray)
-    nir = _add_EPSG4326_crs_to_da(nir)
+    nir = add_crs_metadata(nir)
 
     result = arvi(nir, red, blue)
 
@@ -337,7 +336,7 @@ def test_evi_numpy():
     nir = create_test_arr(arr1)
 
     # add crs for tests
-    nir = _add_EPSG4326_crs_to_da(nir)
+    nir = add_crs_metadata(nir)
 
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
@@ -425,7 +424,7 @@ def test_gci_numpy():
     nir = create_test_arr(arr1)
 
     # add crs for tests
-    nir = _add_EPSG4326_crs_to_da(nir)
+    nir = add_crs_metadata(nir)
 
     green = create_test_arr(arr2)
 
@@ -502,7 +501,7 @@ def test_sipi_numpy():
     nir = create_test_arr(arr1)
 
     # add crs for tests
-    nir = _add_EPSG4326_crs_to_da(nir)
+    nir = add_crs_metadata(nir)
 
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
@@ -585,7 +584,7 @@ def test_nbr_numpy():
     nir = create_test_arr(arr1)
 
     # add crs for tests
-    nir = _add_EPSG4326_crs_to_da(nir)
+    nir = add_crs_metadata(nir)
 
     swir = create_test_arr(arr2)
     result = nbr(nir, swir)
@@ -662,7 +661,7 @@ def test_nbr2_numpy():
     swir1 = create_test_arr(arr1)
 
     # add crs for tests
-    swir1 = _add_EPSG4326_crs_to_da(swir1)
+    swir1 = add_crs_metadata(swir1)
 
     swir2 = create_test_arr(arr2)
 
@@ -738,7 +737,7 @@ def test_ndmi_numpy():
     nir = create_test_arr(arr1)
 
     # add crs for tests
-    nir = _add_EPSG4326_crs_to_da(nir)
+    nir = add_crs_metadata(nir)
 
     swir1 = create_test_arr(arr2)
 
@@ -815,7 +814,7 @@ def test_ebbi_numpy():
     red = create_test_arr(arr1)
 
     # add crs for tests
-    red = _add_EPSG4326_crs_to_da(red)
+    red = add_crs_metadata(red)
 
     swir = create_test_arr(arr2)
     tir = create_test_arr(arr3)

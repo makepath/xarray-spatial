@@ -4,7 +4,7 @@ import pytest
 import datashader as ds
 from xrspatial import viewshed
 
-from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
+from xrspatial.utils import add_crs_metadata
 
 import numpy as np
 import pandas as pd
@@ -51,7 +51,7 @@ def test_viewshed_invalid_y_view():
 def test_viewshed_output_properties():
 
     # add crs for tests
-    empty_agg_crs = _add_EPSG4326_crs_to_da(empty_agg)
+    empty_agg_crs = add_crs_metadata(empty_agg)
 
     for obs_elev in OBS_ELEVS:
         OBSERVER_X = xs[0]
