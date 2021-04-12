@@ -16,3 +16,4 @@ jobs:
           use-black: false
           use-mypy: false
           use-isort: false
+          extra-flake8-options: '--select=E9,F63,F7,F82' # syntax errors or undefined names
