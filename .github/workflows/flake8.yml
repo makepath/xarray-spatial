@@ -10,8 +10,9 @@ jobs:
       - uses: actions/checkout@v1
       - id: file_changes
         uses: trilom/file-changes-action@v1.2.3
+      - name: Get modified files
         run: |
-          echo '["xrspatial/__init__.py"]' | sed -e 's/\[//g; s/\]//g; s/\,/ /g; s/\"//g' -e 's/[0-9]/N/g' > files.txt
+          echo '${{ steps.file_changes.outputs.files_modified}}' | sed -e 's/\[//g; s/\]//g; s/\,/ /g; s/\"//g' -e 's/[0-9]/N/g' > files.txt
       - uses: ricardochaves/python-lint@v1.3.0
         with:
           python-root-list: cat files.txt
