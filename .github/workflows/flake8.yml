@@ -14,6 +14,8 @@ jobs:
           output: ''
       - name: Get modified files
         run: echo "FILES=$(echo ${{ steps.file_changes.outputs.files_modified}} | grep -oP '(?=\s?)(\w*?\.py)(?=\s?)')" >> $GITHUB_ENV
+      - name: Test
+        run: echo ${{ env.FILES }}
       - uses: ricardochaves/python-lint@v1.3.0
         with:
           python-root-list: ${FILES}
