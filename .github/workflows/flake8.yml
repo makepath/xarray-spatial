@@ -12,6 +12,7 @@ jobs:
         uses: trilom/file-changes-action@v1.2.3
         with:
           output: ''
+      - name: Get modified files
         run: echo "FILES=$(echo ${{ steps.file_changes.outputs.files_modified}} | grep -oP '(?=\s?)(\w*?\.py)(?=\s?)')" >> $GITHUB_ENV
       - uses: ricardochaves/python-lint@v1.3.0
         with:
