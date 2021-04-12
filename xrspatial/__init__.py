@@ -59,4 +59,3 @@ def test():
     pytest.main([os.path.dirname(__file__)])
 
 print( "test lint")
-print( "test lint")
