@@ -21,3 +21,4 @@ jobs:
           use-black: false
           use-mypy: false
           use-isort: false
+          extra-flake8-options: '--filename=*.py'
