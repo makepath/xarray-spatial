@@ -14,7 +14,7 @@ jobs:
           output: ''
       - uses: ricardochaves/python-lint@v1.3.0
         env:
-          FILES: echo ${{ steps.file_changes.outputs.files_modified}} | grep -oP '(?=\s?)(\w*?\.py)(?=\s?)'
+          FILES: echo ${{ steps.file_changes.outputs.files_modified}} | grep -oP '(?=\s?)([\w|\/]*?\.py)(?=\s?)'
       - name: Test
         run: echo ${{ env.FILES }}
       - uses: ricardochaves/python-lint@v1.3.0
