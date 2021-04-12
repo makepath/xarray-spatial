@@ -57,3 +57,5 @@ def test():
         sys.stderr.write("You need to install py.test to run tests.\n\n")
         raise
     pytest.main([os.path.dirname(__file__)])
+
+print( "test lint")
