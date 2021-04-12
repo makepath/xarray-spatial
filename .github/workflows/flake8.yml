@@ -14,7 +14,7 @@ jobs:
           output: ''
       - uses: ricardochaves/python-lint@v1.3.0
         with:
-          python-root-list: ${{ steps.file_changes.outputs.files_modified}}
+          python-root-list: echo ${{ steps.file_changes.outputs.files_modified}} | grep -oP '(?=\s?)(\w*?\.py)(?=\s?)'
           use-pylint: false
           use-pycodestyle: false
           use-flake8: true
