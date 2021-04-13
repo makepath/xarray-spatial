@@ -6,4 +6,7 @@ Pathfinding
 
 A* Pathfinding
 ==============
-.. autofunction::  xrspatial.pathfinding.a_star_search
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.pathfinding.a_star_search

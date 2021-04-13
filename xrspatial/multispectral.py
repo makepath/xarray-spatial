@@ -1805,5 +1805,3 @@ def drop_clouds(red, green, blue, nir, swir1, name='drop_clouds'):
                      coords=red.coords,
                      dims=red.dims,
                      attrs=red.attrs)
-
-
