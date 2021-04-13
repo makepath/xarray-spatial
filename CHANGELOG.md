@@ -1,19 +1,28 @@
 ## Xarray-Spatial Changelog
 -----------
 
+## Version 0.1.6 - 4/12/2020
+- Cleared metadata in all examples ipynb (#327)
+- Moved docs requirements to source folder (#326)
+- Fixed manifest file
+- Fixed travis ci (#323)
+- Included yml files
+- Fixed examples path in Pharmacy Deserts Noteboo
+- Integrate xarray-spatial website with the documentation (#291)
+
 ### Version 0.1.5 - 4/8/2020
 - CLI examples bug fixed
+- Added `drop_clouds`, cloud-free mosaic from sentinel2 data example (#255)
 
 ### Version 0.1.4 - 4/8/2020
 - Sphinx doc fixes
 - CLI bug fixed in 0.1.5
 
 ### Version 0.1.3 - 4/5/2020
-
 - Added band_to_img utils func
 - Added download-examples CLI command for all notebooks (#241)
 - Added band_to_img utils func
-- docs enhancements
+- Docs enhancements
 - GPU and dask support for multispectral tools
 - GPU and Dask support for classify module (#168)
 - Fixed savi dask cupy test skip
@@ -23,7 +32,6 @@
 - Improved Sphinx docs / theme
 
 ### Version 0.1.2 - 12/1/2020
-
 - Added GPU support for curvature (#150)
 - Added dask.Array support for curvature (#150)
 - Added GPU support for aspect (#156)
