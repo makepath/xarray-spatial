@@ -238,18 +238,18 @@ def a_star_search(surface: xr.DataArray,
     Calculate distance from a starting point to a
     goal through a surface graph. Starting location
     and goal location should be within the graph.
-    
+
     A* is a modification of Dijkstra’s Algorithm
     that is optimized for a single destination.
     Dijkstra’s Algorithm can find paths to all
     locations; A* finds paths to one location,
     or the closest of several locations. It prioritizes
     paths that seem to be leading closer to a goal.
-    
+
     The output is an equal sized Xarray.DataArray
     with NaNs for non-path pixels, and the value
     of the path pixels being the current cost up to that point.
-    
+
     Parameters:
     ----------
     surface: xarray.DataArray
@@ -266,10 +266,12 @@ def a_star_search(surface: xr.DataArray,
         name of the y coordinate in input surface raster
     connectivity: int (default = 8)
     snap_start: bool (default = False)
-        snap the start location to the nearest valid value before beginning pathfinding
+        snap the start location to the nearest valid value before
+    beginning pathfinding
     snap_goal: bool (default = False)
-        snap the goal location to the nearest valid value before beginning pathfinding
-        
+        snap the goal location to the nearest valid value before
+    beginning pathfinding
+
     Returns:
     ----------
     path_agg: Xarray.DataArray
@@ -279,15 +281,15 @@ def a_star_search(surface: xr.DataArray,
     Notes:
     ----------
     Algorithm References:
-        - https://www.redblobgames.com/pathfinding/a-star/implementation.html
-        - https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
+    - https://www.redblobgames.com/pathfinding/a-star/implementation.html
+    - https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
 
     Examples:
     ----------
     Imports
     >>> import numpy as np
     >>> import xarray as xr
-    >>> from xrspatial import pathfinding
+    >>> from xrspatial import pathfinding as pf
 
     Create Surface Data Array
     >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0],
@@ -303,7 +305,7 @@ def a_star_search(surface: xr.DataArray,
     >>> agg["lat"] = _lat
 
     Create Path Data Array
-    >>> print(pathfinding.a_star_search(agg, (0,0), (4,4), x = 'lon', y = 'lat'))
+    >>> print(pf.a_star_search(agg, (0,0), (4,4), x = 'lon', y = 'lat'))
     <xarray.DataArray (lat: 5, lon: 5)>
     array([[0.        , nan, nan, nan, nan],
            [nan, 1.41421356, nan, nan, nan],

@@ -136,9 +136,9 @@ def slope(agg: xr.DataArray,
           name: str = 'slope') -> xr.DataArray:
     """
     Returns slope of input aggregate in degrees.
-    
+
     Parameters:
-    ---------
+    -----------
     agg: xarray.DataArray
         2D array of elevation band data.
     name: str, optional (default = 'slope')
@@ -151,12 +151,12 @@ def slope(agg: xr.DataArray,
         All other input attributes are preserved.
 
     Notes:
-    ---------
+    ------
     Algorithm References:
-        - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm
-        - Burrough, P. A., and McDonell, R. A., 1998.
-          Principles of Geographical Information Systems
-          (Oxford University Press, New York), pp 406
+    - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm # noqa
+    - Burrough, P. A., and McDonell, R. A., 1998. Principles of Geographical
+    Information Systems (Oxford University Press, New York), pp 406
+
     Examples:
     ---------
     Imports

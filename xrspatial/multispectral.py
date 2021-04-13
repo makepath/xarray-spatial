@@ -626,10 +626,12 @@ def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
 
     validate_arrays(nir_agg, swir2_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
-                                      dask_func=_run_normalized_ratio_dask,
-                                      cupy_func=_run_normalized_ratio_cupy,
-                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
 
     out = mapper(nir_agg)(nir_agg.data, swir2_agg.data)
 
@@ -729,10 +731,12 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr2'):
 
     validate_arrays(swir1_agg, swir2_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
-                                      dask_func=_run_normalized_ratio_dask,
-                                      cupy_func=_run_normalized_ratio_cupy,
-                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
 
     out = mapper(swir1_agg)(swir1_agg.data, swir2_agg.data)
 
@@ -828,10 +832,12 @@ def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
 
     validate_arrays(nir_agg, red_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
-                                      dask_func=_run_normalized_ratio_dask,
-                                      cupy_func=_run_normalized_ratio_cupy,
-                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
 
     out = mapper(nir_agg)(nir_agg.data, red_agg.data)
 
@@ -933,10 +939,12 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
 
     validate_arrays(nir_agg, swir1_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
-                                      dask_func=_run_normalized_ratio_dask,
-                                      cupy_func=_run_normalized_ratio_cupy,
-                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
 
     out = mapper(nir_agg)(nir_agg.data, swir1_agg.data)
 
@@ -1583,10 +1591,12 @@ def ndsi(green_agg: DataArray, swir1_agg: DataArray, name='ndsi'):
     """
     validate_arrays(green_agg, swir1_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
-                                      dask_func=_run_normalized_ratio_dask,
-                                      cupy_func=_run_normalized_ratio_cupy,
-                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
 
     out = mapper(green_agg)(green_agg.data, swir1_agg.data)
 
@@ -1710,8 +1720,8 @@ def _thresholding(agg, lower, upper):
 def drop_clouds(red, green, blue, nir, swir1, name='drop_clouds'):
     """
     Algorithm references:
-    - https://earth.esa.int/c/document_library/get_file?folderId=349490&name=DLFE-4518.pdf
-    - https://sentinels.copernicus.eu/web/sentinel/technical-guides/sentinel-2-msi/level-2a/algorithm
+    - https://earth.esa.int/c/document_library/get_file?folderId=349490&name=DLFE-4518.pdf # noqa
+    - https://sentinels.copernicus.eu/web/sentinel/technical-guides/sentinel-2-msi/level-2a/algorithm # noqa
 
     """
 
@@ -1756,12 +1766,11 @@ def drop_clouds(red, green, blue, nir, swir1, name='drop_clouds'):
     ratio_ns = ratio(nir, swir1)
     prob_ns = _thresholding(ratio_ns, lower_ns, upper_ns)
 
-    out = prob_red * prob_ndsi * prob_ndvi * prob_ng * prob_bs1 * prob_bs2 * prob_ns
+    out = prob_red * prob_ndsi * prob_ndvi * \
+        prob_ng * prob_bs1 * prob_bs2 * prob_ns
 
     return DataArray(out,
                      name=name,
                      coords=red.coords,
                      dims=red.dims,
                      attrs=red.attrs)
-
-

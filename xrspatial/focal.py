@@ -493,7 +493,7 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
     raster_dims = raster.dims
     if raster_dims != (y, x):
         raise ValueError("raster.coords should be named as coordinates:"
-                         "(%s, %s)".format(y, x))
+                         "({0}, {1})".format(y, x))
 
     # Validate the kernel
     _validate_kernel(kernel)
@@ -606,7 +606,7 @@ def hotspots(raster: xr.DataArray,
     raster_dims = raster.dims
     if raster_dims != (y, x):
         raise ValueError("raster.coords should be named as coordinates:"
-                         "(%s, %s)".format(y, x))
+                         "({0}, {1})".format(y, x))
 
     # apply kernel to raster values
     mean_array = convolve_2d(raster.values, kernel / kernel.sum(), pad=True)

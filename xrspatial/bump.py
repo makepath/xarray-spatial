@@ -118,7 +118,7 @@ def bump(width: int, height: int, count: Optional[int] = None,
         res:      1
 
     Terrrain Example:
-        - https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
+        - https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html # noqa
     """
 
     linx = range(width)
@@ -128,7 +128,7 @@ def bump(width: int, height: int, count: Optional[int] = None,
         count = width * height // 10
 
     if height_func is None:
-        height_func = lambda bumps: np.ones(len(bumps))
+        height_func = lambda bumps: np.ones(len(bumps)) # noqa
 
     # create 2d array of random x, y for bump locations
     locs = np.empty((count, 2), dtype=np.uint16)
