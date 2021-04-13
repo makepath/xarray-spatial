@@ -1,0 +1,18 @@
+name: flake8 Lint
+
+on: [push, pull_request]
+
+jobs:
+  flake8-lint:
+    runs-on: ubuntu-latest
+    name: Lint with flake8
+    steps:
+      - uses: actions/checkout@v1
+      - uses: ricardochaves/python-lint@v1.3.0
+        with:
+          use-pylint: false
+          use-pycodestyle: false
+          use-flake8: true
+          use-black: false
+          use-mypy: false
+          use-isort: false

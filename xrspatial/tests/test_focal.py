@@ -104,7 +104,7 @@ def test_convolution():
 
     # kernel array = [[1]]
     kernel = np.ones((1, 1))
-    sum_output_1 = convolve_2d(raster.values, kernel)
+
     # np.nansum(np.array([np.nan])) = 0.0
     expected_out_sum_1 = np.array([[0., 1., 1., 1., 1., 1.],
                                    [1., 0., 1., 1., 1., 1.],

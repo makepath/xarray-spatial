@@ -15,6 +15,10 @@
 import os
 import json
 import sys
+
+import xrspatial
+
+
 sys.path.insert(0, os.path.abspath('../..'))
 
 # -- Project information -----------------------------------------------------
@@ -23,7 +27,6 @@ project = u'xarray_spatial'
 copyright = u'2021, makepath'
 author = u'makepath'
 
-import xrspatial
 version = release = xrspatial.__version__
 
 # -- General configuration ---------------------------------------------------

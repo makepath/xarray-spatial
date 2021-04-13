@@ -147,8 +147,6 @@ def test_ndvi_cupy_equals_numpy():
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_ndvi_dask_cupy_equals_numpy():
 
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
@@ -163,6 +161,7 @@ def test_ndvi_dask_cupy_equals_numpy():
 
     test_result.data = test_result.data.compute()
     assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
 
 # SAVI -------------
 def test_savi_numpy():
@@ -218,9 +217,6 @@ def test_savi_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_savi_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
@@ -291,9 +287,6 @@ def test_arvi_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_arvi_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
@@ -371,9 +364,6 @@ def test_evi_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_evi_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
@@ -403,8 +393,8 @@ def test_gci_numpy():
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
 
-def test_gci_dask_equals_numpy():
 
+def test_gci_dask_equals_numpy():
     # vanilla numpy version
     nir = create_test_arr(arr1)
     green = create_test_arr(arr2)
@@ -441,9 +431,6 @@ def test_gci_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Dgcice not Available")
 def test_gci_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     green = create_test_arr(arr2)
@@ -515,9 +502,6 @@ def test_sipi_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_sipi_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
@@ -584,9 +568,6 @@ def test_nbr_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_nbr_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     swir = create_test_arr(arr2)
@@ -653,9 +634,6 @@ def test_nbr2_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Dnbr2ce not Available")
 def test_nbr2_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     swir1 = create_test_arr(arr1)
     swir2 = create_test_arr(arr2)
@@ -721,9 +699,6 @@ def test_ndmi_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_ndmi_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     swir1 = create_test_arr(arr2)
@@ -793,9 +768,6 @@ def test_ebbi_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_ebbi_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     red = create_test_arr(arr1)
     swir = create_test_arr(arr2)
@@ -874,7 +846,11 @@ def test_ratio_gpu():
 
     assert is_dask_cupy(dask_cupy_result)
     dask_cupy_result = dask_cupy_result.compute()
-    assert np.isclose(numpy_result, dask_cupy_result.data, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result,
+        dask_cupy_result.data,
+        equal_nan=True,
+        ).all()
 
 
 def test_drop_clouds_cpu():
@@ -891,7 +867,13 @@ def test_drop_clouds_cpu():
     nir_agg = create_test_arr(nir)
     swir1_agg = create_test_arr(swir1)
 
-    numpy_result = drop_clouds(red_agg, green_agg, blue_agg, nir_agg, swir1_agg)
+    numpy_result = drop_clouds(
+        red_agg,
+        green_agg,
+        blue_agg,
+        nir_agg,
+        swir1_agg,
+    )
 
     # dask
     red_dask = create_test_arr(red, backend='dask')
@@ -900,7 +882,13 @@ def test_drop_clouds_cpu():
     nir_dask = create_test_arr(nir, backend='dask')
     swir1_dask = create_test_arr(swir1, backend='dask')
 
-    dask_result = drop_clouds(red_dask, green_dask, blue_dask, nir_dask, swir1_dask)
+    dask_result = drop_clouds(
+        red_dask,
+        green_dask,
+        blue_dask,
+        nir_dask,
+        swir1_dask,
+    )
 
     assert isinstance(dask_result.data, da.Array)
 

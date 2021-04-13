@@ -1,5 +1,3 @@
-import warnings
-
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -18,9 +16,9 @@ def stats(zones: xr.DataArray,
     """
     Calculate summary statistics for each zone defined by a zone dataset,
     based on values aggregate.
-    
+
     A single output value is computed for every zone in the input zone dataset.
-    
+
     Parameters:
     ----------
     zones: xarray.DataArray,
@@ -144,7 +142,7 @@ def _crosstab_2d(zones, values):
     masked_values = np.ma.masked_invalid(values.data)
 
     # categories
-    cats = np.unique(masked_values[masked_values.mask == False]).data
+    cats = np.unique(masked_values[masked_values.mask == False]).data # noqa
 
     # return of the function
     # columns are categories
@@ -627,7 +625,7 @@ def regions(raster: xr.DataArray,
     Notes:
     ----------
     Area Numbering implementing based on:
-        - http://spatial-analyst.net/ILWIS/htm/ilwisapp/areanumbering_algorithm.htm
+        - http://spatial-analyst.net/ILWIS/htm/ilwisapp/areanumbering_algorithm.htm # noqa
     """
 
     if neighborhood not in (4, 8):
