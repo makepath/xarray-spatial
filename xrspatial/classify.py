@@ -27,7 +27,6 @@ from typing import List, Optional
 
 
 import warnings
-warnings.simplefilter('default')
 
 
 def color_values(agg, color_key, alpha=255):
@@ -537,21 +536,25 @@ def _run_numpy_natural_break(data, num_sample, k):
 
     # warning if number of total data points to fit the model bigger than 40k
     if sample_data.size >= 40000:
-        warnings.warn('natural_breaks Warning: Natural break classification '
-                      '(Jenks) has a complexity of O(n^2), '
-                      'your classification with {} data points may take '
-                      'a long time.'.format(sample_data.size),
-                      Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn('natural_breaks Warning: Natural break classification '
+                          '(Jenks) has a complexity of O(n^2), '
+                          'your classification with {} data points may take '
+                          'a long time.'.format(sample_data.size),
+                          Warning)
 
     uv = np.unique(sample_data)
     uvk = len(uv)
 
     if uvk < k:
-        warnings.warn('natural_breaks Warning: Not enough unique values '
-                      'in data array for {} classes. '
-                      'n_samples={} should be >= n_clusters={}. '
-                      'Using k={} instead.'.format(k, uvk, k, uvk),
-                      Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn('natural_breaks Warning: Not enough unique values '
+                          'in data array for {} classes. '
+                          'n_samples={} should be >= n_clusters={}. '
+                          'Using k={} instead.'.format(k, uvk, k, uvk),
+                          Warning)
         uv.sort()
         bins = uv
     else:
@@ -649,21 +652,25 @@ def _run_cupy_natural_break(data, num_sample, k):
 
     # warning if number of total data points to fit the model bigger than 40k
     if sample_data.size >= 40000:
-        warnings.warn('natural_breaks Warning: Natural break classification '
-                      '(Jenks) has a complexity of O(n^2), '
-                      'your classification with {} data points may take '
-                      'a long time.'.format(sample_data.size),
-                      Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn('natural_breaks Warning: Natural break classification '
+                          '(Jenks) has a complexity of O(n^2), '
+                          'your classification with {} data points may take '
+                          'a long time.'.format(sample_data.size),
+                          Warning)
 
     uv = cupy.unique(sample_data)
     uvk = len(uv)
 
     if uvk < k:
-        warnings.warn('natural_breaks Warning: Not enough unique values '
-                      'in data array for {} classes. '
-                      'n_samples={} should be >= n_clusters={}. '
-                      'Using k={} instead.'.format(k, uvk, k, uvk),
-                      Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn('natural_breaks Warning: Not enough unique values '
+                          'in data array for {} classes. '
+                          'n_samples={} should be >= n_clusters={}. '
+                          'Using k={} instead.'.format(k, uvk, k, uvk),
+                          Warning)
         uv.sort()
         bins = uv
     else:
