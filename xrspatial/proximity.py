@@ -738,39 +738,92 @@ def direction(raster: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     from xrspatial import direction
+    >>>     import datashader as ds
     >>>     import pandas as pd
+    >>>     from xrspatial import generate_terrain, direction
     >>>     from datashader.transfer_functions import shade, stack, dynspread
-    >>>     from datashader.colors import Elevation
+    >>>     from datashader.colors import Elevation, Set1
 
-    >>>     # Load Data and Create Canvas
-    >>>     df = pd.DataFrame({
-    >>>         'x': np.random.randint(-20, 20, size = 10),
-    >>>         'y': np.random.randint(-20, 20, size = 10),
-    >>>         'z': np.random.randint(0, 10, size = 10)
+    >>>     # Create Canvas
+    >>>     W = 500 
+    >>>     H = 300
+    >>>     cvs = ds.Canvas(plot_width = W,
+    >>>                     plot_height = H,
+    >>>                     x_range = (-20e6, 20e6),
+    >>>                     y_range = (-20e6, 20e6))
+    >>>     # Generate Example Terrain
+    >>>     terrain_agg = generate_terrain(canvas = cvs)
+    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
+    >>>                                             'Max Elevation': '3000',
+    >>>                                             'units': 'meters'})
+    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+    >>>     terrain_agg = terrain_agg.rename('example_terrain')
+    >>>     # Shade Terrain
+    >>>     terrain_img = shade(agg = terrain_agg,
+    >>>                         cmap = Elevation,
+    >>>                         how = 'linear')
+    >>>     print(terrain_agg[200:203, 200:202])
+    >>>     terrain_img
+    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
+    ...     array([[1264.02249454, 1261.94748873],
+    ...            [1285.37061171, 1282.48046696],
+    ...            [1306.02305679, 1303.40657515]])
+    ...     Coordinates:
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  3000
+    ...         units:          meters
+
+            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
+
+    >>>     # Generate a Target Aggregate Array
+    >>>     cities_df = pd.DataFrame({
+    >>>         'lon': [-7475000, 25000, 15025000, -9975000, 5025000, -14975000],
+    >>>         'lat': [-9966666, 6700000, 13366666, 3366666, 13366666, 13366666],
+    >>>         'elevation': [306.5926712, 352.50955382, 347.20870554, 324.11835519, 686.31312024, 319.34522171]
     >>>     })
-    >>>     cvs = ds.Canvas(plot_width=800,
-    >>>                     plot_height=600,
-    >>>                     x_range=(-20, 20),
-    >>>                     y_range=(-20,20))
+    >>>     cities_da = cvs.points(cities_df,
+    >>>                             x ='lon',
+    >>>                             y ='lat',
+    >>>                             agg = ds.max('elevation'))
+    >>>     # Shade Cities
+    >>>     cities_pts = dynspread(shade(cities_da,
+    >>>                                  cmap = 'black',
+    >>>                                  min_alpha = 150),
+    >>>                            threshold = 1,
+    >>>                            max_px = 5)
+    >>>     print(cities_df)
+    >>>     cities_pts
+    >>>             lon       lat   elevation
+    >>>     0  -7475000  -9966666  306.592671
+    >>>     1     25000   6700000  352.509554
+    >>>     2  15025000  13366666  347.208706
+    >>>     3  -9975000   3366666  324.118355
+    >>>     4   5025000  13366666  686.313120
+    >>>     5 -14975000  13366666  319.345222
 
-    >>>     # Create Direction Aggregate
-    >>>     points_agg = cvs.points(df,
-    >>>                             x = 'x',
-    >>>                             y = 'y',
-    >>>                             agg = ds.max('z'))
-    >>>     points_shaded = dynspread(shade(points_agg,
-    >>>                                     cmap = ['salmon', 'salmon']),
-    >>>                                     threshold = 1,
-    >>>                                     max_px = 5)
+            .. image :: ./docs/source/_static/img/docstring/allocation_example_cities.png
 
-    >>>     # Create Allocation Grid for All Non-Zero Values
-    >>>     direction_agg = direction(points_agg)
-    >>>     stack(shade(direction_agg,
-    >>>                 cmap = ['darkturquoise', 'black'],
-    >>>                 how = 'linear'),
-    >>>                 points_shaded)
+    >>>     # Create Direction Aggregate Array
+    >>>     direction_agg = direction(cities_pts, x = 'lon', y = 'lat')
+    >>>     # Shade Image
+    >>>     direction_img = shade(direction_agg.where(terrain_agg != 0), cmap = Set1[0:4],
+    >>>                                                                 alpha = 150)
+    >>>     print(direction_agg[200:203, 200:202])
+    >>>     direction_img
+    ...     <xarray.DataArray (lat: 3, lon: 2)>
+    ...     array([[90., 90.],
+    ...            [90., 90.],
+    ...            [90., 90.]])
+    ...     Coordinates:
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+
+              .. image :: ./docs/source/_static/img/docstring/direction_example.png
+
     """
 
     direction_img = _process(raster,
