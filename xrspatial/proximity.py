@@ -550,37 +550,91 @@ def proximity(raster: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     from xrspatial import proximity
+    >>>     import datashader as ds
     >>>     import pandas as pd
+    >>>     from xrspatial import generate_terrain, proximity
     >>>     from datashader.transfer_functions import shade, stack, dynspread
-    >>>     from datashader.colors import Elevation
+    >>>     from datashader.colors import Elevation, Set1
 
-    >>>     # Load Data and Create Canvas
-    >>>     df = pd.DataFrame({
-    >>>         'x': [-13, -11, -5, 4, 9, 11, 18, 6],
-    >>>         'y': [-13, -5, 0, 10, 7, 2, 5, -5]
-    >>>     })
-    >>>     cvs = ds.Canvas(plot_width = 800,
-    >>>                     plot_height = 600,
-    >>>                     x_range = (-20, 20),
-    >>>                     y_range = (-20,20))
+    >>>     # Create Canvas
+    >>>     W = 500 
+    >>>     H = 300
+    >>>     cvs = ds.Canvas(plot_width = W,
+    >>>                     plot_height = H,
+    >>>                     x_range = (-20e6, 20e6),
+    >>>                     y_range = (-20e6, 20e6))
+    >>>     # Generate Example Terrain
+    >>>     terrain_agg = generate_terrain(canvas = cvs)
+    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
+    >>>                                             'Max Elevation': '3000',
+    >>>                                             'units': 'meters'})
+    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+    >>>     terrain_agg = terrain_agg.rename('example_terrain')
+    >>>     # Shade Terrain
+    >>>     terrain_img = shade(agg = terrain_agg,
+    >>>                         cmap = Elevation,
+    >>>                         how = 'linear')
+    >>>     print(terrain_agg[200:203, 200:202])
+    >>>     terrain_img
+    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
+    ...     array([[1264.02249454, 1261.94748873],
+    ...            [1285.37061171, 1282.48046696],
+    ...            [1306.02305679, 1303.40657515]])
+    ...     Coordinates:
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  3000
+    ...         units:          meters
 
-    >>>     # Create Proximity Aggregate
-    >>>     points_agg = cvs.points(df,
-    >>>                             x = 'x',
-    >>>                             y = 'y')
-    >>>     points_shaded = dynspread(shade(points_agg,
-    >>>                                     cmap = ['salmon', 'salmon']),
-    >>>                                     threshold = 1,
-    >>>                                     max_px = 5)
+            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
 
-    >>>     # Create Proximity Grid for All Non-Zero Values
-    >>>     proximity_agg = proximity(points_agg)
-    >>>     stack(shade(proximity_agg,
-    >>>                 cmap=['darkturquoise', 'black'],
-    >>>                 how = 'linear'),
-    >>>                 points_shaded)
+    >>>     # Generate a Target Aggregate Array
+    >>>     volcano_agg = terrain_agg.copy(deep = True)
+    >>>     volcano_agg = volcano_agg.where(volcano_agg.data > 2800)
+    >>>     volcano_agg = volcano_agg.notnull()
+    >>>     volcano_agg = volcano_agg.rename('volcano')
+    >>>     # Shade Volcano
+    >>>     volcano_img = shade(volcano_agg,
+    >>>                         cmap = 'black')
+    >>>     print(volcano_agg[200:203, 200:202])
+    >>>     volcano_img
+    ...     <xarray.DataArray 'volcano' (lat: 3, lon: 2)>
+    ...     array([[False, False],
+    ...            [False, False],
+    ...            [False, False]])
+    ...     Coordinates:
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+
+              .. image :: ./docs/source/_static/img/docstring/volcano_example.png
+
+    >>>     # Create Proximity Aggregate Array
+    >>>     proximity_agg = proximity(volcano_agg, x = 'lon', y = 'lat')
+    >>>     # Shade Image
+    >>>     island_clause = ((volcano_agg == 0) & (terrain_agg != 0))
+    >>>     proximity_img = shade(proximity_agg.where(island_clause), cmap = ['red', 'orange',                                                                       'yellow', 'green'],
+    >>>                                                                 alpha = 150)
+    >>>     print(proximity_agg[200:203, 200:202])
+    >>>     proximity_img
+    ...     <xarray.DataArray (lat: 3, lon: 2)>
+    ...     array([[4126101.19981456, 4153841.5954391 ],
+    ...            [4001421.96947258, 4025606.92456568],
+    ...            [3875484.19913922, 3897714.42999327]])
+    ...     Coordinates:
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+
+              .. image :: ./docs/source/_static/img/docstring/proximity_example.png
+
+    >>>     # Combine Images
+    >>>     composite_img = stack(terrain_img, volcano_img, proximity_img)
+    >>>     composite_img
+
+              .. image :: ./docs/source/_static/img/docstring/proximity_composite.png
+
     """
 
     proximity_img = _process(raster,
@@ -644,7 +698,7 @@ def allocation(raster: xr.DataArray,
     -------
     >>>     import datashader as ds
     >>>     import pandas as pd
-    >>>     from xrspatial import generate_terrain, direction
+    >>>     from xrspatial import generate_terrain, allocation
     >>>     from datashader.transfer_functions import shade, stack, dynspread
     >>>     from datashader.colors import Elevation, Set1
 
