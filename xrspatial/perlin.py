@@ -13,7 +13,7 @@ def perlin(width: int,
            seed: int = 5) -> xr.DataArray:
     """
     Generate perlin noise aggregate.
-    
+
     Parameters:
     ----------
     width: int
@@ -28,7 +28,8 @@ def perlin(width: int,
     Returns:
     ----------
     xarray.DataArray
-        2D array, of the same type as the input, of calculated perlin noise values.
+        2D array, of the same type as the input, of calculated perlin
+    noise values.
 
     Notes:
     ----------

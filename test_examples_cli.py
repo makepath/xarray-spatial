@@ -5,17 +5,18 @@ from unittest.mock import patch
 
 # test_args include copy-examples, fetch-data, or examples (does both)
 def run_examples_cmds(*cli_cmds):
-    
     """
+    Run conda package cli commands to download examples and fetch data
+    for notebooks.
 
-    Run conda package cli commands to download examples and fetch data for notebooks
     Parameters: 'copy-examples', 'fetch-data', 'examples'
-    Output: downloads examples and data to new xrspatial-examples directory in xarray-spatial
-
+    Output: downloads examples and data to new xrspatial-examples
+    directory in xarray-spatialx
     """
 
     for arg in cli_cmds:
         with patch.object(sys, 'argv', ['xrspatial', arg]):
             m.main()
+
 
 run_examples_cmds('examples')

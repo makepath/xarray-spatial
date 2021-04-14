@@ -20,7 +20,7 @@ def generate_terrain(x_range: tuple = (0, 500),
     """
     Generates a pseudo-random terrain which can be helpful
     for testing raster functions
-    
+
     Parameters:
     ----------
     x_range: tuple (default = (0, 500))
@@ -77,10 +77,10 @@ def generate_terrain(x_range: tuple = (0, 500),
            [0., 0., 0., ..., 0., 0., 0.],
            [0., 0., 0., ..., 0., 0., 0.]])
     Coordinates:
-      * x        (x) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
-      * y        (y) float64 -1.997e+07 -1.99e+07 -1.983e+07 ... 1.99e+07 1.997e+07
+      * x (x) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
+      * y (y) float64 -1.997e+07 -1.99e+07 -1.983e+07 ... 1.99e+07 1.997e+07
     Attributes:
-        res:      1
+        res: 1
     """
 
     def _gen_heights(bumps):

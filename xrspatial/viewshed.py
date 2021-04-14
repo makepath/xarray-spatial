@@ -1527,8 +1527,9 @@ def viewshed(raster: xarray.DataArray,
     ----------
     viewshed: xarray.DataArray
         A cell x in the visibility grid is recorded as follows:
-        If it is invisible, then x is set to INVISIBLE.
-        If it is visible,  then x is set to the vertical angle w.r.t the viewpoint.
+        - If it is invisible, then x is set to INVISIBLE.
+        - If it is visible,  then x is set to the vertical angle w.r.t
+        the viewpoint.
     """
 
     height, width = raster.shape

@@ -129,13 +129,14 @@ def hillshade(agg: xr.DataArray,
     Returns:
     ----------
     data: xarray.DataArray
-        2D array, of the same type as the input of calculated illumination values.
+        2D array, of the same type as the input of calculated illumination
+    values.
 
     Notes:
     ----------
     Algorithm References:
-        http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html
-        
+    - http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html # noqa
+
     Examples:
     ----------
     Imports

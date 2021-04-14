@@ -119,7 +119,7 @@ def validate_arrays(*arrays):
         if not first_array.data.shape == arrays[i].data.shape:
             raise ValueError("input arrays must have equal shapes")
 
-        if not type(first_array.data) == type(arrays[i].data):
+        if not isinstance(first_array.data, type(arrays[i].data)):
             raise ValueError("input arrays must have same type")
 
 
@@ -245,10 +245,10 @@ def height_implied_by_aspect_ratio(W, X, Y):
 
     Examples:
     ----------
-    >>> plot_width = 1000
-    >>> x_range = (0,35
-    >>> y_range = (0, 70)
-    >>> plot_height = height_implied_by_aspect_ratio(plot_width, x_range, y_range)
+    >>> W = 1000
+    >>> X = (0,35
+    >>> Y = (0, 70)
+    >>> plot_height = height_implied_by_aspect_ratio(W, X, Y)
     """
 
     return int((W * (Y[1] - Y[0])) / (X[1] - X[0]))

@@ -358,23 +358,23 @@ def quantile(agg: xr.DataArray,
         Number of quantiles to be produced, default = 4.
     name: str, optional (default = "quantile")
         Name of the output aggregate array.
-        
+
     Returns:
     ----------
     xarray.DataArray, quantiled aggregate
         2D array, of the same type as the input, of quantile allocations.
         All other input attributes are preserved.
-        
+
     Notes:
     ----------
     Adapted from PySAL:
-        - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles
+    - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles # noqa
 
     Note that dask's percentile algorithm is approximate,
     while numpy's is exact. This may cause some differences
     between results of vanilla numpy and dask version of the input agg.
-        - https://github.com/dask/dask/issues/3099
-        
+    - https://github.com/dask/dask/issues/3099
+
     Examples:
     ----------
         Imports
@@ -455,7 +455,7 @@ def _run_numpy_jenks_matrices(data, n_classes):
     nl = data.shape[0] + 1
     variance = 0.0
 
-    for l in range(2, nl):
+    for l in range(2, nl): # noqa
         sum = 0.0
         sum_squares = 0.0
         w = 0.0
@@ -573,7 +573,7 @@ def _run_cupy_jenks_matrices(data, n_classes):
     nl = data.shape[0] + 1
     variance = 0.0
 
-    for l in range(2, nl):
+    for l in range(2, nl): # noqa
         sum = 0.0
         sum_squares = 0.0
         w = 0.0
@@ -709,9 +709,9 @@ def natural_breaks(agg: xr.DataArray,
 
     Algorithm References:
     ----------
-    Map Classify
-        - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks
-    perrygeo
+    Map Classify:
+    - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks # noqa
+    perrygeo:
     - https://github.com/perrygeo/jenks/blob/master/jenks.pyx
 
     Examples:
@@ -850,8 +850,10 @@ def equal_interval(agg: xr.DataArray,
 
     Algorithm References:
     ----------
-    PySal: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval
-    SciKit: https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py
+    PySal:
+    - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval # noqa
+    SciKit:
+    - https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py # noqa
 
     Examples:
     ----------
