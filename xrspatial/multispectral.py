@@ -1564,8 +1564,9 @@ def _contrast_enhancement_numpy(data, contrast, brightness):
 
 
 def _contrast_enhancement_dask(data, contrast, brightness):
-    out = data.map_blocks(_contrast_enhancement_numpy, contrast, brightness,
-                        meta=np.array(()))
+    out = data.map_blocks(
+        _contrast_enhancement_numpy, contrast, brightness, meta=np.array(())
+    )
     return out
 
 
@@ -1578,10 +1579,12 @@ def _contrast_enhancement_dask_cupy(data, contrast, brightness):
 
 
 def _contrast_enhancement(agg, contrast, brightness):
-    mapper = ArrayTypeFunctionMapping(numpy_func=_contrast_enhancement_numpy,
-                                      dask_func=_contrast_enhancement_dask,
-                                      cupy_func=_contrast_enhancement_cupy,
-                                      dask_cupy_func=_contrast_enhancement_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_contrast_enhancement_numpy,
+        dask_func=_contrast_enhancement_dask,
+        cupy_func=_contrast_enhancement_cupy,
+        dask_cupy_func=_contrast_enhancement_dask_cupy
+    )
     out = mapper(agg)(agg.data, contrast, brightness)
     return out
 
