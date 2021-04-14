@@ -6,7 +6,6 @@ from xrspatial.utils import ngjit
 from typing import Union, Optional
 
 import warnings
-warnings.simplefilter('default')
 
 
 NONE = -1
