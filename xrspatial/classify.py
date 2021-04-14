@@ -538,8 +538,8 @@ def _run_numpy_natural_break(data, num_sample, k):
     if sample_data.size >= 40000:
         with warnings.catch_warnings():
             warnings.simplefilter('default')
-            warnings.warn('natural_breaks Warning: Natural break classification '
-                          '(Jenks) has a complexity of O(n^2), '
+            warnings.warn('natural_breaks Warning: Natural break '
+                          'classification (Jenks) has a complexity of O(n^2), '
                           'your classification with {} data points may take '
                           'a long time.'.format(sample_data.size),
                           Warning)
@@ -654,8 +654,8 @@ def _run_cupy_natural_break(data, num_sample, k):
     if sample_data.size >= 40000:
         with warnings.catch_warnings():
             warnings.simplefilter('default')
-            warnings.warn('natural_breaks Warning: Natural break classification '
-                          '(Jenks) has a complexity of O(n^2), '
+            warnings.warn('natural_breaks Warning: Natural break '
+                          'classification (Jenks) has a complexity of O(n^2), '
                           'your classification with {} data points may take '
                           'a long time.'.format(sample_data.size),
                           Warning)
