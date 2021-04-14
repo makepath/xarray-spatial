@@ -642,39 +642,98 @@ def allocation(raster: xr.DataArray,
     
     Example
     -------
-    >>>     # Imports
-    >>>     from xrspatial import allocation
+    >>>     import datashader as ds
     >>>     import pandas as pd
+    >>>     from xrspatial import generate_terrain, direction
     >>>     from datashader.transfer_functions import shade, stack, dynspread
-    >>>     from datashader.colors import Elevation
+    >>>     from datashader.colors import Elevation, Set1
 
-    >>>     # Load Data and Create Canvas
-    >>>     df = pd.DataFrame({
-    >>>    'x': np.random.randint(-20, 20, size = 10),
-    >>>    'y': np.random.randint(-20, 20, size = 10),
-    >>>    'z': np.random.randint(0, 10, size = 10)
+    >>>     # Create Canvas
+    >>>     W = 500 
+    >>>     H = 300
+    >>>     cvs = ds.Canvas(plot_width = W,
+    >>>                     plot_height = H,
+    >>>                     x_range = (-20e6, 20e6),
+    >>>                     y_range = (-20e6, 20e6))
+    >>>     # Generate Example Terrain
+    >>>     terrain_agg = generate_terrain(canvas = cvs)
+    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
+    >>>                                             'Max Elevation': '3000',
+    >>>                                             'units': 'meters'})
+    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+    >>>     terrain_agg = terrain_agg.rename('example_terrain')
+    >>>     # Shade Terrain
+    >>>     terrain_img = shade(agg = terrain_agg,
+    >>>                         cmap = Elevation,
+    >>>                         how = 'linear')
+    >>>     print(terrain_agg[200:203, 200:202])
+    >>>     terrain_img
+    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
+    ...     array([[1264.02249454, 1261.94748873],
+    ...            [1285.37061171, 1282.48046696],
+    ...            [1306.02305679, 1303.40657515]])
+    ...     Coordinates:
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  3000
+    ...         units:          meters
+
+            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
+
+    >>>     # Generate a Target Aggregate Array
+    >>>     cities_df = pd.DataFrame({
+    >>>         'lon': [-7475000, 25000, 15025000, -9975000, 5025000, -14975000],
+    >>>         'lat': [-9966666, 6700000, 13366666, 3366666, 13366666, 13366666],
+    >>>         'elevation': [306.5926712, 352.50955382, 347.20870554, 324.11835519, 686.31312024, 319.34522171]
     >>>     })
-    >>>     cvs = ds.Canvas(plot_width = 800,
-    >>>                     plot_height = 600,
-    >>>                     x_range = (-20, 20),
-    >>>                     y_range = (-20,20))
+    >>>     cities_da = cvs.points(cities_df,
+    >>>                             x ='lon',
+    >>>                             y ='lat',
+    >>>                             agg = ds.max('elevation'))
+    >>>     # Shade Cities
+    >>>     cities_pts = dynspread(shade(cities_da,
+    >>>                                  cmap = 'black',
+    >>>                                  min_alpha = 150),
+    >>>                            threshold = 1,
+    >>>                            max_px = 5)
+    >>>     print(cities_df)
+    >>>     cities_pts
+    >>>             lon       lat   elevation
+    >>>     0  -7475000  -9966666  306.592671
+    >>>     1     25000   6700000  352.509554
+    >>>     2  15025000  13366666  347.208706
+    >>>     3  -9975000   3366666  324.118355
+    >>>     4   5025000  13366666  686.313120
+    >>>     5 -14975000  13366666  319.345222
 
-    >>>     # Create Allocation Aggregate
-    >>>     points_agg = cvs.points(df,
-    >>>                             x = 'x',
-    >>>                             y = 'y',
-    >>>                             agg = ds.max('z'))
-    >>>     points_shaded = dynspread(shade(points_agg,
-    >>>                                     cmap = ['salmon', 'salmon']),
-    >>>                                     threshold = 1,
-    >>>                                     max_px = 5)
+            .. image :: ./docs/source/_static/img/docstring/allocation_example_cities.png
 
-    >>>     # Create Allocation Grid for All Non-Zero Values
-    >>>     allocation_agg = allocation(points_agg)
-    >>>     stack(shade(allocation_agg,
-    >>>                 cmap = ['darkturquoise', 'black'],
-    >>>                 how = 'linear'),
-    >>>                 points_shaded)
+    >>>     # Create Allocation Aggregate Array
+    >>>     allocation_agg = allocation(cities_pts, x = 'lon', y = 'lat')
+    >>>     # Shade Image
+    >>>     allocation_img = shade(allocation_agg.where(terrain_agg != 0), cmap = ['red', 'orange',                                                                       'yellow', 'green'],
+    >>>                                                                 alpha = 150)
+    >>>     print(allocation_agg[200:203, 200:202])
+    >>>     allocation_img
+    ...     <xarray.DataArray (lat: 3, lon: 2)>
+    ...     array([[3925868544, 3925868544],
+    ...            [3925868544, 3925868544],
+    ...            [3925868544, 3925868544]], dtype=uint32)
+    ...     Coordinates:
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+
+    >>>                 .. image :: ./docs/source/_static/img/docstring/allocation_example.png
+
+    >>>     # Combine Images
+    >>>     composite_img = stack(terrain_img, allocation_img, cities_pts)
+    >>>     composite_img
+
+            .. image :: ./docs/source/_static/img/docstring/allocation_composite.png
+
     """
 
     allocation_img = _process(raster,
