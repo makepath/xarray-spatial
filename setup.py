@@ -5,6 +5,7 @@ from setuptools import setup
 
 # build dependencies
 import pyct.build
+import param
 
 # dependencies
 
@@ -23,6 +24,8 @@ install_requires = [
     'scipy',
     'xarray',
     'pyct <=0.4.6',
+    'param >=1.6.1',
+    'distributed >=2021.03.0',
 ]
 
 examples = [
@@ -46,11 +49,8 @@ extras_require['all'] = sorted(set(sum(extras_require.values(), [])))
 
 setup_args = dict(
     name='xarray-spatial',
-    use_scm_version={
-        'write_to': 'xrspatial/_version.py',
-        'write_to_template': '__version__ = "{version}"',
-        'tag_regex': r'^(?P<prefix>v)?(?P<version>[^\+]+)(?P<suffix>.*)?$',
-    },
+    version=param.version.get_setup_version(__file__, "xrspatial",
+                                            archive_commit="$Format:%h$"),
     description='xarray-based spatial analysis tools',
     install_requires=install_requires,
     extras_require=extras_require,
@@ -72,7 +72,7 @@ setup_args = dict(
 
 if __name__ == '__main__':
     example_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                'xarray-spatial', 'examples')
+                                'xrspatial', 'examples')
     if 'develop' not in sys.argv:
         pyct.build.examples(example_path, __file__, force=True)
     setup(**setup_args)

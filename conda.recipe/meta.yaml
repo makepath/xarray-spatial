@@ -18,13 +18,12 @@ requirements:
     - {{ dep }}
     {% endfor %}
 
-# will need the extras_require['tests'] deps below once those are added in setup.py
 test:
   requires:
     - pytest >=2.8.5
-    # {% for dep in sdata['extras_require']['tests'] %}
-    # - {{ dep }}
-    # {% endfor %}
+     {% for dep in sdata['extras_require']['tests'] %}
+     - {{ dep }}
+     {% endfor %}
   imports:
     - xrspatial
 
