@@ -1506,17 +1506,22 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
 @ngjit
 def _normalize_data_cpu(data, min_val, max_val, pixel_max):
     out = np.zeros_like(data)
+    out[:] = np.nan
+
     range_val = max_val - min_val
     rows, cols = data.shape
+
+    c = 10
+    th = .125
+
     # check range_val to avoid dividing by zero
     if range_val != 0:
         for y in range(rows):
             for x in range(cols):
                 val = data[y, x]
                 norm = (val - min_val) / range_val
-
                 # sigmoid contrast enhancement
-                # norm = 1 / (1 + np.exp(c * (th - norm)))
+                norm = 1 / (1 + np.exp(c * (th - norm)))
                 out[y, x] = norm * pixel_max
     return out
 
@@ -1553,77 +1558,15 @@ def _normalize_data(agg, pixel_max=255.0):
     return out
 
 
-@ngjit
-def _contrast_enhancement_numpy(data, contrast, brightness):
-    out = np.zeros_like(data)
-    rows, cols = data.shape
-    for y in range(rows):
-        for x in range(cols):
-            out[y, x] = data[y, x] * contrast + brightness
-    return out
-
-
-def _contrast_enhancement_dask(data, contrast, brightness):
-    out = data.map_blocks(
-        _contrast_enhancement_numpy, contrast, brightness, meta=np.array(())
-    )
-    return out
-
-
-def _contrast_enhancement_cupy(data, contrast, brightness):
-    raise NotImplementedError('Not Supported')
-
-
-def _contrast_enhancement_dask_cupy(data, contrast, brightness):
-    raise NotImplementedError('Not Supported')
-
-
-def _contrast_enhancement(agg, contrast, brightness):
-    mapper = ArrayTypeFunctionMapping(
-        numpy_func=_contrast_enhancement_numpy,
-        dask_func=_contrast_enhancement_dask,
-        cupy_func=_contrast_enhancement_cupy,
-        dask_cupy_func=_contrast_enhancement_dask_cupy
-    )
-    out = mapper(agg)(agg.data, contrast, brightness)
-    return out
-
-
-def true_color(r, g, b, contrast=4, brightness=10, nodata=1):
-    """
-    Create true color image from 3 bands red, green and blue
-    Parameters:
-    ----------
-    r: xarray.DataArray
-        2D array of red band data.
-        (Sentinel 2: Band 4)
-    g: xarray.DataArray
-        2D array of green band data.
-        (Sentinel 2: Band 3)
-    b: xarray.DataArray
-        2D array of blue band data.
-        (Sentinel 2: Band 2)
-
-    Returns
-    ----------
-    PIL Image
-    """
-
+def true_color(r, g, b, nodata=1):
     h, w = r.shape
 
+    pixel_max = 255
+
     data = np.zeros((h, w, 4), dtype=np.uint8)
-
-    norm_r = (_normalize_data(r)).astype(np.uint8)
-    norm_g = (_normalize_data(g)).astype(np.uint8)
-    norm_b = (_normalize_data(b)).astype(np.uint8)
-
-    norm_r = _contrast_enhancement(DataArray(norm_r), contrast, brightness)
-    norm_g = _contrast_enhancement(DataArray(norm_g), contrast, brightness)
-    norm_b = _contrast_enhancement(DataArray(norm_b), contrast, brightness)
-
-    data[:, :, 0] = norm_r
-    data[:, :, 1] = norm_g
-    data[:, :, 2] = norm_b
+    data[:, :, 0] = (_normalize_data(r, pixel_max)).astype(np.uint8)
+    data[:, :, 1] = (_normalize_data(g, pixel_max)).astype(np.uint8)
+    data[:, :, 2] = (_normalize_data(b, pixel_max)).astype(np.uint8)
 
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
     data[:, :, 3] = a.astype(np.uint8)
