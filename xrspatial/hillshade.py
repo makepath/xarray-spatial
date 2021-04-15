@@ -136,6 +136,7 @@ def hillshade(agg: xr.DataArray,
         - http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html
         
     Example
+    -------
     >>>     import datashader as ds
     >>>     from xrspatial import generate_terrain, hillshade
     >>>     from datashader.transfer_functions import shade, stack
