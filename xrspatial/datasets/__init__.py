@@ -5,8 +5,8 @@ import xarray as xr
 __all__ = ["available", "get_data"]
 
 _module_path = os.getcwd()
-_available_datasets = [p for p in next(os.walk(_module_path))[1] \
-    if not p.startswith("__")]
+_available_datasets = [p for p in next(os.walk(_module_path))[1]
+                       if not p.startswith("__")]
 available_datasets = _available_datasets
 
 
