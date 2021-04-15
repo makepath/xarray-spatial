@@ -1,5 +1,7 @@
 ## Xarray-Spatial Changelog
 -----------
+## Version 0.1.8 - 4/15/2020
+- Fixed pypi related error
 
 ## Version 0.1.7 - 4/15/2020
 - Updated multispectral.true_color: sigmoid contrast enhancement (#339)
