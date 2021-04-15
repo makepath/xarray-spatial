@@ -562,6 +562,117 @@ def _apply(data, kernel_array, func):
 
 def apply(raster, kernel, x='x', y='y', func=calc_mean):
     """
+    Returns Mean filtered array using a user-created window.
+
+    Parameters
+    ----------
+    raster : xarray.DataArray
+        2D array of input values to be filtered.
+    kernel : Numpy Array
+        2D array where values of 1 indicate the kernel.
+    x : str, default = "x"
+        Name of x-coordinates.
+    y : str, default = "y"
+        Name of y-coordinates.
+    func : function which takes an input array and returns an array 
+
+    Returns
+    -------
+    agg : xarray.DataArray of same type as `raster`.
+        2D aggregate array of filtered values.
+
+    Example
+    -------
+    >>>     import datashader as ds
+    >>>     from xrspatial import generate_terrain
+    >>>     from xrspatial.focal import apply, circle_kernel
+    >>>     from datashader.transfer_functions import shade, stack
+    >>>     from datashader.colors import Elevation
+
+    >>>     # Create Canvas
+    >>>     W = 500 
+    >>>     H = 300
+    >>>     cvs = ds.Canvas(plot_width = W,
+    >>>                     plot_height = H,
+    >>>                     x_range = (-20e6, 20e6),
+    >>>                     y_range = (-20e6, 20e6))
+    >>>     # Generate Example Terrain
+    >>>     terrain_agg = generate_terrain(canvas = cvs)
+    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
+    >>>                                             'Max Elevation': '3000',
+    >>>                                             'units': 'meters'})
+    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+    >>>     terrain_agg = terrain_agg.rename('example_terrain')
+    >>>     # Shade Terrain
+    >>>     terrain_img = shade(agg = terrain_agg,
+    >>>                         cmap = Elevation,
+    >>>                         how = 'linear')
+    >>>     print(terrain_agg[200:203, 200:202])
+    >>>     terrain_img
+    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
+    ...     array([[1264.02249454, 1261.94748873],
+    ...            [1285.37061171, 1282.48046696],
+    ...            [1306.02305679, 1303.40657515]])
+    ...     Coordinates:
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  3000
+    ...         units:          meters
+
+            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
+
+    >>>     # Create Kernel
+    >>>     kernel = circle_kernel(10, 10, 100)
+    >>>     print(kernel)
+    ...     [[0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 1. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0.]
+    ...      [0. 0. 0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0. 0. 0.]
+    ...      [0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0.]
+    ...      [0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0.]
+    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
+    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
+    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
+    ...      [0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0.]
+    ...      [0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0.]
+    ...      [0. 0. 0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0. 0. 0.]
+    ...      [0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 1. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0.]]
+
+    >>>     # Apply Kernel
+    >>>     agg = apply(raster = terrain_agg,
+    >>>                 kernel = kernel,
+    >>>                 x = 'lon',
+    >>>                 y = 'lat')
+    >>>     img = shade(agg = agg,
+    >>>                 cmap = Elevation)
+    >>>     print(agg[200:203, 200:202])
+    >>>     img
+    ...     <xarray.DataArray (lat: 3, lon: 2)>
+    ...     array([[1307.19361419, 1302.6913412 ],
+    ...            [1323.55780616, 1318.75925071],
+    ...            [1342.3309894 , 1336.93787754]])
+    ...     Coordinates:
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  3000
+    ...         units:          meters
+
+            .. image :: ./docs/source/_static/img/docstring/apply_example.png
+
     """
 
     # validate raster
@@ -631,6 +742,10 @@ def hotspots(raster: xr.DataArray,
         2D Input raster image with `raster.shape` = (height, width).
     kernel : Numpy Array
         2D array where values of 1 indicate the kernel.
+    x : str, default = "x"
+        Name of x-coordinates.
+    y : str, default = "y"
+        Name of y-coordinates.
 
     Returns
     -------
