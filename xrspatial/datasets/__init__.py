@@ -2,10 +2,9 @@ import os
 
 __all__ = ["available", "get_data"]
 
-_module_path = os.path.dirname(__file__)
-_available_dir = [p for p in next(os.walk(_module_path))[1] if not p.startswith("__")]
-
-available = _available_dir
+_module_path = os.getcwd()
+_available_datasets = [p for p in next(os.walk(_module_path))[1] if not p.startswith("__")]
+available_datasets = _available_datasets
 
 def get_data(dataset):
     """
@@ -17,7 +16,7 @@ def get_data(dataset):
         all options.
     Examples
     --------
-    >>>     xrspatial.datasets.get_data("sentinel-2")  
+    >>>     xrspatial.datasets.get_data("sentinel-2")
     """
     data = {}
     if dataset in _available_datasets:
