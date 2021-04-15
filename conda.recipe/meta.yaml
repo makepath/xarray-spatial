@@ -1,8 +1,9 @@
 {% set sdata = load_setup_py_data() %}
+{% set version = sdata.get('version') %}
 
 package:
   name: xarray-spatial
-  version: 0.1.6
+  version: {{ version.split('.post')[0] }}
 
 source:
   path: ..
@@ -10,8 +11,9 @@ source:
 requirements:
   host:
     - python
-    - setuptools
+    - setuptools >=46.4.0
     - pyct
+    - param
   run:
     - python
     {% for dep in sdata.get('install_requires', {}) %}

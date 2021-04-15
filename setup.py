@@ -3,6 +3,7 @@ import sys
 import shutil
 from setuptools import setup
 
+
 # build dependencies
 import pyct.build
 import param
@@ -45,12 +46,16 @@ extras_require['doc'] = extras_require['examples'] + ['numpydoc']
 
 extras_require['all'] = sorted(set(sum(extras_require.values(), [])))
 
+version = param.version.get_setup_version(__file__, 'xrspatial',
+                                            archive_commit="$Format:%h$")
+if 'sdist' in sys.argv:
+    version = version.split('.post')[0]
+
 # metadata for setuptools
 
 setup_args = dict(
     name='xarray-spatial',
-    version=param.version.get_setup_version(__file__, "xrspatial",
-                                            archive_commit="$Format:%h$"),
+    version=version,
     description='xarray-based spatial analysis tools',
     install_requires=install_requires,
     extras_require=extras_require,
@@ -69,6 +74,7 @@ setup_args = dict(
         ]
     },
 )
+
 
 if __name__ == '__main__':
     example_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
