@@ -1,6 +1,7 @@
 import os
 import xarray as xr
 
+
 __all__ = ["available", "get_data"]
 
 _module_path = os.getcwd()
@@ -31,4 +32,3 @@ def get_data(dataset):
         msg += f'Available folders are {available_datasets}.'
         raise ValueError(msg)
     return data
-
