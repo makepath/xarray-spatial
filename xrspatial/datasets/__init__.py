@@ -1,4 +1,5 @@
 import os
+import xarray as xr
 
 __all__ = ["available", "get_data"]
 
