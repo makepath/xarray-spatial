@@ -386,49 +386,82 @@ def mean(agg: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports 
-    >>>     import xarray as xr
+    >>>     import datashader as ds
+    >>>     from xrspatial import generate_terrain
     >>>     from xrspatial.focal import mean
+    >>>     from datashader.transfer_functions import shade, stack
+    >>>     from datashader.colors import Elevationa
 
-    >>>     # Open Example DataArray
-    >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
+    >>>     # Create Canvas
+    >>>     W = 500 
+    >>>     H = 300
+    >>>     cvs = ds.Canvas(plot_width = W,
+    >>>                     plot_height = H,
+    >>>                     x_range = (-20e6, 20e6),
+    >>>                     y_range = (-20e6, 20e6))
+    >>>     # Generate Example Terrain
+    >>>     terrain_agg = generate_terrain(canvas = cvs)
+    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
+    >>>                                             'Max Elevation': '3000',
+    >>>                                             'units': 'meters'})
+    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+    >>>     terrain_agg = terrain_agg.rename('example_terrain')
+    >>>     # Shade Terrain
+    >>>     terrain_img = shade(agg = terrain_agg,
+    >>>                         cmap = Elevation,
+    >>>                         how = 'linear')
+    >>>     print(terrain_agg[200:203, 200:202])
+    >>>     terrain_img
 
-    >>>     print(agg)
-    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
-    ...     [480000 values with dtype=float64]
+    >>>     # Create Canvas
+    >>>     W = 500 
+    >>>     H = 300
+    >>>     cvs = ds.Canvas(plot_width = W,
+    >>>                     plot_height = H,
+    >>>                     x_range = (-20e6, 20e6),
+    >>>                     y_range = (-20e6, 20e6))
+    >>>     # Generate Example Terrain
+    >>>     terrain_agg = generate_terrain(canvas = cvs)
+    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': …                    how = 'linear')
+    >>>     print(terrain_agg[200:203, 200:202])
+    >>>     terrain_img
+    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
+    ...     array([[1264.02249454, 1261.94748873],
+    ...            [1285.37061171, 1282.48046696],
+    ...            [1306.02305679, 1303.40657515]])
     ...     Coordinates:
-    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
-    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
     ...     Attributes:
     ...         res:            1
     ...         Description:    Elevation
-    ...         Max Elevation:  1000
+    ...         Max Elevation:  3000
     ...         units:          meters
 
-    >>>     # Calculate Mean
-    >>>     mean_agg = mean(agg)
+            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
 
-    >>>     print(mean_agg)
-    ...     <xarray.DataArray 'mean' (lon: 600, lat: 800)>
-    ...     array([[0., 0., 0., ..., 0., 0., 0.],
-    ...            [0., 0., 0., ..., 0., 0., 0.],
-    ...            [0., 0., 0., ..., 0., 0., 0.],
-    ...            ...,
-    ...            [0., 0., 0., ..., 0., 0., 0.],
-    ...            [0., 0., 0., ..., 0., 0., 0.],
-    ...            [0., 0., 0., ..., 0., 0., 0.]])
+    >>>     # Create Mean Aggregate Array
+    >>>     mean_agg = mean(agg = terrain_agg)
+    >>>     # Shade Image
+    >>>     mean_img = shade(agg = mean_agg,
+    >>>                      cmap = Elevation)
+    >>>     print(mean_agg[200:203, 200:202])
+    >>>     mean_img
+    ...     <xarray.DataArray 'mean' (lat: 3, lon: 2)>
+    ...     array([[1266.57706238, 1264.26875373],
+    ...            [1284.84948023, 1281.97418665],
+    ...            [1302.86874857, 1298.65145188]])
     ...     Coordinates:
-    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
-    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
     ...     Attributes:
     ...         res:            1
     ...         Description:    Elevation
-    ...         Max Elevation:  1000
+    ...         Max Elevation:  3000
     ...         units:          meters
 
-    >>>     # View In A Jupyter Notebook
-    >>>     from datashader.transfer_functions import shade
-    >>>     shade(agg)
+            .. image :: ./docs/source/_static/img/docstring/mean_example.png
+
     """
 
     out = None
