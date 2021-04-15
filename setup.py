@@ -47,7 +47,7 @@ extras_require['doc'] = extras_require['examples'] + ['numpydoc']
 extras_require['all'] = sorted(set(sum(extras_require.values(), [])))
 
 version = param.version.get_setup_version(__file__, 'xrspatial',
-                                            archive_commit="$Format:%h$")
+                                          archive_commit="$Format:%h$")
 if 'sdist' in sys.argv:
     version = version.split('.post')[0]
 
