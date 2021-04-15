@@ -110,7 +110,7 @@ def calc_cellsize(raster: xr.DataArray,
 
     Example
     -------
-# Imports 
+    >>>     # Imports 
     >>>     import xarray as xr
     >>>     from xrspatial.focal import calc_cellsize
 
@@ -209,7 +209,7 @@ def circle_kernel(cellsize_x: int,
 
     Example
     -------
-# Imports 
+    >>>     # Imports 
     >>>     import xarray as xr
     >>>     from xrspatial.focal import circle_kernel
 
@@ -586,7 +586,7 @@ def hotspots(raster: xr.DataArray,
 
     Example
     -------
-# Imports 
+    >>>     # Imports 
     >>>     import xarray as xr
     >>>     from xrspatial.focal import hotspots, circle_kernel
 
