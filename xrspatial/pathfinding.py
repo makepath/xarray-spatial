@@ -284,35 +284,77 @@ def a_star_search(surface: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
-    >>>     import xarray as xr
-    >>>     from xrspatial import pathfinding
+    >>>     import datashader as ds
+    >>>     from xrspatial import generate_terrain, a_star_search
+    >>>     from datashader.transfer_functions import shade, stack
+    >>>     from datashader.colors import Elevation
 
-    >>>     # Create Surface Data Array
-    >>>     agg = xr.DataArray(np.array([[0, 0, 0, 0, 0],
-    >>>                                  [0, 0, 0, 0, 0],
-    >>>                                  [0, 0, 0, 0, 0],
-    >>>                                  [0, 0, 0, 0, 0],
-    >>>                                  [0, 0, 0, 0, 0]]),
-    >>>                        dims = ["lat", "lon"])
-    >>>     height, width = agg.shape
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     agg["lon"] = _lon
-    >>>     agg["lat"] = _lat
+    >>>     # Create Canvas
+    >>>     W = 500 
+    >>>     H = 300
+    >>>     cvs = ds.Canvas(plot_width = W,
+    >>>                     plot_height = H,
+    >>>                     x_range = (-20e6, 20e6),
+    >>>                     y_range = (-20e6, 20e6))
+    >>>     # Generate Example Terrain
+    >>>     terrain_agg = generate_terrain(canvas = cvs)
+    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
+    >>>                                             'Max Elevation': '3000',
+    >>>                                             'units': 'meters'})
+    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+    >>>     terrain_agg = terrain_agg.rename('example_terrain')
+    >>>     terrain_agg = terrain_agg.astype(dtype=int)
+    >>>     # Shade Terrain
+    >>>     terrain_img = shade(agg = terrain_agg,
+    >>>                         cmap = Elevation,
+    >>>                         how = 'linear')
+    >>>     print(terrain_agg[200:203, 200:202])
+    >>>     terrain_img
+    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
+    ...     array([[1264, 1261],
+    ...            [1285, 1282],
+    ...            [1306, 1303]])
+    ...     Coordinates:
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  3000
+    ...         units:          meters
 
-    >>>     # Create Path Data Array
-    >>>     print(pathfinding.a_star_search(agg, (0,0), (4,4), x = 'lon', y = 'lat'))
-    <xarray.DataArray (lat: 5, lon: 5)>
-            array([[0.        , nan, nan, nan, nan],
-                   [nan, 1.41421356, nan, nan, nan],
-                   [nan, nan, 2.82842712, nan, nan],
-                   [nan, nan, nan, 4.24264069, nan],
-                   [nan, nan, nan, nan, 5.65685425]])
-            Coordinates:
-              * lon      (lon) float64 0.0 1.0 2.0 3.0 4.0
-              * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
+
+    >>>     # Choose 2 random locations
+    >>>     start = terrain_agg[3][100]
+    >>>     start_y = start.coords['lat'].data
+    >>>     start_x = start.coords['lon'].data
+    >>>     end = terrain_agg[298][250]
+    >>>     end_y = end.coords['lat'].data
+    >>>     end_x = end.coords['lon'].data
+    >>>     # Avoid Mountains and Water
+    >>>     barriers = list(range(2000, 3001))
+    >>>     barriers.append(0)
+    >>>     # Create Path Aggregate Array
+    >>>     path_agg = a_star_search(surface = terrain_agg,
+    >>>                              start = (start_y, start_x),
+    >>>                              goal = (end_y, end_x),
+    >>>                              barriers = barriers,
+    >>>                              x = 'lon',
+    >>>                              y = 'lat')
+    >>>     # Shade Image
+    >>>     path_img = dynspread(shade(path_agg, cmap = ['red']))
+    >>>     path_img_background = set_background(path_img, 'black')
+    >>>     path_img_background
+
+            .. image :: ./docs/source/_static/img/docstring/a_star_example.png
+
+# Combine Images
+composite_img = stack(terrain_img, path_img)
+composite_img
+
+            .. image :: ./docs/source/_static/img/docstring/a_star_composite.png
+
     """
 
     if surface.ndim != 2:
