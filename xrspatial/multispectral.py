@@ -596,57 +596,110 @@ def gci(nir_agg: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
-    >>>     import xarray as xr
-    >>>     from xrspatial import gci
+    >>>     import datashader as ds
+    >>>     import xarray as xr 
+    >>>     from xrspatial import generate_terrain
+    >>>     from xrspatial.datasets import get_data
+    >>>     from xrspatial.multispectral import gci
+    >>>     from datashader.transfer_functions import shade, stack
+    >>>     from datashader.colors import Elevation
 
-    >>>     # Create Sample Band Data
-    >>>     np.random.seed(0)
-    >>>     nir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
-    >>>     height, width = nir_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     nir_agg["lat"] = _lat
-    >>>     nir_agg["lon"] = _lon
+    >>>     # Open Example Data
+    >>>     data = get_data('sentinel-2')
+    >>>     # NIR Band
+    >>>     nir = data['NIR']
+    >>>     print(nir[100:102, 200: 203])
+    ...     <xarray.DataArray (y: 2, x: 3)>
+    ...     array([[1286., 1289., 1285.],
+    ...            [1275., 1292., 1312.]])
+    ...     Coordinates:
+    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
+    ...       * y        (y) float64 4.699e+06 4.699e+06
+    ...         band     int32 1
+    ...     Attributes: (12/13)
+    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+    ...         crs:                      +init=epsg:32719
+    ...         res:                      [10. 10.]
+    ...         is_tiled:                 1
+    ...         nodatavals:               nan
+    ...         scales:                   1.0
+    ...         ...                       ...
+    ...         instrument:               Sentinel-2
+    ...         Band:                     07
+    ...         Name:                     NIR
+    ...         Bandwidth (µm):           115
+    ...         Nominal Wavelength (µm):  0.842
+    ...         Resolution (m):            10
 
-    >>>     np.random.seed(3)
-    >>>     green_agg = xr.DataArray(np.random.rand(4,4),  dims = ["lat", "lon"])
-    >>>     height, width = green_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     green_agg["lat"] = _lat
-    >>>     green_agg["lon"] = _lon
+    >>>     # Shade Image
+    >>>     nir_img = shade(agg = nir, cmap = ['black', 'white'])
+    >>>     nir_img
 
-    >>>     print(nir_agg, green_agg)
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
-                   [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
-                   [0.96366276, 0.38344152, 0.79172504, 0.52889492],
-                   [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[0.5507979 , 0.70814782, 0.29090474, 0.51082761],
-                   [0.89294695, 0.89629309, 0.12558531, 0.20724288],
-                   [0.0514672 , 0.44080984, 0.02987621, 0.45683322],
-                   [0.64914405, 0.27848728, 0.6762549 , 0.59086282]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
+            .. image :: ./docs/source/_static/img/docstring/nir_example.png
 
-    >>>     # Create GCI DataArray
-    >>>     gci_agg = gci(nir_agg, green_agg)
-    >>>     print(gci_agg)
-            <xarray.DataArray 'gci' (lat: 4, lon: 4)>
-            array([[-3.60277089e-03,  9.94360715e-03,  1.07203010e+00, 6.66674578e-02],
-                   [-5.25554349e-01, -2.79371758e-01,  2.48438213e+00, 3.30303328e+00],
-                   [ 1.77238221e+01, -1.30143021e-01,  2.55001824e+01, 1.57741801e-01],
-                   [-1.24932959e-01,  2.32365855e+00, -8.94956683e-01, -8.52538868e-01]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
+    >>>     # Green Band
+    >>>     green = data['Green']
+    >>>     print(green[100:102, 200: 203])
+    ...     <xarray.DataArray (y: 2, x: 3)>
+    ...     array([[1012., 1001., 1023.],
+    ...            [ 990.,  992., 1009.]])
+    ...     Coordinates:
+    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
+    ...       * y        (y) float64 4.699e+06 4.699e+06
+    ...         band     int32 ...
+    ...     Attributes: (12/13)
+    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+    ...         crs:                      +init=epsg:32719
+    ...         res:                      [10. 10.]
+    ...         is_tiled:                 1
+    ...         nodatavals:               nan
+    ...         scales:                   1.0
+    ...         ...                       ...
+    ...         instrument:               Sentinel-2
+    ...         Band:                     03
+    ...         Name:                     Green
+    ...         Bandwidth (µm):           35
+    ...         Nominal Wavelength (µm):  0.560
+    ...         Resolution (m):            10
+
+    >>>     # Shade Image
+    >>>     green_img = shade(agg = green, cmap = ['black', 'white'])
+    >>>     green_img
+
+            .. image :: ./docs/source/_static/img/docstring/green_example.png
+
+    >>>     # Generate GCI Aggregate Array
+    >>>     gci_agg = gci(nir_agg = nir,
+    >>>                   green_agg = green)
+    >>>     print(gci_agg[100:102, 200: 203])
+    ...     <xarray.DataArray 'gci' (y: 2, x: 3)>
+    ...     array([[0.27075099, 0.28771229, 0.25610948],
+    ...            [0.28787879, 0.30241935, 0.30029732]])
+    ...     Coordinates:
+    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
+    ...       * y        (y) float64 4.699e+06 4.699e+06
+    ...         band     int32 ...
+    ...     Attributes: (12/13)
+    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+    ...         crs:                      +init=epsg:32719
+    ...         res:                      [10. 10.]
+    ...         is_tiled:                 1
+    ...         nodatavals:               nan
+    ...         scales:                   1.0
+    ...         ...                       ...
+    ...         instrument:               Sentinel-2
+    ...         Band:                     07
+    ...         Name:                     NIR
+    ...         Bandwidth (µm):           115
+    ...         Nominal Wavelength (µm):  0.842
+    ...         Resolution (m):            10
+
+    >>>     # Shade Image
+    >>>     gci_img = shade(gci_agg, cmap = ['black', 'white'])
+    >>>     gci_img
+
+            .. image :: ./docs/source/_static/img/docstring/gci_example.png
+
     """
 
     validate_arrays(nir_agg, green_agg)
