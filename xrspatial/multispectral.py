@@ -4,8 +4,6 @@ import numba as nb
 
 from numba import cuda
 
-from PIL import Image
-
 from xarray import DataArray
 import dask.array as da
 
@@ -1558,17 +1556,75 @@ def _normalize_data(agg, pixel_max=255.0):
     return out
 
 
-def true_color(r, g, b, nodata=1):
+def _alpha_numpy(red, nodata):
+    a = np.where(np.logical_or(np.isnan(red), red <= nodata), 0, 255)
+    return a
+
+
+def _alpha_dask(red, nodata):
+    a = da.where(da.logical_or(da.isnan(red), red <= nodata), 0, 255)
+    return a
+
+
+def _alpha_cupy(red, nodata):
+    raise NotImplementedError('Not Supported')
+
+
+def _alpha_dask_cupy(red, nodata):
+    raise NotImplementedError('Not Supported')
+
+
+def _alpha(red, nodata=1):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_alpha_numpy,
+                                      dask_func=_alpha_dask,
+                                      cupy_func=None,
+                                      dask_cupy_func=None)
+    out = mapper(red)(red.data, nodata)
+    return out
+
+
+def _true_color_numpy(r, g, b, nodata, name):
+    a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
+
     h, w = r.shape
+    out = np.zeros((h, w, 4), dtype=np.uint8)
 
     pixel_max = 255
+    out[:, :, 0] = (_normalize_data(r, pixel_max)).astype(np.uint8)
+    out[:, :, 1] = (_normalize_data(g, pixel_max)).astype(np.uint8)
+    out[:, :, 2] = (_normalize_data(b, pixel_max)).astype(np.uint8)
+    out[:, :, 3] = a.astype(np.uint8)
 
-    data = np.zeros((h, w, 4), dtype=np.uint8)
-    data[:, :, 0] = (_normalize_data(r, pixel_max)).astype(np.uint8)
-    data[:, :, 1] = (_normalize_data(g, pixel_max)).astype(np.uint8)
-    data[:, :, 2] = (_normalize_data(b, pixel_max)).astype(np.uint8)
+    # TODO: output coords, dims, atts
+    return DataArray(out, name=name)
 
-    a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
-    data[:, :, 3] = a.astype(np.uint8)
 
-    return Image.fromarray(data, 'RGBA')
+def _true_color_dask(r, g, b, nodata, name):
+    pixel_max = 255
+    red = (_normalize_data(r, pixel_max)).astype(np.uint8)
+    green = (_normalize_data(g, pixel_max)).astype(np.uint8)
+    blue = (_normalize_data(b, pixel_max)).astype(np.uint8)
+
+    alpha = _alpha(r, nodata).astype(np.uint8)
+
+    out = da.stack([red, green, blue, alpha], axis=-1)
+
+    # TODO: output coords, dims, atts
+    return DataArray(out, name=name)
+
+
+def _true_color_cupy(r, g, b, nodata, name):
+    raise NotImplementedError('Not Supported')
+
+
+def _true_color_dask_cupy(r, g, b, nodata, name):
+    raise NotImplementedError('Not Supported')
+
+
+def true_color(r, g, b, nodata=1, name='true_color'):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_true_color_numpy,
+                                      dask_func=_true_color_dask,
+                                      cupy_func=_true_color_cupy,
+                                      dask_cupy_func=_true_color_dask_cupy)
+    out = mapper(r)(r, g, b, nodata, name)
+    return out
