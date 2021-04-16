@@ -1583,7 +1583,7 @@ def _alpha(red, nodata=1):
     return out
 
 
-def _true_color_numpy(r, g, b, nodata, name):
+def _true_color_numpy(r, g, b, nodata):
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
 
     h, w = r.shape
@@ -1594,12 +1594,10 @@ def _true_color_numpy(r, g, b, nodata, name):
     out[:, :, 1] = (_normalize_data(g, pixel_max)).astype(np.uint8)
     out[:, :, 2] = (_normalize_data(b, pixel_max)).astype(np.uint8)
     out[:, :, 3] = a.astype(np.uint8)
-
-    # TODO: output coords, dims, atts
-    return DataArray(out, name=name)
+    return out
 
 
-def _true_color_dask(r, g, b, nodata, name):
+def _true_color_dask(r, g, b, nodata):
     pixel_max = 255
     red = (_normalize_data(r, pixel_max)).astype(np.uint8)
     green = (_normalize_data(g, pixel_max)).astype(np.uint8)
@@ -1608,16 +1606,14 @@ def _true_color_dask(r, g, b, nodata, name):
     alpha = _alpha(r, nodata).astype(np.uint8)
 
     out = da.stack([red, green, blue, alpha], axis=-1)
-
-    # TODO: output coords, dims, atts
-    return DataArray(out, name=name)
+    return out
 
 
-def _true_color_cupy(r, g, b, nodata, name):
+def _true_color_cupy(r, g, b, nodata):
     raise NotImplementedError('Not Supported')
 
 
-def _true_color_dask_cupy(r, g, b, nodata, name):
+def _true_color_dask_cupy(r, g, b, nodata):
     raise NotImplementedError('Not Supported')
 
 
@@ -1626,5 +1622,15 @@ def true_color(r, g, b, nodata=1, name='true_color'):
                                       dask_func=_true_color_dask,
                                       cupy_func=_true_color_cupy,
                                       dask_cupy_func=_true_color_dask_cupy)
-    out = mapper(r)(r, g, b, nodata, name)
-    return out
+    out = mapper(r)(r, g, b, nodata)
+
+    # TODO: output metadata: coords, dims, atts
+    _dims = ['y', 'x', 'band']
+    _coords = {'y': r['y'],
+               'x': r['x'],
+               'band': [0, 1, 2, 3]}
+
+    return DataArray(out,
+                     dims=_dims,
+                     coords=_coords
+                     )
