@@ -36,3 +36,5 @@ recursive-include examples *.gif
 recursive-include examples *.ipynb
 recursive-include examples *.py
 recursive-include examples *.yml
+recursive-include test_pip_packaging *.py
+recursive-include test_pip_packaging *.sh

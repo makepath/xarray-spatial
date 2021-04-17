@@ -48,13 +48,18 @@ extras_require['all'] = sorted(set(sum(extras_require.values(), [])))
 
 version = param.version.get_setup_version(__file__, 'xrspatial',
                                           archive_commit="$Format:%h$")
-if 'sdist' in sys.argv:
-    version = version.split('.post')[0]
+
+if 'sdist' in sys.argv and 'bdist_wheel' in sys.argv:
+    try:
+        version = version.split('.post')[0]
+    except IndexError:
+        version = version.split('+')[0]
+
 
 # metadata for setuptools
 
 setup_args = dict(
-    name='xarray-spatial',
+    name='xarray-spatial-chlochlo',
     version=version,
     description='xarray-based spatial analysis tools',
     install_requires=install_requires,

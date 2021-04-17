@@ -1,9 +1,8 @@
 {% set sdata = load_setup_py_data() %}
-{% set version = sdata.get('version') %}
 
 package:
   name: xarray-spatial
-  version: {{ version.split('.post')[0] }}
+  version: "0.1.8"
 
 source:
   path: ..
