@@ -908,57 +908,110 @@ def nbr2(swir1_agg: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
-    >>>     import xarray as xr
-    >>>     from xrspatial import nbr2
+    >>>     import datashader as ds
+    >>>     import xarray as xr 
+    >>>     from xrspatial import generate_terrain
+    >>>     from xrspatial.multispectral import nbr2
+    >>>     from datashader.transfer_functions import shade, stack
+    >>>     from datashader.colors import Elevation
+    >>>     from datasets import get_data
 
-    >>>     # Create Sample Band Data
-    >>>     np.random.seed(5)
-    >>>     swir1_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
-    >>>     height, width = swir1_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     swir1_agg["lat"] = _lat
-    >>>     swir1_agg["lon"] = _lon
+    >>>     # Open Example Data
+    >>>     data = get_data('sentinel-2')
+    >>>     # SWIR1 Band
+    >>>     swir1 = data['SWIR1']
+    >>>     print(swir1[100:102, 200: 203])
+    ...     <xarray.DataArray (y: 2, x: 3)>
+    ...     array([[1963., 1968., 2010.],
+    ...            [2054., 2041., 2089.]])
+    ...     Coordinates:
+    ...       * x        (x) float64 6.04e+05 6.04e+05 6.040e+05
+    ...       * y        (y) float64 4.698e+06 4.698e+06
+    ...         band     int32 ...
+    ...     Attributes: (12/13)
+    ...         transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+    ...         crs:                      +init=epsg:32719
+    ...         res:                      [20. 20.]
+    ...         is_tiled:                 1
+    ...         nodatavals:               nan
+    ...         scales:                   1.0
+    ...                       ...
+    ...         instrument:               Sentinel-2
+    ...         Band:                     11
+    ...         Name:                     SWIR1
+    ...         Bandwidth (µm):           90
+    ...         Nominal Wavelength (µm):  1.610
+    ...         Resolution (m):            20
 
-    >>>     np.random.seed(4)
-    >>>     swir2_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
-    >>>     height, width = swir2_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     swir2_agg["lat"] = _lat
-    >>>     swir2_agg["lon"] = _lon
+    >>>     # Shade Image
+    >>>     swir1_img = shade(agg = swir1, cmap = ['black', 'white'])
+    >>>     swir1_img
 
-    >>>     print(swir1_agg, swir2_agg)
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
-                   [0.48841119, 0.61174386, 0.76590786, 0.51841799],
-                   [0.2968005 , 0.18772123, 0.08074127, 0.7384403 ],
-                   [0.44130922, 0.15830987, 0.87993703, 0.27408646]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[0.96702984, 0.54723225, 0.97268436, 0.71481599],
-                   [0.69772882, 0.2160895 , 0.97627445, 0.00623026],
-                   [0.25298236, 0.43479153, 0.77938292, 0.19768507],
-                   [0.86299324, 0.98340068, 0.16384224, 0.59733394]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
-    
-    >>> # Create NBR2 DataArray
-    >>> nbr2_agg = nbr2(swir1_agg, swir2_agg)
-    >>> print(nbr2_agg)
-    <xarray.DataArray 'nbr' (lat: 4, lon: 4)>
-    array([[-0.62659567,  0.22814397, -0.64945135,  0.12476525],
-           [-0.17646958,  0.47793963, -0.1207489 ,  0.97624978],
-           [ 0.07970081, -0.39689195, -0.81225672,  0.57765256],
-           [-0.32330232, -0.7226795 ,  0.6860596 , -0.37094321]])
-    Coordinates:
-      * lat      (lat) float64 0.0 1.0 2.0 3.0
-      * lon      (lon) float64 0.0 1.0 2.0 3.0
+            .. image :: ./docs/source/_static/img/docstring/swir1_example.png
+
+    >>>     # SWIR2 Band
+    >>>     swir2 = data['SWIR2']
+    >>>     print(swir2[100:102, 200: 203])
+    ...     <xarray.DataArray (y: 2, x: 3)>
+    ...     array([[1776., 1765., 1820.],
+       [1878., 1859., 1902.]])
+    ...     Coordinates:
+    ...       * x        (x) float64 6.04e+05 6.04e+05 6.040e+05
+    ...       * y        (y) float64 4.698e+06 4.698e+06
+    ...         band     int32 ...
+    ...     Attributes: (12/13)
+    ...         transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+    ...         crs:                      +init=epsg:32719
+    ...         res:                      [20. 20.]
+    ...         is_tiled:                 1
+    ...         nodatavals:               nan
+    ...         scales:                   1.0
+    ...         ...                       ...
+    ...         instrument:               Sentinel-2
+    ...         Band:                     12
+    ...         Name:                     SWIR2
+    ...         Bandwidth (µm):           180
+    ...         Nominal Wavelength (µm):  2.190
+    ...         Resolution (m):            20
+
+    >>>     # Shade Image
+    >>>     swir2_img = shade(agg = swir2, cmap = ['black', 'white'])
+    >>>     swir2_img
+
+            .. image :: ./docs/source/_static/img/docstring/swir2_example.png
+
+    >>>     # Generate NBR2 Aggregate Array
+    >>>     nbr2_agg = nbr2(swir1_agg = swir1, 
+    >>>                     swir2_agg = swir2)
+    >>>     print(nbr2_agg[100:102, 200: 203])
+    ...     <xarray.DataArray 'nbr' (y: 2, x: 3)>
+    ...     array([[0.05001337, 0.05437986, 0.04960836],
+    ...            [0.04476094, 0.04666667, 0.04685542]])
+    ...     Coordinates:
+    ...       * x        (x) float64 6.04e+05 6.04e+05 6.040e+05
+    ...       * y        (y) float64 4.698e+06 4.698e+06
+    ...         band     int32 ...
+    ...     Attributes: (12/13)
+    ...         transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+    ...         crs:                      +init=epsg:32719
+    ...         res:                      [20. 20.]
+    ...         is_tiled:                 1
+    ...         nodatavals:               nan
+    ...         scales:                   1.0
+    ...        ...                       ...
+    ...         instrument:               Sentinel-2
+    ...         Band:                     11
+    ...         Name:                     SWIR1
+    ...         Bandwidth (µm):           90
+    ...         Nominal Wavelength (µm):  1.610
+    ...         Resolution (m):            20
+
+    >>>     # Shade Image
+    >>>     nbr2_img = shade(nbr2_agg, cmap = ['black', 'white'])
+    >>>     nbr2_img
+
+            .. image :: ./docs/source/_static/img/docstring/nbr2_example.png
+
     """
 
     validate_arrays(swir1_agg, swir2_agg)
