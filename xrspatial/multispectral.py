@@ -1677,73 +1677,141 @@ def sipi(nir_agg: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
-    >>>     import xarray as xr
-    >>>     from xrspatial import sipi
+    >>>     import datashader as ds
+    >>>     import xarray as xr 
+    >>>     from xrspatial import generate_terrain
+    >>>     from xrspatial.datasets import get_data
+    >>>     from xrspatial.multispectral import sipi
+    >>>     from datashader.transfer_functions import shade, stack
+    >>>     from datashader.colors import Elevation
 
-    >>>     # Create Sample Band Data
-    >>>     np.random.seed(0)
-    >>>     nir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
-    >>>     height, width = nir_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     nir_agg["lat"] = _lat
-    >>>     nir_agg["lon"] = _lon
+    >>>     # Open Example Data
+    >>>     data = get_data('sentinel-2')
+    >>>     # NIR Band
+    >>>     nir = data['NIR']
+    >>>     print(nir[100:102, 200: 203])
+    ...     <xarray.DataArray (y: 2, x: 3)>
+    ...     array([[1286., 1289., 1285.],
+    ...            [1275., 1292., 1312.]])
+    ...     Coordinates:
+    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
+    ...       * y        (y) float64 4.699e+06 4.699e+06
+    ...         band     int32 1
+    ...     Attributes: (12/13)
+    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+    ...         crs:                      +init=epsg:32719
+    ...         res:                      [10. 10.]
+    ...         is_tiled:                 1
+    ...         nodatavals:               nan
+    ...         scales:                   1.0
+    ...         ...                       ...
+    ...         instrument:               Sentinel-2
+    ...         Band:                     07
+    ...         Name:                     NIR
+    ...         Bandwidth (µm):           115
+    ...         Nominal Wavelength (µm):  0.842
+    ...         Resolution (m):            10
 
-    >>>     np.random.seed(1)
-    >>>     red_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
-    >>>     height, width = red_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     red_agg["lat"] = _lat
-    >>>     red_agg["lon"] = _lon
+    >>>     # Shade Image
+    >>>     nir_img = shade(agg = nir, cmap = ['black', 'white'])
+    >>>     nir_img
 
-    >>>     np.random.seed(2)
-    >>>     blue_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
-    >>>     height, width = blue_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     blue_agg["lat"] = _lat
-    >>>     blue_agg["lon"] = _lon
+            .. image :: ./docs/source/_static/img/docstring/nir_example.png
 
-    >>>     print(nir_agg, red_agg, blue_agg)
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
-                   [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
-                   [0.96366276, 0.38344152, 0.79172504, 0.52889492],
-                   [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
-                   [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
-                   [3.96767474e-01, 5.38816734e-01, 4.19194514e-01, 6.85219500e-01],
-                   [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[0.4359949 , 0.02592623, 0.54966248, 0.43532239],
-                   [0.4203678 , 0.33033482, 0.20464863, 0.61927097],
-                   [0.29965467, 0.26682728, 0.62113383, 0.52914209],
-                   [0.13457995, 0.51357812, 0.18443987, 0.78533515]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
+    >>>     # Red Band
+    >>>     red = data['Red']
+    >>>     print(red[100:102, 200: 203])
+    ...     <xarray.DataArray (y: 2, x: 3)>
+    ...     array([[1138., 1115., 1112.],
+    ...            [1114., 1109., 1133.]])
+    ...     Coordinates:
+    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
+    ...       * y        (y) float64 4.699e+06 4.699e+06
+    ...         band     int32 1
+    ...     Attributes: (12/13)
+    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+    ...         crs:                      +init=epsg:32719
+    ...         res:                      [10. 10.]
+    ...         is_tiled:                 1
+    ...         nodatavals:               nan
+    ...         scales:                   1.0
+     ...        ...                       ...
+    ...         instrument:               Sentinel-2
+    ...         Band:                     04
+    ...         Name:                     Red
+    ...         Bandwidth (µm):           30
+    ...         Nominal Wavelength (µm):  0.665
+    ...         Resolution (m):            10
 
-    >>>     # Create ARVI DataArray
-    >>>     sipi_agg = sipi(nir_agg, red_agg, blue_agg)
-    >>>     print(sipi_agg)
-            <xarray.DataArray 'sipi' (lat: 4, lon: 4)>
-            array([[ 8.56038534e-01, -1.34225137e+02,  8.81124802e-02, 4.51702802e-01],
-                   [ 1.18707483e-02,  5.70058976e-01,  9.26834671e-01, 4.98894015e-01],
-                   [ 1.17130642e+00, -7.50533112e-01,  4.57925444e-01, 1.58116224e-03],
-                   [ 1.19217212e+00,  8.67787369e+00, -2.59811674e+00, 1.19691430e+00]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
+    >>>     # Shade Image
+    >>>     red_img = shade(agg = red, cmap = ['black', 'white'])
+    >>>     red_img
+
+            .. image :: ./docs/source/_static/img/docstring/red_example.png
+
+    >>>     # Blue Band
+    >>>     blue = data['Blue']
+    >>>     print(blue[100:102, 200: 203])
+    ...     <xarray.DataArray (y: 2, x: 3)>
+    ...     array([[1197., 1191., 1179.],
+    ...            [1178., 1181., 1213.]])
+    ...     Coordinates:
+    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
+    ...       * y        (y) float64 4.699e+06 4.699e+06
+    ...         band     int32 1
+    ...     Attributes: (12/13)
+    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+    ...         crs:                      +init=epsg:32719
+    ...         res:                      [10. 10.]
+    ...         is_tiled:                 1
+    ...         nodatavals:               nan
+    ...         scales:                   1.0
+    ...         ...                       ...
+    ...         instrument:               Sentinel-2
+    ...         Band:                     02
+    ...         Name:                     Blue
+    ...         Bandwidth (µm):           65
+    ...         Nominal Wavelength (µm):  0.490
+    ...         Resolution (m):            10
+
+    >>>     # Shade Image
+    >>>     blue_img = shade(agg = blue, cmap = ['black', 'white'])
+    >>>     blue_img
+
+            .. image :: ./docs/source/_static/img/docstring/blue_example.png
+
+    >>>     # Generate SIPI Aggregate Array
+    >>>     sipi_agg = sipi(nir_agg = nir,
+    >>>                     red_agg = red,
+    >>>                     blue_agg = blue)
+    >>>     print(sipi_agg[100:102, 200: 203])
+    ...     <xarray.DataArray 'sipi' (y: 2, x: 3)>
+    ...     array([[0.60135135, 0.56321839, 0.61271676],
+    ...            [0.60248447, 0.60655738, 0.55307263]])
+    ...     Coordinates:
+    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
+    ...       * y        (y) float64 4.699e+06 4.699e+06
+    ...         band     int32 ...
+    ...     Attributes: (12/13)
+    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+    ...         crs:                      +init=epsg:32719
+    ...         res:                      [10. 10.]
+    ...         is_tiled:                 1
+    ...         nodatavals:               nan
+    ...         scales:                   1.0
+    ...         ...                       ...
+    ...         instrument:               Sentinel-2
+    ...         Band:                     07
+    ...         Name:                     NIR
+    ...         Bandwidth (µm):           115
+    ...         Nominal Wavelength (µm):  0.842
+    ...         Resolution (m):            10
+
+    >>>     # Shade Image
+    >>>     sipi_img = shade(sipi_agg, cmap = ['black', 'white'])
+    >>>     sipi_img
+
+            .. image :: ./docs/source/_static/img/docstring/sipi_example.png
 
     """
 
