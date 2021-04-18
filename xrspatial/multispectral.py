@@ -1214,57 +1214,110 @@ def ndmi(nir_agg: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import numpy as np
-    >>>     import xarray as xr
-    >>>     from xrspatial import ndmi
+    >>>     import datashader as ds
+    >>>     import xarray as xr 
+    >>>     from xrspatial import generate_terrain
+    >>>     from xrspatial.multispectral import ndmi
+    >>>     from datashader.transfer_functions import shade, stack
+    >>>     from datashader.colors import Elevation
+    >>>     from datasets import get_data
 
-    >>>     # Create Sample Band Data
-    >>>     np.random.seed(0)
-    >>>     nir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
-    >>>     height, width = nir_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     nir_agg["lat"] = _lat
-    >>>     nir_agg["lon"] = _lon
+    >>>     # Open Example Data
+    >>>     data = get_data('sentinel-2')
+    >>>     # NIR Band
+    >>>     nir = data['NIR']
+    >>>     print(nir[100:102, 200: 203])
+    ...     <xarray.DataArray (y: 2, x: 3)>
+    ...     array([[1286., 1289., 1285.],
+    ...            [1275., 1292., 1312.]])
+    ...     Coordinates:
+    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
+    ...       * y        (y) float64 4.699e+06 4.699e+06
+    ...         band     int32 ...
+    ...     Attributes: (12/13)
+    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+    ...         crs:                      +init=epsg:32719
+    ...         res:                      [10. 10.]
+    ...         is_tiled:                 1
+    ...         nodatavals:               nan
+    ...         scales:                   1.0
+    ...         ...                       ...
+    ...         instrument:               Sentinel-2
+    ...         Band:                     07
+    ...         Name:                     NIR
+    ...         Bandwidth (µm):           115
+    ...         Nominal Wavelength (µm):  0.842
+    ...         Resolution (m):            10
 
-    >>>     np.random.seed(5)
-    >>>     swir1_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
-    >>>     height, width = swir1_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     swir1_agg["lat"] = _lat
-    >>>     swir1_agg["lon"] = _lon
+    >>>     # Shade Image
+    >>>     nir_img = shade(agg = nir, cmap = ['black', 'white'])
+    >>>     nir_img
 
-    >>>     print(nir_agg, swir1_agg)
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
-                   [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
-                   [0.96366276, 0.38344152, 0.79172504, 0.52889492],
-                   [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
-                   [0.48841119, 0.61174386, 0.76590786, 0.51841799],
-                   [0.2968005 , 0.18772123, 0.08074127, 0.7384403 ],
-                   [0.44130922, 0.15830987, 0.87993703, 0.27408646]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
+            .. image :: ./docs/source/_static/img/docstring/nir_example.png
 
-    >>>     # Create NDMI DataArray
-    >>>     ndmi_agg = ndmi(nir_agg, swir1_agg)
-    >>>     print(ndmi_agg)
-            <xarray.DataArray 'ndmi' (lat: 4, lon: 4)>
-            array([[ 0.4239978 , -0.09807732,  0.48925604, -0.25536675],
-                   [-0.07099968,  0.02715428, -0.27280597,  0.26475493],
-                   [ 0.52906124,  0.34266992,  0.81491258, -0.16534329],
-                   [ 0.12556087,  0.70789018, -0.85060343, -0.51757753]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
+    >>>     # SWIR1 Band
+    >>>     swir1 = data['SWIR1']
+    >>>     print(swir1[100:102, 200: 203])
+    ...     <xarray.DataArray (y: 2, x: 3)>
+    ...     array([[1963., 1968., 2010.],
+    ...            [2054., 2041., 2089.]])
+    ...     Coordinates:
+    ...       * x        (x) float64 6.04e+05 6.04e+05 6.040e+05
+    ...       * y        (y) float64 4.698e+06 4.698e+06
+    ...         band     int32 ...
+    ...     Attributes: (12/13)
+    ...         transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+    ...         crs:                      +init=epsg:32719
+    ...         res:                      [20. 20.]
+    ...         is_tiled:                 1
+    ...         nodatavals:               nan
+    ...         scales:                   1.0
+    ...                       ...
+    ...         instrument:               Sentinel-2
+    ...         Band:                     11
+    ...         Name:                     SWIR1
+    ...         Bandwidth (µm):           90
+    ...         Nominal Wavelength (µm):  1.610
+    ...         Resolution (m):            20
+
+    >>>     # Shade Image
+    >>>     swir1_img = shade(agg = swir1, cmap = ['black', 'white'])
+    >>>     swir1_img
+
+            .. image :: ./docs/source/_static/img/docstring/swir1_example.png
+
+    >>>     # Generate NDMI Aggregate Array
+    >>>     ndmi_agg = ndmi(nir_agg = nir, 
+    >>>                     swir1_agg = swir1)
+    >>>     print(ndmi_agg[100:102, 200: 203])
+    ...     <xarray.DataArray 'ndmi' (y: 2, x: 3)>
+    ...     array([[-0.20837181, -0.20847406, -0.22003035],
+    ...            [-0.23400421, -0.22472247, -0.22846222]])
+    ...     Coordinates:
+    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
+    ...       * y        (y) float64 4.699e+06 4.699e+06
+    ...         band     int32 ...
+    ...     Attributes: (12/13)
+    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+    ...         crs:                      +init=epsg:32719
+    ...         res:                      [10. 10.]
+    ...         is_tiled:                 1
+    ...         nodatavals:               nan
+    ...         scales:                   1.0
+    ...         ...                       ...
+    ...         instrument:               Sentinel-2
+    ...         Band:                     07
+    ...         Name:                     NIR
+    ...         Bandwidth (µm):           115
+    ...         Nominal Wavelength (µm):  0.842
+    ...         Resolution (m):            10
+
+    >>>     # Shade Image
+    >>>     ndmi_img = shade(ndmi_agg, cmap = ['black', 'white'])
+    >>>     ndmi_img
+
+            .. image :: ./docs/source/_static/img/docstring/ndmi_example.png
+
     """
 
     validate_arrays(nir_agg, swir1_agg)
