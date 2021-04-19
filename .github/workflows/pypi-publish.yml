@@ -1,5 +1,7 @@
 name: Publish package to PyPI
-on: [push]
+on:
+  release:
+    types: [published]
 jobs:
   publish:
     runs-on: ubuntu-18.04
