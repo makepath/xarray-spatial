@@ -66,28 +66,49 @@ def bump(width: int,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import xarray as xr
-    >>>     from xrspatial import bump
-    >>>     import numpy as np
+    >>>     import datashader as ds
+    >>>     from xrspatial import generate_terrain, bump
+    >>>     from datashader.transfer_functions import shade, stack, set_background
+    >>>     from datashader.colors import Elevation
     >>>     from functools import partial
+    >>>     import numpy as np
 
-    >>>     # Open Example DataArray
-    >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
-
-    >>>     print(agg)
-    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
-    ...     [480000 values with dtype=float64]
+    >>>     # Create Canvas
+    >>>     W = 500 
+    >>>     H = 300
+    >>>     cvs = ds.Canvas(plot_width = W,
+    >>>                     plot_height = H,
+    >>>                     x_range = (-20e6, 20e6),
+    >>>                     y_range = (-20e6, 20e6))
+    >>>     # Generate Example Terrain
+    >>>     terrain_agg = generate_terrain(canvas = cvs)
+    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
+    >>>                                             'Max Elevation': '3000',
+    >>>                                             'units': 'meters'})
+    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+    >>>     terrain_agg = terrain_agg.rename('example_terrain')
+    >>>     # Shade Terrain
+    >>>     terrain_img = shade(agg = terrain_agg,
+    >>>                         cmap = ['grey', 'white'],
+    >>>                         how = 'linear')
+    >>>     print(terrain_agg[200:203, 200:202])
+    >>>     terrain_img
+    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
+    ...     array([[1264.02249454, 1261.94748873],
+    ...            [1285.37061171, 1282.48046696],
+    ...            [1306.02305679, 1303.40657515]])
     ...     Coordinates:
-    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
-    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
     ...     Attributes:
-    ...         res:          1
-    ...         Description:  Elevation
-    ...         Max Elevation:  1000
-    ...         units:        meters
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  3000
+    ...         units:          meters
 
-    >>>     # Create Height Function
+            .. image :: ./docs/source/_static/img/docstring/terrain_example_grey.png
+
+    >>>      # Create Height Function
     >>>     def heights(locations, src, src_range, height = 20):
     >>>         num_bumps = locations.shape[0]
     >>>         out = np.zeros(num_bumps, dtype = np.uint16)
@@ -102,40 +123,51 @@ def bump(width: int,
 
     >>>     # Create Bump Map Aggregate Array
     >>>     bump_count = 10000
-    >>>     src = agg.data
-
-    >>>     # Short Bumps Between 300-500m
-    >>>     bump_agg = bump(agg.shape[1],
-    >>>                     agg.shape[0],
-    >>>                     count = bump_count,
-    >>>                     height_func = partial(heights,
-    >>>                                           src = src,
-    >>>                                           src_range = (300, 500),
+    >>>     src = terrain_agg.data
+    >>>     # Short Bumps from z = 1000 to z = 1300
+    >>>     bump_agg = bump(width = W, height = H, count = bump_count,
+    >>>                     height_func = partial(heights, src = src,
+    >>>                                           src_range = (1000, 1300),
     >>>                                           height = 5))
-    >>>     # Tall Bumps Between 500-800m
-    >>>     bump_agg += bump(agg.shape[1],
-    >>>                   agg.shape[0],
-    >>>                   count = bump_count//2,
-    >>>                   height_func = partial(heights,
-    >>>                                         src = src,
-    >>>                                         src_range = (500, 800),
-    >>>                                         height = 20))
-
-    >>>     print(bump_agg)
-    ...     array([[0., 0., 0., ..., 0., 0., 0.],
-    ...            [0., 0., 0., ..., 0., 0., 0.],
-    ...            [0., 0., 0., ..., 0., 0., 0.],
-    ...            ...,
-    ...            [0., 0., 0., ..., 0., 0., 0.],
-    ...            [0., 0., 0., ..., 0., 0., 0.],
-    ...            [0., 0., 0., ..., 0., 0., 0.]])
+    >>>     # Tall Bumps from z = 1300 to z = 1700
+    >>>     bump_agg += bump(width = W, height = H, count = bump_count // 2,
+    >>>                      height_func = partial(heights, src = src,
+    >>>                                            src_range = (1300, 1700),
+    >>>                                            height=20))
+    >>>     # Short Bumps from z = 1700 to z = 2000
+    >>>     bump_agg += bump(width = W, height = H, count = bump_count // 3,
+    >>>                      height_func = partial(heights,  src = src,
+    >>>                                            src_range = (1700, 2000),
+    >>>                                            height=5))
+    >>>     # Remove zeros
+    >>>     bump_agg_color = bump_agg.copy()
+    >>>     bump_agg_color.data[bump_agg_color.data == 0] = np.nan
+    >>>     # Shade Image
+    >>>     bump_img = shade(agg = bump_agg_color,
+    >>>                      cmap = 'green',
+    >>>                      how ='linear',
+    >>>                      alpha = 255)
+    >>>     print(bump_agg_color[200:205, 200:206])
+    >>>     bump_img_background = set_background(bump_img, 'black')
+    >>>     bump_img_background
+    ...     <xarray.DataArray (y: 5, x: 6)>
+    ...     array([[ 5.,  5.,  5.,  5.,  5., nan],
+    ...            [nan,  5.,  5., nan, nan, nan],
+    ...            [nan, nan, nan, nan, nan, nan],
+    ...            [nan, nan, nan, nan, nan, nan],
+    ...            [nan, nan, nan, nan, nan, nan]])
     ...     Dimensions without coordinates: y, x
     ...     Attributes:
     ...         res:      1
 
-    >>>     # To View In a Jupyter Notebook
-    >>>     from datashader.transfer_functions import shade
-    >>>     shade(bump_agg)
+            .. image :: ./docs/source/_static/img/docstring/bump_example.png
+
+    >>>     # Combine Images
+    >>>     composite_img = stack(terrain_img, hillshade_img, bump_img)
+    >>>     composite_img
+
+            .. image :: ./docs/source/_static/img/docstring/bump_composite.png
+
     """
 
     linx = range(width)
