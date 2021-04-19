@@ -350,7 +350,85 @@ def annulus_kernel(cellsize_x: int,
 
 
 def custom_kernel(kernel):
-    """Validates a custom kernel. If the kernel is valid, returns itself."""
+    """
+    Validates a custom kernel. If the kernel is valid, returns itself.
+    Valid kernels are numpy arrays with odd dimensions:
+    (`kernel.shape[0] % 2 != 0` and `kernel.shape[1] % 2 != 0`)
+
+    Parameters
+    ----------
+    kernel : numpy.array
+        2D array where values of 1 indicate the kernel.
+
+    Returns
+    -------
+    kernel : numpy.array
+        Returns input kernel if kernel is valid
+
+    Example
+    -------
+    >>>     from xrspatial.focal import custom_kernel
+    >>>     import numpy as np
+
+    >>>     # Valid Kernel
+    >>>     valid_kernel = np.array([[0., 0., 0., 0., 1., 0., 0., 0., 0.],
+    >>>                              [0., 0., 1., 1., 1., 1., 1., 0., 0.],
+    >>>                              [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+    >>>                              [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+    >>>                              [1., 1., 1., 1., 1., 1., 1., 1., 1.],
+    >>>                              [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+    >>>                              [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+    >>>                              [0., 0., 1., 1., 1., 1., 1., 0., 0.],
+    >>>                              [0., 0., 0., 0., 1., 0., 0., 0., 0.]])
+    >>>     print(kernel.shape)
+    ...     (9, 9)
+
+    >>>     print(custom_kernel(valid_kernel))
+    ...     [[0. 0. 0. 0. 1. 0. 0. 0. 0.]
+    ...      [0. 0. 1. 1. 1. 1. 1. 0. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [1. 1. 1. 1. 1. 1. 1. 1. 1.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
+    ...      [0. 0. 1. 1. 1. 1. 1. 0. 0.]
+    ...      [0. 0. 0. 0. 1. 0. 0. 0. 0.]]
+
+    >>>     even_kernel = np.array([[0., 0., 0., 1., 1., 0., 0., 0.],
+    >>>                             [0., 0., 1., 1., 1., 1., 0., 0.],
+    >>>                             [0., 1., 1., 1., 1., 1., 1., 0.],
+    >>>                             [1., 1., 1., 1., 1., 1., 1., 1.],
+    >>>                             [1., 1., 1., 1., 1., 1., 1., 1.],
+    >>>                             [0., 1., 1., 1., 1., 1., 1., 0.],
+    >>>                             [0., 0., 1., 1., 1., 1., 0., 0.],
+    >>>                             [0., 0., 0., 1., 1., 0., 0., 0.]])
+    >>>     print(even_kernel.shape)
+    ...     (8, 8)
+
+    >>>     print(custom_kernel(even_kernel))
+    ...     ValueError: Received custom kernel with improper dimensions.,
+    ...     A custom kernel needs to have an odd shape, the supplied kernel
+    ...     has 8 rows and 8 columns.
+
+    >>>     list_kernel = [[0., 0., 0., 0., 1., 0., 0., 0., 0.],
+    >>>                    [0., 0., 1., 1., 1., 1., 1., 0., 0.],
+    >>>                    [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+    >>>                    [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+    >>>                    [1., 1., 1., 1., 1., 1., 1., 1., 1.],
+    >>>                    [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+    >>>                    [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+    >>>                    [0., 0., 1., 1., 1., 1., 1., 0., 0.],
+    >>>                    [0., 0., 0., 0., 1., 0., 0., 0., 0.]]
+    >>>     print(len(list_kernel))
+    >>>     print(len(list_kernel[0]))
+    ...     9
+    ...     9
+
+    >>>     custom_kernel(list_kernel)
+    ...     ValueError: Received a custom kernel that is not a Numpy array.,
+    ...     The kernel received was of type <class 'list'> and needs to be of
+    ...     type `ndarray` 
+    """
     _validate_kernel(kernel)
     return kernel
 
