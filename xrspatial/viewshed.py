@@ -1529,6 +1529,136 @@ def viewshed(raster: xarray.DataArray,
         A cell x in the visibility grid is recorded as follows:
         If it is invisible, then x is set to INVISIBLE.
         If it is visible,  then x is set to the vertical angle w.r.t the viewpoint.
+    
+    Example
+    -------
+    >>>     import datashader as ds
+    >>>     import pandas as pd
+    >>>     import numpy as np
+    >>>     from xrspatial import generate_terrain, hillshade, viewshed
+    >>>     from datashader.transfer_functions import shade, stack, dynspread
+    >>>     from datashader.colors import Elevation
+
+    >>>     # Create Canvas
+    >>>     W = 500 
+    >>>     H = 300
+    >>>     cvs = ds.Canvas(plot_width = W,
+    >>>                     plot_height = H,
+    >>>                     x_range = (-20e6, 20e6),
+    >>>                     y_range = (-20e6, 20e6))
+    >>>     # Generate Example Terrain
+    >>>     terrain_agg = generate_terrain(canvas = cvs)
+    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
+    >>>                                             'Max Elevation': '3000',
+    >>>                                             'units': 'meters'})
+    >>>     terrain_agg = terrain_agg.rename('example_terrain')
+    >>>     # Shade Terrain
+    >>>     terrain_img = shade(agg = terrain_agg,
+    >>>                         cmap = Elevation,
+    >>>                         how = 'linear')
+    >>>     print(terrain_agg[200:203, 200:202])
+    >>>     terrain_img
+    ...     <xarray.DataArray 'example_terrain' (y: 3, x: 2)>
+    ...     array([[1264.02249454, 1261.94748873],
+    ...            [1285.37061171, 1282.48046696],
+    ...            [1306.02305679, 1303.40657515]])
+    ...     Coordinates:
+    ...       * x        (x) float64 -3.96e+06 -3.88e+06
+    ...       * y        (y) float64 6.733e+06 6.867e+06 7e+06
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  3000
+    ...         units:          meters
+
+            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
+
+    >>>     # Generate a Target Aggregate Array
+    >>>     volcano_agg = terrain_agg.copy(deep = True)
+    >>>     volcano_agg.data = np.where(np.logical_and(volcano_agg.data > 2800,
+    >>>                                                volcano_agg.data < 5000), 1, 0)
+    >>>     volcano_agg = volcano_agg.rename('volcano')
+    >>>     volcano_agg.values = volcano_agg.values.astype("float64")
+    >>>     # Shade Volcano
+    >>>     volcano_img = shade(agg = volcano_agg,
+    >>>                         cmap = 'black')
+    >>>     print(volcano_agg[200:203, 200:202])
+    >>>     volcano_img
+    ...     <xarray.DataArray 'volcano' (y: 3, x: 2)>
+    ...     array([[0., 0.],
+    ...            [0., 0.],
+    ...            [0., 0.]])
+    ...     Coordinates:
+    ...       * x        (x) float64 -3.96e+06 -3.88e+06
+    ...       * y        (y) float64 6.733e+06 6.867e+06 7e+06
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  3000
+    ...         units:          meters
+
+            .. image :: ./docs/source/_static/img/docstring/volcano_example.png
+
+    >>>     # Create Observer Aggregate Array
+    >>>     OBSERVER_X = -12.5e6
+    >>>     OBSERVER_Y = 10e6
+    >>>     observer_df = pd.DataFrame({'x': [OBSERVER_X], 'y': [OBSERVER_Y]})
+    >>>     observer_agg = cvs.points(observer_df, 'x', 'y')
+    >>>     # Shade Point
+    >>>     observer_shaded = dynspread(shade(agg = observer_agg, cmap = ['orange']),
+    >>>                                       threshold=1, max_px=4)
+    >>>     observer_shaded = stack(terrain_img, observer_shaded)
+    >>>     print(observer_df)
+    >>>     observer_shaded
+    ...                 x           y
+    ...     0 -12500000.0  10000000.0
+
+            .. image :: ./docs/source/_static/img/docstring/viewshed_example_observer.png
+
+    >>>     # Generate Viewshed Aggregate Array
+    >>>     view = viewshed(volcano_agg, x=OBSERVER_X, y=OBSERVER_Y)
+    >>>     # Shade Image
+    >>>     view_shaded = shade(agg = view, cmap = ['black', 'white'],
+    >>>                         alpha = 100, how = 'linear')
+    >>>     composite_img = stack(terrain_img, observer_shaded, view_shaded)
+    >>>     # Outside View
+    >>>     print(view[295:300, 498:500])
+    >>>     # Inside View
+    >>>     print(view[5:10, 8:10])
+    >>>     composite_img
+    ...     <xarray.DataArray (y: 5, x: 2)>
+    ...     array([[-1., -1.],
+    ...            [-1., -1.],
+    ...            [-1., -1.],
+    ...            [-1., -1.],
+    ...            [-1., -1.]])
+    ...     Coordinates:
+    ...       * x        (x) float64 1.988e+07 1.996e+07
+    ...       * y        (y) float64 1.94e+07 1.953e+07 1.967e+07 1.98e+07 1.993e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  3000
+    ...         units:          meters
+    ...     <xarray.DataArray (y: 5, x: 2)>
+    ...     array([[90., 90.],
+    ...            [90., 90.],
+    ...            [90., 90.],
+    ...            [90., 90.],
+    ...            [90., 90.]])
+    ...     Coordinates:
+    ...       * x        (x) float64 -1.932e+07 -1.924e+07
+    ...       * y        (y) float64 -1.927e+07 -1.913e+07 -1.9e+07 -1.887e+07 -1.873e+07
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  3000
+    ...         units:          meters
+
+            .. image :: ./docs/source/_static/img/docstring/viewshed_composite.png
+
+
+
     """
 
     height, width = raster.shape
