@@ -349,9 +349,9 @@ def a_star_search(surface: xr.DataArray,
 
             .. image :: ./docs/source/_static/img/docstring/a_star_example.png
 
-# Combine Images
-composite_img = stack(terrain_img, path_img)
-composite_img
+    >>>     # Combine Images
+    >>>     composite_img = stack(terrain_img, path_img)
+    >>>     composite_img
 
             .. image :: ./docs/source/_static/img/docstring/a_star_composite.png
 

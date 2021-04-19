@@ -201,9 +201,9 @@ def hillshade(agg: xr.DataArray,
 
             .. image :: ./docs/source/_static/img/docstring/hillshade_example.png
 
-# Combine Images
-composite_img = stack(terrain_img, hillshade_img)
-composite_img
+    >>>     # Combine Images
+    >>>     composite_img = stack(terrain_img, hillshade_img)
+    >>>     composite_img
 
             .. image :: ./docs/source/_static/img/docstring/hillshade_composite.png
 

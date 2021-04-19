@@ -825,7 +825,6 @@ def nbr(nir_agg: xr.DataArray,
     >>>     nbr_agg = nbr(nir_agg = nir, 
     >>>                   swir2_agg = swir2)
     >>>     print(nbr_agg[100:102, 200: 203])
-
     ...     <xarray.DataArray 'nbr' (y: 2, x: 3)>
     ...     array([[-0.16002613, -0.15586117, -0.17230274],
     ...            [-0.19124643, -0.17994288, -0.18357187]])

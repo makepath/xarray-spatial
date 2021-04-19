@@ -135,7 +135,6 @@ def calc_cellsize(raster: xr.DataArray,
     >>>                         cmap = Elevation,
     >>>                         how = 'linear')
     >>>     print(terrain_agg[200:203, 200:202])
-
     ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
     ...     array([[1264.02249454, 1261.94748873],
     ...            [1285.37061171, 1282.48046696],
@@ -424,7 +423,7 @@ def custom_kernel(kernel):
     ...     9
     ...     9
 
-    >>>     custom_kernel(list_kernel)
+    >>>     print(custom_kernel(list_kernel))
     ...     ValueError: Received a custom kernel that is not a Numpy array.,
     ...     The kernel received was of type <class 'list'> and needs to be of
     ...     type `ndarray` 

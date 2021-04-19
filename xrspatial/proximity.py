@@ -780,7 +780,7 @@ def allocation(raster: xr.DataArray,
     ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
     ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
 
-    >>>                 .. image :: ./docs/source/_static/img/docstring/allocation_example.png
+            .. image :: ./docs/source/_static/img/docstring/allocation_example.png
 
     >>>     # Combine Images
     >>>     composite_img = stack(terrain_img, allocation_img, cities_pts)
