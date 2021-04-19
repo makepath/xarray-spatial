@@ -15,11 +15,6 @@ jobs:
         run: |
           echo "CHANGELOG_VERSION=$(cat CHANGELOG.md | grep -oP '(?<=###\s)(.*)(?=\s\-)' | head -n 1 | sed 's/Version\s/v/')" >> $GITHUB_ENV
           echo "CONDA_VERSION=$(cat conda.recipe/meta.yaml | grep -oP '(version\:.*)' | head -n 1 | sed 's/version\:\s/v/')" >> $GITHUB_ENV
-      - name: Show release versions
-        run: |
-          echo TAG_VERSION: $TAG_VERSION
-          echo CHANGELOG_VERSION: $CHANGELOG_VERSION
-          echo CONDA_VERSION: $CONDA_VERSION
       - name: Check changelog release version
         if: ${{ env.TAG_VERSION != env.CHANGELOG_VERSION }}
         run: |
@@ -40,7 +35,7 @@ jobs:
       - name: Get package size
         run: echo "PKG_SIZE=$(find dist -maxdepth 1 -regex '.*gz' | xargs stat --format='%s')" >> $GITHUB_ENV
       - name: Check package size
-        if: ${{ env.PKG_SIZE > 1e+8 }}
+        if: ${{ env.PKG_SIZE < 1e+8 }}
         run: |
           echo PKG_SIZE $PKG_SIZE bytes is greater than 100MB
       - name: Publish package
