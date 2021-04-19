@@ -35,7 +35,7 @@ jobs:
           python setup.py sdist bdist_wheel
       - name: Check package size
         env:
-          PKG_SIZE: ${{ find dist -maxdepth 1 -regex '.*gz' | xargs stat --format="%s" }}
+          PKG_SIZE: $(find dist -maxdepth 1 -regex '.*gz' | xargs stat --format="%s")
         run: |
           echo PKG_SIZE: $PKG_SIZE
         if: $PKG_SIZE > 1e+8
