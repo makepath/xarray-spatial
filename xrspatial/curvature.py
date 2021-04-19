@@ -131,49 +131,78 @@ def curvature(agg: xr.DataArray,
 
     Example
     -------
-    >>>     # Imports 
-    >>>     import xarray as xr
-    >>>     from xrspatial import curvature
+    >>>     import datashader as ds
+    >>>     import numpy as np
+    >>>     from xrspatial import generate_terrain, curvature
+    >>>     from datashader.transfer_functions import shade, stack
+    >>>     from datashader.colors import Elevation
 
-    >>>     # Open Example DataArray
-    >>>     agg = xr.open_dataarray('./docs/source/_static/nc/example_terrain.nc')
-
-    >>>     print(agg)
-    ...     <xarray.DataArray 'example_terrain' (lon: 600, lat: 800)>
-    ...     [480000 values with dtype=float64]
+    >>>     # Create Canvas
+    >>>     W = 500 
+    >>>     H = 300
+    >>>     cvs = ds.Canvas(plot_width = W,
+    >>>                     plot_height = H,
+    >>>                     x_range = (-20e6, 20e6),
+    >>>                     y_range = (-20e6, 20e6))
+    >>>     # Generate Example Terrain
+    >>>     terrain_agg = generate_terrain(canvas = cvs)
+    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
+    >>>                                             'Max Elevation': '3000',
+    >>>                                             'units': 'meters'})
+    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+    >>>     terrain_agg = terrain_agg.rename('example_terrain')
+    >>>     # Shade Terrain
+    >>>     terrain_img = shade(agg = terrain_agg,
+    >>>                         cmap = ['grey', 'white'],
+    >>>                         how = 'linear')
+    >>>     print(terrain_agg[200:203, 200:202])
+    >>>     terrain_img
+    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
+    ...     array([[1264.02249454, 1261.94748873],
+    ...            [1285.37061171, 1282.48046696],
+    ...            [1306.02305679, 1303.40657515]])
     ...     Coordinates:
-    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
-    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
     ...     Attributes:
     ...         res:            1
     ...         Description:    Elevation
-    ...         Max Elevation:  1000
+    ...         Max Elevation:  3000
     ...         units:          meters
+
+            .. image :: ./docs/source/_static/img/docstring/terrain_example_grey.png
 
     >>>     # Create Curvature Aggregate Array
-    >>>     curvature_agg = curvature(agg)
-
-    >>>     print(curvature_agg)
-    ...     <xarray.DataArray 'curvature' (lon: 600, lat: 800)>
-    ...     array([[nan, nan, nan, ..., nan, nan, nan],
-    ...            [nan, -0., -0., ..., -0., -0., nan],
-    ...            [nan, -0., -0., ..., -0., -0., nan],
-    ...            ...,
-    ...            [nan, -0., -0., ..., -0., -0., nan],
-    ...            [nan, -0., -0., ..., -0., -0., nan],
-    ...            [nan, nan, nan, ..., nan, nan, nan]])
+    >>>     curvature_agg = curvature(agg = terrain_agg)
+    >>>     # Where cells are extremely upwardly convex
+    >>>     where_clause = (curvature_agg > 3000)
+    >>>     # Shade Image
+    >>>     curvature_img = shade(agg = curvature_agg.where(where_clause),
+    >>>                           alpha = 200,
+    >>>                           cmap = ['green'])
+    >>>     print(curvature_agg[200:203, 200:202])
+    >>>     curvature_img
+    ...     <xarray.DataArray 'curvature' (lat: 3, lon: 2)>
+    ...     array([[-926.49565188, -622.23551544],
+    ...            [ 324.53310176,  141.65868176],
+    ...            [1013.96844315, 1803.27526745]])
     ...     Coordinates:
-    ...       * lat      (lat) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
-    ...       * lon      (lon) float64 -1.997e+07 -1.99e+07 ... 1.99e+07 1.997e+07
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
     ...     Attributes:
     ...         res:            1
     ...         Description:    Elevation
-    ...         Max Elevation:  1000
+    ...         Max Elevation:  3000
     ...         units:          meters
 
-    >>>     # View In A Jupyter Notebook
-    >>>     from datashader.transfer_functions import shade
-    >>>     shade(curvature_agg)
+            .. image :: ./docs/source/_static/img/docstring/curvature_example.png
+
+    >>>     # Combine Images
+    >>>     composite_img = stack(terrain_img, curvature_img)
+    >>>     composite_img
+
+            .. image :: ./docs/source/_static/img/docstring/curvature_composite.png
+
     """
 
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
