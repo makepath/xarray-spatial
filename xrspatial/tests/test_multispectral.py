@@ -19,6 +19,7 @@ from xrspatial.multispectral import ndvi
 from xrspatial.multispectral import savi
 from xrspatial.multispectral import gci
 from xrspatial.multispectral import sipi
+from xrspatial.multispectral import true_color
 
 
 max_val = 2**16 - 1
@@ -144,8 +145,6 @@ def test_ndvi_cupy_equals_numpy():
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_ndvi_dask_cupy_equals_numpy():
 
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
@@ -160,6 +159,7 @@ def test_ndvi_dask_cupy_equals_numpy():
 
     test_result.data = test_result.data.compute()
     assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
 
 # SAVI -------------
 def test_savi_numpy():
@@ -215,9 +215,6 @@ def test_savi_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_savi_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
@@ -288,9 +285,6 @@ def test_arvi_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_arvi_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
@@ -368,9 +362,6 @@ def test_evi_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_evi_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
@@ -400,8 +391,8 @@ def test_gci_numpy():
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
 
-def test_gci_dask_equals_numpy():
 
+def test_gci_dask_equals_numpy():
     # vanilla numpy version
     nir = create_test_arr(arr1)
     green = create_test_arr(arr2)
@@ -438,9 +429,6 @@ def test_gci_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Dgcice not Available")
 def test_gci_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     green = create_test_arr(arr2)
@@ -512,9 +500,6 @@ def test_sipi_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_sipi_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     red = create_test_arr(arr2)
@@ -581,9 +566,6 @@ def test_nbr_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_nbr_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     swir = create_test_arr(arr2)
@@ -650,9 +632,6 @@ def test_nbr2_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Dnbr2ce not Available")
 def test_nbr2_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     swir1 = create_test_arr(arr1)
     swir2 = create_test_arr(arr2)
@@ -718,9 +697,6 @@ def test_ndmi_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_ndmi_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     nir = create_test_arr(arr1)
     swir1 = create_test_arr(arr2)
@@ -790,9 +766,6 @@ def test_ebbi_cupy_equals_numpy():
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_ebbi_dask_cupy_equals_numpy():
-
-    import cupy
-
     # vanilla numpy version
     red = create_test_arr(arr1)
     swir = create_test_arr(arr2)
@@ -808,3 +781,23 @@ def test_ebbi_dask_cupy_equals_numpy():
     assert is_dask_cupy(test_result)
     test_result.data = test_result.data.compute()
     assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+
+
+def test_true_color_cpu():
+    # vanilla numpy version
+    red = create_test_arr(arr1)
+    green = create_test_arr(arr2)
+    blue = create_test_arr(arr3)
+    numpy_result = true_color(red, green, blue)
+
+    # dask
+    red_dask = create_test_arr(arr1, backend='dask')
+    green_dask = create_test_arr(arr2, backend='dask')
+    blue_dask = create_test_arr(arr3, backend='dask')
+    dask_result = true_color(red_dask, green_dask, blue_dask)
+
+    # TODO: test output metadata: dims, coords, attrs
+    assert isinstance(numpy_result, xa.DataArray)
+    assert isinstance(dask_result.data, da.Array)
+    dask_result.data = dask_result.data.compute()
+    assert np.isclose(numpy_result, dask_result, equal_nan=True).all()

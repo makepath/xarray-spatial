@@ -9,7 +9,9 @@ from xrspatial.utils import ngjit
 
 from xrspatial import mean
 from xrspatial.focal import hotspots, apply
-from xrspatial.convolution import convolve_2d, cellsize, circle_kernel, annulus_kernel
+from xrspatial.convolution import (
+    convolve_2d, calc_cellsize, circle_kernel, annulus_kernel
+)
 
 
 def _do_sparse_array(data_array):
@@ -53,7 +55,9 @@ def test_mean_transfer_function_cpu():
     assert isinstance(dask_numpy_mean.data, da.Array)
 
     # both output same results
-    assert np.isclose(numpy_mean, dask_numpy_mean.compute(), equal_nan=True).all()
+    assert np.isclose(
+        numpy_mean, dask_numpy_mean.compute(), equal_nan=True
+    ).all()
     assert numpy_agg.shape == numpy_mean.shape
 
 
@@ -74,7 +78,9 @@ def test_mean_transfer_function_gpu_equals_cpu():
     assert np.isclose(numpy_mean, cupy_mean.data.get(), equal_nan=True).all()
 
     # dask + cupy case not implemented
-    dask_cupy_agg = xr.DataArray(da.from_array(cupy.asarray(data_random), chunks=(3, 3)))
+    dask_cupy_agg = xr.DataArray(
+        da.from_array(cupy.asarray(data_random), chunks=(3, 3))
+    )
     with pytest.raises(NotImplementedError) as e_info:
         mean(dask_cupy_agg)
         assert e_info
@@ -95,7 +101,7 @@ def test_kernel():
     agg['x'] = np.linspace(0, n, n)
     agg['y'] = np.linspace(0, m, m)
 
-    cellsize_x, cellsize_y = cellsize(agg)
+    cellsize_x, cellsize_y = calc_cellsize(agg)
 
     kernel1 = circle_kernel(cellsize_x, cellsize_y, 2)
     expected_kernel1 = np.array([[0, 1, 0],
@@ -129,37 +135,47 @@ def test_convolution():
 
     dask_output_1 = convolve_2d(dask_data, kernel1)
     assert isinstance(dask_output_1, da.Array)
-    assert np.isclose(dask_output_1.compute(), expected_output_1, equal_nan=True).all()
+    assert np.isclose(
+        dask_output_1.compute(), expected_output_1, equal_nan=True
+    ).all()
 
     kernel2 = np.array([[0, 1, 0],
                         [1, 1, 1],
                         [0, 1, 0]])
     numpy_output_2 = convolve_2d(data, kernel2)
-    expected_output_2 = np.array([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-                                  [np.nan, 4., 3., 5., 5., np.nan],
-                                  [np.nan, 3., np.nan, np.nan, np.nan, np.nan],
-                                  [np.nan, 5., np.nan, np.nan, np.nan, np.nan],
-                                  [np.nan, 5., np.nan, np.nan, np.nan, np.nan],
-                                  [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]])
+    expected_output_2 = np.array([
+        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+        [np.nan, 4., 3., 5., 5., np.nan],
+        [np.nan, 3., np.nan, np.nan, np.nan, np.nan],
+        [np.nan, 5., np.nan, np.nan, np.nan, np.nan],
+        [np.nan, 5., np.nan, np.nan, np.nan, np.nan],
+        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
+    ])
     # kernel2 is of 3x3, thus the border edge is 1 cell long.
     # currently, ignoring border edge (i.e values in edges are all nans)
     assert isinstance(numpy_output_2, np.ndarray)
-    assert np.isclose(numpy_output_2, expected_output_2, equal_nan=True).all()
+    assert np.isclose(
+        numpy_output_2, expected_output_2, equal_nan=True
+    ).all()
 
     dask_output_2 = convolve_2d(dask_data, kernel2)
     assert isinstance(dask_output_2, da.Array)
-    assert np.isclose(dask_output_2.compute(), expected_output_2, equal_nan=True).all()
+    assert np.isclose(
+        dask_output_2.compute(), expected_output_2, equal_nan=True
+    ).all()
 
     kernel3 = np.array([[0, 1, 0],
                         [1, 0, 1],
                         [0, 1, 0]])
     numpy_output_3 = convolve_2d(data, kernel3)
-    expected_output_3 = np.array([[np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-                                  [np.nan, 4., 2., 4., 4., np.nan],
-                                  [np.nan, 2., np.nan, np.nan, np.nan, np.nan],
-                                  [np.nan, 4., np.nan, np.nan, np.nan, np.nan],
-                                  [np.nan, 4., np.nan, np.nan, np.nan, np.nan],
-                                  [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]])
+    expected_output_3 = np.array([
+        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+        [np.nan, 4., 2., 4., 4., np.nan],
+        [np.nan, 2., np.nan, np.nan, np.nan, np.nan],
+        [np.nan, 4., np.nan, np.nan, np.nan, np.nan],
+        [np.nan, 4., np.nan, np.nan, np.nan, np.nan],
+        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
+    ])
     # kernel3 is of 3x3, thus the border edge is 1 cell long.
     # currently, ignoring border edge (i.e values in edges are all nans)
     assert isinstance(numpy_output_3, np.ndarray)
@@ -167,7 +183,9 @@ def test_convolution():
 
     dask_output_3 = convolve_2d(dask_data, kernel3)
     assert isinstance(dask_output_3, da.Array)
-    assert np.isclose(dask_output_3.compute(), expected_output_3, equal_nan=True).all()
+    assert np.isclose(
+        dask_output_3.compute(), expected_output_3, equal_nan=True
+    ).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -202,7 +220,9 @@ def test_2d_convolution_gpu_equals_cpu():
     assert np.isclose(output_numpy3, output_cupy3.get(), equal_nan=True).all()
 
     # dask + cupy case not implemented
-    dask_cupy_agg = xr.DataArray(da.from_array(cupy.asarray(data), chunks=(3, 3)))
+    dask_cupy_agg = xr.DataArray(
+        da.from_array(cupy.asarray(data), chunks=(3, 3))
+    )
     with pytest.raises(NotImplementedError) as e_info:
         convolve_2d(dask_cupy_agg.data, kernel3)
         assert e_info
@@ -234,7 +254,9 @@ def test_apply_cpu():
     assert isinstance(dask_numpy_apply.data, da.Array)
 
     # both output same results
-    assert np.isclose(numpy_apply, dask_numpy_apply.compute(), equal_nan=True).all()
+    assert np.isclose(
+        numpy_apply, dask_numpy_apply.compute(), equal_nan=True
+    ).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -257,7 +279,9 @@ def test_apply_gpu_equals_gpu():
     assert np.isclose(numpy_apply, cupy_apply.data.get(), equal_nan=True).all()
 
     # dask + cupy case not implemented
-    dask_cupy_agg = xr.DataArray(da.from_array(cupy.asarray(data_apply), chunks=(3, 3)))
+    dask_cupy_agg = xr.DataArray(
+        da.from_array(cupy.asarray(data_apply), chunks=(3, 3))
+    )
     with pytest.raises(NotImplementedError) as e_info:
         apply(dask_cupy_agg, kernel_apply, func_zero)
         assert e_info
@@ -288,7 +312,7 @@ def test_hotspot():
     numpy_agg = xr.DataArray(data, dims=['y', 'x'])
     numpy_agg['x'] = np.linspace(0, n, n)
     numpy_agg['y'] = np.linspace(0, m, m)
-    cellsize_x, cellsize_y = cellsize(numpy_agg)
+    cellsize_x, cellsize_y = calc_cellsize(numpy_agg)
 
     kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
 
@@ -363,7 +387,7 @@ def test_hotspot_gpu_equals_cpu():
     numpy_agg['x'] = np.linspace(0, n, n)
     numpy_agg['y'] = np.linspace(0, m, m)
 
-    cellsize_x, cellsize_y = cellsize(numpy_agg)
+    cellsize_x, cellsize_y = calc_cellsize(numpy_agg)
     kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
     # numpy case
     numpy_hotspots = hotspots(numpy_agg, kernel)
@@ -375,10 +399,14 @@ def test_hotspot_gpu_equals_cpu():
     cupy_hotspots = hotspots(cupy_agg, kernel)
 
     assert isinstance(cupy_hotspots.data, cupy.ndarray)
-    assert np.isclose(numpy_hotspots, cupy_hotspots.data.get(), equal_nan=True).all()
+    assert np.isclose(
+        numpy_hotspots, cupy_hotspots.data.get(), equal_nan=True
+    ).all()
 
     # dask + cupy case not implemented
-    dask_cupy_agg = xr.DataArray(da.from_array(cupy.asarray(data), chunks=(3, 3)))
+    dask_cupy_agg = xr.DataArray(
+        da.from_array(cupy.asarray(data), chunks=(3, 3))
+    )
     with pytest.raises(NotImplementedError) as e_info:
         hotspots(dask_cupy_agg, kernel)
         assert e_info

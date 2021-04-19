@@ -2,6 +2,7 @@
 - [ ] Update CHANGELOG.md
 - [ ] Increment Version in `xrspatial/__init__.py`
 - [ ] Increment Version in `conda.recipe/meta.yaml`
+- [ ] Add the new version reference in `xrspatial/docs/source/releases.json`
 - [ ] Commit changes and push
 
 ### Tag Release

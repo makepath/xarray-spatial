@@ -1,11 +1,10 @@
 from functools import partial
 
 import re
+import warnings
+
 import numpy as np
 import dask.array as da
-
-import warnings
-warnings.simplefilter('default')
 
 from numba import cuda, float32, prange, jit
 
@@ -54,8 +53,11 @@ def _get_distance(distance_str):
 
     unit = DEFAULT_UNIT
     if len(splits) == 1:
-        warnings.warn('Raster distance unit not provided. '
-                      'Use meter as default.', Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn('Raster distance unit not provided. '
+                          'Use meter as default.', Warning)
+
     elif len(splits) == 2:
         unit = splits[1]
 
@@ -82,13 +84,50 @@ def _get_distance(distance_str):
     return meters
 
 
-def cellsize(raster):
+def calc_cellsize(raster):
+    """
+    Calculates cell size of an array based on its attributes.
+    Default = meters. If lat-lon units are converted to meters.
+    Parameters:
+    ----------
+    raster: xarray.DataArray
+        2D array of input values.
+    Returns:
+    ----------
+    cellsize_x: float
+        Size of cells in x direction.
+    cellsize_y: float
+        Size of cells in y direction.
+    Notes:
+    ----------
+    Examples:
+    -----------
+    Imports
+    >>> import numpy as np
+    >>> import xarray as xr
+    >>> from xrspatial import focal
+    Create Data Array
+    >>> np.random.seed(0)
+    >>> agg = xr.DataArray(np.random.rand(4,4),
+                               dims = ["lat", "lon"])
+    >>> height, width = nir_agg.shape
+    >>> _lat = np.linspace(0, height - 1, height)
+    >>> _lon = np.linspace(0, width - 1, width)
+    >>> nir_agg["lat"] = _lat
+    >>> nir_agg["lon"] = _lon
+    Calculate Cell Size
+    >>> focal.calc_cellsize(agg, 'lon', 'lat')
+    (1, 1)
+    """
+
     if 'unit' in raster.attrs:
         unit = raster.attrs['unit']
     else:
         unit = DEFAULT_UNIT
-        warnings.warn('Raster distance unit not provided. '
-                      'Use meter as default.', Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn('Raster distance unit not provided. '
+                          'Use meter as default.', Warning)
 
     cellsize_x, cellsize_y = get_dataarray_resolution(raster)
     cellsize_x = _to_meters(cellsize_x, unit)
@@ -219,7 +258,11 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
         r_inner = r2
 
     if r_outer - r_inner < np.sqrt((cellsize_x / 2)**2 + (cellsize_y / 2)**2):
-        warnings.warn('Annulus radii are closer than cellsize distance.', Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn(
+                'Annulus radii are closer than cellsize distance.', Warning
+            )
 
     # Get the two circular kernels for the annulus
     kernel_outer = circle_kernel(cellsize_x, cellsize_y, outer_radius)
@@ -248,7 +291,8 @@ def custom_kernel(kernel):
     if not isinstance(kernel, np.ndarray):
         raise ValueError(
             "Received a custom kernel that is not a Numpy array.",
-            "The kernel received was of type {} and needs to be of type `ndarray`".format(type(kernel))
+            "The kernel received was of type {} and needs to be "
+            "of type `ndarray`".format(type(kernel))
         )
     else:
         rows, cols = kernel.shape
@@ -256,7 +300,8 @@ def custom_kernel(kernel):
     if (rows % 2 == 0 or cols % 2 == 0):
         raise ValueError(
             "Received custom kernel with improper dimensions.",
-            "A custom kernel needs to have an odd shape, the supplied kernel has {} rows and {} columns.".format(rows, cols)
+            "A custom kernel needs to have an odd shape, the supplied kernel "
+            "has {} rows and {} columns.".format(rows, cols)
         )
     return kernel
 
@@ -314,16 +359,19 @@ def _convolve_2d_cuda(data, kernel, out):
     # (-2-) 2D coordinates of the current thread:
     i, j = cuda.grid(2)
 
-    # To compute the out at coordinates (i, j), we need to use delta_rows rows of the array
-    # before and after the i_th row,
-    # as well as delta_cols columns of the array before and after the j_th column:
+    # To compute the out at coordinates (i, j), we need to use delta_rows rows
+    # of the array before and after the i_th row, as well as delta_cols columns
+    # of the array before and after the j_th column:
     delta_rows = kernel.shape[0] // 2
     delta_cols = kernel.shape[1] // 2
 
     data_rows, data_cols = data.shape
-    # (-3-) if the thread coordinates are outside of the data image, we ignore the thread
-    # currently, if the thread coordinates are in the edges, we ignore the thread
-    if i < delta_rows or i >= data_rows - delta_rows or j < delta_cols or j >= data_cols - delta_cols:
+    # (-3-) if the thread coordinates are outside of the data image,
+    # we ignore the thread
+    # currently, if the thread coordinates are in the edges,
+    # we ignore the thread
+    if i < delta_rows or i >= data_rows - delta_rows or \
+            j < delta_cols or j >= data_cols - delta_cols:
         return
 
     # The out at coordinates (i, j) is equal to
@@ -335,7 +383,8 @@ def _convolve_2d_cuda(data, kernel, out):
             i_k = i - k + delta_rows
             j_l = j - l + delta_cols
             # (-4-) Check if (i_k, j_l) coordinates are inside the array:
-            if (i_k >= 0) and (i_k < data_rows) and (j_l >= 0) and (j_l < data_cols):
+            if (i_k >= 0) and (i_k < data_rows) and \
+                    (j_l >= 0) and (j_l < data_cols):
                 s += kernel[k, l] * data[i_k, j_l]
     out[i, j] = s
 

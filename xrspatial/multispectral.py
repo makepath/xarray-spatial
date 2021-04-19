@@ -4,8 +4,6 @@ import numba as nb
 
 from numba import cuda
 
-from PIL import Image
-
 from xarray import DataArray
 import dask.array as da
 
@@ -83,10 +81,13 @@ def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     ----------
     nir_agg : DataArray
         near-infrared band data
+        (Sentinel 2: Band 8)
     red_agg : DataArray
         red band data
+        (Sentinel 2: Band 4)
     blue_agg : DataArray
         blue band data
+        (Sentinel 2: Band 2)
     name: str, optional (default = "arvi")
         Name of output DataArray
 
@@ -252,10 +253,13 @@ def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     ----------
     nir_agg: xarray.DataArray
         2D array of near-infrared band data.
+        (Sentinel 2: Band 8)
     red_agg: xarray.DataArray
         2D array of red band data.
+        (Sentinel 2: Band 4)
     blue_agg: xarray.DataArray
         2D array of blue band data.
+        (Sentinel 2: Band 2)
     c1: float (default = 6.0)
         First coefficient of the aerosol resistance term.
     c2: float (default = 7.5)
@@ -439,8 +443,10 @@ def gci(nir_agg: DataArray, green_agg: DataArray, name='gci'):
     ----------
     nir_agg: xarray.DataArray
         2D array of near-infrared band data.
+        (Sentinel 2: Band 8)
     green_agg: xarray.DataArray
         2D array of green band data.
+        (Sentinel 2: Band 3)
     name: str, optional (default = "gci")
         Name of output DataArray
 
@@ -542,8 +548,10 @@ def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     ----------
     nir_agg : DataArray
         near-infrared band
-    swir_agg : DataArray
+        (Sentinel 2: Band 8)
+    swir2_agg : DataArray
         shortwave infrared band
+        (Sentinel 2: Band 12)
         (Landsat 4-7: Band 6)
         (Landsat 8: Band 7)
     name: str, optional (default = "nbr")
@@ -616,10 +624,12 @@ def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
 
     validate_arrays(nir_agg, swir2_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
-                                      dask_func=_run_normalized_ratio_dask,
-                                      cupy_func=_run_normalized_ratio_cupy,
-                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
 
     out = mapper(nir_agg)(nir_agg.data, swir2_agg.data)
 
@@ -642,9 +652,11 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr2'):
     swir1_agg : DataArray
         near-infrared band
         shortwave infrared band
+        (Sentinel 2: Band 11)
         (Landsat 4-7: Band 5)
         (Landsat 8: Band 6)
     swir2_agg : DataArray
+        (Sentinel 2: Band 12)
         shortwave infrared band
         (Landsat 4-7: Band 6)
         (Landsat 8: Band 7)
@@ -717,10 +729,12 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr2'):
 
     validate_arrays(swir1_agg, swir2_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
-                                      dask_func=_run_normalized_ratio_dask,
-                                      cupy_func=_run_normalized_ratio_cupy,
-                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
 
     out = mapper(swir1_agg)(swir1_agg.data, swir2_agg.data)
 
@@ -741,8 +755,10 @@ def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
     ----------
     nir_agg: xarray.DataArray
         2D array of near-infrared band data.
+        (Sentinel 2: Band 8)
     red_agg: xarray.DataArray
         2D array red band data.
+        (Sentinel 2: Band 4)
     name: str, optional (default ="ndvi")
         Name of output DataArray.
 
@@ -814,10 +830,12 @@ def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
 
     validate_arrays(nir_agg, red_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
-                                      dask_func=_run_normalized_ratio_dask,
-                                      cupy_func=_run_normalized_ratio_cupy,
-                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
 
     out = mapper(nir_agg)(nir_agg.data, red_agg.data)
 
@@ -838,10 +856,12 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
     ----------
     nir_agg : DataArray
         near-infrared band
+        (Sentinel 2: Band 8)
         (Landsat 4-7: Band 4)
         (Landsat 8: Band 5)
     swir1_agg : DataArray
         shortwave infrared band
+        (Sentinel 2: Band 11)
         (Landsat 4-7: Band 5)
         (Landsat 8: Band 6)
     name: str, optional (default ="ndmi")
@@ -917,10 +937,12 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
 
     validate_arrays(nir_agg, swir1_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
-                                      dask_func=_run_normalized_ratio_dask,
-                                      cupy_func=_run_normalized_ratio_cupy,
-                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
 
     out = mapper(nir_agg)(nir_agg.data, swir1_agg.data)
 
@@ -1044,8 +1066,10 @@ def savi(nir_agg: DataArray, red_agg: DataArray,
     ----------
     nir_agg : DataArray
         near-infrared band data
+        (Sentinel 2: Band 8)
     red_agg : DataArray
         red band data
+        (Sentinel 2: Band 4)
     soil_factor : float
         soil adjustment factor between -1.0 and 1.0.
         when set to zero, savi will return the same as ndvi
@@ -1198,10 +1222,13 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     ----------
     nir_agg: xarray.DataArray
         2D array of near-infrared band data.
+        (Sentinel 2: Band 8)
     red_agg: xarray.DataArray
         2D array of red band data.
+        (Sentinel 2: Band 4)
     blue_agg: xarray.DataArray
         2D array of blue band data.
+        (Sentinel 2: Band 2)
     name: str, optional (default = "sipi")
         Name of output DataArray.
 
@@ -1368,8 +1395,10 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
     ----------
     red_agg: xarray.DataArray
         2D array of red band data.
+        (Sentinel 2: Band 4)
     swir_agg: xarray.DataArray
         2D array of shortwave infrared band data.
+        (Sentinel 2: Band 11)
     tir_agg: xarray.DataArray
         2D array of thermal infrared band data.
     name: str, optional (default = "ebbi")
@@ -1473,36 +1502,135 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
 
 
 @ngjit
-def _normalize_data(agg, pixel_max=255.0):
-    out = np.zeros_like(agg)
-    min_val = 0
-    max_val = 2 ** 16 - 1
+def _normalize_data_cpu(data, min_val, max_val, pixel_max):
+    out = np.zeros_like(data)
+    out[:] = np.nan
+
     range_val = max_val - min_val
-    rows, cols = agg.shape
-    c = 40
+    rows, cols = data.shape
+
+    c = 10
     th = .125
+
     # check range_val to avoid dividing by zero
     if range_val != 0:
         for y in range(rows):
             for x in range(cols):
-                val = agg[y, x]
+                val = data[y, x]
                 norm = (val - min_val) / range_val
-
                 # sigmoid contrast enhancement
                 norm = 1 / (1 + np.exp(c * (th - norm)))
                 out[y, x] = norm * pixel_max
     return out
 
 
-def true_color(r, g, b, nodata=1):
-    h, w = r.shape
+def _normalize_data_numpy(data, pixel_max):
+    min_val = np.nanmin(data)
+    max_val = np.nanmax(data)
+    out = _normalize_data_cpu(data, min_val, max_val, pixel_max)
+    return out
 
-    data = np.zeros((h, w, 4), dtype=np.uint8)
-    data[:, :, 0] = (_normalize_data(r.data)).astype(np.uint8)
-    data[:, :, 1] = (_normalize_data(g.data)).astype(np.uint8)
-    data[:, :, 2] = (_normalize_data(b.data)).astype(np.uint8)
 
+def _normalize_data_dask(data, pixel_max):
+    min_val = da.nanmin(data)
+    max_val = da.nanmax(data)
+    out = da.map_blocks(_normalize_data_cpu, data, min_val, max_val, pixel_max,
+                        meta=np.array(()))
+    return out
+
+
+def _normalize_data_cupy(data, pixel_max):
+    raise NotImplementedError('Not Supported')
+
+
+def _normalize_data_dask_cupy(data, pixel_max):
+    raise NotImplementedError('Not Supported')
+
+
+def _normalize_data(agg, pixel_max=255.0):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_normalize_data_numpy,
+                                      dask_func=_normalize_data_dask,
+                                      cupy_func=_normalize_data_cupy,
+                                      dask_cupy_func=_normalize_data_dask_cupy)
+    out = mapper(agg)(agg.data, pixel_max)
+    return out
+
+
+def _alpha_numpy(red, nodata):
+    a = np.where(np.logical_or(np.isnan(red), red <= nodata), 0, 255)
+    return a
+
+
+def _alpha_dask(red, nodata):
+    a = da.where(da.logical_or(da.isnan(red), red <= nodata), 0, 255)
+    return a
+
+
+def _alpha_cupy(red, nodata):
+    raise NotImplementedError('Not Supported')
+
+
+def _alpha_dask_cupy(red, nodata):
+    raise NotImplementedError('Not Supported')
+
+
+def _alpha(red, nodata=1):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_alpha_numpy,
+                                      dask_func=_alpha_dask,
+                                      cupy_func=None,
+                                      dask_cupy_func=None)
+    out = mapper(red)(red.data, nodata)
+    return out
+
+
+def _true_color_numpy(r, g, b, nodata):
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
-    data[:, :, 3] = a.astype(np.uint8)
 
-    return Image.fromarray(data, 'RGBA')
+    h, w = r.shape
+    out = np.zeros((h, w, 4), dtype=np.uint8)
+
+    pixel_max = 255
+    out[:, :, 0] = (_normalize_data(r, pixel_max)).astype(np.uint8)
+    out[:, :, 1] = (_normalize_data(g, pixel_max)).astype(np.uint8)
+    out[:, :, 2] = (_normalize_data(b, pixel_max)).astype(np.uint8)
+    out[:, :, 3] = a.astype(np.uint8)
+    return out
+
+
+def _true_color_dask(r, g, b, nodata):
+    pixel_max = 255
+    red = (_normalize_data(r, pixel_max)).astype(np.uint8)
+    green = (_normalize_data(g, pixel_max)).astype(np.uint8)
+    blue = (_normalize_data(b, pixel_max)).astype(np.uint8)
+
+    alpha = _alpha(r, nodata).astype(np.uint8)
+
+    out = da.stack([red, green, blue, alpha], axis=-1)
+    return out
+
+
+def _true_color_cupy(r, g, b, nodata):
+    raise NotImplementedError('Not Supported')
+
+
+def _true_color_dask_cupy(r, g, b, nodata):
+    raise NotImplementedError('Not Supported')
+
+
+def true_color(r, g, b, nodata=1, name='true_color'):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_true_color_numpy,
+                                      dask_func=_true_color_dask,
+                                      cupy_func=_true_color_cupy,
+                                      dask_cupy_func=_true_color_dask_cupy)
+    out = mapper(r)(r, g, b, nodata)
+
+    # TODO: output metadata: coords, dims, atts
+    _dims = ['y', 'x', 'band']
+    _coords = {'y': r['y'],
+               'x': r['x'],
+               'band': [0, 1, 2, 3]}
+
+    return DataArray(out,
+                     dims=_dims,
+                     coords=_coords
+                     )

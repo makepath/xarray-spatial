@@ -179,10 +179,9 @@ def aspect(agg: xr.DataArray,
     Notes:
     ----------
     Algorithm References:
-        - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm#ESRI_SECTION1_4198691F8852475A9F4BC71246579FAA
-        - Burrough, P. A., and McDonell, R. A., 1998.
-          Principles of Geographical Information Systems
-          (Oxford University Press, New York), pp 406
+    - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm#ESRI_SECTION1_4198691F8852475A9F4BC71246579FAA # noqa
+    - Burrough, P. A., and McDonell, R. A., 1998. Principles of Geographical
+    Information Systems (Oxford University Press, New York), pp 406
 
     Examples:
     ----------
@@ -217,7 +216,8 @@ def aspect(agg: xr.DataArray,
     * lon      (lon) float64 0.0 1.0 2.0 3.0
     * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
 
-    Terrain Example: https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
+    Terrain Example:
+    - https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
     """
 
     # numpy case

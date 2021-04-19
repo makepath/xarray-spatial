@@ -27,7 +27,6 @@ from typing import List, Optional
 
 
 import warnings
-warnings.simplefilter('default')
 
 
 def color_values(agg, color_key, alpha=255):
@@ -358,23 +357,23 @@ def quantile(agg: xr.DataArray,
         Number of quantiles to be produced, default = 4.
     name: str, optional (default = "quantile")
         Name of the output aggregate array.
-        
+
     Returns:
     ----------
     xarray.DataArray, quantiled aggregate
         2D array, of the same type as the input, of quantile allocations.
         All other input attributes are preserved.
-        
+
     Notes:
     ----------
     Adapted from PySAL:
-        - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles
+    - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles # noqa
 
     Note that dask's percentile algorithm is approximate,
     while numpy's is exact. This may cause some differences
     between results of vanilla numpy and dask version of the input agg.
-        - https://github.com/dask/dask/issues/3099
-        
+    - https://github.com/dask/dask/issues/3099
+
     Examples:
     ----------
         Imports
@@ -455,7 +454,7 @@ def _run_numpy_jenks_matrices(data, n_classes):
     nl = data.shape[0] + 1
     variance = 0.0
 
-    for l in range(2, nl):
+    for l in range(2, nl): # noqa
         sum = 0.0
         sum_squares = 0.0
         w = 0.0
@@ -537,21 +536,25 @@ def _run_numpy_natural_break(data, num_sample, k):
 
     # warning if number of total data points to fit the model bigger than 40k
     if sample_data.size >= 40000:
-        warnings.warn('natural_breaks Warning: Natural break classification '
-                      '(Jenks) has a complexity of O(n^2), '
-                      'your classification with {} data points may take '
-                      'a long time.'.format(sample_data.size),
-                      Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn('natural_breaks Warning: Natural break '
+                          'classification (Jenks) has a complexity of O(n^2), '
+                          'your classification with {} data points may take '
+                          'a long time.'.format(sample_data.size),
+                          Warning)
 
     uv = np.unique(sample_data)
     uvk = len(uv)
 
     if uvk < k:
-        warnings.warn('natural_breaks Warning: Not enough unique values '
-                      'in data array for {} classes. '
-                      'n_samples={} should be >= n_clusters={}. '
-                      'Using k={} instead.'.format(k, uvk, k, uvk),
-                      Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn('natural_breaks Warning: Not enough unique values '
+                          'in data array for {} classes. '
+                          'n_samples={} should be >= n_clusters={}. '
+                          'Using k={} instead.'.format(k, uvk, k, uvk),
+                          Warning)
         uv.sort()
         bins = uv
     else:
@@ -573,7 +576,7 @@ def _run_cupy_jenks_matrices(data, n_classes):
     nl = data.shape[0] + 1
     variance = 0.0
 
-    for l in range(2, nl):
+    for l in range(2, nl): # noqa
         sum = 0.0
         sum_squares = 0.0
         w = 0.0
@@ -649,21 +652,25 @@ def _run_cupy_natural_break(data, num_sample, k):
 
     # warning if number of total data points to fit the model bigger than 40k
     if sample_data.size >= 40000:
-        warnings.warn('natural_breaks Warning: Natural break classification '
-                      '(Jenks) has a complexity of O(n^2), '
-                      'your classification with {} data points may take '
-                      'a long time.'.format(sample_data.size),
-                      Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn('natural_breaks Warning: Natural break '
+                          'classification (Jenks) has a complexity of O(n^2), '
+                          'your classification with {} data points may take '
+                          'a long time.'.format(sample_data.size),
+                          Warning)
 
     uv = cupy.unique(sample_data)
     uvk = len(uv)
 
     if uvk < k:
-        warnings.warn('natural_breaks Warning: Not enough unique values '
-                      'in data array for {} classes. '
-                      'n_samples={} should be >= n_clusters={}. '
-                      'Using k={} instead.'.format(k, uvk, k, uvk),
-                      Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn('natural_breaks Warning: Not enough unique values '
+                          'in data array for {} classes. '
+                          'n_samples={} should be >= n_clusters={}. '
+                          'Using k={} instead.'.format(k, uvk, k, uvk),
+                          Warning)
         uv.sort()
         bins = uv
     else:
@@ -709,9 +716,9 @@ def natural_breaks(agg: xr.DataArray,
 
     Algorithm References:
     ----------
-    Map Classify
-        - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks
-    perrygeo
+    Map Classify:
+    - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks # noqa
+    perrygeo:
     - https://github.com/perrygeo/jenks/blob/master/jenks.pyx
 
     Examples:
@@ -850,8 +857,10 @@ def equal_interval(agg: xr.DataArray,
 
     Algorithm References:
     ----------
-    PySal: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval
-    SciKit: https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py
+    PySal:
+    - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval # noqa
+    SciKit:
+    - https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py # noqa
 
     Examples:
     ----------

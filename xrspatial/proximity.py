@@ -29,7 +29,8 @@ DISTANCE_METRICS = _distance_metric_mapping()
 @njit(nogil=True)
 def euclidean_distance(x1: float, x2: float, y1: float, y2: float) -> float:
     """
-    Calculates Euclidean (straight line) distance between (x1, y1) and (x2, y2).
+    Calculates Euclidean (straight line) distance between (x1, y1) and
+    (x2, y2).
 
     Parameters:
     ----------
@@ -55,12 +56,12 @@ def euclidean_distance(x1: float, x2: float, y1: float, y2: float) -> float:
     Examples:
     ----------
     Imports
-    >>> from xrspatial import euclidean_distance
+    >>> from xrspatial import euclidean_distance as ed
     >>> point_a = (142.32, 23.23)
     >>> point_b = (312.54, 432.01)
 
     Calculate Euclidean Distance
-    >>> dist = euclidean_distance(point_a[0], point_b[0], point_a[1], point_b[1])
+    >>> dist = ed(point_a[0], point_b[0], point_a[1], point_b[1])
     >>> print(dist)
     442.80462599209596
     """
@@ -101,12 +102,12 @@ def manhattan_distance(x1: float, x2: float,
     Examples:
     ----------
     Imports
-    >>> from xrspatial import manhattan_distance
+    >>> from xrspatial import manhattan_distance as md
     >>> point_a = (142.32, 23.23)
     >>> point_b = (312.54, 432.01)
 
     Calculate Euclidean Distance
-    >>> dist = manhattan_distance(point_a[0], point_b[0], point_a[1], point_b[1])
+    >>> dist = md(point_a[0], point_b[0], point_a[1], point_b[1])
     >>> print(dist)
     196075.9368
     """
@@ -150,12 +151,12 @@ def great_circle_distance(x1: float, x2: float,
     Examples:
     ----------
     Imports
-    >>> from xrspatial import great_circle_distance
+    >>> from xrspatial import great_circle_distance as gcd
     >>> point_a = (123.2, 82.32)
     >>> point_b = (178.0, 65.09)
 
     Calculate Euclidean Distance
-    >>> dist = great_circle_distance(point_a[0], point_b[0], point_a[1], point_b[1])
+    >>> dist = gcd(point_a[0], point_b[0], point_a[1], point_b[1])
     >>> print(dist)
     2378290.489801402
     """
@@ -476,7 +477,7 @@ def _process(raster, x='x', y='y', target_values=[],
     raster_dims = raster.dims
     if raster_dims != (y, x):
         raise ValueError("raster.coords should be named as coordinates:"
-                         "(%s, %s)".format(y, x))
+                         "({0}, {1})".format(y, x))
 
     # convert distance metric from string to integer, the correct type
     # of argument for function _distance()
@@ -573,8 +574,8 @@ def proximity(raster: xr.DataArray,
     >>> set_background(points_shaded, 'black')
 
     Create Proximity Grid for All Non-Zero Values
-    >>> proximity_agg = proximity(points_agg)
-    >>> stack(shade(proximity_agg, cmap=['darkturquoise', 'black'], how='linear'),
+    >>> prox_agg = proximity(points_agg)
+    >>> stack(shade(prox_agg, cmap=['darkturquoise', 'black'], how='linear'),
     >>>       points_shaded)
     """
 
