@@ -15,11 +15,9 @@ jobs:
           CHANGELOG_VERSION: $(cat CHANGELOG.md | grep -oP "(?<=###\s)(.*)(?=\s\-)" | head -n 1 | sed 's/Version\s/v/')
           CONDA_VERSION: $(cat conda.recipe/meta.yaml | grep -oP "(version\:.*)" | head -n 1 | sed 's/version\:\s/v/')
         run: |
-          echo "CHANGELOG_VERSION=$(cat CHANGELOG.md | grep -oP '(?<=###\s)(.*)(?=\s\-)' | head -n 1 | sed 's/Version\s/v/')" >> $GITHUB_ENV
-          echo "CONDA_VERSION=$(cat conda.recipe/meta.yaml | grep -oP '(version\:.*)' | head -n 1 | sed 's/version\:\s/v/')" >> $GITHUB_ENV
+          echo "Release tag ${{ steps.vars.outputs.tag }}"
       - name: Show release versions
         run: |
-          echo TAG_VERSION: $TAG_VERSION
           echo CHANGELOG_VERSION: $CHANGELOG_VERSION
           echo CONDA_VERSION: $CONDA_VERSION
       - name: Check changelog release version
