@@ -35,7 +35,7 @@ jobs:
       - name: Get package size
         run: echo "PKG_SIZE=$(find dist -maxdepth 1 -regex '.*gz' | xargs stat --format='%s')" >> $GITHUB_ENV
       - name: Check package size
-        if: ${{ env.PKG_SIZE > 1e+8 }}
+        if: ${{ env.PKG_SIZE < 1e+8 }}
         run: |
           echo "PKG_SIZE($PKG_SIZE bytes) is greater than 100MB"
       - name: Publish package
