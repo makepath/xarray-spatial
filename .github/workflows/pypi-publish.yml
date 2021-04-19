@@ -11,6 +11,19 @@ jobs:
         uses: actions/setup-python@v1
         with:
           python-version: 3.8
+      - name: Get release version
+        env:
+          TAG_VERSION: ${{ steps.vars.outputs.tag }}
+          CHANGELOG_VERSION: $(cat CHANGELOG.md | grep -oP "(?<=###\s)(.*)(?=\s\-)" | head -n 1 | sed 's/Version\s/v/')
+          CONDA_VERSION: $(cat conda.recipe/meta.yaml | grep -oP "(version\:.*)" | head -n 1 | sed 's/version\:\s/v/')
+        run: |
+          echo TAG_VERSION: $TAG_VERSION
+          echo CHANGELOG_VERSION: $CHANGELOG_VERSION
+          echo CONDA_VERSION: $CONDA_VERSION
+      - name: Check changelog release version
+        if: ${{ $TAG_VERSION == $CHANGELOG_VERSION }}
+      - name: Check conda release version
+        if: ${{ $TAG_VERSION == $CONDA_VERSION }}
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -20,6 +33,12 @@ jobs:
       - name: Build package
         run: |
           python setup.py sdist bdist_wheel
+      - name: Check package size
+        env:
+          PKG_SIZE: ${{ find dist -maxdepth 1 -regex '.*gz' | xargs stat --format="%s" }}
+        run: |
+          echo PKG_SIZE: $PKG_SIZE
+        if: ${{ $PKG_SIZE > 1e+8 }}
       - name: Publish package
         if: startsWith(github.ref, 'refs/tags')
         uses: pypa/gh-action-pypi-publish@master
