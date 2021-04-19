@@ -23,11 +23,11 @@ jobs:
       - name: Check changelog release version
         if: ${{ env.TAG_VERSION != env.CHANGELOG_VERSION }}
         run: |
-          echo TAG_VERSION($TAG_VERSION) is different from CHANGELOG_VERSION($CHANGELOG_VERSION)
+          echo TAG_VERSION $TAG_VERSION is different from CHANGELOG_VERSION $CHANGELOG_VERSION
       - name: Check conda release version
         if: ${{ env.TAG_VERSION != env.CONDA_VERSION }}
         run: |
-          echo TAG_VERSION($TAG_VERSION) is different from CONDA_VERSION($CONDA_VERSION)
+          echo TAG_VERSION $TAG_VERSION is different from CONDA_VERSION $CONDA_VERSION
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -42,7 +42,7 @@ jobs:
       - name: Check package size
         if: ${{ env.PKG_SIZE > 1e+8 }}
         run: |
-          echo PKG_SIZE($PKG_SIZE bytes) is greater than 100MB
+          echo PKG_SIZE $PKG_SIZE bytes is greater than 100MB
       - name: Publish package
         if: startsWith(github.ref, 'refs/tags')
         uses: pypa/gh-action-pypi-publish@master
