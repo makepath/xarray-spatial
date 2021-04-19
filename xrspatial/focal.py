@@ -502,6 +502,57 @@ def calc_mean(array):
 
 @ngjit
 def calc_sum(array):
+    """
+    Calculates the sum of an array.
+
+    Parameters
+    ----------
+    array : numpy.Array
+        Array of input values.
+
+    Returns
+    -------
+    array_sum : float
+        Sum of input data
+
+    Example
+    -------
+    >>>     from xrspatial.focal import calc_sum
+    >>>     import numpy as np
+
+    >>>     # 1D Array of Integers
+    >>>     array1 = np.array([1, 2, 3, 4, 5])
+    >>>     array1
+    ...     [1 2 3 4 5]
+
+    >>>     # Calculate Sum
+    >>>     array_sum = calc_sum(array1)
+    >>>     print(array_sum)
+    ...     15
+
+    >>>     # 2D Array of Floats
+    >>>     array2 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    >>>     print(array2)
+    ...     [[1. 2. 3.]
+    ...      [4. 5. 6.]]
+
+    >>>     # Calculate Sum
+    >>>     array_sum = calc_sum(array2)
+    >>>     print(array_sum)
+    ...     21.0
+
+    >>>     # 3D Array of Integers
+    >>>     array3 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+    >>>     print(array3)
+    ...     [[1 2 3]
+    ...      [4 5 6]
+    ...      [7 8 9]]
+
+    >>>     # Calculate Sum
+    >>>     agg_sum = calc_sum(array3)
+    >>>     print(agg_sum)
+    ...     45
+    """
     return np.nansum(array)
 
 
