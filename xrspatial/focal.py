@@ -636,6 +636,49 @@ def calc_sum(array):
 
 @ngjit
 def upper_bound_p_value(zscore):
+    """
+    Calculates the upper bound p-value of a given z-score. The p value
+    is the evidence against a null hypothesis. The smaller the p-value,
+    the stronger the evidence that you should reject the null hypothesis
+
+    Parameters
+    ----------
+    zscore : float
+        Number of standard deviations above or below the mean value.
+
+    Returns
+    -------
+    pvalue : float
+        Probability of obtaining input zscore.
+
+    Example
+    -------
+    >>>     from xrspatial.focal import upper_bound_p_value
+    >>>     import numpy as np
+    >>>     import scipy.stats as stats
+
+    >>>     data = np.array([6, 7, 7, 12, 13, 13, 15, 16, 19, 22])
+    >>>     print(data)
+    ...     [ 6  7  7 12 13 13 15 16 19 22]
+
+    >>>     zscore = stats.zscore(data)
+    >>>     print(zscore)
+    ...     [-1.39443338 -1.19522861 -1.19522861 -0.19920477  0.          0.
+    ...       0.39840954  0.5976143   1.19522861  1.79284291]
+
+    >>>     for i in zscore:
+    >>>         print(upper_bound_p_value(i))
+    ...     0.0985
+    ...     1.0
+    ...     1.0
+    ...     1.0
+    ...     1.0
+    ...     1.0
+    ...     1.0
+    ...     1.0
+    ...     1.0
+    ...     0.0495
+    """
     if abs(zscore) >= 2.33:
         return 0.0099
     if abs(zscore) >= 1.65:
