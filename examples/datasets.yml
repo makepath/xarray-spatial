@@ -3,13 +3,46 @@
 data:
   - url: https://xarrayspatial.blob.core.windows.net/examples-data/facilities.csv
     title: 'Pharmacy Facilities Data'
-    files:
-      - facilities.csv
-  - url: https://xarrayspatial.blob.core.windows.net/examples-data/USA_Block_Groups-shp.zip/USA_Block_Groups.shp
+    files: facilities.csv
+  - url: https://xarrayspatial.blob.core.windows.net/examples-data/USA_Block_Groups-shp.zip
     title: 'USA Block Groups Shapefile'
-    files:
-      - USA_Block_Groups.shp
-  - url: https://xarrayspatial.blob.core.windows.net/examples-data/USA_Counties-shp.zip/USA_Counties.shp
+    files: USA_Block_Groups-shp.zip
+  - url: https://xarrayspatial.blob.core.windows.net/examples-data/USA_Counties-shp.zip
     title: 'USA Counties Shapefile'
-    files:
-      - USA_Counties.shp
+    files: USA_Counties-shp.zip
+  - url: https://s3-us-west-2.amazonaws.com/landsat-pds/L8/003/017/LC80030172015001LGN00/LC80030172015001LGN00_B1.TIF
+    title: 'coastal aerosol'
+    files: LC80030172015001LGN00_B1.TIF
+  - url: https://s3-us-west-2.amazonaws.com/landsat-pds/L8/003/017/LC80030172015001LGN00/LC80030172015001LGN00_B2.TIF
+    title: 'blue'
+    files: LC80030172015001LGN00_B2.TIF
+  - url: https://s3-us-west-2.amazonaws.com/landsat-pds/L8/003/017/LC80030172015001LGN00/LC80030172015001LGN00_B3.TIF
+    title: 'green'
+    files: LC80030172015001LGN00_B3.TIF
+  - url: https://s3-us-west-2.amazonaws.com/landsat-pds/L8/003/017/LC80030172015001LGN00/LC80030172015001LGN00_B4.TIF
+    title: 'red'
+    files: LC80030172015001LGN00_B4.TIF
+  - url: https://s3-us-west-2.amazonaws.com/landsat-pds/L8/003/017/LC80030172015001LGN00/LC80030172015001LGN00_B5.TIF
+    title: 'nir'
+    files: LC80030172015001LGN00_B5.TIF
+  - url: https://s3-us-west-2.amazonaws.com/landsat-pds/L8/003/017/LC80030172015001LGN00/LC80030172015001LGN00_B6.TIF
+    title: 'swir'
+    files: LC80030172015001LGN00_B6.TIF
+  - url: https://s3-us-west-2.amazonaws.com/landsat-pds/L8/003/017/LC80030172015001LGN00/LC80030172015001LGN00_B7.TIF
+    title: 'swir2'
+    files: LC80030172015001LGN00_B7.TIF
+  - url: https://s3-us-west-2.amazonaws.com/landsat-pds/L8/003/017/LC80030172015001LGN00/LC80030172015001LGN00_B8.TIF
+    title: 'panchromatic'
+    files: LC80030172015001LGN00_B8.TIF
+  - url: https://s3-us-west-2.amazonaws.com/landsat-pds/L8/003/017/LC80030172015001LGN00/LC80030172015001LGN00_B9.TIF
+    title: 'cirrhus'
+    files: LC80030172015001LGN00_B9.TIF
+  - url: https://s3-us-west-2.amazonaws.com/landsat-pds/L8/003/017/LC80030172015001LGN00/LC80030172015001LGN00_B10.TIF
+    title: 'tir1'
+    files: LC80030172015001LGN00_B10.TIF
+  - url: https://s3-us-west-2.amazonaws.com/landsat-pds/L8/003/017/LC80030172015001LGN00/LC80030172015001LGN00_B11.TIF
+    title: 'tir2'
+    files: LC80030172015001LGN00_B11.TIF
+  - url: https://s3-us-west-2.amazonaws.com/landsat-pds/L8/003/017/LC80030172015001LGN00/LC80030172015001LGN00_BQA.TIF
+    title: 'qa'
+    files: LC80030172015001LGN00_BQA.TIF
