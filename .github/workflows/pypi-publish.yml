@@ -22,8 +22,10 @@ jobs:
           echo CONDA_VERSION: $CONDA_VERSION
       - name: Check changelog release version
         if: ${{ $TAG_VERSION == $CHANGELOG_VERSION }}
+        run: echo "Changelog release version is correct"
       - name: Check conda release version
         if: ${{ $TAG_VERSION == $CONDA_VERSION }}
+        run: echo "Conda release version is correct"
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
