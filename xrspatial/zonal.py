@@ -356,6 +356,28 @@ def apply(zones: xr.DataArray,
 
 
 def get_full_extent(crs):
+    """
+    Returns the full extent of a map projection, available projections are
+    'Mercator' and 'Geographic'.
+
+    Parameters
+    ----------
+    crs : str
+        Input projection
+
+    Returns
+    -------
+    extent : tuple
+        Projection extent of form ((min_x, max_x), (min_y, max_y))
+
+    Example
+    -------
+    >>>     from xrspatial.zonal import get_full_extent
+
+    >>>     extent = get_full_extent('Mercator')
+    >>>     print(extent)
+    ...     ((-20000000.0, 20000000.0), (-20000000.0, 20000000.0))
+    """
     Mercator = (-20e6, 20e6), (-20e6, 20e6)
     Geographic = (-180, 180), (-90, 90)
 
