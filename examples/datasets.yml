@@ -4,6 +4,9 @@ data:
   - url: https://xarrayspatial.blob.core.windows.net/examples-data/facilities.csv
     title: 'Pharmacy Facilities Data'
     files: facilities.csv
+  - url: https://data.austintexas.gov/api/geospatial/m5w3-uea6?method=export&format=Shapefile
+    title: 'Austin Streets Shapefile'
+    files: Street_Centerline.zip
   - url: https://xarrayspatial.blob.core.windows.net/examples-data/USA_Block_Groups-shp.zip
     title: 'USA Block Groups Shapefile'
     files: USA_Block_Groups-shp.zip
