@@ -1,3 +1,4 @@
+geopandas
 nbsphinx
 pandoc
 pydata_sphinx_theme
