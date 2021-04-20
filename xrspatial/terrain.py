@@ -53,33 +53,46 @@ def generate_terrain(x_range: tuple = (0, 500),
 
     Example
     -------
-    >>>     # Imports
     >>>     import datashader as ds
-    >>>     from datashader.transfer_functions import shade
-    >>>     from xrspatial import generate_terrain
+    >>>     import pandas as pd
+    >>>     from xrspatial import generate_terrain, allocation
+    >>>     from datashader.transfer_functions import shade, stack, dynspread
+    >>>     from datashader.colors import Elevation, Set1
 
     >>>     # Create Canvas
-    >>>     cvs = ds.Canvas(plot_width=800,
-    >>>                     plot_height=600,
-    >>>                     x_range=(-20e6, 20e6),
-    >>>                     y_range=(-20e6, 20e6))
+    >>>     W = 500 
+    >>>     H = 300
+    >>>     cvs = ds.Canvas(plot_width = W,
+    >>>                     plot_height = H,
+    >>>                     x_range = (-20e6, 20e6),
+    >>>                     y_range = (-20e6, 20e6))
+    >>>     # Generate Example Terrain
+    >>>     terrain_agg = generate_terrain(canvas = cvs)
+    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
+    >>>                                             'Max Elevation': '3000',
+    >>>                                             'units': 'meters'})
+    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+    >>>     terrain_agg = terrain_agg.rename('example_terrain')
+    >>>     # Shade Terrain
+    >>>     terrain_img = shade(agg = terrain_agg,
+    >>>                         cmap = Elevation,
+    >>>                         how = 'linear')
+    >>>     print(terrain_agg[200:203, 200:202])
+    >>>     terrain_img
+    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
+    ...     array([[1264.02249454, 1261.94748873],
+    ...            [1285.37061171, 1282.48046696],
+    ...            [1306.02305679, 1303.40657515]])
+    ...     Coordinates:
+    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+    ...     Attributes:
+    ...         res:            1
+    ...         Description:    Elevation
+    ...         Max Elevation:  3000
+    ...         units:          meters
 
-    >>>     # Generate Terrain Data Array
-    >>>     terrain = generate_terrain(canvas = cvs)
-    >>>     print(terrain)
-                <xarray.DataArray 'terrain' (y: 600, x: 800)>
-                array([[0., 0., 0., ..., 0., 0., 0.],
-                       [0., 0., 0., ..., 0., 0., 0.],
-                       [0., 0., 0., ..., 0., 0., 0.],
-                       ...,
-                       [0., 0., 0., ..., 0., 0., 0.],
-                       [0., 0., 0., ..., 0., 0., 0.],
-                       [0., 0., 0., ..., 0., 0., 0.]])
-                Coordinates:
-                  * x        (x) float64 -1.998e+07 -1.992e+07 ... 1.992e+07 1.997e+07
-                  * y        (y) float64 -1.997e+07 -1.99e+07 -1.983e+07 ... 1.99e+07 1.997e+07
-                Attributes:
-                    res:      1
+            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
     """
 
     def _gen_heights(bumps):
