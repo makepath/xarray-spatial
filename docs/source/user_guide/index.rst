@@ -8,4 +8,9 @@ User Guide
    :maxdepth: 1
 
    classification
+   focal
+   multispectral
+   pathfinding
+   proximity
    surface
+   zonal
