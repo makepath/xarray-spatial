@@ -43,6 +43,11 @@ jobs:
         run: |
           echo "PKG_SIZE($PKG_SIZE bytes) is greater than 100MB"
           exit 1
+      - name: Test publish package
+        uses: pypa/gh-action-pypi-publish@master
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          repository_url: https://test.pypi.org/legacy/
       - name: Publish package
         if: startsWith(github.ref, 'refs/tags')
         uses: pypa/gh-action-pypi-publish@master
