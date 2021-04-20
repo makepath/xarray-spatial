@@ -23,10 +23,10 @@ install_requires = [
     'scipy',
     'xarray',
     'pyct <=0.4.6',
+    'spatialpandas'
 ]
 
 examples = [
-    'spatialpandas',
 ]
 
 # Additional tests dependencies and examples_extra may be needed in the future
