@@ -3,6 +3,7 @@ include *.md
 
 graft xrspatial
 graft xrspatial/examples
+graft xrspatial/examples/user_guide
 
 prune docs
 prune *.egg-info
