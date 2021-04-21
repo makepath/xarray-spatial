@@ -3,6 +3,7 @@ from xrspatial import __main__ as m
 from unittest.mock import patch
 import pytest
 
+
 # test_args include copy-examples, fetch-data, or examples (does both)
 @pytest.mark.skip(reason="meant only for internal use")
 def run_examples_cmds(*cli_cmds):
