@@ -1,4 +1,22 @@
 from __future__ import absolute_import, division, print_function
+import warnings
+
+
+def custom_format_warning(message, category,
+                           filename, lineno,
+                           file=None, line=None):
+    return '%s: %s \n %s' % (filename, category.__name__, message)
+
+
+with warnings.catch_warnings():
+    warnings.simplefilter('default')
+    warnings.formatwarning = custom_format_warning
+    warnings.warn(
+        'The tiles module is deprecated and will soon be removed; '
+        'please see the mapshader package for similar functions.',
+        DeprecationWarning
+    )
+
 from io import BytesIO
 
 import math
@@ -10,6 +28,7 @@ import dask.bag as db
 import numpy as np
 
 from PIL.Image import fromarray
+
 
 __all__ = ['render_tiles', 'MercatorTileDefinition']
 
