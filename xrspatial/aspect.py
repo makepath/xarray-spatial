@@ -204,22 +204,34 @@ def aspect(agg: xr.DataArray,
 
         # Generate Example Terrain
         terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'Max Elevation': '3000',
-                                                'units': 'km'})
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
         # Create Aspect Aggregate Array
         aspect_agg = aspect(agg = terrain_agg, name = 'Aspect')
+
+        # Edit Attributes
         aspect_agg = aspect_agg.assign_attrs({'Description': 'Example Aspect',
                                               'units': 'deg'})
-    
-        # Plot Arrays
+
+        # Plot Terrain
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
         plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Aspect
         aspect_agg.plot(aspect = 2, size = 4)
         plt.title("Aspect")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
 
     .. plot::
        :include-source:
@@ -236,13 +248,13 @@ def aspect(agg: xr.DataArray,
         ...     Attributes:
         ...         res:            1
         ...         Description:    Example Terrain
-        ...         Max Elevation:  3000
         ...         units:          km
+        ...         Max Elevation:  4000
 
     .. plot::
        :include-source:
 
-        print(aspect_agg[200:203, 200:202])
+    print(aspect_agg[200:203, 200:202])
 
         ...     <xarray.DataArray 'Aspect' (lat: 3, lon: 2)>
         ...     array([[ 8.18582638,  8.04675084],
@@ -254,8 +266,9 @@ def aspect(agg: xr.DataArray,
         ...     Attributes:
         ...         res:            1
         ...         Description:    Example Aspect
-        ...         Max Elevation:  3000
         ...         units:          deg
+        ...         Max Elevation:  4000
+
     """
 
     # numpy case

@@ -149,24 +149,35 @@ def curvature(agg: xr.DataArray,
 
         # Generate Example Terrain
         terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'Max Elevation': '3000',
-                                                'units': 'km'})
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
         # Create Curvature Aggregate Array
         curvature_agg = curvature(agg = terrain_agg, name = 'Curvature')
+
+        # Edit Attributes
         curvature_agg = curvature_agg.assign_attrs({'Description': 'Curvature',
                                                     'units': 'rad'})
         # Where cells are extremely upwardly convex
         curvature_agg.data = np.where(np.logical_and(curvature_agg.data > 3000, curvature_agg.data < 4000), 1, np.nan)
 
-        # Plot Arrays
+        # Plot Terrain
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
         plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Curvature
         curvature_agg.plot(aspect = 2, size = 4)
         plt.title("Curvature")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
 
     .. plot::
        :include-source:
@@ -183,8 +194,8 @@ def curvature(agg: xr.DataArray,
         ...     Attributes:
         ...         res:            1
         ...         Description:    Example Terrain
-        ...         Max Elevation:  3000
         ...         units:          km
+        ...         Max Elevation:  4000
 
     .. plot::
        :include-source:
@@ -201,8 +212,8 @@ def curvature(agg: xr.DataArray,
         ...     Attributes:
         ...         res:            1
         ...         Description:    Curvature
-        ...         Max Elevation:  3000
         ...         units:          rad
+        ...         Max Elevation:  4000
 
     """
 

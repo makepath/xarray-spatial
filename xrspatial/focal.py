@@ -127,9 +127,12 @@ def calc_cellsize(raster: xr.DataArray,
 
         # Generate Example Terrain
         terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'Max Elevation': '3000',
-                                                'units': 'km'})
+                                                'units': 'km',
+                                                'Max Elevation': '4000',})
+        
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
@@ -138,18 +141,18 @@ def calc_cellsize(raster: xr.DataArray,
 
         print(terrain_agg[200:203, 200:202])
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         Max Elevation:  3000
-        ...         units:          km
+<xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+array([[1264.02249454, 1261.94748873],
+       [1285.37061171, 1282.48046696],
+       [1306.02305679, 1303.40657515]])
+Coordinates:
+  * lon      (lon) float64 -3.96e+06 -3.88e+06
+  * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+Attributes:
+    res:            1
+    Description:    Example Terrain
+    Max Elevation:  3000
+    units:          km
 
     .. plot::
        :include-source:
@@ -159,8 +162,6 @@ def calc_cellsize(raster: xr.DataArray,
         print(cellsize)
 
         ...     (80000.0, 133333.3333333321)
-
-
 
     """
 
@@ -496,81 +497,86 @@ def mean(agg: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     from xrspatial import generate_terrain
-    >>>     from xrspatial.focal import mean
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevationa
+    .. plot::
+       :include-source:
 
-    >>>     # Create Canvas
-    >>>     W = 500 
-    >>>     H = 300
-    >>>     cvs = ds.Canvas(plot_width = W,
-    >>>                     plot_height = H,
-    >>>                     x_range = (-20e6, 20e6),
-    >>>                     y_range = (-20e6, 20e6))
-    >>>     # Generate Example Terrain
-    >>>     terrain_agg = generate_terrain(canvas = cvs)
-    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
-    >>>                                             'Max Elevation': '3000',
-    >>>                                             'units': 'meters'})
-    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-    >>>     terrain_agg = terrain_agg.rename('example_terrain')
-    >>>     # Shade Terrain
-    >>>     terrain_img = shade(agg = terrain_agg,
-    >>>                         cmap = Elevation,
-    >>>                         how = 'linear')
-    >>>     print(terrain_agg[200:203, 200:202])
-    >>>     terrain_img
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.focal import mean
 
-    >>>     # Create Canvas
-    >>>     W = 500 
-    >>>     H = 300
-    >>>     cvs = ds.Canvas(plot_width = W,
-    >>>                     plot_height = H,
-    >>>                     x_range = (-20e6, 20e6),
-    >>>                     y_range = (-20e6, 20e6))
-    >>>     # Generate Example Terrain
-    >>>     terrain_agg = generate_terrain(canvas = cvs)
-    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': …                    how = 'linear')
-    >>>     print(terrain_agg[200:203, 200:202])
-    >>>     terrain_img
-    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
-    ...     array([[1264.02249454, 1261.94748873],
-    ...            [1285.37061171, 1282.48046696],
-    ...            [1306.02305679, 1303.40657515]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  3000
-    ...         units:          meters
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
 
-            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
 
-    >>>     # Create Mean Aggregate Array
-    >>>     mean_agg = mean(agg = terrain_agg)
-    >>>     # Shade Image
-    >>>     mean_img = shade(agg = mean_agg,
-    >>>                      cmap = Elevation)
-    >>>     print(mean_agg[200:203, 200:202])
-    >>>     mean_img
-    ...     <xarray.DataArray 'mean' (lat: 3, lon: 2)>
-    ...     array([[1266.57706238, 1264.26875373],
-    ...            [1284.84948023, 1281.97418665],
-    ...            [1302.86874857, 1298.65145188]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  3000
-    ...         units:          meters
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
 
-            .. image :: ./docs/source/_static/img/docstring/mean_example.png
+        # Create Mean Aggregate Array
+        mean_agg = mean(agg = terrain_agg, name = 'Elevation')
+
+        # Edit Attributes
+        mean_agg = mean_agg.assign_attrs({'Description': 'Example Mean Filtered Terrain'})
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Filtered Terrain
+        mean_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Filtered Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+    print(terrain_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        ...     array([[1264.02249454, 1261.94748873],
+        ...            [1285.37061171, 1282.48046696],
+        ...            [1306.02305679, 1303.40657515]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Example Terrain
+        ...         units:          km
+        ...         Max Elevation:  4000
+
+    .. plot::
+       :include-source:
+
+    print(mean_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        ...     array([[1266.57706238, 1264.26875373],
+        ...            [1284.84948023, 1281.97418665],
+        ...            [1302.86874857, 1298.65145188]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Example Mean Filtered Terrain
+        ...         units:          km
+        ...         Max Elevation:  4000
 
     """
 
@@ -641,10 +647,11 @@ def calc_sum(array):
         ...      [4 5 6]
         ...      [7 8 9]]
 
-    >>>     # Calculate Sum
-    >>>     agg_sum = calc_sum(array3)
-    >>>     print(agg_sum)
-    ...     45
+        # Calculate Sum
+        agg_sum = calc_sum(array3)
+        print(agg_sum)
+        ...     45
+
     """
     return np.nansum(array)
 
@@ -792,9 +799,12 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
         # Generate Example Terrain
         terrain_agg = generate_terrain(canvas = cvs)
         terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'Max Elevation': '3000',
-                                                'units': 'km'})
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+
+        # Edit Attributes
         terrain_agg = terrain_agg.rename('Elevation')
 
         # Create Kernel
@@ -806,16 +816,25 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
                     x = 'lon',
                     y = 'lat')
 
-        # Plot Arrays
+        # Edit Attributes
+        agg = agg.assign_attrs({'Description': 'Example Filtered Terrain'})
+
+        # Plot Terrain
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
         plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Filtered Terrain
         agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("New Terrain")
+        plt.title("Filtered Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
 
     .. plot::
        :include-source:
 
-        print(terrain_agg[200:203, 200:202])
+    print(terrain_agg[200:203, 200:202])
 
         ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
         ...     array([[1264.02249454, 1261.94748873],
@@ -827,13 +846,13 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
         ...     Attributes:
         ...         res:            1
         ...         Description:    Example Terrain
-        ...         Max Elevation:  3000
         ...         units:          km
-        ...     
-        ...         .. plot::
-        ...            :include-source:
+        ...         Max Elevation:  4000
 
-        print(agg[200:203, 200:202])
+    .. plot::
+       :include-source:
+
+    print(agg[200:203, 200:202])
 
         ...     <xarray.DataArray (lat: 3, lon: 2)>
         ...     array([[1307.19361419, 1302.6913412 ],
@@ -844,9 +863,9 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
         ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
         ...     Attributes:
         ...         res:            1
-        ...         Description:    Example Terrain
-        ...         Max Elevation:  3000
+        ...         Description:    Example Filtered Terrain
         ...         units:          km
+        ...         Max Elevation:  4000
 
     """
 
@@ -947,9 +966,12 @@ def hotspots(raster: xr.DataArray,
 
         # Generate Example Terrain
         terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'Max Elevation': '3000',
-                                                'units': 'km'})
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
@@ -961,13 +983,22 @@ def hotspots(raster: xr.DataArray,
                                 kernel = kernel,
                                 x = 'lon',
                                 y = 'lat')
-        hotspots_agg = hotspots_agg.assign_attrs({'Description': 'Hotspots',
-                                            'units': 'correlation'})
-        # Plot Arrays
+        
+        # Edit Attributes
+        hotspots_agg = hotspots_agg.rename('Significance')
+        hotspots_agg = hotspots_agg.assign_attrs({'Description': 'Example Hotspots',
+                                                  'units': '%'})
+        # Plot Terrain
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
         plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Hotspots
         hotspots_agg.plot(aspect = 2, size = 4)
         plt.title("Hotspots")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
 
     .. plot::
        :include-source:
@@ -984,15 +1015,15 @@ def hotspots(raster: xr.DataArray,
         ...     Attributes:
         ...         res:            1
         ...         Description:    Example Terrain
-        ...         Max Elevation:  3000
         ...         units:          km
+        ...         Max Elevation:  4000
 
     .. plot::
        :include-source:
 
         print(hotspots_agg[200:203, 200:202])
 
-        ...     <xarray.DataArray (lat: 3, lon: 2)>
+        ...     <xarray.DataArray 'Significance' (lat: 3, lon: 2)>
         ...     array([[0, 0],
         ...            [0, 0],
         ...            [0, 0]], dtype=int8)
@@ -1001,9 +1032,9 @@ def hotspots(raster: xr.DataArray,
         ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
         ...     Attributes:
         ...         res:            1
-        ...         Description:    Hotspots
-        ...         Max Elevation:  3000
-        ...         units:          correlation
+        ...         Description:    Example Hotspots
+        ...         units:          %
+        ...         Max Elevation:  4000
 
     """
 

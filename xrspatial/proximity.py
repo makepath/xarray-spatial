@@ -550,90 +550,116 @@ def proximity(raster: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     import pandas as pd
-    >>>     from xrspatial import generate_terrain, proximity
-    >>>     from datashader.transfer_functions import shade, stack, dynspread
-    >>>     from datashader.colors import Elevation, Set1
+    .. plot::
+       :include-source:
 
-    >>>     # Create Canvas
-    >>>     W = 500 
-    >>>     H = 300
-    >>>     cvs = ds.Canvas(plot_width = W,
-    >>>                     plot_height = H,
-    >>>                     x_range = (-20e6, 20e6),
-    >>>                     y_range = (-20e6, 20e6))
-    >>>     # Generate Example Terrain
-    >>>     terrain_agg = generate_terrain(canvas = cvs)
-    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
-    >>>                                             'Max Elevation': '3000',
-    >>>                                             'units': 'meters'})
-    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-    >>>     terrain_agg = terrain_agg.rename('example_terrain')
-    >>>     # Shade Terrain
-    >>>     terrain_img = shade(agg = terrain_agg,
-    >>>                         cmap = Elevation,
-    >>>                         how = 'linear')
-    >>>     print(terrain_agg[200:203, 200:202])
-    >>>     terrain_img
-    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
-    ...     array([[1264.02249454, 1261.94748873],
-    ...            [1285.37061171, 1282.48046696],
-    ...            [1306.02305679, 1303.40657515]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  3000
-    ...         units:          meters
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain, proximity
 
-            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
 
-    >>>     # Generate a Target Aggregate Array
-    >>>     volcano_agg = terrain_agg.copy(deep = True)
-    >>>     volcano_agg = volcano_agg.where(volcano_agg.data > 2800)
-    >>>     volcano_agg = volcano_agg.notnull()
-    >>>     volcano_agg = volcano_agg.rename('volcano')
-    >>>     # Shade Volcano
-    >>>     volcano_img = shade(volcano_agg,
-    >>>                         cmap = 'black')
-    >>>     print(volcano_agg[200:203, 200:202])
-    >>>     volcano_img
-    ...     <xarray.DataArray 'volcano' (lat: 3, lon: 2)>
-    ...     array([[False, False],
-    ...            [False, False],
-    ...            [False, False]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
 
-              .. image :: ./docs/source/_static/img/docstring/volcano_example.png
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
 
-    >>>     # Create Proximity Aggregate Array
-    >>>     proximity_agg = proximity(volcano_agg, x = 'lon', y = 'lat')
-    >>>     # Shade Image
-    >>>     island_clause = ((volcano_agg == 0) & (terrain_agg != 0))
-    >>>     proximity_img = shade(proximity_agg.where(island_clause), cmap = ['red', 'orange',                                                                       'yellow', 'green'],
-    >>>                                                                 alpha = 150)
-    >>>     print(proximity_agg[200:203, 200:202])
-    >>>     proximity_img
-    ...     <xarray.DataArray (lat: 3, lon: 2)>
-    ...     array([[4126101.19981456, 4153841.5954391 ],
-    ...            [4001421.96947258, 4025606.92456568],
-    ...            [3875484.19913922, 3897714.42999327]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        # Generate a Target Aggregate Array
+        volcano_agg = terrain_agg.copy(deep = True)
+        volcano_agg = volcano_agg.where(volcano_agg.data > 2800)
+        volcano_agg = volcano_agg.notnull()
 
-              .. image :: ./docs/source/_static/img/docstring/proximity_example.png
+        # Edit Attributes
+        volcano_agg = volcano_agg.assign_attrs({'Description': 'Volcano'})
+        volcano_agg = volcano_agg.rename('Volcano')
 
-    >>>     # Combine Images
-    >>>     composite_img = stack(terrain_img, volcano_img, proximity_img)
-    >>>     composite_img
+        # Create Proximity Aggregate Array
+        proximity_agg = proximity(volcano_agg, x = 'lon', y = 'lat')
+        proximity_agg = proximity_agg.where((volcano_agg == 0) & (terrain_agg > 500))
 
-              .. image :: ./docs/source/_static/img/docstring/proximity_composite.png
+        # Edit Attributes
+        proximity_agg = proximity_agg.assign_attrs({'Description': 'Example Proximity',
+                                                                   'units': 'px'})
+        proximity_agg = proximity_agg.rename('Distance')
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Volcano
+        volcano_agg.plot(cmap = 'Pastel1', aspect = 2, size = 4)
+        plt.title("Volcano")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Proximity
+        proximity_agg.plot(cmap = 'autumn', aspect = 2, size = 4)
+        plt.title("Proximity")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(terrain_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        ...     array([[1264.02249454, 1261.94748873],
+        ...            [1285.37061171, 1282.48046696],
+        ...            [1306.02305679, 1303.40657515]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Example Terrain
+        ...         units:          km
+        ...         Max Elevation:  4000
+
+    .. plot::
+       :include-source:
+
+        print(volcano_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Volcano' (lat: 3, lon: 2)>
+        ...     array([[False, False],
+        ...            [False, False],
+        ...            [False, False]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         Description:  Volcano
+
+    .. plot::
+       :include-source:
+
+        print(proximity_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Distance' (lat: 3, lon: 2)>
+        ...     array([[4126101.19981456, 4153841.5954391 ],
+        ...            [4001421.96947258, 4025606.92456568],
+        ...            [3875484.19913922, 3897714.42999327]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         Description:  Example Proximity
+        ...         units:        px
 
     """
 
@@ -696,97 +722,108 @@ def allocation(raster: xr.DataArray,
     
     Example
     -------
-    >>>     import datashader as ds
-    >>>     import pandas as pd
-    >>>     from xrspatial import generate_terrain, allocation
-    >>>     from datashader.transfer_functions import shade, stack, dynspread
-    >>>     from datashader.colors import Elevation, Set1
+    .. plot::
+       :include-source:
 
-    >>>     # Create Canvas
-    >>>     W = 500 
-    >>>     H = 300
-    >>>     cvs = ds.Canvas(plot_width = W,
-    >>>                     plot_height = H,
-    >>>                     x_range = (-20e6, 20e6),
-    >>>                     y_range = (-20e6, 20e6))
-    >>>     # Generate Example Terrain
-    >>>     terrain_agg = generate_terrain(canvas = cvs)
-    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
-    >>>                                             'Max Elevation': '3000',
-    >>>                                             'units': 'meters'})
-    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-    >>>     terrain_agg = terrain_agg.rename('example_terrain')
-    >>>     # Shade Terrain
-    >>>     terrain_img = shade(agg = terrain_agg,
-    >>>                         cmap = Elevation,
-    >>>                         how = 'linear')
-    >>>     print(terrain_agg[200:203, 200:202])
-    >>>     terrain_img
-    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
-    ...     array([[1264.02249454, 1261.94748873],
-    ...            [1285.37061171, 1282.48046696],
-    ...            [1306.02305679, 1303.40657515]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  3000
-    ...         units:          meters
+        import datashader as ds
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        from matplotlib.pyplot import scatter
+        from xrspatial import generate_terrain, allocation
 
-            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
 
-    >>>     # Generate a Target Aggregate Array
-    >>>     cities_df = pd.DataFrame({
-    >>>         'lon': [-7475000, 25000, 15025000, -9975000, 5025000, -14975000],
-    >>>         'lat': [-9966666, 6700000, 13366666, 3366666, 13366666, 13366666],
-    >>>         'elevation': [306.5926712, 352.50955382, 347.20870554, 324.11835519, 686.31312024, 319.34522171]
-    >>>     })
-    >>>     cities_da = cvs.points(cities_df,
-    >>>                             x ='lon',
-    >>>                             y ='lat',
-    >>>                             agg = ds.max('elevation'))
-    >>>     # Shade Cities
-    >>>     cities_pts = dynspread(shade(cities_da,
-    >>>                                  cmap = 'black',
-    >>>                                  min_alpha = 150),
-    >>>                            threshold = 1,
-    >>>                            max_px = 5)
-    >>>     print(cities_df)
-    >>>     cities_pts
-    >>>             lon       lat   elevation
-    >>>     0  -7475000  -9966666  306.592671
-    >>>     1     25000   6700000  352.509554
-    >>>     2  15025000  13366666  347.208706
-    >>>     3  -9975000   3366666  324.118355
-    >>>     4   5025000  13366666  686.313120
-    >>>     5 -14975000  13366666  319.345222
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
 
-            .. image :: ./docs/source/_static/img/docstring/allocation_example_cities.png
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
 
-    >>>     # Create Allocation Aggregate Array
-    >>>     allocation_agg = allocation(cities_pts, x = 'lon', y = 'lat')
-    >>>     # Shade Image
-    >>>     allocation_img = shade(allocation_agg.where(terrain_agg != 0), cmap = ['red', 'orange',                                                                       'yellow', 'green'],
-    >>>                                                                 alpha = 150)
-    >>>     print(allocation_agg[200:203, 200:202])
-    >>>     allocation_img
-    ...     <xarray.DataArray (lat: 3, lon: 2)>
-    ...     array([[3925868544, 3925868544],
-    ...            [3925868544, 3925868544],
-    ...            [3925868544, 3925868544]], dtype=uint32)
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
 
-            .. image :: ./docs/source/_static/img/docstring/allocation_example.png
+        # Generate a Target Aggregate Array
+        cities_df = pd.DataFrame({
+            'lon': [-7475000, 25000, 15025000, -9975000, 5025000, -14975000],
+            'lat': [-9966666, 6700000, 13366666, 3366666, 13366666, 13366666],
+            'elevation': [306.5926712, 352.50955382, 347.20870554, 324.11835519, 686.31312024, 319.34522171]
+        })
 
-    >>>     # Combine Images
-    >>>     composite_img = stack(terrain_img, allocation_img, cities_pts)
-    >>>     composite_img
+        cities_da = cvs.points(cities_df,
+                                x ='lon',
+                                y ='lat',
+                                agg = ds.max('elevation'))
 
-            .. image :: ./docs/source/_static/img/docstring/allocation_composite.png
+        # Edit Attributes
+        cities_da = cities_da.assign_attrs({'Description': 'Cities'})
+        cities_da = cities_da.rename('Cities')
+
+        # Create Allocation Aggregate Array
+        allocation_agg = allocation(cities_da, x = 'lon', y = 'lat')
+        allocation_agg = allocation_agg.where(terrain_agg > 500)
+
+        # Edit Attributes
+        allocation_agg = allocation_agg.assign_attrs({'Description': 'Example Allocation'})
+        allocation_agg = allocation_agg.rename('Closest City')
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Cities
+        cities_df.plot.scatter(x = 'lon', y = 'lat')
+        plt.title("Cities")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Allocation
+        allocation_agg.plot(cmap = 'prism', aspect = 2, size = 4)
+        plt.title("Allocation")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(terrain_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        ...     array([[1264.02249454, 1261.94748873],
+        ...            [1285.37061171, 1282.48046696],
+        ...            [1306.02305679, 1303.40657515]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Example Terrain
+        ...         units:          km
+        ...         Max Elevation:  4000
+
+    .. plot::
+       :include-source:
+    
+        print(allocation_agg[200:203, 200:202])
+
+        ... <xarray.DataArray 'Closest City' (lat: 3, lon: 2)>
+        ... array([[352.50955382, 352.50955382],
+        ...        [352.50955382, 352.50955382],
+        ...        [352.50955382, 352.50955382]])
+        ... Coordinates:
+        ...   * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...   * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ... Attributes:
+        ...     Description:  Example Allocation
 
     """
 
@@ -851,91 +888,108 @@ def direction(raster: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     import pandas as pd
-    >>>     from xrspatial import generate_terrain, direction
-    >>>     from datashader.transfer_functions import shade, stack, dynspread
-    >>>     from datashader.colors import Elevation, Set1
+    .. plot::
+       :include-source:
 
-    >>>     # Create Canvas
-    >>>     W = 500 
-    >>>     H = 300
-    >>>     cvs = ds.Canvas(plot_width = W,
-    >>>                     plot_height = H,
-    >>>                     x_range = (-20e6, 20e6),
-    >>>                     y_range = (-20e6, 20e6))
-    >>>     # Generate Example Terrain
-    >>>     terrain_agg = generate_terrain(canvas = cvs)
-    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
-    >>>                                             'Max Elevation': '3000',
-    >>>                                             'units': 'meters'})
-    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-    >>>     terrain_agg = terrain_agg.rename('example_terrain')
-    >>>     # Shade Terrain
-    >>>     terrain_img = shade(agg = terrain_agg,
-    >>>                         cmap = Elevation,
-    >>>                         how = 'linear')
-    >>>     print(terrain_agg[200:203, 200:202])
-    >>>     terrain_img
-    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
-    ...     array([[1264.02249454, 1261.94748873],
-    ...            [1285.37061171, 1282.48046696],
-    ...            [1306.02305679, 1303.40657515]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  3000
-    ...         units:          meters
+        import datashader as ds
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        from matplotlib.pyplot import scatter
+        from xrspatial import generate_terrain, direction
 
-            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
 
-    >>>     # Generate a Target Aggregate Array
-    >>>     cities_df = pd.DataFrame({
-    >>>         'lon': [-7475000, 25000, 15025000, -9975000, 5025000, -14975000],
-    >>>         'lat': [-9966666, 6700000, 13366666, 3366666, 13366666, 13366666],
-    >>>         'elevation': [306.5926712, 352.50955382, 347.20870554, 324.11835519, 686.31312024, 319.34522171]
-    >>>     })
-    >>>     cities_da = cvs.points(cities_df,
-    >>>                             x ='lon',
-    >>>                             y ='lat',
-    >>>                             agg = ds.max('elevation'))
-    >>>     # Shade Cities
-    >>>     cities_pts = dynspread(shade(cities_da,
-    >>>                                  cmap = 'black',
-    >>>                                  min_alpha = 150),
-    >>>                            threshold = 1,
-    >>>                            max_px = 5)
-    >>>     print(cities_df)
-    >>>     cities_pts
-    >>>             lon       lat   elevation
-    >>>     0  -7475000  -9966666  306.592671
-    >>>     1     25000   6700000  352.509554
-    >>>     2  15025000  13366666  347.208706
-    >>>     3  -9975000   3366666  324.118355
-    >>>     4   5025000  13366666  686.313120
-    >>>     5 -14975000  13366666  319.345222
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
 
-            .. image :: ./docs/source/_static/img/docstring/allocation_example_cities.png
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
 
-    >>>     # Create Direction Aggregate Array
-    >>>     direction_agg = direction(cities_pts, x = 'lon', y = 'lat')
-    >>>     # Shade Image
-    >>>     direction_img = shade(direction_agg.where(terrain_agg != 0), cmap = Set1[0:4],
-    >>>                                                                 alpha = 150)
-    >>>     print(direction_agg[200:203, 200:202])
-    >>>     direction_img
-    ...     <xarray.DataArray (lat: 3, lon: 2)>
-    ...     array([[90., 90.],
-    ...            [90., 90.],
-    ...            [90., 90.]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
 
-              .. image :: ./docs/source/_static/img/docstring/direction_example.png
+        # Generate a Target Aggregate Array
+        cities_df = pd.DataFrame({
+            'lon': [-7475000, 25000, 15025000, -9975000, 5025000, -14975000],
+            'lat': [-9966666, 6700000, 13366666, 3366666, 13366666, 13366666],
+            'elevation': [306.5926712, 352.50955382, 347.20870554, 324.11835519, 686.31312024, 319.34522171]
+        })
+
+        cities_da = cvs.points(cities_df,
+                                x ='lon',
+                                y ='lat',
+                                agg = ds.max('elevation'))
+
+        # Edit Attributes
+        cities_da = cities_da.assign_attrs({'Description': 'Cities'})
+        cities_da = cities_da.rename('Cities')
+
+        # Create Direction Aggregate Array
+        direction_agg = direction(cities_da, x = 'lon', y = 'lat')
+        direction_agg = direction_agg.where(terrain_agg > 500)
+
+        # Edit Attributes
+        direction_agg = direction_agg.assign_attrs({'Description': 'Example Direction'})
+        direction_agg = direction_agg.rename('Cardinal Direction')
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Cities
+        cities_df.plot.scatter(x = 'lon', y = 'lat')
+        plt.title("Cities")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Allocation
+        direction_agg.plot( aspect = 2, size = 4)
+        plt.title("Direction")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(terrain_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        ...     array([[1264.02249454, 1261.94748873],
+        ...            [1285.37061171, 1282.48046696],
+        ...            [1306.02305679, 1303.40657515]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Example Terrain
+        ...         units:          km
+        ...         Max Elevation:  4000
+
+    .. plot::
+       :include-source:
+
+        print(direction_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Cardinal Direction' (lat: 3, lon: 2)>
+        ...     array([[90.        , 90.        ],
+        ...            [88.09084755, 88.05191498],
+        ...            [86.18592513, 86.10832367]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         Description:  Example Direction
 
     """
 

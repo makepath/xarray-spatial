@@ -154,25 +154,35 @@ def hillshade(agg: xr.DataArray,
 
         # Generate Example Terrain
         terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'Max Elevation': '3000',
-                                                'units': 'km'})
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
-        # Create Aspect Hillshade Array
+        # Create Hillshade Aggregate Array
         hillshade_agg = hillshade(agg = terrain_agg, name = 'Illumination')
-        hillshade_agg = hillshade_agg.assign_attrs({'Description': 'Hillshade',
+
+        # Edit Attributes
+        hillshade_agg = hillshade_agg.assign_attrs({'Description': 'Example Hillshade',
                                                     'units': ''})
 
-        # Plot Arrays
+        # Plot Terrain
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
         plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Terrain
         hillshade_agg.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("Hillshade")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
 
-
-    .. plot::
+   .. plot::
        :include-source:
 
         print(terrain_agg[200:203, 200:202])
@@ -187,10 +197,10 @@ def hillshade(agg: xr.DataArray,
         ...     Attributes:
         ...         res:            1
         ...         Description:    Example Terrain
-        ...         Max Elevation:  3000
         ...         units:          km
+        ...         Max Elevation:  4000
 
-    .. plot::
+   .. plot::
        :include-source:
 
         print(hillshade_agg[200:203, 200:202])
@@ -204,9 +214,9 @@ def hillshade(agg: xr.DataArray,
         ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
         ...     Attributes:
         ...         res:            1
-        ...         Description:    Hillshade
-        ...         Max Elevation:  3000
-        ...         units:        
+        ...         Description:    Example Hillshade
+        ...         units:          
+        ...         Max Elevation:  4000
 
     """
 

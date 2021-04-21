@@ -85,9 +85,12 @@ def bump(width: int,
 
         # Generate Example Terrain
         terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'Max Elevation': '3000',
-                                                'units': 'km'})
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
@@ -125,21 +128,36 @@ def bump(width: int,
                         height_func = partial(heights, src = src,
                                             src_range = (1700, 2000),
                                             height=5))
+        # Edit Attributes
+        bump_agg = bump_agg.assign_attrs({'Description': 'Example Bump Map',
+                                          'units': 'km'})
+
+        bump_agg = bump_agg.rename('Bump Height')
+
+        # Rename Coordinates
+        bump_agg = bump_agg.assign_coords({'x': terrain_agg.coords['lon'].data,
+                                           'y': terrain_agg.coords['lat'].data})
 
         # Remove zeros
-        bump_agg_color = bump_agg.copy()
-        bump_agg_color.data[bump_agg_color.data == 0] = np.nan
+        bump_agg.data[bump_agg.data == 0] = np.nan
 
-        # Plot Arrays
-        terrain_img = terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
         plt.title("Terrain")
-        bump_img = bump_agg_color.plot(aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Bump Map
+        bump_agg.plot(cmap = 'summer', aspect = 2, size = 4)
         plt.title("Bump Map")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
 
     .. plot::
        :include-source:
 
         print(terrain_agg[200:203, 200:202])
+
         ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
         ...     array([[1264.02249454, 1261.94748873],
         ...            [1285.37061171, 1282.48046696],
@@ -150,22 +168,27 @@ def bump(width: int,
         ...     Attributes:
         ...         res:            1
         ...         Description:    Example Terrain
-        ...         Max Elevation:  3000
         ...         units:          km
+        ...         Max Elevation:  4000
 
     .. plot::
        :include-source:
 
-        print(bump_agg_color[200:205, 200:206])
-        ...     <xarray.DataArray (y: 5, x: 6)>
+        print(bump_agg[200:205, 200:206])
+
+        ...     <xarray.DataArray 'Bump Height' (y: 5, x: 6)>
         ...     array([[nan, nan, nan, nan,  5.,  5.],
         ...            [nan, nan, nan, nan, nan,  5.],
         ...            [nan, nan, nan, nan, nan, nan],
         ...            [nan, nan, nan, nan, nan, nan],
         ...            [nan, nan, nan, nan, nan, nan]])
-        ...     Dimensions without coordinates: y, x
+        ...     Coordinates:
+        ...       * x        (x) float64 -3.96e+06 -3.88e+06 -3.8e+06 ... -3.64e+06 -3.56e+06
+        ...       * y        (y) float64 6.733e+06 6.867e+06 7e+06 7.133e+06 7.267e+06
         ...     Attributes:
-        ...         res:      1
+        ...         res:          1
+        ...         Description:  Example Bump Map
+        ...         units:        km
 
     """
 

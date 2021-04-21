@@ -242,9 +242,12 @@ def reclassify(agg: xr.DataArray,
 
         # Generate Example Terrain
         terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'Max Elevation': '3000',
-                                                'units': 'km'})
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
@@ -255,49 +258,59 @@ def reclassify(agg: xr.DataArray,
                                  bins = bins,
                                  new_values = new_vals,
                                  name = 'Elevation')
-        reclass_agg = reclass_agg.assign_attrs({'Description': 'Reclassified Elevation'})
 
-        # Plot Arrays
+        # Edit Attributes
+        reclass_agg = reclass_agg.assign_attrs({'Description': 'Example Reclassify'})
+
+        # Plot Terrain
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
         plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Reclassify
         reclass_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Reclassification")
+        plt.title("Reclassify")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
 
     .. plot::
        :include-source:
 
         print(terrain_agg[200:203, 200:202])
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         Max Elevation:  3000
-        ...         units:          km
+<xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+array([[1264.02249454, 1261.94748873],
+       [1285.37061171, 1282.48046696],
+       [1306.02305679, 1303.40657515]])
+Coordinates:
+  * lon      (lon) float64 -3.96e+06 -3.88e+06
+  * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+Attributes:
+    res:            1
+    Description:    Example Terrain
+    units:          km
+    Max Elevation:  4000
 
     .. plot::
        :include-source:
 
         print(reclass_agg[200:203, 200:202])
 
-        ...     <xarray.DataArray 'Reclassified Elevation' (lat: 3, lon: 2)>
-        ...     array([[2265., 2262.],
-        ...            [2286., 2283.],
-        ...            [2307., 2304.]], dtype=float32)
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Reclassified Elevation
-        ...         Max Elevation:  3000
-        ...         units:          km
+
+<xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+array([[2265., 2262.],
+       [2286., 2283.],
+       [2307., 2304.]], dtype=float32)
+Coordinates:
+  * lon      (lon) float64 -3.96e+06 -3.88e+06
+  * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+Attributes:
+    res:            1
+    Description:    Example Reclassify
+    units:          km
+    Max Elevation:  4000
+
 
     """
 
@@ -432,21 +445,32 @@ def quantile(agg: xr.DataArray,
 
         # Generate Example Terrain
         terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'Max Elevation': '3000',
-                                                'units': 'km'})
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
         # Create Quantiled Aggregate Array
         quantile_agg = quantile(agg = terrain_agg, name = 'Elevation')
-        quantile_agg = quantile_agg.assign_attrs({'Description': 'Quantiled Elevation'})
 
-        # Plot Arrays
+        # Edit Attributes
+        quantile_agg = quantile_agg.assign_attrs({'Description': 'Example Quantile'})
+
+        # Plot Terrain
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
         plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Quantile
         quantile_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Quantiled")
+        plt.title("Quantile")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
 
     .. plot::
        :include-source:
@@ -463,15 +487,15 @@ def quantile(agg: xr.DataArray,
         ...     Attributes:
         ...         res:            1
         ...         Description:    Example Terrain
-        ...         Max Elevation:  3000
         ...         units:          km
+        ...         Max Elevation:  4000
 
     .. plot::
        :include-source:
 
         print(quantile_agg[200:203, 200:202])
 
-        ...     <xarray.DataArray 'Quantiled Elevation' (lat: 3, lon: 2)>
+        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
         ...     array([[2., 2.],
         ...            [2., 2.],
         ...            [2., 2.]], dtype=float32)
@@ -480,9 +504,9 @@ def quantile(agg: xr.DataArray,
         ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
         ...     Attributes:
         ...         res:            1
-        ...         Description:    Quantiled Elevation
-        ...         Max Elevation:  3000
+        ...         Description:    Example Quantile
         ...         units:          km
+        ...         Max Elevation:  4000
 
     """
 
@@ -792,21 +816,32 @@ def natural_breaks(agg: xr.DataArray,
 
         # Generate Example Terrain
         terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'Max Elevation': '3000',
-                                                'units': 'km'})
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
         # Create Natural Breaks Aggregate Array
         natural_breaks_agg = natural_breaks(agg = terrain_agg, name = 'Elevation')
-        natural_breaks_agg = natural_breaks_agg.assign_attrs({'Description': 'Natural Breaks Elevation'})
 
-        # Plot Arrays
+        # Edit Attributes
+        natural_breaks_agg = natural_breaks_agg.assign_attrs({'Description': 'Example Natural Breaks'})
+
+        # Plot Terrain
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
         plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Natural Breaks
         natural_breaks_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
         plt.title("Natural Breaks")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
 
     .. plot::
        :include-source:
@@ -823,8 +858,8 @@ def natural_breaks(agg: xr.DataArray,
         ...     Attributes:
         ...         res:            1
         ...         Description:    Example Terrain
-        ...         Max Elevation:  3000
         ...         units:          km
+        ...         Max Elevation:  4000
 
     .. plot::
        :include-source:
@@ -840,9 +875,9 @@ def natural_breaks(agg: xr.DataArray,
         ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
         ...     Attributes:
         ...         res:            1
-        ...         Description:    Natural Breaks Elevation
-        ...         Max Elevation:  3000
+        ...         Description:    Example Natural Breaks
         ...         units:          km
+        ...         Max Elevation:  4000
     """
 
     # numpy case
@@ -963,21 +998,32 @@ def equal_interval(agg: xr.DataArray,
 
         # Generate Example Terrain
         terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'Max Elevation': '3000',
-                                                'units': 'km'})
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
         # Create Equal Interval Aggregate Array
         equal_interval_agg = equal_interval(agg = terrain_agg, name = 'Elevation')
-        equal_interval_agg = equal_interval_agg.assign_attrs({'Description': 'Equal Interval Elevation'})
 
-        # Plot Arrays
+        # Edit Attributes
+        equal_interval_agg = equal_interval_agg.assign_attrs({'Description': 'Example Equal Interval'})
+
+        # Plot Terrain
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
         plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Equal Interval
         equal_interval_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
         plt.title("Equal Interval")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
 
     .. plot::
        :include-source:
@@ -994,8 +1040,8 @@ def equal_interval(agg: xr.DataArray,
         ...     Attributes:
         ...         res:            1
         ...         Description:    Example Terrain
-        ...         Max Elevation:  3000
         ...         units:          km
+        ...         Max Elevation:  4000
 
     .. plot::
        :include-source:
@@ -1011,9 +1057,9 @@ def equal_interval(agg: xr.DataArray,
         ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
         ...     Attributes:
         ...         res:            1
-        ...         Description:    Equal Interval Elevation
-        ...         Max Elevation:  3000
+        ...         Description:    Example Equal Interval
         ...         units:          km
+        ...         Max Elevation:  4000
 
     """
 

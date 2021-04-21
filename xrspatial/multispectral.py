@@ -106,23 +106,15 @@ def arvi(nir_agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import xarray as xr 
         import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
         from xrspatial.multispectral import arvi
-        from xrspatial.datasets import get_data
+        from datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
 
-        # NIR Band
         nir = data['NIR']
-
-        # Red Band
         red = data['Red']
-
-        # Blue Band
         blue = data['Blue']
 
         # Generate ARVI Aggregate Array
@@ -130,16 +122,57 @@ def arvi(nir_agg: xr.DataArray,
                         red_agg = red,
                         blue_agg = blue)
 
-        # Plot Arrays
-        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        # Plot NIR Band
+        nir.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("NIR Band")
-        red.plot(cmap = 'gist_gray', aspect = 2, size = 4)
-        plt.title("Red Band")
-        blue.plot(cmap = 'gist_gray', aspect = 2, size = 4)
-        plt.title("Blue Band")
-        arvi_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
-        plt.title("ARVI")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
 
+        # Plot Red Band
+        red.plot(cmap = 'Greys', aspect = 2, size = 4)
+        plt.title("Red Band")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Blue Band
+        blue.plot(cmap = 'Greys', aspect = 2, size = 4)
+        plt.title("Blue Band")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot ARVI
+        arvi_agg.plot(cmap = 'Greys', aspect = 2, size = 4)
+        plt.title("ARVI")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+    
+        print(arvi_agg[100:103, 100: 102])
+
+        ...     <xarray.DataArray 'arvi' (y: 3, x: 2)>
+        ...     array([[0.02676934, 0.02135493],
+        ...            [0.02130841, 0.01114413],
+        ...            [0.02488688, 0.00816024]])
+        ...     Coordinates:
+        ...       * x        (x) float64 6.01e+05 6.01e+05
+        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+        ...         band     int32 ...
+        ...     Attributes: (12/13)
+        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+        ...         crs:                      +init=epsg:32719
+        ...         res:                      [10. 10.]
+        ...         is_tiled:                 1
+        ...         nodatavals:               nan
+        ...         scales:                   1.0
+        ...         ...                       ...
+        ...         instrument:               Sentinel-2
+        ...         Band:                     07
+        ...         Name:                     NIR
+        ...         Bandwidth (µm):           115
+        ...         Nominal Wavelength (µm):  0.842
+        ...         Resolution (m):            10
     """
 
     validate_arrays(red_agg, nir_agg, blue_agg)
@@ -258,40 +291,74 @@ def evi(nir_agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import xarray as xr 
         import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
         from xrspatial.multispectral import evi
-        from xrspatial.datasets import get_data
+        from datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
 
-        # NIR Band
         nir = data['NIR']
-
-        # Red Band
         red = data['Red']
-
-        # Blue Band
         blue = data['Blue']
 
         # Generate EVI Aggregate Array
         evi_agg = evi(nir_agg = nir,
                       red_agg = red,
-                      blue_agg = blue)
+                      blue_agg =blue)
 
-        # Plot Arrays
-        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        # Plot NIR Band
+        nir.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("NIR Band")
-        red.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Red Band
+        red.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("Red Band")
-        blue.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Blue Band
+        blue.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("Blue Band")
-        evi_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot EVI
+        evi_agg.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("EVI")
-    
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(evi_agg[100:103, 100: 102])
+
+        ...     <xarray.DataArray 'evi' (y: 3, x: 2)>
+        ...     array([[-3.8247012 , -9.51086957],
+        ...            [11.81818182,  3.83783784],
+        ...            [-8.53211009,  5.48672566]])
+        ...     Coordinates:
+        ...       * x        (x) float64 6.01e+05 6.01e+05
+        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+        ...         band     int32 ...
+        ...     Attributes: (12/13)
+        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+        ...         crs:                      +init=epsg:32719
+        ...         res:                      [10. 10.]
+        ...         is_tiled:                 1
+        ...         nodatavals:               nan
+        ...         scales:                   1.0
+        ...         ...                       ...
+        ...         instrument:               Sentinel-2
+        ...         Band:                     07
+        ...         Name:                     NIR
+        ...         Bandwidth (µm):           115
+        ...         Nominal Wavelength (µm):  0.842
+        ...         Resolution (m):            10
+
     """
 
     if not red_agg.shape == nir_agg.shape == blue_agg.shape:
@@ -401,34 +468,66 @@ def gci(nir_agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import xarray as xr 
         import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
         from xrspatial.multispectral import gci
-        from xrspatial.datasets import get_data
+        from datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
 
-        # NIR Band
         nir = data['NIR']
-
-        # Green Band
         green = data['Green']
 
         # Generate GCI Aggregate Array
         gci_agg = gci(nir_agg = nir,
                       green_agg = green)
 
-        # Plot Arrays
-        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        # Plot NIR Band
+        nir.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("NIR Band")
-        green.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Green Band
+        green.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("Green Band")
-        gci_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot GCI
+        gci_agg.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("GCI")
-    
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(gci_agg[100:103, 100: 102])
+
+        ...     <xarray.DataArray 'gci' (y: 3, x: 2)>
+        ...     array([[0.35625   , 0.33097345],
+        ...            [0.3420342 , 0.29551451],
+        ...            [0.34822242, 0.28270413]])
+        ...     Coordinates:
+        ...       * x        (x) float64 6.01e+05 6.01e+05
+        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+        ...         band     int32 ...
+        ...     Attributes: (12/13)
+        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+        ...         crs:                      +init=epsg:32719
+        ...         res:                      [10. 10.]
+        ...         is_tiled:                 1
+        ...         nodatavals:               nan
+        ...         scales:                   1.0
+        ...         ...                       ...
+        ...         instrument:               Sentinel-2
+        ...         Band:                     07
+        ...         Name:                     NIR
+        ...         Bandwidth (µm):           115
+        ...         Nominal Wavelength (µm):  0.842
+        ...         Resolution (m):            10
+
     """
 
     validate_arrays(nir_agg, green_agg)
@@ -481,34 +580,66 @@ def nbr(nir_agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import xarray as xr 
         import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
         from xrspatial.multispectral import nbr
-        from xrspatial.datasets import get_data
+        from datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
 
-        # NIR Band
         nir = data['NIR']
-
-        # SWIR2 Band
         swir2 = data['SWIR2']
 
         # Generate NBR Aggregate Array
         nbr_agg = nbr(nir_agg = nir,
                       swir2_agg = swir2)
 
-        # Plot Arrays
-        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        # Plot NIR Band
+        nir.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("NIR Band")
-        swir2.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot SWIR2 Band
+        swir2.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("SWIR2 Band")
-        nbr_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot NBR
+        nbr_agg.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("NBR")
-    
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(nbr_agg[100:103, 100: 102])
+
+        ...     <xarray.DataArray 'nbr' (y: 3, x: 2)>
+        ...     array([[-0.10251108, -0.1321408 ],
+        ...            [-0.09691096, -0.12659354],
+        ...            [-0.10823033, -0.14486392]])
+        ...     Coordinates:
+        ...       * x        (x) float64 6.01e+05 6.01e+05
+        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+        ...         band     int32 ...
+        ...     Attributes: (12/13)
+        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+        ...         crs:                      +init=epsg:32719
+        ...         res:                      [10. 10.]
+        ...         is_tiled:                 1
+        ...         nodatavals:               nan
+        ...         scales:                   1.0
+        ...         ...                       ...
+        ...         instrument:               Sentinel-2
+        ...         Band:                     07
+        ...         Name:                     NIR
+        ...         Bandwidth (µm):           115
+        ...         Nominal Wavelength (µm):  0.842
+        ...         Resolution (m):            10
+
     """
 
     validate_arrays(nir_agg, swir2_agg)
@@ -566,34 +697,65 @@ def nbr2(swir1_agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import xarray as xr 
         import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
         from xrspatial.multispectral import nbr2
-        from xrspatial.datasets import get_data
+        from datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
 
-        # SWIR1 Band
         swir1 = data['SWIR1']
-
-        # SWIR2 Band
         swir2 = data['SWIR2']
 
-        # Generate NBR Aggregate Array
+        # Generate NBR2 Aggregate Array
         nbr2_agg = nbr2(swir1_agg = swir1,
                         swir2_agg = swir2)
 
-        # Plot Arrays
-        swir1.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        # Plot SWIR1 Band
+        swir1.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("SWIR1 Band")
-        swir2.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot SWIR2 Band
+        swir2.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("SWIR2 Band")
-        nbr2_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot NBR2
+        nbr2_agg.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("NBR2")
-    
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(nbr2_agg[100:103, 100: 102])
+
+        ...     <xarray.DataArray 'nbr' (y: 3, x: 2)>
+        ...     array([[0.05709955, 0.06660324],
+        ...            [0.053814  , 0.0617284 ],
+        ...            [0.07218576, 0.06857143]])
+        ...     Coordinates:
+        ...       * x        (x) float64 6.02e+05 6.02e+05
+        ...       * y        (y) float64 4.698e+06 4.698e+06 4.698e+06
+        ...         band     int32 ...
+        ...     Attributes: (12/13)
+        ...         transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+        ...         crs:                      +init=epsg:32719
+        ...         res:                      [20. 20.]
+        ...         is_tiled:                 1
+        ...         nodatavals:               nan
+        ...         scales:                   1.0
+        ...         ...                       ...
+        ...         instrument:               Sentinel-2
+        ...         Band:                     11
+        ...         Name:                     SWIR1
+        ...         Bandwidth (µm):           90
+        ...         Nominal Wavelength (µm):  1.610
+        ...         Resolution (m):            20
     """
 
     validate_arrays(swir1_agg, swir2_agg)
@@ -644,34 +806,66 @@ def ndvi(nir_agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import xarray as xr 
         import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
         from xrspatial.multispectral import ndvi
-        from xrspatial.datasets import get_data
+        from datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
 
-        # NIR Band
         nir = data['NIR']
-
-        # Red Band
         red = data['Red']
 
         # Generate NDVI Aggregate Array
         ndvi_agg = ndvi(nir_agg = nir,
                         red_agg = red)
 
-        # Plot Arrays
-        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        # Plot NIR Band
+        nir.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("NIR Band")
-        red.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Red Band
+        red.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("Red Band")
-        ndvi_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot NDVI
+        ndvi_agg.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("NDVI")
-    
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(ndvi_agg[100:103, 100: 102])
+
+        ...     <xarray.DataArray 'ndvi' (y: 3, x: 2)>
+        ...     array([[0.06746311, 0.06177197],
+        ...            [0.065     , 0.05064194],
+        ...            [0.06709957, 0.04431737]])
+        ...     Coordinates:
+        ...       * x        (x) float64 6.01e+05 6.01e+05
+        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+        ...         band     int32 ...
+        ...     Attributes: (12/13)
+        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+        ...         crs:                      +init=epsg:32719
+        ...         res:                      [10. 10.]
+        ...         is_tiled:                 1
+        ...         nodatavals:               nan
+        ...         scales:                   1.0
+        ...         ...                       ...
+        ...         instrument:               Sentinel-2
+        ...         Band:                     07
+        ...         Name:                     NIR
+        ...         Bandwidth (µm):           115
+        ...         Nominal Wavelength (µm):  0.842
+        ...         Resolution (m):            10
+
     """
 
     validate_arrays(nir_agg, red_agg)
@@ -726,34 +920,66 @@ def ndmi(nir_agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import xarray as xr 
         import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
         from xrspatial.multispectral import ndmi
-        from xrspatial.datasets import get_data
+        from datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
 
-        # NIR Band
         nir = data['NIR']
-
-        # SWIR1 Band
         swir1 = data['SWIR1']
 
         # Generate NDMI Aggregate Array
         ndmi_agg = ndmi(nir_agg = nir,
                         swir1_agg = swir1)
 
-        # Plot Arrays
-        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        # Plot NIR Band
+        nir.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("NIR Band")
-        swir1.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot SWIR1 Band
+        swir1.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("SWIR1 Band")
-        ndmi_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot NDMI
+        ndmi_agg.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("NDMI")
-    
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(ndmi_agg[100:103, 100: 102])
+
+        ...     <xarray.DataArray 'ndmi' (y: 3, x: 2)>
+        ...     array([[-0.15868181, -0.19701014],
+        ...            [-0.14994299, -0.18686172],
+        ...            [-0.17901749, -0.21133603]])
+        ...     Coordinates:
+        ...       * x        (x) float64 6.01e+05 6.01e+05
+        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+        ...         band     int32 ...
+        ...     Attributes: (12/13)
+        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+        ...         crs:                      +init=epsg:32719
+        ...         res:                      [10. 10.]
+        ...         is_tiled:                 1
+        ...         nodatavals:               nan
+        ...         scales:                   1.0
+        ...         ...                       ...
+        ...         instrument:               Sentinel-2
+        ...         Band:                     07
+        ...         Name:                     NIR
+        ...         Bandwidth (µm):           115
+        ...         Nominal Wavelength (µm):  0.842
+        ...         Resolution (m):            10
+
     """
 
     validate_arrays(nir_agg, swir1_agg)
@@ -910,33 +1136,65 @@ def savi(nir_agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import xarray as xr 
         import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
         from xrspatial.multispectral import savi
-        from xrspatial.datasets import get_data
+        from datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
 
-        # NIR Band
         nir = data['NIR']
-
-        # Red Band
         red = data['Red']
 
         # Generate SAVI Aggregate Array
-        savi_agg = evi(nir_agg = nir,
-                       red_agg = red)
+        savi_agg = savi(nir_agg = nir,
+                        red_agg = red)
 
-        # Plot Arrays
-        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        # Plot NIR Band
+        nir.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("NIR Band")
-        red.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Red Band
+        red.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("Red Band")
-        savi_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot SAVI
+        savi_agg.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("SAVI")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(savi_agg[100:103, 100: 102])
+
+        ...     <xarray.DataArray 'savi' (y: 3, x: 2)>
+        ...     array([[0.0337197 , 0.03087509],
+        ...            [0.0324884 , 0.02531194],
+        ...            [0.03353768, 0.02215077]])
+        ...     Coordinates:
+        ...       * x        (x) float64 6.01e+05 6.01e+05
+        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+        ...         band     int32 ...
+        ...     Attributes: (12/13)
+        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+        ...         crs:                      +init=epsg:32719
+        ...         res:                      [10. 10.]
+        ...         is_tiled:                 1
+        ...         nodatavals:               nan
+        ...         scales:                   1.0
+        ...         ...                       ...
+        ...         instrument:               Sentinel-2
+        ...         Band:                     07
+        ...         Name:                     NIR
+        ...         Bandwidth (µm):           115
+        ...         Nominal Wavelength (µm):  0.842
+        ...         Resolution (m):            10
 
     """
 
@@ -1043,40 +1301,74 @@ def sipi(nir_agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import xarray as xr 
         import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
         from xrspatial.multispectral import sipi
-        from xrspatial.datasets import get_data
+        from datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
 
-        # NIR Band
         nir = data['NIR']
-
-        # Red Band
         red = data['Red']
-
-        # Blue Band
         blue = data['Blue']
 
-        # Generate SIPI Aggregate Array
+        # Generate ARVI Aggregate Array
         sipi_agg = sipi(nir_agg = nir,
-                       red_agg = red,
-                       blue_agg = blue)
+                        red_agg = red,
+                        blue_agg = blue)
 
-        # Plot Arrays
-        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        # Plot NIR Band
+        nir.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("NIR Band")
-        red.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Red Band
+        red.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("Red Band")
-        blue.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Blue Band
+        blue.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("Blue Band")
-        sipi_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot SIPI
+        sipi_agg.plot(cmap = 'Greys', aspect = 2, size = 4)
         plt.title("SIPI")
-    
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(sipi_agg[100:103, 100: 102])
+
+        ...     <xarray.DataArray 'sipi' (y: 3, x: 2)>
+        ...     array([[1.23958333, 1.33714286],
+        ...            [1.37362637, 1.57746479],
+        ...            [1.29032258, 1.64516129]])
+        ...     Coordinates:
+        ...       * x        (x) float64 6.01e+05 6.01e+05
+        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+        ...         band     int32 ...
+        ...     Attributes: (12/13)
+        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+        ...         crs:                      +init=epsg:32719
+        ...         res:                      [10. 10.]
+        ...         is_tiled:                 1
+        ...         nodatavals:               nan
+        ...         scales:                   1.0
+        ...         ...                       ...
+        ...         instrument:               Sentinel-2
+        ...         Band:                     07
+        ...         Name:                     NIR
+        ...         Bandwidth (µm):           115
+        ...         Nominal Wavelength (µm):  0.842
+        ...         Resolution (m):            10
+
     """
 
     validate_arrays(red_agg, nir_agg, blue_agg)
