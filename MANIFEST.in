@@ -2,6 +2,8 @@ include *.txt
 include *.md
 
 graft xrspatial
+graft xrspatial/examples
+graft xrspatial/examples/user_guide
 
 prune docs
 prune *.egg-info
@@ -11,13 +13,15 @@ prune conda.recipe
 prune img
 prune .idea
 
-include xrspatial/examples/*
-include xrspatial/examples/user_guide/*
-
+exclude xrspatial/.DS_Store
+exclude xrspatial/.version
 exclude examples/.ipynb_checkpoints/*
 exclude xrspatial/_version.py
 exclude xrspatial/__pycache__/*
 exclude xrspatial/examples/user_guide_idea/*
+exclude xrspatial/tests/.DS_Store
+exclude xrspatial/tests/__pycache__/*
+exclude xrspatial/tests/_qgis_results/__pycache__/*
 exclude tile_idea.py
 exclude *.enc
 exclude .gitignore
