@@ -12,6 +12,8 @@ import numpy as np
 
 from PIL.Image import fromarray
 
+__all__ = ['render_tiles', 'MercatorTileDefinition']
+
 import warnings
 
 
@@ -27,9 +29,6 @@ with warnings.catch_warnings():
     warnings.warn('The tiles module is deprecated and will soon be removed; '
                   'please see the mapshader package for similar functions.',
                   DeprecationWarning)
-
-
-__all__ = ['render_tiles', 'MercatorTileDefinition']
 
 
 def _create_dir(path):
