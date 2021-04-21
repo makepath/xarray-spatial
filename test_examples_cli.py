@@ -19,6 +19,3 @@ def run_examples_cmds(*cli_cmds):
     for arg in cli_cmds:
         with patch.object(sys, 'argv', ['xrspatial', arg]):
             m.main()
-
-
-run_examples_cmds('examples')
