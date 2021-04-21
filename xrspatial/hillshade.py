@@ -137,75 +137,76 @@ def hillshade(agg: xr.DataArray,
         
     Example
     -------
-    >>>     import datashader as ds
-    >>>     from xrspatial import generate_terrain, hillshade
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
+    .. plot::
+       :include-source:
 
-    >>>     # Create Canvas
-    >>>     W = 500 
-    >>>     H = 300
-    >>>     cvs = ds.Canvas(plot_width = W,
-    >>>                     plot_height = H,
-    >>>                     x_range = (-20e6, 20e6),
-    >>>                     y_range = (-20e6, 20e6))
-    >>>     # Generate Example Terrain
-    >>>     terrain_agg = generate_terrain(canvas = cvs)
-    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
-    >>>                                             'Max Elevation': '3000',
-    >>>                                             'units': 'meters'})
-    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-    >>>     terrain_agg = terrain_agg.rename('example_terrain')
-    >>>     # Shade Terrain
-    >>>     terrain_img = shade(agg = terrain_agg,
-    >>>                         cmap = Elevation,
-    >>>                         how = 'linear')
-    >>>     print(terrain_agg[200:203, 200:202])
-    >>>     terrain_img
-    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
-    ...     array([[1264.02249454, 1261.94748873],
-    ...            [1285.37061171, 1282.48046696],
-    ...            [1306.02305679, 1303.40657515]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  3000
-    ...         units:          meters
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain, hillshade
 
-            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
 
-    >>>     # Create Hillshade Aggregate Array
-    >>>     hillshade_agg = hillshade(agg = terrain_agg)
-    >>>     # Shade Image
-    >>>     hillshade_img = shade(agg = hillshade_agg,
-    >>>                           alpha = 150,
-    >>>                           cmap = ['gray', 'white'],
-    >>>                           how = 'linear')
-    >>>     print(hillshade_agg[200:203, 200:202])
-    >>>     hillshade_img
-    ...     <xarray.DataArray 'hillshade' (lat: 3, lon: 2)>
-    ...     array([[1264.02249454, 1261.94748873],
-    ...            [1285.37061171, 1282.48046696],
-    ...            [1306.02305679, 1303.40657515]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  3000
-    ...         units:          meters
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'Max Elevation': '3000',
+                                                'units': 'km'})
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
 
-            .. image :: ./docs/source/_static/img/docstring/hillshade_example.png
+        # Create Aspect Hillshade Array
+        hillshade_agg = hillshade(agg = terrain_agg, name = 'Illumination')
+        hillshade_agg = hillshade_agg.assign_attrs({'Description': 'Hillshade',
+                                                    'units': ''})
 
-    >>>     # Combine Images
-    >>>     composite_img = stack(terrain_img, hillshade_img)
-    >>>     composite_img
+        # Plot Arrays
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        hillshade_agg.plot(cmap = 'Greys', aspect = 2, size = 4)
+        plt.title("Hillshade")
 
-            .. image :: ./docs/source/_static/img/docstring/hillshade_composite.png
+
+    .. plot::
+       :include-source:
+
+        print(terrain_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        ...     array([[1264.02249454, 1261.94748873],
+        ...            [1285.37061171, 1282.48046696],
+        ...            [1306.02305679, 1303.40657515]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Example Terrain
+        ...         Max Elevation:  3000
+        ...         units:          km
+
+    .. plot::
+       :include-source:
+
+        print(hillshade_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Illumination' (lat: 3, lon: 2)>
+        ...     array([[1264.02249454, 1261.94748873],
+        ...            [1285.37061171, 1282.48046696],
+        ...            [1306.02305679, 1303.40657515]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Hillshade
+        ...         Max Elevation:  3000
+        ...         units:        
 
     """
 

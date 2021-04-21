@@ -103,141 +103,42 @@ def arvi(nir_agg: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     import xarray as xr 
-    >>>     from xrspatial import generate_terrain
-    >>>     from xrspatial.datasets import get_data
-    >>>     from xrspatial.multispectral import arvi
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
+    .. plot::
+       :include-source:
 
-    >>>     # Open Example Data
-    >>>     data = get_data('sentinel-2')
-    >>>     # NIR Band
-    >>>     nir = data['NIR']
-    >>>     print(nir[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1286., 1289., 1285.],
-    ...            [1275., 1292., 1312.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
+        import datashader as ds
+        import xarray as xr 
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.multispectral import arvi
+        from xrspatial.datasets import get_data
 
-    >>>     # Shade Image
-    >>>     nir_img = shade(agg = nir, cmap = ['black', 'white'])
-    >>>     nir_img
+        # Open Example Data
+        data = get_data('sentinel-2')
 
-            .. image :: ./docs/source/_static/img/docstring/nir_example.png
+        # NIR Band
+        nir = data['NIR']
 
-    >>>     # Red Band
-    >>>     red = data['Red']
-    >>>     print(red[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1138., 1115., 1112.],
-    ...            [1114., 1109., 1133.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-     ...        ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     04
-    ...         Name:                     Red
-    ...         Bandwidth (µm):           30
-    ...         Nominal Wavelength (µm):  0.665
-    ...         Resolution (m):            10
+        # Red Band
+        red = data['Red']
 
-    >>>     # Shade Image
-    >>>     red_img = shade(agg = red, cmap = ['black', 'white'])
-    >>>     red_img
+        # Blue Band
+        blue = data['Blue']
 
-            .. image :: ./docs/source/_static/img/docstring/red_example.png
+        # Generate ARVI Aggregate Array
+        arvi_agg = arvi(nir_agg = nir,
+                        red_agg = red,
+                        blue_agg = blue)
 
-    >>>     # Blue Band
-    >>>     blue = data['Blue']
-    >>>     print(blue[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1197., 1191., 1179.],
-    ...            [1178., 1181., 1213.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     02
-    ...         Name:                     Blue
-    ...         Bandwidth (µm):           65
-    ...         Nominal Wavelength (µm):  0.490
-    ...         Resolution (m):            10
-
-    >>>     # Shade Image
-    >>>     blue_img = shade(agg = blue, cmap = ['black', 'white'])
-    >>>     blue_img
-
-            .. image :: ./docs/source/_static/img/docstring/blue_example.png
-
-    >>>     # Generate ARVI Aggregate Array
-    >>>     arvi_agg = arvi(nir_agg = nir,
-    >>>                     red_agg = red,
-    >>>                     blue_agg = blue)
-    >>>     print(arvi_agg[100:102, 200: 203])
-    ...     <xarray.DataArray 'arvi' (y: 2, x: 3)>
-    ...     array([[0.04349653, 0.05307856, 0.05119454],
-    ...            [0.04806665, 0.05435941, 0.0540597 ]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
-
-    >>>     # Shade Image
-    >>>     arvi_img = shade(arvi_agg, cmap = ['black', 'white'])
-    >>>     arvi_img
-
-            .. image :: ./docs/source/_static/img/docstring/arvi_example.png
+        # Plot Arrays
+        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("NIR Band")
+        red.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("Red Band")
+        blue.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("Blue Band")
+        arvi_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("ARVI")
 
     """
 
@@ -354,142 +255,43 @@ def evi(nir_agg: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     import xarray as xr 
-    >>>     from xrspatial import generate_terrain
-    >>>     from xrspatial.datasets import get_data
-    >>>     from xrspatial.multispectral import evi
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
+    .. plot::
+       :include-source:
 
-    >>>     # Open Example Data
-    >>>     data = get_data('sentinel-2')
-    >>>     # NIR Band
-    >>>     nir = data['NIR']
-    >>>     print(nir[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1286., 1289., 1285.],
-    ...            [1275., 1292., 1312.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
+        import datashader as ds
+        import xarray as xr 
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.multispectral import evi
+        from xrspatial.datasets import get_data
 
-    >>>     # Shade Image
-    >>>     nir_img = shade(agg = nir, cmap = ['black', 'white'])
-    >>>     nir_img
+        # Open Example Data
+        data = get_data('sentinel-2')
 
-            .. image :: ./docs/source/_static/img/docstring/nir_example.png
+        # NIR Band
+        nir = data['NIR']
 
-    >>>     # Red Band
-    >>>     red = data['Red']
-    >>>     print(red[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1138., 1115., 1112.],
-    ...            [1114., 1109., 1133.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-     ...        ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     04
-    ...         Name:                     Red
-    ...         Bandwidth (µm):           30
-    ...         Nominal Wavelength (µm):  0.665
-    ...         Resolution (m):            10
+        # Red Band
+        red = data['Red']
 
-    >>>     # Shade Image
-    >>>     red_img = shade(agg = red, cmap = ['black', 'white'])
-    >>>     red_img
+        # Blue Band
+        blue = data['Blue']
 
-            .. image :: ./docs/source/_static/img/docstring/red_example.png
+        # Generate EVI Aggregate Array
+        evi_agg = evi(nir_agg = nir,
+                      red_agg = red,
+                      blue_agg = blue)
 
-    >>>     # Blue Band
-    >>>     blue = data['Blue']
-    >>>     print(blue[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1197., 1191., 1179.],
-    ...            [1178., 1181., 1213.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     02
-    ...         Name:                     Blue
-    ...         Bandwidth (µm):           65
-    ...         Nominal Wavelength (µm):  0.490
-    ...         Resolution (m):            10
-
-    >>>     # Shade Image
-    >>>     blue_img = shade(agg = blue, cmap = ['black', 'white'])
-    >>>     blue_img
-
-            .. image :: ./docs/source/_static/img/docstring/blue_example.png
-
-    >>>     # Generate EVI Aggregate Array
-    >>>     evi_agg = evi(nir_agg = nir,
-    >>>                   red_agg = red,
-    >>>                   blue_agg = blue)
-    >>>     print(evi_agg[100:102, 200: 203])
-    ...     <xarray.DataArray 'evi' (y: 2, x: 3)>
-    ...     array([[-0.42898551, -0.45669291, -0.48897682],
-    ...            [-0.46      , -0.50247117, -0.45362392]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
-
-    >>>     # Shade Image
-    >>>     evi_img = shade(evi_agg, cmap = ['black', 'white'])
-    >>>     evi_img
-
-            .. image :: ./docs/source/_static/img/docstring/evi_example.png
-
+        # Plot Arrays
+        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("NIR Band")
+        red.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("Red Band")
+        blue.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("Blue Band")
+        evi_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("EVI")
+    
     """
 
     if not red_agg.shape == nir_agg.shape == blue_agg.shape:
@@ -596,110 +398,37 @@ def gci(nir_agg: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     import xarray as xr 
-    >>>     from xrspatial import generate_terrain
-    >>>     from xrspatial.datasets import get_data
-    >>>     from xrspatial.multispectral import gci
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
+    .. plot::
+       :include-source:
 
-    >>>     # Open Example Data
-    >>>     data = get_data('sentinel-2')
-    >>>     # NIR Band
-    >>>     nir = data['NIR']
-    >>>     print(nir[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1286., 1289., 1285.],
-    ...            [1275., 1292., 1312.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
+        import datashader as ds
+        import xarray as xr 
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.multispectral import gci
+        from xrspatial.datasets import get_data
 
-    >>>     # Shade Image
-    >>>     nir_img = shade(agg = nir, cmap = ['black', 'white'])
-    >>>     nir_img
+        # Open Example Data
+        data = get_data('sentinel-2')
 
-            .. image :: ./docs/source/_static/img/docstring/nir_example.png
+        # NIR Band
+        nir = data['NIR']
 
-    >>>     # Green Band
-    >>>     green = data['Green']
-    >>>     print(green[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1012., 1001., 1023.],
-    ...            [ 990.,  992., 1009.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     03
-    ...         Name:                     Green
-    ...         Bandwidth (µm):           35
-    ...         Nominal Wavelength (µm):  0.560
-    ...         Resolution (m):            10
+        # Green Band
+        green = data['Green']
 
-    >>>     # Shade Image
-    >>>     green_img = shade(agg = green, cmap = ['black', 'white'])
-    >>>     green_img
+        # Generate GCI Aggregate Array
+        gci_agg = gci(nir_agg = nir,
+                      green_agg = green)
 
-            .. image :: ./docs/source/_static/img/docstring/green_example.png
-
-    >>>     # Generate GCI Aggregate Array
-    >>>     gci_agg = gci(nir_agg = nir,
-    >>>                   green_agg = green)
-    >>>     print(gci_agg[100:102, 200: 203])
-    ...     <xarray.DataArray 'gci' (y: 2, x: 3)>
-    ...     array([[0.27075099, 0.28771229, 0.25610948],
-    ...            [0.28787879, 0.30241935, 0.30029732]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
-
-    >>>     # Shade Image
-    >>>     gci_img = shade(gci_agg, cmap = ['black', 'white'])
-    >>>     gci_img
-
-            .. image :: ./docs/source/_static/img/docstring/gci_example.png
-
+        # Plot Arrays
+        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("NIR Band")
+        green.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("Green Band")
+        gci_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("GCI")
+    
     """
 
     validate_arrays(nir_agg, green_agg)
@@ -749,110 +478,37 @@ def nbr(nir_agg: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     import xarray as xr 
-    >>>     from xrspatial import generate_terrain
-    >>>     from xrspatial.datasets import get_data
-    >>>     from xrspatial.multispectral import nbr
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
+    .. plot::
+       :include-source:
 
-    >>>     # Open Example Data
-    >>>     data = get_data('sentinel-2')
-    >>>     # NIR Band
-    >>>     nir = data['NIR']
-    >>>     print(nir[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1286., 1289., 1285.],
-    ...            [1275., 1292., 1312.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
+        import datashader as ds
+        import xarray as xr 
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.multispectral import nbr
+        from xrspatial.datasets import get_data
 
-    >>>     # Shade Image
-    >>>     nir_img = shade(agg = nir, cmap = ['black', 'white'])
-    >>>     nir_img
+        # Open Example Data
+        data = get_data('sentinel-2')
 
-            .. image :: ./docs/source/_static/img/docstring/nir_example.png
+        # NIR Band
+        nir = data['NIR']
 
-    >>>     # SWIR2 Band
-    >>>     swir2 = data['SWIR2']
-    >>>     print(swir2[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1776., 1765., 1820.],
-    ...            [1878., 1859., 1902.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.04e+05 6.04e+05 6.040e+05
-    ...       * y        (y) float64 4.698e+06 4.698e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [20. 20.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     12
-    ...         Name:                     SWIR2
-    ...         Bandwidth (µm):           180
-    ...         Nominal Wavelength (µm):  2.190
-    ...         Resolution (m):            20
+        # SWIR2 Band
+        swir2 = data['SWIR2']
 
-    >>>     # Shade Image
-    >>>     swir2_img = shade(agg = swir2, cmap = ['black', 'white'])
-    >>>     swir2_img
+        # Generate NBR Aggregate Array
+        nbr_agg = nbr(nir_agg = nir,
+                      swir2_agg = swir2)
 
-            .. image :: ./docs/source/_static/img/docstring/swir2_example.png
-
-    >>>     # Generate NBR Aggregate Array
-    >>>     nbr_agg = nbr(nir_agg = nir, 
-    >>>                   swir2_agg = swir2)
-    >>>     print(nbr_agg[100:102, 200: 203])
-    ...     <xarray.DataArray 'nbr' (y: 2, x: 3)>
-    ...     array([[-0.16002613, -0.15586117, -0.17230274],
-    ...            [-0.19124643, -0.17994288, -0.18357187]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
-
-    >>>     # Shade Image
-    >>>     nbr_img = shade(nbr_agg, cmap = ['black', 'white'])
-    >>>     nbr_img
-
-            .. image :: ./docs/source/_static/img/docstring/nbr_example.png
-
+        # Plot Arrays
+        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("NIR Band")
+        swir2.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("SWIR2 Band")
+        nbr_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("NBR")
+    
     """
 
     validate_arrays(nir_agg, swir2_agg)
@@ -907,110 +563,37 @@ def nbr2(swir1_agg: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     import xarray as xr 
-    >>>     from xrspatial import generate_terrain
-    >>>     from xrspatial.multispectral import nbr2
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
-    >>>     from datasets import get_data
+    .. plot::
+       :include-source:
 
-    >>>     # Open Example Data
-    >>>     data = get_data('sentinel-2')
-    >>>     # SWIR1 Band
-    >>>     swir1 = data['SWIR1']
-    >>>     print(swir1[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1963., 1968., 2010.],
-    ...            [2054., 2041., 2089.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.04e+05 6.04e+05 6.040e+05
-    ...       * y        (y) float64 4.698e+06 4.698e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [20. 20.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     11
-    ...         Name:                     SWIR1
-    ...         Bandwidth (µm):           90
-    ...         Nominal Wavelength (µm):  1.610
-    ...         Resolution (m):            20
+        import datashader as ds
+        import xarray as xr 
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.multispectral import nbr2
+        from xrspatial.datasets import get_data
 
-    >>>     # Shade Image
-    >>>     swir1_img = shade(agg = swir1, cmap = ['black', 'white'])
-    >>>     swir1_img
+        # Open Example Data
+        data = get_data('sentinel-2')
 
-            .. image :: ./docs/source/_static/img/docstring/swir1_example.png
+        # SWIR1 Band
+        swir1 = data['SWIR1']
 
-    >>>     # SWIR2 Band
-    >>>     swir2 = data['SWIR2']
-    >>>     print(swir2[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1776., 1765., 1820.],
-       [1878., 1859., 1902.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.04e+05 6.04e+05 6.040e+05
-    ...       * y        (y) float64 4.698e+06 4.698e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [20. 20.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     12
-    ...         Name:                     SWIR2
-    ...         Bandwidth (µm):           180
-    ...         Nominal Wavelength (µm):  2.190
-    ...         Resolution (m):            20
+        # SWIR2 Band
+        swir2 = data['SWIR2']
 
-    >>>     # Shade Image
-    >>>     swir2_img = shade(agg = swir2, cmap = ['black', 'white'])
-    >>>     swir2_img
+        # Generate NBR Aggregate Array
+        nbr2_agg = nbr2(swir1_agg = swir1,
+                        swir2_agg = swir2)
 
-            .. image :: ./docs/source/_static/img/docstring/swir2_example.png
-
-    >>>     # Generate NBR2 Aggregate Array
-    >>>     nbr2_agg = nbr2(swir1_agg = swir1, 
-    >>>                     swir2_agg = swir2)
-    >>>     print(nbr2_agg[100:102, 200: 203])
-    ...     <xarray.DataArray 'nbr' (y: 2, x: 3)>
-    ...     array([[0.05001337, 0.05437986, 0.04960836],
-    ...            [0.04476094, 0.04666667, 0.04685542]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.04e+05 6.04e+05 6.040e+05
-    ...       * y        (y) float64 4.698e+06 4.698e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [20. 20.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...        ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     11
-    ...         Name:                     SWIR1
-    ...         Bandwidth (µm):           90
-    ...         Nominal Wavelength (µm):  1.610
-    ...         Resolution (m):            20
-
-    >>>     # Shade Image
-    >>>     nbr2_img = shade(nbr2_agg, cmap = ['black', 'white'])
-    >>>     nbr2_img
-
-            .. image :: ./docs/source/_static/img/docstring/nbr2_example.png
-
+        # Plot Arrays
+        swir1.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("SWIR1 Band")
+        swir2.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("SWIR2 Band")
+        nbr2_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("NBR2")
+    
     """
 
     validate_arrays(swir1_agg, swir2_agg)
@@ -1058,110 +641,37 @@ def ndvi(nir_agg: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     import xarray as xr 
-    >>>     from xrspatial import generate_terrain
-    >>>     from xrspatial.multispectral import ndvi
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
-    >>>     from datasets import get_data
+    .. plot::
+       :include-source:
 
-    >>>     # Open Example Data
-    >>>     data = get_data('sentinel-2')
-    >>>     # NIR Band
-    >>>     nir = data['NIR']
-    >>>     print(nir[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1286., 1289., 1285.],
-    ...            [1275., 1292., 1312.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
+        import datashader as ds
+        import xarray as xr 
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.multispectral import ndvi
+        from xrspatial.datasets import get_data
 
-    >>>     # Shade Image
-    >>>     nir_img = shade(agg = nir, cmap = ['black', 'white'])
-    >>>     nir_img
+        # Open Example Data
+        data = get_data('sentinel-2')
 
-            .. image :: ./docs/source/_static/img/docstring/nir_example.png
+        # NIR Band
+        nir = data['NIR']
 
-    >>>     # Red Band
-    >>>     red = data['Red']
-    >>>     print(red[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1138., 1115., 1112.],
-    ...            [1114., 1109., 1133.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     04
-    ...         Name:                     Red
-    ...         Bandwidth (µm):           30
-    ...         Nominal Wavelength (µm):  0.665
-    ...         Resolution (m):            10
+        # Red Band
+        red = data['Red']
 
-    >>>     # Shade Image
-    >>>     red_img = shade(agg = red, cmap = ['black', 'white'])
-    >>>     red_img
+        # Generate NDVI Aggregate Array
+        ndvi_agg = ndvi(nir_agg = nir,
+                        red_agg = red)
 
-            .. image :: ./docs/source/_static/img/docstring/red_example.png
-
-    >>>     # Generate NDVI Aggregate Array
-    >>>     ndvi_agg = ndvi(nir_agg = nir, 
-    >>>                     red_agg = red)
-    >>>     print(ndvi_agg[100:102, 200: 203])
-    ...     <xarray.DataArray 'ndvi' (y: 2, x: 3)>
-    ...     array([[0.06105611, 0.07237937, 0.07217355],
-    ...            [0.06739221, 0.07621824, 0.07321063]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
-
-    >>>     # Shade Image
-    >>>     ndvi_img = shade(ndvi_agg, cmap = ['black', 'white'])
-    >>>     ndvi_img
-
-            .. image :: ./docs/source/_static/img/docstring/ndvi_example.png
-
+        # Plot Arrays
+        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("NIR Band")
+        red.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("Red Band")
+        ndvi_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("NDVI")
+    
     """
 
     validate_arrays(nir_agg, red_agg)
@@ -1213,110 +723,37 @@ def ndmi(nir_agg: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     import xarray as xr 
-    >>>     from xrspatial import generate_terrain
-    >>>     from xrspatial.multispectral import ndmi
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
-    >>>     from datasets import get_data
+    .. plot::
+       :include-source:
 
-    >>>     # Open Example Data
-    >>>     data = get_data('sentinel-2')
-    >>>     # NIR Band
-    >>>     nir = data['NIR']
-    >>>     print(nir[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1286., 1289., 1285.],
-    ...            [1275., 1292., 1312.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
+        import datashader as ds
+        import xarray as xr 
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.multispectral import ndmi
+        from xrspatial.datasets import get_data
 
-    >>>     # Shade Image
-    >>>     nir_img = shade(agg = nir, cmap = ['black', 'white'])
-    >>>     nir_img
+        # Open Example Data
+        data = get_data('sentinel-2')
 
-            .. image :: ./docs/source/_static/img/docstring/nir_example.png
+        # NIR Band
+        nir = data['NIR']
 
-    >>>     # SWIR1 Band
-    >>>     swir1 = data['SWIR1']
-    >>>     print(swir1[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1963., 1968., 2010.],
-    ...            [2054., 2041., 2089.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.04e+05 6.04e+05 6.040e+05
-    ...       * y        (y) float64 4.698e+06 4.698e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [20. 20.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     11
-    ...         Name:                     SWIR1
-    ...         Bandwidth (µm):           90
-    ...         Nominal Wavelength (µm):  1.610
-    ...         Resolution (m):            20
+        # SWIR1 Band
+        swir1 = data['SWIR1']
 
-    >>>     # Shade Image
-    >>>     swir1_img = shade(agg = swir1, cmap = ['black', 'white'])
-    >>>     swir1_img
+        # Generate NDMI Aggregate Array
+        ndmi_agg = ndmi(nir_agg = nir,
+                        swir1_agg = swir1)
 
-            .. image :: ./docs/source/_static/img/docstring/swir1_example.png
-
-    >>>     # Generate NDMI Aggregate Array
-    >>>     ndmi_agg = ndmi(nir_agg = nir, 
-    >>>                     swir1_agg = swir1)
-    >>>     print(ndmi_agg[100:102, 200: 203])
-    ...     <xarray.DataArray 'ndmi' (y: 2, x: 3)>
-    ...     array([[-0.20837181, -0.20847406, -0.22003035],
-    ...            [-0.23400421, -0.22472247, -0.22846222]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
-
-    >>>     # Shade Image
-    >>>     ndmi_img = shade(ndmi_agg, cmap = ['black', 'white'])
-    >>>     ndmi_img
-
-            .. image :: ./docs/source/_static/img/docstring/ndmi_example.png
-
+        # Plot Arrays
+        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("NIR Band")
+        swir1.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("SWIR1 Band")
+        ndmi_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("NDMI")
+    
     """
 
     validate_arrays(nir_agg, swir1_agg)
@@ -1470,109 +907,36 @@ def savi(nir_agg: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     import xarray as xr 
-    >>>     from xrspatial import generate_terrain
-    >>>     from xrspatial.datasets import get_data
-    >>>     from xrspatial.multispectral import savi
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
+    .. plot::
+       :include-source:
 
-    >>>     # Open Example Data
-    >>>     data = get_data('sentinel-2')
-    >>>     # NIR Band
-    >>>     nir = data['NIR']
-    >>>     print(nir[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1286., 1289., 1285.],
-    ...            [1275., 1292., 1312.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
+        import datashader as ds
+        import xarray as xr 
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.multispectral import savi
+        from xrspatial.datasets import get_data
 
-    >>>     # Shade Image
-    >>>     nir_img = shade(agg = nir, cmap = ['black', 'white'])
-    >>>     nir_img
+        # Open Example Data
+        data = get_data('sentinel-2')
 
-            .. image :: ./docs/source/_static/img/docstring/nir_example.png
+        # NIR Band
+        nir = data['NIR']
 
-    >>>     # Red Band
-    >>>     red = data['Red']
-    >>>     print(red[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1138., 1115., 1112.],
-    ...            [1114., 1109., 1133.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-     ...        ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     04
-    ...         Name:                     Red
-    ...         Bandwidth (µm):           30
-    ...         Nominal Wavelength (µm):  0.665
-    ...         Resolution (m):            10
+        # Red Band
+        red = data['Red']
 
-    >>>     # Shade Image
-    >>>     red_img = shade(agg = red, cmap = ['black', 'white'])
-    >>>     red_img
+        # Generate SAVI Aggregate Array
+        savi_agg = evi(nir_agg = nir,
+                       red_agg = red)
 
-            .. image :: ./docs/source/_static/img/docstring/red_example.png
-
-    >>>     # Generate SAVI Aggregate Array
-    >>>     savi_agg = savi(nir_agg = nir, 
-    >>>                     red_agg = red)
-    >>>     print(savi_agg[100:102, 200: 203])
-    ...     <xarray.DataArray 'savi' (y: 2, x: 3)>
-    ...     array([[0.03051546, 0.03617464, 0.03607173],
-    ...            [0.03368201, 0.03809326, 0.03659035]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
-
-    >>>     # Shade Image
-    >>>     savi_img = shade(savi_agg, cmap = ['black', 'white'])
-    >>>     savi_img
-
-            .. image :: ./docs/source/_static/img/docstring/savi_example.png
+        # Plot Arrays
+        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("NIR Band")
+        red.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("Red Band")
+        savi_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("SAVI")
 
     """
 
@@ -1676,142 +1040,43 @@ def sipi(nir_agg: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     import xarray as xr 
-    >>>     from xrspatial import generate_terrain
-    >>>     from xrspatial.datasets import get_data
-    >>>     from xrspatial.multispectral import sipi
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
+    .. plot::
+       :include-source:
 
-    >>>     # Open Example Data
-    >>>     data = get_data('sentinel-2')
-    >>>     # NIR Band
-    >>>     nir = data['NIR']
-    >>>     print(nir[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1286., 1289., 1285.],
-    ...            [1275., 1292., 1312.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
+        import datashader as ds
+        import xarray as xr 
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.multispectral import sipi
+        from xrspatial.datasets import get_data
 
-    >>>     # Shade Image
-    >>>     nir_img = shade(agg = nir, cmap = ['black', 'white'])
-    >>>     nir_img
+        # Open Example Data
+        data = get_data('sentinel-2')
 
-            .. image :: ./docs/source/_static/img/docstring/nir_example.png
+        # NIR Band
+        nir = data['NIR']
 
-    >>>     # Red Band
-    >>>     red = data['Red']
-    >>>     print(red[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1138., 1115., 1112.],
-    ...            [1114., 1109., 1133.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-     ...        ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     04
-    ...         Name:                     Red
-    ...         Bandwidth (µm):           30
-    ...         Nominal Wavelength (µm):  0.665
-    ...         Resolution (m):            10
+        # Red Band
+        red = data['Red']
 
-    >>>     # Shade Image
-    >>>     red_img = shade(agg = red, cmap = ['black', 'white'])
-    >>>     red_img
+        # Blue Band
+        blue = data['Blue']
 
-            .. image :: ./docs/source/_static/img/docstring/red_example.png
+        # Generate SIPI Aggregate Array
+        sipi_agg = sipi(nir_agg = nir,
+                       red_agg = red,
+                       blue_agg = blue)
 
-    >>>     # Blue Band
-    >>>     blue = data['Blue']
-    >>>     print(blue[100:102, 200: 203])
-    ...     <xarray.DataArray (y: 2, x: 3)>
-    ...     array([[1197., 1191., 1179.],
-    ...            [1178., 1181., 1213.]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 1
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     02
-    ...         Name:                     Blue
-    ...         Bandwidth (µm):           65
-    ...         Nominal Wavelength (µm):  0.490
-    ...         Resolution (m):            10
-
-    >>>     # Shade Image
-    >>>     blue_img = shade(agg = blue, cmap = ['black', 'white'])
-    >>>     blue_img
-
-            .. image :: ./docs/source/_static/img/docstring/blue_example.png
-
-    >>>     # Generate SIPI Aggregate Array
-    >>>     sipi_agg = sipi(nir_agg = nir,
-    >>>                     red_agg = red,
-    >>>                     blue_agg = blue)
-    >>>     print(sipi_agg[100:102, 200: 203])
-    ...     <xarray.DataArray 'sipi' (y: 2, x: 3)>
-    ...     array([[0.60135135, 0.56321839, 0.61271676],
-    ...            [0.60248447, 0.60655738, 0.55307263]])
-    ...     Coordinates:
-    ...       * x        (x) float64 6.02e+05 6.02e+05 6.02e+05
-    ...       * y        (y) float64 4.699e+06 4.699e+06
-    ...         band     int32 ...
-    ...     Attributes: (12/13)
-    ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-    ...         crs:                      +init=epsg:32719
-    ...         res:                      [10. 10.]
-    ...         is_tiled:                 1
-    ...         nodatavals:               nan
-    ...         scales:                   1.0
-    ...         ...                       ...
-    ...         instrument:               Sentinel-2
-    ...         Band:                     07
-    ...         Name:                     NIR
-    ...         Bandwidth (µm):           115
-    ...         Nominal Wavelength (µm):  0.842
-    ...         Resolution (m):            10
-
-    >>>     # Shade Image
-    >>>     sipi_img = shade(sipi_agg, cmap = ['black', 'white'])
-    >>>     sipi_img
-
-            .. image :: ./docs/source/_static/img/docstring/sipi_example.png
-
+        # Plot Arrays
+        nir.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("NIR Band")
+        red.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("Red Band")
+        blue.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("Blue Band")
+        sipi_agg.plot(cmap = 'gist_gray', aspect = 2, size = 4)
+        plt.title("SIPI")
+    
     """
 
     validate_arrays(red_agg, nir_agg, blue_agg)

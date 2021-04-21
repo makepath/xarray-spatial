@@ -1,16 +1,15 @@
 '''Focal Related Utilities'''
 import re
 import warnings
+from typing import Optional
 
-from numba import prange
 import numpy as np
 import xarray as xr
+from numba import prange
 from xarray import DataArray
 
-from xrspatial.utils import ngjit
 from xrspatial.convolution import convolve_2d
-
-from typing import Optional
+from xrspatial.utils import ngjit
 
 warnings.simplefilter('default')
 
@@ -110,48 +109,58 @@ def calc_cellsize(raster: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     from xrspatial import generate_terrain
-    >>>     from xrspatial.focal import calc_cellsize
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
+    .. plot::
+       :include-source:
 
-    >>>     # Create Canvas
-    >>>     W = 500 
-    >>>     H = 300
-    >>>     cvs = ds.Canvas(plot_width = W,
-    >>>                     plot_height = H,
-    >>>                     x_range = (-20e6, 20e6),
-    >>>                     y_range = (-20e6, 20e6))
-    >>>     # Generate Example Terrain
-    >>>     terrain_agg = generate_terrain(canvas = cvs)
-    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
-    >>>                                             'Max Elevation': '3000',
-    >>>                                             'units': 'meters'})
-    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-    >>>     terrain_agg = terrain_agg.rename('example_terrain')
-    >>>     # Shade Terrain
-    >>>     terrain_img = shade(agg = terrain_agg,
-    >>>                         cmap = Elevation,
-    >>>                         how = 'linear')
-    >>>     print(terrain_agg[200:203, 200:202])
-    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
-    ...     array([[1264.02249454, 1261.94748873],
-    ...            [1285.37061171, 1282.48046696],
-    ...            [1306.02305679, 1303.40657515]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  3000
-    ...         units:          meters
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.focal import calc_cellsize
 
-    >>>     # Calculate Cellsize
-    >>>     cellsize = calc_cellsize(terrain_agg, 'lon', 'lat')
-    >>>     print(cellsize)
-    ...     (80000.0, 133333.3333333321)
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
+
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'Max Elevation': '3000',
+                                                'units': 'km'})
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+    .. plot::
+       :include-source:
+
+        print(terrain_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        ...     array([[1264.02249454, 1261.94748873],
+        ...            [1285.37061171, 1282.48046696],
+        ...            [1306.02305679, 1303.40657515]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Example Terrain
+        ...         Max Elevation:  3000
+        ...         units:          km
+
+    .. plot::
+       :include-source:
+
+        # Calculate Cellsize
+        cellsize = calc_cellsize(terrain_agg, 'lon', 'lat')
+        print(cellsize)
+
+        ...     (80000.0, 133333.3333333321)
+
+
 
     """
 
@@ -228,27 +237,28 @@ def circle_kernel(cellsize_x: int,
 
     Example
     -------
-    >>>     # Imports 
-    >>>     import xarray as xr
-    >>>     from xrspatial.focal import circle_kernel
+    .. plot::
+       :include-source:
 
-    >>>     # Create Kernel
-    >>>     kernel = circle_kernel(1, 1, 3)
+        import xarray as xr
+        from xrspatial.focal import circle_kernel
 
-    >>>     print(kernel)
-    ...     [[0. 0. 0. 1. 0. 0. 0.]
-     ...     [0. 1. 1. 1. 1. 1. 0.]
-     ...     [0. 1. 1. 1. 1. 1. 0.]
-     ...     [1. 1. 1. 1. 1. 1. 1.]
-     ...     [0. 1. 1. 1. 1. 1. 0.]
-     ...     [0. 1. 1. 1. 1. 1. 0.]
-     ...     [0. 0. 0. 1. 0. 0. 0.]]
-    >>>     kernel = circle_kernel(1, 2, 3)
-
-    >>>     print(kernel)
-    ...     [[0. 0. 0. 1. 0. 0. 0.]
-    ...      [1. 1. 1. 1. 1. 1. 1.]
-    ...      [0. 0. 0. 1. 0. 0. 0.]]
+        # Create Kernel
+        kernel = circle_kernel(1, 1, 3)
+        print(kernel)
+        ...     [[0. 0. 0. 1. 0. 0. 0.]
+        ...     [0. 1. 1. 1. 1. 1. 0.]
+        ...     [0. 1. 1. 1. 1. 1. 0.]
+        ...     [1. 1. 1. 1. 1. 1. 1.]
+        ...     [0. 1. 1. 1. 1. 1. 0.]
+        ...     [0. 1. 1. 1. 1. 1. 0.]
+        ...     [0. 0. 0. 1. 0. 0. 0.]]
+    
+        kernel = circle_kernel(1, 2, 3)
+        print(kernel)
+        ...     [[0. 0. 0. 1. 0. 0. 0.]
+        ...      [1. 1. 1. 1. 1. 1. 1.]
+        ...      [0. 0. 0. 1. 0. 0. 0.]]
     """
 
     # validate radius, convert radius to meters
@@ -286,30 +296,30 @@ def annulus_kernel(cellsize_x: int,
 
     Example
     -------
-    >>>     # Imports
-    >>>     import xarray as xr
-    >>>     from xrspatial.focal import annulus_kernel
+    .. plot::
+       :include-source:
 
-    >>>     # Create Kernel
-    >>>     kernel = annulus_kernel(1, 1, 3, 1)
+        import xarray as xr
+        from xrspatial.focal import annulus_kernel
 
-    >>>     print(kernel)
-    ...     [[0., 0., 0., 1., 0., 0., 0.],
-    ...      [0., 1., 1., 1., 1., 1., 0.],
-    ...      [0., 1., 1., 0., 1., 1., 0.],
-    ...      [1., 1., 0., 0., 0., 1., 1.],
-    ...      [0., 1., 1., 0., 1., 1., 0.],
-    ...      [0., 1., 1., 1., 1., 1., 0.],
-    ...      [0., 0., 0., 1., 0., 0., 0.]]
+        # Create Kernel
+        kernel = annulus_kernel(1, 1, 3, 1)
+        print(kernel)
+        ...     [[0., 0., 0., 1., 0., 0., 0.],
+        ...      [0., 1., 1., 1., 1., 1., 0.],
+        ...      [0., 1., 1., 0., 1., 1., 0.],
+        ...      [1., 1., 0., 0., 0., 1., 1.],
+        ...      [0., 1., 1., 0., 1., 1., 0.],
+        ...      [0., 1., 1., 1., 1., 1., 0.],
+        ...      [0., 0., 0., 1., 0., 0., 0.]]
 
-    >>>     kernel = annulus_kernel(1, 2, 5, 2)
-
-    >>>     print(kernel)
-    ...     [[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
-    ...      [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-    ...      [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
-    ...      [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-    ...      [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
+        kernel = annulus_kernel(1, 2, 5, 2)
+        print(kernel)
+        ...     [[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
+        ...      [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+        ...      [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
+        ...      [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+        ...      [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
     """
 
     # validate radii, convert to meters
@@ -366,67 +376,70 @@ def custom_kernel(kernel):
 
     Example
     -------
-    >>>     from xrspatial.focal import custom_kernel
-    >>>     import numpy as np
+    .. plot::
+       :include-source:
 
-    >>>     # Valid Kernel
-    >>>     valid_kernel = np.array([[0., 0., 0., 0., 1., 0., 0., 0., 0.],
-    >>>                              [0., 0., 1., 1., 1., 1., 1., 0., 0.],
-    >>>                              [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-    >>>                              [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-    >>>                              [1., 1., 1., 1., 1., 1., 1., 1., 1.],
-    >>>                              [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-    >>>                              [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-    >>>                              [0., 0., 1., 1., 1., 1., 1., 0., 0.],
-    >>>                              [0., 0., 0., 0., 1., 0., 0., 0., 0.]])
-    >>>     print(kernel.shape)
-    ...     (9, 9)
+        from xrspatial.focal import custom_kernel
+        import numpy as np
 
-    >>>     print(custom_kernel(valid_kernel))
-    ...     [[0. 0. 0. 0. 1. 0. 0. 0. 0.]
-    ...      [0. 0. 1. 1. 1. 1. 1. 0. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [1. 1. 1. 1. 1. 1. 1. 1. 1.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 0. 1. 1. 1. 1. 1. 0. 0.]
-    ...      [0. 0. 0. 0. 1. 0. 0. 0. 0.]]
+        # Valid Kernel
+        valid_kernel = np.array([[0., 0., 0., 0., 1., 0., 0., 0., 0.],
+                                 [0., 0., 1., 1., 1., 1., 1., 0., 0.],
+                                 [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                                 [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                                 [1., 1., 1., 1., 1., 1., 1., 1., 1.],
+                                 [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                                 [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                                 [0., 0., 1., 1., 1., 1., 1., 0., 0.],
+                                 [0., 0., 0., 0., 1., 0., 0., 0., 0.]])
+        print(kernel.shape)
+        ...     (9, 9)
 
-    >>>     even_kernel = np.array([[0., 0., 0., 1., 1., 0., 0., 0.],
-    >>>                             [0., 0., 1., 1., 1., 1., 0., 0.],
-    >>>                             [0., 1., 1., 1., 1., 1., 1., 0.],
-    >>>                             [1., 1., 1., 1., 1., 1., 1., 1.],
-    >>>                             [1., 1., 1., 1., 1., 1., 1., 1.],
-    >>>                             [0., 1., 1., 1., 1., 1., 1., 0.],
-    >>>                             [0., 0., 1., 1., 1., 1., 0., 0.],
-    >>>                             [0., 0., 0., 1., 1., 0., 0., 0.]])
-    >>>     print(even_kernel.shape)
-    ...     (8, 8)
+        print(custom_kernel(valid_kernel))
+        ...     [[0. 0. 0. 0. 1. 0. 0. 0. 0.]
+        ...      [0. 0. 1. 1. 1. 1. 1. 0. 0.]
+        ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
+        ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
+        ...      [1. 1. 1. 1. 1. 1. 1. 1. 1.]
+        ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
+        ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
+        ...      [0. 0. 1. 1. 1. 1. 1. 0. 0.]
+        ...      [0. 0. 0. 0. 1. 0. 0. 0. 0.]]
 
-    >>>     print(custom_kernel(even_kernel))
-    ...     ValueError: Received custom kernel with improper dimensions.,
-    ...     A custom kernel needs to have an odd shape, the supplied kernel
-    ...     has 8 rows and 8 columns.
+        even_kernel = np.array([[0., 0., 0., 1., 1., 0., 0., 0.],
+                                [0., 0., 1., 1., 1., 1., 0., 0.],
+                                [0., 1., 1., 1., 1., 1., 1., 0.],
+                                [1., 1., 1., 1., 1., 1., 1., 1.],
+                                [1., 1., 1., 1., 1., 1., 1., 1.],
+                                [0., 1., 1., 1., 1., 1., 1., 0.],
+                                [0., 0., 1., 1., 1., 1., 0., 0.],
+                                [0., 0., 0., 1., 1., 0., 0., 0.]])
+        print(even_kernel.shape)
+        ...     (8, 8)
 
-    >>>     list_kernel = [[0., 0., 0., 0., 1., 0., 0., 0., 0.],
-    >>>                    [0., 0., 1., 1., 1., 1., 1., 0., 0.],
-    >>>                    [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-    >>>                    [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-    >>>                    [1., 1., 1., 1., 1., 1., 1., 1., 1.],
-    >>>                    [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-    >>>                    [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-    >>>                    [0., 0., 1., 1., 1., 1., 1., 0., 0.],
-    >>>                    [0., 0., 0., 0., 1., 0., 0., 0., 0.]]
-    >>>     print(len(list_kernel))
-    >>>     print(len(list_kernel[0]))
-    ...     9
-    ...     9
+        print(custom_kernel(even_kernel))
+        ...     ValueError: Received custom kernel with improper dimensions.,
+        ...     A custom kernel needs to have an odd shape, the supplied kernel
+        ...     has 8 rows and 8 columns.
 
-    >>>     print(custom_kernel(list_kernel))
-    ...     ValueError: Received a custom kernel that is not a Numpy array.,
-    ...     The kernel received was of type <class 'list'> and needs to be of
-    ...     type `ndarray` 
+        list_kernel = [[0., 0., 0., 0., 1., 0., 0., 0., 0.],
+                       [0., 0., 1., 1., 1., 1., 1., 0., 0.],
+                       [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                       [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                       [1., 1., 1., 1., 1., 1., 1., 1., 1.],
+                       [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                       [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                       [0., 0., 1., 1., 1., 1., 1., 0., 0.],
+                       [0., 0., 0., 0., 1., 0., 0., 0., 0.]]
+        print(len(list_kernel))
+        print(len(list_kernel[0]))
+        ...     9
+        ...     9
+
+        print(custom_kernel(list_kernel))
+        ...     ValueError: Received a custom kernel that is not a Numpy array.,
+        ...     The kernel received was of type <class 'list'> and needs to be of
+        ...     type `ndarray` 
     """
     _validate_kernel(kernel)
     return kernel
@@ -594,36 +607,39 @@ def calc_sum(array):
 
     Example
     -------
-    >>>     from xrspatial.focal import calc_sum
-    >>>     import numpy as np
+    .. plot::
+       :include-source:
 
-    >>>     # 1D Array of Integers
-    >>>     array1 = np.array([1, 2, 3, 4, 5])
-    >>>     array1
-    ...     [1 2 3 4 5]
+        from xrspatial.focal import calc_sum
+        import numpy as np
 
-    >>>     # Calculate Sum
-    >>>     array_sum = calc_sum(array1)
-    >>>     print(array_sum)
-    ...     15
+        # 1D Array of Integers
+        array1 = np.array([1, 2, 3, 4, 5])
+        array1
+        ...     [1 2 3 4 5]
 
-    >>>     # 2D Array of Floats
-    >>>     array2 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-    >>>     print(array2)
-    ...     [[1. 2. 3.]
-    ...      [4. 5. 6.]]
+        # Calculate Sum
+        array_sum = calc_sum(array1)
+        print(array_sum)
+        ...     15
 
-    >>>     # Calculate Sum
-    >>>     array_sum = calc_sum(array2)
-    >>>     print(array_sum)
-    ...     21.0
+        # 2D Array of Floats
+        array2 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        print(array2)
+        ...     [[1. 2. 3.]
+        ...      [4. 5. 6.]]
 
-    >>>     # 3D Array of Integers
-    >>>     array3 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
-    >>>     print(array3)
-    ...     [[1 2 3]
-    ...      [4 5 6]
-    ...      [7 8 9]]
+        # Calculate Sum
+       array_sum = calc_sum(array2)
+       print(array_sum)
+        ...     21.0
+
+        # 3D Array of Integers
+        array3 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+        print(array3)
+        ...     [[1 2 3]
+        ...      [4 5 6]
+        ...      [7 8 9]]
 
     >>>     # Calculate Sum
     >>>     agg_sum = calc_sum(array3)
@@ -652,31 +668,34 @@ def upper_bound_p_value(zscore):
 
     Example
     -------
-    >>>     from xrspatial.focal import upper_bound_p_value
-    >>>     import numpy as np
-    >>>     import scipy.stats as stats
+    .. plot::
+       :include-source:
 
-    >>>     data = np.array([6, 7, 7, 12, 13, 13, 15, 16, 19, 22])
-    >>>     print(data)
-    ...     [ 6  7  7 12 13 13 15 16 19 22]
+        from xrspatial.focal import upper_bound_p_value
+        import numpy as np
+        import scipy.stats as stats
 
-    >>>     zscore = stats.zscore(data)
-    >>>     print(zscore)
-    ...     [-1.39443338 -1.19522861 -1.19522861 -0.19920477  0.          0.
-    ...       0.39840954  0.5976143   1.19522861  1.79284291]
+        data = np.array([6, 7, 7, 12, 13, 13, 15, 16, 19, 22])
+        print(data)
+        ...     [ 6  7  7 12 13 13 15 16 19 22]
 
-    >>>     for i in zscore:
-    >>>         print(upper_bound_p_value(i))
-    ...     0.0985
-    ...     1.0
-    ...     1.0
-    ...     1.0
-    ...     1.0
-    ...     1.0
-    ...     1.0
-    ...     1.0
-    ...     1.0
-    ...     0.0495
+        zscore = stats.zscore(data)
+        print(zscore)
+        ...     [-1.39443338 -1.19522861 -1.19522861 -0.19920477  0.          0.
+        ...       0.39840954  0.5976143   1.19522861  1.79284291]
+
+        for i in zscore:
+            print(upper_bound_p_value(i))
+        ...     0.0985
+        ...     1.0
+        ...     1.0
+        ...     1.0
+        ...     1.0
+        ...     1.0
+        ...     1.0
+        ...     1.0
+        ...     1.0
+        ...     0.0495
     """
     if abs(zscore) >= 2.33:
         return 0.0099
@@ -754,95 +773,80 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     from xrspatial import generate_terrain
-    >>>     from xrspatial.focal import apply, circle_kernel
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
+    .. plot::
+       :include-source:
 
-    >>>     # Create Canvas
-    >>>     W = 500 
-    >>>     H = 300
-    >>>     cvs = ds.Canvas(plot_width = W,
-    >>>                     plot_height = H,
-    >>>                     x_range = (-20e6, 20e6),
-    >>>                     y_range = (-20e6, 20e6))
-    >>>     # Generate Example Terrain
-    >>>     terrain_agg = generate_terrain(canvas = cvs)
-    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
-    >>>                                             'Max Elevation': '3000',
-    >>>                                             'units': 'meters'})
-    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-    >>>     terrain_agg = terrain_agg.rename('example_terrain')
-    >>>     # Shade Terrain
-    >>>     terrain_img = shade(agg = terrain_agg,
-    >>>                         cmap = Elevation,
-    >>>                         how = 'linear')
-    >>>     print(terrain_agg[200:203, 200:202])
-    >>>     terrain_img
-    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
-    ...     array([[1264.02249454, 1261.94748873],
-    ...            [1285.37061171, 1282.48046696],
-    ...            [1306.02305679, 1303.40657515]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  3000
-    ...         units:          meters
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain, aspect
+        from xrspatial.focal import apply, circle_kernel
 
-            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
 
-    >>>     # Create Kernel
-    >>>     kernel = circle_kernel(10, 10, 100)
-    >>>     print(kernel)
-    ...     [[0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 1. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0.]
-    ...      [0. 0. 0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0. 0. 0.]
-    ...      [0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0.]
-    ...      [0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0.]
-    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
-    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
-    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
-    ...      [0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0.]
-    ...      [0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0.]
-    ...      [0. 0. 0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0. 0. 0.]
-    ...      [0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 1. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0.]]
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'Max Elevation': '3000',
+                                                'units': 'km'})
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
 
-    >>>     # Apply Kernel
-    >>>     agg = apply(raster = terrain_agg,
-    >>>                 kernel = kernel,
-    >>>                 x = 'lon',
-    >>>                 y = 'lat')
-    >>>     img = shade(agg = agg,
-    >>>                 cmap = Elevation)
-    >>>     print(agg[200:203, 200:202])
-    >>>     img
-    ...     <xarray.DataArray (lat: 3, lon: 2)>
-    ...     array([[1307.19361419, 1302.6913412 ],
-    ...            [1323.55780616, 1318.75925071],
-    ...            [1342.3309894 , 1336.93787754]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  3000
-    ...         units:          meters
+        # Create Kernel
+        kernel = circle_kernel(10, 10, 100)
 
-            .. image :: ./docs/source/_static/img/docstring/apply_example.png
+        # Apply Kernel
+        agg = apply(raster = terrain_agg,
+                    kernel = kernel,
+                    x = 'lon',
+                    y = 'lat')
+
+        # Plot Arrays
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("New Terrain")
+
+    .. plot::
+       :include-source:
+
+        print(terrain_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        ...     array([[1264.02249454, 1261.94748873],
+        ...            [1285.37061171, 1282.48046696],
+        ...            [1306.02305679, 1303.40657515]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Example Terrain
+        ...         Max Elevation:  3000
+        ...         units:          km
+        ...     
+        ...         .. plot::
+        ...            :include-source:
+
+        print(agg[200:203, 200:202])
+
+        ...     <xarray.DataArray (lat: 3, lon: 2)>
+        ...     array([[1307.19361419, 1302.6913412 ],
+        ...            [1323.55780616, 1318.75925071],
+        ...            [1342.3309894 , 1336.93787754]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Example Terrain
+        ...         Max Elevation:  3000
+        ...         units:          km
 
     """
 
@@ -925,103 +929,81 @@ def hotspots(raster: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     from xrspatial import generate_terrain
-    >>>     from xrspatial.focal import hotspots, circle_kernel
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
+    .. plot::
+       :include-source:
 
-    >>>     # Create Canvas
-    >>>     W = 500 
-    >>>     H = 300
-    >>>     cvs = ds.Canvas(plot_width = W,
-    >>>                     plot_height = H,
-    >>>                     x_range = (-20e6, 20e6),
-    >>>                     y_range = (-20e6, 20e6))
-    >>>     # Generate Example Terrain
-    >>>     terrain_agg = generate_terrain(canvas = cvs)
-    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
-    >>>                                             'Max Elevation': '3000',
-    >>>                                             'units': 'meters'})
-    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-    >>>     terrain_agg = terrain_agg.rename('example_terrain')
-    >>>     # Shade Terrain
-    >>>     terrain_img = shade(agg = terrain_agg,
-    >>>                         cmap = Elevation,
-    >>>                         how = 'linear')
-    >>>     print(terrain_agg[200:203, 200:202])
-    >>>     terrain_img
-    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
-    ...     array([[1264.02249454, 1261.94748873],
-    ...            [1285.37061171, 1282.48046696],
-    ...            [1306.02305679, 1303.40657515]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  3000
-    ...         units:          meters
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain, aspect
+        from xrspatial.focal import hotspots, circle_kernel
 
-            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
 
-    >>>     # Create Kernel
-    >>>     kernel = circle_kernel(10, 10, 100)
-    >>>     print(kernel)
-    ...     [[0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 1. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0.]
-    ...      [0. 0. 0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0. 0. 0.]
-    ...      [0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0.]
-    ...      [0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0.]
-    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
-    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0.]
-    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
-    ...      [0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0.]
-    ...      [0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0.]
-    ...      [0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0.]
-    ...      [0. 0. 0. 0. 0. 0. 1. 1. 1. 1. 1. 1. 1. 1. 1. 0. 0. 0. 0. 0. 0.]
-    ...      [0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 1. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0.]]
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'Max Elevation': '3000',
+                                                'units': 'km'})
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
 
-    >>>      # Create Hotspots Aggregate array
-    >>>     hotspots_agg = hotspots(raster = terrain_agg,
-    >>>                             kernel = kernel,
-    >>>                             x = 'lon',
-    >>>                             y = 'lat')
-    >>>     # Shade Image
-    >>>     hotspots_img = shade(agg = hotspots_agg,
-    >>>                          cmap = ['white', 'red'],
-    >>>                          alpha = 150)
-    >>>     print(hotspots_agg[200:203, 200:202])
-    >>>     hotspots_img
-    ...     <xarray.DataArray (lat: 3, lon: 2)>
-    ...     array([[0, 0],
-    ...            [0, 0],
-    ...            [0, 0]], dtype=int8)
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  3000
-    ...         units:          meters
+        # Create Kernel
+        kernel = circle_kernel(10, 10, 100)
 
-            .. image :: ./docs/source/_static/img/docstring/hotspot_example.png
+        # Create Hotspots Aggregate array
+        hotspots_agg = hotspots(raster = terrain_agg,
+                                kernel = kernel,
+                                x = 'lon',
+                                y = 'lat')
+        hotspots_agg = hotspots_agg.assign_attrs({'Description': 'Hotspots',
+                                            'units': 'correlation'})
+        # Plot Arrays
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        hotspots_agg.plot(aspect = 2, size = 4)
+        plt.title("Hotspots")
 
-    >>>     # Combine Images
-    >>>     composite_img = stack(terrain_img, hotspots_img)
-    >>>     composite_img
+    .. plot::
+       :include-source:
 
-            .. image :: ./docs/source/_static/img/docstring/hotspot_composite.png
+        print(terrain_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        ...     array([[1264.02249454, 1261.94748873],
+        ...            [1285.37061171, 1282.48046696],
+        ...            [1306.02305679, 1303.40657515]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Example Terrain
+        ...         Max Elevation:  3000
+        ...         units:          km
+
+    .. plot::
+       :include-source:
+
+        print(hotspots_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray (lat: 3, lon: 2)>
+        ...     array([[0, 0],
+        ...            [0, 0],
+        ...            [0, 0]], dtype=int8)
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Hotspots
+        ...         Max Elevation:  3000
+        ...         units:          correlation
 
     """
 
