@@ -4,8 +4,6 @@ import numba as nb
 
 from numba import cuda
 
-from PIL import Image
-
 from xarray import DataArray
 import dask.array as da
 
@@ -1506,17 +1504,22 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
 @ngjit
 def _normalize_data_cpu(data, min_val, max_val, pixel_max):
     out = np.zeros_like(data)
+    out[:] = np.nan
+
     range_val = max_val - min_val
     rows, cols = data.shape
+
+    c = 10
+    th = .125
+
     # check range_val to avoid dividing by zero
     if range_val != 0:
         for y in range(rows):
             for x in range(cols):
                 val = data[y, x]
                 norm = (val - min_val) / range_val
-
                 # sigmoid contrast enhancement
-                # norm = 1 / (1 + np.exp(c * (th - norm)))
+                norm = 1 / (1 + np.exp(c * (th - norm)))
                 out[y, x] = norm * pixel_max
     return out
 
@@ -1553,224 +1556,81 @@ def _normalize_data(agg, pixel_max=255.0):
     return out
 
 
-def true_color(r, g, b, nodata=1):
-    """
-    Create true color image from 3 bands red, green and blue
-    Parameters:
-    ----------
-    r: xarray.DataArray
-        2D array of red band data.
-        (Sentinel 2: Band 4)
-    g: xarray.DataArray
-        2D array of green band data.
-        (Sentinel 2: Band 3)
-    b: xarray.DataArray
-        2D array of blue band data.
-        (Sentinel 2: Band 2)
+def _alpha_numpy(red, nodata):
+    a = np.where(np.logical_or(np.isnan(red), red <= nodata), 0, 255)
+    return a
 
-    Returns
-    ----------
-    PIL Image
-    """
+
+def _alpha_dask(red, nodata):
+    a = da.where(da.logical_or(da.isnan(red), red <= nodata), 0, 255)
+    return a
+
+
+def _alpha_cupy(red, nodata):
+    raise NotImplementedError('Not Supported')
+
+
+def _alpha_dask_cupy(red, nodata):
+    raise NotImplementedError('Not Supported')
+
+
+def _alpha(red, nodata=1):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_alpha_numpy,
+                                      dask_func=_alpha_dask,
+                                      cupy_func=None,
+                                      dask_cupy_func=None)
+    out = mapper(red)(red.data, nodata)
+    return out
+
+
+def _true_color_numpy(r, g, b, nodata):
+    a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
 
     h, w = r.shape
+    out = np.zeros((h, w, 4), dtype=np.uint8)
 
-    data = np.zeros((h, w, 4), dtype=np.uint8)
-    data[:, :, 0] = (_normalize_data(r)).astype(np.uint8)
-    data[:, :, 1] = (_normalize_data(g)).astype(np.uint8)
-    data[:, :, 2] = (_normalize_data(b)).astype(np.uint8)
-
-    a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
-    data[:, :, 3] = a.astype(np.uint8)
-
-    return Image.fromarray(data, 'RGBA')
-
-
-def ndsi(green_agg: DataArray, swir1_agg: DataArray, name='ndsi'):
-    """
-    """
-    validate_arrays(green_agg, swir1_agg)
-
-    mapper = ArrayTypeFunctionMapping(
-        numpy_func=_normalized_ratio_cpu,
-        dask_func=_run_normalized_ratio_dask,
-        cupy_func=_run_normalized_ratio_cupy,
-        dask_cupy_func=_run_normalized_ratio_dask_cupy,
-    )
-
-    out = mapper(green_agg)(green_agg.data, swir1_agg.data)
-
-    return DataArray(out,
-                     name=name,
-                     coords=green_agg.coords,
-                     dims=green_agg.dims,
-                     attrs=green_agg.attrs)
-
-
-@ngjit
-def _ratio_cpu(arr1, arr2):
-    out = np.zeros(arr1.shape, dtype=np.float32)
-    rows, cols = arr1.shape
-    for y in range(0, rows):
-        for x in range(0, cols):
-            numerator = arr1[y, x]
-            denominator = arr2[y, x]
-            if denominator == 0.0:
-                continue
-            else:
-                out[y, x] = numerator / denominator
+    pixel_max = 255
+    out[:, :, 0] = (_normalize_data(r, pixel_max)).astype(np.uint8)
+    out[:, :, 1] = (_normalize_data(g, pixel_max)).astype(np.uint8)
+    out[:, :, 2] = (_normalize_data(b, pixel_max)).astype(np.uint8)
+    out[:, :, 3] = a.astype(np.uint8)
     return out
 
 
-def _ratio_dask(arr1, arr2):
-    out = da.map_blocks(_ratio_cpu, arr1, arr2,
-                        meta=np.array(()))
+def _true_color_dask(r, g, b, nodata):
+    pixel_max = 255
+    red = (_normalize_data(r, pixel_max)).astype(np.uint8)
+    green = (_normalize_data(g, pixel_max)).astype(np.uint8)
+    blue = (_normalize_data(b, pixel_max)).astype(np.uint8)
+
+    alpha = _alpha(r, nodata).astype(np.uint8)
+
+    out = da.stack([red, green, blue, alpha], axis=-1)
     return out
 
 
-@cuda.jit
-def _ratio_gpu(arr1, arr2, out):
-    y, x = cuda.grid(2)
-    if y < out.shape[0] and x < out.shape[1]:
-        numerator = arr1[y, x]
-        denominator = arr2[y, x]
-        if denominator != 0.0:
-            out[y, x] = numerator / denominator
-
-
-def _ratio_cupy(arr1, arr2):
-    griddim, blockdim = cuda_args(arr1.shape)
-    out = cupy.empty(arr1.shape, dtype='f4')
-    out[:] = cupy.nan
-    _ratio_gpu[griddim, blockdim](arr1, arr2, out)
-    return out
-
-
-def _ratio_dask_cupy(arr1, arr2):
-    out = da.map_blocks(_ratio_cupy, arr1, arr2,
-                        dtype=cupy.float32, meta=cupy.array(()))
-    return out
-
-
-def ratio(agg1, agg2, name='ratio'):
-
-    # calculate ratio agg1.data / agg2.data
-
-    validate_arrays(agg1, agg2)
-    mapper = ArrayTypeFunctionMapping(numpy_func=_ratio_cpu,
-                                      dask_func=_ratio_dask,
-                                      cupy_func=_ratio_cupy,
-                                      dask_cupy_func=_ratio_dask_cupy)
-    out = mapper(agg1)(agg1.data, agg2.data)
-    return DataArray(out,
-                     name=name,
-                     coords=agg1.coords,
-                     dims=agg1.dims,
-                     attrs=agg1.attrs)
-
-
-@ngjit
-def _thresholding_cpu(data, lower, upper):
-    out = np.zeros_like(data)
-    rows, cols = out.shape
-    for y in range(rows):
-        for x in range(cols):
-            if data[y, x] < lower:
-                out[y, x] = 0
-            elif data[y, x] > upper:
-                out[y, x] = upper
-            else:
-                out[y, x] = data[y, x]
-    return out
-
-
-def _thresholding_numpy(data, lower, upper):
-    out = _thresholding_cpu(data, lower, upper)
-    out = _normalize_data_numpy(out, pixel_max=1.0)
-    # TODO: handle nans?
-    # replace nans with nan_value
-    # out[~np.isfinite(out)] = nan_value
-    return out
-
-
-def _thresholding_dask(data, lower, upper):
-    out = da.map_blocks(_thresholding_cpu, data, lower, upper,
-                        meta=np.array(()))
-    out = _normalize_data_dask(out, pixel_max=1.0)
-    return out
-
-
-def _thresholding_cupy(data, lower, upper):
+def _true_color_cupy(r, g, b, nodata):
     raise NotImplementedError('Not Supported')
 
 
-def _thresholding_dask_cupy(data, lower, upper):
+def _true_color_dask_cupy(r, g, b, nodata):
     raise NotImplementedError('Not Supported')
 
 
-def _thresholding(agg, lower, upper):
-    mapper = ArrayTypeFunctionMapping(numpy_func=_thresholding_numpy,
-                                      dask_func=_thresholding_dask,
-                                      cupy_func=_thresholding_cupy,
-                                      dask_cupy_func=_thresholding_dask_cupy)
-    out = mapper(agg)(agg.data, lower, upper)
-    return out
+def true_color(r, g, b, nodata=1, name='true_color'):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_true_color_numpy,
+                                      dask_func=_true_color_dask,
+                                      cupy_func=_true_color_cupy,
+                                      dask_cupy_func=_true_color_dask_cupy)
+    out = mapper(r)(r, g, b, nodata)
 
-
-def drop_clouds(red, green, blue, nir, swir1, name='drop_clouds'):
-    """
-    Algorithm references:
-    - https://earth.esa.int/c/document_library/get_file?folderId=349490&name=DLFE-4518.pdf # noqa
-    - https://sentinels.copernicus.eu/web/sentinel/technical-guides/sentinel-2-msi/level-2a/algorithm # noqa
-
-    """
-
-    # step 1a: _thresholding_numpy red
-    lower_red = 0.07
-    upper_red = 0.25
-    normalized_red = _normalize_data(red, pixel_max=1.)
-    prob_red = _thresholding(DataArray(normalized_red), lower_red, upper_red)
-
-    # step 1b: Normalised Difference Snow Index (NDSI)
-    lower_ndsi = -0.24
-    upper_ndsi = 0.16
-    _ndsi = ndsi(green, swir1)
-    prob_ndsi = _thresholding(_ndsi, lower_ndsi, upper_ndsi)
-
-    # step 3: NDVI
-    lower_ndiv = 0.36
-    upper_ndvi = 0.4
-    _ndvi = ndvi(nir, red)
-    prob_ndvi = 1 - _thresholding(_ndvi, lower_ndiv, upper_ndvi)
-
-    # step 4: Ratio Band 8 / Band 3 for senescing vegetation
-    lower_ng = 1.5
-    upper_ng = 2.5
-    ratio_ng = ratio(nir, green)
-    prob_ng = 1 - _thresholding(ratio_ng, lower_ng, upper_ng)
-
-    # step 5: Ratio Band 2 / Band 11 for soils and water bodies
-    ratio_bs = ratio(blue, swir1)
-    # Pass 1 for soils detection
-    lower_bs1 = 0.55
-    upper_bs1 = 0.8
-    prob_bs1 = _thresholding(ratio_bs, lower_bs1, upper_bs1)
-    # Pass 2 for water bodies detection
-    lower_bs2 = 2.0
-    upper_bs2 = 4.0
-    prob_bs2 = 1 - _thresholding(ratio_bs, lower_bs2, upper_bs2)
-
-    # step 6: Ratio Band 8 / band 11 for rocks and sands in deserts
-    lower_ns = 0.9
-    upper_ns = 1.1
-    ratio_ns = ratio(nir, swir1)
-    prob_ns = _thresholding(ratio_ns, lower_ns, upper_ns)
-
-    out = prob_red * prob_ndsi * prob_ndvi * \
-        prob_ng * prob_bs1 * prob_bs2 * prob_ns
+    # TODO: output metadata: coords, dims, atts
+    _dims = ['y', 'x', 'band']
+    _coords = {'y': r['y'],
+               'x': r['x'],
+               'band': [0, 1, 2, 3]}
 
     return DataArray(out,
-                     name=name,
-                     coords=red.coords,
-                     dims=red.dims,
-                     attrs=red.attrs)
+                     dims=_dims,
+                     coords=_coords
+                     )

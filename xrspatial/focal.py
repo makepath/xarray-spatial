@@ -12,7 +12,6 @@ from xrspatial.convolution import convolve_2d
 
 from typing import Optional
 
-warnings.simplefilter('default')
 
 # TODO: Make convolution more generic with numba first-class functions.
 
@@ -50,8 +49,10 @@ def _get_distance(distance_str):
 
     unit = DEFAULT_UNIT
     if len(splits) == 1:
-        warnings.warn('Raster distance unit not provided. '
-                      'Use meter as default.', Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn('Raster distance unit not provided. '
+                          'Use meter as default.', Warning)
     elif len(splits) == 2:
         unit = splits[1]
 
@@ -135,8 +136,10 @@ def calc_cellsize(raster: xr.DataArray,
         unit = raster.attrs['unit']
     else:
         unit = DEFAULT_UNIT
-        warnings.warn('Raster distance unit not provided. '
-                      'Use meter as default.', Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn('Raster distance unit not provided. '
+                          'Use meter as default.', Warning)
 
     # TODO: check coordinate system
     #       if in lat-lon, need to convert to meter, lnglat_to_meters
@@ -297,8 +300,10 @@ def annulus_kernel(cellsize_x: int,
 
     if r_outer - r_inner < np.sqrt((cellsize_x / 2)**2 +
                                    (cellsize_y / 2)**2):
-        warnings.warn('Annulus radii are closer than cellsize distance.',
-                      Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            warnings.warn('Annulus radii are closer than cellsize distance.',
+                          Warning)
 
     # Get the two circular kernels for the annulus
     kernel_outer = circle_kernel(cellsize_x, cellsize_y, outer_radius)

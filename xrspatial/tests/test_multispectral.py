@@ -20,8 +20,6 @@ from xrspatial.multispectral import savi
 from xrspatial.multispectral import gci
 from xrspatial.multispectral import sipi
 from xrspatial.multispectral import true_color
-from xrspatial.multispectral import ratio
-from xrspatial.multispectral import drop_clouds
 
 
 max_val = 2**16 - 1
@@ -798,99 +796,8 @@ def test_true_color_cpu():
     blue_dask = create_test_arr(arr3, backend='dask')
     dask_result = true_color(red_dask, green_dask, blue_dask)
 
-    assert np.isclose(
-        np.asarray(numpy_result), np.asarray(dask_result), equal_nan=True
-    ).all()
-
-
-def test_ratio_cpu():
-
-    # vanilla numpy version
-    agg1 = create_test_arr(arr1)
-    agg2 = create_test_arr(arr2)
-    numpy_result = ratio(agg1, agg2)
-
-    # dask
-    agg1_dask = create_test_arr(arr1, backend='dask')
-    agg2_dask = create_test_arr(arr2, backend='dask')
-
-    dask_result = ratio(agg1_dask, agg2_dask)
+    # TODO: test output metadata: dims, coords, attrs
+    assert isinstance(numpy_result, xa.DataArray)
     assert isinstance(dask_result.data, da.Array)
-
-    dask_result = dask_result.compute()
-    assert np.isclose(numpy_result, dask_result.data, equal_nan=True).all()
-
-
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_ratio_gpu():
-
-    import cupy
-
-    # vanilla numpy version
-    agg1 = create_test_arr(arr1)
-    agg2 = create_test_arr(arr2)
-    numpy_result = ratio(agg1, agg2)
-
-    # cupy
-    agg1_cupy = create_test_arr(arr1, backend='cupy')
-    agg2_cupy = create_test_arr(arr2, backend='cupy')
-    cupy_result = ratio(agg1_cupy, agg2_cupy)
-
-    assert isinstance(cupy_result.data, cupy.ndarray)
-    assert np.isclose(numpy_result, cupy_result, equal_nan=True).all()
-
-    # dask + cupy
-    agg1_dask_cupy = create_test_arr(arr1, backend='dask+cupy')
-    agg2_dask_cupy = create_test_arr(arr2, backend='dask+cupy')
-    dask_cupy_result = ratio(agg1_dask_cupy, agg2_dask_cupy)
-
-    assert is_dask_cupy(dask_cupy_result)
-    dask_cupy_result = dask_cupy_result.compute()
-    assert np.isclose(
-        numpy_result,
-        dask_cupy_result.data,
-        equal_nan=True,
-        ).all()
-
-
-def test_drop_clouds_cpu():
-    red = np.random.rand(10, 10)
-    green = np.random.rand(10, 10)
-    blue = np.random.rand(10, 10)
-    nir = np.random.rand(10, 10)
-    swir1 = np.random.rand(10, 10)
-
-    # vanilla numpy version
-    red_agg = create_test_arr(red)
-    green_agg = create_test_arr(green)
-    blue_agg = create_test_arr(blue)
-    nir_agg = create_test_arr(nir)
-    swir1_agg = create_test_arr(swir1)
-
-    numpy_result = drop_clouds(
-        red_agg,
-        green_agg,
-        blue_agg,
-        nir_agg,
-        swir1_agg,
-    )
-
-    # dask
-    red_dask = create_test_arr(red, backend='dask')
-    green_dask = create_test_arr(green, backend='dask')
-    blue_dask = create_test_arr(blue, backend='dask')
-    nir_dask = create_test_arr(nir, backend='dask')
-    swir1_dask = create_test_arr(swir1, backend='dask')
-
-    dask_result = drop_clouds(
-        red_dask,
-        green_dask,
-        blue_dask,
-        nir_dask,
-        swir1_dask,
-    )
-
-    assert isinstance(dask_result.data, da.Array)
-
-    dask_result = dask_result.compute()
-    assert np.isclose(numpy_result, dask_result.data, equal_nan=True).all()
+    dask_result.data = dask_result.data.compute()
+    assert np.isclose(numpy_result, dask_result, equal_nan=True).all()
