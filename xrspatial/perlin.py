@@ -37,95 +37,91 @@ def perlin(width: int,
         - http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf
 
     Example
-    -------
-    >>>     from datashader.transfer_functions import shade
-    >>>     from xrspatial import perlin
+    .. plot::
+       :include-source:
 
-    >>>     # Default Noise Aggregate
-    >>>     perlin_default = perlin(width = 500, height = 300)
-    >>>     print(perlin_default[250:256, 150:154])
-    ...     <xarray.DataArray (y: 6, x: 4)>
-    ...     array([[0.5398953 , 0.53867152, 0.53743887, 0.53619742],
-    ...            [0.53621057, 0.53501437, 0.53380949, 0.53259599],
-    ...            [0.53253872, 0.53137001, 0.5301928 , 0.52900716],
-    ...            [0.52888066, 0.52773933, 0.52658969, 0.5254318 ],
-    ...            [0.52523726, 0.5241232 , 0.52300102, 0.52187079],
-    ...            [0.52160935, 0.52052245, 0.51942763, 0.51832494]])
-    ...     Dimensions without coordinates: y, x
-    ...     Attributes:
-    ...         res:      1
+        import matplotlib.pyplot as plt
+        from xrspatial import perlin
 
-    >>>     # Shade Image
-    >>>     perlin_default_img = shade(perlin_default)
-    >>>     perlin_default_img
+        # Generate Perlin Noise Aggregate
+        perlin_default = perlin(width = 500, height = 300)
 
-            .. image :: ./docs/source/_static/img/docstring/perlin_example.png
+        # With Increased x Frequency
+        perlin_high_x_freq = perlin(width = 500, height = 300, freq = (5, 1))
 
-    >>>     # Increased x Frequency
-    >>>     perlin_high_x_freq = perlin(width = 500,
-    >>>                                 height = 300,
-    >>>                                 freq = (5, 1),
-    >>>                                 seed = 3)
-    >>>     print(perlin_high_x_freq[250:256, 150:154])
-    ...     <xarray.DataArray (y: 6, x: 4)>
-    ...     array([[0.03455066, 0.03698676, 0.0398157 , 0.04302266],
-    ...            [0.03599555, 0.03846388, 0.04132664, 0.04456897],
-    ...            [0.03746666, 0.03996852, 0.04286637, 0.04614528],
-    ...            [0.0389632 , 0.04149989, 0.04443408, 0.04775076],
-    ...            [0.04048437, 0.0430572 , 0.04602897, 0.04938461],
-    ...            [0.04202938, 0.04463964, 0.04765022, 0.05104599]])
-    ...     Dimensions without coordinates: y, x
-    ...     Attributes:
-    ...         res:      1
+        # With Increased y Frequency
+        perlin_high_y_freq = perlin(width = 500, height = 300, freq = (1, 5))
 
-    >>>     # Shade Image
-    >>>     perlin_high_x_freq_img = shade(perlin_high_x_freq)
-    >>>     perlin_high_x_freq_img
+        # With a Different Seed
+        perlin_seed_1 = perlin(width = 500, height = 300, seed = 1)
 
-            .. image :: ./docs/source/_static/img/docstring/perlin_example_x.png
+        # Plot Default Perlin
+        perlin_default.plot(cmap = 'inferno', aspect = 2, size = 4)
+        plt.title("Default")
 
-    >>>     # Increased y Frequency
-    >>>     perlin_high_y_freq = perlin(width = 500,
-    >>>                                 height = 300,
-    >>>                                 freq = (1, 5),
-    >>>                                 seed = 3)
-    >>>     print(perlin_high_y_freq[250:256, 150:154])
-    ...     <xarray.DataArray (y: 6, x: 4)>
-    ...     array([[0.16069496, 0.15846582, 0.15624912, 0.15404513],
-    ...            [0.16830904, 0.16612992, 0.16396296, 0.16180843],
-    ...            [0.17707647, 0.17495495, 0.17284527, 0.17074769],
-    ...            [0.18701164, 0.18495538, 0.18291061, 0.18087757],
-    ...            [0.19811672, 0.19613343, 0.19416121, 0.19220029],
-    ...            [0.21038244, 0.20847973, 0.20658764, 0.2047064 ]])
-    ...     Dimensions without coordinates: y, x
-    ...     Attributes:
-    ...         res:      1
+        # Plot High x Frequency
+        perlin_high_x_freq.plot(cmap = 'inferno', aspect = 2, size = 4)
+        plt.title("High x Frequency")
 
-    >>>     # Shade Image
-    >>>     perlin_high_y_freq_img = shade(perlin_high_y_freq)
-    >>>     perlin_high_y_freq_img
+        # Plot High y Frequency
+        perlin_high_y_freq.plot(cmap = 'inferno', aspect = 2, size = 4)
+        plt.title("High y Frequency")
 
-            .. image :: ./docs/source/_static/img/docstring/perlin_example_y.png
+        # Plot Seed = 1
+        perlin_seed_1.plot(cmap = 'inferno', aspect = 2, size = 4)
+        plt.title("Seed = 1")
 
-    >>>     # Different Seed
-    >>>     perlin_seed_1 = perlin(width = 500, height = 300, seed = 1)
-    >>>     print(perlin_seed_1[250:256, 150:154])
-    ...     <xarray.DataArray (y: 6, x: 4)>
-    ...     array([[0.48914834, 0.48723859, 0.48532976, 0.4834222 ],
-    ...            [0.49598854, 0.49405708, 0.49212637, 0.49019678],
-    ...            [0.50280309, 0.50085   , 0.49889751, 0.49694596],
-    ...            [0.50959052, 0.50761589, 0.5056417 , 0.50366828],
-    ...            [0.51634941, 0.51435333, 0.51235753, 0.51036234],
-    ...            [0.52307839, 0.52106096, 0.51904364, 0.51702677]])
-    ...     Dimensions without coordinates: y, x
-    ...     Attributes:
-    ...         res:      1
+    .. plot::
+       :include-source:
 
-    >>>     # Shade Image
-    >>>     perlin_seed_1_img = shade(perlin_seed_1)
-    >>>     perlin_seed_1_img
+        print(perlin_default[200:203, 200: 202])
 
-            .. image :: ./docs/source/_static/img/docstring/perlin_example_seed.png
+        ...     <xarray.DataArray (y: 3, x: 2)>
+        ...     array([[0.56800979, 0.56477393],
+        ...            [0.56651744, 0.56331014],
+        ...            [0.56499184, 0.56181344]])
+        ...     Dimensions without coordinates: y, x
+        ...     Attributes:
+        ...         res:      1
+
+    .. plot::
+       :include-source:
+
+        print(perlin_high_x_freq[200:203, 200: 202])
+
+        ...     <xarray.DataArray (y: 3, x: 2)>
+        ...     array([[0.5       , 0.48999444],
+        ...            [0.5       , 0.48999434],
+        ...            [0.5       , 0.48999425]])
+        ...     Dimensions without coordinates: y, x
+        ...     Attributes:
+        ...         res:      1
+
+    .. plot::
+       :include-source:
+
+        print(perlin_high_y_freq[200:203, 200: 202])
+
+        ...     <xarray.DataArray (y: 3, x: 2)>
+        ...     array([[0.31872961, 0.31756859],
+        ...            [0.2999256 , 0.2988189 ],
+        ...            [0.28085118, 0.27979834]])
+        ...     Dimensions without coordinates: y, x
+        ...     Attributes:
+        ...         res:      1
+
+    .. plot::
+       :include-source:
+
+        print(perlin_seed_1[200:203, 200: 202])
+
+        ...     <xarray.DataArray (y: 3, x: 2)>
+        ...     array([[0.12991498, 0.12984185],
+        ...            [0.13451158, 0.13441514],
+        ...            [0.13916956, 0.1390495 ]])
+        ...     Dimensions without coordinates: y, x
+        ...     Attributes:
+        ...         res:      1
 
     """
 
