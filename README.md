@@ -215,3 +215,7 @@ With the introduction of projects like Numba, Python gained new ways to provide 
 - @SAN154
 - @SapirLastimoza-Dooley
 - @lex-c
+
+Cite our code:
+
+`makepath/xarray-spatial, https://github.com/makepath/xarray-spatial, ©2020.`
