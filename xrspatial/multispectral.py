@@ -108,7 +108,7 @@ def arvi(nir_agg: xr.DataArray,
 
         import matplotlib.pyplot as plt
         from xrspatial.multispectral import arvi
-        from datasets import get_data
+        from xrspatial.datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
@@ -293,7 +293,7 @@ def evi(nir_agg: xr.DataArray,
 
         import matplotlib.pyplot as plt
         from xrspatial.multispectral import evi
-        from datasets import get_data
+        from xrspatial.datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
@@ -470,7 +470,7 @@ def gci(nir_agg: xr.DataArray,
 
         import matplotlib.pyplot as plt
         from xrspatial.multispectral import gci
-        from datasets import get_data
+        from xrspatial.datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
@@ -582,7 +582,7 @@ def nbr(nir_agg: xr.DataArray,
 
         import matplotlib.pyplot as plt
         from xrspatial.multispectral import nbr
-        from datasets import get_data
+        from xrspatial.datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
@@ -699,7 +699,7 @@ def nbr2(swir1_agg: xr.DataArray,
 
         import matplotlib.pyplot as plt
         from xrspatial.multispectral import nbr2
-        from datasets import get_data
+        from xrspatial.datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
@@ -808,7 +808,7 @@ def ndvi(nir_agg: xr.DataArray,
 
         import matplotlib.pyplot as plt
         from xrspatial.multispectral import ndvi
-        from datasets import get_data
+        from xrspatial.datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
@@ -922,7 +922,7 @@ def ndmi(nir_agg: xr.DataArray,
 
         import matplotlib.pyplot as plt
         from xrspatial.multispectral import ndmi
-        from datasets import get_data
+        from xrspatial.datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
@@ -1138,7 +1138,7 @@ def savi(nir_agg: xr.DataArray,
 
         import matplotlib.pyplot as plt
         from xrspatial.multispectral import savi
-        from datasets import get_data
+        from xrspatial.datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')
@@ -1303,7 +1303,7 @@ def sipi(nir_agg: xr.DataArray,
 
         import matplotlib.pyplot as plt
         from xrspatial.multispectral import sipi
-        from datasets import get_data
+        from xrspatial.datasets import get_data
 
         # Open Example Data
         data = get_data('sentinel-2')

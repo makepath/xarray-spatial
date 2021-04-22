@@ -37,6 +37,7 @@ def perlin(width: int,
         - http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf
 
     Example
+    -------
     .. plot::
        :include-source:
 

@@ -254,7 +254,7 @@ def aspect(agg: xr.DataArray,
     .. plot::
        :include-source:
 
-    print(aspect_agg[200:203, 200:202])
+        print(aspect_agg[200:203, 200:202])
 
         ...     <xarray.DataArray 'Aspect' (lat: 3, lon: 2)>
         ...     array([[ 8.18582638,  8.04675084],

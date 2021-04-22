@@ -141,18 +141,18 @@ def calc_cellsize(raster: xr.DataArray,
 
         print(terrain_agg[200:203, 200:202])
 
-<xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-array([[1264.02249454, 1261.94748873],
-       [1285.37061171, 1282.48046696],
-       [1306.02305679, 1303.40657515]])
-Coordinates:
-  * lon      (lon) float64 -3.96e+06 -3.88e+06
-  * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-Attributes:
-    res:            1
-    Description:    Example Terrain
-    Max Elevation:  3000
-    units:          km
+        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        ...     array([[1264.02249454, 1261.94748873],
+        ...            [1285.37061171, 1282.48046696],
+        ...            [1306.02305679, 1303.40657515]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Example Terrain
+        ...         Max Elevation:  3000
+        ...         units:          km
 
     .. plot::
        :include-source:
@@ -393,7 +393,8 @@ def custom_kernel(kernel):
                                  [0., 1., 1., 1., 1., 1., 1., 1., 0.],
                                  [0., 0., 1., 1., 1., 1., 1., 0., 0.],
                                  [0., 0., 0., 0., 1., 0., 0., 0., 0.]])
-        print(kernel.shape)
+        
+        print(valid_kernel.shape)
         ...     (9, 9)
 
         print(custom_kernel(valid_kernel))
@@ -407,6 +408,9 @@ def custom_kernel(kernel):
         ...      [0. 0. 1. 1. 1. 1. 1. 0. 0.]
         ...      [0. 0. 0. 0. 1. 0. 0. 0. 0.]]
 
+    .. plot::
+       :include-source:
+
         even_kernel = np.array([[0., 0., 0., 1., 1., 0., 0., 0.],
                                 [0., 0., 1., 1., 1., 1., 0., 0.],
                                 [0., 1., 1., 1., 1., 1., 1., 0.],
@@ -415,6 +419,7 @@ def custom_kernel(kernel):
                                 [0., 1., 1., 1., 1., 1., 1., 0.],
                                 [0., 0., 1., 1., 1., 1., 0., 0.],
                                 [0., 0., 0., 1., 1., 0., 0., 0.]])
+        
         print(even_kernel.shape)
         ...     (8, 8)
 
@@ -422,6 +427,9 @@ def custom_kernel(kernel):
         ...     ValueError: Received custom kernel with improper dimensions.,
         ...     A custom kernel needs to have an odd shape, the supplied kernel
         ...     has 8 rows and 8 columns.
+
+    .. plot::
+       :include-source:
 
         list_kernel = [[0., 0., 0., 0., 1., 0., 0., 0., 0.],
                        [0., 0., 1., 1., 1., 1., 1., 0., 0.],
@@ -432,6 +440,7 @@ def custom_kernel(kernel):
                        [0., 1., 1., 1., 1., 1., 1., 1., 0.],
                        [0., 0., 1., 1., 1., 1., 1., 0., 0.],
                        [0., 0., 0., 0., 1., 0., 0., 0., 0.]]
+        
         print(len(list_kernel))
         print(len(list_kernel[0]))
         ...     9
@@ -441,6 +450,7 @@ def custom_kernel(kernel):
         ...     ValueError: Received a custom kernel that is not a Numpy array.,
         ...     The kernel received was of type <class 'list'> and needs to be of
         ...     type `ndarray` 
+
     """
     _validate_kernel(kernel)
     return kernel
@@ -545,7 +555,7 @@ def mean(agg: xr.DataArray,
     .. plot::
        :include-source:
 
-    print(terrain_agg[200:203, 200:202])
+        print(terrain_agg[200:203, 200:202])
 
         ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
         ...     array([[1264.02249454, 1261.94748873],
@@ -563,7 +573,7 @@ def mean(agg: xr.DataArray,
     .. plot::
        :include-source:
 
-    print(mean_agg[200:203, 200:202])
+        print(mean_agg[200:203, 200:202])
 
         ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
         ...     array([[1266.57706238, 1264.26875373],
@@ -834,7 +844,7 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
     .. plot::
        :include-source:
 
-    print(terrain_agg[200:203, 200:202])
+        print(terrain_agg[200:203, 200:202])
 
         ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
         ...     array([[1264.02249454, 1261.94748873],
@@ -852,7 +862,7 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
     .. plot::
        :include-source:
 
-    print(agg[200:203, 200:202])
+        print(agg[200:203, 200:202])
 
         ...     <xarray.DataArray (lat: 3, lon: 2)>
         ...     array([[1307.19361419, 1302.6913412 ],
