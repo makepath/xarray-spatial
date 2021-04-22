@@ -6,7 +6,6 @@ from xrspatial.utils import ngjit
 from typing import Union, Optional
 
 import warnings
-warnings.simplefilter('default')
 
 
 NONE = -1
@@ -350,7 +349,9 @@ def a_star_search(surface: xr.DataArray,
         start_py, start_px = _find_nearest_pixel(start_py, start_px,
                                                  surface.data, barriers)
     if _is_not_crossable(surface.data[start_py, start_px], barriers):
-        warnings.warn('Start at a non crossable pixel', Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter("default")
+            warnings.warn('Start at a non crossable pixel', Warning)
 
     goal_py, goal_px = _find_pixel_id(goal[0], goal[1], x_coords, y_coords)
     if snap_goal:
@@ -358,10 +359,14 @@ def a_star_search(surface: xr.DataArray,
         goal_py, goal_px = _find_nearest_pixel(goal_py, goal_px,
                                                surface.data, barriers)
     if _is_not_crossable(surface.data[goal_py, goal_px], barriers):
-        warnings.warn('End at a non crossable pixel', Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter("default")
+            warnings.warn('End at a non crossable pixel', Warning)
 
     if start_py == NONE or goal_py == NONE:
-        warnings.warn('No valid pixels in input surface', Warning)
+        with warnings.catch_warnings():
+            warnings.simplefilter("default")
+            warnings.warn('No valid pixels in input surface', Warning)
 
     # 2d output image that stores the path
     path_img = np.zeros_like(surface, dtype=np.float64)

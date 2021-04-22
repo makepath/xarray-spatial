@@ -27,10 +27,10 @@ install_requires = [
     'pyct <=0.4.6',
     'param >=1.6.1',
     'distributed >=2021.03.0',
+    'spatialpandas'
 ]
 
 examples = [
-    'spatialpandas',
 ]
 
 # Additional tests dependencies and examples_extra may be needed in the future
