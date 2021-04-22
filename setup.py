@@ -46,14 +46,18 @@ extras_require['doc'] = extras_require['examples'] + ['numpydoc']
 
 extras_require['all'] = sorted(set(sum(extras_require.values(), [])))
 
-version = param.version.get_setup_version(__file__, 'xrspatial',
+version = param.version.get_setup_version(__file__, 'xarray-spatial',
+                                          pkgname='xrspatial',
                                           archive_commit="$Format:%h$")
 
 if 'sdist' in sys.argv and 'bdist_wheel' in sys.argv:
     try:
+        version_test = version.split('.post')[1]
         version = version.split('.post')[0]
     except IndexError:
         version = version.split('+')[0]
+    if version == None:
+        sys.exit('invalid version')
 
 
 # metadata for setuptools

@@ -31,25 +31,25 @@ git push origin "$version"
 
 # run sdist and upload twine
 python setup.py sdist bdist_wheel
-twine upload --username=username --password=password dist/*
+twine upload --username="$username" --password="$password" dist/*
 
 
 # test out in new env
-conda deactivate
-cd ..
-mkdir test_cli || cd .
-cd test_cli || exit
-rm -rf xrspatial-examples
-conda deactivate
-conda create -n test_cli -y
-conda activate test_cli
-conda install -c anaconda pip -y
-version_arr=(${version//v/ })
-version_num=${version_arr[1]}
-sleep 10s
-pip install xarray-spatial=="$version_num"
-xrspatial examples
-pip uninstall xarray-spatial -y
-ls xrspatial-examples
-conda deactivate
-cd ../xarray-spatial || exit
+# conda deactivate
+# cd ..
+# mkdir test_cli || cd .
+# cd test_cli || exit
+# rm -rf xrspatial-examples
+# conda deactivate
+# conda create -n test_cli -y
+# conda activate test_cli
+# conda install -c anaconda pip -y
+# version_arr=(${version//v/ })
+# version_num=${version_arr[1]}
+# sleep 10s
+# pip install xarray-spatial=="$version_num"
+# xrspatial examples
+# pip uninstall xarray-spatial -y
+# ls xrspatial-examples
+# conda deactivate
+# cd ../xarray-spatial || exit
