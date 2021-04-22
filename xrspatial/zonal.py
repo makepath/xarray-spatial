@@ -50,28 +50,83 @@ def stats(zones: xr.DataArray,
         is a zone with zone id.
 
     Example
-    -------
-    >>>     zones_val = np.array([[1, 1, 0, 2],
-    >>>                          [0, 2, 1, 2]])
-    >>>     zones = xarray.DataArray(zones_val)
-    >>>     values_val = np.array([[2, -1, 5, 3],
-    >>>                           [3, np.nan, 20, 10]])
-    >>>     values = xarray.DataArray(values_val)
+    .. plot::
+       :include-source:
 
-    >>>     # default setting
-    >>>     df = stats(zones, values)
-    >>>     df
-                mean	max 	min 	std     	var
-            1	7.0 	20.0	-1.0	9.273618	86.00
-            2	6.5	    10.0   	3.0	    3.500000	12.25
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.classify import equal_interval
+        from xrspatial.zonal import stats
 
-    >>>     # custom stat
-    >>>     custom_stats ={'sum': lambda val: val.sum()}
-    >>>     df = stats(zones, values, stat_funcs=custom_stats)
-    >>>     df
-                sum
-            1	21.0
-            2	13.0
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
+
+
+        # Generate Values
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+        # Create Zones
+        equal_interval_agg = equal_interval(agg = terrain_agg, name = 'Elevation')
+        equal_interval_agg = equal_interval_agg.astype('int')
+
+        # Edit Attributes
+        equal_interval_agg = equal_interval_agg.assign_attrs({'Description': 'Example Equal Interval'})
+
+        # Plot Terrain (Values)
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain (Values)")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Equal Interval (Zones)
+        equal_interval_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Equal Interval (Zones)")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        # Calculate Stats
+        stats_agg = stats(zones = equal_interval_agg, values = terrain_agg)
+        print(stats_agg)
+
+        ...               mean          max          min         std           var    count
+        ...     1  1346.099206  1599.980772  1200.014238  107.647012  11587.879265  52698.0
+        ...     2  1867.613738  2399.949943  1600.049783  207.072933  42879.199507  22987.0
+        ...     3  2716.967940  3199.499889  2400.079093  215.475764  46429.804756   4926.0
+        ...     4  3491.072129  4000.000000  3200.057209  182.752194  33398.364467   1373.0
+
+    .. plot::
+       :include-source:
+
+        # Custom Stats
+        custom_stats ={'sum': lambda val: val.sum()}
+        custom_stats_agg = stats(zones = equal_interval_agg,
+                                 values = terrain_agg,
+                                 stat_funcs=custom_stats)
+        print(custom_stats_agg)
+
+        ...                 sum
+        ...     1  7.093674e+07
+        ...     2  4.293084e+07
+        ...     3  1.338378e+07
+        ...     4  4.793242e+06
+
     """
 
     if zones.shape != values.shape:
@@ -232,12 +287,97 @@ def crosstab(zones: xr.DataArray,
 
     layer: str, default = None
         name of the layer inside the `values` DataArray for getting the values.
+
     Returns
     -------
     crosstab_df : pandas.DataFrame
         A pandas DataFrame where each column is a categorical value
         and each row is a zone with zone id.
         Each entry presents the percentage of the category over the zone.
+
+    Example
+    -------
+    .. plot::
+       :include-source:
+
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.classify import equal_interval
+        from xrspatial.zonal import crosstab
+
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
+
+
+        # Generate Values
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+        # Create Zones
+        equal_interval_agg = equal_interval(agg = terrain_agg, name = 'Elevation')
+        equal_interval_agg = equal_interval_agg.astype('int')
+
+        # Edit Attributes
+        equal_interval_agg = equal_interval_agg.assign_attrs({'Description': 'Example Equal Interval'})
+
+        # Plot Terrain (Values)
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain (Values)")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Equal Interval (Zones)
+        equal_interval_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Equal Interval (Zones)")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        # Calculate Crosstab
+        crosstab_agg = crosstab(zones = equal_interval_agg, values = terrain_agg)
+        print(crosstab_agg)
+
+        ...        0.000000     1200.014238  1200.014864  1200.021077  1200.027001  \
+        ...     1          0.0     0.000019     0.000019     0.000019     0.000019   
+        ...     2          0.0     0.000000     0.000000     0.000000     0.000000   
+        ...     3          0.0     0.000000     0.000000     0.000000     0.000000   
+        ...     4          0.0     0.000000     0.000000     0.000000     0.000000   
+        ...     
+        ...        1200.030954  1200.034319  1200.038300  1200.042588  1200.042805  ...  \
+        ...     1     0.000019     0.000019     0.000019     0.000019     0.000019  ...   
+        ...     2     0.000000     0.000000     0.000000     0.000000     0.000000  ...   
+        ...     3     0.000000     0.000000     0.000000     0.000000     0.000000  ...   
+        ...     4     0.000000     0.000000     0.000000     0.000000     0.000000  ...   
+        ...     
+        ...        3932.764078  3946.456024  3947.505026  3952.279254  3957.748147  \
+        ...     1     0.000000     0.000000     0.000000     0.000000     0.000000   
+        ...     2     0.000000     0.000000     0.000000     0.000000     0.000000   
+        ...     3     0.000000     0.000000     0.000000     0.000000     0.000000   
+        ...     4     0.000728     0.000728     0.000728     0.000728     0.000728   
+        ...     
+        ...        3968.600152  3973.840684  3989.509344  3998.678232  4000.000000  
+        ...     1     0.000000     0.000000     0.000000     0.000000     0.000000  
+        ...     2     0.000000     0.000000     0.000000     0.000000     0.000000  
+        ...     3     0.000000     0.000000     0.000000     0.000000     0.000000  
+        ...     4     0.000728     0.000728     0.000728     0.000728     0.000728  
+        ...     
+        ...     [4 rows x 81984 columns]
+
     """
 
     if not isinstance(zones, xr.DataArray):
@@ -639,6 +779,7 @@ def regions(raster: xr.DataArray,
         4 or 8 pixel-based connectivity
     name: str, default = 'regions'
         output xr.DataArray.name property
+
     Returns
     -------
     regions_agg : xarray.DataArray
@@ -647,6 +788,93 @@ def regions(raster: xr.DataArray,
     -----
     Area Numbering implementing based on:
         - http://spatial-analyst.net/ILWIS/htm/ilwisapp/areanumbering_algorithm.htm
+
+    Example
+    -------
+    .. plot::
+       :include-source:
+
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.zonal import regions
+
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
+
+
+        # Generate Values
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+        # Create Regions
+        regions_agg = regions(terrain_agg)
+
+        # Edit Attributes
+        regions_agg = regions_agg.assign_attrs({'Description': 'Example Regions',
+                                                 'units': ''})
+        regions_agg = regions_agg.rename('Region Value')
+
+        # Plot Terrain (Values)
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain (Values)")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Regions
+        regions_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Regions")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(terrain_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        ...     array([[1264.02249454, 1261.94748873],
+        ...            [1285.37061171, 1282.48046696],
+        ...            [1306.02305679, 1303.40657515]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Example Terrain
+        ...         units:          km
+        ...         Max Elevation:  4000
+
+    .. plot::
+       :include-source:
+
+        print(regions_agg[200:203, 200:202])
+
+        ...     <xarray.DataArray 'Region Value' (lat: 3, lon: 2)>
+        ...     array([[39557., 39558.],
+        ...            [39943., 39944.],
+        ...            [40327., 40328.]])
+        ...     Coordinates:
+        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
+        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        ...     Attributes:
+        ...         res:            1
+        ...         Description:    Example Regions
+        ...         units:          
+        ...         Max Elevation:  4000
+
     """
 
     if neighborhood not in (4, 8):
@@ -772,6 +1000,85 @@ def trim(raster: xr.DataArray,
     Notes
     -----
     This operation will change the output size of the raster
+
+    Example
+    -------
+    .. plot::
+       :include-source:
+
+        import datashader as ds
+        import numpy as np 
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.zonal import trim
+
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
+
+
+        # Generate Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+        terrain_agg = terrain_agg.astype('int')
+
+        # Trim Image
+        trimmed_agg = trim(raster = terrain_agg, values = [0])
+
+        # Edit Attributes
+        trimmed_agg = trimmed_agg.assign_attrs({'Description': 'Example Trim'})
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Trimmed Terrain
+        trimmed_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Trim")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(terrain_agg.shape)
+
+        ...     (300, 500)
+
+    .. plot::
+       :include-source:
+
+        print(terrain_agg.attrs)
+
+        ...     {'res': 1, 'Description': 'Example Terrain', 'units': 'km', 'Max Elevation': '4000'}
+
+    .. plot::
+       :include-source:
+
+        print(trimmed_agg.shape)
+
+        ...     (268, 500)
+
+    .. plot::
+       :include-source:
+
+        print(trimmed_agg.attrs)
+
+        ...     {'res': 1, 'Description': 'Example Trim', 'units': 'km', 'Max Elevation': '4000'}
+
     """
 
     top, bottom, left, right = _trim(raster.data, values)
@@ -907,6 +1214,83 @@ def crop(zones: xr.DataArray,
     Notes
     -----
     This operation will change the output size of the raster
+
+    Example
+    -------
+    .. plot::
+       :include-source:
+
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.zonal import crop
+
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
+
+
+        # Generate Zones
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+        # Crop Image
+        values_agg = terrain_agg[0:300, 0:250]
+        cropped_agg = crop(zones = terrain_agg, values = values_agg, zones_ids = [0])
+
+        # Edit Attributes
+        cropped_agg = cropped_agg.assign_attrs({'Description': 'Example Crop'})
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Cropped Terrain
+        cropped_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Crop")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. plot::
+       :include-source:
+
+        print(terrain_agg.shape)
+        ...     (300, 500)
+
+    .. plot::
+       :include-source:
+
+        print(terrain_agg.attrs)
+
+        ...     {'res': 1, 'Description': 'Example Terrain', 'units': 'km', 'Max Elevation': '4000'}
+
+    .. plot::
+       :include-source:
+
+        print(cropped_agg.shape)
+
+        ...     (300, 250)
+
+    .. plot::
+       :include-source:
+
+        print(cropped_agg.attrs)
+
+        ...     {'res': 1, 'Description': 'Example Crop', 'units': 'km', 'Max Elevation': '4000'}
+
     """
 
     top, bottom, left, right = _crop(zones.data, zones_ids)
