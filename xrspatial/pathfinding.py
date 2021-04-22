@@ -280,8 +280,8 @@ def a_star_search(surface: xr.DataArray,
     Notes:
     ----------
     Algorithm References:
-    - https://www.redblobgames.com/pathfinding/a-star/implementation.html
-    - https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
+    - Patel, A, Red Blob Games, Implementation of A*, https://www.redblobgames.com/pathfinding/a-star/implementation.html, Accessed Apr. 21, 2021. # noqa
+    - Swift, N, Medium, Easy A* (star) Pathfinding, https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2, Accessed Apr. 21, 2021. # noqa
 
     Examples:
     ----------
