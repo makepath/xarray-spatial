@@ -1,10 +1,11 @@
 import os
-import sys
 import param
+
 
 version_before = param.version.get_setup_version(
     os.path.dirname(__file__),
-    'xrspatial',
+    'xarray-spatial',
+    pkgname='xrspatial',
     archive_commit="$Format:%h$")
 
 try:
@@ -15,5 +16,4 @@ except IndexError:
     version_tag = '.'.join((version_before.split('+')[0].rsplit('.', 1)[0],
                             str(int(version_before.split('+')[0]
                                     .rsplit('.', 1)[1]) + 1)))
-    print(f'v{version_tag}')
-    sys.exit(0)
+print(f'{version_before}')
