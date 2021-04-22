@@ -56,7 +56,7 @@ if 'sdist' in sys.argv and 'bdist_wheel' in sys.argv:
         version = version.split('.post')[0]
     except IndexError:
         version = version.split('+')[0]
-    if version == None:
+    if version is None:
         sys.exit('invalid version')
 
 
