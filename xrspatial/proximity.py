@@ -113,7 +113,7 @@ def manhattan_distance(x1: float, x2: float,
 
     x = x1 - x2
     y = y1 - y2
-    return np.sqrt(x * x) + np.sqrt(y * y)
+    return abs(x) + abs(y)
 
 
 @njit(nogil=True)
