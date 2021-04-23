@@ -1,5 +1,15 @@
 ## Xarray-Spatial Changelog
 -----------
+## Version 0.1.9 - 4/23/2021
+- Add deprecation warning to tiles module (#381)
+- Add user guide on the documentation website (#376)
+- Update docs design version mapping (#378)
+- Add Github Action to publish package to PyPI (#371)
+- Move Spatialpandas to core install requirements for it to work on JLabs (#372)
+- Add CONTRIBUTING.md (#374)
+- Update True_color to return a DataArray (#364)
+- Add get_data module and example sentinel-2 data (#358)
+
 ## Version 0.1.8 - 4/15/2021
 - Fixed pypi related error
 
