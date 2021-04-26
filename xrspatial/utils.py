@@ -139,7 +139,8 @@ def calc_res(raster):
 
     Notes:
     ----------
-    Sourced from datashader.utils
+    Sourced from datashader.utils:
+    - Holoviz/datashader, https://github.com/holoviz/datashader/blob/master/datashader/utils.py, Apr. 22, 2021. # noqa
     """
 
     h, w = raster.shape[-2:]

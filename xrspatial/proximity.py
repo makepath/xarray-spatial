@@ -51,7 +51,7 @@ def euclidean_distance(x1: float, x2: float, y1: float, y2: float) -> float:
     Notes:
     ----------
     Algorithm References:
-        https://en.wikipedia.org/wiki/Euclidean_distance#:~:text=In%20mathematics%2C%20the%20Euclidean%20distance,being%20called%20the%20Pythagorean%20distance.
+    - Wikipedia, Euclidean Distance, https://en.wikipedia.org/wiki/Euclidean_distance#:~:text=In%20mathematics%2C%20the%20Euclidean%20distance,being%20called%20the%20Pythagorean%20distance, Accessed Apr. 22, 2021. # noqa
 
     Examples:
     ----------
@@ -97,7 +97,7 @@ def manhattan_distance(x1: float, x2: float,
     Notes:
     ----------
     Algorithm References:
-        https://en.wikipedia.org/wiki/Taxicab_geometry
+    - Wikipedia, Taxicab Geometry, https://en.wikipedia.org/wiki/Taxicab_geometry, Accessed Apr. 22, 2021. # noqa
 
     Examples:
     ----------
@@ -146,7 +146,7 @@ def great_circle_distance(x1: float, x2: float,
     Notes:
     ----------
     Algorithm References:
-        https://en.wikipedia.org/wiki/Great-circle_distance#:~:text=The%20great%2Dcircle%20distance%2C%20orthodromic,line%20through%20the%20sphere's%20interior).
+    - Wikipedia, Great-circle Distance, https://en.wikipedia.org/wiki/Great-circle_distance#:~:text=The%20great%2Dcircle%20distance%2C%20orthodromic,line%20through%20the%20sphere, Accessed Apr. 22, 2021. # noqa
 
     Examples:
     ----------
@@ -544,7 +544,7 @@ def proximity(raster: xr.DataArray,
     Notes:
     ---------
     Algorithm References:
-        https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp
+    - OSGeo/gdal, https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp, Apr. 22, 2021. # noqa
 
     Example:
     ----------
@@ -638,7 +638,7 @@ def allocation(raster: xr.DataArray,
     Notes:
     ---------
     Algorithm References:
-        https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp
+    - OSGeo/gdal, https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp, Apr. 22, 2021. # noqa
     """
 
     allocation_img = _process(raster,
@@ -701,7 +701,7 @@ def direction(raster: xr.DataArray,
     Notes:
     ---------
     Algorithm References:
-        https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp
+    - OSGeo/gdal, https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp, Apr. 22, 2021. # noqa
     """
 
     direction_img = _process(raster,
