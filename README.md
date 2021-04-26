@@ -39,7 +39,7 @@ pip install xarray-spatial
 conda install -c conda-forge xarray-spatial
 ```
 
-### Dowloading our starter examples and data
+### Downloading our starter examples and data
 Once you have xarray-spatial installed in your environment, you can use one of the following in your terminal (with the environment active) to download our examples and/or sample data into your local directory. 
 
 ```xrspatial examples``` : Download the examples notebooks and the data used.  
