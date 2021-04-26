@@ -63,7 +63,7 @@ if 'sdist' in sys.argv and 'bdist_wheel' in sys.argv:
 # metadata for setuptools
 
 setup_args = dict(
-    name='xarray-spatial-chlochlo',
+    name='xarray-spatial',
     version=version,
     description='xarray-based spatial analysis tools',
     install_requires=install_requires,
