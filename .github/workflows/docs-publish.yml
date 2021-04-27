@@ -12,7 +12,7 @@ jobs:
           dotnet-version: '3.0.100'
       - name: Install dependencies
         run: |
-          apt-get install pandoc
+          sudo apt-get install pandoc
           python -m pip install --upgrade pip
           pip install setuptools \
                       wheel \
