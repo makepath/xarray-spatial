@@ -1,7 +1,8 @@
 name: Publish package to PyPI
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+       - '*'
 jobs:
   publish:
     runs-on: ubuntu-18.04
@@ -12,11 +13,10 @@ jobs:
         with:
           python-version: 3.8
       - name: Get release version
-        env:
-          TAG_VERSION: ${{ steps.vars.outputs.tag }}
         run: |
           echo "CHANGELOG_VERSION=$(cat CHANGELOG.md | grep -oP '(?<=###\s)(.*)(?=\s\-)' | head -n 1 | sed 's/Version\s/v/')" >> $GITHUB_ENV
           echo "CONDA_VERSION=$(cat conda.recipe/meta.yaml | grep -oP '(version\:.*)' | head -n 1 | sed 's/version\:\s/v/')" >> $GITHUB_ENV
+          echo "TAG_VERSION=`echo $(git describe --tags --abbrev=0)`" >> $GITHUB_ENV
       - name: Check changelog release version
         if: ${{ env.TAG_VERSION != env.CHANGELOG_VERSION }}
         run: |
