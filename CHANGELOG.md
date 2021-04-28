@@ -1,6 +1,9 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.2.0 - 4/28/2021
+- Test release for new github actions
+
 ### Version 0.1.9 - 4/27/2021
 - Deprecated tiles module (#381)
 - Added user guide on the documentation website (#376)
