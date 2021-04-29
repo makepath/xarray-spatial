@@ -8,7 +8,7 @@ Xarray-spatial documentation
 
 xarray-spatial grew out of the `Datashader project <https://datashader.org/>`_, which provides fast rasterization of vector data (points, lines, polygons, meshes, and rasters) for use with xarray-spatial.
 
-xarray-spatial does not depend on GDAL / GEOS, which makes it fully extensible in Python but does limit the breadth of operations that can be covered.  xarray-spatial is meant to include the core raster-a
+xarray-spatial does not depend on GDAL / GEOS, which makes it fully extensible in Python but does limit the breadth of operations that can be covered.  xarray-spatial is meant to include the core raster-analysis functions needed for GIS developers / analysts, implemented independently of the non-Python geo stack.
 
 -------
 
