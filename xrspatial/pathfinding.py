@@ -284,76 +284,67 @@ def a_star_search(surface: xr.DataArray,
 
     Example
     -------
-    >>>     import datashader as ds
-    >>>     from xrspatial import generate_terrain, a_star_search
-    >>>     from datashader.transfer_functions import shade, stack
-    >>>     from datashader.colors import Elevation
+    .. plot::
+       :include-source:
 
-    >>>     # Create Canvas
-    >>>     W = 500 
-    >>>     H = 300
-    >>>     cvs = ds.Canvas(plot_width = W,
-    >>>                     plot_height = H,
-    >>>                     x_range = (-20e6, 20e6),
-    >>>                     y_range = (-20e6, 20e6))
-    >>>     # Generate Example Terrain
-    >>>     terrain_agg = generate_terrain(canvas = cvs)
-    >>>     terrain_agg = terrain_agg.assign_attrs({'Description': 'Elevation',
-    >>>                                             'Max Elevation': '3000',
-    >>>                                             'units': 'meters'})
-    >>>     terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-    >>>     terrain_agg = terrain_agg.rename('example_terrain')
-    >>>     terrain_agg = terrain_agg.astype(dtype=int)
-    >>>     # Shade Terrain
-    >>>     terrain_img = shade(agg = terrain_agg,
-    >>>                         cmap = Elevation,
-    >>>                         how = 'linear')
-    >>>     print(terrain_agg[200:203, 200:202])
-    >>>     terrain_img
-    ...     <xarray.DataArray 'example_terrain' (lat: 3, lon: 2)>
-    ...     array([[1264, 1261],
-    ...            [1285, 1282],
-    ...            [1306, 1303]])
-    ...     Coordinates:
-    ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-    ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-    ...     Attributes:
-    ...         res:            1
-    ...         Description:    Elevation
-    ...         Max Elevation:  3000
-    ...         units:          meters
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.pathfinding import a_star_search
 
-            .. image :: ./docs/source/_static/img/docstring/terrain_example.png
+        # Create Canvas
+        W = 500 
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
 
-    >>>     # Choose 2 random locations
-    >>>     start = terrain_agg[3][100]
-    >>>     start_y = start.coords['lat'].data
-    >>>     start_x = start.coords['lon'].data
-    >>>     end = terrain_agg[298][250]
-    >>>     end_y = end.coords['lat'].data
-    >>>     end_x = end.coords['lon'].data
-    >>>     # Avoid Mountains and Water
-    >>>     barriers = list(range(2000, 3001))
-    >>>     barriers.append(0)
-    >>>     # Create Path Aggregate Array
-    >>>     path_agg = a_star_search(surface = terrain_agg,
-    >>>                              start = (start_y, start_x),
-    >>>                              goal = (end_y, end_x),
-    >>>                              barriers = barriers,
-    >>>                              x = 'lon',
-    >>>                              y = 'lat')
-    >>>     # Shade Image
-    >>>     path_img = dynspread(shade(path_agg, cmap = ['red']))
-    >>>     path_img_background = set_background(path_img, 'black')
-    >>>     path_img_background
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
 
-            .. image :: ./docs/source/_static/img/docstring/a_star_example.png
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
+                                                'units': 'km',
+                                                'Max Elevation': '4000'})
+        
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
 
-    >>>     # Combine Images
-    >>>     composite_img = stack(terrain_img, path_img)
-    >>>     composite_img
+        # Choose Start and End Points
+        start = terrain_agg[3][100]
+        start_y = start.coords['lat'].data
+        start_x = start.coords['lon'].data
 
-            .. image :: ./docs/source/_static/img/docstring/a_star_composite.png
+        end = terrain_agg[298][250]
+        end_y = end.coords['lat'].data
+        end_x = end.coords['lon'].data
+
+        # Avoid Water
+        barriers = [0]
+
+        # Create Path Aggregate Array
+        path_agg = a_star_search(surface = terrain_agg,
+                                 start = (start_y, start_x),
+                                 goal = (end_y, end_x),
+                                 barriers = barriers,
+                                 x = 'lon',
+                                 y = 'lat')
+
+        # Edit Attributes
+        path_agg = path_agg.rename('Distance')
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Path
+        path_agg.plot(aspect = 2, size = 4)
+        plt.title("Path")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
 
     """
 
