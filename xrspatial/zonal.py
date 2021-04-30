@@ -50,6 +50,7 @@ def stats(zones: xr.DataArray,
         is a zone with zone id.
 
     Example
+    -------
     .. plot::
        :include-source:
 
