@@ -625,7 +625,7 @@ def regions(raster: xr.DataArray,
     Notes:
     ----------
     Area Numbering implementing based on:
-        - http://spatial-analyst.net/ILWIS/htm/ilwisapp/areanumbering_algorithm.htm # noqa
+        - Hengl, T, Spatial Analyst, http://spatial-analyst.net/ILWIS/htm/ilwisapp/areanumbering_algorithm.htm, Accessed Apr. 22, 2021. # noqa
     """
 
     if neighborhood not in (4, 8):

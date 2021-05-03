@@ -45,6 +45,8 @@ extensions = [
     'sphinx.ext.viewcode',
     'sphinx.ext.autosummary',
     'sphinx_multiversion',
+    'nbsphinx',
+    'sphinx.ext.mathjax',
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -92,9 +94,9 @@ html_favicon = '_static/img/favicon.ico'
 # sphinx-multiversion config
 smv_branch_whitelist = 'master'
 if os.getenv('THEME') == 'sphinx_rtd_theme':
-    smv_tag_whitelist = r'^v([0]\.[1]\.[0-2]|[0]\.[0]\.[0-9])'
+    smv_tag_whitelist = r'^v([0]\.[1]\.[0-5]|[0]\.[0]\.[0-9])'
 else:
-    smv_tag_whitelist = r'^v([0-9]\.[1]\.[3-9]|[1-9]\.[0-9]\.[0-9])'
+    smv_tag_whitelist = r'^v([0-9]\.[1]\.[6-9]|[1-9]\.[0-9]\.[0-9])'
 
 # Load releases
 with open("releases.json") as f:
@@ -207,3 +209,6 @@ epub_title = project
 
 # A list of files that should not be packed into the epub file.
 epub_exclude_files = ['search.html']
+
+# nbsphinx configuration
+nbsphinx_allow_errors = True

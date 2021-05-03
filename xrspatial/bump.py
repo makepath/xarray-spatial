@@ -56,7 +56,7 @@ def bump(width: int, height: int, count: Optional[int] = None,
     Notes:
     ----------
     Algorithm References:
-        - http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf
+        - Nighbert, JS, Bureau of Land Management, Portland, OR, Using “Materials and Textures” in Cartographic Presentations A.K.A. “Bump Mapping”, http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf, Accessed Apr. 21, 2021. # noqa
 
     Examples:
     ----------
@@ -118,7 +118,7 @@ def bump(width: int, height: int, count: Optional[int] = None,
         res:      1
 
     Terrrain Example:
-        - https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html # noqa
+        - makepath, User Guide, https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html, Accessed Apr. 21, 2021. # noqa
     """
 
     linx = range(width)

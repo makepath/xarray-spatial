@@ -48,9 +48,9 @@ def generate_terrain(x_range: tuple = (0, 500),
     Notes:
     ----------
     Algorithm References:
-        - This was inspired by Michael McHugh's 2016 PyCon Canada talk:
-          https://www.youtube.com/watch?v=O33YV4ooHSo
-        - https://www.redblobgames.com/maps/terrain-from-noise/
+    - This was inspired by Michael McHugh's 2016 PyCon Canada talk: # noqa
+        - Michael McHugh, PyCon Canada, YouTube, Dec. 9, 2016, https://www.youtube.com/watch?v=O33YV4ooHSo, Accessed Apr. 22, 2021. # noqa
+    - Patel, A, Red Blob Games, Making maps with noise functions, https://www.redblobgames.com/maps/terrain-from-noise/, Accessed Apr. 22, 2021. # noqa
 
     Examples:
     ----------

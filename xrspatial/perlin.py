@@ -34,9 +34,9 @@ def perlin(width: int,
     Notes:
     ----------
     Algorithm References:
-        numba-ized from Paul Panzer example available here:
-        https://stackoverflow.com/questions/42147776/producing-2d-perlin-noise-with-numpy
-        http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf
+    - numba-ized from Paul Panzer example available here: #noqa
+        - tgirod, Panzer, Paul, StackOverflow, https://stackoverflow.com/questions/42147776/producing-2d-perlin-noise-with-numpy, Accessed Apr. 21, 2021. # noqa
+    - Nighbert, JS, Bureau of Land Management, Portland, OR, Using “Materials and Textures” in Cartographic Presentations A.K.A. “Bump Mapping”, http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf, Accessed Apr. 21, 2021. # noqa
 
     Examples:
     ----------
