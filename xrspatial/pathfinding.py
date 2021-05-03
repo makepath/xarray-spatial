@@ -236,8 +236,9 @@ def a_star_search(surface: xr.DataArray,
                   snap_goal: bool = False) -> xr.DataArray:
     """
     Calculates, for all inner cells of an array, the 2D convolution of
-    Calculate distance from a starting point to a goal through a surface
-    graph. Starting location and goal location should be within the graph.
+    Calculate distance from a starting point to a goal through a
+    surface graph. Starting location and goal location should be within
+    the graph.
     
     A* is a modification of Dijkstra’s Algorithm that is optimized for
     a single destination. Dijkstra’s Algorithm can find paths to all
@@ -257,33 +258,34 @@ def a_star_search(surface: xr.DataArray,
         (x, y) or (lon, lat) coordinates of the starting point.
     goal : array like object of 2 numeric elements
         (x, y) or (lon, lat) coordinates of the goal location.
-    barriers : array like object, default = []
-        List of values inside the surface which are barriers (cannot cross).
-    x : str, default = 'x'
+    barriers : array like object, default=[]
+        List of values inside the surface which are barriers
+        (cannot cross).
+    x : str, default='x'
         Name of the x coordinate in input surface raster.
-    y: str, default = 'x'
+    y: str, default='x'
         Name of the y coordinate in input surface raster.
-    connectivity : int, default = 8
-    snap_start: bool, default = False
+    connectivity : int, default=8
+    snap_start: bool, default=False
         Snap the start location to the nearest valid value before
         beginning pathfinding.
-    snap_goal: bool, default = False
+    snap_goal: bool, default=False
         Snap the goal location to the nearest valid value before
         beginning pathfinding.
+
     Returns
     -------
     path_agg: xr.DataArray of the same type as `surface`.
         2D array of pathfinding values.
         All other input attributes are preserved.
 
-    Notes
-    -----
-    Algorithm References
-        - https://www.redblobgames.com/pathfinding/a-star/implementation.html
-        - https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
+    References
+    ----------
+        - Red Blob Games: https://www.redblobgames.com/pathfinding/a-star/implementation.html
+        - Nicholas Swift: https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -304,9 +306,13 @@ def a_star_search(surface: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
         
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
@@ -345,9 +351,7 @@ def a_star_search(surface: xr.DataArray,
         plt.title("Path")
         plt.ylabel("latitude")
         plt.xlabel("longitude")
-
     """
-
     if surface.ndim != 2:
         raise ValueError("surface must be 2D")
 
