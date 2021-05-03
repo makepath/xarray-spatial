@@ -388,10 +388,13 @@ def _hotspots_dask_numpy(raster, kernel):
     # calculate z-scores
     global_mean = da.nanmean(raster.data)
     global_std = da.nanstd(raster.data)
-    if global_std == 0:
-        raise ZeroDivisionError(
-            "Standard deviation of the input raster values is 0."
-        )
+
+    # commented out to avoid early compute to check if global_std is zero
+    # if global_std == 0:
+    #     raise ZeroDivisionError(
+    #         "Standard deviation of the input raster values is 0."
+    #     )
+
     z_array = (mean_array - global_mean) / global_std
 
     _func = partial(_calc_hotspots_numpy)
