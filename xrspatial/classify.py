@@ -196,8 +196,8 @@ def reclassify(agg: xr.DataArray,
                new_values: List[int],
                name: Optional[str] = 'reclassify') -> xr.DataArray:
     """
-    Reclassifies data for array `agg` into new values based on user defined
-    bins.
+    Reclassifies data for array `agg` into new values based on user
+    defined bins.
 
     Parameters
     ----------
@@ -208,22 +208,21 @@ def reclassify(agg: xr.DataArray,
         Values or ranges of values to be changed.
     new_values : array-like object
         New values for each bin.
-    name : str, default = "reclassify"
+    name : str, default='reclassify'
         Name of output aggregate array.
 
     Returns
     -------
-    reclass_agg : xarray.DataArray, of the same type as `agg`.
+    reclass_agg : xarray.DataArray, of the same type as `agg`
         2D aggregate array of reclassified allocations.
         All other input attributes are preserved.
 
-    Notes
-    -----
-    Algorithm References
+    References
+    ----------
         - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -244,9 +243,13 @@ def reclassify(agg: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            },
+        )
         
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
@@ -260,7 +263,9 @@ def reclassify(agg: xr.DataArray,
                                  name = 'Elevation')
 
         # Edit Attributes
-        reclass_agg = reclass_agg.assign_attrs({'Description': 'Example Reclassify'})
+        reclass_agg = reclass_agg.assign_attrs(
+            {'Description': 'Example Reclassify'}
+        )
 
         # Plot Terrain
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
@@ -274,46 +279,36 @@ def reclassify(agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+                [1285.37061171, 1282.48046696],
+                [1306.02305679, 1303.40657515]])
+        Coordinates:
+            * lon      (lon) float64 -3.96e+06 -3.88e+06
+            * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
-
-    .. plot::
-       :include-source:
-
-        print(reclass_agg[200:203, 200:202])
-
-
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[2265., 2262.],
-        ...            [2286., 2283.],
-        ...            [2307., 2304.]], dtype=float32)
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Reclassify
-        ...         units:          km
-        ...         Max Elevation:  4000
-
-
+        >>> print(reclass_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[2265., 2262.],
+                [2286., 2283.],
+                [2307., 2304.]], dtype=float32)
+        Coordinates:
+            * lon      (lon) float64 -3.96e+06 -3.88e+06
+            * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Reclassify
+            units:          km
+            Max Elevation:  4000
     """
-
     if len(bins) != len(new_values):
         raise ValueError('bins and new_values mismatch.'
                          'Should have same length.')
@@ -405,28 +400,29 @@ def quantile(agg: xr.DataArray,
     agg : xarray.DataArray
         2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
         of values to be reclassified.
-    k : int, default = 4
+    k : int, default=4
         Number of quantiles to be produced.
-    name : str, default = "quantile"
-        Name of the output aggregate array.        
+    name : str, default='quantile'
+        Name of the output aggregate array.
+
     Returns
     -------
-    quantile_agg : xarray.DataArray, of the same type as `agg`.
+    quantile_agg : xarray.DataArray, of the same type as `agg`
         2D aggregate array, of quantile allocations.
         All other input attributes are preserved.
-        
+
     Notes
     -----
     Dask's percentile algorithm is approximate, while numpy's is exact.
     This may cause some differences between results of vanilla numpy
-    and dask version of the input agg.
-        - https://github.com/dask/dask/issues/3099
+    and dask version of the input agg. (https://github.com/dask/dask/issues/3099)
 
-    Algorithm References
+    References
+    ----------
         -  PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -472,44 +468,36 @@ def quantile(agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+                [1285.37061171, 1282.48046696],
+                [1306.02305679, 1303.40657515]])
+        Coordinates:
+            * lon      (lon) float64 -3.96e+06 -3.88e+06
+            * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
-
-    .. plot::
-       :include-source:
-
-        print(quantile_agg[200:203, 200:202])
-
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[2., 2.],
-        ...            [2., 2.],
-        ...            [2., 2.]], dtype=float32)
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Quantile
-        ...         units:          km
-        ...         Max Elevation:  4000
-
+        >>> print(quantile_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[2., 2.],
+                [2., 2.],
+                [2., 2.]], dtype=float32)
+        Coordinates:
+            * lon      (lon) float64 -3.96e+06 -3.88e+06
+            * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Quantile
+            units:          km
+            Max Elevation:  4000
     """
-
     q = _quantile(agg, k)
     k_q = q.shape[0]
     if k_q < k:
@@ -763,41 +751,40 @@ def natural_breaks(agg: xr.DataArray,
                    name: Optional[str] = 'natural_breaks',
                    k: int = 5) -> xr.DataArray:
     """
-
-    Reclassifies data for array `agg` into new values based on Natural Breaks or
-    K-Means clustering method. Values are grouped so that similar values are
-    placed in the same group and space between groups is maximized. 
+    Reclassifies data for array `agg` into new values based on Natural
+    Breaks or K-Means clustering method. Values are grouped so that
+    similar values are placed in the same group and space between
+    groups is maximized.
 
     Parameters
     ----------
     agg : xarray.DataArray
         2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
         of values to be reclassified.
-    num_sample : int, default = None
+    num_sample : int, default=None
         Number of sample data points used to fit the model.
         Natural Breaks (Jenks) classification is indeed O(n²) complexity,
         where n is the total number of data points, i.e: `agg.size`
         When n is large, we should fit the model on a small sub-sample
         of the data instead of using the whole dataset.
-    k : int, default = 5
+    k : int, default=5
         Number of classes to be produced.
-    name : str, default = "natural_breaks"
+    name : str, default='natural_breaks'
         Name of output aggregate.
 
     Returns
     -------
-    natural_breaks_agg : xarray.DataArray of the same type as `agg`.
+    natural_breaks_agg : xarray.DataArray of the same type as `agg`
         2D aggregate array of natural break allocations.
         All other input attributes are preserved.
 
-    Notes
-    -----
-    Algorithm References
-        - Map Classify: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks
-        - perrygeo: https://github.com/perrygeo/jenks/blob/master/jenks.pyx
+    References
+    ----------
+        - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks
+        - jenks: https://github.com/perrygeo/jenks/blob/master/jenks.pyx
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -843,43 +830,36 @@ def natural_breaks(agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
-
-    .. plot::
-       :include-source:
-
-        print(natural_breaks_agg[200:203, 200:202])
-
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1., 1.],
-        ...            [1., 1.],
-        ...            [1., 1.]], dtype=float32)
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Natural Breaks
-        ...         units:          km
-        ...         Max Elevation:  4000
+        >>> print(natural_breaks_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1., 1.],
+               [1., 1.],
+               [1., 1.]], dtype=float32)
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Natural Breaks
+            units:          km
+            Max Elevation:  4000
     """
-
     # numpy case
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy_natural_break(agg.data, num_sample, k)
@@ -953,33 +933,32 @@ def equal_interval(agg: xr.DataArray,
                    k: int = 5,
                    name: Optional[str] = 'equal_interval') -> xr.DataArray:
     """
-    Reclassifies data for array `agg` into new values based on intervals of
-    equal width.
+    Reclassifies data for array `agg` into new values based on intervals
+    of equal width.
 
     Parameters
     ----------
     agg : xarray.DataArray
         2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
         of values to be reclassified.
-    k : int, default = 5
+    k : int, default=5
         Number of classes to be produced.
-    name : str, default = "equal_interval"
+    name : str, default='equal_interval'
         Name of output aggregate.
 
     Returns
     -------
-    equal_interval_agg : xarray.DataArray of the same type as `agg`.
+    equal_interval_agg : xarray.DataArray of the same type as `agg`
         2D aggregate array of equal interval allocations.
         All other input attributes are preserved.
 
-    Notes
-    -----
-    Algorithm References:
-        - PySal: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval
-        - SciKit: https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py
+    References
+    ----------
+        - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval
+        - scikit-learn: https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -1025,44 +1004,38 @@ def equal_interval(agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+            [1285.37061171, 1282.48046696],
+            [1306.02305679, 1303.40657515]])
+        Coordinates:
+        * lon      (lon) float64 -3.96e+06 -3.88e+06
+        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
+    .. sourcecode:: python
 
-    .. plot::
-       :include-source:
-
-        print(equal_interval_agg[200:203, 200:202])
-
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1., 1.],
-        ...            [1., 1.],
-        ...            [1., 1.]], dtype=float32)
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Equal Interval
-        ...         units:          km
-        ...         Max Elevation:  4000
-
+        >>> print(equal_interval_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1., 1.],
+            [1., 1.],
+            [1., 1.]], dtype=float32)
+        Coordinates:
+        * lon      (lon) float64 -3.96e+06 -3.88e+06
+        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Equal Interval
+            units:          km
+            Max Elevation:  4000
     """
-
     # numpy case
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy_equal_interval(agg.data, k)
