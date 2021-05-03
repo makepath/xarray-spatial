@@ -134,8 +134,8 @@ def hillshade(agg: xr.DataArray,
 
     References
     ----------
-        - GeoExamples: http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html
-        
+        - GeoExamples: http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html # noqa
+
     Examples
     --------
     .. plot::
@@ -146,7 +146,7 @@ def hillshade(agg: xr.DataArray,
         from xrspatial import generate_terrain, hillshade
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -157,9 +157,13 @@ def hillshade(agg: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
         
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')

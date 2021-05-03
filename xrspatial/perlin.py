@@ -13,7 +13,7 @@ def perlin(width: int,
            seed: int = 5) -> xr.DataArray:
     """
     Generate perlin noise aggregate.
-    
+
     Parameters
     ----------
     width : int
@@ -32,8 +32,8 @@ def perlin(width: int,
 
     References
     ----------
-        - Paul Panzer: https://stackoverflow.com/questions/42147776/producing-2d-perlin-noise-with-numpy
-        - ICA: http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf
+        - Paul Panzer: https://stackoverflow.com/questions/42147776/producing-2d-perlin-noise-with-numpy # noqa
+        - ICA: http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf # noqa
 
     Examples
     --------

@@ -162,7 +162,7 @@ def aspect(agg: xr.DataArray,
     The value is measured clockwise in degrees with 0 and 360 at due
     north. Flat areas are given a value of -1. Values along the edges
     are not calculated.
-  
+
     Parameters
     ----------
     agg : xarray.DataArray
@@ -179,7 +179,7 @@ def aspect(agg: xr.DataArray,
 
     References
     ----------
-        - arcgis: http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm#ESRI_SECTION1_4198691F8852475A9F4BC71246579FAA
+        - arcgis: http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm#ESRI_SECTION1_4198691F8852475A9F4BC71246579FAA # noqa
 
     Examples
     --------
@@ -191,7 +191,7 @@ def aspect(agg: xr.DataArray,
         from xrspatial import generate_terrain, aspect
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -202,9 +202,13 @@ def aspect(agg: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
         
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
@@ -213,8 +217,12 @@ def aspect(agg: xr.DataArray,
         aspect_agg = aspect(agg = terrain_agg, name = 'Aspect')
 
         # Edit Attributes
-        aspect_agg = aspect_agg.assign_attrs({'Description': 'Example Aspect',
-                                              'units': 'deg'})
+        aspect_agg = aspect_agg.assign_attrs(
+            {
+                'Description': 'Example Aspect',
+                'units': 'deg',
+            }
+        )
 
         # Plot Terrain
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)

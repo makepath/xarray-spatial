@@ -35,7 +35,7 @@ def convolve_2d(image: xr.DataArray,
     -------
     convolve_agg : numpy.ndarray
         2D array representation of the impulse function.
-    
+
     Examples
     --------
     .. plot::

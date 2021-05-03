@@ -20,7 +20,7 @@ def generate_terrain(x_range: tuple = (0, 500),
     """
     Generates a pseudo-random terrain which can be helpful for testing
     raster functions.
-    
+
     Parameters
     ----------
     x_range : tuple, default=(0, 500)
@@ -60,7 +60,7 @@ def generate_terrain(x_range: tuple = (0, 500),
         from xrspatial import generate_terrain, aspect
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -78,7 +78,7 @@ def generate_terrain(x_range: tuple = (0, 500),
                 'Max Elevation': '4000',
             }
         )
-        
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 

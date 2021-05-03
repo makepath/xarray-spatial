@@ -53,7 +53,7 @@ def euclidean_distance(x1: float,
 
     References
     ----------
-        - Wikipedia: https://en.wikipedia.org/wiki/Euclidean_distance#:~:text=In%20mathematics%2C%20the%20Euclidean%20distance,being%20called%20the%20Pythagorean%20distance.
+        - Wikipedia: https://en.wikipedia.org/wiki/Euclidean_distance#:~:text=In%20mathematics%2C%20the%20Euclidean%20distance,being%20called%20the%20Pythagorean%20distance. # noqa
 
     Examples
     --------
@@ -65,7 +65,12 @@ def euclidean_distance(x1: float,
         >>> point_b = (312.54, 432.01)
 
         >>> # Calculate Euclidean Distance
-        >>> dist = euclidean_distance(point_a[0], point_b[0], point_a[1], point_b[1])
+        >>> dist = euclidean_distance(
+                point_a[0],
+                point_b[0],
+                point_a[1],
+                point_b[1],
+            )
         >>> print(dist)
         442.80462599209596
     """
@@ -114,7 +119,12 @@ def manhattan_distance(x1: float,
         >>> point_b = (312.54, 432.01)
 
         >>> # Calculate Euclidean Distance
-        >>> dist = manhattan_distance(point_a[0], point_b[0], point_a[1], point_b[1])
+        >>> dist = manhattan_distance(
+                point_a[0],
+                point_b[0],
+                point_a[1],
+                point_b[1],
+            )
         >>> print(dist)
         196075.9368
     """
@@ -154,7 +164,7 @@ def great_circle_distance(x1: float,
 
     References
     ----------
-        - Wikipedia: https://en.wikipedia.org/wiki/Great-circle_distance#:~:text=The%20great%2Dcircle%20distance%2C%20orthodromic,line%20through%20the%20sphere's%20interior).
+        - Wikipedia: https://en.wikipedia.org/wiki/Great-circle_distance#:~:text=The%20great%2Dcircle%20distance%2C%20orthodromic,line%20through%20the%20sphere's%20interior). # noqa
 
     Examples
     --------
@@ -167,7 +177,12 @@ def great_circle_distance(x1: float,
         >>> point_b = (178.0, 65.09)
 
         >>> # Calculate Euclidean Distance
-        >>> dist = great_circle_distance(point_a[0], point_b[0], point_a[1], point_b[1])
+        >>> dist = great_circle_distance(
+                point_a[0],
+                point_b[0],
+                point_a[1],
+                point_b[1],
+            )
         >>> print(dist)
         2378290.489801402
     """
@@ -560,7 +575,7 @@ def proximity(raster: xr.DataArray,
 
     References
     ----------
-        - OSGeo: https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp
+        - OSGeo: https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp # noqa
 
     Examples
     --------
@@ -572,7 +587,7 @@ def proximity(raster: xr.DataArray,
         from xrspatial import generate_terrain, proximity
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -590,7 +605,7 @@ def proximity(raster: xr.DataArray,
                 'Max Elevation': '4000',
             }
         )
-        
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
@@ -730,8 +745,8 @@ def allocation(raster: xr.DataArray,
 
     References
     ----------
-        - OSGeo: https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp
-    
+        - OSGeo: https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp # noqa
+
     Examples
     --------
     .. plot::
@@ -744,7 +759,7 @@ def allocation(raster: xr.DataArray,
         from xrspatial import generate_terrain, allocation
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -918,7 +933,7 @@ def direction(raster: xr.DataArray,
 
     References
     ----------
-        - OSGeo: https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp
+        - OSGeo: https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp # noqa
 
     Examples
     --------
@@ -932,7 +947,7 @@ def direction(raster: xr.DataArray,
         from xrspatial import generate_terrain, direction
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,

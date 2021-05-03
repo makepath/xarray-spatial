@@ -1530,7 +1530,7 @@ def viewshed(raster: xarray.DataArray,
         If it is invisible, then x is set to INVISIBLE.
         If it is visible,  then x is set to the vertical angle w.r.t
         the viewpoint.
-    
+
     Examples
     --------
     .. plot::
@@ -1543,7 +1543,7 @@ def viewshed(raster: xarray.DataArray,
         from xrspatial import generate_terrain, viewshed
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -1554,9 +1554,13 @@ def viewshed(raster: xarray.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
 
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')

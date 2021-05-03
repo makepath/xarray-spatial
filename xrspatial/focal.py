@@ -119,7 +119,7 @@ def calc_cellsize(raster: xr.DataArray,
         from xrspatial.focal import calc_cellsize
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -130,10 +130,14 @@ def calc_cellsize(raster: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000',})
-        
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
@@ -502,7 +506,7 @@ def mean(agg: xr.DataArray,
         from xrspatial.focal import mean
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -513,10 +517,14 @@ def mean(agg: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
-        
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
@@ -524,7 +532,11 @@ def mean(agg: xr.DataArray,
         mean_agg = mean(agg = terrain_agg, name = 'Elevation')
 
         # Edit Attributes
-        mean_agg = mean_agg.assign_attrs({'Description': 'Example Mean Filtered Terrain'})
+        mean_agg = mean_agg.assign_attrs(
+            {
+                'Description': 'Example Mean Filtered Terrain',
+            }
+        )
 
         # Plot Terrain
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
@@ -828,7 +840,7 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
         from xrspatial.focal import apply, circle_kernel
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -837,10 +849,14 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
 
         # Generate Example Terrain
         terrain_agg = generate_terrain(canvas = cvs)
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
-        
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
 
         # Edit Attributes
@@ -990,7 +1006,7 @@ def hotspots(raster: xr.DataArray,
         from xrspatial.focal import hotspots, circle_kernel
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -1001,10 +1017,14 @@ def hotspots(raster: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
-        
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
@@ -1016,11 +1036,16 @@ def hotspots(raster: xr.DataArray,
                                 kernel = kernel,
                                 x = 'lon',
                                 y = 'lat')
-        
+
         # Edit Attributes
         hotspots_agg = hotspots_agg.rename('Significance')
-        hotspots_agg = hotspots_agg.assign_attrs({'Description': 'Example Hotspots',
-                                                  'units': '%'})
+        hotspots_agg = hotspots_agg.assign_attrs(
+            {
+                'Description': 'Example Hotspots',
+                'units': '%',
+            }
+        )
+
         # Plot Terrain
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
         plt.title("Terrain")

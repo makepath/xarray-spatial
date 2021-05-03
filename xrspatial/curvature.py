@@ -126,7 +126,7 @@ def curvature(agg: xr.DataArray,
 
     References
     ----------
-        - arcgis: https://pro.arcgis.com/en/pro-app/latest/tool-reference/spatial-analyst/how-curvature-works.htm
+        - arcgis: https://pro.arcgis.com/en/pro-app/latest/tool-reference/spatial-analyst/how-curvature-works.htm # noqa
 
     Examples
     --------
@@ -139,7 +139,7 @@ def curvature(agg: xr.DataArray,
         from xrspatial import generate_terrain, curvature
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -157,7 +157,7 @@ def curvature(agg: xr.DataArray,
                 'Max Elevation': '4000',
             }
         )
-        
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 

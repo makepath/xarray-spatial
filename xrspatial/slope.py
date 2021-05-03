@@ -136,7 +136,7 @@ def slope(agg: xr.DataArray,
           name: str = 'slope') -> xr.DataArray:
     """
     Returns slope of input aggregate in degrees.
-    
+
     Parameters
     ----------
     agg : xr.DataArray
@@ -152,21 +152,21 @@ def slope(agg: xr.DataArray,
 
     References
     ----------
-        - arcgis: http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm
+        - arcgis: http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm # noqa
 
     Examples
     --------
     .. plot::
        :include-source:
 
-        import numpy as np 
-        import xarray as xr 
+        import numpy as np
+        import xarray as xr
         import datashader as ds
-        import matplotlib.pyplot as plt 
+        import matplotlib.pyplot as plt
         from xrspatial import generate_terrain, slope
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -177,9 +177,13 @@ def slope(agg: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
         
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')

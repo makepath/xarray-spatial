@@ -30,10 +30,10 @@ def _finish_bump(width, height, locs, heights, spread):
 
 
 def bump(width: int,
-        height: int,
-        count: Optional[int] = None,
-        height_func = None,
-        spread: int = 1) -> xr.DataArray:
+         height: int,
+         count: Optional[int] = None,
+         height_func=None,
+         spread: int = 1) -> xr.DataArray:
     """
     Generate a simple bump map to simulate the appearance of land
     features.
@@ -63,7 +63,7 @@ def bump(width: int,
 
     References
     ----------
-        - ICA: http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf
+        - ICA: http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf # noqa
 
     Examples
     --------
@@ -77,7 +77,7 @@ def bump(width: int,
         from functools import partial
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -88,9 +88,13 @@ def bump(width: int,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
         
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')

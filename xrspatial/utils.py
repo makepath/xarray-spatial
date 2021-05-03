@@ -254,7 +254,11 @@ def height_implied_by_aspect_ratio(W, X, Y):
         >>> plot_width = 1000
         >>> x_range = (0,35
         >>> y_range = (0, 70)
-        >>> plot_height = height_implied_by_aspect_ratio(plot_width, x_range, y_range)
+        >>> plot_height = height_implied_by_aspect_ratio(
+                plot_width,
+                x_range,
+                y_range,
+            )
     """
     return int((W * (Y[1] - Y[0])) / (X[1] - X[0]))
 

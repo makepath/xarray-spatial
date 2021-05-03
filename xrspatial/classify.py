@@ -218,7 +218,7 @@ def reclassify(agg: xr.DataArray,
 
     References
     ----------
-        - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html
+        - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html # noqa
 
     Examples
     --------
@@ -231,7 +231,7 @@ def reclassify(agg: xr.DataArray,
         from xrspatial.classify import reclassify
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -249,7 +249,7 @@ def reclassify(agg: xr.DataArray,
                 'Max Elevation': '4000',
             },
         )
-        
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
@@ -414,11 +414,11 @@ def quantile(agg: xr.DataArray,
     -----
         - Dask's percentile algorithm is approximate, while numpy's is exact.
         - This may cause some differences between results of vanilla numpy
-        and dask version of the input agg. (https://github.com/dask/dask/issues/3099)
+        and dask version of the input agg. (https://github.com/dask/dask/issues/3099) # noqa
 
     References
     ----------
-        -  PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles
+        -  PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles # noqa
 
     Examples
     --------
@@ -431,7 +431,7 @@ def quantile(agg: xr.DataArray,
         from xrspatial.classify import quantile
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -442,9 +442,13 @@ def quantile(agg: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
         
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
@@ -787,7 +791,7 @@ def natural_breaks(agg: xr.DataArray,
 
     References
     ----------
-        - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks
+        - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks # noqa
         - jenks: https://github.com/perrygeo/jenks/blob/master/jenks.pyx
 
     Examples
@@ -801,7 +805,7 @@ def natural_breaks(agg: xr.DataArray,
         from xrspatial.classify import natural_breaks
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -812,9 +816,13 @@ def natural_breaks(agg: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
         
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
@@ -961,8 +969,8 @@ def equal_interval(agg: xr.DataArray,
 
     References
     ----------
-        - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval
-        - scikit-learn: https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py
+        - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval # noqa
+        - scikit-learn: https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py # noqa
 
     Examples
     --------
@@ -975,7 +983,7 @@ def equal_interval(agg: xr.DataArray,
         from xrspatial.classify import equal_interval
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -986,9 +994,13 @@ def equal_interval(agg: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
         
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')

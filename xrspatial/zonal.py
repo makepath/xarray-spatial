@@ -16,10 +16,10 @@ def stats(zones: xr.DataArray,
     """
     Calculate summary statistics for each zone defined by a zone
     dataset, based on values aggregate.
-    
+
     A single output value is computed for every zone in the input zone
     dataset.
-    
+
     Parameters
     ----------
     zones : xr.DataArray
@@ -58,7 +58,7 @@ def stats(zones: xr.DataArray,
         from xrspatial.zonal import stats
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -70,19 +70,30 @@ def stats(zones: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
-        
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
         # Create Zones
-        equal_interval_agg = equal_interval(agg = terrain_agg, name = 'Elevation')
+        equal_interval_agg = equal_interval(
+            agg = terrain_agg,
+            name = 'Elevation',
+        )
         equal_interval_agg = equal_interval_agg.astype('int')
 
         # Edit Attributes
-        equal_interval_agg = equal_interval_agg.assign_attrs({'Description': 'Example Equal Interval'})
+        equal_interval_agg = equal_interval_agg.assign_attrs(
+            {
+                'Description': 'Example Equal Interval',
+            }
+        )
 
         # Plot Terrain (Values)
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
@@ -101,11 +112,11 @@ def stats(zones: xr.DataArray,
         >>> # Calculate Stats
         >>> stats_agg = stats(zones = equal_interval_agg, values = terrain_agg)
         >>> print(stats_agg)
-                  mean          max          min         std           var    count
-        1  1346.099206  1599.980772  1200.014238  107.647012  11587.879265  52698.0
-        2  1867.613738  2399.949943  1600.049783  207.072933  42879.199507  22987.0
-        3  2716.967940  3199.499889  2400.079093  215.475764  46429.804756   4926.0
-        4  3491.072129  4000.000000  3200.057209  182.752194  33398.364467   1373.0
+                  mean          max          min         std           var    count # noqa
+        1  1346.099206  1599.980772  1200.014238  107.647012  11587.879265  52698.0 # noqa
+        2  1867.613738  2399.949943  1600.049783  207.072933  42879.199507  22987.0 # noqa
+        3  2716.967940  3199.499889  2400.079093  215.475764  46429.804756   4926.0 # noqa
+        4  3491.072129  4000.000000  3200.057209  182.752194  33398.364467   1373.0 # noqa
 
         >>> # Custom Stats
         >>> custom_stats ={'sum': lambda val: val.sum()}
@@ -296,7 +307,7 @@ def crosstab(zones: xr.DataArray,
         from xrspatial.zonal import crosstab
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -308,19 +319,30 @@ def crosstab(zones: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
-        
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
         # Create Zones
-        equal_interval_agg = equal_interval(agg = terrain_agg, name = 'Elevation')
+        equal_interval_agg = equal_interval(
+            agg = terrain_agg,
+            name = 'Elevation',
+        )
         equal_interval_agg = equal_interval_agg.astype('int')
 
         # Edit Attributes
-        equal_interval_agg = equal_interval_agg.assign_attrs({'Description': 'Example Equal Interval'})
+        equal_interval_agg = equal_interval_agg.assign_attrs(
+            {
+                'Description': 'Example Equal Interval',
+            }
+        )
 
         # Plot Terrain (Values)
         terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
@@ -337,7 +359,10 @@ def crosstab(zones: xr.DataArray,
     .. sourcecode:: python
 
         >>> # Calculate Crosstab
-        >>> crosstab_agg = crosstab(zones = equal_interval_agg, values = terrain_agg)
+        >>> crosstab_agg = crosstab(
+                zones=equal_interval_agg,
+                values=terrain_agg,
+            )
         >>> print(crosstab_agg)
            0.000000     1200.014238  1200.014864  1200.021077  1200.027001
         1          0.0     0.000019     0.000019     0.000019     0.000019
@@ -564,16 +589,23 @@ def suggest_zonal_canvas(smallest_area: Union[int, float],
         >>> df = df.to_crs("EPSG:3857")
         >>> df = df[df.continent != 'Antarctica']
         >>> df['id'] = [i for i in range(len(df.index))]
-        >>> xmin, ymin, xmax, ymax = (df.bounds.minx.min(), df.bounds.miny.min(),
-        >>>                           df.bounds.maxx.max(), df.bounds.maxy.max())
+        >>> xmin, ymin, xmax, ymax = (
+                df.bounds.minx.min(),
+                df.bounds.miny.min(),
+                df.bounds.maxx.max(),
+                df.bounds.maxy.max(),
+            )
         >>> x_range = (xmin, xmax)
         >>> y_range = (ymin, ymax)
         >>> smallest_area = df.area.min()
         >>> min_pixels = 20
-        >>> height, width = suggest_zonal_canvas(x_range=x_range, y_range=y_range,
-        >>>                                      smallest_area=smallest_area,
-        >>>                                      crs='Mercator',
-        >>>                                      min_pixels=min_pixels)
+        >>> height, width = suggest_zonal_canvas(
+                x_range=x_range,
+                y_range=y_range,
+                smallest_area=smallest_area,
+                crs='Mercator',
+                min_pixels=min_pixels,
+            )
         >>> cvs = ds.Canvas(x_range=x_range, y_range=y_range,
         >>>             plot_height=height, plot_width=width)
         >>> spatial_df = GeoDataFrame(df, geometry='geometry')
@@ -771,7 +803,7 @@ def regions(raster: xr.DataArray,
 
     References
     ----------
-        - Tomislav Hengl: http://spatial-analyst.net/ILWIS/htm/ilwisapp/areanumbering_algorithm.htm
+        - Tomislav Hengl: http://spatial-analyst.net/ILWIS/htm/ilwisapp/areanumbering_algorithm.htm # noqa
 
     Examples
     --------
@@ -784,7 +816,7 @@ def regions(raster: xr.DataArray,
         from xrspatial.zonal import regions
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -796,9 +828,13 @@ def regions(raster: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
         
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
@@ -983,13 +1019,13 @@ def trim(raster: xr.DataArray,
        :include-source:
 
         import datashader as ds
-        import numpy as np 
+        import numpy as np
         import matplotlib.pyplot as plt
         from xrspatial import generate_terrain
         from xrspatial.zonal import trim
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -1001,10 +1037,14 @@ def trim(raster: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
-        
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
         terrain_agg = terrain_agg.astype('int')
@@ -1196,7 +1236,7 @@ def crop(zones: xr.DataArray,
         from xrspatial.zonal import crop
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -1208,16 +1248,24 @@ def crop(zones: xr.DataArray,
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
-        
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
         # Crop Image
         values_agg = terrain_agg[0:300, 0:250]
-        cropped_agg = crop(zones = terrain_agg, values = values_agg, zones_ids = [0])
+        cropped_agg = crop(
+            zones=terrain_agg,
+            values=values_agg,
+            zones_ids=[0],
+        )
 
         # Edit Attributes
         cropped_agg = cropped_agg.assign_attrs({'Description': 'Example Crop'})

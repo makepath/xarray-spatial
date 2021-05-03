@@ -238,17 +238,17 @@ def a_star_search(surface: xr.DataArray,
     Calculate distance from a starting point to a goal through a
     surface graph. Starting location and goal location should be within
     the graph.
-    
+
     A* is a modification of Dijkstra’s Algorithm that is optimized for
     a single destination. Dijkstra’s Algorithm can find paths to all
     locations; A* finds paths to one location,or the closest of several
     locations. It prioritizes paths that seem to be leading closer to
     a goal.
-    
+
     The output is an equal sized Xarray.DataArray with NaNs for non-path
     pixels, and the value of the path pixels being the current cost up
     to that point.
-    
+
     Parameters
     ----------
     surface : xr.DataArray
@@ -280,8 +280,8 @@ def a_star_search(surface: xr.DataArray,
 
     References
     ----------
-        - Red Blob Games: https://www.redblobgames.com/pathfinding/a-star/implementation.html
-        - Nicholas Swift: https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
+        - Red Blob Games: https://www.redblobgames.com/pathfinding/a-star/implementation.html # noqa
+        - Nicholas Swift: https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2 # noqa
 
     Examples
     --------
@@ -294,7 +294,7 @@ def a_star_search(surface: xr.DataArray,
         from xrspatial.pathfinding import a_star_search
 
         # Create Canvas
-        W = 500 
+        W = 500
         H = 300
         cvs = ds.Canvas(plot_width = W,
                         plot_height = H,
@@ -312,7 +312,7 @@ def a_star_search(surface: xr.DataArray,
                 'Max Elevation': '4000',
             }
         )
-        
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 

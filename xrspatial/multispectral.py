@@ -5,8 +5,6 @@ import numba as nb
 from numba import cuda
 
 
-from PIL import Image
-
 import xarray as xr
 from xarray import DataArray
 import dask.array as da
@@ -67,6 +65,7 @@ def _arvi_cupy(nir_data, red_data, blue_data):
     _arvi_gpu[griddim, blockdim](nir_data, red_data, blue_data, out)
     return out
 
+
 def _arvi_dask_cupy(nir_data, red_data, blue_data):
     out = da.map_blocks(_arvi_cupy, nir_data, red_data, blue_data,
                         dtype=cupy.float32, meta=cupy.array(()))
@@ -76,7 +75,7 @@ def _arvi_dask_cupy(nir_data, red_data, blue_data):
 def arvi(nir_agg: xr.DataArray,
          red_agg: xr.DataArray,
          blue_agg: xr.DataArray,
-         name = 'arvi'):
+         name='arvi'):
     """
     Computes Atmospherically Resistant Vegetation Index. Allows for
     molecular and ozone correction with no further need for aerosol
@@ -100,7 +99,7 @@ def arvi(nir_agg: xr.DataArray,
 
     References
     ----------
-        - MODIS: https://modis.gsfc.nasa.gov/sci_team/pubs/abstract_new.php?id=03667
+        - MODIS: https://modis.gsfc.nasa.gov/sci_team/pubs/abstract_new.php?id=03667 # noqa
 
     Examples
     --------
@@ -159,7 +158,7 @@ def arvi(nir_agg: xr.DataArray,
           * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
             band     int32 ...
         Attributes: (12/13)
-            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000... # noqa
             crs:                      +init=epsg:32719
             res:                      [10. 10.]
             is_tiled:                 1
@@ -244,11 +243,11 @@ def _evi_dask_cupy(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
 def evi(nir_agg: xr.DataArray,
         red_agg: xr.DataArray,
         blue_agg: xr.DataArray,
-        c1 = 6.0,
-        c2 = 7.5,
-        soil_factor = 1.0,
-        gain = 2.5,
-        name = 'evi'):
+        c1=6.0,
+        c2=7.5,
+        soil_factor=1.0,
+        gain=2.5,
+        name='evi'):
     """
     Computes Enhanced Vegetation Index. Allows for importved sensitivity
     in high biomass regions, de-coupling of the canopy background signal
@@ -340,7 +339,7 @@ def evi(nir_agg: xr.DataArray,
           * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
             band     int32 ...
         Attributes: (12/13)
-            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000... # noqa
             crs:                      +init=epsg:32719
             res:                      [10. 10.]
             is_tiled:                 1
@@ -432,7 +431,7 @@ def _gci_dask_cupy(nir_data, green_data):
 
 def gci(nir_agg: xr.DataArray,
         green_agg: xr.DataArray,
-        name = 'gci'):
+        name='gci'):
     """
     Computes Green Chlorophyll Index. Used to estimate the content of
     leaf chorophyll and predict the physiological state of vegetation
@@ -506,7 +505,7 @@ def gci(nir_agg: xr.DataArray,
           * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
             band     int32 ...
         Attributes: (12/13)
-            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000... # noqa
             crs:                      +init=epsg:32719
             res:                      [10. 10.]
             is_tiled:                 1
@@ -539,7 +538,7 @@ def gci(nir_agg: xr.DataArray,
 # NBR ----------
 def nbr(nir_agg: xr.DataArray,
         swir2_agg: xr.DataArray,
-        name = 'nbr'):
+        name='nbr'):
     """
     Computes Normalized Burn Ratio. Used to identify burned areas and
     provide a measure of burn severity.
@@ -563,7 +562,7 @@ def nbr(nir_agg: xr.DataArray,
 
     References
     ----------
-        - USGS: https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
+        - USGS: https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio # noqa
     Examples
     --------
     .. plot::
@@ -613,7 +612,7 @@ def nbr(nir_agg: xr.DataArray,
               * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
                 band     int32 ...
             Attributes: (12/13)
-                transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+                transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000... # noqa
                 crs:                      +init=epsg:32719
                 res:                      [10. 10.]
                 is_tiled:                 1
@@ -647,7 +646,7 @@ def nbr(nir_agg: xr.DataArray,
 
 def nbr2(swir1_agg: xr.DataArray,
          swir2_agg: xr.DataArray,
-         name = 'nbr2'):
+         name='nbr2'):
     """
     Computes Normalized Burn Ratio 2 "NBR2 modifies the Normalized Burn
     Ratio (NBR) to highlight water sensitivity in vegetation and may be
@@ -676,7 +675,7 @@ def nbr2(swir1_agg: xr.DataArray,
 
     Notes
     -----
-    .. [1] https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+    .. [1] https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2 # noqa
 
     Examples
     --------
@@ -727,7 +726,7 @@ def nbr2(swir1_agg: xr.DataArray,
           * y        (y) float64 4.698e+06 4.698e+06 4.698e+06
             band     int32 ...
         Attributes: (12/13)
-            transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000... # noqa
             crs:                      +init=epsg:32719
             res:                      [20. 20.]
             is_tiled:                 1
@@ -762,7 +761,7 @@ def nbr2(swir1_agg: xr.DataArray,
 # NDVI ----------
 def ndvi(nir_agg: xr.DataArray,
          red_agg: xr.DataArray,
-         name = 'ndvi'):
+         name='ndvi'):
     """
     Computes Normalized Difference Vegetation Index (NDVI). Used to
     determine if a cell contains live green vegetation.
@@ -784,7 +783,7 @@ def ndvi(nir_agg: xr.DataArray,
 
     References
     ----------
-        - Chris Holden: http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
+        - Chris Holden: http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html # noqa
 
     Examples
     --------
@@ -835,7 +834,7 @@ def ndvi(nir_agg: xr.DataArray,
           * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
             band     int32 ...
         Attributes: (12/13)
-            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000... # noqa
             crs:                      +init=epsg:32719
             res:                      [10. 10.]
             is_tiled:                 1
@@ -870,7 +869,7 @@ def ndvi(nir_agg: xr.DataArray,
 # NDMI ----------
 def ndmi(nir_agg: xr.DataArray,
          swir1_agg: xr.DataArray,
-         name = 'ndmi'):
+         name='ndmi'):
     """
     Computes Normalized Difference Moisture Index. Used to determine
     vegetation water content.
@@ -896,7 +895,7 @@ def ndmi(nir_agg: xr.DataArray,
 
     References
     ----------
-        - USGS: https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
+        - USGS: https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index # noqa
 
     Examples
     --------
@@ -947,7 +946,7 @@ def ndmi(nir_agg: xr.DataArray,
           * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
             band     int32 ...
         Attributes: (12/13)
-            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000... # noqa
             crs:                      +init=epsg:32719
             res:                      [10. 10.]
             is_tiled:                 1
@@ -1110,7 +1109,7 @@ def savi(nir_agg: xr.DataArray,
 
     References
     ----------
-        - ScienceDirect: https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
+        - ScienceDirect: https://www.sciencedirect.com/science/article/abs/pii/003442578890106X # noqa
 
     Examples
     --------
@@ -1161,7 +1160,7 @@ def savi(nir_agg: xr.DataArray,
           * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
             band     int32 ...
         Attributes: (12/13)
-            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000... # noqa
             crs:                      +init=epsg:32719
             res:                      [10. 10.]
             is_tiled:                 1
@@ -1247,7 +1246,7 @@ def _sipi_dask_cupy(nir_data, red_data, blue_data):
 def sipi(nir_agg: xr.DataArray,
          red_agg: xr.DataArray,
          blue_agg: xr.DataArray,
-         name = 'sipi'):
+         name='sipi'):
     """
     Computes Structure Insensitive Pigment Index which helpful in early
     disease detection in vegetation.
@@ -1330,7 +1329,7 @@ def sipi(nir_agg: xr.DataArray,
           * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
             band     int32 ...
         Attributes: (12/13)
-            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000... # noqa
             crs:                      +init=epsg:32719
             res:                      [10. 10.]
             is_tiled:                 1
@@ -1413,7 +1412,7 @@ def _ebbi_dask_cupy(red_data, swir_data, tir_data):
 def ebbi(red_agg: xr.DataArray,
          swir_agg: xr.DataArray,
          tir_agg: xr.DataArray,
-         name = 'ebbi'):
+         name='ebbi'):
     """
     Computes Enhanced Built-Up and Bareness Index (EBBI) which allows
     for easily distinguishing between built-up and bare land areas.
@@ -1475,10 +1474,10 @@ def ebbi(red_agg: xr.DataArray,
 
         >>> print(red_agg, swir_agg, tir_agg)
         <xarray.DataArray (lat: 4, lon: 4)>
-        array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
-                [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
-                [3.96767474e-01, 5.38816734e-01, 4.19194514e-01, 6.85219500e-01],
-                [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
+        array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01], # noqa
+                [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01], # noqa
+                [3.96767474e-01, 5.38816734e-01, 4.19194514e-01, 6.85219500e-01], # noqa
+                [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]]) # noqa
         Coordinates:
             * lat      (lat) float64 0.0 1.0 2.0 3.0
             * lon      (lon) float64 0.0 1.0 2.0 3.0
