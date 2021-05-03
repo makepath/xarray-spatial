@@ -16,41 +16,40 @@ def stats(zones: xr.DataArray,
           values: xr.DataArray,
           stat_funcs=['mean', 'max', 'min', 'std', 'var', 'count']):
     """
-    Calculate summary statistics for each zone defined by a zone dataset,
-    based on values aggregate.
+    Calculate summary statistics for each zone defined by a zone
+    dataset, based on values aggregate.
     
-    A single output value is computed for every zone in the input zone dataset.
+    A single output value is computed for every zone in the input zone
+    dataset.
     
     Parameters
     ----------
-    zones : xr.DataArray,
+    zones : xr.DataArray
         zones.values is a 2d array of integers.
         A zone is all the cells in a raster that have the same value,
         whether or not they are contiguous. The input zone layer defines
         the shape, values, and locations of the zones. An integer field
         in the zone input is specified to define the zones.
-
-    values : xr.DataArray,
+    values : xr.DataArray
         values.values is a 2d array of integers or floats.
-        The input value raster contains the input values used in calculating
-        the output statistic for each zone.
+        The input value raster contains the input values used in
+        calculating the output statistic for each zone.
+    stat_funcs : list of string or dict, default=['mean', 'max', 'min',
+        'std', 'var', 'count'])
+        Which statistics to calculate for each zone. If a list, possible
+        choices are subsets of ['mean', 'max', 'min', 'std', 'var',
+        'count']. In the dictionary case, all of its values must be
+        callable. Function takes only one argument that is the zone
+        values. The key become the column name in the output DataFrame.
 
-    stat_funcs : list of strings or dictionary<stat_name: func(zone_values)>.
-                (default = ['mean', 'max', 'min', 'std', 'var', 'count'])
-        Which statistics to calculate for each zone.
-        If a list, possible choices are subsets of
-        ['mean', 'max', 'min', 'std', 'var', 'count']
-        In the dictionary case, all of its values must be callable.
-        Function takes only one argument that is the zone values.
-        The key become the column name in the output DataFrame.
     Returns
     -------
     stats_df : pandas.DataFrame
-        A pandas DataFrame where each column is a statistic and each row
-        is a zone with zone id.
+        A pandas DataFrame where each column is a statistic and each
+        row is a zone with zone id.
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -99,37 +98,29 @@ def stats(zones: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        # Calculate Stats
-        stats_agg = stats(zones = equal_interval_agg, values = terrain_agg)
-        print(stats_agg)
+        >>> # Calculate Stats
+        >>> stats_agg = stats(zones = equal_interval_agg, values = terrain_agg)
+        >>> print(stats_agg)
+                  mean          max          min         std           var    count
+        1  1346.099206  1599.980772  1200.014238  107.647012  11587.879265  52698.0
+        2  1867.613738  2399.949943  1600.049783  207.072933  42879.199507  22987.0
+        3  2716.967940  3199.499889  2400.079093  215.475764  46429.804756   4926.0
+        4  3491.072129  4000.000000  3200.057209  182.752194  33398.364467   1373.0
 
-        ...               mean          max          min         std           var    count
-        ...     1  1346.099206  1599.980772  1200.014238  107.647012  11587.879265  52698.0
-        ...     2  1867.613738  2399.949943  1600.049783  207.072933  42879.199507  22987.0
-        ...     3  2716.967940  3199.499889  2400.079093  215.475764  46429.804756   4926.0
-        ...     4  3491.072129  4000.000000  3200.057209  182.752194  33398.364467   1373.0
-
-    .. plot::
-       :include-source:
-
-        # Custom Stats
-        custom_stats ={'sum': lambda val: val.sum()}
-        custom_stats_agg = stats(zones = equal_interval_agg,
-                                 values = terrain_agg,
-                                 stat_funcs=custom_stats)
-        print(custom_stats_agg)
-
-        ...                 sum
-        ...     1  7.093674e+07
-        ...     2  4.293084e+07
-        ...     3  1.338378e+07
-        ...     4  4.793242e+06
-
+        >>> # Custom Stats
+        >>> custom_stats ={'sum': lambda val: val.sum()}
+        >>> custom_stats_agg = stats(zones = equal_interval_agg,
+                                     values = terrain_agg,
+                                     stat_funcs=custom_stats)
+        >>> print(custom_stats_agg)
+                    sum
+        1  7.093674e+07
+        2  4.293084e+07
+        3  1.338378e+07
+        4  4.793242e+06
     """
-
     if zones.shape != values.shape:
         raise ValueError(
             "`zones` and `values` must have same shape")
@@ -260,8 +251,8 @@ def crosstab(zones: xr.DataArray,
              layer: Optional[str] = None) -> pd.DataFrame:
     """
     Calculate cross-tabulated (categorical stats) areas
-    between two datasets: a zone dataset, a value dataset (a value raster).
-    Outputs a pandas DataFrame.
+    between two datasets: a zone dataset, a value dataset (a value
+    raster). Outputs a pandas DataFrame.
 
     Requires a DataArray with a single data dimension, here called the
     "values", indexed using 3D coordinates.
@@ -274,20 +265,19 @@ def crosstab(zones: xr.DataArray,
 
     Parameters
     ----------
-    zones : xr.DataArray,
+    zones : xr.DataArray
         zones.values is a 2d array of integers.
         A zone is all the cells in a raster that have the same value,
         whether or not they are contiguous. The input zone layer defines
         the shape, values, and locations of the zones. An integer field
         in the zone input is specified to define the zones.
-
-    values : xr.DataArray,
+    values : xr.DataArray
         values.values is a 3d array of integers or floats.
-        The input value raster contains the input values used in calculating
-        the categorical statistic for each zone.
-
-    layer: str, default = None
-        name of the layer inside the `values` DataArray for getting the values.
+        The input value raster contains the input values used in
+        calculating the categorical statistic for each zone.
+    layer: str, default=None
+        name of the layer inside the `values` DataArray for getting
+        the values.
 
     Returns
     -------
@@ -296,8 +286,8 @@ def crosstab(zones: xr.DataArray,
         and each row is a zone with zone id.
         Each entry presents the percentage of the category over the zone.
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -346,41 +336,37 @@ def crosstab(zones: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        # Calculate Crosstab
-        crosstab_agg = crosstab(zones = equal_interval_agg, values = terrain_agg)
-        print(crosstab_agg)
+        >>> # Calculate Crosstab
+        >>> crosstab_agg = crosstab(zones = equal_interval_agg, values = terrain_agg)
+        >>> print(crosstab_agg)
+           0.000000     1200.014238  1200.014864  1200.021077  1200.027001
+        1          0.0     0.000019     0.000019     0.000019     0.000019
+        2          0.0     0.000000     0.000000     0.000000     0.000000
+        3          0.0     0.000000     0.000000     0.000000     0.000000
+        4          0.0     0.000000     0.000000     0.000000     0.000000
 
-        ...        0.000000     1200.014238  1200.014864  1200.021077  1200.027001  \
-        ...     1          0.0     0.000019     0.000019     0.000019     0.000019   
-        ...     2          0.0     0.000000     0.000000     0.000000     0.000000   
-        ...     3          0.0     0.000000     0.000000     0.000000     0.000000   
-        ...     4          0.0     0.000000     0.000000     0.000000     0.000000   
-        ...     
-        ...        1200.030954  1200.034319  1200.038300  1200.042588  1200.042805  ...  \
-        ...     1     0.000019     0.000019     0.000019     0.000019     0.000019  ...   
-        ...     2     0.000000     0.000000     0.000000     0.000000     0.000000  ...   
-        ...     3     0.000000     0.000000     0.000000     0.000000     0.000000  ...   
-        ...     4     0.000000     0.000000     0.000000     0.000000     0.000000  ...   
-        ...     
-        ...        3932.764078  3946.456024  3947.505026  3952.279254  3957.748147  \
-        ...     1     0.000000     0.000000     0.000000     0.000000     0.000000   
-        ...     2     0.000000     0.000000     0.000000     0.000000     0.000000   
-        ...     3     0.000000     0.000000     0.000000     0.000000     0.000000   
-        ...     4     0.000728     0.000728     0.000728     0.000728     0.000728   
-        ...     
-        ...        3968.600152  3973.840684  3989.509344  3998.678232  4000.000000  
-        ...     1     0.000000     0.000000     0.000000     0.000000     0.000000  
-        ...     2     0.000000     0.000000     0.000000     0.000000     0.000000  
-        ...     3     0.000000     0.000000     0.000000     0.000000     0.000000  
-        ...     4     0.000728     0.000728     0.000728     0.000728     0.000728  
-        ...     
-        ...     [4 rows x 81984 columns]
+           1200.030954  1200.034319  1200.038300  1200.042588  1200.042805
+        1     0.000019     0.000019     0.000019     0.000019     0.000019
+        2     0.000000     0.000000     0.000000     0.000000     0.000000
+        3     0.000000     0.000000     0.000000     0.000000     0.000000
+        4     0.000000     0.000000     0.000000     0.000000     0.000000
 
+           3932.764078  3946.456024  3947.505026  3952.279254  3957.748147
+        1     0.000000     0.000000     0.000000     0.000000     0.000000
+        2     0.000000     0.000000     0.000000     0.000000     0.000000
+        3     0.000000     0.000000     0.000000     0.000000     0.000000
+        4     0.000728     0.000728     0.000728     0.000728     0.000728
+
+           3968.600152  3973.840684  3989.509344  3998.678232  4000.000000
+        1     0.000000     0.000000     0.000000     0.000000     0.000000
+        2     0.000000     0.000000     0.000000     0.000000     0.000000
+        3     0.000000     0.000000     0.000000     0.000000     0.000000
+        4     0.000728     0.000728     0.000728     0.000728     0.000728
+
+        [4 rows x 81984 columns]
     """
-
     if not isinstance(zones, xr.DataArray):
         raise TypeError("zones must be instance of DataArray")
 
@@ -419,36 +405,33 @@ def apply(zones: xr.DataArray,
 
     Parameters
     ----------
-    zones : xr.DataArray,
-        - zones.values is a 2d array of integers.
-        - A zone is all the cells in a raster that have the same value,
-          whether or not they are contiguous. The input zone layer defines
-          the shape, values, and locations of the zones. An integer field
-          in the zone input is specified to define the zones.
-    agg : xr.DataArray,
-        - agg.values is either a 2D or 3D array of integers or floats.
-        - The input value raster.
-    func: callable function to apply.
+    zones : xr.DataArray
+        zones.values is a 2d array of integers. A zone is all the cells
+        in a raster that have the same value, whether or not they are
+        contiguous. The input zone layer defines the shape, values, and
+        locations of the zones. An integer field in the zone input is
+        specified to define the zones.
+    agg : xr.DataArray
+        agg.values is either a 2D or 3D array of integers or floats.
+        The input value raster.
+    func : callable function to apply.
 
-    Returns
-    -------
-        None
+    Examples
+    --------
+    .. sourcecode:: python
 
-    Example
-    -------
-    >>>     zones_val = np.array([[1, 1, 0, 2],
-    >>>                           [0, 2, 1, 2]])
-    >>>     zones = xarray.DataArray(zones_val)
-    >>>     values_val = np.array([[2, -1, 5, 3],
-    >>>                            [3, np.nan, 20, 10]])
-    >>>     agg = xarray.DataArray(values_val)
-    >>>     func = lambda x: 0
-    >>>     apply(zones, agg, func)
-    >>>     agg
-            array([[0, 0, 5, 0],
-                   [3, 0, 0, 0]])
+        >>> zones_val = np.array([[1, 1, 0, 2],
+        >>>                       [0, 2, 1, 2]])
+        >>> zones = xarray.DataArray(zones_val)
+        >>> values_val = np.array([[2, -1, 5, 3],
+        >>>                        [3, np.nan, 20, 10]])
+        >>> agg = xarray.DataArray(values_val)
+        >>> func = lambda x: 0
+        >>> apply(zones, agg, func)
+        >>> agg
+        array([[0, 0, 5, 0],
+               [3, 0, 0, 0]])
     """
-
     if not isinstance(zones, xr.DataArray):
         raise TypeError("zones must be instance of DataArray")
 
@@ -498,26 +481,28 @@ def apply(zones: xr.DataArray,
 
 def get_full_extent(crs):
     """
-    Returns the full extent of a map projection, available projections are
-    'Mercator' and 'Geographic'.
+    Returns the full extent of a map projection, available projections
+    are 'Mercator' and 'Geographic'.
 
     Parameters
     ----------
     crs : str
-        Input projection
+        Input projection.
 
     Returns
     -------
     extent : tuple
-        Projection extent of form ((min_x, max_x), (min_y, max_y))
+        Projection extent of form ((min_x, max_x), (min_y, max_y)).
 
-    Example
-    -------
-    >>>     from xrspatial.zonal import get_full_extent
+    Examples
+    --------
+    .. sourcecode:: python
 
-    >>>     extent = get_full_extent('Mercator')
-    >>>     print(extent)
-    ...     ((-20000000.0, 20000000.0), (-20000000.0, 20000000.0))
+        >>> from xrspatial.zonal import get_full_extent
+
+        >>> extent = get_full_extent('Mercator')
+        >>> print(extent)
+        ((-20000000.0, 20000000.0), (-20000000.0, 20000000.0))
     """
     Mercator = (-20e6, 20e6), (-20e6, 20e6)
     Geographic = (-180, 180), (-90, 90)
@@ -539,64 +524,65 @@ def suggest_zonal_canvas(smallest_area: Union[int, float],
                          min_pixels: int = 25) -> tuple:
     """
     Given a coordinate reference system (crs), a set of polygons with
-    corresponding x range and y range, calculate the height and width of canvas
-    so that the smallest polygon (polygon with smallest area) is rasterized
-    with at least min pixels.
+    corresponding x range and y range, calculate the height and width
+    of canvas so that the smallest polygon (polygon with smallest area)
+    is rasterized with at least min pixels.
 
-    Currently, we assume that the smallest polygon does not intersect others.
-    One should note that a polygon can have different shapes when it is
-    rasterized in canvases of different size. Thus, we cannot 100% guarantee
-    the actual number of pixels after rasterization. It is recommended to add
-    an additional of 5% to @min_pixels parameter.
+    Currently, we assume that the smallest polygon does not intersect
+    others. One should note that a polygon can have different shapes
+    when it is rasterized in canvases of different size. Thus, we cannot
+    100% guarantee the actual number of pixels after rasterization.
+    It is recommended to add an additional of 5% to @min_pixels parameter.
 
     Parameters
     ----------
-    x_range : tuple or list of 2 numeric elements,
+    x_range : tuple or list of float or int
         The full x extent of the polygon GeoDataFrame.
-    y_range : tuple or list of 2 numeric elements,
+    y_range : tuple or list of float or int
         The full y extent of the polygon GeoDataFrame.
-    smallest_area : numeric (float, int)
+    smallest_area : float or int
         Area of the smallest polygon.
-    crs : str, default = 'Mercator'
+    crs : str, default='Mercator'
         Name of the coordinate reference system.
-    min_pixels : int, default = 25
+    min_pixels : int, default=25
         Expected number of pixels of the polygon with smallest area
         when the whole dataframe is rasterized.
 
     Returns
     -------
-    height, width: int, int
-        height and width of the canvas in pixel space
+    height, width: int
+        Height and width of the canvas in pixel space.
 
-    Example
-    -------
-    >>>     # Imports
-    >>>     from spatialpandas import GeoDataFrame
-    >>>     import geopandas as gpd
-    >>>     import datashader as ds
+    Examples
+    --------
+    .. sourcecode:: python
 
-    >>>     df = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
-    >>>     df = df.to_crs("EPSG:3857")
-    >>>     df = df[df.continent != 'Antarctica']
-    >>>     df['id'] = [i for i in range(len(df.index))]
-    >>>     xmin, ymin, xmax, ymax = (df.bounds.minx.min(), df.bounds.miny.min(),
-    >>>                               df.bounds.maxx.max(), df.bounds.maxy.max())
-    >>>     x_range = (xmin, xmax)
-    >>>     y_range = (ymin, ymax)
-    >>>     smallest_area = df.area.min()
-    >>>     min_pixels = 20
-    >>>     height, width = suggest_zonal_canvas(x_range=x_range, y_range=y_range,
-    >>>                                          smallest_area=smallest_area,
-    >>>                                          crs='Mercator',
-    >>>                                          min_pixels=min_pixels)
-    >>>     cvs = ds.Canvas(x_range=x_range, y_range=y_range,
-    >>>                 plot_height=height, plot_width=width)
-    >>>     spatial_df = GeoDataFrame(df, geometry='geometry')
-    >>>     agg = cvs.polygons(spatial_df, 'geometry', agg=ds.max('id'))
-    >>>     min_poly_id = df.area.argmin()
-    >>>     actual_min_pixels = len(np.where(agg.data==min_poly_id)[0])
+        >>> # Imports
+        >>> from spatialpandas import GeoDataFrame
+        >>> import geopandas as gpd
+        >>> import datashader as ds
+
+        >>> df = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
+        >>> df = df.to_crs("EPSG:3857")
+        >>> df = df[df.continent != 'Antarctica']
+        >>> df['id'] = [i for i in range(len(df.index))]
+        >>> xmin, ymin, xmax, ymax = (df.bounds.minx.min(), df.bounds.miny.min(),
+        >>>                           df.bounds.maxx.max(), df.bounds.maxy.max())
+        >>> x_range = (xmin, xmax)
+        >>> y_range = (ymin, ymax)
+        >>> smallest_area = df.area.min()
+        >>> min_pixels = 20
+        >>> height, width = suggest_zonal_canvas(x_range=x_range, y_range=y_range,
+        >>>                                      smallest_area=smallest_area,
+        >>>                                      crs='Mercator',
+        >>>                                      min_pixels=min_pixels)
+        >>> cvs = ds.Canvas(x_range=x_range, y_range=y_range,
+        >>>             plot_height=height, plot_width=width)
+        >>> spatial_df = GeoDataFrame(df, geometry='geometry')
+        >>> agg = cvs.polygons(spatial_df, 'geometry', agg=ds.max('id'))
+        >>> min_poly_id = df.area.argmin()
+        >>> actual_min_pixels = len(np.where(agg.data==min_poly_id)[0])
     """
-
     full_xrange, full_yrange = get_full_extent(crs)
     xmin, xmax = full_xrange
     ymin, ymax = full_yrange
@@ -776,22 +762,21 @@ def regions(raster: xr.DataArray,
     Parameters
     ----------
     raster : xr.DataArray
-    connections : int, default = 4
-        4 or 8 pixel-based connectivity
-    name: str, default = 'regions'
-        output xr.DataArray.name property
+    connections : int, default=4
+        4 or 8 pixel-based connectivity.
+    name: str, default='regions'
+        output xr.DataArray.name property.
 
     Returns
     -------
     regions_agg : xarray.DataArray
 
-    Notes
-    -----
-    Area Numbering implementing based on:
-        - http://spatial-analyst.net/ILWIS/htm/ilwisapp/areanumbering_algorithm.htm
+    References
+    ----------
+        - Tomislav Hengl: http://spatial-analyst.net/ILWIS/htm/ilwisapp/areanumbering_algorithm.htm
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -840,44 +825,36 @@ def regions(raster: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
-
-    .. plot::
-       :include-source:
-
-        print(regions_agg[200:203, 200:202])
-
-        ...     <xarray.DataArray 'Region Value' (lat: 3, lon: 2)>
-        ...     array([[39557., 39558.],
-        ...            [39943., 39944.],
-        ...            [40327., 40328.]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Regions
-        ...         units:          
-        ...         Max Elevation:  4000
-
+        >>> print(regions_agg[200:203, 200:202])
+        <xarray.DataArray 'Region Value' (lat: 3, lon: 2)>
+        array([[39557., 39558.],
+               [39943., 39944.],
+               [40327., 40328.]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Regions
+            units:
+            Max Elevation:  4000
     """
-
     if neighborhood not in (4, 8):
         raise ValueError('`neighborhood` value must be either 4 or 8)')
 
@@ -983,16 +960,16 @@ def trim(raster: xr.DataArray,
          values: Union[list, tuple] = (np.nan,),
          name: str = 'trim') -> xr.DataArray:
     """
-    Trim scans from the edges and eliminates rows / cols
-    which only contain the values supplied.
+    Trim scans from the edges and eliminates rows / cols which only
+    contain the values supplied.
 
     Parameters
     ----------
     raster: xr.DataArray
-    values: list, tuple (default = (np.nan))
-        list of zone ids to trim from raster edge
-    name: str, default = 'trim'
-        output xr.DataArray.name property
+    values: list or tuple, default=(np.nan)
+        List of zone ids to trim from raster edge.
+    name: str, default='trim'
+        Output xr.DataArray.name property.
 
     Returns
     -------
@@ -1000,10 +977,10 @@ def trim(raster: xr.DataArray,
 
     Notes
     -----
-    This operation will change the output size of the raster
+        - This operation will change the output size of the raster.
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -1052,36 +1029,30 @@ def trim(raster: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg.shape)
+        >>> print(terrain_agg.shape)
+        (300, 500)
 
-        ...     (300, 500)
+        >>> print(terrain_agg.attrs)
+        {
+            'res': 1,
+            'Description': 'Example Terrain',
+            'units': 'km',
+            'Max Elevation': '4000',
+        }
 
-    .. plot::
-       :include-source:
+        >>> print(trimmed_agg.shape)
+        (268, 500)
 
-        print(terrain_agg.attrs)
-
-        ...     {'res': 1, 'Description': 'Example Terrain', 'units': 'km', 'Max Elevation': '4000'}
-
-    .. plot::
-       :include-source:
-
-        print(trimmed_agg.shape)
-
-        ...     (268, 500)
-
-    .. plot::
-       :include-source:
-
-        print(trimmed_agg.attrs)
-
-        ...     {'res': 1, 'Description': 'Example Trim', 'units': 'km', 'Max Elevation': '4000'}
-
+        >>> print(trimmed_agg.attrs)
+        {
+            'res': 1,
+            'Description': 'Example Trim',
+            'units': 'km',
+            'Max Elevation': '4000',
+        }
     """
-
     top, bottom, left, right = _trim(raster.data, values)
     arr = raster[top:bottom+1, left:right+1]
     arr.name = name
@@ -1191,22 +1162,22 @@ def crop(zones: xr.DataArray,
          zones_ids: Union[list, tuple],
          name: str = 'crop'):
     """
-    Crop scans from edges and eliminates rows / cols
-    until one of the input values is found.
+    Crop scans from edges and eliminates rows / cols until one of the
+    input values is found.
 
     Parameters
     ----------
     zones : xr.DataArray
-        input zone raster
+        Input zone raster.
 
     values: xr.DataArray
-        input values raster
+        Input values raster.
 
-    zones_ids : list, tuple
-        list of zone ids to crop raster
+    zones_ids : list or tuple
+        List of zone ids to crop raster.
 
-    name: str, default = 'crop'
-        output xr.DataArray.name property
+    name: str, default='crop'
+        Output xr.DataArray.name property.
 
     Returns
     -------
@@ -1214,10 +1185,10 @@ def crop(zones: xr.DataArray,
 
     Notes
     -----
-    This operation will change the output size of the raster
+        - This operation will change the output size of the raster.
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -1265,35 +1236,30 @@ def crop(zones: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg.shape)
-        ...     (300, 500)
+        >>> print(terrain_agg.shape)
+        (300, 500)
 
-    .. plot::
-       :include-source:
+        >>> print(terrain_agg.attrs)
+        {
+            'res': 1,
+            'Description': 'Example Terrain',
+            'units': 'km',
+            'Max Elevation': '4000',
+        }
 
-        print(terrain_agg.attrs)
+        >>> print(cropped_agg.shape)
+        (300, 250)
 
-        ...     {'res': 1, 'Description': 'Example Terrain', 'units': 'km', 'Max Elevation': '4000'}
-
-    .. plot::
-       :include-source:
-
-        print(cropped_agg.shape)
-
-        ...     (300, 250)
-
-    .. plot::
-       :include-source:
-
-        print(cropped_agg.attrs)
-
-        ...     {'res': 1, 'Description': 'Example Crop', 'units': 'km', 'Max Elevation': '4000'}
-
+        >>> print(cropped_agg.attrs)
+        {
+            'res': 1,
+            'Description': 'Example Crop',
+            'units': 'km',
+            'Max Elevation': '4000',
+        }
     """
-
     top, bottom, left, right = _crop(zones.data, zones_ids)
     arr = values[top:bottom+1, left:right+1]
     arr.name = name
