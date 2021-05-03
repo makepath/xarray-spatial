@@ -391,6 +391,7 @@ def test_gci_numpy():
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
 
+
 def test_gci_dask_equals_numpy():
     # vanilla numpy version
     nir = create_test_arr(arr1)
