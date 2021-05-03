@@ -18,41 +18,40 @@ def generate_terrain(x_range: tuple = (0, 500),
                      zfactor: int = 4000,
                      full_extent: Optional[str] = None) -> xr.DataArray:
     """
-    Generates a pseudo-random terrain which can be helpful
-    for testing raster functions
+    Generates a pseudo-random terrain which can be helpful for testing
+    raster functions.
     
     Parameters
     ----------
-    x_range : tuple, default = (0, 500)
+    x_range : tuple, default=(0, 500)
         Range of x values.
-    x_range : tuple, default = (0, 500)
+    x_range : tuple, default=(0, 500)
         Range of y values.
-    width : int, default = 25
+    width : int, default=25
         Width of output data array in pixels.
-    height : int, default = 30
+    height : int, default=30
         Height of output data array in pixels.
-    canvas : ds.Canvas, default = None
+    canvas : ds.Canvas, default=None
         Instance for passing output dimensions / ranges.
-    seed : int, default = 10
+    seed : int, default=10
         Seed for random number generator.
-    zfactor : int, default = 4000
+    zfactor : int, default=4000
         Multipler for z values.
-    full_extent : str, default = None
+    full_extent : str, default=None
         bbox<xmin, ymin, xmax, ymax>. Full extent of coordinate system.
+
     Returns
     -------
     terrain : xr.DataArray
         2D array of generated terrain values.
 
-    Notes
-    -----
-    Algorithm References
-        - This was inspired by Michael McHugh's 2016 PyCon Canada talk:
-          https://www.youtube.com/watch?v=O33YV4ooHSo
-        - https://www.redblobgames.com/maps/terrain-from-noise/
+    References
+    ----------
+        - Michael McHugh: https://www.youtube.com/watch?v=O33YV4ooHSo
+        - Red Blob Games: https://www.redblobgames.com/maps/terrain-from-noise/
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -72,9 +71,13 @@ def generate_terrain(x_range: tuple = (0, 500),
         terrain_agg = generate_terrain(canvas = cvs)
 
         # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs({'Description': 'Example Terrain',
-                                                'units': 'km',
-                                                'Max Elevation': '4000'})
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
         
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
@@ -85,26 +88,22 @@ def generate_terrain(x_range: tuple = (0, 500),
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
-
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
-
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
     """
-
     def _gen_heights(bumps):
         out = np.zeros(len(bumps))
         for i, b in enumerate(bumps):
