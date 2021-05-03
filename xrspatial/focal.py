@@ -93,9 +93,9 @@ def calc_cellsize(raster: xr.DataArray,
     ----------
     raster : xarray.DataArray
         2D array of input values.
-    x : str, default = "x"
+    x : str, default='x'
         Name of input x-axis.
-    y : str, Default = "y"
+    y : str, Default='y'
         Name of input y-axis.
 
     Returns
@@ -107,8 +107,8 @@ def calc_cellsize(raster: xr.DataArray,
     cellsize_y : float
         Size of cells in y-direction.
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -136,35 +136,29 @@ def calc_cellsize(raster: xr.DataArray,
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            Max Elevation:  3000
+            units:          km
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         Max Elevation:  3000
-        ...         units:          km
+    .. sourcecode:: python
 
-    .. plot::
-       :include-source:
-
-        # Calculate Cellsize
-        cellsize = calc_cellsize(terrain_agg, 'lon', 'lat')
-        print(cellsize)
-
-        ...     (80000.0, 133333.3333333321)
-
+        >>> # Calculate Cellsize
+        >>> cellsize = calc_cellsize(terrain_agg, 'lon', 'lat')
+        >>> print(cellsize)
+        (80000.0, 133333.3333333321)
     """
-
     if 'unit' in raster.attrs:
         unit = raster.attrs['unit']
     else:
@@ -233,35 +227,33 @@ def circle_kernel(cellsize_x: int,
 
     Returns
     -------
-    kernel : NumPy Array of float values.
+    kernel : NumPy Array of float values
         2D array where values of 1 indicate the kernel.
 
-    Example
-    -------
-    .. plot::
-       :include-source:
+    Examples
+    --------
+    .. sourcecode:: python
 
-        import xarray as xr
-        from xrspatial.focal import circle_kernel
+        >>> import xarray as xr
+        >>> from xrspatial.focal import circle_kernel
 
-        # Create Kernel
-        kernel = circle_kernel(1, 1, 3)
-        print(kernel)
-        ...     [[0. 0. 0. 1. 0. 0. 0.]
-        ...     [0. 1. 1. 1. 1. 1. 0.]
-        ...     [0. 1. 1. 1. 1. 1. 0.]
-        ...     [1. 1. 1. 1. 1. 1. 1.]
-        ...     [0. 1. 1. 1. 1. 1. 0.]
-        ...     [0. 1. 1. 1. 1. 1. 0.]
-        ...     [0. 0. 0. 1. 0. 0. 0.]]
-    
-        kernel = circle_kernel(1, 2, 3)
-        print(kernel)
-        ...     [[0. 0. 0. 1. 0. 0. 0.]
-        ...      [1. 1. 1. 1. 1. 1. 1.]
-        ...      [0. 0. 0. 1. 0. 0. 0.]]
+        >>> # Create Kernel
+        >>> kernel = circle_kernel(1, 1, 3)
+        >>> print(kernel)
+        [[0. 0. 0. 1. 0. 0. 0.]
+        [0. 1. 1. 1. 1. 1. 0.]
+        [0. 1. 1. 1. 1. 1. 0.]
+        [1. 1. 1. 1. 1. 1. 1.]
+        [0. 1. 1. 1. 1. 1. 0.]
+        [0. 1. 1. 1. 1. 1. 0.]
+        [0. 0. 0. 1. 0. 0. 0.]]
+
+        >>> kernel = circle_kernel(1, 2, 3)
+        >>> print(kernel)
+        [[0. 0. 0. 1. 0. 0. 0.]
+         [1. 1. 1. 1. 1. 1. 1.]
+         [0. 0. 0. 1. 0. 0. 0.]]
     """
-
     # validate radius, convert radius to meters
     r = _get_distance(str(radius))
 
@@ -295,34 +287,32 @@ def annulus_kernel(cellsize_x: int,
     kernel : NumPy Array of float values.
         2D array of 0s and 1s where values of 1 indicate the kernel.
 
-    Example
-    -------
-    .. plot::
-       :include-source:
+    Examples
+    --------
+    .. sourcecode:: python
 
-        import xarray as xr
-        from xrspatial.focal import annulus_kernel
+        >>> import xarray as xr
+        >>> from xrspatial.focal import annulus_kernel
 
-        # Create Kernel
-        kernel = annulus_kernel(1, 1, 3, 1)
-        print(kernel)
-        ...     [[0., 0., 0., 1., 0., 0., 0.],
-        ...      [0., 1., 1., 1., 1., 1., 0.],
-        ...      [0., 1., 1., 0., 1., 1., 0.],
-        ...      [1., 1., 0., 0., 0., 1., 1.],
-        ...      [0., 1., 1., 0., 1., 1., 0.],
-        ...      [0., 1., 1., 1., 1., 1., 0.],
-        ...      [0., 0., 0., 1., 0., 0., 0.]]
+        >>> # Create Kernel
+        >>> kernel = annulus_kernel(1, 1, 3, 1)
+        >>> print(kernel)
+        [[0., 0., 0., 1., 0., 0., 0.],
+         [0., 1., 1., 1., 1., 1., 0.],
+         [0., 1., 1., 0., 1., 1., 0.],
+         [1., 1., 0., 0., 0., 1., 1.],
+         [0., 1., 1., 0., 1., 1., 0.],
+         [0., 1., 1., 1., 1., 1., 0.],
+         [0., 0., 0., 1., 0., 0., 0.]]
 
-        kernel = annulus_kernel(1, 2, 5, 2)
-        print(kernel)
-        ...     [[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
-        ...      [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-        ...      [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
-        ...      [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-        ...      [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
+        >>> kernel = annulus_kernel(1, 2, 5, 2)
+        >>> print(kernel)
+        [[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
+         [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+         [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
+         [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+         [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
     """
-
     # validate radii, convert to meters
     r2 = _get_distance(str(outer_radius))
     r1 = _get_distance(str(inner_radius))
@@ -375,82 +365,73 @@ def custom_kernel(kernel):
     kernel : numpy.array
         Returns input kernel if kernel is valid
 
-    Example
-    -------
-    .. plot::
-       :include-source:
+    Examples
+    --------
+    .. sourcecode:: python
 
-        from xrspatial.focal import custom_kernel
-        import numpy as np
+        >>> from xrspatial.focal import custom_kernel
+        >>> import numpy as np
 
-        # Valid Kernel
-        valid_kernel = np.array([[0., 0., 0., 0., 1., 0., 0., 0., 0.],
-                                 [0., 0., 1., 1., 1., 1., 1., 0., 0.],
-                                 [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-                                 [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-                                 [1., 1., 1., 1., 1., 1., 1., 1., 1.],
-                                 [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-                                 [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-                                 [0., 0., 1., 1., 1., 1., 1., 0., 0.],
-                                 [0., 0., 0., 0., 1., 0., 0., 0., 0.]])
-        
-        print(valid_kernel.shape)
-        ...     (9, 9)
+        >>> # Valid Kernel
+        >>> valid_kernel = np.array([[0., 0., 0., 0., 1., 0., 0., 0., 0.],
+                                    [0., 0., 1., 1., 1., 1., 1., 0., 0.],
+                                    [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                                    [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                                    [1., 1., 1., 1., 1., 1., 1., 1., 1.],
+                                    [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                                    [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                                    [0., 0., 1., 1., 1., 1., 1., 0., 0.],
+                                    [0., 0., 0., 0., 1., 0., 0., 0., 0.]])
+        >>> print(valid_kernel.shape)
+        (9, 9)
 
-        print(custom_kernel(valid_kernel))
-        ...     [[0. 0. 0. 0. 1. 0. 0. 0. 0.]
-        ...      [0. 0. 1. 1. 1. 1. 1. 0. 0.]
-        ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
-        ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
-        ...      [1. 1. 1. 1. 1. 1. 1. 1. 1.]
-        ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
-        ...      [0. 1. 1. 1. 1. 1. 1. 1. 0.]
-        ...      [0. 0. 1. 1. 1. 1. 1. 0. 0.]
-        ...      [0. 0. 0. 0. 1. 0. 0. 0. 0.]]
+        >>> print(custom_kernel(valid_kernel))
+        [[0. 0. 0. 0. 1. 0. 0. 0. 0.]
+         [0. 0. 1. 1. 1. 1. 1. 0. 0.]
+         [0. 1. 1. 1. 1. 1. 1. 1. 0.]
+         [0. 1. 1. 1. 1. 1. 1. 1. 0.]
+         [1. 1. 1. 1. 1. 1. 1. 1. 1.]
+         [0. 1. 1. 1. 1. 1. 1. 1. 0.]
+         [0. 1. 1. 1. 1. 1. 1. 1. 0.]
+         [0. 0. 1. 1. 1. 1. 1. 0. 0.]
+         [0. 0. 0. 0. 1. 0. 0. 0. 0.]]
 
-    .. plot::
-       :include-source:
+        >>> even_kernel = np.array([[0., 0., 0., 1., 1., 0., 0., 0.],
+                                    [0., 0., 1., 1., 1., 1., 0., 0.],
+                                    [0., 1., 1., 1., 1., 1., 1., 0.],
+                                    [1., 1., 1., 1., 1., 1., 1., 1.],
+                                    [1., 1., 1., 1., 1., 1., 1., 1.],
+                                    [0., 1., 1., 1., 1., 1., 1., 0.],
+                                    [0., 0., 1., 1., 1., 1., 0., 0.],
+                                    [0., 0., 0., 1., 1., 0., 0., 0.]])
 
-        even_kernel = np.array([[0., 0., 0., 1., 1., 0., 0., 0.],
-                                [0., 0., 1., 1., 1., 1., 0., 0.],
-                                [0., 1., 1., 1., 1., 1., 1., 0.],
-                                [1., 1., 1., 1., 1., 1., 1., 1.],
-                                [1., 1., 1., 1., 1., 1., 1., 1.],
-                                [0., 1., 1., 1., 1., 1., 1., 0.],
-                                [0., 0., 1., 1., 1., 1., 0., 0.],
-                                [0., 0., 0., 1., 1., 0., 0., 0.]])
-        
-        print(even_kernel.shape)
-        ...     (8, 8)
+        >>> print(even_kernel.shape)
+        (8, 8)
 
-        print(custom_kernel(even_kernel))
-        ...     ValueError: Received custom kernel with improper dimensions.,
-        ...     A custom kernel needs to have an odd shape, the supplied kernel
-        ...     has 8 rows and 8 columns.
+        >>> print(custom_kernel(even_kernel))
+        ValueError: Received custom kernel with improper dimensions.,
+        A custom kernel needs to have an odd shape, the supplied kernel
+        has 8 rows and 8 columns.
 
-    .. plot::
-       :include-source:
+        >>> list_kernel = [[0., 0., 0., 0., 1., 0., 0., 0., 0.],
+                           [0., 0., 1., 1., 1., 1., 1., 0., 0.],
+                           [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                           [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                           [1., 1., 1., 1., 1., 1., 1., 1., 1.],
+                           [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                           [0., 1., 1., 1., 1., 1., 1., 1., 0.],
+                           [0., 0., 1., 1., 1., 1., 1., 0., 0.],
+                           [0., 0., 0., 0., 1., 0., 0., 0., 0.]]
 
-        list_kernel = [[0., 0., 0., 0., 1., 0., 0., 0., 0.],
-                       [0., 0., 1., 1., 1., 1., 1., 0., 0.],
-                       [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-                       [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-                       [1., 1., 1., 1., 1., 1., 1., 1., 1.],
-                       [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-                       [0., 1., 1., 1., 1., 1., 1., 1., 0.],
-                       [0., 0., 1., 1., 1., 1., 1., 0., 0.],
-                       [0., 0., 0., 0., 1., 0., 0., 0., 0.]]
-        
-        print(len(list_kernel))
-        print(len(list_kernel[0]))
-        ...     9
-        ...     9
+        >>> print(len(list_kernel))
+        >>> print(len(list_kernel[0]))
+        9
+        9
 
-        print(custom_kernel(list_kernel))
-        ...     ValueError: Received a custom kernel that is not a Numpy array.,
-        ...     The kernel received was of type <class 'list'> and needs to be of
-        ...     type `ndarray` 
-
+        >>> print(custom_kernel(list_kernel))
+        ValueError: Received a custom kernel that is not a Numpy array.
+        The kernel received was of type <class 'list'> and needs to be of
+        type `ndarray`.
     """
     _validate_kernel(kernel)
     return kernel
@@ -495,18 +476,18 @@ def mean(agg: xr.DataArray,
     ----------
     agg : xarray.DataArray
         2D array of input values to be filtered.
-    passes : int, default = 1
+    passes : int, default=1
         Number of times to run mean.
-    name : str, default = 'mean'
-        output xr.DataArray.name property
+    name : str, default='mean'
+        Output xr.DataArray.name property.
 
     Returns
     -------
-    mean_agg : xarray.DataArray of same type as `agg`.
+    mean_agg : xarray.DataArray of same type as `agg`
         2D aggregate array of filtered values.
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -552,44 +533,36 @@ def mean(agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
-
-    .. plot::
-       :include-source:
-
-        print(mean_agg[200:203, 200:202])
-
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1266.57706238, 1264.26875373],
-        ...            [1284.84948023, 1281.97418665],
-        ...            [1302.86874857, 1298.65145188]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Mean Filtered Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
-
+        >>> print(mean_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1266.57706238, 1264.26875373],
+               [1284.84948023, 1281.97418665],
+               [1302.86874857, 1298.65145188]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Mean Filtered Terrain
+            units:          km
+            Max Elevation:  4000
     """
-
     out = None
     for i in range(passes):
         if out is None:
@@ -606,7 +579,6 @@ def calc_mean(array):
     """
     Calculates the mean of an array.
 
-
     Parameters
     ----------
     array : numpy.Array
@@ -615,49 +587,47 @@ def calc_mean(array):
     Returns
     -------
     array_sum : float
-        Mean of input data
+        Mean of input data.
 
-    Example
-    -------
-    .. plot::
-       :include-source:
+    Examples
+    --------
+    .. sourcecode:: python
 
-        from xrspatial.focal import calc_mean
-        import numpy as np
+        >>> from xrspatial.focal import calc_mean
+        >>> import numpy as np
 
-        # 1D Array of Integers
-        array1 = np.array([1, 2, 3, 4, 5])
-        print(array1)
-        ...     [1 2 3 4 5]
+        >>> # 1D Array of Integers
+        >>> array1 = np.array([1, 2, 3, 4, 5])
+        >>> print(array1)
+        [1 2 3 4 5]
 
-        # Calculate Mean
-        array_mean = calc_mean(array1)
-        print(array_mean)
-        ...     3.0
+        >>> # Calculate Mean
+        >>> array_mean = calc_mean(array1)
+        >>> print(array_mean)
+        3.0
 
-        # 2D Array of Floats
-        array2 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        print(array2)
-        ...     [[1. 2. 3.]
-        ...      [4. 5. 6.]]
+        >>> # 2D Array of Floats
+        >>> array2 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        >>> print(array2)
+        [[1. 2. 3.]
+         [4. 5. 6.]]
 
-        # Calculate Mean
-        array_mean = calc_mean(array2)
-        print(array_mean)
-        ...     3.5
+        >>> # Calculate Mean
+        >>> array_mean = calc_mean(array2)
+        >>> print(array_mean)
+        3.5
 
-        # 3D Array of Integers
-        array3 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
-        print(array3)
-        ...     [[1 2 3]
-        ...      [4 5 6]
-        ...      [7 8 9]]
+        >>> # 3D Array of Integers
+        >>> array3 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+        >>> print(array3)
+        [[1 2 3]
+         [4 5 6]
+         [7 8 9]]
 
-        # Calculate Mean
-        array_mean = calc_mean(array3)
-        print(array_mean)
-        ...     5.0
-
+        >>> # Calculate Mean
+        >>> array_mean = calc_mean(array3)
+        >>> print(array_mean)
+        5.0
     """
     return np.nanmean(array)
 
@@ -675,49 +645,47 @@ def calc_sum(array):
     Returns
     -------
     array_sum : float
-        Sum of input data
+        Sum of input data.
 
-    Example
-    -------
-    .. plot::
-       :include-source:
+    Examples
+    --------
+    .. sourcecode:: python
 
-        from xrspatial.focal import calc_sum
-        import numpy as np
+        >>> from xrspatial.focal import calc_sum
+        >>> import numpy as np
 
-        # 1D Array of Integers
-        array1 = np.array([1, 2, 3, 4, 5])
-        print(array1)
-        ...     [1 2 3 4 5]
+        >>> # 1D Array of Integers
+        >>> array1 = np.array([1, 2, 3, 4, 5])
+        >>> print(array1)
+        [1 2 3 4 5]
 
-        # Calculate Sum
-        array_sum = calc_sum(array1)
-        print(array_sum)
-        ...     15
+        >>> # Calculate Sum
+        >>> array_sum = calc_sum(array1)
+        >>> print(array_sum)
+        15
 
-        # 2D Array of Floats
-        array2 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        print(array2)
-        ...     [[1. 2. 3.]
-        ...      [4. 5. 6.]]
+        >>> # 2D Array of Floats
+        >>> array2 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        >>> print(array2)
+        [[1. 2. 3.]
+         [4. 5. 6.]]
 
-        # Calculate Sum
-        array_sum = calc_sum(array2)
-        print(array_sum)
-        ...     21.0
+        >>> # Calculate Sum
+        >>> array_sum = calc_sum(array2)
+        >>> print(array_sum)
+        21.0
 
-        # 3D Array of Integers
-        array3 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
-        print(array3)
-        ...     [[1 2 3]
-        ...      [4 5 6]
-        ...      [7 8 9]]
+        >>> # 3D Array of Integers
+        >>> array3 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+        >>> print(array3)
+        [[1 2 3]
+         [4 5 6]
+         [7 8 9]]
 
-        # Calculate Sum
-        agg_sum = calc_sum(array3)
-        print(agg_sum)
-        ...     45
-
+        >>> # Calculate Sum
+        >>> agg_sum = calc_sum(array3)
+        >>> print(agg_sum)
+        45
     """
     return np.nansum(array)
 
@@ -727,7 +695,7 @@ def upper_bound_p_value(zscore):
     """
     Calculates the upper bound p-value of a given z-score. The p value
     is the evidence against a null hypothesis. The smaller the p-value,
-    the stronger the evidence that you should reject the null hypothesis
+    the stronger the evidence that you should reject the null hypothesis.
 
     Parameters
     ----------
@@ -739,37 +707,36 @@ def upper_bound_p_value(zscore):
     pvalue : float
         Probability of obtaining input zscore.
 
-    Example
-    -------
-    .. plot::
-       :include-source:
+    Examples
+    --------
+    .. sourcecode:: python
 
-        from xrspatial.focal import upper_bound_p_value
-        import numpy as np
-        import scipy.stats as stats
+        >>> from xrspatial.focal import upper_bound_p_value
+        >>> import numpy as np
+        >>> import scipy.stats as stats
 
-        data = np.array([6, 7, 7, 12, 13, 13, 15, 16, 19, 22])
-        print(data)
-        ...     [ 6  7  7 12 13 13 15 16 19 22]
+        >>> data = np.array([6, 7, 7, 12, 13, 13, 15, 16, 19, 22])
+        >>> print(data)
+        [ 6  7  7 12 13 13 15 16 19 22]
 
-        zscore = stats.zscore(data)
-        print(zscore)
-        ...     [-1.39443338 -1.19522861 -1.19522861 -0.19920477  0.          0.
-        ...       0.39840954  0.5976143   1.19522861  1.79284291]
+        >>> zscore = stats.zscore(data)
+        >>> print(zscore)
+        [-1.39443338 -1.19522861 -1.19522861 -0.19920477  0.          0.
+          0.39840954  0.5976143   1.19522861  1.79284291]
 
-        for i in zscore:
-            print(upper_bound_p_value(i))
-        ...     0.0985
-        ...     1.0
-        ...     1.0
-        ...     1.0
-        ...     1.0
-        ...     1.0
-        ...     1.0
-        ...     1.0
-        ...     1.0
-        ...     0.0495
-    """
+        >>> for i in zscore:
+        >>>     print(upper_bound_p_value(i))
+        0.0985
+        1.0
+        1.0
+        1.0
+        1.0
+        1.0
+        1.0
+        1.0
+        1.0
+        0.0495
+"""
     if abs(zscore) >= 2.33:
         return 0.0099
     if abs(zscore) >= 1.65:
@@ -833,19 +800,20 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
         2D array of input values to be filtered.
     kernel : Numpy Array
         2D array where values of 1 indicate the kernel.
-    x : str, default = "x"
+    x : str, default='x'
         Name of x-coordinates.
-    y : str, default = "y"
+    y : str, default='y'
         Name of y-coordinates.
-    func : function which takes an input array and returns an array 
+    func : xrspatial.focal.calc_mean
+        Function which takes an input array and returns an array.
 
     Returns
     -------
-    agg : xarray.DataArray of same type as `raster`.
+    agg : xarray.DataArray of same type as `raster`
         2D aggregate array of filtered values.
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -897,42 +865,35 @@ def apply(raster, kernel, x='x', y='y', func=calc_mean):
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
-
-    .. plot::
-       :include-source:
-
-        print(agg[200:203, 200:202])
-
-        ...     <xarray.DataArray (lat: 3, lon: 2)>
-        ...     array([[1307.19361419, 1302.6913412 ],
-        ...            [1323.55780616, 1318.75925071],
-        ...            [1342.3309894 , 1336.93787754]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Filtered Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
-
+        >>> print(agg[200:203, 200:202])
+        <xarray.DataArray (lat: 3, lon: 2)>
+        array([[1307.19361419, 1302.6913412 ],
+               [1323.55780616, 1318.75925071],
+               [1342.3309894 , 1336.93787754]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Filtered Terrain
+            units:          km
+            Max Elevation:  4000
     """
 
     # validate raster
@@ -981,20 +942,21 @@ def hotspots(raster: xr.DataArray,
              x: Optional[str] = 'x',
              y: Optional[str] = 'y') -> xr.DataArray:
     """
-    Identify statistically significant hot spots and cold spots in an input
-    raster. To be a statistically significant hot spot, a feature will have a
-    high value and be surrounded by other features with high values as well.
-    Neighborhood of a feature defined by the input kernel, which currently
-    support a shape of circle, annulus, or custom kernel.
+    Identify statistically significant hot spots and cold spots in an
+    input raster. To be a statistically significant hot spot, a feature
+    will have a high value and be surrounded by other features with
+    high values as well.
+    Neighborhood of a feature defined by the input kernel, which
+    currently support a shape of circle, annulus, or custom kernel.
 
     The result should be a raster with the following 7 values:
-         90 for 90% confidence high value cluster
-         95 for 95% confidence high value cluster
-         99 for 99% confidence high value cluster
-        -90 for 90% confidence low value cluster
-        -95 for 95% confidence low value cluster
-        -99 for 99% confidence low value cluster
-         0 for no significance
+        - 90 for 90% confidence high value cluster
+        - 95 for 95% confidence high value cluster
+        - 99 for 99% confidence high value cluster
+        - 90 for 90% confidence low value cluster
+        - 95 for 95% confidence low value cluster
+        - 99 for 99% confidence low value cluster
+        - 0 for no significance
 
     Parameters
     ----------
@@ -1002,18 +964,18 @@ def hotspots(raster: xr.DataArray,
         2D Input raster image with `raster.shape` = (height, width).
     kernel : Numpy Array
         2D array where values of 1 indicate the kernel.
-    x : str, default = "x"
+    x : str, default='x'
         Name of x-coordinates.
-    y : str, default = "y"
+    y : str, default='y'
         Name of y-coordinates.
 
     Returns
     -------
-    hotspots_agg : xarray.DataArray of same type as `raster`.
+    hotspots_agg : xarray.DataArray of same type as `raster`
         2D array of hotspots with values indicating confidence level.
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -1066,44 +1028,36 @@ def hotspots(raster: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
-
-    .. plot::
-       :include-source:
-
-        print(hotspots_agg[200:203, 200:202])
-
-        ...     <xarray.DataArray 'Significance' (lat: 3, lon: 2)>
-        ...     array([[0, 0],
-        ...            [0, 0],
-        ...            [0, 0]], dtype=int8)
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Hotspots
-        ...         units:          %
-        ...         Max Elevation:  4000
-
+        >>> print(hotspots_agg[200:203, 200:202])
+        <xarray.DataArray 'Significance' (lat: 3, lon: 2)>
+        array([[0, 0],
+               [0, 0],
+               [0, 0]], dtype=int8)
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Hotspots
+            units:          %
+            Max Elevation:  4000
     """
-
     # validate raster
     if not isinstance(raster, DataArray):
         raise TypeError("`raster` must be instance of DataArray")
