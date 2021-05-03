@@ -26,18 +26,18 @@ def test_reclassify_cpu():
     # numpy
 
     # add crs for tests
-    numpy_agg_crs = _add_EPSG4326_crs_to_da(numpy_agg)
+    numpy_agg = _add_EPSG4326_crs_to_da(numpy_agg)
 
-    numpy_reclassify = reclassify(numpy_agg_crs, bins=bins, new_values=new_values,
+    numpy_reclassify = reclassify(numpy_agg, bins=bins, new_values=new_values,
                                   name='numpy_reclassify')
     unique_elements, counts_elements = np.unique(numpy_reclassify.data,
                                                  return_counts=True)
     assert len(unique_elements) == 3
 
     # crs tests
-    assert numpy_reclassify.attrs == numpy_agg_crs.attrs
-    for coord in numpy_agg_crs.coords:
-        assert np.all(numpy_reclassify[coord] == numpy_agg_crs[coord])
+    assert numpy_reclassify.attrs == numpy_agg.attrs
+    for coord in numpy_agg.coords:
+        assert np.all(numpy_reclassify[coord] == numpy_agg[coord])
 
     # dask + numpy
     dask_reclassify = reclassify(dask_numpy_agg, bins=bins,
@@ -90,9 +90,9 @@ def test_quantile_cpu():
     # numpy
 
     # add crs for tests
-    numpy_agg_crs = _add_EPSG4326_crs_to_da(numpy_agg)
+    numpy_agg = _add_EPSG4326_crs_to_da(numpy_agg)
 
-    numpy_quantile = quantile(numpy_agg_crs, k=k)
+    numpy_quantile = quantile(numpy_agg, k=k)
 
     unique_elements, counts_elements = np.unique(numpy_quantile.data,
                                                  return_counts=True)
@@ -102,9 +102,9 @@ def test_quantile_cpu():
     assert np.unique(counts_elements)[0] == 5
 
     # crs tests
-    assert numpy_quantile.attrs == numpy_agg_crs.attrs
-    for coord in numpy_agg_crs.coords:
-        assert np.all(numpy_quantile[coord] == numpy_agg_crs[coord])
+    assert numpy_quantile.attrs == numpy_agg.attrs
+    for coord in numpy_agg.coords:
+        assert np.all(numpy_quantile[coord] == numpy_agg[coord])
 
     # dask + numpy
     dask_quantile = quantile(dask_numpy_agg, k=k)
@@ -146,16 +146,16 @@ def test_natural_breaks_cpu():
     # vanilla numpy
 
     # add crs for tests
-    numpy_agg_crs = _add_EPSG4326_crs_to_da(numpy_agg)
+    numpy_agg = _add_EPSG4326_crs_to_da(numpy_agg)
 
-    numpy_natural_breaks = natural_breaks(numpy_agg_crs, k=k)
+    numpy_natural_breaks = natural_breaks(numpy_agg, k=k)
 
     # shape and other attributes remain the same, as well as coords, including crs
-    assert numpy_agg_crs.shape == numpy_natural_breaks.shape
-    assert numpy_agg_crs.dims == numpy_natural_breaks.dims
-    assert numpy_agg_crs.attrs == numpy_natural_breaks.attrs
-    for coord in numpy_agg_crs.coords:
-        assert np.all(numpy_agg_crs[coord] == numpy_natural_breaks[coord])
+    assert numpy_agg.shape == numpy_natural_breaks.shape
+    assert numpy_agg.dims == numpy_natural_breaks.dims
+    assert numpy_agg.attrs == numpy_natural_breaks.attrs
+    for coord in numpy_agg.coords:
+        assert np.all(numpy_agg[coord] == numpy_natural_breaks[coord])
 
     unique_elements, counts_elements = np.unique(numpy_natural_breaks.data,
                                                  return_counts=True)
@@ -186,9 +186,9 @@ def test_equal_interval_cpu():
     # numpy
 
     # add crs for tests
-    numpy_agg_crs = _add_EPSG4326_crs_to_da(numpy_agg)
+    numpy_agg = _add_EPSG4326_crs_to_da(numpy_agg)
 
-    numpy_ei = equal_interval(numpy_agg_crs, k=5)
+    numpy_ei = equal_interval(numpy_agg, k=5)
 
     unique_elements, counts_elements = np.unique(numpy_ei.data,
                                                  return_counts=True)
@@ -196,9 +196,9 @@ def test_equal_interval_cpu():
     assert len(unique_elements) == k
 
     # crs tests
-    assert numpy_ei.attrs == numpy_agg_crs.attrs
-    for coord in numpy_agg_crs.coords:
-        assert np.all(numpy_ei[coord] == numpy_agg_crs[coord])
+    assert numpy_ei.attrs == numpy_agg.attrs
+    for coord in numpy_agg.coords:
+        assert np.all(numpy_ei[coord] == numpy_agg[coord])
 
     # dask + numpy
     dask_ei = equal_interval(dask_numpy_agg, k=k, name='dask_reclassify')

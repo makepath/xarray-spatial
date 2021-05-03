@@ -21,7 +21,6 @@ from xrspatial.multispectral import gci
 from xrspatial.multispectral import sipi
 from xrspatial.multispectral import true_color
 
-from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
 
 max_val = 2**16 - 1
 
@@ -91,15 +90,10 @@ def test_ndvi_numpy_contains_valid_values():
     nir = (a*b)[::-1, ::-1]
 
     da_nir = xr.DataArray(nir, dims=['y', 'x'])
-
-    # add crs for tests
-    da_nir = _add_EPSG4326_crs_to_da(da_nir)
-
     da_red = xr.DataArray(red, dims=['y', 'x'])
 
     da_ndvi = ndvi(da_nir, da_red)
 
-    # test preservation of dims, attrs, coords, including crs
     assert da_ndvi.dims == da_nir.dims
     assert da_ndvi.attrs == da_nir.attrs
     for coord in da_nir.coords:
@@ -170,10 +164,6 @@ def test_ndvi_dask_cupy_equals_numpy():
 # SAVI -------------
 def test_savi_numpy():
     nir = create_test_arr(arr1)
-
-    # add crs for tests
-    nir = _add_EPSG4326_crs_to_da(nir)
-
     red = create_test_arr(arr2)
 
     # savi should be same as ndvi at soil_factor=0
@@ -186,11 +176,6 @@ def test_savi_numpy():
     result_savi = savi(nir, red, soil_factor=1.0)
     assert isinstance(result_savi, xa.DataArray)
     assert result_savi.dims == nir.dims
-
-    # crs tests
-    assert result_savi.attrs == nir.attrs
-    for coord in nir.coords:
-        assert np.all(result_savi[coord] == nir[coord])
 
 
 def test_savi_dask_equals_numpy():
@@ -251,19 +236,11 @@ def test_arvi_numpy():
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
 
-    #add crs for tests (nir dims, attrs, coords are the ones arvi function sets on the return DataArray)
-    nir = _add_EPSG4326_crs_to_da(nir)
-
     result = arvi(nir, red, blue)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
-
-    #crs tests
-    assert result.attrs == nir.attrs
-    for coord in nir.coords:
-        assert np.all(result[coord] == nir[coord])
 
 
 def test_arvi_dask_equals_numpy():
@@ -329,10 +306,6 @@ def test_arvi_dask_cupy_equals_numpy():
 # EVI -------------
 def test_evi_numpy():
     nir = create_test_arr(arr1)
-
-    # add crs for tests
-    nir = _add_EPSG4326_crs_to_da(nir)
-
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
     gain = 2.5
@@ -346,10 +319,6 @@ def test_evi_numpy():
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
 
-    # crs tests
-    assert result.attrs == nir.attrs
-    for coord in nir.coords:
-        assert np.all(result[coord] == nir[coord])
 
 def test_evi_dask_equals_numpy():
 
@@ -414,10 +383,6 @@ def test_evi_dask_cupy_equals_numpy():
 # GCI -------------
 def test_gci_numpy():
     nir = create_test_arr(arr1)
-
-    # add crs for tests
-    nir = _add_EPSG4326_crs_to_da(nir)
-
     green = create_test_arr(arr2)
 
     result = gci(nir, green)
@@ -425,11 +390,6 @@ def test_gci_numpy():
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
-
-    # crs tests
-    assert result.attrs == nir.attrs
-    for coord in nir.coords:
-        assert np.all(result[coord] == nir[coord])
 
 def test_gci_dask_equals_numpy():
     # vanilla numpy version
@@ -487,10 +447,6 @@ def test_gci_dask_cupy_equals_numpy():
 # SIPI -------------
 def test_sipi_numpy():
     nir = create_test_arr(arr1)
-
-    # add crs for tests
-    nir = _add_EPSG4326_crs_to_da(nir)
-
     red = create_test_arr(arr2)
     blue = create_test_arr(arr3)
 
@@ -500,10 +456,6 @@ def test_sipi_numpy():
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
 
-    # crs tests
-    assert result.attrs == nir.attrs
-    for coord in nir.coords:
-        assert np.all(result[coord] == nir[coord])
 
 def test_sipi_dask_equals_numpy():
 
@@ -567,21 +519,12 @@ def test_sipi_dask_cupy_equals_numpy():
 # NBR -------------
 def test_nbr_numpy():
     nir = create_test_arr(arr1)
-
-    # add crs for tests
-    nir = _add_EPSG4326_crs_to_da(nir)
-
     swir = create_test_arr(arr2)
     result = nbr(nir, swir)
 
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
-
-    # crs tests
-    assert result.attrs == nir.attrs
-    for coord in nir.coords:
-        assert np.all(result[coord] == nir[coord])
 
 
 def test_nbr_dask_equals_numpy():
@@ -641,10 +584,6 @@ def test_nbr_dask_cupy_equals_numpy():
 # NBR2 -------------
 def test_nbr2_numpy():
     swir1 = create_test_arr(arr1)
-
-    # add crs for tests
-    swir1 = _add_EPSG4326_crs_to_da(swir1)
-
     swir2 = create_test_arr(arr2)
 
     result = nbr2(swir1, swir2)
@@ -653,10 +592,6 @@ def test_nbr2_numpy():
     assert isinstance(result, xa.DataArray)
     assert result.dims == swir1.dims
 
-    # crs tests
-    assert result.attrs == swir1.attrs
-    for coord in swir1.coords:
-        assert np.all(result[coord] == swir1[coord])
 
 def test_nbr2_dask_equals_numpy():
 
@@ -714,10 +649,6 @@ def test_nbr2_dask_cupy_equals_numpy():
 # NDMI -------------
 def test_ndmi_numpy():
     nir = create_test_arr(arr1)
-
-    # add crs for tests
-    nir = _add_EPSG4326_crs_to_da(nir)
-
     swir1 = create_test_arr(arr2)
 
     result = ndmi(nir, swir1)
@@ -725,11 +656,6 @@ def test_ndmi_numpy():
     assert result.dims == nir.dims
     assert isinstance(result, xa.DataArray)
     assert result.dims == nir.dims
-
-    # crs tests
-    assert result.attrs == nir.attrs
-    for coord in nir.coords:
-        assert np.all(result[coord] == nir[coord])
 
 
 def test_ndmi_dask_equals_numpy():
@@ -788,10 +714,6 @@ def test_ndmi_dask_cupy_equals_numpy():
 # EBBI -------------
 def test_ebbi_numpy():
     red = create_test_arr(arr1)
-
-    # add crs for tests
-    red = _add_EPSG4326_crs_to_da(red)
-
     swir = create_test_arr(arr2)
     tir = create_test_arr(arr3)
     numpy_result = ebbi(red, swir, tir)
@@ -800,10 +722,6 @@ def test_ebbi_numpy():
     assert isinstance(numpy_result, xa.DataArray)
     assert numpy_result.dims == red.dims
 
-    # crs tests
-    assert numpy_result.attrs == red.attrs
-    for coord in red.coords:
-        assert np.all(numpy_result[coord] == red[coord])
 
 def test_ebbi_dask_equals_numpy():
 

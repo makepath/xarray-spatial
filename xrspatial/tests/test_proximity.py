@@ -5,8 +5,6 @@ from xrspatial import great_circle_distance, manhattan_distance
 from xrspatial import euclidean_distance
 from xrspatial.proximity import _calc_direction
 
-from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
-
 import numpy as np
 import xarray as xa
 
@@ -54,21 +52,12 @@ def create_test_raster():
 def test_proximity():
     raster = create_test_raster()
 
-    # add crs for tests
-    raster_for_default = _add_EPSG4326_crs_to_da(raster)
-
     # DEFAULT SETTINGS
-    default_prox = proximity(raster_for_default, x='lon', y='lat')
+    default_prox = proximity(raster, x='lon', y='lat')
     # output must be an xarray DataArray
     assert isinstance(default_prox, xa.DataArray)
     assert type(default_prox.values[0][0]) == np.float64
-    assert default_prox.shape == raster_for_default.shape
-
-    # crs tests
-    assert default_prox.attrs == raster_for_default.attrs
-    for coord in raster_for_default.coords:
-        assert np.all(default_prox[coord] == raster_for_default[coord])
-
+    assert default_prox.shape == raster.shape
     # in this test case, where no polygon is completely inside another polygon,
     # number of non-zeros (target pixels) in original image
     # must be equal to the number of zeros (target pixels) in proximity matrix
@@ -123,20 +112,11 @@ def test_allocation():
     # this is to test against corresponding proximity
     raster = create_test_raster()
 
-    # add crs for tests
-    raster = _add_EPSG4326_crs_to_da(raster)
-
     allocation_agg = allocation(raster, x='lon', y='lat')
     # output must be an xarray DataArray
     assert isinstance(allocation_agg, xa.DataArray)
     assert type(allocation_agg.values[0][0]) == raster.dtype
     assert allocation_agg.shape == raster.shape
-
-    # crs tests
-    assert allocation_agg.attrs == raster.attrs
-    for coord in raster.coords:
-        assert np.all(allocation_agg[coord] == raster[coord])
-
     # targets not specified,
     # Thus, targets are set to non-zero values of input @raster
     targets = np.unique(raster.data[np.where((raster.data != 0) &
@@ -182,13 +162,9 @@ def test_calc_direction():
 
 def test_direction():
     raster = create_test_raster()
-
-    # add crs for tests
-    raster = _add_EPSG4326_crs_to_da(raster)
-
     direction_agg = direction(raster, x='lon', y='lat')
 
-    # output must be an xarray DataArray, and attrs and coords must be preserved, including crs
+    # output must be an xarray DataArray
     assert isinstance(direction_agg, xa.DataArray)
     assert type(direction_agg.values[0][0]) == np.float64
     assert direction_agg.shape == raster.shape
