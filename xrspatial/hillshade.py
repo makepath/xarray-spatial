@@ -109,20 +109,22 @@ def hillshade(agg: xr.DataArray,
               angle_altitude: int = 25,
               name: Optional[str] = 'hillshade') -> xr.DataArray:
     """
-    Calculates, for all cells in the array, an illumination value of each
-    cell based on illumination from a specific azimuth and altitude.
+    Calculates, for all cells in the array, an illumination value of
+    each cell based on illumination from a specific azimuth and
+    altitude.
 
     Parameters
     ----------
     agg : xarray.DataArray
         2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
         of elevation values.
-    altitude : int, default = 25
+    altitude : int, default=25
         Altitude angle of the sun specified in degrees.
-    azimuth : int, default = 225
-        The angle between the north vector and the perpendicular projection
-        of the light source down onto the horizon specified in degrees.
-    name : str, default = "hillshade"
+    azimuth : int, default=225
+        The angle between the north vector and the perpendicular
+        projection of the light source down onto the horizon
+        specified in degrees.
+    name : str, default='hillshade'
         Name of output DataArray.
 
     Returns
@@ -130,13 +132,12 @@ def hillshade(agg: xr.DataArray,
     hillshade_agg : xarray.DataArray, of same type as `agg`
         2D aggregate array of illumination values.
 
-    Notes
-    -----
-    Algorithm References
-        - http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html
+    References
+    ----------
+        - GeoExamples: http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html
         
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -182,44 +183,36 @@ def hillshade(agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-   .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
-
-   .. plot::
-       :include-source:
-
-        print(hillshade_agg[200:203, 200:202])
-
-        ...     <xarray.DataArray 'Illumination' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Hillshade
-        ...         units:          
-        ...         Max Elevation:  4000
-
+        >>> print(hillshade_agg[200:203, 200:202])
+        <xarray.DataArray 'Illumination' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Hillshade
+            units:
+            Max Elevation:  4000
     """
-
     # numpy case
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy(agg.data, azimuth, angle_altitude)
