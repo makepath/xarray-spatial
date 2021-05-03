@@ -16,7 +16,8 @@ def convolve_2d(image: xr.DataArray,
     each cell via Numba. To account for edge cells, a pad can be added
     to the image array. Convolution is frequently used for image
     processing, such as smoothing, sharpening, and edge detection of
-    images by eliminating spurious data or enhancing features in the data.
+    images by eliminating spurious data or enhancing features in the
+    data.
 
     Parameters
     ----------
@@ -25,9 +26,9 @@ def convolve_2d(image: xr.DataArray,
     kernel : array-like object
         Impulse kernel, determines area to apply impulse function for
         each cell.
-    pad : bool, default = True
+    pad : bool, default=True
         To compute edges set to True.
-    use-cuda : bool, default = True
+    use-cuda : bool, default=True
         For parallel computing set to True.
 
     Returns
@@ -35,8 +36,8 @@ def convolve_2d(image: xr.DataArray,
     convolve_agg : numpy.ndarray
         2D array representation of the impulse function.
     
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -67,17 +68,16 @@ def convolve_2d(image: xr.DataArray,
         # Create Convolution Data Array
         convolve_agg = convolve_2d(image = agg, kernel = kernel)
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        ...     print(convolve_agg)
-        ...         [[ 0.  0.  4.  8.  0. 16.  0.]
-        ...         [ 0.  4.  8. 10. 18. 16. 16.]
-        ...         [ 4.  8. 14. 20. 24. 30. 16.]
-        ...         [ 8. 16. 20. 24. 30. 30. 16.]
-        ...         [12. 24. 30. 30. 34. 30. 16.]
-        ...         [16. 22. 30. 30. 30. 24. 16.]
-        ...         [ 0. 16. 16. 16. 16. 16.  0.]]
+        >>> print(convolve_agg)
+        [[ 0.  0.  4.  8.  0. 16.  0.]
+        [ 0.  4.  8. 10. 18. 16. 16.]
+        [ 4.  8. 14. 20. 24. 30. 16.]
+        [ 8. 16. 20. 24. 30. 30. 16.]
+        [12. 24. 30. 30. 34. 30. 16.]
+        [16. 22. 30. 30. 30. 24. 16.]
+        [ 0. 16. 16. 16. 16. 16.  0.]]
     """
     # Don't allow padding on (1, 1) kernel
     if (kernel.shape[0] == 1 and kernel.shape[1] == 1):
@@ -114,8 +114,9 @@ def convolve_2d(image: xr.DataArray,
 
 @jit(nopython=True, nogil=True, parallel=True)
 def _convolve_2d(kernel, image):
-    """Apply kernel to image."""
-
+    """
+    Apply kernel to image.
+    """
     nx = image.shape[0]
     ny = image.shape[1]
     nkx = kernel.shape[0]
