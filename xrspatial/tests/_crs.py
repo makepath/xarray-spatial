@@ -23,12 +23,10 @@ def _add_EPSG4326_crs_to_da(da, res=(10.0, 10.0)):
         Attrs from the original DataArray are not preserved in the returned one.
         Coords are preserved.
         """
-        crs_da = xr.DataArray(np.empty_like(da.data), dims=da.dims)
+        crs_da = xr.DataArray(np.empty_like(da.data))
         crs_da.data = da.data
         crs_attrs['res'] = res
         crs_da.attrs = crs_attrs
-        for coord in da.coords:
-                crs_da[coord] = da[coord]
         crs_da.coords['spatial_ref'] = spatial_ref_coords_da
         return crs_da
 
