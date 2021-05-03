@@ -11,8 +11,6 @@ from xrspatial import natural_breaks
 from xrspatial import quantile
 from xrspatial import reclassify
 
-from xrspatial.tests._crs import _add_EPSG4326_crs_to_da
-
 
 n, m = 5, 5
 elevation = np.arange(n * m).reshape((n, m))
