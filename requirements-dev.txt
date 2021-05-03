@@ -1,8 +1,5 @@
 check-manifest
-pydata_sphinx_theme
 pytest
-sphinx
-sphinx-panels
 setuptools_scm
 tox
 twine
