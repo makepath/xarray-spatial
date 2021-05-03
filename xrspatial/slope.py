@@ -141,24 +141,21 @@ def slope(agg: xr.DataArray,
     ----------
     agg : xr.DataArray
         2D array of elevation data.
-    name : str, default = 'slope'
+    name : str, default='slope'
         Name of output DataArray.
+
     Returns
     -------
-    slope_agg : xr.DataArray of same type as `agg`.
+    slope_agg : xr.DataArray of same type as `agg`
         2D array of slope values.
         All other input attributes are preserved.
 
-    Notes
-    -----
-    Algorithm References
-        - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm
-        - Burrough, P. A., and McDonell, R. A., 1998.
-          Principles of Geographical Information Systems
-          (Oxford University Press, New York), pp 406
+    References
+    ----------
+        - arcgis: http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -206,44 +203,36 @@ def slope(agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
-
-    .. plot::
-       :include-source:
-
-        print(slope_agg[200:203, 200:202])
-
-        ...     <xarray.DataArray 'Slope' (lat: 3, lon: 2)>
-        ...     array([[86.69626115, 86.55635267],
-        ...            [87.2235249 , 87.24527062],
-        ...            [86.69883402, 86.22918773]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Slope
-        ...         units:          deg
-        ...         Max Elevation:  4000
-
+        >>> print(slope_agg[200:203, 200:202])
+        <xarray.DataArray 'Slope' (lat: 3, lon: 2)>
+        array([[86.69626115, 86.55635267],
+               [87.2235249 , 87.24527062],
+               [86.69883402, 86.22918773]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Slope
+            units:          deg
+            Max Elevation:  4000
     """
-
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
 
     # numpy case
