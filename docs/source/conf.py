@@ -44,7 +44,7 @@ extensions = [
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
     'sphinx.ext.autosummary',
-    'matplotlib.sphinxext.plot_directive'
+    'matplotlib.sphinxext.plot_directive',
     'sphinx_multiversion',
     'nbsphinx',
     'sphinx.ext.mathjax',
