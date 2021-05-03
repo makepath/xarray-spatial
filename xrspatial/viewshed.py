@@ -1528,10 +1528,11 @@ def viewshed(raster: xarray.DataArray,
     viewshed: xarray.DataArray
         A cell x in the visibility grid is recorded as follows:
         If it is invisible, then x is set to INVISIBLE.
-        If it is visible,  then x is set to the vertical angle w.r.t the viewpoint.
+        If it is visible,  then x is set to the vertical angle w.r.t
+        the viewpoint.
     
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -1598,58 +1599,46 @@ def viewshed(raster: xarray.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
+        >>> print(volcano_agg[200:203, 200:202])
+        <xarray.DataArray 'Volcano' (y: 3, x: 2)>
+        array([[0., 0.],
+               [0., 0.],
+               [0., 0.]])
+        Coordinates:
+          * x        (x) float64 -3.96e+06 -3.88e+06
+          * y        (y) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:          1
+            Description:  Volcano
 
-    .. plot::
-       :include-source:
-
-        print(volcano_agg[200:203, 200:202])
-
-        ...     <xarray.DataArray 'Volcano' (y: 3, x: 2)>
-        ...     array([[0., 0.],
-        ...            [0., 0.],
-        ...            [0., 0.]])
-        ...     Coordinates:
-        ...       * x        (x) float64 -3.96e+06 -3.88e+06
-        ...       * y        (y) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:          1
-        ...         Description:  Volcano
-
-    .. plot::
-       :include-source:
-
-        print(view[200:203, 200:202])
-
-        ...     <xarray.DataArray (y: 3, x: 2)>
-        ...     array([[90., 90.],
-        ...            [90., 90.],
-        ...            [90., 90.]])
-        ...     Coordinates:
-        ...       * x        (x) float64 -3.96e+06 -3.88e+06
-        ...       * y        (y) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:          1
-        ...         Description:  Volcano
-
+        >>> print(view[200:203, 200:202])
+        <xarray.DataArray (y: 3, x: 2)>
+        array([[90., 90.],
+               [90., 90.],
+               [90., 90.]])
+        Coordinates:
+          * x        (x) float64 -3.96e+06 -3.88e+06
+          * y        (y) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:          1
+            Description:  Volcano
     """
-
     height, width = raster.shape
 
     y_coords = raster.indexes.get('y').values
