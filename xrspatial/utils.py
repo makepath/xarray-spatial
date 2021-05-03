@@ -43,18 +43,19 @@ def doesnt_have_cuda():
 
 def cuda_args(shape):
     """
-    Compute the blocks-per-grid and threads-per-block parameters for use when
-    invoking cuda kernels
+    Compute the blocks-per-grid and threads-per-block parameters for
+    use when invoking cuda kernels
 
     Parameters
     ----------
     shape: int or tuple of ints
-        The shape of the input array that the kernel will parallelize over
+        The shape of the input array that the kernel will parallelize
+        over.
 
     Returns
     -------
-    tuple
-        Tuple of (blocks_per_grid, threads_per_block)
+    bpg, tpb : tuple
+        Tuple of (blocks_per_grid, threads_per_block).
     """
     if isinstance(shape, int):
         shape = (shape,)
@@ -124,23 +125,24 @@ def validate_arrays(*arrays):
 
 
 def calc_res(raster):
-    """Calculate the resolution of xarray.DataArray raster and return it as the
-    two-tuple (xres, yres).
+    """
+    Calculate the resolution of xarray.DataArray raster and return it
+    as thetwo-tuple (xres, yres).
 
     Parameters
     ----------
     raster: xr.DataArray
         Input raster.
+
     Returns
     -------
-    tuple
-        Tuple of (x-resolution, y-resolution)
+    xres, yres: tuple
+        Tuple of (x-resolution, y-resolution).
 
     Notes
     -----
-    Sourced from datashader.utils
+        - Sourced from datashader.utils.
     """
-
     h, w = raster.shape[-2:]
     ydim, xdim = raster.dims[-2:]
     xcoords = raster[xdim].values
@@ -154,17 +156,16 @@ def get_dataarray_resolution(agg: xr.DataArray):
     """
     Calculate resolution of xarray.DataArray.
 
-    Parameters:
+    Parameters
     ----------
     agg: xarray.DataArray
         Input raster.
 
-    Returns:
-    ----------
-    tuple
-        Tuple of (x cell size, y cell size)
+    Returns
+    -------
+    cellsize_x, cellsize_y: tuple
+        Tuple of (x cell size, y cell size).
     """
-
     # get cellsize out from 'res' attribute
     cellsize = agg.attrs.get('res')
     if isinstance(cellsize, (tuple, np.ndarray, list)) and len(cellsize) == 2 \
@@ -183,7 +184,8 @@ def get_dataarray_resolution(agg: xr.DataArray):
 def lnglat_to_meters(longitude, latitude):
     """
     Projects the given (longitude, latitude) values into Web Mercator
-    coordinates (meters East of Greenwich and meters North of the Equator).
+    coordinates (meters East of Greenwich and meters North of the
+    Equator).
 
     Longitude and latitude can be provided as scalars, Pandas columns,
     or Numpy arrays, and will be returned in the same form.  Lists
@@ -195,21 +197,24 @@ def lnglat_to_meters(longitude, latitude):
         Input latitude.
     longitude: float
         Input longitude.
+
     Returns
     -------
-    Tuple of (easting, northing)
+    easting, northing : tuple
+        Tuple of (easting, northing).
 
-    Example
-    -------
-    >>>     easting, northing = lnglat_to_meters(-40.71,74)
-    >>>     easting, northing = lnglat_to_meters(np.array([-74]),
-    >>>                                          np.array([40.71]))
-    >>>     df = pandas.DataFrame(dict(longitude=np.array([-74]),
-    >>>                                latitude=np.array([40.71])))
-    >>>     df.loc[:, 'longitude'], df.loc[:, 'latitude'] = lnglat_to_meters(
-    >>>         df.longitude, df.latitude)
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> easting, northing = lnglat_to_meters(-40.71,74)
+        >>> easting, northing = lnglat_to_meters(np.array([-74]),
+        >>>                                      np.array([40.71]))
+        >>> df = pandas.DataFrame(dict(longitude=np.array([-74]),
+        >>>                            latitude=np.array([40.71])))
+        >>> df.loc[:, 'longitude'], df.loc[:, 'latitude'] = lnglat_to_meters(
+        >>>     df.longitude, df.latitude)
     """
-
     if isinstance(longitude, (list, tuple)):
         longitude = np.array(longitude)
     if isinstance(latitude, (list, tuple)):
@@ -224,30 +229,33 @@ def lnglat_to_meters(longitude, latitude):
 
 def height_implied_by_aspect_ratio(W, X, Y):
     """
-    Utility function for calculating height (in pixels)
-    which is implied by a width, x-range, and y-range.
-    Simple ratios are used to maintain aspect ratio.
+    Utility function for calculating height (in pixels) which is implied
+    by a width, x-range, and y-range. Simple ratios are used to maintain
+    aspect ratio.
 
     Parameters
     ----------
     W: int
-      width in pixel
-    X: tuple(xmin, xmax)
-      x-range in data units
-    Y: tuple(xmin, xmax)
-      x-range in data units
+        Width in pixel.
+    X: tuple
+        X-range in data units.
+    Y: tuple
+        X-range in data units.
+
     Returns
     -------
-    height in pixels
+    height : int
+        height in pixels
 
-    Example
-    -------
-    >>>     plot_width = 1000
-    >>>     x_range = (0,35
-    >>>     y_range = (0, 70)
-    >>>     plot_height = height_implied_by_aspect_ratio(plot_width, x_range, y_range)
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> plot_width = 1000
+        >>> x_range = (0,35
+        >>> y_range = (0, 70)
+        >>> plot_height = height_implied_by_aspect_ratio(plot_width, x_range, y_range)
     """
-
     return int((W * (Y[1] - Y[0])) / (X[1] - X[0]))
 
 
