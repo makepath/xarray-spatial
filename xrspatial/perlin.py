@@ -20,24 +20,23 @@ def perlin(width: int,
         Width of output aggregate array.
     height : int
         Height of output aggregate array.
-    freq : tuple, default = (1,1)
+    freq : tuple, default=(1,1)
         (x, y) frequency multipliers.
-    seed : int, default = 5
+    seed : int, default=5
         Seed for random number generator.
+
     Returns
     -------
     perlin_agg : xarray.DataArray
         2D array of perlin noise values.
 
-    Notes
-    -----
-    Algorithm References
-        numba-ized from Paul Panzer example available here:
-        - https://stackoverflow.com/questions/42147776/producing-2d-perlin-noise-with-numpy
-        - http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf
+    References
+    ----------
+        - Paul Panzer: https://stackoverflow.com/questions/42147776/producing-2d-perlin-noise-with-numpy
+        - ICA: http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -72,60 +71,44 @@ def perlin(width: int,
         perlin_seed_1.plot(cmap = 'inferno', aspect = 2, size = 4)
         plt.title("Seed = 1")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(perlin_default[200:203, 200: 202])
+        >>> print(perlin_default[200:203, 200: 202])
+        <xarray.DataArray (y: 3, x: 2)>
+        array([[0.56800979, 0.56477393],
+               [0.56651744, 0.56331014],
+               [0.56499184, 0.56181344]])
+        Dimensions without coordinates: y, x
+        Attributes:
+            res:      1
 
-        ...     <xarray.DataArray (y: 3, x: 2)>
-        ...     array([[0.56800979, 0.56477393],
-        ...            [0.56651744, 0.56331014],
-        ...            [0.56499184, 0.56181344]])
-        ...     Dimensions without coordinates: y, x
-        ...     Attributes:
-        ...         res:      1
+        >>> print(perlin_high_x_freq[200:203, 200: 202])
+        <xarray.DataArray (y: 3, x: 2)>
+        array([[0.5       , 0.48999444],
+               [0.5       , 0.48999434],
+               [0.5       , 0.48999425]])
+        Dimensions without coordinates: y, x
+        Attributes:
+            res:      1
 
-    .. plot::
-       :include-source:
+        >>> print(perlin_high_y_freq[200:203, 200: 202])
+        <xarray.DataArray (y: 3, x: 2)>
+        array([[0.31872961, 0.31756859],
+               [0.2999256 , 0.2988189 ],
+               [0.28085118, 0.27979834]])
+        Dimensions without coordinates: y, x
+        Attributes:
+            res:      1
 
-        print(perlin_high_x_freq[200:203, 200: 202])
-
-        ...     <xarray.DataArray (y: 3, x: 2)>
-        ...     array([[0.5       , 0.48999444],
-        ...            [0.5       , 0.48999434],
-        ...            [0.5       , 0.48999425]])
-        ...     Dimensions without coordinates: y, x
-        ...     Attributes:
-        ...         res:      1
-
-    .. plot::
-       :include-source:
-
-        print(perlin_high_y_freq[200:203, 200: 202])
-
-        ...     <xarray.DataArray (y: 3, x: 2)>
-        ...     array([[0.31872961, 0.31756859],
-        ...            [0.2999256 , 0.2988189 ],
-        ...            [0.28085118, 0.27979834]])
-        ...     Dimensions without coordinates: y, x
-        ...     Attributes:
-        ...         res:      1
-
-    .. plot::
-       :include-source:
-
-        print(perlin_seed_1[200:203, 200: 202])
-
-        ...     <xarray.DataArray (y: 3, x: 2)>
-        ...     array([[0.12991498, 0.12984185],
-        ...            [0.13451158, 0.13441514],
-        ...            [0.13916956, 0.1390495 ]])
-        ...     Dimensions without coordinates: y, x
-        ...     Attributes:
-        ...         res:      1
-
+        >>> print(perlin_seed_1[200:203, 200: 202])
+        <xarray.DataArray (y: 3, x: 2)>
+        array([[0.12991498, 0.12984185],
+               [0.13451158, 0.13441514],
+               [0.13916956, 0.1390495 ]])
+        Dimensions without coordinates: y, x
+        Attributes:
+            res:      1
     """
-
     linx = range(width)
     liny = range(height)
     linx = np.linspace(0, 1, width, endpoint=False)
