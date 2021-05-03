@@ -89,20 +89,20 @@ def arvi(nir_agg: xr.DataArray,
         2D array of red band data.
     blue_agg : xarray.DataArray
         2D array of blue band data.
-    name : str, default = "arvi"
+    name : str, default='arvi'
         Name of output DataArray.
+
     Returns
     -------
     arvi_agg : xarray.DataArray of the same type as inputs.
         2D array arvi values. All other input attributes are preserved.
 
-    Notes
-    -----
-    Algorithm References
-        - https://modis.gsfc.nasa.gov/sci_team/pubs/abstract_new.php?id=03667
+    References
+    ----------
+        - MODIS: https://modis.gsfc.nasa.gov/sci_team/pubs/abstract_new.php?id=03667
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -146,35 +146,32 @@ def arvi(nir_agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
-    
-        print(arvi_agg[100:103, 100: 102])
+    .. sourcecode:: python
 
-        ...     <xarray.DataArray 'arvi' (y: 3, x: 2)>
-        ...     array([[0.02676934, 0.02135493],
-        ...            [0.02130841, 0.01114413],
-        ...            [0.02488688, 0.00816024]])
-        ...     Coordinates:
-        ...       * x        (x) float64 6.01e+05 6.01e+05
-        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
-        ...         band     int32 ...
-        ...     Attributes: (12/13)
-        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-        ...         crs:                      +init=epsg:32719
-        ...         res:                      [10. 10.]
-        ...         is_tiled:                 1
-        ...         nodatavals:               nan
-        ...         scales:                   1.0
-        ...         ...                       ...
-        ...         instrument:               Sentinel-2
-        ...         Band:                     07
-        ...         Name:                     NIR
-        ...         Bandwidth (µm):           115
-        ...         Nominal Wavelength (µm):  0.842
-        ...         Resolution (m):            10
+        >>> print(arvi_agg[100:103, 100: 102])
+        <xarray.DataArray 'arvi' (y: 3, x: 2)>
+        array([[0.02676934, 0.02135493],
+               [0.02130841, 0.01114413],
+               [0.02488688, 0.00816024]])
+        Coordinates:
+          * x        (x) float64 6.01e+05 6.01e+05
+          * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+            band     int32 ...
+        Attributes: (12/13)
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            crs:                      +init=epsg:32719
+            res:                      [10. 10.]
+            is_tiled:                 1
+            nodatavals:               nan
+            scales:                   1.0
+            ...                       ...
+            instrument:               Sentinel-2
+            Band:                     07
+            Name:                     NIR
+            Bandwidth (µm):           115
+            Nominal Wavelength (µm):  0.842
+            Resolution (m):            10
     """
-
     validate_arrays(red_agg, nir_agg, blue_agg)
 
     mapper = ArrayTypeFunctionMapping(numpy_func=_arvi_cpu,
@@ -264,30 +261,29 @@ def evi(nir_agg: xr.DataArray,
         2D array of red band data.
     blue_agg : xr.DataArray
         2D array of blue band data.
-    c1 : float, default = 6.0
+    c1 : float, default=6.0
         First coefficient of the aerosol resistance term.
-    c2 : float, default = 7.5
+    c2 : float, default=7.5
         Second coefficients of the aerosol resistance term.
-    soil_factor : float, default = 1.0
+    soil_factor : float, default=1.0
         Soil adjustment factor between -1.0 and 1.0.
-    gain : float, default = 2.5
+    gain : float, default=2.5
         Amplitude adjustment factor.
-    name : str, default = "evi"
+    name : str, default='evi'
         Name of output DataArray.
 
     Returns
     -------
-    evi_agg : xarray.DataArray of same type as inputs.
+    evi_agg : xarray.DataArray of same type as inputs
         2D array of evi values.
         All other input attributes are preserved.
 
-    Notes
-    -----
-    Algorithm References
-        - https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+    References
+    ----------
+        - Wikipedia: https://en.wikipedia.org/wiki/Enhanced_vegetation_index
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -331,34 +327,31 @@ def evi(nir_agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(evi_agg[100:103, 100: 102])
-
-        ...     <xarray.DataArray 'evi' (y: 3, x: 2)>
-        ...     array([[-3.8247012 , -9.51086957],
-        ...            [11.81818182,  3.83783784],
-        ...            [-8.53211009,  5.48672566]])
-        ...     Coordinates:
-        ...       * x        (x) float64 6.01e+05 6.01e+05
-        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
-        ...         band     int32 ...
-        ...     Attributes: (12/13)
-        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-        ...         crs:                      +init=epsg:32719
-        ...         res:                      [10. 10.]
-        ...         is_tiled:                 1
-        ...         nodatavals:               nan
-        ...         scales:                   1.0
-        ...         ...                       ...
-        ...         instrument:               Sentinel-2
-        ...         Band:                     07
-        ...         Name:                     NIR
-        ...         Bandwidth (µm):           115
-        ...         Nominal Wavelength (µm):  0.842
-        ...         Resolution (m):            10
-
+        >>> print(evi_agg[100:103, 100: 102])
+        <xarray.DataArray 'evi' (y: 3, x: 2)>
+        array([[-3.8247012 , -9.51086957],
+               [11.81818182,  3.83783784],
+               [-8.53211009,  5.48672566]])
+        Coordinates:
+          * x        (x) float64 6.01e+05 6.01e+05
+          * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+            band     int32 ...
+        Attributes: (12/13)
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            crs:                      +init=epsg:32719
+            res:                      [10. 10.]
+            is_tiled:                 1
+            nodatavals:               nan
+            scales:                   1.0
+            ...                       ...
+            instrument:               Sentinel-2
+            Band:                     07
+            Name:                     NIR
+            Bandwidth (µm):           115
+            Nominal Wavelength (µm):  0.842
+            Resolution (m):            10
     """
 
     if not red_agg.shape == nir_agg.shape == blue_agg.shape:
@@ -440,9 +433,9 @@ def gci(nir_agg: xr.DataArray,
         green_agg: xr.DataArray,
         name = 'gci'):
     """
-    Computes Green Chlorophyll Index. Used to estimate
-    the content of leaf chorophyll and predict the
-    physiological state of vegetation and plant health.
+    Computes Green Chlorophyll Index. Used to estimate the content of
+    leaf chorophyll and predict the physiological state of vegetation
+    and plant health.
 
     Parameters
     ----------
@@ -450,21 +443,21 @@ def gci(nir_agg: xr.DataArray,
         2D array of near-infrared band data.
     green_agg : xr.DataArray
         2D array of green band data.
-    name : str, default = "gci"
+    name : str, default='gci'
         Name of output DataArray.
+
     Returns
     -------
-    gci_agg : xarray.DataArray of the same type as inputs.
+    gci_agg : xarray.DataArray of the same type as inputs
         2D array of gci values.
         All other input attributes are preserved.
 
-    Notes
-    -----
-    Algorithm References
-        - https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+    References
+    ----------
+        - Wikipedia: https://en.wikipedia.org/wiki/Enhanced_vegetation_index
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -500,36 +493,32 @@ def gci(nir_agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(gci_agg[100:103, 100: 102])
-
-        ...     <xarray.DataArray 'gci' (y: 3, x: 2)>
-        ...     array([[0.35625   , 0.33097345],
-        ...            [0.3420342 , 0.29551451],
-        ...            [0.34822242, 0.28270413]])
-        ...     Coordinates:
-        ...       * x        (x) float64 6.01e+05 6.01e+05
-        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
-        ...         band     int32 ...
-        ...     Attributes: (12/13)
-        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-        ...         crs:                      +init=epsg:32719
-        ...         res:                      [10. 10.]
-        ...         is_tiled:                 1
-        ...         nodatavals:               nan
-        ...         scales:                   1.0
-        ...         ...                       ...
-        ...         instrument:               Sentinel-2
-        ...         Band:                     07
-        ...         Name:                     NIR
-        ...         Bandwidth (µm):           115
-        ...         Nominal Wavelength (µm):  0.842
-        ...         Resolution (m):            10
-
+        >>> print(gci_agg[100:103, 100: 102])
+        <xarray.DataArray 'gci' (y: 3, x: 2)>
+        array([[0.35625   , 0.33097345],
+               [0.3420342 , 0.29551451],
+               [0.34822242, 0.28270413]])
+        Coordinates:
+          * x        (x) float64 6.01e+05 6.01e+05
+          * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+            band     int32 ...
+        Attributes: (12/13)
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            crs:                      +init=epsg:32719
+            res:                      [10. 10.]
+            is_tiled:                 1
+            nodatavals:               nan
+            scales:                   1.0
+            ...                       ...
+            instrument:               Sentinel-2
+            Band:                     07
+            Name:                     NIR
+            Bandwidth (µm):           115
+            Nominal Wavelength (µm):  0.842
+            Resolution (m):            10
     """
-
     validate_arrays(nir_agg, green_agg)
 
     mapper = ArrayTypeFunctionMapping(numpy_func=_gci_cpu,
@@ -551,8 +540,8 @@ def nbr(nir_agg: xr.DataArray,
         swir2_agg: xr.DataArray,
         name = 'nbr'):
     """
-    Computes Normalized Burn Ratio. Used to identify
-    burned areas and provide a measure of burn severity.
+    Computes Normalized Burn Ratio. Used to identify burned areas and
+    provide a measure of burn severity.
 
     Parameters
     ----------
@@ -562,21 +551,21 @@ def nbr(nir_agg: xr.DataArray,
         2D array of shortwave infrared band.
         (Landsat 4-7: Band 6)
         (Landsat 8: Band 7)
-    name : str, default = "nbr"
+    name : str, default='nbr'
         Name of output DataArray.
+
     Returns
     -------
-    nbr_agg : xr.DataArray of the same type as inputs.
+    nbr_agg : xr.DataArray of the same type as inputs
         2D array of nbr values.
         All other input attributes are preserved.
 
-    Notes
-    -----
-    Algorithm References
-        - https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
+    References
+    ----------
+        - USGS: https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -612,36 +601,32 @@ def nbr(nir_agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
         print(nbr_agg[100:103, 100: 102])
-
-        ...     <xarray.DataArray 'nbr' (y: 3, x: 2)>
-        ...     array([[-0.10251108, -0.1321408 ],
-        ...            [-0.09691096, -0.12659354],
-        ...            [-0.10823033, -0.14486392]])
-        ...     Coordinates:
-        ...       * x        (x) float64 6.01e+05 6.01e+05
-        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
-        ...         band     int32 ...
-        ...     Attributes: (12/13)
-        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-        ...         crs:                      +init=epsg:32719
-        ...         res:                      [10. 10.]
-        ...         is_tiled:                 1
-        ...         nodatavals:               nan
-        ...         scales:                   1.0
-        ...         ...                       ...
-        ...         instrument:               Sentinel-2
-        ...         Band:                     07
-        ...         Name:                     NIR
-        ...         Bandwidth (µm):           115
-        ...         Nominal Wavelength (µm):  0.842
-        ...         Resolution (m):            10
-
+            <xarray.DataArray 'nbr' (y: 3, x: 2)>
+            array([[-0.10251108, -0.1321408 ],
+                   [-0.09691096, -0.12659354],
+                   [-0.10823033, -0.14486392]])
+            Coordinates:
+              * x        (x) float64 6.01e+05 6.01e+05
+              * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+                band     int32 ...
+            Attributes: (12/13)
+                transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+                crs:                      +init=epsg:32719
+                res:                      [10. 10.]
+                is_tiled:                 1
+                nodatavals:               nan
+                scales:                   1.0
+                ...                       ...
+                instrument:               Sentinel-2
+                Band:                     07
+                Name:                     NIR
+                Bandwidth (µm):           115
+                Nominal Wavelength (µm):  0.842
+                Resolution (m):            10
     """
-
     validate_arrays(nir_agg, swir2_agg)
 
     mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
@@ -662,11 +647,9 @@ def nbr2(swir1_agg: xr.DataArray,
          swir2_agg: xr.DataArray,
          name = 'nbr2'):
     """
-    Computes Normalized Burn Ratio 2
-    "NBR2 modifies the Normalized Burn Ratio (NBR)
-    to highlight water sensitivity in vegetation and
-    may be useful in post-fire recovery studies."
-    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+    Computes Normalized Burn Ratio 2 "NBR2 modifies the Normalized Burn
+    Ratio (NBR) to highlight water sensitivity in vegetation and may be
+    useful in post-fire recovery studies." [1]_
 
     Parameters
     ----------
@@ -679,8 +662,9 @@ def nbr2(swir1_agg: xr.DataArray,
         2D array of shortwave infrared band data.
         (Landsat 4-7: Band 6)
         (Landsat 8: Band 7)
-    name : str default = "nbr2"
+    name : str default='nbr2'
         Name of output DataArray.
+
     Returns
     -------
     nbr2_agg : xr.DataArray of same type as inputs.
@@ -689,11 +673,10 @@ def nbr2(swir1_agg: xr.DataArray,
 
     Notes
     -----
-    Algorithm References
-        - https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+    .. [1] https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -729,35 +712,32 @@ def nbr2(swir1_agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(nbr2_agg[100:103, 100: 102])
-
-        ...     <xarray.DataArray 'nbr' (y: 3, x: 2)>
-        ...     array([[0.05709955, 0.06660324],
-        ...            [0.053814  , 0.0617284 ],
-        ...            [0.07218576, 0.06857143]])
-        ...     Coordinates:
-        ...       * x        (x) float64 6.02e+05 6.02e+05
-        ...       * y        (y) float64 4.698e+06 4.698e+06 4.698e+06
-        ...         band     int32 ...
-        ...     Attributes: (12/13)
-        ...         transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-        ...         crs:                      +init=epsg:32719
-        ...         res:                      [20. 20.]
-        ...         is_tiled:                 1
-        ...         nodatavals:               nan
-        ...         scales:                   1.0
-        ...         ...                       ...
-        ...         instrument:               Sentinel-2
-        ...         Band:                     11
-        ...         Name:                     SWIR1
-        ...         Bandwidth (µm):           90
-        ...         Nominal Wavelength (µm):  1.610
-        ...         Resolution (m):            20
+        >>> print(nbr2_agg[100:103, 100: 102])
+        <xarray.DataArray 'nbr' (y: 3, x: 2)>
+        array([[0.05709955, 0.06660324],
+               [0.053814  , 0.0617284 ],
+               [0.07218576, 0.06857143]])
+        Coordinates:
+          * x        (x) float64 6.02e+05 6.02e+05
+          * y        (y) float64 4.698e+06 4.698e+06 4.698e+06
+            band     int32 ...
+        Attributes: (12/13)
+            transform:                [ 2.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            crs:                      +init=epsg:32719
+            res:                      [20. 20.]
+            is_tiled:                 1
+            nodatavals:               nan
+            scales:                   1.0
+            ...                       ...
+            instrument:               Sentinel-2
+            Band:                     11
+            Name:                     SWIR1
+            Bandwidth (µm):           90
+            Nominal Wavelength (µm):  1.610
+            Resolution (m):            20
     """
-
     validate_arrays(swir1_agg, swir2_agg)
 
     mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
@@ -779,8 +759,8 @@ def ndvi(nir_agg: xr.DataArray,
          red_agg: xr.DataArray,
          name = 'ndvi'):
     """
-    Computes Normalized Difference Vegetation Index (NDVI).
-    Used to determine if a cell contains live green vegetation.
+    Computes Normalized Difference Vegetation Index (NDVI). Used to
+    determine if a cell contains live green vegetation.
 
     Parameters
     ----------
@@ -788,21 +768,21 @@ def ndvi(nir_agg: xr.DataArray,
         2D array of near-infrared band data.
     red_agg : xr.DataArray
         2D array red band data.
-    name : str default = "ndvi"
+    name : str default='ndvi'
         Name of output DataArray.
+
     Returns
     -------
-    ndvi_agg : xarray.DataArray of same type as inputs.
+    ndvi_agg : xarray.DataArray of same type as inputs
         2D array of ndvi values.
         All other input attributes are preserved.
 
-    Notes
-    -----
-    Algorithm References
-        - http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
+    References
+    ----------
+        - Chris Holden: http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -838,36 +818,32 @@ def ndvi(nir_agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(ndvi_agg[100:103, 100: 102])
-
-        ...     <xarray.DataArray 'ndvi' (y: 3, x: 2)>
-        ...     array([[0.06746311, 0.06177197],
-        ...            [0.065     , 0.05064194],
-        ...            [0.06709957, 0.04431737]])
-        ...     Coordinates:
-        ...       * x        (x) float64 6.01e+05 6.01e+05
-        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
-        ...         band     int32 ...
-        ...     Attributes: (12/13)
-        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-        ...         crs:                      +init=epsg:32719
-        ...         res:                      [10. 10.]
-        ...         is_tiled:                 1
-        ...         nodatavals:               nan
-        ...         scales:                   1.0
-        ...         ...                       ...
-        ...         instrument:               Sentinel-2
-        ...         Band:                     07
-        ...         Name:                     NIR
-        ...         Bandwidth (µm):           115
-        ...         Nominal Wavelength (µm):  0.842
-        ...         Resolution (m):            10
-
+        >>> print(ndvi_agg[100:103, 100: 102])
+        <xarray.DataArray 'ndvi' (y: 3, x: 2)>
+        array([[0.06746311, 0.06177197],
+               [0.065     , 0.05064194],
+               [0.06709957, 0.04431737]])
+        Coordinates:
+          * x        (x) float64 6.01e+05 6.01e+05
+          * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+            band     int32 ...
+        Attributes: (12/13)
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            crs:                      +init=epsg:32719
+            res:                      [10. 10.]
+            is_tiled:                 1
+            nodatavals:               nan
+            scales:                   1.0
+            ...                       ...
+            instrument:               Sentinel-2
+            Band:                     07
+            Name:                     NIR
+            Bandwidth (µm):           115
+            Nominal Wavelength (µm):  0.842
+            Resolution (m):            10
     """
-
     validate_arrays(nir_agg, red_agg)
 
     mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
@@ -889,8 +865,8 @@ def ndmi(nir_agg: xr.DataArray,
          swir1_agg: xr.DataArray,
          name = 'ndmi'):
     """
-    Computes Normalized Difference Moisture Index.
-    Used to determine vegetation water content.
+    Computes Normalized Difference Moisture Index. Used to determine
+    vegetation water content.
 
     Parameters
     ----------
@@ -902,21 +878,21 @@ def ndmi(nir_agg: xr.DataArray,
         2D array of shortwave infrared band.
         (Landsat 4-7: Band 5)
         (Landsat 8: Band 6)
-    name: str, default = "ndmi"
+    name: str, default='ndmi'
         Name of output DataArray.
+
     Returns
     -------
-    ndmi_agg : xr.DataArray of same type as inputs.
+    ndmi_agg : xr.DataArray of same type as inputs
         2D array of ndmi values.
         All other input attributes are preserved.
 
-    Notes
-    -----
-    Algorithm References
-        - https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
+    References
+    ----------
+        - USGS: https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -952,36 +928,32 @@ def ndmi(nir_agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(ndmi_agg[100:103, 100: 102])
-
-        ...     <xarray.DataArray 'ndmi' (y: 3, x: 2)>
-        ...     array([[-0.15868181, -0.19701014],
-        ...            [-0.14994299, -0.18686172],
-        ...            [-0.17901749, -0.21133603]])
-        ...     Coordinates:
-        ...       * x        (x) float64 6.01e+05 6.01e+05
-        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
-        ...         band     int32 ...
-        ...     Attributes: (12/13)
-        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-        ...         crs:                      +init=epsg:32719
-        ...         res:                      [10. 10.]
-        ...         is_tiled:                 1
-        ...         nodatavals:               nan
-        ...         scales:                   1.0
-        ...         ...                       ...
-        ...         instrument:               Sentinel-2
-        ...         Band:                     07
-        ...         Name:                     NIR
-        ...         Bandwidth (µm):           115
-        ...         Nominal Wavelength (µm):  0.842
-        ...         Resolution (m):            10
-
+        >> print(ndmi_agg[100:103, 100: 102])
+        <xarray.DataArray 'ndmi' (y: 3, x: 2)>
+        array([[-0.15868181, -0.19701014],
+               [-0.14994299, -0.18686172],
+               [-0.17901749, -0.21133603]])
+        Coordinates:
+          * x        (x) float64 6.01e+05 6.01e+05
+          * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+            band     int32 ...
+        Attributes: (12/13)
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            crs:                      +init=epsg:32719
+            res:                      [10. 10.]
+            is_tiled:                 1
+            nodatavals:               nan
+            scales:                   1.0
+            ...                       ...
+            instrument:               Sentinel-2
+            Band:                     07
+            Name:                     NIR
+            Bandwidth (µm):           115
+            Nominal Wavelength (µm):  0.842
+            Resolution (m):            10
     """
-
     validate_arrays(nir_agg, swir1_agg)
 
     mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
@@ -1105,9 +1077,9 @@ def savi(nir_agg: xr.DataArray,
          soil_factor: float = 1.0,
          name: str = 'savi'):
     """
-    Computes Soil Adjusted Vegetation Index (SAVI).
-    Used to determine if a cell contains living
-    vegetation while minimizing soil brightness.
+    Computes Soil Adjusted Vegetation Index (SAVI). Used to determine
+    if a cell contains living vegetation while minimizing soil
+    brightness.
 
     Parameters
     ----------
@@ -1115,24 +1087,24 @@ def savi(nir_agg: xr.DataArray,
         2D array of near-infrared band data.
     red_agg : xr.DataArray
         2D array of red band data.
-    soil_factor : float, default = 1.0
+    soil_factor : float, default=1.0
         soil adjustment factor between -1.0 and 1.0.
         When set to zero, savi will return the same as ndvi.
-    name : str, default = "savi"
+    name : str, default='savi'
         Name of output DataArray.
+
     Returns
     -------
-    savi_agg : xr.DataArray of same type as inputs.
+    savi_agg : xr.DataArray of same type as inputs
         2D array of  savi values.
         All other input attributes are preserved.
 
-    Notes
-    -----
-    Algorithm References
-        - https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
+    References
+    ----------
+        - ScienceDirect: https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -1168,36 +1140,32 @@ def savi(nir_agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(savi_agg[100:103, 100: 102])
-
-        ...     <xarray.DataArray 'savi' (y: 3, x: 2)>
-        ...     array([[0.0337197 , 0.03087509],
-        ...            [0.0324884 , 0.02531194],
-        ...            [0.03353768, 0.02215077]])
-        ...     Coordinates:
-        ...       * x        (x) float64 6.01e+05 6.01e+05
-        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
-        ...         band     int32 ...
-        ...     Attributes: (12/13)
-        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-        ...         crs:                      +init=epsg:32719
-        ...         res:                      [10. 10.]
-        ...         is_tiled:                 1
-        ...         nodatavals:               nan
-        ...         scales:                   1.0
-        ...         ...                       ...
-        ...         instrument:               Sentinel-2
-        ...         Band:                     07
-        ...         Name:                     NIR
-        ...         Bandwidth (µm):           115
-        ...         Nominal Wavelength (µm):  0.842
-        ...         Resolution (m):            10
-
+        >>> print(savi_agg[100:103, 100: 102])
+        <xarray.DataArray 'savi' (y: 3, x: 2)>
+        array([[0.0337197 , 0.03087509],
+               [0.0324884 , 0.02531194],
+               [0.03353768, 0.02215077]])
+        Coordinates:
+          * x        (x) float64 6.01e+05 6.01e+05
+          * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+            band     int32 ...
+        Attributes: (12/13)
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            crs:                      +init=epsg:32719
+            res:                      [10. 10.]
+            is_tiled:                 1
+            nodatavals:               nan
+            scales:                   1.0
+            ...                       ...
+            instrument:               Sentinel-2
+            Band:                     07
+            Name:                     NIR
+            Bandwidth (µm):           115
+            Nominal Wavelength (µm):  0.842
+            Resolution (m):            10
     """
-
     validate_arrays(red_agg, nir_agg)
 
     if not -1.0 <= soil_factor <= 1.0:
@@ -1272,8 +1240,8 @@ def sipi(nir_agg: xr.DataArray,
          blue_agg: xr.DataArray,
          name = 'sipi'):
     """
-    Computes Structure Insensitive Pigment Index which helpful
-    in early disease detection in vegetation.
+    Computes Structure Insensitive Pigment Index which helpful in early
+    disease detection in vegetation.
 
     Parameters
     ----------
@@ -1283,21 +1251,21 @@ def sipi(nir_agg: xr.DataArray,
         2D array of red band data.
     blue_agg : xr.DataArray
         2D array of blue band data.
-    name: str, default = "sipi"
+    name: str, default='sipi'
         Name of output DataArray.
+
     Returns
     -------
-     sipi_agg : xr.DataArray of same type as inputs.
+     sipi_agg : xr.DataArray of same type as inputs
         2D array of sipi values.
         All other input attributes are preserved.
 
-    Notes
-    -----
-    Algorithm References:
-        - https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+    References
+    ----------
+        - Wikipedia: https://en.wikipedia.org/wiki/Enhanced_vegetation_index
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -1341,36 +1309,32 @@ def sipi(nir_agg: xr.DataArray,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(sipi_agg[100:103, 100: 102])
-
-        ...     <xarray.DataArray 'sipi' (y: 3, x: 2)>
-        ...     array([[1.23958333, 1.33714286],
-        ...            [1.37362637, 1.57746479],
-        ...            [1.29032258, 1.64516129]])
-        ...     Coordinates:
-        ...       * x        (x) float64 6.01e+05 6.01e+05
-        ...       * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
-        ...         band     int32 ...
-        ...     Attributes: (12/13)
-        ...         transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
-        ...         crs:                      +init=epsg:32719
-        ...         res:                      [10. 10.]
-        ...         is_tiled:                 1
-        ...         nodatavals:               nan
-        ...         scales:                   1.0
-        ...         ...                       ...
-        ...         instrument:               Sentinel-2
-        ...         Band:                     07
-        ...         Name:                     NIR
-        ...         Bandwidth (µm):           115
-        ...         Nominal Wavelength (µm):  0.842
-        ...         Resolution (m):            10
-
+        >>> print(sipi_agg[100:103, 100: 102])
+        <xarray.DataArray 'sipi' (y: 3, x: 2)>
+        array([[1.23958333, 1.33714286],
+               [1.37362637, 1.57746479],
+               [1.29032258, 1.64516129]])
+        Coordinates:
+          * x        (x) float64 6.01e+05 6.01e+05
+          * y        (y) float64 4.699e+06 4.699e+06 4.699e+06
+            band     int32 ...
+        Attributes: (12/13)
+            transform:                [ 1.00000e+01  0.00000e+00  6.00000e+05  0.0000...
+            crs:                      +init=epsg:32719
+            res:                      [10. 10.]
+            is_tiled:                 1
+            nodatavals:               nan
+            scales:                   1.0
+            ...                       ...
+            instrument:               Sentinel-2
+            Band:                     07
+            Name:                     NIR
+            Bandwidth (µm):           115
+            Nominal Wavelength (µm):  0.842
+            Resolution (m):            10
     """
-
     validate_arrays(red_agg, nir_agg, blue_agg)
 
     mapper = ArrayTypeFunctionMapping(numpy_func=_sipi_cpu,
@@ -1442,8 +1406,8 @@ def ebbi(red_agg: xr.DataArray,
          tir_agg: xr.DataArray,
          name = 'ebbi'):
     """
-    Computes Enhanced Built-Up and Bareness Index (EBBI) which
-    allows for easily distinguishing between built-up and bare land areas.
+    Computes Enhanced Built-Up and Bareness Index (EBBI) which allows
+    for easily distinguishing between built-up and bare land areas.
 
     Parameters
     ----------
@@ -1453,91 +1417,91 @@ def ebbi(red_agg: xr.DataArray,
         2D array of shortwave infrared band data.
     tir_agg: xr.DataArray
         2D array of thermal infrared band data.
-    name: str, default = "ebbi"
+    name: str, default='ebbi'
         Name of output DataArray.
 
     Returns
     -------
-    ebbi_agg = xr.DataArray of same type as inputs.
+    ebbi_agg = xr.DataArray of same type as inputs
         2D array of ebbi values.
         All other input attributes are preserved
 
-    Notes
-    -----
-    Algorithm References
-        - https://rdrr.io/cran/LSRS/man/EBBI.html
+    References
+    ----------
+        - rdrr: https://rdrr.io/cran/LSRS/man/EBBI.html
 
-    Example
-    -------
-    >>>     # Imports
-    >>>     import numpy as np
-    >>>     import xarray as xr
-    >>>     from xrspatial import ebbi
+    Examples
+    --------
+    .. sourcecode:: python
 
-    >>>     # Create Sample Band Data
-    >>>     np.random.seed(1)
-    >>>     red_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
-    >>>     height, width = red_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     red_agg["lat"] = _lat
-    >>>     red_agg["lon"] = _lon
+        >>> # Imports
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import ebbi
 
-    >>>     np.random.seed(5)
-    >>>     swir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
-    >>>     height, width = swir_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     swir_agg["lat"] = _lat
-    >>>     swir_agg["lon"] = _lon
+        >>> # Create Sample Band Data
+        >>> np.random.seed(1)
+        >>> red_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
+        >>> height, width = red_agg.shape
+        >>> _lat = np.linspace(0, height - 1, height)
+        >>> _lon = np.linspace(0, width - 1, width)
+        >>> red_agg["lat"] = _lat
+        >>> red_agg["lon"] = _lon
 
-    >>>     np.random.seed(6)
-    >>>     tir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
-    >>>     height, width = tir_agg.shape
-    >>>     _lat = np.linspace(0, height - 1, height)
-    >>>     _lon = np.linspace(0, width - 1, width)
-    >>>     tir_agg["lat"] = _lat
-    >>>     tir_agg["lon"] = _lon
+        >>> np.random.seed(5)
+        >>> swir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
+        >>> height, width = swir_agg.shape
+        >>> _lat = np.linspace(0, height - 1, height)
+        >>> _lon = np.linspace(0, width - 1, width)
+        >>> swir_agg["lat"] = _lat
+        >>> swir_agg["lon"] = _lon
 
-    >>>     print(red_agg, swir_agg, tir_agg)
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
-                   [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
-                   [3.96767474e-01, 5.38816734e-01, 4.19194514e-01, 6.85219500e-01],
-                   [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
-                   [0.48841119, 0.61174386, 0.76590786, 0.51841799],
-                   [0.2968005 , 0.18772123, 0.08074127, 0.7384403 ],
-                   [0.44130922, 0.15830987, 0.87993703, 0.27408646]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
-            <xarray.DataArray (lat: 4, lon: 4)>
-            array([[0.89286015, 0.33197981, 0.82122912, 0.04169663],
-                   [0.10765668, 0.59505206, 0.52981736, 0.41880743],
-                   [0.33540785, 0.62251943, 0.43814143, 0.73588211],
-                   [0.51803641, 0.5788586 , 0.6453551 , 0.99022427]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
+        >>> np.random.seed(6)
+        >>> tir_agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
+        >>> height, width = tir_agg.shape
+        >>> _lat = np.linspace(0, height - 1, height)
+        >>> _lon = np.linspace(0, width - 1, width)
+        >>> tir_agg["lat"] = _lat
+        >>> tir_agg["lon"] = _lon
 
-    >>>     # Create EBBI DataArray
-    >>>     ebbi_agg = ebbi(red_agg, swir_agg, tir_agg)
-    >>>     print(ebbi_agg)
-            <xarray.DataArray 'ebbi' (lat: 4, lon: 4)>
-            array([[-2.43983486, -2.58194492,  3.97432599, -0.42291921],
-                   [-0.11444052,  0.96786363,  0.59269999,  0.42374096],
-                   [ 0.61379897, -0.23840436, -0.05598088,  0.95193251],
-                   [ 1.32393891,  0.41574839,  0.72484653, -0.80669034]])
-            Coordinates:
-              * lat      (lat) float64 0.0 1.0 2.0 3.0
-              * lon      (lon) float64 0.0 1.0 2.0 3.0
+        >>> print(red_agg, swir_agg, tir_agg)
+        <xarray.DataArray (lat: 4, lon: 4)>
+        array([[4.17022005e-01, 7.20324493e-01, 1.14374817e-04, 3.02332573e-01],
+                [1.46755891e-01, 9.23385948e-02, 1.86260211e-01, 3.45560727e-01],
+                [3.96767474e-01, 5.38816734e-01, 4.19194514e-01, 6.85219500e-01],
+                [2.04452250e-01, 8.78117436e-01, 2.73875932e-02, 6.70467510e-01]])
+        Coordinates:
+            * lat      (lat) float64 0.0 1.0 2.0 3.0
+            * lon      (lon) float64 0.0 1.0 2.0 3.0
+        <xarray.DataArray (lat: 4, lon: 4)>
+        array([[0.22199317, 0.87073231, 0.20671916, 0.91861091],
+                [0.48841119, 0.61174386, 0.76590786, 0.51841799],
+                [0.2968005 , 0.18772123, 0.08074127, 0.7384403 ],
+                [0.44130922, 0.15830987, 0.87993703, 0.27408646]])
+        Coordinates:
+            * lat      (lat) float64 0.0 1.0 2.0 3.0
+            * lon      (lon) float64 0.0 1.0 2.0 3.0
+        <xarray.DataArray (lat: 4, lon: 4)>
+        array([[0.89286015, 0.33197981, 0.82122912, 0.04169663],
+                [0.10765668, 0.59505206, 0.52981736, 0.41880743],
+                [0.33540785, 0.62251943, 0.43814143, 0.73588211],
+                [0.51803641, 0.5788586 , 0.6453551 , 0.99022427]])
+        Coordinates:
+            * lat      (lat) float64 0.0 1.0 2.0 3.0
+            * lon      (lon) float64 0.0 1.0 2.0 3.0
+
+        >>> # Create EBBI DataArray
+        >>> ebbi_agg = ebbi(red_agg, swir_agg, tir_agg)
+        >>> print(ebbi_agg)
+        <xarray.DataArray 'ebbi' (lat: 4, lon: 4)>
+        array([[-2.43983486, -2.58194492,  3.97432599, -0.42291921],
+                [-0.11444052,  0.96786363,  0.59269999,  0.42374096],
+                [ 0.61379897, -0.23840436, -0.05598088,  0.95193251],
+                [ 1.32393891,  0.41574839,  0.72484653, -0.80669034]])
+        Coordinates:
+            * lat      (lat) float64 0.0 1.0 2.0 3.0
+            * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
-
     validate_arrays(red_agg, swir_agg, tir_agg)
 
     mapper = ArrayTypeFunctionMapping(numpy_func=_ebbi_cpu,
