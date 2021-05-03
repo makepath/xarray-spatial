@@ -34,11 +34,13 @@ def bump(width: int,
         count: Optional[int] = None,
         height_func = None,
         spread: int = 1) -> xr.DataArray:
-    """Generate a simple bump map to simulate the appearance of land features.
+    """
+    Generate a simple bump map to simulate the appearance of land
+    features.
 
-    Using a user-defined height function, determines at what elevation a
-    specific bump height is acceptable. Bumps of number "count" are applied
-    over the area "width" x "height".
+    Using a user-defined height function, determines at what elevation
+    a specific bump height is acceptable. Bumps of number `count` are
+    applied over the area `width` x `height`.
 
     Parameters
     ----------
@@ -46,26 +48,25 @@ def bump(width: int,
         Total width, in pixels, of the image.
     height : int
         Total height, in pixels, of the image.
-    count : int, default: w * h / 10
+    count : int
         Number of bumps to generate.
     height_func : function which takes x, y and returns a height value
-        Function used to apply varying bump heights to different elevations.
-    spread : tuple boundaries, default = 1
+        Function used to apply varying bump heights to different
+        elevations.
+    spread : int, default=1
+        Number of pixels to spread on all sides.
 
     Returns
     -------
     bump_agg : xarray.DataArray
         2D aggregate array of calculated bump heights.
 
-    Notes
-    -----
-    Algorithm References
-        - http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf
-    Terrrain Example
-        - https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html
+    References
+    ----------
+        - ICA: http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf
 
-    Example
-    -------
+    Examples
+    --------
     .. plot::
        :include-source:
 
@@ -153,45 +154,39 @@ def bump(width: int,
         plt.ylabel("latitude")
         plt.xlabel("longitude")
 
-    .. plot::
-       :include-source:
+    .. sourcecode:: python
 
-        print(terrain_agg[200:203, 200:202])
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
 
-        ...     <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        ...     array([[1264.02249454, 1261.94748873],
-        ...            [1285.37061171, 1282.48046696],
-        ...            [1306.02305679, 1303.40657515]])
-        ...     Coordinates:
-        ...       * lon      (lon) float64 -3.96e+06 -3.88e+06
-        ...       * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        ...     Attributes:
-        ...         res:            1
-        ...         Description:    Example Terrain
-        ...         units:          km
-        ...         Max Elevation:  4000
+    .. sourcecode:: python
 
-    .. plot::
-       :include-source:
-
-        print(bump_agg[200:205, 200:206])
-
-        ...     <xarray.DataArray 'Bump Height' (y: 5, x: 6)>
-        ...     array([[nan, nan, nan, nan,  5.,  5.],
-        ...            [nan, nan, nan, nan, nan,  5.],
-        ...            [nan, nan, nan, nan, nan, nan],
-        ...            [nan, nan, nan, nan, nan, nan],
-        ...            [nan, nan, nan, nan, nan, nan]])
-        ...     Coordinates:
-        ...       * x        (x) float64 -3.96e+06 -3.88e+06 -3.8e+06 ... -3.64e+06 -3.56e+06
-        ...       * y        (y) float64 6.733e+06 6.867e+06 7e+06 7.133e+06 7.267e+06
-        ...     Attributes:
-        ...         res:          1
-        ...         Description:  Example Bump Map
-        ...         units:        km
-
+        >>> print(bump_agg[200:205, 200:206])
+        <xarray.DataArray 'Bump Height' (y: 5, x: 6)>
+        array([[nan, nan, nan, nan,  5.,  5.],
+               [nan, nan, nan, nan, nan,  5.],
+               [nan, nan, nan, nan, nan, nan],
+               [nan, nan, nan, nan, nan, nan],
+               [nan, nan, nan, nan, nan, nan]])
+        Coordinates:
+          * x        (x) float64 -3.96e+06 -3.88e+06 -3.8e+06 ... -3.64e+06 -3.56e+06
+          * y        (y) float64 6.733e+06 6.867e+06 7e+06 7.133e+06 7.267e+06
+        Attributes:
+            res:          1
+            Description:  Example Bump Map
+            units:        km
     """
-
     linx = range(width)
     liny = range(height)
 
