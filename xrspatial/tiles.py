@@ -1,4 +1,5 @@
 from __future__ import absolute_import, division, print_function
+
 from io import BytesIO
 
 import math
@@ -12,6 +13,22 @@ import numpy as np
 from PIL.Image import fromarray
 
 __all__ = ['render_tiles', 'MercatorTileDefinition']
+
+import warnings
+
+
+def custom_format_warning(message, category,
+                          filename, lineno,
+                          file=None, line=None):
+    return '%s: %s \n %s' % (filename, category.__name__, message)
+
+
+with warnings.catch_warnings():
+    warnings.simplefilter('default')
+    warnings.formatwarning = custom_format_warning
+    warnings.warn('The tiles module is deprecated and will soon be removed; '
+                  'please see the mapshader package for similar functions.',
+                  DeprecationWarning)
 
 
 def _create_dir(path):
@@ -61,12 +78,13 @@ def render_tiles(full_extent, levels, load_data_func,
     results = dict()
     for level in levels:
         print('calculating statistics for level {}'.format(level))
-        span = calculate_zoom_level_stats(full_extent,
-                                          level,
-                                          load_data_func,
-                                          rasterize_func,
-                                          color_ranging_strategy =
-                                          color_ranging_strategy)
+        span = calculate_zoom_level_stats(
+            full_extent,
+            level,
+            load_data_func,
+            rasterize_func,
+            color_ranging_strategy=color_ranging_strategy,
+        )
 
         super_tiles = list(gen_super_tiles(full_extent, level, span))
         print(f'rendering {len(super_tiles)} supertiles for zoom level {level}'

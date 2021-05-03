@@ -8,16 +8,17 @@ prune *.egg-info
 
 global-exclude *.png
 prune conda.recipe
-prune examples
 prune img
+prune .idea
 
+include xrspatial/examples/*
+include xrspatial/examples/user_guide/*
+
+exclude examples/.ipynb_checkpoints/*
 exclude xrspatial/_version.py
 exclude xrspatial/__pycache__/*
-exclude xrspatial/examples/*
-exclude xrspatial/examples/user_guide/*
 exclude xrspatial/examples/user_guide_idea/*
 exclude tile_idea.py
-exclude *.yml
 exclude *.enc
 exclude .gitignore
 exclude .isort.cfg
@@ -26,3 +27,9 @@ exclude *.gif
 exclude *.svg
 exclude tox.ini
 exclude test_examples_cli.py
+include *.yml
+
+recursive-include examples *.gif
+recursive-include examples *.ipynb
+recursive-include examples *.py
+recursive-include examples *.yml

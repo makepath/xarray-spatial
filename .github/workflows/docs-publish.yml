@@ -12,8 +12,18 @@ jobs:
           dotnet-version: '3.0.100'
       - name: Install dependencies
         run: |
+          sudo apt-get -y install pandoc
           python -m pip install --upgrade pip
-          pip install setuptools wheel sphinx pydata_sphinx_theme sphinx-panels
+          pip install setuptools \
+                      wheel \
+                      geopandas \
+                      nbsphinx \
+                      pandoc \
+                      pydata_sphinx_theme \
+                      sphinx \
+                      sphinx-multiversion \
+                      sphinx-panels \
+                      sphinx_rtd_theme
       - name: Build
         run: |
           pip install .

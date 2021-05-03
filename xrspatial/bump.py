@@ -194,7 +194,7 @@ def bump(width: int,
         count = width * height // 10
 
     if height_func is None:
-        height_func = lambda bumps: np.ones(len(bumps))
+        height_func = lambda bumps: np.ones(len(bumps)) # noqa
 
     # create 2d array of random x, y for bump locations
     locs = np.empty((count, 2), dtype=np.uint16)

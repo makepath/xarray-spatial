@@ -1,20 +1,64 @@
 ## Xarray-Spatial Changelog
 -----------
 
-### Version 0.1.3 - 3/31/2020
+### Version 0.2.0 - 4/28/2021
+- Test release for new github actions
 
-- added band_to_img utils func
-- Add download-examples CLI command for all notebooks (#241)
-- added band_to_img utils func
-- docs enhancements
+### Version 0.1.9 - 4/27/2021
+- Deprecated tiles module (#381)
+- Added user guide on the documentation website (#376)
+- Updated docs design version mapping (#378)
+- Added Github Action to publish package to PyPI (#371)
+- Moved Spatialpandas to core install requirements for it to work on JLabs (#372)
+- Added CONTRIBUTING.md (#374)
+- Updated `true_color` to return a `xr.DataArray` (#364)
+- Added get_data module and example sentinel-2 data (#358)
+- Added citations guidelines and reformat (#382)
+
+### Version 0.1.8 - 4/15/2021
+- Fixed pypi related error
+
+### Version 0.1.7 - 4/15/2021
+- Updated multispectral.true_color: sigmoid contrast enhancement (#339)
+- Added notebook save cogs in examples directory (#307)
+- Updated Focal user guide (#336)
+- Added documentation step on release steps (#346)
+- Updated cloudless mosaic notebook: use Dask-Gateway (#351)
+- Fixed user guide notebook numbering (#333)
+- Correct warnings (#350)
+- Add flake8 Github Action (#331)
+
+### Version 0.1.6 - 4/12/2021
+- Cleared metadata in all examples ipynb (#327)
+- Moved docs requirements to source folder (#326)
+- Fixed manifest file
+- Fixed travis ci (#323)
+- Included yml files
+- Fixed examples path in Pharmacy Deserts Noteboo
+- Integrate xarray-spatial website with the documentation (#291)
+
+### Version 0.1.5 - 4/8/2021
+- CLI examples bug fixed
+- Added `drop_clouds`, cloud-free mosaic from sentinel2 data example (#255)
+
+### Version 0.1.4 - 4/8/2021
+- Sphinx doc fixes
+- CLI bug fixed in 0.1.5
+
+### Version 0.1.3 - 4/5/2021
+- Added band_to_img utils func
+- Added download-examples CLI command for all notebooks (#241)
+- Added band_to_img utils func
+- Docs enhancements
 - GPU and dask support for multispectral tools
 - GPU and Dask support for classify module (#168)
-- fixed savi dask cupy test skip
-- moved validate_arrays to utils
-- Add GPU support for hillshade (#151)
+- Fixed savi dask cupy test skip
+- Moved validate_arrays to utils
+- Added GPU support for hillshade (#151)
+- Added CLI for examples data
+- Improved Sphinx docs / theme
 
 ### Version 0.1.2 - 12/1/2020
-
 - Added GPU support for curvature (#150)
 - Added dask.Array support for curvature (#150)
 - Added GPU support for aspect (#156)

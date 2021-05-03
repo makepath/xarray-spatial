@@ -1,0 +1,8 @@
+geopandas
+nbsphinx
+pandoc
+pydata_sphinx_theme
+sphinx
+sphinx-multiversion
+sphinx-panels
+sphinx_rtd_theme

@@ -4,6 +4,7 @@ import numba as nb
 
 from numba import cuda
 
+
 from PIL import Image
 
 import xarray as xr
@@ -563,7 +564,6 @@ def nbr(nir_agg: xr.DataArray,
     References
     ----------
         - USGS: https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
-
     Examples
     --------
     .. plot::
@@ -629,10 +629,12 @@ def nbr(nir_agg: xr.DataArray,
     """
     validate_arrays(nir_agg, swir2_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
-                                      dask_func=_run_normalized_ratio_dask,
-                                      cupy_func=_run_normalized_ratio_cupy,
-                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
 
     out = mapper(nir_agg)(nir_agg.data, swir2_agg.data)
 
@@ -656,6 +658,7 @@ def nbr2(swir1_agg: xr.DataArray,
     swir1_agg : xr.DataArray
         2D array of near-infrared band data.
         shortwave infrared band
+        (Sentinel 2: Band 11)
         (Landsat 4-7: Band 5)
         (Landsat 8: Band 6)
     swir2_agg : xr.DataArray
@@ -740,10 +743,12 @@ def nbr2(swir1_agg: xr.DataArray,
     """
     validate_arrays(swir1_agg, swir2_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
-                                      dask_func=_run_normalized_ratio_dask,
-                                      cupy_func=_run_normalized_ratio_cupy,
-                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
 
     out = mapper(swir1_agg)(swir1_agg.data, swir2_agg.data)
 
@@ -846,10 +851,12 @@ def ndvi(nir_agg: xr.DataArray,
     """
     validate_arrays(nir_agg, red_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
-                                      dask_func=_run_normalized_ratio_dask,
-                                      cupy_func=_run_normalized_ratio_cupy,
-                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
 
     out = mapper(nir_agg)(nir_agg.data, red_agg.data)
 
@@ -956,10 +963,12 @@ def ndmi(nir_agg: xr.DataArray,
     """
     validate_arrays(nir_agg, swir1_agg)
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_normalized_ratio_cpu,
-                                      dask_func=_run_normalized_ratio_dask,
-                                      cupy_func=_run_normalized_ratio_cupy,
-                                      dask_cupy_func=_run_normalized_ratio_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
 
     out = mapper(nir_agg)(nir_agg.data, swir1_agg.data)
 
@@ -1519,36 +1528,135 @@ def ebbi(red_agg: xr.DataArray,
 
 
 @ngjit
-def _normalize_data(agg, pixel_max=255.0):
-    out = np.zeros_like(agg)
-    min_val = 0
-    max_val = 2 ** 16 - 1
+def _normalize_data_cpu(data, min_val, max_val, pixel_max):
+    out = np.zeros_like(data)
+    out[:] = np.nan
+
     range_val = max_val - min_val
-    rows, cols = agg.shape
-    c = 40
+    rows, cols = data.shape
+
+    c = 10
     th = .125
+
     # check range_val to avoid dividing by zero
     if range_val != 0:
         for y in range(rows):
             for x in range(cols):
-                val = agg[y, x]
+                val = data[y, x]
                 norm = (val - min_val) / range_val
-
                 # sigmoid contrast enhancement
                 norm = 1 / (1 + np.exp(c * (th - norm)))
                 out[y, x] = norm * pixel_max
     return out
 
 
-def true_color(r, g, b, nodata=1):
-    h, w = r.shape
+def _normalize_data_numpy(data, pixel_max):
+    min_val = np.nanmin(data)
+    max_val = np.nanmax(data)
+    out = _normalize_data_cpu(data, min_val, max_val, pixel_max)
+    return out
 
-    data = np.zeros((h, w, 4), dtype=np.uint8)
-    data[:, :, 0] = (_normalize_data(r.data)).astype(np.uint8)
-    data[:, :, 1] = (_normalize_data(g.data)).astype(np.uint8)
-    data[:, :, 2] = (_normalize_data(b.data)).astype(np.uint8)
 
+def _normalize_data_dask(data, pixel_max):
+    min_val = da.nanmin(data)
+    max_val = da.nanmax(data)
+    out = da.map_blocks(_normalize_data_cpu, data, min_val, max_val, pixel_max,
+                        meta=np.array(()))
+    return out
+
+
+def _normalize_data_cupy(data, pixel_max):
+    raise NotImplementedError('Not Supported')
+
+
+def _normalize_data_dask_cupy(data, pixel_max):
+    raise NotImplementedError('Not Supported')
+
+
+def _normalize_data(agg, pixel_max=255.0):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_normalize_data_numpy,
+                                      dask_func=_normalize_data_dask,
+                                      cupy_func=_normalize_data_cupy,
+                                      dask_cupy_func=_normalize_data_dask_cupy)
+    out = mapper(agg)(agg.data, pixel_max)
+    return out
+
+
+def _alpha_numpy(red, nodata):
+    a = np.where(np.logical_or(np.isnan(red), red <= nodata), 0, 255)
+    return a
+
+
+def _alpha_dask(red, nodata):
+    a = da.where(da.logical_or(da.isnan(red), red <= nodata), 0, 255)
+    return a
+
+
+def _alpha_cupy(red, nodata):
+    raise NotImplementedError('Not Supported')
+
+
+def _alpha_dask_cupy(red, nodata):
+    raise NotImplementedError('Not Supported')
+
+
+def _alpha(red, nodata=1):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_alpha_numpy,
+                                      dask_func=_alpha_dask,
+                                      cupy_func=None,
+                                      dask_cupy_func=None)
+    out = mapper(red)(red.data, nodata)
+    return out
+
+
+def _true_color_numpy(r, g, b, nodata):
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
-    data[:, :, 3] = a.astype(np.uint8)
 
-    return Image.fromarray(data, 'RGBA')
+    h, w = r.shape
+    out = np.zeros((h, w, 4), dtype=np.uint8)
+
+    pixel_max = 255
+    out[:, :, 0] = (_normalize_data(r, pixel_max)).astype(np.uint8)
+    out[:, :, 1] = (_normalize_data(g, pixel_max)).astype(np.uint8)
+    out[:, :, 2] = (_normalize_data(b, pixel_max)).astype(np.uint8)
+    out[:, :, 3] = a.astype(np.uint8)
+    return out
+
+
+def _true_color_dask(r, g, b, nodata):
+    pixel_max = 255
+    red = (_normalize_data(r, pixel_max)).astype(np.uint8)
+    green = (_normalize_data(g, pixel_max)).astype(np.uint8)
+    blue = (_normalize_data(b, pixel_max)).astype(np.uint8)
+
+    alpha = _alpha(r, nodata).astype(np.uint8)
+
+    out = da.stack([red, green, blue, alpha], axis=-1)
+    return out
+
+
+def _true_color_cupy(r, g, b, nodata):
+    raise NotImplementedError('Not Supported')
+
+
+def _true_color_dask_cupy(r, g, b, nodata):
+    raise NotImplementedError('Not Supported')
+
+
+def true_color(r, g, b, nodata=1, name='true_color'):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_true_color_numpy,
+                                      dask_func=_true_color_dask,
+                                      cupy_func=_true_color_cupy,
+                                      dask_cupy_func=_true_color_dask_cupy)
+    out = mapper(r)(r, g, b, nodata)
+
+    # TODO: output metadata: coords, dims, atts
+    _dims = ['y', 'x', 'band']
+    _coords = {'y': r['y'],
+               'x': r['x'],
+               'band': [0, 1, 2, 3]}
+
+    return DataArray(out,
+                     dims=_dims,
+                     coords=_coords
+                     )

@@ -176,3 +176,36 @@ h5,
 h6 {
 	color: #062161!important;
 }
+
+/*
+Releases dropdown
+========
+*/
+
+li.dropdown {
+	margin-right: auto;
+}
+
+.dropdown {
+	list-style: none;
+}
+
+.dropdown > a:hover {
+	COLOR: #00194f;
+	TEXT-DECORATION: none;
+	font-weight: none;
+}
+
+div.rst-versions {
+	overflow: hidden!important;
+}
+
+.deprecated-warning {
+	font-family: sans-serif;
+	font-weight:bold;
+	text-align: center;
+	background-color: pink;
+	color: firebrick;
+	right:0em;
+	z-index:1000000000000;
+}

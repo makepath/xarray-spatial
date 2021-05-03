@@ -120,7 +120,7 @@ def validate_arrays(*arrays):
         if not first_array.data.shape == arrays[i].data.shape:
             raise ValueError("input arrays must have equal shapes")
 
-        if not type(first_array.data) == type(arrays[i].data):
+        if not isinstance(first_array.data, type(arrays[i].data)):
             raise ValueError("input arrays must have same type")
 
 

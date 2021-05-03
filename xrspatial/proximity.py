@@ -32,7 +32,8 @@ def euclidean_distance(x1: float,
                        y1: float,
                        y2: float) -> float:
     """
-    Calculates Euclidean (straight line) distance between (x1, y1) and (x2, y2).
+    Calculates Euclidean (straight line) distance between (x1, y1) and
+    (x2, y2).
 
     Parameters
     ----------
@@ -495,7 +496,7 @@ def _process(raster, x='x', y='y', target_values=[],
     raster_dims = raster.dims
     if raster_dims != (y, x):
         raise ValueError("raster.coords should be named as coordinates:"
-                         "(%s, %s)".format(y, x))
+                         "({0}, {1})".format(y, x))
 
     # convert distance metric from string to integer, the correct type
     # of argument for function _distance()
@@ -558,7 +559,7 @@ def proximity(raster: xr.DataArray,
         All other input attributes are preserved.
 
     References
-    -----
+    ----------
         - OSGeo: https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp
 
     Examples

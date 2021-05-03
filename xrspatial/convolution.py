@@ -171,7 +171,7 @@ def _convolve_2d_cuda(result, kernel, image):
     # with k and l going through the whole kernel array:
     s = 0
     for k in range(kernel.shape[0]):
-        for l in range(kernel.shape[1]):
+        for l in range(kernel.shape[1]): # noqa
             i_k = i - k + delta_rows
             j_l = j - l + delta_cols
             # (-4-) Check if (i_k, j_k)
