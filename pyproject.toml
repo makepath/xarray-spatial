@@ -4,3 +4,5 @@ requires = [
     'setuptools >= 54.1.2',
     'wheel >= 0.36.2',
 ]
+[tool.check-manifest]
+ignore = ["xrspatial/examples/*", "xrspatial/examples/user_guide/*"]

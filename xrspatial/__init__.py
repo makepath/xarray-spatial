@@ -42,7 +42,7 @@ from xrspatial.classify import natural_breaks  # noqa
 from xrspatial.pathfinding import a_star_search  # noqa
 
 try:
-    from ._version import __version__
+    from .version import __version__
 except ImportError:
     __version__ = "unknown"
 

@@ -101,7 +101,7 @@ def arvi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     Notes:
     ----------
     Algorithm References:
-    https://modis.gsfc.nasa.gov/sci_team/pubs/abstract_new.php?id=03667
+    - Kaufman, Y. J., & Tanre, D. (1992). Atmospherically resistant vegetation index (ARVI) for EOS-MODIS. IEEE transactions on Geoscience and Remote Sensing, 30(2), 261-270. # noqa
 
     Examples:
     ----------
@@ -281,7 +281,7 @@ def evi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     Notes:
     ----------
     Algorithm References:
-    https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+    - Wikipedia, Enhanced Vegetation Index, https://en.wikipedia.org/wiki/Enhanced_vegetation_index, Accessed Apr. 21, 2021. # noqa
 
         Examples:
     ----------
@@ -460,7 +460,7 @@ def gci(nir_agg: DataArray, green_agg: DataArray, name='gci'):
     Notes:
     ----------
     Algorithm References:
-        https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+    - Wikipedia, Enhanced Vegetation Index, https://en.wikipedia.org/wiki/Enhanced_vegetation_index, Accessed Apr. 21, 2021. # noqa
 
     Examples:
     ----------
@@ -567,7 +567,7 @@ def nbr(nir_agg: DataArray, swir2_agg: DataArray, name='nbr'):
     Notes:
     ----------
     Algorithm References:
-    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio
+    - USGS, Landsat Normalized Burn Ratio, https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio, Accessed Apr. 21, 2021. # noqa
 
     Examples:
     ----------
@@ -647,7 +647,7 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr2'):
     "NBR2 modifies the Normalized Burn Ratio (NBR)
     to highlight water sensitivity in vegetation and
     may be useful in post-fire recovery studies."
-    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+
     Parameters
     ----------
     swir1_agg : DataArray
@@ -671,7 +671,7 @@ def nbr2(swir1_agg: DataArray, swir2_agg: DataArray, name='nbr2'):
     Notes:
     ----------
     Algorithm References:
-    https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2
+    - USGS, Landsat Normalized Burn Ratio 2, https://www.usgs.gov/land-resources/nli/landsat/landsat-normalized-burn-ratio-2, Accessed Apr. 21, 2021. # noqa
 
     Examples:
     ----------
@@ -772,9 +772,9 @@ def ndvi(nir_agg: DataArray, red_agg: DataArray, name='ndvi'):
     Notes:
     ----------
     Algorithm References:
-    http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html
+    - Holden, C, Chapter 2: Your first remote sensing vegetation index, http://ceholden.github.io/open-geo-tutorial/python/chapter_2_indices.html, Accessed Apr. 21, 2021. # noqa
 
-        Examples:
+    Examples:
     ----------
     Imports
     >>> import numpy as np
@@ -877,7 +877,7 @@ def ndmi(nir_agg: DataArray, swir1_agg: DataArray, name='ndmi'):
     Notes:
     ----------
     Algorithm References:
-    https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index
+    - USGS, Normalized Difference Moisture Index, https://www.usgs.gov/land-resources/nli/landsat/normalized-difference-moisture-index, Accessed Apr. 21, 2021. # noqa
 
     Examples:
     ----------
@@ -1086,7 +1086,7 @@ def savi(nir_agg: DataArray, red_agg: DataArray,
     Notes:
     ----------
     Algorithm References:
-     - https://www.sciencedirect.com/science/article/abs/pii/003442578890106X
+     - Huete, A. R. (1988). A soil-adjusted vegetation index (SAVI). Remote sensing of environment, 25(3), 295-309. # noqa
 
     Examples
     ----------
@@ -1242,7 +1242,7 @@ def sipi(nir_agg: DataArray, red_agg: DataArray, blue_agg: DataArray,
     Notes:
     ----------
     Algorithm References:
-    https://en.wikipedia.org/wiki/Enhanced_vegetation_index
+    - Wikipedia, Enhanced Vegetation Index, https://en.wikipedia.org/wiki/Enhanced_vegetation_index, Accessed Apr. 21, 2021. # noqa
 
     Examples:
     ----------
@@ -1414,7 +1414,7 @@ def ebbi(red_agg: DataArray, swir_agg: DataArray, tir_agg: DataArray,
     Notes:
     ----------
     Algorithm References:
-        https://rdrr.io/cran/LSRS/man/EBBI.html
+    - RDRR.io, EBBI: Enhanced Built-Up and Bareness Index, https://rdrr.io/cran/LSRS/man/EBBI.html, Accessed Apr. 21, 2021. # noqa
 
     Examples:
     ----------

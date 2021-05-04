@@ -2,7 +2,8 @@
 
 package:
   name: xarray-spatial
-  version: 0.1.8
+  version: "0.2.0"
+
 
 source:
   path: ..
@@ -10,21 +11,21 @@ source:
 requirements:
   host:
     - python
-    - setuptools
+    - setuptools >=46.4.0
     - pyct
+    - param
   run:
     - python
     {% for dep in sdata.get('install_requires', {}) %}
     - {{ dep }}
     {% endfor %}
 
-# will need the extras_require['tests'] deps below once those are added in setup.py
 test:
   requires:
     - pytest >=2.8.5
-    # {% for dep in sdata['extras_require']['tests'] %}
-    # - {{ dep }}
-    # {% endfor %}
+     {% for dep in sdata['extras_require']['tests'] %}
+     - {{ dep }}
+     {% endfor %}
   imports:
     - xrspatial
 

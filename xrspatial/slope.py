@@ -153,9 +153,8 @@ def slope(agg: xr.DataArray,
     Notes:
     ------
     Algorithm References:
-    - http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm # noqa
-    - Burrough, P. A., and McDonell, R. A., 1998. Principles of Geographical
-    Information Systems (Oxford University Press, New York), pp 406
+    - esri, How Slope works, http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm, Accessed Apr. 22, 2021. # noqa
+    - Burrough, P. A., McDonnell, R., McDonnell, R. A., & Lloyd, C. D. (1998). Principles of geographical information systems. Oxford university press. pp 406. # noqa
 
     Examples:
     ---------
