@@ -130,7 +130,7 @@ def manhattan_distance(x1: float,
     """
     x = x1 - x2
     y = y1 - y2
-    return x * x + y * y
+    return abs(x) + abs(y)
 
 
 @njit(nogil=True)

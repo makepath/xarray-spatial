@@ -14,6 +14,7 @@ from xrspatial.utils import ngjit
 from xrspatial.utils import ArrayTypeFunctionMapping
 from xrspatial.utils import validate_arrays
 
+import warnings
 # 3rd-party
 try:
     import cupy
@@ -1647,7 +1648,9 @@ def true_color(r, g, b, nodata=1, name='true_color'):
                                       dask_func=_true_color_dask,
                                       cupy_func=_true_color_cupy,
                                       dask_cupy_func=_true_color_dask_cupy)
-    out = mapper(r)(r, g, b, nodata)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        out = mapper(r)(r, g, b, nodata)
 
     # TODO: output metadata: coords, dims, atts
     _dims = ['y', 'x', 'band']
