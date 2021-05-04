@@ -44,7 +44,6 @@ extensions = [
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
     'sphinx.ext.autosummary',
-    'matplotlib.sphinxext.plot_directive',
     'sphinx_multiversion',
     'nbsphinx',
     'sphinx.ext.mathjax',
@@ -87,6 +86,7 @@ if os.getenv('THEME') == 'sphinx_rtd_theme':
     html_theme = 'sphinx_rtd_theme'
 else:
     html_theme = 'pydata_sphinx_theme'
+    extensions.append('matplotlib.sphinxext.plot_directive')
 
 html_logo = '_static/img/Xarray-Spatial-logo.svg'
 
@@ -97,7 +97,7 @@ smv_branch_whitelist = 'master'
 if os.getenv('THEME') == 'sphinx_rtd_theme':
     smv_tag_whitelist = r'^v([0]\.[1]\.[0-5]|[0]\.[0]\.[0-9])'
 else:
-    smv_tag_whitelist = r'^v([0-9]\.[1]\.[6-9]|[1-9]\.[0-9]\.[0-9])'
+    smv_tag_whitelist = r'^v([0-9]\.[1]\.[6-8]|[0-9]\.[2]\.[1-9]|[1-9]\.[0-9]\.[0-9])'
 
 # Load releases
 with open("releases.json") as f:
