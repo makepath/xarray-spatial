@@ -88,38 +88,40 @@ def calc_cellsize(raster):
     """
     Calculates cell size of an array based on its attributes.
     Default = meters. If lat-lon units are converted to meters.
-    Parameters:
+
+    Parameters
     ----------
     raster: xarray.DataArray
         2D array of input values.
-    Returns:
-    ----------
+
+    Returns
+    -------
     cellsize_x: float
         Size of cells in x direction.
     cellsize_y: float
         Size of cells in y direction.
-    Notes:
-    ----------
-    Examples:
-    -----------
-    Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import focal
-    Create Data Array
-    >>> np.random.seed(0)
-    >>> agg = xr.DataArray(np.random.rand(4,4),
-                               dims = ["lat", "lon"])
-    >>> height, width = nir_agg.shape
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> nir_agg["lat"] = _lat
-    >>> nir_agg["lon"] = _lon
-    Calculate Cell Size
-    >>> focal.calc_cellsize(agg, 'lon', 'lat')
-    (1, 1)
-    """
 
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> # Imports
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import focal
+        >>> # Create Data Array
+        >>> np.random.seed(0)
+        >>> agg = xr.DataArray(np.random.rand(4,4),
+                                   dims = ["lat", "lon"])
+        >>> height, width = nir_agg.shape
+        >>> _lat = np.linspace(0, height - 1, height)
+        >>> _lon = np.linspace(0, width - 1, width)
+        >>> nir_agg["lat"] = _lat
+        >>> nir_agg["lon"] = _lon
+        >>> # Calculate Cell Size
+        >>> focal.calc_cellsize(agg, 'lon', 'lat')
+        (1, 1)
+    """
     if 'unit' in raster.attrs:
         unit = raster.attrs['unit']
     else:
@@ -153,7 +155,7 @@ def circle_kernel(cellsize_x, cellsize_y, radius):
     """
     Generates a circular kernel of a given cellsize and radius.
 
-    Parameters:
+    Parameters
     ----------
     cellsize_x: int
         Cell size of output kernel in x direction.
@@ -162,34 +164,35 @@ def circle_kernel(cellsize_x, cellsize_y, radius):
     radius: int
         Radius of output kernel.
 
-    Returns:
-    ----------
+    Returns
+    -------
     kernel: NumPy Array
         2D array where values of 1 indicate the kernel.
 
-    Examples:
-    ----------
-        Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import focal
+    Examples
+    --------
+    .. sourcecode:: python
 
-        Create Kernels
-    >>> focal.circle_kernel(1, 1, 3)
-    array([[0., 0., 0., 1., 0., 0., 0.],
-           [0., 1., 1., 1., 1., 1., 0.],
-           [0., 1., 1., 1., 1., 1., 0.],
-           [1., 1., 1., 1., 1., 1., 1.],
-           [0., 1., 1., 1., 1., 1., 0.],
-           [0., 1., 1., 1., 1., 1., 0.],
-           [0., 0., 0., 1., 0., 0., 0.]])
+        >>> # Imports
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import focal
 
-    >>> focal.circle_kernel(1, 2, 3)
-    array([[0., 0., 0., 1., 0., 0., 0.],
-           [1., 1., 1., 1., 1., 1., 1.],
-           [0., 0., 0., 1., 0., 0., 0.]])
+        >>> # Create Kernels
+        >>> focal.circle_kernel(1, 1, 3)
+        array([[0., 0., 0., 1., 0., 0., 0.],
+               [0., 1., 1., 1., 1., 1., 0.],
+               [0., 1., 1., 1., 1., 1., 0.],
+               [1., 1., 1., 1., 1., 1., 1.],
+               [0., 1., 1., 1., 1., 1., 0.],
+               [0., 1., 1., 1., 1., 1., 0.],
+               [0., 0., 0., 1., 0., 0., 0.]])
+
+        >>> focal.circle_kernel(1, 2, 3)
+        array([[0., 0., 0., 1., 0., 0., 0.],
+               [1., 1., 1., 1., 1., 1., 1.],
+               [0., 0., 0., 1., 0., 0., 0.]])
     """
-
     # validate radius, convert radius to meters
     r = _get_distance(str(radius))
 
@@ -204,7 +207,7 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
     """
     Generates a annulus (ring-shaped) kernel of a given cellsize and radius.
 
-    Parameters:
+    Parameters
     ----------
     cellsize_x: int
         Cell size of output kernel in x direction.
@@ -215,36 +218,37 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
     inner_radius: int
         Inner circle radius of output kernel.
 
-    Returns:
-    ----------
+    Returns
+    -------
     kernel: NumPy Array
         2D array of 0s and 1s where values of 1 indicate the kernel.
 
-    Examples:
-    ----------
-    Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import focal
+    Examples
+    --------
+    .. sourcecode:: python
 
-    Create Kernels
-    >>> focal.annulus_kernel(1, 1, 3, 1)
-    array([[0., 0., 0., 1., 0., 0., 0.],
-           [0., 1., 1., 1., 1., 1., 0.],
-           [0., 1., 1., 0., 1., 1., 0.],
-           [1., 1., 0., 0., 0., 1., 1.],
-           [0., 1., 1., 0., 1., 1., 0.],
-           [0., 1., 1., 1., 1., 1., 0.],
-           [0., 0., 0., 1., 0., 0., 0.]])
+        >>> # Imports
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import focal
 
-    >>> focal.annulus_kernel(1, 2, 5, 2)
-    array([[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
-           [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-           [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
-           [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-           [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
+        >>> # Create Kernels
+        >>> focal.annulus_kernel(1, 1, 3, 1)
+        array([[0., 0., 0., 1., 0., 0., 0.],
+               [0., 1., 1., 1., 1., 1., 0.],
+               [0., 1., 1., 0., 1., 1., 0.],
+               [1., 1., 0., 0., 0., 1., 1.],
+               [0., 1., 1., 0., 1., 1., 0.],
+               [0., 1., 1., 1., 1., 1., 0.],
+               [0., 0., 0., 1., 0., 0., 0.]])
+
+        >>> focal.annulus_kernel(1, 2, 5, 2)
+        array([[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
+               [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+               [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
+               [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+               [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
     """
-
     # validate radii, convert to meters
     r2 = _get_distance(str(outer_radius))
     r1 = _get_distance(str(inner_radius))
@@ -308,8 +312,9 @@ def custom_kernel(kernel):
 
 @jit(nopython=True, nogil=True, parallel=True)
 def _convolve_2d_numpy(data, kernel):
-    """Apply kernel to data image."""
-
+    """
+    Apply kernel to data image.
+    """
     # TODO: handle nan
 
     nx = data.shape[0]
