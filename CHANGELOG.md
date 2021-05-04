@@ -2,11 +2,11 @@
 -----------
 
 ### Version 0.2.1 - 5/4/2021
-- Add GPU and Dask support for Focal tools: mean, apply, hotspots (#238) 
+- Added GPU and Dask support for Focal tools: mean, apply, hotspots (#238) 
 - Update Code of Conduct (#391)
-- fix manhattan distance to sum of abs (#309)
+- Fixed manhattan distance to sum of abs (#309)
 - Example notebooks running on JupyterLab (#370)
-- Fix examples download cli cmd (#349)
+- Fixed examples download cli cmd (#349)
 
 ### Version 0.2.0 - 4/28/2021
 - Test release for new github actions
