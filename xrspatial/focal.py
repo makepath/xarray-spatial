@@ -429,10 +429,6 @@ def apply(raster, kernel, func=calc_mean):
         2D array of input values to be filtered.
     kernel : Numpy Array
         2D array where values of 1 indicate the kernel.
-    x : str, default='x'
-        Name of x-coordinates.
-    y : str, default='y'
-        Name of y-coordinates.
     func : xrspatial.focal.calc_mean
         Function which takes an input array and returns an array.
 
@@ -449,7 +445,9 @@ def apply(raster, kernel, func=calc_mean):
         import datashader as ds
         import matplotlib.pyplot as plt
         from xrspatial import generate_terrain, aspect
-        from xrspatial.focal import apply, circle_kernel
+        from xrspatial.focal import apply
+        from xrspatial.convolution import circle_kernel
+
 
         # Create Canvas
         W = 500
@@ -479,9 +477,7 @@ def apply(raster, kernel, func=calc_mean):
 
         # Apply Kernel
         agg = apply(raster = terrain_agg,
-                    kernel = kernel,
-                    x = 'lon',
-                    y = 'lat')
+                    kernel = kernel)
 
         # Edit Attributes
         agg = agg.assign_attrs({'Description': 'Example Filtered Terrain'})
@@ -718,10 +714,6 @@ def hotspots(raster, kernel):
         2D Input raster image with `raster.shape` = (height, width).
     kernel : Numpy Array
         2D array where values of 1 indicate the kernel.
-    x : str, default='x'
-        Name of x-coordinates.
-    y : str, default='y'
-        Name of y-coordinates.
 
     Returns
     -------
@@ -736,7 +728,8 @@ def hotspots(raster, kernel):
         import datashader as ds
         import matplotlib.pyplot as plt
         from xrspatial import generate_terrain, aspect
-        from xrspatial.focal import hotspots, circle_kernel
+        from xrspatial.convolution import circle_kernel
+        from xrspatial.focal import hotspots
 
         # Create Canvas
         W = 500
@@ -766,9 +759,7 @@ def hotspots(raster, kernel):
 
         # Create Hotspots Aggregate array
         hotspots_agg = hotspots(raster = terrain_agg,
-                                kernel = kernel,
-                                x = 'lon',
-                                y = 'lat')
+                                kernel = kernel)
 
         # Edit Attributes
         hotspots_agg = hotspots_agg.rename('Significance')
