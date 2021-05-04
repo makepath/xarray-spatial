@@ -2,6 +2,7 @@ from functools import partial
 
 from math import isnan
 
+from numba import prange
 import numpy as np
 from xarray import DataArray
 import dask.array as da
@@ -194,7 +195,7 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
                 'Description': 'Example Mean Filtered Terrain',
             }
         )
-
+    """
     out = agg.data
     for i in range(passes):
         out = _mean(out, tuple(excludes))
@@ -527,7 +528,6 @@ def apply(raster, kernel, func=calc_mean):
             units:          km
             Max Elevation:  4000
     """
-
     # validate raster
     if not isinstance(raster, DataArray):
         raise TypeError("`raster` must be instance of DataArray")
