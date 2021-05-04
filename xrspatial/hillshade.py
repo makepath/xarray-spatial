@@ -135,7 +135,7 @@ def hillshade(agg: xr.DataArray,
     Notes:
     ----------
     Algorithm References:
-    - http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html # noqa
+    - GeoExamples, Shaded relief images using GDAL python, http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html, Accessed Apr. 21, 2021. # noqa
 
     Examples:
     ----------

@@ -127,7 +127,7 @@ def curvature(agg: xr.DataArray,
     Notes:
     ----------
     Algorithm References:
-    - https://pro.arcgis.com/en/pro-app/latest/tool-reference/spatial-analyst/how-curvature-works.htm # noqa
+    - esri, How Curvature works, https://pro.arcgis.com/en/pro-app/latest/tool-reference/spatial-analyst/how-curvature-works.htm, Accessed Apr. 21, 2021. # noqa
 
     Examples:
     ----------

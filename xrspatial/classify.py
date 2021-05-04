@@ -216,8 +216,8 @@ def reclassify(agg: xr.DataArray,
 
     Notes:
     ----------
-    Adapted from PySal:
-        - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html
+    Adapted from PySAL:
+        - PySAL, Source code for mapclassify.classifiers, https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html, Accessed Apr. 21, 2021. # noqa
 
     Examples:
     ----------
@@ -367,7 +367,7 @@ def quantile(agg: xr.DataArray,
     Notes:
     ----------
     Adapted from PySAL:
-    - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles # noqa
+    - PySAL, Source code for mapclassify.classifiers, https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles, Accessed Apr. 21, 2021. # noqa
 
     Note that dask's percentile algorithm is approximate,
     while numpy's is exact. This may cause some differences
@@ -717,9 +717,9 @@ def natural_breaks(agg: xr.DataArray,
     Algorithm References:
     ----------
     Map Classify:
-    - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks # noqa
+    - PySAL, Source code for mapclassify.classifiers, https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#NaturalBreaks, Accessed Apr. 21, 2021. # noqa
     perrygeo:
-    - https://github.com/perrygeo/jenks/blob/master/jenks.pyx
+    - perrygeo/jenks, https://github.com/perrygeo/jenks/blob/master/jenks.pyx, Apr. 21, 2021. # noqa
 
     Examples:
     ----------
@@ -858,9 +858,9 @@ def equal_interval(agg: xr.DataArray,
     Algorithm References:
     ----------
     PySal:
-    - https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval # noqa
+    - PySAL, Source code for mapclassify.classifiers, https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#EqualInterval, Accessed Apr. 21, 2021. # noqa
     SciKit:
-    - https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py # noqa
+    - scikit-learn, Classifier comparison, https://scikit-learn.org/stable/auto_examples/classification/plot_classifier_comparison.html#sphx-glr-auto-examples-classification-plot-classifier-comparison-py, Accessed Apr. 21, 2021. # noqa
 
     Examples:
     ----------

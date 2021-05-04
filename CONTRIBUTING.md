@@ -28,7 +28,7 @@ In order to avoid duplication of effort, it's always a good idea to comment on a
 
 1. Make sure that there is a corresponding issue for your change first. If there isn't yet, create one.
 
-2. Create a fork of the Xaray Spatial repository on GitHub (this is only done before *first*) contribution).
+2. Create a fork of the Xarray Spatial repository on GitHub (this is only done before *first*) contribution).
 
 3. Create a branch off the `master` branch with a meaningful name. Preferably include issue number and a few keywords, so that we will have a rough idea what the branch refers to, without looking up the issue. 
 
@@ -43,6 +43,6 @@ In order to avoid duplication of effort, it's always a good idea to comment on a
 8. We will review your PR as time permits. Reviewers may comment on your contributions, ask you questions regarding the implementation or request changes. If changes are requested, push new commits to the existing branch. Do *NOT* rebase, amend, or cherry-pick published commits. Any of those actions will make us start the review from scratch. If you need updates from `master`, just merge it into your branch.
 
 
-### Atribution
+### Attribution
 
 Portions of text derived from [Bokeh CONTRIBUTING file]: (https://github.com/bokeh/bokeh/blob/branch-2.4/.github/CONTRIBUTING.md)
