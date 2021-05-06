@@ -14,50 +14,101 @@ def perlin(width: int,
     """
     Generate perlin noise aggregate.
 
-    Parameters:
+    Parameters
     ----------
-    width: int
+    width : int
         Width of output aggregate array.
-    height: int
+    height : int
         Height of output aggregate array.
-    freq: tuple (default = (1,1))
+    freq : tuple, default=(1,1)
         (x, y) frequency multipliers.
-    seed: int (default = 5)
+    seed : int, default=5
         Seed for random number generator.
 
-    Returns:
-    ----------
-    xarray.DataArray
-        2D array, of the same type as the input, of calculated perlin
-    noise values.
+    Returns
+    -------
+    perlin_agg : xarray.DataArray
+        2D array of perlin noise values.
 
-    Notes:
+    References
     ----------
-    Algorithm References:
-    - numba-ized from Paul Panzer example available here: #noqa
-        - tgirod, Panzer, Paul, StackOverflow, https://stackoverflow.com/questions/42147776/producing-2d-perlin-noise-with-numpy, Accessed Apr. 21, 2021. # noqa
-    - Nighbert, JS, Bureau of Land Management, Portland, OR, Using “Materials and Textures” in Cartographic Presentations A.K.A. “Bump Mapping”, http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf, Accessed Apr. 21, 2021. # noqa
+        - Paul Panzer: https://stackoverflow.com/questions/42147776/producing-2d-perlin-noise-with-numpy # noqa
+        - ICA: http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf # noqa
 
-    Examples:
-    ----------
-    Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import perlin
+    Examples
+    --------
+    .. plot::
+       :include-source:
 
-    Generate Perlin Aggregate
-    >>> print(perlin(5, 5))
-    <xarray.DataArray (y: 5, x: 5)>
-    array([[0.38502038, 0.3235394 , 0.13230299, 0.02275815, 0.13502038],
-           [0.69650136, 0.6169794 , 0.34002832, 0.10065245, 0.10962136],
-           [1.        , 0.90777853, 0.55206348, 0.16047902, 0.01192   ],
-           [1.        , 0.92388163, 0.60956174, 0.21797728, 0.        ],
-           [0.69650136, 0.6604194 , 0.50362745, 0.29227467, 0.15306136]])
-    Dimensions without coordinates: y, x
-    Attributes:
-        res:      1
+        import matplotlib.pyplot as plt
+        from xrspatial import perlin
+
+        # Generate Perlin Noise Aggregate
+        perlin_default = perlin(width = 500, height = 300)
+
+        # With Increased x Frequency
+        perlin_high_x_freq = perlin(width = 500, height = 300, freq = (5, 1))
+
+        # With Increased y Frequency
+        perlin_high_y_freq = perlin(width = 500, height = 300, freq = (1, 5))
+
+        # With a Different Seed
+        perlin_seed_1 = perlin(width = 500, height = 300, seed = 1)
+
+        # Plot Default Perlin
+        perlin_default.plot(cmap = 'inferno', aspect = 2, size = 4)
+        plt.title("Default")
+
+        # Plot High x Frequency
+        perlin_high_x_freq.plot(cmap = 'inferno', aspect = 2, size = 4)
+        plt.title("High x Frequency")
+
+        # Plot High y Frequency
+        perlin_high_y_freq.plot(cmap = 'inferno', aspect = 2, size = 4)
+        plt.title("High y Frequency")
+
+        # Plot Seed = 1
+        perlin_seed_1.plot(cmap = 'inferno', aspect = 2, size = 4)
+        plt.title("Seed = 1")
+
+    .. sourcecode:: python
+
+        >>> print(perlin_default[200:203, 200: 202])
+        <xarray.DataArray (y: 3, x: 2)>
+        array([[0.56800979, 0.56477393],
+               [0.56651744, 0.56331014],
+               [0.56499184, 0.56181344]])
+        Dimensions without coordinates: y, x
+        Attributes:
+            res:      1
+
+        >>> print(perlin_high_x_freq[200:203, 200: 202])
+        <xarray.DataArray (y: 3, x: 2)>
+        array([[0.5       , 0.48999444],
+               [0.5       , 0.48999434],
+               [0.5       , 0.48999425]])
+        Dimensions without coordinates: y, x
+        Attributes:
+            res:      1
+
+        >>> print(perlin_high_y_freq[200:203, 200: 202])
+        <xarray.DataArray (y: 3, x: 2)>
+        array([[0.31872961, 0.31756859],
+               [0.2999256 , 0.2988189 ],
+               [0.28085118, 0.27979834]])
+        Dimensions without coordinates: y, x
+        Attributes:
+            res:      1
+
+        >>> print(perlin_seed_1[200:203, 200: 202])
+        <xarray.DataArray (y: 3, x: 2)>
+        array([[0.12991498, 0.12984185],
+               [0.13451158, 0.13441514],
+               [0.13916956, 0.1390495 ]])
+        Dimensions without coordinates: y, x
+        Attributes:
+            res:      1
     """
-
     linx = range(width)
     liny = range(height)
     linx = np.linspace(0, 1, width, endpoint=False)

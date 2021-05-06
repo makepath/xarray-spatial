@@ -1510,28 +1510,139 @@ def viewshed(raster: xarray.DataArray,
     Calculate viewshed of a raster (the visible cells in the raster)
     for the given viewpoint (observer) location.
 
-    Parameters:
+    Parameters
     ----------
-    raster: xarray.DataArray
+    raster : xr.DataArray
         Input raster image.
-    x: int, float
+    x : int, float
         x-coordinate in data space of observer location.
-    y: int, float
+    y : int, float
         y-coordinate in data space of observer location.
-    observer_elev: float
+    observer_elev : float
         Observer elevation above the terrain.
-    target_elev: float
+    target_elev : float
         Target elevation offset above the terrain.
 
-    Returns:
-    ----------
+    Returns
+    -------
     viewshed: xarray.DataArray
         A cell x in the visibility grid is recorded as follows:
-        - If it is invisible, then x is set to INVISIBLE.
-        - If it is visible,  then x is set to the vertical angle w.r.t
+        If it is invisible, then x is set to INVISIBLE.
+        If it is visible,  then x is set to the vertical angle w.r.t
         the viewpoint.
-    """
 
+    Examples
+    --------
+    .. plot::
+       :include-source:
+
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        import pandas as pd
+        import numpy as np
+        from xrspatial import generate_terrain, viewshed
+
+        # Create Canvas
+        W = 500
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
+
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+        # Generate a Target Aggregate Array
+        volcano_agg = generate_terrain(canvas = cvs)
+        volcano_agg.data = np.where(np.logical_and(volcano_agg.data > 2800,
+                                                volcano_agg.data < 5000), 1, 0)
+        volcano_agg = volcano_agg.rename('volcano')
+        volcano_agg.values = volcano_agg.values.astype("float64")
+
+        # Edit Attributes
+        volcano_agg = volcano_agg.assign_attrs({'Description': 'Volcano'})
+        volcano_agg = volcano_agg.rename('Volcano')
+
+        # Create Observer Aggregate Array
+        OBSERVER_X = -12.5e6
+        OBSERVER_Y = 10e6
+        observer_df = pd.DataFrame({'x': [OBSERVER_X], 'y': [OBSERVER_Y]})
+        observer_agg = cvs.points(observer_df, 'x', 'y')
+
+        # Generate Viewshed Aggregate Array
+        view = viewshed(volcano_agg, x=OBSERVER_X, y=OBSERVER_Y)
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Volcano
+        volcano_agg.plot(cmap = 'Pastel1', aspect = 2, size = 4)
+        plt.title("Volcano")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Viewshed
+        view.plot(cmap = 'Greys', aspect = 2, size = 4)
+        plt.title("Viewshed")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. sourcecode:: python
+
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
+
+        >>> print(volcano_agg[200:203, 200:202])
+        <xarray.DataArray 'Volcano' (y: 3, x: 2)>
+        array([[0., 0.],
+               [0., 0.],
+               [0., 0.]])
+        Coordinates:
+          * x        (x) float64 -3.96e+06 -3.88e+06
+          * y        (y) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:          1
+            Description:  Volcano
+
+        >>> print(view[200:203, 200:202])
+        <xarray.DataArray (y: 3, x: 2)>
+        array([[90., 90.],
+               [90., 90.],
+               [90., 90.]])
+        Coordinates:
+          * x        (x) float64 -3.96e+06 -3.88e+06
+          * y        (y) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:          1
+            Description:  Volcano
+    """
     height, width = raster.shape
 
     y_coords = raster.indexes.get('y').values

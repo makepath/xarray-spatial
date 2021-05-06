@@ -234,88 +234,123 @@ def a_star_search(surface: xr.DataArray,
                   snap_start: bool = False,
                   snap_goal: bool = False) -> xr.DataArray:
     """
-    Calculate distance from a starting point to a
-    goal through a surface graph. Starting location
-    and goal location should be within the graph.
+    Calculates, for all inner cells of an array, the 2D convolution of
+    Calculate distance from a starting point to a goal through a
+    surface graph. Starting location and goal location should be within
+    the graph.
 
-    A* is a modification of Dijkstra’s Algorithm
-    that is optimized for a single destination.
-    Dijkstra’s Algorithm can find paths to all
-    locations; A* finds paths to one location,
-    or the closest of several locations. It prioritizes
-    paths that seem to be leading closer to a goal.
+    A* is a modification of Dijkstra’s Algorithm that is optimized for
+    a single destination. Dijkstra’s Algorithm can find paths to all
+    locations; A* finds paths to one location,or the closest of several
+    locations. It prioritizes paths that seem to be leading closer to
+    a goal.
 
-    The output is an equal sized Xarray.DataArray
-    with NaNs for non-path pixels, and the value
-    of the path pixels being the current cost up to that point.
+    The output is an equal sized Xarray.DataArray with NaNs for non-path
+    pixels, and the value of the path pixels being the current cost up
+    to that point.
 
-    Parameters:
+    Parameters
     ----------
-    surface: xarray.DataArray
-        2D array of values to bin
-    start: array like object (tuple, list, array, ...) of 2 numeric elements
-        (x, y) or (lon, lat) coordinates of the starting point
-    goal: array like object (tuple, list, array, ...) of 2 numeric elements
-        (x, y) or (lon, lat) coordinates of the goal location
-    barriers: array like object (default = [])
-        list of values inside the surface which are barriers (cannot cross)
-    x: str (default = 'x)
-        name of the x coordinate in input surface raster
-    y: str (default = 'x')
-        name of the y coordinate in input surface raster
-    connectivity: int (default = 8)
-    snap_start: bool (default = False)
-        snap the start location to the nearest valid value before
-    beginning pathfinding
-    snap_goal: bool (default = False)
-        snap the goal location to the nearest valid value before
-    beginning pathfinding
+    surface : xr.DataArray
+        2D array of values to bin.
+    start : array-like object of 2 numeric elements
+        (x, y) or (lon, lat) coordinates of the starting point.
+    goal : array like object of 2 numeric elements
+        (x, y) or (lon, lat) coordinates of the goal location.
+    barriers : array like object, default=[]
+        List of values inside the surface which are barriers
+        (cannot cross).
+    x : str, default='x'
+        Name of the x coordinate in input surface raster.
+    y: str, default='x'
+        Name of the y coordinate in input surface raster.
+    connectivity : int, default=8
+    snap_start: bool, default=False
+        Snap the start location to the nearest valid value before
+        beginning pathfinding.
+    snap_goal: bool, default=False
+        Snap the goal location to the nearest valid value before
+        beginning pathfinding.
 
-    Returns:
-    ----------
-    path_agg: Xarray.DataArray
-        2D array, of the same type as the input surface raster.
+    Returns
+    -------
+    path_agg: xr.DataArray of the same type as `surface`.
+        2D array of pathfinding values.
         All other input attributes are preserved.
 
-    Notes:
+    References
     ----------
-    Algorithm References:
-    - Patel, A, Red Blob Games, Implementation of A*, https://www.redblobgames.com/pathfinding/a-star/implementation.html, Accessed Apr. 21, 2021. # noqa
-    - Swift, N, Medium, Easy A* (star) Pathfinding, https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2, Accessed Apr. 21, 2021. # noqa
+        - Red Blob Games: https://www.redblobgames.com/pathfinding/a-star/implementation.html # noqa
+        - Nicholas Swift: https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2 # noqa
 
-    Examples:
-    ----------
-    Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import pathfinding as pf
+    Examples
+    --------
+    .. plot::
+       :include-source:
 
-    Create Surface Data Array
-    >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0],
-    >>>                              [0, 0, 0, 0, 0],
-    >>>                              [0, 0, 0, 0, 0],
-    >>>                              [0, 0, 0, 0, 0],
-    >>>                              [0, 0, 0, 0, 0]]),
-    >>>                    dims = ["lat", "lon"])
-    >>> height, width = agg.shape
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> agg["lon"] = _lon
-    >>> agg["lat"] = _lat
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.pathfinding import a_star_search
 
-    Create Path Data Array
-    >>> print(pf.a_star_search(agg, (0,0), (4,4), x = 'lon', y = 'lat'))
-    <xarray.DataArray (lat: 5, lon: 5)>
-    array([[0.        , nan, nan, nan, nan],
-           [nan, 1.41421356, nan, nan, nan],
-           [nan, nan, 2.82842712, nan, nan],
-           [nan, nan, nan, 4.24264069, nan],
-           [nan, nan, nan, nan, 5.65685425]])
-    Coordinates:
-      * lon      (lon) float64 0.0 1.0 2.0 3.0 4.0
-      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+        # Create Canvas
+        W = 500
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
+
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+        # Choose Start and End Points
+        start = terrain_agg[3][100]
+        start_y = start.coords['lat'].data
+        start_x = start.coords['lon'].data
+
+        end = terrain_agg[298][250]
+        end_y = end.coords['lat'].data
+        end_x = end.coords['lon'].data
+
+        # Avoid Water
+        barriers = [0]
+
+        # Create Path Aggregate Array
+        path_agg = a_star_search(surface = terrain_agg,
+                                 start = (start_y, start_x),
+                                 goal = (end_y, end_x),
+                                 barriers = barriers,
+                                 x = 'lon',
+                                 y = 'lat')
+
+        # Edit Attributes
+        path_agg = path_agg.rename('Distance')
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Path
+        path_agg.plot(aspect = 2, size = 4)
+        plt.title("Path")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
     """
-
     if surface.ndim != 2:
         raise ValueError("surface must be 2D")
 

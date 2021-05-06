@@ -155,70 +155,119 @@ def _run_dask_numpy(data: da.Array) -> da.Array:
 def aspect(agg: xr.DataArray,
            name: Optional[str] = 'aspect') -> xr.DataArray:
     """
-    Calculates, for all cells in the array,
-    the downward slope direction of each cell
-    based on the elevation of its neighbors in a 3x3 grid.
-    The value is measured clockwise in degrees with 0 and 360 at due north.
-    Flat areas are given a value of -1.
-    Values along the edges are not calculated.
+    Calculates the aspect value of an elevation aggregate.
 
-    Parameters:
+    Calculates, for all cells in the array, the downward slope direction
+    of each cell based on the elevation of its neighbors in a 3x3 grid.
+    The value is measured clockwise in degrees with 0 and 360 at due
+    north. Flat areas are given a value of -1. Values along the edges
+    are not calculated.
+
+    Parameters
     ----------
-    agg: xarray.DataArray
-        2D array of elevation values. NumPy, CuPy, NumPy-backed Dask,
-        or Cupy-backed Dask array.
-    name: str, optional (default = "aspect")
+    agg : xarray.DataArray
+        2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
+        of elevation values.
+    name : str, default='aspect'
         Name of ouput DataArray.
 
-    Returns:
-    ----------
-    xarray.DataArray
-        2D array, of the same type as the input, of calculated aspect values.
+    Returns
+    -------
+    aspect_agg : xarray.DataArray of the same type as `agg`
+        2D aggregate array of calculated aspect values.
         All other input attributes are preserved.
 
-    Notes:
+    References
     ----------
-    Algorithm References:
-    - esri, How Aspect Works, http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm#ESRI_SECTION1_4198691F8852475A9F4BC71246579FAA, Accessed Apr. 21, 2021. # noqa
-    - Burrough, P. A., McDonnell, R., McDonnell, R. A., & Lloyd, C. D. (2015). Principles of geographical information systems. Oxford university press. pp 406. # noqa
+        - arcgis: http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm#ESRI_SECTION1_4198691F8852475A9F4BC71246579FAA # noqa
 
-    Examples:
-    ----------
-    Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> import xrspatial
+    Examples
+    --------
+    .. plot::
+       :include-source:
 
-    Create Elevation DataArray
-    >>> agg = xr.DataArray(np.array([[0, 1, 0, 0],
-    >>>                              [1, 1, 0, 0],
-    >>>                              [0, 1, 2, 2],
-    >>>                              [1, 0, 2, 0],
-    >>>                              [0, 2, 2, 2]]),
-    >>>                    dims = ["lat", "lon"])
-    >>> height, width = agg.shape
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> agg["lon"] = _lon
-    >>> agg["lat"] = _lat
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain, aspect
 
-    Create Aspect DataArray
-    >>> aspect = xrspatial.aspect(agg)
-    >>> print(aspect)
-    <xarray.DataArray 'aspect' (lat: 5, lon: 4)>
-    array([[nan,  nan,  nan,  nan],
-           [nan,   0.,  18.43494882,  nan],
-           [nan, 270., 341.56505118,  nan],
-           [nan, 288.43494882, 315.,  nan],
-           [nan,  nan,  nan,  nan]])
-    Coordinates:
-    * lon      (lon) float64 0.0 1.0 2.0 3.0
-    * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+        # Create Canvas
+        W = 500
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
 
-    Terrain Example:
-    - makepath, User Guide, https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html, Accessed Apr. 21, 2021 # noqa
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+        
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+        # Create Aspect Aggregate Array
+        aspect_agg = aspect(agg = terrain_agg, name = 'Aspect')
+
+        # Edit Attributes
+        aspect_agg = aspect_agg.assign_attrs(
+            {
+                'Description': 'Example Aspect',
+                'units': 'deg',
+            }
+        )
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Aspect
+        aspect_agg.plot(aspect = 2, size = 4)
+        plt.title("Aspect")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. sourcecode:: python
+
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
+
+    .. sourcecode:: python
+
+        >>> print(aspect_agg[200:203, 200:202])
+        <xarray.DataArray 'Aspect' (lat: 3, lon: 2)>
+        array([[ 8.18582638,  8.04675084],
+               [ 5.49302641,  9.86625477],
+               [12.04270534, 16.87079619]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Aspect
+            units:          deg
+            Max Elevation:  4000
     """
-
     # numpy case
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy(agg.data)

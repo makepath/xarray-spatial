@@ -87,39 +87,78 @@ def _get_distance(distance_str):
 def calc_cellsize(raster):
     """
     Calculates cell size of an array based on its attributes.
-    Default = meters. If lat-lon units are converted to meters.
-    Parameters:
-    ----------
-    raster: xarray.DataArray
-        2D array of input values.
-    Returns:
-    ----------
-    cellsize_x: float
-        Size of cells in x direction.
-    cellsize_y: float
-        Size of cells in y direction.
-    Notes:
-    ----------
-    Examples:
-    -----------
-    Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import focal
-    Create Data Array
-    >>> np.random.seed(0)
-    >>> agg = xr.DataArray(np.random.rand(4,4),
-                               dims = ["lat", "lon"])
-    >>> height, width = nir_agg.shape
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> nir_agg["lat"] = _lat
-    >>> nir_agg["lon"] = _lon
-    Calculate Cell Size
-    >>> focal.calc_cellsize(agg, 'lon', 'lat')
-    (1, 1)
-    """
+    Default = meters. If lat-lon, units are converted to meters.
 
+    Parameters
+    ----------
+    raster : xarray.DataArray
+        2D array of input values.
+
+    Returns
+    -------
+    cellsize : tuple
+        Tuple of (cellsize_x, cellsize_y).
+    cellsize_x : float
+        Size of cells in x-direction.
+    cellsize_y : float
+        Size of cells in y-direction.
+
+    Examples
+    --------
+    .. plot::
+       :include-source:
+
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.convolution import calc_cellsize
+
+        # Create Canvas
+        W = 500
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
+
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+    .. sourcecode:: python
+
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            Max Elevation:  3000
+            units:          km
+
+    .. sourcecode:: python
+
+        >>> # Calculate Cellsize
+        >>> cellsize = calc_cellsize(terrain_agg)
+        >>> print(cellsize)
+        (1, 1)
+    """
     if 'unit' in raster.attrs:
         unit = raster.attrs['unit']
     else:
@@ -153,43 +192,44 @@ def circle_kernel(cellsize_x, cellsize_y, radius):
     """
     Generates a circular kernel of a given cellsize and radius.
 
-    Parameters:
+    Parameters
     ----------
-    cellsize_x: int
-        Cell size of output kernel in x direction.
-    cellsize_y: int
-        Cell size of output kernel in y direction.
-    radius: int
+    cellsize_x : int
+        Cell size of output kernel in x-direction.
+    cellsize_y : int
+        Cell size of output kernel in y-direction.
+    radius : int
         Radius of output kernel.
 
-    Returns:
-    ----------
-    kernel: NumPy Array
+    Returns
+    -------
+    kernel : NumPy Array of float values
         2D array where values of 1 indicate the kernel.
 
-    Examples:
-    ----------
-        Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import focal
+    Examples
+    --------
+    .. sourcecode:: python
 
-        Create Kernels
-    >>> focal.circle_kernel(1, 1, 3)
-    array([[0., 0., 0., 1., 0., 0., 0.],
-           [0., 1., 1., 1., 1., 1., 0.],
-           [0., 1., 1., 1., 1., 1., 0.],
-           [1., 1., 1., 1., 1., 1., 1.],
-           [0., 1., 1., 1., 1., 1., 0.],
-           [0., 1., 1., 1., 1., 1., 0.],
-           [0., 0., 0., 1., 0., 0., 0.]])
+        >>> import xarray as xr
+        >>> from xrspatial.convolution import circle_kernel
 
-    >>> focal.circle_kernel(1, 2, 3)
-    array([[0., 0., 0., 1., 0., 0., 0.],
-           [1., 1., 1., 1., 1., 1., 1.],
-           [0., 0., 0., 1., 0., 0., 0.]])
+        >>> # Create Kernel
+        >>> kernel = circle_kernel(1, 1, 3)
+        >>> print(kernel)
+        [[0. 0. 0. 1. 0. 0. 0.]
+        [0. 1. 1. 1. 1. 1. 0.]
+        [0. 1. 1. 1. 1. 1. 0.]
+        [1. 1. 1. 1. 1. 1. 1.]
+        [0. 1. 1. 1. 1. 1. 0.]
+        [0. 1. 1. 1. 1. 1. 0.]
+        [0. 0. 0. 1. 0. 0. 0.]]
+
+        >>> kernel = circle_kernel(1, 2, 3)
+        >>> print(kernel)
+        [[0. 0. 0. 1. 0. 0. 0.]
+         [1. 1. 1. 1. 1. 1. 1.]
+         [0. 0. 0. 1. 0. 0. 0.]]
     """
-
     # validate radius, convert radius to meters
     r = _get_distance(str(radius))
 
@@ -204,47 +244,48 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
     """
     Generates a annulus (ring-shaped) kernel of a given cellsize and radius.
 
-    Parameters:
+    Parameters
     ----------
-    cellsize_x: int
+    cellsize_x : int
         Cell size of output kernel in x direction.
-    cellsize_y: int
+    cellsize_y : int
         Cell size of output kernel in y direction.
-    outer_radius: int
+    outer_radius : int
         Outer ring radius of output kernel.
-    inner_radius: int
+    inner_radius : int
         Inner circle radius of output kernel.
 
-    Returns:
-    ----------
-    kernel: NumPy Array
+    Returns
+    -------
+    kernel : NumPy Array of float values.
         2D array of 0s and 1s where values of 1 indicate the kernel.
 
-    Examples:
-    ----------
-    Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import focal
+    Examples
+    --------
+    .. sourcecode:: python
 
-    Create Kernels
-    >>> focal.annulus_kernel(1, 1, 3, 1)
-    array([[0., 0., 0., 1., 0., 0., 0.],
-           [0., 1., 1., 1., 1., 1., 0.],
-           [0., 1., 1., 0., 1., 1., 0.],
-           [1., 1., 0., 0., 0., 1., 1.],
-           [0., 1., 1., 0., 1., 1., 0.],
-           [0., 1., 1., 1., 1., 1., 0.],
-           [0., 0., 0., 1., 0., 0., 0.]])
+        >>> import xarray as xr
+        >>> from xrspatial.convolution import annulus_kernel
 
-    >>> focal.annulus_kernel(1, 2, 5, 2)
-    array([[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
-           [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-           [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
-           [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
-           [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
+        >>> # Create Kernel
+        >>> kernel = annulus_kernel(1, 1, 3, 1)
+        >>> print(kernel)
+        [[0., 0., 0., 1., 0., 0., 0.],
+         [0., 1., 1., 1., 1., 1., 0.],
+         [0., 1., 1., 0., 1., 1., 0.],
+         [1., 1., 0., 0., 0., 1., 1.],
+         [0., 1., 1., 0., 1., 1., 0.],
+         [0., 1., 1., 1., 1., 1., 0.],
+         [0., 0., 0., 1., 0., 0., 0.]]
+
+        >>> kernel = annulus_kernel(1, 2, 5, 2)
+        >>> print(kernel)
+        [[0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.],
+         [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+         [1., 1., 1., 0., 0., 0., 0., 0., 1., 1., 1.],
+         [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
+         [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
     """
-
     # validate radii, convert to meters
     r2 = _get_distance(str(outer_radius))
     r1 = _get_distance(str(inner_radius))
@@ -308,8 +349,9 @@ def custom_kernel(kernel):
 
 @jit(nopython=True, nogil=True, parallel=True)
 def _convolve_2d_numpy(data, kernel):
-    """Apply kernel to data image."""
-
+    """
+    Apply kernel to data image.
+    """
     # TODO: handle nan
 
     nx = data.shape[0]
@@ -408,63 +450,69 @@ def convolve_2d(data, kernel):
     each cell via Numba. To account for edge cells, a pad can be added
     to the image array. Convolution is frequently used for image
     processing, such as smoothing, sharpening, and edge detection of
-    images by elimatig spurious data or enhancing features in the data.
+    images by eliminating spurious data or enhancing features in the
+    data.
 
-    Parameters:
+    Parameters
     ----------
-    image: xarray.DataArray
+    image : xarray.DataArray
         2D array of values to processed and padded.
-    kernel: array-like object
-        Impulse kernel, determines area to apply
-        impulse function for each cell.
-    pad: Boolean
+    kernel : array-like object
+        Impulse kernel, determines area to apply impulse function for
+        each cell.
+    pad : bool, default=True
         To compute edges set to True.
-    use-cuda: Boolean
+    use-cuda : bool, default=True
         For parallel computing set to True.
 
-    Returns:
-    ----------
-    convolve_agg: xarray.DataArray
+    Returns
+    -------
+    convolve_agg : numpy.ndarray
         2D array representation of the impulse function.
-        All other input attributes are preserverd.
 
-    Examples:
-    ----------
-    Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import convolution, focal
+    Examples
+    --------
+    .. plot::
+       :include-source:
 
-    Create Data Array
-    >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
-    >>>                              [0, 0, 2, 4, 0, 8, 0],
-    >>>                              [0, 2, 2, 4, 6, 8, 0],
-    >>>                              [0, 4, 4, 4, 6, 8, 0],
-    >>>                              [0, 6, 6, 6, 6, 8, 0],
-    >>>                              [0, 8, 8, 8, 8, 8, 0],
-    >>>                              [0, 0, 0, 0, 0, 0, 0]]),
-    >>>                     dims = ["lat", "lon"],
-    >>>                     attrs = dict(res = 1))
-    >>> height, width = agg.shape
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> agg["lon"] = _lon
-    >>> agg["lat"] = _lat
+        import numpy as np
+        import xarray as xr
+        from xrspatial import focal
+        from xrspatial.convolution import convolve_2d
 
-        Create Kernel
-    >>> kernel = focal.circle_kernel(1, 1, 1)
+        # Create Data Array
+        agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
+                                     [0, 0, 2, 4, 0, 8, 0],
+                                     [0, 2, 2, 4, 6, 8, 0],
+                                     [0, 4, 4, 4, 6, 8, 0],
+                                     [0, 6, 6, 6, 6, 8, 0],
+                                     [0, 8, 8, 8, 8, 8, 0],
+                                     [0, 0, 0, 0, 0, 0, 0]]),
+                            dims = ["lat", "lon"],
+                            attrs = dict(res = 1))
+        height, width = agg.shape
+        _lon = np.linspace(0, width - 1, width)
+        _lat = np.linspace(0, height - 1, height)
+        agg["lon"] = _lon
+        agg["lat"] = _lat
 
-        Create Convolution Data Array
-    >>> print(convolution.convolve_2d(agg, kernel))
-    [[ 0.  0.  4.  8.  0. 16.  0.]
-     [ 0.  4.  8. 10. 18. 16. 16.]
-     [ 4.  8. 14. 20. 24. 30. 16.]
-     [ 8. 16. 20. 24. 30. 30. 16.]
-     [12. 24. 30. 30. 34. 30. 16.]
-     [16. 22. 30. 30. 30. 24. 16.]
-     [ 0. 16. 16. 16. 16. 16.  0.]]
+        # Create Kernel
+        kernel = focal.circle_kernel(1, 1, 1)
+
+        # Create Convolution Data Array
+        convolve_agg = convolve_2d(image = agg, kernel = kernel)
+
+    .. sourcecode:: python
+
+        >>> print(convolve_agg)
+        [[ 0.  0.  4.  8.  0. 16.  0.]
+        [ 0.  4.  8. 10. 18. 16. 16.]
+        [ 4.  8. 14. 20. 24. 30. 16.]
+        [ 8. 16. 20. 24. 30. 30. 16.]
+        [12. 24. 30. 30. 34. 30. 16.]
+        [16. 22. 30. 30. 30. 24. 16.]
+        [ 0. 16. 16. 16. 16. 16.  0.]]
     """
-
     # numpy case
     if isinstance(data, np.ndarray):
         out = _convolve_2d_numpy(data, kernel)

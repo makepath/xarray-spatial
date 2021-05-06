@@ -137,65 +137,106 @@ def slope(agg: xr.DataArray,
     """
     Returns slope of input aggregate in degrees.
 
-    Parameters:
-    -----------
-    agg: xarray.DataArray
-        2D array of elevation band data.
-    name: str, optional (default = 'slope')
-        name property of output xarray.DataArray
+    Parameters
+    ----------
+    agg : xr.DataArray
+        2D array of elevation data.
+    name : str, default='slope'
+        Name of output DataArray.
 
-    Returns:
-    ---------
-    xarray.DataArray
-        2D array, of the same type as the input, of calculated slope values.
+    Returns
+    -------
+    slope_agg : xr.DataArray of same type as `agg`
+        2D array of slope values.
         All other input attributes are preserved.
 
-    Notes:
-    ------
-    Algorithm References:
-    - esri, How Slope works, http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm, Accessed Apr. 22, 2021. # noqa
-    - Burrough, P. A., McDonnell, R., McDonnell, R. A., & Lloyd, C. D. (1998). Principles of geographical information systems. Oxford university press. pp 406. # noqa
+    References
+    ----------
+        - arcgis: http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-slope-works.htm # noqa
 
-    Examples:
-    ---------
-    Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import slope
+    Examples
+    --------
+    .. plot::
+       :include-source:
 
-    Create Data Array
-    >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
-    >>>                              [0, 0, 2, 4, 0, 8, 0],
-    >>>                              [0, 2, 2, 4, 6, 8, 0],
-    >>>                              [0, 4, 4, 4, 6, 8, 0],
-    >>>                              [0, 6, 6, 6, 6, 8, 0],
-    >>>                              [0, 8, 8, 8, 8, 8, 0],
-    >>>                              [0, 0, 0, 0, 0, 0, 0]]),
-    >>>                     dims = ["lat", "lon"],
-    >>>                     attrs = dict(res = 1))
-    >>> height, width = agg.shape
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> agg["lon"] = _lon
-    >>> agg["lat"] = _lat
+        import numpy as np
+        import xarray as xr
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain, slope
 
-    Create Slope Data Array
-    >>> print(slope(agg))
-    <xarray.DataArray 'slope' (lat: 7, lon: 7)>
-    array([[ 0,  0,  0,  0,  0,  0,  0],
-           [ 0, 46, 60, 63, 73, 70,  0],
-           [ 0, 60, 54, 54, 68, 67,  0],
-           [ 0, 68, 60, 54, 60, 71,  0],
-           [ 0, 73, 63, 60, 54, 72,  0],
-           [ 0, 74, 71, 71, 72, 75,  0],
-           [ 0,  0,  0,  0,  0,  0,  0]])
-    Coordinates:
-      * lon      (lon) float64 0.0 1.0 2.0 3.0 4.0 5.0 6.0
-      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0 5.0 6.0
-    Attributes:
-        res:      1
+        # Create Canvas
+        W = 500
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
+
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+        
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+        # Create Slope Aggregate Array
+        slope_agg = slope(agg = terrain_agg, name = 'Slope')
+
+        # Edit Attributes
+        slope_agg = slope_agg.assign_attrs({'Description': 'Example Slope',
+                                            'units': 'deg'})
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Slope
+        slope_agg.plot(aspect = 2, size = 4)
+        plt.title("Slope")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. sourcecode:: python
+
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
+
+        >>> print(slope_agg[200:203, 200:202])
+        <xarray.DataArray 'Slope' (lat: 3, lon: 2)>
+        array([[86.69626115, 86.55635267],
+               [87.2235249 , 87.24527062],
+               [86.69883402, 86.22918773]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Slope
+            units:          deg
+            Max Elevation:  4000
     """
-
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
 
     # numpy case
