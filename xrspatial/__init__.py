@@ -41,10 +41,14 @@ from xrspatial.classify import natural_breaks  # noqa
 
 from xrspatial.pathfinding import a_star_search  # noqa
 
-try:
-    from .version import __version__
-except ImportError:
-    __version__ = "unknown"
+import param
+__version__ = str(
+    param.version.Version(
+        fpath=__file__,
+        archive_commit='$Format:%h$',
+        reponame='xrspatial',
+    )
+)
 
 
 def test():
