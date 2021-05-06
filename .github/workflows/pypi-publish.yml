@@ -15,7 +15,6 @@ jobs:
       - name: Get release version
         run: |
           echo "CHANGELOG_VERSION=$(cat CHANGELOG.md | grep -oP '(?<=###\s)(.*)(?=\s\-)' | head -n 1 | sed 's/Version\s/v/')" >> $GITHUB_ENV
-          echo "PUBLISH_VERSION=$(cat CHANGELOG.md | grep -oP '(?<=###\s)(.*)(?=\s\-)' | head -n 1 | sed 's/Version\s//')" >> $GITHUB_ENV
           echo "TAG_VERSION=`echo $(git describe --tags --abbrev=0)`" >> $GITHUB_ENV
       - name: Check changelog release version
         if: ${{ env.TAG_VERSION != env.CHANGELOG_VERSION }}
@@ -28,9 +27,8 @@ jobs:
           pip install pyct \
                       wheel \
                       setuptools
-      - name: Update publish version
-        run: |
-          sed -i "/name='.*',/a \   \ version='$PUBLISH_VERSION'," setup.py
+      - name: Get all git tags
+        run: git fetch --tags -f
       - name: Build package
         run: |
           python setup.py sdist bdist_wheel
