@@ -8,6 +8,8 @@
 - Fixed manhattan distance to sum of abs (#309)
 - Example notebooks running on PC Jupyter Hub (#370)
 - Fixed examples download cli cmd (#349)
+- Removed conda recipe (#397)
+- Updated Functions & Classes Docstrings (#302)
 
 ### Version 0.2.0 - 4/28/2021
 - Test release for new github actions
