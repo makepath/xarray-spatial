@@ -1,7 +1,7 @@
 ## Xarray-Spatial Changelog
 -----------
 
-### Version 0.2.1 - 5/5/2021
+### Version 0.2.1 - 5/6/2021
 - Added GPU and Dask support for Focal tools: mean, apply, hotspots (#238) 
 - Moved kernel creation functions to convolution module (#238) 
 - Update Code of Conduct (#391)
@@ -9,7 +9,7 @@
 - Example notebooks running on PC Jupyter Hub (#370)
 - Fixed examples download cli cmd (#349)
 - Removed conda recipe (#397)
-- Updated Functions & Classes Docstrings (#302)
+- Updated functions and classes docstrings (#302)
 
 ### Version 0.2.0 - 4/28/2021
 - Test release for new github actions
