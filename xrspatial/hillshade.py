@@ -109,78 +109,114 @@ def hillshade(agg: xr.DataArray,
               angle_altitude: int = 25,
               name: Optional[str] = 'hillshade') -> xr.DataArray:
     """
-    Calculates, for all cells in the array, an illumination
-    value of each cell based on illumination from a specific
-    azimuth and altitude.
+    Calculates, for all cells in the array, an illumination value of
+    each cell based on illumination from a specific azimuth and
+    altitude.
 
-    Parameters:
+    Parameters
     ----------
-    agg: xarray.DataArray
-        2D array of elevation values:
-        NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
-    altitude: int (default: 30)
+    agg : xarray.DataArray
+        2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
+        of elevation values.
+    altitude : int, default=25
         Altitude angle of the sun specified in degrees.
-    azimuth: int (default: 315)
-        The angle between the north vector and the perpendicular projection
-        of the light source down onto the horizon specified in degrees.
-    name: str, optional (default = "hillshade")
+    azimuth : int, default=225
+        The angle between the north vector and the perpendicular
+        projection of the light source down onto the horizon
+        specified in degrees.
+    name : str, default='hillshade'
         Name of output DataArray.
 
-    Returns:
+    Returns
+    -------
+    hillshade_agg : xarray.DataArray, of same type as `agg`
+        2D aggregate array of illumination values.
+
+    References
     ----------
-    data: xarray.DataArray
-        2D array, of the same type as the input of calculated illumination
-    values.
+        - GeoExamples: http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html # noqa
 
-    Notes:
-    ----------
-    Algorithm References:
-    - GeoExamples, Shaded relief images using GDAL python, http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html, Accessed Apr. 21, 2021. # noqa
+    Examples
+    --------
+    .. plot::
+       :include-source:
 
-    Examples:
-    ----------
-    Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> import xrspatial
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain, hillshade
 
-    Create Initial DataArray
-    >>> agg = xr.DataArray(np.array([[0, 1, 0, 0],
-    >>>                              [1, 1, 0, 0],
-    >>>                              [0, 1, 2, 2],
-    >>>                              [1, 0, 2, 0],
-    >>>                              [0, 2, 2, 2]]),
-    >>>                       dims = ["lat", "lon"])
-    >>> height, width = agg.shape
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> agg["lon"] = _lon
-    >>> agg["lat"] = _lat
-    >>> print(agg)
-    <xarray.DataArray (lat: 5, lon: 4)>
-    array([[0, 1, 0, 0],
-           [1, 1, 0, 0],
-           [0, 1, 2, 2],
-           [1, 0, 2, 0],
-           [0, 2, 2, 2]])
-    Coordinates:
-      * lon      (lon) float64 0.0 1.0 2.0 3.0
-      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+        # Create Canvas
+        W = 500
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
 
-    Create Hillshade DataArray
-    >>> hillshade = xrspatial.hillshade(agg)
-    >>> print(hillshade)
-    <xarray.DataArray 'hillshade' (lat: 5, lon: 4)>
-    array([[       nan,        nan,        nan,        nan],
-           [       nan, 0.54570079, 0.32044456,        nan],
-           [       nan, 0.96130094, 0.53406336,        nan],
-           [       nan, 0.67253318, 0.71130913,        nan],
-           [       nan,        nan,        nan,        nan]])
-    Coordinates:
-      * lon      (lon) float64 0.0 1.0 2.0 3.0
-      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+        
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+        # Create Hillshade Aggregate Array
+        hillshade_agg = hillshade(agg = terrain_agg, name = 'Illumination')
+
+        # Edit Attributes
+        hillshade_agg = hillshade_agg.assign_attrs({'Description': 'Example Hillshade',
+                                                    'units': ''})
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Terrain
+        hillshade_agg.plot(cmap = 'Greys', aspect = 2, size = 4)
+        plt.title("Hillshade")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. sourcecode:: python
+
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
+
+        >>> print(hillshade_agg[200:203, 200:202])
+        <xarray.DataArray 'Illumination' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Hillshade
+            units:
+            Max Elevation:  4000
     """
-
     # numpy case
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy(agg.data, azimuth, angle_altitude)

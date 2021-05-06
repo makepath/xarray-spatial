@@ -29,98 +29,168 @@ def _finish_bump(width, height, locs, heights, spread):
     return out
 
 
-def bump(width: int, height: int, count: Optional[int] = None,
-         height_func=None, spread: int = 1) -> xr.DataArray:
+def bump(width: int,
+         height: int,
+         count: Optional[int] = None,
+         height_func=None,
+         spread: int = 1) -> xr.DataArray:
     """
-    Generate a simple bump map to simulate the appearance of land features.
-    Using a user-defined height function, determines at what elevation a
-    specific bump height is acceptable.
-    Bumps of number "count" are applied over the area "width" x "height".
+    Generate a simple bump map to simulate the appearance of land
+    features.
 
-    Parameters:
+    Using a user-defined height function, determines at what elevation
+    a specific bump height is acceptable. Bumps of number `count` are
+    applied over the area `width` x `height`.
+
+    Parameters
     ----------
-    width: int
-        Total width in pixels of the image.
-    height: int
+    width : int
+        Total width, in pixels, of the image.
+    height : int
         Total height, in pixels, of the image.
-    count: int (defaults: w * h / 10)
+    count : int
         Number of bumps to generate.
-    height_func: function which takes x, y and returns a height value
-        Function used to apply varying bump heights to different elevations.
-    spread: tuple boundaries (default = 1)
+    height_func : function which takes x, y and returns a height value
+        Function used to apply varying bump heights to different
+        elevations.
+    spread : int, default=1
+        Number of pixels to spread on all sides.
 
-    Returns:
+    Returns
+    -------
+    bump_agg : xarray.DataArray
+        2D aggregate array of calculated bump heights.
+
+    References
     ----------
-    xarray.DataArray, 2D DataArray of calculated bump heights.
+        - ICA: http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf # noqa
 
-    Notes:
-    ----------
-    Algorithm References:
-        - Nighbert, JS, Bureau of Land Management, Portland, OR, Using “Materials and Textures” in Cartographic Presentations A.K.A. “Bump Mapping”, http://www.mountaincartography.org/mt_hood/pdfs/nighbert_bump1.pdf, Accessed Apr. 21, 2021. # noqa
+    Examples
+    --------
+    .. plot::
+       :include-source:
 
-    Examples:
-    ----------
-    Imports
-    >>> import numpy as np
-    >>> import datashader as ds
-    >>> from datashader.transfer_functions import shade
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from xrspatial import generate_terrain, bump
+        from functools import partial
 
-    Generate Terrain
-    >>> from xrspatial import generate_terrain
+        # Create Canvas
+        W = 500
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
 
-    >>> W = 800
-    >>> H = 600
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
 
-    >>> cvs = ds.Canvas(plot_width = W, plot_height = H,
-                            x_range = (-20e6, 20e6), y_range = (-20e6, 20e6))
-    >>> terrain = generate_terrain(canvas=cvs)
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+        
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
 
-    Create Height Function
-    >>> from functools import partial
-    >>> from xrspatial import bump
+        # Create Height Function
+        def heights(locations, src, src_range, height = 20):
+            num_bumps = locations.shape[0]
+            out = np.zeros(num_bumps, dtype = np.uint16)
+            for r in range(0, num_bumps):
+                loc = locations[r]
+                x = loc[0]
+                y = loc[1]
+                val = src[y, x]
+                if val >= src_range[0] and val < src_range[1]:
+                    out[r] = height
+            return out
 
-    >>> def heights(locations, src, src_range, height=20):
-    >>>     num_bumps = locations.shape[0]
-    >>>     out = np.zeros(num_bumps, dtype=np.uint16)
-    >>>     for r in range(0, num_bumps):
-    >>>         loc = locations[r]
-    >>>         x = loc[0]
-    >>>         y = loc[1]
-    >>>         val = src[y, x]
-    >>>         if val >= src_range[0] and val < src_range[1]:
-    >>>             out[r] = height
-    >>>    return out
+        # Create Bump Map Aggregate Array
+        bump_count = 10000
+        src = terrain_agg.data
 
-    Create Bump Map
-    >>> bump_count = 10000
-    >>> src = terrain.data
-    >>> bumps = bump(W, H, count = bump_count,
-                     height_func = partial(heights,
-                                           src = src,
-                                           src_range = (1000, 1300),
-                                           height = 5))
-    >>> bumps += bump(W, H, count = bump_count//2,
-                     height_func = partial(heights,
-                                           src = src,
-                                           src_range = (1300, 1700),
-                                           height = 20))
-    >>> print(bumps)
-    <xarray.DataArray (y: 600, x: 800)>
-    array([[0., 0., 0., ..., 0., 0., 0.],
-           [0., 0., 0., ..., 0., 0., 0.],
-           [0., 0., 0., ..., 0., 0., 0.],
-           ...,
-           [0., 0., 0., ..., 0., 0., 0.],
-           [0., 0., 0., ..., 0., 0., 0.],
-           [0., 0., 0., ..., 0., 0., 0.]])
-    Dimensions without coordinates: y, x
-    Attributes:
-        res:      1
+        # Short Bumps from z = 1000 to z = 1300
+        bump_agg = bump(width = W, height = H, count = bump_count,
+                        height_func = partial(heights, src = src,
+                                            src_range = (1000, 1300),
+                                            height = 5))
 
-    Terrrain Example:
-        - makepath, User Guide, https://makepath.github.io/xarray-spatial/assets/examples/user-guide.html, Accessed Apr. 21, 2021. # noqa
+        # Tall Bumps from z = 1300 to z = 1700
+        bump_agg += bump(width = W, height = H, count = bump_count // 2,
+                        height_func = partial(heights, src = src,
+                                            src_range = (1300, 1700),
+                                            height=20))
+
+        # Short Bumps from z = 1700 to z = 2000
+        bump_agg += bump(width = W, height = H, count = bump_count // 3,
+                        height_func = partial(heights, src = src,
+                                            src_range = (1700, 2000),
+                                            height=5))
+        # Edit Attributes
+        bump_agg = bump_agg.assign_attrs({'Description': 'Example Bump Map',
+                                          'units': 'km'})
+
+        bump_agg = bump_agg.rename('Bump Height')
+
+        # Rename Coordinates
+        bump_agg = bump_agg.assign_coords({'x': terrain_agg.coords['lon'].data,
+                                           'y': terrain_agg.coords['lat'].data})
+
+        # Remove zeros
+        bump_agg.data[bump_agg.data == 0] = np.nan
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Bump Map
+        bump_agg.plot(cmap = 'summer', aspect = 2, size = 4)
+        plt.title("Bump Map")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. sourcecode:: python
+
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
+
+    .. sourcecode:: python
+
+        >>> print(bump_agg[200:205, 200:206])
+        <xarray.DataArray 'Bump Height' (y: 5, x: 6)>
+        array([[nan, nan, nan, nan,  5.,  5.],
+               [nan, nan, nan, nan, nan,  5.],
+               [nan, nan, nan, nan, nan, nan],
+               [nan, nan, nan, nan, nan, nan],
+               [nan, nan, nan, nan, nan, nan]])
+        Coordinates:
+          * x        (x) float64 -3.96e+06 -3.88e+06 -3.8e+06 ... -3.64e+06 -3.56e+06
+          * y        (y) float64 6.733e+06 6.867e+06 7e+06 7.133e+06 7.267e+06
+        Attributes:
+            res:          1
+            Description:  Example Bump Map
+            units:        km
     """
-
     linx = range(width)
     liny = range(height)
 

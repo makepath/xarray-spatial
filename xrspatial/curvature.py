@@ -100,83 +100,131 @@ def _run_dask_cupy(data: da.Array,
 def curvature(agg: xr.DataArray,
               name: Optional[str] = 'curvature') -> xr.DataArray:
     """
-    Calculates, for all cells in the array, the curvature
-    (second derivative) of each cell based on the elevation
-    of its neighbors in a 3x3 grid. A positive curvature
-    indicates the surface is upwardly convex. A negative
-    value indicates it is upwardly concave. A value of 0
-    indicates a flat surface.
+    Calculates, for all cells in the array, the curvature (second
+    derivative) of each cell based on the elevation of its neighbors
+    in a 3x3 grid. A positive curvature indicates the surface is
+    upwardly convex. A negative value indicates it is upwardly
+    concave. A value of 0 indicates a flat surface.
 
-    Units of the curvature output raster are one hundredth (1/100) of a z-unit.
+    Units of the curvature output raster are one hundredth (1/100)
+    of a z-unit.
 
-    Parameters:
+    Parameters
     ----------
-    agg: xarray.DataArray
-        2D array of elevation values
-        NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array.
-        Must contain "res" attribute.
-    name: str (default = "curvature")
+    agg : xarray.DataArray
+        2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
+        of elevation values.
+        Must contain `res` attribute.
+    name : str, default='curvature'
         Name of output DataArray.
 
-    Returns:
-    ----------
-    curvature: xarray.DataArray
-        2D array, of the same type as the input, of calculated curvature values
+    Returns
+    -------
+    curvature_agg : xarray.DataArray, of the same type as `agg`
+        2D aggregate array of curvature values.
         All other input attributes are preserved.
 
-    Notes:
+    References
     ----------
-    Algorithm References:
-    - esri, How Curvature works, https://pro.arcgis.com/en/pro-app/latest/tool-reference/spatial-analyst/how-curvature-works.htm, Accessed Apr. 21, 2021. # noqa
+        - arcgis: https://pro.arcgis.com/en/pro-app/latest/tool-reference/spatial-analyst/how-curvature-works.htm # noqa
 
-    Examples:
-    ----------
-    Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import curvature
+    Examples
+    --------
+    .. plot::
+       :include-source:
 
-        Create Initial DataArray
-    >>> agg = xr.DataArray(np.array([[0, 1, 0, 0],
-    >>>                              [1, 1, 0, 0],
-    >>>                              [0, 1, 2, 2],
-    >>>                              [1, 0, 2, 0],
-    >>>                              [0, 2, 2, 2]]),
-    >>>                    dims = ["lat", "lon"],
-    >>>                    attrs = dict(res = 1))
-    >>> height, width = agg.shape
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> agg["lon"] = _lon
-    >>> agg["lat"] = _lat
-    >>> print(agg)
-    <xarray.DataArray (lat: 5, lon: 4)>
-    array([[0, 1, 0, 0],
-           [1, 1, 0, 0],
-           [0, 1, 2, 2],
-           [1, 0, 2, 0],
-           [0, 2, 2, 2]])
-    Coordinates:
-      * lon      (lon) float64 0.0 1.0 2.0 3.0
-      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
-    Attributes:
-        res:      1
+        import datashader as ds
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain, curvature
 
-    Create Curvature DataArray
-    >>> print(curvature(agg))
-    <xarray.DataArray 'curvature' (lat: 5, lon: 4)>
-    array([[  nan,   nan,   nan,   nan],
-           [  nan,  100., -300.,   nan],
-           [  nan,  100.,  300.,   nan],
-           [  nan, -600.,  400.,   nan],
-           [  nan,   nan,   nan,   nan]])
-    Coordinates:
-      * lon      (lon) float64 0.0 1.0 2.0 3.0
-      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0
-    Attributes:
-        res:      1
+        # Create Canvas
+        W = 500
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
+
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+        # Create Curvature Aggregate Array
+        curvature_agg = curvature(agg = terrain_agg, name = 'Curvature')
+
+        # Edit Attributes
+        curvature_agg = curvature_agg.assign_attrs(
+            {
+                'Description': 'Curvature',
+                'units': 'rad',
+            }
+        )
+        # Where cells are extremely upwardly convex
+        curvature_agg.data = np.where(
+            np.logical_and(
+                curvature_agg.data > 3000,
+                curvature_agg.data < 4000,
+            ),
+            1,
+            np.nan,
+        )
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Curvature
+        curvature_agg.plot(aspect = 2, size = 4)
+        plt.title("Curvature")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. sourcecode:: python
+
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
+
+    .. sourcecode:: python
+
+        >>> print(curvature_agg[200:203, 200:202])
+        <xarray.DataArray 'Curvature' (lat: 3, lon: 2)>
+        array([[nan, nan],
+               [nan, nan],
+               [nan, nan]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Curvature
+            units:          rad
+            Max Elevation:  4000
     """
-
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
     cellsize = (cellsize_x + cellsize_y) / 2
 

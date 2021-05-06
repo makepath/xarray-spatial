@@ -163,52 +163,43 @@ def invert_y_tile(y, z):
 
 # TODO: change name from source to definition
 class MercatorTileDefinition(object):
+    """
+    Implementation of mercator tile source.
 
-    """ Implementation of mercator tile source
-    In general, tile sources are used as a required input for ``TileRenderer``.
+    In general, tile sources are used as a required input for
+    ``TileRenderer``.
 
     .. depreciated
 
     Parameters
     ----------
-
     x_range : tuple
         full extent of x dimension in data units
-
     y_range : tuple
         full extent of y dimension in data units
-
     max_zoom : int
         A maximum zoom level for the tile layer.
         This is the most zoomed-in level.
-
     min_zoom : int
         A minimum zoom level for the tile layer.
         This is the most zoomed-out level.
-
     max_zoom : int
         A maximum zoom level for the tile layer.
         This is the most zoomed-in level.
-
     x_origin_offset : int
         An x-offset in plot coordinates.
-
     y_origin_offset : int
         An y-offset in plot coordinates.
-
     initial_resolution : int
         Resolution (plot_units / pixels) of minimum zoom level of tileset
         projection. None to auto-compute.
-
     format : int
         An y-offset in plot coordinates.
 
-    Output
-    ------
+    Returns
+    -------
     tileScheme: MercatorTileSource
-
     """
-
     def __init__(self, x_range, y_range, tile_size=256,
                  min_zoom=0, max_zoom=30,
                  x_origin_offset=20037508.34, y_origin_offset=20037508.34,
@@ -226,13 +217,13 @@ class MercatorTileDefinition(object):
 
     def to_ogc_tile_metadata(self, output_file_path):
         """
-        Create OGC tile metadata XML
+        Create OGC tile metadata XML.
         """
         pass
 
     def to_esri_tile_metadata(self, output_file_path):
         """
-        Create ESRI tile metadata JSON
+        Create ESRI tile metadata JSON.
         """
         pass
 
@@ -374,15 +365,14 @@ def tile_previewer(full_extent, tileset_url,
                    height=None, width=None,
                    **kwargs):
     """
-    Helper function for creating a simple Bokeh figure with
-    a WMTS Tile Source.
+    Helper function for creating a simple Bokeh figure with a WMTS
+    Tile Source.
 
     Notes
     -----
         - if you don't supply height / width, stretch_both sizing_mode is used.
         - supply an output_dir to write figure to disk.
     """
-
     try:
         from bokeh.plotting import figure
         from bokeh.models.tiles import WMTSTileSource

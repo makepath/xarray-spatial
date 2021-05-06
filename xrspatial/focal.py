@@ -1,4 +1,3 @@
-'''Focal Related Utilities'''
 from functools import partial
 
 from math import isnan
@@ -140,44 +139,63 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
     Returns Mean filtered array using a 3x3 window.
     Default behaviour to 'mean' is to pad the borders with nans
 
-    Parameters:
+    Parameters
     ----------
     agg : xarray.DataArray
         2D array of input values to be filtered.
-    passes : int (default = 1)
+    passes : int, default=1
         Number of times to run mean.
-    name : str, optional (default = 'mean')
-        output xr.DataArray.name property
+    name : str, default='mean'
+        Output xr.DataArray.name property.
 
-    Returns:
-    ----------
-    data: xarray.DataArray
-        2D array of filtered values.
+    Returns
+    -------
+    mean_agg : xarray.DataArray of same type as `agg`
+        2D aggregate array of filtered values.
 
-    Examples:
-    ----------
-    Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import focal
+    Examples
+    --------
+    .. plot::
+       :include-source:
 
-    Create Data Array
-    >>> np.random.seed(0)
-    >>> agg = xr.DataArray(np.random.rand(4,4), dims = ["lat", "lon"])
-    >>> height, width = nir_agg.shape
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> nir_agg["lat"] = _lat
-    >>> nir_agg["lon"] = _lon
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain
+        from xrspatial.focal import mean
 
-    Calculate Mean
-    >>> focal.mean(agg)
-    array([[0.5488135 , 0.71518937, 0.60276338, 0.54488318],
-           [0.4236548 , 0.64589411, 0.43758721, 0.891773  ],
-           [0.96366276, 0.38344152, 0.79172504, 0.52889492],
-           [0.56804456, 0.92559664, 0.07103606, 0.0871293 ]])
+        # Create Canvas
+        W = 500
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
+
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+        # Create Mean Aggregate Array
+        mean_agg = mean(agg = terrain_agg, name = 'Elevation')
+
+        # Edit Attributes
+        mean_agg = mean_agg.assign_attrs(
+            {
+                'Description': 'Example Mean Filtered Terrain',
+            }
+        )
     """
-
     out = agg.data
     for i in range(passes):
         out = _mean(out, tuple(excludes))
@@ -191,11 +209,117 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
 
 @ngjit
 def calc_mean(array):
+    """
+    Calculates the mean of an array.
+
+    Parameters
+    ----------
+    array : numpy.Array
+        Array of input values.
+
+    Returns
+    -------
+    array_sum : float
+        Mean of input data.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> from xrspatial.focal import calc_mean
+        >>> import numpy as np
+
+        >>> # 1D Array of Integers
+        >>> array1 = np.array([1, 2, 3, 4, 5])
+        >>> print(array1)
+        [1 2 3 4 5]
+
+        >>> # Calculate Mean
+        >>> array_mean = calc_mean(array1)
+        >>> print(array_mean)
+        3.0
+
+        >>> # 2D Array of Floats
+        >>> array2 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        >>> print(array2)
+        [[1. 2. 3.]
+         [4. 5. 6.]]
+
+        >>> # Calculate Mean
+        >>> array_mean = calc_mean(array2)
+        >>> print(array_mean)
+        3.5
+
+        >>> # 3D Array of Integers
+        >>> array3 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+        >>> print(array3)
+        [[1 2 3]
+         [4 5 6]
+         [7 8 9]]
+
+        >>> # Calculate Mean
+        >>> array_mean = calc_mean(array3)
+        >>> print(array_mean)
+        5.0
+    """
     return np.nanmean(array)
 
 
 @ngjit
 def calc_sum(array):
+    """
+    Calculates the sum of an array.
+
+    Parameters
+    ----------
+    array : numpy.Array
+        Array of input values.
+
+    Returns
+    -------
+    array_sum : float
+        Sum of input data.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> from xrspatial.focal import calc_sum
+        >>> import numpy as np
+
+        >>> # 1D Array of Integers
+        >>> array1 = np.array([1, 2, 3, 4, 5])
+        >>> print(array1)
+        [1 2 3 4 5]
+
+        >>> # Calculate Sum
+        >>> array_sum = calc_sum(array1)
+        >>> print(array_sum)
+        15
+
+        >>> # 2D Array of Floats
+        >>> array2 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        >>> print(array2)
+        [[1. 2. 3.]
+         [4. 5. 6.]]
+
+        >>> # Calculate Sum
+        >>> array_sum = calc_sum(array2)
+        >>> print(array_sum)
+        21.0
+
+        >>> # 3D Array of Integers
+        >>> array3 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+        >>> print(array3)
+        [[1 2 3]
+         [4 5 6]
+         [7 8 9]]
+
+        >>> # Calculate Sum
+        >>> agg_sum = calc_sum(array3)
+        >>> print(agg_sum)
+        45
+    """
     return np.nansum(array)
 
 
@@ -297,8 +421,109 @@ def _apply(data, kernel, func):
 
 def apply(raster, kernel, func=calc_mean):
     """
-    """
+    Returns Mean filtered array using a user-created window.
 
+    Parameters
+    ----------
+    raster : xarray.DataArray
+        2D array of input values to be filtered.
+    kernel : Numpy Array
+        2D array where values of 1 indicate the kernel.
+    func : xrspatial.focal.calc_mean
+        Function which takes an input array and returns an array.
+
+    Returns
+    -------
+    agg : xarray.DataArray of same type as `raster`
+        2D aggregate array of filtered values.
+
+    Examples
+    --------
+    .. plot::
+       :include-source:
+
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain, aspect
+        from xrspatial.focal import apply
+        from xrspatial.convolution import circle_kernel
+
+
+        # Create Canvas
+        W = 500
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
+
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.rename('Elevation')
+
+        # Create Kernel
+        kernel = circle_kernel(10, 10, 100)
+
+        # Apply Kernel
+        agg = apply(raster = terrain_agg,
+                    kernel = kernel)
+
+        # Edit Attributes
+        agg = agg.assign_attrs({'Description': 'Example Filtered Terrain'})
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Filtered Terrain
+        agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Filtered Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. sourcecode:: python
+
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
+
+        >>> print(agg[200:203, 200:202])
+        <xarray.DataArray (lat: 3, lon: 2)>
+        array([[1307.19361419, 1302.6913412 ],
+               [1323.55780616, 1318.75925071],
+               [1342.3309894 , 1336.93787754]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Filtered Terrain
+            units:          km
+            Max Elevation:  4000
+    """
     # validate raster
     if not isinstance(raster, DataArray):
         raise TypeError("`raster` must be instance of DataArray")
@@ -466,73 +691,127 @@ def _hotspots_cupy(raster, kernel):
 
 
 def hotspots(raster, kernel):
-    """Identify statistically significant hot spots and cold spots in an input
-    raster. To be a statistically significant hot spot, a feature will have a
-    high value and be surrounded by other features with high values as well.
-    Neighborhood of a feature defined by the input kernel, which currently
-    support a shape of circle, annulus, or custom kernel.
+    """
+    Identify statistically significant hot spots and cold spots in an
+    input raster. To be a statistically significant hot spot, a feature
+    will have a high value and be surrounded by other features with
+    high values as well.
+    Neighborhood of a feature defined by the input kernel, which
+    currently support a shape of circle, annulus, or custom kernel.
 
     The result should be a raster with the following 7 values:
-         90 for 90% confidence high value cluster
-         95 for 95% confidence high value cluster
-         99 for 99% confidence high value cluster
-        -90 for 90% confidence low value cluster
-        -95 for 95% confidence low value cluster
-        -99 for 99% confidence low value cluster
-         0 for no significance
+        - 90 for 90% confidence high value cluster
+        - 95 for 95% confidence high value cluster
+        - 99 for 99% confidence high value cluster
+        - 90 for 90% confidence low value cluster
+        - 95 for 95% confidence low value cluster
+        - 99 for 99% confidence low value cluster
+        - 0 for no significance
 
-    Parameters:
+    Parameters
     ----------
-    raster: xarray.DataArray
-        2D Input raster image with shape = (height, width).
-    kernel: Numpy Array
+    raster : xarray.DataArray
+        2D Input raster image with `raster.shape` = (height, width).
+    kernel : Numpy Array
         2D array where values of 1 indicate the kernel.
 
-    Returns:
-    ----------
-    xarray.DataArray
+    Returns
+    -------
+    hotspots_agg : xarray.DataArray of same type as `raster`
         2D array of hotspots with values indicating confidence level.
 
-    Examples:
-    ----------
-        Imports
-    >>> import numpy as np
-    >>> import xarray as xr
-    >>> from xrspatial import focal
+    Examples
+    --------
+    .. plot::
+       :include-source:
 
-    Create Data Array
-    >>> agg = xr.DataArray(np.array([[0, 0, 0, 0, 0, 0, 0],
-    >>>                              [0, 0, 0, 0, 0, 0, 0],
-    >>>                              [0, 0, 10, 10, 10, 0, 0],
-    >>>                              [0, 0, 10, 10, 10, 0, 0],
-    >>>                              [0, 0, 10, 10, 10, 0, 0],
-    >>>                              [0, 0, 0, 0, 0, 0, 0],
-    >>>                              [0, 0, 0, 0, 0, 0, 0]]),
-    >>>                              dims = ["lat", "lon"])
-    >>> height, width = agg.shape
-    >>> _lon = np.linspace(0, width - 1, width)
-    >>> _lat = np.linspace(0, height - 1, height)
-    >>> agg["lon"] = _lon
-    >>> agg["lat"] = _lat
+        import datashader as ds
+        import matplotlib.pyplot as plt
+        from xrspatial import generate_terrain, aspect
+        from xrspatial.convolution import circle_kernel
+        from xrspatial.focal import hotspots
 
-        Create Kernel
-    >>> kernel = focal.circle_kernel(1, 1, 1)
+        # Create Canvas
+        W = 500
+        H = 300
+        cvs = ds.Canvas(plot_width = W,
+                        plot_height = H,
+                        x_range = (-20e6, 20e6),
+                        y_range = (-20e6, 20e6))
 
-        Create Hotspot Data Array
-    >>> focal.hotspots(agg, kernel, x = 'lon', y = 'lat')
-    <xarray.DataArray (lat: 7, lon: 7)>
-    array([[ 0,  0,  0,  0,  0,  0,  0],
-           [ 0,  0,  0,  0,  0,  0,  0],
-           [ 0,  0,  0,  0,  0,  0,  0],
-           [ 0,  0,  0, 95,  0,  0,  0],
-           [ 0,  0,  0,  0,  0,  0,  0],
-           [ 0,  0,  0,  0,  0,  0,  0],
-           [ 0,  0,  0,  0,  0,  0,  0]], dtype=int8)
-    Coordinates:
-      * lon      (lon) float64 0.0 1.0 2.0 3.0 4.0 5.0 6.0
-      * lat      (lat) float64 0.0 1.0 2.0 3.0 4.0 5.0 6.0
+        # Generate Example Terrain
+        terrain_agg = generate_terrain(canvas = cvs)
+
+        # Edit Attributes
+        terrain_agg = terrain_agg.assign_attrs(
+            {
+                'Description': 'Example Terrain',
+                'units': 'km',
+                'Max Elevation': '4000',
+            }
+        )
+
+        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
+        terrain_agg = terrain_agg.rename('Elevation')
+
+        # Create Kernel
+        kernel = circle_kernel(10, 10, 100)
+
+        # Create Hotspots Aggregate array
+        hotspots_agg = hotspots(raster = terrain_agg,
+                                kernel = kernel)
+
+        # Edit Attributes
+        hotspots_agg = hotspots_agg.rename('Significance')
+        hotspots_agg = hotspots_agg.assign_attrs(
+            {
+                'Description': 'Example Hotspots',
+                'units': '%',
+            }
+        )
+
+        # Plot Terrain
+        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
+        plt.title("Terrain")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+        # Plot Hotspots
+        hotspots_agg.plot(aspect = 2, size = 4)
+        plt.title("Hotspots")
+        plt.ylabel("latitude")
+        plt.xlabel("longitude")
+
+    .. sourcecode:: python
+
+        >>> print(terrain_agg[200:203, 200:202])
+        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
+        array([[1264.02249454, 1261.94748873],
+               [1285.37061171, 1282.48046696],
+               [1306.02305679, 1303.40657515]])
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Terrain
+            units:          km
+            Max Elevation:  4000
+
+        >>> print(hotspots_agg[200:203, 200:202])
+        <xarray.DataArray 'Significance' (lat: 3, lon: 2)>
+        array([[0, 0],
+               [0, 0],
+               [0, 0]], dtype=int8)
+        Coordinates:
+          * lon      (lon) float64 -3.96e+06 -3.88e+06
+          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        Attributes:
+            res:            1
+            Description:    Example Hotspots
+            units:          %
+            Max Elevation:  4000
     """
-
     # validate raster
     if not isinstance(raster, DataArray):
         raise TypeError("`raster` must be instance of DataArray")
