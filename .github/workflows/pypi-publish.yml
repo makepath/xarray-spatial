@@ -16,17 +16,11 @@ jobs:
         run: |
           echo "CHANGELOG_VERSION=$(cat CHANGELOG.md | grep -oP '(?<=###\s)(.*)(?=\s\-)' | head -n 1 | sed 's/Version\s/v/')" >> $GITHUB_ENV
           echo "PUBLISH_VERSION=$(cat CHANGELOG.md | grep -oP '(?<=###\s)(.*)(?=\s\-)' | head -n 1 | sed 's/Version\s//')" >> $GITHUB_ENV
-          echo "CONDA_VERSION=$(cat conda.recipe/meta.yaml | grep -oP '(version\:.*)' | head -n 1 | sed 's/version\:\s/v/')" >> $GITHUB_ENV
           echo "TAG_VERSION=`echo $(git describe --tags --abbrev=0)`" >> $GITHUB_ENV
       - name: Check changelog release version
         if: ${{ env.TAG_VERSION != env.CHANGELOG_VERSION }}
         run: |
           echo "CHANGELOG_VERSION($CHANGELOG_VERSION) is different from TAG_VERSION($TAG_VERSION)"
-          exit 1
-      - name: Check conda release version
-        if: ${{ env.TAG_VERSION != env.CONDA_VERSION }}
-        run: |
-          echo "CONDA_VERSION($CONDA_VERSION) is different from TAG_VERSION($TAG_VERSION)"
           exit 1
       - name: Install dependencies
         run: |
