@@ -6,4 +6,8 @@ requires = [
     'wheel >= 0.36.2',
 ]
 [tool.check-manifest]
-ignore = ["xrspatial/examples/*", "xrspatial/examples/user_guide/*"]
+ignore = [
+    'xrspatial/examples/*',
+    'xrspatial/examples/user_guide/*',
+    'xrspatial/.version',
+]

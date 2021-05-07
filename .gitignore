@@ -27,6 +27,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 xrspatial/_version.py
+xrspatial/.version
 
 
 # PyInstaller
