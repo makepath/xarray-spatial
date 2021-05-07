@@ -1,6 +1,10 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.2.2 - 5/7/2021
+- Fixed conda-forge building pipeline
+- Moved all examples data to Azure Storage (#424)
+
 ### Version 0.2.1 - 5/6/2021
 - Added GPU and Dask support for Focal tools: mean, apply, hotspots (#238) 
 - Moved kernel creation functions to convolution module (#238) 
