@@ -59,6 +59,8 @@ if 'sdist' in sys.argv and 'bdist_wheel' in sys.argv:
     if version is None:
         sys.exit('invalid version')
 
+if 'reprojection' in sys.argv:
+    shutil.copy('./optional-modules/reprojection.py', './xrspatial/reprojection.py')
 
 # metadata for setuptools
 
