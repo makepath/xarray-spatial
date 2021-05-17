@@ -12,6 +12,8 @@ import param
 
 
 # optional modules install commands
+# based on code from this discussion:
+# https://stackoverflow.com/questions/18725137/how-to-obtain-arguments-passed-to-setup-py-from-pip-with-install-option # noqa
 class CommandMixin(object):
     user_options = install.user_options + [
         ('reprojection', None, None)
