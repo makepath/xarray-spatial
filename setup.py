@@ -2,11 +2,55 @@ import os
 import sys
 import shutil
 from setuptools import setup
+from setuptools.command.install import install
+from setuptools.command.develop import develop
 
 
 # build dependencies
 import pyct.build
 import param
+
+
+# optional modules install commands
+class CommandMixin(object):
+    user_options = install.user_options + [
+        ('reprojection', None, None)
+    ]
+
+    def initialize_options(self):
+        super().initialize_options()
+        self.reprojection = None
+
+    def finalize_options(self):
+        super().finalize_options()
+
+    def run(self):
+        global reprojection
+        reprojection = self.reprojection
+        reprojection_start = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            'optional-modules',
+            'reprojection.py')
+        reprojection_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            'xrspatial', 'reprojection.py')
+        if reprojection is not None:
+            shutil.copy(reprojection_start, reprojection_path)
+        else:
+            if os.path.exists(reprojection_path):
+                os.remove(reprojection_path)
+        super().run()
+
+
+class InstallCommand(CommandMixin, install):
+    user_options = getattr(install, 'user_options', []) +\
+        CommandMixin.user_options
+
+
+class DevelopCommand(CommandMixin, develop):
+    user_options = getattr(develop, 'user_options', []) +\
+        CommandMixin.user_options
+
 
 # dependencies
 
@@ -59,15 +103,16 @@ if 'sdist' in sys.argv and 'bdist_wheel' in sys.argv:
     if version is None:
         sys.exit('invalid version')
 
-if 'reprojection' in sys.argv:
-    shutil.copy('./optional-modules/reprojection.py', './xrspatial/reprojection.py')
-
 # metadata for setuptools
 
 setup_args = dict(
     name='xarray-spatial',
     version=version,
     description='xarray-based spatial analysis tools',
+    cmdclass={
+        'install': InstallCommand,
+        'develop': DevelopCommand,
+    },
     install_requires=install_requires,
     extras_require=extras_require,
     tests_require=extras_require['tests'],
