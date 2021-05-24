@@ -28,7 +28,7 @@ install_requires = [
     'param >=1.6.1',
     'distributed >=2021.03.0',
     'spatialpandas',
-    'noise >=1.2.2',
+    'noise',
 ]
 
 examples = [
