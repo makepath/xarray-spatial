@@ -1,8 +1,14 @@
 import os
 import xarray as xr
 
+from ._samples_generator import make_terrain
 
-__all__ = ["available", "get_data"]
+
+__all__ = [
+    'available',
+    'get_data',
+    'make_terrain',
+]
 
 _module_path = os.path.dirname(os.path.abspath(__file__))
 _available_datasets = [p for p in next(os.walk(_module_path))[1]
