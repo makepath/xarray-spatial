@@ -27,7 +27,7 @@ install_requires = [
     'pyct <=0.4.6',
     'param >=1.6.1',
     'distributed >=2021.03.0',
-    'spatialpandas'
+    'spatialpandas',
 ]
 
 examples = [
@@ -37,6 +37,7 @@ examples = [
 extras_require = {
     'tests': [
         'pytest',
+        'noise >=1.2.2',
     ],
     'examples': examples,
 }
