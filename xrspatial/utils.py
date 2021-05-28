@@ -284,8 +284,7 @@ def resample(
         y_range=None,
         agg='mean',
         interpolate='linear',
-        max_mem=None,
-    ):
+        max_mem=None):
     """
     Resample a xarray.DataArray by canvas size and bounds.
 
