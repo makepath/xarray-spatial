@@ -567,5 +567,3 @@ def convolution_2d(agg, kernel):
                      coords=agg.coords,
                      dims=agg.dims,
                      attrs=agg.attrs)
-
-
