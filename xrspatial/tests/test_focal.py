@@ -308,7 +308,6 @@ def test_focal_stats_cpu():
     ).all()
 
 
-
 def test_hotspot():
     n, m = 10, 10
     data = np.zeros((n, m), dtype=float)
