@@ -1,6 +1,10 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.2.3 - 6/2/2021
+- Added make terrain data function (#439)
+- Added focal_stats and convolution_2d functions (#453)
+
 ### Version 0.2.2 - 5/7/2021
 - Fixed conda-forge building pipeline
 - Moved all examples data to Azure Storage (#424)
