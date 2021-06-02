@@ -218,6 +218,33 @@ def _calc_sum(array):
 
 
 @ngjit
+def _calc_min(array):
+    return np.nanmin(array)
+
+
+@ngjit
+def _calc_max(array):
+    return np.nanmax(array)
+
+
+@ngjit
+def _calc_std(array):
+    return np.nanstd(array)
+
+
+@ngjit
+def _calc_range(array):
+    value_min = _calc_min(array)
+    value_max = _calc_max(array)
+    return value_max - value_min
+
+
+@ngjit
+def _calc_var(array):
+    return np.nanvar(array)
+
+
+@ngjit
 def _apply_numpy(data, kernel, func):
     out = np.zeros_like(data)
     rows, cols = data.shape
