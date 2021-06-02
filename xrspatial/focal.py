@@ -468,7 +468,11 @@ def apply(raster, kernel, func=_calc_mean):
     return result
 
 
-def focal_stats(agg, kernel):
+def focal_stats(agg,
+                kernel,
+                stats_funcs=[
+                    'mean', 'max', 'min', 'range', 'std', 'var', 'sum'
+                ]):
     """
     Calculates statistics of the values within a specified focal neighborhood
     for each pixel in an input raster. The statistics types are Mean, Maximum,
@@ -480,28 +484,30 @@ def focal_stats(agg, kernel):
         2D array of input values to be analysed.
     kernel : Numpy Array
         2D array where values of 1 indicate the kernel.
-
+    stat_funcs: list of statistics types to be calculated.
+        Default set to ['mean', 'max', 'min', 'range', 'std', 'var', 'sum'].
     Returns
     -------
     stats_agg : xarray.DataArray of same type as `agg`
         3D array with dimensions of `(stat, y, x)` and with values
         indicating the focal stats.
     """
+    _function_mapping = {
+        'mean': _calc_mean,
+        'max': _calc_max,
+        'min': _calc_min,
+        'range': _calc_range,
+        'std': _calc_std,
+        'var': _calc_var,
+        'sum': _calc_sum
+    }
 
-    mean_stats = apply(agg, kernel, func=_calc_mean)
-    max_stats = apply(agg, kernel, func=_calc_max)
-    min_stats = apply(agg, kernel, func=_calc_min)
-    range_stats = apply(agg, kernel, func=_calc_range)
-    std_stats = apply(agg, kernel, func=_calc_std)
-    var_stats = apply(agg, kernel, func=_calc_var)
-    sum_stats = apply(agg, kernel, func=_calc_sum)
+    stats_aggs = []
+    for stats in stats_funcs:
+        stats_agg = apply(agg, kernel, func=_function_mapping[stats])
+        stats_aggs.append(stats_agg)
 
-    dims = ['mean', 'max', 'min', 'range', 'std', 'var', 'sum']
-    stats = [
-        mean_stats, max_stats, min_stats, range_stats, std_stats, var_stats,
-        sum_stats
-    ]
-    stats = xr.concat(stats, pd.Index(dims, name='stat'))
+    stats = xr.concat(stats_aggs, pd.Index(stats_funcs, name='stats'))
     return stats
 
 
