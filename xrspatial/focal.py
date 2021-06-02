@@ -348,9 +348,9 @@ def apply(raster, kernel, func=_calc_mean):
     ----------
     raster : xarray.DataArray
         2D array of input values to be filtered.
-    kernel : Numpy Array
+    kernel : numpy.array
         2D array where values of 1 indicate the kernel.
-    func : custom user defined function
+    func : callable, default=xrspatial.focal._calc_mean
         Function which takes an input array and returns an array.
 
     Returns
@@ -482,9 +482,10 @@ def focal_stats(agg,
     ----------
     agg : xarray.DataArray
         2D array of input values to be analysed.
-    kernel : Numpy Array
+    kernel : numpy.array
         2D array where values of 1 indicate the kernel.
-    stats_funcs: list of statistics types to be calculated.
+    stats_funcs: list of string
+        List of statistics types to be calculated.
         Default set to ['mean', 'max', 'min', 'range', 'std', 'var', 'sum'].
 
     Returns
