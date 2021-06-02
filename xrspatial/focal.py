@@ -208,118 +208,12 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
 
 
 @ngjit
-def calc_mean(array):
-    """
-    Calculates the mean of an array.
-
-    Parameters
-    ----------
-    array : numpy.Array
-        Array of input values.
-
-    Returns
-    -------
-    array_sum : float
-        Mean of input data.
-
-    Examples
-    --------
-    .. sourcecode:: python
-
-        >>> from xrspatial.focal import calc_mean
-        >>> import numpy as np
-
-        >>> # 1D Array of Integers
-        >>> array1 = np.array([1, 2, 3, 4, 5])
-        >>> print(array1)
-        [1 2 3 4 5]
-
-        >>> # Calculate Mean
-        >>> array_mean = calc_mean(array1)
-        >>> print(array_mean)
-        3.0
-
-        >>> # 2D Array of Floats
-        >>> array2 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        >>> print(array2)
-        [[1. 2. 3.]
-         [4. 5. 6.]]
-
-        >>> # Calculate Mean
-        >>> array_mean = calc_mean(array2)
-        >>> print(array_mean)
-        3.5
-
-        >>> # 3D Array of Integers
-        >>> array3 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
-        >>> print(array3)
-        [[1 2 3]
-         [4 5 6]
-         [7 8 9]]
-
-        >>> # Calculate Mean
-        >>> array_mean = calc_mean(array3)
-        >>> print(array_mean)
-        5.0
-    """
+def _calc_mean(array):
     return np.nanmean(array)
 
 
 @ngjit
-def calc_sum(array):
-    """
-    Calculates the sum of an array.
-
-    Parameters
-    ----------
-    array : numpy.Array
-        Array of input values.
-
-    Returns
-    -------
-    array_sum : float
-        Sum of input data.
-
-    Examples
-    --------
-    .. sourcecode:: python
-
-        >>> from xrspatial.focal import calc_sum
-        >>> import numpy as np
-
-        >>> # 1D Array of Integers
-        >>> array1 = np.array([1, 2, 3, 4, 5])
-        >>> print(array1)
-        [1 2 3 4 5]
-
-        >>> # Calculate Sum
-        >>> array_sum = calc_sum(array1)
-        >>> print(array_sum)
-        15
-
-        >>> # 2D Array of Floats
-        >>> array2 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        >>> print(array2)
-        [[1. 2. 3.]
-         [4. 5. 6.]]
-
-        >>> # Calculate Sum
-        >>> array_sum = calc_sum(array2)
-        >>> print(array_sum)
-        21.0
-
-        >>> # 3D Array of Integers
-        >>> array3 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
-        >>> print(array3)
-        [[1 2 3]
-         [4 5 6]
-         [7 8 9]]
-
-        >>> # Calculate Sum
-        >>> agg_sum = calc_sum(array3)
-        >>> print(agg_sum)
-        45
-    """
+def _calc_sum(array):
     return np.nansum(array)
 
 
@@ -419,9 +313,9 @@ def _apply(data, kernel, func):
     return out
 
 
-def apply(raster, kernel, func=calc_mean):
+def apply(raster, kernel, func=_calc_mean):
     """
-    Returns Mean filtered array using a user-created window.
+    Returns custom function applied array using a user-created window.
 
     Parameters
     ----------
@@ -429,7 +323,7 @@ def apply(raster, kernel, func=calc_mean):
         2D array of input values to be filtered.
     kernel : Numpy Array
         2D array where values of 1 indicate the kernel.
-    func : xrspatial.focal.calc_mean
+    func : custom user defined function
         Function which takes an input array and returns an array.
 
     Returns

@@ -33,7 +33,5 @@ Focal Statistics
 
    xrspatial.convolution.annulus_kernel
    xrspatial.convolution.calc_cellsize
-   xrspatial.focal.calc_mean
-   xrspatial.focal.calc_sum
    xrspatial.convolution.circle_kernel
    xrspatial.focal.custom_kernel
