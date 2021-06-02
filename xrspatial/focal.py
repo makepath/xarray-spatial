@@ -1,11 +1,12 @@
-from functools import partial
-
-from math import isnan
-
-from numba import prange
 import numpy as np
-from xarray import DataArray
+import pandas as pd
+import xarray as xr
 import dask.array as da
+
+from functools import partial
+from math import isnan
+from numba import prange, cuda
+from xarray import DataArray
 
 try:
     import cupy
@@ -13,7 +14,6 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-from numba import cuda
 from xrspatial.utils import cuda_args
 from xrspatial.utils import has_cuda
 from xrspatial.utils import is_cupy_backed
@@ -439,6 +439,43 @@ def apply(raster, kernel, func=_calc_mean):
                        attrs=raster.attrs)
 
     return result
+
+
+def focal_stats(agg, kernel):
+    """
+    Calculates statistics of the values within a specified focal neighborhood
+    for each pixel in an input raster. The statistics types are Mean, Maximum,
+    Minimum, Range, Standard deviation, Variation and Sum.
+
+    Parameters
+    ----------
+    agg : xarray.DataArray
+        2D array of input values to be analysed.
+    kernel : Numpy Array
+        2D array where values of 1 indicate the kernel.
+
+    Returns
+    -------
+    stats_agg : xarray.DataArray of same type as `agg`
+        3D array with dimensions of `(stat, y, x)` and with values
+        indicating the focal stats.
+    """
+
+    mean_stats = apply(agg, kernel, func=_calc_mean)
+    max_stats = apply(agg, kernel, func=_calc_max)
+    min_stats = apply(agg, kernel, func=_calc_min)
+    range_stats = apply(agg, kernel, func=_calc_range)
+    std_stats = apply(agg, kernel, func=_calc_std)
+    var_stats = apply(agg, kernel, func=_calc_var)
+    sum_stats = apply(agg, kernel, func=_calc_sum)
+
+    dims = ['mean', 'max', 'min', 'range', 'std', 'var', 'sum']
+    stats = [
+        mean_stats, max_stats, min_stats, range_stats, std_stats, var_stats,
+        sum_stats
+    ]
+    stats = xr.concat(stats, pd.Index(dims, name='stat'))
+    return stats
 
 
 @ngjit
