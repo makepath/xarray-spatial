@@ -16,31 +16,31 @@ import param
 # https://stackoverflow.com/questions/18725137/how-to-obtain-arguments-passed-to-setup-py-from-pip-with-install-option # noqa
 class CommandMixin(object):
     user_options = install.user_options + [
-        ('reprojection', None, None)
+        ('gdal', None, None)
     ]
 
     def initialize_options(self):
         super().initialize_options()
-        self.reprojection = None
+        self.gdal = None
 
     def finalize_options(self):
         super().finalize_options()
 
     def run(self):
-        global reprojection
-        reprojection = self.reprojection
-        reprojection_start = os.path.join(
+        global gdal
+        gdal = self.gdal
+        gdal_start = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
             'optional-modules',
-            'reprojection.py')
-        reprojection_path = os.path.join(
+            'gdal')
+        gdal_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            'xrspatial', 'reprojection.py')
-        if reprojection is not None:
-            shutil.copy(reprojection_start, reprojection_path)
+            'xrspatial', 'gdal')
+        if gdal is not None:
+            shutil.copytree(gdal_start, gdal_path)
         else:
-            if os.path.exists(reprojection_path):
-                os.remove(reprojection_path)
+            if os.path.exists(gdal_path):
+                shutil.rmtree(gdal_path)
         super().run()
 
 
