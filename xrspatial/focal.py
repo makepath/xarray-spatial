@@ -484,14 +484,16 @@ def focal_stats(agg,
         2D array of input values to be analysed.
     kernel : Numpy Array
         2D array where values of 1 indicate the kernel.
-    stat_funcs: list of statistics types to be calculated.
+    stats_funcs: list of statistics types to be calculated.
         Default set to ['mean', 'max', 'min', 'range', 'std', 'var', 'sum'].
+
     Returns
     -------
     stats_agg : xarray.DataArray of same type as `agg`
         3D array with dimensions of `(stat, y, x)` and with values
         indicating the focal stats.
     """
+
     _function_mapping = {
         'mean': _calc_mean,
         'max': _calc_max,
