@@ -4,6 +4,7 @@ import re
 
 import numpy as np
 import dask.array as da
+from xarray import DataArray
 
 from numba import cuda, float32, prange, jit
 
@@ -534,3 +535,37 @@ def convolve_2d(data, kernel):
         raise TypeError('Unsupported Array Type: {}'.format(type(data)))
 
     return out
+
+
+def convolution_2d(agg, kernel):
+    """
+    Calculates, for all inner cells of an array, the 2D convolution of
+    each cell via Numba. To account for edge cells, a pad can be added
+    to the image array. Convolution is frequently used for image
+    processing, such as smoothing, sharpening, and edge detection of
+    images by eliminating spurious data or enhancing features in the
+    data.
+
+    Parameters
+    ----------
+    agg : xarray.DataArray
+        2D array of values to processed and padded.
+    kernel : array-like object
+        Impulse kernel, determines area to apply impulse function for
+        each cell.
+
+    Returns
+    -------
+    convolve_agg : xarray.DataArray
+        2D array representation of the impulse function.
+    """
+
+    # wrapper of convolve_2d
+    out = convolve_2d(agg.data, kernel)
+
+    return DataArray(out,
+                     coords=agg.coords,
+                     dims=agg.dims,
+                     attrs=agg.attrs)
+
+
