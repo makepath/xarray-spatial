@@ -5,6 +5,8 @@ include xrspatial/.version
 graft xrspatial
 graft xrspatial/examples
 graft xrspatial/examples/user_guide
+graft xrspatial/datasets
+graft optional-modules
 
 prune docs
 prune *.egg-info
@@ -20,6 +22,7 @@ exclude examples/user_guide/.ipynb_checkpoints/*
 exclude xrspatial/_version.py
 exclude xrspatial/.DS_Store
 exclude xrspatial/__pycache__/*
+exclude optional-modules/.DS_Store
 
 exclude xrspatial/examples/user_guide_idea/*
 exclude xrspatial/tests/.DS_Store
@@ -39,6 +42,9 @@ exclude *.svg
 exclude tox.ini
 exclude test_examples_cli.py
 include *.yml
+
+recursive-exclude xrspatial/gdal *.py
+recursive-exclude xrspatial/gdal/__pycache__ *.pyc
 
 recursive-include examples *.gif
 recursive-include examples *.ipynb
