@@ -2,8 +2,6 @@ import os
 import sys
 import shutil
 from setuptools import setup
-from setuptools.command.install import install
-from setuptools.command.develop import develop
 
 
 # build dependencies
@@ -11,58 +9,14 @@ import pyct.build
 import param
 
 
-# optional modules install commands
-# based on code from this discussion:
-# https://stackoverflow.com/questions/18725137/how-to-obtain-arguments-passed-to-setup-py-from-pip-with-install-option # noqa
-class CommandMixin(object):
-    user_options = install.user_options + [
-        ('gdal', None, None)
-    ]
-
-    def initialize_options(self):
-        super().initialize_options()
-        self.gdal = None
-
-    def finalize_options(self):
-        super().finalize_options()
-
-    def run(self):
-        global gdal
-        gdal = self.gdal
-        gdal_start = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            'optional-modules',
-            'gdal')
-        gdal_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            'xrspatial', 'gdal')
-        if gdal is not None:
-            shutil.copytree(gdal_start, gdal_path)
-        else:
-            if os.path.exists(gdal_path):
-                shutil.rmtree(gdal_path)
-        super().run()
-
-
-class InstallCommand(CommandMixin, install):
-    user_options = getattr(install, 'user_options', []) +\
-        CommandMixin.user_options
-
-
-class DevelopCommand(CommandMixin, develop):
-    user_options = getattr(develop, 'user_options', []) +\
-        CommandMixin.user_options
-
-
 # dependencies
-
 # datashader first, then pyct unless pyct version compatible with ds
 # is specified
 # spatialpandas may not be required in final pharmacy_desert version
 # pyct may not be required after pyctdev is released
 install_requires = [
-    'dask',
-    'datashader',
+    'dask[complete] ==2021.03.0',
+    'datashader >=0.12.1',
     'numba',
     'numpy',
     'pandas',
@@ -73,7 +27,7 @@ install_requires = [
     'pyct <=0.4.6',
     'param >=1.6.1',
     'distributed >=2021.03.0',
-    'spatialpandas'
+    'spatialpandas >=0.3.6'
 ]
 
 examples = [
@@ -85,7 +39,18 @@ extras_require = {
         'pytest',
     ],
     'examples': examples,
+    'gdal': [
+        'rasterio',
+        'rioxarray',
+        'geopandas'
+    ]
 }
+
+packages = [
+    'xrspatial',
+    'xrspatial.tests',
+    'xrspatial.gdal'
+    ]
 
 # additional doc dependencies may be needed
 extras_require['doc'] = extras_require['examples'] + ['numpydoc']
@@ -111,10 +76,6 @@ setup_args = dict(
     name='xarray-spatial',
     version=version,
     description='xarray-based spatial analysis tools',
-    cmdclass={
-        'install': InstallCommand,
-        'develop': DevelopCommand,
-    },
     install_requires=install_requires,
     extras_require=extras_require,
     tests_require=extras_require['tests'],
@@ -122,9 +83,7 @@ setup_args = dict(
     classifiers=['Programming Language :: Python :: 3',
                  'License :: OSI Approved :: MIT License',
                  'Operating System :: OS Independent'],
-    packages=['xrspatial',
-              'xrspatial.tests'
-              ],
+    packages=packages,
     include_package_data=True,
     entry_points={
         'console_scripts': [
