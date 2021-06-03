@@ -1,10 +1,10 @@
 from functools import partial
 
 import re
-import warnings
 
 import numpy as np
 import dask.array as da
+from xarray import DataArray
 
 from numba import cuda, float32, prange, jit
 
@@ -52,13 +52,8 @@ def _get_distance(distance_str):
         raise ValueError("Invalid distance.")
 
     unit = DEFAULT_UNIT
-    if len(splits) == 1:
-        with warnings.catch_warnings():
-            warnings.simplefilter('default')
-            warnings.warn('Raster distance unit not provided. '
-                          'Use meter as default.', Warning)
 
-    elif len(splits) == 2:
+    if len(splits) == 2:
         unit = splits[1]
 
     number = splits[0]
@@ -163,10 +158,6 @@ def calc_cellsize(raster):
         unit = raster.attrs['unit']
     else:
         unit = DEFAULT_UNIT
-        with warnings.catch_warnings():
-            warnings.simplefilter('default')
-            warnings.warn('Raster distance unit not provided. '
-                          'Use meter as default.', Warning)
 
     cellsize_x, cellsize_y = get_dataarray_resolution(raster)
     cellsize_x = _to_meters(cellsize_x, unit)
@@ -286,25 +277,6 @@ def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
          [0., 1., 1., 1., 1., 0., 1., 1., 1., 1., 0.],
          [0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0.]])
     """
-    # validate radii, convert to meters
-    r2 = _get_distance(str(outer_radius))
-    r1 = _get_distance(str(inner_radius))
-
-    # Validate that outer radius is indeed outer radius
-    if r2 > r1:
-        r_outer = r2
-        r_inner = r1
-    else:
-        r_outer = r1
-        r_inner = r2
-
-    if r_outer - r_inner < np.sqrt((cellsize_x / 2)**2 + (cellsize_y / 2)**2):
-        with warnings.catch_warnings():
-            warnings.simplefilter('default')
-            warnings.warn(
-                'Annulus radii are closer than cellsize distance.', Warning
-            )
-
     # Get the two circular kernels for the annulus
     kernel_outer = circle_kernel(cellsize_x, cellsize_y, outer_radius)
     kernel_inner = circle_kernel(cellsize_x, cellsize_y, inner_radius)
@@ -534,3 +506,35 @@ def convolve_2d(data, kernel):
         raise TypeError('Unsupported Array Type: {}'.format(type(data)))
 
     return out
+
+
+def convolution_2d(agg, kernel):
+    """
+    Calculates, for all inner cells of an array, the 2D convolution of
+    each cell via Numba. To account for edge cells, a pad can be added
+    to the image array. Convolution is frequently used for image
+    processing, such as smoothing, sharpening, and edge detection of
+    images by eliminating spurious data or enhancing features in the
+    data.
+
+    Parameters
+    ----------
+    agg : xarray.DataArray
+        2D array of values to processed and padded.
+    kernel : array-like object
+        Impulse kernel, determines area to apply impulse function for
+        each cell.
+
+    Returns
+    -------
+    convolve_agg : xarray.DataArray
+        2D array representation of the impulse function.
+    """
+
+    # wrapper of convolve_2d
+    out = convolve_2d(agg.data, kernel)
+
+    return DataArray(out,
+                     coords=agg.coords,
+                     dims=agg.dims,
+                     attrs=agg.attrs)

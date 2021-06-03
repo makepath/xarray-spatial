@@ -37,6 +37,7 @@ examples = [
 extras_require = {
     'tests': [
         'pytest',
+        'noise >=1.2.2',
     ],
     'examples': examples,
     'gdal': [
