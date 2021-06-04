@@ -25,9 +25,6 @@ exclude xrspatial/examples/user_guide_idea/*
 exclude xrspatial/tests/.DS_Store
 exclude xrspatial/tests/__pycache__/*
 
-exclude xrspatial/tests/__pycache__/*
-exclude xrspatial/tests/.DS_Store
-
 exclude xrspatial/tests/_qgis_results/__pycache__/*
 exclude tile_idea.py
 exclude *.enc
