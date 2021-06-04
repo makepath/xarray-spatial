@@ -2,48 +2,86 @@ import numpy as np
 import xarray as xr
 
 
-def combine_arrays(array1, array2, array3):
-    unique_combos = {}
+def combine(raster, dims=None):
+    """
+    Combine the dimensions of a `xarray.Dataset` so that a unique
+    output value is assigned to each unique combination.
+
+    Parameters
+    ----------
+    raster : xarray.Dataset
+        The input raster to combine the dimensions.
+    dims : list of string
+        The list of dimensions name to be combined.
+
+    Returns
+    -------
+    combined_arr : xarray.DataArray
+        The combined dimensions data.
+    """
+    if not isinstance(raster, xr.Dataset):
+        raise TypeError(
+            "Expected raster to be a 'xarray.Dataset'. "
+            f"Received '{type(raster).__name__}' instead."
+        )
+
+    if dims:
+        if (
+            not isinstance(dims, list) or
+            not all([isinstance(dim, str) for dim in dims])
+        ):
+            raise TypeError('Expected dims to be a list of string.')
+
+        if not set(dims).issubset(raster.data_vars):
+            raise ValueError(
+                "raster must contain all the dimensions of dims. "
+                f"The dimensions available are '{list(raster.data_vars)}'."
+            )
+    else:
+        dims = list(raster.data_vars)
+
+    iter_list = []
+
+    for comb in np.nditer([raster[dim].data for dim in dims]):
+        iter_list.append(tuple(items.item() for items in comb))
+
+    unique_comb = {}
     unique_values = {}
-    all_combos = []
+    all_comb = []
     all_values = []
     value = 1
 
-    # Iterate through each array simultaneously
-    for a, b, c in np.nditer([array1.data, array2.data, array3.data]):
-        combo = (a.item(), b.item(), c.item())
-        if np.isnan(combo).any():   # skip nan
+    for comb in iter_list:
+        if np.isnan(comb).any():
             all_values.append(np.nan)
-            all_combos.append('NAN')
+            all_comb.append('NAN')
             continue
-        if combo in unique_combos.keys():   # apply 0 combos already found
-            all_combos.append(combo)
+        if comb in unique_comb.keys():
+            all_comb.append(comb)
             all_values.append(0)
-        else:                               # apply new value to unique combos
-            unique_combos[combo] = value
-            unique_values[value] = combo
-            all_combos.append(combo)
+        else:
+            unique_comb[comb] = value
+            unique_values[value] = comb
+            all_comb.append(comb)
             all_values.append(value)
             value += 1
 
-    # apply new value to matching combos
     k = 0
     for value in all_values:
         if value == 0:
-            combo = all_combos[k]
-            all_values[k] = [unique_combos[combo]][0]
+            comb = all_comb[k]
+            all_values[k] = [unique_comb[comb]][0]
         k += 1
 
-    # create new array
-    new_array = np.array(all_values)
-    new_array = np.reshape(new_array, (-1, array1.shape[1]))
+    final_arr = np.array(all_values)
+    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
 
-    out = xr.DataArray(
-        data=new_array,
+    combined_arr = xr.DataArray(
+        data=final_arr,
         attrs=dict(key=unique_values)
     )
 
-    return out
+    return combined_arr
 
 
 def equal_frequency(val_agg, agg_list):

@@ -1,8 +1,9 @@
 import numpy as np
+import pytest
 import xarray as xr
 
 from xrspatial.local import (
-    combine_arrays,
+    combine,
     equal_frequency,
     greater_frequency,
     highest_array,
@@ -16,21 +17,23 @@ from xrspatial.local import (
 arr1 = xr.DataArray([[1, 1, 0, 0],
                      [np.nan, 1, 2, 2],
                      [4, 0, 0, 2],
-                     [4, 0, 1, 1]])
+                     [4, 0, 1, 1]], name='arr1')
 
 arr2 = xr.DataArray([[0, 1, 1, 0],
                      [3, 3, 1, 2],
                      [np.nan, 0, 0, 2],
-                     [3, 2, 1, 0]])
+                     [3, 2, 1, 0]], name='arr2')
 
 arr3 = xr.DataArray([[np.nan, 1, 0, 0],
                      [2, 0, 3, 3],
                      [0, 0, 3, 2],
-                     [1, 1, np.nan, 0]])
+                     [1, 1, np.nan, 0]], name='arr3')
+
+raster_ds = xr.merge([arr1, arr2, arr3])
 
 
-def test_combine_arrays():
-    result = combine_arrays(arr1, arr2, arr3)
+def test_combine_all_dims():
+    result = combine(raster_ds)
 
     expected_arr = xr.DataArray([[np.nan, 1, 2, 3],
                                  [np.nan, 4, 5, 6],
@@ -38,6 +41,37 @@ def test_combine_arrays():
                                  [9, 10, np.nan, 11]])
 
     assert result.equals(expected_arr)
+
+
+def test_combine_some_dims():
+    result = combine(raster_ds, ['arr1', 'arr3'])
+
+    expected_arr = xr.DataArray([[np.nan, 1, 2, 2],
+                                 [np.nan, 3, 4, 4],
+                                 [5, 2, 6, 7],
+                                 [8, 9, np.nan, 3]])
+
+    assert result.equals(expected_arr)
+
+
+def test_combine_raster_type_error():
+    with pytest.raises(TypeError):
+        combine(arr1)
+
+
+def test_combine_dims_param_type_error():
+    with pytest.raises(TypeError):
+        combine(raster_ds, dims='arr1')
+
+
+def test_combine_dims_elem_type_error():
+    with pytest.raises(TypeError):
+        combine(raster_ds, dims=[0])
+
+
+def test_combine_wrong_dim():
+    with pytest.raises(ValueError):
+        combine(raster_ds, dims=['arr1', 'arr9'])
 
 
 def test_equal_frequency():
