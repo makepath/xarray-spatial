@@ -1,11 +1,12 @@
 import rioxarray
 import os
-from reprojection import reproject
+from ..reprojection import reproject
 import pytest  # noqa: F401
 
 
 elev_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
+            '..',
             '..',
             'datasets',
             'elevation.tif')
