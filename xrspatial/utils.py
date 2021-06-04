@@ -1,8 +1,9 @@
+import datashader as ds
+import datashader.transfer_functions as tf
 from math import ceil
 import numba as nb
 import numpy as np
 import xarray as xr
-import datashader.transfer_functions as tf
 
 import dask.array as da
 
@@ -272,3 +273,83 @@ def bands_to_img(r, g, b, nodata=1):
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
     data[:, :, 3] = a.astype(np.uint8)
     return tf.Image.fromarray(data, 'RGBA')
+
+
+def resample(
+        raster,
+        layer=None,
+        height=512,
+        width=512,
+        x_range=None,
+        y_range=None,
+        agg='mean',
+        interpolate='linear',
+        max_mem=None):
+    """
+    Resample a xarray.DataArray by canvas size and bounds.
+
+    Handles 2D or 3D xarray.DataArray, assuming that the last two
+    array dimensions are the y-axis and x-axis that are to be
+    resampled. If a 3D array is supplied a layer may be specified
+    to resample to select the layer along the first dimension to
+    resample.
+
+    If there are memory constraints they may be defined using the
+    max_mem parameter, which determines how large the chunks in
+    memory may be.
+
+    Parameters
+    ----------
+    raster : xarray.DataArray
+        2D or 3D labeled data array.
+    layer : float, optional
+        For a 3D array, value along the z dimension.
+    height : int, default=512
+        Height of the output aggregate in pixels.
+    width : int, default=512
+        Width of the output aggregate in pixels.
+    x_range : tuple of int, optional
+        A tuple representing the bounds inclusive space ``[min, max]``
+        along the x-axis.
+    y_range : tuple of int, optional
+        A tuple representing the bounds inclusive space ``[min, max]``
+        along the y-axis.
+    agg : Reduction, default=mean
+        Resampling mode when downsampling raster. The supported
+        options include: first, last, mean, mode, var, std, min,
+        The agg can be specified as either a string name or as a
+        reduction function, but note that the function object will
+        be used only to extract the agg type (mean, max, etc.) and
+        the optional column name; the hardcoded raster code
+        supports only a fixed set of reductions and ignores the
+        actual code of the provided agg.
+    interpolate : str, default=linear
+        Method to use for interpolation between specified values.
+        ``nearest`` means to use a single value for the whole
+        triangle, and ``linear``  means to do bilinear interpolation
+        of the pixels within each triangle (a weighted average of the
+        vertex values).
+    max_mem : int, optional
+        The maximum number of bytes that should be loaded into memory
+        during the regridding operation.
+
+    References
+    ----------
+        - https://datashader.org/_modules/datashader/core.html#Canvas
+    """
+    cvs = ds.Canvas(
+        plot_height=height,
+        plot_width=width,
+        x_range=x_range,
+        y_range=y_range,
+    )
+
+    out = cvs.raster(
+        raster,
+        layer=layer,
+        agg=agg,
+        interpolate=interpolate,
+        max_mem=max_mem,
+    )
+
+    return out
