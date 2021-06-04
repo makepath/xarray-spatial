@@ -40,7 +40,7 @@ exclude tox.ini
 exclude test_examples_cli.py
 include *.yml
 
-recursive-exclude xrspatial/gdal/__pycache__ *.pyc
+recursive-exclude xrspatial/gdal/__pycache__ *.py   c
 
 recursive-include examples *.gif
 recursive-include examples *.ipynb
