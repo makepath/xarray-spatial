@@ -1,3 +1,4 @@
 datashader
 xarray
 bokeh>2
+noise >=1.2.2

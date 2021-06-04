@@ -8,7 +8,7 @@ from xrspatial.utils import doesnt_have_cuda
 from xrspatial.utils import ngjit
 
 from xrspatial import mean
-from xrspatial.focal import hotspots, apply
+from xrspatial.focal import hotspots, apply, focal_stats
 from xrspatial.convolution import (
     convolve_2d, calc_cellsize, circle_kernel, annulus_kernel
 )
@@ -285,6 +285,27 @@ def test_apply_gpu_equals_gpu():
     with pytest.raises(NotImplementedError) as e_info:
         apply(dask_cupy_agg, kernel_apply, func_zero)
         assert e_info
+
+
+def test_focal_stats_cpu():
+    data = np.arange(16).reshape(4, 4)
+    numpy_agg = xr.DataArray(data)
+    dask_numpy_agg = xr.DataArray(da.from_array(data, chunks=(3, 3)))
+
+    cellsize = (1, 1)
+    kernel = circle_kernel(*cellsize, 1.5)
+
+    numpy_focalstats = focal_stats(numpy_agg, kernel)
+    assert isinstance(numpy_focalstats.data, np.ndarray)
+    assert numpy_focalstats.ndim == 3
+    assert numpy_agg.shape == numpy_focalstats.shape[1:]
+
+    dask_numpy_focalstats = focal_stats(dask_numpy_agg, kernel)
+    assert isinstance(dask_numpy_focalstats.data, da.Array)
+
+    assert np.isclose(
+        numpy_focalstats, dask_numpy_focalstats.compute(), equal_nan=True
+    ).all()
 
 
 def test_hotspot():

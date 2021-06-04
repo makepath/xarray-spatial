@@ -31,9 +31,9 @@ Focal Statistics
 .. autosummary::
    :toctree: _autosummary
 
+   xrspatial.convolution.convolution_2d
    xrspatial.convolution.annulus_kernel
    xrspatial.convolution.calc_cellsize
-   xrspatial.focal.calc_mean
-   xrspatial.focal.calc_sum
    xrspatial.convolution.circle_kernel
    xrspatial.focal.custom_kernel
+   xrspatial.focal.focal_stats

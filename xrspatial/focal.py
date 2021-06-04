@@ -1,11 +1,12 @@
-from functools import partial
-
-from math import isnan
-
-from numba import prange
 import numpy as np
-from xarray import DataArray
+import pandas as pd
+import xarray as xr
 import dask.array as da
+
+from functools import partial
+from math import isnan
+from numba import prange, cuda
+from xarray import DataArray
 
 try:
     import cupy
@@ -13,7 +14,6 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-from numba import cuda
 from xrspatial.utils import cuda_args
 from xrspatial.utils import has_cuda
 from xrspatial.utils import is_cupy_backed
@@ -208,119 +208,40 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
 
 
 @ngjit
-def calc_mean(array):
-    """
-    Calculates the mean of an array.
-
-    Parameters
-    ----------
-    array : numpy.Array
-        Array of input values.
-
-    Returns
-    -------
-    array_sum : float
-        Mean of input data.
-
-    Examples
-    --------
-    .. sourcecode:: python
-
-        >>> from xrspatial.focal import calc_mean
-        >>> import numpy as np
-
-        >>> # 1D Array of Integers
-        >>> array1 = np.array([1, 2, 3, 4, 5])
-        >>> print(array1)
-        [1 2 3 4 5]
-
-        >>> # Calculate Mean
-        >>> array_mean = calc_mean(array1)
-        >>> print(array_mean)
-        3.0
-
-        >>> # 2D Array of Floats
-        >>> array2 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        >>> print(array2)
-        [[1. 2. 3.]
-         [4. 5. 6.]]
-
-        >>> # Calculate Mean
-        >>> array_mean = calc_mean(array2)
-        >>> print(array_mean)
-        3.5
-
-        >>> # 3D Array of Integers
-        >>> array3 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
-        >>> print(array3)
-        [[1 2 3]
-         [4 5 6]
-         [7 8 9]]
-
-        >>> # Calculate Mean
-        >>> array_mean = calc_mean(array3)
-        >>> print(array_mean)
-        5.0
-    """
+def _calc_mean(array):
     return np.nanmean(array)
 
 
 @ngjit
-def calc_sum(array):
-    """
-    Calculates the sum of an array.
-
-    Parameters
-    ----------
-    array : numpy.Array
-        Array of input values.
-
-    Returns
-    -------
-    array_sum : float
-        Sum of input data.
-
-    Examples
-    --------
-    .. sourcecode:: python
-
-        >>> from xrspatial.focal import calc_sum
-        >>> import numpy as np
-
-        >>> # 1D Array of Integers
-        >>> array1 = np.array([1, 2, 3, 4, 5])
-        >>> print(array1)
-        [1 2 3 4 5]
-
-        >>> # Calculate Sum
-        >>> array_sum = calc_sum(array1)
-        >>> print(array_sum)
-        15
-
-        >>> # 2D Array of Floats
-        >>> array2 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        >>> print(array2)
-        [[1. 2. 3.]
-         [4. 5. 6.]]
-
-        >>> # Calculate Sum
-        >>> array_sum = calc_sum(array2)
-        >>> print(array_sum)
-        21.0
-
-        >>> # 3D Array of Integers
-        >>> array3 = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
-        >>> print(array3)
-        [[1 2 3]
-         [4 5 6]
-         [7 8 9]]
-
-        >>> # Calculate Sum
-        >>> agg_sum = calc_sum(array3)
-        >>> print(agg_sum)
-        45
-    """
+def _calc_sum(array):
     return np.nansum(array)
+
+
+@ngjit
+def _calc_min(array):
+    return np.nanmin(array)
+
+
+@ngjit
+def _calc_max(array):
+    return np.nanmax(array)
+
+
+@ngjit
+def _calc_std(array):
+    return np.nanstd(array)
+
+
+@ngjit
+def _calc_range(array):
+    value_min = _calc_min(array)
+    value_max = _calc_max(array)
+    return value_max - value_min
+
+
+@ngjit
+def _calc_var(array):
+    return np.nanvar(array)
 
 
 @ngjit
@@ -419,17 +340,17 @@ def _apply(data, kernel, func):
     return out
 
 
-def apply(raster, kernel, func=calc_mean):
+def apply(raster, kernel, func=_calc_mean):
     """
-    Returns Mean filtered array using a user-created window.
+    Returns custom function applied array using a user-created window.
 
     Parameters
     ----------
     raster : xarray.DataArray
         2D array of input values to be filtered.
-    kernel : Numpy Array
+    kernel : numpy.array
         2D array where values of 1 indicate the kernel.
-    func : xrspatial.focal.calc_mean
+    func : callable, default=xrspatial.focal._calc_mean
         Function which takes an input array and returns an array.
 
     Returns
@@ -545,6 +466,52 @@ def apply(raster, kernel, func=calc_mean):
                        attrs=raster.attrs)
 
     return result
+
+
+def focal_stats(agg,
+                kernel,
+                stats_funcs=[
+                    'mean', 'max', 'min', 'range', 'std', 'var', 'sum'
+                ]):
+    """
+    Calculates statistics of the values within a specified focal neighborhood
+    for each pixel in an input raster. The statistics types are Mean, Maximum,
+    Minimum, Range, Standard deviation, Variation and Sum.
+
+    Parameters
+    ----------
+    agg : xarray.DataArray
+        2D array of input values to be analysed.
+    kernel : numpy.array
+        2D array where values of 1 indicate the kernel.
+    stats_funcs: list of string
+        List of statistics types to be calculated.
+        Default set to ['mean', 'max', 'min', 'range', 'std', 'var', 'sum'].
+
+    Returns
+    -------
+    stats_agg : xarray.DataArray of same type as `agg`
+        3D array with dimensions of `(stat, y, x)` and with values
+        indicating the focal stats.
+    """
+
+    _function_mapping = {
+        'mean': _calc_mean,
+        'max': _calc_max,
+        'min': _calc_min,
+        'range': _calc_range,
+        'std': _calc_std,
+        'var': _calc_var,
+        'sum': _calc_sum
+    }
+
+    stats_aggs = []
+    for stats in stats_funcs:
+        stats_agg = apply(agg, kernel, func=_function_mapping[stats])
+        stats_aggs.append(stats_agg)
+
+    stats = xr.concat(stats_aggs, pd.Index(stats_funcs, name='stats'))
+    return stats
 
 
 @ngjit
