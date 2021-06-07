@@ -5,7 +5,6 @@ channels:
   - pyviz
 dependencies:
   - python >=3.6
-  - openssl >=1.1.1,<1.1.2.0a0
   - datashader
   - numpy
   - pandas
