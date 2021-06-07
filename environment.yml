@@ -14,8 +14,8 @@ dependencies:
   - stackstac
   - satsearch
   - azure
-  - pystac_client
-  - planetary_computer
+  - pystac-client
+  - planetary-computer
   - geopandas
   - spatialpandas
   - xarray-spatial
