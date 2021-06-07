@@ -21,5 +21,4 @@ dependencies:
   - xarray-spatial
   - pip
   - pip:
-    - python >=3.6
     - stackstac
