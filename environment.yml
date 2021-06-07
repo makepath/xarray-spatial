@@ -20,12 +20,5 @@ dependencies:
   - spatialpandas
   - xarray-spatial
   - pip
-  - pip:
-    - python
-    - numpy
-    - dask[array]
-    - pyproj
-    - rasterio
-    - scipy
-    - xarray
+    pip:
     - stackstac
