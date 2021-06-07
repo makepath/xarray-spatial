@@ -6,7 +6,7 @@ from xrspatial.local import (
     combine,
     equal_frequency,
     greater_frequency,
-    highest_array,
+    highest,
     lesser_frequency,
     lowest_array,
     popularity,
@@ -212,8 +212,8 @@ def test_greater_frequency_all_dims_not_contain_ref_error():
         greater_frequency(raster_ds, 'arr9', dims=['arr1', 'arr2'])
 
 
-def test_highest_array():
-    result = highest_array(arr1, arr2, arr3)
+def test_highest_all_dims():
+    result = highest(raster_ds)
 
     expected_arr = xr.DataArray([[np.nan, 1, 2, 1],
                                  [np.nan, 2, 3, 3],
@@ -221,6 +221,37 @@ def test_highest_array():
                                  [1, 2, np.nan, 1]])
 
     assert result.equals(expected_arr)
+
+
+def test_highest_some_dims():
+    result = highest(raster_ds, ['arr1', 'arr3'])
+
+    expected_arr = xr.DataArray([[np.nan, 1, 1, 1],
+                                 [np.nan, 1, 2, 2],
+                                 [1, 1, 2, 1],
+                                 [1, 2, np.nan, 1]])
+
+    assert result.equals(expected_arr)
+
+
+def test_highest_raster_type_error():
+    with pytest.raises(TypeError):
+        highest(arr1)
+
+
+def test_highest_dims_param_type_error():
+    with pytest.raises(TypeError):
+        highest(raster_ds, dims='arr1')
+
+
+def test_highest_dims_elem_type_error():
+    with pytest.raises(TypeError):
+        highest(raster_ds, dims=[0])
+
+
+def test_highest_wrong_dim():
+    with pytest.raises(ValueError):
+        highest(raster_ds, dims=['arr1', 'arr9'])
 
 
 def test_lesser_frequency():
