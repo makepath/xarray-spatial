@@ -19,6 +19,6 @@ dependencies:
   - geopandas
   - spatialpandas
   - xarray-spatial
-  - pip
+  - pip >=20.3.3
   - pip:
     - stackstac ==0.2.1
