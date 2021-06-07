@@ -8,7 +8,7 @@ from xrspatial.local import (
     greater_frequency,
     highest_position,
     lesser_frequency,
-    lowest_array,
+    lowest_position,
     popularity,
     rank,
 )
@@ -323,8 +323,8 @@ def test_lesser_frequency_all_dims_not_contain_ref_error():
         lesser_frequency(raster_ds, 'arr9', dims=['arr1', 'arr2'])
 
 
-def test_lowest_array():
-    result = lowest_array(arr1, arr2, arr3)
+def test_lowest_position_all_dims():
+    result = lowest_position(raster_ds)
 
     expected_arr = xr.DataArray([[np.nan, 1, 1, 1],
                                  [np.nan, 3, 2, 1],
@@ -332,6 +332,37 @@ def test_lowest_array():
                                  [3, 1, np.nan, 2]])
 
     assert result.equals(expected_arr)
+
+
+def test_lowest_position_some_dims():
+    result = lowest_position(raster_ds, ['arr1', 'arr3'])
+
+    expected_arr = xr.DataArray([[np.nan, 1, 1, 1],
+                                 [np.nan, 2, 1, 1],
+                                 [2, 1, 1, 1],
+                                 [2, 1, np.nan, 2]])
+    print(result)
+    assert result.equals(expected_arr)
+
+
+def test_lowest_position_raster_type_error():
+    with pytest.raises(TypeError):
+        lowest_position(arr1)
+
+
+def test_lowest_position_dims_param_type_error():
+    with pytest.raises(TypeError):
+        lowest_position(raster_ds, dims='arr1')
+
+
+def test_lowest_position_dims_elem_type_error():
+    with pytest.raises(TypeError):
+        lowest_position(raster_ds, dims=[0])
+
+
+def test_lowest_position_wrong_dim():
+    with pytest.raises(ValueError):
+        lowest_position(raster_ds, dims=['arr1', 'arr9'])
 
 
 def test_popularity():

@@ -406,27 +406,70 @@ def lesser_frequency(raster, dim_ref, dims=None):
     return final_arr
 
 
-def lowest_array(array1, array2, array3):
+def lowest_position(raster, dims=None):
+    """
+    Determines on a cell-by-cell basis the position of the raster with
+    the minimum value in a `xarray.Dataset` dimensions.
+
+    Parameters
+    ----------
+    raster : xarray.Dataset
+        The input raster.
+    dims : list of string
+        The list of dimensions name.
+
+    Returns
+    -------
+    final_arr : xarray.DataArray
+        The result.
+
+    References
+    ----------
+        - https://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/lowest-position.htm # noqa
+    """
+    if not isinstance(raster, xr.Dataset):
+        raise TypeError(
+            "Expected raster to be a 'xarray.Dataset'. "
+            f"Received '{type(raster).__name__}' instead."
+        )
+
+    if dims:
+        if (
+            not isinstance(dims, list) or
+            not all([isinstance(dim, str) for dim in dims])
+        ):
+            raise TypeError('Expected dims to be a list of string.')
+
+        if not set(dims).issubset(raster.data_vars):
+            raise ValueError(
+                "raster must contain all the dimensions of dims. "
+                f"The dimensions available are '{list(raster.data_vars)}'."
+            )
+    else:
+        dims = list(raster.data_vars)
+
+    iter_list = []
+
+    for comb in np.nditer([raster[dim].data for dim in dims]):
+        iter_list.append(tuple(items.item() for items in comb))
+
     out = []
 
-    # Iterate through each array simultaneously
-    for a, b, c in np.nditer([array1.data, array2.data, array3.data]):
-        combo = (a.item(), b.item(), c.item())
-        if np.isnan(combo).any():   # skip nan
+    for comb in iter_list:
+        if np.isnan(comb).any():
             out.append(np.nan)
             continue
 
-        min_value = min(combo)
-        min_index = combo.index(min_value) + 1
+        min_value = min(comb)
+        min_index = comb.index(min_value) + 1
 
         out.append(min_index)
 
-    # create new array
-    out = np.array(out)
-    out = np.reshape(out, (-1, array1.shape[1]))
-    out = xr.DataArray(out)
+    final_arr = np.array(out)
+    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
+    final_arr = xr.DataArray(final_arr)
 
-    return out
+    return final_arr
 
 
 def popularity(pop_agg, agg_list):
