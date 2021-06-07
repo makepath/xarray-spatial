@@ -341,7 +341,7 @@ def test_lowest_position_some_dims():
                                  [np.nan, 2, 1, 1],
                                  [2, 1, 1, 1],
                                  [2, 1, np.nan, 2]])
-    print(result)
+
     assert result.equals(expected_arr)
 
 
@@ -395,7 +395,7 @@ def test_popularity_some_dims():
                                  [np.nan, np.nan, 1, np.nan]])
 
     result = popularity(input_arr, 'arr', ['arr1', 'arr2'])
-    print(result)
+
     assert result.equals(expected_arr)
 
 
@@ -434,17 +434,70 @@ def test_popularity_all_dims_not_contain_ref_error():
         popularity(raster_ds, 'arr9', dims=['arr1', 'arr2'])
 
 
-def test_rank():
+def test_rank_all_dims():
     comp_arr = xr.DataArray([[3, 3, 3, 3],
                              [3, 3, 3, 3],
                              [3, 3, 3, 3],
-                             [3, 3, 3, 3]])
+                             [3, 3, 3, 3]], name='arr')
 
-    result = rank(comp_arr, [arr1, arr2, arr3])
-
+    input_arr = xr.merge([comp_arr, raster_ds])
     expected_arr = xr.DataArray([[np.nan, 1, 1, 0],
                                  [np.nan, 3, 3, 3],
                                  [np.nan, 0, 3, 2],
                                  [4, 2, np.nan, 1]])
 
+    result = rank(input_arr, 'arr')
+
     assert result.equals(expected_arr)
+
+
+def test_rank_some_dims():
+    comp_arr = xr.DataArray([[3, 3, 3, 3],
+                             [3, 3, 3, 3],
+                             [3, 3, 3, 3],
+                             [3, 3, 3, 3]], name='arr')
+
+    input_arr = xr.merge([comp_arr, raster_ds])
+    expected_arr = xr.DataArray([[np.nan, np.nan, np.nan, np.nan],
+                                 [np.nan, np.nan, np.nan, np.nan],
+                                 [np.nan, np.nan, np.nan, np.nan],
+                                 [np.nan, np.nan, np.nan, np.nan]])
+
+    result = rank(input_arr, 'arr', ['arr1', 'arr2'])
+
+    assert result.equals(expected_arr)
+
+
+def test_rank_raster_type_error():
+    with pytest.raises(TypeError):
+        rank(arr1, 'arr1')
+
+
+def test_rank_dims_param_type_error():
+    with pytest.raises(TypeError):
+        rank(raster_ds, 'arr1', dims='arr2')
+
+
+def test_rank_dim_ref_param_type_error():
+    with pytest.raises(TypeError):
+        rank(raster_ds, ['arr1'])
+
+
+def test_rank_dims_elem_type_error():
+    with pytest.raises(TypeError):
+        rank(raster_ds, 'arr1', dims=[0])
+
+
+def test_rank_wrong_dim():
+    with pytest.raises(ValueError):
+        rank(raster_ds, 'arr1', dims=['arr2', 'arr9'])
+
+
+def test_rank_dims_contain_ref_error():
+    with pytest.raises(ValueError):
+        rank(raster_ds, 'arr1', dims=['arr1', 'arr2'])
+
+
+def test_rank_all_dims_not_contain_ref_error():
+    with pytest.raises(ValueError):
+        rank(raster_ds, 'arr9', dims=['arr1', 'arr2'])

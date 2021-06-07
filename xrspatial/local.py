@@ -566,29 +566,85 @@ def popularity(raster, dim_ref, dims=None):
     return final_arr
 
 
-def rank(val_agg, agg_list):
-    out = []
-    in_aggs = [val_agg]
-    for agg in agg_list:
-        in_aggs.append(agg)
+def rank(raster, dim_ref, dims=None):
+    """
+    Rank the values from the set of input rasters on a cell-by-cell
+    basis which of these gets returned is determined by the value of
+    the rank input raster.
 
-    # Iterate through each array simultaneously
-    for v, a, b, c in np.nditer(in_aggs):
-        if np.isnan((a, b, c)).any():   # skip nan
+    Parameters
+    ----------
+    raster : xarray.Dataset
+        The input raster to be compared.
+    dim_ref : string
+        The reference dimension name. 
+    dims : list of string
+        The list of dimensions name to be compared.
+
+    Returns
+    -------
+    final_arr : xarray.DataArray
+        The result.
+
+    References
+    ----------
+        - https://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/rank.htm # noqa
+    """
+    if not isinstance(raster, xr.Dataset):
+        raise TypeError(
+            "Expected raster to be a 'xarray.Dataset'. "
+            f"Received '{type(raster).__name__}' instead."
+        )
+
+    if not isinstance(dim_ref, str):
+        raise TypeError(
+            "Expected dim_ref to be a 'str'. "
+            f"Received '{type(dim_ref).__name__}' instead."
+        )
+
+    if dim_ref not in list(raster.data_vars):
+        raise ValueError('raster must contain dim_ref.')
+
+    if dims:
+        if (
+            not isinstance(dims, list) or
+            not all([isinstance(dim, str) for dim in dims])
+        ):
+            raise TypeError('Expected dims to be a list of string.')
+
+        if not set(dims).issubset(raster.data_vars):
+            raise ValueError(
+                "raster must contain all the dimensions of dims. "
+                f"The dimensions available are '{list(raster.data_vars)}'."
+            )
+
+        if dim_ref in dims:
+            raise ValueError('dim_ref must not be an element of dims.')
+
+    else:
+        dims = list(raster.data_vars)
+        dims.remove(dim_ref)
+
+    iter_list = []
+
+    for comb in np.nditer([raster[dim].data for dim in dims]):
+        iter_list.append(list(items.item() for items in comb))
+
+    out = []
+    ref_list = [item for arr in raster[dim_ref].data for item in arr]
+
+    for ref, comb in zip(ref_list, iter_list):
+        comb_ref = ref - 1
+        comb.sort()
+
+        if np.isnan(comb).any() or comb_ref >= len(comb):
             out.append(np.nan)
             continue
 
-        sort = np.sort((a, b, c))[::-1]
-        if v == 1:
-            out.append(sort[2])
-        elif v == 3:
-            out.append(sort[0])
-        else:
-            out.append(sort[1])
+        out.append(comb[comb_ref])
 
-    # create new array
-    out = np.array(out)
-    out = np.reshape(out, (-1, agg_list[0].shape[1]))
-    out = xr.DataArray(out)
+    final_arr = np.array(out)
+    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
+    final_arr = xr.DataArray(final_arr)
 
-    return out
+    return final_arr
