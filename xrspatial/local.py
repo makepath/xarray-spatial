@@ -256,7 +256,7 @@ def greater_frequency(raster, dim_ref, dims=None):
     return final_arr
 
 
-def highest(raster, dims=None):
+def highest_position(raster, dims=None):
     """
     Determines on a cell-by-cell basis the position of the raster with
     the maximum value in a `xarray.Dataset` dimensions.
