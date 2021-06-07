@@ -254,20 +254,73 @@ def test_highest_position_wrong_dim():
         highest_position(raster_ds, dims=['arr1', 'arr9'])
 
 
-def test_lesser_frequency():
+def test_lesser_frequency_all_dims():
     comp_arr = xr.DataArray([[2, 2, 2, 2],
                              [2, 2, 2, 2],
                              [2, 2, 2, 2],
-                             [2, 2, 2, 2]])
+                             [2, 2, 2, 2]], name='arr')
 
-    result = lesser_frequency(comp_arr, [arr1, arr2, arr3])
-
+    input_arr = xr.merge([comp_arr, raster_ds])
     expected_arr = xr.DataArray([[np.nan, 3, 3, 3],
                                  [np.nan, 2, 1, 0],
                                  [np.nan, 3, 2, 0],
                                  [1, 2, np.nan, 3]])
 
+    result = lesser_frequency(input_arr, 'arr')
+
     assert result.equals(expected_arr)
+
+
+def test_lesser_frequency_some_dims():
+    comp_arr = xr.DataArray([[2, 2, 2, 2],
+                             [2, 2, 2, 2],
+                             [2, 2, 2, 2],
+                             [2, 2, 2, 2]], name='arr')
+
+    input_arr = xr.merge([comp_arr, raster_ds])
+    expected_arr = xr.DataArray([[2, 2, 2, 2],
+                                 [np.nan, 1, 1, 0],
+                                 [np.nan, 2, 2, 0],
+                                 [0, 1, 2, 2]])
+
+    result = lesser_frequency(input_arr, 'arr', ['arr1', 'arr2'])
+
+    assert result.equals(expected_arr)
+
+
+def test_lesser_frequency_raster_type_error():
+    with pytest.raises(TypeError):
+        lesser_frequency(arr1, 'arr1')
+
+
+def test_lesser_frequency_dims_param_type_error():
+    with pytest.raises(TypeError):
+        lesser_frequency(raster_ds, 'arr1', dims='arr2')
+
+
+def test_lesser_frequency_dim_ref_param_type_error():
+    with pytest.raises(TypeError):
+        lesser_frequency(raster_ds, ['arr1'])
+
+
+def test_lesser_frequency_dims_elem_type_error():
+    with pytest.raises(TypeError):
+        lesser_frequency(raster_ds, 'arr1', dims=[0])
+
+
+def test_lesser_frequency_wrong_dim():
+    with pytest.raises(ValueError):
+        lesser_frequency(raster_ds, 'arr1', dims=['arr2', 'arr9'])
+
+
+def test_lesser_frequency_dims_contain_ref_error():
+    with pytest.raises(ValueError):
+        lesser_frequency(raster_ds, 'arr1', dims=['arr1', 'arr2'])
+
+
+def test_lesser_frequency_all_dims_not_contain_ref_error():
+    with pytest.raises(ValueError):
+        lesser_frequency(raster_ds, 'arr9', dims=['arr1', 'arr2'])
 
 
 def test_lowest_array():
