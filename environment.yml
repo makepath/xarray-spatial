@@ -1,8 +1,8 @@
 name: xarray-spatial
 channels:
-  - anaconda
   - conda-forge
   - pyviz
+  - anaconda
 dependencies:
   - python >=3.6
   - datashader
@@ -21,4 +21,4 @@ dependencies:
   - xarray-spatial
   - pip
   - pip:
-    - stackstac
+    - stackstac ==0.2.1
