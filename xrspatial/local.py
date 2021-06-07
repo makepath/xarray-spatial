@@ -1,3 +1,5 @@
+from collections import Counter
+
 import numpy as np
 import xarray as xr
 
@@ -472,57 +474,96 @@ def lowest_position(raster, dims=None):
     return final_arr
 
 
-def popularity(pop_agg, agg_list):
+def popularity(raster, dim_ref, dims=None):
+    """
+    Determines the value in an argument list that is at a certain
+    level of popularity on a cell-by-cell basis which the number
+    of occurrences of each value is specified by the first argument.
+
+
+    Parameters
+    ----------
+    raster : xarray.Dataset
+        The input raster to be compared.
+    dim_ref : string
+        The reference dimension name. 
+    dims : list of string
+        The list of dimensions name to be compared.
+
+    Returns
+    -------
+    final_arr : xarray.DataArray
+        The result.
+
+    References
+    ----------
+        - https://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/popularity.htm # noqa
+    """
+    if not isinstance(raster, xr.Dataset):
+        raise TypeError(
+            "Expected raster to be a 'xarray.Dataset'. "
+            f"Received '{type(raster).__name__}' instead."
+        )
+
+    if not isinstance(dim_ref, str):
+        raise TypeError(
+            "Expected dim_ref to be a 'str'. "
+            f"Received '{type(dim_ref).__name__}' instead."
+        )
+
+    if dim_ref not in list(raster.data_vars):
+        raise ValueError('raster must contain dim_ref.')
+
+    if dims:
+        if (
+            not isinstance(dims, list) or
+            not all([isinstance(dim, str) for dim in dims])
+        ):
+            raise TypeError('Expected dims to be a list of string.')
+
+        if not set(dims).issubset(raster.data_vars):
+            raise ValueError(
+                "raster must contain all the dimensions of dims. "
+                f"The dimensions available are '{list(raster.data_vars)}'."
+            )
+
+        if dim_ref in dims:
+            raise ValueError('dim_ref must not be an element of dims.')
+
+    else:
+        dims = list(raster.data_vars)
+        dims.remove(dim_ref)
+
+    iter_list = []
+
+    for comb in np.nditer([raster[dim].data for dim in dims]):
+        iter_list.append(tuple(items.item() for items in comb))
+
     out = []
-    in_aggs = [pop_agg]
-    for agg in agg_list:
-        in_aggs.append(agg)
+    ref_list = [item for arr in raster[dim_ref].data for item in arr]
 
-    for p, a, b, c in np.nditer(in_aggs):
-        if np.isnan((a, b, c)).any():   # skip nan
+    for ref, comb in zip(ref_list, iter_list):
+        comb = np.array(comb)
+        comb_ref = ref - 1
+        comb_counts = sorted(list(dict(Counter(comb)).keys()))
+
+        if (np.isnan(comb).any() or len(comb_counts) >= len(comb)):
             out.append(np.nan)
             continue
+        elif len(comb_counts) == 1:
+            out.append(comb_counts[0])
+        else:
+            if comb_ref >= len(comb_counts):
+                out.append(np.nan)
+                continue
 
-        inputs = np.array([a, b, c])
+            out.append(comb_counts[comb_ref])
 
-        count_a = np.count_nonzero(inputs == a)
-        count_b = np.count_nonzero(inputs == b)
-        count_c = np.count_nonzero(inputs == c)
-        counts = np.array([count_a, count_b, count_c])
+    final_arr = np.array(out)
+    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
+    final_arr = xr.DataArray(final_arr)
 
-        countsI = counts.argsort()
-        sorted_inputs = inputs[countsI][::-1]
-        sorted_counts = counts[countsI][::-1]
-
-        first = 0
-        second = 0
-        third = 0
-
-        if sorted_counts[0] == 1:
-            out.append(np.nan)
-            continue
-        elif sorted_counts[0] == 2:
-            first = sorted_inputs[0]
-            second = sorted_inputs[2]
-            third = np.nan
-        elif sorted_counts[0] == 3:
-            first = sorted_inputs[0]
-            second = sorted_inputs[1]
-            third = sorted_inputs[2]
-
-        if p == 1:
-            out.append(first)
-        elif p == 2:
-            out.append(second)
-        elif p == 3:
-            out.append(third)
-
-    # create new array
-    out = np.array(out)
-    out = np.reshape(out, (-1, agg_list[0].shape[1]))
-    out = xr.DataArray(out)
-
-    return out
+    return final_arr
 
 
 def rank(val_agg, agg_list):

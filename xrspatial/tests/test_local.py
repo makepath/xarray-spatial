@@ -365,20 +365,73 @@ def test_lowest_position_wrong_dim():
         lowest_position(raster_ds, dims=['arr1', 'arr9'])
 
 
-def test_popularity():
+def test_popularity_all_dims():
     comp_arr = xr.DataArray([[2, 2, 2, 2],
                              [2, 2, 2, 2],
                              [2, 2, 2, 2],
-                             [2, 2, 2, 2]])
+                             [2, 2, 2, 2]], name='arr')
 
-    result = popularity(comp_arr, [arr1, arr2, arr3])
-
+    input_arr = xr.merge([comp_arr, raster_ds])
     expected_arr = xr.DataArray([[np.nan, 1, 1, 0],
                                  [np.nan, np.nan, np.nan, 3],
                                  [np.nan, 0, 3, 2],
                                  [np.nan, np.nan, np.nan, 1]])
 
+    result = popularity(input_arr, 'arr')
+
     assert result.equals(expected_arr)
+
+
+def test_popularity_some_dims():
+    comp_arr = xr.DataArray([[2, 2, 2, 2],
+                             [2, 2, 2, 2],
+                             [2, 2, 2, 2],
+                             [2, 2, 2, 2]], name='arr')
+
+    input_arr = xr.merge([comp_arr, raster_ds])
+    expected_arr = xr.DataArray([[np.nan, 1, np.nan, 0],
+                                 [np.nan, np.nan, np.nan, 2],
+                                 [np.nan, 0, 0, 2],
+                                 [np.nan, np.nan, 1, np.nan]])
+
+    result = popularity(input_arr, 'arr', ['arr1', 'arr2'])
+    print(result)
+    assert result.equals(expected_arr)
+
+
+def test_popularity_raster_type_error():
+    with pytest.raises(TypeError):
+        popularity(arr1, 'arr1')
+
+
+def test_popularity_dims_param_type_error():
+    with pytest.raises(TypeError):
+        popularity(raster_ds, 'arr1', dims='arr2')
+
+
+def test_popularity_dim_ref_param_type_error():
+    with pytest.raises(TypeError):
+        popularity(raster_ds, ['arr1'])
+
+
+def test_popularity_dims_elem_type_error():
+    with pytest.raises(TypeError):
+        popularity(raster_ds, 'arr1', dims=[0])
+
+
+def test_popularity_wrong_dim():
+    with pytest.raises(ValueError):
+        popularity(raster_ds, 'arr1', dims=['arr2', 'arr9'])
+
+
+def test_popularity_dims_contain_ref_error():
+    with pytest.raises(ValueError):
+        popularity(raster_ds, 'arr1', dims=['arr1', 'arr2'])
+
+
+def test_popularity_all_dims_not_contain_ref_error():
+    with pytest.raises(ValueError):
+        popularity(raster_ds, 'arr9', dims=['arr1', 'arr2'])
 
 
 def test_rank():
