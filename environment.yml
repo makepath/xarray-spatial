@@ -1,0 +1,19 @@
+name: xarray-spatial
+channels:
+  - anaconda
+  - conda-forge
+  - pyviz
+dependencies:
+  - dask
+  - datashader
+  - numba
+  - numpy
+  - pandas
+  - pillow
+  - requests
+  - scipy
+  - xarray
+  - pyct <=0.4.6
+  - param >=1.6.1
+  - distributed >=2021.03.0
+  - spatialpandas
