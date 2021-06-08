@@ -21,4 +21,4 @@ dependencies:
   - xarray-spatial
   - pip >=20.3.3
   - pip:
-    - pip install stackstac
+    - 'stackstac'
