@@ -3,6 +3,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.local import (
+    cell_statistics,
     combine,
     equal_frequency,
     greater_frequency,
@@ -30,6 +31,110 @@ arr3 = xr.DataArray([[np.nan, 1, 0, 0],
                      [1, 1, np.nan, 0]], name='arr3')
 
 raster_ds = xr.merge([arr1, arr2, arr3])
+
+
+def test_cell_statistics_all_dims():
+    result = cell_statistics(raster_ds)
+
+    expected_arr = xr.DataArray([[np.nan, 3, 1, 0],
+                                 [np.nan, 4, 6, 7],
+                                 [np.nan, 0, 3, 6],
+                                 [8, 3, np.nan, 1]])
+
+    assert result.equals(expected_arr)
+
+
+def test_cell_statistics_some_dims():
+    result = cell_statistics(raster_ds, ['arr1', 'arr3'])
+
+    expected_arr = xr.DataArray([[np.nan, 2, 0, 0],
+                                 [np.nan, 1, 5, 5],
+                                 [4, 0, 3, 4],
+                                 [5, 1, np.nan, 1]])
+
+    assert result.equals(expected_arr)
+
+
+def test_cell_statistics_max():
+    result = cell_statistics(raster_ds, func='max')
+
+    expected_arr = xr.DataArray([[np.nan,  1,  1,  0],
+                                 [np.nan,  3,  3,  3],
+                                 [np.nan,  0,  3,  2],
+                                 [4,  2, np.nan,  1]])
+
+    assert result.equals(expected_arr)
+
+
+def test_cell_statistics_mean():
+    result = cell_statistics(raster_ds, func='mean')
+
+    expected_arr = xr.DataArray([[np.nan, 1., 0.3333333333333333, 0.],
+                                 [np.nan, 1.3333333333333333,
+                                     2., 2.3333333333333333],
+                                 [np.nan, 0., 1., 2.],
+                                 [2.6666666666666665, 1., np.nan, 0.3333333333333333]]) # noqa
+
+    assert result.equals(expected_arr)
+
+
+def test_cell_statistics_median():
+    result = cell_statistics(raster_ds, func='median')
+
+    expected_arr = xr.DataArray([[np.nan,  1,  0,  0],
+                                 [np.nan,  1,  2,  2],
+                                 [np.nan,  0,  0,  2],
+                                 [3,  1, np.nan,  0]])
+
+    assert result.equals(expected_arr)
+
+
+def test_cell_statistics_min():
+    result = cell_statistics(raster_ds, func='min')
+
+    expected_arr = xr.DataArray([[np.nan,  1,  0,  0],
+                                 [np.nan,  0,  1,  2],
+                                 [np.nan,  0,  0,  2],
+                                 [1,  0, np.nan,  0]])
+
+    assert result.equals(expected_arr)
+
+
+def test_cell_statistics_std():
+    result = cell_statistics(raster_ds, func='std')
+
+    expected_arr = xr.DataArray([[np.nan, 0., 0.4714045207910317, 0.],
+                                 [np.nan, 1.247219128924647,
+                                     0.816496580927726, 0.4714045207910317],
+                                 [np.nan, 0., 1.4142135623730951, 0.],
+                                 [1.247219128924647, 0.816496580927726, np.nan, 0.4714045207910317]]) # noqa
+
+    assert result.equals(expected_arr)
+
+
+def test_cell_statistics_wrong_func():
+    with pytest.raises(ValueError):
+        cell_statistics(raster_ds, func='med')
+
+
+def test_cell_statistics_raster_type_error():
+    with pytest.raises(TypeError):
+        cell_statistics(arr1)
+
+
+def test_cell_statistics_dims_param_type_error():
+    with pytest.raises(TypeError):
+        cell_statistics(raster_ds, dims='arr1')
+
+
+def test_cell_statistics_dims_elem_type_error():
+    with pytest.raises(TypeError):
+        cell_statistics(raster_ds, dims=[0])
+
+
+def test_cell_statistics_wrong_dim():
+    with pytest.raises(ValueError):
+        cell_statistics(raster_ds, dims=['arr1', 'arr9'])
 
 
 def test_combine_all_dims():

@@ -4,6 +4,83 @@ import numpy as np
 import xarray as xr
 
 
+funcs = {
+    'max': np.max,
+    'mean': np.mean,
+    'median': np.median,
+    'min': np.min,
+    'std': np.std,
+    'sum': np.sum,
+}
+
+
+def cell_statistics(raster, dims=None, func='sum'):
+    """
+    Calculates a per-cell statistic from multiple rasters.
+
+    Parameters
+    ----------
+    raster : xarray.Dataset
+        The input raster.
+    dims : list of string
+        The list of dimensions name.
+    func : string, default=sum
+        Function to apply over dimensions. The supported
+        functions are: max, mean, median, min, std, and sum.
+
+    Returns
+    -------
+    combined_arr : xarray.DataArray
+        The result.
+
+    References
+    ----------
+        - https://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/cell-statistics.htm # noqa
+    """
+    if not isinstance(raster, xr.Dataset):
+        raise TypeError(
+            "Expected raster to be a 'xarray.Dataset'. "
+            f"Received '{type(raster).__name__}' instead."
+        )
+
+    if func not in funcs:
+        raise ValueError(
+            f'{func} is not supported. '
+            f"The available funcs are '{list(funcs.keys())}'."
+        )
+
+    if dims:
+        if (
+            not isinstance(dims, list) or
+            not all([isinstance(dim, str) for dim in dims])
+        ):
+            raise TypeError('Expected dims to be a list of string.')
+
+        if not set(dims).issubset(raster.data_vars):
+            raise ValueError(
+                "raster must contain all the dimensions of dims. "
+                f"The dimensions available are '{list(raster.data_vars)}'."
+            )
+    else:
+        dims = list(raster.data_vars)
+
+    iter_list = []
+
+    for comb in np.nditer([raster[dim].data for dim in dims]):
+        iter_list.append(tuple(items.item() for items in comb))
+
+    out = []
+
+    for comb in iter_list:
+        out.append(funcs[func](comb))
+
+    final_arr = np.array(out)
+    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
+    final_arr = xr.DataArray(final_arr)
+
+    return final_arr
+
+
 def combine(raster, dims=None):
     """
     Combine the dimensions of a `xarray.Dataset` so that a unique
