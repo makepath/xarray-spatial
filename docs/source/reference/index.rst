@@ -14,3 +14,4 @@ Reference
    proximity
    surface
    zonal
+   local
