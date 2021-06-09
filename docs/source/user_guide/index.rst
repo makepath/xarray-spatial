@@ -14,3 +14,4 @@ User Guide
    proximity
    surface
    zonal
+   local
