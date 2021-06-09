@@ -14,24 +14,23 @@ funcs = {
 }
 
 
-def cell_statistics(raster, dims=None, func='sum'):
+def cell_stats(raster, data_vars=None, func='sum'):
     """
-    Calculates a per-cell statistic from multiple rasters.
+    Calculates statistics of raster dataset on a cell-by-cell basis.
 
     Parameters
     ----------
     raster : xarray.Dataset
-        The input raster.
-    dims : list of string
-        The list of dimensions name.
+        2D or 3D labelled array.
+    data_vars : list of string
+        Variable name list.
     func : string, default=sum
-        Function to apply over dimensions. The supported
-        functions are: max, mean, median, min, std, and sum.
+        Statistic type. The supported types are max, mean, median,
+        min, std, and sum.
 
     Returns
     -------
-    combined_arr : xarray.DataArray
-        The result.
+    final_arr : xarray.DataArray
 
     References
     ----------
@@ -46,27 +45,27 @@ def cell_statistics(raster, dims=None, func='sum'):
     if func not in funcs:
         raise ValueError(
             f'{func} is not supported. '
-            f"The available funcs are '{list(funcs.keys())}'."
+            f"The supported types are '{list(funcs.keys())}'."
         )
 
-    if dims:
+    if data_vars:
         if (
-            not isinstance(dims, list) or
-            not all([isinstance(dim, str) for dim in dims])
+            not isinstance(data_vars, list) or
+            not all([isinstance(var, str) for var in data_vars])
         ):
-            raise TypeError('Expected dims to be a list of string.')
+            raise TypeError('Expected data_vars to be a list of string.')
 
-        if not set(dims).issubset(raster.data_vars):
+        if not set(data_vars).issubset(raster.data_vars):
             raise ValueError(
-                "raster must contain all the dimensions of dims. "
-                f"The dimensions available are '{list(raster.data_vars)}'."
+                "raster must contain all the variables of data_vars. "
+                f"The variables available are '{list(raster.data_vars)}'."
             )
     else:
-        dims = list(raster.data_vars)
+        data_vars = list(raster.data_vars)
 
     iter_list = []
 
-    for comb in np.nditer([raster[dim].data for dim in dims]):
+    for comb in np.nditer([raster[var].data for var in data_vars]):
         iter_list.append(tuple(items.item() for items in comb))
 
     out = []
@@ -75,28 +74,27 @@ def cell_statistics(raster, dims=None, func='sum'):
         out.append(funcs[func](comb))
 
     final_arr = np.array(out)
-    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
+    final_arr = np.reshape(final_arr, (-1, raster[data_vars[0]].data.shape[1]))
     final_arr = xr.DataArray(final_arr)
 
     return final_arr
 
 
-def combine(raster, dims=None):
+def combine(raster, data_vars=None):
     """
-    Combine the dimensions of a `xarray.Dataset` so that a unique
-    output value is assigned to each unique combination.
+    Combines raster dataset, a unique output value is assigned to each
+    unique combination of raster values.
 
     Parameters
     ----------
     raster : xarray.Dataset
-        The input raster to combine the dimensions.
-    dims : list of string
-        The list of dimensions name to be combined.
+        2D or 3D labelled array.
+    data_vars : list of string
+        Variable name list.
 
     Returns
     -------
-    combined_arr : xarray.DataArray
-        The combined dimensions data.
+    final_arr : xarray.DataArray
 
     References
     ----------
@@ -108,24 +106,24 @@ def combine(raster, dims=None):
             f"Received '{type(raster).__name__}' instead."
         )
 
-    if dims:
+    if data_vars:
         if (
-            not isinstance(dims, list) or
-            not all([isinstance(dim, str) for dim in dims])
+            not isinstance(data_vars, list) or
+            not all([isinstance(var, str) for var in data_vars])
         ):
-            raise TypeError('Expected dims to be a list of string.')
+            raise TypeError('Expected data_vars to be a list of string.')
 
-        if not set(dims).issubset(raster.data_vars):
+        if not set(data_vars).issubset(raster.data_vars):
             raise ValueError(
-                "raster must contain all the dimensions of dims. "
-                f"The dimensions available are '{list(raster.data_vars)}'."
+                "raster must contain all the variables of data_vars. "
+                f"The variables available are '{list(raster.data_vars)}'."
             )
     else:
-        dims = list(raster.data_vars)
+        data_vars = list(raster.data_vars)
 
     iter_list = []
 
-    for comb in np.nditer([raster[dim].data for dim in dims]):
+    for comb in np.nditer([raster[var].data for var in data_vars]):
         iter_list.append(tuple(items.item() for items in comb))
 
     unique_comb = {}
@@ -157,268 +155,33 @@ def combine(raster, dims=None):
         k += 1
 
     final_arr = np.array(all_values)
-    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
+    final_arr = np.reshape(final_arr, (-1, raster[data_vars[0]].data.shape[1]))
 
-    combined_arr = xr.DataArray(
+    final_arr = xr.DataArray(
         data=final_arr,
         attrs=dict(key=unique_values)
     )
 
-    return combined_arr
-
-
-def equal_frequency(raster, dim_ref, dims=None):
-    """
-    Evaluates on a cell-by-cell basis the number of times the values
-    in a set of rasters are equal to another raster.
-
-    Parameters
-    ----------
-    raster : xarray.Dataset
-        The input raster to be compared.
-    dim_ref : string
-        The reference dimension name. 
-    dims : list of string
-        The list of dimensions name to be compared.
-
-    Returns
-    -------
-    final_arr : xarray.DataArray
-        The result.
-
-    References
-    ----------
-        - https://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/equal-to-frequency.htm # noqa
-    """
-    if not isinstance(raster, xr.Dataset):
-        raise TypeError(
-            "Expected raster to be a 'xarray.Dataset'. "
-            f"Received '{type(raster).__name__}' instead."
-        )
-
-    if not isinstance(dim_ref, str):
-        raise TypeError(
-            "Expected dim_ref to be a 'str'. "
-            f"Received '{type(dim_ref).__name__}' instead."
-        )
-
-    if dim_ref not in list(raster.data_vars):
-        raise ValueError('raster must contain dim_ref.')
-
-    if dims:
-        if (
-            not isinstance(dims, list) or
-            not all([isinstance(dim, str) for dim in dims])
-        ):
-            raise TypeError('Expected dims to be a list of string.')
-
-        if not set(dims).issubset(raster.data_vars):
-            raise ValueError(
-                "raster must contain all the dimensions of dims. "
-                f"The dimensions available are '{list(raster.data_vars)}'."
-            )
-
-        if dim_ref in dims:
-            raise ValueError('dim_ref must not be an element of dims.')
-
-    else:
-        dims = list(raster.data_vars)
-        dims.remove(dim_ref)
-
-    iter_list = []
-
-    for comb in np.nditer([raster[dim].data for dim in dims]):
-        iter_list.append(tuple(items.item() for items in comb))
-
-    out = []
-    ref_list = [item for arr in raster[dim_ref].data for item in arr]
-    for ref, comb in zip(ref_list, iter_list):
-        count = 0
-        if np.isnan(comb).any():
-            out.append(np.nan)
-            continue
-
-        for item in comb:
-            if ref == item:
-                count += 1
-
-        out.append(count)
-
-    final_arr = np.array(out)
-    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
-    final_arr = xr.DataArray(final_arr)
-
     return final_arr
 
 
-def greater_frequency(raster, dim_ref, dims=None):
+def lesser_frequency(raster, ref_var, data_vars=None):
     """
-    Evaluates on a cell-by-cell basis the number of times a set of
-    rasters is greater than another raster.
+    Calculates the number of times the raster dataset has a lesser
+    frequency on a cell-by-cell basis.
 
     Parameters
     ----------
     raster : xarray.Dataset
-        The input raster to be compared.
-    dim_ref : string
-        The reference dimension name. 
-    dims : list of string
-        The list of dimensions name to be compared.
+        2D or 3D labelled array.
+    ref_var : string
+        The reference variable name.
+    data_vars : list of string
+        Variable name list.
 
     Returns
     -------
     final_arr : xarray.DataArray
-        The result.
-
-    References
-    ----------
-        - https://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/greater-than-frequency.htm # noqa
-    """
-    if not isinstance(raster, xr.Dataset):
-        raise TypeError(
-            "Expected raster to be a 'xarray.Dataset'. "
-            f"Received '{type(raster).__name__}' instead."
-        )
-
-    if not isinstance(dim_ref, str):
-        raise TypeError(
-            "Expected dim_ref to be a 'str'. "
-            f"Received '{type(dim_ref).__name__}' instead."
-        )
-
-    if dim_ref not in list(raster.data_vars):
-        raise ValueError('raster must contain dim_ref.')
-
-    if dims:
-        if (
-            not isinstance(dims, list) or
-            not all([isinstance(dim, str) for dim in dims])
-        ):
-            raise TypeError('Expected dims to be a list of string.')
-
-        if not set(dims).issubset(raster.data_vars):
-            raise ValueError(
-                "raster must contain all the dimensions of dims. "
-                f"The dimensions available are '{list(raster.data_vars)}'."
-            )
-
-        if dim_ref in dims:
-            raise ValueError('dim_ref must not be an element of dims.')
-
-    else:
-        dims = list(raster.data_vars)
-        dims.remove(dim_ref)
-
-    iter_list = []
-
-    for comb in np.nditer([raster[dim].data for dim in dims]):
-        iter_list.append(tuple(items.item() for items in comb))
-
-    out = []
-    ref_list = [item for arr in raster[dim_ref].data for item in arr]
-    for ref, comb in zip(ref_list, iter_list):
-        count = 0
-        if np.isnan(comb).any():
-            out.append(np.nan)
-            continue
-
-        for item in comb:
-            if ref < item:
-                count += 1
-
-        out.append(count)
-
-    final_arr = np.array(out)
-    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
-    final_arr = xr.DataArray(final_arr)
-
-    return final_arr
-
-
-def highest_position(raster, dims=None):
-    """
-    Determines on a cell-by-cell basis the position of the raster with
-    the maximum value in a `xarray.Dataset` dimensions.
-
-    Parameters
-    ----------
-    raster : xarray.Dataset
-        The input raster.
-    dims : list of string
-        The list of dimensions name.
-
-    Returns
-    -------
-    final_arr : xarray.DataArray
-        The result.
-
-    References
-    ----------
-        - https://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/highest-position.htm # noqa
-    """
-    if not isinstance(raster, xr.Dataset):
-        raise TypeError(
-            "Expected raster to be a 'xarray.Dataset'. "
-            f"Received '{type(raster).__name__}' instead."
-        )
-
-    if dims:
-        if (
-            not isinstance(dims, list) or
-            not all([isinstance(dim, str) for dim in dims])
-        ):
-            raise TypeError('Expected dims to be a list of string.')
-
-        if not set(dims).issubset(raster.data_vars):
-            raise ValueError(
-                "raster must contain all the dimensions of dims. "
-                f"The dimensions available are '{list(raster.data_vars)}'."
-            )
-    else:
-        dims = list(raster.data_vars)
-
-    iter_list = []
-
-    for comb in np.nditer([raster[dim].data for dim in dims]):
-        iter_list.append(tuple(items.item() for items in comb))
-
-    out = []
-
-    for comb in iter_list:
-        if np.isnan(comb).any():
-            out.append(np.nan)
-            continue
-
-        max_value = max(comb)
-        max_index = comb.index(max_value) + 1
-
-        out.append(max_index)
-
-    final_arr = np.array(out)
-    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
-    final_arr = xr.DataArray(final_arr)
-
-    return final_arr
-
-
-def lesser_frequency(raster, dim_ref, dims=None):
-    """
-    Evaluates on a cell-by-cell basis the number of times a set of
-    rasters is less than another raster.
-
-    Parameters
-    ----------
-    raster : xarray.Dataset
-        The input raster to be compared.
-    dim_ref : string
-        The reference dimension name. 
-    dims : list of string
-        The list of dimensions name to be compared.
-
-    Returns
-    -------
-    final_arr : xarray.DataArray
-        The result.
 
     References
     ----------
@@ -430,42 +193,42 @@ def lesser_frequency(raster, dim_ref, dims=None):
             f"Received '{type(raster).__name__}' instead."
         )
 
-    if not isinstance(dim_ref, str):
+    if not isinstance(ref_var, str):
         raise TypeError(
-            "Expected dim_ref to be a 'str'. "
-            f"Received '{type(dim_ref).__name__}' instead."
+            "Expected ref_var to be a 'str'. "
+            f"Received '{type(ref_var).__name__}' instead."
         )
 
-    if dim_ref not in list(raster.data_vars):
-        raise ValueError('raster must contain dim_ref.')
+    if ref_var not in list(raster.data_vars):
+        raise ValueError('raster must contain ref_var.')
 
-    if dims:
+    if data_vars:
         if (
-            not isinstance(dims, list) or
-            not all([isinstance(dim, str) for dim in dims])
+            not isinstance(data_vars, list) or
+            not all([isinstance(var, str) for var in data_vars])
         ):
-            raise TypeError('Expected dims to be a list of string.')
+            raise TypeError('Expected data_vars to be a list of string.')
 
-        if not set(dims).issubset(raster.data_vars):
+        if not set(data_vars).issubset(raster.data_vars):
             raise ValueError(
-                "raster must contain all the dimensions of dims. "
-                f"The dimensions available are '{list(raster.data_vars)}'."
+                "raster must contain all the variables of data_vars. "
+                f"The variables available are '{list(raster.data_vars)}'."
             )
 
-        if dim_ref in dims:
-            raise ValueError('dim_ref must not be an element of dims.')
+        if ref_var in data_vars:
+            raise ValueError('ref_var must not be an element of data_vars.')
 
     else:
-        dims = list(raster.data_vars)
-        dims.remove(dim_ref)
+        data_vars = list(raster.data_vars)
+        data_vars.remove(ref_var)
 
     iter_list = []
 
-    for comb in np.nditer([raster[dim].data for dim in dims]):
+    for comb in np.nditer([raster[var].data for var in data_vars]):
         iter_list.append(tuple(items.item() for items in comb))
 
     out = []
-    ref_list = [item for arr in raster[dim_ref].data for item in arr]
+    ref_list = [item for arr in raster[ref_var].data for item in arr]
     for ref, comb in zip(ref_list, iter_list):
         count = 0
         if np.isnan(comb).any():
@@ -479,28 +242,193 @@ def lesser_frequency(raster, dim_ref, dims=None):
         out.append(count)
 
     final_arr = np.array(out)
-    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
+    final_arr = np.reshape(final_arr, (-1, raster[data_vars[0]].data.shape[1]))
     final_arr = xr.DataArray(final_arr)
 
     return final_arr
 
 
-def lowest_position(raster, dims=None):
+def equal_frequency(raster, ref_var, data_vars=None):
     """
-    Determines on a cell-by-cell basis the position of the raster with
-    the minimum value in a `xarray.Dataset` dimensions.
+    Calculates the number of times the raster dataset has a equal
+    frequency on a cell-by-cell basis.
 
     Parameters
     ----------
     raster : xarray.Dataset
-        The input raster.
-    dims : list of string
-        The list of dimensions name.
+        2D or 3D labelled array.
+    ref_var : string
+        The reference variable name. 
+    data_vars : list of string
+        Variable name list.
 
     Returns
     -------
     final_arr : xarray.DataArray
-        The result.
+
+    References
+    ----------
+        - https://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/equal-to-frequency.htm # noqa
+    """
+    if not isinstance(raster, xr.Dataset):
+        raise TypeError(
+            "Expected raster to be a 'xarray.Dataset'. "
+            f"Received '{type(raster).__name__}' instead."
+        )
+
+    if not isinstance(ref_var, str):
+        raise TypeError(
+            "Expected ref_var to be a 'str'. "
+            f"Received '{type(ref_var).__name__}' instead."
+        )
+
+    if ref_var not in list(raster.data_vars):
+        raise ValueError('raster must contain ref_var.')
+
+    if data_vars:
+        if (
+            not isinstance(data_vars, list) or
+            not all([isinstance(var, str) for var in data_vars])
+        ):
+            raise TypeError('Expected data_vars to be a list of string.')
+
+        if not set(data_vars).issubset(raster.data_vars):
+            raise ValueError(
+                "raster must contain all the variables of data_vars. "
+                f"The variables available are '{list(raster.data_vars)}'."
+            )
+
+        if ref_var in data_vars:
+            raise ValueError('ref_var must not be an element of data_vars.')
+
+    else:
+        data_vars = list(raster.data_vars)
+        data_vars.remove(ref_var)
+
+    iter_list = []
+
+    for comb in np.nditer([raster[var].data for var in data_vars]):
+        iter_list.append(tuple(items.item() for items in comb))
+
+    out = []
+    ref_list = [item for arr in raster[ref_var].data for item in arr]
+    for ref, comb in zip(ref_list, iter_list):
+        count = 0
+        if np.isnan(comb).any():
+            out.append(np.nan)
+            continue
+
+        for item in comb:
+            if ref == item:
+                count += 1
+
+        out.append(count)
+
+    final_arr = np.array(out)
+    final_arr = np.reshape(final_arr, (-1, raster[data_vars[0]].data.shape[1]))
+    final_arr = xr.DataArray(final_arr)
+
+    return final_arr
+
+
+def greater_frequency(raster, ref_var, data_vars=None):
+    """
+    Calculates the number of times the raster dataset has a greater
+    frequency on a cell-by-cell basis.
+
+    Parameters
+    ----------
+    raster : xarray.Dataset
+        2D or 3D labelled array.
+    ref_var : string
+        The reference variable name. 
+    data_vars : list of string
+        Variable name list.
+
+    Returns
+    -------
+    final_arr : xarray.DataArray
+
+    References
+    ----------
+        - https://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/greater-than-frequency.htm # noqa
+    """
+    if not isinstance(raster, xr.Dataset):
+        raise TypeError(
+            "Expected raster to be a 'xarray.Dataset'. "
+            f"Received '{type(raster).__name__}' instead."
+        )
+
+    if not isinstance(ref_var, str):
+        raise TypeError(
+            "Expected ref_var to be a 'str'. "
+            f"Received '{type(ref_var).__name__}' instead."
+        )
+
+    if ref_var not in list(raster.data_vars):
+        raise ValueError('raster must contain ref_var.')
+
+    if data_vars:
+        if (
+            not isinstance(data_vars, list) or
+            not all([isinstance(var, str) for var in data_vars])
+        ):
+            raise TypeError('Expected data_vars to be a list of string.')
+
+        if not set(data_vars).issubset(raster.data_vars):
+            raise ValueError(
+                "raster must contain all the variables of data_vars. "
+                f"The variables available are '{list(raster.data_vars)}'."
+            )
+
+        if ref_var in data_vars:
+            raise ValueError('ref_var must not be an element of data_vars.')
+
+    else:
+        data_vars = list(raster.data_vars)
+        data_vars.remove(ref_var)
+
+    iter_list = []
+
+    for comb in np.nditer([raster[var].data for var in data_vars]):
+        iter_list.append(tuple(items.item() for items in comb))
+
+    out = []
+    ref_list = [item for arr in raster[ref_var].data for item in arr]
+    for ref, comb in zip(ref_list, iter_list):
+        count = 0
+        if np.isnan(comb).any():
+            out.append(np.nan)
+            continue
+
+        for item in comb:
+            if ref < item:
+                count += 1
+
+        out.append(count)
+
+    final_arr = np.array(out)
+    final_arr = np.reshape(final_arr, (-1, raster[data_vars[0]].data.shape[1]))
+    final_arr = xr.DataArray(final_arr)
+
+    return final_arr
+
+
+def lowest_position(raster, data_vars=None):
+    """
+    Calculates the data variable index of the lowest value on a
+    cell-by-cell basis.
+
+    Parameters
+    ----------
+    raster : xarray.Dataset
+        2D or 3D labelled array.
+    data_vars : list of string
+        Variable name list.
+
+    Returns
+    -------
+    final_arr : xarray.DataArray
 
     References
     ----------
@@ -512,24 +440,24 @@ def lowest_position(raster, dims=None):
             f"Received '{type(raster).__name__}' instead."
         )
 
-    if dims:
+    if data_vars:
         if (
-            not isinstance(dims, list) or
-            not all([isinstance(dim, str) for dim in dims])
+            not isinstance(data_vars, list) or
+            not all([isinstance(var, str) for var in data_vars])
         ):
-            raise TypeError('Expected dims to be a list of string.')
+            raise TypeError('Expected data_vars to be a list of string.')
 
-        if not set(dims).issubset(raster.data_vars):
+        if not set(data_vars).issubset(raster.data_vars):
             raise ValueError(
-                "raster must contain all the dimensions of dims. "
-                f"The dimensions available are '{list(raster.data_vars)}'."
+                "raster must contain all the variables of data_vars. "
+                f"The variables available are '{list(raster.data_vars)}'."
             )
     else:
-        dims = list(raster.data_vars)
+        data_vars = list(raster.data_vars)
 
     iter_list = []
 
-    for comb in np.nditer([raster[dim].data for dim in dims]):
+    for comb in np.nditer([raster[var].data for var in data_vars]):
         iter_list.append(tuple(items.item() for items in comb))
 
     out = []
@@ -545,32 +473,95 @@ def lowest_position(raster, dims=None):
         out.append(min_index)
 
     final_arr = np.array(out)
-    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
+    final_arr = np.reshape(final_arr, (-1, raster[data_vars[0]].data.shape[1]))
     final_arr = xr.DataArray(final_arr)
 
     return final_arr
 
 
-def popularity(raster, dim_ref, dims=None):
+def highest_position(raster, data_vars=None):
     """
-    Determines the value in an argument list that is at a certain
-    level of popularity on a cell-by-cell basis which the number
-    of occurrences of each value is specified by the first argument.
-
+    Calculates the data variable index of the highest value on a
+    cell-by-cell basis.
 
     Parameters
     ----------
     raster : xarray.Dataset
-        The input raster to be compared.
-    dim_ref : string
-        The reference dimension name. 
-    dims : list of string
-        The list of dimensions name to be compared.
+        2D or 3D labelled array.
+    data_vars : list of string
+        Variable name list.
 
     Returns
     -------
     final_arr : xarray.DataArray
-        The result.
+
+    References
+    ----------
+        - https://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/highest-position.htm # noqa
+    """
+    if not isinstance(raster, xr.Dataset):
+        raise TypeError(
+            "Expected raster to be a 'xarray.Dataset'. "
+            f"Received '{type(raster).__name__}' instead."
+        )
+
+    if data_vars:
+        if (
+            not isinstance(data_vars, list) or
+            not all([isinstance(var, str) for var in data_vars])
+        ):
+            raise TypeError('Expected data_vars to be a list of string.')
+
+        if not set(data_vars).issubset(raster.data_vars):
+            raise ValueError(
+                "raster must contain all the variables of data_vars. "
+                f"The variables available are '{list(raster.data_vars)}'."
+            )
+    else:
+        data_vars = list(raster.data_vars)
+
+    iter_list = []
+
+    for comb in np.nditer([raster[var].data for var in data_vars]):
+        iter_list.append(tuple(items.item() for items in comb))
+
+    out = []
+
+    for comb in iter_list:
+        if np.isnan(comb).any():
+            out.append(np.nan)
+            continue
+
+        max_value = max(comb)
+        max_index = comb.index(max_value) + 1
+
+        out.append(max_index)
+
+    final_arr = np.array(out)
+    final_arr = np.reshape(final_arr, (-1, raster[data_vars[0]].data.shape[1]))
+    final_arr = xr.DataArray(final_arr)
+
+    return final_arr
+
+
+def popularity(raster, ref_var, data_vars=None):
+    """
+    Calculates the popularity, the number of occurrences of each value,
+    of raster dataset on a cell-by-cell basis. The output value is
+    assigned based on the reference data variable nth most popular.
+
+    Parameters
+    ----------
+    raster : xarray.Dataset
+        2D or 3D labelled array.
+    ref_var : string
+        The reference variable name. 
+    data_vars : list of string
+        Variable name list.
+
+    Returns
+    -------
+    final_arr : xarray.DataArray
 
     References
     ----------
@@ -582,42 +573,42 @@ def popularity(raster, dim_ref, dims=None):
             f"Received '{type(raster).__name__}' instead."
         )
 
-    if not isinstance(dim_ref, str):
+    if not isinstance(ref_var, str):
         raise TypeError(
-            "Expected dim_ref to be a 'str'. "
-            f"Received '{type(dim_ref).__name__}' instead."
+            "Expected ref_var to be a 'str'. "
+            f"Received '{type(ref_var).__name__}' instead."
         )
 
-    if dim_ref not in list(raster.data_vars):
-        raise ValueError('raster must contain dim_ref.')
+    if ref_var not in list(raster.data_vars):
+        raise ValueError('raster must contain ref_var.')
 
-    if dims:
+    if data_vars:
         if (
-            not isinstance(dims, list) or
-            not all([isinstance(dim, str) for dim in dims])
+            not isinstance(data_vars, list) or
+            not all([isinstance(var, str) for var in data_vars])
         ):
-            raise TypeError('Expected dims to be a list of string.')
+            raise TypeError('Expected data_vars to be a list of string.')
 
-        if not set(dims).issubset(raster.data_vars):
+        if not set(data_vars).issubset(raster.data_vars):
             raise ValueError(
-                "raster must contain all the dimensions of dims. "
-                f"The dimensions available are '{list(raster.data_vars)}'."
+                "raster must contain all the variables of data_vars. "
+                f"The variables available are '{list(raster.data_vars)}'."
             )
 
-        if dim_ref in dims:
-            raise ValueError('dim_ref must not be an element of dims.')
+        if ref_var in data_vars:
+            raise ValueError('ref_var must not be an element of data_vars.')
 
     else:
-        dims = list(raster.data_vars)
-        dims.remove(dim_ref)
+        data_vars = list(raster.data_vars)
+        data_vars.remove(ref_var)
 
     iter_list = []
 
-    for comb in np.nditer([raster[dim].data for dim in dims]):
+    for comb in np.nditer([raster[var].data for var in data_vars]):
         iter_list.append(tuple(items.item() for items in comb))
 
     out = []
-    ref_list = [item for arr in raster[dim_ref].data for item in arr]
+    ref_list = [item for arr in raster[ref_var].data for item in arr]
 
     for ref, comb in zip(ref_list, iter_list):
         comb = np.array(comb)
@@ -637,31 +628,30 @@ def popularity(raster, dim_ref, dims=None):
             out.append(comb_counts[comb_ref])
 
     final_arr = np.array(out)
-    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
+    final_arr = np.reshape(final_arr, (-1, raster[data_vars[0]].data.shape[1]))
     final_arr = xr.DataArray(final_arr)
 
     return final_arr
 
 
-def rank(raster, dim_ref, dims=None):
+def rank(raster, ref_var, data_vars=None):
     """
-    Rank the values from the set of input rasters on a cell-by-cell
-    basis which of these gets returned is determined by the value of
-    the rank input raster.
+    Calculates the rank of raster dataset on a cell-by-cell basis.
+    The output value is assigned based on the reference data variable
+    rank.
 
     Parameters
     ----------
     raster : xarray.Dataset
-        The input raster to be compared.
-    dim_ref : string
-        The reference dimension name. 
-    dims : list of string
-        The list of dimensions name to be compared.
+        2D or 3D labelled array.
+    ref_var : string
+        The reference variable name. 
+    data_vars : list of string
+        Variable name list.
 
     Returns
     -------
     final_arr : xarray.DataArray
-        The result.
 
     References
     ----------
@@ -673,42 +663,42 @@ def rank(raster, dim_ref, dims=None):
             f"Received '{type(raster).__name__}' instead."
         )
 
-    if not isinstance(dim_ref, str):
+    if not isinstance(ref_var, str):
         raise TypeError(
-            "Expected dim_ref to be a 'str'. "
-            f"Received '{type(dim_ref).__name__}' instead."
+            "Expected ref_var to be a 'str'. "
+            f"Received '{type(ref_var).__name__}' instead."
         )
 
-    if dim_ref not in list(raster.data_vars):
-        raise ValueError('raster must contain dim_ref.')
+    if ref_var not in list(raster.data_vars):
+        raise ValueError('raster must contain ref_var.')
 
-    if dims:
+    if data_vars:
         if (
-            not isinstance(dims, list) or
-            not all([isinstance(dim, str) for dim in dims])
+            not isinstance(data_vars, list) or
+            not all([isinstance(var, str) for var in data_vars])
         ):
-            raise TypeError('Expected dims to be a list of string.')
+            raise TypeError('Expected data_vars to be a list of string.')
 
-        if not set(dims).issubset(raster.data_vars):
+        if not set(data_vars).issubset(raster.data_vars):
             raise ValueError(
-                "raster must contain all the dimensions of dims. "
-                f"The dimensions available are '{list(raster.data_vars)}'."
+                "raster must contain all the variables of data_vars. "
+                f"The variables available are '{list(raster.data_vars)}'."
             )
 
-        if dim_ref in dims:
-            raise ValueError('dim_ref must not be an element of dims.')
+        if ref_var in data_vars:
+            raise ValueError('ref_var must not be an element of data_vars.')
 
     else:
-        dims = list(raster.data_vars)
-        dims.remove(dim_ref)
+        data_vars = list(raster.data_vars)
+        data_vars.remove(ref_var)
 
     iter_list = []
 
-    for comb in np.nditer([raster[dim].data for dim in dims]):
+    for comb in np.nditer([raster[var].data for var in data_vars]):
         iter_list.append(list(items.item() for items in comb))
 
     out = []
-    ref_list = [item for arr in raster[dim_ref].data for item in arr]
+    ref_list = [item for arr in raster[ref_var].data for item in arr]
 
     for ref, comb in zip(ref_list, iter_list):
         comb_ref = ref - 1
@@ -721,7 +711,7 @@ def rank(raster, dim_ref, dims=None):
         out.append(comb[comb_ref])
 
     final_arr = np.array(out)
-    final_arr = np.reshape(final_arr, (-1, raster[dims[0]].data.shape[1]))
+    final_arr = np.reshape(final_arr, (-1, raster[data_vars[0]].data.shape[1]))
     final_arr = xr.DataArray(final_arr)
 
     return final_arr
