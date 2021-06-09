@@ -162,6 +162,21 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Zonal Statistics](xrspatial/zonal.py) | ✅️ | | | |
 | [Zonal Cross Tabulate](xrspatial/zonal.py) | ✅️ | | | |
 
+-----------
+
+### **Local**
+
+| Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Cell Stats](xrspatial/local.py) | ✅️ |  | | |
+| [Combine](xrspatial/local.py) | ✅️ | | | |
+| [Lesser Frequency](xrspatial/local.py) | ✅️ |  | | |
+| [Equal Frequency](xrspatial/local.py) | ✅️ |  | | |
+| [Greater Frequency](xrspatial/local.py) | ✅️ |  | | |
+| [Lowest Position](xrspatial/local.py) | ✅️ | | | |
+| [Highest Position](xrspatial/local.py) | ✅️ | | | |
+| [Popularity](xrspatial/local.py) | ✅️ | | | |
+| [Rank](xrspatial/local.py) | ✅️ | | | |
 
 #### Usage
 
