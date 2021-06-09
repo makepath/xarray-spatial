@@ -1,5 +1,4 @@
 name: xarray-spatial
-
 dependencies:
   - python >=3.6
   - datashader
@@ -18,5 +17,5 @@ dependencies:
   - xarray-spatial
   - setuptools
   - pip
-  - pip3:
+  - pip:
     - stackstac
