@@ -1,6 +1,11 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.2.4 - 6/10/2021
+- Added resample notebook (#452)
+- Reviewed mosaic notebook (#454)
+- Added local module (#456)
+
 ### Version 0.2.3 - 6/2/2021
 - Added make terrain data function (#439)
 - Added focal_stats and convolution_2d functions (#453)
