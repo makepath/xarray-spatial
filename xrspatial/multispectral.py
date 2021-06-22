@@ -1644,6 +1644,30 @@ def _true_color_dask_cupy(r, g, b, nodata):
 
 
 def true_color(r, g, b, nodata=1, name='true_color'):
+    """
+    Create true color composite from a combination of red, green and blue bands
+    satellite images.
+
+    Parameters
+    ----------
+    r : xarray.DataArray
+        2D array of red band data.
+    g : xarray.DataArray
+        2D array of green band data.
+    b : xarray.DataArray
+        2D array of blue band data.
+    nodata : int, float numeric value
+        Nodata value of input DataArrays
+    name : str, default='true_color'
+        Name of output DataArray.
+
+    Returns
+    -------
+    true_color_agg : xarray.DataArray of the same type as inputs.
+        3D array true color image with dims of [y, x, band].
+        All output attributes are copied from red band image.
+    """
+
     mapper = ArrayTypeFunctionMapping(numpy_func=_true_color_numpy,
                                       dask_func=_true_color_dask,
                                       cupy_func=_true_color_cupy,
