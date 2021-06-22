@@ -1670,6 +1670,27 @@ def true_color(r, g, b, nodata=1, contrast=10.0, name='true_color'):
     true_color_agg : xarray.DataArray of the same type as inputs.
         3D array true color image with dims of [y, x, band].
         All output attributes are copied from red band image.
+
+
+    Examples
+    --------
+    .. plot::
+       :include-source:
+
+        import matplotlib.pyplot as plt
+        from xrspatial.multispectral import true_color
+        from xrspatial.datasets import get_data
+
+        # Open Example Data
+        data = get_data('sentinel-2')
+
+        red = data['Red']
+        green = data['Green']
+        blue = data['Blue']
+
+        # Generate ARVI Aggregate Array
+        true_color_img = true_color(r=red, g=green, b=blue)
+        true_color_img.plot.imshow()
     """
 
     mapper = ArrayTypeFunctionMapping(numpy_func=_true_color_numpy,
