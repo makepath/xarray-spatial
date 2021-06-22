@@ -1652,8 +1652,9 @@ def true_color(r, g, b, nodata=1, name='true_color'):
         warnings.simplefilter('ignore')
         out = mapper(r)(r, g, b, nodata)
 
-    # TODO: output metadata: coords, dims, atts
+    # TODO: output metadata: coords, dims, attrs
     _dims = ['y', 'x', 'band']
+    _attrs = r.attrs
     _coords = {'y': r['y'],
                'x': r['x'],
                'band': [0, 1, 2, 3]}
@@ -1663,4 +1664,5 @@ def true_color(r, g, b, nodata=1, name='true_color'):
         name=name,
         dims=_dims,
         coords=_coords,
+        attrs=_attrs,
     )
