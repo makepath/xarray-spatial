@@ -1658,7 +1658,9 @@ def true_color(r, g, b, nodata=1, name='true_color'):
                'x': r['x'],
                'band': [0, 1, 2, 3]}
 
-    return DataArray(out,
-                     dims=_dims,
-                     coords=_coords
-                     )
+    return DataArray(
+        out,
+        name=name,
+        dims=_dims,
+        coords=_coords,
+    )

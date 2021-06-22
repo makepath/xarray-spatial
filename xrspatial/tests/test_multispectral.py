@@ -788,13 +788,17 @@ def test_true_color_cpu():
     red = create_test_arr(arr1)
     green = create_test_arr(arr2)
     blue = create_test_arr(arr3)
-    numpy_result = true_color(red, green, blue)
+    numpy_result = true_color(red, green, blue, name='np_true_color')
+    assert numpy_result.name == 'np_true_color'
 
     # dask
     red_dask = create_test_arr(arr1, backend='dask')
     green_dask = create_test_arr(arr2, backend='dask')
     blue_dask = create_test_arr(arr3, backend='dask')
-    dask_result = true_color(red_dask, green_dask, blue_dask)
+    dask_result = true_color(
+        red_dask, green_dask, blue_dask, name='dask_true_color'
+    )
+    assert dask_result.name == 'dask_true_color'
 
     # TODO: test output metadata: dims, coords, attrs
     assert isinstance(numpy_result, xa.DataArray)
