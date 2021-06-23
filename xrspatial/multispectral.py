@@ -1660,7 +1660,7 @@ def true_color(r, g, b, nodata=1, contrast=10.0, name='true_color'):
         2D array of blue band data.
     nodata : int, float numeric value
         Nodata value of input DataArrays
-    contrast : int, float numeric value.
+    contrast : int, float numeric value
         Contrast controlling parameter for output image.
     name : str, default='true_color'
         Name of output DataArray.
