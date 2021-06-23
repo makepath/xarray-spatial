@@ -1647,8 +1647,8 @@ def _true_color_dask_cupy(r, g, b, nodata, contrast):
 
 def true_color(r, g, b, nodata=1, contrast=10.0, name='true_color'):
     """
-    Create true color composite from a combination of red, green and blue bands
-    satellite images.
+    Create true color composite from a combination of red, green and
+    blue bands satellite images.
 
     Parameters
     ----------
@@ -1659,7 +1659,7 @@ def true_color(r, g, b, nodata=1, contrast=10.0, name='true_color'):
     b : xarray.DataArray
         2D array of blue band data.
     nodata : int, float numeric value
-        Nodata value of input DataArrays
+        Nodata value of input DataArrays.
     contrast : int, float numeric value
         Contrast controlling parameter for output image.
     name : str, default='true_color'
