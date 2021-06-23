@@ -1667,7 +1667,7 @@ def true_color(r, g, b, nodata=1, contrast=10.0, name='true_color'):
 
     Returns
     -------
-    true_color_agg : xarray.DataArray of the same type as inputs.
+    true_color_agg : xarray.DataArray of the same type as inputs
         3D array true color image with dims of [y, x, band].
         All output attributes are copied from red band image.
 
