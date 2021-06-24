@@ -1,6 +1,19 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.2.5 - 6/24/2021
+- Added reprojection notebook (#474)
+- Reviewed local tools notebook (#466)
+- Removed save_cogs_azure notebook (#478)
+- Removed xrspatial install guidance from makepath channel (#483)
+- Moved local notebook to user guide folder (#486)
+- Fixed pharmacy notebook (#479)
+- Fixed path-finding notebook data load guidance (#480)
+- Fixed focal notebook imports (#481)
+- Fixed remote-sensing notebook data load guidance (#482)
+- Added output name and attrs on true_color function (#484)
+- Added classify notebook (#477)
+
 ### Version 0.2.4 - 6/10/2021
 - Added resample notebook (#452)
 - Reviewed mosaic notebook (#454)
