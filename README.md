@@ -1,11 +1,10 @@
-:earth_africa: xarray-spatial: Raster-Based Spatial Analysis in Python
--------
-
 [![Build Status](https://travis-ci.org/makepath/xarray-spatial.svg?branch=master)](https://travis-ci.org/makepath/xarray-spatial)
 [![Build status](https://ci.appveyor.com/api/projects/status/4aco2mfbk14vds77?svg=true)](https://ci.appveyor.com/project/brendancol/xarray-spatial)
 [![PyPI version](https://badge.fury.io/py/xarray-spatial.svg)](https://badge.fury.io/py/xarray-spatial)
 [![Downloads](https://img.shields.io/pypi/dm/xarray-spatial.svg)]()
 [![License](https://img.shields.io/pypi/l/xarray-spatial.svg)]()
+
+<img src="img/Xarray-Spatial-logo.png"/><br>
 
 -------
 
