@@ -4,7 +4,7 @@
 [![Downloads](https://img.shields.io/pypi/dm/xarray-spatial.svg)]()
 [![License](https://img.shields.io/pypi/l/xarray-spatial.svg)]()
 
-<img src="img/Xarray-Spatial-logo.svg"/><br>
+<img src="img/Xarray-Spatial-logo.svg"/>
 
 -------
 
