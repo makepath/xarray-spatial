@@ -1,6 +1,14 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.2.6 - 6/28/2021
+- Updated the classification notebook (#489)
+- Added xrspatial logo to readme (#492)
+- Removed reprojection notebook old version (#494)
+- Added true_color function to documentation (#494)
+- Added th params to true_color function (#494)
+- Added pathfinding nb data load guidance (#491)
+
 ### Version 0.2.5 - 6/24/2021
 - Added reprojection notebook (#474)
 - Reviewed local tools notebook (#466)
