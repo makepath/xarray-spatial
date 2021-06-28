@@ -1535,9 +1535,6 @@ def _normalize_data_cpu(data, min_val, max_val, pixel_max, c, th):
     range_val = max_val - min_val
     rows, cols = data.shape
 
-    c = c
-    th = th
-
     # check range_val to avoid dividing by zero
     if range_val != 0:
         for y in range(rows):
