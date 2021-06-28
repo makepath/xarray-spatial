@@ -1528,15 +1528,12 @@ def ebbi(red_agg: xr.DataArray,
 
 
 @ngjit
-def _normalize_data_cpu(data, min_val, max_val, pixel_max, contrast):
+def _normalize_data_cpu(data, min_val, max_val, pixel_max, c, th):
     out = np.zeros_like(data)
     out[:] = np.nan
 
     range_val = max_val - min_val
     rows, cols = data.shape
-
-    c = contrast
-    th = .125
 
     # check range_val to avoid dividing by zero
     if range_val != 0:
@@ -1550,37 +1547,39 @@ def _normalize_data_cpu(data, min_val, max_val, pixel_max, contrast):
     return out
 
 
-def _normalize_data_numpy(data, pixel_max, contrast):
+def _normalize_data_numpy(data, pixel_max, c, th):
     min_val = np.nanmin(data)
     max_val = np.nanmax(data)
-    out = _normalize_data_cpu(data, min_val, max_val, pixel_max, contrast)
-    return out
-
-
-def _normalize_data_dask(data, pixel_max, contrast):
-    min_val = da.nanmin(data)
-    max_val = da.nanmax(data)
-    out = da.map_blocks(
-        _normalize_data_cpu, data, min_val, max_val, pixel_max, contrast,
-        meta=np.array(())
+    out = _normalize_data_cpu(
+        data, min_val, max_val, pixel_max, c, th
     )
     return out
 
 
-def _normalize_data_cupy(data, pixel_max, contrast):
+def _normalize_data_dask(data, pixel_max, c, th):
+    min_val = da.nanmin(data)
+    max_val = da.nanmax(data)
+    out = da.map_blocks(
+        _normalize_data_cpu, data, min_val, max_val, pixel_max,
+        c, th, meta=np.array(())
+    )
+    return out
+
+
+def _normalize_data_cupy(data, pixel_max, c, th):
     raise NotImplementedError('Not Supported')
 
 
-def _normalize_data_dask_cupy(data, pixel_max, contrast):
+def _normalize_data_dask_cupy(data, pixel_max, c, th):
     raise NotImplementedError('Not Supported')
 
 
-def _normalize_data(agg, pixel_max=255.0, contrast=10):
+def _normalize_data(agg, pixel_max, c, th):
     mapper = ArrayTypeFunctionMapping(numpy_func=_normalize_data_numpy,
                                       dask_func=_normalize_data_dask,
                                       cupy_func=_normalize_data_cupy,
                                       dask_cupy_func=_normalize_data_dask_cupy)
-    out = mapper(agg)(agg.data, pixel_max, contrast)
+    out = mapper(agg)(agg.data, pixel_max, c, th)
     return out
 
 
@@ -1611,25 +1610,25 @@ def _alpha(red, nodata=1):
     return out
 
 
-def _true_color_numpy(r, g, b, nodata, contrast):
+def _true_color_numpy(r, g, b, nodata, c, th):
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
 
     h, w = r.shape
     out = np.zeros((h, w, 4), dtype=np.uint8)
 
     pixel_max = 255
-    out[:, :, 0] = (_normalize_data(r, pixel_max, contrast)).astype(np.uint8)
-    out[:, :, 1] = (_normalize_data(g, pixel_max, contrast)).astype(np.uint8)
-    out[:, :, 2] = (_normalize_data(b, pixel_max, contrast)).astype(np.uint8)
+    out[:, :, 0] = (_normalize_data(r, pixel_max, c, th)).astype(np.uint8)
+    out[:, :, 1] = (_normalize_data(g, pixel_max, c, th)).astype(np.uint8)
+    out[:, :, 2] = (_normalize_data(b, pixel_max, c, th)).astype(np.uint8)
     out[:, :, 3] = a.astype(np.uint8)
     return out
 
 
-def _true_color_dask(r, g, b, nodata, contrast):
+def _true_color_dask(r, g, b, nodata, c, th):
     pixel_max = 255
-    red = (_normalize_data(r, pixel_max, contrast)).astype(np.uint8)
-    green = (_normalize_data(g, pixel_max, contrast)).astype(np.uint8)
-    blue = (_normalize_data(b, pixel_max, contrast)).astype(np.uint8)
+    red = (_normalize_data(r, pixel_max, c, th)).astype(np.uint8)
+    green = (_normalize_data(g, pixel_max, c, th)).astype(np.uint8)
+    blue = (_normalize_data(b, pixel_max, c, th)).astype(np.uint8)
 
     alpha = _alpha(r, nodata).astype(np.uint8)
 
@@ -1637,18 +1636,23 @@ def _true_color_dask(r, g, b, nodata, contrast):
     return out
 
 
-def _true_color_cupy(r, g, b, nodata, contrast):
+def _true_color_cupy(r, g, b, nodata, c, th):
     raise NotImplementedError('Not Supported')
 
 
-def _true_color_dask_cupy(r, g, b, nodata, contrast):
+def _true_color_dask_cupy(r, g, b, nodata, c, th):
     raise NotImplementedError('Not Supported')
 
 
-def true_color(r, g, b, nodata=1, contrast=10.0, name='true_color'):
+def true_color(r, g, b, nodata=1, c=10.0, th=0.125, name='true_color'):
     """
     Create true color composite from a combination of red, green and
     blue bands satellite images.
+
+    A sigmoid function will be used to improve the contrast of output image.
+    The function is defined as:
+        ``normalized_pixel = 1 / (1 + np.exp(c * (th - normalized_pixel)))``
+    where ``c`` and ``th`` are contrast and brightness controlling parameters.
 
     Parameters
     ----------
@@ -1660,8 +1664,10 @@ def true_color(r, g, b, nodata=1, contrast=10.0, name='true_color'):
         2D array of blue band data.
     nodata : int, float numeric value
         Nodata value of input DataArrays.
-    contrast : int, float numeric value
-        Contrast controlling parameter for output image.
+    c : float, default=10
+        Contrast and brighness controlling parameter for output image.
+    th : float, default=0.125
+        Contrast and brighness controlling parameter for output image.
     name : str, default='true_color'
         Name of output DataArray.
 
@@ -1670,7 +1676,6 @@ def true_color(r, g, b, nodata=1, contrast=10.0, name='true_color'):
     true_color_agg : xarray.DataArray of the same type as inputs
         3D array true color image with dims of [y, x, band].
         All output attributes are copied from red band image.
-
 
     Examples
     --------
@@ -1699,7 +1704,7 @@ def true_color(r, g, b, nodata=1, contrast=10.0, name='true_color'):
                                       dask_cupy_func=_true_color_dask_cupy)
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        out = mapper(r)(r, g, b, nodata, contrast)
+        out = mapper(r)(r, g, b, nodata, c, th)
 
     # TODO: output metadata: coords, dims, attrs
     _dims = ['y', 'x', 'band']
