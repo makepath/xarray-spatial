@@ -73,3 +73,4 @@ Structure Insensitive Pigment Index (SIPI)
     :toctree: _autosummary
 
     xrspatial.multispectral.sipi
+    xrspatial.multispectral.true_color
