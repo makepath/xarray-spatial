@@ -12,7 +12,8 @@ from typing import Optional, Callable, Union, Dict, List
 
 def stats(zones: xr.DataArray,
           values: xr.DataArray,
-          stat_funcs=['mean', 'max', 'min', 'std', 'var', 'count']):
+          stat_funcs: Union[Dict, List] = ['mean', 'max', 'min', 'std', 'var', 'count'], #noqa
+          nodata: Optional[int] = None):
     """
     Calculate summary statistics for each zone defined by a zone
     dataset, based on values aggregate.
@@ -41,6 +42,10 @@ def stats(zones: xr.DataArray,
         'count']`. In the dictionary case, all of its values must be
         callable. Function takes only one argument that is the `values` raster.
         The key become the column name in the output DataFrame.
+
+    nodata: int, default=None
+        Nodata value in `zones` raster.
+        Cells with `nodata` does not belong to any zone.
 
     Returns
     -------
@@ -144,7 +149,11 @@ def stats(zones: xr.DataArray,
         raise ValueError(
             "`values` must be an array of integers or floats")
 
-    unique_zones = np.unique(zones.data)
+    if nodata is not None:
+        # do not consider zone with nodata values
+        unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
+    else:
+        unique_zones = np.unique(zones.data)
 
     # mask out all invalid values such as: nan, inf
     masked_values = np.ma.masked_invalid(values.data)
@@ -192,8 +201,13 @@ def stats(zones: xr.DataArray,
     return stats_df
 
 
-def _crosstab_2d(zones, values):
-    unique_zones = np.unique(zones.data)
+def _crosstab_2d(zones, values, nodata):
+
+    if nodata is not None:
+        # do not consider zone with nodata values
+        unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
+    else:
+        unique_zones = np.unique(zones.data)
 
     # mask out all invalid values such as: nan, inf
     masked_values = np.ma.masked_invalid(values.data)
@@ -219,7 +233,7 @@ def _crosstab_2d(zones, values):
     return crosstab_df
 
 
-def _crosstab_3d(zones, values, layer):
+def _crosstab_3d(zones, values, layer, nodata):
     if layer is None:
         cats = values.indexes[values.dims[-1]].values
     else:
@@ -229,7 +243,11 @@ def _crosstab_3d(zones, values, layer):
 
     num_cats = len(cats)
 
-    unique_zones = np.unique(zones.data)
+    if nodata is not None:
+        # do not consider zone with nodata values
+        unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
+    else:
+        unique_zones = np.unique(zones.data)
 
     # mask out all invalid values such as: nan, inf
     masked_values = np.ma.masked_invalid(values.data)
@@ -256,7 +274,8 @@ def _crosstab_3d(zones, values, layer):
 
 def crosstab(zones: xr.DataArray,
              values: xr.DataArray,
-             layer: Optional[str] = None) -> pd.DataFrame:
+             layer: Optional[str] = None,
+             nodata: Optional[int] = None) -> pd.DataFrame:
     """
     Calculate cross-tabulated (categorical stats) areas
     between two datasets: a zone dataset, a value dataset (a value
@@ -411,9 +430,9 @@ def crosstab(zones: xr.DataArray,
             "`values` must be an xarray of integers or floats")
 
     if values.ndim == 3:
-        return _crosstab_3d(zones, values, layer)
+        return _crosstab_3d(zones, values, layer, nodata)
     elif values.ndim == 2:
-        return _crosstab_2d(zones, values)
+        return _crosstab_2d(zones, values, nodata)
     else:
         raise ValueError("`values` must use either 2D or 3D coordinates.")
 
