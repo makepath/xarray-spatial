@@ -439,7 +439,8 @@ def crosstab(zones: xr.DataArray,
 
 def apply(zones: xr.DataArray,
           values: xr.DataArray,
-          func: Callable):
+          func: Callable,
+          nodata: Optional[int] = 0):
     """
     Apply a function to the `values` agg within zones in `zones` agg.
     Change the agg content.
@@ -497,11 +498,11 @@ def apply(zones: xr.DataArray,
         raise ValueError(
             "`values` must be an array of integers or float")
 
-    # entries of zone 0 remain the same
-    remain_entries = zones.data == 0
+    # entries of nodata remain the same
+    remain_entries = zones.data == nodata
 
-    # entries with a non-zero zone value
-    zones_entries = zones.data != 0
+    # entries with to be included in calculation
+    zones_entries = zones.data != nodata
 
     if len(values.shape) == 3:
         z = values.shape[-1]

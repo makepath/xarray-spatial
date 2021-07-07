@@ -38,11 +38,36 @@ def test_stats_default():
     zone_vals_2 = np.ma.masked_where(zones != 2, masked_values)
     zone_vals_3 = np.ma.masked_where(zones != 4, masked_values)
 
-    zone_means = [zone_vals_0.mean(), zone_vals_1.mean(), zone_vals_2.mean(), zone_vals_3.mean()]
-    zone_maxes = [zone_vals_0.max(), zone_vals_1.max(), zone_vals_2.max(), zone_vals_3.max()]
-    zone_mins = [zone_vals_0.min(), zone_vals_1.min(), zone_vals_2.min(), zone_vals_3.min()]
-    zone_stds = [zone_vals_0.std(), zone_vals_1.std(), zone_vals_2.std(), zone_vals_3.std()]
-    zone_vars = [zone_vals_0.var(), zone_vals_1.var(), zone_vals_2.var(), zone_vals_3.var()]
+    zone_means = [
+        zone_vals_0.mean(),
+        zone_vals_1.mean(),
+        zone_vals_2.mean(),
+        zone_vals_3.mean()
+    ]
+    zone_maxes = [
+        zone_vals_0.max(),
+        zone_vals_1.max(),
+        zone_vals_2.max(),
+        zone_vals_3.max()
+    ]
+    zone_mins = [
+        zone_vals_0.min(),
+        zone_vals_1.min(),
+        zone_vals_2.min(),
+        zone_vals_3.min()
+    ]
+    zone_stds = [
+        zone_vals_0.std(),
+        zone_vals_1.std(),
+        zone_vals_2.std(),
+        zone_vals_3.std()
+    ]
+    zone_vars = [
+        zone_vals_0.var(),
+        zone_vals_1.var(),
+        zone_vals_2.var(),
+        zone_vals_3.var()
+    ]
 
     zone_counts = [
         np.ma.count(zone_vals_0),
@@ -322,8 +347,8 @@ def test_apply():
 
     zones_val = np.zeros((3, 3), dtype=np.int)
     # define some zones
-    zones_val[0, ...] = 1
-    zones_val[1, ...] = 2
+    zones_val[1] = 1
+    zones_val[2] = 2
     zones = xa.DataArray(zones_val)
 
     values_val = np.array([[0, 1, 2],
@@ -332,7 +357,7 @@ def test_apply():
     values = xa.DataArray(values_val)
 
     values_copy = values.copy()
-    apply(zones, values, func)
+    apply(zones, values, func, nodata=2)
 
     # agg.shape remains the same
     assert values.shape == values_copy.shape
@@ -342,9 +367,7 @@ def test_apply():
     assert (values_val[0] == [0, 0, 0]).all()
     assert (values_val[1] == [0, 0, 0]).all()
     # values outside zones remain
-    assert (values_val[2, :2] == values_copy.values[2, :2]).all()
-    # last element of the last row is nan
-    assert np.isnan(values_val[2, 2])
+    assert np.isclose(values_val[2], values_copy.values[2], equal_nan=True).all()
 
 
 def test_suggest_zonal_canvas():
