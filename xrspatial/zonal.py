@@ -12,7 +12,7 @@ from typing import Optional, Callable, Union, Dict, List
 
 def stats(zones: xr.DataArray,
           values: xr.DataArray,
-          stat_funcs: Union[Dict, List] = ['mean', 'max', 'min', 'std', 'var', 'count'], #noqa
+          stat_funcs: Union[Dict, List] = ['mean', 'max', 'min', 'std', 'var', 'count'], # noqa
           nodata: Optional[int] = None):
     """
     Calculate summary statistics for each zone defined by a zone
