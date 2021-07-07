@@ -367,7 +367,9 @@ def test_apply():
     assert (values_val[0] == [0, 0, 0]).all()
     assert (values_val[1] == [0, 0, 0]).all()
     # values outside zones remain
-    assert np.isclose(values_val[2], values_copy.values[2], equal_nan=True).all()
+    assert np.isclose(
+        values_val[2], values_copy.values[2], equal_nan=True
+    ).all()
 
 
 def test_suggest_zonal_canvas():
