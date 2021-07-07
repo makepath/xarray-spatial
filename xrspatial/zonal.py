@@ -45,7 +45,8 @@ def stats(zones: xr.DataArray,
 
     nodata: int, default=None
         Nodata value in `zones` raster.
-        Cells with `nodata` does not belong to any zone.
+        Cells with `nodata` does not belong to any zone,
+        and thus excluded from calculation.
 
     Returns
     -------
@@ -298,13 +299,20 @@ def crosstab(zones: xr.DataArray,
         whether or not they are contiguous. The input zone layer defines
         the shape, values, and locations of the zones. An integer field
         in the zone input is specified to define the zones.
+
     values : xr.DataArray
         values.values is a 3d array of integers or floats.
         The input value raster contains the input values used in
         calculating the categorical statistic for each zone.
+
     layer: str, default=None
         name of the layer inside the `values` DataArray for getting
         the values.
+
+    nodata: int, default=None
+        Nodata value in `zones` raster.
+        Cells with `nodata` does not belong to any zone,
+        and thus excluded from calculation.
 
     Returns
     -------
@@ -453,10 +461,17 @@ def apply(zones: xr.DataArray,
         contiguous. The input zone layer defines the shape, values, and
         locations of the zones. An integer field in the zone input is
         specified to define the zones.
+
     agg : xr.DataArray
         agg.values is either a 2D or 3D array of integers or floats.
         The input value raster.
+        
     func : callable function to apply.
+
+    nodata: int, default=None
+        Nodata value in `zones` raster.
+        Cells with `nodata` does not belong to any zone,
+        and thus excluded from calculation.
 
     Examples
     --------
