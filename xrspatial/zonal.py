@@ -7,7 +7,7 @@ from xrspatial.utils import ngjit
 
 from math import sqrt
 
-from typing import Optional, Callable, Union
+from typing import Optional, Callable, Union, Dict, List
 
 
 def stats(zones: xr.DataArray,
@@ -23,22 +23,24 @@ def stats(zones: xr.DataArray,
     Parameters
     ----------
     zones : xr.DataArray
-        zones.values is a 2d array of integers.
+        zones is a 2D xarray DataArray of integers.
         A zone is all the cells in a raster that have the same value,
-        whether or not they are contiguous. The input zone layer defines
+        whether or not they are contiguous. The input `zones` raster defines
         the shape, values, and locations of the zones. An integer field
-        in the zone input is specified to define the zones.
+        in the input `zones` DataArray defines a zone.
+
     values : xr.DataArray
-        values.values is a 2d array of integers or floats.
-        The input value raster contains the input values used in
+        values is a 2D xarray DataArray of numeric values (integers or floats).
+        The input `values` raster contains the input values used in
         calculating the output statistic for each zone.
-    stat_funcs : list of string or dict, default=['mean', 'max', 'min',
+
+    stat_funcs : Dict, or List of strings, default=['mean', 'max', 'min',
         'std', 'var', 'count'])
-        Which statistics to calculate for each zone. If a list, possible
-        choices are subsets of ['mean', 'max', 'min', 'std', 'var',
-        'count']. In the dictionary case, all of its values must be
-        callable. Function takes only one argument that is the zone
-        values. The key become the column name in the output DataFrame.
+        The statistics to calculate for each zone. If a list, possible
+        choices are subsets of `['mean', 'max', 'min', 'std', 'var',
+        'count']`. In the dictionary case, all of its values must be
+        callable. Function takes only one argument that is the `values` raster.
+        The key become the column name in the output DataFrame.
 
     Returns
     -------
@@ -142,8 +144,7 @@ def stats(zones: xr.DataArray,
         raise ValueError(
             "`values` must be an array of integers or floats")
 
-    # do not consider zone with 0s
-    unique_zones = np.unique(zones.data[np.where(zones.data != 0)])
+    unique_zones = np.unique(zones.data)
 
     # mask out all invalid values such as: nan, inf
     masked_values = np.ma.masked_invalid(values.data)
@@ -192,8 +193,7 @@ def stats(zones: xr.DataArray,
 
 
 def _crosstab_2d(zones, values):
-    # do not consider zone with 0s
-    unique_zones = np.unique(zones.data[np.where(zones.data != 0)])
+    unique_zones = np.unique(zones.data)
 
     # mask out all invalid values such as: nan, inf
     masked_values = np.ma.masked_invalid(values.data)
@@ -229,8 +229,7 @@ def _crosstab_3d(zones, values, layer):
 
     num_cats = len(cats)
 
-    # do not consider zone with 0s
-    unique_zones = np.unique(zones.data[np.where(zones.data != 0)])
+    unique_zones = np.unique(zones.data)
 
     # mask out all invalid values such as: nan, inf
     masked_values = np.ma.masked_invalid(values.data)

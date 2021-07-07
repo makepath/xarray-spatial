@@ -31,25 +31,28 @@ def stats_create_zones_values():
 def test_stats_default():
     zones, values = stats_create_zones_values()
 
-    unique_values = [1, 2, 4]
+    unique_values = [0, 1, 2, 4]
     masked_values = np.ma.masked_invalid(values.values)
+    zone_vals_0 = np.ma.masked_where(zones != 0, masked_values)
     zone_vals_1 = np.ma.masked_where(zones != 1, masked_values)
     zone_vals_2 = np.ma.masked_where(zones != 2, masked_values)
     zone_vals_3 = np.ma.masked_where(zones != 4, masked_values)
 
-    zone_means = [zone_vals_1.mean(), zone_vals_2.mean(), zone_vals_3.mean()]
-    zone_maxes = [zone_vals_1.max(), zone_vals_2.max(), zone_vals_3.max()]
-    zone_mins = [zone_vals_1.min(), zone_vals_2.min(), zone_vals_3.min()]
-    zone_stds = [zone_vals_1.std(), zone_vals_2.std(), zone_vals_3.std()]
-    zone_vars = [zone_vals_1.var(), zone_vals_2.var(), zone_vals_3.var()]
+    zone_means = [zone_vals_0.mean(), zone_vals_1.mean(), zone_vals_2.mean(), zone_vals_3.mean()]
+    zone_maxes = [zone_vals_0.max(), zone_vals_1.max(), zone_vals_2.max(), zone_vals_3.max()]
+    zone_mins = [zone_vals_0.min(), zone_vals_1.min(), zone_vals_2.min(), zone_vals_3.min()]
+    zone_stds = [zone_vals_0.std(), zone_vals_1.std(), zone_vals_2.std(), zone_vals_3.std()]
+    zone_vars = [zone_vals_0.var(), zone_vals_1.var(), zone_vals_2.var(), zone_vals_3.var()]
 
-    zone_counts = [np.ma.count(zone_vals_1),
-                   np.ma.count(zone_vals_2),
-                   np.ma.count(zone_vals_3)]
+    zone_counts = [
+        np.ma.count(zone_vals_0),
+        np.ma.count(zone_vals_1),
+        np.ma.count(zone_vals_2),
+        np.ma.count(zone_vals_3)
+    ]
 
     # default stat_funcs=['mean', 'max', 'min', 'std', 'var', 'count']
     df = stats(zones=zones, values=values)
-
     assert isinstance(df, pd.DataFrame)
 
     # indices of the output DataFrame matches the unique values in `zones`
@@ -57,7 +60,7 @@ def test_stats_default():
     assert idx == unique_values
 
     num_cols = len(df.columns)
-    # there are 5 statistics in default setting
+    # there are 6 statistics in default settings
     assert num_cols == 6
 
     assert zone_means == df['mean'].tolist()
@@ -74,11 +77,18 @@ def test_stats_default():
     def cal_double_sum(values):
         return values.sum() * 2
 
-    zone_sums = [cal_sum(zone_vals_1), cal_sum(zone_vals_2),
-                 cal_sum(zone_vals_3)]
-    zone_double_sums = [cal_double_sum(zone_vals_1),
-                        cal_double_sum(zone_vals_2),
-                        cal_double_sum(zone_vals_3)]
+    zone_sums = [
+        cal_sum(zone_vals_0),
+        cal_sum(zone_vals_1),
+        cal_sum(zone_vals_2),
+        cal_sum(zone_vals_3)
+    ]
+    zone_double_sums = [
+        cal_double_sum(zone_vals_0),
+        cal_double_sum(zone_vals_1),
+        cal_double_sum(zone_vals_2),
+        cal_double_sum(zone_vals_3)
+    ]
 
     custom_stats = {'sum': cal_sum, 'double sum': cal_double_sum}
     df = stats(zones=zones, values=values, stat_funcs=custom_stats)
@@ -92,16 +102,6 @@ def test_stats_default():
     assert num_cols == 2
     assert zone_sums == df['sum'].tolist()
     assert zone_double_sums == df['double sum'].tolist()
-
-
-def test_stats_dtypes():
-    zones, values = stats_create_zones_values()
-    values = values.astype(np.float16)
-
-    # default stat_funcs=['mean', 'max', 'min', 'std', 'var', 'count']
-    df = stats(zones=zones, values=values)
-
-    assert isinstance(df, pd.DataFrame)
 
 
 # TODO: get this test passing
@@ -187,25 +187,6 @@ def test_crosstab_invalid_input():
         crosstab(zones_agg=zones, values_agg=values, layer=layer)
 
 
-def test_crosstab_no_zones():
-    # create valid `values_agg`
-    values_agg = xa.DataArray(np.zeros(24).reshape(2, 3, 4),
-                              dims=['lat', 'lon', 'race'])
-    values_agg['race'] = ['cat1', 'cat2', 'cat3', 'cat4']
-    # create a valid `zones_agg` with compatiable shape
-    # no zone
-    zones_arr = np.zeros((2, 3), dtype=np.int)
-    zones_agg = xa.DataArray(zones_arr)
-
-    num_cats = len(values_agg.dims[-1])
-    df = crosstab(zones_agg, values_agg)
-
-    # number of columns = number of categories
-    assert len(df.columns) == num_cats
-    # no row as no zone
-    assert len(df.index) == 0
-
-
 def test_crosstab_no_values():
     # create valid `values_agg` of 0s
     values_agg = xa.DataArray(np.zeros(24).reshape(2, 3, 4),
@@ -222,8 +203,7 @@ def test_crosstab_no_values():
     # number of columns = number of categories
     assert len(df.columns) == num_cats
 
-    # exclude region with 0 zone id
-    zone_idx = set(np.unique(zones_arr)) - {0}
+    zone_idx = np.unique(zones_arr)
     num_zones = len(zone_idx)
     # number of rows = number of zones
     assert len(df.index) == num_zones
@@ -245,13 +225,13 @@ def test_crosstab_3d():
     zones_agg = xa.DataArray(zones_arr)
 
     df = crosstab(zones_agg, values_agg, layer)
+    assert isinstance(df, pd.DataFrame)
 
     num_cats = len(values_agg.dims[-1])
     # number of columns = number of categories
     assert len(df.columns) == num_cats
 
-    # exclude region with 0 zone id
-    zone_idx = list(set(np.unique(zones_arr)) - {0})
+    zone_idx = np.unique(zones_arr)
     num_zones = len(zone_idx)
     # number of rows = number of zones
     assert len(df.index) == num_zones
@@ -285,38 +265,19 @@ def test_crosstab_2d():
     zones_agg = xa.DataArray(zones_val, dims=['lat', 'lon'])
 
     df = crosstab(zones_agg, values_agg)
+    assert isinstance(df, pd.DataFrame)
 
     num_cats = 6  # 0, 10, 20, 30, 40, 50
     # number of columns = number of categories
     assert len(df.columns) == num_cats
 
-    # exclude region with 0 zone id
-    zone_idx = list(set(np.unique(zones_agg.data)) - {0})
+    zone_idx = np.unique(zones_agg.data)
     num_zones = len(zone_idx)
     # number of rows = number of zones
     assert len(df.index) == num_zones
     df.loc[:, 'check_sum'] = df.sum(axis=1)
     # sum of a row is 1.0
     assert df['check_sum'][zone_idx[0]] == 1.0
-
-
-def test_crosstab_2d_dtypes():
-    values_val = np.asarray([[0, 0, 10, 20],
-                             [0, 0, 0, 10],
-                             [np.inf, 30, 20, 50],
-                             [10, 30, 40, 40],
-                             [10, np.nan, 50, 0]], dtype=np.float16)
-    values_agg = xa.DataArray(values_val, dims=['lat', 'lon'])
-    zones_val = np.asarray([[1, 1, 6, 6],
-                            [1, 1, 6, 6],
-                            [3, 5, 6, 6],
-                            [3, 5, 7, 7],
-                            [3, 7, 7, 0]])
-    zones_agg = xa.DataArray(zones_val, dims=['lat', 'lon'])
-
-    df = crosstab(zones_agg, values_agg)
-
-    assert isinstance(df, pd.DataFrame)
 
 
 def test_apply_invalid_input():
