@@ -182,8 +182,9 @@ def stats(zones: xr.DataArray,
     .. plot::
        :include-source:
 
-        from xrspatial.zonal import stats
         import numpy as np
+        import xarray as xr
+        from xrspatial.zonal import stats
 
         height, width = 10, 10
         # values raster
@@ -216,7 +217,33 @@ def stats(zones: xr.DataArray,
         1  10     1350
         2  20     3600
         3  30     3850
+
+        >>> # Calculate Stats with dask backed xarray DataArrays
+        >>> dask_stats_df = stats(zones=dask_zones, values=dask_values)
+        >>> print(type(dask_stats_df))
+        <class 'dask.dataframe.core.DataFrame'>
+        >>> print(dask_stats_df.compute())
+            zone  mean  max  min   sum       std    var  count
+        0     0  22.0   44    0   550  14.21267  202.0     25
+        1    10  27.0   49    5   675  14.21267  202.0     25
+        2    20  72.0   94   50  1800  14.21267  202.0     25
+        3    30  77.0   99   55  1925  14.21267  202.0     25
+
+        >>> # Custom Stats with dask backed xarray DataArrays
+        >>> dask_custom_stats ={'double_sum': lambda val: val.sum()*2}
+        >>> dask_custom_stats_df = stats(zones=dask_zones,
+                                    values=dask_values,
+                                    stats_funcs=custom_stats)
+        >>> print(type(dask_custom_stats_df))
+        <class 'dask.dataframe.core.DataFrame'>
+        >>> print(dask_custom_stats_df.compute())
+            zone  double_sum
+        0     0        1100
+        1    10        1350
+        2    20        3600
+        3    30        3850
     """
+
     if zones.shape != values.shape:
         raise ValueError("`zones` and `values` must have same shape.")
 
