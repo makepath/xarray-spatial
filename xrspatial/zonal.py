@@ -150,11 +150,8 @@ def stats(zones: xr.DataArray,
         raise ValueError(
             "`values` must be an array of integers or floats")
 
-    if nodata is not None:
-        # do not consider zone with nodata values
-        unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
-    else:
-        unique_zones = np.unique(zones.data)
+    # do not consider zone with nodata values
+    unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
 
     # mask out all invalid values such as: nan, inf
     masked_values = np.ma.masked_invalid(values.data)
@@ -204,11 +201,8 @@ def stats(zones: xr.DataArray,
 
 def _crosstab_2d(zones, values, nodata):
 
-    if nodata is not None:
-        # do not consider zone with nodata values
-        unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
-    else:
-        unique_zones = np.unique(zones.data)
+    # do not consider zone with nodata values
+    unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
 
     # mask out all invalid values such as: nan, inf
     masked_values = np.ma.masked_invalid(values.data)
@@ -244,11 +238,8 @@ def _crosstab_3d(zones, values, layer, nodata):
 
     num_cats = len(cats)
 
-    if nodata is not None:
-        # do not consider zone with nodata values
-        unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
-    else:
-        unique_zones = np.unique(zones.data)
+    # do not consider zone with nodata values
+    unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
 
     # mask out all invalid values such as: nan, inf
     masked_values = np.ma.masked_invalid(values.data)
@@ -465,7 +456,7 @@ def apply(zones: xr.DataArray,
     agg : xr.DataArray
         agg.values is either a 2D or 3D array of integers or floats.
         The input value raster.
-        
+
     func : callable function to apply.
 
     nodata: int, default=None
