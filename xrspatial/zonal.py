@@ -123,7 +123,8 @@ def _stats_dask(zones: xr.DataArray,
     # name columns
     stats_df.columns = stats_dict.keys()
     stats_df.set_index('zone')
-
+    # set dtype for zone column the be the same as of `zones` raster
+    stats_df = stats_df.astype({'zone': zones.data.dtype})
     return stats_df
 
 
