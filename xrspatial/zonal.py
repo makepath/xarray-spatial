@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from xarray import DataArray
+import dask.array as da
+import dask.dataframe as dd
 
 from xrspatial.utils import ngjit
 
@@ -10,10 +12,123 @@ from math import sqrt
 from typing import Optional, Callable, Union, Dict, List
 
 
+def _stats_count(data):
+    if isinstance(data, np.ndarray):
+        # numpy case
+        stats_count = np.ma.count(data)
+    else:
+        # dask case
+        stats_count = data.size - da.ma.getmaskarray(data).sum()
+    return stats_count
+
+
+_DEFAULT_STATS = dict(
+    mean=lambda z: z.mean(),
+    max=lambda z: z.max(),
+    min=lambda z: z.min(),
+    sum=lambda z: z.sum(),
+    std=lambda z: z.std(),
+    var=lambda z: z.var(),
+    count=lambda z: _stats_count(z),
+)
+
+
+def _stats(zones: xr.DataArray,
+           unique_zones: List[int],
+           masked_values: xr.DataArray,
+           stats_funcs: List,
+           nodata: Union[int, float]) -> Dict:
+
+    # Calculate stats that supported in default stats functions
+
+    stats_dict = {
+        stats: [] for stats in stats_funcs
+    }
+    # zone column
+    stats_dict['zone'] = []
+
+    for zone_id in unique_zones:
+
+        # do not consider zone with nodata values
+        if nodata is not None:
+            if np.isclose(zone_id, nodata, equal_nan=True):
+                continue
+
+        stats_dict['zone'].append(zone_id)
+
+        # get zone values
+        if isinstance(masked_values, np.ndarray):
+            # numpy case
+            zone_values = np.ma.masked_where(
+                zones.data != zone_id, masked_values
+            )
+        else:
+            # dask case
+            zone_values = da.ma.masked_where(
+                zones.data != zone_id, masked_values
+            )
+        for stats in stats_funcs:
+            stats_func = stats_funcs.get(stats)
+            if not callable(stats_func):
+                raise ValueError(stats)
+            stats_dict[stats].append(stats_func(zone_values))
+
+    return stats_dict
+
+
+def _stats_numpy(zones: xr.DataArray,
+                 values: xr.DataArray,
+                 stats_funcs: Dict,
+                 nodata: Union[int, float]) -> pd.DataFrame:
+
+    # do not consider zone with nodata values
+    unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
+
+    # mask out all invalid values such as: nan, inf
+    masked_values = np.ma.masked_invalid(values.data)
+
+    stats_dict = _stats(
+        zones, unique_zones, masked_values, stats_funcs, nodata
+    )
+    stats_df = pd.DataFrame(stats_dict)
+    stats_df.set_index('zone', inplace=True)
+    return stats_df
+
+
+def _stats_dask(zones: xr.DataArray,
+                values: xr.DataArray,
+                stats_funcs: Union[Dict, List] = ['mean', 'max', 'min', 'std', 'var', 'count'], # noqa
+                nodata: Optional[int] = None) -> pd.DataFrame:
+
+    unique_zones = da.unique(zones.data).compute_chunk_sizes()
+
+    # mask out all invalid values such as: nan, inf
+    masked_values = da.ma.masked_invalid(values.data)
+
+    stats_dict = _stats(
+        zones, unique_zones, masked_values, stats_funcs, nodata
+    )
+
+    stats_dict = {
+        stats: da.stack(zonal_stats, axis=0)
+        for stats, zonal_stats in stats_dict.items()
+    }
+
+    # generate dask dataframe
+    stats_df = dd.concat(
+        [dd.from_dask_array(stats) for stats in stats_dict.values()],
+        axis=1
+    )
+    # name columns
+    stats_df.columns = stats_dict.keys()
+
+    return stats_df
+
+
 def stats(zones: xr.DataArray,
           values: xr.DataArray,
-          stat_funcs: Union[Dict, List] = ['mean', 'max', 'min', 'std', 'var', 'count'], # noqa
-          nodata: Optional[int] = None):
+          stats_funcs: Union[Dict, List] = ['mean', 'max', 'min', 'sum', 'std', 'var', 'count'], # noqa
+          nodata: Optional[Union[int, float]] = None):
     """
     Calculate summary statistics for each zone defined by a zone
     dataset, based on values aggregate.
@@ -24,7 +139,7 @@ def stats(zones: xr.DataArray,
     Parameters
     ----------
     zones : xr.DataArray
-        zones is a 2D xarray DataArray of integers.
+        zones is a 2D xarray DataArray of numeric values.
         A zone is all the cells in a raster that have the same value,
         whether or not they are contiguous. The input `zones` raster defines
         the shape, values, and locations of the zones. An integer field
@@ -35,7 +150,7 @@ def stats(zones: xr.DataArray,
         The input `values` raster contains the input values used in
         calculating the output statistic for each zone.
 
-    stat_funcs : Dict, or List of strings, default=['mean', 'max', 'min',
+    stats_funcs : Dict, or List of strings, default=['mean', 'max', 'min',
         'std', 'var', 'count'])
         The statistics to calculate for each zone. If a list, possible
         choices are subsets of `['mean', 'max', 'min', 'std', 'var',
@@ -43,7 +158,7 @@ def stats(zones: xr.DataArray,
         callable. Function takes only one argument that is the `values` raster.
         The key become the column name in the output DataFrame.
 
-    nodata: int, default=None
+    nodata: int, float, default=None
         Nodata value in `zones` raster.
         Cells with `nodata` does not belong to any zone,
         and thus excluded from calculation.
@@ -130,7 +245,7 @@ def stats(zones: xr.DataArray,
         >>> custom_stats ={'sum': lambda val: val.sum()}
         >>> custom_stats_agg = stats(zones = equal_interval_agg,
                                      values = terrain_agg,
-                                     stat_funcs=custom_stats)
+                                     stats_funcs=custom_stats)
         >>> print(custom_stats_agg)
                     sum
         1  7.093674e+07
@@ -150,51 +265,22 @@ def stats(zones: xr.DataArray,
         raise ValueError(
             "`values` must be an array of integers or floats")
 
-    # do not consider zone with nodata values
-    unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
+    if isinstance(stats_funcs, list):
+        # create a dict of stats
+        stats_funcs_dict = {}
 
-    # mask out all invalid values such as: nan, inf
-    masked_values = np.ma.masked_invalid(values.data)
+        for stats in stats_funcs:
+            func = _DEFAULT_STATS.get(stats, None)
+            if func is None:
+                err_str = f"Invalid stat name. {stats} option not supported."
+                raise ValueError(err_str)
 
-    if isinstance(stat_funcs, dict):
-        stats_df = pd.DataFrame(columns=[*stat_funcs])
-        for zone_id in unique_zones:
-            # get zone values
-            zone_values = np.ma.masked_where(zones.data != zone_id,
-                                             masked_values)
-            zone_stats = []
-            for stat in stat_funcs:
-                stat_func = stat_funcs.get(stat)
-                if not callable(stat_func):
-                    raise ValueError(stat)
-                zone_stats.append(stat_func(zone_values))
-            stats_df.loc[zone_id] = zone_stats
-    else:
-        stats_df = pd.DataFrame(columns=stat_funcs)
+            stats_funcs_dict[stats] = func
 
-        for zone_id in unique_zones:
-            # get zone values
-            zone_values = np.ma.masked_where(zones.data != zone_id,
-                                             masked_values)
-            zone_stats = []
-            for stat in stat_funcs:
-                if stat == 'mean':
-                    zone_stats.append(zone_values.mean())
-                elif stat == 'max':
-                    zone_stats.append(zone_values.max())
-                elif stat == 'min':
-                    zone_stats.append(zone_values.min())
-                elif stat == 'std':
-                    zone_stats.append(zone_values.std())
-                elif stat == 'var':
-                    zone_stats.append(zone_values.var())
-                elif stat == 'count':
-                    zone_stats.append(np.ma.count(zone_values))
-                else:
-                    err_str = 'Invalid stat name. ' \
-                              + '\'' + stat + '\' option not supported.'
-                    raise ValueError(err_str)
-            stats_df.loc[zone_id] = zone_stats
+    elif isinstance(stats_funcs, dict):
+        stats_funcs_dict = stats_funcs.copy()
+
+    stats_df = _stats_numpy(zones, values, stats_funcs_dict, nodata)
 
     return stats_df
 

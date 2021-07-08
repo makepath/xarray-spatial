@@ -56,6 +56,12 @@ def test_stats_default():
         zone_vals_2.min(),
         zone_vals_3.min()
     ]
+    zone_sums = [
+        zone_vals_0.sum(),
+        zone_vals_1.sum(),
+        zone_vals_2.sum(),
+        zone_vals_3.sum(),
+    ]
     zone_stds = [
         zone_vals_0.std(),
         zone_vals_1.std(),
@@ -68,7 +74,6 @@ def test_stats_default():
         zone_vals_2.var(),
         zone_vals_3.var()
     ]
-
     zone_counts = [
         np.ma.count(zone_vals_0),
         np.ma.count(zone_vals_1),
@@ -76,7 +81,7 @@ def test_stats_default():
         np.ma.count(zone_vals_3)
     ]
 
-    # default stat_funcs=['mean', 'max', 'min', 'std', 'var', 'count']
+    # default stats_funcs=['mean', 'max', 'min', 'sum', 'std', 'var', 'count']
     df = stats(zones=zones, values=values)
     assert isinstance(df, pd.DataFrame)
 
@@ -85,12 +90,13 @@ def test_stats_default():
     assert idx == unique_values
 
     num_cols = len(df.columns)
-    # there are 6 statistics in default settings
-    assert num_cols == 6
+    # there are 7 statistics in default settings
+    assert num_cols == 7
 
     assert zone_means == df['mean'].tolist()
     assert zone_maxes == df['max'].tolist()
     assert zone_mins == df['min'].tolist()
+    assert zone_sums == df['sum'].tolist()
     assert zone_stds == df['std'].tolist()
     assert zone_vars == df['var'].tolist()
     assert zone_counts == df['count'].tolist()
@@ -116,7 +122,7 @@ def test_stats_default():
     ]
 
     custom_stats = {'sum': cal_sum, 'double sum': cal_double_sum}
-    df = stats(zones=zones, values=values, stat_funcs=custom_stats)
+    df = stats(zones=zones, values=values, stats_funcs=custom_stats)
 
     assert isinstance(df, pd.DataFrame)
     # indices of the output DataFrame matches the unique values in `zones`
@@ -140,7 +146,7 @@ def _test_stats_invalid_custom_stat():
 
     # custom stat only takes 1 argument. Thus, raise error
     with pytest.raises(Exception) as e_info:  # noqa
-        stats(zones=zones, values=values, stat_funcs=custom_stats)
+        stats(zones=zones, values=values, stats_funcs=custom_stats)
 
 
 def test_stats_invalid_stat_input():
@@ -149,7 +155,7 @@ def test_stats_invalid_stat_input():
     # invalid stats
     custom_stats = ['some_stat']
     with pytest.raises(Exception) as e_info:  # noqa
-        stats(zones=zones, values=values, stat_funcs=custom_stats)
+        stats(zones=zones, values=values, stats_funcs=custom_stats)
 
     # invalid values:
     zones = xa.DataArray(np.array([1, 2, 0], dtype=np.int))
