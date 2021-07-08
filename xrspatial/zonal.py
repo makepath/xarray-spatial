@@ -41,11 +41,12 @@ def _stats(zones: xr.DataArray,
 
     # Calculate stats that supported in default stats functions
 
-    stats_dict = {
-        stats: [] for stats in stats_funcs
-    }
+    stats_dict = {}
     # zone column
     stats_dict['zone'] = []
+    # stats columns
+    for stats in stats_funcs:
+        stats_dict[stats] = []
 
     for zone_id in unique_zones:
 
@@ -91,14 +92,14 @@ def _stats_numpy(zones: xr.DataArray,
         zones, unique_zones, masked_values, stats_funcs, nodata
     )
     stats_df = pd.DataFrame(stats_dict)
-    stats_df.set_index('zone', inplace=True)
+    stats_df.set_index('zone')
     return stats_df
 
 
 def _stats_dask(zones: xr.DataArray,
                 values: xr.DataArray,
-                stats_funcs: Union[Dict, List] = ['mean', 'max', 'min', 'std', 'var', 'count'], # noqa
-                nodata: Optional[int] = None) -> pd.DataFrame:
+                stats_funcs: Dict,
+                nodata: Union[int, float]) -> pd.DataFrame:
 
     unique_zones = da.unique(zones.data).compute_chunk_sizes()
 
@@ -121,6 +122,7 @@ def _stats_dask(zones: xr.DataArray,
     )
     # name columns
     stats_df.columns = stats_dict.keys()
+    stats_df.set_index('zone')
 
     return stats_df
 
@@ -135,6 +137,9 @@ def stats(zones: xr.DataArray,
 
     A single output value is computed for every zone in the input zone
     dataset.
+
+    This function currently supports numpy backed, and dask with numpy backed
+    xarray DataArray.
 
     Parameters
     ----------
@@ -279,7 +284,12 @@ def stats(zones: xr.DataArray,
     elif isinstance(stats_funcs, dict):
         stats_funcs_dict = stats_funcs.copy()
 
-    stats_df = _stats_numpy(zones, values, stats_funcs_dict, nodata)
+    if isinstance(values.data, np.ndarray):
+        # numpy case
+        stats_df = _stats_numpy(zones, values, stats_funcs_dict, nodata)
+    else:
+        # dask case
+        stats_df = _stats_dask(zones, values, stats_funcs_dict, nodata)
 
     return stats_df
 

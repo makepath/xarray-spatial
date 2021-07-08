@@ -2,6 +2,8 @@ import pytest
 import numpy as np
 import pandas as pd
 import xarray as xa
+import dask.array as da
+import dask.dataframe as dd
 
 from xrspatial import zonal_stats as stats
 from xrspatial import zonal_apply as apply
@@ -14,7 +16,7 @@ from xrspatial import crop
 from xrspatial.zonal import regions
 
 
-def stats_create_zones_values():
+def stats_create_zones_values(backend='numpy'):
     # create valid "zones" and "values" for testing stats()
     zones_val = np.array([[0, 1, 1, 2, 4, 0, 0],
                           [0, 0, 1, 1, 2, 1, 4],
@@ -25,11 +27,17 @@ def stats_create_zones_values():
                            [0, 0, -11, 4, -2.5, np.nan, 7],
                            [np.nan, 3.5, -9, 4, 2, 0, np.inf]])
     values = xa.DataArray(values_val)
+
+    if 'dask' in backend:
+        zones.data = da.from_array(zones.data, chunks=(3, 3))
+        values.data = da.from_array(values.data, chunks=(3, 3))
+
     return zones, values
 
 
 def test_stats_default():
-    zones, values = stats_create_zones_values()
+    zones, values = stats_create_zones_values(backend='numpy')
+    dask_zones, dask_values = stats_create_zones_values(backend='dask')
 
     unique_values = [0, 1, 2, 4]
     masked_values = np.ma.masked_invalid(values.values)
@@ -85,13 +93,23 @@ def test_stats_default():
     df = stats(zones=zones, values=values)
     assert isinstance(df, pd.DataFrame)
 
+    dask_df = stats(zones=dask_zones, values=dask_values)
+    assert isinstance(dask_df, dd.DataFrame)
+
+    dask_df = dask_df.compute()
+    assert isinstance(dask_df, pd.DataFrame)
+
+    assert (df.columns == dask_df.columns).all()
+    for col in df.columns:
+        assert np.isclose(df[col], dask_df[col], equal_nan=True).all()
+
     # indices of the output DataFrame matches the unique values in `zones`
-    idx = df.index.tolist()
-    assert idx == unique_values
+    idx = df['zone']
+    assert np.isclose(idx, unique_values).all()
 
     num_cols = len(df.columns)
-    # there are 7 statistics in default settings
-    assert num_cols == 7
+    # 8 columns: 1 for zone id, and 7 statistics in default settings
+    assert num_cols == 8
 
     assert zone_means == df['mean'].tolist()
     assert zone_maxes == df['max'].tolist()
@@ -126,11 +144,11 @@ def test_stats_default():
 
     assert isinstance(df, pd.DataFrame)
     # indices of the output DataFrame matches the unique values in `zones`
-    idx = df.index.tolist()
-    assert idx == unique_values
+    idx = df['zone']
+    assert np.isclose(idx, unique_values).all()
     num_cols = len(df.columns)
-    # there are 2 statistics
-    assert num_cols == 2
+    # 3 columns: 1 zone, 2 statistics
+    assert num_cols == 3
     assert zone_sums == df['sum'].tolist()
     assert zone_double_sums == df['double sum'].tolist()
 
