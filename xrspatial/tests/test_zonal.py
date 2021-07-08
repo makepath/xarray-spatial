@@ -163,12 +163,6 @@ def test_stats_invalid_stat_input():
     with pytest.raises(Exception) as e_info:  # noqa
         stats(zones=zones, values=values)
 
-    # invalid zones
-    zones = xa.DataArray(np.array([1, 2, 0.5]))
-    values = xa.DataArray(np.array([1, 2, 0.5]))
-    with pytest.raises(Exception) as e_info:  # noqa
-        stats(zones=zones, values=values)
-
     # mismatch shape between zones and values:
     zones = xa.DataArray(np.array([1, 2, 0]))
     values = xa.DataArray(np.array([1, 2, 0, np.nan]))

@@ -254,16 +254,15 @@ def stats(zones: xr.DataArray,
         4  4.793242e+06
     """
     if zones.shape != values.shape:
-        raise ValueError(
-            "`zones` and `values` must have same shape")
+        raise ValueError("`zones` and `values` must have same shape.")
 
-    if not issubclass(zones.data.dtype.type, np.integer):
-        raise ValueError("`zones` must be an array of integers")
+    if not (issubclass(zones.data.dtype.type, np.integer) or
+            issubclass(zones.data.dtype.type, np.floating)):
+        raise ValueError("`zones` must be an array of integers.")
 
     if not (issubclass(values.data.dtype.type, np.integer) or
             issubclass(values.data.dtype.type, np.floating)):
-        raise ValueError(
-            "`values` must be an array of integers or floats")
+        raise ValueError("`values` must be an array of integers or floats.")
 
     if isinstance(stats_funcs, list):
         # create a dict of stats
