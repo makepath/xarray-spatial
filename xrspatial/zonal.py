@@ -93,6 +93,8 @@ def _stats_numpy(zones: xr.DataArray,
     )
     stats_df = pd.DataFrame(stats_dict)
     stats_df.set_index('zone')
+    # set dtype for zone column the be the same as of `zones` raster
+    stats_df = stats_df.astype({'zone': zones.data.dtype})
     return stats_df
 
 
