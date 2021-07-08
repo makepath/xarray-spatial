@@ -179,84 +179,40 @@ def stats(zones: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
-        from xrspatial.classify import equal_interval
         from xrspatial.zonal import stats
+        import numpy as np
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
+        height, width = 10, 10
+        # values raster
+        values = xr.DataArray(np.arange(height * width).reshape(height, width))
+        # zones raster
+        zones = xr.DataArray(np.zeros(height * width).reshape(height, width))
+        zones[:5, :5] = 0
+        zones[:5, 5:] = 10
+        zones[5:, :5] = 20
+        zones[5:, 5:] = 30
 
-
-        # Generate Values
-        terrain_agg = generate_terrain(canvas = cvs)
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Zones
-        equal_interval_agg = equal_interval(
-            agg = terrain_agg,
-            name = 'Elevation',
-        )
-        equal_interval_agg = equal_interval_agg.astype('int')
-
-        # Edit Attributes
-        equal_interval_agg = equal_interval_agg.assign_attrs(
-            {
-                'Description': 'Example Equal Interval',
-            }
-        )
-
-        # Plot Terrain (Values)
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain (Values)")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Equal Interval (Zones)
-        equal_interval_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Equal Interval (Zones)")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-    .. sourcecode:: python
-
+        # .. sourcecode:: python
         >>> # Calculate Stats
-        >>> stats_agg = stats(zones = equal_interval_agg, values = terrain_agg)
-        >>> print(stats_agg)
-                  mean          max          min         std           var    count # noqa
-        1  1346.099206  1599.980772  1200.014238  107.647012  11587.879265  52698.0 # noqa
-        2  1867.613738  2399.949943  1600.049783  207.072933  42879.199507  22987.0 # noqa
-        3  2716.967940  3199.499889  2400.079093  215.475764  46429.804756   4926.0 # noqa
-        4  3491.072129  4000.000000  3200.057209  182.752194  33398.364467   1373.0 # noqa
+        >>> stats_df = stats(zones=zones, values=values)
+        >>> print(stats_df)
+            zone  mean  max  min   sum       std    var  count
+        0   0    22.0   44    0   550  14.21267  202.0     25
+        1  10    27.0   49    5   675  14.21267  202.0     25
+        2  20    72.0   94   50  1800  14.21267  202.0     25
+        3  30    77.0   99   55  1925  14.21267  202.0     25
 
         >>> # Custom Stats
-        >>> custom_stats ={'sum': lambda val: val.sum()}
-        >>> custom_stats_agg = stats(zones = equal_interval_agg,
-                                     values = terrain_agg,
-                                     stats_funcs=custom_stats)
-        >>> print(custom_stats_agg)
-                    sum
-        1  7.093674e+07
-        2  4.293084e+07
-        3  1.338378e+07
-        4  4.793242e+06
+        >>> custom_stats ={'double_sum': lambda val: val.sum()*2}
+        >>> custom_stats_df = stats(zones=zones,
+                                    values=values,
+                                    stats_funcs=custom_stats)
+        >>> print(custom_stats_df)
+            zone  double_sum
+        0   0     1100
+        1  10     1350
+        2  20     3600
+        3  30     3850
     """
     if zones.shape != values.shape:
         raise ValueError("`zones` and `values` must have same shape.")
