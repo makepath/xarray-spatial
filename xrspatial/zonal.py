@@ -35,7 +35,7 @@ _DEFAULT_STATS = dict(
 
 def _stats(zones: xr.DataArray,
            unique_zones: List[int],
-           masked_values: xr.DataArray,
+           masked_data: xr.DataArray,
            stats_funcs: List,
            nodata: Union[int, float]) -> Dict:
 
@@ -58,15 +58,15 @@ def _stats(zones: xr.DataArray,
         stats_dict['zone'].append(zone_id)
 
         # get zone values
-        if isinstance(masked_values, np.ndarray):
+        if isinstance(masked_data, np.ndarray):
             # numpy case
             zone_values = np.ma.masked_where(
-                zones.data != zone_id, masked_values
+                zones.data != zone_id, masked_data
             )
         else:
             # dask case
             zone_values = da.ma.masked_where(
-                zones.data != zone_id, masked_values
+                zones.data != zone_id, masked_data
             )
         for stats in stats_funcs:
             stats_func = stats_funcs.get(stats)
@@ -86,10 +86,10 @@ def _stats_numpy(zones: xr.DataArray,
     unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
 
     # mask out all invalid values such as: nan, inf
-    masked_values = np.ma.masked_invalid(values.data)
+    masked_data = np.ma.masked_invalid(values.data)
 
     stats_dict = _stats(
-        zones, unique_zones, masked_values, stats_funcs, nodata
+        zones, unique_zones, masked_data, stats_funcs, nodata
     )
     stats_df = pd.DataFrame(stats_dict)
     stats_df.set_index('zone')
@@ -106,10 +106,10 @@ def _stats_dask(zones: xr.DataArray,
     unique_zones = da.unique(zones.data).compute_chunk_sizes()
 
     # mask out all invalid values such as: nan, inf
-    masked_values = da.ma.masked_invalid(values.data)
+    masked_data = da.ma.masked_invalid(values.data)
 
     stats_dict = _stats(
-        zones, unique_zones, masked_values, stats_funcs, nodata
+        zones, unique_zones, masked_data, stats_funcs, nodata
     )
 
     stats_dict = {
@@ -280,7 +280,7 @@ def stats(zones: xr.DataArray,
     return stats_df
 
 
-def _crosstab_dict_2d(zones, values, masked_values, unique_zones, cats):
+def _crosstab_dict_2d(zones, values, masked_data, unique_zones, cats):
 
     # array backend
     if isinstance(zones.data, np.ndarray):
@@ -297,7 +297,7 @@ def _crosstab_dict_2d(zones, values, masked_values, unique_zones, cats):
     for zone_id in unique_zones:
         # get zone values
         zone_values = array_module.ma.masked_where(
-            zones.data != zone_id, masked_values
+            zones.data != zone_id, masked_data
         )
         zone_counts[zone_id] = _stats_count(zone_values)
 
@@ -305,7 +305,7 @@ def _crosstab_dict_2d(zones, values, masked_values, unique_zones, cats):
         for zone_id in unique_zones:
             # get category cat values in the selected zone
             zone_cat_values = array_module.ma.masked_where(
-                ((values.data != cat) | (zones.data != zone_id)), masked_values
+                ((values.data != cat) | (zones.data != zone_id)), masked_data
             )
             zone_cat_count = _stats_count(zone_cat_values)
             zone_cat_stat = zone_cat_count / zone_counts[zone_id]
@@ -320,13 +320,13 @@ def _crosstab_2d_numpy(zones, values, nodata):
     unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
 
     # mask out all invalid values such as: nan, inf
-    masked_values = np.ma.masked_invalid(values.data)
+    masked_data = np.ma.masked_invalid(values.data)
 
     # categories
-    cats = np.unique(masked_values[masked_values.mask == False]).data # noqa
+    cats = np.unique(masked_data[masked_data.mask == False]).data # noqa
 
     crosstab_dict = _crosstab_dict_2d(
-        zones, values, masked_values, unique_zones, cats
+        zones, values, masked_data, unique_zones, cats
     )
 
     crosstab_df = pd.DataFrame(crosstab_dict)
@@ -344,12 +344,12 @@ def _crosstab_2d_dask(zones, values, nodata):
     unique_zones = da.unique(zones.data).compute()
 
     # mask out all invalid values such as: nan, inf
-    masked_values = da.ma.masked_invalid(values.data)
+    masked_data = da.ma.masked_invalid(values.data)
     # precompute categories
-    cats = da.unique(da.ma.getdata(masked_values)).compute()
+    cats = da.unique(da.ma.getdata(masked_data)).compute()
 
     crosstab_dict = _crosstab_dict_2d(
-        zones, values, masked_values, unique_zones, cats
+        zones, values, masked_data, unique_zones, cats
     )
 
     crosstab_dict = {
@@ -359,8 +359,7 @@ def _crosstab_2d_dask(zones, values, nodata):
 
     # generate dask dataframe
     crosstab_df = dd.concat(
-        [dd.from_dask_array(stats) for stats in crosstab_dict.values()],
-        axis=1
+        [dd.from_dask_array(stats) for stats in crosstab_dict.values()], axis=1
     )
     # name columns
     crosstab_df.columns = crosstab_dict.keys()
@@ -385,11 +384,12 @@ def _crosstab_2d(zones, values, nodata):
 
 def _crosstab_3d(zones, values, layer, nodata):
     if layer is None:
-        cats = values.indexes[values.dims[-1]].values
-    else:
-        if layer not in values.dims:
-            raise ValueError("`layer` does not exist in `values` agg.")
-        cats = values[layer].values
+        layer = -1
+
+    try:
+        cats = values.indexes[values.dims[layer]].values
+    except (IndexError, KeyError):
+        raise ValueError("Invalid `layer`")
 
     num_cats = len(cats)
 
@@ -397,7 +397,7 @@ def _crosstab_3d(zones, values, layer, nodata):
     unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
 
     # mask out all invalid values such as: nan, inf
-    masked_values = np.ma.masked_invalid(values.data)
+    masked_data = np.ma.masked_invalid(values.data)
 
     # return of the function
     # columns are categories
@@ -408,7 +408,7 @@ def _crosstab_3d(zones, values, layer, nodata):
         zone_entries = zones.data == zone_id
         zones_entries_3d = np.repeat(zone_entries[:, :, np.newaxis],
                                      num_cats, axis=-1)
-        zone_values = zones_entries_3d * masked_values
+        zone_values = zones_entries_3d * masked_data
         zone_cat_stats = [np.sum(zone_cat) for zone_cat in zone_values.T]
         sum_zone_cats = sum(zone_cat_stats)
         if sum_zone_cats != 0:
@@ -421,7 +421,7 @@ def _crosstab_3d(zones, values, layer, nodata):
 
 def crosstab(zones: xr.DataArray,
              values: xr.DataArray,
-             layer: Optional[str] = None,
+             layer: Optional[int] = None,
              nodata: Optional[int] = None) -> pd.DataFrame:
     """
     Calculate cross-tabulated (categorical stats) areas
@@ -451,9 +451,8 @@ def crosstab(zones: xr.DataArray,
         The input value raster contains the input values used in
         calculating the categorical statistic for each zone.
 
-    layer: str, default=None
-        name of the layer inside the `values` DataArray for getting
-        the values.
+    layer: int, default=0
+        index of the categorical dimension layer inside the `values` DataArray.
 
     nodata: int, default=None
         Nodata value in `zones` raster.

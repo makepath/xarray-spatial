@@ -261,13 +261,12 @@ def test_crosstab_3d():
     values_agg = xa.DataArray(np.ones(24).reshape(2, 3, 4),
                               dims=['lat', 'lon', 'race'])
     values_agg['race'] = ['cat1', 'cat2', 'cat3', 'cat4']
-    layer = 'race'
 
     # create a valid `zones_agg` with compatiable shape
     zones_arr = np.arange(6, dtype=np.int).reshape(2, 3)
     zones_agg = xa.DataArray(zones_arr)
 
-    df = crosstab(zones_agg, values_agg, layer)
+    df = crosstab(zones_agg, values_agg)
     assert isinstance(df, pd.DataFrame)
 
     num_cats = len(values_agg.dims[-1])
