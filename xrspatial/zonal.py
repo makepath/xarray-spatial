@@ -323,7 +323,7 @@ def _crosstab_2d_numpy(zones, values, nodata):
     masked_values = np.ma.masked_invalid(values.data)
 
     # categories
-    cats = np.unique(masked_values[masked_values.mask == False]).data
+    cats = np.unique(masked_values[masked_values.mask == False]).data # noqa
 
     crosstab_dict = _crosstab_dict_2d(
         zones, values, masked_values, unique_zones, cats
