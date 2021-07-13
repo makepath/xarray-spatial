@@ -330,6 +330,8 @@ def _crosstab_2d_numpy(zones, values, nodata):
     )
 
     crosstab_df = pd.DataFrame(crosstab_dict)
+    # name columns
+    crosstab_df.columns = crosstab_dict.keys()
     crosstab_df.set_index('zone')
     # set dtype for zone column the be the same as of `zones` raster
     crosstab_df = crosstab_df.astype({'zone': zones.data.dtype})
@@ -337,7 +339,7 @@ def _crosstab_2d_numpy(zones, values, nodata):
     return crosstab_df
 
 
-def _crosstab_2d_dask(zones, values):
+def _crosstab_2d_dask(zones, values, nodata):
     # precompute unique zones
     unique_zones = da.unique(zones.data).compute()
 
@@ -346,30 +348,9 @@ def _crosstab_2d_dask(zones, values):
     # precompute categories
     cats = da.unique(da.ma.getdata(masked_values)).compute()
 
-    crosstab_dict = {}
-    crosstab_dict['zone'] = unique_zones
-    for i in cats:
-        crosstab_dict[i] = []
-
-    zone_counts = {}
-    for zone_id in unique_zones:
-        # get zone values
-        zone_values = da.ma.masked_where(
-            zones.data != zone_id, masked_values
-        )
-        zone_count = zone_values.size - da.ma.getmaskarray(zone_values).sum()
-        zone_counts[zone_id] = zone_count
-
-    for cat in cats:
-        for zone_id in unique_zones:
-            # get category cat values in the selected zone
-            zone_cat_values = da.ma.masked_where(
-                ((values.data != cat) | (zones.data != zone_id)), masked_values
-            )
-            zone_cat_count = zone_cat_values.size - da.ma.getmaskarray(
-                zone_cat_values).sum()
-            zone_cat_stat = zone_cat_count / zone_counts[zone_id]
-            crosstab_dict[cat].append(zone_cat_stat)
+    crosstab_dict = _crosstab_dict_2d(
+        zones, values, masked_values, unique_zones, cats
+    )
 
     crosstab_dict = {
         stats: da.stack(zonal_stats, axis=0)
@@ -377,15 +358,17 @@ def _crosstab_2d_dask(zones, values):
     }
 
     # generate dask dataframe
-    stats_df = dd.concat(
+    crosstab_df = dd.concat(
         [dd.from_dask_array(stats) for stats in crosstab_dict.values()],
         axis=1
     )
     # name columns
-    stats_df.columns = crosstab_dict.keys()
-    stats_df.set_index('zone')
+    crosstab_df.columns = crosstab_dict.keys()
+    # set dtype for zone column the be the same as of `zones` raster
+    crosstab_df = crosstab_df.astype({'zone': zones.data.dtype})
+    crosstab_df.set_index('zone')
 
-    return stats_df
+    return crosstab_df
 
 
 def _crosstab_2d(zones, values, nodata):

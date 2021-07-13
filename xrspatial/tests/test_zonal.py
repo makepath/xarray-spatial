@@ -296,19 +296,32 @@ def test_crosstab_3d():
 def test_crosstab_2d():
     values_val = np.asarray([[0, 0, 10, 20],
                              [0, 0, 0, 10],
-                             [np.inf, 30, 20, 50],
+                             [0, 30, 20, 50],
                              [10, 30, 40, 40],
-                             [10, np.nan, 50, 0]])
-    values_agg = xa.DataArray(values_val, dims=['lat', 'lon'])
+                             [10, 10, 50, 0]])
+    values_agg = xa.DataArray(values_val)
+    values_agg_dask = xa.DataArray(da.from_array(values_val, chunks=(3, 3)))
+
     zones_val = np.asarray([[1, 1, 6, 6],
                             [1, 1, 6, 6],
                             [3, 5, 6, 6],
                             [3, 5, 7, 7],
                             [3, 7, 7, 0]])
-    zones_agg = xa.DataArray(zones_val, dims=['lat', 'lon'])
+    zones_agg = xa.DataArray(zones_val)
+    zones_agg_dask = xa.DataArray(da.from_array(zones_val, chunks=(3, 3)))
 
     df = crosstab(zones_agg, values_agg)
     assert isinstance(df, pd.DataFrame)
+
+    dask_df = crosstab(zones_agg_dask, values_agg_dask)
+    assert isinstance(dask_df, dd.DataFrame)
+
+    dask_df = dask_df.compute()
+    assert isinstance(dask_df, pd.DataFrame)
+
+    assert (df.columns == dask_df.columns).all()
+    for col in df.columns:
+        assert np.isclose(df[col], dask_df[col], equal_nan=True).all()
 
     num_cats = 6  # 0, 10, 20, 30, 40, 50
     # number of columns = number of categories + 1 (zone column)
