@@ -311,8 +311,8 @@ def test_crosstab_2d():
     assert isinstance(df, pd.DataFrame)
 
     num_cats = 6  # 0, 10, 20, 30, 40, 50
-    # number of columns = number of categories
-    assert len(df.columns) == num_cats
+    # number of columns = number of categories + 1 (zone column)
+    assert len(df.columns) == num_cats + 1
 
     zone_idx = np.unique(zones_agg.data)
     num_zones = len(zone_idx)

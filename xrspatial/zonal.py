@@ -291,22 +291,85 @@ def _crosstab_2d(zones, values, nodata):
     # categories
     cats = np.unique(masked_values[masked_values.mask == False]).data # noqa
 
-    # return of the function
-    # columns are categories
-    crosstab_df = pd.DataFrame(columns=cats)
+    crosstab_dict = {}
+    crosstab_dict['zone'] = unique_zones
+    for i in cats:
+        crosstab_dict[i] = []
 
+    zone_counts = {}
     for zone_id in unique_zones:
         # get zone values
-        zone_values = np.ma.masked_where(zones.data != zone_id, masked_values)
-        zone_cat_counts = np.zeros((len(cats),))
-        for i, cat in enumerate(cats):
-            zone_cat_counts[i] = len(np.where(zone_values == cat)[0])
-        if np.sum(zone_cat_counts) != 0:
-            zone_cat_stats = zone_cat_counts / np.sum(zone_cat_counts)
-        # percentage of each category over the zone
-        crosstab_df.loc[zone_id] = zone_cat_stats
+        zone_values = np.ma.masked_where(
+            zones.data != zone_id, masked_values
+        )
+        zone_counts[zone_id] = _stats_count(zone_values)
 
+    for cat in cats:
+        for zone_id in unique_zones:
+            # get category cat values in the selected zone
+            zone_cat_values = np.ma.masked_where(
+                ((values.data != cat) | (zones.data != zone_id)), masked_values
+            )
+            zone_cat_count = _stats_count(zone_cat_values)
+            zone_cat_stat = zone_cat_count / zone_counts[zone_id]
+            crosstab_dict[cat].append(zone_cat_stat)
+
+    crosstab_df = pd.DataFrame(crosstab_dict)
+    crosstab_df.set_index('zone')
+    # set dtype for zone column the be the same as of `zones` raster
+    crosstab_df = crosstab_df.astype({'zone': zones.data.dtype})
     return crosstab_df
+
+
+def _crosstab_2d_dask(zones, values):
+    # precompute unique zones
+    unique_zones = da.unique(zones.data).compute()
+
+    # mask out all invalid values such as: nan, inf
+    masked_values = da.ma.masked_invalid(values.data)
+    # precompute categories
+    cats = da.unique(da.ma.getdata(masked_values)).compute()
+
+    crosstab_dict = {}
+    crosstab_dict['zone'] = unique_zones
+    for i in cats:
+        crosstab_dict[i] = []
+
+    zone_counts = {}
+    for zone_id in unique_zones:
+        # get zone values
+        zone_values = da.ma.masked_where(
+            zones.data != zone_id, masked_values
+        )
+        zone_count = zone_values.size - da.ma.getmaskarray(zone_values).sum()
+        zone_counts[zone_id] = zone_count
+
+    for cat in cats:
+        for zone_id in unique_zones:
+            # get category cat values in the selected zone
+            zone_cat_values = da.ma.masked_where(
+                ((values.data != cat) | (zones.data != zone_id)), masked_values
+            )
+            zone_cat_count = zone_cat_values.size - da.ma.getmaskarray(
+                zone_cat_values).sum()
+            zone_cat_stat = zone_cat_count / zone_counts[zone_id]
+            crosstab_dict[cat].append(zone_cat_stat)
+
+    crosstab_dict = {
+        stats: da.stack(zonal_stats, axis=0)
+        for stats, zonal_stats in crosstab_dict.items()
+    }
+
+    # generate dask dataframe
+    stats_df = dd.concat(
+        [dd.from_dask_array(stats) for stats in crosstab_dict.values()],
+        axis=1
+    )
+    # name columns
+    stats_df.columns = crosstab_dict.keys()
+    stats_df.set_index('zone')
+
+    return stats_df
 
 
 def _crosstab_3d(zones, values, layer, nodata):
