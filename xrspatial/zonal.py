@@ -382,39 +382,91 @@ def _crosstab_2d(zones, values, nodata):
     return crosstab_df
 
 
+def _crosstab_dict_3d(zones, values, unique_zones, cats):
+    # array backend
+    if isinstance(zones.data, np.ndarray):
+        array_module = np
+    elif isinstance(zones.data, da.Array):
+        array_module = da
+
+    crosstab_dict = {}
+    crosstab_dict['zone'] = unique_zones
+    for i in cats:
+        crosstab_dict[i] = []
+
+    for c, cat in enumerate(cats):
+        cat_data = values[c]
+        cat_masked_data = da.ma.masked_invalid(cat_data.data)
+        for zone_id in unique_zones:
+            # get category cat values in the selected zone
+            zone_cat_values = array_module.ma.masked_where(
+                zones.data != zone_id, cat_masked_data
+            )
+            zone_cat_count = _stats_count(zone_cat_values)
+            crosstab_dict[cat].append(zone_cat_count)
+
+    return crosstab_dict
+
+
+def _crosstab_3d_dask(zones, values, cats, nodata):
+
+    unique_zones = da.unique(zones.data).compute_chunk_sizes()
+
+    crosstab_dict = _crosstab_dict_3d(zones, values, unique_zones, cats)
+    crosstab_dict = {
+        stats: da.stack(zonal_stats, axis=0)
+        for stats, zonal_stats in crosstab_dict.items()
+    }
+
+    # generate dask dataframe
+    crosstab_df = dd.concat(
+        [dd.from_dask_array(stats) for stats in crosstab_dict.values()],
+        axis=1
+    )
+    # name columns
+    crosstab_df.columns = crosstab_dict.keys()
+    crosstab_df.set_index('zone')
+    return crosstab_df
+
+
+def _crosstab_3d_numpy(zones, values, cats, nodata):
+
+    # do not consider zone with nodata values
+    unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
+
+    crosstab_dict = _crosstab_dict_3d(zones, values, unique_zones, cats)
+
+    crosstab_df = pd.DataFrame(crosstab_dict)
+    # name columns
+    crosstab_df.columns = crosstab_dict.keys()
+    crosstab_df.set_index('zone')
+    # set dtype for zone column the be the same as of `zones` raster
+    crosstab_df = crosstab_df.astype({'zone': zones.data.dtype})
+
+    return crosstab_df
+
+
 def _crosstab_3d(zones, values, layer, nodata):
     if layer is None:
-        layer = -1
-
+        layer = 0
     try:
         cats = values.indexes[values.dims[layer]].values
     except (IndexError, KeyError):
         raise ValueError("Invalid `layer`")
 
-    num_cats = len(cats)
+    dims = values.dims
+    reshape_dims = [dims[layer]] + [d for d in dims if d != dims[layer]]
+    values = values.transpose(*reshape_dims)
 
-    # do not consider zone with nodata values
-    unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
+    if zones.shape != values.shape[1:]:
+        raise ValueError("Incompatible shapes")
 
-    # mask out all invalid values such as: nan, inf
-    masked_data = np.ma.masked_invalid(values.data)
-
-    # return of the function
-    # columns are categories
-    crosstab_df = pd.DataFrame(columns=cats)
-
-    for zone_id in unique_zones:
-        # get all entries in zones with zone_id
-        zone_entries = zones.data == zone_id
-        zones_entries_3d = np.repeat(zone_entries[:, :, np.newaxis],
-                                     num_cats, axis=-1)
-        zone_values = zones_entries_3d * masked_data
-        zone_cat_stats = [np.sum(zone_cat) for zone_cat in zone_values.T]
-        sum_zone_cats = sum(zone_cat_stats)
-        if sum_zone_cats != 0:
-            zone_cat_stats = zone_cat_stats / sum_zone_cats
-        # percentage of each category over the zone
-        crosstab_df.loc[zone_id] = zone_cat_stats
+    if isinstance(values.data, np.ndarray):
+        # numpy case
+        crosstab_df = _crosstab_3d_numpy(zones, values, cats, nodata)
+    else:
+        # dask case
+        crosstab_df = _crosstab_3d_dask(zones, values, cats, nodata)
 
     return crosstab_df
 
@@ -569,10 +621,6 @@ def crosstab(zones: xr.DataArray,
 
     if zones.ndim != 2:
         raise ValueError("zones must be 2D")
-
-    if zones.shape != values.shape[:2]:
-        raise ValueError(
-            "Incompatible shapes between `zones` and `values`")
 
     if not issubclass(zones.data.dtype.type, np.integer):
         raise ValueError("`zones` must be an xarray of integers")
