@@ -36,27 +36,18 @@ _DEFAULT_STATS = dict(
 def _stats(zones: xr.DataArray,
            unique_zones: List[int],
            masked_data: xr.DataArray,
-           stats_funcs: List,
-           nodata: Union[int, float]) -> Dict:
+           stats_funcs: List) -> Dict:
 
     # Calculate stats that supported in default stats functions
 
     stats_dict = {}
     # zone column
-    stats_dict['zone'] = []
+    stats_dict['zone'] = unique_zones
     # stats columns
     for stats in stats_funcs:
         stats_dict[stats] = []
 
     for zone_id in unique_zones:
-
-        # do not consider zone with nodata values
-        if nodata is not None:
-            if np.isclose(zone_id, nodata, equal_nan=True):
-                continue
-
-        stats_dict['zone'].append(zone_id)
-
         # get zone values
         if isinstance(masked_data, np.ndarray):
             # numpy case
@@ -80,16 +71,17 @@ def _stats(zones: xr.DataArray,
 def _stats_numpy(zones: xr.DataArray,
                  values: xr.DataArray,
                  stats_funcs: Dict,
-                 nodata: Union[int, float]) -> pd.DataFrame:
+                 nodata_zones: Union[int, float]) -> pd.DataFrame:
 
     # do not consider zone with nodata values
-    unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
+    unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
+    unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
 
     # mask out all invalid values such as: nan, inf
     masked_data = np.ma.masked_invalid(values.data)
 
     stats_dict = _stats(
-        zones, unique_zones, masked_data, stats_funcs, nodata
+        zones, unique_zones, masked_data, stats_funcs
     )
     stats_df = pd.DataFrame(stats_dict)
     stats_df.set_index('zone')
@@ -101,15 +93,18 @@ def _stats_numpy(zones: xr.DataArray,
 def _stats_dask(zones: xr.DataArray,
                 values: xr.DataArray,
                 stats_funcs: Dict,
-                nodata: Union[int, float]) -> pd.DataFrame:
+                nodata_zones: Union[int, float]) -> pd.DataFrame:
 
-    unique_zones = da.unique(zones.data).compute_chunk_sizes()
+    # precompute unique zones
+    unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
+    # do not consider zone with nodata values
+    unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
 
     # mask out all invalid values such as: nan, inf
     masked_data = da.ma.masked_invalid(values.data)
 
     stats_dict = _stats(
-        zones, unique_zones, masked_data, stats_funcs, nodata
+        zones, unique_zones, masked_data, stats_funcs
     )
 
     stats_dict = {
@@ -133,7 +128,8 @@ def _stats_dask(zones: xr.DataArray,
 def stats(zones: xr.DataArray,
           values: xr.DataArray,
           stats_funcs: Union[Dict, List] = ['mean', 'max', 'min', 'sum', 'std', 'var', 'count'], # noqa
-          nodata: Optional[Union[int, float]] = None):
+          nodata_zones: Optional[Union[int, float]] = None
+          ) -> Union[pd.DataFrame, dd.DataFrame]:
     """
     Calculate summary statistics for each zone defined by a zone
     dataset, based on values aggregate.
@@ -166,16 +162,16 @@ def stats(zones: xr.DataArray,
         callable. Function takes only one argument that is the `values` raster.
         The key become the column name in the output DataFrame.
 
-    nodata: int, float, default=None
+    nodata_zones: int, float, default=None
         Nodata value in `zones` raster.
         Cells with `nodata` does not belong to any zone,
         and thus excluded from calculation.
 
     Returns
     -------
-    stats_df : pandas.DataFrame
-        A pandas DataFrame where each column is a statistic and each
-        row is a zone with zone id.
+    stats_df : Union[pandas.DataFrame, dask.dataframe.DataFrame]
+        A pandas DataFrame, or a dask DataFrame where each column
+        is a statistic and each row is a zone with zone id.
 
     Examples
     --------
@@ -272,10 +268,10 @@ def stats(zones: xr.DataArray,
 
     if isinstance(values.data, np.ndarray):
         # numpy case
-        stats_df = _stats_numpy(zones, values, stats_funcs_dict, nodata)
+        stats_df = _stats_numpy(zones, values, stats_funcs_dict, nodata_zones)
     else:
         # dask case
-        stats_df = _stats_dask(zones, values, stats_funcs_dict, nodata)
+        stats_df = _stats_dask(zones, values, stats_funcs_dict, nodata_zones)
 
     return stats_df
 
@@ -446,11 +442,11 @@ def crosstab(zones: xr.DataArray,
 
     Returns
     -------
-    crosstab_df : pandas.DataFrame
-        A pandas DataFrame where each column is a categorical value
-        and each row is a zone with zone id.
-        Each entry presents the number of pixels counted of the category
-        over the zone.
+    crosstab_df : Union[pandas.DataFrame, dask.dataframe.DataFrame]
+        A pandas DataFrame, or an uncomputed dask DataFrame,
+        where each column is a categorical value and each row is a zone
+        with zone id. Each entry presents the number of pixels counted
+        of the category over the zone.
 
     Examples
     --------
