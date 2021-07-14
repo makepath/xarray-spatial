@@ -535,8 +535,9 @@ def crosstab(zones: xr.DataArray,
     if zones.ndim != 2:
         raise ValueError("zones must be 2D")
 
-    if not issubclass(zones.data.dtype.type, np.integer):
-        raise ValueError("`zones` must be an xarray of integers")
+    if not (issubclass(zones.data.dtype.type, np.integer) or
+            issubclass(zones.data.dtype.type, np.integer)):
+        raise ValueError("`zones` must be an xarray of integers or floats")
 
     if not issubclass(values.data.dtype.type, np.integer) and \
             not issubclass(values.data.dtype.type, np.floating):

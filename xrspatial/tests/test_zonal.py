@@ -197,11 +197,6 @@ def test_crosstab_invalid_input():
     with pytest.raises(Exception) as e_info:
         crosstab(zones_agg=zones, values_agg=values)
 
-    # invalid zones dtype (must be int)
-    zones = xa.DataArray(np.array([[1, 2, 0.5]]))
-    with pytest.raises(Exception) as e_info:  # noqa
-        crosstab(zones_agg=zones, values_agg=values)
-
     # invalid values
     zones = xa.DataArray(np.array([[1, 2, 0]], dtype=np.int))
     # values must be either int or float
