@@ -280,28 +280,34 @@ def stats(zones: xr.DataArray,
     return stats_df
 
 
-def _crosstab_dict(zones, values, unique_zones, cats, masked_data):
-
-    def _zone_cat_data(cat, zone_id, cat_id):
-        if len(values.shape) == 2:
-            # 2D case
-            zone_cat_data = array_module.ma.masked_where(
-                ((values.data != cat) | (zones.data != zone_id)), masked_data
-            )
-        else:
-            # 3D case
-            cat_data = values[cat_id]
-            cat_masked_data = da.ma.masked_invalid(cat_data.data)
-            zone_cat_data = array_module.ma.masked_where(
-                zones.data != zone_id, cat_masked_data
-            )
-        return zone_cat_data
+def _crosstab_dict(zones, values, unique_zones, cats, nodata_values):
 
     # array backend
     if isinstance(zones.data, np.ndarray):
         array_module = np
     elif isinstance(zones.data, da.Array):
         array_module = da
+
+    def _zone_cat_data(cat, zone_id, cat_id):
+        if len(values.shape) == 2:
+            # 2D case
+            zone_cat_data = array_module.ma.masked_where(
+                ((values.data != cat) |
+                 (zones.data != zone_id) |
+                 ~np.isfinite(values.data) |  # mask out nan, inf
+                 (values.data == nodata_values)  # mask out nodata_values
+                 ),
+                values.data
+            )
+        else:
+            # 3D case
+            cat_data = values[cat_id].data
+            cat_masked_data = array_module.ma.masked_invalid(cat_data)
+            zone_cat_data = array_module.ma.masked_where(
+                ((zones.data != zone_id) | (cat_data == nodata_values)),
+                cat_masked_data
+            )
+        return zone_cat_data
 
     crosstab_dict = {}
     crosstab_dict['zone'] = unique_zones
@@ -318,24 +324,24 @@ def _crosstab_dict(zones, values, unique_zones, cats, masked_data):
     return crosstab_dict
 
 
-def _crosstab_numpy(zones, values, nodata_zones):
-
-    # mask out all invalid values such as: nan, inf
-    masked_data = np.ma.masked_invalid(values.data)
+def _crosstab_numpy(zones, values, nodata_zones, nodata_values):
 
     if len(values.shape) == 3:
         # 3D case
         cats = values.indexes[values.dims[0]].values
     else:
         # 2D case
+        # mask out all invalid values such as: nan, inf
+        masked_data = np.ma.masked_invalid(values.data)
         cats = np.unique(masked_data[masked_data.mask == False]).data  # noqa
+        cats = sorted(list(set(cats) - set([nodata_values])))
 
     # do not consider zone with nodata values
     unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
-    unique_zones = [z for z in unique_zones if z != nodata_zones]
+    unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
 
     crosstab_dict = _crosstab_dict(
-        zones, values, unique_zones, cats, masked_data
+        zones, values, unique_zones, cats, nodata_values
     )
 
     crosstab_df = pd.DataFrame(crosstab_dict)
@@ -348,26 +354,26 @@ def _crosstab_numpy(zones, values, nodata_zones):
     return crosstab_df
 
 
-def _crosstab_dask(zones, values, nodata_zones):
-
-    # mask out all invalid values such as: nan, inf
-    masked_data = da.ma.masked_invalid(values.data)
+def _crosstab_dask(zones, values, nodata_zones, nodata_values):
 
     if len(values.shape) == 3:
         # 3D case
         cats = values.indexes[values.dims[0]].values
     else:
         # 2D case
+        # mask out all invalid values: nan, inf
+        masked_data = da.ma.masked_invalid(values.data)
         # precompute categories
         cats = da.unique(da.ma.getdata(masked_data)).compute()
+        cats = sorted(list(set(cats) - set([nodata_values])))
 
     # precompute unique zones
     unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
     # do not consider zone with nodata values
-    unique_zones = [z for z in unique_zones if z != nodata_zones]
+    unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
 
     crosstab_dict = _crosstab_dict(
-        zones, values, unique_zones, cats, masked_data
+        zones, values, unique_zones, cats, nodata_values
     )
     crosstab_dict = {
         stats: da.stack(zonal_stats, axis=0)
@@ -390,7 +396,9 @@ def _crosstab_dask(zones, values, nodata_zones):
 def crosstab(zones: xr.DataArray,
              values: xr.DataArray,
              layer: Optional[int] = None,
-             nodata_zones: Optional[int] = None) -> pd.DataFrame:
+             nodata_zones: Optional[Union[int, float]] = None,
+             nodata_values: Optional[Union[int, float]] = None
+             ) -> pd.DataFrame:
     """
     Calculate cross-tabulated (categorical stats) areas
     between two datasets: a zone dataset, a value dataset (a value
@@ -569,10 +577,13 @@ def crosstab(zones: xr.DataArray,
 
     if isinstance(values.data, np.ndarray):
         # numpy case
-        crosstab_df = _crosstab_numpy(zones, values, nodata_zones)
+        crosstab_df = _crosstab_numpy(
+            zones, values, nodata_zones, nodata_values)
     else:
         # dask case
-        crosstab_df = _crosstab_dask(zones, values, nodata_zones)
+        crosstab_df = _crosstab_dask(
+            zones, values, nodata_zones, nodata_values
+        )
 
     return crosstab_df
 
