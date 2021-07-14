@@ -280,7 +280,7 @@ def stats(zones: xr.DataArray,
     return stats_df
 
 
-def _crosstab_dict(zones, values, unique_zones, cats, masked_data=None):
+def _crosstab_dict(zones, values, unique_zones, cats, masked_data):
     
     def _zone_cat_data(cat, zone_id, cat_id):
         if len(values.shape) == 2:
@@ -318,16 +318,20 @@ def _crosstab_dict(zones, values, unique_zones, cats, masked_data=None):
     return crosstab_dict
 
 
-def _crosstab_2d_numpy(zones, values, nodata):
-
-    # do not consider zone with nodata values
-    unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
+def _crosstab_numpy(zones, values, nodata=None):
 
     # mask out all invalid values such as: nan, inf
     masked_data = np.ma.masked_invalid(values.data)
 
-    # categories
-    cats = np.unique(masked_data[masked_data.mask == False]).data # noqa
+    if len(values.shape) == 3:
+        # 3D case
+        cats = values.indexes[values.dims[0]].values
+    else:
+        # 2D case
+        cats = np.unique(masked_data[masked_data.mask == False]).data  # noqa
+
+    # do not consider zone with nodata values
+    unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
 
     crosstab_dict = _crosstab_dict(
         zones, values, unique_zones, cats, masked_data
@@ -343,19 +347,25 @@ def _crosstab_2d_numpy(zones, values, nodata):
     return crosstab_df
 
 
-def _crosstab_2d_dask(zones, values, nodata):
-    # precompute unique zones
-    unique_zones = da.unique(zones.data).compute()
+def _crosstab_dask(zones, values, nodata):
 
     # mask out all invalid values such as: nan, inf
     masked_data = da.ma.masked_invalid(values.data)
-    # precompute categories
-    cats = da.unique(da.ma.getdata(masked_data)).compute()
+
+    if len(values.shape) == 3:
+        # 3D case
+        cats = values.indexes[values.dims[0]].values
+    else:
+        # 2D case
+        # precompute categories
+        cats = da.unique(da.ma.getdata(masked_data)).compute()
+
+    # precompute unique zones
+    unique_zones = da.unique(zones.data).compute()
 
     crosstab_dict = _crosstab_dict(
         zones, values, unique_zones, cats, masked_data
     )
-
     crosstab_dict = {
         stats: da.stack(zonal_stats, axis=0)
         for stats, zonal_stats in crosstab_dict.items()
@@ -370,81 +380,6 @@ def _crosstab_2d_dask(zones, values, nodata):
     # set dtype for zone column the be the same as of `zones` raster
     crosstab_df = crosstab_df.astype({'zone': zones.data.dtype})
     crosstab_df.set_index('zone')
-
-    return crosstab_df
-
-
-def _crosstab_2d(zones, values, nodata):
-
-    if isinstance(values.data, np.ndarray):
-        # numpy case
-        crosstab_df = _crosstab_2d_numpy(zones, values, nodata)
-    else:
-        # dask case
-        crosstab_df = _crosstab_2d_dask(zones, values, nodata)
-
-    return crosstab_df
-
-
-def _crosstab_3d_dask(zones, values, cats, nodata):
-
-    unique_zones = da.unique(zones.data).compute_chunk_sizes()
-
-    crosstab_dict = _crosstab_dict(zones, values, unique_zones, cats)
-    crosstab_dict = {
-        stats: da.stack(zonal_stats, axis=0)
-        for stats, zonal_stats in crosstab_dict.items()
-    }
-
-    # generate dask dataframe
-    crosstab_df = dd.concat(
-        [dd.from_dask_array(stats) for stats in crosstab_dict.values()],
-        axis=1
-    )
-    # name columns
-    crosstab_df.columns = crosstab_dict.keys()
-    crosstab_df.set_index('zone')
-    return crosstab_df
-
-
-def _crosstab_3d_numpy(zones, values, cats, nodata):
-
-    # do not consider zone with nodata values
-    unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
-
-    crosstab_dict = _crosstab_dict(zones, values, unique_zones, cats)
-
-    crosstab_df = pd.DataFrame(crosstab_dict)
-    # name columns
-    crosstab_df.columns = crosstab_dict.keys()
-    crosstab_df.set_index('zone')
-    # set dtype for zone column the be the same as of `zones` raster
-    crosstab_df = crosstab_df.astype({'zone': zones.data.dtype})
-
-    return crosstab_df
-
-
-def _crosstab_3d(zones, values, layer, nodata):
-    if layer is None:
-        layer = 0
-    try:
-        cats = values.indexes[values.dims[layer]].values
-    except (IndexError, KeyError):
-        raise ValueError("Invalid `layer`")
-
-    dims = values.dims
-    reshape_dims = [dims[layer]] + [d for d in dims if d != dims[layer]]
-    values = values.transpose(*reshape_dims)
-
-    if zones.shape != values.shape[1:]:
-        raise ValueError("Incompatible shapes")
-
-    if isinstance(values.data, np.ndarray):
-        # numpy case
-        crosstab_df = _crosstab_3d_numpy(zones, values, cats, nodata)
-    else:
-        # dask case
-        crosstab_df = _crosstab_3d_dask(zones, values, cats, nodata)
 
     return crosstab_df
 
@@ -608,12 +543,34 @@ def crosstab(zones: xr.DataArray,
         raise ValueError(
             "`values` must be an xarray of integers or floats")
 
-    if values.ndim == 3:
-        return _crosstab_3d(zones, values, layer, nodata)
-    elif values.ndim == 2:
-        return _crosstab_2d(zones, values, nodata)
-    else:
+    if values.ndim not in [2, 3]:
         raise ValueError("`values` must use either 2D or 3D coordinates.")
+
+    if len(values.shape) == 3:
+        # 3D case
+        if layer is None:
+            layer = 0
+        try:
+            values.indexes[values.dims[layer]].values
+        except (IndexError, KeyError):
+            raise ValueError("Invalid `layer`")
+
+        dims = values.dims
+        reshape_dims = [dims[layer]] + [d for d in dims if d != dims[layer]]
+        # transpose by that category dimension
+        values = values.transpose(*reshape_dims)
+
+        if zones.shape != values.shape[1:]:
+            raise ValueError("Incompatible shapes")
+
+    if isinstance(values.data, np.ndarray):
+        # numpy case
+        crosstab_df = _crosstab_numpy(zones, values, nodata)
+    else:
+        # dask case
+        crosstab_df = _crosstab_dask(zones, values, nodata)
+
+    return crosstab_df
 
 
 def apply(zones: xr.DataArray,
