@@ -318,7 +318,7 @@ def _crosstab_dict(zones, values, unique_zones, cats, masked_data):
     return crosstab_dict
 
 
-def _crosstab_numpy(zones, values, nodata=None):
+def _crosstab_numpy(zones, values, nodata):
 
     # mask out all invalid values such as: nan, inf
     masked_data = np.ma.masked_invalid(values.data)
@@ -331,7 +331,8 @@ def _crosstab_numpy(zones, values, nodata=None):
         cats = np.unique(masked_data[masked_data.mask == False]).data  # noqa
 
     # do not consider zone with nodata values
-    unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
+    unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
+    unique_zones = [z for z in unique_zones if z != nodata]
 
     crosstab_dict = _crosstab_dict(
         zones, values, unique_zones, cats, masked_data
@@ -361,7 +362,9 @@ def _crosstab_dask(zones, values, nodata):
         cats = da.unique(da.ma.getdata(masked_data)).compute()
 
     # precompute unique zones
-    unique_zones = da.unique(zones.data).compute()
+    unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
+    # do not consider zone with nodata values
+    unique_zones = [z for z in unique_zones if z != nodata]
 
     crosstab_dict = _crosstab_dict(
         zones, values, unique_zones, cats, masked_data
