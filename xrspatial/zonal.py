@@ -53,14 +53,14 @@ def _stats(zones: xr.DataArray,
     for stats in stats_funcs:
         stats_dict[stats] = []
 
-    # mask out all invalid values such as: nan, inf
-    masked_data = array_module.ma.masked_invalid(values.data)
-
     for zone_id in unique_zones:
         # get zone values
         zone_values = array_module.ma.masked_where(
-            ((zones.data != zone_id) | (values.data == nodata_values)),
-            masked_data
+            ((zones.data != zone_id) |
+             (values.data == nodata_values) |
+             ~np.isfinite(values.data)  # mask out nan, inf
+             ),
+            values.data
         )
         for stats in stats_funcs:
             stats_func = stats_funcs.get(stats)
@@ -523,7 +523,7 @@ def crosstab(zones: xr.DataArray,
         raise ValueError("zones must be 2D")
 
     if not (issubclass(zones.data.dtype.type, np.integer) or
-            issubclass(zones.data.dtype.type, np.integer)):
+            issubclass(zones.data.dtype.type, np.floating)):
         raise ValueError("`zones` must be an xarray of integers or floats")
 
     if not issubclass(values.data.dtype.type, np.integer) and \
