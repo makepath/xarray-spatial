@@ -318,7 +318,7 @@ def _crosstab_dict(zones, values, unique_zones, cats, masked_data):
     return crosstab_dict
 
 
-def _crosstab_numpy(zones, values, nodata):
+def _crosstab_numpy(zones, values, nodata_zones):
 
     # mask out all invalid values such as: nan, inf
     masked_data = np.ma.masked_invalid(values.data)
@@ -332,7 +332,7 @@ def _crosstab_numpy(zones, values, nodata):
 
     # do not consider zone with nodata values
     unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
-    unique_zones = [z for z in unique_zones if z != nodata]
+    unique_zones = [z for z in unique_zones if z != nodata_zones]
 
     crosstab_dict = _crosstab_dict(
         zones, values, unique_zones, cats, masked_data
@@ -348,7 +348,7 @@ def _crosstab_numpy(zones, values, nodata):
     return crosstab_df
 
 
-def _crosstab_dask(zones, values, nodata):
+def _crosstab_dask(zones, values, nodata_zones):
 
     # mask out all invalid values such as: nan, inf
     masked_data = da.ma.masked_invalid(values.data)
@@ -364,7 +364,7 @@ def _crosstab_dask(zones, values, nodata):
     # precompute unique zones
     unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
     # do not consider zone with nodata values
-    unique_zones = [z for z in unique_zones if z != nodata]
+    unique_zones = [z for z in unique_zones if z != nodata_zones]
 
     crosstab_dict = _crosstab_dict(
         zones, values, unique_zones, cats, masked_data
@@ -390,7 +390,7 @@ def _crosstab_dask(zones, values, nodata):
 def crosstab(zones: xr.DataArray,
              values: xr.DataArray,
              layer: Optional[int] = None,
-             nodata: Optional[int] = None) -> pd.DataFrame:
+             nodata_zones: Optional[int] = None) -> pd.DataFrame:
     """
     Calculate cross-tabulated (categorical stats) areas
     between two datasets: a zone dataset, a value dataset (a value
@@ -569,10 +569,10 @@ def crosstab(zones: xr.DataArray,
 
     if isinstance(values.data, np.ndarray):
         # numpy case
-        crosstab_df = _crosstab_numpy(zones, values, nodata)
+        crosstab_df = _crosstab_numpy(zones, values, nodata_zones)
     else:
         # dask case
-        crosstab_df = _crosstab_dask(zones, values, nodata)
+        crosstab_df = _crosstab_dask(zones, values, nodata_zones)
 
     return crosstab_df
 
