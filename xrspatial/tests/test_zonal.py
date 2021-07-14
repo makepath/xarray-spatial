@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 import pandas as pd
-import xarray as xa
+import xarray as xr
 import dask.array as da
 import dask.dataframe as dd
 
@@ -21,12 +21,12 @@ def stats_create_zones_values(backend='numpy'):
     zones_val = np.array([[0, 1, 1, 2, 4, 0, 0],
                           [0, 0, 1, 1, 2, 1, 4],
                           [4, 2, 2, 4, 4, 4, 0]])
-    zones = xa.DataArray(zones_val)
+    zones = xr.DataArray(zones_val)
 
     values_val = np.array([[0, 12, 10, 2, 3.25, np.nan, np.nan],
                            [0, 0, -11, 4, -2.5, np.nan, 7],
                            [np.nan, 3.5, -9, 4, 2, 0, np.inf]])
-    values = xa.DataArray(values_val)
+    values = xr.DataArray(values_val)
 
     if 'dask' in backend:
         zones.data = da.from_array(zones.data, chunks=(3, 3))
@@ -176,47 +176,47 @@ def test_stats_invalid_stat_input():
         stats(zones=zones, values=values, stats_funcs=custom_stats)
 
     # invalid values:
-    zones = xa.DataArray(np.array([1, 2, 0], dtype=np.int))
-    values = xa.DataArray(np.array(['apples', 'foobar', 'cowboy']))
+    zones = xr.DataArray(np.array([1, 2, 0], dtype=np.int))
+    values = xr.DataArray(np.array(['apples', 'foobar', 'cowboy']))
     with pytest.raises(Exception) as e_info:  # noqa
         stats(zones=zones, values=values)
 
     # mismatch shape between zones and values:
-    zones = xa.DataArray(np.array([1, 2, 0]))
-    values = xa.DataArray(np.array([1, 2, 0, np.nan]))
+    zones = xr.DataArray(np.array([1, 2, 0]))
+    values = xr.DataArray(np.array([1, 2, 0, np.nan]))
     with pytest.raises(Exception) as e_info:  # noqa
         stats(zones=zones, values=values)
 
 
 def test_crosstab_invalid_input():
     # invalid zones dims (must be 2d)
-    zones = xa.DataArray(np.array([1, 2, 0]))
-    values = xa.DataArray(np.array([[[1, 2, 0.5]]]),
+    zones = xr.DataArray(np.array([1, 2, 0]))
+    values = xr.DataArray(np.array([[[1, 2, 0.5]]]),
                           dims=['lat', 'lon', 'race'])
     values['race'] = ['cat1', 'cat2', 'cat3']
     with pytest.raises(Exception) as e_info:
         crosstab(zones_agg=zones, values_agg=values)
 
     # invalid values
-    zones = xa.DataArray(np.array([[1, 2, 0]], dtype=np.int))
+    zones = xr.DataArray(np.array([[1, 2, 0]], dtype=np.int))
     # values must be either int or float
-    values = xa.DataArray(np.array([[['apples', 'foobar', 'cowboy']]]),
+    values = xr.DataArray(np.array([[['apples', 'foobar', 'cowboy']]]),
                           dims=['lat', 'lon', 'race'])
     values['race'] = ['cat1', 'cat2', 'cat3']
     with pytest.raises(Exception) as e_info:  # noqa
         crosstab(zones_agg=zones, values_agg=values)
 
     # mismatch shape zones and values
-    zones = xa.DataArray(np.array([[1, 2]]))
-    values = xa.DataArray(np.array([[[1, 2, np.nan]]]),
+    zones = xr.DataArray(np.array([[1, 2]]))
+    values = xr.DataArray(np.array([[[1, 2, np.nan]]]),
                           dims=['lat', 'lon', 'race'])
     values['race'] = ['cat1', 'cat2', 'cat3']
     with pytest.raises(Exception) as e_info:  # noqa
         crosstab(zones_agg=zones, values_agg=values)
 
     # invalid layer
-    zones = xa.DataArray(np.array([[1, 2]]))
-    values = xa.DataArray(np.array([[[1, 2, np.nan]]]),
+    zones = xr.DataArray(np.array([[1, 2]]))
+    values = xr.DataArray(np.array([[[1, 2, np.nan]]]),
                           dims=['lat', 'lon', 'race'])
     values['race'] = ['cat1', 'cat2', 'cat3']
     # this layer does not exist in values agg
@@ -227,14 +227,14 @@ def test_crosstab_invalid_input():
 
 def test_crosstab_no_values():
     # create valid `values_agg` of 0s
-    values_agg = xa.DataArray(np.zeros(24).reshape(2, 3, 4),
+    values_agg = xr.DataArray(np.zeros(24).reshape(2, 3, 4),
                               dims=['lat', 'lon', 'race'])
     values_agg['race'] = ['cat1', 'cat2', 'cat3', 'cat4']
     layer = -1
 
     # create a valid `zones_agg` with compatiable shape
     zones_arr = np.arange(6, dtype=np.int).reshape(2, 3)
-    zones_agg = xa.DataArray(zones_arr)
+    zones_agg = xr.DataArray(zones_arr)
 
     df = crosstab(zones_agg, values_agg, layer)
 
@@ -256,26 +256,26 @@ def test_crosstab_no_values():
 
 def test_crosstab_3d():
     # create valid `values_agg` of np.nan and np.inf
-    values_agg = xa.DataArray(np.ones(4*5*6).reshape(5, 6, 4),
+    values_agg = xr.DataArray(np.ones(4*5*6).reshape(5, 6, 4),
                               dims=['lat', 'lon', 'race'])
     values_agg['race'] = ['cat1', 'cat2', 'cat3', 'cat4']
     layer = -1
 
     # create a valid `zones_agg` with compatiable shape
     zones_arr = np.arange(5*6, dtype=np.int).reshape(5, 6)
-    zones_agg = xa.DataArray(zones_arr)
+    zones_agg = xr.DataArray(zones_arr)
 
     # numpy case
     df = crosstab(zones_agg, values_agg, layer)
     assert isinstance(df, pd.DataFrame)
 
     # dask case
-    values_agg_dask = xa.DataArray(
+    values_agg_dask = xr.DataArray(
         da.from_array(values_agg.data, chunks=(3, 3, 1)),
         dims=['lat', 'lon', 'race']
     )
     values_agg_dask['race'] = ['cat1', 'cat2', 'cat3', 'cat4']
-    zones_agg_dask = xa.DataArray(da.from_array(zones_agg.data, chunks=(3, 3)))
+    zones_agg_dask = xr.DataArray(da.from_array(zones_agg.data, chunks=(3, 3)))
     dask_df = crosstab(zones_agg_dask, values_agg_dask, layer)
     assert isinstance(dask_df, dd.DataFrame)
 
@@ -311,16 +311,16 @@ def test_crosstab_2d():
                              [0, 30, 20, 50],
                              [10, 30, 40, 40],
                              [10, 10, 50, 0]])
-    values_agg = xa.DataArray(values_val)
-    values_agg_dask = xa.DataArray(da.from_array(values_val, chunks=(3, 3)))
+    values_agg = xr.DataArray(values_val)
+    values_agg_dask = xr.DataArray(da.from_array(values_val, chunks=(3, 3)))
 
     zones_val = np.asarray([[1, 1, 6, 6],
                             [1, 1, 6, 6],
                             [3, 5, 6, 6],
                             [3, 5, 7, 7],
                             [3, 7, 7, 0]])
-    zones_agg = xa.DataArray(zones_val)
-    zones_agg_dask = xa.DataArray(da.from_array(zones_val, chunks=(3, 3)))
+    zones_agg = xr.DataArray(zones_val)
+    zones_agg_dask = xr.DataArray(da.from_array(zones_val, chunks=(3, 3)))
 
     df = crosstab(zones_agg, values_agg)
     assert isinstance(df, pd.DataFrame)
@@ -350,31 +350,31 @@ def test_apply_invalid_input():
         return 0
 
     # invalid dims (must be 2d)
-    zones = xa.DataArray(np.array([1, 2, 0]))
-    values = xa.DataArray(np.array([[[1, 2, 0.5]]]))
+    zones = xr.DataArray(np.array([1, 2, 0]))
+    values = xr.DataArray(np.array([[[1, 2, 0.5]]]))
     with pytest.raises(Exception) as e_info:
         apply(zones, values, func)
 
     # invalid zones data dtype (must be int)
-    zones = xa.DataArray(np.array([[1, 2, 0.5]]))
-    values = xa.DataArray(np.array([[[1, 2, 0.5]]]))
+    zones = xr.DataArray(np.array([[1, 2, 0.5]]))
+    values = xr.DataArray(np.array([[[1, 2, 0.5]]]))
     with pytest.raises(Exception) as e_info:
         apply(zones, values, func)
 
     # invalid values data dtype (must be int or float)
-    values = xa.DataArray(np.array([['apples', 'foobar', 'cowboy']]))
-    zones = xa.DataArray(np.array([[1, 2, 0]]))
+    values = xr.DataArray(np.array([['apples', 'foobar', 'cowboy']]))
+    zones = xr.DataArray(np.array([[1, 2, 0]]))
     with pytest.raises(Exception) as e_info:
         apply(zones, values, func)
 
     # invalid values dim (must be 2d or 3d)
-    values = xa.DataArray(np.array([1, 2, 0.5]))
-    zones = xa.DataArray(np.array([[1, 2, 0]]))
+    values = xr.DataArray(np.array([1, 2, 0.5]))
+    zones = xr.DataArray(np.array([[1, 2, 0]]))
     with pytest.raises(Exception) as e_info:
         apply(zones, values, func)
 
-    zones = xa.DataArray(np.array([[1, 2, 0], [1, 2, 3]]))
-    values = xa.DataArray(np.array([[1, 2, 0.5]]))
+    zones = xr.DataArray(np.array([[1, 2, 0], [1, 2, 3]]))
+    values = xr.DataArray(np.array([[1, 2, 0.5]]))
     # mis-match zones.shape and values.shape
     with pytest.raises(Exception) as e_info:  # noqa
         apply(zones, values, func)
@@ -389,12 +389,12 @@ def test_apply():
     # define some zones
     zones_val[1] = 1
     zones_val[2] = 2
-    zones = xa.DataArray(zones_val)
+    zones = xr.DataArray(zones_val)
 
     values_val = np.array([[0, 1, 2],
                            [3, 4, 5],
                            [6, 7, np.nan]])
-    values = xa.DataArray(values_val)
+    values = xr.DataArray(values_val)
 
     values_copy = values.copy()
     apply(zones, values, func, nodata=2)
@@ -440,7 +440,7 @@ def test_suggest_zonal_canvas():
 
 def create_test_arr(arr):
     n, m = arr.shape
-    raster = xa.DataArray(arr, dims=['y', 'x'])
+    raster = xr.DataArray(arr, dims=['y', 'x'])
     raster['y'] = np.linspace(0, n, n)
     raster['x'] = np.linspace(0, m, m)
     return raster
