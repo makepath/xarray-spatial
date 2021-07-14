@@ -236,7 +236,7 @@ def test_crosstab_no_values():
     zones_arr = np.arange(6, dtype=np.int).reshape(2, 3)
     zones_agg = xr.DataArray(zones_arr)
 
-    df = crosstab(zones_agg, values_agg, layer)
+    df = crosstab(zones_agg, values_agg, layer, nodata_values=0)
 
     num_cats = len(values_agg.dims[-1])
     # number of columns = number of categories + 1
@@ -247,11 +247,10 @@ def test_crosstab_no_values():
     # number of rows = number of zones
     assert len(df.index) == num_zones
 
-    # # values_agg are all 0s, so all 0 over categories
-    # for col in df.columns:
-    #     if col != 'zone':
-    #         print(col, df[col].unique())
-    #         assert np.isclose(df[col].unique(), [0])
+    # values_agg are all 0s, so all 0 over categories
+    for col in df.columns:
+        if col != 'zone':
+            assert np.isclose(df[col].unique(), [0])
 
 
 def test_crosstab_3d():

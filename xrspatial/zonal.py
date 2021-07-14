@@ -159,10 +159,10 @@ def stats(zones: xr.DataArray,
         calculating the output statistic for each zone.
 
     stats_funcs : Dict, or List of strings, default=['mean', 'max', 'min',
-        'std', 'var', 'count'])
+        'sum', 'std', 'var', 'count'])
         The statistics to calculate for each zone. If a list, possible
-        choices are subsets of `['mean', 'max', 'min', 'std', 'var',
-        'count']`. In the dictionary case, all of its values must be
+        choices are subsets of the default options.
+        In the dictionary case, all of its values must be
         callable. Function takes only one argument that is the `values` raster.
         The key become the column name in the output DataFrame.
 
@@ -231,9 +231,9 @@ def stats(zones: xr.DataArray,
 
         >>> # Custom Stats with dask backed xarray DataArrays
         >>> dask_custom_stats ={'double_sum': lambda val: val.sum()*2}
-        >>> dask_custom_stats_df = stats(zones=dask_zones,
-                                    values=dask_values,
-                                    stats_funcs=custom_stats)
+        >>> dask_custom_stats_df = stats(
+        >>>      zones=dask_zones, values=dask_values, stats_funcs=custom_stats
+        >>> )
         >>> print(type(dask_custom_stats_df))
         <class 'dask.dataframe.core.DataFrame'>
         >>> print(dask_custom_stats_df.compute())
@@ -332,8 +332,7 @@ def _crosstab_numpy(zones, values, nodata_zones, nodata_values):
     else:
         # 2D case
         # mask out all invalid values such as: nan, inf
-        masked_data = np.ma.masked_invalid(values.data)
-        cats = np.unique(masked_data[masked_data.mask == False]).data  # noqa
+        cats = da.unique(values.data[da.isfinite(values.data)]).compute()
         cats = sorted(list(set(cats) - set([nodata_values])))
 
     # do not consider zone with nodata values
@@ -398,14 +397,19 @@ def crosstab(zones: xr.DataArray,
              layer: Optional[int] = None,
              nodata_zones: Optional[Union[int, float]] = None,
              nodata_values: Optional[Union[int, float]] = None
-             ) -> pd.DataFrame:
+             ) -> Union[pd.DataFrame, dd.DataFrame]:
     """
     Calculate cross-tabulated (categorical stats) areas
-    between two datasets: a zone dataset, a value dataset (a value
-    raster). Outputs a pandas DataFrame.
+    between two datasets: a zone dataset `zones`, a value dataset `values`
+    (a value raster). Infinite and NaN values in `zones` and `values` will
+    be ignored.
+
+    Outputs a pandas DataFrame if `zones` and `values` are numpy backed.
+    Outputs a dask DataFrame if `zones` and `values` are dask with
+    numpy-backed xarray DataArrays.
 
     Requires a DataArray with a single data dimension, here called the
-    "values", indexed using 3D coordinates.
+    "values", indexed using either 2D or 3D coordinates.
 
     DataArrays with 3D coordinates are expected to contain values
     distributed over different categories that are indexed by the
@@ -416,22 +420,27 @@ def crosstab(zones: xr.DataArray,
     Parameters
     ----------
     zones : xr.DataArray
-        zones.values is a 2d array of integers.
+        2D data array of integers or floats.
         A zone is all the cells in a raster that have the same value,
-        whether or not they are contiguous. The input zone layer defines
-        the shape, values, and locations of the zones. An integer field
+        whether or not they are contiguous. The input `zones` raster defines
+        the shape, values, and locations of the zones. An unique field
         in the zone input is specified to define the zones.
 
     values : xr.DataArray
-        values.values is a 3d array of integers or floats.
+        2D or 3D data array of integers or floats.
         The input value raster contains the input values used in
         calculating the categorical statistic for each zone.
 
     layer: int, default=0
         index of the categorical dimension layer inside the `values` DataArray.
 
-    nodata: int, default=None
+    nodata_zones: int, float, default=None
         Nodata value in `zones` raster.
+        Cells with `nodata` does not belong to any zone,
+        and thus excluded from calculation.
+
+    nodata_values: int, float, default=None
+        Nodata value in `values` raster.
         Cells with `nodata` does not belong to any zone,
         and thus excluded from calculation.
 
@@ -440,102 +449,64 @@ def crosstab(zones: xr.DataArray,
     crosstab_df : pandas.DataFrame
         A pandas DataFrame where each column is a categorical value
         and each row is a zone with zone id.
-        Each entry presents the percentage of the category over the zone.
+        Each entry presents the number of pixels counted of the category
+        over the zone.
 
     Examples
     --------
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
-        from xrspatial.classify import equal_interval
-        from xrspatial.zonal import crosstab
+        values_data = np.asarray([[0, 0, 10, 20],
+                                  [0, 0, 0, 10],
+                                  [0, np.nan, 20, 50],
+                                  [10, 30, 40, np.inf],
+                                  [10, 10, 50, 0]])
+        values = xr.DataArray(values_data)
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
+        zones_data = np.asarray([[1, 1, 6, 6],
+                                 [1, np.nan, 6, 6],
+                                 [3, 5, 6, 6],
+                                 [3, 5, 7, np.nan],
+                                 [3, 7, 7, 0]])
+        zones = xr.DataArray(zones_val)
 
-
-        # Generate Values
-        terrain_agg = generate_terrain(canvas = cvs)
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Zones
-        equal_interval_agg = equal_interval(
-            agg = terrain_agg,
-            name = 'Elevation',
-        )
-        equal_interval_agg = equal_interval_agg.astype('int')
-
-        # Edit Attributes
-        equal_interval_agg = equal_interval_agg.assign_attrs(
-            {
-                'Description': 'Example Equal Interval',
-            }
-        )
-
-        # Plot Terrain (Values)
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain (Values)")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Equal Interval (Zones)
-        equal_interval_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Equal Interval (Zones)")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
+        values_dask = xr.DataArray(da.from_array(values_val, chunks=(3, 3)))
+        zones_dask = xr.DataArray(da.from_array(zones_val, chunks=(3, 3)))
 
     .. sourcecode:: python
 
-        >>> # Calculate Crosstab
-        >>> crosstab_agg = crosstab(
-                zones=equal_interval_agg,
-                values=terrain_agg,
-            )
-        >>> print(crosstab_agg)
-           0.000000     1200.014238  1200.014864  1200.021077  1200.027001
-        1          0.0     0.000019     0.000019     0.000019     0.000019
-        2          0.0     0.000000     0.000000     0.000000     0.000000
-        3          0.0     0.000000     0.000000     0.000000     0.000000
-        4          0.0     0.000000     0.000000     0.000000     0.000000
+        >>> # Calculate Crosstab, numpy case
+        >>> df = crosstab(zones=zones, values=values)
+        >>> print(df)
+                zone  0.0  10.0  20.0  30.0  40.0  50.0
+            0   0.0    1     0     0     0     0     0
+            1   1.0    3     0     0     0     0     0
+            2   3.0    1     2     0     0     0     0
+            3   5.0    0     0     0     1     0     0
+            4   6.0    1     2     2     0     0     1
+            5   7.0    0     1     0     0     1     1
 
-           1200.030954  1200.034319  1200.038300  1200.042588  1200.042805
-        1     0.000019     0.000019     0.000019     0.000019     0.000019
-        2     0.000000     0.000000     0.000000     0.000000     0.000000
-        3     0.000000     0.000000     0.000000     0.000000     0.000000
-        4     0.000000     0.000000     0.000000     0.000000     0.000000
-
-           3932.764078  3946.456024  3947.505026  3952.279254  3957.748147
-        1     0.000000     0.000000     0.000000     0.000000     0.000000
-        2     0.000000     0.000000     0.000000     0.000000     0.000000
-        3     0.000000     0.000000     0.000000     0.000000     0.000000
-        4     0.000728     0.000728     0.000728     0.000728     0.000728
-
-           3968.600152  3973.840684  3989.509344  3998.678232  4000.000000
-        1     0.000000     0.000000     0.000000     0.000000     0.000000
-        2     0.000000     0.000000     0.000000     0.000000     0.000000
-        3     0.000000     0.000000     0.000000     0.000000     0.000000
-        4     0.000728     0.000728     0.000728     0.000728     0.000728
-
-        [4 rows x 81984 columns]
+        >>> # Calculate Crosstab, dask case
+        >>> df = crosstab(zones=zones_dask, values=values_dask)
+        >>> print(df)
+            Dask DataFrame Structure:
+            zone	0.0	10.0	20.0	30.0	40.0	50.0
+            npartitions=5
+            0	float64	int64	int64	int64	int64	int64	int64
+            1	...	...	...	...	...	...	...
+            ...	...	...	...	...	...	...	...
+            4	...	...	...	...	...	...	...
+            5	...	...	...	...	...	...	...
+            Dask Name: astype, 1186 tasks
+        >>> print(dask_df.compute)
+                zone  0.0  10.0  20.0  30.0  40.0  50.0
+            0   0.0    1     0     0     0     0     0
+            1   1.0    3     0     0     0     0     0
+            2   3.0    1     2     0     0     0     0
+            3   5.0    0     0     0     1     0     0
+            4   6.0    1     2     2     0     0     1
+            5   7.0    0     1     0     0     1     1
     """
     if not isinstance(zones, xr.DataArray):
         raise TypeError("zones must be instance of DataArray")
