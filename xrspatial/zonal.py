@@ -281,7 +281,7 @@ def stats(zones: xr.DataArray,
 
 
 def _crosstab_dict(zones, values, unique_zones, cats, masked_data):
-    
+
     def _zone_cat_data(cat, zone_id, cat_id):
         if len(values.shape) == 2:
             # 2D case
@@ -309,7 +309,7 @@ def _crosstab_dict(zones, values, unique_zones, cats, masked_data):
         crosstab_dict[i] = []
 
     for c, cat in enumerate(cats):
-        for zone_id in unique_zones:            
+        for zone_id in unique_zones:
             # get category cat values in the selected zone
             zone_cat_data = _zone_cat_data(cat, zone_id, c)
             zone_cat_count = _stats_count(zone_cat_data)
