@@ -29,7 +29,7 @@ def create_zones_values(backend):
     ])
     values_2d = xr.DataArray(values_val_2d)
 
-    values_val_3d = np.ones(4 * 3 * 6).reshape(3, 6, 4)
+    values_val_3d = np.ones(4*3*8).reshape(3, 8, 4)
     values_3d = xr.DataArray(
         values_val_3d,
         dims=['lat', 'lon', 'race']
@@ -42,6 +42,26 @@ def create_zones_values(backend):
         values_3d.data = da.from_array(values_3d.data, chunks=(3, 3, 1))
 
     return zones, values_2d, values_3d
+
+
+def check_results(df_np, df_da, expected_results_dict):
+    # numpy case
+    assert isinstance(df_np, pd.DataFrame)
+    assert len(df_np.columns) == len(expected_results_dict)
+    for col in df_np.columns:
+        assert np.isclose(
+            df_np[col], expected_results_dict[col], equal_nan=True
+        ).all()
+
+    # dask case
+    assert isinstance(df_da, dd.DataFrame)
+    df_da = df_da.compute()
+    assert isinstance(df_da, pd.DataFrame)
+
+    # numpy results equal dask results
+    assert (df_np.columns == df_da.columns).all()
+    for col in df_np.columns:
+        assert np.isclose(df_np[col], df_da[col], equal_nan=True).all()
 
 
 def test_stats():
@@ -61,22 +81,11 @@ def test_stats():
     zones_np, values_np, _ = create_zones_values(backend='numpy')
     # default stats_funcs
     df_np = stats(zones=zones_np, values=values_np)
-    assert isinstance(df_np, pd.DataFrame)
-    assert len(df_np.columns) == len(default_stats_results)
-    for col in df_np.columns:
-        assert np.isclose(
-            df_np[col], default_stats_results[col], equal_nan=True
-        ).all()
 
     # dask case
     zones_da, values_da, _ = create_zones_values(backend='dask')
     df_da = stats(zones=zones_da, values=values_da)
-    assert isinstance(df_da, dd.DataFrame)
-    df_da = df_da.compute()
-    assert isinstance(df_da, pd.DataFrame)
-    assert (df_da.columns == df_np.columns).all()
-    for col in df_da.columns:
-        assert np.isclose(df_da[col], df_np[col], equal_nan=True).all()
+    check_results(df_np, df_da, default_stats_results)
 
     # ---- custom stats ----
     # expected results
@@ -102,143 +111,82 @@ def test_stats():
         zones=zones_np, values=values_np, stats_funcs=custom_stats,
         nodata_zones=0, nodata_values=0
     )
-    assert isinstance(df_np, pd.DataFrame)
-    assert len(df_np.columns) == len(custom_stats_results)
-    for col in df_np.columns:
-        assert np.isclose(
-            df_np[col], custom_stats_results[col], equal_nan=True
-        ).all()
-
     # dask case
     df_da = stats(
         zones=zones_da, values=values_da, stats_funcs=custom_stats,
         nodata_zones=0, nodata_values=0
     )
-    assert isinstance(df_da, dd.DataFrame)
-    df_da = df_da.compute()
-    assert isinstance(df_da, pd.DataFrame)
-    assert (df_da.columns == df_np.columns).all()
-    for col in df_da.columns:
-        assert np.isclose(df_da[col], df_np[col], equal_nan=True).all()
-
-
-def test_crosstab_no_values():
-    # create valid `values_agg` of 0s
-    values_agg = xr.DataArray(np.zeros(24).reshape(2, 3, 4),
-                              dims=['lat', 'lon', 'race'])
-    values_agg['race'] = ['cat1', 'cat2', 'cat3', 'cat4']
-    layer = -1
-
-    # create a valid `zones_agg` with compatiable shape
-    zones_arr = np.arange(6, dtype=np.int).reshape(2, 3)
-    zones_agg = xr.DataArray(zones_arr)
-
-    df = crosstab(zones_agg, values_agg, layer, nodata_values=0)
-
-    num_cats = len(values_agg.dims[-1])
-    # number of columns = number of categories + 1
-    assert len(df.columns) == num_cats + 1
-
-    zone_idx = np.unique(zones_arr)
-    num_zones = len(zone_idx)
-    # number of rows = number of zones
-    assert len(df.index) == num_zones
-
-    # values_agg are all 0s, so all 0 over categories
-    for col in df.columns:
-        if col != 'zone':
-            assert np.isclose(df[col].unique(), [0])
-
-
-def test_crosstab_3d():
-    # create valid `values_agg` of np.nan and np.inf
-    values_agg = xr.DataArray(np.ones(4*5*6).reshape(5, 6, 4),
-                              dims=['lat', 'lon', 'race'])
-    values_agg['race'] = ['cat1', 'cat2', 'cat3', 'cat4']
-    layer = -1
-
-    # create a valid `zones_agg` with compatiable shape
-    zones_arr = np.arange(5*6, dtype=np.int).reshape(5, 6)
-    zones_agg = xr.DataArray(zones_arr)
-
-    # numpy case
-    df = crosstab(zones_agg, values_agg, layer)
-    assert isinstance(df, pd.DataFrame)
-
-    # dask case
-    values_agg_dask = xr.DataArray(
-        da.from_array(values_agg.data, chunks=(3, 3, 1)),
-        dims=['lat', 'lon', 'race']
-    )
-    values_agg_dask['race'] = ['cat1', 'cat2', 'cat3', 'cat4']
-    zones_agg_dask = xr.DataArray(da.from_array(zones_agg.data, chunks=(3, 3)))
-    dask_df = crosstab(zones_agg_dask, values_agg_dask, layer)
-    assert isinstance(dask_df, dd.DataFrame)
-
-    dask_df = dask_df.compute()
-    assert isinstance(dask_df, pd.DataFrame)
-
-    assert (df.columns == dask_df.columns).all()
-    for col in df.columns:
-        assert np.isclose(df[col], dask_df[col], equal_nan=True).all()
-
-    num_cats = len(values_agg.dims[-1])
-    # number of columns = number of categories
-    assert len(df.columns) == num_cats + 1
-
-    zone_idx = np.unique(zones_arr)
-    num_zones = len(zone_idx)
-    # number of rows = number of zones
-    assert len(df.index) == num_zones
-
-    num_nans = df.isnull().sum().sum()
-    # no NaN
-    assert num_nans == 0
-
-    # values_agg are all 1s
-    for col in df.columns:
-        if col != 'zone':
-            assert len(df[col].unique()) == 1
+    check_results(df_np, df_da, custom_stats_results)
 
 
 def test_crosstab_2d():
-    values_val = np.asarray([[0, 0, 10, 20],
-                             [0, 0, 0, 10],
-                             [0, 30, 20, 50],
-                             [10, 30, 40, 40],
-                             [10, 10, 50, 0]])
-    values_agg = xr.DataArray(values_val)
-    values_agg_dask = xr.DataArray(da.from_array(values_val, chunks=(3, 3)))
+    # expected results
+    crosstab_2d_results = {
+        'zone': [1, 2, 3],
+        0:      [0, 0, 1],
+        1:      [6, 0, 0],
+        2:      [0, 4, 0],
+    }
 
-    zones_val = np.asarray([[1, 1, 6, 6],
-                            [1, 1, 6, 6],
-                            [3, 5, 6, 6],
-                            [3, 5, 7, 7],
-                            [3, 7, 7, 0]])
-    zones_agg = xr.DataArray(zones_val)
-    zones_agg_dask = xr.DataArray(da.from_array(zones_val, chunks=(3, 3)))
+    # numpy case
+    zones_np, values_np, _ = create_zones_values(backend='numpy')
 
-    df = crosstab(zones_agg, values_agg)
-    assert isinstance(df, pd.DataFrame)
+    df_np = crosstab(
+        zones=zones_np, values=values_np, nodata_zones=0, nodata_values=3
+    )
 
-    dask_df = crosstab(zones_agg_dask, values_agg_dask)
-    assert isinstance(dask_df, dd.DataFrame)
+    # dask case
+    zones_da, values_da, _ = create_zones_values(backend='dask')
+    df_da = crosstab(
+        zones=zones_da, values=values_da, nodata_zones=0, nodata_values=3
+    )
+    check_results(df_np, df_da, crosstab_2d_results)
 
-    dask_df = dask_df.compute()
-    assert isinstance(dask_df, pd.DataFrame)
 
-    assert (df.columns == dask_df.columns).all()
-    for col in df.columns:
-        assert np.isclose(df[col], dask_df[col], equal_nan=True).all()
+def test_crosstab_3d():
+    # expected results
+    crosstab_3d_results = {
+        'zone': [0, 1, 2, 3],
+        'cat1': [6, 6, 5, 6],
+        'cat2': [6, 6, 5, 6],
+        'cat3': [6, 6, 5, 6],
+        'cat4': [6, 6, 5, 6],
+    }
 
-    num_cats = 6  # 0, 10, 20, 30, 40, 50
-    # number of columns = number of categories + 1 (zone column)
-    assert len(df.columns) == num_cats + 1
+    # numpy case
+    zones_np, _, values_np = create_zones_values(backend='numpy')
+    df_np = crosstab(
+        zones=zones_np, values=values_np, layer=-1
+    )
+    # dask case
+    zones_da, _, values_da = create_zones_values(backend='dask')
+    df_da = crosstab(
+        zones=zones_da, values=values_da, layer=-1
+    )
+    check_results(df_np, df_da, crosstab_3d_results)
 
-    zone_idx = np.unique(zones_agg.data)
-    num_zones = len(zone_idx)
-    # number of rows = number of zones
-    assert len(df.index) == num_zones
+    # ----- no values case ------
+    crosstab_3d_novalues_results = {
+        'zone': [1, 2, 3],
+        'cat1': [0, 0, 0],
+        'cat2': [0, 0, 0],
+        'cat3': [0, 0, 0],
+        'cat4': [0, 0, 0],
+    }
+
+    # numpy case
+    zones_np, _, values_np = create_zones_values(backend='numpy')
+    df_np = crosstab(
+        zones=zones_np, values=values_np, layer=-1,
+        nodata_zones=0, nodata_values=1
+    )
+    # dask case
+    zones_da, _, values_da = create_zones_values(backend='dask')
+    df_da = crosstab(
+        zones=zones_da, values=values_da, layer=-1,
+        nodata_zones=0, nodata_values=1
+    )
+    check_results(df_np, df_da, crosstab_3d_novalues_results)
 
 
 def test_apply():

@@ -365,10 +365,8 @@ def _crosstab_dask(zones, values, nodata_zones, nodata_values):
         cats = values.indexes[values.dims[0]].values
     else:
         # 2D case
-        # mask out all invalid values: nan, inf
-        masked_data = da.ma.masked_invalid(values.data)
         # precompute categories
-        cats = da.unique(da.ma.getdata(masked_data)).compute()
+        cats = da.unique(values.data[da.isfinite(values.data)]).compute()
         cats = sorted(list(set(cats) - set([nodata_values])))
 
     # precompute unique zones
