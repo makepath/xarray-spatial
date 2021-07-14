@@ -280,7 +280,22 @@ def stats(zones: xr.DataArray,
     return stats_df
 
 
-def _crosstab_dict_2d(zones, values, masked_data, unique_zones, cats):
+def _crosstab_dict(zones, values, unique_zones, cats, masked_data=None):
+    
+    def _zone_cat_data(cat, zone_id, cat_id):
+        if len(values.shape) == 2:
+            # 2D case
+            zone_cat_data = array_module.ma.masked_where(
+                ((values.data != cat) | (zones.data != zone_id)), masked_data
+            )
+        else:
+            # 3D case
+            cat_data = values[cat_id]
+            cat_masked_data = da.ma.masked_invalid(cat_data.data)
+            zone_cat_data = array_module.ma.masked_where(
+                zones.data != zone_id, cat_masked_data
+            )
+        return zone_cat_data
 
     # array backend
     if isinstance(zones.data, np.ndarray):
@@ -293,23 +308,12 @@ def _crosstab_dict_2d(zones, values, masked_data, unique_zones, cats):
     for i in cats:
         crosstab_dict[i] = []
 
-    zone_counts = {}
-    for zone_id in unique_zones:
-        # get zone values
-        zone_values = array_module.ma.masked_where(
-            zones.data != zone_id, masked_data
-        )
-        zone_counts[zone_id] = _stats_count(zone_values)
-
-    for cat in cats:
-        for zone_id in unique_zones:
+    for c, cat in enumerate(cats):
+        for zone_id in unique_zones:            
             # get category cat values in the selected zone
-            zone_cat_values = array_module.ma.masked_where(
-                ((values.data != cat) | (zones.data != zone_id)), masked_data
-            )
-            zone_cat_count = _stats_count(zone_cat_values)
-            zone_cat_stat = zone_cat_count / zone_counts[zone_id]
-            crosstab_dict[cat].append(zone_cat_stat)
+            zone_cat_data = _zone_cat_data(cat, zone_id, c)
+            zone_cat_count = _stats_count(zone_cat_data)
+            crosstab_dict[cat].append(zone_cat_count)
 
     return crosstab_dict
 
@@ -325,8 +329,8 @@ def _crosstab_2d_numpy(zones, values, nodata):
     # categories
     cats = np.unique(masked_data[masked_data.mask == False]).data # noqa
 
-    crosstab_dict = _crosstab_dict_2d(
-        zones, values, masked_data, unique_zones, cats
+    crosstab_dict = _crosstab_dict(
+        zones, values, unique_zones, cats, masked_data
     )
 
     crosstab_df = pd.DataFrame(crosstab_dict)
@@ -348,8 +352,8 @@ def _crosstab_2d_dask(zones, values, nodata):
     # precompute categories
     cats = da.unique(da.ma.getdata(masked_data)).compute()
 
-    crosstab_dict = _crosstab_dict_2d(
-        zones, values, masked_data, unique_zones, cats
+    crosstab_dict = _crosstab_dict(
+        zones, values, unique_zones, cats, masked_data
     )
 
     crosstab_dict = {
@@ -382,37 +386,11 @@ def _crosstab_2d(zones, values, nodata):
     return crosstab_df
 
 
-def _crosstab_dict_3d(zones, values, unique_zones, cats):
-    # array backend
-    if isinstance(zones.data, np.ndarray):
-        array_module = np
-    elif isinstance(zones.data, da.Array):
-        array_module = da
-
-    crosstab_dict = {}
-    crosstab_dict['zone'] = unique_zones
-    for i in cats:
-        crosstab_dict[i] = []
-
-    for c, cat in enumerate(cats):
-        cat_data = values[c]
-        cat_masked_data = da.ma.masked_invalid(cat_data.data)
-        for zone_id in unique_zones:
-            # get category cat values in the selected zone
-            zone_cat_values = array_module.ma.masked_where(
-                zones.data != zone_id, cat_masked_data
-            )
-            zone_cat_count = _stats_count(zone_cat_values)
-            crosstab_dict[cat].append(zone_cat_count)
-
-    return crosstab_dict
-
-
 def _crosstab_3d_dask(zones, values, cats, nodata):
 
     unique_zones = da.unique(zones.data).compute_chunk_sizes()
 
-    crosstab_dict = _crosstab_dict_3d(zones, values, unique_zones, cats)
+    crosstab_dict = _crosstab_dict(zones, values, unique_zones, cats)
     crosstab_dict = {
         stats: da.stack(zonal_stats, axis=0)
         for stats, zonal_stats in crosstab_dict.items()
@@ -434,7 +412,7 @@ def _crosstab_3d_numpy(zones, values, cats, nodata):
     # do not consider zone with nodata values
     unique_zones = np.unique(zones.data[np.where(zones.data != nodata)])
 
-    crosstab_dict = _crosstab_dict_3d(zones, values, unique_zones, cats)
+    crosstab_dict = _crosstab_dict(zones, values, unique_zones, cats)
 
     crosstab_df = pd.DataFrame(crosstab_dict)
     # name columns

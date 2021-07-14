@@ -235,25 +235,28 @@ def test_crosstab_no_values():
     values_agg = xa.DataArray(np.zeros(24).reshape(2, 3, 4),
                               dims=['lat', 'lon', 'race'])
     values_agg['race'] = ['cat1', 'cat2', 'cat3', 'cat4']
+    layer = -1
 
     # create a valid `zones_agg` with compatiable shape
     zones_arr = np.arange(6, dtype=np.int).reshape(2, 3)
     zones_agg = xa.DataArray(zones_arr)
 
-    df = crosstab(zones_agg, values_agg)
+    df = crosstab(zones_agg, values_agg, layer)
 
     num_cats = len(values_agg.dims[-1])
-    # number of columns = number of categories
-    assert len(df.columns) == num_cats
+    # number of columns = number of categories + 1
+    assert len(df.columns) == num_cats + 1
 
     zone_idx = np.unique(zones_arr)
     num_zones = len(zone_idx)
     # number of rows = number of zones
     assert len(df.index) == num_zones
 
-    num_zeros = (df == 0).sum().sum()
-    # all are 0s
-    assert num_zeros == num_zones * num_cats
+    # # values_agg are all 0s, so all 0 over categories
+    # for col in df.columns:
+    #     if col != 'zone':
+    #         print(col, df[col].unique())
+    #         assert np.isclose(df[col].unique(), [0])
 
 
 def test_crosstab_3d():
@@ -301,7 +304,7 @@ def test_crosstab_3d():
     # no NaN
     assert num_nans == 0
 
-    # values_agg are all 1s, so all categories have same percentage over zones
+    # values_agg are all 1s
     for col in df.columns:
         if col != 'zone':
             assert len(df[col].unique()) == 1
@@ -345,9 +348,6 @@ def test_crosstab_2d():
     num_zones = len(zone_idx)
     # number of rows = number of zones
     assert len(df.index) == num_zones
-    df.loc[:, 'check_sum'] = df.sum(axis=1)
-    # sum of a row is 1.0
-    assert df['check_sum'][zone_idx[0]] == 1.0
 
 
 def test_apply_invalid_input():
