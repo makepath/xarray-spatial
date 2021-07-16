@@ -154,12 +154,12 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Apply](xrspatial/zonal.py) | ✅️ |  | | |
+| [Apply](xrspatial/zonal.py) | ✅️ | ✅️ | | |
 | [Crop](xrspatial/zonal.py) | ✅️ | | | |
-| [Regions](xrspatial/zonal.py) | ✅️ |  | | |
+| [Regions](xrspatial/zonal.py) |  |  | | |
 | [Trim](xrspatial/zonal.py) | ✅️ |  | | |
-| [Zonal Statistics](xrspatial/zonal.py) | ✅️ | | | |
-| [Zonal Cross Tabulate](xrspatial/zonal.py) | ✅️ | | | |
+| [Zonal Statistics](xrspatial/zonal.py) | ✅️ | ✅️| | |
+| [Zonal Cross Tabulate](xrspatial/zonal.py) | ✅️ | ✅️| | |
 
 -----------
 
