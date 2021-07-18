@@ -326,7 +326,7 @@ def _run_cpu_quantile(data, k):
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    q = np.percentile(data, p)
+    q = np.nanpercentile(data, p)
     q = np.unique(q)
     return q
 
@@ -338,7 +338,7 @@ def _run_dask_numpy_quantile(data, k):
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    q = da.percentile(data.flatten(), p)
+    q = da.percentile(data[da.isfinite(data)].flatten(), p)
     q = da.unique(q)
     return q
 
@@ -350,7 +350,7 @@ def _run_cupy_quantile(data, k):
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    q = cupy.percentile(data, p)
+    q = cupy.percentile(data[cupy.isfinite(data)], p)
     q = cupy.unique(q)
     return q
 
