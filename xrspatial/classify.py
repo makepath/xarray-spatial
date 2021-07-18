@@ -620,7 +620,10 @@ def _run_numpy_natural_break(data, num_sample, k):
                           'a long time.'.format(sample_data.size),
                           Warning)
 
-    uv = np.unique(sample_data)
+    # only include non-nan values
+    sample_data = np.asarray([i for i in sample_data if np.isfinite(i)])
+
+    uv = np.unique(sample_data[np.isfinite(sample_data)])
     uvk = len(uv)
 
     if uvk < k:
@@ -736,7 +739,10 @@ def _run_cupy_natural_break(data, num_sample, k):
                           'a long time.'.format(sample_data.size),
                           Warning)
 
-    uv = cupy.unique(sample_data)
+    # only include non-nan values
+    sample_data = cupy.asarray([i for i in sample_data if cupy.isfinite(i)])
+
+    uv = cupy.unique(sample_data[cupy.isfinite(sample_data)])
     uvk = len(uv)
 
     if uvk < k:
@@ -1064,9 +1070,9 @@ def equal_interval(agg: xr.DataArray,
         out = _run_cupy_equal_interval(agg.data, k)
 
     # dask + cupy case
-    elif has_cuda() and \
-            isinstance(agg.data, cupy.ndarray) and \
-            is_cupy_backed(agg):
+    elif (has_cuda() and
+          isinstance(agg.data, cupy.ndarray) and
+          is_cupy_backed(agg)):
         out = _run_dask_cupy_equal_interval(agg.data, k)
 
     # dask + numpy case
