@@ -11,19 +11,21 @@ from xrspatial import natural_breaks
 from xrspatial import quantile
 from xrspatial import reclassify
 
+elevation = np.array([
+    [1.,  2.,  3.,  4., np.nan],
+    [5.,  6.,  7.,  8.,  9.],
+    [10., 11., 12., 13., 14.],
+    [15., 16., 17., 18., np.inf],
+])
 
-n, m = 5, 5
-elevation = np.arange(n * m, dtype=float).reshape((n, m))
-elevation[0, 0] = np.nan
-elevation[-1, -1] = np.nan
 numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
 dask_numpy_agg = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
                               attrs={'res': (10.0, 10.0)})
 
 
 def test_reclassify_cpu():
-    bins = [10, 20, 30]
-    new_values = [1, 2, 3]
+    bins = [10, 20]
+    new_values = [1, 2]
 
     # numpy
     numpy_reclassify = reclassify(numpy_agg, bins=bins, new_values=new_values,
@@ -32,7 +34,7 @@ def test_reclassify_cpu():
     unique_elements = np.unique(
         numpy_reclassify.data[np.isfinite(numpy_reclassify.data)]
     )
-    assert len(unique_elements) == 3
+    assert len(unique_elements) == 2
 
     # dask + numpy
     dask_reclassify = reclassify(dask_numpy_agg, bins=bins,

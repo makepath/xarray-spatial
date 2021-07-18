@@ -326,7 +326,7 @@ def _run_cpu_quantile(data, k):
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    q = np.nanpercentile(data, p)
+    q = np.percentile(data[np.isfinite(data)], p)
     q = np.unique(q)
     return q
 
@@ -900,8 +900,8 @@ def natural_breaks(agg: xr.DataArray,
 
 
 def _run_numpy_equal_interval(data, k):
-    max_data = np.nanmax(data)
-    min_data = np.nanmin(data)
+    max_data = np.nanmax(data[np.isfinite(data)])
+    min_data = np.nanmin(data[np.isfinite(data)])
     rg = max_data - min_data
     width = rg * 1.0 / k
     cuts = np.arange(min_data + width, max_data + width, width)
@@ -915,8 +915,8 @@ def _run_numpy_equal_interval(data, k):
 
 
 def _run_dask_numpy_equal_interval(data, k):
-    max_data = da.nanmax(data)
-    min_data = da.nanmin(data)
+    max_data = da.nanmax(data[da.isfinite(data)])
+    min_data = da.nanmin(data[da.isfinite(data)])
     width = (max_data - min_data) / k
     cuts = da.arange(min_data + width, max_data + width, width)
     l_cuts = cuts.shape[0]
@@ -930,8 +930,8 @@ def _run_dask_numpy_equal_interval(data, k):
 
 
 def _run_cupy_equal_interval(data, k):
-    max_data = cupy.nanmax(data)
-    min_data = cupy.nanmin(data)
+    max_data = cupy.nanmax(data[cupy.isfinite(data)])
+    min_data = cupy.nanmin(data[cupy.isfinite(data)])
     width = (max_data - min_data) / k
     cuts = cupy.arange(min_data.get() +
                        width.get(), max_data.get() +
