@@ -386,8 +386,9 @@ def _crosstab_dask(zones, values, nodata_zones, nodata_values):
     crosstab_df = dd.concat(
         [dd.from_dask_array(stats) for stats in crosstab_dict.values()], axis=1
     )
+    columns = [str(c) for c in crosstab_dict.keys()]
     # name columns
-    crosstab_df.columns = crosstab_dict.keys()
+    crosstab_df.columns = columns
     # set dtype for zone column the be the same as of `zones` raster
     crosstab_df = crosstab_df.astype({'zone': zones.data.dtype})
     crosstab_df.set_index('zone')
