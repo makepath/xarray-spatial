@@ -113,6 +113,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
 | [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
 | [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | ✅️ |✅️ | ✅️ |✅️ |
+| [True Color](xrspatial/multispectral.py) | ✅️ | ️ | ✅️ | ️ |
 
 -------
 
