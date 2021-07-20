@@ -11,24 +11,30 @@ from xrspatial import natural_breaks
 from xrspatial import quantile
 from xrspatial import reclassify
 
+elevation = np.array([
+    [1.,  2.,  3.,  4., np.nan],
+    [5.,  6.,  7.,  8.,  9.],
+    [10., 11., 12., 13., 14.],
+    [15., 16., 17., 18., np.inf],
+])
 
-n, m = 5, 5
-elevation = np.arange(n * m).reshape((n, m))
 numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
 dask_numpy_agg = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
                               attrs={'res': (10.0, 10.0)})
 
 
 def test_reclassify_cpu():
-    bins = [10, 20, 30]
-    new_values = [1, 2, 3]
+    bins = [10, 20]
+    new_values = [1, 2]
 
     # numpy
     numpy_reclassify = reclassify(numpy_agg, bins=bins, new_values=new_values,
                                   name='numpy_reclassify')
-    unique_elements, counts_elements = np.unique(numpy_reclassify.data,
-                                                 return_counts=True)
-    assert len(unique_elements) == 3
+    # ignore nans
+    unique_elements = np.unique(
+        numpy_reclassify.data[np.isfinite(numpy_reclassify.data)]
+    )
+    assert len(unique_elements) == 2
 
     # dask + numpy
     dask_reclassify = reclassify(dask_numpy_agg, bins=bins,
@@ -80,13 +86,11 @@ def test_quantile_cpu():
 
     # numpy
     numpy_quantile = quantile(numpy_agg, k=k)
-
-    unique_elements, counts_elements = np.unique(numpy_quantile.data,
-                                                 return_counts=True)
+    unique_elements = np.unique(
+        numpy_quantile.data[np.isfinite(numpy_quantile.data)]
+    )
     assert isinstance(numpy_quantile.data, np.ndarray)
     assert len(unique_elements) == k
-    assert len(np.unique(counts_elements)) == 1
-    assert np.unique(counts_elements)[0] == 5
 
     # dask + numpy
     dask_quantile = quantile(dask_numpy_agg, k=k)
@@ -127,7 +131,6 @@ def test_natural_breaks_cpu():
 
     # vanilla numpy
     numpy_natural_breaks = natural_breaks(numpy_agg, k=k)
-
     # shape and other attributes remain the same
     assert numpy_agg.shape == numpy_natural_breaks.shape
     assert numpy_agg.dims == numpy_natural_breaks.dims
@@ -135,8 +138,9 @@ def test_natural_breaks_cpu():
     for coord in numpy_agg.coords:
         assert np.all(numpy_agg[coord] == numpy_natural_breaks[coord])
 
-    unique_elements, counts_elements = np.unique(numpy_natural_breaks.data,
-                                                 return_counts=True)
+    unique_elements = np.unique(
+        numpy_natural_breaks.data[np.isfinite(numpy_natural_breaks.data)]
+    )
     assert len(unique_elements) == k
 
 
@@ -164,8 +168,7 @@ def test_equal_interval_cpu():
     # numpy
     numpy_ei = equal_interval(numpy_agg, k=5)
 
-    unique_elements, counts_elements = np.unique(numpy_ei.data,
-                                                 return_counts=True)
+    unique_elements = np.unique(numpy_ei.data[da.isfinite(numpy_ei.data)])
     assert isinstance(numpy_ei.data, np.ndarray)
     assert len(unique_elements) == k
 

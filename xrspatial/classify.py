@@ -225,89 +225,48 @@ def reclassify(agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
+        import numpy as np
+        import xarray as xr
+        import dask.array as da
         from xrspatial.classify import reclassify
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
-
-        # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            },
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Reclassified Aggregate Array
-        bins = list(range(0, 3000))
-        new_vals = list(range(1000, 4000))
-        reclass_agg = reclassify(agg = terrain_agg,
-                                 bins = bins,
-                                 new_values = new_vals,
-                                 name = 'Elevation')
-
-        # Edit Attributes
-        reclass_agg = reclass_agg.assign_attrs(
-            {'Description': 'Example Reclassify'}
-        )
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Reclassify
-        reclass_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Reclassify")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
+        elevation = np.array([
+            [np.nan,  1.,  2.,  3.,  4.],
+            [ 5.,  6.,  7.,  8.,  9.],
+            [10., 11., 12., 13., 14.],
+            [15., 16., 17., 18., 19.],
+            [20., 21., 22., 23., np.inf]
+        ])
+        data = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+        bins = [10, 20, 30]
+        new_values = [1, 2, 3]
+        data_reclassify = reclassify(data, bins=bins, new_values=new_values)
 
     .. sourcecode:: python
 
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-                [1285.37061171, 1282.48046696],
-                [1306.02305679, 1303.40657515]])
-        Coordinates:
-            * lon      (lon) float64 -3.96e+06 -3.88e+06
-            * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        >>> print(data)
+        <xarray.DataArray (dim_0: 5, dim_1: 5)>
+        array([[nan,  1.,  2.,  3.,  4.],
+               [ 5.,  6.,  7.,  8.,  9.],
+               [10., 11., 12., 13., 14.],
+               [15., 16., 17., 18., 19.],
+               [20., 21., 22., 23., inf]])
+        Dimensions without coordinates: dim_0, dim_1
         Attributes:
-            res:            1
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
+            res:      (10.0, 10.0)
 
-        >>> print(reclass_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[2265., 2262.],
-                [2286., 2283.],
-                [2307., 2304.]], dtype=float32)
-        Coordinates:
-            * lon      (lon) float64 -3.96e+06 -3.88e+06
-            * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        >>> print(data_reclassify)
+        <xarray.DataArray 'reclassify' (dim_0: 5, dim_1: 5)>
+        array([[nan,  1.,  1.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.],
+               [ 1.,  2.,  2.,  2.,  2.],
+               [ 2.,  2.,  2.,  2.,  2.],
+               [ 2.,  3.,  3.,  3., nan]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
         Attributes:
-            res:            1
-            Description:    Example Reclassify
-            units:          km
-            Max Elevation:  4000
+            res:      (10.0, 10.0)
     """
+
     if len(bins) != len(new_values):
         raise ValueError('bins and new_values mismatch.'
                          'Should have same length.')
@@ -326,7 +285,7 @@ def _run_cpu_quantile(data, k):
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    q = np.percentile(data, p)
+    q = np.percentile(data[np.isfinite(data)], p)
     q = np.unique(q)
     return q
 
@@ -338,7 +297,7 @@ def _run_dask_numpy_quantile(data, k):
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    q = da.percentile(data.flatten(), p)
+    q = da.percentile(data[da.isfinite(data)].flatten(), p)
     q = da.unique(q)
     return q
 
@@ -350,7 +309,7 @@ def _run_cupy_quantile(data, k):
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    q = cupy.percentile(data, p)
+    q = cupy.percentile(data[cupy.isfinite(data)], p)
     q = cupy.unique(q)
     return q
 
@@ -425,82 +384,46 @@ def quantile(agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
+        import numpy as np
+        import xarray as xr
+        import dask.array as da
         from xrspatial.classify import quantile
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
-
-        # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-        
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Quantiled Aggregate Array
-        quantile_agg = quantile(agg = terrain_agg, name = 'Elevation')
-
-        # Edit Attributes
-        quantile_agg = quantile_agg.assign_attrs({'Description': 'Example Quantile'})
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Quantile
-        quantile_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Quantile")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
+        elevation = np.array([
+            [np.nan,  1.,  2.,  3.,  4.],
+            [ 5.,  6.,  7.,  8.,  9.],
+            [10., 11., 12., 13., 14.],
+            [15., 16., 17., 18., 19.],
+            [20., 21., 22., 23., np.inf]
+        ])
+        data = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+        data_quantile = quantile(data, k=5)
 
     .. sourcecode:: python
 
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-                [1285.37061171, 1282.48046696],
-                [1306.02305679, 1303.40657515]])
-        Coordinates:
-            * lon      (lon) float64 -3.96e+06 -3.88e+06
-            * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        >>> print(data)
+        <xarray.DataArray (dim_0: 5, dim_1: 5)>
+        array([[nan,  1.,  2.,  3.,  4.],
+               [ 5.,  6.,  7.,  8.,  9.],
+               [10., 11., 12., 13., 14.],
+               [15., 16., 17., 18., 19.],
+               [20., 21., 22., 23., inf]])
+        Dimensions without coordinates: dim_0, dim_1
         Attributes:
-            res:            1
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
+            res:      (10.0, 10.0)
 
-        >>> print(quantile_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[2., 2.],
-                [2., 2.],
-                [2., 2.]], dtype=float32)
-        Coordinates:
-            * lon      (lon) float64 -3.96e+06 -3.88e+06
-            * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        >>> print(data_quantile)
+        <xarray.DataArray 'quantile' (dim_0: 5, dim_1: 5)>
+        array([[nan,  0.,  0.,  0.,  0.],
+               [ 0.,  1.,  1.,  1.,  1.],
+               [ 2.,  2.,  2.,  2.,  2.],
+               [ 3.,  3.,  3.,  3.,  4.],
+               [ 4.,  4.,  4.,  4., nan]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
         Attributes:
-            res:            1
-            Description:    Example Quantile
-            units:          km
-            Max Elevation:  4000
+            res:      (10.0, 10.0)
     """
+
     q = _quantile(agg, k)
     k_q = q.shape[0]
     if k_q < k:
@@ -620,7 +543,10 @@ def _run_numpy_natural_break(data, num_sample, k):
                           'a long time.'.format(sample_data.size),
                           Warning)
 
-    uv = np.unique(sample_data)
+    # only include non-nan values
+    sample_data = np.asarray([i for i in sample_data if np.isfinite(i)])
+
+    uv = np.unique(sample_data[np.isfinite(sample_data)])
     uvk = len(uv)
 
     if uvk < k:
@@ -736,7 +662,10 @@ def _run_cupy_natural_break(data, num_sample, k):
                           'a long time.'.format(sample_data.size),
                           Warning)
 
-    uv = cupy.unique(sample_data)
+    # only include non-nan values
+    sample_data = cupy.asarray([i for i in sample_data if cupy.isfinite(i)])
+
+    uv = cupy.unique(sample_data[cupy.isfinite(sample_data)])
     uvk = len(uv)
 
     if uvk < k:
@@ -799,82 +728,46 @@ def natural_breaks(agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
+        import numpy as np
+        import xarray as xr
+        import dask.array as da
         from xrspatial.classify import natural_breaks
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
-
-        # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-        
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Natural Breaks Aggregate Array
-        natural_breaks_agg = natural_breaks(agg = terrain_agg, name = 'Elevation')
-
-        # Edit Attributes
-        natural_breaks_agg = natural_breaks_agg.assign_attrs({'Description': 'Example Natural Breaks'})
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Natural Breaks
-        natural_breaks_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Natural Breaks")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
+        elevation = np.array([
+            [np.nan,  1.,  2.,  3.,  4.],
+            [ 5.,  6.,  7.,  8.,  9.],
+            [10., 11., 12., 13., 14.],
+            [15., 16., 17., 18., 19.],
+            [20., 21., 22., 23., np.inf]
+        ])
+        data = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+        data_natural_breaks = natural_breaks(data, k=5)
 
     .. sourcecode:: python
 
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-               [1285.37061171, 1282.48046696],
-               [1306.02305679, 1303.40657515]])
-        Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        >>> print(data)
+        <xarray.DataArray (dim_0: 5, dim_1: 5)>
+        array([[nan,  1.,  2.,  3.,  4.],
+               [ 5.,  6.,  7.,  8.,  9.],
+               [10., 11., 12., 13., 14.],
+               [15., 16., 17., 18., 19.],
+               [20., 21., 22., 23., inf]])
+        Dimensions without coordinates: dim_0, dim_1
         Attributes:
-            res:            1
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
+            res:      (10.0, 10.0)
 
-        >>> print(natural_breaks_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1., 1.],
-               [1., 1.],
-               [1., 1.]], dtype=float32)
-        Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        >>> print(data_natural_breaks)
+        <xarray.DataArray 'natural_breaks' (dim_0: 5, dim_1: 5)>
+        array([[nan,  0.,  0.,  0.,  0.],
+               [ 1.,  1.,  1.,  1.,  2.],
+               [ 2.,  2.,  2.,  2.,  3.],
+               [ 3.,  3.,  3.,  3.,  4.],
+               [ 4.,  4.,  4.,  4., nan]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
         Attributes:
-            res:            1
-            Description:    Example Natural Breaks
-            units:          km
-            Max Elevation:  4000
+            res:      (10.0, 10.0)
     """
+
     # numpy case
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy_natural_break(agg.data, num_sample, k)
@@ -894,8 +787,8 @@ def natural_breaks(agg: xr.DataArray,
 
 
 def _run_numpy_equal_interval(data, k):
-    max_data = np.nanmax(data)
-    min_data = np.nanmin(data)
+    max_data = np.nanmax(data[np.isfinite(data)])
+    min_data = np.nanmin(data[np.isfinite(data)])
     rg = max_data - min_data
     width = rg * 1.0 / k
     cuts = np.arange(min_data + width, max_data + width, width)
@@ -909,8 +802,8 @@ def _run_numpy_equal_interval(data, k):
 
 
 def _run_dask_numpy_equal_interval(data, k):
-    max_data = da.nanmax(data)
-    min_data = da.nanmin(data)
+    max_data = da.nanmax(data[da.isfinite(data)])
+    min_data = da.nanmin(data[da.isfinite(data)])
     width = (max_data - min_data) / k
     cuts = da.arange(min_data + width, max_data + width, width)
     l_cuts = cuts.shape[0]
@@ -924,8 +817,8 @@ def _run_dask_numpy_equal_interval(data, k):
 
 
 def _run_cupy_equal_interval(data, k):
-    max_data = cupy.nanmax(data)
-    min_data = cupy.nanmin(data)
+    max_data = cupy.nanmax(data[cupy.isfinite(data)])
+    min_data = cupy.nanmin(data[cupy.isfinite(data)])
     width = (max_data - min_data) / k
     cuts = cupy.arange(min_data.get() +
                        width.get(), max_data.get() +
@@ -977,84 +870,46 @@ def equal_interval(agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
+        import numpy as np
+        import xarray as xr
+        import dask.array as da
         from xrspatial.classify import equal_interval
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
-
-        # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-        
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Equal Interval Aggregate Array
-        equal_interval_agg = equal_interval(agg = terrain_agg, name = 'Elevation')
-
-        # Edit Attributes
-        equal_interval_agg = equal_interval_agg.assign_attrs({'Description': 'Example Equal Interval'})
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Equal Interval
-        equal_interval_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Equal Interval")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
+        elevation = np.array([
+            [np.nan,  1.,  2.,  3.,  4.],
+            [ 5.,  6.,  7.,  8.,  9.],
+            [10., 11., 12., 13., 14.],
+            [15., 16., 17., 18., 19.],
+            [20., 21., 22., 23., np.inf]
+        ])
+        data = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+        data_equal_interval = equal_interval(data, k=5)
 
     .. sourcecode:: python
 
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-            [1285.37061171, 1282.48046696],
-            [1306.02305679, 1303.40657515]])
-        Coordinates:
-        * lon      (lon) float64 -3.96e+06 -3.88e+06
-        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        >>> print(data)
+        <xarray.DataArray (dim_0: 5, dim_1: 5)>
+        array([[nan,  1.,  2.,  3.,  4.],
+               [ 5.,  6.,  7.,  8.,  9.],
+               [10., 11., 12., 13., 14.],
+               [15., 16., 17., 18., 19.],
+               [20., 21., 22., 23., inf]])
+        Dimensions without coordinates: dim_0, dim_1
         Attributes:
-            res:            1
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
+            res:      (10.0, 10.0)
 
-    .. sourcecode:: python
-
-        >>> print(equal_interval_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1., 1.],
-            [1., 1.],
-            [1., 1.]], dtype=float32)
-        Coordinates:
-        * lon      (lon) float64 -3.96e+06 -3.88e+06
-        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        >>> print(data_equal_interval)
+        <xarray.DataArray 'equal_interval' (dim_0: 5, dim_1: 5)>
+        array([[nan,  0.,  0.,  0.,  0.],
+               [ 0.,  0.,  0.,  0.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.],
+               [ 1.,  2.,  2.,  2.,  2.],
+               [ 2.,  2.,  2.,  2., nan]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
         Attributes:
-            res:            1
-            Description:    Example Equal Interval
-            units:          km
-            Max Elevation:  4000
+            res:      (10.0, 10.0)
     """
+
     # numpy case
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy_equal_interval(agg.data, k)
@@ -1064,9 +919,9 @@ def equal_interval(agg: xr.DataArray,
         out = _run_cupy_equal_interval(agg.data, k)
 
     # dask + cupy case
-    elif has_cuda() and \
-            isinstance(agg.data, cupy.ndarray) and \
-            is_cupy_backed(agg):
+    elif (has_cuda() and
+          isinstance(agg.data, cupy.ndarray) and
+          is_cupy_backed(agg)):
         out = _run_dask_cupy_equal_interval(agg.data, k)
 
     # dask + numpy case
