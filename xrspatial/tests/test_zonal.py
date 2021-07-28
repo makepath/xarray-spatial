@@ -128,7 +128,7 @@ def test_stats():
 def test_crosstab_2d():
     # expected results
     crosstab_2d_results = {
-        'zone': ['zone 1', 'zone 2', 'zone 3'],
+        'zone': [1, 2, 3],
         0:      [0, 0, 1],
         1:      [6, 0, 0],
         2:      [0, 4, 0],
@@ -152,7 +152,7 @@ def test_crosstab_2d():
 def test_crosstab_3d():
     # expected results
     crosstab_3d_results = {
-        'zone': ['zone 0', 'zone 1', 'zone 2', 'zone 3'],
+        'zone': [0, 1, 2, 3],
         'cat1': [6, 6, 5, 6],
         'cat2': [6, 6, 5, 6],
         'cat3': [6, 6, 5, 6],
@@ -173,7 +173,7 @@ def test_crosstab_3d():
 
     # ----- no values case ------
     crosstab_3d_novalues_results = {
-        'zone': ['zone 1', 'zone 2', 'zone 3'],
+        'zone': [1, 2, 3],
         'cat1': [0, 0, 0],
         'cat2': [0, 0, 0],
         'cat3': [0, 0, 0],

@@ -332,15 +332,7 @@ def _crosstab_dict(zones, values, unique_zones, cats, nodata_values, agg):
         return zone_cat_data
 
     crosstab_dict = {}
-
-    zone_column = []
-    for z in unique_zones:
-        if float(z).is_integer():
-            zone_column.append(f'zone {int(z)}')
-        else:
-            zone_column.append(f'zone {z}')
-    crosstab_dict['zone'] = zone_column
-
+    crosstab_dict['zone'] = unique_zones
     for i in cats:
         crosstab_dict[i] = []
 
