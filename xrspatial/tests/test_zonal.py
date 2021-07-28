@@ -47,7 +47,11 @@ def check_results(df_np, df_da, expected_results_dict):
     # numpy case
     assert isinstance(df_np, pd.DataFrame)
     assert len(df_np.columns) == len(expected_results_dict)
-    for col in df_np.columns:
+
+    # zone column
+    assert (df_np['zone'] == expected_results_dict['zone']).all()
+
+    for col in df_np.columns[1:]:
         assert np.isclose(
             df_np[col], expected_results_dict[col], equal_nan=True
         ).all()
@@ -58,8 +62,11 @@ def check_results(df_np, df_da, expected_results_dict):
     assert isinstance(df_da, pd.DataFrame)
 
     # numpy results equal dask results
+    # zone column
+    assert (df_np['zone'] == df_da['zone']).all()
+
     assert (df_np.columns == df_da.columns).all()
-    for col in df_np.columns:
+    for col in df_np.columns[1:]:
         assert np.isclose(df_np[col], df_da[col], equal_nan=True).all()
 
 
@@ -89,7 +96,7 @@ def test_stats():
     # ---- custom stats ----
     # expected results
     custom_stats_results = {
-        'zone':       [1,   2,  3],
+        'zone':       [1, 2, 3],
         'double_sum': [12, 16, 24],
         'range':      [0,   0,  0],
     }
@@ -121,7 +128,7 @@ def test_stats():
 def test_crosstab_2d():
     # expected results
     crosstab_2d_results = {
-        'zone': [1, 2, 3],
+        'zone': ['zone 1', 'zone 2', 'zone 3'],
         0:      [0, 0, 1],
         1:      [6, 0, 0],
         2:      [0, 4, 0],
@@ -145,7 +152,7 @@ def test_crosstab_2d():
 def test_crosstab_3d():
     # expected results
     crosstab_3d_results = {
-        'zone': [0, 1, 2, 3],
+        'zone': ['zone 0', 'zone 1', 'zone 2', 'zone 3'],
         'cat1': [6, 6, 5, 6],
         'cat2': [6, 6, 5, 6],
         'cat3': [6, 6, 5, 6],
@@ -166,7 +173,7 @@ def test_crosstab_3d():
 
     # ----- no values case ------
     crosstab_3d_novalues_results = {
-        'zone': [1, 2, 3],
+        'zone': ['zone 1', 'zone 2', 'zone 3'],
         'cat1': [0, 0, 0],
         'cat2': [0, 0, 0],
         'cat3': [0, 0, 0],
