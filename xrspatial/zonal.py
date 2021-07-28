@@ -315,17 +315,6 @@ def stats(zones: xr.DataArray,
     return stats_df
 
 
-def _crosstab_percentage(crosstab_dict):
-    # first key is for zone, remaining keys are categories
-    cats = list(crosstab_dict.keys())[1:]
-
-    for cat in cats:
-        cat_sum = sum(crosstab_dict[cat])
-        crosstab_dict[cat] = crosstab_dict[cat] / cat_sum * 100
-
-    return crosstab_dict
-
-
 def _crosstab_dict(zones, values, unique_zones, cats, nodata_values, agg):
 
     crosstab_dict = {}
@@ -346,7 +335,12 @@ def _crosstab_dict(zones, values, unique_zones, cats, nodata_values, agg):
             crosstab_dict[cat].append(zone_cat_count)
 
     if agg == 'percentage':
-        crosstab_dict = _crosstab_percentage(crosstab_dict)
+        zone_counts = _stats(
+            zones, values, unique_zones, {'count': _stats_count}, nodata_values
+        )['count']
+        for c, cat in enumerate(cats):
+            for z in range(len(unique_zones)):
+                crosstab_dict[cat][z] = crosstab_dict[cat][z] / zone_counts[z] * 100  # noqa
 
     return crosstab_dict
 
@@ -456,7 +450,7 @@ def crosstab(zones: xr.DataArray,
     layer: int, default=0
         index of the categorical dimension layer inside the `values` DataArray.
 
-    agg: str, default = 'percentage'
+    agg: str, default = 'count'
         Aggregation method.
         If the data is 2D, available options are: percentage, count.
         If the data is 3D, available option is: count.
@@ -476,8 +470,8 @@ def crosstab(zones: xr.DataArray,
     crosstab_df : Union[pandas.DataFrame, dask.dataframe.DataFrame]
         A pandas DataFrame, or an uncomputed dask DataFrame,
         where each column is a categorical value and each row is a zone
-        with zone id. Each entry presents the number of pixels counted
-        of the category over the zone.
+        with zone id. Each entry presents the statistics, which computed
+        using the specified aggregation method, of the category over the zone.
 
     Examples
     --------

@@ -126,7 +126,7 @@ def test_stats():
 
 
 def test_crosstab_2d():
-    # expected results
+    # count agg, expected results
     crosstab_2d_results = {
         'zone': [1, 2, 3],
         0:      [0, 0, 1],
@@ -136,17 +136,36 @@ def test_crosstab_2d():
 
     # numpy case
     zones_np, values_np, _ = create_zones_values(backend='numpy')
-
     df_np = crosstab(
         zones=zones_np, values=values_np, nodata_zones=0, nodata_values=3
     )
-
     # dask case
     zones_da, values_da, _ = create_zones_values(backend='dask')
     df_da = crosstab(
         zones=zones_da, values=values_da, nodata_zones=0, nodata_values=3
     )
     check_results(df_np, df_da, crosstab_2d_results)
+
+    # percentage agg, expected results
+
+    crosstab_2d_percentage_results = {
+        'zone': [1,   2,  3],
+        0:      [0,   0,  100],
+        1:      [100, 0,  0],
+        2:      [0,   100, 0],
+    }
+
+    # numpy case
+    df_np = crosstab(
+        zones=zones_np, values=values_np,
+        nodata_zones=0, nodata_values=3, agg='percentage'
+    )
+    # dask case
+    df_da = crosstab(
+        zones=zones_da, values=values_da,
+        nodata_zones=0, nodata_values=3, agg='percentage'
+    )
+    check_results(df_np, df_da, crosstab_2d_percentage_results)
 
 
 def test_crosstab_3d():
