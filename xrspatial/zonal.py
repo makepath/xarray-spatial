@@ -218,16 +218,17 @@ def stats(zones: xr.DataArray,
         from xrspatial.zonal import stats
 
         height, width = 10, 10
-        # values raster
+        # Values raster
         values = xr.DataArray(np.arange(height * width).reshape(height, width))
-        # zones raster
+        # Zones raster
         zones = xr.DataArray(np.zeros(height * width).reshape(height, width))
         zones[:5, :5] = 0
         zones[:5, 5:] = 10
         zones[5:, :5] = 20
         zones[5:, 5:] = 30
 
-        # .. sourcecode:: python
+    .. sourcecode:: python
+
         >>> # Calculate Stats
         >>> stats_df = stats(zones=zones, values=values)
         >>> print(stats_df)
@@ -478,6 +479,11 @@ def crosstab(zones: xr.DataArray,
     .. plot::
        :include-source:
 
+        import dask.array as da
+        import numpy as np
+        import xarray as xr
+        from xrspatial.zonal import crosstab
+
         values_data = np.asarray([[0, 0, 10, 20],
                                   [0, 0, 0, 10],
                                   [0, np.nan, 20, 50],
@@ -490,10 +496,10 @@ def crosstab(zones: xr.DataArray,
                                  [3, 5, 6, 6],
                                  [3, 5, 7, np.nan],
                                  [3, 7, 7, 0]])
-        zones = xr.DataArray(zones_val)
+        zones = xr.DataArray(zones_data)
 
-        values_dask = xr.DataArray(da.from_array(values_val, chunks=(3, 3)))
-        zones_dask = xr.DataArray(da.from_array(zones_val, chunks=(3, 3)))
+        values_dask = xr.DataArray(da.from_array(values, chunks=(3, 3)))
+        zones_dask = xr.DataArray(da.from_array(zones, chunks=(3, 3)))
 
     .. sourcecode:: python
 
