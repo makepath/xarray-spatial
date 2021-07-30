@@ -1,6 +1,11 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.2.7 - 7/30/2021
+- Added Dask support for stats and crosstab zonal functions (#502)
+- Ignored NaN values on classify functions (#534)
+- Added agg param to crosstab zonal function (#536)
+
 ### Version 0.2.6 - 6/28/2021
 - Updated the classification notebook (#489)
 - Added xrspatial logo to readme (#492)
