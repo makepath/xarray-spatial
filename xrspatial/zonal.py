@@ -33,18 +33,50 @@ _DEFAULT_STATS = dict(
 )
 
 
-def _stats(zones: xr.DataArray,
-           values: xr.DataArray,
-           unique_zones: List[int],
-           stats_funcs: List,
-           nodata_values: Union[int, float]
-           ) -> Dict:
+def _convert_to_ints(numeric_value):
+    if float(numeric_value).is_integer():
+        return int(numeric_value)
+    return numeric_value
+
+
+def _zone_cat_data(zones, values, zone_id, nodata_values,
+                   cat=None, cat_id=None):
 
     # array backend
     if isinstance(zones.data, np.ndarray):
         array_module = np
     elif isinstance(zones.data, da.Array):
         array_module = da
+
+    if len(values.shape) == 2:
+        # 2D case
+        conditions = ((zones.data != zone_id) |
+                      ~np.isfinite(values.data) |  # mask out nan, inf
+                      (values.data == nodata_values)  # mask out nodata_values
+                      )
+
+        if cat is not None:
+            conditions |= (values.data != cat)
+
+        zone_cat_data = array_module.ma.masked_where(conditions, values.data)
+
+    else:
+        # 3D case
+        cat_data = values[cat_id].data
+        cat_masked_data = array_module.ma.masked_invalid(cat_data)
+        zone_cat_data = array_module.ma.masked_where(
+            ((zones.data != zone_id) | (cat_data == nodata_values)),
+            cat_masked_data
+        )
+    return zone_cat_data
+
+
+def _stats(zones: xr.DataArray,
+           values: xr.DataArray,
+           unique_zones: List[int],
+           stats_funcs: List,
+           nodata_values: Union[int, float]
+           ) -> Dict:
 
     stats_dict = {}
     # zone column
@@ -55,18 +87,17 @@ def _stats(zones: xr.DataArray,
 
     for zone_id in unique_zones:
         # get zone values
-        zone_values = array_module.ma.masked_where(
-            ((zones.data != zone_id) |
-             (values.data == nodata_values) |
-             ~np.isfinite(values.data)  # mask out nan, inf
-             ),
-            values.data
+        zone_values = _zone_cat_data(
+            zones, values, zone_id, nodata_values
         )
         for stats in stats_funcs:
             stats_func = stats_funcs.get(stats)
             if not callable(stats_func):
                 raise ValueError(stats)
             stats_dict[stats].append(stats_func(zone_values))
+
+    unique_zones = list(map(_convert_to_ints, unique_zones))
+    stats_dict['zone'] = unique_zones
 
     return stats_dict
 
@@ -84,10 +115,10 @@ def _stats_numpy(zones: xr.DataArray,
     stats_dict = _stats(
         zones, values, unique_zones, stats_funcs, nodata_values
     )
+
     stats_df = pd.DataFrame(stats_dict)
     stats_df.set_index('zone')
-    # set dtype for zone column the be the same as of `zones` raster
-    stats_df = stats_df.astype({'zone': zones.data.dtype})
+
     return stats_df
 
 
@@ -119,8 +150,7 @@ def _stats_dask(zones: xr.DataArray,
     # name columns
     stats_df.columns = stats_dict.keys()
     stats_df.set_index('zone')
-    # set dtype for zone column the be the same as of `zones` raster
-    stats_df = stats_df.astype({'zone': zones.data.dtype})
+
     return stats_df
 
 
@@ -188,16 +218,17 @@ def stats(zones: xr.DataArray,
         from xrspatial.zonal import stats
 
         height, width = 10, 10
-        # values raster
+        # Values raster
         values = xr.DataArray(np.arange(height * width).reshape(height, width))
-        # zones raster
+        # Zones raster
         zones = xr.DataArray(np.zeros(height * width).reshape(height, width))
         zones[:5, :5] = 0
         zones[:5, 5:] = 10
         zones[5:, :5] = 20
         zones[5:, 5:] = 30
 
-        # .. sourcecode:: python
+    .. sourcecode:: python
+
         >>> # Calculate Stats
         >>> stats_df = stats(zones=zones, values=values)
         >>> print(stats_df)
@@ -285,51 +316,37 @@ def stats(zones: xr.DataArray,
     return stats_df
 
 
-def _crosstab_dict(zones, values, unique_zones, cats, nodata_values):
-
-    # array backend
-    if isinstance(zones.data, np.ndarray):
-        array_module = np
-    elif isinstance(zones.data, da.Array):
-        array_module = da
-
-    def _zone_cat_data(cat, zone_id, cat_id):
-        if len(values.shape) == 2:
-            # 2D case
-            zone_cat_data = array_module.ma.masked_where(
-                ((values.data != cat) |
-                 (zones.data != zone_id) |
-                 ~np.isfinite(values.data) |  # mask out nan, inf
-                 (values.data == nodata_values)  # mask out nodata_values
-                 ),
-                values.data
-            )
-        else:
-            # 3D case
-            cat_data = values[cat_id].data
-            cat_masked_data = array_module.ma.masked_invalid(cat_data)
-            zone_cat_data = array_module.ma.masked_where(
-                ((zones.data != zone_id) | (cat_data == nodata_values)),
-                cat_masked_data
-            )
-        return zone_cat_data
+def _crosstab_dict(zones, values, unique_zones, cats, nodata_values, agg):
 
     crosstab_dict = {}
+
+    unique_zones = list(map(_convert_to_ints, unique_zones))
     crosstab_dict['zone'] = unique_zones
+
     for i in cats:
         crosstab_dict[i] = []
 
-    for c, cat in enumerate(cats):
+    for cat_id, cat in enumerate(cats):
         for zone_id in unique_zones:
             # get category cat values in the selected zone
-            zone_cat_data = _zone_cat_data(cat, zone_id, c)
+            zone_cat_data = _zone_cat_data(
+                zones, values, zone_id, nodata_values, cat, cat_id
+            )
             zone_cat_count = _stats_count(zone_cat_data)
             crosstab_dict[cat].append(zone_cat_count)
+
+    if agg == 'percentage':
+        zone_counts = _stats(
+            zones, values, unique_zones, {'count': _stats_count}, nodata_values
+        )['count']
+        for c, cat in enumerate(cats):
+            for z in range(len(unique_zones)):
+                crosstab_dict[cat][z] = crosstab_dict[cat][z] / zone_counts[z] * 100  # noqa
 
     return crosstab_dict
 
 
-def _crosstab_numpy(zones, values, nodata_zones, nodata_values):
+def _crosstab_numpy(zones, values, nodata_zones, nodata_values, agg):
 
     if len(values.shape) == 3:
         # 3D case
@@ -345,20 +362,18 @@ def _crosstab_numpy(zones, values, nodata_zones, nodata_values):
     unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
 
     crosstab_dict = _crosstab_dict(
-        zones, values, unique_zones, cats, nodata_values
+        zones, values, unique_zones, cats, nodata_values, agg
     )
 
     crosstab_df = pd.DataFrame(crosstab_dict)
+
     # name columns
     crosstab_df.columns = crosstab_dict.keys()
-    crosstab_df.set_index('zone')
-    # set dtype for zone column the be the same as of `zones` raster
-    crosstab_df = crosstab_df.astype({'zone': zones.data.dtype})
 
     return crosstab_df
 
 
-def _crosstab_dask(zones, values, nodata_zones, nodata_values):
+def _crosstab_dask(zones, values, nodata_zones, nodata_values, agg):
 
     if len(values.shape) == 3:
         # 3D case
@@ -375,7 +390,7 @@ def _crosstab_dask(zones, values, nodata_zones, nodata_values):
     unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
 
     crosstab_dict = _crosstab_dict(
-        zones, values, unique_zones, cats, nodata_values
+        zones, values, unique_zones, cats, nodata_values, agg
     )
     crosstab_dict = {
         stats: da.stack(zonal_stats, axis=0)
@@ -386,11 +401,9 @@ def _crosstab_dask(zones, values, nodata_zones, nodata_values):
     crosstab_df = dd.concat(
         [dd.from_dask_array(stats) for stats in crosstab_dict.values()], axis=1
     )
+
     # name columns
     crosstab_df.columns = crosstab_dict.keys()
-    # set dtype for zone column the be the same as of `zones` raster
-    crosstab_df = crosstab_df.astype({'zone': zones.data.dtype})
-    crosstab_df.set_index('zone')
 
     return crosstab_df
 
@@ -398,6 +411,7 @@ def _crosstab_dask(zones, values, nodata_zones, nodata_values):
 def crosstab(zones: xr.DataArray,
              values: xr.DataArray,
              layer: Optional[int] = None,
+             agg: Optional[str] = 'count',
              nodata_zones: Optional[Union[int, float]] = None,
              nodata_values: Optional[Union[int, float]] = None
              ) -> Union[pd.DataFrame, dd.DataFrame]:
@@ -437,6 +451,11 @@ def crosstab(zones: xr.DataArray,
     layer: int, default=0
         index of the categorical dimension layer inside the `values` DataArray.
 
+    agg: str, default = 'count'
+        Aggregation method.
+        If the data is 2D, available options are: percentage, count.
+        If the data is 3D, available option is: count.
+
     nodata_zones: int, float, default=None
         Nodata value in `zones` raster.
         Cells with `nodata` do not belong to any zone,
@@ -452,13 +471,18 @@ def crosstab(zones: xr.DataArray,
     crosstab_df : Union[pandas.DataFrame, dask.dataframe.DataFrame]
         A pandas DataFrame, or an uncomputed dask DataFrame,
         where each column is a categorical value and each row is a zone
-        with zone id. Each entry presents the number of pixels counted
-        of the category over the zone.
+        with zone id. Each entry presents the statistics, which computed
+        using the specified aggregation method, of the category over the zone.
 
     Examples
     --------
     .. plot::
        :include-source:
+
+        import dask.array as da
+        import numpy as np
+        import xarray as xr
+        from xrspatial.zonal import crosstab
 
         values_data = np.asarray([[0, 0, 10, 20],
                                   [0, 0, 0, 10],
@@ -472,10 +496,10 @@ def crosstab(zones: xr.DataArray,
                                  [3, 5, 6, 6],
                                  [3, 5, 7, np.nan],
                                  [3, 7, 7, 0]])
-        zones = xr.DataArray(zones_val)
+        zones = xr.DataArray(zones_data)
 
-        values_dask = xr.DataArray(da.from_array(values_val, chunks=(3, 3)))
-        zones_dask = xr.DataArray(da.from_array(zones_val, chunks=(3, 3)))
+        values_dask = xr.DataArray(da.from_array(values, chunks=(3, 3)))
+        zones_dask = xr.DataArray(da.from_array(zones, chunks=(3, 3)))
 
     .. sourcecode:: python
 
@@ -483,12 +507,12 @@ def crosstab(zones: xr.DataArray,
         >>> df = crosstab(zones=zones, values=values)
         >>> print(df)
                 zone  0.0  10.0  20.0  30.0  40.0  50.0
-            0   0.0    1     0     0     0     0     0
-            1   1.0    3     0     0     0     0     0
-            2   3.0    1     2     0     0     0     0
-            3   5.0    0     0     0     1     0     0
-            4   6.0    1     2     2     0     0     1
-            5   7.0    0     1     0     0     1     1
+            0      0    1     0     0     0     0     0
+            1      1    3     0     0     0     0     0
+            2      3    1     2     0     0     0     0
+            3      5    0     0     0     1     0     0
+            4      6    1     2     2     0     0     1
+            5      7    0     1     0     0     1     1
 
         >>> # Calculate Crosstab, dask case
         >>> df = crosstab(zones=zones_dask, values=values_dask)
@@ -504,12 +528,12 @@ def crosstab(zones: xr.DataArray,
             Dask Name: astype, 1186 tasks
         >>> print(dask_df.compute)
                 zone  0.0  10.0  20.0  30.0  40.0  50.0
-            0   0.0    1     0     0     0     0     0
-            1   1.0    3     0     0     0     0     0
-            2   3.0    1     2     0     0     0     0
-            3   5.0    0     0     0     1     0     0
-            4   6.0    1     2     2     0     0     1
-            5   7.0    0     1     0     0     1     1
+            0      0    1     0     0     0     0     0
+            1      1    3     0     0     0     0     0
+            2      3    1     2     0     0     0     0
+            3      5    0     0     0     1     0     0
+            4      6    1     2     2     0     0     1
+            5      7    0     1     0     0     1     1
     """
     if not isinstance(zones, xr.DataArray):
         raise TypeError("zones must be instance of DataArray")
@@ -532,6 +556,19 @@ def crosstab(zones: xr.DataArray,
     if values.ndim not in [2, 3]:
         raise ValueError("`values` must use either 2D or 3D coordinates.")
 
+    agg_2d = ['percentage', 'count']
+    agg_3d = ['count']
+
+    if values.ndim == 2 and agg not in agg_2d:
+        raise ValueError(
+            f"`agg` method for 2D data array must be one of following {agg_2d}"
+        )
+
+    if values.ndim == 3 and agg not in agg_3d:
+        raise ValueError(
+            f"`agg` method for 3D data array must be one of following {agg_3d}"
+        )
+
     if len(values.shape) == 3:
         # 3D case
         if layer is None:
@@ -552,11 +589,11 @@ def crosstab(zones: xr.DataArray,
     if isinstance(values.data, np.ndarray):
         # numpy case
         crosstab_df = _crosstab_numpy(
-            zones, values, nodata_zones, nodata_values)
+            zones, values, nodata_zones, nodata_values, agg)
     else:
         # dask case
         crosstab_df = _crosstab_dask(
-            zones, values, nodata_zones, nodata_values
+            zones, values, nodata_zones, nodata_values, agg
         )
 
     return crosstab_df
