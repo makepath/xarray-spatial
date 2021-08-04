@@ -33,7 +33,9 @@ _DEFAULT_STATS = dict(
 )
 
 
-def _convert_to_ints(numeric_value):
+def _to_int(numeric_value):
+    # convert an integer in float type to integer type
+    # if not an integer, return the value itself
     if float(numeric_value).is_integer():
         return int(numeric_value)
     return numeric_value
@@ -96,7 +98,7 @@ def _stats(zones: xr.DataArray,
                 raise ValueError(stats)
             stats_dict[stats].append(stats_func(zone_values))
 
-    unique_zones = list(map(_convert_to_ints, unique_zones))
+    unique_zones = list(map(_to_int, unique_zones))
     stats_dict['zone'] = unique_zones
 
     return stats_dict
@@ -320,7 +322,7 @@ def _crosstab_dict(zones, values, unique_zones, cats, nodata_values, agg):
 
     crosstab_dict = {}
 
-    unique_zones = list(map(_convert_to_ints, unique_zones))
+    unique_zones = list(map(_to_int, unique_zones))
     crosstab_dict['zone'] = unique_zones
 
     for i in cats:
