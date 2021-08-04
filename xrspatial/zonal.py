@@ -106,13 +106,19 @@ def _stats(zones: xr.DataArray,
 
 def _stats_numpy(zones: xr.DataArray,
                  values: xr.DataArray,
+                 zone_ids: List[Union[int, float]],
                  stats_funcs: Dict,
                  nodata_zones: Union[int, float],
                  nodata_values: Union[int, float]
                  ) -> pd.DataFrame:
-    # do not consider zone with nodata values
-    unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
-    unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+
+    if zone_ids is None:
+        # no zone_ids provided, find ids for all zones
+        # do not consider zone with nodata values
+        unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
+        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    else:
+        unique_zones = np.array(zone_ids)
 
     stats_dict = _stats(
         zones, values, unique_zones, stats_funcs, nodata_values
@@ -126,14 +132,20 @@ def _stats_numpy(zones: xr.DataArray,
 
 def _stats_dask(zones: xr.DataArray,
                 values: xr.DataArray,
+                zone_ids: List[Union[int, float]],
                 stats_funcs: Dict,
                 nodata_zones: Union[int, float],
                 nodata_values: Union[int, float]
                 ) -> pd.DataFrame:
-    # precompute unique zones
-    unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
-    # do not consider zone with nodata values
-    unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+
+    if zone_ids is None:
+        # no zone_ids provided, find ids for all zones
+        # precompute unique zones
+        unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
+        # do not consider zone with nodata values
+        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    else:
+        unique_zones = np.array(zone_ids)
 
     stats_dict = _stats(
         zones, values, unique_zones, stats_funcs, nodata_values
@@ -158,6 +170,7 @@ def _stats_dask(zones: xr.DataArray,
 
 def stats(zones: xr.DataArray,
           values: xr.DataArray,
+          zone_ids: Optional[List[Union[int, float]]] = None,
           stats_funcs: Union[Dict, List] = ['mean', 'max', 'min', 'sum', 'std', 'var', 'count'], # noqa
           nodata_zones: Optional[Union[int, float]] = None,
           nodata_values: Union[int, float] = None
@@ -185,6 +198,10 @@ def stats(zones: xr.DataArray,
         values is a 2D xarray DataArray of numeric values (integers or floats).
         The input `values` raster contains the input values used in
         calculating the output statistic for each zone.
+
+    zone_ids: List of ints, or floats
+        List of zones to be included in calculation. If no zone_ids provided,
+        all zones will be used.
 
     stats_funcs : Dict, or List of strings, default=['mean', 'max', 'min',
         'sum', 'std', 'var', 'count'])
@@ -307,12 +324,12 @@ def stats(zones: xr.DataArray,
     if isinstance(values.data, np.ndarray):
         # numpy case
         stats_df = _stats_numpy(
-            zones, values, stats_funcs_dict, nodata_zones, nodata_values
+            zones, values, zone_ids, stats_funcs_dict, nodata_zones, nodata_values  # noqa
         )
     else:
         # dask case
         stats_df = _stats_dask(
-            zones, values, stats_funcs_dict, nodata_zones, nodata_values
+            zones, values, zone_ids, stats_funcs_dict, nodata_zones, nodata_values  # noqa
         )
 
     return stats_df
@@ -348,20 +365,27 @@ def _crosstab_dict(zones, values, unique_zones, cats, nodata_values, agg):
     return crosstab_dict
 
 
-def _crosstab_numpy(zones, values, nodata_zones, nodata_values, agg):
+def _crosstab_numpy(zones, values, zone_ids, cat_ids, nodata_zones, nodata_values, agg):  # noqa
 
-    if len(values.shape) == 3:
-        # 3D case
-        cats = values.indexes[values.dims[0]].values
+    if cat_ids is not None:
+        cats = np.array(cat_ids)
     else:
-        # 2D case
-        # mask out all invalid values such as: nan, inf
-        cats = da.unique(values.data[da.isfinite(values.data)]).compute()
-        cats = sorted(list(set(cats) - set([nodata_values])))
+        # no categories provided, find all possible cats in values raster
+        if len(values.shape) == 3:
+            # 3D case
+            cats = values.indexes[values.dims[0]].values
+        else:
+            # 2D case
+            # mask out all invalid values such as: nan, inf
+            cats = da.unique(values.data[da.isfinite(values.data)]).compute()
+            cats = sorted(list(set(cats) - set([nodata_values])))
 
-    # do not consider zone with nodata values
-    unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
-    unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    if zone_ids is None:
+        # do not consider zone with nodata values
+        unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
+        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    else:
+        unique_zones = np.array(zone_ids)
 
     crosstab_dict = _crosstab_dict(
         zones, values, unique_zones, cats, nodata_values, agg
@@ -375,21 +399,28 @@ def _crosstab_numpy(zones, values, nodata_zones, nodata_values, agg):
     return crosstab_df
 
 
-def _crosstab_dask(zones, values, nodata_zones, nodata_values, agg):
+def _crosstab_dask(zones, values, zone_ids, cat_ids, nodata_zones, nodata_values, agg):  # noqa
 
-    if len(values.shape) == 3:
-        # 3D case
-        cats = values.indexes[values.dims[0]].values
+    if cat_ids is not None:
+        cats = np.array(cat_ids)
     else:
-        # 2D case
-        # precompute categories
-        cats = da.unique(values.data[da.isfinite(values.data)]).compute()
-        cats = sorted(list(set(cats) - set([nodata_values])))
+        # no categories provided, find all possible cats in values raster
+        if len(values.shape) == 3:
+            # 3D case
+            cats = values.indexes[values.dims[0]].values
+        else:
+            # 2D case
+            # precompute categories
+            cats = da.unique(values.data[da.isfinite(values.data)]).compute()
+            cats = sorted(list(set(cats) - set([nodata_values])))
 
-    # precompute unique zones
-    unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
-    # do not consider zone with nodata values
-    unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    if zone_ids is None:
+        # precompute unique zones
+        unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
+        # do not consider zone with nodata values
+        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    else:
+        unique_zones = np.array(zone_ids)
 
     crosstab_dict = _crosstab_dict(
         zones, values, unique_zones, cats, nodata_values, agg
@@ -412,6 +443,8 @@ def _crosstab_dask(zones, values, nodata_zones, nodata_values, agg):
 
 def crosstab(zones: xr.DataArray,
              values: xr.DataArray,
+             zone_ids: List[Union[int, float]] = None,
+             cat_ids: List[Union[int, float]] = None,
              layer: Optional[int] = None,
              agg: Optional[str] = 'count',
              nodata_zones: Optional[Union[int, float]] = None,
@@ -449,6 +482,14 @@ def crosstab(zones: xr.DataArray,
         2D or 3D data array of integers or floats.
         The input value raster contains the input values used in
         calculating the categorical statistic for each zone.
+
+    zone_ids: List of ints, or floats
+        List of zones to be included in calculation. If no zone_ids provided,
+        all zones will be used.
+
+    cat_ids: List of ints, or floats
+        List of categories to be included in calculation.
+        If no cat_ids provided, all categories will be used.
 
     layer: int, default=0
         index of the categorical dimension layer inside the `values` DataArray.
@@ -591,11 +632,12 @@ def crosstab(zones: xr.DataArray,
     if isinstance(values.data, np.ndarray):
         # numpy case
         crosstab_df = _crosstab_numpy(
-            zones, values, nodata_zones, nodata_values, agg)
+            zones, values, zone_ids, cat_ids, nodata_zones, nodata_values, agg
+        )
     else:
         # dask case
         crosstab_df = _crosstab_dask(
-            zones, values, nodata_zones, nodata_values, agg
+            zones, values, zone_ids, cat_ids, nodata_zones, nodata_values, agg
         )
 
     return crosstab_df
