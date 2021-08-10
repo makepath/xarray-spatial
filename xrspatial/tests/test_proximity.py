@@ -53,7 +53,7 @@ def create_test_raster():
     )
     numpy_agg['lon'] = dask_numpy_agg['lon'] = _lon
     numpy_agg['lat'] = dask_numpy_agg['lat'] = _lat
-    
+
     return numpy_agg, dask_numpy_agg
 
 
