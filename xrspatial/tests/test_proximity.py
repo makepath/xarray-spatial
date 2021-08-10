@@ -6,7 +6,8 @@ from xrspatial import euclidean_distance
 from xrspatial.proximity import _calc_direction
 
 import numpy as np
-import xarray as xa
+import xarray as xr
+import dask.array as da
 
 
 def test_great_circle_distance():
@@ -43,66 +44,103 @@ def create_test_raster():
     _lon = np.linspace(-20, 20, width)
     _lat = np.linspace(-20, 20, height)
 
-    raster = xa.DataArray(data, dims=['lat', 'lon'])
-    raster['lon'] = _lon
-    raster['lat'] = _lat
-    return raster
+    numpy_agg = xr.DataArray(
+        data, dims=['lat', 'lon'], attrs={'res': (10.0, 10.0)}
+    )
+    dask_numpy_agg = xr.DataArray(
+        da.from_array(data, chunks=(3, 3)),
+        dims=['lat', 'lon'], attrs={'res': (10.0, 10.0)}
+    )
+    numpy_agg['lon'] = dask_numpy_agg['lon'] = _lon
+    numpy_agg['lat'] = dask_numpy_agg['lat'] = _lat
+    
+    return numpy_agg, dask_numpy_agg
 
 
 def test_proximity():
-    raster = create_test_raster()
+    raster_numpy, raster_dask = create_test_raster()
 
     # DEFAULT SETTINGS
-    default_prox = proximity(raster, x='lon', y='lat')
+    # numpy case
+    default_prox = proximity(raster_numpy, x='lon', y='lat')
     # output must be an xarray DataArray
-    assert isinstance(default_prox, xa.DataArray)
+    assert isinstance(default_prox, xr.DataArray)
     assert type(default_prox.values[0][0]) == np.float64
-    assert default_prox.shape == raster.shape
+    assert default_prox.shape == raster_numpy.shape
     # in this test case, where no polygon is completely inside another polygon,
     # number of non-zeros (target pixels) in original image
     # must be equal to the number of zeros (target pixels) in proximity matrix
-    assert len(np.where((raster.data != 0) & np.isfinite(raster.data))[0]) == \
+    assert len(np.where((raster_numpy.data != 0) &
+                        np.isfinite(raster_numpy.data))[0]) == \
         len(np.where(default_prox.data == 0)[0])
+
+    # dask case
+    default_prox_dask = proximity(raster_dask, x='lon', y='lat')
+    assert isinstance(default_prox_dask.data, da.Array)
+    assert np.isclose(
+        default_prox.data, default_prox_dask.compute().data, equal_nan=True
+    ).all()
 
     # TARGET VALUES SETTING
     target_values = [2, 3]
-    target_prox = proximity(raster, x='lon', y='lat',
+    # numpy case
+    target_prox = proximity(raster_numpy, x='lon', y='lat',
                             target_values=target_values)
     # output must be an xarray DataArray
-    assert isinstance(target_prox, xa.DataArray)
+    assert isinstance(target_prox, xr.DataArray)
     assert type(target_prox.values[0][0]) == np.float64
-    assert target_prox.shape == raster.shape
-    assert (len(np.where(raster.data == 2)[0]) +
-            len(np.where(raster.data == 3)[0])) == \
+    assert target_prox.shape == raster_numpy.shape
+    assert (len(np.where(raster_numpy.data == 2)[0]) +
+            len(np.where(raster_numpy.data == 3)[0])) == \
         len(np.where(target_prox.data == 0)[0])
 
+    # dask case
+    target_prox_dask = proximity(raster_dask, x='lon', y='lat',
+                                 target_values=target_values)
+    assert isinstance(target_prox_dask.data, da.Array)
+    assert np.isclose(
+        target_prox.data, target_prox_dask.compute().data, equal_nan=True
+    ).all()
+
     # distance_metric SETTING: MANHATTAN
-    manhattan_prox = proximity(raster, x='lon', y='lat',
+    # numpy case
+    manhattan_prox = proximity(raster_numpy, x='lon', y='lat',
                                distance_metric='MANHATTAN')
     # output must be an xarray DataArray
-    assert isinstance(manhattan_prox, xa.DataArray)
+    assert isinstance(manhattan_prox, xr.DataArray)
     assert type(manhattan_prox.values[0][0]) == np.float64
-    assert manhattan_prox.shape == raster.shape
+    assert manhattan_prox.shape == raster_numpy.shape
     # all output values must be in range [0, max_possible_dist]
-    max_possible_dist = manhattan_distance(raster.coords['lon'].values[0],
-                                           raster.coords['lon'].values[-1],
-                                           raster.coords['lat'].values[0],
-                                           raster.coords['lat'].values[-1])
+    max_possible_dist = manhattan_distance(
+        raster_numpy.coords['lon'].values[0],
+        raster_numpy.coords['lon'].values[-1],
+        raster_numpy.coords['lat'].values[0],
+        raster_numpy.coords['lat'].values[-1]
+    )
     assert np.nanmax(manhattan_prox.values) <= max_possible_dist
     assert np.nanmin(manhattan_prox.values) == 0
+    # dask case
+    manhattan_prox_dask = proximity(raster_dask, x='lon', y='lat',
+                                    distance_metric='MANHATTAN')
+    assert isinstance(manhattan_prox_dask.data, da.Array)
+    assert np.isclose(
+        manhattan_prox.data, manhattan_prox_dask.compute().data, equal_nan=True
+    ).all()
 
     # distance_metric SETTING: GREAT_CIRCLE
-    great_circle_prox = proximity(raster, x='lon', y='lat',
+    great_circle_prox = proximity(raster_numpy, x='lon', y='lat',
                                   distance_metric='GREAT_CIRCLE')
     # output must be an xarray DataArray
-    assert isinstance(great_circle_prox, xa.DataArray)
+    assert isinstance(great_circle_prox, xr.DataArray)
     assert type(great_circle_prox.values[0][0]) == np.float64
-    assert great_circle_prox.shape == raster.shape
+    assert great_circle_prox.shape == raster_numpy.shape
     # all output values must be in range [0, max_possible_dist]
-    max_possible_dist = great_circle_distance(raster.coords['lon'].values[0],
-                                              raster.coords['lon'].values[-1],
-                                              raster.coords['lat'].values[0],
-                                              raster.coords['lat'].values[-1])
+    max_possible_dist = great_circle_distance(
+        raster_numpy.coords['lon'].values[0],
+        raster_numpy.coords['lon'].values[-1],
+        raster_numpy.coords['lat'].values[0],
+        raster_numpy.coords['lat'].values[-1]
+    )
     assert np.nanmax(great_circle_prox.values) <= max_possible_dist
     assert np.nanmin(great_circle_prox.values) == 0
 
@@ -110,11 +148,11 @@ def test_proximity():
 def test_allocation():
     # create test raster, all non-zero cells are unique,
     # this is to test against corresponding proximity
-    raster = create_test_raster()
+    raster, _ = create_test_raster()
 
     allocation_agg = allocation(raster, x='lon', y='lat')
     # output must be an xarray DataArray
-    assert isinstance(allocation_agg, xa.DataArray)
+    assert isinstance(allocation_agg, xr.DataArray)
     assert type(allocation_agg.values[0][0]) == raster.dtype
     assert allocation_agg.shape == raster.shape
     # targets not specified,
@@ -161,11 +199,11 @@ def test_calc_direction():
 
 
 def test_direction():
-    raster = create_test_raster()
+    raster, _ = create_test_raster()
     direction_agg = direction(raster, x='lon', y='lat')
 
     # output must be an xarray DataArray
-    assert isinstance(direction_agg, xa.DataArray)
+    assert isinstance(direction_agg, xr.DataArray)
     assert type(direction_agg.values[0][0]) == np.float64
     assert direction_agg.shape == raster.shape
     assert direction_agg.dims == raster.dims
