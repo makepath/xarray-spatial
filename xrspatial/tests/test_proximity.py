@@ -199,22 +199,25 @@ def test_calc_direction():
 
 
 def test_direction():
-    raster, _ = create_test_raster()
-    direction_agg = direction(raster, x='lon', y='lat')
+    raster_numpy, raster_dask = create_test_raster()
+
+    # numpy case
+    direction_agg = direction(raster_numpy, x='lon', y='lat')
 
     # output must be an xarray DataArray
     assert isinstance(direction_agg, xr.DataArray)
     assert type(direction_agg.values[0][0]) == np.float64
-    assert direction_agg.shape == raster.shape
-    assert direction_agg.dims == raster.dims
-    assert direction_agg.attrs == raster.attrs
+    assert direction_agg.shape == raster_numpy.shape
+    assert direction_agg.dims == raster_numpy.dims
+    assert direction_agg.attrs == raster_numpy.attrs
     for c in direction_agg.coords:
-        assert (direction_agg[c] == raster.coords[c]).all()
+        assert (direction_agg[c] == raster_numpy.coords[c]).all()
 
     # in this test case, where no polygon is completely inside another polygon,
     # number of non-zeros (target pixels) in original image
     # must be equal to the number of zeros (target pixels) in proximity matrix
-    assert len(np.where((raster.data != 0) & np.isfinite(raster.data))[0]) == \
+    assert len(np.where((raster_numpy.data != 0) &
+                        np.isfinite(raster_numpy.data))[0]) == \
         len(np.where(direction_agg.data == 0)[0])
 
     # values are within [0, 360]
@@ -222,15 +225,22 @@ def test_direction():
     assert np.max(direction_agg.data) <= 360
 
     # test against allocation
-    allocation_agg = allocation(raster, x='lon', y='lat')
+    allocation_agg = allocation(raster_numpy, x='lon', y='lat')
     xcoords = allocation_agg['lon'].data
     ycoords = allocation_agg['lat'].data
 
-    for y in range(raster.shape[0]):
-        for x in range(raster.shape[1]):
+    for y in range(raster_numpy.shape[0]):
+        for x in range(raster_numpy.shape[1]):
             a = allocation_agg.data[y, x]
-            py, px = np.where(raster.data == a)
+            py, px = np.where(raster_numpy.data == a)
             # non-zero cells in raster are unique, thus len(px)=len(py)=1
             d = _calc_direction(xcoords[x], xcoords[px[0]],
                                 ycoords[y], ycoords[py[0]])
             assert direction_agg.data[y, x] == d
+
+    # dask case
+    direction_agg_dask = direction(raster_dask, x='lon', y='lat')
+    assert isinstance(direction_agg_dask.data, da.Array)
+    assert np.isclose(
+        direction_agg.data, direction_agg_dask.compute().data, equal_nan=True
+    ).all()

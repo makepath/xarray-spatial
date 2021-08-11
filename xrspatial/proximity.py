@@ -514,13 +514,8 @@ def _process_image(img, x_coords, y_coords, target_values,
         return img_direction
 
 
-def _process(raster, x='x', y='y', target_values=[],
-             distance_metric='EUCLIDEAN', process_mode=PROXIMITY):
-    raster_dims = raster.dims
-    if raster_dims != (y, x):
-        raise ValueError("raster.coords should be named as coordinates:"
-                         "({0}, {1})".format(y, x))
-
+def _process_numpy(raster, x='x', y='y', target_values=[],
+                   distance_metric='EUCLIDEAN', process_mode=PROXIMITY):
     # convert distance metric from string to integer, the correct type
     # of argument for function _distance()
     distance_metric = DISTANCE_METRICS.get(distance_metric, None)
@@ -592,13 +587,38 @@ def _compute_distance_dask(nearest_targets,
     return out
 
 
-def _proximity_dask(
-        raster: xr.DataArray,
-        x: str = 'x',
-        y: str = 'y',
-        target_values: list = [],
-        distance_metric: str = 'EUCLIDEAN'
-):
+@ngjit
+def _compute_direction_numpy(nearest_targets,
+                             flatten_coords,
+                             target_xcoords,
+                             target_ycoords):
+    out = np.zeros_like(nearest_targets, dtype=np.float64)
+    n = nearest_targets.shape[0]
+    for i in range(n):
+        x1 = flatten_coords[i][1]
+        y1 = flatten_coords[i][0]
+        x2 = target_xcoords[nearest_targets[i][0]]
+        y2 = target_ycoords[nearest_targets[i][0]]
+        out[i] = _calc_direction(x1, x2, y1, y2)
+    return out
+
+
+def _compute_direction_dask(nearest_targets,
+                            flatten_coords,
+                            target_xcoords,
+                            target_ycoords):
+    out = da.map_blocks(
+        _compute_direction_numpy,
+        nearest_targets,
+        flatten_coords,
+        target_xcoords,
+        target_ycoords,
+        meta=np.array(())
+    )
+    return out
+
+
+def _process_dask(raster, x, y, target_values, distance_metric, process_mode):
     # find target pixels by target values
     if len(target_values):
         conditions = False
@@ -645,15 +665,46 @@ def _proximity_dask(
         chunks=(flatten_coords.chunks[0], (1,))
     )
 
-    out = _compute_distance_dask(
-        nearest_targets,
-        flatten_coords,
-        target_xcoords,
-        target_ycoords,
-        DISTANCE_METRICS[distance_metric],
-    ).reshape(raster.shape)
+    if process_mode == PROXIMITY:
+        out = _compute_distance_dask(
+            nearest_targets,
+            flatten_coords,
+            target_xcoords,
+            target_ycoords,
+            DISTANCE_METRICS[distance_metric],
+        ).reshape(raster.shape)
+
+    elif process_mode == DIRECTION:
+        out = _compute_direction_dask(
+            nearest_targets,
+            flatten_coords,
+            target_xcoords,
+            target_ycoords,
+        ).reshape(raster.shape)
 
     return out
+
+
+def _process(raster, x='x', y='y', target_values=[],
+             distance_metric='EUCLIDEAN', process_mode=PROXIMITY):
+    raster_dims = raster.dims
+    if raster_dims != (y, x):
+        raise ValueError("raster.coords should be named as coordinates:"
+                         "({0}, {1})".format(y, x))
+
+    if isinstance(raster.data, np.ndarray):
+        # numpy case
+        result = _process_numpy(
+            raster, x=x, y=y, target_values=target_values,
+            distance_metric=distance_metric, process_mode=process_mode
+        )
+    elif isinstance(raster.data, da.Array):
+        # dask + numpy case
+        result = _process_dask(
+            raster, x=x, y=y, target_values=target_values,
+            distance_metric=distance_metric, process_mode=process_mode
+        )
+    return result
 
 
 # ported from
@@ -815,23 +866,18 @@ def proximity(raster: xr.DataArray,
             Description:  Example Proximity
             units:        px
     """
-    if isinstance(raster.data, np.ndarray):
-        # numpy case
-        proximity_img = _process(
-            raster, x=x, y=y, target_values=target_values,
-            distance_metric=distance_metric, process_mode=PROXIMITY
-        )
-    elif isinstance(raster.data, da.Array):
-        # dask + numpy case
-        proximity_img = _proximity_dask(
-            raster, x=x, y=y, target_values=target_values,
-            distance_metric=distance_metric
-        )
+    proximity_img = _process(raster,
+                             x=x,
+                             y=y,
+                             target_values=target_values,
+                             distance_metric=distance_metric,
+                             process_mode=PROXIMITY)
 
     result = xr.DataArray(proximity_img,
                           coords=raster.coords,
                           dims=raster.dims,
                           attrs=raster.attrs)
+
     return result
 
 
