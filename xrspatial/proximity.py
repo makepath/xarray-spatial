@@ -262,10 +262,9 @@ def _process_proximity_line(source_line, x_coords, y_coords,
         1d numpy array of type np.float64, calculated proximity from
         source_line.
     values : numpy.array
-        1d numpy array of type np.uint8. A list of target pixel values
+        1d numpy array. A list of target pixel values
         to measure the distance from. If this option is not provided
         proximity will be computed from non-zero pixel values.
-        Currently pixel values are internally processed as integers.
 
     Returns
     -------
@@ -516,14 +515,13 @@ def _process_image(img, x_coords, y_coords, target_values,
 
 def _process_numpy(raster, x='x', y='y', target_values=[],
                    distance_metric='EUCLIDEAN', process_mode=PROXIMITY):
-    # convert distance metric from string to integer, the correct type
-    # of argument for function _distance()
+
     distance_metric = DISTANCE_METRICS.get(distance_metric, None)
 
     if distance_metric is None:
         distance_metric = DISTANCE_METRICS['EUCLIDEAN']
 
-    target_values = np.asarray(target_values).astype(np.uint8)
+    target_values = np.asarray(target_values)
 
     img = raster.values
     y_coords = raster.coords[y].values
@@ -730,6 +728,18 @@ def proximity(raster: xr.DataArray,
     and all proximities will be computed in pixels. Note that target
     pixels are set to the value corresponding to a distance of zero.
 
+    Proximity support NumPy backed, and Dask with NumPy backed
+    xarray DataArray. The return values of proximity are of the same type as
+    the input type.
+    If input raster is a NumPy-backed DataArray, the result is NumPy-backed.
+    If input raster is a Dask-backed DataArray, the result is Dask-backed.
+
+    The implementation for NumPy-backed is ported from GDAL, which uses
+    a dynamic programming approach to identify nearest target of a pixel from
+    its surrounding neighborhood in a 3x3 window.
+    The implementation for Dask-backed uses `sklearn.sklearn.neighbors.KDTree`
+    internally.
+
     Parameters
     ----------
     raster : xr.DataArray
@@ -741,8 +751,7 @@ def proximity(raster: xr.DataArray,
     target_values: list
         Target pixel values to measure the distance from. If this option
         is not provided, proximity will be computed from non-zero pixel
-        values. Currently pixel values are internally processed as
-        integers.
+        values.
     distance_metric: str, default='EUCLIDEAN'
         The metric for calculating distance between 2 points. Valid
         distance_metrics: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
