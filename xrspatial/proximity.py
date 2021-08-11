@@ -718,8 +718,7 @@ def proximity(raster: xr.DataArray,
               distance_metric: str = 'EUCLIDEAN') -> xr.DataArray:
     """
     Computes the proximity of all pixels in the image to a set of pixels
-    in the source image based on Euclidean, Great-Circle or Manhattan
-    distance.
+    in the source image based on a distance metric.
 
     This function attempts to compute the proximity of all pixels in the
     image to a set of pixels in the source image. The following options
@@ -753,8 +752,9 @@ def proximity(raster: xr.DataArray,
         is not provided, proximity will be computed from non-zero pixel
         values.
     distance_metric: str, default='EUCLIDEAN'
-        The metric for calculating distance between 2 points. Valid
-        distance_metrics: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
+        The metric for calculating distance between 2 points.
+        Valid distance_metrics for Numpy-backed raster: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.  # noqa
+        Valid distance_metrics for Dask-backed raster: 'EUCLIDEAN', and 'MANHATTAN'.  # noqa
 
     Returns
     -------
@@ -845,6 +845,11 @@ def allocation(raster: xr.DataArray,
     By default all non-zero pixels in `raster.values` will be considered
     as"target", and all allocation will be computed in pixels.
 
+    Allocation support Numpy-backed xarray DataArray currently.
+    It uses the same approach as `proximity`, which is ported from GDAL.
+    A dynamic programming approach is used for identifying nearest target
+    of a pixel from its surrounding neighborhood in a 3x3 window.
+
     Parameters
     ----------
     raster : xr.DataArray
@@ -856,8 +861,7 @@ def allocation(raster: xr.DataArray,
     target_values : list
         Target pixel values to measure the distance from. If this option
         is not provided, allocation will be computed from non-zero pixel
-        values. Currently pixel values are internally processed as
-        integers.
+        values.
     distance_metric : str, default='EUCLIDEAN'
         The metric for calculating distance between 2 points. Valid
         distance_metrics: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
@@ -950,8 +954,20 @@ def direction(raster: xr.DataArray,
     270 for the west, 360 for the north, and 0 for the source cell
     itself. The following options are used to define the behavior of
     the function. By default all non-zero pixels in `raster.values`
-    will be considered as "target", and all allocation will be computed
+    will be considered as "target", and all direction will be computed
     in pixels.
+
+    Direction support NumPy backed, and Dask with NumPy backed
+    xarray DataArray. The return values of `direction` are of the same type as
+    the input type.
+    If input raster is a NumPy-backed DataArray, the result is NumPy-backed.
+    If input raster is a Dask-backed DataArray, the result is Dask-backed.
+
+    Similar to `proximity`, the implementation for NumPy-backed is ported
+    from GDAL, which uses a dynamic programming approach to identify
+    nearest target of a pixel from its surrounding neighborhood in a 3x3 window
+    The implementation for Dask-backed uses `sklearn.sklearn.neighbors.KDTree`
+    internally.
 
     Parameters
     ----------
@@ -964,16 +980,16 @@ def direction(raster: xr.DataArray,
     target_values: list
         Target pixel values to measure the distance from. If this
         option is not provided, proximity will be computed from
-        non-zero pixel values. Currently pixel values are
-        internally processed as integers.
+        non-zero pixel values.
     distance_metric: str, default='EUCLIDEAN'
-        The metric for calculating distance between 2 points. Valid
-        distance_metrics: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
+        The metric for calculating distance between 2 points.
+        Valid distance_metrics for NumPy-backed raster: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.  # noqa
+        Valid distance_metrics for Dask-backed raster: 'EUCLIDEAN', and 'MANHATTAN'.  # noqa
 
     Returns
     -------
     direction_agg: xr.DataArray of same type as `raster`
-        2D array of proximity values.
+        2D array of direction values.
         All other input attributes are preserved.
 
     References
