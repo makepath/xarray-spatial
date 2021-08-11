@@ -619,6 +619,10 @@ def _compute_direction_dask(nearest_targets,
 
 
 def _process_dask(raster, x, y, target_values, distance_metric, process_mode):
+
+    if process_mode == ALLOCATION:
+        raise NotImplementedError('allocation does not support Dask yet.')
+
     # find target pixels by target values
     if len(target_values):
         conditions = False
