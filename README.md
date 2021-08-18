@@ -130,7 +130,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Allocation](xrspatial/proximity.py) | ✅️ |  | | |
+| [Allocation](xrspatial/proximity.py) | ✅️ | ✅ | | |
 | [Direction](xrspatial/proximity.py) | ✅️ | ✅ | | |
 | [Proximity](xrspatial/proximity.py) | ✅️ | ✅ | | |
 
