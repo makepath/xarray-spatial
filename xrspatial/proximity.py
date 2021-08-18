@@ -4,11 +4,9 @@ import xarray as xr
 import numpy as np
 import dask.array as da
 
-from numba import njit, prange
+from numba import prange
 
-from xrspatial.utils import ngjit
-
-import sklearn.neighbors
+from xrspatial.utils import ngjit, get_dataarray_resolution
 
 
 EUCLIDEAN = 0
@@ -34,7 +32,7 @@ def _distance_metric_mapping():
 DISTANCE_METRICS = _distance_metric_mapping()
 
 
-@njit(nogil=True)
+@ngjit
 def euclidean_distance(x1: float,
                        x2: float,
                        y1: float,
@@ -87,7 +85,7 @@ def euclidean_distance(x1: float,
     return np.sqrt(x * x + y * y)
 
 
-@njit(nogil=True)
+@ngjit
 def manhattan_distance(x1: float,
                        x2: float,
                        y1: float,
@@ -141,7 +139,7 @@ def manhattan_distance(x1: float,
     return abs(x) + abs(y)
 
 
-@njit(nogil=True)
+@ngjit
 def great_circle_distance(x1: float,
                           x2: float,
                           y1: float,
@@ -221,7 +219,7 @@ def great_circle_distance(x1: float,
     return radius * 2 * np.arcsin(np.sqrt(a))
 
 
-@njit(nogil=True)
+@ngjit
 def _distance(x1, x2, y1, y2, metric):
     if metric == EUCLIDEAN:
         return euclidean_distance(x1, x2, y1, y2)
@@ -235,7 +233,7 @@ def _distance(x1, x2, y1, y2, metric):
     return -1.0
 
 
-@njit(nogil=True)
+@ngjit
 def _process_proximity_line(source_line, x_coords, y_coords,
                             pan_near_x, pan_near_y, is_forward,
                             line_id, width, max_distance, line_proximity,
@@ -351,7 +349,7 @@ def _process_proximity_line(source_line, x_coords, y_coords,
     return
 
 
-@njit
+@ngjit
 def _calc_direction(x1, x2, y1, y2):
     # Calculate direction from (x1, y1) to a source cell (x2, y2).
     # The output values are based on compass directions,
@@ -373,8 +371,8 @@ def _calc_direction(x1, x2, y1, y2):
     return d
 
 
-@njit(nogil=True)
-def _process_image(img, x_coords, y_coords, target_values,
+@ngjit
+def _process_numpy(img, x_coords, y_coords, target_values,
                    max_distance, distance_metric, process_mode):
     # max_distance = _distance(x_coords[0], x_coords[-1],
     #                          y_coords[0], y_coords[-1],
@@ -513,202 +511,70 @@ def _process_image(img, x_coords, y_coords, target_values,
         return img_direction
 
 
-def _process_numpy(raster, x, y, target_values, max_distance,
-                   distance_metric, process_mode):
-
-    distance_metric = DISTANCE_METRICS.get(distance_metric, None)
-
-    if distance_metric is None:
-        distance_metric = DISTANCE_METRICS['EUCLIDEAN']
-
-    target_values = np.asarray(target_values)
-
-    img = raster.values
-    y_coords = raster.coords[y].values
-    x_coords = raster.coords[x].values
-
-    if max_distance is None:
-        max_distance = np.inf
-    output_img = _process_image(img, x_coords, y_coords, target_values,
-                                max_distance, distance_metric, process_mode)
-    return output_img
-
-
-@ngjit
-def _indicies_to_coords_numpy(indicies, coords):
-    out = np.zeros_like(indicies, dtype=np.float64)
-    n = indicies.shape[0]
-    for i in range(n):
-        out[i] = coords[indicies[i]]
-    return out
-
-
-def _indicies_to_coords_dask(indicies, coords):
-    out = da.map_blocks(
-        _indicies_to_coords_numpy,
-        indicies,
-        coords,
-        meta=np.array(())
-    )
-    return out
-
-
-@ngjit
-def _compute_distance_numpy(nearest_targets,
-                            flatten_coords,
-                            target_xcoords,
-                            target_ycoords,
-                            metric):
-    out = np.zeros_like(nearest_targets, dtype=np.float64)
-    n = nearest_targets.shape[0]
-    for i in range(n):
-        x1 = flatten_coords[i][1]
-        y1 = flatten_coords[i][0]
-        x2 = target_xcoords[nearest_targets[i][0]]
-        y2 = target_ycoords[nearest_targets[i][0]]
-        out[i] = _distance(x1, x2, y1, y2, metric)
-    return out
-
-
-def _compute_distance_dask(nearest_targets,
-                           flatten_coords,
-                           target_xcoords,
-                           target_ycoords,
-                           metric):
-    out = da.map_blocks(
-        _compute_distance_numpy,
-        nearest_targets,
-        flatten_coords,
-        target_xcoords,
-        target_ycoords,
-        metric,
-        meta=np.array(())
-    )
-    return out
-
-
-@ngjit
-def _compute_direction_numpy(nearest_targets,
-                             flatten_coords,
-                             target_xcoords,
-                             target_ycoords):
-    out = np.zeros_like(nearest_targets, dtype=np.float64)
-    n = nearest_targets.shape[0]
-    for i in range(n):
-        x1 = flatten_coords[i][1]
-        y1 = flatten_coords[i][0]
-        x2 = target_xcoords[nearest_targets[i][0]]
-        y2 = target_ycoords[nearest_targets[i][0]]
-        out[i] = _calc_direction(x1, x2, y1, y2)
-    return out
-
-
-def _compute_direction_dask(nearest_targets,
-                            flatten_coords,
-                            target_xcoords,
-                            target_ycoords):
-    out = da.map_blocks(
-        _compute_direction_numpy,
-        nearest_targets,
-        flatten_coords,
-        target_xcoords,
-        target_ycoords,
-        meta=np.array(())
-    )
-    return out
-
-
-def _process_dask(raster, x, y, target_values, distance_metric, process_mode):
-
-    if process_mode == ALLOCATION:
-        raise NotImplementedError('allocation does not support Dask yet.')
-
-    # find target pixels by target values
-    if len(target_values):
-        conditions = False
-        for t in target_values:
-            conditions |= (raster.data == t)
+def _process_dask(raster, x_coords, y_coords, target_values,
+                  max_distance, distance_metric, process_mode):
+    # calculate padding for width and height
+    if not np.isfinite(max_distance):
+        # consider all targets in the whole raster
+        height, width = raster.shape
+        pad_y = height - 1
+        pad_x = width - 1
     else:
-        conditions = (raster.data != 0)
+        cellsize_x, cellsize_y = get_dataarray_resolution(raster)
+        pad_y = int(max_distance / cellsize_y + 0.5)
+        pad_x = int(max_distance / cellsize_x + 0.5)
 
-    target_mask = da.ma.masked_where(
-        (conditions & np.isfinite(raster.data)),
-        raster.data
+    padded_ycoords = np.array(
+        [*[np.nan for _ in range(pad_y)], *y_coords, *[np.nan for _ in range(pad_y)]]  # noqa
     )
-    # indicies in pixel space of all targets
-    target_ys = da.nonzero(da.ma.getmaskarray(target_mask))[0].compute()
-    target_xs = da.nonzero(da.ma.getmaskarray(target_mask))[1].compute()
-
-    # coords of all targets
-    target_ycoords = _indicies_to_coords_dask(
-        target_ys, raster[y].data).compute()
-    target_xcoords = _indicies_to_coords_dask(
-        target_xs, raster[x].data).compute()
-    target_coords = np.array(
-        [[y, x] for y, x in zip(target_ycoords, target_xcoords)]
+    padded_xcoords = np.array(
+        [*[np.nan for _ in range(pad_x)], *x_coords, *[np.nan for _ in range(pad_x)]]  # noqa
     )
 
-    # chunksize
-    chunksize = max(*raster.shape, *target_coords.shape)
-
-    # A 2-D array that has the x-y coordinates of each point.
-    # flatten the coords of input raster
-    xs = np.tile(raster[x], raster.shape[0])
-    ys = np.repeat(raster[y], raster.shape[1])
-    flatten_coords = da.stack([ys, xs]).T.rechunk(chunksize)
-
-    # build the KDTree
-    tree = sklearn.neighbors.KDTree(
-        target_coords, metric=distance_metric.lower()
-    )
-
-    nearest_targets = flatten_coords.map_blocks(
-        tree.query,
-        return_distance=False,
-        dtype=flatten_coords.dtype,
-        chunks=(flatten_coords.chunks[0], (1,))
-    )
-
-    if process_mode == PROXIMITY:
-        out = _compute_distance_dask(
-            nearest_targets,
-            flatten_coords,
-            target_xcoords,
-            target_ycoords,
-            DISTANCE_METRICS[distance_metric],
-        ).reshape(raster.shape)
-
-    elif process_mode == DIRECTION:
-        out = _compute_direction_dask(
-            nearest_targets,
-            flatten_coords,
-            target_xcoords,
-            target_ycoords,
-        ).reshape(raster.shape)
-
+    out = raster.data.map_overlap(_process_numpy,
+                                  x_coords=padded_xcoords,
+                                  y_coords=padded_ycoords,
+                                  target_values=target_values,
+                                  max_distance=max_distance,
+                                  distance_metric=distance_metric,
+                                  process_mode=process_mode,
+                                  depth=(pad_y, pad_x),
+                                  boundary=np.nan,
+                                  meta=np.array(()),
+                                  trim=True)
     return out
 
 
 def _process(raster, x, y, target_values, max_distance,
              distance_metric, process_mode):
-
     raster_dims = raster.dims
     if raster_dims != (y, x):
         raise ValueError("raster.coords should be named as coordinates:"
                          "({0}, {1})".format(y, x))
 
+    distance_metric = DISTANCE_METRICS.get(distance_metric, None)
+    if distance_metric is None:
+        distance_metric = DISTANCE_METRICS['EUCLIDEAN']
+
+    target_values = np.asarray(target_values)
+
+    y_coords = raster.coords[y].values
+    x_coords = raster.coords[x].values
+
+    if max_distance is None:
+        max_distance = np.inf
+
     if isinstance(raster.data, np.ndarray):
         # numpy case
         result = _process_numpy(
-            raster, x=x, y=y, target_values=target_values,
-            max_distance=max_distance, distance_metric=distance_metric,
-            process_mode=process_mode
+            raster.data, x_coords, y_coords, target_values,
+            max_distance, distance_metric, process_mode
         )
     elif isinstance(raster.data, da.Array):
         # dask + numpy case
         result = _process_dask(
-            raster, x=x, y=y, target_values=target_values,
-            distance_metric=distance_metric, process_mode=process_mode
+            raster, x_coords, y_coords, target_values,
+            max_distance, distance_metric, process_mode
         )
     return result
 
