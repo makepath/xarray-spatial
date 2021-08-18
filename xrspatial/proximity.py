@@ -375,10 +375,10 @@ def _calc_direction(x1, x2, y1, y2):
 
 @njit(nogil=True)
 def _process_image(img, x_coords, y_coords, target_values,
-                   distance_metric, process_mode):
-    max_distance = _distance(x_coords[0], x_coords[-1],
-                             y_coords[0], y_coords[-1],
-                             distance_metric)
+                   max_distance, distance_metric, process_mode):
+    # max_distance = _distance(x_coords[0], x_coords[-1],
+    #                          y_coords[0], y_coords[-1],
+    #                          distance_metric)
 
     height, width = img.shape
 
@@ -513,8 +513,8 @@ def _process_image(img, x_coords, y_coords, target_values,
         return img_direction
 
 
-def _process_numpy(raster, x='x', y='y', target_values=[],
-                   distance_metric='EUCLIDEAN', process_mode=PROXIMITY):
+def _process_numpy(raster, x, y, target_values, max_distance,
+                   distance_metric, process_mode):
 
     distance_metric = DISTANCE_METRICS.get(distance_metric, None)
 
@@ -527,8 +527,10 @@ def _process_numpy(raster, x='x', y='y', target_values=[],
     y_coords = raster.coords[y].values
     x_coords = raster.coords[x].values
 
+    if max_distance is None:
+        max_distance = np.inf
     output_img = _process_image(img, x_coords, y_coords, target_values,
-                                distance_metric, process_mode)
+                                max_distance, distance_metric, process_mode)
     return output_img
 
 
@@ -687,8 +689,9 @@ def _process_dask(raster, x, y, target_values, distance_metric, process_mode):
     return out
 
 
-def _process(raster, x='x', y='y', target_values=[],
-             distance_metric='EUCLIDEAN', process_mode=PROXIMITY):
+def _process(raster, x, y, target_values, max_distance,
+             distance_metric, process_mode):
+
     raster_dims = raster.dims
     if raster_dims != (y, x):
         raise ValueError("raster.coords should be named as coordinates:"
@@ -698,7 +701,8 @@ def _process(raster, x='x', y='y', target_values=[],
         # numpy case
         result = _process_numpy(
             raster, x=x, y=y, target_values=target_values,
-            distance_metric=distance_metric, process_mode=process_mode
+            max_distance=max_distance, distance_metric=distance_metric,
+            process_mode=process_mode
         )
     elif isinstance(raster.data, da.Array):
         # dask + numpy case
@@ -715,6 +719,7 @@ def proximity(raster: xr.DataArray,
               x: str = 'x',
               y: str = 'y',
               target_values: list = [],
+              max_distance: float = None,
               distance_metric: str = 'EUCLIDEAN') -> xr.DataArray:
     """
     Computes the proximity of all pixels in the image to a set of pixels
@@ -818,6 +823,7 @@ def proximity(raster: xr.DataArray,
                              x=x,
                              y=y,
                              target_values=target_values,
+                             max_distance=max_distance,
                              distance_metric=distance_metric,
                              process_mode=PROXIMITY)
 
@@ -833,6 +839,7 @@ def allocation(raster: xr.DataArray,
                x: str = 'x',
                y: str = 'y',
                target_values: list = [],
+               max_distance: float = None,
                distance_metric: str = 'EUCLIDEAN'):
     """
     Calculates, for all cells in the array, the downward slope direction
@@ -927,6 +934,7 @@ def allocation(raster: xr.DataArray,
                               x=x,
                               y=y,
                               target_values=target_values,
+                              max_distance=max_distance,
                               distance_metric=distance_metric,
                               process_mode=ALLOCATION)
 
@@ -942,6 +950,7 @@ def direction(raster: xr.DataArray,
               x: str = 'x',
               y: str = 'y',
               target_values: list = [],
+              max_distance: float = None,
               distance_metric: str = 'EUCLIDEAN'):
     """
     Calculates, for all cells in the array, the downward slope direction
@@ -1048,6 +1057,7 @@ def direction(raster: xr.DataArray,
                              x=x,
                              y=y,
                              target_values=target_values,
+                             max_distance=max_distance,
                              distance_metric=distance_metric,
                              process_mode=DIRECTION)
 
