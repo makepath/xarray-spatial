@@ -607,8 +607,9 @@ def proximity(raster: xr.DataArray,
     The implementation for NumPy-backed is ported from GDAL, which uses
     a dynamic programming approach to identify nearest target of a pixel from
     its surrounding neighborhood in a 3x3 window.
-    The implementation for Dask-backed uses `sklearn.sklearn.neighbors.KDTree`
-    internally.
+    The implementation for Dask-backed uses `dask.map_overlap` to compute
+    proximity chunk by chunk by expanding the chunk's borders to cover
+    the `max_distance`.
 
     Parameters
     ----------
@@ -622,10 +623,16 @@ def proximity(raster: xr.DataArray,
         Target pixel values to measure the distance from. If this option
         is not provided, proximity will be computed from non-zero pixel
         values.
+    max_distance: float
+        The maximum distance to search. Proximity distances greater than
+        this value will be set to a NaN value.
+        Note that this must be given in the same unit as input. For example,
+        if input raster is in latitude/longitude units, `max_distance` should
+        also be provided in latitude/longitude units.
     distance_metric: str, default='EUCLIDEAN'
         The metric for calculating distance between 2 points.
-        Valid distance_metrics for Numpy-backed raster: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.  # noqa
-        Valid distance_metrics for Dask-backed raster: 'EUCLIDEAN', and 'MANHATTAN'.  # noqa
+        Valid distance metrics are:
+        'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
 
     Returns
     -------
@@ -718,10 +725,18 @@ def allocation(raster: xr.DataArray,
     By default all non-zero pixels in `raster.values` will be considered
     as"target", and all allocation will be computed in pixels.
 
-    Allocation support Numpy-backed xarray DataArray currently.
-    It uses the same approach as `proximity`, which is ported from GDAL.
-    A dynamic programming approach is used for identifying nearest target
-    of a pixel from its surrounding neighborhood in a 3x3 window.
+    Allocation supports NumPy backed, and Dask with NumPy backed
+    xarray DataArray. The return values of `allocation` are of the same type as
+    the input type.
+    If input raster is a NumPy-backed DataArray, the result is NumPy-backed.
+    If input raster is a Dask-backed DataArray, the result is Dask-backed.
+
+    `allocation` uses the same approach as `proximity`, which is ported
+    from GDAL. A dynamic programming approach is used for identifying nearest
+    target of a pixel from its surrounding neighborhood in a 3x3 window.
+    The implementation for Dask-backed uses `dask.map_overlap` to compute
+    `allocation` chunk by chunk by expanding the chunk's borders to cover
+    the `max_distance`.
 
     Parameters
     ----------
@@ -735,9 +750,15 @@ def allocation(raster: xr.DataArray,
         Target pixel values to measure the distance from. If this option
         is not provided, allocation will be computed from non-zero pixel
         values.
+    max_distance: float
+        The maximum distance to search. Proximity distances greater than
+        this value will be set to a NaN value.
+        Note that this must be given in the same unit as input. For example,
+        if input raster is in latitude/longitude units, `max_distance` should
+        also be provided in latitude/longitude units.
     distance_metric : str, default='EUCLIDEAN'
         The metric for calculating distance between 2 points. Valid
-        distance_metrics: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
+        distance metrics are: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
 
     Returns
     -------
@@ -856,10 +877,16 @@ def direction(raster: xr.DataArray,
         Target pixel values to measure the distance from. If this
         option is not provided, proximity will be computed from
         non-zero pixel values.
+    max_distance: float
+        The maximum distance to search. Proximity distances greater than
+        this value will be set to a NaN value.
+        Note that this must be given in the same unit as input. For example,
+        if input raster is in latitude/longitude units, `max_distance` should
+        also be provided in latitude/longitude units.
     distance_metric: str, default='EUCLIDEAN'
         The metric for calculating distance between 2 points.
-        Valid distance_metrics for NumPy-backed raster: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.  # noqa
-        Valid distance_metrics for Dask-backed raster: 'EUCLIDEAN', and 'MANHATTAN'.  # noqa
+        Valid distance_metrics are:
+        'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
 
     Returns
     -------

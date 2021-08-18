@@ -148,38 +148,45 @@ def test_proximity():
 def test_allocation():
     # create test raster, all non-zero cells are unique,
     # this is to test against corresponding proximity
-    raster, _ = create_test_raster()
+    raster_numpy, raster_dask = create_test_raster()
 
-    allocation_agg = allocation(raster, x='lon', y='lat')
+    allocation_agg = allocation(raster_numpy, x='lon', y='lat')
     # output must be an xarray DataArray
     assert isinstance(allocation_agg, xr.DataArray)
-    assert type(allocation_agg.values[0][0]) == raster.dtype
-    assert allocation_agg.shape == raster.shape
+    assert type(allocation_agg.values[0][0]) == raster_numpy.dtype
+    assert allocation_agg.shape == raster_numpy.shape
     # targets not specified,
     # Thus, targets are set to non-zero values of input @raster
-    targets = np.unique(raster.data[np.where((raster.data != 0) &
-                                             np.isfinite(raster.data))])
+    targets = np.unique(raster_numpy.data[np.where((raster_numpy.data != 0) &
+                                             np.isfinite(raster_numpy.data))])
     # non-zero cells (a.k.a targets) remain the same
     for t in targets:
-        ry, rx = np.where(raster.data == t)
+        ry, rx = np.where(raster_numpy.data == t)
         for y, x in zip(ry, rx):
             assert allocation_agg.values[y, x] == t
     # values of allocation output
     assert (np.unique(allocation_agg.data) == targets).all()
 
     # check against corresponding proximity
-    proximity_agg = proximity(raster, x='lon', y='lat')
+    proximity_agg = proximity(raster_numpy, x='lon', y='lat')
     xcoords = allocation_agg['lon'].data
     ycoords = allocation_agg['lat'].data
 
-    for y in range(raster.shape[0]):
-        for x in range(raster.shape[1]):
+    for y in range(raster_numpy.shape[0]):
+        for x in range(raster_numpy.shape[1]):
             a = allocation_agg.data[y, x]
-            py, px = np.where(raster.data == a)
+            py, px = np.where(raster_numpy.data == a)
             # non-zero cells in raster are unique, thus len(px)=len(py)=1
             d = euclidean_distance(xcoords[x], xcoords[px[0]],
                                    ycoords[y], ycoords[py[0]])
             assert proximity_agg.data[y, x] == d
+
+    # dask case
+    allocation_agg_dask = allocation(raster_dask, x='lon', y='lat')
+    assert isinstance(allocation_agg_dask.data, da.Array)
+    assert np.isclose(
+        allocation_agg.data, allocation_agg_dask.compute().data, equal_nan=True
+    ).all()
 
 
 def test_calc_direction():
