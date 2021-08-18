@@ -157,8 +157,8 @@ def test_allocation():
     assert allocation_agg.shape == raster_numpy.shape
     # targets not specified,
     # Thus, targets are set to non-zero values of input @raster
-    targets = np.unique(raster_numpy.data[np.where((raster_numpy.data != 0) &
-                                             np.isfinite(raster_numpy.data))])
+    targets = np.unique(raster_numpy.data[np.where(
+        (raster_numpy.data != 0) & np.isfinite(raster_numpy.data))])
     # non-zero cells (a.k.a targets) remain the same
     for t in targets:
         ry, rx = np.where(raster_numpy.data == t)
