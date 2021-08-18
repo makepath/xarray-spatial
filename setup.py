@@ -22,7 +22,6 @@ install_requires = [
     'pandas',
     'pillow',
     'requests',
-    'scikit-learn',
     'xarray',
     'pyct <=0.4.6',
     'param >=1.6.1',

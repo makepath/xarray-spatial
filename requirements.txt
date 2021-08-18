@@ -1,5 +1,4 @@
 datashader
 xarray
 bokeh>2
-scikit-learn
 noise >=1.2.2
