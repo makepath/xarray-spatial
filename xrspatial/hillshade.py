@@ -131,23 +131,23 @@ def calc_dims(shape):
     )
     return blockspergrid, threadsperblock
 
-def _run_numba(data, azimuth, angle_altitude):
-
-    d_data = cuda.to_device(data)
-    output = np.empty(data.shape, np.float32)
-
+def _run_numba(d_data, azimuth, angle_altitude):
+    # Precompute constant values shared between all threads
     altituderad = angle_altitude * np.pi / 180.
     sin_altituderad = np.sin(altituderad)
     cos_altituderad = np.cos(altituderad)
     azimuthrad = (360.0 - azimuth) * np.pi / 180.
 
-    griddim, blockdim = calc_dims(data.shape)
+    # Allocate output buffer and launch kernel with appropriate dimensions 
+    output = cupy.empty(d_data.shape, np.float32)
+    griddim, blockdim = calc_dims(d_data.shape)
     _gpu_calc_numba[griddim, blockdim](d_data, output, sin_altituderad, cos_altituderad, azimuthrad)
 
-    output[ 0, :] = np.nan
-    output[-1, :] = np.nan
-    output[:,  0] = np.nan
-    output[:, -1] = np.nan
+    # Fill borders with nans.
+    output[ 0, :] = cupy.nan
+    output[-1, :] = cupy.nan
+    output[:,  0] = cupy.nan
+    output[:, -1] = cupy.nan
 
     return output
 
@@ -264,17 +264,13 @@ def hillshade(agg: xr.DataArray,
             units:
             Max Elevation:  4000
     """
-    # numba case
-    if has_cuda() and isinstance(agg.data, np.ndarray):
-        out = _run_numba(agg.data, azimuth, angle_altitude)
-
     # numpy case
-    elif isinstance(agg.data, np.ndarray):
+    if isinstance(agg.data, np.ndarray):
         out = _run_numpy(agg.data, azimuth, angle_altitude)
 
-    # cupy case
+    # cupy/numba case
     elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _run_cupy(agg.data, azimuth, angle_altitude)
+        out = _run_numba(agg.data, azimuth, angle_altitude)
 
     # dask + cupy case
     elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
