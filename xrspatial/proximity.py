@@ -554,7 +554,7 @@ def _process_dask(raster, xs, ys, target_values,
                          meta=np.array(()),
                          trim=False,
                          chunks=raster.shape  # noqa: workaround to ensure the output is a Dask array with correct shape
-                         ).rechunk(raster.chunks[0][0], raster.chunks[1][0])  # noqa: workaround to ensure the output chunksize is the same as of input raster
+                         ).rechunk(raster.chunks)  # noqa: workaround to ensure the output chunksize is the same as of input raster
     return out
 
 
