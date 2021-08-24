@@ -36,11 +36,11 @@ def test_great_circle_distance():
 
 def create_test_raster():
     height, width = 5, 10
-    data = np.asarray([[0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
+    data = np.asarray([[0., 0., 0., 0., 0., 0., 0., 0., 0., 2.],
                        [0., 0., 0., 1., 0., 0., 0., 0., 0., 0.],
-                       [0., 0., np.inf, 3., 2., 5., 6., 0., 0., 0.],
-                       [0., 0., 0., 4., 0., 0., 0., 0., 0., 0.],
-                       [0., 0., 0., 0., 0., 0., np.nan, 0., 0., 0.]])
+                       [0., 0., np.inf, 0., 3., 0., 0., 0., 0., 0.],
+                       [0., 0., 0., 0., 0., 0., 0., 0., 0., 0.],
+                       [4., 0., 0., 0., 0., 0., np.nan, 0., 0., 0.]])
     _lon = np.linspace(-20, 20, width)
     _lat = np.linspace(20, -20, height)
 
@@ -150,13 +150,13 @@ def test_proximity():
     ).all()
 
     # max_distance setting
-    max_distance = 8
-    # numpy case
-    max_distance_prox = proximity(
-        raster_numpy, x='lon', y='lat', max_distance=max_distance
-    )
-    # no proximity distances greater than max_distance
-    assert np.nanmax(max_distance_prox.data) <= max_distance
+    for max_distance in range(0, 25):
+        # numpy case
+        max_distance_prox = proximity(
+            raster_numpy, x='lon', y='lat', max_distance=max_distance
+        )
+        # no proximity distances greater than max_distance
+        assert np.nanmax(max_distance_prox.data) <= max_distance
 
     # dask case
     max_distance_prox_dask = proximity(
