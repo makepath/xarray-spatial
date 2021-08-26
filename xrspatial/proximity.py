@@ -541,20 +541,22 @@ def _process_dask(raster, xs, ys, target_values,
         pad_y = int(max_distance / cellsize_y + 0.5)
         pad_x = int(max_distance / cellsize_x + 0.5)
 
-    out = da.map_overlap(func=_process_numpy,
-                         img=raster.data,
-                         x_coords=xs,
-                         y_coords=ys,
-                         target_values=target_values,
-                         max_distance=max_distance,
-                         distance_metric=distance_metric,
-                         process_mode=process_mode,
-                         depth=(pad_y, pad_x),
-                         boundary=np.nan,
-                         meta=np.array(()),
-                         trim=False,
-                         chunks=raster.shape  # noqa: workaround to ensure the output is a Dask array with correct shape
-                         ).rechunk(raster.chunks)  # noqa: workaround to ensure the output chunksize is the same as of input raster
+    out = da.map_overlap(
+        func=_process_numpy,
+        img=raster.data,
+        x_coords=xs,
+        y_coords=ys,
+        target_values=target_values,
+        max_distance=max_distance,
+        distance_metric=distance_metric,
+        process_mode=process_mode,
+        depth=(pad_y, pad_x),
+        boundary=np.nan,
+        meta=np.array(()),
+        trim=False,
+        chunks=raster.shape  # noqa: workaround to ensure the output is a Dask array with correct shape
+    ).rechunk(raster.chunks)  # noqa: workaround to ensure the output chunksize is the same as of input raster
+
     return out
 
 

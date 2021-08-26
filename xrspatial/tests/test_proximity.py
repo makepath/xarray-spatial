@@ -158,15 +158,15 @@ def test_proximity():
         # no proximity distances greater than max_distance
         assert np.nanmax(max_distance_prox.data) <= max_distance
 
-    # dask case
-    max_distance_prox_dask = proximity(
-        raster_dask, x='lon', y='lat', max_distance=max_distance
-    )
-    assert isinstance(max_distance_prox_dask.data, da.Array)
-    assert np.isclose(
-        max_distance_prox.data, max_distance_prox_dask.compute().data,
-        equal_nan=True
-    ).all()
+        # dask case
+        max_distance_prox_dask = proximity(
+            raster_dask, x='lon', y='lat', max_distance=max_distance
+        )
+        assert isinstance(max_distance_prox_dask.data, da.Array)
+        assert np.isclose(
+            max_distance_prox.data, max_distance_prox_dask.compute().data,
+            equal_nan=True
+        ).all()
 
 
 def test_allocation():
@@ -211,6 +211,22 @@ def test_allocation():
     assert np.isclose(
         allocation_agg.data, allocation_agg_dask.compute().data, equal_nan=True
     ).all()
+
+    # max_distance setting
+    for max_distance in range(0, 25):
+        # numpy case
+        max_distance_alloc = allocation(
+            raster_numpy, x='lon', y='lat', max_distance=max_distance
+        )
+        # dask case
+        max_distance_alloc_dask = allocation(
+            raster_dask, x='lon', y='lat', max_distance=max_distance
+        )
+        assert isinstance(max_distance_alloc_dask.data, da.Array)
+        assert np.isclose(
+            max_distance_alloc.data, max_distance_alloc_dask.compute().data,
+            equal_nan=True
+        ).all()
 
 
 def test_calc_direction():
@@ -275,3 +291,20 @@ def test_direction():
     assert np.isclose(
         direction_agg.data, direction_agg_dask.compute().data, equal_nan=True
     ).all()
+
+    # max_distance setting
+    for max_distance in range(0, 25):
+        # numpy case
+        max_distance_direction = direction(
+            raster_numpy, x='lon', y='lat', max_distance=max_distance
+        )
+        # dask case
+        max_distance_direction_dask = direction(
+            raster_dask, x='lon', y='lat', max_distance=max_distance
+        )
+        assert isinstance(max_distance_direction_dask.data, da.Array)
+        assert np.isclose(
+            max_distance_direction.data,
+            max_distance_direction_dask.compute().data,
+            equal_nan=True
+        ).all()
