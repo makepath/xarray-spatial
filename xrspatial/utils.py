@@ -1,13 +1,12 @@
+from math import ceil
+
+import dask.array as da
 import datashader as ds
 import datashader.transfer_functions as tf
-from math import ceil
-import numba as nb
+from numba import cuda, jit
 import numpy as np
 import xarray as xr
 
-import dask.array as da
-
-from numba import cuda
 
 try:
     import cupy
@@ -17,13 +16,15 @@ try:
         # Without this, cupy.histogram raises an error that cupy.result_type
         # is not defined.
         cupy.result_type = lambda *args: np.result_type(
-            *[arg.dtype if isinstance(arg, cupy.ndarray) else arg
-              for arg in args]
+            *[
+                arg.dtype if isinstance(arg, cupy.ndarray)
+                else arg for arg in args
+            ]
         )
 except ImportError:
     cupy = None
 
-ngjit = nb.jit(nopython=True, nogil=True)
+ngjit = jit(nopython=True, nogil=True)
 
 
 def has_cuda():
@@ -71,7 +72,7 @@ def cuda_args(shape):
 
 def is_cupy_backed(agg: xr.DataArray):
     try:
-        return type(agg.data._meta).__module__.split('.')[0] == 'cupy'
+        return type(agg.data._meta).__module__.split(".")[0] == "cupy"
     except AttributeError:
         return False
 
@@ -81,7 +82,6 @@ def is_dask_cupy(agg: xr.DataArray):
 
 
 class ArrayTypeFunctionMapping(object):
-
     def __init__(self, numpy_func, cupy_func, dask_func, dask_cupy_func):
         self.numpy_func = numpy_func
         self.cupy_func = cupy_func
@@ -107,13 +107,14 @@ class ArrayTypeFunctionMapping(object):
             return self.dask_func
 
         else:
-            raise TypeError('Unsupported Array Type: {}'.format(type(arr)))
+            raise TypeError("Unsupported Array Type: {}".format(type(arr)))
 
 
 def validate_arrays(*arrays):
     if len(arrays) < 2:
         raise ValueError(
-            'validate_arrays() input must contain 2 or more arrays')
+            "validate_arrays() input must contain 2 or more arrays"
+        )
 
     first_array = arrays[0]
     for i in range(1, len(arrays)):
@@ -168,10 +169,13 @@ def get_dataarray_resolution(agg: xr.DataArray):
         Tuple of (x cell size, y cell size).
     """
     # get cellsize out from 'res' attribute
-    cellsize = agg.attrs.get('res')
-    if isinstance(cellsize, (tuple, np.ndarray, list)) and len(cellsize) == 2 \
-            and isinstance(cellsize[0], (int, float)) \
-            and isinstance(cellsize[1], (int, float)):
+    cellsize = agg.attrs.get("res")
+    if (
+        isinstance(cellsize, (tuple, np.ndarray, list))
+        and len(cellsize) == 2
+        and isinstance(cellsize[0], (int, float))
+        and isinstance(cellsize[1], (int, float))
+    ):
         cellsize_x, cellsize_y = cellsize
     elif isinstance(cellsize, (int, float)):
         cellsize_x = cellsize
@@ -224,7 +228,8 @@ def lnglat_to_meters(longitude, latitude):
     origin_shift = np.pi * 6378137
     easting = longitude * origin_shift / 180.0
     northing = np.log(
-        np.tan((90 + latitude) * np.pi / 360.0)) * origin_shift / np.pi
+        np.tan((90 + latitude) * np.pi / 360.0)
+        ) * origin_shift / np.pi
     return (easting, northing)
 
 
@@ -272,21 +277,25 @@ def bands_to_img(r, g, b, nodata=1):
     data[:, :, 2] = (b).astype(np.uint8)
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
     data[:, :, 3] = a.astype(np.uint8)
-    return tf.Image.fromarray(data, 'RGBA')
+    return tf.Image.fromarray(data, "RGBA")
 
 
-def resample(
-        raster,
-        layer=None,
-        height=512,
-        width=512,
-        x_range=None,
-        y_range=None,
-        agg='mean',
-        interpolate='linear',
-        max_mem=None):
+def canvas_like(
+    raster,
+    width=512,
+    height=None,
+    x_range=None,
+    y_range=None,
+    **kwargs
+):
+
     """
-    Resample a xarray.DataArray by canvas size and bounds.
+    Resample a xarray.DataArray by canvas width and bounds.
+    Height of the resampled raster is implied from the canvas width
+    using aspect ratio of original raster.
+
+    This function uses of datashader.Canvas.raster internally.
+    Most of the docstrings are copied from Datashader.
 
     Handles 2D or 3D xarray.DataArray, assuming that the last two
     array dimensions are the y-axis and x-axis that are to be
@@ -294,62 +303,49 @@ def resample(
     to resample to select the layer along the first dimension to
     resample.
 
-    If there are memory constraints they may be defined using the
-    max_mem parameter, which determines how large the chunks in
-    memory may be.
-
     Parameters
     ----------
     raster : xarray.DataArray
         2D or 3D labeled data array.
     layer : float, optional
         For a 3D array, value along the z dimension.
-    height : int, default=512
-        Height of the output aggregate in pixels.
     width : int, default=512
         Width of the output aggregate in pixels.
+    height : int, default=None
+        Height of the output aggregate in pixels.
+        If not provided, height will be implied from `width`
+        using aspect ratio of input raster.
     x_range : tuple of int, optional
         A tuple representing the bounds inclusive space ``[min, max]``
         along the x-axis.
     y_range : tuple of int, optional
         A tuple representing the bounds inclusive space ``[min, max]``
         along the y-axis.
-    agg : Reduction, default=mean
-        Resampling mode when downsampling raster. The supported
-        options include: first, last, mean, mode, var, std, min,
-        The agg can be specified as either a string name or as a
-        reduction function, but note that the function object will
-        be used only to extract the agg type (mean, max, etc.) and
-        the optional column name; the hardcoded raster code
-        supports only a fixed set of reductions and ignores the
-        actual code of the provided agg.
-    interpolate : str, default=linear
-        Method to use for interpolation between specified values.
-        ``nearest`` means to use a single value for the whole
-        triangle, and ``linear``  means to do bilinear interpolation
-        of the pixels within each triangle (a weighted average of the
-        vertex values).
-    max_mem : int, optional
-        The maximum number of bytes that should be loaded into memory
-        during the regridding operation.
 
     References
     ----------
         - https://datashader.org/_modules/datashader/core.html#Canvas
     """
-    cvs = ds.Canvas(
-        plot_height=height,
-        plot_width=width,
-        x_range=x_range,
-        y_range=y_range,
-    )
 
-    out = cvs.raster(
-        raster,
-        layer=layer,
-        agg=agg,
-        interpolate=interpolate,
-        max_mem=max_mem,
+    # get ranges
+    if x_range is None:
+        x_range = (
+            raster.coords["x"].min().item(),
+            raster.coords["x"].max().item()
+        )
+    if y_range is None:
+        y_range = (
+            raster.coords["y"].min().item(),
+            raster.coords["y"].max().item()
+        )
+
+    if height is None:
+        # set width and height
+        height = height_implied_by_aspect_ratio(width, x_range, y_range)
+
+    cvs = ds.Canvas(
+        plot_width=width, plot_height=height, x_range=x_range, y_range=y_range
     )
+    out = cvs.raster(raster, **kwargs)
 
     return out
