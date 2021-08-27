@@ -1,7 +1,12 @@
-import xarray as xr
-import numpy as np
-from numba import njit, prange
 from math import sqrt
+
+import dask.array as da
+from numba import prange
+import numpy as np
+import xarray as xr
+
+from xrspatial.utils import ngjit, get_dataarray_resolution
+
 
 EUCLIDEAN = 0
 GREAT_CIRCLE = 1
@@ -14,9 +19,9 @@ DIRECTION = 2
 
 def _distance_metric_mapping():
     DISTANCE_METRICS = {}
-    DISTANCE_METRICS['EUCLIDEAN'] = EUCLIDEAN
-    DISTANCE_METRICS['GREAT_CIRCLE'] = GREAT_CIRCLE
-    DISTANCE_METRICS['MANHATTAN'] = MANHATTAN
+    DISTANCE_METRICS["EUCLIDEAN"] = EUCLIDEAN
+    DISTANCE_METRICS["GREAT_CIRCLE"] = GREAT_CIRCLE
+    DISTANCE_METRICS["MANHATTAN"] = MANHATTAN
 
     return DISTANCE_METRICS
 
@@ -26,11 +31,8 @@ def _distance_metric_mapping():
 DISTANCE_METRICS = _distance_metric_mapping()
 
 
-@njit(nogil=True)
-def euclidean_distance(x1: float,
-                       x2: float,
-                       y1: float,
-                       y2: float) -> float:
+@ngjit
+def euclidean_distance(x1: float, x2: float, y1: float, y2: float) -> float:
     """
     Calculates Euclidean (straight line) distance between (x1, y1) and
     (x2, y2).
@@ -79,11 +81,8 @@ def euclidean_distance(x1: float,
     return np.sqrt(x * x + y * y)
 
 
-@njit(nogil=True)
-def manhattan_distance(x1: float,
-                       x2: float,
-                       y1: float,
-                       y2: float) -> float:
+@ngjit
+def manhattan_distance(x1: float, x2: float, y1: float, y2: float) -> float:
     """
     Calculates Manhattan distance (sum of distance in x and y directions)
     between (x1, y1) and (x2, y2).
@@ -133,12 +132,10 @@ def manhattan_distance(x1: float,
     return abs(x) + abs(y)
 
 
-@njit(nogil=True)
-def great_circle_distance(x1: float,
-                          x2: float,
-                          y1: float,
-                          y2: float,
-                          radius: float = 6378137) -> float:
+@ngjit
+def great_circle_distance(
+    x1: float, x2: float, y1: float, y2: float, radius: float = 6378137
+) -> float:
     """
     Calculates great-circle (orthodromic/spherical) distance between
     (x1, y1) and (x2, y2), assuming each point is a longitude,
@@ -187,23 +184,35 @@ def great_circle_distance(x1: float,
         2378290.489801402
     """
     if x1 > 180 or x1 < -180:
-        raise ValueError('Invalid x-coordinate of the first point.'
-                         'Must be in the range [-180, 180]')
+        raise ValueError(
+            "Invalid x-coordinate of the first point."
+            "Must be in the range [-180, 180]"
+        )
 
     if x2 > 180 or x2 < -180:
-        raise ValueError('Invalid x-coordinate of the second point.'
-                         'Must be in the range [-180, 180]')
+        raise ValueError(
+            "Invalid x-coordinate of the second point."
+            "Must be in the range [-180, 180]"
+        )
 
     if y1 > 90 or y1 < -90:
-        raise ValueError('Invalid y-coordinate of the first point.'
-                         'Must be in the range [-90, 90]')
+        raise ValueError(
+            "Invalid y-coordinate of the first point."
+            "Must be in the range [-90, 90]"
+        )
 
     if y2 > 90 or y2 < -90:
-        raise ValueError('Invalid y-coordinate of the second point.'
-                         'Must be in the range [-90, 90]')
+        raise ValueError(
+            "Invalid y-coordinate of the second point."
+            "Must be in the range [-90, 90]"
+        )
 
-    lat1, lon1, lat2, lon2 = (np.radians(y1), np.radians(x1),
-                              np.radians(y2), np.radians(x2))
+    lat1, lon1, lat2, lon2 = (
+        np.radians(y1),
+        np.radians(x1),
+        np.radians(y2),
+        np.radians(x2),
+    )
     dlon = lon2 - lon1
     dlat = lat2 - lat1
     a = np.sin(dlat / 2.0) ** 2 + \
@@ -213,7 +222,7 @@ def great_circle_distance(x1: float,
     return radius * 2 * np.arcsin(np.sqrt(a))
 
 
-@njit(nogil=True)
+@ngjit
 def _distance(x1, x2, y1, y2, metric):
     if metric == EUCLIDEAN:
         return euclidean_distance(x1, x2, y1, y2)
@@ -227,12 +236,23 @@ def _distance(x1, x2, y1, y2, metric):
     return -1.0
 
 
-@njit(nogil=True)
-def _process_proximity_line(source_line, x_coords, y_coords,
-                            pan_near_x, pan_near_y, is_forward,
-                            line_id, width, max_distance, line_proximity,
-                            nearest_xs, nearest_ys,
-                            values, distance_metric):
+@ngjit
+def _process_proximity_line(
+    source_line,
+    xs,
+    ys,
+    pan_near_x,
+    pan_near_y,
+    is_forward,
+    line_id,
+    width,
+    max_distance,
+    line_proximity,
+    nearest_xs,
+    nearest_ys,
+    values,
+    distance_metric,
+):
     """
     Process proximity for a line of pixels in an image.
 
@@ -254,10 +274,9 @@ def _process_proximity_line(source_line, x_coords, y_coords,
         1d numpy array of type np.float64, calculated proximity from
         source_line.
     values : numpy.array
-        1d numpy array of type np.uint8. A list of target pixel values
+        1d numpy array. A list of target pixel values
         to measure the distance from. If this option is not provided
         proximity will be computed from non-zero pixel values.
-        Currently pixel values are internally processed as integers.
 
     Returns
     -------
@@ -297,9 +316,12 @@ def _process_proximity_line(source_line, x_coords, y_coords,
         near_distance_square = max_distance ** 2 * 2.0
         if pan_near_x[pixel] != -1:
             # distance_square
-            dist = _distance(x_coords[pan_near_x[pixel]], x_coords[pixel],
-                             y_coords[pan_near_y[pixel]], y_coords[line_id],
-                             distance_metric)
+            x1 = xs[pan_near_y[pixel], pan_near_x[pixel]]
+            y1 = ys[pan_near_y[pixel], pan_near_x[pixel]]
+            x2 = xs[line_id, pixel]
+            y2 = ys[line_id, pixel]
+
+            dist = _distance(x1, x2, y1, y2, distance_metric)
             dist_sqr = dist ** 2
             if dist_sqr < near_distance_square:
                 near_distance_square = dist_sqr
@@ -310,9 +332,12 @@ def _process_proximity_line(source_line, x_coords, y_coords,
         # Are we near(er) to the closest target to the left (right) pixel?
         last = pixel - step
         if pixel != start and pan_near_x[last] != -1:
-            dist = _distance(x_coords[pan_near_x[last]], x_coords[pixel],
-                             y_coords[pan_near_y[last]], y_coords[line_id],
-                             distance_metric)
+            x1 = xs[pan_near_y[last], pan_near_x[last]]
+            y1 = ys[pan_near_y[last], pan_near_x[last]]
+            x2 = xs[line_id, pixel]
+            y2 = ys[line_id, pixel]
+
+            dist = _distance(x1, x2, y1, y2, distance_metric)
             dist_sqr = dist ** 2
             if dist_sqr < near_distance_square:
                 near_distance_square = dist_sqr
@@ -323,9 +348,12 @@ def _process_proximity_line(source_line, x_coords, y_coords,
         #  topright (bottom left) pixel?
         tr = pixel + step
         if tr != end and pan_near_x[tr] != -1:
-            dist = _distance(x_coords[pan_near_x[tr]], x_coords[pixel],
-                             y_coords[pan_near_y[tr]], y_coords[line_id],
-                             distance_metric)
+            x1 = xs[pan_near_y[tr], pan_near_x[tr]]
+            y1 = ys[pan_near_y[tr], pan_near_x[tr]]
+            x2 = xs[line_id, pixel]
+            y2 = ys[line_id, pixel]
+
+            dist = _distance(x1, x2, y1, y2, distance_metric)
             dist_sqr = dist ** 2
             if dist_sqr < near_distance_square:
                 near_distance_square = dist_sqr
@@ -333,18 +361,22 @@ def _process_proximity_line(source_line, x_coords, y_coords,
                 pan_near_y[pixel] = pan_near_y[tr]
 
         # Update our proximity value.
-        if pan_near_x[pixel] != -1 \
-                and max_distance * max_distance >= near_distance_square \
-                and (line_proximity[pixel] < 0 or
-                     near_distance_square <
-                     line_proximity[pixel] * line_proximity[pixel]):
+        if (
+            pan_near_x[pixel] != -1
+            and max_distance * max_distance >= near_distance_square
+            and (
+                line_proximity[pixel] < 0
+                or near_distance_square < line_proximity[pixel]
+                * line_proximity[pixel]
+            )
+        ):
             line_proximity[pixel] = sqrt(near_distance_square)
             nearest_xs[pixel] = pan_near_x[pixel]
             nearest_ys[pixel] = pan_near_y[pixel]
     return
 
 
-@njit
+@ngjit
 def _calc_direction(x1, x2, y1, y2):
     # Calculate direction from (x1, y1) to a source cell (x2, y2).
     # The output values are based on compass directions,
@@ -366,12 +398,19 @@ def _calc_direction(x1, x2, y1, y2):
     return d
 
 
-@njit(nogil=True)
-def _process_image(img, x_coords, y_coords, target_values,
-                   distance_metric, process_mode):
-    max_distance = _distance(x_coords[0], x_coords[-1],
-                             y_coords[0], y_coords[-1],
-                             distance_metric)
+@ngjit
+def _process_numpy(
+    img,
+    x_coords,
+    y_coords,
+    target_values,
+    max_distance,
+    distance_metric,
+    process_mode
+):
+    # max_distance = _distance(x_coords[0], x_coords[-1],
+    #                          y_coords[0], y_coords[-1],
+    #                          distance_metric)
 
     height, width = img.shape
 
@@ -388,9 +427,10 @@ def _process_image(img, x_coords, y_coords, target_values,
         pan_near_x[i] = -1
         pan_near_y[i] = -1
 
-    # a single line of the input image @img
+    # a single line of the input image img
     scan_line = np.zeros(width, dtype=img.dtype)
-    # indexes of nearest pixels of current line @scan_line
+
+    # indexes of nearest pixels of current line scan_line
     nearest_xs = np.zeros(width, dtype=np.int64)
     nearest_ys = np.zeros(width, dtype=np.int64)
 
@@ -407,16 +447,31 @@ def _process_image(img, x_coords, y_coords, target_values,
             nearest_ys[i] = -1
 
         # left to right
-        _process_proximity_line(scan_line, x_coords, y_coords,
-                                pan_near_x, pan_near_y, True, line,
-                                width, max_distance, line_proximity,
-                                nearest_xs, nearest_ys,
-                                target_values, distance_metric)
+        _process_proximity_line(
+            scan_line,
+            x_coords,
+            y_coords,
+            pan_near_x,
+            pan_near_y,
+            True,
+            line,
+            width,
+            max_distance,
+            line_proximity,
+            nearest_xs,
+            nearest_ys,
+            target_values,
+            distance_metric,
+        )
         for i in prange(width):
             if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                 img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
-                d = _calc_direction(x_coords[i], x_coords[nearest_xs[i]],
-                                    y_coords[line], y_coords[nearest_ys[i]])
+                d = _calc_direction(
+                    x_coords[line, i],
+                    x_coords[nearest_ys[i], nearest_xs[i]],
+                    y_coords[line, i],
+                    y_coords[nearest_ys[i], nearest_xs[i]],
+                )
                 img_direction[line][i] = d
 
         # right to left
@@ -424,18 +479,33 @@ def _process_image(img, x_coords, y_coords, target_values,
             nearest_xs[i] = -1
             nearest_ys[i] = -1
 
-        _process_proximity_line(scan_line, x_coords, y_coords,
-                                pan_near_x, pan_near_y, False, line,
-                                width, max_distance, line_proximity,
-                                nearest_xs, nearest_ys,
-                                target_values, distance_metric)
+        _process_proximity_line(
+            scan_line,
+            x_coords,
+            y_coords,
+            pan_near_x,
+            pan_near_y,
+            False,
+            line,
+            width,
+            max_distance,
+            line_proximity,
+            nearest_xs,
+            nearest_ys,
+            target_values,
+            distance_metric,
+        )
 
         for i in prange(width):
             img_distance[line][i] = line_proximity[i]
             if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                 img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
-                d = _calc_direction(x_coords[i], x_coords[nearest_xs[i]],
-                                    y_coords[line], y_coords[nearest_ys[i]])
+                d = _calc_direction(
+                    x_coords[line, i],
+                    x_coords[nearest_ys[i], nearest_xs[i]],
+                    y_coords[line, i],
+                    y_coords[nearest_ys[i], nearest_xs[i]],
+                )
                 img_direction[line][i] = d
 
     # Loop from bottom to top of the image.
@@ -457,17 +527,33 @@ def _process_image(img, x_coords, y_coords, target_values,
             nearest_xs[i] = -1
             nearest_ys[i] = -1
 
-        _process_proximity_line(scan_line, x_coords, y_coords,
-                                pan_near_x, pan_near_y, False, line,
-                                width, max_distance, line_proximity,
-                                nearest_xs, nearest_ys,
-                                target_values, distance_metric)
+        _process_proximity_line(
+            scan_line,
+            x_coords,
+            y_coords,
+            pan_near_x,
+            pan_near_y,
+            False,
+            line,
+            width,
+            max_distance,
+            line_proximity,
+            nearest_xs,
+            nearest_ys,
+            target_values,
+            distance_metric,
+        )
 
         for i in prange(width):
             if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                 img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
-                d = _calc_direction(x_coords[i], x_coords[nearest_xs[i]],
-                                    y_coords[line], y_coords[nearest_ys[i]])
+                d = _calc_direction(
+                    x_coords[line, i],
+                    x_coords[nearest_ys[i], nearest_xs[i]],
+                    y_coords[line, i],
+                    y_coords[nearest_ys[i], nearest_xs[i]],
+                )
+
                 img_direction[line][i] = d
 
         # Left to right
@@ -475,11 +561,22 @@ def _process_image(img, x_coords, y_coords, target_values,
             nearest_xs[i] = -1
             nearest_ys[i] = -1
 
-        _process_proximity_line(scan_line, x_coords, y_coords,
-                                pan_near_x, pan_near_y, True, line,
-                                width, max_distance, line_proximity,
-                                nearest_xs, nearest_ys,
-                                target_values, distance_metric)
+        _process_proximity_line(
+            scan_line,
+            x_coords,
+            y_coords,
+            pan_near_x,
+            pan_near_y,
+            True,
+            line,
+            width,
+            max_distance,
+            line_proximity,
+            nearest_xs,
+            nearest_ys,
+            target_values,
+            distance_metric,
+        )
 
         # final post processing of distances
         for i in prange(width):
@@ -487,12 +584,13 @@ def _process_image(img, x_coords, y_coords, target_values,
                 line_proximity[i] = np.nan
             else:
                 if nearest_xs[i] != -1 and line_proximity[i] >= 0:
-                    img_allocation[line][i] = img[nearest_ys[i],
-                                                  nearest_xs[i]]
-                    d = _calc_direction(x_coords[i],
-                                        x_coords[nearest_xs[i]],
-                                        y_coords[line],
-                                        y_coords[nearest_ys[i]])
+                    img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
+                    d = _calc_direction(
+                        x_coords[line, i],
+                        x_coords[nearest_ys[i], nearest_xs[i]],
+                        y_coords[line, i],
+                        y_coords[nearest_ys[i], nearest_xs[i]],
+                    )
                     img_direction[line][i] = d
 
         for i in prange(width):
@@ -506,42 +604,109 @@ def _process_image(img, x_coords, y_coords, target_values,
         return img_direction
 
 
-def _process(raster, x='x', y='y', target_values=[],
-             distance_metric='EUCLIDEAN', process_mode=PROXIMITY):
+def _process_dask(
+    raster, xs, ys, target_values, max_distance, distance_metric, process_mode
+):
+    # calculate padding for width and height
+    if not np.isfinite(max_distance):
+        # consider all targets in the whole raster
+        height, width = raster.shape
+        pad_y = height - 1
+        pad_x = width - 1
+    else:
+        cellsize_x, cellsize_y = get_dataarray_resolution(raster)
+        pad_y = int(max_distance / cellsize_y + 0.5)
+        pad_x = int(max_distance / cellsize_x + 0.5)
+
+    out = da.map_overlap(
+        func=_process_numpy,
+        img=raster.data,
+        x_coords=xs,
+        y_coords=ys,
+        target_values=target_values,
+        max_distance=max_distance,
+        distance_metric=distance_metric,
+        process_mode=process_mode,
+        depth=(pad_y, pad_x),
+        boundary=np.nan,
+        meta=np.array(()),
+        trim=False,
+        chunks=raster.shape,  # noqa: workaround to ensure the output is a Dask array with correct shape
+    ).rechunk(raster.chunks)  # noqa: workaround to ensure the output chunksize is the same as of input raster
+
+    return out
+
+
+def _process(
+    raster,
+    x,
+    y,
+    target_values,
+    max_distance,
+    distance_metric,
+    process_mode
+):
     raster_dims = raster.dims
     if raster_dims != (y, x):
-        raise ValueError("raster.coords should be named as coordinates:"
-                         "({0}, {1})".format(y, x))
+        raise ValueError(
+            "raster.coords should be named as coordinates:"
+            "({0}, {1})".format(y, x)
+        )
 
-    # convert distance metric from string to integer, the correct type
-    # of argument for function _distance()
     distance_metric = DISTANCE_METRICS.get(distance_metric, None)
-
     if distance_metric is None:
-        distance_metric = DISTANCE_METRICS['EUCLIDEAN']
+        distance_metric = DISTANCE_METRICS["EUCLIDEAN"]
 
-    target_values = np.asarray(target_values).astype(np.uint8)
+    target_values = np.asarray(target_values)
 
-    img = raster.values
-    y_coords = raster.coords[y].values
-    x_coords = raster.coords[x].values
+    # x-y coordinates of each pixel.
+    # flatten the coords of input raster and reshape to 2d
+    xs = np.tile(raster[x].data, raster.shape[0]).reshape(raster.shape)
+    ys = np.repeat(raster[y].data, raster.shape[1]).reshape(raster.shape)
 
-    output_img = _process_image(img, x_coords, y_coords, target_values,
-                                distance_metric, process_mode)
-    return output_img
+    if max_distance is None:
+        max_distance = np.inf
+
+    if isinstance(raster.data, np.ndarray):
+        # numpy case
+        result = _process_numpy(
+            raster.data,
+            xs,
+            ys,
+            target_values,
+            max_distance,
+            distance_metric,
+            process_mode,
+        )
+    elif isinstance(raster.data, da.Array):
+        # dask + numpy case
+        xs = da.from_array(xs, chunks=(raster.chunks[0]))
+        ys = da.from_array(ys, chunks=(raster.chunks[0]))
+        result = _process_dask(
+            raster,
+            xs,
+            ys,
+            target_values,
+            max_distance,
+            distance_metric,
+            process_mode
+        )
+    return result
 
 
 # ported from
 # https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp
-def proximity(raster: xr.DataArray,
-              x: str = 'x',
-              y: str = 'y',
-              target_values: list = [],
-              distance_metric: str = 'EUCLIDEAN') -> xr.DataArray:
+def proximity(
+    raster: xr.DataArray,
+    x: str = "x",
+    y: str = "y",
+    target_values: list = [],
+    max_distance: float = None,
+    distance_metric: str = "EUCLIDEAN",
+) -> xr.DataArray:
     """
     Computes the proximity of all pixels in the image to a set of pixels
-    in the source image based on Euclidean, Great-Circle or Manhattan
-    distance.
+    in the source image based on a distance metric.
 
     This function attempts to compute the proximity of all pixels in the
     image to a set of pixels in the source image. The following options
@@ -549,6 +714,19 @@ def proximity(raster: xr.DataArray,
     non-zero pixels in `raster.values` will be considered the "target",
     and all proximities will be computed in pixels. Note that target
     pixels are set to the value corresponding to a distance of zero.
+
+    Proximity support NumPy backed, and Dask with NumPy backed
+    xarray DataArray. The return values of proximity are of the same type as
+    the input type.
+    If input raster is a NumPy-backed DataArray, the result is NumPy-backed.
+    If input raster is a Dask-backed DataArray, the result is Dask-backed.
+
+    The implementation for NumPy-backed is ported from GDAL, which uses
+    a dynamic programming approach to identify nearest target of a pixel from
+    its surrounding neighborhood in a 3x3 window.
+    The implementation for Dask-backed uses `dask.map_overlap` to compute
+    proximity chunk by chunk by expanding the chunk's borders to cover
+    the `max_distance`.
 
     Parameters
     ----------
@@ -561,11 +739,17 @@ def proximity(raster: xr.DataArray,
     target_values: list
         Target pixel values to measure the distance from. If this option
         is not provided, proximity will be computed from non-zero pixel
-        values. Currently pixel values are internally processed as
-        integers.
+        values.
+    max_distance: float
+        The maximum distance to search. Proximity distances greater than
+        this value will be set to a NaN value.
+        Note that this must be given in the same unit as input. For example,
+        if input raster is in latitude/longitude units, `max_distance` should
+        also be provided in latitude/longitude units.
     distance_metric: str, default='EUCLIDEAN'
-        The metric for calculating distance between 2 points. Valid
-        distance_metrics: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
+        The metric for calculating distance between 2 points.
+        Valid distance metrics are:
+        'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
 
     Returns
     -------
@@ -582,133 +766,77 @@ def proximity(raster: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain, proximity
+        import numpy as np
+        import xarray as xr
+        from xrspatial import proximity
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
+        data = np.array([
+            [0., 0., 0., 0., 0.],
+            [0., 0., 0., 1., 0.],
+            [0., 0., 0., 0., 0.],
+            [0., 0., 0., 0., 0.],
+            [0., 0., 0., 0., 0.]
+        ])
+        raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
+        raster['y'] = np.arange(n)[::-1]
+        raster['x'] = np.arange(n)
 
-        # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Generate a Target Aggregate Array
-        volcano_agg = terrain_agg.copy(deep = True)
-        volcano_agg = volcano_agg.where(volcano_agg.data > 2800)
-        volcano_agg = volcano_agg.notnull()
-
-        # Edit Attributes
-        volcano_agg = volcano_agg.assign_attrs({'Description': 'Volcano'})
-        volcano_agg = volcano_agg.rename('Volcano')
-
-        # Create Proximity Aggregate Array
-        proximity_agg = proximity(volcano_agg, x = 'lon', y = 'lat')
-        proximity_agg = proximity_agg.where(
-            (volcano_agg == 0) & (terrain_agg > 500)
-        )
-
-        # Edit Attributes
-        proximity_agg = proximity_agg.assign_attrs(
-            {
-                'Description': 'Example Proximity',
-                'units': 'px',
-            }
-        )
-        proximity_agg = proximity_agg.rename('Distance')
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Volcano
-        volcano_agg.plot(cmap = 'Pastel1', aspect = 2, size = 4)
-        plt.title("Volcano")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Proximity
-        proximity_agg.plot(cmap = 'autumn', aspect = 2, size = 4)
-        plt.title("Proximity")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
+        proximity_agg = proximity(raster)
 
     .. sourcecode:: python
 
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-               [1285.37061171, 1282.48046696],
-               [1306.02305679, 1303.40657515]])
+        >>> raster
+        <xarray.DataArray 'raster' (y: 5, x: 5)>
+        array([[0., 0., 0., 0., 0.],
+               [0., 0., 0., 1., 0.],
+               [0., 0., 0., 0., 0.],
+               [0., 0., 0., 0., 0.],
+               [1., 0., 0., 0., 0.]])
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            res:            1
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
+          * y        (y) int64 4 3 2 1 0
+          * x        (x) int64 0 1 2 3 4
 
-        >>> print(volcano_agg[200:203, 200:202])
-        <xarray.DataArray 'Volcano' (lat: 3, lon: 2)>
-        array([[False, False],
-               [False, False],
-               [False, False]])
+        >>> proximity_agg
+        <xarray.DataArray (y: 5, x: 5)>
+        array([[3.1622777, 2.236068 , 1.4142135, 1.       , 1.4142135],
+               [3.       , 2.       , 1.       , 0.       , 1.       ],
+               [3.1622777, 2.236068 , 1.4142135, 1.       , 1.4142135],
+               [3.6055512, 2.828427 , 2.236068 , 2.       , 2.236068 ],
+               [4.2426405, 3.6055512, 3.1622777, 3.       , 3.1622777]],
+              dtype=float64)
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            Description:  Volcano
-
-        >>> print(proximity_agg[200:203, 200:202])
-        <xarray.DataArray 'Distance' (lat: 3, lon: 2)>
-        array([[4126101.19981456, 4153841.5954391 ],
-               [4001421.96947258, 4025606.92456568],
-               [3875484.19913922, 3897714.42999327]])
-        Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            Description:  Example Proximity
-            units:        px
+          * y        (y) int64 4 3 2 1 0
+          * x        (x) int64 0 1 2 3 4
     """
-    proximity_img = _process(raster,
-                             x=x,
-                             y=y,
-                             target_values=target_values,
-                             distance_metric=distance_metric,
-                             process_mode=PROXIMITY)
 
-    result = xr.DataArray(proximity_img,
-                          coords=raster.coords,
-                          dims=raster.dims,
-                          attrs=raster.attrs)
+    proximity_img = _process(
+        raster,
+        x=x,
+        y=y,
+        target_values=target_values,
+        max_distance=max_distance,
+        distance_metric=distance_metric,
+        process_mode=PROXIMITY,
+    )
+
+    result = xr.DataArray(
+        proximity_img,
+        coords=raster.coords,
+        dims=raster.dims,
+        attrs=raster.attrs
+    )
+
     return result
 
 
-def allocation(raster: xr.DataArray,
-               x: str = 'x',
-               y: str = 'y',
-               target_values: list = [],
-               distance_metric: str = 'EUCLIDEAN'):
+def allocation(
+    raster: xr.DataArray,
+    x: str = "x",
+    y: str = "y",
+    target_values: list = [],
+    max_distance: float = None,
+    distance_metric: str = "EUCLIDEAN",
+):
     """
     Calculates, for all cells in the array, the downward slope direction
     Calculates, for all pixels in the input raster, the nearest source
@@ -719,6 +847,19 @@ def allocation(raster: xr.DataArray,
     following options are used to define the behavior of the function.
     By default all non-zero pixels in `raster.values` will be considered
     as"target", and all allocation will be computed in pixels.
+
+    Allocation supports NumPy backed, and Dask with NumPy backed
+    xarray DataArray. The return values of `allocation` are of the same type as
+    the input type.
+    If input raster is a NumPy-backed DataArray, the result is NumPy-backed.
+    If input raster is a Dask-backed DataArray, the result is Dask-backed.
+
+    `allocation` uses the same approach as `proximity`, which is ported
+    from GDAL. A dynamic programming approach is used for identifying nearest
+    target of a pixel from its surrounding neighborhood in a 3x3 window.
+    The implementation for Dask-backed uses `dask.map_overlap` to compute
+    `allocation` chunk by chunk by expanding the chunk's borders to cover
+    the `max_distance`.
 
     Parameters
     ----------
@@ -731,11 +872,16 @@ def allocation(raster: xr.DataArray,
     target_values : list
         Target pixel values to measure the distance from. If this option
         is not provided, allocation will be computed from non-zero pixel
-        values. Currently pixel values are internally processed as
-        integers.
+        values.
+    max_distance: float
+        The maximum distance to search. Proximity distances greater than
+        this value will be set to a NaN value.
+        Note that this must be given in the same unit as input. For example,
+        if input raster is in latitude/longitude units, `max_distance` should
+        also be provided in latitude/longitude units.
     distance_metric : str, default='EUCLIDEAN'
         The metric for calculating distance between 2 points. Valid
-        distance_metrics: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
+        distance metrics are: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
 
     Returns
     -------
@@ -752,148 +898,76 @@ def allocation(raster: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import pandas as pd
-        import matplotlib.pyplot as plt
-        from matplotlib.pyplot import scatter
-        from xrspatial import generate_terrain, allocation
+        import numpy as np
+        import xarray as xr
+        from xrspatial import allocation
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
+        data = np.array([
+            [0., 0., 0., 0., 0.],
+            [0., 1., 0., 2., 0.],
+            [0., 0., 3., 0., 0.],
+            [0., 0., 0., 0., 0.],
+            [0., 0., 0., 0., 0.]
+        ])
+        raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
+        raster['y'] = np.arange(n)[::-1]
+        raster['x'] = np.arange(n)
 
-        # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Generate a Target Aggregate Array
-        cities_df = pd.DataFrame({
-            'lon': [
-                -7475000,
-                25000,
-                15025000,
-                -9975000,
-                5025000,
-                -14975000,
-            ],
-            'lat': [
-                -9966666,
-                6700000,
-                13366666,
-                3366666,
-                13366666,
-                13366666,
-            ],
-            'elevation': [
-                306.5926712,
-                352.50955382,
-                347.20870554,
-                324.11835519,
-                686.31312024,
-                319.34522171,
-            ]
-        })
-
-        cities_da = cvs.points(cities_df,
-                                x ='lon',
-                                y ='lat',
-                                agg = ds.max('elevation'))
-
-        # Edit Attributes
-        cities_da = cities_da.assign_attrs({'Description': 'Cities'})
-        cities_da = cities_da.rename('Cities')
-
-        # Create Allocation Aggregate Array
-        allocation_agg = allocation(cities_da, x = 'lon', y = 'lat')
-        allocation_agg = allocation_agg.where(terrain_agg > 500)
-
-        # Edit Attributes
-        allocation_agg = allocation_agg.assign_attrs(
-            {
-                'Description': 'Example Allocation',
-            }
-        )
-        allocation_agg = allocation_agg.rename('Closest City')
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Cities
-        cities_df.plot.scatter(x = 'lon', y = 'lat')
-        plt.title("Cities")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Allocation
-        allocation_agg.plot(cmap = 'prism', aspect = 2, size = 4)
-        plt.title("Allocation")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
+        allocation_agg = allocation(raster)
 
     .. sourcecode:: python
 
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-               [1285.37061171, 1282.48046696],
-               [1306.02305679, 1303.40657515]])
+        >>> raster
+        <xarray.DataArray 'raster' (y: 5, x: 5)>
+        array([[0., 0., 0., 0., 0.],
+               [0., 1., 0., 2., 0.],
+               [0., 0., 3., 0., 0.],
+               [0., 0., 0., 0., 0.],
+               [1., 0., 0., 0., 0.]])
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            res:            1
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
+          * y        (y) int64 4 3 2 1 0
+          * x        (x) int64 0 1 2 3 4
 
-        >>> print(allocation_agg[200:203, 200:202])
-        <xarray.DataArray 'Closest City' (lat: 3, lon: 2)>
-        array([[352.50955382, 352.50955382],
-               [352.50955382, 352.50955382],
-               [352.50955382, 352.50955382]])
+        >>> allocation_agg
+        <xarray.DataArray (y: 5, x: 5)>
+        array([[1., 1., 2., 2., 2.],
+               [1., 1., 1., 2., 2.],
+               [1., 1., 3., 2., 2.],
+               [1., 3., 3., 3., 2.],
+               [3., 3., 3., 3., 3.]])
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            Description:  Example Allocation
+          * y        (y) int64 4 3 2 1 0
+          * x        (x) int64 0 1 2 3 4
+
     """
-    allocation_img = _process(raster,
-                              x=x,
-                              y=y,
-                              target_values=target_values,
-                              distance_metric=distance_metric,
-                              process_mode=ALLOCATION)
+    allocation_img = _process(
+        raster,
+        x=x,
+        y=y,
+        target_values=target_values,
+        max_distance=max_distance,
+        distance_metric=distance_metric,
+        process_mode=ALLOCATION,
+    )
+
     # convert to have same type as of input @raster
-    result = xr.DataArray((allocation_img).astype(raster.dtype),
-                          coords=raster.coords,
-                          dims=raster.dims,
-                          attrs=raster.attrs)
+    result = xr.DataArray(
+        (allocation_img).astype(raster.dtype),
+        coords=raster.coords,
+        dims=raster.dims,
+        attrs=raster.attrs,
+    )
     return result
 
 
-def direction(raster: xr.DataArray,
-              x: str = 'x',
-              y: str = 'y',
-              target_values: list = [],
-              distance_metric: str = 'EUCLIDEAN'):
+def direction(
+    raster: xr.DataArray,
+    x: str = "x",
+    y: str = "y",
+    target_values: list = [],
+    max_distance: float = None,
+    distance_metric: str = "EUCLIDEAN",
+):
     """
     Calculates, for all cells in the array, the downward slope direction
     Calculates, for all pixels in the input raster, the direction to
@@ -905,8 +979,20 @@ def direction(raster: xr.DataArray,
     270 for the west, 360 for the north, and 0 for the source cell
     itself. The following options are used to define the behavior of
     the function. By default all non-zero pixels in `raster.values`
-    will be considered as "target", and all allocation will be computed
+    will be considered as "target", and all direction will be computed
     in pixels.
+
+    Direction support NumPy backed, and Dask with NumPy backed
+    xarray DataArray. The return values of `direction` are of the same type as
+    the input type.
+    If input raster is a NumPy-backed DataArray, the result is NumPy-backed.
+    If input raster is a Dask-backed DataArray, the result is Dask-backed.
+
+    Similar to `proximity`, the implementation for NumPy-backed is ported
+    from GDAL, which uses a dynamic programming approach to identify
+    nearest target of a pixel from its surrounding neighborhood in a 3x3 window
+    The implementation for Dask-backed uses `sklearn.sklearn.neighbors.KDTree`
+    internally.
 
     Parameters
     ----------
@@ -919,16 +1005,22 @@ def direction(raster: xr.DataArray,
     target_values: list
         Target pixel values to measure the distance from. If this
         option is not provided, proximity will be computed from
-        non-zero pixel values. Currently pixel values are
-        internally processed as integers.
+        non-zero pixel values.
+    max_distance: float
+        The maximum distance to search. Proximity distances greater than
+        this value will be set to a NaN value.
+        Note that this must be given in the same unit as input. For example,
+        if input raster is in latitude/longitude units, `max_distance` should
+        also be provided in latitude/longitude units.
     distance_metric: str, default='EUCLIDEAN'
-        The metric for calculating distance between 2 points. Valid
-        distance_metrics: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
+        The metric for calculating distance between 2 points.
+        Valid distance_metrics are:
+        'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
 
     Returns
     -------
     direction_agg: xr.DataArray of same type as `raster`
-        2D array of proximity values.
+        2D array of direction values.
         All other input attributes are preserved.
 
     References
@@ -940,138 +1032,63 @@ def direction(raster: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import pandas as pd
-        import matplotlib.pyplot as plt
-        from matplotlib.pyplot import scatter
-        from xrspatial import generate_terrain, direction
+        import numpy as np
+        import xarray as xr
+        from xrspatial import direction
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
+        data = np.array([
+            [0., 0., 0., 0., 0.],
+            [0., 0., 0., 0., 0.],
+            [0., 0., 1., 0., 0.],
+            [0., 0., 0., 0., 0.],
+            [1., 0., 0., 0., 0.]
+        ])
+        raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
+        raster['y'] = np.arange(n)[::-1]
+        raster['x'] = np.arange(n)
 
-        # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Generate a Target Aggregate Array
-        cities_df = pd.DataFrame({
-            'lon': [
-                -7475000,
-                25000,
-                15025000,
-                -9975000,
-                5025000,
-                -14975000,
-            ],
-            'lat': [
-                -9966666,
-                6700000,
-                13366666,
-                3366666,
-                13366666,
-                13366666,
-            ],
-            'elevation': [
-                306.5926712,
-                352.50955382,
-                347.20870554,
-                324.11835519,
-                686.31312024,
-                319.34522171,
-            ]
-        })
-
-        cities_da = cvs.points(cities_df,
-                                x ='lon',
-                                y ='lat',
-                                agg = ds.max('elevation'))
-
-        # Edit Attributes
-        cities_da = cities_da.assign_attrs({'Description': 'Cities'})
-        cities_da = cities_da.rename('Cities')
-
-        # Create Direction Aggregate Array
-        direction_agg = direction(cities_da, x = 'lon', y = 'lat')
-        direction_agg = direction_agg.where(terrain_agg > 500)
-
-        # Edit Attributes
-        direction_agg = direction_agg.assign_attrs(
-            {
-                'Description': 'Example Direction',
-            }
-        )
-        direction_agg = direction_agg.rename('Cardinal Direction')
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Cities
-        cities_df.plot.scatter(x = 'lon', y = 'lat')
-        plt.title("Cities")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Allocation
-        direction_agg.plot( aspect = 2, size = 4)
-        plt.title("Direction")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
+        direction_agg = direction(raster)
 
     ... sourcecode:: python
 
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-               [1285.37061171, 1282.48046696],
-               [1306.02305679, 1303.40657515]])
+        >>> raster
+        <xarray.DataArray 'raster' (y: 5, x: 5)>
+        array([[0., 0., 0., 0., 0.],
+               [0., 0., 0., 0., 0.],
+               [0., 0., 1., 0., 0.],
+               [0., 0., 0., 0., 0.],
+               [1., 0., 0., 0., 0.]])
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            res:            1
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
+          * y        (y) int64 4 3 2 1 0
+          * x        (x) int64 0 1 2 3 4
 
-        >>> print(direction_agg[200:203, 200:202])
-        <xarray.DataArray 'Cardinal Direction' (lat: 3, lon: 2)>
-        array([[90.        , 90.        ],
-               [88.09084755, 88.05191498],
-               [86.18592513, 86.10832367]])
+        >>> direction_agg
+        <xarray.DataArray (y: 5, x: 5)>
+        array([[ 45.      ,  26.56505 , 360.      , 333.43494 , 315.      ],
+               [ 63.434948,  45.      , 360.      , 315.      , 296.56506 ],
+               [ 90.      ,  90.      ,   0.      , 270.      , 270.      ],
+               [360.      , 135.      , 180.      , 225.      , 243.43495 ],
+               [  0.      , 270.      , 180.      , 206.56505 , 225.      ]],
+              dtype=float64)
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            Description:  Example Direction
+          * y        (y) int64 4 3 2 1 0
+          * x        (x) int64 0 1 2 3 4
     """
-    direction_img = _process(raster,
-                             x=x,
-                             y=y,
-                             target_values=target_values,
-                             distance_metric=distance_metric,
-                             process_mode=DIRECTION)
 
-    result = xr.DataArray(direction_img,
-                          coords=raster.coords,
-                          dims=raster.dims,
-                          attrs=raster.attrs)
+    direction_img = _process(
+        raster,
+        x=x,
+        y=y,
+        target_values=target_values,
+        max_distance=max_distance,
+        distance_metric=distance_metric,
+        process_mode=DIRECTION,
+    )
+
+    result = xr.DataArray(
+        direction_img,
+        coords=raster.coords,
+        dims=raster.dims,
+        attrs=raster.attrs
+    )
     return result

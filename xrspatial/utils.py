@@ -169,18 +169,22 @@ def get_dataarray_resolution(agg: xr.DataArray):
         Tuple of (x cell size, y cell size).
     """
     # get cellsize out from 'res' attribute
-    cellsize = agg.attrs.get("res")
-    if (
-        isinstance(cellsize, (tuple, np.ndarray, list))
-        and len(cellsize) == 2
-        and isinstance(cellsize[0], (int, float))
-        and isinstance(cellsize[1], (int, float))
-    ):
-        cellsize_x, cellsize_y = cellsize
-    elif isinstance(cellsize, (int, float)):
-        cellsize_x = cellsize
-        cellsize_y = cellsize
-    else:
+    try:
+        cellsize = agg.attrs.get("res")
+        if (
+            isinstance(cellsize, (tuple, np.ndarray, list))
+            and len(cellsize) == 2
+            and isinstance(cellsize[0], (int, float))
+            and isinstance(cellsize[1], (int, float))
+        ):
+            cellsize_x, cellsize_y = cellsize
+        elif isinstance(cellsize, (int, float)):
+            cellsize_x = cellsize
+            cellsize_y = cellsize
+        else:
+            cellsize_x, cellsize_y = calc_res(agg)
+
+    except Exception:
         cellsize_x, cellsize_y = calc_res(agg)
 
     return cellsize_x, cellsize_y
