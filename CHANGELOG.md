@@ -1,6 +1,11 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.2.8 - 8/27/2021
+- Added dask support to proximity tools (#540)
+- Refactored the resample utils function and changed their name to canvas_like (#539)
+- Added zone_ids and cat_ids param to stats zonal function (#538)
+
 ### Version 0.2.7 - 7/30/2021
 - Added Dask support for stats and crosstab zonal functions (#502)
 - Ignored NaN values on classify functions (#534)
