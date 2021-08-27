@@ -321,19 +321,13 @@ def canvas_like(
         - https://datashader.org/_modules/datashader/core.html#Canvas
     """
 
-    if x_range is None or y_range is None:
-        # get full extent of raster
-        full_extent = (
-            raster.coords["x"].min().item(),
-            raster.coords["y"].min().item(),
-            raster.coords["x"].max().item(),
-            raster.coords["y"].max().item(),
-        )
-        # get ranges
-        if x_range is None:
-            x_range = (full_extent[0], full_extent[2])
-        if y_range is None:
-            y_range = (full_extent[1], full_extent[3])
+    # get ranges
+    if x_range is None:
+        x_range = (raster.coords["x"].min().item(),
+                   raster.coords["x"].max().item())
+    if y_range is None:
+        y_range = (raster.coords["y"].min().item(),
+                   raster.coords["y"].max().item())
 
     if height is None:
         # set width and height
