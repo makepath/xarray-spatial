@@ -1,10 +1,9 @@
 from math import sqrt
 
-import xarray as xr
-import numpy as np
 import dask.array as da
-
 from numba import prange
+import numpy as np
+import xarray as xr
 
 from xrspatial.utils import ngjit, get_dataarray_resolution
 
@@ -20,9 +19,9 @@ DIRECTION = 2
 
 def _distance_metric_mapping():
     DISTANCE_METRICS = {}
-    DISTANCE_METRICS['EUCLIDEAN'] = EUCLIDEAN
-    DISTANCE_METRICS['GREAT_CIRCLE'] = GREAT_CIRCLE
-    DISTANCE_METRICS['MANHATTAN'] = MANHATTAN
+    DISTANCE_METRICS["EUCLIDEAN"] = EUCLIDEAN
+    DISTANCE_METRICS["GREAT_CIRCLE"] = GREAT_CIRCLE
+    DISTANCE_METRICS["MANHATTAN"] = MANHATTAN
 
     return DISTANCE_METRICS
 
@@ -33,10 +32,7 @@ DISTANCE_METRICS = _distance_metric_mapping()
 
 
 @ngjit
-def euclidean_distance(x1: float,
-                       x2: float,
-                       y1: float,
-                       y2: float) -> float:
+def euclidean_distance(x1: float, x2: float, y1: float, y2: float) -> float:
     """
     Calculates Euclidean (straight line) distance between (x1, y1) and
     (x2, y2).
@@ -86,10 +82,7 @@ def euclidean_distance(x1: float,
 
 
 @ngjit
-def manhattan_distance(x1: float,
-                       x2: float,
-                       y1: float,
-                       y2: float) -> float:
+def manhattan_distance(x1: float, x2: float, y1: float, y2: float) -> float:
     """
     Calculates Manhattan distance (sum of distance in x and y directions)
     between (x1, y1) and (x2, y2).
@@ -140,11 +133,9 @@ def manhattan_distance(x1: float,
 
 
 @ngjit
-def great_circle_distance(x1: float,
-                          x2: float,
-                          y1: float,
-                          y2: float,
-                          radius: float = 6378137) -> float:
+def great_circle_distance(
+    x1: float, x2: float, y1: float, y2: float, radius: float = 6378137
+) -> float:
     """
     Calculates great-circle (orthodromic/spherical) distance between
     (x1, y1) and (x2, y2), assuming each point is a longitude,
@@ -193,23 +184,35 @@ def great_circle_distance(x1: float,
         2378290.489801402
     """
     if x1 > 180 or x1 < -180:
-        raise ValueError('Invalid x-coordinate of the first point.'
-                         'Must be in the range [-180, 180]')
+        raise ValueError(
+            "Invalid x-coordinate of the first point."
+            "Must be in the range [-180, 180]"
+        )
 
     if x2 > 180 or x2 < -180:
-        raise ValueError('Invalid x-coordinate of the second point.'
-                         'Must be in the range [-180, 180]')
+        raise ValueError(
+            "Invalid x-coordinate of the second point."
+            "Must be in the range [-180, 180]"
+        )
 
     if y1 > 90 or y1 < -90:
-        raise ValueError('Invalid y-coordinate of the first point.'
-                         'Must be in the range [-90, 90]')
+        raise ValueError(
+            "Invalid y-coordinate of the first point."
+            "Must be in the range [-90, 90]"
+        )
 
     if y2 > 90 or y2 < -90:
-        raise ValueError('Invalid y-coordinate of the second point.'
-                         'Must be in the range [-90, 90]')
+        raise ValueError(
+            "Invalid y-coordinate of the second point."
+            "Must be in the range [-90, 90]"
+        )
 
-    lat1, lon1, lat2, lon2 = (np.radians(y1), np.radians(x1),
-                              np.radians(y2), np.radians(x2))
+    lat1, lon1, lat2, lon2 = (
+        np.radians(y1),
+        np.radians(x1),
+        np.radians(y2),
+        np.radians(x2),
+    )
     dlon = lon2 - lon1
     dlat = lat2 - lat1
     a = np.sin(dlat / 2.0) ** 2 + \
@@ -234,11 +237,22 @@ def _distance(x1, x2, y1, y2, metric):
 
 
 @ngjit
-def _process_proximity_line(source_line, xs, ys,
-                            pan_near_x, pan_near_y, is_forward,
-                            line_id, width, max_distance, line_proximity,
-                            nearest_xs, nearest_ys,
-                            values, distance_metric):
+def _process_proximity_line(
+    source_line,
+    xs,
+    ys,
+    pan_near_x,
+    pan_near_y,
+    is_forward,
+    line_id,
+    width,
+    max_distance,
+    line_proximity,
+    nearest_xs,
+    nearest_ys,
+    values,
+    distance_metric,
+):
     """
     Process proximity for a line of pixels in an image.
 
@@ -347,11 +361,15 @@ def _process_proximity_line(source_line, xs, ys,
                 pan_near_y[pixel] = pan_near_y[tr]
 
         # Update our proximity value.
-        if pan_near_x[pixel] != -1 \
-                and max_distance * max_distance >= near_distance_square \
-                and (line_proximity[pixel] < 0 or
-                     near_distance_square <
-                     line_proximity[pixel] * line_proximity[pixel]):
+        if (
+            pan_near_x[pixel] != -1
+            and max_distance * max_distance >= near_distance_square
+            and (
+                line_proximity[pixel] < 0
+                or near_distance_square < line_proximity[pixel]
+                * line_proximity[pixel]
+            )
+        ):
             line_proximity[pixel] = sqrt(near_distance_square)
             nearest_xs[pixel] = pan_near_x[pixel]
             nearest_ys[pixel] = pan_near_y[pixel]
@@ -381,8 +399,15 @@ def _calc_direction(x1, x2, y1, y2):
 
 
 @ngjit
-def _process_numpy(img, x_coords, y_coords, target_values,
-                   max_distance, distance_metric, process_mode):
+def _process_numpy(
+    img,
+    x_coords,
+    y_coords,
+    target_values,
+    max_distance,
+    distance_metric,
+    process_mode
+):
     # max_distance = _distance(x_coords[0], x_coords[-1],
     #                          y_coords[0], y_coords[-1],
     #                          distance_metric)
@@ -422,18 +447,31 @@ def _process_numpy(img, x_coords, y_coords, target_values,
             nearest_ys[i] = -1
 
         # left to right
-        _process_proximity_line(scan_line, x_coords, y_coords,
-                                pan_near_x, pan_near_y, True, line,
-                                width, max_distance, line_proximity,
-                                nearest_xs, nearest_ys,
-                                target_values, distance_metric)
+        _process_proximity_line(
+            scan_line,
+            x_coords,
+            y_coords,
+            pan_near_x,
+            pan_near_y,
+            True,
+            line,
+            width,
+            max_distance,
+            line_proximity,
+            nearest_xs,
+            nearest_ys,
+            target_values,
+            distance_metric,
+        )
         for i in prange(width):
             if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                 img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
-                d = _calc_direction(x_coords[line, i],
-                                    x_coords[nearest_ys[i], nearest_xs[i]],
-                                    y_coords[line, i],
-                                    y_coords[nearest_ys[i], nearest_xs[i]])
+                d = _calc_direction(
+                    x_coords[line, i],
+                    x_coords[nearest_ys[i], nearest_xs[i]],
+                    y_coords[line, i],
+                    y_coords[nearest_ys[i], nearest_xs[i]],
+                )
                 img_direction[line][i] = d
 
         # right to left
@@ -441,20 +479,33 @@ def _process_numpy(img, x_coords, y_coords, target_values,
             nearest_xs[i] = -1
             nearest_ys[i] = -1
 
-        _process_proximity_line(scan_line, x_coords, y_coords,
-                                pan_near_x, pan_near_y, False, line,
-                                width, max_distance, line_proximity,
-                                nearest_xs, nearest_ys,
-                                target_values, distance_metric)
+        _process_proximity_line(
+            scan_line,
+            x_coords,
+            y_coords,
+            pan_near_x,
+            pan_near_y,
+            False,
+            line,
+            width,
+            max_distance,
+            line_proximity,
+            nearest_xs,
+            nearest_ys,
+            target_values,
+            distance_metric,
+        )
 
         for i in prange(width):
             img_distance[line][i] = line_proximity[i]
             if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                 img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
-                d = _calc_direction(x_coords[line, i],
-                                    x_coords[nearest_ys[i], nearest_xs[i]],
-                                    y_coords[line, i],
-                                    y_coords[nearest_ys[i], nearest_xs[i]])
+                d = _calc_direction(
+                    x_coords[line, i],
+                    x_coords[nearest_ys[i], nearest_xs[i]],
+                    y_coords[line, i],
+                    y_coords[nearest_ys[i], nearest_xs[i]],
+                )
                 img_direction[line][i] = d
 
     # Loop from bottom to top of the image.
@@ -476,19 +527,32 @@ def _process_numpy(img, x_coords, y_coords, target_values,
             nearest_xs[i] = -1
             nearest_ys[i] = -1
 
-        _process_proximity_line(scan_line, x_coords, y_coords,
-                                pan_near_x, pan_near_y, False, line,
-                                width, max_distance, line_proximity,
-                                nearest_xs, nearest_ys,
-                                target_values, distance_metric)
+        _process_proximity_line(
+            scan_line,
+            x_coords,
+            y_coords,
+            pan_near_x,
+            pan_near_y,
+            False,
+            line,
+            width,
+            max_distance,
+            line_proximity,
+            nearest_xs,
+            nearest_ys,
+            target_values,
+            distance_metric,
+        )
 
         for i in prange(width):
             if nearest_xs[i] != -1 and line_proximity[i] >= 0:
                 img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
-                d = _calc_direction(x_coords[line, i],
-                                    x_coords[nearest_ys[i], nearest_xs[i]],
-                                    y_coords[line, i],
-                                    y_coords[nearest_ys[i], nearest_xs[i]])
+                d = _calc_direction(
+                    x_coords[line, i],
+                    x_coords[nearest_ys[i], nearest_xs[i]],
+                    y_coords[line, i],
+                    y_coords[nearest_ys[i], nearest_xs[i]],
+                )
 
                 img_direction[line][i] = d
 
@@ -497,11 +561,22 @@ def _process_numpy(img, x_coords, y_coords, target_values,
             nearest_xs[i] = -1
             nearest_ys[i] = -1
 
-        _process_proximity_line(scan_line, x_coords, y_coords,
-                                pan_near_x, pan_near_y, True, line,
-                                width, max_distance, line_proximity,
-                                nearest_xs, nearest_ys,
-                                target_values, distance_metric)
+        _process_proximity_line(
+            scan_line,
+            x_coords,
+            y_coords,
+            pan_near_x,
+            pan_near_y,
+            True,
+            line,
+            width,
+            max_distance,
+            line_proximity,
+            nearest_xs,
+            nearest_ys,
+            target_values,
+            distance_metric,
+        )
 
         # final post processing of distances
         for i in prange(width):
@@ -509,12 +584,13 @@ def _process_numpy(img, x_coords, y_coords, target_values,
                 line_proximity[i] = np.nan
             else:
                 if nearest_xs[i] != -1 and line_proximity[i] >= 0:
-                    img_allocation[line][i] = img[nearest_ys[i],
-                                                  nearest_xs[i]]
-                    d = _calc_direction(x_coords[line, i],
-                                        x_coords[nearest_ys[i], nearest_xs[i]],
-                                        y_coords[line, i],
-                                        y_coords[nearest_ys[i], nearest_xs[i]])
+                    img_allocation[line][i] = img[nearest_ys[i], nearest_xs[i]]
+                    d = _calc_direction(
+                        x_coords[line, i],
+                        x_coords[nearest_ys[i], nearest_xs[i]],
+                        y_coords[line, i],
+                        y_coords[nearest_ys[i], nearest_xs[i]],
+                    )
                     img_direction[line][i] = d
 
         for i in prange(width):
@@ -528,8 +604,9 @@ def _process_numpy(img, x_coords, y_coords, target_values,
         return img_direction
 
 
-def _process_dask(raster, xs, ys, target_values,
-                  max_distance, distance_metric, process_mode):
+def _process_dask(
+    raster, xs, ys, target_values, max_distance, distance_metric, process_mode
+):
     # calculate padding for width and height
     if not np.isfinite(max_distance):
         # consider all targets in the whole raster
@@ -554,22 +631,31 @@ def _process_dask(raster, xs, ys, target_values,
         boundary=np.nan,
         meta=np.array(()),
         trim=False,
-        chunks=raster.shape  # noqa: workaround to ensure the output is a Dask array with correct shape
+        chunks=raster.shape,  # noqa: workaround to ensure the output is a Dask array with correct shape
     ).rechunk(raster.chunks)  # noqa: workaround to ensure the output chunksize is the same as of input raster
 
     return out
 
 
-def _process(raster, x, y, target_values, max_distance,
-             distance_metric, process_mode):
+def _process(
+    raster,
+    x,
+    y,
+    target_values,
+    max_distance,
+    distance_metric,
+    process_mode
+):
     raster_dims = raster.dims
     if raster_dims != (y, x):
-        raise ValueError("raster.coords should be named as coordinates:"
-                         "({0}, {1})".format(y, x))
+        raise ValueError(
+            "raster.coords should be named as coordinates:"
+            "({0}, {1})".format(y, x)
+        )
 
     distance_metric = DISTANCE_METRICS.get(distance_metric, None)
     if distance_metric is None:
-        distance_metric = DISTANCE_METRICS['EUCLIDEAN']
+        distance_metric = DISTANCE_METRICS["EUCLIDEAN"]
 
     target_values = np.asarray(target_values)
 
@@ -584,28 +670,40 @@ def _process(raster, x, y, target_values, max_distance,
     if isinstance(raster.data, np.ndarray):
         # numpy case
         result = _process_numpy(
-            raster.data, xs, ys, target_values,
-            max_distance, distance_metric, process_mode
+            raster.data,
+            xs,
+            ys,
+            target_values,
+            max_distance,
+            distance_metric,
+            process_mode,
         )
     elif isinstance(raster.data, da.Array):
         # dask + numpy case
         xs = da.from_array(xs, chunks=(raster.chunks[0]))
         ys = da.from_array(ys, chunks=(raster.chunks[0]))
         result = _process_dask(
-            raster, xs, ys, target_values,
-            max_distance, distance_metric, process_mode
+            raster,
+            xs,
+            ys,
+            target_values,
+            max_distance,
+            distance_metric,
+            process_mode
         )
     return result
 
 
 # ported from
 # https://github.com/OSGeo/gdal/blob/master/gdal/alg/gdalproximity.cpp
-def proximity(raster: xr.DataArray,
-              x: str = 'x',
-              y: str = 'y',
-              target_values: list = [],
-              max_distance: float = None,
-              distance_metric: str = 'EUCLIDEAN') -> xr.DataArray:
+def proximity(
+    raster: xr.DataArray,
+    x: str = "x",
+    y: str = "y",
+    target_values: list = [],
+    max_distance: float = None,
+    distance_metric: str = "EUCLIDEAN",
+) -> xr.DataArray:
     """
     Computes the proximity of all pixels in the image to a set of pixels
     in the source image based on a distance metric.
@@ -711,28 +809,34 @@ def proximity(raster: xr.DataArray,
           * x        (x) int64 0 1 2 3 4
     """
 
-    proximity_img = _process(raster,
-                             x=x,
-                             y=y,
-                             target_values=target_values,
-                             max_distance=max_distance,
-                             distance_metric=distance_metric,
-                             process_mode=PROXIMITY)
+    proximity_img = _process(
+        raster,
+        x=x,
+        y=y,
+        target_values=target_values,
+        max_distance=max_distance,
+        distance_metric=distance_metric,
+        process_mode=PROXIMITY,
+    )
 
-    result = xr.DataArray(proximity_img,
-                          coords=raster.coords,
-                          dims=raster.dims,
-                          attrs=raster.attrs)
+    result = xr.DataArray(
+        proximity_img,
+        coords=raster.coords,
+        dims=raster.dims,
+        attrs=raster.attrs
+    )
 
     return result
 
 
-def allocation(raster: xr.DataArray,
-               x: str = 'x',
-               y: str = 'y',
-               target_values: list = [],
-               max_distance: float = None,
-               distance_metric: str = 'EUCLIDEAN'):
+def allocation(
+    raster: xr.DataArray,
+    x: str = "x",
+    y: str = "y",
+    target_values: list = [],
+    max_distance: float = None,
+    distance_metric: str = "EUCLIDEAN",
+):
     """
     Calculates, for all cells in the array, the downward slope direction
     Calculates, for all pixels in the input raster, the nearest source
@@ -836,28 +940,34 @@ def allocation(raster: xr.DataArray,
           * x        (x) int64 0 1 2 3 4
 
     """
-    allocation_img = _process(raster,
-                              x=x,
-                              y=y,
-                              target_values=target_values,
-                              max_distance=max_distance,
-                              distance_metric=distance_metric,
-                              process_mode=ALLOCATION)
+    allocation_img = _process(
+        raster,
+        x=x,
+        y=y,
+        target_values=target_values,
+        max_distance=max_distance,
+        distance_metric=distance_metric,
+        process_mode=ALLOCATION,
+    )
 
     # convert to have same type as of input @raster
-    result = xr.DataArray((allocation_img).astype(raster.dtype),
-                          coords=raster.coords,
-                          dims=raster.dims,
-                          attrs=raster.attrs)
+    result = xr.DataArray(
+        (allocation_img).astype(raster.dtype),
+        coords=raster.coords,
+        dims=raster.dims,
+        attrs=raster.attrs,
+    )
     return result
 
 
-def direction(raster: xr.DataArray,
-              x: str = 'x',
-              y: str = 'y',
-              target_values: list = [],
-              max_distance: float = None,
-              distance_metric: str = 'EUCLIDEAN'):
+def direction(
+    raster: xr.DataArray,
+    x: str = "x",
+    y: str = "y",
+    target_values: list = [],
+    max_distance: float = None,
+    distance_metric: str = "EUCLIDEAN",
+):
     """
     Calculates, for all cells in the array, the downward slope direction
     Calculates, for all pixels in the input raster, the direction to
@@ -965,16 +1075,20 @@ def direction(raster: xr.DataArray,
           * x        (x) int64 0 1 2 3 4
     """
 
-    direction_img = _process(raster,
-                             x=x,
-                             y=y,
-                             target_values=target_values,
-                             max_distance=max_distance,
-                             distance_metric=distance_metric,
-                             process_mode=DIRECTION)
+    direction_img = _process(
+        raster,
+        x=x,
+        y=y,
+        target_values=target_values,
+        max_distance=max_distance,
+        distance_metric=distance_metric,
+        process_mode=DIRECTION,
+    )
 
-    result = xr.DataArray(direction_img,
-                          coords=raster.coords,
-                          dims=raster.dims,
-                          attrs=raster.attrs)
+    result = xr.DataArray(
+        direction_img,
+        coords=raster.coords,
+        dims=raster.dims,
+        attrs=raster.attrs
+    )
     return result
