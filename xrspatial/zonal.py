@@ -1,15 +1,14 @@
+from math import sqrt
+from typing import Optional, Callable, Union, Dict, List
+
+import dask.array as da
+import dask.dataframe as dd
 import numpy as np
 import pandas as pd
 import xarray as xr
 from xarray import DataArray
-import dask.array as da
-import dask.dataframe as dd
 
 from xrspatial.utils import ngjit
-
-from math import sqrt
-
-from typing import Optional, Callable, Union, Dict, List
 
 
 def _stats_count(data):
@@ -33,14 +32,22 @@ _DEFAULT_STATS = dict(
 )
 
 
-def _convert_to_ints(numeric_value):
+def _to_int(numeric_value):
+    # convert an integer in float type to integer type
+    # if not an integer, return the value itself
     if float(numeric_value).is_integer():
         return int(numeric_value)
     return numeric_value
 
 
-def _zone_cat_data(zones, values, zone_id, nodata_values,
-                   cat=None, cat_id=None):
+def _zone_cat_data(
+    zones,
+    values,
+    zone_id,
+    nodata_values,
+    cat=None,
+    cat_id=None
+):
 
     # array backend
     if isinstance(zones.data, np.ndarray):
@@ -50,13 +57,14 @@ def _zone_cat_data(zones, values, zone_id, nodata_values,
 
     if len(values.shape) == 2:
         # 2D case
-        conditions = ((zones.data != zone_id) |
-                      ~np.isfinite(values.data) |  # mask out nan, inf
-                      (values.data == nodata_values)  # mask out nodata_values
-                      )
+        conditions = (
+            (zones.data != zone_id)
+            | ~np.isfinite(values.data)  # mask out nan, inf
+            | (values.data == nodata_values)  # mask out nodata_values
+        )
 
         if cat is not None:
-            conditions |= (values.data != cat)
+            conditions |= values.data != cat
 
         zone_cat_data = array_module.ma.masked_where(conditions, values.data)
 
@@ -65,76 +73,100 @@ def _zone_cat_data(zones, values, zone_id, nodata_values,
         cat_data = values[cat_id].data
         cat_masked_data = array_module.ma.masked_invalid(cat_data)
         zone_cat_data = array_module.ma.masked_where(
-            ((zones.data != zone_id) | (cat_data == nodata_values)),
+            (
+                (zones.data != zone_id)
+                | (cat_data == nodata_values)
+            ),
             cat_masked_data
         )
     return zone_cat_data
 
 
-def _stats(zones: xr.DataArray,
-           values: xr.DataArray,
-           unique_zones: List[int],
-           stats_funcs: List,
-           nodata_values: Union[int, float]
-           ) -> Dict:
+def _stats(
+    zones: xr.DataArray,
+    values: xr.DataArray,
+    unique_zones: List[int],
+    stats_funcs: List,
+    nodata_values: Union[int, float],
+) -> Dict:
 
     stats_dict = {}
     # zone column
-    stats_dict['zone'] = unique_zones
+    stats_dict["zone"] = unique_zones
     # stats columns
     for stats in stats_funcs:
         stats_dict[stats] = []
 
     for zone_id in unique_zones:
         # get zone values
-        zone_values = _zone_cat_data(
-            zones, values, zone_id, nodata_values
-        )
+        zone_values = _zone_cat_data(zones, values, zone_id, nodata_values)
         for stats in stats_funcs:
             stats_func = stats_funcs.get(stats)
             if not callable(stats_func):
                 raise ValueError(stats)
             stats_dict[stats].append(stats_func(zone_values))
 
-    unique_zones = list(map(_convert_to_ints, unique_zones))
-    stats_dict['zone'] = unique_zones
+    unique_zones = list(map(_to_int, unique_zones))
+    stats_dict["zone"] = unique_zones
 
     return stats_dict
 
 
-def _stats_numpy(zones: xr.DataArray,
-                 values: xr.DataArray,
-                 stats_funcs: Dict,
-                 nodata_zones: Union[int, float],
-                 nodata_values: Union[int, float]
-                 ) -> pd.DataFrame:
-    # do not consider zone with nodata values
-    unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
-    unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+def _stats_numpy(
+    zones: xr.DataArray,
+    values: xr.DataArray,
+    zone_ids: List[Union[int, float]],
+    stats_funcs: Dict,
+    nodata_zones: Union[int, float],
+    nodata_values: Union[int, float],
+) -> pd.DataFrame:
+
+    if zone_ids is None:
+        # no zone_ids provided, find ids for all zones
+        # do not consider zone with nodata values
+        unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
+        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    else:
+        unique_zones = np.array(zone_ids)
 
     stats_dict = _stats(
-        zones, values, unique_zones, stats_funcs, nodata_values
+        zones,
+        values,
+        unique_zones,
+        stats_funcs,
+        nodata_values
     )
 
     stats_df = pd.DataFrame(stats_dict)
-    stats_df.set_index('zone')
+    stats_df.set_index("zone")
 
     return stats_df
 
 
-def _stats_dask(zones: xr.DataArray,
-                values: xr.DataArray,
-                stats_funcs: Dict,
-                nodata_zones: Union[int, float],
-                nodata_values: Union[int, float]
-                ) -> pd.DataFrame:
-    # precompute unique zones
-    unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
-    # do not consider zone with nodata values
-    unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+def _stats_dask(
+    zones: xr.DataArray,
+    values: xr.DataArray,
+    zone_ids: List[Union[int, float]],
+    stats_funcs: Dict,
+    nodata_zones: Union[int, float],
+    nodata_values: Union[int, float],
+) -> pd.DataFrame:
+
+    if zone_ids is None:
+        # no zone_ids provided, find ids for all zones
+        # precompute unique zones
+        unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
+        # do not consider zone with nodata values
+        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    else:
+        unique_zones = np.array(zone_ids)
 
     stats_dict = _stats(
-        zones, values, unique_zones, stats_funcs, nodata_values
+        zones,
+        values,
+        unique_zones,
+        stats_funcs,
+        nodata_values
     )
 
     stats_dict = {
@@ -144,22 +176,31 @@ def _stats_dask(zones: xr.DataArray,
 
     # generate dask dataframe
     stats_df = dd.concat(
-        [dd.from_dask_array(stats) for stats in stats_dict.values()],
-        axis=1
+        [dd.from_dask_array(stats) for stats in stats_dict.values()], axis=1
     )
     # name columns
     stats_df.columns = stats_dict.keys()
-    stats_df.set_index('zone')
+    stats_df.set_index("zone")
 
     return stats_df
 
 
-def stats(zones: xr.DataArray,
-          values: xr.DataArray,
-          stats_funcs: Union[Dict, List] = ['mean', 'max', 'min', 'sum', 'std', 'var', 'count'], # noqa
-          nodata_zones: Optional[Union[int, float]] = None,
-          nodata_values: Union[int, float] = None
-          ) -> Union[pd.DataFrame, dd.DataFrame]:
+def stats(
+    zones: xr.DataArray,
+    values: xr.DataArray,
+    zone_ids: Optional[List[Union[int, float]]] = None,
+    stats_funcs: Union[Dict, List] = [
+        "mean",
+        "max",
+        "min",
+        "sum",
+        "std",
+        "var",
+        "count",
+    ],
+    nodata_zones: Optional[Union[int, float]] = None,
+    nodata_values: Union[int, float] = None,
+) -> Union[pd.DataFrame, dd.DataFrame]:
     """
     Calculate summary statistics for each zone defined by a zone
     dataset, based on values aggregate.
@@ -184,7 +225,11 @@ def stats(zones: xr.DataArray,
         The input `values` raster contains the input values used in
         calculating the output statistic for each zone.
 
-    stats_funcs : Dict, or List of strings, default=['mean', 'max', 'min',
+    zone_ids : list of ints, or floats
+        List of zones to be included in calculation. If no zone_ids provided,
+        all zones will be used.
+
+    stats_funcs : dict, or list of strings, default=['mean', 'max', 'min',
         'sum', 'std', 'var', 'count'])
         The statistics to calculate for each zone. If a list, possible
         choices are subsets of the default options.
@@ -279,12 +324,16 @@ def stats(zones: xr.DataArray,
     if zones.shape != values.shape:
         raise ValueError("`zones` and `values` must have same shape.")
 
-    if not (issubclass(zones.data.dtype.type, np.integer) or
-            issubclass(zones.data.dtype.type, np.floating)):
+    if not (
+        issubclass(zones.data.dtype.type, np.integer)
+        or issubclass(zones.data.dtype.type, np.floating)
+    ):
         raise ValueError("`zones` must be an array of integers.")
 
-    if not (issubclass(values.data.dtype.type, np.integer) or
-            issubclass(values.data.dtype.type, np.floating)):
+    if not (
+        issubclass(values.data.dtype.type, np.integer)
+        or issubclass(values.data.dtype.type, np.floating)
+    ):
         raise ValueError("`values` must be an array of integers or floats.")
 
     if isinstance(stats_funcs, list):
@@ -305,12 +354,22 @@ def stats(zones: xr.DataArray,
     if isinstance(values.data, np.ndarray):
         # numpy case
         stats_df = _stats_numpy(
-            zones, values, stats_funcs_dict, nodata_zones, nodata_values
+            zones,
+            values,
+            zone_ids,
+            stats_funcs_dict,
+            nodata_zones,
+            nodata_values
         )
     else:
         # dask case
         stats_df = _stats_dask(
-            zones, values, stats_funcs_dict, nodata_zones, nodata_values
+            zones,
+            values,
+            zone_ids,
+            stats_funcs_dict,
+            nodata_zones,
+            nodata_values
         )
 
     return stats_df
@@ -320,8 +379,8 @@ def _crosstab_dict(zones, values, unique_zones, cats, nodata_values, agg):
 
     crosstab_dict = {}
 
-    unique_zones = list(map(_convert_to_ints, unique_zones))
-    crosstab_dict['zone'] = unique_zones
+    unique_zones = list(map(_to_int, unique_zones))
+    crosstab_dict["zone"] = unique_zones
 
     for i in cats:
         crosstab_dict[i] = []
@@ -335,31 +394,52 @@ def _crosstab_dict(zones, values, unique_zones, cats, nodata_values, agg):
             zone_cat_count = _stats_count(zone_cat_data)
             crosstab_dict[cat].append(zone_cat_count)
 
-    if agg == 'percentage':
+    if agg == "percentage":
         zone_counts = _stats(
-            zones, values, unique_zones, {'count': _stats_count}, nodata_values
-        )['count']
+            zones,
+            values,
+            unique_zones,
+            {"count": _stats_count},
+            nodata_values
+        )["count"]
         for c, cat in enumerate(cats):
             for z in range(len(unique_zones)):
-                crosstab_dict[cat][z] = crosstab_dict[cat][z] / zone_counts[z] * 100  # noqa
+                crosstab_dict[cat][z] = (
+                    crosstab_dict[cat][z] / zone_counts[z] * 100
+                )  # noqa
 
     return crosstab_dict
 
 
-def _crosstab_numpy(zones, values, nodata_zones, nodata_values, agg):
+def _crosstab_numpy(
+    zones,
+    values,
+    zone_ids,
+    cat_ids,
+    nodata_zones,
+    nodata_values,
+    agg
+):
 
-    if len(values.shape) == 3:
-        # 3D case
-        cats = values.indexes[values.dims[0]].values
+    if cat_ids is not None:
+        cats = np.array(cat_ids)
     else:
-        # 2D case
-        # mask out all invalid values such as: nan, inf
-        cats = da.unique(values.data[da.isfinite(values.data)]).compute()
-        cats = sorted(list(set(cats) - set([nodata_values])))
+        # no categories provided, find all possible cats in values raster
+        if len(values.shape) == 3:
+            # 3D case
+            cats = values.indexes[values.dims[0]].values
+        else:
+            # 2D case
+            # mask out all invalid values such as: nan, inf
+            cats = da.unique(values.data[da.isfinite(values.data)]).compute()
+            cats = sorted(list(set(cats) - set([nodata_values])))
 
-    # do not consider zone with nodata values
-    unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
-    unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    if zone_ids is None:
+        # do not consider zone with nodata values
+        unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
+        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    else:
+        unique_zones = np.array(zone_ids)
 
     crosstab_dict = _crosstab_dict(
         zones, values, unique_zones, cats, nodata_values, agg
@@ -373,21 +453,36 @@ def _crosstab_numpy(zones, values, nodata_zones, nodata_values, agg):
     return crosstab_df
 
 
-def _crosstab_dask(zones, values, nodata_zones, nodata_values, agg):
+def _crosstab_dask(
+    zones,
+    values,
+    zone_ids,
+    cat_ids,
+    nodata_zones,
+    nodata_values,
+    agg
+):
 
-    if len(values.shape) == 3:
-        # 3D case
-        cats = values.indexes[values.dims[0]].values
+    if cat_ids is not None:
+        cats = np.array(cat_ids)
     else:
-        # 2D case
-        # precompute categories
-        cats = da.unique(values.data[da.isfinite(values.data)]).compute()
-        cats = sorted(list(set(cats) - set([nodata_values])))
+        # no categories provided, find all possible cats in values raster
+        if len(values.shape) == 3:
+            # 3D case
+            cats = values.indexes[values.dims[0]].values
+        else:
+            # 2D case
+            # precompute categories
+            cats = da.unique(values.data[da.isfinite(values.data)]).compute()
+            cats = sorted(list(set(cats) - set([nodata_values])))
 
-    # precompute unique zones
-    unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
-    # do not consider zone with nodata values
-    unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    if zone_ids is None:
+        # precompute unique zones
+        unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
+        # do not consider zone with nodata values
+        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    else:
+        unique_zones = np.array(zone_ids)
 
     crosstab_dict = _crosstab_dict(
         zones, values, unique_zones, cats, nodata_values, agg
@@ -408,13 +503,16 @@ def _crosstab_dask(zones, values, nodata_zones, nodata_values, agg):
     return crosstab_df
 
 
-def crosstab(zones: xr.DataArray,
-             values: xr.DataArray,
-             layer: Optional[int] = None,
-             agg: Optional[str] = 'count',
-             nodata_zones: Optional[Union[int, float]] = None,
-             nodata_values: Optional[Union[int, float]] = None
-             ) -> Union[pd.DataFrame, dd.DataFrame]:
+def crosstab(
+    zones: xr.DataArray,
+    values: xr.DataArray,
+    zone_ids: List[Union[int, float]] = None,
+    cat_ids: List[Union[int, float]] = None,
+    layer: Optional[int] = None,
+    agg: Optional[str] = "count",
+    nodata_zones: Optional[Union[int, float]] = None,
+    nodata_values: Optional[Union[int, float]] = None,
+) -> Union[pd.DataFrame, dd.DataFrame]:
     """
     Calculate cross-tabulated (categorical stats) areas
     between two datasets: a zone dataset `zones`, a value dataset `values`
@@ -447,6 +545,14 @@ def crosstab(zones: xr.DataArray,
         2D or 3D data array of integers or floats.
         The input value raster contains the input values used in
         calculating the categorical statistic for each zone.
+
+    zone_ids: List of ints, or floats
+        List of zones to be included in calculation. If no zone_ids provided,
+        all zones will be used.
+
+    cat_ids: List of ints, or floats
+        List of categories to be included in calculation.
+        If no cat_ids provided, all categories will be used.
 
     layer: int, default=0
         index of the categorical dimension layer inside the `values` DataArray.
@@ -544,20 +650,22 @@ def crosstab(zones: xr.DataArray,
     if zones.ndim != 2:
         raise ValueError("zones must be 2D")
 
-    if not (issubclass(zones.data.dtype.type, np.integer) or
-            issubclass(zones.data.dtype.type, np.floating)):
+    if not (
+        issubclass(zones.data.dtype.type, np.integer)
+        or issubclass(zones.data.dtype.type, np.floating)
+    ):
         raise ValueError("`zones` must be an xarray of integers or floats")
 
-    if not issubclass(values.data.dtype.type, np.integer) and \
-            not issubclass(values.data.dtype.type, np.floating):
-        raise ValueError(
-            "`values` must be an xarray of integers or floats")
+    if not issubclass(values.data.dtype.type, np.integer) and not issubclass(
+        values.data.dtype.type, np.floating
+    ):
+        raise ValueError("`values` must be an xarray of integers or floats")
 
     if values.ndim not in [2, 3]:
         raise ValueError("`values` must use either 2D or 3D coordinates.")
 
-    agg_2d = ['percentage', 'count']
-    agg_3d = ['count']
+    agg_2d = ["percentage", "count"]
+    agg_3d = ["count"]
 
     if values.ndim == 2 and agg not in agg_2d:
         raise ValueError(
@@ -589,20 +697,23 @@ def crosstab(zones: xr.DataArray,
     if isinstance(values.data, np.ndarray):
         # numpy case
         crosstab_df = _crosstab_numpy(
-            zones, values, nodata_zones, nodata_values, agg)
+            zones, values, zone_ids, cat_ids, nodata_zones, nodata_values, agg
+        )
     else:
         # dask case
         crosstab_df = _crosstab_dask(
-            zones, values, nodata_zones, nodata_values, agg
+            zones, values, zone_ids, cat_ids, nodata_zones, nodata_values, agg
         )
 
     return crosstab_df
 
 
-def apply(zones: xr.DataArray,
-          values: xr.DataArray,
-          func: Callable,
-          nodata: Optional[int] = 0):
+def apply(
+    zones: xr.DataArray,
+    values: xr.DataArray,
+    func: Callable,
+    nodata: Optional[int] = 0
+):
     """
     Apply a function to the `values` agg within zones in `zones` agg.
     Change the agg content.
@@ -656,16 +767,16 @@ def apply(zones: xr.DataArray,
         raise ValueError("values must be either 2D or 3D coordinates")
 
     if zones.shape != values.shape[:2]:
-        raise ValueError(
-            "Incompatible shapes between `zones` and `values`")
+        raise ValueError("Incompatible shapes between `zones` and `values`")
 
     if not issubclass(zones.values.dtype.type, np.integer):
         raise ValueError("`zones.values` must be an array of integers")
 
-    if not (issubclass(values.values.dtype.type, np.integer) or
-            issubclass(values.values.dtype.type, np.floating)):
-        raise ValueError(
-            "`values` must be an array of integers or float")
+    if not (
+        issubclass(values.values.dtype.type, np.integer)
+        or issubclass(values.values.dtype.type, np.floating)
+    ):
+        raise ValueError("`values` must be an array of integers or float")
 
     # entries of nodata remain the same
     remain_entries = zones.data == nodata
@@ -676,9 +787,16 @@ def apply(zones: xr.DataArray,
     if len(values.shape) == 3:
         z = values.shape[-1]
         # add new z-dimension in case 3D `values` aggregate
-        remain_entries = np.repeat(remain_entries[:, :, np.newaxis], z,
-                                   axis=-1)
-        zones_entries = np.repeat(zones_entries[:, :, np.newaxis], z, axis=-1)
+        remain_entries = np.repeat(
+            remain_entries[:, :, np.newaxis],
+            z,
+            axis=-1
+        )
+        zones_entries = np.repeat(
+            zones_entries[:, :, np.newaxis],
+            z,
+            axis=-1
+        )
 
     remain_mask = np.ma.masked_array(values.data, mask=remain_entries)
     zones_mask = np.ma.masked_array(values.data, mask=zones_entries)
@@ -686,8 +804,12 @@ def apply(zones: xr.DataArray,
     # apply func to corresponding `values` of `zones`
     vfunc = np.vectorize(func)
     values_func = vfunc(zones_mask)
-    values.values = remain_mask.data * remain_mask.mask \
-        + values_func.data * values_func.mask
+    values.values = (
+        remain_mask.data
+        * remain_mask.mask
+        + values_func.data
+        * values_func.mask
+    )
 
 
 def get_full_extent(crs):
@@ -720,19 +842,21 @@ def get_full_extent(crs):
 
     def _crs_code_mapping():
         CRS_CODES = {}
-        CRS_CODES['Mercator'] = Mercator
-        CRS_CODES['Geographic'] = Geographic
+        CRS_CODES["Mercator"] = Mercator
+        CRS_CODES["Geographic"] = Geographic
         return CRS_CODES
 
     CRS_CODES = _crs_code_mapping()
     return CRS_CODES[crs]
 
 
-def suggest_zonal_canvas(smallest_area: Union[int, float],
-                         x_range: Union[tuple, list],
-                         y_range: Union[tuple, list],
-                         crs: str = 'Mercator',
-                         min_pixels: int = 25) -> tuple:
+def suggest_zonal_canvas(
+    smallest_area: Union[int, float],
+    x_range: Union[tuple, list],
+    y_range: Union[tuple, list],
+    crs: str = "Mercator",
+    min_pixels: int = 25,
+) -> tuple:
     """
     Given a coordinate reference system (crs), a set of polygons with
     corresponding x range and y range, calculate the height and width
@@ -842,34 +966,34 @@ def _area_connectivity(data, n=4):
                 continue
 
             if n == 8:
-                src_window[0] = data[max(y-1, 0), max(x-1, 0)]
-                src_window[1] = data[y, max(x-1, 0)]
-                src_window[2] = data[min(y+1, rows-1), max(x-1, 0)]
-                src_window[3] = data[max(y-1, 0), x]
-                src_window[4] = data[min(y+1, rows-1), x]
-                src_window[5] = data[max(y-1, 0), min(x+1, cols-1)]
-                src_window[6] = data[y, min(x+1, cols-1)]
-                src_window[7] = data[min(y+1, rows-1), min(x+1, cols-1)]
+                src_window[0] = data[max(y - 1, 0), max(x - 1, 0)]
+                src_window[1] = data[y, max(x - 1, 0)]
+                src_window[2] = data[min(y + 1, rows - 1), max(x - 1, 0)]
+                src_window[3] = data[max(y - 1, 0), x]
+                src_window[4] = data[min(y + 1, rows - 1), x]
+                src_window[5] = data[max(y - 1, 0), min(x + 1, cols - 1)]
+                src_window[6] = data[y, min(x + 1, cols - 1)]
+                src_window[7] = data[min(y + 1, rows - 1), min(x + 1, cols - 1)] # noqa
 
-                area_window[0] = out[max(y-1, 0), max(x-1, 0)]
-                area_window[1] = out[y, max(x-1, 0)]
-                area_window[2] = out[min(y+1, rows-1), max(x-1, 0)]
-                area_window[3] = out[max(y-1, 0), x]
-                area_window[4] = out[min(y+1, rows-1), x]
-                area_window[5] = out[max(y-1, 0), min(x+1, cols-1)]
-                area_window[6] = out[y, min(x+1, cols-1)]
-                area_window[7] = out[min(y+1, rows-1), min(x+1, cols-1)]
+                area_window[0] = out[max(y - 1, 0), max(x - 1, 0)]
+                area_window[1] = out[y, max(x - 1, 0)]
+                area_window[2] = out[min(y + 1, rows - 1), max(x - 1, 0)]
+                area_window[3] = out[max(y - 1, 0), x]
+                area_window[4] = out[min(y + 1, rows - 1), x]
+                area_window[5] = out[max(y - 1, 0), min(x + 1, cols - 1)]
+                area_window[6] = out[y, min(x + 1, cols - 1)]
+                area_window[7] = out[min(y + 1, rows - 1), min(x + 1, cols - 1)] # noqa
 
             else:
-                src_window[0] = data[y, max(x-1, 0)]
-                src_window[1] = data[max(y-1, 0), x]
-                src_window[2] = data[min(y+1, rows-1), x]
-                src_window[3] = data[y, min(x+1, cols-1)]
+                src_window[0] = data[y, max(x - 1, 0)]
+                src_window[1] = data[max(y - 1, 0), x]
+                src_window[2] = data[min(y + 1, rows - 1), x]
+                src_window[3] = data[y, min(x + 1, cols - 1)]
 
-                area_window[0] = out[y, max(x-1, 0)]
-                area_window[1] = out[max(y-1, 0), x]
-                area_window[2] = out[min(y+1, rows-1), x]
-                area_window[3] = out[y, min(x+1, cols-1)]
+                area_window[0] = out[y, max(x - 1, 0)]
+                area_window[1] = out[max(y - 1, 0), x]
+                area_window[2] = out[min(y + 1, rows - 1), x]
+                area_window[3] = out[y, min(x + 1, cols - 1)]
 
             # check in has matching value in neighborhood
             rtol = 1e-05
@@ -881,7 +1005,7 @@ def _area_connectivity(data, n=4):
 
                 # check in has area already assigned
                 assigned_value = None
-                for j in range(len(neighbor_matches)): # NOQA
+                for j in range(len(neighbor_matches)):
                     area_val = area_window[neighbor_matches[j]]
                     if area_val > 0:
                         assigned_value = area_val
@@ -900,34 +1024,34 @@ def _area_connectivity(data, n=4):
         for x in range(0, cols):
 
             if n == 8:
-                src_window[0] = data[max(y-1, 0), max(x-1, 0)]
-                src_window[1] = data[y, max(x-1, 0)]
-                src_window[2] = data[min(y+1, rows-1), max(x-1, 0)]
-                src_window[3] = data[max(y-1, 0), x]
-                src_window[4] = data[min(y+1, rows-1), x]
-                src_window[5] = data[max(y-1, 0), min(x+1, cols-1)]
-                src_window[6] = data[y, min(x+1, cols-1)]
-                src_window[7] = data[min(y+1, rows-1), min(x+1, cols-1)]
+                src_window[0] = data[max(y - 1, 0), max(x - 1, 0)]
+                src_window[1] = data[y, max(x - 1, 0)]
+                src_window[2] = data[min(y + 1, rows - 1), max(x - 1, 0)]
+                src_window[3] = data[max(y - 1, 0), x]
+                src_window[4] = data[min(y + 1, rows - 1), x]
+                src_window[5] = data[max(y - 1, 0), min(x + 1, cols - 1)]
+                src_window[6] = data[y, min(x + 1, cols - 1)]
+                src_window[7] = data[min(y + 1, rows - 1), min(x + 1, cols - 1)] # noqa
 
-                area_window[0] = out[max(y-1, 0), max(x-1, 0)]
-                area_window[1] = out[y, max(x-1, 0)]
-                area_window[2] = out[min(y+1, rows-1), max(x-1, 0)]
-                area_window[3] = out[max(y-1, 0), x]
-                area_window[4] = out[min(y+1, rows-1), x]
-                area_window[5] = out[max(y-1, 0), min(x+1, cols-1)]
-                area_window[6] = out[y, min(x+1, cols-1)]
-                area_window[7] = out[min(y+1, rows-1), min(x+1, cols-1)]
+                area_window[0] = out[max(y - 1, 0), max(x - 1, 0)]
+                area_window[1] = out[y, max(x - 1, 0)]
+                area_window[2] = out[min(y + 1, rows - 1), max(x - 1, 0)]
+                area_window[3] = out[max(y - 1, 0), x]
+                area_window[4] = out[min(y + 1, rows - 1), x]
+                area_window[5] = out[max(y - 1, 0), min(x + 1, cols - 1)]
+                area_window[6] = out[y, min(x + 1, cols - 1)]
+                area_window[7] = out[min(y + 1, rows - 1), min(x + 1, cols - 1)] # noqa
 
             else:
-                src_window[0] = data[y, max(x-1, 0)]
-                src_window[1] = data[max(y-1, 0), x]
-                src_window[2] = data[min(y+1, rows-1), x]
-                src_window[3] = data[y, min(x+1, cols-1)]
+                src_window[0] = data[y, max(x - 1, 0)]
+                src_window[1] = data[max(y - 1, 0), x]
+                src_window[2] = data[min(y + 1, rows - 1), x]
+                src_window[3] = data[y, min(x + 1, cols - 1)]
 
-                area_window[0] = out[y, max(x-1, 0)]
-                area_window[1] = out[max(y-1, 0), x]
-                area_window[2] = out[min(y+1, rows-1), x]
-                area_window[3] = out[y, min(x+1, cols-1)]
+                area_window[0] = out[y, max(x - 1, 0)]
+                area_window[1] = out[max(y - 1, 0), x]
+                area_window[2] = out[min(y + 1, rows - 1), x]
+                area_window[3] = out[y, min(x + 1, cols - 1)]
 
             val = data[y, x]
 
@@ -969,9 +1093,9 @@ def _area_connectivity(data, n=4):
     return out
 
 
-def regions(raster: xr.DataArray,
-            neighborhood: int = 4,
-            name: str = 'regions') -> xr.DataArray:
+def regions(
+    raster: xr.DataArray, neighborhood: int = 4, name: str = "regions"
+) -> xr.DataArray:
     """
     Create unique regions of raster based on pixel value connectivity.
     Connectivity can be based on either 4 or 8-pixel neighborhoods.
@@ -1023,7 +1147,7 @@ def regions(raster: xr.DataArray,
                 'Max Elevation': '4000',
             }
         )
-        
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
@@ -1078,13 +1202,17 @@ def regions(raster: xr.DataArray,
             Max Elevation:  4000
     """
     if neighborhood not in (4, 8):
-        raise ValueError('`neighborhood` value must be either 4 or 8)')
+        raise ValueError("`neighborhood` value must be either 4 or 8)")
 
     out = _area_connectivity(raster.data, n=neighborhood)
 
-    return DataArray(out, name=name,
-                     dims=raster.dims,
-                     coords=raster.coords, attrs=raster.attrs)
+    return DataArray(
+        out,
+        name=name,
+        dims=raster.dims,
+        coords=raster.coords,
+        attrs=raster.attrs
+    )
 
 
 def _bool_crop(arr, rows_flags, cols_flags):
@@ -1092,7 +1220,7 @@ def _bool_crop(arr, rows_flags, cols_flags):
     bottom = np.argwhere(rows_flags).flatten()[-1]
     left = np.argwhere(cols_flags).flatten()[0]
     right = np.argwhere(cols_flags).flatten()[-1]
-    return arr[top:bottom+1, left:right+1]
+    return arr[top: bottom + 1, left: right + 1]
 
 
 @ngjit
@@ -1124,7 +1252,7 @@ def _trim(data, excludes):
     # find empty bottom rows
     bottom = 0
     scan_complete = False
-    for y in range(rows-1, -1, -1):
+    for y in range(rows - 1, -1, -1):
         if scan_complete:
             break
         bottom = y
@@ -1160,7 +1288,7 @@ def _trim(data, excludes):
     # find empty right cols
     right = 0
     scan_complete = False
-    for x in range(cols-1, -1, -1):
+    for x in range(cols - 1, -1, -1):
         if scan_complete:
             break
         right = x
@@ -1178,9 +1306,11 @@ def _trim(data, excludes):
     return top, bottom, left, right
 
 
-def trim(raster: xr.DataArray,
-         values: Union[list, tuple] = (np.nan,),
-         name: str = 'trim') -> xr.DataArray:
+def trim(
+    raster: xr.DataArray,
+    values: Union[list, tuple] = (np.nan,),
+    name: str = "trim"
+) -> xr.DataArray:
     """
     Trim scans from the edges and eliminates rows / cols which only
     contain the values supplied.
@@ -1280,7 +1410,7 @@ def trim(raster: xr.DataArray,
         }
     """
     top, bottom, left, right = _trim(raster.data, values)
-    arr = raster[top:bottom+1, left:right+1]
+    arr = raster[top: bottom + 1, left: right + 1]
     arr.name = name
     return arr
 
@@ -1320,7 +1450,7 @@ def _crop(data, values):
     # find empty bottom rows
     bottom = 0
     scan_complete = False
-    for y in range(rows-1, -1, -1):
+    for y in range(rows - 1, -1, -1):
 
         if scan_complete:
             break
@@ -1364,7 +1494,7 @@ def _crop(data, values):
     # find empty right cols
     right = 0
     scan_complete = False
-    for x in range(cols-1, -1, -1):
+    for x in range(cols - 1, -1, -1):
         if scan_complete:
             break
         right = x
@@ -1383,10 +1513,12 @@ def _crop(data, values):
     return top, bottom, left, right
 
 
-def crop(zones: xr.DataArray,
-         values: xr.DataArray,
-         zones_ids: Union[list, tuple],
-         name: str = 'crop'):
+def crop(
+    zones: xr.DataArray,
+    values: xr.DataArray,
+    zones_ids: Union[list, tuple],
+    name: str = "crop",
+):
     """
     Crop scans from edges and eliminates rows / cols until one of the
     input values is found.
@@ -1495,6 +1627,6 @@ def crop(zones: xr.DataArray,
         }
     """
     top, bottom, left, right = _crop(zones.data, zones_ids)
-    arr = values[top:bottom+1, left:right+1]
+    arr = values[top: bottom + 1, left: right + 1]
     arr.name = name
     return arr

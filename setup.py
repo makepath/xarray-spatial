@@ -18,7 +18,7 @@ install_requires = [
     'dask',
     'datashader',
     'numba',
-    'numpy',
+    'numpy>=1.7,<=1.20',
     'pandas',
     'pillow',
     'requests',
