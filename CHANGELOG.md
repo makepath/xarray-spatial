@@ -1,6 +1,9 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.2.9 - 9/01/2021
+- Refactored proximity module to avoid rechunking (#549)
+
 ### Version 0.2.8 - 8/27/2021
 - Added dask support to proximity tools (#540)
 - Refactored the resample utils function and changed their name to canvas_like (#539)
