@@ -2,6 +2,7 @@ import xarray as xr
 import numpy as np
 
 from xrspatial.utils import ngjit
+from xrspatial.utils import get_pixel_id
 
 from typing import Union, Optional
 
@@ -21,6 +22,16 @@ def _is_not_crossable(cell_value, barriers):
         if cell_value == i:
             return True
     return False
+
+
+@ngjit
+def _is_inside(py, px, h, w):
+    inside = True
+    if px < 0 or px >= w:
+        inside = False
+    if py < 0 or py >= h:
+        inside = False
+    return inside
 
 
 @ngjit
@@ -50,15 +61,6 @@ def _min_cost_pixel_id(cost, is_open):
                 min_cost = cost[i, j]
                 py = i
                 px = j
-    return py, px
-
-
-@ngjit
-def _find_pixel_id(x, y, xs, ys):
-    cellsize_y = ys[1] - ys[0]
-    cellsize_x = xs[1] - xs[0]
-    py = int((y - ys[0]) / cellsize_y)
-    px = int((x - xs[0]) / cellsize_x)
     return py, px
 
 
@@ -210,20 +212,6 @@ def _a_star_search(data, path_img, start_py, start_px, goal_py, goal_px,
     return
 
 
-@ngjit
-def _is_inside(point, xmin, xmax, epsilon_x, ymin, ymax, epsilon_y):
-    # check if a point at (x, y) is within
-    # range from (xmin - epsilon_x, ymin - epsilon_y)
-    #       to   (xmax + epsilon_x, ymax + epsilon_y)
-
-    x, y = point
-    if (x < xmin - epsilon_x) or x > xmax + epsilon_x:
-        return False
-    if (y < ymin - epsilon_y) or y > ymax + epsilon_y:
-        return False
-    return True
-
-
 def a_star_search(surface: xr.DataArray,
                   start: Union[tuple, list, np.array],
                   goal: Union[tuple, list, np.array],
@@ -254,9 +242,9 @@ def a_star_search(surface: xr.DataArray,
     surface : xr.DataArray
         2D array of values to bin.
     start : array-like object of 2 numeric elements
-        (x, y) or (lon, lat) coordinates of the starting point.
+        (y, x) or (lat, lon) coordinates of the starting point.
     goal : array like object of 2 numeric elements
-        (x, y) or (lon, lat) coordinates of the goal location.
+        (y, x) or (lat, lon) coordinates of the goal location.
     barriers : array like object, default=[]
         List of values inside the surface which are barriers
         (cannot cross).
@@ -352,56 +340,44 @@ def a_star_search(surface: xr.DataArray,
         plt.xlabel("longitude")
     """
     if surface.ndim != 2:
-        raise ValueError("surface must be 2D")
+        raise ValueError("input `surface` must be 2D")
 
     if surface.dims != (y, x):
-        raise ValueError("surface.coords should be named as coordinates:"
+        raise ValueError("`surface.coords` should be named as coordinates:"
                          "({}, {})".format(y, x))
 
     if connectivity != 4 and connectivity != 8:
         raise ValueError("Use either 4 or 8-connectivity.")
 
-    y_coords = surface.coords[y].data
-    x_coords = surface.coords[x].data
-    epsilon_x = (x_coords[1] - x_coords[0]) / 2
-    epsilon_y = (y_coords[1] - y_coords[0]) / 2
+    # convert starting and ending point from geo coords to pixel coords
+    start_py, start_px = get_pixel_id(start, surface, x, y)
+    goal_py, goal_px = get_pixel_id(goal, surface, x, y)
 
+    h, w = surface.shape
     # validate start and goal locations are in the graph
-    if not _is_inside(start, x_coords[0], x_coords[-1], epsilon_x,
-                      y_coords[0], y_coords[-1], epsilon_y):
+    if not _is_inside(start_py, start_px, h, w):
         raise ValueError("start location outside the surface graph.")
 
-    if not _is_inside(goal, x_coords[0], x_coords[-1], epsilon_x,
-                      y_coords[0], y_coords[-1], epsilon_y):
+    if not _is_inside(goal_py, goal_px, h, w):
         raise ValueError("goal location outside the surface graph.")
 
     barriers = np.array(barriers)
 
-    # convert starting and ending point from geo coords to pixel coords
-    start_py, start_px = _find_pixel_id(start[0], start[1], x_coords, y_coords)
     if snap_start:
         # find nearest valid pixel to the start location
-        start_py, start_px = _find_nearest_pixel(start_py, start_px,
-                                                 surface.data, barriers)
+        start_py, start_px = _find_nearest_pixel(
+            start_py, start_px, surface.data, barriers
+        )
     if _is_not_crossable(surface.data[start_py, start_px], barriers):
-        with warnings.catch_warnings():
-            warnings.simplefilter("default")
-            warnings.warn('Start at a non crossable pixel', Warning)
+        warnings.warn("Start at a non crossable location", Warning)
 
-    goal_py, goal_px = _find_pixel_id(goal[0], goal[1], x_coords, y_coords)
     if snap_goal:
         # find nearest valid pixel to the goal location
-        goal_py, goal_px = _find_nearest_pixel(goal_py, goal_px,
-                                               surface.data, barriers)
+        goal_py, goal_px = _find_nearest_pixel(
+            goal_py, goal_px, surface.data, barriers
+        )
     if _is_not_crossable(surface.data[goal_py, goal_px], barriers):
-        with warnings.catch_warnings():
-            warnings.simplefilter("default")
-            warnings.warn('End at a non crossable pixel', Warning)
-
-    if start_py == NONE or goal_py == NONE:
-        with warnings.catch_warnings():
-            warnings.simplefilter("default")
-            warnings.warn('No valid pixels in input surface', Warning)
+        warnings.warn("End at a non crossable location", Warning)
 
     # 2d output image that stores the path
     path_img = np.zeros_like(surface, dtype=np.float64)
