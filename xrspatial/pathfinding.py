@@ -384,7 +384,7 @@ def a_star_search(surface: xr.DataArray,
     # first, initialize all cells as np.nans
     path_img[:, :] = np.nan
 
-    if start_py != NONE or goal_py != NONE:
+    if start_py != NONE:
         neighbor_ys, neighbor_xs = _neighborhood_structure(connectivity)
         _a_star_search(surface.data, path_img, start_py, start_px,
                        goal_py, goal_px, barriers, neighbor_ys, neighbor_xs)

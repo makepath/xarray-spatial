@@ -45,7 +45,7 @@ def test_a_star_search():
     barriers = [1]
     # set pixels with value 1 as barriers,
     # cannot go from (0, 0) to anywhere since it is surrounded by 1s
-    start = (0, 0)
+    start = (4, 0)
     for x1 in _lon:
         for y1 in _lat:
             goal = (y1, x1)
@@ -62,7 +62,6 @@ def test_a_star_search():
                     assert (path_agg[c] == agg.coords[c]).all()
                 # no path, all cells in path_agg are nans
                 assert np.isnan(path_agg).all()
-
     # test with nans
     agg = xr.DataArray(np.array([[0, 1, 0, 0],
                                  [1, 1, np.nan, 0],
