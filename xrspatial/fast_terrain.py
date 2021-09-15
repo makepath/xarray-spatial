@@ -29,8 +29,8 @@ from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
 from xrspatial.utils import is_dask_cupy
 
-from perlinopt import _perlin
-from perlinopt import _perlin_gpu
+from .fast_perlin import _perlin
+from .fast_perlin import _perlin_gpu
 
 
 def _scale(value, old_range, new_range):
