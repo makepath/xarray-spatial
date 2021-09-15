@@ -12,6 +12,7 @@ from xrspatial.multispectral import evi  # noqa
 from xrspatial.multispectral import sipi  # noqa
 
 from xrspatial.perlin import perlin  # noqa
+from xrspatial.fast_perlin import fast_perlin  # noqa
 
 from xrspatial.proximity import euclidean_distance  # noqa
 from xrspatial.proximity import great_circle_distance  # noqa
@@ -22,6 +23,7 @@ from xrspatial.proximity import direction  # noqa
 
 from xrspatial.slope import slope  # noqa
 from xrspatial.terrain import generate_terrain  # noqa
+from xrspatial.fast_terrain import generate_fast_terrain  # noqa
 from xrspatial.viewshed import viewshed  # noqa
 
 from xrspatial.zonal import apply as zonal_apply  # noqa
