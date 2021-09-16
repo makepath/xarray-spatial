@@ -1,6 +1,6 @@
 # std lib
 from functools import partial
-from math import sqrt
+import math
 
 # 3rd-party
 try:
@@ -22,7 +22,6 @@ from xrspatial.utils import has_cuda
 from xrspatial.utils import is_cupy_backed
 
 from typing import Optional
-
 
 def _run_numpy(data, azimuth=225, angle_altitude=25):
     azimuth = 360.0 - azimuth
@@ -48,61 +47,58 @@ def _run_dask_numpy(data, azimuth, angle_altitude):
                            meta=np.array(()))
     return out
 
-
-@cuda.jit
-def _gpu_calc(x, y, out):
-    i, j = cuda.grid(2)
-    if i < out.shape[0] and j < out.shape[1]:
-        out[i, j] = sqrt(x[i, j] * x[i, j] + y[i, j] * y[i, j])
-
-
-@cuda.jit
-def _gpu_cos_part(cos_altituderad, cos_slope, cos_aspect, out):
-    i, j = cuda.grid(2)
-    if i < out.shape[0] and j < out.shape[1]:
-        out[i, j] = cos_altituderad * cos_slope[i, j] * cos_aspect[i, j]
-
-
-def _run_cupy(data, azimuth, angle_altitude):
-    x, y = np.gradient(data.get())
-    x = cupy.asarray(x, dtype=x.dtype)
-    y = cupy.asarray(y, dtype=y.dtype)
-
-    altituderad = angle_altitude * np.pi / 180.
-    sin_altituderad = np.sin(altituderad)
-    cos_altituderad = np.cos(altituderad)
-
-    griddim, blockdim = cuda_args(data.shape)
-    arctan_part = cupy.empty(data.shape, dtype='f4')
-    _gpu_calc[griddim, blockdim](x, y, arctan_part)
-
-    slope = np.pi / 2. - np.arctan(arctan_part)
-    sin_slope = np.sin(slope)
-    sin_part = sin_altituderad * sin_slope
-
-    azimuthrad = (360.0 - azimuth) * np.pi / 180.
-    aspect = (azimuthrad - np.pi / 2.) - np.arctan2(-x, y)
-    cos_aspect = np.cos(aspect)
-    cos_slope = np.cos(slope)
-
-    cos_part = cupy.empty(data.shape, dtype='f4')
-    _gpu_cos_part[griddim, blockdim](cos_altituderad, cos_slope,
-                                     cos_aspect, cos_part)
-    shaded = sin_part + cos_part
-    out = (shaded + 1) / 2
-
-    out[0, :] = cupy.nan
-    out[-1, :] = cupy.nan
-    out[:, 0] = cupy.nan
-    out[:, -1] = cupy.nan
-
-    return out
-
-
 def _run_dask_cupy(data, azimuth, angle_altitude):
     msg = 'Upstream bug in dask prevents cupy backed arrays'
     raise NotImplementedError(msg)
 
+@cuda.jit
+def _gpu_calc_numba(data, output, sin_altituderad, cos_altituderad, azimuthrad):
+    i, j = cuda.grid(2)
+    if i>0 and i < data.shape[0]-1 and j>0 and j < data.shape[1]-1:
+        x = (data[i+1, j]-data[i-1, j])/2
+        y = (data[i, j+1]-data[i, j-1])/2
+
+        len = math.sqrt(x*x + y*y)
+        slope = 1.57079632679 - math.atan(len)
+        aspect = (azimuthrad - 1.57079632679) - math.atan2(-x, y)
+
+        sin_slope = math.sin(slope)
+        sin_part = sin_altituderad * sin_slope
+        
+        cos_aspect = math.cos(aspect)
+        cos_slope = math.cos(slope)
+        cos_part = cos_altituderad * cos_slope * cos_aspect
+
+        res = sin_part + cos_part
+        output[i, j] = (res + 1) * 0.5
+
+def calc_dims(shape):
+    threadsperblock = (32,32)
+    blockspergrid = (
+        (shape[0] + (threadsperblock[0] - 1)) // threadsperblock[0],
+        (shape[1] + (threadsperblock[1] - 1)) // threadsperblock[1]
+    )
+    return blockspergrid, threadsperblock
+
+def _run_cupy(d_data, azimuth, angle_altitude):
+    # Precompute constant values shared between all threads
+    altituderad = angle_altitude * np.pi / 180.
+    sin_altituderad = np.sin(altituderad)
+    cos_altituderad = np.cos(altituderad)
+    azimuthrad = (360.0 - azimuth) * np.pi / 180.
+
+    # Allocate output buffer and launch kernel with appropriate dimensions 
+    output = cupy.empty(d_data.shape, np.float32)
+    griddim, blockdim = calc_dims(d_data.shape)
+    _gpu_calc_numba[griddim, blockdim](d_data, output, sin_altituderad, cos_altituderad, azimuthrad)
+
+    # Fill borders with nans.
+    output[ 0, :] = cupy.nan
+    output[-1, :] = cupy.nan
+    output[:,  0] = cupy.nan
+    output[:, -1] = cupy.nan
+
+    return output
 
 def hillshade(agg: xr.DataArray,
               azimuth: int = 225,
@@ -221,7 +217,7 @@ def hillshade(agg: xr.DataArray,
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy(agg.data, azimuth, angle_altitude)
 
-    # cupy case
+    # cupy/numba case
     elif has_cuda() and isinstance(agg.data, cupy.ndarray):
         out = _run_cupy(agg.data, azimuth, angle_altitude)
 
