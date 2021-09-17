@@ -25,7 +25,6 @@ def create_test_arr(backend='numpy'):
     return raster
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_terrain_cpu_case():
     # vanilla numpy version
     data_numpy = create_test_arr()
@@ -42,6 +41,7 @@ def test_terrain_cpu_case():
     ).all()
 
 
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_terrain_cpu_case():
     # vanilla numpy version
     data_numpy = create_test_arr()
