@@ -195,7 +195,9 @@ def generate_terrain(agg: xr.DataArray,
         # Generate Example Terrain
         data = xr.DataArray(np.zeros((H, W), dtype=np.float32),
                             name='terrain')
-        terrain_agg = generate_fast_terrain(data, x_range, y_range, seed, zfactor)
+        terrain_agg = generate_fast_terrain(
+            data, x_range, y_range, seed, zfactor
+        )
 
         # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs(

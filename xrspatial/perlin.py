@@ -1,6 +1,5 @@
 # std lib
 from functools import partial
-from typing import Union
 
 # 3rd-party
 import numpy as np
