@@ -80,11 +80,41 @@ def _terrain_dask_numpy(data: da.Array,
                         y_range_scaled: tuple,
                         zfactor: int) -> da.Array:
     data = data * 0
-    _func = partial(_gen_terrain, seed=seed,
-                    x_range=x_range_scaled, y_range=y_range_scaled)
-    data = da.map_blocks(_func, data, meta=np.array((), dtype=np.float32))
 
-    data = (data - da.min(data))/da.ptp(data)
+    height, width = data.shape
+    linx = da.linspace(
+        x_range_scaled[0], x_range_scaled[1], width, endpoint=False,
+        dtype=np.float32
+    )
+    liny = da.linspace(
+        y_range_scaled[0], y_range_scaled[1], height, endpoint=False,
+        dtype=np.float32
+    )
+    x, y = da.meshgrid(linx, liny)
+
+    nrange = np.arange(2 ** 20, dtype=int)
+
+    # multiplier, (xfreq, yfreq)
+    NOISE_LAYERS = ((1 / 2 ** i, (2 ** i, 2 ** i)) for i in range(16))
+    for i, (m, (xfreq, yfreq)) in enumerate(NOISE_LAYERS):
+        np.random.seed(seed + i)
+        p = np.random.permutation(nrange)
+        p = np.append(p, p)
+
+        _func = partial(_perlin, p)
+        noise = da.map_blocks(
+            _func,
+            x * xfreq,
+            y * yfreq,
+            meta=np.array((), dtype=np.float32)
+        )
+
+        data += noise * m
+
+    data /= (1.00 + 0.50 + 0.25 + 0.13 + 0.06 + 0.03)
+    data = data ** 3
+
+    data = (data - np.min(data)) / np.ptp(data)
     data[data < 0.3] = 0  # create water
     data *= zfactor
 
