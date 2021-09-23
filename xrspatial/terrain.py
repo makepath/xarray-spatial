@@ -129,7 +129,7 @@ def _terrain_gpu(height_map, seed, x_range=(0, 1), y_range=(0, 1)):
     noise = cupy.empty_like(height_map, dtype=np.float32)
     nrange = cupy.arange(2**20, dtype=int)
     
-    griddim, blockdim = cuda_args(data.shape)
+    griddim, blockdim = cuda_args(height_map.shape)
 
     for i, (m, (xfreq, yfreq)) in enumerate(NOISE_LAYERS):
         cupy.random.seed(seed+i)
