@@ -164,10 +164,10 @@ def _perlin_gpu(p, x0, x1, y0, y1, m, out):
 def _perlin_cupy(data: cupy.ndarray,
                  freq: tuple,
                  seed: int) -> cupy.ndarray:
-    # cupy.random.seed(seed)
-    # p = cupy.random.permutation(2**20)
-    np.random.seed(seed)
-    p = cupy.asarray(np.random.permutation(2**20))
+    cupy.random.seed(seed)
+    p = cupy.random.permutation(2**20)
+    # np.random.seed(seed)
+    # p = cupy.asarray(np.random.permutation(2**20))
     p = cupy.append(p, p)
 
     griddim, blockdim = cuda_args(data.shape)
