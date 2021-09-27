@@ -407,6 +407,7 @@ def _process(
     distance_metric,
     process_mode
 ):
+
     raster_dims = raster.dims
     if raster_dims != (y, x):
         raise ValueError(
@@ -427,6 +428,10 @@ def _process(
 
     if max_distance is None:
         max_distance = np.inf
+
+    max_possible_distance = _distance(
+        xs[0][0], xs[-1][-1], ys[0][0], ys[-1][-1], distance_metric
+    )
 
     @ngjit
     def _process_numpy(img, x_coords, y_coords):
@@ -586,14 +591,18 @@ def _process(
             return img_direction
 
     def _process_dask(raster, xs, ys):
-        # calculate padding for width and height
-        if not np.isfinite(max_distance):
+
+        if max_distance >= max_possible_distance:
             # consider all targets in the whole raster
+            # the data array is computed at once, make sure your data fit your memory
             height, width = raster.shape
-            pad_y = height - 1
-            pad_x = width - 1
+            raster.data = raster.data.rechunk({0: height, 1: width})
+            xs = xs.rechunk({0: height, 1: width})
+            ys = ys.rechunk({0: height, 1: width})
+            pad_y = pad_x = 0
         else:
             cellsize_x, cellsize_y = get_dataarray_resolution(raster)
+            # calculate padding for each chunk
             pad_y = int(max_distance / cellsize_y + 0.5)
             pad_x = int(max_distance / cellsize_x + 0.5)
 
