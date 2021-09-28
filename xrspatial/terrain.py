@@ -20,6 +20,7 @@ import dask.array as da
 # local modules
 from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
+from xrspatial.utils import get_dataarray_resolution
 from .perlin import _perlin, _perlin_gpu
 
 
@@ -215,59 +216,34 @@ def generate_terrain(agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
+        import numpy as np
         import xarray as xr
-        import matplotlib.pyplot as plt
-        from xrspatial import generate_fast_terrain, aspect
+        from xrspatial import generate_terrain
 
-        # Create Canvas
-        W = 500
-        H = 300
-        x_range = (-20e6, 20e6)
-        y_range = (-20e6, 20e6)
-        seed = 42
-        zfactor = 4000
+        W = 4
+        H = 3
+        data = np.zeros((H, W), dtype=np.float32)
+        raster = xr.DataArray(data, dims=['y', 'x'])
 
-        # Generate Example Terrain
-        data = xr.DataArray(np.zeros((H, W), dtype=np.float32),
-                            name='terrain')
-        terrain_agg = generate_fast_terrain(
-            data, x_range, y_range, seed, zfactor
-        )
+        xrange = (-20e6, 20e6)
+        yrange = (-20e6, 20e6)
+        seed = 2
+        zfactor = 10
 
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
+        terrain = generate_terrain(raster, xrange, yrange, seed, zfactor)
 
     .. sourcecode:: python
 
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-               [1285.37061171, 1282.48046696],
-               [1306.02305679, 1303.40657515]])
+        >>> print(terrain)
+        <xarray.DataArray 'terrain' (y: 3, x: 4)>
+        array([[ 6.8067746,  5.263137 ,  4.664292 ,  6.821344 ],
+               [ 7.4834156,  6.9849734,  4.3545456,  0.       ],
+               [ 6.7674546, 10.       ,  7.0946655,  7.015267 ]], dtype=float32)  # noqa
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+          * x        (x) float64 -1.5e+07 -5e+06 5e+06 1.5e+07
+          * y        (y) float64 -1.333e+07 0.0 1.333e+07
         Attributes:
-            res:            1
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
+            res:      (10000000.0, -13333333.333333334)
     """
 
     height, width = agg.shape
@@ -312,10 +288,11 @@ def generate_terrain(agg: xr.DataArray,
 
     # DataArray coords were coming back different from cvs.points...
     hack_agg = canvas.points(pd.DataFrame({'x': [], 'y': []}), 'x', 'y')
+    res = get_dataarray_resolution(hack_agg)
     result = xr.DataArray(out,
                           name=name,
                           coords=hack_agg.coords,
                           dims=hack_agg.dims,
-                          attrs={'res': 1})
+                          attrs={'res': res})
 
     return result

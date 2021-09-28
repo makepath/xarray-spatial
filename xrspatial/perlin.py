@@ -213,79 +213,25 @@ def perlin(agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import matplotlib.pyplot as plt
+        import numpy as np
         import xarray as xr
-        from xrspatial import fast_perlin
-        noise = xr.DataArray(np.zeros((H, W), dtype=np.float32),
-                        name='numpy_terrain',
-                        dims=('y', 'x'),
-                        attrs={'res': 1})
+        from xrspatial import perlin
 
-        # Generate Perlin Noise Aggregate
-        perlin_default = fast_perlin(noise)
+        W = 4
+        H = 3
+        data = np.zeros((H, W), dtype=np.float32)
+        raster = xr.DataArray(data, dims=['y', 'x'])
 
-        # With Increased x Frequency
-        perlin_high_x_freq = fast_perlin(noise, freq = (5, 1))
-
-        # With Increased y Frequency
-        perlin_high_y_freq = fast_perlin(noise, freq = (1, 5))
-
-        # With a Different Seed
-        perlin_seed_1 = fast_perlin(noise, seed = 1)
-
-        # Plot Default Perlin
-        perlin_default.plot(cmap = 'inferno', aspect = 2, size = 4)
-        plt.title("Default")
-
-        # Plot High x Frequency
-        perlin_high_x_freq.plot(cmap = 'inferno', aspect = 2, size = 4)
-        plt.title("High x Frequency")
-
-        # Plot High y Frequency
-        perlin_high_y_freq.plot(cmap = 'inferno', aspect = 2, size = 4)
-        plt.title("High y Frequency")
-
-        # Plot Seed = 1
-        perlin_seed_1.plot(cmap = 'inferno', aspect = 2, size = 4)
-        plt.title("Seed = 1")
+        perlin_noise = perlin(raster)
 
     .. sourcecode:: python
 
-        >>> print(perlin_default[200:203, 200: 202])
-        <xarray.DataArray (y: 3, x: 2)>
-        array([[0.56800979, 0.56477393],
-               [0.56651744, 0.56331014],
-               [0.56499184, 0.56181344]])
+        >>> print(perlin_noise)
+        <xarray.DataArray 'perlin' (y: 3, x: 4)>
+        array([[0.39268944, 0.27577767, 0.01621884, 0.05518942],
+               [1.        , 0.8229485 , 0.2935367 , 0.        ],
+               [1.        , 0.8715414 , 0.41902685, 0.02916668]], dtype=float32)  # noqa
         Dimensions without coordinates: y, x
-        Attributes:
-            res:      1
-
-        >>> print(perlin_high_x_freq[200:203, 200: 202])
-        <xarray.DataArray (y: 3, x: 2)>
-        array([[0.5       , 0.48999444],
-               [0.5       , 0.48999434],
-               [0.5       , 0.48999425]])
-        Dimensions without coordinates: y, x
-        Attributes:
-            res:      1
-
-        >>> print(perlin_high_y_freq[200:203, 200: 202])
-        <xarray.DataArray (y: 3, x: 2)>
-        array([[0.31872961, 0.31756859],
-               [0.2999256 , 0.2988189 ],
-               [0.28085118, 0.27979834]])
-        Dimensions without coordinates: y, x
-        Attributes:
-            res:      1
-
-        >>> print(perlin_seed_1[200:203, 200: 202])
-        <xarray.DataArray (y: 3, x: 2)>
-        array([[0.12991498, 0.12984185],
-               [0.13451158, 0.13441514],
-               [0.13916956, 0.1390495 ]])
-        Dimensions without coordinates: y, x
-        Attributes:
-            res:      1
     """
 
     # numpy case
