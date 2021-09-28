@@ -601,7 +601,8 @@ def _process(
 
         if max_distance >= max_possible_distance:
             # consider all targets in the whole raster
-            # the data array is computed at once, make sure your data fit your memory
+            # the data array is computed at once,
+            # make sure your data fit your memory
             height, width = raster.shape
             raster.data = raster.data.rechunk({0: height, 1: width})
             xs = xs.rechunk({0: height, 1: width})
@@ -727,9 +728,11 @@ def proximity(
             [0., 0., 0., 0., 0.],
             [0., 0., 0., 0., 0.]
         ])
+
+        n, m = data.shape
         raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
         raster['y'] = np.arange(n)[::-1]
-        raster['x'] = np.arange(n)
+        raster['x'] = np.arange(m)
 
         proximity_agg = proximity(raster)
 
@@ -868,9 +871,10 @@ def allocation(
             [0., 0., 0., 0., 0.],
             [0., 0., 0., 0., 0.]
         ])
+        n, m = data.shape
         raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
         raster['y'] = np.arange(n)[::-1]
-        raster['x'] = np.arange(n)
+        raster['x'] = np.arange(m)
 
         allocation_agg = allocation(raster)
 
@@ -1012,9 +1016,10 @@ def direction(
             [0., 0., 0., 0., 0.],
             [1., 0., 0., 0., 0.]
         ])
+        n, m = data.shape
         raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
         raster['y'] = np.arange(n)[::-1]
-        raster['x'] = np.arange(n)
+        raster['x'] = np.arange(m)
 
         direction_agg = direction(raster)
 
