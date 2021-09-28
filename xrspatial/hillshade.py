@@ -1,4 +1,5 @@
 # std lib
+from typing import Optional
 from functools import partial
 import math
 
@@ -21,7 +22,6 @@ from xrspatial.utils import cuda_args
 from xrspatial.utils import has_cuda
 from xrspatial.utils import is_cupy_backed
 
-from typing import Optional
 
 def _run_numpy(data, azimuth=225, angle_altitude=25):
     azimuth = 360.0 - azimuth
@@ -47,14 +47,16 @@ def _run_dask_numpy(data, azimuth, angle_altitude):
                            meta=np.array(()))
     return out
 
+
 def _run_dask_cupy(data, azimuth, angle_altitude):
-    msg = 'Upstream bug in dask prevents cupy backed arrays'
+    msg = 'Not implemented.'
     raise NotImplementedError(msg)
+
 
 @cuda.jit
 def _gpu_calc_numba(data, output, sin_altituderad, cos_altituderad, azimuthrad):
     i, j = cuda.grid(2)
-    if i>0 and i < data.shape[0]-1 and j>0 and j < data.shape[1]-1:
+    if i > 0 and i < data.shape[0]-1 and j > 0 and j < data.shape[1] - 1:
         x = (data[i+1, j]-data[i-1, j])/2
         y = (data[i, j+1]-data[i, j-1])/2
 
@@ -72,13 +74,6 @@ def _gpu_calc_numba(data, output, sin_altituderad, cos_altituderad, azimuthrad):
         res = sin_part + cos_part
         output[i, j] = (res + 1) * 0.5
 
-def calc_dims(shape):
-    threadsperblock = (32,32)
-    blockspergrid = (
-        (shape[0] + (threadsperblock[0] - 1)) // threadsperblock[0],
-        (shape[1] + (threadsperblock[1] - 1)) // threadsperblock[1]
-    )
-    return blockspergrid, threadsperblock
 
 def _run_cupy(d_data, azimuth, angle_altitude):
     # Precompute constant values shared between all threads
@@ -89,16 +84,17 @@ def _run_cupy(d_data, azimuth, angle_altitude):
 
     # Allocate output buffer and launch kernel with appropriate dimensions 
     output = cupy.empty(d_data.shape, np.float32)
-    griddim, blockdim = calc_dims(d_data.shape)
+    griddim, blockdim = cuda_args(d_data.shape)
     _gpu_calc_numba[griddim, blockdim](d_data, output, sin_altituderad, cos_altituderad, azimuthrad)
 
     # Fill borders with nans.
-    output[ 0, :] = cupy.nan
+    output[0, :] = cupy.nan
     output[-1, :] = cupy.nan
     output[:,  0] = cupy.nan
     output[:, -1] = cupy.nan
 
     return output
+
 
 def hillshade(agg: xr.DataArray,
               azimuth: int = 225,
@@ -114,7 +110,7 @@ def hillshade(agg: xr.DataArray,
     agg : xarray.DataArray
         2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
         of elevation values.
-    altitude : int, default=25
+    angle_altitude : int, default=25
         Altitude angle of the sun specified in degrees.
     azimuth : int, default=225
         The angle between the north vector and the perpendicular
