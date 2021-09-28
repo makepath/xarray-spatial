@@ -61,7 +61,7 @@ def test_proximity():
     default_prox = proximity(raster_numpy, x='lon', y='lat')
     # output must be an xarray DataArray
     assert isinstance(default_prox, xr.DataArray)
-    assert type(default_prox.data[0][0]) == np.float64
+    assert type(default_prox.data[0][0]) == np.float32
     assert default_prox.shape == raster_numpy.shape
     # in this test case, where no polygon is completely inside another polygon,
     # number of non-zeros (target pixels) in original image
@@ -84,7 +84,7 @@ def test_proximity():
                             target_values=target_values)
     # output must be an xarray DataArray
     assert isinstance(target_prox, xr.DataArray)
-    assert type(target_prox.data[0][0]) == np.float64
+    assert type(target_prox.data[0][0]) == np.float32
     assert target_prox.shape == raster_numpy.shape
     assert (len(np.where(raster_numpy.data == 2)[0]) +
             len(np.where(raster_numpy.data == 3)[0])) == \
@@ -104,7 +104,7 @@ def test_proximity():
                                distance_metric='MANHATTAN')
     # output must be an xarray DataArray
     assert isinstance(manhattan_prox, xr.DataArray)
-    assert type(manhattan_prox.data[0][0]) == np.float64
+    assert type(manhattan_prox.data[0][0]) == np.float32
     assert manhattan_prox.shape == raster_numpy.shape
     # all output values must be in range [0, max_possible_dist]
     max_possible_dist = manhattan_distance(
@@ -128,7 +128,7 @@ def test_proximity():
                                   distance_metric='GREAT_CIRCLE')
     # output must be an xarray DataArray
     assert isinstance(great_circle_prox, xr.DataArray)
-    assert type(great_circle_prox.data[0][0]) == np.float64
+    assert type(great_circle_prox.data[0][0]) == np.float32
     assert great_circle_prox.shape == raster_numpy.shape
     # all output values must be in range [0, max_possible_dist]
     max_possible_dist = great_circle_distance(
@@ -253,7 +253,7 @@ def test_direction():
 
     # output must be an xarray DataArray
     assert isinstance(direction_agg, xr.DataArray)
-    assert type(direction_agg.data[0][0]) == np.float64
+    assert type(direction_agg.data[0][0]) == np.float32
     assert direction_agg.shape == raster_numpy.shape
     assert direction_agg.dims == raster_numpy.dims
     assert direction_agg.attrs == raster_numpy.attrs
