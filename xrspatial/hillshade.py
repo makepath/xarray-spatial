@@ -54,7 +54,14 @@ def _run_dask_cupy(data, azimuth, angle_altitude):
 
 
 @cuda.jit
-def _gpu_calc_numba(data, output, sin_altituderad, cos_altituderad, azimuthrad):
+def _gpu_calc_numba(
+    data,
+    output,
+    sin_altituderad,
+    cos_altituderad,
+    azimuthrad
+):
+
     i, j = cuda.grid(2)
     if i > 0 and i < data.shape[0]-1 and j > 0 and j < data.shape[1] - 1:
         x = (data[i+1, j]-data[i-1, j])/2
@@ -66,7 +73,7 @@ def _gpu_calc_numba(data, output, sin_altituderad, cos_altituderad, azimuthrad):
 
         sin_slope = math.sin(slope)
         sin_part = sin_altituderad * sin_slope
-        
+
         cos_aspect = math.cos(aspect)
         cos_slope = math.cos(slope)
         cos_part = cos_altituderad * cos_slope * cos_aspect
@@ -82,10 +89,12 @@ def _run_cupy(d_data, azimuth, angle_altitude):
     cos_altituderad = np.cos(altituderad)
     azimuthrad = (360.0 - azimuth) * np.pi / 180.
 
-    # Allocate output buffer and launch kernel with appropriate dimensions 
+    # Allocate output buffer and launch kernel with appropriate dimensions
     output = cupy.empty(d_data.shape, np.float32)
     griddim, blockdim = cuda_args(d_data.shape)
-    _gpu_calc_numba[griddim, blockdim](d_data, output, sin_altituderad, cos_altituderad, azimuthrad)
+    _gpu_calc_numba[griddim, blockdim](
+        d_data, output, sin_altituderad, cos_altituderad, azimuthrad
+    )
 
     # Fill borders with nans.
     output[0, :] = cupy.nan
