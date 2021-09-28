@@ -1,4 +1,5 @@
 # std lib
+from typing import Optional
 from functools import partial
 import math
 
@@ -21,7 +22,6 @@ from xrspatial.utils import cuda_args
 from xrspatial.utils import has_cuda
 from xrspatial.utils import is_cupy_backed
 
-from typing import Optional
 
 def _run_numpy(data, azimuth=225, angle_altitude=25):
     azimuth = 360.0 - azimuth
@@ -47,14 +47,23 @@ def _run_dask_numpy(data, azimuth, angle_altitude):
                            meta=np.array(()))
     return out
 
+
 def _run_dask_cupy(data, azimuth, angle_altitude):
-    msg = 'Upstream bug in dask prevents cupy backed arrays'
+    msg = 'Not implemented.'
     raise NotImplementedError(msg)
 
+
 @cuda.jit
-def _gpu_calc_numba(data, output, sin_altituderad, cos_altituderad, azimuthrad):
+def _gpu_calc_numba(
+    data,
+    output,
+    sin_altituderad,
+    cos_altituderad,
+    azimuthrad
+):
+
     i, j = cuda.grid(2)
-    if i>0 and i < data.shape[0]-1 and j>0 and j < data.shape[1]-1:
+    if i > 0 and i < data.shape[0]-1 and j > 0 and j < data.shape[1] - 1:
         x = (data[i+1, j]-data[i-1, j])/2
         y = (data[i, j+1]-data[i, j-1])/2
 
@@ -64,7 +73,7 @@ def _gpu_calc_numba(data, output, sin_altituderad, cos_altituderad, azimuthrad):
 
         sin_slope = math.sin(slope)
         sin_part = sin_altituderad * sin_slope
-        
+
         cos_aspect = math.cos(aspect)
         cos_slope = math.cos(slope)
         cos_part = cos_altituderad * cos_slope * cos_aspect
@@ -72,13 +81,6 @@ def _gpu_calc_numba(data, output, sin_altituderad, cos_altituderad, azimuthrad):
         res = sin_part + cos_part
         output[i, j] = (res + 1) * 0.5
 
-def calc_dims(shape):
-    threadsperblock = (32,32)
-    blockspergrid = (
-        (shape[0] + (threadsperblock[0] - 1)) // threadsperblock[0],
-        (shape[1] + (threadsperblock[1] - 1)) // threadsperblock[1]
-    )
-    return blockspergrid, threadsperblock
 
 def _run_cupy(d_data, azimuth, angle_altitude):
     # Precompute constant values shared between all threads
@@ -87,18 +89,21 @@ def _run_cupy(d_data, azimuth, angle_altitude):
     cos_altituderad = np.cos(altituderad)
     azimuthrad = (360.0 - azimuth) * np.pi / 180.
 
-    # Allocate output buffer and launch kernel with appropriate dimensions 
+    # Allocate output buffer and launch kernel with appropriate dimensions
     output = cupy.empty(d_data.shape, np.float32)
-    griddim, blockdim = calc_dims(d_data.shape)
-    _gpu_calc_numba[griddim, blockdim](d_data, output, sin_altituderad, cos_altituderad, azimuthrad)
+    griddim, blockdim = cuda_args(d_data.shape)
+    _gpu_calc_numba[griddim, blockdim](
+        d_data, output, sin_altituderad, cos_altituderad, azimuthrad
+    )
 
     # Fill borders with nans.
-    output[ 0, :] = cupy.nan
+    output[0, :] = cupy.nan
     output[-1, :] = cupy.nan
     output[:,  0] = cupy.nan
     output[:, -1] = cupy.nan
 
     return output
+
 
 def hillshade(agg: xr.DataArray,
               azimuth: int = 225,
@@ -114,7 +119,7 @@ def hillshade(agg: xr.DataArray,
     agg : xarray.DataArray
         2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
         of elevation values.
-    altitude : int, default=25
+    angle_altitude : int, default=25
         Altitude angle of the sun specified in degrees.
     azimuth : int, default=225
         The angle between the north vector and the perpendicular
@@ -136,83 +141,38 @@ def hillshade(agg: xr.DataArray,
     --------
     .. plot::
        :include-source:
+            import numpy as np
+            import xarray as xr
+            from xrspatial import hillshade
 
-        import datashader as ds
-        import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain, hillshade
+            data = np.array([
+                [0., 0., 0., 0., 0.],
+                [0., 1., 0., 2., 0.],
+                [0., 0., 3., 0., 0.],
+                [0., 0., 0., 0., 0.],
+                [0., 0., 0., 0., 0.]
+            ])
+            n, m = data.shape
+            raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
+            raster['y'] = np.arange(n)[::-1]
+            raster['x'] = np.arange(m)
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
-
-        # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-        
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Hillshade Aggregate Array
-        hillshade_agg = hillshade(agg = terrain_agg, name = 'Illumination')
-
-        # Edit Attributes
-        hillshade_agg = hillshade_agg.assign_attrs({'Description': 'Example Hillshade',
-                                                    'units': ''})
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Terrain
-        hillshade_agg.plot(cmap = 'Greys', aspect = 2, size = 4)
-        plt.title("Hillshade")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
+            hillshade_agg = hillshade(raster)
 
     .. sourcecode:: python
 
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-               [1285.37061171, 1282.48046696],
-               [1306.02305679, 1303.40657515]])
+        >>> print(hillshade_agg)
+        <xarray.DataArray 'hillshade' (y: 5, x: 5)>
+        array([[       nan,        nan,        nan,        nan,        nan],
+               [       nan, 0.71130913, 0.44167341, 0.71130913,        nan],
+               [       nan, 0.95550163, 0.71130913, 0.52478473,        nan],
+               [       nan, 0.71130913, 0.88382559, 0.71130913,        nan],
+               [       nan,        nan,        nan,        nan,        nan]])
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            res:            1
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
-
-        >>> print(hillshade_agg[200:203, 200:202])
-        <xarray.DataArray 'Illumination' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-               [1285.37061171, 1282.48046696],
-               [1306.02305679, 1303.40657515]])
-        Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            res:            1
-            Description:    Example Hillshade
-            units:
-            Max Elevation:  4000
+          * y        (y) int32 4 3 2 1 0
+          * x        (x) int32 0 1 2 3 4
     """
+
     # numpy case
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy(agg.data, azimuth, angle_altitude)
