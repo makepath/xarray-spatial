@@ -2,7 +2,7 @@ import xarray as xr
 import numpy as np
 
 from xrspatial.utils import ngjit
-from xrspatial.utils import get_pixel_id
+from xrspatial.utils import get_dataarray_resolution
 
 from typing import Union, Optional
 
@@ -10,6 +10,41 @@ import warnings
 
 
 NONE = -1
+
+
+def _get_pixel_id(point, raster, xdim=None, ydim=None):
+    # Get location in `raster` pixel space for `point` in y-x coordinate space
+    # 
+    # Parameters
+    # ----------
+    # point: array-like
+    #     (y, x) - coordinates of the point.
+    # raster: xarray.DataArray
+    # xdim: str, default = None
+    #     Name of the x coordinate dimension in input `raster`.
+    #     If not provided, assume xdim is `raster.dims[-1]`
+    # ydim: str, default = None
+    #     Name of the y coordinate dimension in input `raster`
+    #     If not provided, assume ydim is `raster.dims[-2]`
+    # 
+    # 
+    # Return
+    # ----------
+    # (py, px): Tuple
+    #     indexes of row and column where the `point` located.
+
+    if ydim is None:
+        ydim = raster.dims[-2]
+    if xdim is None:
+        xdim = raster.dims[-1]
+    y_coords = raster.coords[ydim].data
+    x_coords = raster.coords[xdim].data
+
+    cellsize_x, cellsize_y = get_dataarray_resolution(raster, xdim, ydim)
+    py = int(abs(point[0] - y_coords[0]) / cellsize_y)
+    px = int(abs(point[1] - x_coords[0]) / cellsize_x)
+
+    return py, px
 
 
 @ngjit
@@ -268,77 +303,53 @@ def a_star_search(surface: xr.DataArray,
 
     References
     ----------
-        - Red Blob Games: https://www.redblobgames.com/pathfinding/a-star/implementation.html # noqa
-        - Nicholas Swift: https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2 # noqa
+        - Red Blob Games: https://www.redblobgames.com/pathfinding/a-star/implementation.html  # noqa
+        - Nicholas Swift: https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2  # noqa
 
     Examples
     --------
     .. plot::
        :include-source:
 
-        import datashader as ds
-        import matplotlib.pyplot as plt
-        from xrspatial import generate_terrain
-        from xrspatial.pathfinding import a_star_search
+        import numpy as np
+        import xarray as xr
+        from xrspatial import a_star_search
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
+        agg = xr.DataArray(np.array([
+            [0, 1, 0, 0],
+             [1, 1, 0, 0],
+             [0, 1, 2, 2],
+             [1, 0, 2, 0],
+             [0, 2, 2, 2]
+        ]), dims=['lat', 'lon'])
 
-        # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
+        height, width = agg.shape
+        _lon = np.linspace(0, width - 1, width)
+        _lat = np.linspace(height - 1, 0, height)
+        agg['lon'] = _lon
+        agg['lat'] = _lat
 
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Choose Start and End Points
-        start = terrain_agg[3][100]
-        start_y = start.coords['lat'].data
-        start_x = start.coords['lon'].data
-
-        end = terrain_agg[298][250]
-        end_y = end.coords['lat'].data
-        end_x = end.coords['lon'].data
-
-        # Avoid Water
+        # set pixels with value 0 as barriers
         barriers = [0]
 
-        # Create Path Aggregate Array
-        path_agg = a_star_search(surface = terrain_agg,
-                                 start = (start_y, start_x),
-                                 goal = (end_y, end_x),
-                                 barriers = barriers,
-                                 x = 'lon',
-                                 y = 'lat')
+        start = (3, 0)
+        goal = (0, 1)
+        path_agg = a_star_search(agg, start, goal, barriers, 'lon', 'lat')
 
-        # Edit Attributes
-        path_agg = path_agg.rename('Distance')
+    ... sourcecode:: python
 
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Path
-        path_agg.plot(aspect = 2, size = 4)
-        plt.title("Path")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
+        >>> print(path_agg)
+        <xarray.DataArray (lat: 5, lon: 4)>
+        array([[       nan,        nan,        nan,        nan],
+               [0.        ,        nan,        nan,        nan],
+               [       nan, 1.41421356,        nan,        nan],
+               [       nan,        nan, 2.82842712,        nan],
+               [       nan, 4.24264069,        nan,        nan]])
+        Coordinates:
+          * lon      (lon) float64 0.0 1.0 2.0 3.0
+          * lat      (lat) float64 4.0 3.0 2.0 1.0 0.0
     """
+
     if surface.ndim != 2:
         raise ValueError("input `surface` must be 2D")
 
@@ -350,8 +361,8 @@ def a_star_search(surface: xr.DataArray,
         raise ValueError("Use either 4 or 8-connectivity.")
 
     # convert starting and ending point from geo coords to pixel coords
-    start_py, start_px = get_pixel_id(start, surface, x, y)
-    goal_py, goal_px = get_pixel_id(goal, surface, x, y)
+    start_py, start_px = _get_pixel_id(start, surface, x, y)
+    goal_py, goal_px = _get_pixel_id(goal, surface, x, y)
 
     h, w = surface.shape
     # validate start and goal locations are in the graph

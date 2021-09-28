@@ -240,43 +240,6 @@ def get_dataarray_resolution(
     return cellsize_x, cellsize_y
 
 
-def get_pixel_id(point, raster, xdim=None, ydim=None):
-    """
-    Get location in `raster` pixel space for `point` in (y, x) coordinate space
-
-    Parameters
-    ----------
-    point: array-like
-        (y, x) - coordinates of the point.
-    raster: xarray.DataArray
-    xdim: str, default = None
-        Name of the x coordinate dimension in input `raster`.
-        If not provided, assume xdim is `raster.dims[-1]`
-    ydim: str, default = None
-        Name of the y coordinate dimension in input `raster`
-        If not provided, assume ydim is `raster.dims[-2]`
-
-
-    Return
-    ----------
-    (py, px): Tuple
-        indexes of row and column where the `point` located.
-    """
-
-    if ydim is None:
-        ydim = raster.dims[-2]
-    if xdim is None:
-        xdim = raster.dims[-1]
-    y_coords = raster.coords[ydim].data
-    x_coords = raster.coords[xdim].data
-
-    cellsize_x, cellsize_y = get_dataarray_resolution(raster, xdim, ydim)
-    py = int(abs(point[0] - y_coords[0]) / cellsize_y)
-    px = int(abs(point[1] - x_coords[0]) / cellsize_x)
-
-    return py, px
-
-
 def lnglat_to_meters(longitude, latitude):
     """
     Projects the given (longitude, latitude) values into Web Mercator
