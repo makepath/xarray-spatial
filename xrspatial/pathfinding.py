@@ -13,25 +13,10 @@ NONE = -1
 
 
 def _get_pixel_id(point, raster, xdim=None, ydim=None):
-    # Get location in `raster` pixel space for `point` in y-x coordinate space
-    # 
-    # Parameters
-    # ----------
-    # point: array-like
-    #     (y, x) - coordinates of the point.
-    # raster: xarray.DataArray
-    # xdim: str, default = None
-    #     Name of the x coordinate dimension in input `raster`.
-    #     If not provided, assume xdim is `raster.dims[-1]`
-    # ydim: str, default = None
-    #     Name of the y coordinate dimension in input `raster`
-    #     If not provided, assume ydim is `raster.dims[-2]`
-    # 
-    # 
-    # Return
-    # ----------
-    # (py, px): Tuple
-    #     indexes of row and column where the `point` located.
+    # get location in `raster` pixel space for `point` in y-x coordinate space
+    # point: (y, x) - coordinates of the point
+    # xdim: name of the x coordinate dimension in input `raster`.
+    # ydim: name of the x coordinate dimension in input `raster`
 
     if ydim is None:
         ydim = raster.dims[-2]
@@ -44,6 +29,7 @@ def _get_pixel_id(point, raster, xdim=None, ydim=None):
     py = int(abs(point[0] - y_coords[0]) / cellsize_y)
     px = int(abs(point[1] - x_coords[0]) / cellsize_x)
 
+    # return index of row and column where the `point` located.
     return py, px
 
 
