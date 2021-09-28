@@ -19,6 +19,7 @@ import dask.array as da
 
 # local modules
 from xrspatial.utils import has_cuda
+from xrspatial.utils import cuda_args
 from .perlin import _perlin, _perlin_gpu
 
 
@@ -127,9 +128,9 @@ def _terrain_gpu(height_map, seed, x_range=(0, 1), y_range=(0, 1)):
 
     noise = cupy.empty_like(height_map, dtype=np.float32)
     nrange = cupy.arange(2**20, dtype=int)
+    
+    griddim, blockdim = cuda_args(height_map.shape)
 
-    blockdim = (24, 24)
-    griddim = (10, 80)
     for i, (m, (xfreq, yfreq)) in enumerate(NOISE_LAYERS):
         cupy.random.seed(seed+i)
         p = cupy.random.permutation(nrange)

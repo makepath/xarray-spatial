@@ -17,6 +17,7 @@ import numba as nb
 
 # local modules
 from xrspatial.utils import has_cuda
+from xrspatial.utils import cuda_args
 
 
 @jit(nopython=True, nogil=True, parallel=True, cache=True)
@@ -72,8 +73,7 @@ def _perlin_numpy(data: np.ndarray,
                   freq: tuple,
                   seed: int) -> np.ndarray:
     np.random.seed(seed)
-    p = np.arange(2 ** 20, dtype=int)
-    np.random.shuffle(p)
+    p = np.random.permutation(2**20)
     p = np.append(p, p)
 
     height, width = data.shape
@@ -90,8 +90,7 @@ def _perlin_dask_numpy(data: da.Array,
                        freq: tuple,
                        seed: int) -> da.Array:
     np.random.seed(seed)
-    p = np.arange(2 ** 20, dtype=int)
-    np.random.shuffle(p)
+    p = np.random.permutation(2**20)
     p = np.append(p, p)
 
     height, width = data.shape
@@ -130,59 +129,51 @@ def _perlin_gpu(p, x0, x1, y0, y1, m, out):
     vec[0][1] = vec[2][0] = 1
     vec[1][1] = vec[3][0] = -1
 
-    # these are the i,j coordinates of the block's first thread
-    si = cuda.blockDim.y * cuda.blockIdx.y
-    sj = cuda.blockDim.x * cuda.blockIdx.x
+    i, j = nb.cuda.grid(2)
+    if i < out.shape[0] and j < out.shape[1]:
+        # coordinates of the top-left
+        y = y0 + i * (y1 - y0) / out.shape[0]
+        x = x0 + j * (x1 - x0) / out.shape[1]
 
-    # while the block's elementes are still in the data's range
-    for si in range(cuda.blockDim.y * cuda.blockIdx.y, out.shape[0],
-                    cuda.gridDim.y * cuda.blockDim.y):
-        for sj in range(cuda.blockDim.x * cuda.blockIdx.x, out.shape[1],
-                        cuda.gridDim.x * cuda.blockDim.x):
-            # this the thread's element index
-            # this loop limits memory divergence
-            i = si + cuda.threadIdx.y
-            j = sj + cuda.threadIdx.x
-            if i < out.shape[0] and j < out.shape[1]:
-                # coordinates of the top-left
-                y = y0 + i * (y1 - y0) / out.shape[0]
-                x = x0 + j * (x1 - x0) / out.shape[1]
+        # coordinates of the top-left
+        x_int = int(x)
+        y_int = int(y)
 
-                # coordinates of the top-left
-                x_int = int(x)
-                y_int = int(y)
+        # internal coordinates
+        xf = x - x_int
+        yf = y - y_int
 
-                # internal coordinates
-                xf = x - x_int
-                yf = y - y_int
+        # fade factors
+        u = _fade_gpu(xf)
+        v = _fade_gpu(yf)
 
-                # fade factors
-                u = _fade_gpu(xf)
-                v = _fade_gpu(yf)
-
-                # noise components
-                n00 = _gradient_gpu(vec, p[p[x_int] + y_int], xf, yf)
-                n01 = _gradient_gpu(vec, p[p[x_int] + y_int + 1], xf, yf - 1)
-                n11 = _gradient_gpu(vec, p[p[x_int + 1] + y_int + 1], xf - 1,
+        # noise components
+        n00 = _gradient_gpu(vec, p[p[x_int] + y_int], xf, yf)
+        n01 = _gradient_gpu(vec, p[p[x_int] + y_int + 1], xf, yf - 1)
+        n11 = _gradient_gpu(vec, p[p[x_int + 1] + y_int + 1], xf - 1,
                                     yf - 1)
-                n10 = _gradient_gpu(vec, p[p[x_int + 1] + y_int], xf - 1, yf)
+        n10 = _gradient_gpu(vec, p[p[x_int + 1] + y_int], xf - 1, yf)
 
-                # combine noises
-                x1 = _lerp_gpu(n00, n10, u)
-                x2 = _lerp_gpu(n01, n11, u)
-                out[i, j] = m * _lerp_gpu(x1, x2, v)
+        # combine noises
+        x1 = _lerp_gpu(n00, n10, u)
+        x2 = _lerp_gpu(n01, n11, u)
+        out[i, j] = m * _lerp_gpu(x1, x2, v)
+    
 
 
 def _perlin_cupy(data: cupy.ndarray,
                  freq: tuple,
                  seed: int) -> cupy.ndarray:
-    p = cupy.arange(2 ** 20, dtype=int)
     cupy.random.seed(seed)
-    cupy.random.shuffle(p)
+    p = cupy.random.permutation(2**20)
+    # np.random.seed(seed)
+    # p = cupy.asarray(np.random.permutation(2**20))
     p = cupy.append(p, p)
 
-    blockdim = (24, 24)
-    griddim = tuple(int(d / blockdim[0] + 0.5) for d in data.shape)
+    griddim, blockdim = cuda_args(data.shape)
+
+    # blockdim = (24, 24)
+    # griddim = tuple(int(d / blockdim[0] + 0.5) for d in data.shape)
     _perlin_gpu[griddim, blockdim](p, 0, freq[0], 0, freq[1], 1, data)
 
     minimum = cupy.amin(data)
