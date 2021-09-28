@@ -150,30 +150,29 @@ def _perlin_gpu(p, x0, x1, y0, y1, m, out):
         # noise components
         n00 = _gradient_gpu(vec, p[p[x_int] + y_int], xf, yf)
         n01 = _gradient_gpu(vec, p[p[x_int] + y_int + 1], xf, yf - 1)
-        n11 = _gradient_gpu(vec, p[p[x_int + 1] + y_int + 1], xf - 1,
-                                    yf - 1)
+        n11 = _gradient_gpu(vec, p[p[x_int + 1] + y_int + 1], xf - 1, yf - 1)
         n10 = _gradient_gpu(vec, p[p[x_int + 1] + y_int], xf - 1, yf)
 
         # combine noises
         x1 = _lerp_gpu(n00, n10, u)
         x2 = _lerp_gpu(n01, n11, u)
         out[i, j] = m * _lerp_gpu(x1, x2, v)
-    
 
 
 def _perlin_cupy(data: cupy.ndarray,
                  freq: tuple,
                  seed: int) -> cupy.ndarray:
-    cupy.random.seed(seed)
-    p = cupy.random.permutation(2**20)
-    # np.random.seed(seed)
-    # p = cupy.asarray(np.random.permutation(2**20))
+
+    # cupy.random.seed(seed)
+    # p = cupy.random.permutation(2**20)
+
+    # use numpy.random then transfer data to GPU to ensure the same result
+    # when running numpy backed and cupy backed data array.
+    np.random.seed(seed)
+    p = cupy.asarray(np.random.permutation(2**20))
     p = cupy.append(p, p)
 
     griddim, blockdim = cuda_args(data.shape)
-
-    # blockdim = (24, 24)
-    # griddim = tuple(int(d / blockdim[0] + 0.5) for d in data.shape)
     _perlin_gpu[griddim, blockdim](p, 0, freq[0], 0, freq[1], 1, data)
 
     minimum = cupy.amin(data)

@@ -10,8 +10,8 @@ from xrspatial import perlin
 
 
 def create_test_arr(backend='numpy'):
-    W = 20
-    H = 30
+    W = 50
+    H = 50
     data = np.zeros((H, W), dtype=np.float32)
     raster = xr.DataArray(data, dims=['y', 'x'])
 
@@ -37,7 +37,8 @@ def test_perlin_cpu():
 
     perlin_dask = perlin_dask.compute()
     assert np.isclose(
-        perlin_numpy.data, perlin_dask.data, equal_nan=True
+        perlin_numpy.data, perlin_dask.data,
+        rtol=1e-05, atol=1e-07, equal_nan=True
     ).all()
 
 
@@ -52,4 +53,6 @@ def test_perlin_gpu():
     perlin_cupy = perlin(data_cupy)
 
     assert np.isclose(
-        perlin_numpy.data, perlin_cupy.data, equal_nan=True).all()
+        perlin_numpy.data, perlin_cupy.data,
+        rtol=1e-05, atol=1e-07, equal_nan=True
+    ).all()
