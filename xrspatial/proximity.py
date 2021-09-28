@@ -635,7 +635,7 @@ def proximity(
     x: str = "x",
     y: str = "y",
     target_values: list = [],
-    max_distance: float = None,
+    max_distance: float = np.inf,
     distance_metric: str = "EUCLIDEAN",
 ) -> xr.DataArray:
     """
@@ -674,12 +674,21 @@ def proximity(
         Target pixel values to measure the distance from. If this option
         is not provided, proximity will be computed from non-zero pixel
         values.
-    max_distance: float
+    max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
-        this value will be set to a NaN value.
-        Note that this must be given in the same unit as input. For example,
-        if input raster is in latitude/longitude units, `max_distance` should
-        also be provided in latitude/longitude units.
+        this value will be set to NaN.
+        Should be given in the same distance unit as input.
+        For example, if input raster is in lat-lon and distances between points
+        within the raster is calculated using Euclidean distance metric,
+        `max_distance` should also be provided in lat-lon unit.
+        If using Great Circle distance metric, and thus all distances is in km,
+        `max_distance` should also be provided in kilometer unit.
+        When scaling with Dask, whether the function scales well depends on
+        the `max_distance` value. If `max_distance` is infinite by default,
+        this function only works on a single machine.
+        It should scale well, however, if `max_distance` is relatively small
+        compared to the maximum possible distance in two arbitrary points
+        in the input raster.
     distance_metric: str, default='EUCLIDEAN'
         The metric for calculating distance between 2 points.
         Valid distance metrics are:
@@ -768,7 +777,7 @@ def allocation(
     x: str = "x",
     y: str = "y",
     target_values: list = [],
-    max_distance: float = None,
+    max_distance: float = np.inf,
     distance_metric: str = "EUCLIDEAN",
 ):
     """
@@ -807,12 +816,21 @@ def allocation(
         Target pixel values to measure the distance from. If this option
         is not provided, allocation will be computed from non-zero pixel
         values.
-    max_distance: float
+    max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
-        this value will be set to a NaN value.
-        Note that this must be given in the same unit as input. For example,
-        if input raster is in latitude/longitude units, `max_distance` should
-        also be provided in latitude/longitude units.
+        this value will be set to NaN.
+        Should be given in the same distance unit as input.
+        For example, if input raster is in lat-lon and distances between points
+        within the raster is calculated using Euclidean distance metric,
+        `max_distance` should also be provided in lat-lon unit.
+        If using Great Circle distance metric, and thus all distances is in km,
+        `max_distance` should also be provided in kilometer unit.
+        When scaling with Dask, whether the function scales well depends on
+        the `max_distance` value. If `max_distance` is infinite by default,
+        this function only works on a single machine.
+        It should scale well, however, if `max_distance` is relatively small
+        compared to the maximum possible distance in two arbitrary points
+        in the input raster.
     distance_metric : str, default='EUCLIDEAN'
         The metric for calculating distance between 2 points. Valid
         distance metrics are: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
@@ -899,7 +917,7 @@ def direction(
     x: str = "x",
     y: str = "y",
     target_values: list = [],
-    max_distance: float = None,
+    max_distance: float = np.inf,
     distance_metric: str = "EUCLIDEAN",
 ):
     """
@@ -925,8 +943,9 @@ def direction(
     Similar to `proximity`, the implementation for NumPy-backed is ported
     from GDAL, which uses a dynamic programming approach to identify
     nearest target of a pixel from its surrounding neighborhood in a 3x3 window
-    The implementation for Dask-backed uses `sklearn.sklearn.neighbors.KDTree`
-    internally.
+    The implementation for Dask-backed uses `dask.map_overlap` to compute
+    proximity direction chunk by chunk by expanding the chunk's borders
+    to cover the `max_distance`.
 
     Parameters
     ----------
@@ -940,12 +959,21 @@ def direction(
         Target pixel values to measure the distance from. If this
         option is not provided, proximity will be computed from
         non-zero pixel values.
-    max_distance: float
+    max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
-        this value will be set to a NaN value.
-        Note that this must be given in the same unit as input. For example,
-        if input raster is in latitude/longitude units, `max_distance` should
-        also be provided in latitude/longitude units.
+        this value will be set to NaN.
+        Should be given in the same distance unit as input.
+        For example, if input raster is in lat-lon and distances between points
+        within the raster is calculated using Euclidean distance metric,
+        `max_distance` should also be provided in lat-lon unit.
+        If using Great Circle distance metric, and thus all distances is in km,
+        `max_distance` should also be provided in kilometer unit.
+        When scaling with Dask, whether the function scales well depends on
+        the `max_distance` value. If `max_distance` is infinite by default,
+        this function only works on a single machine.
+        It should scale well, however, if `max_distance` is relatively small
+        compared to the maximum possible distance in two arbitrary points
+        in the input raster.
     distance_metric: str, default='EUCLIDEAN'
         The metric for calculating distance between 2 points.
         Valid distance_metrics are:
