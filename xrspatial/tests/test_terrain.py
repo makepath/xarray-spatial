@@ -10,8 +10,8 @@ from xrspatial import generate_terrain
 
 
 def create_test_arr(backend='numpy'):
-    W = 20
-    H = 30
+    W = 50
+    H = 50
     data = np.zeros((H, W), dtype=np.float32)
     raster = xr.DataArray(data, dims=['y', 'x'])
 
@@ -37,7 +37,8 @@ def test_terrain_cpu():
 
     terrain_dask = terrain_dask.compute()
     assert np.isclose(
-        terrain_numpy.data, terrain_dask.data, equal_nan=True
+        terrain_numpy.data, terrain_dask.data,
+        rtol=1e-05, atol=1e-07, equal_nan=True
     ).all()
 
 
@@ -52,4 +53,6 @@ def test_terrain_gpu():
     terrain_cupy = generate_terrain(data_cupy)
 
     assert np.isclose(
-        terrain_numpy.data, terrain_cupy.data, equal_nan=True).all()
+        terrain_numpy.data, terrain_cupy.data,
+        rtol=1e-05, atol=1e-07, equal_nan=True
+    ).all()

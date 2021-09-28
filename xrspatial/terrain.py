@@ -127,13 +127,19 @@ def _terrain_gpu(height_map, seed, x_range=(0, 1), y_range=(0, 1)):
     NOISE_LAYERS = ((1 / 2**i, (2**i, 2**i)) for i in range(16))
 
     noise = cupy.empty_like(height_map, dtype=np.float32)
-    nrange = cupy.arange(2**20, dtype=int)
+    nrange = np.arange(2**20, dtype=int)
 
     griddim, blockdim = cuda_args(height_map.shape)
 
     for i, (m, (xfreq, yfreq)) in enumerate(NOISE_LAYERS):
-        cupy.random.seed(seed+i)
-        p = cupy.random.permutation(nrange)
+
+        # cupy.random.seed(seed+i)
+        # p = cupy.random.permutation(2**20)
+
+        # use numpy.random then transfer data to GPU to ensure the same result
+        # when running numpy backed and cupy backed data array.
+        np.random.seed(seed+i)
+        p = cupy.asarray(np.random.permutation(2**20))
         p = cupy.append(p, p)
 
         _perlin_gpu[griddim, blockdim](
