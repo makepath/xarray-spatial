@@ -126,7 +126,45 @@ def validate_arrays(*arrays):
             raise ValueError("input arrays must have same type")
 
 
-def calc_res(raster):
+def get_xy_range(raster, xdim=None, ydim=None):
+    """
+    Compute xrange and yrange for input `raster`
+
+    Parameters
+    ----------
+    raster: xarray.DataArray
+    xdim: str, default = None
+        Name of the x coordinate dimension in input `raster`.
+        If not provided, assume xdim is `raster.dims[-1]`
+    ydim: str, default = None
+        Name of the y coordinate dimension in input `raster`
+        If not provided, assume ydim is `raster.dims[-2]`
+
+    Returns
+    ----------
+    xrange, yrange
+        Tuple of tuples: (x, y-range).
+        xrange: tuple of (xmin, xmax)
+        yrange: tuple of (ymin, ymax)
+    """
+
+    if ydim is None:
+        ydim = raster.dims[-2]
+    if xdim is None:
+        xdim = raster.dims[-1]
+
+    xmin = raster[xdim].min().item()
+    xmax = raster[xdim].max().item()
+    ymin = raster[ydim].min().item()
+    ymax = raster[ydim].max().item()
+
+    xrange = (xmin, xmax)
+    yrange = (ymin, ymax)
+
+    return xrange, yrange
+
+
+def calc_res(raster, xdim=None, ydim=None):
     """
     Calculate the resolution of xarray.DataArray raster and return it
     as thetwo-tuple (xres, yres).
@@ -135,26 +173,31 @@ def calc_res(raster):
     ----------
     raster: xr.DataArray
         Input raster.
+    xdim: str, default = None
+        Name of the x coordinate dimension in input `raster`.
+        If not provided, assume xdim is `raster.dims[-1]`
+    ydim: str, default = None
+        Name of the y coordinate dimension in input `raster`
+        If not provided, assume ydim is `raster.dims[-2]`
 
     Returns
     -------
     xres, yres: tuple
         Tuple of (x-resolution, y-resolution).
-
-    Notes
-    -----
-        - Sourced from datashader.utils.
     """
+
     h, w = raster.shape[-2:]
-    ydim, xdim = raster.dims[-2:]
-    xcoords = raster[xdim].values
-    ycoords = raster[ydim].values
-    xres = (xcoords[-1] - xcoords[0]) / (w - 1)
-    yres = (ycoords[0] - ycoords[-1]) / (h - 1)
+    xrange, yrange = get_xy_range(raster, xdim, ydim)
+    xres = (xrange[-1] - xrange[0]) / (w - 1)
+    yres = (yrange[-1] - yrange[0]) / (h - 1)
     return xres, yres
 
 
-def get_dataarray_resolution(agg: xr.DataArray):
+def get_dataarray_resolution(
+    agg: xr.DataArray,
+    xdim: str = None,
+    ydim: str = None,
+):
     """
     Calculate resolution of xarray.DataArray.
 
@@ -162,12 +205,19 @@ def get_dataarray_resolution(agg: xr.DataArray):
     ----------
     agg: xarray.DataArray
         Input raster.
+    xdim: str, default = None
+        Name of the x coordinate dimension in input `raster`.
+        If not provided, assume xdim is `raster.dims[-1]`
+    ydim: str, default = None
+        Name of the y coordinate dimension in input `raster`
+        If not provided, assume ydim is `raster.dims[-2]`
 
     Returns
     -------
     cellsize_x, cellsize_y: tuple
         Tuple of (x cell size, y cell size).
     """
+
     # get cellsize out from 'res' attribute
     try:
         cellsize = agg.attrs.get("res")
@@ -182,10 +232,10 @@ def get_dataarray_resolution(agg: xr.DataArray):
             cellsize_x = cellsize
             cellsize_y = cellsize
         else:
-            cellsize_x, cellsize_y = calc_res(agg)
+            cellsize_x, cellsize_y = calc_res(agg, xdim, ydim)
 
     except Exception:
-        cellsize_x, cellsize_y = calc_res(agg)
+        cellsize_x, cellsize_y = calc_res(agg, xdim, ydim)
 
     return cellsize_x, cellsize_y
 
