@@ -144,9 +144,9 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Curvature](xrspatial/curvature.py) | ✅️ | | | ⚠️  |
 | [Hillshade](xrspatial/hillshade.py) | ✅️ | ✅️  | | |
 | [Slope](xrspatial/slope.py) | ✅️  | ✅️  | ✅️ | ⚠️  |
-| [Terrain Generation](xrspatial/terrain.py) | ✅️ |  | | |
+| [Terrain Generation](xrspatial/terrain.py) | ✅️ | ✅️ | ✅️ | |
 | [Viewshed](xrspatial/viewshed.py) | ✅️ |  | | |
-| [Perlin Noise](xrspatial/perlin.py) | ✅️ |  | | |
+| [Perlin Noise](xrspatial/perlin.py) | ✅️ | ✅️ | ✅️ | |
 | [Bump Mapping](xrspatial/bump.py) | ✅️ | | | |
 
 -----------
