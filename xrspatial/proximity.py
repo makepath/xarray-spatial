@@ -674,14 +674,18 @@ def proximity(
     ----------
     raster : xr.DataArray
         2D array image with `raster.shape` = (height, width).
+
     x : str, default='x'
         Name of x-coordinates.
+
     y : str, default='y'
         Name of y-coordinates.
+
     target_values: list
         Target pixel values to measure the distance from. If this option
         is not provided, proximity will be computed from non-zero pixel
         values.
+
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
         this value will be set to NaN.
@@ -691,12 +695,16 @@ def proximity(
         `max_distance` should also be provided in lat-lon unit.
         If using Great Circle distance metric, and thus all distances is in km,
         `max_distance` should also be provided in kilometer unit.
+
         When scaling with Dask, whether the function scales well depends on
         the `max_distance` value. If `max_distance` is infinite by default,
         this function only works on a single machine.
         It should scale well, however, if `max_distance` is relatively small
         compared to the maximum possible distance in two arbitrary points
-        in the input raster.
+        in the input raster. Note that if `max_distance` is equal or larger
+        than the max possible distance between 2 arbitrary points in the input
+        raster, the input data array will be rechunked.
+
     distance_metric: str, default='EUCLIDEAN'
         The metric for calculating distance between 2 points.
         Valid distance metrics are:
@@ -818,14 +826,18 @@ def allocation(
     ----------
     raster : xr.DataArray
         2D array of target data.
+
     x : str, default='x'
         Name of x-coordinates.
+
     y : str, default='y'
         Name of y-coordinates.
+
     target_values : list
         Target pixel values to measure the distance from. If this option
         is not provided, allocation will be computed from non-zero pixel
         values.
+
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
         this value will be set to NaN.
@@ -835,12 +847,16 @@ def allocation(
         `max_distance` should also be provided in lat-lon unit.
         If using Great Circle distance metric, and thus all distances is in km,
         `max_distance` should also be provided in kilometer unit.
+
         When scaling with Dask, whether the function scales well depends on
         the `max_distance` value. If `max_distance` is infinite by default,
         this function only works on a single machine.
         It should scale well, however, if `max_distance` is relatively small
         compared to the maximum possible distance in two arbitrary points
-        in the input raster.
+        in the input raster. Note that if `max_distance` is equal or larger
+        than the max possible distance between 2 arbitrary points in the input
+        raster, the input data array will be rechunked.
+
     distance_metric : str, default='EUCLIDEAN'
         The metric for calculating distance between 2 points. Valid
         distance metrics are: 'EUCLIDEAN', 'GREAT_CIRCLE', and 'MANHATTAN'.
@@ -962,14 +978,18 @@ def direction(
     ----------
     raster : xr.DataArray
         2D array image with `raster.shape` = (height, width).
+
     x : str, default='x'
         Name of x-coordinates.
+
     y : str, default='y'
         Name of y-coordinates.
+
     target_values: list
         Target pixel values to measure the distance from. If this
         option is not provided, proximity will be computed from
         non-zero pixel values.
+
     max_distance: float, default=np.inf
         The maximum distance to search. Proximity distances greater than
         this value will be set to NaN.
@@ -979,12 +999,16 @@ def direction(
         `max_distance` should also be provided in lat-lon unit.
         If using Great Circle distance metric, and thus all distances is in km,
         `max_distance` should also be provided in kilometer unit.
+
         When scaling with Dask, whether the function scales well depends on
         the `max_distance` value. If `max_distance` is infinite by default,
         this function only works on a single machine.
         It should scale well, however, if `max_distance` is relatively small
         compared to the maximum possible distance in two arbitrary points
-        in the input raster.
+        in the input raster. Note that if `max_distance` is equal or larger
+        than the max possible distance between 2 arbitrary points in the input
+        raster, the input data array will be rechunked.
+
     distance_metric: str, default='EUCLIDEAN'
         The metric for calculating distance between 2 points.
         Valid distance_metrics are:
