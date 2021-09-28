@@ -127,7 +127,6 @@ def _terrain_gpu(height_map, seed, x_range=(0, 1), y_range=(0, 1)):
     NOISE_LAYERS = ((1 / 2**i, (2**i, 2**i)) for i in range(16))
 
     noise = cupy.empty_like(height_map, dtype=np.float32)
-    nrange = np.arange(2**20, dtype=int)
 
     griddim, blockdim = cuda_args(height_map.shape)
 
