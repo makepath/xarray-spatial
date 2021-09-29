@@ -526,7 +526,9 @@ def _run_numpy_natural_break(data, num_sample, k):
         # randomly select sample from the whole dataset
         # create a pseudo random number generator
         generator = RandomState(1234567890)
-        idx = np.linspace(0, data.size, data.size, endpoint=False, dtype=np.uint32)
+        idx = np.linspace(
+            0, data.size, data.size, endpoint=False, dtype=np.uint32
+        )
         generator.shuffle(idx)
         sample_idx = idx[:num_sample]
         sample_data = data.flatten()[sample_idx]
