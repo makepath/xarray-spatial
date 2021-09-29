@@ -13,7 +13,7 @@ import numpy as np
 from datashader.colors import rgb
 from xarray import DataArray
 
-from numba import cuda
+import numba as nb
 import dask.array as da
 
 from numpy.random import RandomState
@@ -112,7 +112,7 @@ def _run_dask_numpy_bin(data, bins, new_values):
     return out
 
 
-@cuda.jit(device=True)
+@nb.cuda.jit(device=True)
 def _gpu_bin(data, bins, new_values):
     nbins = len(bins)
     val = data[0, 0]
@@ -139,9 +139,9 @@ def _gpu_bin(data, bins, new_values):
     return out
 
 
-@cuda.jit
+@nb.cuda.jit
 def _run_gpu_bin(data, bins, new_values, out):
-    i, j = cuda.grid(2)
+    i, j = nb.cuda.grid(2)
     if (i >= 0 and i < out.shape[0] and j >= 0 and j < out.shape[1]):
         out[i, j] = _gpu_bin(data[i:i+1, j:j+1], bins, new_values)
 
@@ -440,7 +440,7 @@ def quantile(agg: xr.DataArray,
                      attrs=agg.attrs)
 
 
-@ngjit
+@nb.jit(nopython=True, parallel=True)
 def _run_numpy_jenks_matrices(data, n_classes):
     n_data = data.shape[0]
     lower_class_limits = np.zeros((n_data + 1, n_classes + 1),
@@ -453,7 +453,7 @@ def _run_numpy_jenks_matrices(data, n_classes):
     nl = data.shape[0] + 1
     variance = 0.0
 
-    for l in range(2, nl): # noqa
+    for l in nb.prange(2, nl): # noqa
         sum = 0.0
         sum_squares = 0.0
         w = 0.0
@@ -494,7 +494,7 @@ def _run_numpy_jenks_matrices(data, n_classes):
     return lower_class_limits, var_combinations
 
 
-@ngjit
+@nb.jit(nopython=True)
 def _run_numpy_jenks(data, n_classes):
     # ported from existing cython implementation:
     # https://github.com/perrygeo/jenks/blob/master/jenks.pyx
@@ -526,7 +526,7 @@ def _run_numpy_natural_break(data, num_sample, k):
         # randomly select sample from the whole dataset
         # create a pseudo random number generator
         generator = RandomState(1234567890)
-        idx = [i for i in range(0, data.size)]
+        idx = np.linspace(0, data.size, data.size, endpoint=False, dtype=np.uint32)
         generator.shuffle(idx)
         sample_idx = idx[:num_sample]
         sample_data = data.flatten()[sample_idx]
@@ -544,7 +544,8 @@ def _run_numpy_natural_break(data, num_sample, k):
                           Warning)
 
     # only include non-nan values
-    sample_data = np.asarray([i for i in sample_data if np.isfinite(i)])
+    if not isinstance(sample_data, np.ndarray):
+        sample_data = np.asarray(sample_data)
 
     uv = np.unique(sample_data[np.isfinite(sample_data)])
     uvk = len(uv)
