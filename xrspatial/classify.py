@@ -563,7 +563,7 @@ def _run_numpy_natural_break(data, num_sample, k):
         uv.sort()
         bins = uv
     else:
-        centroids = _run_numpy_jenks(sample_data, k)
+        centroids = _run_numpy_jenks(uv, k)
         bins = np.array(centroids[1:])
 
     out = _bin(data, bins, np.arange(uvk))
