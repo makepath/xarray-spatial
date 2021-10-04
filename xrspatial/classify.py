@@ -440,30 +440,30 @@ def quantile(agg: xr.DataArray,
                      attrs=agg.attrs)
 
 
-@nb.jit(nopython=True, parallel=True)
+@nb.jit(nopython=True)
 def _run_numpy_jenks_matrices(data, n_classes):
     n_data = data.shape[0]
     lower_class_limits = np.zeros((n_data + 1, n_classes + 1),
                                   dtype=np.float64)
     lower_class_limits[1, 1:n_classes + 1] = 1.0
 
-    var_combinations = np.zeros((n_data + 1, n_classes + 1), dtype=np.float64)
+    var_combinations = np.zeros((n_data + 1, n_classes + 1),
+                                  dtype=np.float64)
     var_combinations[2:n_data + 1, 1:n_classes + 1] = np.inf
 
-    nl = data.shape[0] + 1
     variance = 0.0
 
-    for l in nb.prange(2, nl): # noqa
+    for l in range(2, n_data + 1): # noqa
         sum = 0.0
         sum_squares = 0.0
         w = 0.0
 
-        for m in range(1, l + 1):
+        for m in range(l):
             # `III` originally
-            lower_class_limit = l - m + 1
+            lower_class_limit = l - m
             i4 = lower_class_limit - 1
 
-            val = data[i4]
+            val = np.float64(data[i4])
 
             # here we're estimating variance for each potential classing
             # of the data, for each potential number of classes. `w`
@@ -479,14 +479,17 @@ def _run_numpy_jenks_matrices(data, n_classes):
             # of samples.
             variance = sum_squares - (sum * sum) / w
 
-            if i4 != 0:
-                for j in range(2, n_classes + 1):
-                    jm1 = j - 1
-                    if var_combinations[l, j] >= \
-                            (variance + var_combinations[i4, jm1]):
-                        lower_class_limits[l, j] = lower_class_limit
-                        var_combinations[l, j] = variance + \
-                            var_combinations[i4, jm1]
+            if i4 == 0:
+                continue
+            for j in range(2, n_classes + 1):
+                # if adding this element to an existing class
+                # will increase its variance beyond the limit, break
+                # the class at this point, setting the lower_class_limit
+                # at this point.
+                new_variance = variance + var_combinations[i4, j-1]
+                if var_combinations[l, j] >= new_variance:
+                    lower_class_limits[l, j] = lower_class_limit
+                    var_combinations[l, j] = new_variance
 
         lower_class_limits[l, 1] = 1.
         var_combinations[l, 1] = variance
@@ -494,7 +497,6 @@ def _run_numpy_jenks_matrices(data, n_classes):
     return lower_class_limits, var_combinations
 
 
-@nb.jit(nopython=True)
 def _run_numpy_jenks(data, n_classes):
     # ported from existing cython implementation:
     # https://github.com/perrygeo/jenks/blob/master/jenks.pyx
@@ -504,11 +506,10 @@ def _run_numpy_jenks(data, n_classes):
     lower_class_limits, _ = _run_numpy_jenks_matrices(data, n_classes)
 
     k = data.shape[0]
-    kclass = [0.] * (n_classes + 1)
-    count_num = n_classes
-
-    kclass[n_classes] = data[len(data) - 1]
+    kclass = np.zeros(n_classes + 1, dtype=np.float64)
     kclass[0] = data[0]
+    kclass[-1] = data[-1]
+    count_num = n_classes
 
     while count_num > 1:
         elt = int(lower_class_limits[k][count_num] - 2)
