@@ -548,11 +548,12 @@ def _run_numpy_natural_break(data, num_sample, k):
                           'a long time.'.format(sample_data.size),
                           Warning)
 
-    # only include non-nan values
     if not isinstance(sample_data, np.ndarray):
         sample_data = np.asarray(sample_data)
 
-    uv = np.unique(sample_data[np.isfinite(sample_data)])
+    # only include finite values
+    sample_data = sample_data[np.isfinite(sample_data)]
+    uv = np.unique(sample_data)
     uvk = len(uv)
 
     if uvk < k:
@@ -566,7 +567,7 @@ def _run_numpy_natural_break(data, num_sample, k):
         uv.sort()
         bins = uv
     else:
-        centroids = _run_numpy_jenks(uv, k)
+        centroids = _run_numpy_jenks(sample_data, k)
         bins = np.array(centroids[1:])
 
     out = _bin(data, bins, np.arange(uvk))
