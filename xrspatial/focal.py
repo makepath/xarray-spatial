@@ -160,19 +160,24 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
 
         import datashader as ds
         import matplotlib.pyplot as plt
+        import numpy as np
+        import xarray as xr
+
         from xrspatial import generate_terrain
         from xrspatial.focal import mean
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
 
         # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
+        W = 500
+        H = 300
+
+        template_terrain = xr.DataArray(np.zeros((H, W)))
+        x_range=(-20e6, 20e6)
+        y_range=(-20e6, 20e6)
+
+        terrain_agg = generate_terrain(
+            template_terrain, x_range=x_range, y_range=y_range
+        )
 
         # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs(
@@ -363,23 +368,28 @@ def apply(raster, kernel, func=_calc_mean):
     .. plot::
        :include-source:
 
-        import datashader as ds
         import matplotlib.pyplot as plt
+        import numpy as np
+        import xarray as xr
+
         from xrspatial import generate_terrain, aspect
         from xrspatial.focal import apply
         from xrspatial.convolution import circle_kernel
 
 
-        # Create Canvas
+        # Generate Example Terrain
         W = 500
         H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
 
-        # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
+        template_terrain = xr.DataArray(np.zeros((H, W)))
+        x_range=(-20e6, 20e6)
+        y_range=(-20e6, 20e6)
+
+        terrain_agg = generate_terrain(
+            template_terrain, x_range=x_range, y_range=y_range
+        )
+
+        # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs(
             {
                 'Description': 'Example Terrain',
@@ -419,28 +429,28 @@ def apply(raster, kernel, func=_calc_mean):
 
         >>> print(terrain_agg[200:203, 200:202])
         <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-               [1285.37061171, 1282.48046696],
-               [1306.02305679, 1303.40657515]])
+        array([[1264.02296597, 1261.947921  ],
+               [1285.37105519, 1282.48079719],
+               [1306.02339636, 1303.4069579 ]])
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        * lon      (lon) float64 -3.96e+06 -3.88e+06
+        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
         Attributes:
-            res:            1
+            res:            (80000.0, 133333.3333333333)
             Description:    Example Terrain
             units:          km
             Max Elevation:  4000
 
         >>> print(agg[200:203, 200:202])
         <xarray.DataArray (lat: 3, lon: 2)>
-        array([[1307.19361419, 1302.6913412 ],
-               [1323.55780616, 1318.75925071],
-               [1342.3309894 , 1336.93787754]])
+        array([[1307.19395948, 1302.69168271],
+               [1323.55815161, 1318.75959349],
+               [1342.33133041, 1336.93821534]])
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        * lon      (lon) float64 -3.96e+06 -3.88e+06
+        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
         Attributes:
-            res:            1
+            res:            (80000.0, 133333.3333333333)
             Description:    Example Filtered Terrain
             units:          km
             Max Elevation:  4000
@@ -692,22 +702,26 @@ def hotspots(raster, kernel):
     .. plot::
        :include-source:
 
-        import datashader as ds
         import matplotlib.pyplot as plt
+        import numpy as np
+        import xarray as xr
+
         from xrspatial import generate_terrain, aspect
         from xrspatial.convolution import circle_kernel
         from xrspatial.focal import hotspots
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
 
         # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
+        W = 500
+        H = 300
+
+        template_terrain = xr.DataArray(np.zeros((H, W)))
+        x_range=(-20e6, 20e6)
+        y_range=(-20e6, 20e6)
+
+        terrain_agg = generate_terrain(
+            template_terrain, x_range=x_range, y_range=y_range
+        )
 
         # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs(
@@ -753,14 +767,14 @@ def hotspots(raster, kernel):
 
         >>> print(terrain_agg[200:203, 200:202])
         <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-               [1285.37061171, 1282.48046696],
-               [1306.02305679, 1303.40657515]])
+        array([[1264.02296597, 1261.947921  ],
+               [1285.37105519, 1282.48079719],
+               [1306.02339636, 1303.4069579 ]])
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        * lon      (lon) float64 -3.96e+06 -3.88e+06
+        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
         Attributes:
-            res:            1
+            res:            (80000.0, 133333.3333333333)
             Description:    Example Terrain
             units:          km
             Max Elevation:  4000
@@ -771,10 +785,10 @@ def hotspots(raster, kernel):
                [0, 0],
                [0, 0]], dtype=int8)
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        * lon      (lon) float64 -3.96e+06 -3.88e+06
+        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
         Attributes:
-            res:            1
+            res:            (80000.0, 133333.3333333333)
             Description:    Example Hotspots
             units:          %
             Max Elevation:  4000

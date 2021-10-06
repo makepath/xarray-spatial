@@ -373,11 +373,11 @@ def quantile(agg: xr.DataArray,
     -----
         - Dask's percentile algorithm is approximate, while numpy's is exact.
         - This may cause some differences between results of vanilla numpy
-        and dask version of the input agg. (https://github.com/dask/dask/issues/3099) # noqa
+    and dask version of the input agg. (https://github.com/dask/dask/issues/3099) # noqa
 
     References
     ----------
-        -  PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles # noqa
+        - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Quantiles # noqa
 
     Examples
     --------

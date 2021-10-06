@@ -1650,8 +1650,8 @@ def true_color(r, g, b, nodata=1, c=10.0, th=0.125, name='true_color'):
     blue bands satellite images.
 
     A sigmoid function will be used to improve the contrast of output image.
-    The function is defined as:
-        ``normalized_pixel = 1 / (1 + np.exp(c * (th - normalized_pixel)))``
+    The function is defined as
+    ``normalized_pixel = 1 / (1 + np.exp(c * (th - normalized_pixel)))``
     where ``c`` and ``th`` are contrast and brightness controlling parameters.
 
     Parameters
