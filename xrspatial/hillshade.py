@@ -141,6 +141,7 @@ def hillshade(agg: xr.DataArray,
     --------
     .. plot::
        :include-source:
+
             import numpy as np
             import xarray as xr
             from xrspatial import hillshade

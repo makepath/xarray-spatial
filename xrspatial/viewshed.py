@@ -1536,22 +1536,25 @@ def viewshed(raster: xarray.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
         import matplotlib.pyplot as plt
-        import pandas as pd
         import numpy as np
+        import pandas as pd
+        import xarray as xr
+
         from xrspatial import generate_terrain, viewshed
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
 
         # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
+        W = 500
+        H = 300
+
+        template_terrain = xr.DataArray(np.zeros((H, W)))
+        x_range=(-20e6, 20e6)
+        y_range=(-20e6, 20e6)
+
+        terrain_agg = generate_terrain(
+            template_terrain, x_range=x_range, y_range=y_range
+        )
 
         # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs(
@@ -1566,7 +1569,9 @@ def viewshed(raster: xarray.DataArray,
         terrain_agg = terrain_agg.rename('Elevation')
 
         # Generate a Target Aggregate Array
-        volcano_agg = generate_terrain(canvas = cvs)
+        volcano_agg = generate_terrain(
+            template_terrain, x_range=x_range, y_range=y_range
+        )
         volcano_agg.data = np.where(np.logical_and(volcano_agg.data > 2800,
                                                 volcano_agg.data < 5000), 1, 0)
         volcano_agg = volcano_agg.rename('volcano')
@@ -1576,13 +1581,9 @@ def viewshed(raster: xarray.DataArray,
         volcano_agg = volcano_agg.assign_attrs({'Description': 'Volcano'})
         volcano_agg = volcano_agg.rename('Volcano')
 
-        # Create Observer Aggregate Array
+        # Generate Viewshed Aggregate Array
         OBSERVER_X = -12.5e6
         OBSERVER_Y = 10e6
-        observer_df = pd.DataFrame({'x': [OBSERVER_X], 'y': [OBSERVER_Y]})
-        observer_agg = cvs.points(observer_df, 'x', 'y')
-
-        # Generate Viewshed Aggregate Array
         view = viewshed(volcano_agg, x=OBSERVER_X, y=OBSERVER_Y)
 
         # Plot Terrain
@@ -1607,14 +1608,14 @@ def viewshed(raster: xarray.DataArray,
 
         >>> print(terrain_agg[200:203, 200:202])
         <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-               [1285.37061171, 1282.48046696],
-               [1306.02305679, 1303.40657515]])
+        array([[1264.02296597, 1261.947921  ],
+               [1285.37105519, 1282.48079719],
+               [1306.02339636, 1303.4069579 ]])
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        * lon      (lon) float64 -3.96e+06 -3.88e+06
+        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
         Attributes:
-            res:            1
+            res:            (80000.0, 133333.3333333333)
             Description:    Example Terrain
             units:          km
             Max Elevation:  4000
@@ -1625,10 +1626,10 @@ def viewshed(raster: xarray.DataArray,
                [0., 0.],
                [0., 0.]])
         Coordinates:
-          * x        (x) float64 -3.96e+06 -3.88e+06
-          * y        (y) float64 6.733e+06 6.867e+06 7e+06
+        * x        (x) float64 -3.96e+06 -3.88e+06
+        * y        (y) float64 6.733e+06 6.867e+06 7e+06
         Attributes:
-            res:          1
+            res:          (80000.0, 133333.3333333333)
             Description:  Volcano
 
         >>> print(view[200:203, 200:202])
@@ -1637,10 +1638,10 @@ def viewshed(raster: xarray.DataArray,
                [90., 90.],
                [90., 90.]])
         Coordinates:
-          * x        (x) float64 -3.96e+06 -3.88e+06
-          * y        (y) float64 6.733e+06 6.867e+06 7e+06
+        * x        (x) float64 -3.96e+06 -3.88e+06
+        * y        (y) float64 6.733e+06 6.867e+06 7e+06
         Attributes:
-            res:          1
+            res:          (80000.0, 133333.3333333333)
             Description:  Volcano
     """
     height, width = raster.shape

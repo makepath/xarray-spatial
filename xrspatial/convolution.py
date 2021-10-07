@@ -103,21 +103,25 @@ def calc_cellsize(raster):
     .. plot::
        :include-source:
 
-        import datashader as ds
         import matplotlib.pyplot as plt
+        import numpy as np
+        import xarray as xr
+
         from xrspatial import generate_terrain
         from xrspatial.convolution import calc_cellsize
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
 
         # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
+        W = 500
+        H = 300
+
+        template_terrain = xr.DataArray(np.zeros((H, W)))
+        x_range=(-20e6, 20e6)
+        y_range=(-20e6, 20e6)
+
+        terrain_agg = generate_terrain(
+            template_terrain, x_range=x_range, y_range=y_range
+        )
 
         # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs(
@@ -135,24 +139,24 @@ def calc_cellsize(raster):
 
         >>> print(terrain_agg[200:203, 200:202])
         <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-               [1285.37061171, 1282.48046696],
-               [1306.02305679, 1303.40657515]])
+        array([[1264.02296597, 1261.947921  ],
+               [1285.37105519, 1282.48079719],
+               [1306.02339636, 1303.4069579 ]])
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        * lon      (lon) float64 -3.96e+06 -3.88e+06
+        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
         Attributes:
-            res:            1
+            res:            (80000.0, 133333.3333333333)
             Description:    Example Terrain
-            Max Elevation:  3000
             units:          km
+            Max Elevation:  4000
 
     .. sourcecode:: python
 
         >>> # Calculate Cellsize
         >>> cellsize = calc_cellsize(terrain_agg)
         >>> print(cellsize)
-        (1, 1)
+        (80000.0, 133333.3333333333)
     """
     if 'unit' in raster.attrs:
         unit = raster.attrs['unit']

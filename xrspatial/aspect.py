@@ -186,20 +186,24 @@ def aspect(agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import datashader as ds
         import matplotlib.pyplot as plt
+        import numpy as np
+        import xarray as xr
+
         from xrspatial import generate_terrain, aspect
 
-        # Create Canvas
-        W = 500
-        H = 300
-        cvs = ds.Canvas(plot_width = W,
-                        plot_height = H,
-                        x_range = (-20e6, 20e6),
-                        y_range = (-20e6, 20e6))
 
         # Generate Example Terrain
-        terrain_agg = generate_terrain(canvas = cvs)
+        W = 800
+        H = 600
+
+        template_terrain = xr.DataArray(np.zeros((H, W)))
+        x_range=(-20e6, 20e6)
+        y_range=(-20e6, 20e6)
+
+        terrain_agg = generate_terrain(
+            template_terrain, x_range=x_range, y_range=y_range, seed=1, zfactor=1000
+        )
 
         # Edit Attributes
         terrain_agg = terrain_agg.assign_attrs(
@@ -209,7 +213,7 @@ def aspect(agg: xr.DataArray,
                 'Max Elevation': '4000',
             }
         )
-        
+
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
@@ -240,14 +244,14 @@ def aspect(agg: xr.DataArray,
 
         >>> print(terrain_agg[200:203, 200:202])
         <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02249454, 1261.94748873],
-               [1285.37061171, 1282.48046696],
-               [1306.02305679, 1303.40657515]])
+        array([[707.57051795, 704.3194383 ],
+               [706.36271613, 705.4514285 ],
+               [699.46372883, 703.7514251 ]])
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        * lon      (lon) float64 -9.975e+06 -9.925e+06
+        * lat      (lat) float64 -6.633e+06 -6.567e+06 -6.5e+06
         Attributes:
-            res:            1
+            res:            (50000.0, 66666.66666666667)
             Description:    Example Terrain
             units:          km
             Max Elevation:  4000
@@ -256,14 +260,14 @@ def aspect(agg: xr.DataArray,
 
         >>> print(aspect_agg[200:203, 200:202])
         <xarray.DataArray 'Aspect' (lat: 3, lon: 2)>
-        array([[ 8.18582638,  8.04675084],
-               [ 5.49302641,  9.86625477],
-               [12.04270534, 16.87079619]])
+        array([[155.07530658, 146.26526699],
+               [194.81685088, 136.55836607],
+               [203.14170549, 187.97760934]])
         Coordinates:
-          * lon      (lon) float64 -3.96e+06 -3.88e+06
-          * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        * lon      (lon) float64 -9.975e+06 -9.925e+06
+        * lat      (lat) float64 -6.633e+06 -6.567e+06 -6.5e+06
         Attributes:
-            res:            1
+            res:            (50000.0, 66666.66666666667)
             Description:    Example Aspect
             units:          deg
             Max Elevation:  4000
