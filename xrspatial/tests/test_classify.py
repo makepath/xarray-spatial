@@ -144,6 +144,34 @@ def test_natural_breaks_cpu():
     assert len(unique_elements) == k
 
 
+def test_natural_breaks_cpu_deterministic():
+    results = []
+    elevation = np.arange(100).reshape(10, 10)
+    agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+
+    k = 5
+    numIters = 3
+    for i in range(numIters):
+        # vanilla numpy
+        numpy_natural_breaks = natural_breaks(agg, k=k)
+        # shape and other attributes remain the same
+        assert agg.shape == numpy_natural_breaks.shape
+        assert agg.dims == numpy_natural_breaks.dims
+        assert agg.attrs == numpy_natural_breaks.attrs
+        for coord in agg.coords:
+            assert np.all(agg[coord] == numpy_natural_breaks[coord])
+
+        unique_elements = np.unique(
+            numpy_natural_breaks.data[np.isfinite(numpy_natural_breaks.data)]
+        )
+        assert len(unique_elements) == k
+        results.append(numpy_natural_breaks)
+    # Check that the code is deterministic.
+    # Multiple runs on same data should produce same results
+    for i in range(numIters-1):
+        assert(np.all(results[i].data == results[i+1].data))
+
+
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_natural_breaks_cpu_equals_gpu():
 
