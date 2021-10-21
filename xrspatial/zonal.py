@@ -185,17 +185,26 @@ def _stats_dask(
     return stats_df
 
 
-def _strides(arr, zone_ids):
+def _strides(flatten_zones, zone_ids):
+    # exclude nans from calculation
+    # flatten_zones is already sorted, NaN elements (if any) are at the end
+    # of the array, removing them will not affect data before them
+    num_elements = flatten_zones[np.isfinite(flatten_zones)].shape[0]
+
     strides = []
     i = 0
-    num_elements = arr.shape[0]
+
     while (i < num_elements - 1):
-        while (i + 1 < num_elements) and (arr[i] == arr[i + 1]): i += 1
-        if arr[i] in zone_ids:
+        while ((i < num_elements - 1) and
+               (flatten_zones[i] == flatten_zones[i + 1])):
+            i += 1
+
+        if flatten_zones[i] in zone_ids:
             strides.append(i)
         i += 1
 
-    if arr[num_elements - 2] != arr[num_elements - 1]:
+    # check last elements
+    if flatten_zones[num_elements - 2] != flatten_zones[num_elements - 1]:
         strides.append(num_elements - 1)
 
     return strides
@@ -209,6 +218,7 @@ def _faster_stats_numpy(
         nodata_zones: Union[int, float],
         nodata_values: Union[int, float],
 ) -> pd.DataFrame:
+
     if zone_ids is None:
         # no zone_ids provided, find ids for all zones
         # do not consider zone with nodata values
