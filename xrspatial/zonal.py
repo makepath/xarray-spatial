@@ -185,6 +185,72 @@ def _stats_dask(
     return stats_df
 
 
+def _strides(arr, zone_ids):
+    strides = []
+    i = 0
+    num_elements = arr.shape[0]
+    while (i < num_elements - 1):
+        while (i + 1 < num_elements) and (arr[i] == arr[i + 1]): i += 1
+        if arr[i] in zone_ids:
+            strides.append(i)
+        i += 1
+
+    if arr[num_elements - 2] != arr[num_elements - 1]:
+        strides.append(num_elements - 1)
+
+    return strides
+
+
+def _faster_stats_numpy(
+        zones: xr.DataArray,
+        values: xr.DataArray,
+        zone_ids: List[Union[int, float]],
+        stats_funcs: Dict,
+        nodata_zones: Union[int, float],
+        nodata_values: Union[int, float],
+) -> pd.DataFrame:
+    if zone_ids is None:
+        # no zone_ids provided, find ids for all zones
+        # do not consider zone with nodata values
+        unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
+        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    else:
+        unique_zones = np.array(zone_ids)
+
+    stats_dict = {}
+    # zone column
+    stats_dict["zone"] = unique_zones
+    # stats columns
+    for stats in stats_funcs:
+        stats_dict[stats] = []
+
+    unique_zones = list(map(_to_int, unique_zones))
+    stats_dict["zone"] = unique_zones
+
+    sorted_zones = np.sort(zones.data.flatten())
+    sored_indices = np.argsort(zones.data.flatten())
+    values_by_zones = values.data.flatten()[sored_indices]
+    zone_breaks = _strides(sorted_zones, unique_zones)
+
+    start = 0
+    for i in range(len(unique_zones)):
+        end = zone_breaks[i] + 1
+        zone_values = values_by_zones[start: end]
+        # filter out non-finite and nodata_values
+        zone_values = zone_values[
+            np.isfinite(zone_values) & (zone_values != nodata_values)]
+        for stats in stats_funcs:
+            stats_func = stats_funcs.get(stats)
+            if not callable(stats_func):
+                raise ValueError(stats)
+            stats_dict[stats].append(stats_func(zone_values))
+        start = end
+
+    stats_df = pd.DataFrame(stats_dict)
+    stats_df.set_index("zone")
+    return stats_df
+
+
 def stats(
     zones: xr.DataArray,
     values: xr.DataArray,
@@ -353,7 +419,7 @@ def stats(
 
     if isinstance(values.data, np.ndarray):
         # numpy case
-        stats_df = _stats_numpy(
+        stats_df = _faster_stats_numpy(
             zones,
             values,
             zone_ids,
