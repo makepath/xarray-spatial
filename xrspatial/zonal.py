@@ -185,27 +185,22 @@ def _stats_dask(
     return stats_df
 
 
+@ngjit
 def _strides(flatten_zones, zone_ids):
-    # exclude nans from calculation
-    # flatten_zones is already sorted, NaN elements (if any) are at the end
-    # of the array, removing them will not affect data before them
-    num_elements = flatten_zones[np.isfinite(flatten_zones)].shape[0]
+    num_elements = flatten_zones.shape[0]
+    strides = np.zeros(len(zone_ids), dtype=np.int32)
 
-    strides = []
-    i = 0
-
-    while (i < num_elements - 1):
-        while ((i < num_elements - 1) and
-               (flatten_zones[i] == flatten_zones[i + 1])):
-            i += 1
-
-        if flatten_zones[i] in zone_ids:
-            strides.append(i)
-        i += 1
+    zone_count = 0
+    for i in range(num_elements - 1):
+        if (flatten_zones[i] != flatten_zones[i + 1]):
+            if flatten_zones[i] in zone_ids:
+                strides[zone_count] = i
+                zone_count += 1
 
     # check last elements
-    if flatten_zones[num_elements - 2] != flatten_zones[num_elements - 1]:
-        strides.append(num_elements - 1)
+    if flatten_zones[num_elements - 1] != strides[zone_count - 1]:
+        if flatten_zones[num_elements - 1] in zone_ids:
+            strides[zone_count] = num_elements - 1
 
     return strides
 
@@ -240,6 +235,11 @@ def _faster_stats_numpy(
     sorted_zones = np.sort(zones.data.flatten())
     sored_indices = np.argsort(zones.data.flatten())
     values_by_zones = values.data.flatten()[sored_indices]
+
+    # exclude nans from calculation
+    # flatten_zones is already sorted, NaN elements (if any) are at the end
+    # of the array, removing them will not affect data before them
+    sorted_zones = sorted_zones[np.isfinite(sorted_zones)]
     zone_breaks = _strides(sorted_zones, unique_zones)
 
     start = 0
