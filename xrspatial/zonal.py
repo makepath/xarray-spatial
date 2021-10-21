@@ -220,7 +220,10 @@ def _faster_stats_numpy(
         unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
         unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
     else:
-        unique_zones = np.array(zone_ids)
+        unique_zones = zone_ids
+
+    unique_zones = list(map(_to_int, unique_zones))
+    unique_zones = np.asarray(unique_zones)
 
     stats_dict = {}
     # zone column
@@ -228,9 +231,6 @@ def _faster_stats_numpy(
     # stats columns
     for stats in stats_funcs:
         stats_dict[stats] = []
-
-    unique_zones = list(map(_to_int, unique_zones))
-    stats_dict["zone"] = unique_zones
 
     sorted_zones = np.sort(zones.data.flatten())
     sored_indices = np.argsort(zones.data.flatten())
