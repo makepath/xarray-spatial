@@ -1,19 +1,30 @@
+# standard library
 from math import sqrt
 from typing import Optional, Callable, Union, Dict, List
+
+# 3rd-party
+import dask.array as da
+import dask.dataframe as dd
+from dask import delayed
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 from xarray import DataArray
 
-import dask.array as da
-import dask.dataframe as dd
-from dask import delayed
+try:
+    import cupy
+except ImportError:
+    class cupy(object):
+        ndarray = False
 
-from xrspatial.utils import ngjit, validate_arrays
+# local modules
+from xrspatial.utils import ngjit
+from xrspatial.utils import has_cuda
+from xrspatial.utils import cuda_args
+from xrspatial.utils import validate_arrays
 from xrspatial.utils import ArrayTypeFunctionMapping
 from xrspatial.utils import not_implemented_func
-
 
 TOTAL_COUNT = '_total_count'
 
@@ -143,9 +154,78 @@ def _single_stats_func(
     return results
 
 
-def _stats_dask_numpy(
-    zones: da.Array,
-    values: da.Array,
+def _stats_cupy(
+    zones: xr.DataArray,
+    values: xr.DataArray,
+    zone_ids: List[Union[int, float]],
+    stats_funcs: Dict,
+    nodata_zones: Union[int, float],
+    nodata_values: Union[int, float],
+) -> pd.DataFrame:
+
+    if zone_ids is None:
+        # TODO time this operation
+        # if it takes too long, then I need to figure out a better way
+        # no zone_ids provided, find ids for all zones
+        # do not consider zone with nodata values
+        unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
+        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+        unique_zones = cupy.array(unique_zones)
+    else:
+        unique_zones = cupy.array(zone_ids)
+
+    # I need to prepare the kernel call
+    # perhaps divide it into multiple kernels
+    # One kernel is the mask kernel
+    # input: gets zone array, and returns a collection of value arrays
+    # then we apply the stats on these arrays.
+    # this is the zone_cat_data kernel.
+    # for simplicity, I do all the dev here at first
+    # then divide into separate functions
+    # stats_dict = _stats_cupy(
+    #     zones,
+    #     values,
+    #     unique_zones,
+    #     stats_funcs,
+    #     nodata_values
+    # )
+    # We can use function where and select
+    stats_dict = {}
+    # zone column
+    stats_dict["zone"] = unique_zones
+    # stats columns
+    for stats in stats_funcs:
+        stats_dict[stats] = []
+
+    # first with zone_cat_data, collect all the values into multiple arrays
+
+    # then iterate over the arrays and apply the stat funcs
+
+    for zone_id in unique_zones:
+        # get zone values
+        zone_values = _zone_cat_data(zones, values, zone_id, nodata_values)
+        for stats in stats_funcs:
+            stats_func = stats_funcs.get(stats)
+            if not callable(stats_func):
+                raise ValueError(stats)
+            stats_dict[stats].append(stats_func(zone_values))
+
+    unique_zones = list(map(_to_int, unique_zones))
+    stats_dict["zone"] = unique_zones
+
+
+    # in the end convert back to dataframe
+    # and also measure the time it takes, if it
+    # is too slow, I need to return it as a cupy dataframe
+    stats_df = pd.DataFrame(stats_dict)
+    stats_df.set_index("zone")
+
+    return stats_df
+
+
+def _stats_numpy(
+    zones: xr.DataArray,
+    values: xr.DataArray,
     zone_ids: List[Union[int, float]],
     stats_funcs: Dict,
     nodata_values: Union[int, float],
@@ -476,9 +556,7 @@ def stats(
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_stats_numpy,
         dask_func=_stats_dask_numpy,
-        cupy_func=lambda *args: not_implemented_func(
-            *args, messages='stats() does not support cupy backed DataArray'
-        ),
+        cupy_func=_stats_cupy,
         dask_cupy_func=lambda *args: not_implemented_func(
             *args, messages='stats() does not support dask with cupy backed DataArray'  # noqa
         ),
@@ -841,13 +919,13 @@ def crosstab(
         >>> df = crosstab(zones=zones_dask, values=values_dask)
         >>> print(df)
             Dask DataFrame Structure:
-            zone	0.0	10.0	20.0	30.0	40.0	50.0
+            zone    0.0 10.0    20.0    30.0    40.0    50.0
             npartitions=5
-            0	float64	int64	int64	int64	int64	int64	int64
-            1	...	...	...	...	...	...	...
-            ...	...	...	...	...	...	...	...
-            4	...	...	...	...	...	...	...
-            5	...	...	...	...	...	...	...
+            0   float64 int64   int64   int64   int64   int64   int64
+            1   ... ... ... ... ... ... ...
+            ... ... ... ... ... ... ... ...
+            4   ... ... ... ... ... ... ...
+            5   ... ... ... ... ... ... ...
             Dask Name: astype, 1186 tasks
         >>> print(dask_df.compute)
                 zone  0.0  10.0  20.0  30.0  40.0  50.0
@@ -1214,7 +1292,7 @@ def _area_connectivity(data, n=4):
                 src_window[4] = data[min(y + 1, rows - 1), x]
                 src_window[5] = data[max(y - 1, 0), min(x + 1, cols - 1)]
                 src_window[6] = data[y, min(x + 1, cols - 1)]
-                src_window[7] = data[min(y + 1, rows - 1), min(x + 1, cols - 1)] # noqa
+                src_window[7] = data[min(y + 1, rows - 1), min(x + 1, cols - 1)]  # noqa
 
                 area_window[0] = out[max(y - 1, 0), max(x - 1, 0)]
                 area_window[1] = out[y, max(x - 1, 0)]
@@ -1223,7 +1301,7 @@ def _area_connectivity(data, n=4):
                 area_window[4] = out[min(y + 1, rows - 1), x]
                 area_window[5] = out[max(y - 1, 0), min(x + 1, cols - 1)]
                 area_window[6] = out[y, min(x + 1, cols - 1)]
-                area_window[7] = out[min(y + 1, rows - 1), min(x + 1, cols - 1)] # noqa
+                area_window[7] = out[min(y + 1, rows - 1), min(x + 1, cols - 1)]  # noqa
 
             else:
                 src_window[0] = data[y, max(x - 1, 0)]
@@ -1272,7 +1350,7 @@ def _area_connectivity(data, n=4):
                 src_window[4] = data[min(y + 1, rows - 1), x]
                 src_window[5] = data[max(y - 1, 0), min(x + 1, cols - 1)]
                 src_window[6] = data[y, min(x + 1, cols - 1)]
-                src_window[7] = data[min(y + 1, rows - 1), min(x + 1, cols - 1)] # noqa
+                src_window[7] = data[min(y + 1, rows - 1), min(x + 1, cols - 1)]  # noqa
 
                 area_window[0] = out[max(y - 1, 0), max(x - 1, 0)]
                 area_window[1] = out[y, max(x - 1, 0)]
@@ -1281,7 +1359,7 @@ def _area_connectivity(data, n=4):
                 area_window[4] = out[min(y + 1, rows - 1), x]
                 area_window[5] = out[max(y - 1, 0), min(x + 1, cols - 1)]
                 area_window[6] = out[y, min(x + 1, cols - 1)]
-                area_window[7] = out[min(y + 1, rows - 1), min(x + 1, cols - 1)] # noqa
+                area_window[7] = out[min(y + 1, rows - 1), min(x + 1, cols - 1)]  # noqa
 
             else:
                 src_window[0] = data[y, max(x - 1, 0)]
