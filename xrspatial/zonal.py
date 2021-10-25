@@ -112,37 +112,6 @@ def _stats(
     return stats_dict
 
 
-def _stats_numpy(
-    zones: xr.DataArray,
-    values: xr.DataArray,
-    zone_ids: List[Union[int, float]],
-    stats_funcs: Dict,
-    nodata_zones: Union[int, float],
-    nodata_values: Union[int, float],
-) -> pd.DataFrame:
-
-    if zone_ids is None:
-        # no zone_ids provided, find ids for all zones
-        # do not consider zone with nodata values
-        unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
-        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
-    else:
-        unique_zones = np.array(zone_ids)
-
-    stats_dict = _stats(
-        zones,
-        values,
-        unique_zones,
-        stats_funcs,
-        nodata_values
-    )
-
-    stats_df = pd.DataFrame(stats_dict)
-    stats_df.set_index("zone")
-
-    return stats_df
-
-
 def _stats_dask(
     zones: xr.DataArray,
     values: xr.DataArray,
@@ -182,6 +151,83 @@ def _stats_dask(
     stats_df.columns = stats_dict.keys()
     stats_df.set_index("zone")
 
+    return stats_df
+
+
+@ngjit
+def _strides(flatten_zones, zone_ids):
+    num_elements = flatten_zones.shape[0]
+    strides = np.zeros(len(zone_ids), dtype=np.int32)
+
+    zone_count = 0
+    for i in range(num_elements - 1):
+        if (flatten_zones[i] != flatten_zones[i + 1]):
+            if flatten_zones[i] in zone_ids:
+                strides[zone_count] = i
+                zone_count += 1
+
+    # check last elements
+    if flatten_zones[num_elements - 1] != strides[zone_count - 1]:
+        if flatten_zones[num_elements - 1] in zone_ids:
+            strides[zone_count] = num_elements - 1
+
+    return strides
+
+
+def _stats_numpy(
+        zones: xr.DataArray,
+        values: xr.DataArray,
+        zone_ids: List[Union[int, float]],
+        stats_funcs: Dict,
+        nodata_zones: Union[int, float],
+        nodata_values: Union[int, float],
+) -> pd.DataFrame:
+
+    if zone_ids is None:
+        # no zone_ids provided, find ids for all zones
+        # do not consider zone with nodata values
+        unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
+        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+    else:
+        unique_zones = zone_ids
+
+    unique_zones = list(map(_to_int, unique_zones))
+    unique_zones = np.asarray(unique_zones)
+
+    stats_dict = {}
+    # zone column
+    stats_dict["zone"] = unique_zones
+    # stats columns
+    for stats in stats_funcs:
+        stats_dict[stats] = []
+
+    flatten_zones = zones.data.flatten()
+    sorted_indices = np.argsort(flatten_zones)
+    sorted_zones = flatten_zones[sorted_indices]
+    values_by_zones = values.data.flatten()[sorted_indices]
+
+    # exclude nans from calculation
+    # flatten_zones is already sorted, NaN elements (if any) are at the end
+    # of the array, removing them will not affect data before them
+    sorted_zones = sorted_zones[np.isfinite(sorted_zones)]
+    zone_breaks = _strides(sorted_zones, unique_zones)
+
+    start = 0
+    for i in range(len(unique_zones)):
+        end = zone_breaks[i] + 1
+        zone_values = values_by_zones[start:end]
+        # filter out non-finite and nodata_values
+        zone_values = zone_values[
+            np.isfinite(zone_values) & (zone_values != nodata_values)]
+        for stats in stats_funcs:
+            stats_func = stats_funcs.get(stats)
+            if not callable(stats_func):
+                raise ValueError(stats)
+            stats_dict[stats].append(stats_func(zone_values))
+        start = end
+
+    stats_df = pd.DataFrame(stats_dict)
+    stats_df.set_index("zone")
     return stats_df
 
 
