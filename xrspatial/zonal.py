@@ -112,37 +112,6 @@ def _stats(
     return stats_dict
 
 
-def _stats_numpy(
-    zones: xr.DataArray,
-    values: xr.DataArray,
-    zone_ids: List[Union[int, float]],
-    stats_funcs: Dict,
-    nodata_zones: Union[int, float],
-    nodata_values: Union[int, float],
-) -> pd.DataFrame:
-
-    if zone_ids is None:
-        # no zone_ids provided, find ids for all zones
-        # do not consider zone with nodata values
-        unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
-        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
-    else:
-        unique_zones = np.array(zone_ids)
-
-    stats_dict = _stats(
-        zones,
-        values,
-        unique_zones,
-        stats_funcs,
-        nodata_values
-    )
-
-    stats_df = pd.DataFrame(stats_dict)
-    stats_df.set_index("zone")
-
-    return stats_df
-
-
 def _stats_dask(
     zones: xr.DataArray,
     values: xr.DataArray,
@@ -205,7 +174,7 @@ def _strides(flatten_zones, zone_ids):
     return strides
 
 
-def _faster_stats_numpy(
+def _stats_numpy(
         zones: xr.DataArray,
         values: xr.DataArray,
         zone_ids: List[Union[int, float]],
@@ -232,9 +201,10 @@ def _faster_stats_numpy(
     for stats in stats_funcs:
         stats_dict[stats] = []
 
-    sorted_zones = np.sort(zones.data.flatten())
-    sored_indices = np.argsort(zones.data.flatten())
-    values_by_zones = values.data.flatten()[sored_indices]
+    flatten_zones = zones.data.flatten()
+    sorted_indices = np.argsort(flatten_zones)
+    sorted_zones = flatten_zones[sorted_indices]
+    values_by_zones = values.data.flatten()[sorted_indices]
 
     # exclude nans from calculation
     # flatten_zones is already sorted, NaN elements (if any) are at the end
@@ -245,7 +215,7 @@ def _faster_stats_numpy(
     start = 0
     for i in range(len(unique_zones)):
         end = zone_breaks[i] + 1
-        zone_values = values_by_zones[start: end]
+        zone_values = values_by_zones[start:end]
         # filter out non-finite and nodata_values
         zone_values = zone_values[
             np.isfinite(zone_values) & (zone_values != nodata_values)]
@@ -429,7 +399,7 @@ def stats(
 
     if isinstance(values.data, np.ndarray):
         # numpy case
-        stats_df = _faster_stats_numpy(
+        stats_df = _stats_numpy(
             zones,
             values,
             zone_ids,
