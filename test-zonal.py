@@ -32,7 +32,7 @@ parser.add_argument('-b', '--backend', type=str, choices=['numpy', 'cupy', 'dask
 
 def create_arr(data=None, H=10, W=10, backend='numpy'):
     assert(backend in ['numpy', 'cupy', 'dask'])
-    if not data:
+    if data is None:
         data = np.zeros((H, W), dtype=np.float32)
     raster = xr.DataArray(data, dims=['y', 'x'])
 
@@ -52,8 +52,8 @@ if __name__ == '__main__':
 
     W = args.width
     H = args.height
-    zH = args.zones_height
-    zW = args.zones_width
+    zH = args.zone_height
+    zW = args.zone_width
     assert(W/zW == W//zW)
     assert(H/zH == H//zH)
 

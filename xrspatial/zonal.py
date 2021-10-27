@@ -36,9 +36,9 @@ def _stats_count(data):
     elif isinstance(data, cupy.ndarray):
         # cupy case
         # TODO validate count function
-        stats_count = 1
-        for dim in data.shape:
-            stats_count *= dim
+        stats_count = np.prod(data.shape)
+        #for dim in data.shape:
+        #    stats_count *= dim
     else:
         # dask case
         stats_count = data.size - da.ma.getmaskarray(data).sum()
@@ -55,8 +55,6 @@ _DEFAULT_STATS = dict(
     count=lambda z: _stats_count(z),
 )
 
-# TODO
-# validate that cupy arrays can call stats functions like this
 _DEFAULT_STATS_CUPY = dict(
     mean=lambda z: z.mean(),
     max=lambda z: z.max(),
@@ -229,8 +227,8 @@ def _stats_cupy(
         # Here I need a kernel to return 0 for elements not included, 1 for 
         # elements to be included
         # If this doesn't work, then I extract the index and pass it to the kernel
-        zone_values = zones[values_cond & (zones == zone_id)]
-
+        #zone_values = zones[values_cond & (zones == zone_id)]
+        zone_values = values[cupy.nonzero(values_cond & (zones == zone_id))[0]]
         # nonzero_idx = cupy.nonzero(values_cond & (zone_values == zone_id))
         # zone_values = _zone_cat_data(zones, values, zone_id, nodata_values)
         for stats in stats_funcs:
