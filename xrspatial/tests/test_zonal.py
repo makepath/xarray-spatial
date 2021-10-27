@@ -115,12 +115,12 @@ def test_stats():
     # numpy case
     df_np = stats(
         zones=zones_np, values=values_np, stats_funcs=custom_stats,
-        zone_ids=[1, 2], nodata_zones=0, nodata_values=0
+        zone_ids=[1, 2], nodata_values=0
     )
     # dask case
     df_da = stats(
         zones=zones_da, values=values_da, stats_funcs=custom_stats,
-        zone_ids=[1, 2], nodata_zones=0, nodata_values=0
+        zone_ids=[1, 2], nodata_values=0
     )
     check_results(df_np, df_da, custom_stats_results)
 

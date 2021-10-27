@@ -32,14 +32,6 @@ _DEFAULT_STATS = dict(
 )
 
 
-def _to_int(numeric_value):
-    # convert an integer in float type to integer type
-    # if not an integer, return the value itself
-    if float(numeric_value).is_integer():
-        return int(numeric_value)
-    return numeric_value
-
-
 def _zone_cat_data(
     zones,
     values,
@@ -106,7 +98,6 @@ def _stats(
                 raise ValueError(stats)
             stats_dict[stats].append(stats_func(zone_values))
 
-    unique_zones = list(map(_to_int, unique_zones))
     stats_dict["zone"] = unique_zones
 
     return stats_dict
@@ -117,7 +108,6 @@ def _stats_dask(
     values: xr.DataArray,
     zone_ids: List[Union[int, float]],
     stats_funcs: Dict,
-    nodata_zones: Union[int, float],
     nodata_values: Union[int, float],
 ) -> pd.DataFrame:
 
@@ -125,8 +115,6 @@ def _stats_dask(
         # no zone_ids provided, find ids for all zones
         # precompute unique zones
         unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
-        # do not consider zone with nodata values
-        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
     else:
         unique_zones = np.array(zone_ids)
 
@@ -179,19 +167,15 @@ def _stats_numpy(
         values: xr.DataArray,
         zone_ids: List[Union[int, float]],
         stats_funcs: Dict,
-        nodata_zones: Union[int, float],
         nodata_values: Union[int, float],
 ) -> pd.DataFrame:
 
     if zone_ids is None:
         # no zone_ids provided, find ids for all zones
-        # do not consider zone with nodata values
         unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
-        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
     else:
         unique_zones = zone_ids
 
-    unique_zones = list(map(_to_int, unique_zones))
     unique_zones = np.asarray(unique_zones)
 
     stats_dict = {}
@@ -244,7 +228,6 @@ def stats(
         "var",
         "count",
     ],
-    nodata_zones: Optional[Union[int, float]] = None,
     nodata_values: Union[int, float] = None,
 ) -> Union[pd.DataFrame, dd.DataFrame]:
     """
@@ -282,11 +265,6 @@ def stats(
         In the dictionary case, all of its values must be
         callable. Function takes only one argument that is the `values` raster.
         The key become the column name in the output DataFrame.
-
-    nodata_zones: int, float, default=None
-        Nodata value in `zones` raster.
-        Cells with `nodata_zones` do not belong to any zone,
-        and thus excluded from calculation.
 
     nodata_values: int, float, default=None
         Nodata value in `values` raster.
@@ -404,7 +382,6 @@ def stats(
             values,
             zone_ids,
             stats_funcs_dict,
-            nodata_zones,
             nodata_values
         )
     else:
@@ -414,7 +391,6 @@ def stats(
             values,
             zone_ids,
             stats_funcs_dict,
-            nodata_zones,
             nodata_values
         )
 
@@ -424,8 +400,6 @@ def stats(
 def _crosstab_dict(zones, values, unique_zones, cats, nodata_values, agg):
 
     crosstab_dict = {}
-
-    unique_zones = list(map(_to_int, unique_zones))
     crosstab_dict["zone"] = unique_zones
 
     for i in cats:
