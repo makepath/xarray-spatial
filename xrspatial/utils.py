@@ -95,7 +95,11 @@ class ArrayTypeFunctionMapping(object):
             return self.numpy_func
 
         # cupy case
-        elif has_cuda() and isinstance(arr.data, cupy.ndarray):
+        elif (
+            has_cuda()
+            and cupy is not None
+            and isinstance(arr.data, cupy.ndarray)
+        ):
             return self.cupy_func
 
         # dask + cupy case
