@@ -19,6 +19,8 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
+from pyprof import timing
+
 # local modules
 from xrspatial.utils import ngjit
 from xrspatial.utils import has_cuda
@@ -183,25 +185,27 @@ def _stats_cupy(
     if len(orig_values.shape) > 2:
         raise TypeError('More than 2D not supported for cupy backend')
     
-    flatten_time = time.time()
-    zones = cupy.ravel(orig_zones.data)
-    values = cupy.ravel(orig_values.data)
-    flatten_time = time.time() - flatten_time
+    # flatten_time = time.time()
+    with timing.timed_region('flatten'):
+        zones = cupy.ravel(orig_zones.data)
+        values = cupy.ravel(orig_values.data)
+    # flatten_time = time.time() - flatten_time
 
-    unique_zones_time = time.time()
-    if zone_ids is None:
-        # TODO time this operation
-        # if it takes too long, then I need to figure out a better way
-        # no zone_ids provided, find ids for all zones
-        # do not consider zone with nodata values
-        unique_zones = cupy.unique(zones)
-        # TODO remove nodata_zones
-        #unique_zones = cupy.asnumpy(zones.data)
-        #unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
-        #unique_zones = cupy.array(unique_zones)
-    else:
-        unique_zones = cupy.array(zone_ids)
-    unique_zones_time = time.time() - unique_zones_time
+    # unique_zones_time = time.time()
+    with timing.timed_region('unique_zones')
+        if zone_ids is None:
+            # TODO time this operation
+            # if it takes too long, then I need to figure out a better way
+            # no zone_ids provided, find ids for all zones
+            # do not consider zone with nodata values
+            unique_zones = cupy.unique(zones)
+            # TODO remove nodata_zones
+            #unique_zones = cupy.asnumpy(zones.data)
+            #unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+            #unique_zones = cupy.array(unique_zones)
+        else:
+            unique_zones = cupy.array(zone_ids)
+    # unique_zones_time = time.time() - unique_zones_time
 
     # I need to prepare the kernel call
     # perhaps divide it into multiple kernels
@@ -229,52 +233,57 @@ def _stats_cupy(
     # first with zone_cat_data, collect all the values into multiple arrays
 
     # then iterate over the arrays and apply the stat funcs
-    values_cond_time = time.time()
-    values_cond = cupy.isfinite(values)
-    if nodata_values:
-        values_cond = values_cond & (values != nodata_values)
+    # values_cond_time = time.time()
+    with timing.timed_region('values_cond'):
+        values_cond = cupy.isfinite(values)
+        if nodata_values:
+            values_cond = values_cond & (values != nodata_values)
     #values_cond = cupy.isfinite(values) & (values != nodata_values)
-    values_cond_time = time.time() - values_cond_time
-    zone_values_time = 0
-    stats_time = 0
+    # values_cond_time = time.time() - values_cond_time
+    # zone_values_time = 0
+    # stats_time = 0
     for zone_id in unique_zones:
         # get zone values
         # Here I need a kernel to return 0 for elements not included, 1 for 
         # elements to be included
         # If this doesn't work, then I extract the index and pass it to the kernel
         #zone_values = zones[values_cond & (zones == zone_id)]
-        start_t = time.time()
-        zone_values = values[cupy.nonzero(values_cond & (zones == zone_id))[0]]
-        zone_values_time += time.time() - start_t
+        # start_t = time.time()
+        with timing.timed_region('zone_values'):
+            zone_values = values[cupy.nonzero(values_cond & (zones == zone_id))[0]]
+        # zone_values_time += time.time() - start_t
         # nonzero_idx = cupy.nonzero(values_cond & (zone_values == zone_id))
         # zone_values = _zone_cat_data(zones, values, zone_id, nodata_values)
-        start_t = time.time()
+        # start_t = time.time()
         for stats in stats_funcs:
             stats_func = stats_funcs.get(stats)
             if not callable(stats_func):
                 raise ValueError(stats)
-            result = stats_func(zone_values)
+            with timing.timed_region('stats_func'):
+                result = stats_func(zone_values)
             assert(len(result.shape) == 0)
-            stats_dict[stats].append(cupy.float(result))
-        stats_time += time.time() - start_t
+            with timing.timed_region('cupy_float'):
+                stats_dict[stats].append(cupy.float(result))
+        # stats_time += time.time() - start_t
     
-    remaining_t = time.time()
-    unique_zones = list(map(_to_int, unique_zones))
+    # remaining_t = time.time()
+    # unique_zones = list(map(_to_int, unique_zones))
     stats_dict["zone"] = unique_zones
 
 
     # in the end convert back to dataframe
     # and also measure the time it takes, if it
     # is too slow, I need to return it as a cupy dataframe
-    stats_df = pd.DataFrame(stats_dict)
-    stats_df.set_index("zone")
-    remaining_t = time.time()-remaining_t
-    print("flatten_time: ", flatten_time)
-    print("unique_zones_time: ", unique_zones_time)
-    print("values_cond_time: ", values_cond_time)
-    print("zone_values_time: ", zone_values_time)
-    print("stats_time: ", stats_time)
-    print("remaining_t: ", remaining_t)
+    with timing.timed_region('dataframe'):
+        stats_df = pd.DataFrame(stats_dict)
+        stats_df.set_index("zone")
+    # remaining_t = time.time()-remaining_t
+    # print("flatten_time: ", flatten_time)
+    # print("unique_zones_time: ", unique_zones_time)
+    # print("values_cond_time: ", values_cond_time)
+    # print("zone_values_time: ", zone_values_time)
+    # print("stats_time: ", stats_time)
+    # print("remaining_t: ", remaining_t)
     return stats_df
 
 

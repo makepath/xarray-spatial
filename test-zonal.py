@@ -7,6 +7,8 @@ from xrspatial.zonal import stats
 from xrspatial.utils import has_cuda
 from xrspatial.utils import doesnt_have_cuda
 
+from pyprof import timing
+
 parser = argparse.ArgumentParser(description='Simple zonal-stats use example, to be used a benchmarking template.',
                                  usage='python test-zonal.py -width width -height height -i iteration')
 
@@ -74,6 +76,8 @@ if __name__ == '__main__':
     stats_df = stats(zones=zones, values=values)
     warm_up_sec = time.time() - start
 
+    timing.mode = 'timing'
+    timing.reset()
     elapsed_sec = 0
     for i in range(args.iterations):
         start = time.time()
@@ -88,6 +92,7 @@ if __name__ == '__main__':
         elapsed_sec/args.iterations, warm_up_sec))
     print('Result: ', stats_df)
 
+    timing.report(total_time=elapsed_sec)
 
     #     from dask.distributed import Client
     #     import dask.array as da
