@@ -92,7 +92,8 @@ if __name__ == '__main__':
         elapsed_sec/args.iterations, warm_up_sec))
     print('Result: ', stats_df)
 
-    timing.report(total_time=elapsed_sec)
+    timing.report(total_time=elapsed_sec*1e3)
+    #timing.report()
 
     #     from dask.distributed import Client
     #     import dask.array as da
