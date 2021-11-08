@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from xarray import DataArray
+import time
 
 try:
     import cupy
@@ -182,6 +183,7 @@ def _stats_cupy(
     if len(values.shape) > 2:
         raise TypeError('More than 2D not supported for cupy backend')
 
+    unique_zones_time = time.time()
     if zone_ids is None:
         # TODO time this operation
         # if it takes too long, then I need to figure out a better way
@@ -193,8 +195,7 @@ def _stats_cupy(
         unique_zones = cupy.array(unique_zones)
     else:
         unique_zones = cupy.array(zone_ids)
-
-
+    unique_zones_time = time.time() - unique_zones_time
 
     # I need to prepare the kernel call
     # perhaps divide it into multiple kernels
@@ -222,22 +223,31 @@ def _stats_cupy(
     # first with zone_cat_data, collect all the values into multiple arrays
 
     # then iterate over the arrays and apply the stat funcs
+    values_cond_time = time.time()
     values_cond = cupy.isfinite(values.data) & (values.data != nodata_values)
+    values_cond_time = time.time() - values_cond_time
+    zone_values_time = 0
+    stats_time = 0
     for zone_id in unique_zones:
         # get zone values
         # Here I need a kernel to return 0 for elements not included, 1 for 
         # elements to be included
         # If this doesn't work, then I extract the index and pass it to the kernel
         #zone_values = zones[values_cond & (zones == zone_id)]
+        start_t = time.time()
         zone_values = values[cupy.nonzero(values_cond & (zones == zone_id))[0]]
+        zone_values_time += time.time() - start_t
         # nonzero_idx = cupy.nonzero(values_cond & (zone_values == zone_id))
         # zone_values = _zone_cat_data(zones, values, zone_id, nodata_values)
+        start_t = time.time()
         for stats in stats_funcs:
             stats_func = stats_funcs.get(stats)
             if not callable(stats_func):
                 raise ValueError(stats)
             stats_dict[stats].append(stats_func(zone_values))
-
+        stats_time += time.time() - start_t
+    
+    remaining_t = time.time()
     unique_zones = list(map(_to_int, unique_zones))
     stats_dict["zone"] = unique_zones
 
@@ -247,7 +257,12 @@ def _stats_cupy(
     # is too slow, I need to return it as a cupy dataframe
     stats_df = pd.DataFrame(stats_dict)
     stats_df.set_index("zone")
-
+    remaining_t = time.time()-remaining_t
+    print("unique_zones_time: ", unique_zones_time)
+    print("values_cond_time: ", values_cond_time)
+    print("zone_values_time: ", zone_values_time)
+    print("stats_time: ", stats_time)
+    print("remaining_t: ", remaining_t)
     return stats_df
 
 
