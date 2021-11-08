@@ -171,8 +171,8 @@ def _single_stats_func(
 
 # TODO: flatten zones and values
 def _stats_cupy(
-    zones: xr.DataArray,
-    values: xr.DataArray,
+    orig_zones: xr.DataArray,
+    orig_values: xr.DataArray,
     zone_ids: List[Union[int, float]],
     stats_funcs: Dict,
     nodata_zones: Union[int, float],
@@ -180,8 +180,13 @@ def _stats_cupy(
 ) -> pd.DataFrame:
     
     # TODO support 3D input
-    if len(values.shape) > 2:
+    if len(orig_values.shape) > 2:
         raise TypeError('More than 2D not supported for cupy backend')
+    
+    flatten_time = time.time()
+    zones = cupy.ravel(orig_zones.data)
+    values = cupy.ravel(orig_values.data)
+    flatten_time = time.time() - flatten_time
 
     unique_zones_time = time.time()
     if zone_ids is None:
@@ -189,10 +194,11 @@ def _stats_cupy(
         # if it takes too long, then I need to figure out a better way
         # no zone_ids provided, find ids for all zones
         # do not consider zone with nodata values
-
-        unique_zones = cupy.asnumpy(zones.data)
-        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
-        unique_zones = cupy.array(unique_zones)
+        unique_zones = cupy.unique(zones)
+        # TODO remove nodata_zones
+        #unique_zones = cupy.asnumpy(zones.data)
+        #unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
+        #unique_zones = cupy.array(unique_zones)
     else:
         unique_zones = cupy.array(zone_ids)
     unique_zones_time = time.time() - unique_zones_time
@@ -224,7 +230,10 @@ def _stats_cupy(
 
     # then iterate over the arrays and apply the stat funcs
     values_cond_time = time.time()
-    values_cond = cupy.isfinite(values.data) & (values.data != nodata_values)
+    values_cond = cupy.isfinite(values)
+    if nodata_values:
+        values_cond = values_cond & (values != nodata_values)
+    #values_cond = cupy.isfinite(values) & (values != nodata_values)
     values_cond_time = time.time() - values_cond_time
     zone_values_time = 0
     stats_time = 0
@@ -244,7 +253,9 @@ def _stats_cupy(
             stats_func = stats_funcs.get(stats)
             if not callable(stats_func):
                 raise ValueError(stats)
-            stats_dict[stats].append(stats_func(zone_values))
+            result = stats_func(zone_values)
+            assert(len(result.shape) == 0)
+            stats_dict[stats].append(cupy.float(result))
         stats_time += time.time() - start_t
     
     remaining_t = time.time()
@@ -258,6 +269,7 @@ def _stats_cupy(
     stats_df = pd.DataFrame(stats_dict)
     stats_df.set_index("zone")
     remaining_t = time.time()-remaining_t
+    print("flatten_time: ", flatten_time)
     print("unique_zones_time: ", unique_zones_time)
     print("values_cond_time: ", values_cond_time)
     print("zone_values_time: ", zone_values_time)
