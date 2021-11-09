@@ -233,6 +233,7 @@ def _stats_cupy(
             if nodata_values:
                 zone_values = zone_values[cupy.isfinite(zone_values) & (zone_values != nodata_values)]
             else:
+                # TODO filter out all non finite elements in the original array
                 zone_values = zone_values[cupy.isfinite(zone_values)]
 
         # apply stats on the zone data
@@ -243,6 +244,8 @@ def _stats_cupy(
             with timing.timed_region('calc:' + stats):
                 result = stats_func(zone_values)
             assert(len(result.shape) == 0)
+            # TODO do not append the results, copy them in pre-allocated array,
+            # and transfer to host once
             with timing.timed_region('cupy_float'):
                 result = cupy.float(result)
             with timing.timed_region('append_stats'):
@@ -299,6 +302,8 @@ def _stats_cupy(
     # in the end convert back to dataframe
     # and also measure the time it takes, if it
     # is too slow, I need to return it as a cupy dataframe
+    #stats_df = pd.DataFrame()
+    #return stats_df
     with timing.timed_region('dataframe'):
         stats_df = pd.DataFrame(stats_dict)
         stats_df.set_index("zone")
