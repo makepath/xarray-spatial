@@ -58,15 +58,15 @@ _DEFAULT_STATS = dict(
     count=lambda z: _stats_count(z),
 )
 
-_DEFAULT_STATS_CUPY = dict(
-    mean=lambda z: z.mean(),
-    max=lambda z: z.max(),
-    min=lambda z: z.min(),
-    sum=lambda z: z.sum(),
-    std=lambda z: z.std(),
-    var=lambda z: z.var(),
-    count=lambda z: _stats_count(z),
-)
+# _DEFAULT_STATS_CUPY = dict(
+#     mean=lambda z: z.mean(),
+#     max=lambda z: z.max(),
+#     min=lambda z: z.min(),
+#     sum=lambda z: z.sum(),
+#     std=lambda z: z.std(),
+#     var=lambda z: z.var(),
+#     count=lambda z: _stats_count(z),
+# )
 
 _DASK_BLOCK_STATS = dict(
     max=lambda z: z.max(),
@@ -189,73 +189,113 @@ def _stats_cupy(
         zones = cupy.ravel(orig_zones.data)
         values = cupy.ravel(orig_values.data)
 
-    with timing.timed_region('unique_zones'):
-        if zone_ids is None:
-            # TODO time this operation
-            # if it takes too long, then I need to figure out a better way
-            # no zone_ids provided, find ids for all zones
-            # do not consider zone with nodata values
-            unique_zones = cupy.unique(zones)
-            # TODO remove nodata_zones
-            #unique_zones = cupy.asnumpy(zones.data)
-            #unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
-            #unique_zones = cupy.array(unique_zones)
-        else:
-            unique_zones = cupy.array(zone_ids)
+    with timing.timed_region('argsort_zones'):
+        sorted_indices = cupy.argsort(zones)
 
-    # I need to prepare the kernel call
-    # perhaps divide it into multiple kernels
-    # One kernel is the mask kernel
-    # input: gets zone array, and returns a collection of value arrays
-    # then we apply the stats on these arrays.
-    # this is the zone_cat_data kernel.
-    # for simplicity, I do all the dev here at first
-    # then divide into separate functions
-    # stats_dict = _stats_cupy(
-    #     zones,
-    #     values,
-    #     unique_zones,
-    #     stats_funcs,
-    #     nodata_values
-    # )
+
+    # NaN should go at the end of the array
+    with timing.timed_region('sorted_zones_and_values'):
+        sorted_zones = zones[sorted_indices]
+        values_by_zone = values[sorted_indices]
+
+    # Now I need to find the unique zones, and zone breaks
+    with timing.timed_region('unique_values'):
+        unique_zones, unique_index = cupy.unique(sorted_zones, return_index=True)
+    
+    # Transfer to the host
+    with timing.timed_region('transfer_to_host'):
+        unique_zones = unique_zones.get()
+        unique_index = unique_index.get()
+
     # We can use function where and select
     stats_dict = {}
+    stats_dict["zone"] = []
     # stats columns
     for stats in stats_funcs:
         stats_dict[stats] = []
-    # first with zone_cat_data, collect all the values into multiple arrays
 
-    # then iterate over the arrays and apply the stat funcs
-    with timing.timed_region('values_cond'):
-        values_cond = cupy.isfinite(values)
-        if nodata_values:
-            values_cond = values_cond & (values != nodata_values)
-    #values_cond = cupy.isfinite(values) & (values != nodata_values)
-    for zone_id in unique_zones:
-        # get zone values
-        # Here I need a kernel to return 0 for elements not included, 1 for 
-        # elements to be included
-        # If this doesn't work, then I extract the index and pass it to the kernel
-        #zone_values = zones[values_cond & (zones == zone_id)]
+    for i in range(len(unique_zones)):
+        zone_id = unique_zones[i]
+        # skip zone_id == nodata_zones, and non-finite zone ids
+        if ((nodata_zones) and (zone_id == nodata_zones)) or (not np.isfinite(zone_id)):
+            continue
+
+        stats_dict["zone"].append(zone_id)
+        # extract zone_values
         with timing.timed_region('zone_values'):
-            zone_values = values[cupy.nonzero(values_cond & (zones == zone_id))[0]]
-        # nonzero_idx = cupy.nonzero(values_cond & (zone_values == zone_id))
-        # zone_values = _zone_cat_data(zones, values, zone_id, nodata_values)
+            if i < len(unique_zones) - 1:
+                zone_values = values_by_zone[unique_index[i]:unique_index[i+1]]
+            else:
+                zone_values = values_by_zone[unique_index[i]:]
+
+        with timing.timed_region('zone_values_filter'):
+            # filter out non-finite values or values equal to nodata_values
+            if nodata_values:
+                zone_values = zone_values[cupy.isfinite(zone_values) & (zone_values != nodata_values)]
+            else:
+                zone_values = zone_values[cupy.isfinite(zone_values)]
+
+        # apply stats on the zone data
         for stats in stats_funcs:
             stats_func = stats_funcs.get(stats)
             if not callable(stats_func):
                 raise ValueError(stats)
-            with timing.timed_region('stats_func'):
+            with timing.timed_region('calc:' + stats):
                 result = stats_func(zone_values)
             assert(len(result.shape) == 0)
             with timing.timed_region('cupy_float'):
                 result = cupy.float(result)
             with timing.timed_region('append_stats'):
                 stats_dict[stats].append(result)
-    
-    unique_zones = list(map(_to_int, unique_zones))
-    stats_dict["zone"] = unique_zones
 
+    # unique_zones should be a host array-like
+    # with timing.timed_region('unique_zones'):
+    #     if zone_ids is None:
+    #         # TODO time this operation
+    #         # if it takes too long, then I need to figure out a better way
+    #         # no zone_ids provided, find ids for all zones
+    #         # do not consider zone with nodata values
+    #         # unique_zones = cupy.unique(zones)
+    #         # unique_zones = cupy.asnumpy(unique_zones)
+    #         unique_zones = cupy.asnumpy(zones)
+    #         unique_zones = np.unique(zones[np.isfinite(zones)])
+    #         unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))            
+    #     else:
+    #         unique_zones = zone_ids
+    #         # unique_zones = cupy.array(zone_ids)
+    #     unique_zones = list(map(_to_int, unique_zones))
+
+
+    # # first with zone_cat_data, collect all the values into multiple arrays
+
+    # # then iterate over the arrays and apply the stat funcs
+    # with timing.timed_region('values_cond'):
+    #     values_cond = cupy.isfinite(values)
+    #     if nodata_values:
+    #         values_cond = values_cond & (values != nodata_values)
+    # #values_cond = cupy.isfinite(values) & (values != nodata_values)
+    # for zone_id in unique_zones:
+    #     # get zone values
+    #     # Here I need a kernel to return 0 for elements not included, 1 for 
+    #     # elements to be included
+    #     # If this doesn't work, then I extract the index and pass it to the kernel
+    #     #zone_values = zones[values_cond & (zones == zone_id)]
+    #     with timing.timed_region('zone_values'):
+    #         zone_values = values[cupy.nonzero(values_cond & (zones == zone_id))[0]]
+    #     # nonzero_idx = cupy.nonzero(values_cond & (zone_values == zone_id))
+    #     # zone_values = _zone_cat_data(zones, values, zone_id, nodata_values)
+    #     for stats in stats_funcs:
+    #         stats_func = stats_funcs.get(stats)
+    #         if not callable(stats_func):
+    #             raise ValueError(stats)
+    #         with timing.timed_region('stats_func'):
+    #             result = stats_func(zone_values)
+    #         assert(len(result.shape) == 0)
+    #         with timing.timed_region('cupy_float'):
+    #             result = cupy.float(result)
+    #         with timing.timed_region('append_stats'):
+    #             stats_dict[stats].append(result)
+    
     # in the end convert back to dataframe
     # and also measure the time it takes, if it
     # is too slow, I need to return it as a cupy dataframe
@@ -366,7 +406,7 @@ def _stats_numpy(
 
     return stats_df
 
-@timing.timeit(key="_stats_numpy")
+@timing.timeit(key="stats_numpy")
 def _stats_numpy(
     zones: xr.DataArray,
     values: xr.DataArray,
@@ -584,12 +624,12 @@ def stats(
         # create a dict of stats
         stats_funcs_dict = {}
 
-        for stats in stats_funcs:
-            func = _DEFAULT_STATS_CUPY.get(stats, None)
-            if func is None:
-                err_str = f"Invalid stat name. {stats} option not supported."
-                raise ValueError(err_str)
-            stats_funcs_dict[stats] = func
+    #     for stats in stats_funcs:
+    #         func = _DEFAULT_STATS_CUPY.get(stats, None)
+    #         if func is None:
+    #             err_str = f"Invalid stat name. {stats} option not supported."
+    #             raise ValueError(err_str)
+    #         stats_funcs_dict[stats] = func
 
     if isinstance(stats_funcs, list):
         # create a dict of stats
