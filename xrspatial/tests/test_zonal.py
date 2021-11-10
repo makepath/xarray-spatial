@@ -62,13 +62,8 @@ def check_results(df_np, df_da, expected_results_dict):
         df_da = df_da.compute()
         assert isinstance(df_da, pd.DataFrame)
 
-        # numpy results equal dask results
-        # zone column
-        assert (df_np['zone'] == df_da['zone']).all()
-
-        assert (df_np.columns == df_da.columns).all()
-        for col in df_np.columns[1:]:
-            assert np.isclose(df_np[col], df_da[col], equal_nan=True).all()
+        # numpy results equal dask results, ignoring their indexes
+        assert np.array_equal(df_np.values, df_da.values, equal_nan=True)
 
 
 def test_stats():
@@ -94,7 +89,27 @@ def test_stats():
     df_da = stats(zones=zones_da, values=values_da)
     check_results(df_np, df_da, default_stats_results)
 
-    # ---- custom stats ----
+    # expected results
+    stats_results_zone_0_3 = {
+        'zone':  [0, 3],
+        'mean':  [0, 2.4],
+        'max':   [0, 3],
+        'min':   [0, 0],
+        'sum':   [0, 12],
+        'std':   [0, 1.2],
+        'var':   [0, 1.44],
+        'count': [5, 5]
+    }
+
+    # numpy case
+    df_np_zone_0_3 = stats(zones=zones_np, values=values_np, zone_ids=[0, 3])
+
+    # dask case
+    df_da_zone_0_3 = stats(zones=zones_da, values=values_da, zone_ids=[0, 3])
+
+    check_results(df_np_zone_0_3, df_da_zone_0_3, stats_results_zone_0_3)
+
+    # ---- custom stats (NumPy only) ----
     # expected results
     custom_stats_results = {
         'zone':       [1, 2],

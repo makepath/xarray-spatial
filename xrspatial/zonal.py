@@ -51,9 +51,9 @@ _DASK_STATS = dict(
     sum_squares=lambda block_sum_squares: np.nansum(block_sum_squares, axis=0),
     squared_sum=lambda block_sums: np.nansum(block_sums, axis=0)**2,
 )
-_dask_mean=lambda sums, counts: sums / counts
-_dask_std=lambda sum_squares, squared_sum, n: np.sqrt((sum_squares - squared_sum/n) / n)  # noqa
-_dask_var=lambda sum_squares, squared_sum, n: (sum_squares - squared_sum/n) / n  # noqa
+_dask_mean = lambda sums, counts: sums / counts  # noqa
+_dask_std = lambda sum_squares, squared_sum, n: np.sqrt((sum_squares - squared_sum/n) / n)  # noqa
+_dask_var = lambda sum_squares, squared_sum, n: (sum_squares - squared_sum/n) / n  # noqa
 
 
 def _zone_cat_data(
@@ -189,12 +189,12 @@ def _stats_dask_numpy(
 
     # find ids for all zones
     unique_zones = np.unique(zones[np.isfinite(zones)])
-    # selected zones to do analysis
+
+    select_all_zones = False
+    # selecte zones to do analysis
     if zone_ids is None:
         zone_ids = unique_zones
-
-    # # remove zones that does not exist in `zones` raster
-    # zone_ids = [z for z in zone_ids if z in unique_zones]
+        select_all_zones = True
 
     zones_blocks = zones.to_delayed().ravel()
     values_blocks = values.to_delayed().ravel()
@@ -221,6 +221,15 @@ def _stats_dask_numpy(
     if compute_sum_squares:
         basis_stats.append('sum_squares')
 
+    dask_dtypes = dict(
+        max=values.dtype,
+        min=values.dtype,
+        sum=values.dtype,
+        count=np.int64,
+        sum_squares=values.dtype,
+        squared_sum=values.dtype,
+    )
+
     for s in basis_stats:
         if s == 'sum_squares' and not compute_sum_squares:
             continue
@@ -231,7 +240,7 @@ def _stats_dask_numpy(
             da.from_delayed(
                 delayed(_stats_func_dask_numpy)(
                     z, v, unique_zones, zone_ids, stats_func, nodata_values
-                ), shape=(np.nan,), dtype=np.float64
+                ), shape=(np.nan,), dtype=dask_dtypes[s]
             )
             for z, v in zip(zones_blocks, values_blocks)
         ]
@@ -260,9 +269,16 @@ def _stats_dask_numpy(
     )
     # name columns
     stats_df.columns = stats_dict.keys()
-    stats_df.set_index("zone")
     # select columns
-    stats_df = stats_df[["zone"] + list(stats_funcs.keys())]
+    stats_df = stats_df[['zone'] + list(stats_funcs.keys())]
+
+    if not select_all_zones:
+        # only return zones specified in `zone_ids`
+        selected_rows = []
+        for index, row in stats_df.iterrows():
+            if row['zone'] in zone_ids:
+                selected_rows.append(stats_df.loc[index])
+        stats_df = dd.concat(selected_rows)
 
     return stats_df
 
@@ -319,7 +335,6 @@ def _stats_numpy(
         start = end
 
     stats_df = pd.DataFrame(stats_dict)
-    stats_df.set_index("zone")
 
     return stats_df
 
