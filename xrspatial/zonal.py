@@ -1,12 +1,14 @@
 from math import sqrt
 from typing import Optional, Callable, Union, Dict, List
 
-import dask.array as da
-import dask.dataframe as dd
 import numpy as np
 import pandas as pd
 import xarray as xr
 from xarray import DataArray
+
+import dask.array as da
+import dask.dataframe as dd
+from dask import delayed
 
 from xrspatial.utils import ngjit
 
@@ -30,6 +32,28 @@ _DEFAULT_STATS = dict(
     var=lambda z: z.var(),
     count=lambda z: _stats_count(z),
 )
+
+
+_DASK_BLOCK_STATS = dict(
+    max=lambda z: z.max(),
+    min=lambda z: z.min(),
+    sum=lambda z: z.sum(),
+    count=lambda z: _stats_count(z),
+    sum_squares=lambda z: (z**2).sum()
+)
+
+
+_DASK_STATS = dict(
+    max=lambda block_maxes: np.nanmax(block_maxes, axis=0),
+    min=lambda block_mins: np.nanmin(block_mins, axis=0),
+    sum=lambda block_sums: np.nansum(block_sums, axis=0),
+    count=lambda block_counts: np.nansum(block_counts, axis=0),
+    sum_squares=lambda block_sum_squares: np.nansum(block_sum_squares, axis=0),
+    squared_sum=lambda block_sums: np.nansum(block_sums, axis=0)**2,
+)
+_dask_mean=lambda sums, counts: sums / counts
+_dask_std=lambda sum_squares, squared_sum, n: np.sqrt((sum_squares - squared_sum/n) / n)  # noqa
+_dask_var=lambda sum_squares, squared_sum, n: (sum_squares - squared_sum/n) / n  # noqa
 
 
 def _zone_cat_data(
@@ -103,92 +127,172 @@ def _stats(
     return stats_dict
 
 
-def _stats_dask(
+@ngjit
+def _strides(flatten_zones, unique_zones):
+    num_elements = flatten_zones.shape[0]
+    num_zones = len(unique_zones)
+    strides = np.zeros(len(unique_zones), dtype=np.int32)
+
+    count = 0
+    for i in range(num_zones):
+        while (count < num_elements) and (
+                flatten_zones[count] == unique_zones[i]):
+            count += 1
+        strides[i] = count
+
+    return strides
+
+
+@delayed
+def _stats_func_dask_numpy(
+    zones: np.array,
+    values: np.array,
+    unique_zones: np.array,
+    zone_ids: np.array,
+    func: callable,
+    nodata_values: Union[int, float] = None,
+) -> pd.DataFrame:
+
+    sorted_zones = np.sort(zones.flatten())
+    sored_indices = np.argsort(zones.flatten())
+    values_by_zones = values.flatten()[sored_indices]
+
+    # exclude nans from calculation
+    # flatten_zones is already sorted, NaN elements (if any) are at the end
+    # of the array, removing them will not affect data before them
+    sorted_zones = sorted_zones[np.isfinite(sorted_zones)]
+    zone_breaks = _strides(sorted_zones, unique_zones)
+
+    start = 0
+    results = np.zeros(unique_zones.shape) * np.nan
+    for i in range(len(unique_zones)):
+        end = zone_breaks[i]
+        if unique_zones[i] in zone_ids:
+            zone_values = values_by_zones[start: end]
+            # filter out non-finite and nodata_values
+            zone_values = zone_values[
+                np.isfinite(zone_values) & (zone_values != nodata_values)]
+            if len(zone_values) > 0:
+                results[i] = func(zone_values)
+        start = end
+
+    return results
+
+
+def _stats_dask_numpy(
+        zones: da.Array,
+        values: da.Array,
+        zone_ids: List[Union[int, float]],
+        stats_funcs: Dict,
+        nodata_values: Union[int, float],
+) -> pd.DataFrame:
+
+    # find ids for all zones
+    unique_zones = np.unique(zones[np.isfinite(zones)])
+    # selected zones to do analysis
+    if zone_ids is None:
+        zone_ids = unique_zones
+
+    # # remove zones that does not exist in `zones` raster
+    # zone_ids = [z for z in zone_ids if z in unique_zones]
+
+    zones_blocks = zones.to_delayed().ravel()
+    values_blocks = values.to_delayed().ravel()
+
+    stats_dict = {}
+    stats_dict["zone"] = unique_zones  # zone column
+
+    compute_sum_squares = False
+    compute_sum = False
+    compute_count = False
+
+    if 'mean' or 'std' or 'var' in stats_funcs:
+        compute_sum = True
+        compute_count = True
+
+    if 'std' or 'var' in stats_funcs:
+        compute_sum_squares = True
+
+    basis_stats = [s for s in _DASK_BLOCK_STATS if s in stats_funcs]
+    if compute_count and 'count' not in basis_stats:
+        basis_stats.append('count')
+    if compute_sum and 'sum' not in basis_stats:
+        basis_stats.append('sum')
+    if compute_sum_squares:
+        basis_stats.append('sum_squares')
+
+    for s in basis_stats:
+        if s == 'sum_squares' and not compute_sum_squares:
+            continue
+        stats_func = _DASK_BLOCK_STATS.get(s)
+        if not callable(stats_func):
+            raise ValueError(s)
+        stats_by_block = [
+            da.from_delayed(
+                delayed(_stats_func_dask_numpy)(
+                    z, v, unique_zones, zone_ids, stats_func, nodata_values
+                ), shape=(np.nan,), dtype=np.float64
+            )
+            for z, v in zip(zones_blocks, values_blocks)
+        ]
+        zonal_stats = da.stack(stats_by_block, allow_unknown_chunksizes=True)
+        stats_func_by_block = delayed(_DASK_STATS[s])
+        stats_dict[s] = da.from_delayed(
+            stats_func_by_block(zonal_stats), shape=(np.nan,), dtype=np.float64
+        )
+
+    if 'mean' in stats_funcs:
+        stats_dict['mean'] = _dask_mean(stats_dict['sum'], stats_dict['count'])
+    if 'std' in stats_funcs:
+        stats_dict['std'] = _dask_std(
+            stats_dict['sum_squares'], stats_dict['sum'] ** 2,
+            stats_dict['count']
+        )
+    if 'var' in stats_funcs:
+        stats_dict['var'] = _dask_var(
+            stats_dict['sum_squares'], stats_dict['sum'] ** 2,
+            stats_dict['count']
+        )
+
+    # generate dask dataframe
+    stats_df = dd.concat(
+        [dd.from_dask_array(s) for s in stats_dict.values()], axis=1
+    )
+    # name columns
+    stats_df.columns = stats_dict.keys()
+    stats_df.set_index("zone")
+    # select columns
+    stats_df = stats_df[["zone"] + list(stats_funcs.keys())]
+
+    return stats_df
+
+
+def _stats_numpy(
     zones: xr.DataArray,
     values: xr.DataArray,
     zone_ids: List[Union[int, float]],
     stats_funcs: Dict,
     nodata_values: Union[int, float],
 ) -> pd.DataFrame:
-
+    # find ids for all zones
+    unique_zones = np.unique(zones[np.isfinite(zones)])
+    # selected zones to do analysis
     if zone_ids is None:
-        # no zone_ids provided, find ids for all zones
-        # precompute unique zones
-        unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
-    else:
-        unique_zones = np.array(zone_ids)
-
-    stats_dict = _stats(
-        zones,
-        values,
-        unique_zones,
-        stats_funcs,
-        nodata_values
-    )
-
-    stats_dict = {
-        stats: da.stack(zonal_stats, axis=0)
-        for stats, zonal_stats in stats_dict.items()
-    }
-
-    # generate dask dataframe
-    stats_df = dd.concat(
-        [dd.from_dask_array(stats) for stats in stats_dict.values()], axis=1
-    )
-    # name columns
-    stats_df.columns = stats_dict.keys()
-    stats_df.set_index("zone")
-
-    return stats_df
-
-
-@ngjit
-def _strides(flatten_zones, zone_ids):
-    num_elements = flatten_zones.shape[0]
-    strides = np.zeros(len(zone_ids), dtype=np.int32)
-
-    zone_count = 0
-    for i in range(num_elements - 1):
-        if (flatten_zones[i] != flatten_zones[i + 1]):
-            if flatten_zones[i] in zone_ids:
-                strides[zone_count] = i
-                zone_count += 1
-
-    # check last elements
-    if flatten_zones[num_elements - 1] != strides[zone_count - 1]:
-        if flatten_zones[num_elements - 1] in zone_ids:
-            strides[zone_count] = num_elements - 1
-
-    return strides
-
-
-def _stats_numpy(
-        zones: xr.DataArray,
-        values: xr.DataArray,
-        zone_ids: List[Union[int, float]],
-        stats_funcs: Dict,
-        nodata_values: Union[int, float],
-) -> pd.DataFrame:
-
-    if zone_ids is None:
-        # no zone_ids provided, find ids for all zones
-        unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
-    else:
-        unique_zones = zone_ids
-
-    unique_zones = np.asarray(unique_zones)
+        zone_ids = unique_zones
+    # remove zones that does not exist in `zones` raster
+    zone_ids = [z for z in zone_ids if z in unique_zones]
 
     stats_dict = {}
     # zone column
-    stats_dict["zone"] = unique_zones
+    stats_dict["zone"] = zone_ids
     # stats columns
     for stats in stats_funcs:
         stats_dict[stats] = []
 
-    flatten_zones = zones.data.flatten()
+    flatten_zones = zones.flatten()
     sorted_indices = np.argsort(flatten_zones)
     sorted_zones = flatten_zones[sorted_indices]
-    values_by_zones = values.data.flatten()[sorted_indices]
+    values_by_zones = values.flatten()[sorted_indices]
 
     # exclude nans from calculation
     # flatten_zones is already sorted, NaN elements (if any) are at the end
@@ -198,20 +302,25 @@ def _stats_numpy(
 
     start = 0
     for i in range(len(unique_zones)):
-        end = zone_breaks[i] + 1
-        zone_values = values_by_zones[start:end]
-        # filter out non-finite and nodata_values
-        zone_values = zone_values[
-            np.isfinite(zone_values) & (zone_values != nodata_values)]
-        for stats in stats_funcs:
-            stats_func = stats_funcs.get(stats)
-            if not callable(stats_func):
-                raise ValueError(stats)
-            stats_dict[stats].append(stats_func(zone_values))
+        end = zone_breaks[i]
+        if unique_zones[i] in zone_ids:
+            zone_values = values_by_zones[start:end]
+            # filter out non-finite and nodata_values
+            zone_values = zone_values[
+                np.isfinite(zone_values) & (zone_values != nodata_values)]
+            if len(zone_values) == 0:
+                stats_dict[stats].append(np.nan)
+            else:
+                for stats in stats_funcs:
+                    stats_func = stats_funcs.get(stats)
+                    if not callable(stats_func):
+                        raise ValueError(stats)
+                    stats_dict[stats].append(stats_func(zone_values))
         start = end
 
     stats_df = pd.DataFrame(stats_dict)
     stats_df.set_index("zone")
+
     return stats_df
 
 
@@ -378,17 +487,17 @@ def stats(
     if isinstance(values.data, np.ndarray):
         # numpy case
         stats_df = _stats_numpy(
-            zones,
-            values,
+            zones.data,
+            values.data,
             zone_ids,
             stats_funcs_dict,
             nodata_values
         )
     else:
         # dask case
-        stats_df = _stats_dask(
-            zones,
-            values,
+        stats_df = _stats_dask_numpy(
+            zones.data,
+            values.data,
             zone_ids,
             stats_funcs_dict,
             nodata_values

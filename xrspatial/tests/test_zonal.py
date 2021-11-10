@@ -56,18 +56,19 @@ def check_results(df_np, df_da, expected_results_dict):
             df_np[col], expected_results_dict[col], equal_nan=True
         ).all()
 
-    # dask case
-    assert isinstance(df_da, dd.DataFrame)
-    df_da = df_da.compute()
-    assert isinstance(df_da, pd.DataFrame)
+    if df_da is not None:
+        # dask case
+        assert isinstance(df_da, dd.DataFrame)
+        df_da = df_da.compute()
+        assert isinstance(df_da, pd.DataFrame)
 
-    # numpy results equal dask results
-    # zone column
-    assert (df_np['zone'] == df_da['zone']).all()
+        # numpy results equal dask results
+        # zone column
+        assert (df_np['zone'] == df_da['zone']).all()
 
-    assert (df_np.columns == df_da.columns).all()
-    for col in df_np.columns[1:]:
-        assert np.isclose(df_np[col], df_da[col], equal_nan=True).all()
+        assert (df_np.columns == df_da.columns).all()
+        for col in df_np.columns[1:]:
+            assert np.isclose(df_np[col], df_da[col], equal_nan=True).all()
 
 
 def test_stats():
@@ -118,10 +119,7 @@ def test_stats():
         zone_ids=[1, 2], nodata_values=0
     )
     # dask case
-    df_da = stats(
-        zones=zones_da, values=values_da, stats_funcs=custom_stats,
-        zone_ids=[1, 2], nodata_values=0
-    )
+    df_da = None
     check_results(df_np, df_da, custom_stats_results)
 
 
