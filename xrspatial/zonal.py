@@ -192,11 +192,21 @@ def _stats_cupy(
     with timing.timed_region('argsort_zones'):
         sorted_indices = cupy.argsort(zones)
 
-
     # NaN should go at the end of the array
     with timing.timed_region('sorted_zones_and_values'):
         sorted_zones = zones[sorted_indices]
         values_by_zone = values[sorted_indices]
+
+
+    # TODO Now I need to filter out values that are non-finite or 
+    # values equal to nodata_values
+    with timing.timed_region('filter_values'):
+        if nodata_values:
+            filter_values = cupy.isfinite(values_by_zone) & (values_by_zone != nodata_values)
+        else:
+            filter_values = cupy.isfinite(values_by_zone)
+        values_by_zone = values_by_zone[filter_values]
+        sorted_zones = sorted_zones[filter_values]
 
     # Now I need to find the unique zones, and zone breaks
     with timing.timed_region('unique_values'):
@@ -228,13 +238,13 @@ def _stats_cupy(
             else:
                 zone_values = values_by_zone[unique_index[i]:]
 
-        with timing.timed_region('zone_values_filter'):
-            # filter out non-finite values or values equal to nodata_values
-            if nodata_values:
-                zone_values = zone_values[cupy.isfinite(zone_values) & (zone_values != nodata_values)]
-            else:
-                # TODO filter out all non finite elements in the original array
-                zone_values = zone_values[cupy.isfinite(zone_values)]
+        # with timing.timed_region('zone_values_filter'):
+        #     # filter out non-finite values or values equal to nodata_values
+        #     if nodata_values:
+        #         zone_values = zone_values[cupy.isfinite(zone_values) & (zone_values != nodata_values)]
+        #     else:
+        #         # TODO filter out all non finite elements in the original array
+        #         zone_values = zone_values[cupy.isfinite(zone_values)]
 
         # apply stats on the zone data
         for stats in stats_funcs:
@@ -302,12 +312,12 @@ def _stats_cupy(
     # in the end convert back to dataframe
     # and also measure the time it takes, if it
     # is too slow, I need to return it as a cupy dataframe
-    #stats_df = pd.DataFrame()
-    #return stats_df
-    with timing.timed_region('dataframe'):
-        stats_df = pd.DataFrame(stats_dict)
-        stats_df.set_index("zone")
+    stats_df = pd.DataFrame()
     return stats_df
+    # with timing.timed_region('dataframe'):
+    #     stats_df = pd.DataFrame(stats_dict)
+    #     stats_df.set_index("zone")
+    # return stats_df
 
 
 def _stats_numpy(

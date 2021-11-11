@@ -7,7 +7,6 @@ from xrspatial.zonal import stats
 from xrspatial.utils import has_cuda
 from xrspatial.utils import doesnt_have_cuda
 
-from pyprof import timing
 
 parser = argparse.ArgumentParser(description='Simple zonal-stats use example, to be used a benchmarking template.',
                                  usage='python test-zonal.py -width width -height height -i iteration')
@@ -31,6 +30,9 @@ parser.add_argument('-b', '--backend', type=str, choices=['numpy', 'cupy', 'dask
                     default='numpy',
                     help='Computational backend to use.')
 
+parser.add_argument('-p', '--profile', type=bool, action='store_true',
+                    help='Turns on the profiling mode.')
+
 
 def create_arr(data=None, H=10, W=10, backend='numpy'):
     assert(backend in ['numpy', 'cupy', 'dask'])
@@ -52,6 +54,7 @@ def create_arr(data=None, H=10, W=10, backend='numpy'):
 if __name__ == '__main__':
     args = parser.parse_args()
 
+
     W = args.width
     H = args.height
     zH = args.zone_height
@@ -70,14 +73,17 @@ if __name__ == '__main__':
         for j in range(zW):
             zones[i * hstep: (i+1)*hstep, j*wstep: (j+1)*wstep] = i*zW + j
 
-    zones = create_arr(zones, backend=args.backend)    
+    zones = create_arr(zones, backend=args.backend)
     # Profiling region
     start = time.time()
     stats_df = stats(zones=zones, values=values)
     warm_up_sec = time.time() - start
 
-    timing.mode = 'timing'
-    timing.reset()
+    if args.profile:
+        from pyprof import timing
+        timing.mode = 'timing'
+        timing.reset()
+    
     elapsed_sec = 0
     for i in range(args.iterations):
         start = time.time()
@@ -92,8 +98,14 @@ if __name__ == '__main__':
         elapsed_sec/args.iterations, warm_up_sec))
     print('Result: ', stats_df)
 
-    timing.report(total_time=elapsed_sec*1e3)
-    #timing.report()
+    if args.profile:
+        from datetime import datetime
+        now = datetime.now()
+        now = now.strftime("%H:%M:%S-%d-%m-%Y")
+        timing.report(total_time=elapsed_sec*1e3)
+        timing.report(total_time=elapsed_sec*1e3, out_dir,
+                      out_file=f'timing-{now}.csv')
+    # timing.report()
 
     #     from dask.distributed import Client
     #     import dask.array as da
