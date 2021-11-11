@@ -215,13 +215,12 @@ def _stats_cupy(
         unique_zones = unique_zones.get()
         unique_index = unique_index.get()
 
-    # We can use function where and select
+    # stats columns
     stats_dict = {}
     zone_list = []
-    #stats_dict["zone"] = []
-    # stats columns
-    for stats in stats_funcs:
-        stats_dict[stats] = cupy.zeros(len(unique_zones), dtype=cupy.float)
+    stat_results = cupy.zeros((len(stats_funcs), len(unique_zones)), dtype=cupy.float)
+    # for stats in stats_funcs:
+        # stats_dict[stats] = cupy.zeros(len(unique_zones), dtype=cupy.float)
     
     for i in range(len(unique_zones)):
         zone_id = unique_zones[i]
@@ -246,7 +245,7 @@ def _stats_cupy(
         #         zone_values = zone_values[cupy.isfinite(zone_values)]
 
         # apply stats on the zone data
-        for stats in stats_funcs:
+        for j, stats in enumerate(stats_funcs):
             stats_func = stats_funcs.get(stats)
             if not callable(stats_func):
                 raise ValueError(stats)
@@ -259,11 +258,15 @@ def _stats_cupy(
             #    result = cupy.float(result)
             with timing.timed_region('append_stats'):
                 #stats_dict[stats].append(result)
-                stats_dict[stats][i] = result
+                # stats_dict[stats][i] = result
+                stat_results[j][i] = result
 
     with timing.timed_region("get_stats_to_host"):
-        for stat, val in stats_dict.items():
-            stats_dict[stat] = val.get()
+        stat_results = stat_results.get()
+        for j, stats in enumerate(stats_funcs):
+            stats_dict[stats] = stat_results[j]
+        # for stat, val in stats_dict.items():
+            # stats_dict[stat] = val.get()
     stats_dict['zone'] = zone_list
     # in the end convert back to dataframe
     # and also measure the time it takes, if it
