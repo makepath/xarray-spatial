@@ -180,7 +180,8 @@ def _stats_cupy(
     nodata_zones: Union[int, float],
     nodata_values: Union[int, float],
 ) -> pd.DataFrame:
-    
+    # TODO use https://docs.cupy.dev/en/stable/reference/generated/cupy.prof.time_range.html
+    # for accurate profiling
     # TODO support 3D input
     if len(orig_values.shape) > 2:
         raise TypeError('More than 2D not supported for cupy backend')
@@ -236,14 +237,6 @@ def _stats_cupy(
             else:
                 zone_values = values_by_zone[unique_index[i]:]
 
-        # with timing.timed_region('zone_values_filter'):
-        #     # filter out non-finite values or values equal to nodata_values
-        #     if nodata_values:
-        #         zone_values = zone_values[cupy.isfinite(zone_values) & (zone_values != nodata_values)]
-        #     else:
-        #         # TODO filter out all non finite elements in the original array
-        #         zone_values = zone_values[cupy.isfinite(zone_values)]
-
         # apply stats on the zone data
         for j, stats in enumerate(stats_funcs):
             stats_func = stats_funcs.get(stats)
@@ -252,12 +245,9 @@ def _stats_cupy(
             with timing.timed_region('calc:' + stats):
                 result = stats_func(zone_values)
             assert(len(result.shape) == 0)
-            # TODO do not append the results, copy them in pre-allocated array,
-            # and transfer to host once
             #with timing.timed_region('cupy_float'):
             #    result = cupy.float(result)
             with timing.timed_region('append_stats'):
-                #stats_dict[stats].append(result)
                 # stats_dict[stats][i] = result
                 stat_results[j][i] = result
 
@@ -265,12 +255,8 @@ def _stats_cupy(
         stat_results = stat_results.get()
         for j, stats in enumerate(stats_funcs):
             stats_dict[stats] = stat_results[j]
-        # for stat, val in stats_dict.items():
-            # stats_dict[stat] = val.get()
     stats_dict['zone'] = zone_list
-    # in the end convert back to dataframe
-    # and also measure the time it takes, if it
-    # is too slow, I need to return it as a cupy dataframe
+
     # stats_df = pd.DataFrame()
     with timing.timed_region('dataframe'):
         stats_df = pd.DataFrame(stats_dict)
