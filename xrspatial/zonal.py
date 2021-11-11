@@ -197,9 +197,7 @@ def _stats_cupy(
         sorted_zones = zones[sorted_indices]
         values_by_zone = values[sorted_indices]
 
-
-    # TODO Now I need to filter out values that are non-finite or 
-    # values equal to nodata_values
+    # filter out values that are non-finite or values equal to nodata_values
     with timing.timed_region('filter_values'):
         if nodata_values:
             filter_values = cupy.isfinite(values_by_zone) & (values_by_zone != nodata_values)
@@ -219,18 +217,19 @@ def _stats_cupy(
 
     # We can use function where and select
     stats_dict = {}
-    stats_dict["zone"] = []
+    zone_list = []
+    #stats_dict["zone"] = []
     # stats columns
     for stats in stats_funcs:
-        stats_dict[stats] = []
-
+        stats_dict[stats] = cupy.zeros(len(unique_zones), dtype=cupy.float)
+    
     for i in range(len(unique_zones)):
         zone_id = unique_zones[i]
         # skip zone_id == nodata_zones, and non-finite zone ids
         if ((nodata_zones) and (zone_id == nodata_zones)) or (not np.isfinite(zone_id)):
             continue
-
-        stats_dict["zone"].append(zone_id)
+        zone_list.append(zone_id)
+        #stats_dict["zone"].append(zone_id)
         # extract zone_values
         with timing.timed_region('zone_values'):
             if i < len(unique_zones) - 1:
@@ -256,68 +255,24 @@ def _stats_cupy(
             assert(len(result.shape) == 0)
             # TODO do not append the results, copy them in pre-allocated array,
             # and transfer to host once
-            with timing.timed_region('cupy_float'):
-                result = cupy.float(result)
+            #with timing.timed_region('cupy_float'):
+            #    result = cupy.float(result)
             with timing.timed_region('append_stats'):
-                stats_dict[stats].append(result)
+                #stats_dict[stats].append(result)
+                stats_dict[stats][i] = result
 
-    # unique_zones should be a host array-like
-    # with timing.timed_region('unique_zones'):
-    #     if zone_ids is None:
-    #         # TODO time this operation
-    #         # if it takes too long, then I need to figure out a better way
-    #         # no zone_ids provided, find ids for all zones
-    #         # do not consider zone with nodata values
-    #         # unique_zones = cupy.unique(zones)
-    #         # unique_zones = cupy.asnumpy(unique_zones)
-    #         unique_zones = cupy.asnumpy(zones)
-    #         unique_zones = np.unique(zones[np.isfinite(zones)])
-    #         unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))            
-    #     else:
-    #         unique_zones = zone_ids
-    #         # unique_zones = cupy.array(zone_ids)
-    #     unique_zones = list(map(_to_int, unique_zones))
-
-
-    # # first with zone_cat_data, collect all the values into multiple arrays
-
-    # # then iterate over the arrays and apply the stat funcs
-    # with timing.timed_region('values_cond'):
-    #     values_cond = cupy.isfinite(values)
-    #     if nodata_values:
-    #         values_cond = values_cond & (values != nodata_values)
-    # #values_cond = cupy.isfinite(values) & (values != nodata_values)
-    # for zone_id in unique_zones:
-    #     # get zone values
-    #     # Here I need a kernel to return 0 for elements not included, 1 for 
-    #     # elements to be included
-    #     # If this doesn't work, then I extract the index and pass it to the kernel
-    #     #zone_values = zones[values_cond & (zones == zone_id)]
-    #     with timing.timed_region('zone_values'):
-    #         zone_values = values[cupy.nonzero(values_cond & (zones == zone_id))[0]]
-    #     # nonzero_idx = cupy.nonzero(values_cond & (zone_values == zone_id))
-    #     # zone_values = _zone_cat_data(zones, values, zone_id, nodata_values)
-    #     for stats in stats_funcs:
-    #         stats_func = stats_funcs.get(stats)
-    #         if not callable(stats_func):
-    #             raise ValueError(stats)
-    #         with timing.timed_region('stats_func'):
-    #             result = stats_func(zone_values)
-    #         assert(len(result.shape) == 0)
-    #         with timing.timed_region('cupy_float'):
-    #             result = cupy.float(result)
-    #         with timing.timed_region('append_stats'):
-    #             stats_dict[stats].append(result)
-    
+    with timing.timed_region("get_stats_to_host"):
+        for stat, val in stats_dict.items():
+            stats_dict[stat] = val.get()
+    stats_dict['zone'] = zone_list
     # in the end convert back to dataframe
     # and also measure the time it takes, if it
     # is too slow, I need to return it as a cupy dataframe
-    stats_df = pd.DataFrame()
+    # stats_df = pd.DataFrame()
+    with timing.timed_region('dataframe'):
+        stats_df = pd.DataFrame(stats_dict)
+        stats_df.set_index("zone")
     return stats_df
-    # with timing.timed_region('dataframe'):
-    #     stats_df = pd.DataFrame(stats_dict)
-    #     stats_df.set_index("zone")
-    # return stats_df
 
 
 def _stats_numpy(

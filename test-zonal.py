@@ -30,7 +30,7 @@ parser.add_argument('-b', '--backend', type=str, choices=['numpy', 'cupy', 'dask
                     default='numpy',
                     help='Computational backend to use.')
 
-parser.add_argument('-p', '--profile', type=bool, action='store_true',
+parser.add_argument('-p', '--profile', action='store_true',
                     help='Turns on the profiling mode.')
 
 
@@ -103,7 +103,7 @@ if __name__ == '__main__':
         now = datetime.now()
         now = now.strftime("%H:%M:%S-%d-%m-%Y")
         timing.report(total_time=elapsed_sec*1e3)
-        timing.report(total_time=elapsed_sec*1e3, out_dir,
+        timing.report(total_time=elapsed_sec*1e3, out_dir='./',
                       out_file=f'timing-{now}.csv')
     # timing.report()
 
