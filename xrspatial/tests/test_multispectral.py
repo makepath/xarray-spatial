@@ -139,7 +139,8 @@ def test_ndvi_cupy_equals_numpy():
     test_result = ndvi(nir_cupy, red_cupy)
 
     assert isinstance(test_result.data, cupy.ndarray)
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -158,7 +159,8 @@ def test_ndvi_dask_cupy_equals_numpy():
     assert is_dask_cupy(test_result)
 
     test_result.data = test_result.data.compute()
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 # SAVI -------------
@@ -210,7 +212,8 @@ def test_savi_cupy_equals_numpy():
     test_result = savi(nir_cupy, red_cupy)
 
     assert isinstance(test_result.data, cupy.ndarray)
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -227,7 +230,8 @@ def test_savi_dask_cupy_equals_numpy():
 
     assert is_dask_cupy(test_result)
     test_result.data = test_result.data.compute()
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 # arvi -------------
@@ -280,7 +284,8 @@ def test_arvi_cupy_equals_numpy():
     test_result = arvi(nir_cupy, red_cupy, blue_cupy)
 
     assert isinstance(test_result.data, cupy.ndarray)
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -300,7 +305,8 @@ def test_arvi_dask_cupy_equals_numpy():
     assert is_dask_cupy(test_result)
 
     test_result.data = test_result.data.compute()
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 # EVI -------------
@@ -357,7 +363,8 @@ def test_evi_cupy_equals_numpy():
     test_result = evi(nir_cupy, red_cupy, blue_cupy)
 
     assert isinstance(test_result.data, cupy.ndarray)
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -377,7 +384,8 @@ def test_evi_dask_cupy_equals_numpy():
     assert is_dask_cupy(test_result)
 
     test_result.data = test_result.data.compute()
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 # GCI -------------
@@ -424,7 +432,8 @@ def test_gci_cupy_equals_numpy():
     test_result = gci(nir_cupy, green_cupy)
 
     assert isinstance(test_result.data, cupy.ndarray)
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Dgcice not Available")
@@ -442,7 +451,8 @@ def test_gci_dask_cupy_equals_numpy():
     assert is_dask_cupy(test_result)
 
     test_result.data = test_result.data.compute()
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 # SIPI -------------
@@ -495,7 +505,8 @@ def test_sipi_cupy_equals_numpy():
     test_result = sipi(nir_dask, red_dask, blue_dask)
 
     assert isinstance(test_result.data, cupy.ndarray)
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -514,7 +525,8 @@ def test_sipi_dask_cupy_equals_numpy():
 
     assert is_dask_cupy(test_result)
     test_result.data = test_result.data.compute()
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 # NBR -------------
@@ -561,7 +573,8 @@ def test_nbr_cupy_equals_numpy():
     test_result = nbr(nir_cupy, swir_cupy)
 
     assert isinstance(test_result.data, cupy.ndarray)
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -579,7 +592,8 @@ def test_nbr_dask_cupy_equals_numpy():
     assert is_dask_cupy(test_result)
 
     test_result.data = test_result.data.compute()
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 # NBR2 -------------
@@ -627,7 +641,8 @@ def test_nbr2_cupy_equals_numpy():
     test_result = nbr2(swir1_cupy, swir2_cupy)
 
     assert isinstance(test_result.data, cupy.ndarray)
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Dnbr2ce not Available")
@@ -644,7 +659,8 @@ def test_nbr2_dask_cupy_equals_numpy():
 
     assert is_dask_cupy(test_result)
     test_result.data = test_result.data.compute()
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 # NDMI -------------
@@ -692,7 +708,8 @@ def test_ndmi_cupy_equals_numpy():
     test_result = ndmi(nir_cupy, swir1_cupy)
 
     assert isinstance(test_result.data, cupy.ndarray)
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -709,7 +726,8 @@ def test_ndmi_dask_cupy_equals_numpy():
 
     assert is_dask_cupy(test_result)
     test_result.data = test_result.data.compute()
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 # EBBI -------------
@@ -761,7 +779,8 @@ def test_ebbi_cupy_equals_numpy():
     test_result = ebbi(red_dask, swir_dask, tir_dask)
 
     assert isinstance(test_result.data, cupy.ndarray)
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -780,7 +799,8 @@ def test_ebbi_dask_cupy_equals_numpy():
 
     assert is_dask_cupy(test_result)
     test_result.data = test_result.data.compute()
-    assert np.isclose(numpy_result, test_result, equal_nan=True).all()
+    assert np.isclose(
+        numpy_result, test_result.data.get(), equal_nan=True).all()
 
 
 def test_true_color_cpu():

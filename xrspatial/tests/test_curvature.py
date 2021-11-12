@@ -166,7 +166,7 @@ def test_curvature_gpu_equals_cpu():
 
     assert isinstance(gpu.data, cupy.ndarray)
 
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()
 
 
 def test_curvature_numpy_equals_dask():

@@ -94,7 +94,7 @@ def test_slope_against_qgis_gpu():
 
     # validate output values
     # ignore border edges
-    xrspatial_vals = xrspatial_slope.values[1:-1, 1:-1]
+    xrspatial_vals = xrspatial_slope.data[1:-1, 1:-1].get()
     qgis_vals = qgis_slope[1:-1, 1:-1]
     assert (np.isclose(xrspatial_vals, qgis_vals, equal_nan=True).all() | (
                 np.isnan(xrspatial_vals) & np.isnan(qgis_vals))).all()
@@ -114,7 +114,7 @@ def test_slope_gpu_equals_cpu():
     gpu = slope(small_da_cupy, name='cupy_result')
     assert isinstance(gpu.data, cupy.ndarray)
 
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
