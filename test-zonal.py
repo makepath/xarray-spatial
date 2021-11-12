@@ -102,9 +102,8 @@ if __name__ == '__main__':
         from datetime import datetime
         now = datetime.now()
         now = now.strftime("%H:%M:%S-%d-%m-%Y")
-        timing.report(total_time=elapsed_sec*1e3)
-        timing.report(total_time=elapsed_sec*1e3, out_dir='./',
-                      out_file=f'timing-{now}.csv')
+        timing.report()
+        timing.report(out_dir='./', out_file=f'timing-{now}.csv')
     # timing.report()
 
     #     from dask.distributed import Client
