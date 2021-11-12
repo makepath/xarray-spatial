@@ -67,7 +67,7 @@ def test_reclassify_cpu_equals_gpu():
                      bins=bins,
                      new_values=new_values)
     assert isinstance(gpu.data, cupy.ndarray)
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()
 
     # dask + cupy
     dask_cupy_agg = xr.DataArray(cupy.asarray(elevation),
@@ -78,7 +78,7 @@ def test_reclassify_cpu_equals_gpu():
     assert isinstance(dask_gpu.data, da.Array) and is_cupy_backed(dask_gpu)
 
     dask_gpu.data = dask_gpu.data.compute()
-    assert np.isclose(cpu, dask_gpu, equal_nan=True).all()
+    assert np.isclose(cpu, dask_gpu.data.get(), equal_nan=True).all()
 
 
 def test_quantile_cpu():
@@ -123,7 +123,7 @@ def test_quantile_cpu_equals_gpu():
     gpu = quantile(cupy_agg, k=k, name='cupy_result')
 
     assert isinstance(gpu.data, cupy.ndarray)
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()
 
 
 def test_natural_breaks_cpu():
@@ -188,7 +188,7 @@ def test_natural_breaks_cpu_equals_gpu():
     gpu = natural_breaks(cupy_agg, k=k, name='cupy_result')
 
     assert isinstance(gpu.data, cupy.ndarray)
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()
 
 
 def test_equal_interval_cpu():
@@ -224,4 +224,4 @@ def test_equal_interval_cpu_equals_gpu():
     gpu = equal_interval(cupy_agg, k=k)
     assert isinstance(gpu.data, cupy.ndarray)
 
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()

@@ -89,7 +89,7 @@ def test_numpy_equals_cupy():
     gpu = aspect(small_da_cupy, name='aspect_agg')
 
     assert isinstance(gpu.data, cupy.ndarray)
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -113,7 +113,7 @@ def test_cupy_equals_qgis():
     # TODO: We shouldn't ignore edges!
     # validate output values
     # ignore border edges
-    xrspatial_vals = xrspatial_aspect.values[1:-1, 1:-1]
+    xrspatial_vals = xrspatial_aspect.data[1:-1, 1:-1].get()
     qgis_vals = QGIS_OUTPUT[1:-1, 1:-1]
     assert np.isclose(xrspatial_vals, qgis_vals, equal_nan=True).all()
 

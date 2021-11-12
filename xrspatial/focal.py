@@ -113,7 +113,7 @@ def _mean_dask_cupy(data, excludes):
 def _mean(data, excludes):
     # numpy case
     if isinstance(data, np.ndarray):
-        out = _mean_numpy(data.astype(np.float), excludes)
+        out = _mean_numpy(data.astype(float), excludes)
 
     # cupy case
     elif has_cuda() and isinstance(data, cupy.ndarray):
@@ -122,11 +122,11 @@ def _mean(data, excludes):
     # dask + cupy case
     elif has_cuda() and isinstance(data, da.Array) and \
             type(data._meta).__module__.split('.')[0] == 'cupy':
-        out = _mean_dask_cupy(data.astype(cupy.float), excludes)
+        out = _mean_dask_cupy(data.astype(float), excludes)
 
     # dask + numpy case
     elif isinstance(data, da.Array):
-        out = _mean_dask_numpy(data.astype(np.float), excludes)
+        out = _mean_dask_numpy(data.astype(float), excludes)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(data)))
