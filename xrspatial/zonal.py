@@ -186,20 +186,20 @@ def _stats_cupy(
     if len(orig_values.shape) > 2:
         raise TypeError('More than 2D not supported for cupy backend')
     
-    with timing.timed_region('flatten'):
+    with timing.timed_region('flatten', cupy=True):
         zones = cupy.ravel(orig_zones.data)
         values = cupy.ravel(orig_values.data)
 
-    with timing.timed_region('argsort_zones'):
+    with timing.timed_region('argsort_zones', cupy=True):
         sorted_indices = cupy.argsort(zones)
 
     # NaN should go at the end of the array
-    with timing.timed_region('sorted_zones_and_values'):
+    with timing.timed_region('sorted_zones_and_values', cupy=True):
         sorted_zones = zones[sorted_indices]
         values_by_zone = values[sorted_indices]
 
     # filter out values that are non-finite or values equal to nodata_values
-    with timing.timed_region('filter_values'):
+    with timing.timed_region('filter_values', cupy=True):
         if nodata_values:
             filter_values = cupy.isfinite(values_by_zone) & (values_by_zone != nodata_values)
         else:
@@ -208,11 +208,11 @@ def _stats_cupy(
         sorted_zones = sorted_zones[filter_values]
 
     # Now I need to find the unique zones, and zone breaks
-    with timing.timed_region('unique_values'):
+    with timing.timed_region('unique_values', cupy=True):
         unique_zones, unique_index = cupy.unique(sorted_zones, return_index=True)
     
     # Transfer to the host
-    with timing.timed_region('transfer_to_host'):
+    with timing.timed_region('transfer_to_host', cupy=True):
         unique_zones = unique_zones.get()
         unique_index = unique_index.get()
 
@@ -231,7 +231,7 @@ def _stats_cupy(
         zone_list.append(zone_id)
         #stats_dict["zone"].append(zone_id)
         # extract zone_values
-        with timing.timed_region('zone_values'):
+        with timing.timed_region('zone_values', cupy=True):
             if i < len(unique_zones) - 1:
                 zone_values = values_by_zone[unique_index[i]:unique_index[i+1]]
             else:
@@ -242,16 +242,16 @@ def _stats_cupy(
             stats_func = stats_funcs.get(stats)
             if not callable(stats_func):
                 raise ValueError(stats)
-            with timing.timed_region('calc:' + stats):
+            with timing.timed_region('calc:' + stats, cupy=True):
                 result = stats_func(zone_values)
             assert(len(result.shape) == 0)
             #with timing.timed_region('cupy_float'):
             #    result = cupy.float(result)
-            with timing.timed_region('append_stats'):
+            with timing.timed_region('append_stats', cupy=True):
                 # stats_dict[stats][i] = result
                 stat_results[j][i] = result
 
-    with timing.timed_region("get_stats_to_host"):
+    with timing.timed_region("get_stats_to_host", cupy=True):
         stat_results = stat_results.get()
         for j, stats in enumerate(stats_funcs):
             stats_dict[stats] = stat_results[j]
