@@ -145,17 +145,17 @@ def _strides(flatten_zones, unique_zones):
 
 @delayed
 def _stats_func_dask_numpy(
-    zones: np.array,
-    values: np.array,
+    zones_block: np.array,
+    values_block: np.array,
     unique_zones: np.array,
     zone_ids: np.array,
     func: callable,
     nodata_values: Union[int, float] = None,
 ) -> pd.DataFrame:
 
-    sorted_zones = np.sort(zones.flatten())
-    sored_indices = np.argsort(zones.flatten())
-    values_by_zones = values.flatten()[sored_indices]
+    sorted_zones = np.sort(zones_block.flatten())
+    sored_indices = np.argsort(zones_block.flatten())
+    values_by_zones = values_block.flatten()[sored_indices]
 
     # exclude nans from calculation
     # flatten_zones is already sorted, NaN elements (if any) are at the end
@@ -180,11 +180,11 @@ def _stats_func_dask_numpy(
 
 
 def _stats_dask_numpy(
-        zones: da.Array,
-        values: da.Array,
-        zone_ids: List[Union[int, float]],
-        stats_funcs: Dict,
-        nodata_values: Union[int, float],
+    zones: da.Array,
+    values: da.Array,
+    zone_ids: List[Union[int, float]],
+    stats_funcs: Dict,
+    nodata_values: Union[int, float],
 ) -> pd.DataFrame:
 
     # find ids for all zones
