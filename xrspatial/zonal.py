@@ -234,8 +234,6 @@ def _stats_dask_numpy(
         if s == 'sum_squares' and not compute_sum_squares:
             continue
         stats_func = _DASK_BLOCK_STATS.get(s)
-        if not callable(stats_func):
-            raise ValueError(s)
         stats_by_block = [
             da.from_delayed(
                 delayed(_stats_func_dask_numpy)(
@@ -355,14 +353,14 @@ def stats(
     nodata_values: Union[int, float] = None,
 ) -> Union[pd.DataFrame, dd.DataFrame]:
     """
-    Calculate summary statistics for each zone defined by a zone
-    dataset, based on values aggregate.
+    Calculate summary statistics for each zone defined by a `zones`
+    dataset, based on `values` aggregate.
 
-    A single output value is computed for every zone in the input zone
+    A single output value is computed for every zone in the input `zones`
     dataset.
 
     This function currently supports numpy backed, and dask with numpy backed
-    xarray DataArray.
+    xarray DataArrays.
 
     Parameters
     ----------
@@ -383,12 +381,15 @@ def stats(
         all zones will be used.
 
     stats_funcs : dict, or list of strings, default=['mean', 'max', 'min',
-        'sum', 'std', 'var', 'count'])
+        'sum', 'std', 'var', 'count']
         The statistics to calculate for each zone. If a list, possible
         choices are subsets of the default options.
         In the dictionary case, all of its values must be
         callable. Function takes only one argument that is the `values` raster.
         The key become the column name in the output DataFrame.
+        Note that if `zones` and `values` are dask backed DataArrays,
+        `stats_funcs` must be provided as a list that is a subset of
+        default supported stats.
 
     nodata_values: int, float, default=None
         Nodata value in `values` raster.
@@ -483,6 +484,14 @@ def stats(
         or issubclass(values.data.dtype.type, np.floating)
     ):
         raise ValueError("`values` must be an array of integers or floats.")
+
+    # validate stats_funcs
+    if isinstance(values.data, da.Array) and not isinstance(stats_funcs, list):
+        raise ValueError(
+            "Got dask-backed DataArray as `values` aggregate. "
+            "`stats_funcs` must be a subset of default supported stats "
+            "`[\'mean\', \'max\', \'min\', \'sum\', \'std\', \'var\', \'count\']`"  # noqa
+        )
 
     if isinstance(stats_funcs, list):
         # create a dict of stats
