@@ -149,13 +149,13 @@ def _stats_func_dask_numpy(
     values_block: np.array,
     unique_zones: np.array,
     zone_ids: np.array,
-    func: callable,
+    func: Callable,
     nodata_values: Union[int, float] = None,
 ) -> pd.DataFrame:
 
     sorted_zones = np.sort(zones_block.flatten())
-    sored_indices = np.argsort(zones_block.flatten())
-    values_by_zones = values_block.flatten()[sored_indices]
+    sorted_indices = np.argsort(zones_block.flatten())
+    values_by_zones = values_block.flatten()[sorted_indices]
 
     # exclude nans from calculation
     # flatten_zones is already sorted, NaN elements (if any) are at the end
@@ -164,11 +164,11 @@ def _stats_func_dask_numpy(
     zone_breaks = _strides(sorted_zones, unique_zones)
 
     start = 0
-    results = np.zeros(unique_zones.shape) * np.nan
+    results = np.full(unique_zones.shape, np.nan)
     for i in range(len(unique_zones)):
         end = zone_breaks[i]
         if unique_zones[i] in zone_ids:
-            zone_values = values_by_zones[start: end]
+            zone_values = values_by_zones[start:end]
             # filter out non-finite and nodata_values
             zone_values = zone_values[
                 np.isfinite(zone_values) & (zone_values != nodata_values)]
