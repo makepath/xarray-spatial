@@ -585,7 +585,7 @@ def _run_cupy_jenks_matrices(data, n_classes):
     nl = data.shape[0] + 1
     variance = 0.0
 
-    for l in range(2, nl): # noqa
+    for l in range(2, nl):  # noqa
         sum = 0.0
         sum_squares = 0.0
         w = 0.0

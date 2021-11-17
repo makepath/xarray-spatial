@@ -10,7 +10,7 @@ import dask.array as da
 import dask.dataframe as dd
 from dask import delayed
 
-from xrspatial.utils import ngjit
+from xrspatial.utils import ngjit, validate_arrays
 
 
 def _stats_count(data):
@@ -472,14 +472,13 @@ def stats(
         3    30        3850
     """
 
-    if zones.shape != values.shape:
-        raise ValueError("`zones` and `values` must have same shape.")
+    validate_arrays(zones, values)
 
     if not (
         issubclass(zones.data.dtype.type, np.integer)
         or issubclass(zones.data.dtype.type, np.floating)
     ):
-        raise ValueError("`zones` must be an array of integers.")
+        raise ValueError("`zones` must be an array of integers or floats.")
 
     if not (
         issubclass(values.data.dtype.type, np.integer)
@@ -521,11 +520,6 @@ def stats(
         )
     else:
         # dask case
-
-        # make sure chunksizes of `zones` and `values` are matching
-        if zones.chunks != values.chunks:
-            values.data = values.data.rechunk(zones.chunks)
-
         stats_df = _stats_dask_numpy(
             zones.data,
             values.data,
