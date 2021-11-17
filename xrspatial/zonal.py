@@ -374,7 +374,9 @@ def stats(
     values : xr.DataArray
         values is a 2D xarray DataArray of numeric values (integers or floats).
         The input `values` raster contains the input values used in
-        calculating the output statistic for each zone.
+        calculating the output statistic for each zone. In dask case,
+        the chunksizes of `zones` and `values` should be matching. If not,
+        `values` will be rechunked to be the same as of `zones`.
 
     zone_ids : list of ints, or floats
         List of zones to be included in calculation. If no zone_ids provided,
@@ -519,6 +521,11 @@ def stats(
         )
     else:
         # dask case
+
+        # make sure chunksizes of `zones` and `values` are matching
+        if zones.chunks != values.chunks:
+            values.data = values.data.rechunk(zones.chunks)
+
         stats_df = _stats_dask_numpy(
             zones.data,
             values.data,
