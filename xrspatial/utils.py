@@ -129,6 +129,12 @@ def validate_arrays(*arrays):
         if not isinstance(first_array.data, type(arrays[i].data)):
             raise ValueError("input arrays must have same type")
 
+    # ensure dask chunksizes of all arrays are the same
+    if isinstance(first_array.data, da.Array):
+        for i in range(1, len(arrays)):
+            if first_array.chunks != arrays[i].chunks:
+                arrays[i].data = arrays[i].data.rechunk(first_array.chunks)
+
 
 def get_xy_range(raster, xdim=None, ydim=None):
     """
