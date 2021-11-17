@@ -694,7 +694,7 @@ def _run_cupy_natural_break(data, num_sample, k):
 
 
 def natural_breaks(agg: xr.DataArray,
-                   num_sample: Optional[int] = None,
+                   num_sample: Optional[int] = 20000,
                    name: Optional[str] = 'natural_breaks',
                    k: int = 5) -> xr.DataArray:
     """
@@ -708,7 +708,7 @@ def natural_breaks(agg: xr.DataArray,
     agg : xarray.DataArray
         2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
         of values to be reclassified.
-    num_sample : int, default=None
+    num_sample : int, default=20000
         Number of sample data points used to fit the model.
         Natural Breaks (Jenks) classification is indeed O(n²) complexity,
         where n is the total number of data points, i.e: `agg.size`
