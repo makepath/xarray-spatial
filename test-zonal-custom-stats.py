@@ -77,7 +77,7 @@ if __name__ == '__main__':
         custom_stats = {
             'double_sum': lambda val: val.sum()*2
         }
-    else
+    else:
         custom_stats = {
             'double_sum': lambda val: val.sum()*2
         }
