@@ -74,12 +74,33 @@ if __name__ == '__main__':
 
     zones = create_arr(zones, backend=args.backend)
     if args.backend == 'cupy':
+        import cupy
+
+        l2normKernel = cupy.ReductionKernel(
+                    in_params='T x', out_params='T y',
+                    map_expr='x*x', reduce_expr='a+b',
+                    post_map_expr='y = sqrt(a)',
+                    identity='0', name='l2normKernel'
+                )
         custom_stats = {
-            'double_sum': lambda val: val.sum()*2
+            'double_sum': lambda val: val.sum()*2,
+            'l2norm': lambda val: np.sqrt(cupy.sum(val * val)),
+            'l2normKernel': lambda val: l2normKernel(val)
         }
     else:
+        from xrspatial.utils import ngjit
+
+        @ngjit
+        def l2normKernel(arr):
+            acc = 0
+            for x in arr:
+                acc += x * x
+            return np.sqrt(acc)
+
         custom_stats = {
-            'double_sum': lambda val: val.sum()*2
+            'double_sum': lambda val: val.sum()*2,
+            'l2norm': lambda val: np.sqrt(np.sum(val * val)),
+            'l2normKernel': lambda val: l2normKernel(val)
         }
 
     # Profiling region
