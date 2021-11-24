@@ -253,12 +253,12 @@ def _stats_cupy(
 
             with timing.timed_region('append_stats', cupy=True):
                 # stat_results[j][i] = result
-                stats_dict[stats].append(result)
+                stats_dict[stats].append(cupy.float(result))
 
-    with timing.timed_region("get_stats_to_host", cupy=True):
+    # with timing.timed_region("get_stats_to_host", cupy=True):
         # stat_results = stat_results.get()
-        for j, stats in enumerate(stats_funcs):
-            stats_dict[stats] = stats_dict[stats].get()
+        # for j, stats in enumerate(stats_funcs):
+            # stats_dict[stats] = stats_dict[stats].get()
     # stats_dict['zone'] = zone_list
 
     with timing.timed_region('dataframe'):
