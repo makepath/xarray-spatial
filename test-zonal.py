@@ -101,5 +101,5 @@ if __name__ == '__main__':
         now = now.strftime("%H:%M:%S-%d-%m-%Y")
         timing.report()
         timing.report(out_dir='./',
-                      out_file=f'timing-{args.backend}-h{H}-w{W}-zh{zH}-zw{zW}-i{args.iterations}-{now}.csv')
+                      out_file=f'zonal-default-{args.backend}-h{H}-w{W}-zh{zH}-zw{zW}-i{args.iterations}-{now}.csv')
 
