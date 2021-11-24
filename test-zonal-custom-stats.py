@@ -62,7 +62,7 @@ if __name__ == '__main__':
     assert(H/zH == H//zH)
 
     # Values raster
-    values = xr.DataArray(np.arange(H * W).reshape(H, W))
+    values = xr.DataArray(np.arange(H * W, dtype=float).reshape(H, W))
     values = create_arr(values, backend=args.backend)
     # Zones raster
     zones = xr.DataArray(np.zeros(H * W).reshape(H, W))
@@ -77,7 +77,7 @@ if __name__ == '__main__':
         import cupy
 
         l2normKernel = cupy.ReductionKernel(
-                    in_params='T x', out_params='T y',
+                    in_params='T x', out_params='float64 y',
                     map_expr='x*x', reduce_expr='a+b',
                     post_map_expr='y = sqrt(a)',
                     identity='0', name='l2normKernel'
