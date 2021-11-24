@@ -180,11 +180,9 @@ def _stats_cupy(
     nodata_zones: Union[int, float],
     nodata_values: Union[int, float],
 ) -> pd.DataFrame:
-    # TODO use https://docs.cupy.dev/en/stable/reference/generated/cupy.prof.time_range.html
-    # for accurate profiling
     # TODO support 3D input
     if len(orig_values.shape) > 2:
-        raise TypeError('More than 2D not supported for cupy backend')
+        raise TypeError('3D inputs not supported for cupy backend')
     
     with timing.timed_region('flatten', cupy=True):
         zones = cupy.ravel(orig_zones.data)
