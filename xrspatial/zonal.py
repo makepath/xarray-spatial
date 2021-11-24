@@ -224,15 +224,12 @@ def _stats_cupy(
     for stats in stats_funcs:
         stats_dict[stats] = []
 
-    # zone_list = []
-    # stat_results = cupy.zeros((len(stats_funcs), len(unique_zones)), dtype=cupy.float)
-    
     for i in range(len(unique_zones)):
         zone_id = unique_zones[i]
         # skip zone_id == nodata_zones, and non-finite zone ids
         if ((nodata_zones) and (zone_id == nodata_zones)) or (not np.isfinite(zone_id)):
             continue
-        # zone_list.append(zone_id)
+
         stats_dict['zone'].append(zone_id)
         # extract zone_values
         with timing.timed_region('zone_values', cupy=True):
@@ -252,14 +249,7 @@ def _stats_cupy(
             assert(len(result.shape) == 0)
 
             with timing.timed_region('append_stats', cupy=True):
-                # stat_results[j][i] = result
                 stats_dict[stats].append(cupy.float(result))
-
-    # with timing.timed_region("get_stats_to_host", cupy=True):
-        # stat_results = stat_results.get()
-        # for j, stats in enumerate(stats_funcs):
-            # stats_dict[stats] = stats_dict[stats].get()
-    # stats_dict['zone'] = zone_list
 
     with timing.timed_region('dataframe'):
         stats_df = pd.DataFrame(stats_dict)

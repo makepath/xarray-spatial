@@ -73,9 +73,18 @@ if __name__ == '__main__':
             zones[i * hstep: (i+1)*hstep, j*wstep: (j+1)*wstep] = i*zW + j
 
     zones = create_arr(zones, backend=args.backend)
+    if args.backend == 'cupy':
+        custom_stats = {
+            'double_sum': lambda val: val.sum()*2
+        }
+    else
+        custom_stats = {
+            'double_sum': lambda val: val.sum()*2
+        }
+
     # Profiling region
     start = time.time()
-    stats_df = stats(zones=zones, values=values)
+    stats_df = stats(zones=zones, values=values, stats_funcs=custom_stats)
     warm_up_sec = time.time() - start
 
     if args.profile:
@@ -86,7 +95,7 @@ if __name__ == '__main__':
     elapsed_sec = 0
     for i in range(args.iterations):
         start = time.time()
-        stats_df = stats(zones=zones, values=values)
+        stats_df = stats(zones=zones, values=values, stats_funcs=custom_stats)
         elapsed_sec += time.time() - start
     print('HxW,Runs,total_time(sec),time_per_run(sec),warm_up_time(sec)')
     print('{}x{},{},{:.4f},{:.4f},{:.4f}'.format(
