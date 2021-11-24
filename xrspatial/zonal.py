@@ -211,23 +211,29 @@ def _stats_cupy(
     
     # Transfer to the host
     with timing.timed_region('transfer_to_host', cupy=True):
-        unique_zones = unique_zones.get()
         unique_index = unique_index.get()
+        if zone_ids is None:
+            unique_zones = unique_zones.get()
+        else:
+            unique_zones = zone_ids
+        unique_zones = list(map(_to_int, unique_zones))
+        unique_zones = np.asarray(unique_zones)
 
     # stats columns
-    stats_dict = {}
-    zone_list = []
-    stat_results = cupy.zeros((len(stats_funcs), len(unique_zones)), dtype=cupy.float)
-    # for stats in stats_funcs:
-        # stats_dict[stats] = cupy.zeros(len(unique_zones), dtype=cupy.float)
+    stats_dict = {'zone': []}
+    for stats in stats_funcs:
+        stats_dict[stats] = []
+
+    # zone_list = []
+    # stat_results = cupy.zeros((len(stats_funcs), len(unique_zones)), dtype=cupy.float)
     
     for i in range(len(unique_zones)):
         zone_id = unique_zones[i]
         # skip zone_id == nodata_zones, and non-finite zone ids
         if ((nodata_zones) and (zone_id == nodata_zones)) or (not np.isfinite(zone_id)):
             continue
-        zone_list.append(zone_id)
-        #stats_dict["zone"].append(zone_id)
+        # zone_list.append(zone_id)
+        stats_dict['zone'].append(zone_id)
         # extract zone_values
         with timing.timed_region('zone_values', cupy=True):
             if i < len(unique_zones) - 1:
@@ -242,20 +248,19 @@ def _stats_cupy(
                 raise ValueError(stats)
             with timing.timed_region('calc:' + stats, cupy=True):
                 result = stats_func(zone_values)
+
             assert(len(result.shape) == 0)
-            #with timing.timed_region('cupy_float'):
-            #    result = cupy.float(result)
+
             with timing.timed_region('append_stats', cupy=True):
-                # stats_dict[stats][i] = result
-                stat_results[j][i] = result
+                # stat_results[j][i] = result
+                stats_dict[stats].append(result)
 
     with timing.timed_region("get_stats_to_host", cupy=True):
-        stat_results = stat_results.get()
+        # stat_results = stat_results.get()
         for j, stats in enumerate(stats_funcs):
-            stats_dict[stats] = stat_results[j]
-    stats_dict['zone'] = zone_list
+            stats_dict[stats] = stats_dict[stats].get()
+    # stats_dict['zone'] = zone_list
 
-    # stats_df = pd.DataFrame()
     with timing.timed_region('dataframe'):
         stats_df = pd.DataFrame(stats_dict)
         stats_df.set_index("zone")
