@@ -130,6 +130,9 @@ if __name__ == '__main__':
         now = datetime.now()
         now = now.strftime("%H:%M:%S-%d-%m-%Y")
         timing.report()
+        import os
+        if not os.path.isdir('./timings'):
+            os.makedirs('./timings')
         timing.report(out_dir='./timings/',
                       out_file=f'zonal-custom-{args.backend}-h{H}-w{W}-zh{zH}-zw{zW}-i{args.iterations}-{now}.csv')
 
