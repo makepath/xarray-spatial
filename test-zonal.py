@@ -54,7 +54,6 @@ def create_arr(data=None, H=10, W=10, backend='numpy'):
 if __name__ == '__main__':
     args = parser.parse_args()
 
-
     W = args.width
     H = args.height
     zH = args.zone_height
@@ -83,7 +82,7 @@ if __name__ == '__main__':
         from pyprof import timing
         timing.mode = 'timing'
         timing.reset()
-    
+
     elapsed_sec = 0
     for i in range(args.iterations):
         start = time.time()
@@ -103,7 +102,8 @@ if __name__ == '__main__':
         now = datetime.now()
         now = now.strftime("%H:%M:%S-%d-%m-%Y")
         timing.report()
-        timing.report(out_dir='./', out_file=f'timing-{now}.csv')
+        timing.report(out_dir='./',
+                      out_file=f'timing-{args.backend}-h{H}-w{W}-zh{zH}-zw{zW}-i{args.iterations}-{now}.csv')
     # timing.report()
 
     #     from dask.distributed import Client
