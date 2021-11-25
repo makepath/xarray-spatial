@@ -40,7 +40,12 @@ extras_require = {
     ],
     'examples': examples,
     'optional': [
-        'rtxpy',
+        # Optional for polygonize return types.
+        'awkward>=1.4',
+        'geopandas',
+        'shapely',
+        # Optional for gpu_rtx functions.
+        "rtxpy",
     ],
 }
 
