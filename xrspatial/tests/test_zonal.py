@@ -151,7 +151,7 @@ def test_crosstab_2d():
     zones_np, values_np, _ = create_zones_values(backend='numpy')
     df_np = crosstab(
         zones=zones_np, values=values_np,
-        zone_ids=[1, 2, 3], cat_ids=[0, 1, 2, 3],
+        zone_ids=[1, 2, 3], cat_ids=[0, 1, 2],
     )
     # dask case
     zones_da, values_da, _ = create_zones_values(backend='dask')
