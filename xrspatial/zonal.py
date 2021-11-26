@@ -612,7 +612,6 @@ def _crosstab_dask(
     values,
     zone_ids,
     cat_ids,
-    nodata_zones,
     nodata_values,
     agg
 ):
@@ -633,8 +632,6 @@ def _crosstab_dask(
     if zone_ids is None:
         # precompute unique zones
         unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
-        # do not consider zone with nodata values
-        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
     else:
         unique_zones = np.array(zone_ids)
 
@@ -657,6 +654,132 @@ def _crosstab_dask(
     return crosstab_df
 
 
+def _find_cats(values, cat_ids, nodata_values):
+    if len(values.shape) == 2:
+        # 2D case
+        unique_cats = np.unique(values.data[
+            np.isfinite(values.data) & (values.data != nodata_values)
+        ])
+        if cat_ids is None:
+            cat_ids = unique_cats
+        # remove cats that does not exist in `values` raster
+        cat_ids = [c for c in cat_ids if c in unique_cats]
+    else:
+        # 3D case
+        unique_cats = values[values.dims[0]].data
+        if cat_ids is None:
+            cat_ids = unique_cats
+        # remove cats that does not exist in `values` raster
+        cat_ids = [c for c in cat_ids if c in unique_cats]
+    return unique_cats, cat_ids
+
+
+def _sort_values(sorted_indices, values, cats):
+    if len(values.shape) == 2:
+        # 2D case
+        result = values.flatten()[sorted_indices]
+    else:
+        # 3D case
+        num_cats = len(cats)
+        h, w = values.shape[1:]
+        result = np.zeros(shape=(num_cats, h * w), dtype=values.dtype)
+        for i, cat in enumerate(cats):
+            result[i] = values[i].flatten()[sorted_indices]
+
+    return result
+
+
+def _get_zone_values(values_by_zones, start, end):
+    if len(values_by_zones.shape) == 1:
+        # 1D flatten, i.e, original data is 2D
+        return values_by_zones[start:end]
+    else:
+        # 2D flatten, i.e, original data is 3D
+        return values_by_zones[:, start:end]
+
+
+def _single_zone_crosstab(zone_values, unique_cats, cat_ids, nodata_values,
+                          crosstab_dict):
+    if len(zone_values.shape) == 1:
+        # 1D flatten, i.e, original data is 2D
+
+        # filter out non-finite and nodata_values
+        zone_values = zone_values[
+            np.isfinite(zone_values) & (zone_values != nodata_values)
+            ]
+
+        sorted_zone_values = np.sort(zone_values)
+        zone_cat_breaks = _strides(sorted_zone_values, unique_cats)
+        cat_start = 0
+        for j, cat in enumerate(unique_cats):
+            if cat in cat_ids:
+                count = zone_cat_breaks[j] - cat_start
+                crosstab_dict[cat].append(count)
+                cat_start = zone_cat_breaks[j]
+    else:
+        # 2D flatten, i.e, original data is 3D
+        for j, cat in enumerate(unique_cats):
+            if cat in cat_ids:
+                zone_cat_data = zone_values[j]
+                # filter out non-finite and nodata_values
+                zone_cat_data = zone_cat_data[
+                    np.isfinite(zone_cat_data)
+                    & (zone_cat_data != nodata_values)
+                ]
+                count = zone_cat_data.shape[0]
+                crosstab_dict[cat].append(count)
+
+
+def _faster_crosstab_numpy(
+    zones: np.ndarray,
+    values: np.ndarray,
+    zone_ids: List[Union[int, float]],
+    unique_cats: np.ndarray,
+    cat_ids: Union[List, np.ndarray],
+    nodata_values: Union[int, float],
+    agg: str,
+) -> pd.DataFrame:
+    # find ids for all zones
+    unique_zones = np.unique(zones[np.isfinite(zones)])
+    # selected zones to do analysis
+    if zone_ids is None:
+        zone_ids = unique_zones
+    # remove zones that does not exist in `zones` raster
+    zone_ids = [z for z in zone_ids if z in unique_zones]
+
+    crosstab_dict = {}
+    # zone column
+    crosstab_dict["zone"] = zone_ids
+    # stats columns
+    for cat in cat_ids:
+        crosstab_dict[cat] = []
+
+    flatten_zones = zones.flatten()
+    sorted_indices = np.argsort(flatten_zones)
+    sorted_zones = flatten_zones[sorted_indices]
+    values_by_zones = _sort_values(sorted_indices, values, cat_ids)
+
+    # exclude nans from calculation
+    # flatten_zones is already sorted, NaN elements (if any) are at the end
+    # of the array, removing them will not affect data before them
+    sorted_zones = sorted_zones[np.isfinite(sorted_zones)]
+    zone_breaks = _strides(sorted_zones, unique_zones)
+
+    start = 0
+    for i in range(len(unique_zones)):
+        end = zone_breaks[i]
+        if unique_zones[i] in zone_ids:
+            # get data for zone unique_zones[i]
+            zone_values = _get_zone_values(values_by_zones, start, end)
+            _single_zone_crosstab(
+                zone_values, unique_cats, cat_ids, nodata_values, crosstab_dict
+            )
+        start = end
+
+    crosstab_df = pd.DataFrame(crosstab_dict)
+    return crosstab_df
+
+
 def crosstab(
     zones: xr.DataArray,
     values: xr.DataArray,
@@ -664,7 +787,6 @@ def crosstab(
     cat_ids: List[Union[int, float]] = None,
     layer: Optional[int] = None,
     agg: Optional[str] = "count",
-    nodata_zones: Optional[Union[int, float]] = None,
     nodata_values: Optional[Union[int, float]] = None,
 ) -> Union[pd.DataFrame, dd.DataFrame]:
     """
@@ -715,11 +837,6 @@ def crosstab(
         Aggregation method.
         If the data is 2D, available options are: percentage, count.
         If the data is 3D, available option is: count.
-
-    nodata_zones: int, float, default=None
-        Nodata value in `zones` raster.
-        Cells with `nodata` do not belong to any zone,
-        and thus excluded from calculation.
 
     nodata_values: int, float, default=None
         Nodata value in `values` raster.
@@ -795,6 +912,7 @@ def crosstab(
             4      6    1     2     2     0     0     1
             5      7    0     1     0     0     1     1
     """
+
     if not isinstance(zones, xr.DataArray):
         raise TypeError("zones must be instance of DataArray")
 
@@ -805,13 +923,13 @@ def crosstab(
         raise ValueError("zones must be 2D")
 
     if not (
-        issubclass(zones.data.dtype.type, np.integer)
-        or issubclass(zones.data.dtype.type, np.floating)
+            issubclass(zones.data.dtype.type, np.integer)
+            or issubclass(zones.data.dtype.type, np.floating)
     ):
         raise ValueError("`zones` must be an xarray of integers or floats")
 
     if not issubclass(values.data.dtype.type, np.integer) and not issubclass(
-        values.data.dtype.type, np.floating
+            values.data.dtype.type, np.floating
     ):
         raise ValueError("`values` must be an xarray of integers or floats")
 
@@ -849,14 +967,17 @@ def crosstab(
             raise ValueError("Incompatible shapes")
 
     if isinstance(values.data, np.ndarray):
+        # find categories
+        unique_cats, cat_ids = _find_cats(values, cat_ids, nodata_values)
         # numpy case
-        crosstab_df = _crosstab_numpy(
-            zones, values, zone_ids, cat_ids, nodata_zones, nodata_values, agg
+        crosstab_df = _faster_crosstab_numpy(
+            zones.data, values.data, zone_ids, unique_cats, cat_ids,
+            nodata_values, agg
         )
     else:
         # dask case
         crosstab_df = _crosstab_dask(
-            zones, values, zone_ids, cat_ids, nodata_zones, nodata_values, agg
+            zones, values, zone_ids, cat_ids, nodata_values, agg
         )
 
     return crosstab_df
