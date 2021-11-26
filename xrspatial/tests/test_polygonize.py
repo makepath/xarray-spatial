@@ -2,7 +2,6 @@ import itertools
 import pytest
 import numpy as np
 from numpy.testing import assert_allclose
-import spatialpandas as sp
 import xarray as xr
 
 try:
@@ -14,6 +13,12 @@ try:
     import geopandas as gpd
 except ImportError:
     gpd = None
+
+try:
+    import spatialpandas as sp
+except ImportError:
+    sp = None
+
 
 from ..experimental.polygonize import polygonize
 
@@ -169,6 +174,7 @@ def test_polygonize_geopandas(raster_3x3, connectivity):
     assert isinstance(df.geometry, gpd.GeoSeries)
 
 
+@pytest.mark.skipif(sp is None, reason="spatialpandas not installed")
 @pytest.mark.parametrize(
     "dtype",
     [np.int32, np.int64, np.uint32, np.uint64, np.float32, np.float64])

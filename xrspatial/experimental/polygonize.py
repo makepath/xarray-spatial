@@ -544,9 +544,8 @@ def polygonize(
 
     return_type: str, default="numpy"
         Format of returned data.  Allowed values are "numpy", "spatialpandas",
-        "geopandas" and "awkward".  Both "numpy" and "spatialpandas" are
-        always available whereas "geopandas" and "awkward" require optional
-        dependencies.
+        "geopandas" and "awkward".  Only "numpy" is always available, the
+        others require optional dependencies.
 
     Returns
     -------
