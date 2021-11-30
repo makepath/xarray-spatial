@@ -3,7 +3,9 @@ from math import pi as PI
 from typing import Union
 
 import numpy as np
-from xrspatial.utils import ngjit
+from .utils import has_cupy, is_cupy_array, ngjit
+from .gpu_rtx import has_rtx
+
 
 import xarray
 
@@ -1333,8 +1335,8 @@ def _pop(stack):
 # function viewshed_in_memory()
 
 @ngjit
-def _viewshed(raster, vp_row, vp_col, vp_elev, vp_target, ew_res, ns_res,
-              event_rcts, event_aes, data, visibility_grid):
+def _viewshed_cpu_sweep(raster, vp_row, vp_col, vp_elev, vp_target, ew_res,
+                        ns_res, event_rcts, event_aes, data, visibility_grid):
     n_rows, n_cols = raster.shape
 
     # for e in event_list:
@@ -1501,6 +1503,90 @@ def _viewshed(raster, vp_row, vp_col, vp_elev, vp_target, ew_res, ns_res,
     return visibility_grid
 
 
+def _viewshed_cpu(
+    raster: xarray.DataArray,  # contains numpy array
+    x: Union[int, float],
+    y: Union[int, float],
+    observer_elev: float = OBS_ELEV,
+    target_elev: float = TARGET_ELEV,
+) -> xarray.DataArray:
+
+    height, width = raster.shape
+
+    y_coords = raster.indexes.get('y').values
+    x_coords = raster.indexes.get('x').values
+
+    # validate x arg
+    if not (x_coords.min() <= x <= x_coords.max()):
+        raise ValueError("x argument outside of raster x_range")
+
+    # validate y arg
+    if not (y_coords.min() <= y <= y_coords.max()):
+        raise ValueError("y argument outside of raster y_range")
+
+    selection = raster.sel(x=[x], y=[y], method='nearest')
+    x = selection.x.values[0]
+    y = selection.y.values[0]
+
+    y_view = np.where(y_coords == y)[0][0]
+    y_range = (y_coords[0], y_coords[-1])
+
+    x_view = np.where(x_coords == x)[0][0]
+    x_range = (x_coords[0], x_coords[-1])
+
+    # viewpoint properties
+    viewpoint_row = y_view
+    viewpoint_col = x_view
+    viewpoint_elev = raster.values[y_view, x_view] + observer_elev
+    viewpoint_target = 0.0
+    if target_elev > 0:
+        viewpoint_target = target_elev
+
+    # int getgrdhead(FILE * fd, struct Cell_head *cellhd)
+    ew_res = (x_range[1] - x_range[0]) / (width - 1)
+    ns_res = (y_range[1] - y_range[0]) / (height - 1)
+
+    # create the visibility grid of the sizes specified in the header
+    visibility_grid = np.empty(shape=raster.shape, dtype=np.float64)
+    # set everything initially invisible
+    visibility_grid.fill(INVISIBLE)
+    n_rows, n_cols = raster.shape
+
+    data = np.zeros(shape=(3, n_cols), dtype=np.float64)
+
+    # construct the event list corresponding to the given input file and vp;
+    # this creates an array of all the cells on the same row as the vp
+    num_events = 3 * (n_rows * n_cols - 1)
+    event_list = np.zeros((num_events, 7), dtype=np.float64)
+
+    raster.values = raster.values.astype(np.float64)
+
+    _init_event_list(event_list=event_list, raster=raster.values,
+                     vp_row=viewpoint_row, vp_col=viewpoint_col,
+                     data=data, visibility_grid=visibility_grid)
+
+    # sort the events radially by ang
+    event_list = event_list[np.lexsort((event_list[:, E_TYPE_ID],
+                                        event_list[:, E_ANG_ID]))]
+
+    # event indices: row, col, type, ang, enter elev, center elev, exit elev
+    # split event into 2 arrays: one of 3 integer elements: row, col, type;
+    #                          and one of 4 float elements: angle, elevations.
+    event_rcts = np.array(event_list[:, :3], dtype=np.int64)
+    event_aes = np.array(event_list[:, 3:], dtype=np.float64)
+
+    viewshed_img = _viewshed_cpu_sweep(
+        raster.values, viewpoint_row, viewpoint_col, viewpoint_elev,
+        viewpoint_target, ew_res, ns_res, event_rcts, event_aes, data,
+        visibility_grid)
+
+    visibility = xarray.DataArray(viewshed_img,
+                                  coords=raster.coords,
+                                  attrs=raster.attrs,
+                                  dims=raster.dims)
+    return visibility
+
+
 def viewshed(raster: xarray.DataArray,
              x: Union[int, float],
              y: Union[int, float],
@@ -1644,80 +1730,20 @@ def viewshed(raster: xarray.DataArray,
             res:          (80000.0, 133333.3333333333)
             Description:  Volcano
     """
-    height, width = raster.shape
 
-    y_coords = raster.indexes.get('y').values
-    x_coords = raster.indexes.get('x').values
+    if isinstance(raster.data, np.ndarray):
+        return _viewshed_cpu(raster, x, y, observer_elev, target_elev)
 
-    # validate x arg
-    if x < x_coords[0]:
-        raise ValueError("x argument outside of raster x_range")
-    elif x > x_coords[-1]:
-        raise ValueError("x argument outside of raster x_range")
+    elif has_cupy() and is_cupy_array(raster.data):
+        if has_rtx():
+            # Run on gpu
+            from .gpu_rtx.viewshed import viewshed_gpu
+            return viewshed_gpu(raster, x, y, observer_elev, target_elev)
+        else:
+            # Convert to numpy and run on cpu
+            import cupy as cp
+            raster.data = cp.asnumpy(raster.data)
+            return _viewshed_cpu(raster, x, y, observer_elev, target_elev)
 
-    # validate y arg
-    if y < y_coords[0]:
-        raise ValueError("y argument outside of raster y_range")
-    elif y > y_coords[-1]:
-        raise ValueError("y argument outside of raster y_range")
-
-    selection = raster.sel(x=[x], y=[y], method='nearest')
-    x = selection.x.values[0]
-    y = selection.y.values[0]
-
-    y_view = np.where(y_coords == y)[0][0]
-    y_range = (y_coords[0], y_coords[-1])
-
-    x_view = np.where(x_coords == x)[0][0]
-    x_range = (x_coords[0], x_coords[-1])
-
-    # viewpoint properties
-    viewpoint_row = y_view
-    viewpoint_col = x_view
-    viewpoint_elev = raster.values[y_view, x_view] + observer_elev
-    viewpoint_target = 0.0
-    if target_elev > 0:
-        viewpoint_target = target_elev
-
-    # int getgrdhead(FILE * fd, struct Cell_head *cellhd)
-    ew_res = (x_range[1] - x_range[0]) / (width - 1)
-    ns_res = (y_range[1] - y_range[0]) / (height - 1)
-
-    # create the visibility grid of the sizes specified in the header
-    visibility_grid = np.empty(shape=raster.shape, dtype=np.float64)
-    # set everything initially invisible
-    visibility_grid.fill(INVISIBLE)
-    n_rows, n_cols = raster.shape
-
-    data = np.zeros(shape=(3, n_cols), dtype=np.float64)
-
-    # construct the event list corresponding to the given input file and vp;
-    # this creates an array of all the cells on the same row as the vp
-    num_events = 3 * (n_rows * n_cols - 1)
-    event_list = np.zeros((num_events, 7), dtype=np.float64)
-
-    raster.values = raster.values.astype(np.float64)
-
-    _init_event_list(event_list=event_list, raster=raster.values,
-                     vp_row=viewpoint_row, vp_col=viewpoint_col,
-                     data=data, visibility_grid=visibility_grid)
-
-    # sort the events radially by ang
-    event_list = event_list[np.lexsort((event_list[:, E_TYPE_ID],
-                                        event_list[:, E_ANG_ID]))]
-
-    # event indices: row, col, type, ang, enter elev, center elev, exit elev
-    # split event into 2 arrays: one of 3 integer elements: row, col, type;
-    #                          and one of 4 float elements: angle, elevations.
-    event_rcts = np.array(event_list[:, :3], dtype=np.int64)
-    event_aes = np.array(event_list[:, 3:], dtype=np.float64)
-
-    viewshed_img = _viewshed(raster.values, viewpoint_row, viewpoint_col,
-                             viewpoint_elev, viewpoint_target, ew_res, ns_res,
-                             event_rcts, event_aes, data, visibility_grid)
-
-    visibility = xarray.DataArray(viewshed_img,
-                                  coords=raster.coords,
-                                  attrs=raster.attrs,
-                                  dims=raster.dims)
-    return visibility
+    else:
+        raise TypeError(f"Unsupported raster array type: {type(raster.data)}")

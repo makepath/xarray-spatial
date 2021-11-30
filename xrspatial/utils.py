@@ -27,6 +27,14 @@ except ImportError:
 ngjit = jit(nopython=True, nogil=True)
 
 
+def has_cupy():
+    return cupy is not None
+
+
+def is_cupy_array(arr):
+    return has_cupy() and isinstance(arr, cupy.ndarray)
+
+
 def has_cuda():
     """Check for supported CUDA device. If none found, return False"""
     local_cuda = False
@@ -68,6 +76,15 @@ def cuda_args(shape):
     tpb = (threads_per_block,) * len(shape)
     bpg = tuple(int(ceil(d / threads_per_block)) for d in shape)
     return bpg, tpb
+
+
+def calc_cuda_dims(shape):
+    threadsperblock = (32, 32)
+    blockspergrid = (
+        (shape[0] + (threadsperblock[0] - 1)) // threadsperblock[0],
+        (shape[1] + (threadsperblock[1] - 1)) // threadsperblock[1]
+    )
+    return blockspergrid, threadsperblock
 
 
 def is_cupy_backed(agg: xr.DataArray):
