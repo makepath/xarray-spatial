@@ -2,6 +2,7 @@ import xarray as xa
 import pytest
 
 import datashader as ds
+from ..gpu_rtx import has_rtx
 from xrspatial import viewshed
 
 import numpy as np
@@ -61,7 +62,6 @@ def test_viewshed_output_properties():
 
 
 def test_viewshed():
-
     # check if a matrix is symmetric
     def check_symmetric(matrix, rtol=1e-05, atol=1e-08):
         return np.allclose(matrix, matrix.T, rtol=rtol, atol=atol)
@@ -127,3 +127,39 @@ def test_viewshed():
 
                     # empty image for next uses
                     empty_agg.values[row_id, col_id] = 0
+
+
+@pytest.mark.parametrize("observer_elev", [5, 2])
+@pytest.mark.parametrize("target_elev", [0, 1])
+@pytest.mark.parametrize("backend", ["numpy", "cupy"])
+def test_viewshed_flat(backend, observer_elev, target_elev):
+    if backend == "cupy":
+        if not has_rtx():
+            pytest.skip("rtxpy not available")
+        else:
+            import cupy as cp
+
+    x, y = 0, 0
+    ny, nx = 5, 4
+    arr = np.full((ny, nx), 1.3)
+    xs = np.arange(nx)*0.5
+    ys = np.arange(ny)*1.5
+    if backend == "cupy":
+        arr = cp.asarray(arr)
+    xarr = xa.DataArray(arr, coords=dict(x=xs, y=ys), dims=["y", "x"])
+    v = viewshed(
+        xarr, x=x, y=y, observer_elev=observer_elev, target_elev=target_elev)
+    if backend == "cupy":
+        v.data = cp.asnumpy(v.data)
+    xs2, ys2 = np.meshgrid(xs, ys)
+    d_vert = observer_elev - target_elev
+    d_horz = np.sqrt((xs2 - x)**2 + (ys2 - y)**2)
+    angle = np.rad2deg(np.arctan2(d_horz, d_vert))
+    # Don't want to compare value under observer.
+    angle[0, 0] = v.data[0, 0]
+    if backend == "numpy":
+        np.testing.assert_allclose(v.data, angle)
+    else:
+        # Should do better with viewshed gpu output angles.
+        mask = (v.data < 90)
+        np.testing.assert_allclose(v.data[mask], angle[mask], atol=0.03)

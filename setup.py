@@ -39,6 +39,9 @@ extras_require = {
         'noise >=1.2.2',
     ],
     'examples': examples,
+    'optional': [
+        'rtxpy',
+    ],
 }
 
 # additional doc dependencies may be needed
