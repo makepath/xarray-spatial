@@ -97,11 +97,7 @@ smv_branch_whitelist = 'master'
 if os.getenv('THEME') == 'sphinx_rtd_theme':
     smv_tag_whitelist = r'^v([0]\.[1]\.[0-5]|[0]\.[0]\.[0-9])'
 else:
-    smv_tag_whitelist = (
-        r'^v([0-9]\.[1]\.[6-8]|'
-        r'[0-9]\.[2]\.[1-9]|'
-        r'[1-9]\.[0-9]\.[0-9])'
-    )
+    smv_tag_whitelist = r'^v([0]\.[1]\.[6-9]|[0-9]\.[2-9]\.[0-9])'
 
 # Load releases
 with open("releases.json") as f:
