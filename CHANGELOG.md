@@ -1,6 +1,22 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.3.0 - 2021-12-01
+- Added a pure numba hillshade that is 10x faster compared to numpy (#542)
+- dask case proximity: process whole raster at once if max_distance exceed max possible distance (#558)
+- pathfinding: `start` and `goal` in (y, x) format (#550)
+- generate_terrain: cupy case, dask numpy case (#555)
+- Optimize natural_break on large inputs (#562)
+- Fixes in CPU version of natural_breaks. (#562) (#563)
+- zonal stats, speed up numpy case (#568)
+- Ensure that cupy is not None (#570)
+- Use explicit cupy to numpy conversion in tests (#573)
+- zonal stats: speed up dask case (#572)
+- zonal_stats: ensure chunksizes of zones and values are matching (#574)
+- validate_arrays: ensure chunksizes of arrays are matching (#577)
+- set default value for num_sample (#580)
+- Add rtx gpu viewshed and improve cpu viewshed (#588)
+
 ### Version 0.2.9 - 2021-09-01
 - Refactored proximity module to avoid rechunking (#549)
 
