@@ -146,7 +146,7 @@ def test_viewshed_flat(backend, observer_elev, target_elev):
     ys = np.arange(ny)*1.5
     if backend == "cupy":
         arr = cp.asarray(arr)
-    xarr = xa.DataArray(arr, coords=dict(y=ys, x=xs))
+    xarr = xa.DataArray(arr, coords=dict(x=xs, y=ys), dims=["y", "x"])
     v = viewshed(
         xarr, x=x, y=y, observer_elev=observer_elev, target_elev=target_elev)
     if backend == "cupy":
