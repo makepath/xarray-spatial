@@ -31,4 +31,4 @@ git push --tags
 - When the github release is created, a github action automatically builds the documentation and uploads it to https://xarray-spatial.org/.  This can take more than an hour to finish.
 
 ### conda-forge packages
-- A bot in https://github.com/conda-forge/xarray-spatial-feedstock runs periodically to identify the new PyPI release and update the conda recipe appropriately. This should create a new PR and run tests to check that the conda build works. If it does then the PR can be merged and the conda-forge packages will automatically be created and uploaded.
+- A bot in https://github.com/conda-forge/xarray-spatial-feedstock runs periodically to identify the new PyPI release and update the conda recipe appropriately. This should create a new PR, run tests to check that the conda build works, and automatically upload the packages to conda-forge if everything is OK. Check this works, a few hours after the PyPI release.
