@@ -288,13 +288,15 @@ def _stats_numpy(
     stats_funcs: Dict,
     nodata_values: Union[int, float],
 ) -> pd.DataFrame:
+
     # find ids for all zones
     unique_zones = np.unique(zones[np.isfinite(zones)])
     # selected zones to do analysis
     if zone_ids is None:
         zone_ids = unique_zones
-    # remove zones that does not exist in `zones` raster
-    zone_ids = [z for z in zone_ids if z in unique_zones]
+    else:
+        # remove zones that do not exist in `zones` raster
+        zone_ids = [z for z in zone_ids if z in unique_zones]
 
     stats_dict = {}
     # zone column
@@ -620,15 +622,17 @@ def _find_cats(values, cat_ids, nodata_values):
         ])
         if cat_ids is None:
             cat_ids = unique_cats
-        # remove cats that does not exist in `values` raster
-        cat_ids = [c for c in cat_ids if c in unique_cats]
+        else:
+            # remove cats that do not exist in `values` raster
+            cat_ids = [c for c in cat_ids if c in unique_cats]
     else:
         # 3D case
         unique_cats = values[values.dims[0]].data
         if cat_ids is None:
             cat_ids = unique_cats
-        # remove cats that does not exist in `values` raster
-        cat_ids = [c for c in cat_ids if c in unique_cats]
+        else:
+            # remove cats that do not exist in `values` raster
+            cat_ids = [c for c in cat_ids if c in unique_cats]
     return unique_cats, cat_ids
 
 
@@ -670,7 +674,7 @@ def _single_zone_crosstab(
         # filter out non-finite and nodata_values
         zone_values = zone_values[
             np.isfinite(zone_values) & (zone_values != nodata_values)
-            ]
+        ]
         total_count = zone_values.shape[0]
 
         sorted_zone_values = np.sort(zone_values)
@@ -703,7 +707,7 @@ def _single_zone_crosstab(
                 crosstab_dict[cat].append(count)
 
 
-def _faster_crosstab_numpy(
+def _crosstab_numpy(
     zones: np.ndarray,
     values: np.ndarray,
     zone_ids: List[Union[int, float]],
@@ -712,13 +716,15 @@ def _faster_crosstab_numpy(
     nodata_values: Union[int, float],
     agg: str,
 ) -> pd.DataFrame:
+
     # find ids for all zones
     unique_zones = np.unique(zones[np.isfinite(zones)])
     # selected zones to do analysis
     if zone_ids is None:
         zone_ids = unique_zones
-    # remove zones that does not exist in `zones` raster
-    zone_ids = [z for z in zone_ids if z in unique_zones]
+    else:
+        # remove zones that do not exist in `zones` raster
+        zone_ids = [z for z in zone_ids if z in unique_zones]
 
     crosstab_dict = {}
     # zone column
@@ -944,7 +950,7 @@ def crosstab(
         # find categories
         unique_cats, cat_ids = _find_cats(values, cat_ids, nodata_values)
         # numpy case
-        crosstab_df = _faster_crosstab_numpy(
+        crosstab_df = _crosstab_numpy(
             zones.data, values.data, zone_ids, unique_cats, cat_ids,
             nodata_values, agg
         )
