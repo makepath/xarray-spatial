@@ -620,19 +620,19 @@ def _find_cats(values, cat_ids, nodata_values):
         unique_cats = np.unique(values.data[
             np.isfinite(values.data) & (values.data != nodata_values)
         ])
-        if cat_ids is None:
-            cat_ids = unique_cats
-        else:
-            # remove cats that do not exist in `values` raster
-            cat_ids = [c for c in cat_ids if c in unique_cats]
     else:
         # 3D case
         unique_cats = values[values.dims[0]].data
-        if cat_ids is None:
-            cat_ids = unique_cats
-        else:
+
+    if cat_ids is None:
+        cat_ids = unique_cats
+    else:
+        if isinstance(values.data, np.ndarray):
             # remove cats that do not exist in `values` raster
             cat_ids = [c for c in cat_ids if c in unique_cats]
+        else:
+            cat_ids = _select_ids(unique_cats, cat_ids)
+
     return unique_cats, cat_ids
 
 
@@ -758,6 +758,101 @@ def _crosstab_numpy(
 
     crosstab_df = pd.DataFrame(crosstab_dict)
     return crosstab_df
+
+
+@delayed
+def _single_chunk_crosstab(
+        zones_block: np.array,
+        values_block: np.array,
+        unique_zones: np.array,
+        zone_ids: np.array,
+        unique_cats,
+        cat_ids,
+        nodata_values: Union[int, float],
+        agg
+):
+    flatten_zones = zones_block.ravel()
+    sorted_indices = np.argsort(flatten_zones)
+    sorted_zones = flatten_zones[sorted_indices]
+    values_by_zones = _sort_values(sorted_indices, values_block, cat_ids)
+
+    # exclude nans from calculation
+    # flatten_zones is already sorted, NaN elements (if any) are at the end
+    # of the array, removing them will not affect data before them
+    sorted_zones = sorted_zones[np.isfinite(sorted_zones)]
+    zone_breaks = _strides(sorted_zones, unique_zones)
+
+    results = {}
+    for cat in cat_ids:
+        results[cat] = []
+
+    start = 0
+    for i in range(len(unique_zones)):
+        end = zone_breaks[i]
+        if unique_zones[i] in zone_ids:
+            # get data for zone unique_zones[i]
+            zone_values = _get_zone_values(values_by_zones, start, end)
+            _single_zone_crosstab(
+                zone_values, unique_cats, cat_ids,
+                nodata_values, results, agg
+            )
+        start = end
+
+    for j, cat in enumerate(cat_ids):
+        results[cat] = np.array(results[cat])
+    return results
+
+
+@delayed
+def _select_ids(unique_ids, ids):
+    selected_ids = []
+    for i in ids:
+        if i in unique_ids:
+            selected_ids.append(i)
+    return selected_ids
+
+
+@delayed
+def _crosstab_df_dask(crosstab_by_block, zone_ids):
+    result = crosstab_by_block[0]
+    for i in range(1, len(crosstab_by_block)):
+        for k in crosstab_by_block[i]:
+            result[k] += crosstab_by_block[i][k]
+    df = pd.DataFrame(result)
+    df['zone'] = zone_ids
+    columns = ['zone'] + [c for c in df.columns[:-1]]
+    df = df[columns]
+    return df
+
+
+def _crosstab_dask_numpy(
+        zones: np.ndarray,
+        values: np.ndarray,
+        zone_ids: List[Union[int, float]],
+        unique_cats: np.ndarray,
+        cat_ids: Union[List, np.ndarray],
+        nodata_values: Union[int, float],
+        agg: str,
+):
+    # find ids for all zones
+    unique_zones = np.unique(zones[np.isfinite(zones)])
+    zone_ids = _select_ids(unique_zones, zone_ids)
+
+    cat_ids = _select_ids(unique_cats, cat_ids)
+
+    zones_blocks = zones.to_delayed().ravel()
+    values_blocks = values.to_delayed().ravel()
+
+    crosstab_by_block = [
+        _single_chunk_crosstab(
+            z, v, unique_zones, zone_ids,
+            unique_cats, cat_ids, nodata_values, agg
+        )
+        for z, v in zip(zones_blocks, values_blocks)
+    ]
+
+    crosstab_df = _crosstab_df_dask(crosstab_by_block, zone_ids)
+    return dd.from_delayed(crosstab_df)
 
 
 def crosstab(
@@ -946,18 +1041,20 @@ def crosstab(
         if zones.shape != values.shape[1:]:
             raise ValueError("Incompatible shapes")
 
+    # find categories
+    unique_cats, cat_ids = _find_cats(values, cat_ids, nodata_values)
+
     if isinstance(values.data, np.ndarray):
-        # find categories
-        unique_cats, cat_ids = _find_cats(values, cat_ids, nodata_values)
         # numpy case
         crosstab_df = _crosstab_numpy(
-            zones.data, values.data, zone_ids, unique_cats, cat_ids,
-            nodata_values, agg
+            zones.data, values.data,
+            zone_ids, unique_cats, cat_ids, nodata_values, agg
         )
     else:
         # dask case
-        crosstab_df = _crosstab_dask(
-            zones, values, zone_ids, cat_ids, nodata_values, agg
+        crosstab_df = _crosstab_dask_numpy(
+            zones.data, values.data,
+            zone_ids, unique_cats, cat_ids, nodata_values, agg
         )
 
     return crosstab_df
