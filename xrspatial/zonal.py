@@ -153,9 +153,9 @@ def _stats_func_dask_numpy(
     nodata_values: Union[int, float] = None,
 ) -> pd.DataFrame:
 
-    sorted_zones = np.sort(zones_block.flatten())
-    sorted_indices = np.argsort(zones_block.flatten())
-    values_by_zones = values_block.flatten()[sorted_indices]
+    sorted_zones = np.sort(zones_block.ravel())
+    sorted_indices = np.argsort(zones_block.ravel())
+    values_by_zones = values_block.ravel()[sorted_indices]
 
     # exclude nans from calculation
     # flatten_zones is already sorted, NaN elements (if any) are at the end
@@ -303,10 +303,10 @@ def _stats_numpy(
     for stats in stats_funcs:
         stats_dict[stats] = []
 
-    flatten_zones = zones.flatten()
+    flatten_zones = zones.ravel()
     sorted_indices = np.argsort(flatten_zones)
     sorted_zones = flatten_zones[sorted_indices]
-    values_by_zones = values.flatten()[sorted_indices]
+    values_by_zones = values.ravel()[sorted_indices]
 
     # exclude nans from calculation
     # flatten_zones is already sorted, NaN elements (if any) are at the end
@@ -565,48 +565,6 @@ def _crosstab_dict(zones, values, unique_zones, cats, nodata_values, agg):
     return crosstab_dict
 
 
-def _crosstab_numpy(
-    zones,
-    values,
-    zone_ids,
-    cat_ids,
-    nodata_zones,
-    nodata_values,
-    agg
-):
-
-    if cat_ids is not None:
-        cats = np.array(cat_ids)
-    else:
-        # no categories provided, find all possible cats in values raster
-        if len(values.shape) == 3:
-            # 3D case
-            cats = values.indexes[values.dims[0]].values
-        else:
-            # 2D case
-            # mask out all invalid values such as: nan, inf
-            cats = da.unique(values.data[da.isfinite(values.data)]).compute()
-            cats = sorted(list(set(cats) - set([nodata_values])))
-
-    if zone_ids is None:
-        # do not consider zone with nodata values
-        unique_zones = np.unique(zones.data[np.isfinite(zones.data)])
-        unique_zones = sorted(list(set(unique_zones) - set([nodata_zones])))
-    else:
-        unique_zones = np.array(zone_ids)
-
-    crosstab_dict = _crosstab_dict(
-        zones, values, unique_zones, cats, nodata_values, agg
-    )
-
-    crosstab_df = pd.DataFrame(crosstab_dict)
-
-    # name columns
-    crosstab_df.columns = crosstab_dict.keys()
-
-    return crosstab_df
-
-
 def _crosstab_dask(
     zones,
     values,
@@ -677,14 +635,14 @@ def _find_cats(values, cat_ids, nodata_values):
 def _sort_values(sorted_indices, values, cats):
     if len(values.shape) == 2:
         # 2D case
-        result = values.flatten()[sorted_indices]
+        result = values.ravel()[sorted_indices]
     else:
         # 3D case
         num_cats = len(cats)
         h, w = values.shape[1:]
         result = np.zeros(shape=(num_cats, h * w), dtype=values.dtype)
         for i, cat in enumerate(cats):
-            result[i] = values[i].flatten()[sorted_indices]
+            result[i] = values[i].ravel()[sorted_indices]
 
     return result
 
@@ -769,7 +727,7 @@ def _faster_crosstab_numpy(
     for cat in cat_ids:
         crosstab_dict[cat] = []
 
-    flatten_zones = zones.flatten()
+    flatten_zones = zones.ravel()
     sorted_indices = np.argsort(flatten_zones)
     sorted_zones = flatten_zones[sorted_indices]
     values_by_zones = _sort_values(sorted_indices, values, cat_ids)
