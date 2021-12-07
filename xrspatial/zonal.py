@@ -13,6 +13,9 @@ from dask import delayed
 from xrspatial.utils import ngjit, validate_arrays
 
 
+TOTAL_COUNT = '_total_count'
+
+
 def _stats_count(data):
     if isinstance(data, np.ndarray):
         # numpy case
@@ -514,7 +517,6 @@ def _single_zone_crosstab(
     cat_ids,
     nodata_values,
     crosstab_dict,
-    agg
 ):
     if len(zone_values.shape) == 1:
         # 1D flatten, i.e, original data is 2D
@@ -524,21 +526,17 @@ def _single_zone_crosstab(
             np.isfinite(zone_values) & (zone_values != nodata_values)
         ]
         total_count = zone_values.shape[0]
+        crosstab_dict[TOTAL_COUNT].append(total_count)
 
         sorted_zone_values = np.sort(zone_values)
         zone_cat_breaks = _strides(sorted_zone_values, unique_cats)
+
         cat_start = 0
 
         for j, cat in enumerate(unique_cats):
             if cat in cat_ids:
                 count = zone_cat_breaks[j] - cat_start
-                if agg == 'count':
-                    crosstab_dict[cat].append(count)
-                elif agg == 'percentage':
-                    pct = np.nan
-                    if total_count != 0:
-                        pct = count / total_count * 100
-                    crosstab_dict[cat].append(pct)
+                crosstab_dict[cat].append(count)
                 cat_start = zone_cat_breaks[j]
 
     else:
@@ -575,9 +573,8 @@ def _crosstab_numpy(
         zone_ids = [z for z in zone_ids if z in unique_zones]
 
     crosstab_dict = {}
-    # zone column
     crosstab_dict["zone"] = zone_ids
-    # stats columns
+    crosstab_dict[TOTAL_COUNT] = []
     for cat in cat_ids:
         crosstab_dict[cat] = []
 
@@ -600,24 +597,37 @@ def _crosstab_numpy(
             zone_values = _get_zone_values(values_by_zones, start, end)
             _single_zone_crosstab(
                 zone_values, unique_cats, cat_ids,
-                nodata_values, crosstab_dict, agg
+                nodata_values, crosstab_dict
             )
         start = end
 
+    crosstab_dict[TOTAL_COUNT] = np.array(
+        crosstab_dict[TOTAL_COUNT], dtype=np.float32
+    )
+    for j, cat in enumerate(cat_ids):
+        crosstab_dict[cat] = np.array(crosstab_dict[cat])
+
+    # construct output dataframe
+    if agg == 'percentage':
+        # replace 0s with nans to avoid dividing by 0 error
+        crosstab_dict[TOTAL_COUNT][crosstab_dict[TOTAL_COUNT] == 0] = np.nan
+        for cat in cat_ids:
+            crosstab_dict[cat] = crosstab_dict[cat] / crosstab_dict[TOTAL_COUNT] * 100
+
     crosstab_df = pd.DataFrame(crosstab_dict)
+    crosstab_df = crosstab_df[['zone'] + cat_ids]
     return crosstab_df
 
 
 @delayed
 def _single_chunk_crosstab(
-        zones_block: np.array,
-        values_block: np.array,
-        unique_zones: np.array,
-        zone_ids: np.array,
-        unique_cats,
-        cat_ids,
-        nodata_values: Union[int, float],
-        agg
+    zones_block: np.array,
+    values_block: np.array,
+    unique_zones: np.array,
+    zone_ids: np.array,
+    unique_cats,
+    cat_ids,
+    nodata_values: Union[int, float],
 ):
     flatten_zones = zones_block.ravel()
     sorted_indices = np.argsort(flatten_zones)
@@ -631,6 +641,7 @@ def _single_chunk_crosstab(
     zone_breaks = _strides(sorted_zones, unique_zones)
 
     results = {}
+    results[TOTAL_COUNT] = []
     for cat in cat_ids:
         results[cat] = []
 
@@ -642,12 +653,14 @@ def _single_chunk_crosstab(
             zone_values = _get_zone_values(values_by_zones, start, end)
             _single_zone_crosstab(
                 zone_values, unique_cats, cat_ids,
-                nodata_values, results, agg
+                nodata_values, results
             )
         start = end
 
+    results[TOTAL_COUNT] = np.array(results[TOTAL_COUNT], dtype=np.float32)
     for j, cat in enumerate(cat_ids):
         results[cat] = np.array(results[cat])
+
     return results
 
 
@@ -661,26 +674,33 @@ def _select_ids(unique_ids, ids):
 
 
 @delayed
-def _crosstab_df_dask(crosstab_by_block, zone_ids):
+def _crosstab_df_dask(crosstab_by_block, zone_ids, cat_ids, agg):
     result = crosstab_by_block[0]
     for i in range(1, len(crosstab_by_block)):
         for k in crosstab_by_block[i]:
             result[k] += crosstab_by_block[i][k]
+
+    if agg == 'percentage':
+        # replace 0s with nans to avoid dividing by 0 error
+        result[TOTAL_COUNT][result[TOTAL_COUNT] == 0] = np.nan
+        for cat in cat_ids:
+            result[cat] = result[cat] / result[TOTAL_COUNT] * 100
+
     df = pd.DataFrame(result)
     df['zone'] = zone_ids
-    columns = ['zone'] + [c for c in df.columns[:-1]]
+    columns = ['zone'] + [c for c in cat_ids]
     df = df[columns]
     return df
 
 
 def _crosstab_dask_numpy(
-        zones: np.ndarray,
-        values: np.ndarray,
-        zone_ids: List[Union[int, float]],
-        unique_cats: np.ndarray,
-        cat_ids: Union[List, np.ndarray],
-        nodata_values: Union[int, float],
-        agg: str,
+    zones: np.ndarray,
+    values: np.ndarray,
+    zone_ids: List[Union[int, float]],
+    unique_cats: np.ndarray,
+    cat_ids: Union[List, np.ndarray],
+    nodata_values: Union[int, float],
+    agg: str,
 ):
     # find ids for all zones
     unique_zones = np.unique(zones[np.isfinite(zones)])
@@ -694,12 +714,14 @@ def _crosstab_dask_numpy(
     crosstab_by_block = [
         _single_chunk_crosstab(
             z, v, unique_zones, zone_ids,
-            unique_cats, cat_ids, nodata_values, agg
+            unique_cats, cat_ids, nodata_values
         )
         for z, v in zip(zones_blocks, values_blocks)
     ]
 
-    crosstab_df = _crosstab_df_dask(crosstab_by_block, zone_ids)
+    crosstab_df = _crosstab_df_dask(
+        crosstab_by_block, zone_ids, cat_ids, agg
+    )
     return dd.from_delayed(crosstab_df)
 
 
