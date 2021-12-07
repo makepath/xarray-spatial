@@ -260,7 +260,10 @@ def _stats_numpy(
                 np.isfinite(zone_values) & (zone_values != nodata_values)]
             for stats in stats_funcs:
                 if len(zone_values) == 0:
-                    stats_dict[stats].append(np.nan)
+                    if stats == 'count':
+                        stats_dict[stats].append(0)
+                    else:
+                        stats_dict[stats].append(np.nan)
                 else:
                     stats_func = stats_funcs.get(stats)
                     if not callable(stats_func):
