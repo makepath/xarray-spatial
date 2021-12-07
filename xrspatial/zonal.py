@@ -75,6 +75,21 @@ def _strides(flatten_zones, unique_zones):
     return strides
 
 
+def _sort_and_stride(zones, values, unique_zones):
+    flatten_zones = zones.ravel()
+    sorted_indices = np.argsort(flatten_zones)
+    sorted_zones = flatten_zones[sorted_indices]
+    values_by_zones = values.ravel()[sorted_indices]
+
+    # exclude nans from calculation
+    # flatten_zones is already sorted, NaN elements (if any) are at the end
+    # of the array, removing them will not affect data before them
+    sorted_zones = sorted_zones[np.isfinite(sorted_zones)]
+    zone_breaks = _strides(sorted_zones, unique_zones)
+
+    return values_by_zones, zone_breaks
+
+
 @delayed
 def _stats_func_dask_numpy(
     zones_block: np.array,
@@ -85,15 +100,9 @@ def _stats_func_dask_numpy(
     nodata_values: Union[int, float] = None,
 ) -> pd.DataFrame:
 
-    sorted_zones = np.sort(zones_block.ravel())
-    sorted_indices = np.argsort(zones_block.ravel())
-    values_by_zones = values_block.ravel()[sorted_indices]
-
-    # exclude nans from calculation
-    # flatten_zones is already sorted, NaN elements (if any) are at the end
-    # of the array, removing them will not affect data before them
-    sorted_zones = sorted_zones[np.isfinite(sorted_zones)]
-    zone_breaks = _strides(sorted_zones, unique_zones)
+    values_by_zones, zone_breaks = _sort_and_stride(
+        zones_block, values_block, unique_zones
+    )
 
     start = 0
     results = np.full(unique_zones.shape, np.nan)
@@ -237,16 +246,9 @@ def _stats_numpy(
     for stats in stats_funcs:
         stats_dict[stats] = []
 
-    flatten_zones = zones.ravel()
-    sorted_indices = np.argsort(flatten_zones)
-    sorted_zones = flatten_zones[sorted_indices]
-    values_by_zones = values.ravel()[sorted_indices]
-
-    # exclude nans from calculation
-    # flatten_zones is already sorted, NaN elements (if any) are at the end
-    # of the array, removing them will not affect data before them
-    sorted_zones = sorted_zones[np.isfinite(sorted_zones)]
-    zone_breaks = _strides(sorted_zones, unique_zones)
+    values_by_zones, zone_breaks = _sort_and_stride(
+        zones, values, unique_zones
+    )
 
     start = 0
     for i in range(len(unique_zones)):
@@ -578,16 +580,9 @@ def _crosstab_numpy(
     for cat in cat_ids:
         crosstab_dict[cat] = []
 
-    flatten_zones = zones.ravel()
-    sorted_indices = np.argsort(flatten_zones)
-    sorted_zones = flatten_zones[sorted_indices]
-    values_by_zones = _sort_values(sorted_indices, values, cat_ids)
-
-    # exclude nans from calculation
-    # flatten_zones is already sorted, NaN elements (if any) are at the end
-    # of the array, removing them will not affect data before them
-    sorted_zones = sorted_zones[np.isfinite(sorted_zones)]
-    zone_breaks = _strides(sorted_zones, unique_zones)
+    values_by_zones, zone_breaks = _sort_and_stride(
+        zones, values, unique_zones
+    )
 
     start = 0
     for i in range(len(unique_zones)):
@@ -612,7 +607,7 @@ def _crosstab_numpy(
         # replace 0s with nans to avoid dividing by 0 error
         crosstab_dict[TOTAL_COUNT][crosstab_dict[TOTAL_COUNT] == 0] = np.nan
         for cat in cat_ids:
-            crosstab_dict[cat] = crosstab_dict[cat] / crosstab_dict[TOTAL_COUNT] * 100
+            crosstab_dict[cat] = crosstab_dict[cat] / crosstab_dict[TOTAL_COUNT] * 100  # noqa
 
     crosstab_df = pd.DataFrame(crosstab_dict)
     crosstab_df = crosstab_df[['zone'] + cat_ids]
@@ -629,16 +624,10 @@ def _single_chunk_crosstab(
     cat_ids,
     nodata_values: Union[int, float],
 ):
-    flatten_zones = zones_block.ravel()
-    sorted_indices = np.argsort(flatten_zones)
-    sorted_zones = flatten_zones[sorted_indices]
-    values_by_zones = _sort_values(sorted_indices, values_block, cat_ids)
 
-    # exclude nans from calculation
-    # flatten_zones is already sorted, NaN elements (if any) are at the end
-    # of the array, removing them will not affect data before them
-    sorted_zones = sorted_zones[np.isfinite(sorted_zones)]
-    zone_breaks = _strides(sorted_zones, unique_zones)
+    values_by_zones, zone_breaks = _sort_and_stride(
+        zones_block, values_block, unique_zones
+    )
 
     results = {}
     results[TOTAL_COUNT] = []
