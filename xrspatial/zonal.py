@@ -90,20 +90,14 @@ def _sort_and_stride(zones, values, unique_zones):
     return values_by_zones, zone_breaks
 
 
-@delayed
-def _stats_func_dask_numpy(
-    zones_block: np.array,
-    values_block: np.array,
+def _calc_stats(
+    values_by_zones: np.array,
+    zone_breaks: np.array,
     unique_zones: np.array,
     zone_ids: np.array,
     func: Callable,
     nodata_values: Union[int, float] = None,
-) -> pd.DataFrame:
-
-    values_by_zones, zone_breaks = _sort_and_stride(
-        zones_block, values_block, unique_zones
-    )
-
+):
     start = 0
     results = np.full(unique_zones.shape, np.nan)
     for i in range(len(unique_zones)):
@@ -116,7 +110,26 @@ def _stats_func_dask_numpy(
             if len(zone_values) > 0:
                 results[i] = func(zone_values)
         start = end
+    return results
 
+
+@delayed
+def _single_stats_func(
+    zones_block: np.array,
+    values_block: np.array,
+    unique_zones: np.array,
+    zone_ids: np.array,
+    func: Callable,
+    nodata_values: Union[int, float] = None,
+) -> pd.DataFrame:
+
+    values_by_zones, zone_breaks = _sort_and_stride(
+        zones_block, values_block, unique_zones
+    )
+    results = _calc_stats(
+        values_by_zones, zone_breaks,
+        unique_zones, zone_ids, func, nodata_values
+    )
     return results
 
 
@@ -177,7 +190,7 @@ def _stats_dask_numpy(
         stats_func = _DASK_BLOCK_STATS.get(s)
         stats_by_block = [
             da.from_delayed(
-                delayed(_stats_func_dask_numpy)(
+                delayed(_single_stats_func)(
                     z, v, unique_zones, zone_ids, stats_func, nodata_values
                 ), shape=(np.nan,), dtype=dask_dtypes[s]
             )
@@ -236,43 +249,26 @@ def _stats_numpy(
     if zone_ids is None:
         zone_ids = unique_zones
     else:
+        zone_ids = np.unique(zone_ids)
         # remove zones that do not exist in `zones` raster
         zone_ids = [z for z in zone_ids if z in unique_zones]
 
-    stats_dict = {}
-    # zone column
-    stats_dict["zone"] = zone_ids
-    # stats columns
-    for stats in stats_funcs:
-        stats_dict[stats] = []
-
+    selected_indexes = [i for i, z in enumerate(unique_zones) if z in zone_ids]
     values_by_zones, zone_breaks = _sort_and_stride(
         zones, values, unique_zones
     )
 
-    start = 0
-    for i in range(len(unique_zones)):
-        end = zone_breaks[i]
-        if unique_zones[i] in zone_ids:
-            zone_values = values_by_zones[start:end]
-            # filter out non-finite and nodata_values
-            zone_values = zone_values[
-                np.isfinite(zone_values) & (zone_values != nodata_values)]
-            for stats in stats_funcs:
-                if len(zone_values) == 0:
-                    if stats == 'count':
-                        stats_dict[stats].append(0)
-                    else:
-                        stats_dict[stats].append(np.nan)
-                else:
-                    stats_func = stats_funcs.get(stats)
-                    if not callable(stats_func):
-                        raise ValueError(stats)
-                    stats_dict[stats].append(stats_func(zone_values))
-        start = end
+    stats_dict = {}
+    stats_dict["zone"] = zone_ids
+    for stats in stats_funcs:
+        func = stats_funcs.get(stats)
+        stats_dict[stats] = _calc_stats(
+            values_by_zones, zone_breaks,
+            unique_zones, zone_ids, func, nodata_values
+        )
+        stats_dict[stats] = stats_dict[stats][selected_indexes]
 
     stats_df = pd.DataFrame(stats_dict)
-
     return stats_df
 
 
