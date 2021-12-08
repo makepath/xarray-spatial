@@ -1,48 +1,35 @@
-### Release Prep
-- [ ] Update CHANGELOG.md
-- [ ] Increment Version in `xrspatial/__init__.py`
-- [ ] Increment Version in `conda.recipe/meta.yaml`
-- [ ] Add the new version reference in `xrspatial/docs/source/releases.json`
-- [ ] Commit changes and push
+## Release process
 
-### Tag Release
-- [ ] Create New Tag
+### Preparation
+- Create a new branch containing the following changes:
+  - Update CHANGELOG.md with new version number and list of changes extracted from `git log`.
+  - Add the new version reference in `xrspatial/docs/source/releases.json`
+  - Check that the new version number is included in `smv_tag_whitelist` in `docs/source/conf.py` so that the docs will be built and uploaded by CI.
+- Commit changes and submit them as a PR to the `master` branch.
+- If the CI passes OK, merge the PR.
+
+### Tag release
+- To sign the release you need a GPG key registered with your github account. See https://docs.github.com/en/authentication/managing-commit-signature-verification
+- Create new tag, with the correct version number, using:
 ```bash
-git tag -a v0.0.1 -m "Version 0.0.1"
+git tag -a v0.1.2 -s -m "Version 0.1.2"
 git push --tags
-git checkout v0.0.1
 ```
 
-### Build / Upload package for pypi
-- [ ] Build Pip Package
-```bash
-python setup.py sdist bdist_wheel
-```
+### PyPI packages
+- These are automatically built and uploaded to PyPI via a github action when a new tag is pushed to the github repo.
+- Check that both an sdist (`.tar.gz` file) and wheel (`.whl` file) are available on PyPI.
+- Check you can install the new version in a new virtual environment using `pip install xarray-spatial`.
 
-- [ ] Upload Pip Package
-```bash
-python -m twine upload dist/*
-```
+### github release notes
+- Convert the tag into a release on github:
+  - On the right-hand side of the github repo, click on `Releases`.
+  - Click on `Draft a new release`.
+  - Select the correct tag, and enter the title and description by copying and pasting from the CHANGELOG.md.
+  - Click `Publish release`.
 
-- [ ] Build Conda Packages
-```bash
-conda build conda.recipe --python 3.6 -c conda-forge
-conda build conda.recipe --python 3.7 -c conda-forge
-conda build conda.recipe --python 3.8 -c conda-forge
-```
+### Documentation
+- When the github release is created, a github action automatically builds the documentation and uploads it to https://xarray-spatial.org/.  This can take more than an hour to finish.
 
-- [ ] Create Packages for different platforms
-```bash
-VERSION=0.0.6
-cd /Users/<user>/miniconda3/conda-bld/
-cd osx-64
-conda convert --platform win-64 xarray-spatial-$VERSION*.tar.bz2 -o ../
-conda convert --platform linux-64 xarray-spatial-$VERSION*.tar.bz2 -o ../
-```
-
-### Build upload to Anaconda.org
-```bash
-anaconda upload xarray-spatial-$VERSION*.tar.bz2
-anaconda upload ../linux-64/xarray-spatial-$VERSION*.tar.bz2
-anaconda upload ../win-64/xarray-spatial-$VERSION*.tar.bz2
-```
+### conda-forge packages
+- A bot in https://github.com/conda-forge/xarray-spatial-feedstock runs periodically to identify the new PyPI release and update the conda recipe appropriately. This should create a new PR, run tests to check that the conda build works, and automatically upload the packages to conda-forge if everything is OK. Check this works, a few hours after the PyPI release.
