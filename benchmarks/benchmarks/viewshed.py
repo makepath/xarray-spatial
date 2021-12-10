@@ -10,7 +10,7 @@ class Viewshed:
     def setup(self, nx, type):
         ny = nx // 2
         self.xr = get_xr_dataarray(
-            (ny, nx), type, different_each_call=(type=="rtxpy"))
+            (ny, nx), type, different_each_call=(type == "rtxpy"))
         self.x = 100
         self.y = 50
 
