@@ -79,7 +79,15 @@ def _sort_and_stride(zones, values, unique_zones):
     flatten_zones = zones.ravel()
     sorted_indices = np.argsort(flatten_zones)
     sorted_zones = flatten_zones[sorted_indices]
-    values_by_zones = values.ravel()[sorted_indices]
+
+    values_shape = values.shape
+    if len(values_shape) == 3:
+        values_by_zones = values.reshape(
+            values_shape[0], values_shape[1] * values_shape[2])
+        for i in range(values_shape[0]):
+            values_by_zones[i] = values_by_zones[i][sorted_indices]
+    else:
+        values_by_zones = values.ravel()[sorted_indices]
 
     # exclude nans from calculation
     # flatten_zones is already sorted, NaN elements (if any) are at the end
@@ -575,7 +583,8 @@ def _crosstab_numpy(
 
     crosstab_dict = {}
     crosstab_dict["zone"] = zone_ids
-    crosstab_dict[TOTAL_COUNT] = []
+    if len(values.shape) == 2:
+        crosstab_dict[TOTAL_COUNT] = []
     for cat in cat_ids:
         crosstab_dict[cat] = []
 
@@ -595,9 +604,10 @@ def _crosstab_numpy(
             )
         start = end
 
-    crosstab_dict[TOTAL_COUNT] = np.array(
-        crosstab_dict[TOTAL_COUNT], dtype=np.float32
-    )
+    if TOTAL_COUNT in crosstab_dict:
+        crosstab_dict[TOTAL_COUNT] = np.array(
+            crosstab_dict[TOTAL_COUNT], dtype=np.float32
+        )
     for j, cat in enumerate(cat_ids):
         crosstab_dict[cat] = np.array(crosstab_dict[cat])
 
@@ -609,7 +619,7 @@ def _crosstab_numpy(
             crosstab_dict[cat] = crosstab_dict[cat] / crosstab_dict[TOTAL_COUNT] * 100  # noqa
 
     crosstab_df = pd.DataFrame(crosstab_dict)
-    crosstab_df = crosstab_df[['zone'] + cat_ids]
+    crosstab_df = crosstab_df[['zone'] + [c for c in cat_ids]]
     return crosstab_df
 
 
