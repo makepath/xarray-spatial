@@ -633,15 +633,15 @@ def _single_chunk_crosstab(
     cat_ids,
     nodata_values: Union[int, float],
 ):
+    results = {}
+    if len(values_block.shape) == 2:
+        results[TOTAL_COUNT] = []
+    for cat in cat_ids:
+        results[cat] = []
 
     values_by_zones, zone_breaks = _sort_and_stride(
         zones_block, values_block, unique_zones
     )
-
-    results = {}
-    results[TOTAL_COUNT] = []
-    for cat in cat_ids:
-        results[cat] = []
 
     start = 0
     for i in range(len(unique_zones)):
@@ -655,7 +655,8 @@ def _single_chunk_crosstab(
             )
         start = end
 
-    results[TOTAL_COUNT] = np.array(results[TOTAL_COUNT], dtype=np.float32)
+    if TOTAL_COUNT in results:
+        results[TOTAL_COUNT] = np.array(results[TOTAL_COUNT], dtype=np.float32)
     for j, cat in enumerate(cat_ids):
         results[cat] = np.array(results[cat])
 
@@ -908,6 +909,25 @@ def crosstab(
 
         if zones.shape != values.shape[1:]:
             raise ValueError("Incompatible shapes")
+
+        if isinstance(values.data, da.Array):
+            # dask case, rechunk if necessary
+            zones_dims = zones.dims
+            values_dims = values.dims
+            zones_chunks = zones.chunksizes
+            expected_values_chunks = {
+                0: (values.shape[0],),
+                1: zones_chunks[zones_dims[0]],
+                2: zones_chunks[zones_dims[1]]
+            }
+            actual_values_chunks = values.chunksizes
+            actual_values_chunks = {
+                0: actual_values_chunks[values_dims[0]],
+                1: actual_values_chunks[values_dims[1]],
+                2: actual_values_chunks[values_dims[2]],
+            }
+            if actual_values_chunks != expected_values_chunks:
+                values.data = values.data.rechunk(expected_values_chunks)
 
     # find categories
     unique_cats, cat_ids = _find_cats(values, cat_ids, nodata_values)

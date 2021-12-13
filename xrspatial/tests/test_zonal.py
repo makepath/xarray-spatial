@@ -195,13 +195,12 @@ def test_crosstab_3d():
     df_np = crosstab(
         zones=zones_np, values=values_np, zone_ids=[1, 2, 3], layer=-1
     )
-    # # dask case
-    # zones_da, _, values_da = create_zones_values(backend='dask')
-    # df_da = crosstab(
-    #     zones=zones_da, values=values_da, zone_ids=[1, 2, 3],
-    #     cat_ids=['cat1', 'cat2', 'cat3', 'cat4'], layer=-1
-    # )
-    df_da = None
+    # dask case
+    zones_da, _, values_da = create_zones_values(backend='dask')
+    df_da = crosstab(
+        zones=zones_da, values=values_da, zone_ids=[1, 2, 3],
+        cat_ids=['cat1', 'cat2', 'cat3', 'cat4'], layer=-1
+    )
     check_results(df_np, df_da, crosstab_3d_results)
 
     # ----- no values case ------
@@ -219,13 +218,12 @@ def test_crosstab_3d():
         zones=zones_np, values=values_np, layer=-1,
         zone_ids=[1, 2, 3], nodata_values=1
     )
-    # # dask case
-    # zones_da, _, values_da = create_zones_values(backend='dask')
-    # df_da = crosstab(
-    #     zones=zones_da, values=values_da, layer=-1,
-    #     zone_ids=[1, 2, 3], nodata_values=1
-    # )
-    df_da = None
+    # dask case
+    zones_da, _, values_da = create_zones_values(backend='dask')
+    df_da = crosstab(
+        zones=zones_da, values=values_da, layer=-1,
+        zone_ids=[1, 2, 3], nodata_values=1
+    )
     check_results(df_np, df_da, crosstab_3d_novalues_results)
 
 
