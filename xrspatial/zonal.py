@@ -703,7 +703,10 @@ def _crosstab_dask_numpy(
 ):
     # find ids for all zones
     unique_zones = np.unique(zones[np.isfinite(zones)])
-    zone_ids = _select_ids(unique_zones, zone_ids)
+    if zone_ids is None:
+        zone_ids = unique_zones
+    else:
+        zone_ids = _select_ids(unique_zones, zone_ids)
 
     cat_ids = _select_ids(unique_cats, cat_ids)
 
