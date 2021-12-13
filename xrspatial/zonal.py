@@ -915,19 +915,14 @@ def crosstab(
 
         if isinstance(values.data, da.Array):
             # dask case, rechunk if necessary
-            zones_dims = zones.dims
-            values_dims = values.dims
-            zones_chunks = zones.chunksizes
+            zones_chunks = zones.chunks
             expected_values_chunks = {
                 0: (values.shape[0],),
-                1: zones_chunks[zones_dims[0]],
-                2: zones_chunks[zones_dims[1]]
+                1: zones_chunks[0],
+                2: zones_chunks[1],
             }
-            actual_values_chunks = values.chunksizes
             actual_values_chunks = {
-                0: actual_values_chunks[values_dims[0]],
-                1: actual_values_chunks[values_dims[1]],
-                2: actual_values_chunks[values_dims[2]],
+                i: values.chunks[i] for i in range(3)
             }
             if actual_values_chunks != expected_values_chunks:
                 values.data = values.data.rechunk(expected_values_chunks)
