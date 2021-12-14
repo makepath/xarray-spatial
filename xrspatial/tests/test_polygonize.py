@@ -188,6 +188,15 @@ def test_polygonize_spatialpandas(raster_3x3, connectivity):
     assert isinstance(df.geometry, sp.GeoSeries)
 
 
+@pytest.mark.parametrize("dtype", [np.uint64])
+def test_polygonize_invalid_return_type(raster_3x3):
+    raster = xr.DataArray(raster_3x3)
+    return_type = "qwerty"
+    msg = f"Invalid return_type '{return_type}'"
+    with pytest.raises(ValueError, match=msg):
+        polygonize(raster, return_type=return_type)
+
+
 @pytest.mark.parametrize("transform", [
     (1, 0, 0, 0, 1, 0),
     (1.2, -0.3, 0.2, 1.4, 0.7, 0.1)])

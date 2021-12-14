@@ -469,9 +469,8 @@ def _polygonize_numpy(
     mask: Optional[np.ndarray],
     connectivity_8: bool,
     transform: Optional[np.ndarray],
-    column_name: str,
-    return_type: str,
-):
+) -> Tuple[List[Union[int, float]], List[List[np.ndarray]]]:
+
     ny, nx = values.shape
     if nx == 1:
         # Algorithm requires nx > 1 to differentiate between facing E
@@ -492,16 +491,7 @@ def _polygonize_numpy(
     column, polygon_points = _scan(
         values, mask, connectivity_8, transform, nx, ny)
 
-    if return_type == "numpy":
-        return column, polygon_points
-    elif return_type == "awkward":
-        return _to_awkward(column, polygon_points)
-    elif return_type == "geopandas":
-        return _to_geopandas(column, polygon_points, column_name)
-    elif return_type == "spatialpandas":
-        return _to_spatialpandas(column, polygon_points, column_name)
-    else:
-        raise ValueError(f"Invalid return_type '{return_type}'")
+    return column, polygon_points
 
 
 def polygonize(
@@ -524,7 +514,7 @@ def polygonize(
 
     mask: xr.DataArray, optional
         Optional input mask.  Pixels to include should have mask values of 1
-        or True, pixels to exclude should have 0 or True.  This is the
+        or True, pixels to exclude should have 0 or False.  This is the
         opposite of a NumPy mask.
 
     connectivity: int, default=4
@@ -583,8 +573,19 @@ def polygonize(
                 f"Incorrect transform length of {len(transform)} instead of 6")
 
     if isinstance(raster.data, np.ndarray):
-        return _polygonize_numpy(
-            raster.data, mask_data, connectivity_8, transform, column_name,
-            return_type)
+        column, polygon_points = _polygonize_numpy(
+            raster.data, mask_data, connectivity_8, transform)
     else:
         raise TypeError(f"Unsupported array type: {type(raster.data)}")
+
+    # Convert to requested return_type.
+    if return_type == "numpy":
+        return column, polygon_points
+    elif return_type == "awkward":
+        return _to_awkward(column, polygon_points)
+    elif return_type == "geopandas":
+        return _to_geopandas(column, polygon_points, column_name)
+    elif return_type == "spatialpandas":
+        return _to_spatialpandas(column, polygon_points, column_name)
+    else:
+        raise ValueError(f"Invalid return_type '{return_type}'")
