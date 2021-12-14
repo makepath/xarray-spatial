@@ -159,14 +159,14 @@ def aspect(agg: xr.DataArray,
 
     Calculates, for all cells in the array, the downward slope direction
     of each cell based on the elevation of its neighbors in a 3x3 grid.
-    The value is measured clockwise in degrees with 0 and 360 at due
-    north. Flat areas are given a value of -1. Values along the edges
-    are not calculated.
+    The value is measured clockwise in degrees with 0 (due north), and 360
+    (again due north). Flat areas are given a value of -1.
+    Values along the edges are not calculated.
 
     Parameters
     ----------
     agg : xarray.DataArray
-        2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
+        2D NumPy, CuPy, or Dask with NumPy-backed xarray DataArray
         of elevation values.
     name : str, default='aspect'
         Name of ouput DataArray.
@@ -183,95 +183,82 @@ def aspect(agg: xr.DataArray,
 
     Examples
     --------
-    .. plot::
-       :include-source:
-
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import xarray as xr
-
-        from xrspatial import generate_terrain, aspect
-
-
-        # Generate Example Terrain
-        W = 800
-        H = 600
-
-        template_terrain = xr.DataArray(np.zeros((H, W)))
-        x_range=(-20e6, 20e6)
-        y_range=(-20e6, 20e6)
-
-        terrain_agg = generate_terrain(
-            template_terrain, x_range=x_range, y_range=y_range, seed=1, zfactor=1000
-        )
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Aspect Aggregate Array
-        aspect_agg = aspect(agg = terrain_agg, name = 'Aspect')
-
-        # Edit Attributes
-        aspect_agg = aspect_agg.assign_attrs(
-            {
-                'Description': 'Example Aspect',
-                'units': 'deg',
-            }
-        )
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Aspect
-        aspect_agg.plot(aspect = 2, size = 4)
-        plt.title("Aspect")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
+    Aspect works with NumPy backed xarray DataArray
     .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import aspect
 
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[707.57051795, 704.3194383 ],
-               [706.36271613, 705.4514285 ],
-               [699.46372883, 703.7514251 ]])
-        Coordinates:
-        * lon      (lon) float64 -9.975e+06 -9.925e+06
-        * lat      (lat) float64 -6.633e+06 -6.567e+06 -6.5e+06
-        Attributes:
-            res:            (50000.0, 66666.66666666667)
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
+        >>> data = np.array([
+            [11., 11., 9., 9., 9.],
+            [10., 10., 9., 8., 8.],
+            [10., 10., 9., 8., 7.],
+            [10., 10., 8., 7., 7.],
+            [10., 10., 8., 7., 6.]
+        ])
+        >>> n, m = data.shape
+        >>> raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
+        >>> print(raster)
+        <xarray.DataArray 'raster' (y: 5, x: 5)>
+        array([[11., 11.,  9.,  9.,  9.],
+               [10., 10.,  9.,  8.,  8.],
+               [10., 10.,  9.,  8.,  7.],
+               [10., 10.,  8.,  7.,  7.],
+               [10., 10.,  8.,  7.,  6.]])
+        Dimensions without coordinates: y, x
+        >>> aspect_agg = aspect(raster)
+        >>> print(aspect_agg)
+        <xarray.DataArray 'aspect' (y: 5, x: 5)>
+        array([[nan,      nan,        nan,        nan,         nan],
+               [nan, 120.96375653, 104.03624347, 135.        , nan],
+               [nan, 101.30993247, 108.43494882, 123.69006753, nan],
+               [nan,  98.13010235, 105.2551187 , 123.69006753, nan],
+               [nan,      nan,        nan,        nan,         nan]])
+        Dimensions without coordinates: y, x
 
+    Aspect works with Dask with NumPy backed xarray DataArray
     .. sourcecode:: python
+        >>> import dask.array as da
+        >>> data_da = da.from_array(data, chunks=(3, 3))
+        >>> raster_da = xr.DataArray(data_da, dims=['y', 'x'], name='raster_da')
+        >>> print(raster_da)
+        <xarray.DataArray 'raster_da' (y: 5, x: 5)>
+        dask.array<array, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>  # noqa
+        Dimensions without coordinates: y, x
+        >>> aspect_da = aspect(raster_da)
+        >>> print(aspect_da)
+        <xarray.DataArray 'aspect' (y: 5, x: 5)>
+        dask.array<_trim, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        Dimensions without coordinates: y, x
+        >>> aspect_da.compute()  # compute the results
+        <xarray.DataArray 'aspect' (y: 5, x: 5)>
+        array([[nan,     nan,        nan,        nan,          nan],
+               [nan, 120.96375653, 104.03624347, 135.        , nan],
+               [nan, 101.30993247, 108.43494882, 123.69006753, nan],
+               [nan,  98.13010235, 105.2551187 , 123.69006753, nan],
+               [nan,     nan,        nan,        nan,          nan]])
+        Dimensions without coordinates: y, x
 
-        >>> print(aspect_agg[200:203, 200:202])
-        <xarray.DataArray 'Aspect' (lat: 3, lon: 2)>
-        array([[155.07530658, 146.26526699],
-               [194.81685088, 136.55836607],
-               [203.14170549, 187.97760934]])
-        Coordinates:
-        * lon      (lon) float64 -9.975e+06 -9.925e+06
-        * lat      (lat) float64 -6.633e+06 -6.567e+06 -6.5e+06
-        Attributes:
-            res:            (50000.0, 66666.66666666667)
-            Description:    Example Aspect
-            units:          deg
-            Max Elevation:  4000
+    Aspect works with CuPy backed xarray DataArray.
+    Make sure you have a GPU and CuPy installed to run this example.
+    .. sourcecode:: python
+        >>> import cupy
+        >>> data_cupy = cupy.asarray(data)
+        >>> raster_cupy = xr.DataArray(data_cupy, dims=['y', 'x'])
+        >>> aspect_cupy = aspect(raster_cupy)
+        >>> print(type(aspect_cupy.data))
+        <class 'cupy.core.core.ndarray'>
+        >>> print(aspect_cupy)
+        <xarray.DataArray 'aspect' (y: 5, x: 5)>
+        array([[       nan,        nan,        nan,        nan,        nan],
+               [       nan, 120.96376 , 104.03625 , 135.      ,        nan],
+               [       nan, 101.30993 , 108.43495 , 123.69007 ,        nan],
+               [       nan,  98.130104, 105.25512 , 123.69007 ,        nan],
+               [       nan,        nan,        nan,        nan,        nan]],
+              dtype=float32)
+        Dimensions without coordinates: y, x
     """
+
     # numpy case
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy(agg.data)
