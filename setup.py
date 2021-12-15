@@ -26,7 +26,6 @@ install_requires = [
     'pyct <=0.4.6',
     'param >=1.6.1',
     'distributed >=2021.03.0',
-    'spatialpandas',
 ]
 
 examples = [
@@ -40,7 +39,13 @@ extras_require = {
     ],
     'examples': examples,
     'optional': [
-        'rtxpy',
+        # Optional for polygonize return types.
+        'awkward>=1.4',
+        'geopandas',
+        'shapely',
+        'spatialpandas',
+        # Optional for gpu_rtx functions.
+        "rtxpy",
     ],
 }
 
