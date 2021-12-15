@@ -809,8 +809,9 @@ def _run_numpy_equal_interval(data, k):
 
 
 def _run_dask_numpy_equal_interval(data, k):
-    max_data = da.nanmax(data[da.isfinite(data)])
-    min_data = da.nanmin(data[da.isfinite(data)])
+    data = da.where(data == np.inf, np.nan, data)
+    max_data = da.nanmax(data)
+    min_data = da.nanmin(data)
     width = (max_data - min_data) / k
     cuts = da.arange(min_data + width, max_data + width, width)
     l_cuts = cuts.shape[0]
