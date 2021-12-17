@@ -496,21 +496,6 @@ def _find_cats(values, cat_ids, nodata_values):
     return unique_cats, cat_ids
 
 
-def _sort_values(sorted_indices, values, cats):
-    if len(values.shape) == 2:
-        # 2D case
-        result = values.ravel()[sorted_indices]
-    else:
-        # 3D case
-        num_cats = len(cats)
-        h, w = values.shape[1:]
-        result = np.zeros(shape=(num_cats, h * w), dtype=values.dtype)
-        for i, cat in enumerate(cats):
-            result[i] = values[i].ravel()[sorted_indices]
-
-    return result
-
-
 def _get_zone_values(values_by_zones, start, end):
     if len(values_by_zones.shape) == 1:
         # 1D flatten, i.e, original data is 2D
@@ -608,7 +593,7 @@ def _crosstab_numpy(
         crosstab_dict[TOTAL_COUNT] = np.array(
             crosstab_dict[TOTAL_COUNT], dtype=np.float32
         )
-    for j, cat in enumerate(cat_ids):
+    for cat in cat_ids:
         crosstab_dict[cat] = np.array(crosstab_dict[cat])
 
     # construct output dataframe
@@ -619,7 +604,7 @@ def _crosstab_numpy(
             crosstab_dict[cat] = crosstab_dict[cat] / crosstab_dict[TOTAL_COUNT] * 100  # noqa
 
     crosstab_df = pd.DataFrame(crosstab_dict)
-    crosstab_df = crosstab_df[['zone'] + [c for c in cat_ids]]
+    crosstab_df = crosstab_df[['zone'] + list(cat_ids)]
     return crosstab_df
 
 
@@ -657,7 +642,7 @@ def _single_chunk_crosstab(
 
     if TOTAL_COUNT in results:
         results[TOTAL_COUNT] = np.array(results[TOTAL_COUNT], dtype=np.float32)
-    for j, cat in enumerate(cat_ids):
+    for cat in cat_ids:
         results[cat] = np.array(results[cat])
 
     return results
@@ -687,7 +672,7 @@ def _crosstab_df_dask(crosstab_by_block, zone_ids, cat_ids, agg):
 
     df = pd.DataFrame(result)
     df['zone'] = zone_ids
-    columns = ['zone'] + [c for c in cat_ids]
+    columns = ['zone'] + list(cat_ids)
     df = df[columns]
     return df
 
