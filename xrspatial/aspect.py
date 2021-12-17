@@ -215,17 +215,17 @@ def aspect(agg: xr.DataArray,
             [4, 4, 9, 2, 4],
             [1, 5, 0, 1, 4],
             [1, 5, 0, 5, 5]
-        ])
+        ], dtype=np.float64)
         >>> n, m = data.shape
         >>> raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
         >>> print(raster)
         <xarray.DataArray 'raster' (y: 6, x: 5)>
-        array([[1, 1, 1, 1, 1],
-               [1, 1, 1, 2, 0],
-               [1, 1, 1, 0, 0],
-               [4, 4, 9, 2, 4],
-               [1, 5, 0, 1, 4],
-               [1, 5, 0, 5, 5]])
+        array([[1., 1., 1., 1., 1.],
+               [1., 1., 1., 2., 0.],
+               [1., 1., 1., 0., 0.],
+               [4., 4., 9., 2., 4.],
+               [1., 5., 0., 1., 4.],
+               [1., 5., 0., 5., 5.]])
         Dimensions without coordinates: y, x
         >>> aspect_agg = aspect(raster)
         >>> print(aspect_agg)
