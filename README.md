@@ -39,11 +39,11 @@ conda install -c conda-forge xarray-spatial
 ```
 
 ### Downloading our starter examples and data
-Once you have xarray-spatial installed in your environment, you can use one of the following in your terminal (with the environment active) to download our examples and/or sample data into your local directory. 
+Once you have xarray-spatial installed in your environment, you can use one of the following in your terminal (with the environment active) to download our examples and/or sample data into your local directory.
 
-```xrspatial examples``` : Download the examples notebooks and the data used.  
+```xrspatial examples``` : Download the examples notebooks and the data used.
 
-```xrspatial copy-examples``` : Download the examples notebooks but not the data. Note: you won't be able to run many of the examples.  
+```xrspatial copy-examples``` : Download the examples notebooks but not the data. Note: you won't be able to run many of the examples.
 
 ```xrspatial fetch-data``` : Download just the data and not the notebooks.
 
@@ -136,6 +136,14 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 --------
 
+### **Raster to vector**
+
+| Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:-----|:------------------:|:-----------------:|:---------------------:|:---------------------:|
+| [Polygonize](xrspatial/experimental/polygonize.py) | ✅️ | | | |
+
+--------
+
 ### **Surface**
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
@@ -198,7 +206,7 @@ Check out the user guide [here](/examples/user_guide/).
 
 #### Dependencies
 
-`xarray-spatial` currently depends on Datashader, but will soon be updated to depend only on `xarray` and `numba`, while still being able to make use of Datashader output when available. 
+`xarray-spatial` currently depends on Datashader, but will soon be updated to depend only on `xarray` and `numba`, while still being able to make use of Datashader output when available.
 
 ![title](img/dependencies.svg)
 
