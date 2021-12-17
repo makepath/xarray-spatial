@@ -43,18 +43,24 @@ def test_numpy_equals_qgis():
     for coord in small_da.coords:
         assert np.all(xrspatial_aspect[coord] == small_da[coord])
 
-    # TODO: We shouldn't ignore edges!
     # validate output values
-    # ignore border edges
-    xrspatial_vals = xrspatial_aspect.values[1:-1, 1:-1]
+    xrspatial_vals = xrspatial_aspect.data[1:-1, 1:-1]
     qgis_vals = QGIS_OUTPUT[1:-1, 1:-1]
-
-    # TODO: use np.is_close instead
-    # set a tolerance of 1e-4
     # aspect is nan if nan input
-    # aspect is invalid (nan) if slope equals 0
+    # aspect is invalid (-1) if slope equals 0
     # otherwise aspect are from 0 - 360
     assert np.isclose(xrspatial_vals, qgis_vals, equal_nan=True).all()
+
+    # nan edge effect
+    xrspatial_edges = [
+        xrspatial_aspect.data[0, :],
+        xrspatial_aspect.data[-1, :],
+        xrspatial_aspect.data[:, 0],
+        xrspatial_aspect.data[:, -1],
+    ]
+    for edge in xrspatial_edges:
+        assert np.isclose(
+            edge, np.full(edge.shape, np.nan), equal_nan=True).all()
 
 
 def test_numpy_equals_dask():
