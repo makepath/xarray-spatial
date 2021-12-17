@@ -10,6 +10,8 @@ matrix:
       env: PY=3.7
     - name: "python-3.8"
       env: PY=3.8
+    - name: "python-3.9"
+      env: PY=3.9
     - name: "tarball"
       env: PY=3
 
