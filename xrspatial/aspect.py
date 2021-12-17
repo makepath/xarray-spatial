@@ -150,11 +150,12 @@ def _run_dask_numpy(data: da.Array) -> da.Array:
                            boundary=np.nan,
                            meta=np.array(()))
 
-    # Fill borders with nans to ensure nan edge effect.
-    out[0, :] = np.nan
-    out[-1, :] = np.nan
-    out[:,  0] = np.nan
-    out[:, -1] = np.nan
+    # # Fill borders with nans to ensure nan edge effect.
+    # require dask >= 2021.04.1
+    # out[0, :] = np.nan
+    # out[-1, :] = np.nan
+    # out[:,  0] = np.nan
+    # out[:, -1] = np.nan
 
     return out
 
