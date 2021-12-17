@@ -149,6 +149,13 @@ def _run_dask_numpy(data: da.Array) -> da.Array:
                            depth=(1, 1),
                            boundary=np.nan,
                            meta=np.array(()))
+
+    # Fill borders with nans to ensure nan edge effect.
+    out[0, :] = np.nan
+    out[-1, :] = np.nan
+    out[:,  0] = np.nan
+    out[:, -1] = np.nan
+
     return out
 
 
@@ -160,8 +167,19 @@ def aspect(agg: xr.DataArray,
     Calculates, for all cells in the array, the downward slope direction
     of each cell based on the elevation of its neighbors in a 3x3 grid.
     The value is measured clockwise in degrees with 0 (due north), and 360
-    (again due north). Flat areas are given a value of -1.
-    Values along the edges are not calculated.
+    (again due north). Values along the edges are not calculated.
+
+    Direction of the aspect can be determined by its value:
+    From 0     to 22.5:  North
+    From 22.5  to 67.5:  Northeast
+    From 67.5  to 112.5: East
+    From 112.5 to 157.5: Southeast
+    From 157.5 to 202.5: South
+    From 202.5 to 247.5: West
+    From 247.5 to 292.5: Northwest
+    From 337.5 to 360:   North
+
+    Note that values of -1 denote flat areas.
 
     Parameters
     ----------
@@ -190,45 +208,47 @@ def aspect(agg: xr.DataArray,
         >>> from xrspatial import aspect
 
         >>> data = np.array([
-            [11., 11., 9., 9., 9.],
-            [10., 10., 9., 8., 8.],
-            [10., 10., 9., 8., 7.],
-            [10., 10., 8., 7., 7.],
-            [10., 10., 8., 7., 6.]
+            [1, 1, 1, 1, 1],
+            [1, 1, 1, 2, 0],
+            [1, 1, 1, 0, 0],
+            [4, 4, 9, 2, 4],
+            [1, 5, 0, 1, 4],
+            [1, 5, 0, 5, 5]
         ])
         >>> n, m = data.shape
         >>> raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
         >>> print(raster)
-        <xarray.DataArray 'raster' (y: 5, x: 5)>
-        array([[11., 11.,  9.,  9.,  9.],
-               [10., 10.,  9.,  8.,  8.],
-               [10., 10.,  9.,  8.,  7.],
-               [10., 10.,  8.,  7.,  7.],
-               [10., 10.,  8.,  7.,  6.]])
+        <xarray.DataArray 'raster' (y: 6, x: 5)>
+        array([[1, 1, 1, 1, 1],
+               [1, 1, 1, 2, 0],
+               [1, 1, 1, 0, 0],
+               [4, 4, 9, 2, 4],
+               [1, 5, 0, 1, 4],
+               [1, 5, 0, 5, 5]])
         Dimensions without coordinates: y, x
         >>> aspect_agg = aspect(raster)
         >>> print(aspect_agg)
-        <xarray.DataArray 'aspect' (y: 5, x: 5)>
-        array([[nan,      nan,        nan,        nan,         nan],
-               [nan, 120.96375653, 104.03624347, 135.        , nan],
-               [nan, 101.30993247, 108.43494882, 123.69006753, nan],
-               [nan,  98.13010235, 105.2551187 , 123.69006753, nan],
-               [nan,      nan,        nan,        nan,         nan]])
+        <xarray.DataArray 'aspect' (y: 6, x: 5)>
+        array([[ nan,  nan,  nan,  nan, nan],
+               [ nan,  -1.        ,   225.      ,   135.      , nan],
+               [ nan, 343.61045967,   8.97262661,  33.69006753, nan],
+               [ nan, 307.87498365,  71.56505118,  54.46232221, nan],
+               [ nan, 191.30993247, 144.46232221, 255.96375653, nan],
+               [ nan,  nan        ,  nan        ,  nan        , nan]])
         Dimensions without coordinates: y, x
-
     Aspect works with Dask with NumPy backed xarray DataArray
     .. sourcecode:: python
         >>> import dask.array as da
         >>> data_da = da.from_array(data, chunks=(3, 3))
         >>> raster_da = xr.DataArray(data_da, dims=['y', 'x'], name='raster_da')
         >>> print(raster_da)
-        <xarray.DataArray 'raster_da' (y: 5, x: 5)>
-        dask.array<array, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>  # noqa
+        <xarray.DataArray 'raster' (y: 6, x: 5)>
+        dask.array<array, shape=(6, 5), dtype=int64, chunksize=(3, 3), chunktype=numpy.ndarray>
         Dimensions without coordinates: y, x
         >>> aspect_da = aspect(raster_da)
         >>> print(aspect_da)
-        <xarray.DataArray 'aspect' (y: 5, x: 5)>
-        dask.array<_trim, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        <xarray.DataArray 'aspect' (y: 6, x: 5)>
+        dask.array<_trim, shape=(6, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
         Dimensions without coordinates: y, x
         >>> aspect_da.compute()  # compute the results
         <xarray.DataArray 'aspect' (y: 5, x: 5)>
@@ -249,11 +269,12 @@ def aspect(agg: xr.DataArray,
         >>> print(type(aspect_cupy.data))
         <class 'cupy.core.core.ndarray'>
         >>> print(aspect_cupy)
-        <xarray.DataArray 'aspect' (y: 5, x: 5)>
+        <xarray.DataArray 'aspect' (y: 6, x: 5)>
         array([[       nan,        nan,        nan,        nan,        nan],
-               [       nan, 120.96376 , 104.03625 , 135.      ,        nan],
-               [       nan, 101.30993 , 108.43495 , 123.69007 ,        nan],
-               [       nan,  98.130104, 105.25512 , 123.69007 ,        nan],
+               [       nan,  -1.      , 225.      , 135.      ,        nan],
+               [       nan, 343.61047 ,   8.972626,  33.690067,        nan],
+               [       nan, 307.87497 ,  71.56505 ,  54.462322,        nan],
+               [       nan, 191.30994 , 144.46233 , 255.96376 ,        nan],
                [       nan,        nan,        nan,        nan,        nan]],
               dtype=float32)
         Dimensions without coordinates: y, x
