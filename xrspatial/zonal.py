@@ -13,6 +13,9 @@ from dask import delayed
 from xrspatial.utils import ngjit, validate_arrays
 
 
+TOTAL_COUNT = '_total_count'
+
+
 def _stats_count(data):
     if isinstance(data, np.ndarray):
         # numpy case
@@ -56,77 +59,6 @@ _dask_std = lambda sum_squares, squared_sum, n: np.sqrt((sum_squares - squared_s
 _dask_var = lambda sum_squares, squared_sum, n: (sum_squares - squared_sum/n) / n  # noqa
 
 
-def _zone_cat_data(
-    zones,
-    values,
-    zone_id,
-    nodata_values,
-    cat=None,
-    cat_id=None
-):
-
-    # array backend
-    if isinstance(zones.data, np.ndarray):
-        array_module = np
-    elif isinstance(zones.data, da.Array):
-        array_module = da
-
-    if len(values.shape) == 2:
-        # 2D case
-        conditions = (
-            (zones.data != zone_id)
-            | ~np.isfinite(values.data)  # mask out nan, inf
-            | (values.data == nodata_values)  # mask out nodata_values
-        )
-
-        if cat is not None:
-            conditions |= values.data != cat
-
-        zone_cat_data = array_module.ma.masked_where(conditions, values.data)
-
-    else:
-        # 3D case
-        cat_data = values[cat_id].data
-        cat_masked_data = array_module.ma.masked_invalid(cat_data)
-        zone_cat_data = array_module.ma.masked_where(
-            (
-                (zones.data != zone_id)
-                | (cat_data == nodata_values)
-            ),
-            cat_masked_data
-        )
-    return zone_cat_data
-
-
-def _stats(
-    zones: xr.DataArray,
-    values: xr.DataArray,
-    unique_zones: List[int],
-    stats_funcs: List,
-    nodata_values: Union[int, float],
-) -> Dict:
-
-    stats_dict = {}
-    # zone column
-    stats_dict["zone"] = unique_zones
-    # stats columns
-    for stats in stats_funcs:
-        stats_dict[stats] = []
-
-    for zone_id in unique_zones:
-        # get zone values
-        zone_values = _zone_cat_data(zones, values, zone_id, nodata_values)
-        for stats in stats_funcs:
-            stats_func = stats_funcs.get(stats)
-            if not callable(stats_func):
-                raise ValueError(stats)
-            stats_dict[stats].append(stats_func(zone_values))
-
-    stats_dict["zone"] = unique_zones
-
-    return stats_dict
-
-
 @ngjit
 def _strides(flatten_zones, unique_zones):
     num_elements = flatten_zones.shape[0]
@@ -143,19 +75,19 @@ def _strides(flatten_zones, unique_zones):
     return strides
 
 
-@delayed
-def _stats_func_dask_numpy(
-    zones_block: np.array,
-    values_block: np.array,
-    unique_zones: np.array,
-    zone_ids: np.array,
-    func: Callable,
-    nodata_values: Union[int, float] = None,
-) -> pd.DataFrame:
+def _sort_and_stride(zones, values, unique_zones):
+    flatten_zones = zones.ravel()
+    sorted_indices = np.argsort(flatten_zones)
+    sorted_zones = flatten_zones[sorted_indices]
 
-    sorted_zones = np.sort(zones_block.ravel())
-    sorted_indices = np.argsort(zones_block.ravel())
-    values_by_zones = values_block.ravel()[sorted_indices]
+    values_shape = values.shape
+    if len(values_shape) == 3:
+        values_by_zones = values.reshape(
+            values_shape[0], values_shape[1] * values_shape[2])
+        for i in range(values_shape[0]):
+            values_by_zones[i] = values_by_zones[i][sorted_indices]
+    else:
+        values_by_zones = values.ravel()[sorted_indices]
 
     # exclude nans from calculation
     # flatten_zones is already sorted, NaN elements (if any) are at the end
@@ -163,6 +95,17 @@ def _stats_func_dask_numpy(
     sorted_zones = sorted_zones[np.isfinite(sorted_zones)]
     zone_breaks = _strides(sorted_zones, unique_zones)
 
+    return values_by_zones, zone_breaks
+
+
+def _calc_stats(
+    values_by_zones: np.array,
+    zone_breaks: np.array,
+    unique_zones: np.array,
+    zone_ids: np.array,
+    func: Callable,
+    nodata_values: Union[int, float] = None,
+):
     start = 0
     results = np.full(unique_zones.shape, np.nan)
     for i in range(len(unique_zones)):
@@ -175,7 +118,26 @@ def _stats_func_dask_numpy(
             if len(zone_values) > 0:
                 results[i] = func(zone_values)
         start = end
+    return results
 
+
+@delayed
+def _single_stats_func(
+    zones_block: np.array,
+    values_block: np.array,
+    unique_zones: np.array,
+    zone_ids: np.array,
+    func: Callable,
+    nodata_values: Union[int, float] = None,
+) -> pd.DataFrame:
+
+    values_by_zones, zone_breaks = _sort_and_stride(
+        zones_block, values_block, unique_zones
+    )
+    results = _calc_stats(
+        values_by_zones, zone_breaks,
+        unique_zones, zone_ids, func, nodata_values
+    )
     return results
 
 
@@ -236,7 +198,7 @@ def _stats_dask_numpy(
         stats_func = _DASK_BLOCK_STATS.get(s)
         stats_by_block = [
             da.from_delayed(
-                delayed(_stats_func_dask_numpy)(
+                delayed(_single_stats_func)(
                     z, v, unique_zones, zone_ids, stats_func, nodata_values
                 ), shape=(np.nan,), dtype=dask_dtypes[s]
             )
@@ -295,47 +257,26 @@ def _stats_numpy(
     if zone_ids is None:
         zone_ids = unique_zones
     else:
+        zone_ids = np.unique(zone_ids)
         # remove zones that do not exist in `zones` raster
         zone_ids = [z for z in zone_ids if z in unique_zones]
 
+    selected_indexes = [i for i, z in enumerate(unique_zones) if z in zone_ids]
+    values_by_zones, zone_breaks = _sort_and_stride(
+        zones, values, unique_zones
+    )
+
     stats_dict = {}
-    # zone column
     stats_dict["zone"] = zone_ids
-    # stats columns
     for stats in stats_funcs:
-        stats_dict[stats] = []
-
-    flatten_zones = zones.ravel()
-    sorted_indices = np.argsort(flatten_zones)
-    sorted_zones = flatten_zones[sorted_indices]
-    values_by_zones = values.ravel()[sorted_indices]
-
-    # exclude nans from calculation
-    # flatten_zones is already sorted, NaN elements (if any) are at the end
-    # of the array, removing them will not affect data before them
-    sorted_zones = sorted_zones[np.isfinite(sorted_zones)]
-    zone_breaks = _strides(sorted_zones, unique_zones)
-
-    start = 0
-    for i in range(len(unique_zones)):
-        end = zone_breaks[i]
-        if unique_zones[i] in zone_ids:
-            zone_values = values_by_zones[start:end]
-            # filter out non-finite and nodata_values
-            zone_values = zone_values[
-                np.isfinite(zone_values) & (zone_values != nodata_values)]
-            for stats in stats_funcs:
-                if len(zone_values) == 0:
-                    stats_dict[stats].append(np.nan)
-                else:
-                    stats_func = stats_funcs.get(stats)
-                    if not callable(stats_func):
-                        raise ValueError(stats)
-                    stats_dict[stats].append(stats_func(zone_values))
-        start = end
+        func = stats_funcs.get(stats)
+        stats_dict[stats] = _calc_stats(
+            values_by_zones, zone_breaks,
+            unique_zones, zone_ids, func, nodata_values
+        )
+        stats_dict[stats] = stats_dict[stats][selected_indexes]
 
     stats_df = pd.DataFrame(stats_dict)
-
     return stats_df
 
 
@@ -533,122 +474,26 @@ def stats(
     return stats_df
 
 
-def _crosstab_dict(zones, values, unique_zones, cats, nodata_values, agg):
-
-    crosstab_dict = {}
-    crosstab_dict["zone"] = unique_zones
-
-    for i in cats:
-        crosstab_dict[i] = []
-
-    for cat_id, cat in enumerate(cats):
-        for zone_id in unique_zones:
-            # get category cat values in the selected zone
-            zone_cat_data = _zone_cat_data(
-                zones, values, zone_id, nodata_values, cat, cat_id
-            )
-            zone_cat_count = _stats_count(zone_cat_data)
-            crosstab_dict[cat].append(zone_cat_count)
-
-    if agg == "percentage":
-        zone_counts = _stats(
-            zones,
-            values,
-            unique_zones,
-            {"count": _stats_count},
-            nodata_values
-        )["count"]
-        for c, cat in enumerate(cats):
-            for z in range(len(unique_zones)):
-                crosstab_dict[cat][z] = (
-                    crosstab_dict[cat][z] / zone_counts[z] * 100
-                )  # noqa
-
-    return crosstab_dict
-
-
-def _crosstab_dask(
-    zones,
-    values,
-    zone_ids,
-    cat_ids,
-    nodata_values,
-    agg
-):
-
-    if cat_ids is not None:
-        cats = np.array(cat_ids)
-    else:
-        # no categories provided, find all possible cats in values raster
-        if len(values.shape) == 3:
-            # 3D case
-            cats = values.indexes[values.dims[0]].values
-        else:
-            # 2D case
-            # precompute categories
-            cats = da.unique(values.data[da.isfinite(values.data)]).compute()
-            cats = sorted(list(set(cats) - set([nodata_values])))
-
-    if zone_ids is None:
-        # precompute unique zones
-        unique_zones = da.unique(zones.data[da.isfinite(zones.data)]).compute()
-    else:
-        unique_zones = np.array(zone_ids)
-
-    crosstab_dict = _crosstab_dict(
-        zones, values, unique_zones, cats, nodata_values, agg
-    )
-    crosstab_dict = {
-        stats: da.stack(zonal_stats, axis=0)
-        for stats, zonal_stats in crosstab_dict.items()
-    }
-
-    # generate dask dataframe
-    crosstab_df = dd.concat(
-        [dd.from_dask_array(stats) for stats in crosstab_dict.values()], axis=1
-    )
-
-    # name columns
-    crosstab_df.columns = crosstab_dict.keys()
-
-    return crosstab_df
-
-
 def _find_cats(values, cat_ids, nodata_values):
     if len(values.shape) == 2:
         # 2D case
         unique_cats = np.unique(values.data[
             np.isfinite(values.data) & (values.data != nodata_values)
         ])
-        if cat_ids is None:
-            cat_ids = unique_cats
-        else:
-            # remove cats that do not exist in `values` raster
-            cat_ids = [c for c in cat_ids if c in unique_cats]
     else:
         # 3D case
         unique_cats = values[values.dims[0]].data
-        if cat_ids is None:
-            cat_ids = unique_cats
-        else:
+
+    if cat_ids is None:
+        cat_ids = unique_cats
+    else:
+        if isinstance(values.data, np.ndarray):
             # remove cats that do not exist in `values` raster
             cat_ids = [c for c in cat_ids if c in unique_cats]
+        else:
+            cat_ids = _select_ids(unique_cats, cat_ids)
+
     return unique_cats, cat_ids
-
-
-def _sort_values(sorted_indices, values, cats):
-    if len(values.shape) == 2:
-        # 2D case
-        result = values.ravel()[sorted_indices]
-    else:
-        # 3D case
-        num_cats = len(cats)
-        h, w = values.shape[1:]
-        result = np.zeros(shape=(num_cats, h * w), dtype=values.dtype)
-        for i, cat in enumerate(cats):
-            result[i] = values[i].ravel()[sorted_indices]
-
-    return result
 
 
 def _get_zone_values(values_by_zones, start, end):
@@ -666,7 +511,6 @@ def _single_zone_crosstab(
     cat_ids,
     nodata_values,
     crosstab_dict,
-    agg
 ):
     if len(zone_values.shape) == 1:
         # 1D flatten, i.e, original data is 2D
@@ -676,21 +520,17 @@ def _single_zone_crosstab(
             np.isfinite(zone_values) & (zone_values != nodata_values)
         ]
         total_count = zone_values.shape[0]
+        crosstab_dict[TOTAL_COUNT].append(total_count)
 
         sorted_zone_values = np.sort(zone_values)
         zone_cat_breaks = _strides(sorted_zone_values, unique_cats)
+
         cat_start = 0
 
         for j, cat in enumerate(unique_cats):
             if cat in cat_ids:
                 count = zone_cat_breaks[j] - cat_start
-                if agg == 'count':
-                    crosstab_dict[cat].append(count)
-                elif agg == 'percentage':
-                    pct = np.nan
-                    if total_count != 0:
-                        pct = count / total_count * 100
-                    crosstab_dict[cat].append(pct)
+                crosstab_dict[cat].append(count)
                 cat_start = zone_cat_breaks[j]
 
     else:
@@ -727,22 +567,15 @@ def _crosstab_numpy(
         zone_ids = [z for z in zone_ids if z in unique_zones]
 
     crosstab_dict = {}
-    # zone column
     crosstab_dict["zone"] = zone_ids
-    # stats columns
+    if len(values.shape) == 2:
+        crosstab_dict[TOTAL_COUNT] = []
     for cat in cat_ids:
         crosstab_dict[cat] = []
 
-    flatten_zones = zones.ravel()
-    sorted_indices = np.argsort(flatten_zones)
-    sorted_zones = flatten_zones[sorted_indices]
-    values_by_zones = _sort_values(sorted_indices, values, cat_ids)
-
-    # exclude nans from calculation
-    # flatten_zones is already sorted, NaN elements (if any) are at the end
-    # of the array, removing them will not affect data before them
-    sorted_zones = sorted_zones[np.isfinite(sorted_zones)]
-    zone_breaks = _strides(sorted_zones, unique_zones)
+    values_by_zones, zone_breaks = _sort_and_stride(
+        zones, values, unique_zones
+    )
 
     start = 0
     for i in range(len(unique_zones)):
@@ -752,12 +585,131 @@ def _crosstab_numpy(
             zone_values = _get_zone_values(values_by_zones, start, end)
             _single_zone_crosstab(
                 zone_values, unique_cats, cat_ids,
-                nodata_values, crosstab_dict, agg
+                nodata_values, crosstab_dict
             )
         start = end
 
+    if TOTAL_COUNT in crosstab_dict:
+        crosstab_dict[TOTAL_COUNT] = np.array(
+            crosstab_dict[TOTAL_COUNT], dtype=np.float32
+        )
+    for cat in cat_ids:
+        crosstab_dict[cat] = np.array(crosstab_dict[cat])
+
+    # construct output dataframe
+    if agg == 'percentage':
+        # replace 0s with nans to avoid dividing by 0 error
+        crosstab_dict[TOTAL_COUNT][crosstab_dict[TOTAL_COUNT] == 0] = np.nan
+        for cat in cat_ids:
+            crosstab_dict[cat] = crosstab_dict[cat] / crosstab_dict[TOTAL_COUNT] * 100  # noqa
+
     crosstab_df = pd.DataFrame(crosstab_dict)
+    crosstab_df = crosstab_df[['zone'] + list(cat_ids)]
     return crosstab_df
+
+
+@delayed
+def _single_chunk_crosstab(
+    zones_block: np.array,
+    values_block: np.array,
+    unique_zones: np.array,
+    zone_ids: np.array,
+    unique_cats,
+    cat_ids,
+    nodata_values: Union[int, float],
+):
+    results = {}
+    if len(values_block.shape) == 2:
+        results[TOTAL_COUNT] = []
+    for cat in cat_ids:
+        results[cat] = []
+
+    values_by_zones, zone_breaks = _sort_and_stride(
+        zones_block, values_block, unique_zones
+    )
+
+    start = 0
+    for i in range(len(unique_zones)):
+        end = zone_breaks[i]
+        if unique_zones[i] in zone_ids:
+            # get data for zone unique_zones[i]
+            zone_values = _get_zone_values(values_by_zones, start, end)
+            _single_zone_crosstab(
+                zone_values, unique_cats, cat_ids,
+                nodata_values, results
+            )
+        start = end
+
+    if TOTAL_COUNT in results:
+        results[TOTAL_COUNT] = np.array(results[TOTAL_COUNT], dtype=np.float32)
+    for cat in cat_ids:
+        results[cat] = np.array(results[cat])
+
+    return results
+
+
+@delayed
+def _select_ids(unique_ids, ids):
+    selected_ids = []
+    for i in ids:
+        if i in unique_ids:
+            selected_ids.append(i)
+    return selected_ids
+
+
+@delayed
+def _crosstab_df_dask(crosstab_by_block, zone_ids, cat_ids, agg):
+    result = crosstab_by_block[0]
+    for i in range(1, len(crosstab_by_block)):
+        for k in crosstab_by_block[i]:
+            result[k] += crosstab_by_block[i][k]
+
+    if agg == 'percentage':
+        # replace 0s with nans to avoid dividing by 0 error
+        result[TOTAL_COUNT][result[TOTAL_COUNT] == 0] = np.nan
+        for cat in cat_ids:
+            result[cat] = result[cat] / result[TOTAL_COUNT] * 100
+
+    df = pd.DataFrame(result)
+    df['zone'] = zone_ids
+    columns = ['zone'] + list(cat_ids)
+    df = df[columns]
+    return df
+
+
+def _crosstab_dask_numpy(
+    zones: np.ndarray,
+    values: np.ndarray,
+    zone_ids: List[Union[int, float]],
+    unique_cats: np.ndarray,
+    cat_ids: Union[List, np.ndarray],
+    nodata_values: Union[int, float],
+    agg: str,
+):
+    # find ids for all zones
+    unique_zones = np.unique(zones[np.isfinite(zones)])
+    if zone_ids is None:
+        zone_ids = unique_zones
+    else:
+        zone_ids = _select_ids(unique_zones, zone_ids)
+
+    cat_ids = _select_ids(unique_cats, cat_ids)
+
+    zones_blocks = zones.to_delayed().ravel()
+    values_blocks = values.to_delayed().ravel()
+
+    crosstab_by_block = [
+        _single_chunk_crosstab(
+            z, v, unique_zones, zone_ids,
+            unique_cats, cat_ids, nodata_values
+        )
+        for z, v in zip(zones_blocks, values_blocks)
+    ]
+
+    crosstab_df = _crosstab_df_dask(
+        crosstab_by_block, zone_ids, cat_ids, agg
+    )
+    return dd.from_delayed(crosstab_df)
 
 
 def crosstab(
@@ -946,18 +898,34 @@ def crosstab(
         if zones.shape != values.shape[1:]:
             raise ValueError("Incompatible shapes")
 
+        if isinstance(values.data, da.Array):
+            # dask case, rechunk if necessary
+            zones_chunks = zones.chunks
+            expected_values_chunks = {
+                0: (values.shape[0],),
+                1: zones_chunks[0],
+                2: zones_chunks[1],
+            }
+            actual_values_chunks = {
+                i: values.chunks[i] for i in range(3)
+            }
+            if actual_values_chunks != expected_values_chunks:
+                values.data = values.data.rechunk(expected_values_chunks)
+
+    # find categories
+    unique_cats, cat_ids = _find_cats(values, cat_ids, nodata_values)
+
     if isinstance(values.data, np.ndarray):
-        # find categories
-        unique_cats, cat_ids = _find_cats(values, cat_ids, nodata_values)
         # numpy case
         crosstab_df = _crosstab_numpy(
-            zones.data, values.data, zone_ids, unique_cats, cat_ids,
-            nodata_values, agg
+            zones.data, values.data,
+            zone_ids, unique_cats, cat_ids, nodata_values, agg
         )
     else:
         # dask case
-        crosstab_df = _crosstab_dask(
-            zones, values, zone_ids, cat_ids, nodata_values, agg
+        crosstab_df = _crosstab_dask_numpy(
+            zones.data, values.data,
+            zone_ids, unique_cats, cat_ids, nodata_values, agg
         )
 
     return crosstab_df
