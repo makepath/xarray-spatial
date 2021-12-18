@@ -11,9 +11,8 @@ from numba import cuda
 import xarray as xr
 
 from xrspatial.utils import ngjit
-from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
-from xrspatial.utils import is_cupy_backed
+from xrspatial.utils import ArrayTypeFunctionMapping
 
 from typing import Optional
 
@@ -280,25 +279,12 @@ def aspect(agg: xr.DataArray,
               dtype=float32)
         Dimensions without coordinates: y, x
     """
+    mapper = ArrayTypeFunctionMapping(numpy_func=_run_numpy,
+                                      dask_func=_run_dask_numpy,
+                                      cupy_func=_run_cupy,
+                                      dask_cupy_func=_run_dask_cupy)
 
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        out = _run_numpy(agg.data)
-
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _run_cupy(agg.data)
-
-    # dask + cupy case
-    elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
-        out = _run_dask_cupy(agg.data)
-
-    # dask + numpy case
-    elif isinstance(agg.data, da.Array):
-        out = _run_dask_numpy(agg.data)
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
+    out = mapper(agg)(agg.data)
 
     return xr.DataArray(out,
                         name=name,
