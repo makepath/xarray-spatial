@@ -74,28 +74,24 @@ def _gpu(arr):
     h = arr[2, 1]
     i = arr[2, 2]
 
-    two = nb.int32(2.)  # reducing size to int8 causes wrong results
-    eight = nb.int32(8.)  # reducing size to int8 causes wrong results
-    ninety = nb.float32(90.)
-
-    dz_dx = ((c + two * f + i) - (a + two * d + g)) / eight
-    dz_dy = ((g + two * h + i) - (a + two * b + c)) / eight
+    dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / 8
+    dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / 8
 
     if dz_dx == 0 and dz_dy == 0:
         # flat surface, slope = 0, thus invalid aspect
-        aspect = nb.float32(-1.)  # TODO: return null instead
+        aspect = -1
     else:
-        aspect = atan2(dz_dy, -dz_dx) * nb.float32(57.29578)
+        aspect = atan2(dz_dy, -dz_dx) * 57.29578
         # convert to compass direction values (0-360 degrees)
-        if aspect < nb.float32(0.):
-            aspect = ninety - aspect
-        elif aspect > ninety:
-            aspect = nb.float32(360.0) - aspect + ninety
+        if aspect < 0:
+            aspect = 90 - aspect
+        elif aspect > 90:
+            aspect = 360 - aspect + 90
         else:
-            aspect = ninety - aspect
+            aspect = 90 - aspect
 
-    if aspect > nb.float32(359.999):  # lame float equality check...
-        return nb.float32(0.)
+    if aspect > 359.999:  # lame float equality check...
+        return 0
     else:
         return aspect
 
@@ -215,7 +211,6 @@ def aspect(agg: xr.DataArray,
             [1, 5, 0, 1, 4],
             [1, 5, 0, 5, 5]
         ], dtype=np.float64)
-        >>> n, m = data.shape
         >>> raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
         >>> print(raster)
         <xarray.DataArray 'raster' (y: 6, x: 5)>
