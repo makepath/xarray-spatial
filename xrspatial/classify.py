@@ -22,6 +22,7 @@ from xrspatial.utils import cuda_args
 from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
 from xrspatial.utils import is_cupy_backed
+from xrspatial.utils import ArrayTypeFunctionMapping
 
 from typing import List, Optional
 
@@ -99,6 +100,8 @@ def _cpu_bin(data, bins, new_values):
 
 
 def _run_numpy_bin(data, bins, new_values):
+    bins = np.asarray(bins)
+    new_values = np.asarray(new_values)
     out = _cpu_bin(data, bins, new_values)
     return out
 
@@ -146,7 +149,9 @@ def _run_gpu_bin(data, bins, new_values, out):
         out[i, j] = _gpu_bin(data[i:i+1, j:j+1], bins, new_values)
 
 
-def _run_cupy_bin(data, bins_cupy, new_values_cupy):
+def _run_cupy_bin(data, bins, new_values):
+    bins_cupy = cupy.asarray(bins)
+    new_values_cupy = cupy.asarray(new_values)
     out = cupy.empty(data.shape, dtype='f4')
     out[:] = cupy.nan
     griddim, blockdim = cuda_args(data.shape)
@@ -164,29 +169,13 @@ def _run_dask_cupy_bin(data, bins_cupy, new_values_cupy):
     return out
 
 
-def _bin(data, bins, new_values):
-    # numpy case
-    if isinstance(data, np.ndarray):
-        out = _run_numpy_bin(data, np.asarray(bins), np.asarray(new_values))
+def _bin(agg, bins, new_values):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_run_numpy_bin,
+                                      dask_func=_run_dask_numpy_bin,
+                                      cupy_func=_run_cupy_bin,
+                                      dask_cupy_func=_run_dask_cupy_bin)
 
-    # cupy case
-    elif has_cuda() and isinstance(data, cupy.ndarray):
-        bins_cupy = cupy.asarray(bins, dtype='f4')
-        new_values_cupy = cupy.asarray(new_values, dtype='f4')
-        out = _run_cupy_bin(data, bins_cupy, new_values_cupy)
-
-    # dask + cupy case
-    elif has_cuda() and isinstance(data, da.Array) and \
-            type(data._meta).__module__.split('.')[0] == 'cupy':
-        bins_cupy = cupy.asarray(bins, dtype='f4')
-        new_values_cupy = cupy.asarray(new_values, dtype='f4')
-        out = _run_dask_cupy_bin(data, bins_cupy, new_values_cupy)
-
-    # dask + numpy case
-    elif isinstance(data, da.Array):
-        out = _run_dask_numpy_bin(data, np.asarray(bins),
-                                  np.asarray(new_values))
-
+    out = mapper(agg)(agg.data, bins, new_values)
     return out
 
 
@@ -270,7 +259,7 @@ def reclassify(agg: xr.DataArray,
     if len(bins) != len(new_values):
         raise ValueError('bins and new_values mismatch.'
                          'Should have same length.')
-    out = _bin(agg.data, bins, new_values)
+    out = _bin(agg, bins, new_values)
     return DataArray(out,
                      name=name,
                      dims=agg.dims,
@@ -431,7 +420,7 @@ def quantile(agg: xr.DataArray,
               "for k classes (using {} bins)".format(k_q))
         k = k_q
 
-    out = _bin(agg.data, bins=q, new_values=np.arange(k))
+    out = _bin(agg, bins=q, new_values=np.arange(k))
 
     return DataArray(out,
                      name=name,
@@ -522,7 +511,8 @@ def _run_numpy_jenks(data, n_classes):
     return kclass
 
 
-def _run_numpy_natural_break(data, num_sample, k):
+def _run_numpy_natural_break(agg, num_sample, k):
+    data = agg.data
     num_data = data.size
 
     if num_sample is not None and num_sample < num_data:
@@ -570,7 +560,7 @@ def _run_numpy_natural_break(data, num_sample, k):
         centroids = _run_numpy_jenks(sample_data, k)
         bins = np.array(centroids[1:])
 
-    out = _bin(data, bins, np.arange(uvk))
+    out = _bin(agg, bins, np.arange(uvk))
     return out
 
 
@@ -647,7 +637,8 @@ def _run_cupy_jenks(data, n_classes):
     return kclass
 
 
-def _run_cupy_natural_break(data, num_sample, k):
+def _run_cupy_natural_break(agg, num_sample, k):
+    data = agg.data
     num_data = data.size
 
     if num_sample is not None and num_sample < num_data:
@@ -689,7 +680,7 @@ def _run_cupy_natural_break(data, num_sample, k):
         centroids = _run_cupy_jenks(sample_data, k)
         bins = cupy.array(centroids[1:])
 
-    out = _bin(data, bins, cupy.arange(uvk))
+    out = _bin(agg, bins, cupy.arange(uvk))
     return out
 
 
@@ -777,11 +768,11 @@ def natural_breaks(agg: xr.DataArray,
 
     # numpy case
     if isinstance(agg.data, np.ndarray):
-        out = _run_numpy_natural_break(agg.data, num_sample, k)
+        out = _run_numpy_natural_break(agg, num_sample, k)
 
     # cupy case
     elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _run_cupy_natural_break(agg.data, num_sample, k)
+        out = _run_cupy_natural_break(agg, num_sample, k)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
@@ -793,7 +784,8 @@ def natural_breaks(agg: xr.DataArray,
                      attrs=agg.attrs)
 
 
-def _run_numpy_equal_interval(data, k):
+def _run_numpy_equal_interval(agg, k):
+    data = agg.data
     max_data = np.nanmax(data[np.isfinite(data)])
     min_data = np.nanmin(data[np.isfinite(data)])
     rg = max_data - min_data
@@ -804,11 +796,12 @@ def _run_numpy_equal_interval(data, k):
         # handle overshooting
         cuts = cuts[0:k]
     cuts[-1] = max_data
-    out = _run_numpy_bin(data, cuts, np.arange(l_cuts))
+    out = _bin(agg, cuts, np.arange(l_cuts))
     return out
 
 
-def _run_dask_numpy_equal_interval(data, k):
+def _run_dask_numpy_equal_interval(agg, k):
+    data = agg.data
     data = da.where(data == np.inf, np.nan, data)
     max_data = da.nanmax(data)
     min_data = da.nanmin(data)
@@ -820,11 +813,12 @@ def _run_dask_numpy_equal_interval(data, k):
         cuts = cuts[0:k]
     # work around to assign cuts[-1] = max_data
     bins = da.concatenate([cuts[:k-1], [max_data]])
-    out = _bin(data, bins, np.arange(l_cuts))
+    out = _bin(agg, bins, np.arange(l_cuts))
     return out
 
 
-def _run_cupy_equal_interval(data, k):
+def _run_cupy_equal_interval(agg, k):
+    data = agg.data
     max_data = cupy.nanmax(data[cupy.isfinite(data)])
     min_data = cupy.nanmin(data[cupy.isfinite(data)])
     width = (max_data - min_data) / k
@@ -836,11 +830,11 @@ def _run_cupy_equal_interval(data, k):
         # handle overshooting
         cuts = cuts[0:k]
     cuts[-1] = max_data
-    out = _bin(data, cuts, cupy.arange(l_cuts))
+    out = _bin(agg, cuts, cupy.arange(l_cuts))
     return out
 
 
-def _run_dask_cupy_equal_interval(data, k):
+def _run_dask_cupy_equal_interval(agg, k):
     msg = 'Not yet supported.'
     raise NotImplementedError(msg)
 
@@ -920,21 +914,21 @@ def equal_interval(agg: xr.DataArray,
 
     # numpy case
     if isinstance(agg.data, np.ndarray):
-        out = _run_numpy_equal_interval(agg.data, k)
+        out = _run_numpy_equal_interval(agg, k)
 
     # cupy case
     elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _run_cupy_equal_interval(agg.data, k)
+        out = _run_cupy_equal_interval(agg, k)
 
     # dask + cupy case
     elif (has_cuda() and
           isinstance(agg.data, cupy.ndarray) and
           is_cupy_backed(agg)):
-        out = _run_dask_cupy_equal_interval(agg.data, k)
+        out = _run_dask_cupy_equal_interval(agg, k)
 
     # dask + numpy case
     elif isinstance(agg.data, da.Array):
-        out = _run_dask_numpy_equal_interval(agg.data, k)
+        out = _run_dask_numpy_equal_interval(agg, k)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
