@@ -671,53 +671,37 @@ def natural_breaks(agg: xr.DataArray,
                         attrs=agg.attrs)
 
 
-def _run_numpy_equal_interval(agg, k):
-    data = agg.data
-    max_data = np.nanmax(data[np.isfinite(data)])
-    min_data = np.nanmin(data[np.isfinite(data)])
-    rg = max_data - min_data
-    width = rg * 1.0 / k
-    cuts = np.arange(min_data + width, max_data + width, width)
-    l_cuts = len(cuts)
-    if l_cuts > k:
-        # handle overshooting
-        cuts = cuts[0:k]
-    cuts[-1] = max_data
-    out = _bin(agg, cuts, np.arange(l_cuts))
-    return out
+def _run_equal_interval(agg, k, module):
+    data = agg.data.ravel()
+    if module == cupy:
+        nan = cupy.nan
+        inf = cupy.inf
+    else:
+        nan = np.nan
+        inf = np.inf
 
+    data = module.where(data == inf, nan, data)
+    max_data = module.nanmax(data)
+    min_data = module.nanmin(data)
+    if module == cupy:
+        min_data = min_data.get()
+        max_data = max_data.get()
 
-def _run_dask_numpy_equal_interval(agg, k):
-    data = agg.data
-    data = da.where(data == np.inf, np.nan, data)
-    max_data = da.nanmax(data)
-    min_data = da.nanmin(data)
-    width = (max_data - min_data) / k
-    cuts = da.arange(min_data + width, max_data + width, width)
+    width = (max_data - min_data) * 1.0 / k
+    cuts = module.arange(min_data + width, max_data + width, width)
     l_cuts = cuts.shape[0]
     if l_cuts > k:
         # handle overshooting
         cuts = cuts[0:k]
-    # work around to assign cuts[-1] = max_data
-    bins = da.concatenate([cuts[:k-1], [max_data]])
-    out = _bin(agg, bins, np.arange(l_cuts))
-    return out
 
+    if module == da:
+        # work around to assign cuts[-1] = max_data
+        bins = da.concatenate([cuts[:k-1], [max_data]])
+        out = _bin(agg, bins, np.arange(l_cuts))
+    else:
+        cuts[-1] = max_data
+        out = _bin(agg, cuts, np.arange(l_cuts))
 
-def _run_cupy_equal_interval(agg, k):
-    data = agg.data
-    max_data = cupy.nanmax(data[cupy.isfinite(data)])
-    min_data = cupy.nanmin(data[cupy.isfinite(data)])
-    width = (max_data - min_data) / k
-    cuts = cupy.arange(min_data.get() +
-                       width.get(), max_data.get() +
-                       width.get(), width.get())
-    l_cuts = cuts.shape[0]
-    if l_cuts > k:
-        # handle overshooting
-        cuts = cuts[0:k]
-    cuts[-1] = max_data
-    out = _bin(agg, cuts, cupy.arange(l_cuts))
     return out
 
 
@@ -794,9 +778,9 @@ def equal_interval(agg: xr.DataArray,
             res:      (10.0, 10.0)
     """
     mapper = ArrayTypeFunctionMapping(
-        numpy_func=_run_numpy_equal_interval,
-        dask_func=_run_dask_numpy_equal_interval,
-        cupy_func=_run_cupy_equal_interval,
+        numpy_func=lambda *args: _run_equal_interval(*args, module=np),
+        dask_func=lambda *args: _run_equal_interval(*args, module=da),
+        cupy_func=lambda *args: _run_equal_interval(*args, module=cupy),
         dask_cupy_func=not_implemented_func
     )
     out = mapper(agg)(agg, k)
