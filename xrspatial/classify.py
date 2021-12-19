@@ -445,82 +445,6 @@ def _run_numpy_jenks_matrices(data, n_classes):
     return lower_class_limits, var_combinations
 
 
-def _run_numpy_jenks(data, n_classes):
-    # ported from existing cython implementation:
-    # https://github.com/perrygeo/jenks/blob/master/jenks.pyx
-
-    data.sort()
-
-    lower_class_limits, _ = _run_numpy_jenks_matrices(data, n_classes)
-
-    k = data.shape[0]
-    kclass = np.zeros(n_classes + 1, dtype=np.float64)
-    kclass[0] = data[0]
-    kclass[-1] = data[-1]
-    count_num = n_classes
-
-    while count_num > 1:
-        elt = int(lower_class_limits[k][count_num] - 2)
-        kclass[count_num - 1] = data[elt]
-        k = int(lower_class_limits[k][count_num] - 1)
-        count_num -= 1
-
-    return kclass
-
-
-def _run_numpy_natural_break(agg, num_sample, k):
-    data = agg.data
-    num_data = data.size
-
-    if num_sample is not None and num_sample < num_data:
-        # randomly select sample from the whole dataset
-        # create a pseudo random number generator
-        generator = RandomState(1234567890)
-        idx = np.linspace(
-            0, data.size, data.size, endpoint=False, dtype=np.uint32
-        )
-        generator.shuffle(idx)
-        sample_idx = idx[:num_sample]
-        sample_data = data.flatten()[sample_idx]
-    else:
-        sample_data = data.flatten()
-
-    # warning if number of total data points to fit the model bigger than 40k
-    if sample_data.size >= 40000:
-        with warnings.catch_warnings():
-            warnings.simplefilter('default')
-            warnings.warn('natural_breaks Warning: Natural break '
-                          'classification (Jenks) has a complexity of O(n^2), '
-                          'your classification with {} data points may take '
-                          'a long time.'.format(sample_data.size),
-                          Warning)
-
-    if not isinstance(sample_data, np.ndarray):
-        sample_data = np.asarray(sample_data)
-
-    # only include finite values
-    sample_data = sample_data[np.isfinite(sample_data)]
-    uv = np.unique(sample_data)
-    uvk = len(uv)
-
-    if uvk < k:
-        with warnings.catch_warnings():
-            warnings.simplefilter('default')
-            warnings.warn('natural_breaks Warning: Not enough unique values '
-                          'in data array for {} classes. '
-                          'n_samples={} should be >= n_clusters={}. '
-                          'Using k={} instead.'.format(k, uvk, k, uvk),
-                          Warning)
-        uv.sort()
-        bins = uv
-    else:
-        centroids = _run_numpy_jenks(sample_data, k)
-        bins = np.array(centroids[1:])
-
-    out = _bin(agg, bins, np.arange(uvk))
-    return out
-
-
 def _run_cupy_jenks_matrices(data, n_classes):
     n_data = data.shape[0]
     lower_class_limits = cupy.zeros((n_data + 1, n_classes + 1), dtype='f4')
@@ -573,17 +497,22 @@ def _run_cupy_jenks_matrices(data, n_classes):
     return lower_class_limits, var_combinations
 
 
-def _run_cupy_jenks(data, n_classes):
+def _run_jenks(data, n_classes, module):
+    # ported from existing cython implementation:
+    # https://github.com/perrygeo/jenks/blob/master/jenks.pyx
+
     data.sort()
 
-    lower_class_limits, _ = _run_cupy_jenks_matrices(data, n_classes)
+    if module == np:
+        lower_class_limits, _ = _run_numpy_jenks_matrices(data, n_classes)
+    elif module == cupy:
+        lower_class_limits, _ = _run_cupy_jenks_matrices(data, n_classes)
 
     k = data.shape[0]
-    kclass = [0.] * (n_classes + 1)
-    count_num = n_classes
-
-    kclass[n_classes] = data[len(data) - 1]
+    kclass = np.zeros(n_classes + 1, dtype=np.float64)
     kclass[0] = data[0]
+    kclass[-1] = data[-1]
+    count_num = n_classes
 
     while count_num > 1:
         elt = int(lower_class_limits[k][count_num] - 2)
@@ -594,13 +523,17 @@ def _run_cupy_jenks(data, n_classes):
     return kclass
 
 
-def _run_cupy_natural_break(agg, num_sample, k):
+def _run_natural_break(agg, num_sample, k, module):
     data = agg.data
     num_data = data.size
 
     if num_sample is not None and num_sample < num_data:
-        generator = cupy.random.RandomState(1234567890)
-        idx = [i for i in range(0, data.size)]
+        # randomly select sample from the whole dataset
+        # create a pseudo random number generator
+        generator = RandomState(1234567890)
+        idx = module.linspace(
+            0, data.size, data.size, endpoint=False, dtype=module.uint32
+        )
         generator.shuffle(idx)
         sample_idx = idx[:num_sample]
         sample_data = data.flatten()[sample_idx]
@@ -617,10 +550,11 @@ def _run_cupy_natural_break(agg, num_sample, k):
                           'a long time.'.format(sample_data.size),
                           Warning)
 
-    # only include non-nan values
-    sample_data = cupy.asarray([i for i in sample_data if cupy.isfinite(i)])
+    sample_data = module.asarray(sample_data)
 
-    uv = cupy.unique(sample_data[cupy.isfinite(sample_data)])
+    # only include finite values
+    sample_data = sample_data[module.isfinite(sample_data)]
+    uv = module.unique(sample_data)
     uvk = len(uv)
 
     if uvk < k:
@@ -634,10 +568,10 @@ def _run_cupy_natural_break(agg, num_sample, k):
         uv.sort()
         bins = uv
     else:
-        centroids = _run_cupy_jenks(sample_data, k)
-        bins = cupy.array(centroids[1:])
+        centroids = _run_jenks(sample_data, k, module)
+        bins = module.array(centroids[1:])
 
-    out = _bin(agg, bins, cupy.arange(uvk))
+    out = _bin(agg, bins, module.arange(uvk))
     return out
 
 
@@ -723,10 +657,12 @@ def natural_breaks(agg: xr.DataArray,
             res:      (10.0, 10.0)
     """
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_run_numpy_natural_break,
-                                      dask_func=not_implemented_func,
-                                      cupy_func=_run_cupy_natural_break,
-                                      dask_cupy_func=not_implemented_func)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=lambda *args: _run_natural_break(*args, module=np),
+        dask_func=not_implemented_func,
+        cupy_func=lambda *args: _run_natural_break(*args, module=cupy),
+        dask_cupy_func=not_implemented_func
+    )
     out = mapper(agg)(agg, num_sample, k)
     return xr.DataArray(out,
                         name=name,
