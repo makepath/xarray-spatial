@@ -34,7 +34,7 @@ def _equal_numpy(x, y):
 def _mean_numpy(data, excludes):
     # TODO: exclude nans, what if nans in the kernel?
     out = np.zeros_like(data)
-    out[:, :] = np.nan
+    out[:] = np.nan
     rows, cols = data.shape
 
     for y in range(1, rows - 1):

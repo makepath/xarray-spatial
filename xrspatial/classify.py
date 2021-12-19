@@ -64,7 +64,7 @@ def binary(agg, values, name='binary'):
 @ngjit
 def _cpu_bin(data, bins, new_values):
     out = np.zeros(data.shape, dtype=np.float32)
-    out[:, :] = np.nan
+    out[:] = np.nan
     rows, cols = data.shape
     nbins = len(bins)
     for y in range(0, rows):

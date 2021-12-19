@@ -1,6 +1,7 @@
 # std lib
 from functools import partial
 from typing import Union
+from typing import Optional
 
 # 3rd-party
 try:
@@ -22,14 +23,14 @@ from xrspatial.utils import get_dataarray_resolution
 from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
 from xrspatial.utils import is_cupy_backed
-
-from typing import Optional
+from xrspatial.utils import not_implemented_func
+from xrspatial.utils import ArrayTypeFunctionMapping
 
 
 @ngjit
 def _cpu(data, cellsize):
     out = np.empty(data.shape, np.float64)
-    out[:, :] = np.nan
+    out[:] = np.nan
     rows, cols = data.shape
     for y in range(1, rows - 1):
         for x in range(1, cols - 1):
@@ -89,12 +90,6 @@ def _run_cupy(data: cupy.ndarray,
     _run_gpu[griddim, blockdim](data, cellsize_arr, out)
 
     return out
-
-
-def _run_dask_cupy(data: da.Array,
-                   cellsize: Union[int, float]) -> da.Array:
-    msg = 'Upstream bug in dask prevents cupy backed arrays'
-    raise NotImplementedError(msg)
 
 
 def curvature(agg: xr.DataArray,
@@ -222,25 +217,13 @@ def curvature(agg: xr.DataArray,
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
     cellsize = (cellsize_x + cellsize_y) / 2
 
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        out = _run_numpy(agg.data, cellsize)
-
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _run_cupy(agg.data, cellsize)
-
-    # dask + cupy case
-    elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
-        out = _run_dask_cupy(agg.data, cellsize)
-
-    # dask + numpy case
-    elif isinstance(agg.data, da.Array):
-        out = _run_dask_numpy(agg.data, cellsize)
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
-
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_run_numpy,
+        cupy_func=_run_cupy,
+        dask_func=_run_dask_numpy,
+        dask_cupy_func=not_implemented_func,
+    )
+    out = mapper(agg)(agg.data, cellsize)
     return xr.DataArray(out,
                         name=name,
                         coords=agg.coords,

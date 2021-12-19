@@ -378,7 +378,7 @@ def a_star_search(surface: xr.DataArray,
     # 2d output image that stores the path
     path_img = np.zeros_like(surface, dtype=np.float64)
     # first, initialize all cells as np.nans
-    path_img[:, :] = np.nan
+    path_img[:] = np.nan
 
     if start_py != NONE:
         neighbor_ys, neighbor_xs = _neighborhood_structure(connectivity)
