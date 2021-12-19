@@ -262,39 +262,15 @@ def reclassify(agg: xr.DataArray,
                         attrs=agg.attrs)
 
 
-def _run_cpu_quantile(data, k):
+def _run_quantile(data, k, module):
     w = 100.0 / k
-    p = np.arange(w, 100 + w, w)
+    p = module.arange(w, 100 + w, w)
 
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    q = np.percentile(data[np.isfinite(data)], p)
-    q = np.unique(q)
-    return q
-
-
-def _run_dask_numpy_quantile(data, k):
-    w = 100.0 / k
-    p = da.arange(w, 100 + w, w)
-
-    if p[-1] > 100.0:
-        p[-1] = 100.0
-
-    q = da.percentile(data[da.isfinite(data)].flatten(), p)
-    q = da.unique(q)
-    return q
-
-
-def _run_cupy_quantile(data, k):
-    w = 100.0 / k
-    p = cupy.arange(w, 100 + w, w)
-
-    if p[-1] > 100.0:
-        p[-1] = 100.0
-
-    q = cupy.percentile(data[cupy.isfinite(data)], p)
-    q = cupy.unique(q)
+    q = module.percentile(data[module.isfinite(data)], p)
+    q = module.unique(q)
     return q
 
 
@@ -306,10 +282,12 @@ def _run_dask_cupy_quantile(data, k):
 
 
 def _quantile(agg, k):
-    mapper = ArrayTypeFunctionMapping(numpy_func=_run_cpu_quantile,
-                                      dask_func=_run_dask_numpy_quantile,
-                                      cupy_func=_run_cupy_quantile,
-                                      dask_cupy_func=_run_dask_cupy_quantile)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=lambda *args: _run_quantile(*args, module=np),
+        dask_func=lambda *args: _run_quantile(*args, module=da),
+        cupy_func=lambda *args: _run_quantile(*args, module=cupy),
+        dask_cupy_func=_run_dask_cupy_quantile
+    )
     out = mapper(agg)(agg.data, k)
     return out
 
