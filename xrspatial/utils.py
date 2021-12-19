@@ -98,6 +98,10 @@ def is_dask_cupy(agg: xr.DataArray):
     return isinstance(agg.data, da.Array) and is_cupy_backed(agg)
 
 
+def not_implemented_func(agg, *args):
+    raise NotImplementedError('Not yet implemented.')
+
+
 class ArrayTypeFunctionMapping(object):
     def __init__(self, numpy_func, cupy_func, dask_func, dask_cupy_func):
         self.numpy_func = numpy_func

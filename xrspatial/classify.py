@@ -1,7 +1,8 @@
+from typing import List, Optional
 from functools import partial
-import xarray as xr
+import warnings
 
-# 3rd-party
+import xarray as xr
 try:
     import cupy
 except ImportError:
@@ -11,7 +12,6 @@ except ImportError:
 import datashader.transfer_functions as tf
 import numpy as np
 from datashader.colors import rgb
-from xarray import DataArray
 
 import numba as nb
 import dask.array as da
@@ -19,15 +19,9 @@ import dask.array as da
 from numpy.random import RandomState
 
 from xrspatial.utils import cuda_args
-from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
-from xrspatial.utils import is_cupy_backed
 from xrspatial.utils import ArrayTypeFunctionMapping
-
-from typing import List, Optional
-
-
-import warnings
+from xrspatial.utils import not_implemented_func
 
 
 def color_values(agg, color_key, alpha=255):
@@ -60,11 +54,11 @@ def binary(agg, values, name='binary'):
     else:
         vals = values
 
-    return DataArray(_binary(agg.data, vals),
-                     name=name,
-                     dims=agg.dims,
-                     coords=agg.coords,
-                     attrs=agg.attrs)
+    return xr.DataArray(_binary(agg.data, vals),
+                        name=name,
+                        dims=agg.dims,
+                        coords=agg.coords,
+                        attrs=agg.attrs)
 
 
 @ngjit
@@ -257,14 +251,15 @@ def reclassify(agg: xr.DataArray,
     """
 
     if len(bins) != len(new_values):
-        raise ValueError('bins and new_values mismatch.'
-                         'Should have same length.')
+        raise ValueError(
+            'bins and new_values mismatch. Should have same length.'
+        )
     out = _bin(agg, bins, new_values)
-    return DataArray(out,
-                     name=name,
-                     dims=agg.dims,
-                     coords=agg.coords,
-                     attrs=agg.attrs)
+    return xr.DataArray(out,
+                        name=name,
+                        dims=agg.dims,
+                        coords=agg.coords,
+                        attrs=agg.attrs)
 
 
 def _run_cpu_quantile(data, k):
@@ -311,28 +306,12 @@ def _run_dask_cupy_quantile(data, k):
 
 
 def _quantile(agg, k):
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        q = _run_cpu_quantile(agg.data, k)
-
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        q = _run_cupy_quantile(agg.data, k)
-
-    # dask + cupy case
-    elif has_cuda() and \
-        isinstance(agg.data, cupy.ndarray) and \
-            is_cupy_backed(agg):
-        q = _run_dask_cupy_quantile(agg.data, k)
-
-    # dask + numpy case
-    elif isinstance(agg.data, da.Array):
-        q = _run_dask_numpy_quantile(agg.data, k)
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
-
-    return q
+    mapper = ArrayTypeFunctionMapping(numpy_func=_run_cpu_quantile,
+                                      dask_func=_run_dask_numpy_quantile,
+                                      cupy_func=_run_cupy_quantile,
+                                      dask_cupy_func=_run_dask_cupy_quantile)
+    out = mapper(agg)(agg.data, k)
+    return out
 
 
 def quantile(agg: xr.DataArray,
@@ -422,11 +401,11 @@ def quantile(agg: xr.DataArray,
 
     out = _bin(agg, bins=q, new_values=np.arange(k))
 
-    return DataArray(out,
-                     name=name,
-                     dims=agg.dims,
-                     coords=agg.coords,
-                     attrs=agg.attrs)
+    return xr.DataArray(out,
+                        name=name,
+                        dims=agg.dims,
+                        coords=agg.coords,
+                        attrs=agg.attrs)
 
 
 @nb.jit(nopython=True)
@@ -766,22 +745,16 @@ def natural_breaks(agg: xr.DataArray,
             res:      (10.0, 10.0)
     """
 
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        out = _run_numpy_natural_break(agg, num_sample, k)
-
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _run_cupy_natural_break(agg, num_sample, k)
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
-
-    return DataArray(out,
-                     name=name,
-                     coords=agg.coords,
-                     dims=agg.dims,
-                     attrs=agg.attrs)
+    mapper = ArrayTypeFunctionMapping(numpy_func=_run_numpy_natural_break,
+                                      dask_func=not_implemented_func,
+                                      cupy_func=_run_cupy_natural_break,
+                                      dask_cupy_func=not_implemented_func)
+    out = mapper(agg)(agg, num_sample, k)
+    return xr.DataArray(out,
+                        name=name,
+                        coords=agg.coords,
+                        dims=agg.dims,
+                        attrs=agg.attrs)
 
 
 def _run_numpy_equal_interval(agg, k):
@@ -832,11 +805,6 @@ def _run_cupy_equal_interval(agg, k):
     cuts[-1] = max_data
     out = _bin(agg, cuts, cupy.arange(l_cuts))
     return out
-
-
-def _run_dask_cupy_equal_interval(agg, k):
-    msg = 'Not yet supported.'
-    raise NotImplementedError(msg)
 
 
 def equal_interval(agg: xr.DataArray,
@@ -911,30 +879,15 @@ def equal_interval(agg: xr.DataArray,
         Attributes:
             res:      (10.0, 10.0)
     """
-
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        out = _run_numpy_equal_interval(agg, k)
-
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _run_cupy_equal_interval(agg, k)
-
-    # dask + cupy case
-    elif (has_cuda() and
-          isinstance(agg.data, cupy.ndarray) and
-          is_cupy_backed(agg)):
-        out = _run_dask_cupy_equal_interval(agg, k)
-
-    # dask + numpy case
-    elif isinstance(agg.data, da.Array):
-        out = _run_dask_numpy_equal_interval(agg, k)
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
-
-    return DataArray(out,
-                     name=name,
-                     coords=agg.coords,
-                     dims=agg.dims,
-                     attrs=agg.attrs)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_run_numpy_equal_interval,
+        dask_func=_run_dask_numpy_equal_interval,
+        cupy_func=_run_cupy_equal_interval,
+        dask_cupy_func=not_implemented_func
+    )
+    out = mapper(agg)(agg, k)
+    return xr.DataArray(out,
+                        name=name,
+                        coords=agg.coords,
+                        dims=agg.dims,
+                        attrs=agg.attrs)
