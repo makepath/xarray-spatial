@@ -1,6 +1,5 @@
 from math import atan2
 import numpy as np
-import numba as nb
 
 from functools import partial
 
