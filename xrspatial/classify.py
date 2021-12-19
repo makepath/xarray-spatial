@@ -205,49 +205,78 @@ def reclassify(agg: xr.DataArray,
 
     Examples
     --------
-    .. plot::
-       :include-source:
+    Reclassify works with NumPy backed xarray DataArray
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> import dask.array as da
+        >>> from xrspatial.classify import reclassify
 
-        import numpy as np
-        import xarray as xr
-        import dask.array as da
-        from xrspatial.classify import reclassify
-
-        elevation = np.array([
+        >>> data = np.array([
             [np.nan,  1.,  2.,  3.,  4.],
             [ 5.,  6.,  7.,  8.,  9.],
             [10., 11., 12., 13., 14.],
-            [15., 16., 17., 18., 19.],
-            [20., 21., 22., 23., np.inf]
+            [15., 16., 17., 18., np.inf],
         ])
-        data = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-        bins = [10, 20, 30]
-        new_values = [1, 2, 3]
-        data_reclassify = reclassify(data, bins=bins, new_values=new_values)
-
-    .. sourcecode:: python
-
-        >>> print(data)
-        <xarray.DataArray (dim_0: 5, dim_1: 5)>
+        >>> agg = xr.DataArray(data)
+        >>> print(agg)
+        <xarray.DataArray (dim_0: 4, dim_1: 5)>
         array([[nan,  1.,  2.,  3.,  4.],
                [ 5.,  6.,  7.,  8.,  9.],
                [10., 11., 12., 13., 14.],
-               [15., 16., 17., 18., 19.],
-               [20., 21., 22., 23., inf]])
+               [15., 16., 17., 18., inf]])
         Dimensions without coordinates: dim_0, dim_1
-        Attributes:
-            res:      (10.0, 10.0)
-
-        >>> print(data_reclassify)
-        <xarray.DataArray 'reclassify' (dim_0: 5, dim_1: 5)>
+        >>> bins=[10, 15, np.inf]
+        >>> new_values=[1, 2, 3]
+        >>> agg_reclassify = reclassify(agg, bins=bins, new_values=new_values)
+        >>> print(agg_reclassify)
+        <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
         array([[nan,  1.,  1.,  1.,  1.],
-               [ 1.,  1.,  1.,  1.,  1.],
                [ 1.,  2.,  2.,  2.,  2.],
                [ 2.,  2.,  2.,  2.,  2.],
-               [ 2.,  3.,  3.,  3., nan]], dtype=float32)
+               [ 2.,  3.,  3.,  3.,  3.]], dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
-        Attributes:
-            res:      (10.0, 10.0)
+
+    Reclassify works with Dask with NumPy backed xarray DataArray
+    .. sourcecode:: python
+        >>> import dask.array as da
+        >>> data_da = da.from_array(data, chunks=(3, 3))
+        >>> agg_da = xr.DataArray(data_da, name='agg_da')
+        >>> print(agg_da)
+        <xarray.DataArray 'agg_da' (dim_0: 4, dim_1: 5)>
+        dask.array<array, shape=(4, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        Dimensions without coordinates: dim_0, dim_1
+        >>> agg_reclassify_da = reclassify(agg_da, bins=bins, new_values=new_values)  # noqa
+        >>> print(agg_reclassify_da)
+        <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
+        dask.array<_run_numpy_bin, shape=(4, 5), dtype=float32, chunksize=(3, 3), chunktype=numpy.ndarray>
+        Dimensions without coordinates: dim_0, dim_1
+        >>> print(agg_reclassify_da.compute())  # print the computed the results
+        <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
+        array([[nan,  1.,  1.,  1.,  1.],
+               [ 1.,  2.,  2.,  2.,  2.],
+               [ 2.,  2.,  2.,  2.,  2.],
+               [ 2.,  3.,  3.,  3.,  3.]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
+
+    Reclassify works with CuPy backed xarray DataArray.
+    Make sure you have a GPU and CuPy installed to run this example.
+    .. sourcecode:: python
+        >>> import cupy
+        >>> data_cupy = cupy.asarray(data)
+        >>> agg_cupy = xr.DataArray(data_cupy)
+        >>> agg_reclassify_cupy = reclassify(agg_cupy, bins, new_values)
+        >>> print(type(agg_reclassify_cupy.data))
+        <class 'cupy.core.core.ndarray'>
+        >>> print(agg_reclassify_cupy)
+        <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
+        array([[nan,  1.,  1.,  1.,  1.],
+               [ 1.,  2.,  2.,  2.,  2.],
+               [ 2.,  2.,  2.,  2.,  2.],
+               [ 2.,  3.,  3.,  3.,  3.]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
+
+    Reclassify works with Dask with CuPy backed xarray DataArray.
     """
 
     if len(bins) != len(new_values):

@@ -230,6 +230,7 @@ def aspect(agg: xr.DataArray,
                [ nan, 191.30993247, 144.46232221, 255.96375653, nan],
                [ nan,  nan        ,  nan        ,  nan        , nan]])
         Dimensions without coordinates: y, x
+
     Aspect works with Dask with NumPy backed xarray DataArray
     .. sourcecode:: python
         >>> import dask.array as da

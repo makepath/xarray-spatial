@@ -21,9 +21,23 @@ elevation = np.array([
     [15., 16., 17., 18., np.inf],
 ])
 
-numpy_agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-dask_numpy_agg = xr.DataArray(da.from_array(elevation, chunks=(3, 3)),
-                              attrs={'res': (10.0, 10.0)})
+h, w = elevation.shape
+ys = np.arange(h)
+xs = np.arange(w)
+
+numpy_agg = xr.DataArray(
+    elevation, dims=['y', 'x'], attrs={'res': (10.0, 10.0)}
+)
+numpy_agg['y'] = ys
+numpy_agg['x'] = xs
+
+dask_numpy_agg = xr.DataArray(
+    da.from_array(elevation, chunks=(3, 3)),
+    dims=['y', 'x'],
+    attrs={'res': (10.0, 10.0)}
+)
+dask_numpy_agg['y'] = ys
+dask_numpy_agg['x'] = xs
 
 
 def test_reclassify_cpu():
