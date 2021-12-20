@@ -7,6 +7,8 @@ from xrspatial import aspect
 from xrspatial.utils import doesnt_have_cuda
 from xrspatial.utils import is_cupy_backed
 
+from xrspatial.tests.general_checks import general_output_checks
+
 
 INPUT_DATA = np.asarray([
     [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
@@ -35,13 +37,8 @@ def test_numpy_equals_qgis():
     small_da = xr.DataArray(INPUT_DATA, attrs={'res': (10.0, 10.0)})
     xrspatial_aspect = aspect(small_da, name='numpy_aspect')
 
-    # validate output attributes
-    assert xrspatial_aspect.dims == small_da.dims
-    assert xrspatial_aspect.attrs == small_da.attrs
-    assert xrspatial_aspect.shape == small_da.shape
+    general_output_checks(small_da, xrspatial_aspect)
     assert xrspatial_aspect.name == 'numpy_aspect'
-    for coord in small_da.coords:
-        assert np.all(xrspatial_aspect[coord] == small_da[coord])
 
     # validate output values
     xrspatial_vals = xrspatial_aspect.data[1:-1, 1:-1]
@@ -74,15 +71,13 @@ def test_numpy_equals_dask():
     numpy_result = aspect(small_numpy_based_data_array, name='numpy_result')
     dask_result = aspect(small_dask_based_data_array,
                          name='dask_result')
-
-    assert isinstance(dask_result.data, da.Array)
-
+    general_output_checks(small_dask_based_data_array, dask_result)
     dask_result.data = dask_result.data.compute()
     assert np.isclose(numpy_result, dask_result, equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_numpy_equals_cupy():
+def test_cpu_equals_gpu():
 
     import cupy
 
@@ -93,35 +88,8 @@ def test_numpy_equals_cupy():
     # aspect by xrspatial
     cpu = aspect(small_da, name='aspect_agg')
     gpu = aspect(small_da_cupy, name='aspect_agg')
-
-    assert isinstance(gpu.data, cupy.ndarray)
+    general_output_checks(small_da_cupy, gpu)
     assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()
-
-
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_cupy_equals_qgis():
-
-    import cupy
-
-    small_da = xr.DataArray(INPUT_DATA, attrs={'res': (10.0, 10.0)})
-    small_da_cupy = xr.DataArray(cupy.asarray(INPUT_DATA),
-                                 attrs={'res': (10.0, 10.0)})
-    xrspatial_aspect = aspect(small_da_cupy, name='aspect_agg')
-
-    # validate output attributes
-    assert xrspatial_aspect.dims == small_da.dims
-    assert xrspatial_aspect.attrs == small_da.attrs
-    assert xrspatial_aspect.shape == small_da.shape
-    assert xrspatial_aspect.name == 'aspect_agg'
-    for coord in small_da.coords:
-        assert np.all(xrspatial_aspect[coord] == small_da[coord])
-
-    # TODO: We shouldn't ignore edges!
-    # validate output values
-    # ignore border edges
-    xrspatial_vals = xrspatial_aspect.data[1:-1, 1:-1].get()
-    qgis_vals = QGIS_OUTPUT[1:-1, 1:-1]
-    assert np.isclose(xrspatial_vals, qgis_vals, equal_nan=True).all()
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")

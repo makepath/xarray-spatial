@@ -20,9 +20,7 @@ import xarray as xr
 # local modules
 from xrspatial.utils import cuda_args
 from xrspatial.utils import get_dataarray_resolution
-from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
-from xrspatial.utils import is_cupy_backed
 from xrspatial.utils import not_implemented_func
 from xrspatial.utils import ArrayTypeFunctionMapping
 

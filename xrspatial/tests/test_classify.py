@@ -53,18 +53,14 @@ def test_reclassify_cpu():
     numpy_reclassify = reclassify(
         numpy_agg, bins=bins, new_values=new_values, name='numpy_reclassify'
     )
-    general_output_checks(numpy_agg, numpy_reclassify)
-    assert np.isclose(
-        numpy_reclassify.data, expected_results, equal_nan=True).all()
+    general_output_checks(numpy_agg, numpy_reclassify, expected_results)
 
     # dask + numpy
     dask_reclassify = reclassify(
         dask_numpy_agg, bins=bins,
         new_values=new_values, name='dask_reclassify'
     )
-    general_output_checks(dask_numpy_agg, dask_reclassify)
-    assert np.isclose(
-        numpy_reclassify, dask_reclassify.compute(), equal_nan=True).all()
+    general_output_checks(dask_numpy_agg, dask_reclassify, expected_results)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -114,9 +110,7 @@ def test_quantile_cpu():
     ])
     # numpy
     numpy_quantile = quantile(numpy_agg, k=k)
-    general_output_checks(numpy_agg, numpy_quantile)
-    assert np.isclose(
-        numpy_quantile.data, expected_results, equal_nan=True).all()
+    general_output_checks(numpy_agg, numpy_quantile, expected_results)
 
     # dask + numpy
     dask_quantile = quantile(dask_numpy_agg, k=k)
@@ -164,9 +158,7 @@ def test_natural_breaks_cpu():
     ])
     # vanilla numpy
     numpy_natural_breaks = natural_breaks(numpy_agg, k=k)
-    general_output_checks(numpy_agg, numpy_natural_breaks)
-    assert np.isclose(
-        numpy_natural_breaks.data, expected_results, equal_nan=True).all()
+    general_output_checks(numpy_agg, numpy_natural_breaks, expected_results)
 
 
 def test_natural_breaks_cpu_deterministic():
@@ -218,8 +210,7 @@ def test_equal_interval_cpu():
 
     # numpy
     numpy_ei = equal_interval(numpy_agg, k=k)
-    general_output_checks(numpy_agg, numpy_ei)
-    assert np.isclose(numpy_ei.data, expected_results, equal_nan=True).all()
+    general_output_checks(numpy_agg, numpy_ei, expected_results)
 
     # dask + numpy
     dask_ei = equal_interval(dask_numpy_agg, k=k, name='dask_reclassify')
