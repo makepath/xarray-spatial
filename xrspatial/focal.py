@@ -16,8 +16,10 @@ except ImportError:
 
 from xrspatial.utils import cuda_args
 from xrspatial.utils import has_cuda
-from xrspatial.utils import is_cupy_backed
 from xrspatial.utils import ngjit
+from xrspatial.utils import not_implemented_func
+from xrspatial.utils import ArrayTypeFunctionMapping
+
 from xrspatial.convolution import convolve_2d, custom_kernel
 
 # TODO: Make convolution more generic with numba first-class functions.
@@ -94,43 +96,22 @@ def _mean_gpu(data, excludes, out):
 
 
 def _mean_cupy(data, excludes):
-    out = cupy.zeros_like(data)
-    out[:, :] = cupy.nan
     griddim, blockdim = cuda_args(data.shape)
     out = cupy.empty(data.shape, dtype='f4')
     out[:] = cupy.nan
-
     _mean_gpu[griddim, blockdim](data, cupy.asarray(excludes), out)
-
     return out
 
 
-def _mean_dask_cupy(data, excludes):
-    msg = 'Upstream bug in dask prevents cupy backed arrays'
-    raise NotImplementedError(msg)
-
-
 def _mean(data, excludes):
-    # numpy case
-    if isinstance(data, np.ndarray):
-        out = _mean_numpy(data.astype(float), excludes)
-
-    # cupy case
-    elif has_cuda() and isinstance(data, cupy.ndarray):
-        out = _mean_cupy(data.astype(cupy.float), excludes)
-
-    # dask + cupy case
-    elif has_cuda() and isinstance(data, da.Array) and \
-            type(data._meta).__module__.split('.')[0] == 'cupy':
-        out = _mean_dask_cupy(data.astype(float), excludes)
-
-    # dask + numpy case
-    elif isinstance(data, da.Array):
-        out = _mean_dask_numpy(data.astype(float), excludes)
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(data)))
-
+    agg = xr.DataArray(data.astype(float))
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_mean_numpy,
+        cupy_func=_mean_cupy,
+        dask_func=_mean_dask_numpy,
+        dask_cupy_func=not_implemented_func
+    )
+    out = mapper(agg)(agg.data, excludes)
     return out
 
 
@@ -800,25 +781,13 @@ def hotspots(raster, kernel):
     if raster.ndim != 2:
         raise ValueError("`raster` must be 2D")
 
-    # numpy case
-    if isinstance(raster.data, np.ndarray):
-        out = _hotspots_numpy(raster, kernel)
-
-    # cupy case
-    elif has_cuda() and isinstance(raster.data, cupy.ndarray):
-        out = _hotspots_cupy(raster, kernel)
-
-    # dask + cupy case
-    elif has_cuda() and isinstance(raster.data, da.Array) and \
-            is_cupy_backed(raster):
-        raise NotImplementedError()
-
-    # dask + numpy case
-    elif isinstance(raster.data, da.Array):
-        out = _hotspots_dask_numpy(raster, kernel)
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(raster.data)))
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_hotspots_numpy,
+        cupy_func=_hotspots_cupy,
+        dask_func=_hotspots_dask_numpy,
+        dask_cupy_func=not_implemented_func,
+    )
+    out = mapper(raster)(raster, kernel)
 
     return DataArray(out,
                      coords=raster.coords,

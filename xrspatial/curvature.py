@@ -47,9 +47,7 @@ def _run_numpy(data: np.ndarray,
 
 def _run_dask_numpy(data: da.Array,
                     cellsize: Union[int, float]) -> da.Array:
-    _func = partial(_cpu,
-                    cellsize=cellsize)
-
+    _func = partial(_cpu, cellsize=cellsize)
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=np.nan,
