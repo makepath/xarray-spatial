@@ -136,52 +136,76 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
 
     Examples
     --------
-    .. plot::
-       :include-source:
+    Focal mean works with NumPy backed xarray DataArray
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import mean
+        >>> data = np.zeros((5, 5), dtype=np.float64)
+        >>> data[2, 2] = 9
+        >>> raster = xr.DataArray(data)
+        >>> mean_agg = mean(raster, passes=1)
+        >>> print(mean_agg)
+        <xarray.DataArray 'mean' (dim_0: 5, dim_1: 5)>
+        array([[nan, nan, nan, nan, nan],
+               [nan,  1.,  1.,  1., nan],
+               [nan,  1.,  1.,  1., nan],
+               [nan,  1.,  1.,  1., nan],
+               [nan, nan, nan, nan, nan]])
+        Dimensions without coordinates: dim_0, dim_1
 
-        import datashader as ds
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import xarray as xr
+    Focal mean works with Dask with NumPy backed xarray DataArray
+    .. sourcecode:: python
+        >>> import dask.array as da
+        >>> data_da = np.arange(25).reshape(5, 5)
+        >>> print(data_da)
+        [[ 0  1  2  3  4]
+         [ 5  6  7  8  9]
+         [10 11 12 13 14]
+         [15 16 17 18 19]
+         [20 21 22 23 24]]
+        >>> data_da = da.from_array(data_da, chunks=(3, 3))
+        >>> raster_da = xr.DataArray(data_da, dims=['y', 'x'], name='raster_da')
+        >>> print(raster_da)
+        <xarray.DataArray 'raster_da' (y: 5, x: 5)>
+        dask.array<array, shape=(5, 5), dtype=int64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        Dimensions without coordinates: y, x
+        >>> mean_da = mean(raster_da)
+        >>> print(mean_da)
+        <xarray.DataArray 'mean' (y: 5, x: 5)>
+        dask.array<_trim, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        Dimensions without coordinates: y, x
+        >>> print(mean_da.compute())
+        <xarray.DataArray 'mean' (y: 5, x: 5)>
+        array([[nan, nan, nan, nan, nan],
+               [nan,  6.,  7.,  8., nan],
+               [nan, 11., 12., 13., nan],
+               [nan, 16., 17., 18., nan],
+               [nan, nan, nan, nan, nan]])
+        Dimensions without coordinates: y, x
 
-        from xrspatial import generate_terrain
-        from xrspatial.focal import mean
-
-
-        # Generate Example Terrain
-        W = 500
-        H = 300
-
-        template_terrain = xr.DataArray(np.zeros((H, W)))
-        x_range=(-20e6, 20e6)
-        y_range=(-20e6, 20e6)
-
-        terrain_agg = generate_terrain(
-            template_terrain, x_range=x_range, y_range=y_range
-        )
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Mean Aggregate Array
-        mean_agg = mean(agg = terrain_agg, name = 'Elevation')
-
-        # Edit Attributes
-        mean_agg = mean_agg.assign_attrs(
-            {
-                'Description': 'Example Mean Filtered Terrain',
-            }
-        )
+    Focal mean works with CuPy backed xarray DataArray.
+    .. sourcecode:: python
+        >>> import cupy
+        >>> data_cupy = cupy.asarray([
+            [0, 1, 1, 1, 1, 2],
+            [0, 0, 1, 1, 2, 2],
+            [0, -1, 0, 2, 2, 2],
+            [-2, -2, -1, 0, 1, 1],
+        ])
+        >>> raster_cupy = xr.DataArray(data_cupy, dims=['y', 'x'])
+        >>> mean_cupy = mean(raster_cupy)
+        >>> print(type(mean_cupy.data))
+        <class 'cupy.core.core.ndarray'>
+        >>> print(mean_cupy)
+        <xarray.DataArray 'mean' (y: 4, x: 6)>
+        array([[nan,         nan,         nan,         nan,         nan, nan],
+               [nan,  0.22222222,  0.6666667 ,  1.2222222 ,  1.6666666 , nan],
+               [nan, -0.5555556 ,  0.        ,  0.8888889 ,  1.4444444 , nan],
+               [nan,         nan,         nan,         nan,         nan, nan]], dtype=float32)
+        Dimensions without coordinates: y, x
     """
+
     out = agg.data
     for i in range(passes):
         out = _mean(out, tuple(excludes))
@@ -266,6 +290,7 @@ def _apply_dask_numpy(data, kernel, func):
 
 
 def _apply_cupy(data, kernel, func):
+    kernel = cupy.asarray(kernel)
 
     out = cupy.zeros(data.shape, dtype=data.dtype)
     out[:] = cupy.nan
@@ -290,42 +315,6 @@ def _apply_cupy(data, kernel, func):
     return out
 
 
-def _apply_dask_cupy(data, kernel, func):
-    msg = 'Upstream bug in dask prevents cupy backed arrays'
-    raise NotImplementedError(msg)
-
-
-def _apply(data, kernel, func):
-    # numpy case
-    if isinstance(data, np.ndarray):
-        if not (issubclass(data.dtype.type, np.integer) or
-                issubclass(data.dtype.type, np.floating)):
-            raise ValueError("data type must be integer or float")
-
-        out = _apply_numpy(data, kernel, func)
-
-    # cupy case
-    elif has_cuda() and isinstance(data, cupy.ndarray):
-        if not (issubclass(data.dtype.type, cupy.integer) or
-                issubclass(data.dtype.type, cupy.floating)):
-            raise ValueError("data type must be integer or float")
-        out = _apply_cupy(data, cupy.asarray(kernel), func)
-
-    # dask + cupy case
-    elif has_cuda() and isinstance(data, da.Array) and \
-            type(data._meta).__module__.split('.')[0] == 'cupy':
-        out = _apply_dask_cupy(data, cupy.asarray(kernel), func)
-
-    # dask + numpy case
-    elif isinstance(data, da.Array):
-        out = _apply_dask_numpy(data, kernel, func)
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(data)))
-
-    return out
-
-
 def apply(raster, kernel, func=_calc_mean):
     """
     Returns custom function applied array using a user-created window.
@@ -346,95 +335,7 @@ def apply(raster, kernel, func=_calc_mean):
 
     Examples
     --------
-    .. plot::
-       :include-source:
 
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import xarray as xr
-
-        from xrspatial import generate_terrain, aspect
-        from xrspatial.focal import apply
-        from xrspatial.convolution import circle_kernel
-
-
-        # Generate Example Terrain
-        W = 500
-        H = 300
-
-        template_terrain = xr.DataArray(np.zeros((H, W)))
-        x_range=(-20e6, 20e6)
-        y_range=(-20e6, 20e6)
-
-        terrain_agg = generate_terrain(
-            template_terrain, x_range=x_range, y_range=y_range
-        )
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Kernel
-        kernel = circle_kernel(10, 10, 100)
-
-        # Apply Kernel
-        agg = apply(raster = terrain_agg,
-                    kernel = kernel)
-
-        # Edit Attributes
-        agg = agg.assign_attrs({'Description': 'Example Filtered Terrain'})
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Filtered Terrain
-        agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Filtered Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-    .. sourcecode:: python
-
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02296597, 1261.947921  ],
-               [1285.37105519, 1282.48079719],
-               [1306.02339636, 1303.4069579 ]])
-        Coordinates:
-        * lon      (lon) float64 -3.96e+06 -3.88e+06
-        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            res:            (80000.0, 133333.3333333333)
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
-
-        >>> print(agg[200:203, 200:202])
-        <xarray.DataArray (lat: 3, lon: 2)>
-        array([[1307.19395948, 1302.69168271],
-               [1323.55815161, 1318.75959349],
-               [1342.33133041, 1336.93821534]])
-        Coordinates:
-        * lon      (lon) float64 -3.96e+06 -3.88e+06
-        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            res:            (80000.0, 133333.3333333333)
-            Description:    Example Filtered Terrain
-            units:          km
-            Max Elevation:  4000
     """
     # validate raster
     if not isinstance(raster, DataArray):
@@ -449,13 +350,17 @@ def apply(raster, kernel, func=_calc_mean):
     # apply kernel to raster values
     # if raster is a numpy or dask with numpy backed data array,
     # the function func must be a @ngjit
-    out = _apply(raster.data.astype(float), kernel, func)
-
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_apply_numpy,
+        cupy_func=_apply_cupy,
+        dask_func=_apply_dask_numpy,
+        dask_cupy_func=not_implemented_func,
+    )
+    out = mapper(raster)(raster.data.astype(float), kernel, func)
     result = DataArray(out,
                        coords=raster.coords,
                        dims=raster.dims,
                        attrs=raster.attrs)
-
     return result
 
 
