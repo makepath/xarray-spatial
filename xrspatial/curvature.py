@@ -105,8 +105,7 @@ def curvature(agg: xr.DataArray,
     Parameters
     ----------
     agg : xarray.DataArray
-        2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
-        of elevation values.
+        2D NumPy, CuPy, NumPy-backed Dask xarray DataArray of elevation values.
         Must contain `res` attribute.
     name : str, default='curvature'
         Name of output DataArray.
