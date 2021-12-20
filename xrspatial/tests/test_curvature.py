@@ -77,7 +77,7 @@ def test_curvature_on_concave_surface():
     test_raster3 = xr.DataArray(test_arr3, attrs={'res': (1, 1)})
     curv = curvature(test_raster3)
     general_output_checks(test_raster3, curv, expected_results)
-    
+
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_curvature_gpu_equals_cpu():

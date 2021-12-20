@@ -123,95 +123,87 @@ def curvature(agg: xr.DataArray,
 
     Examples
     --------
-    .. plot::
-       :include-source:
-
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import xarray as xr
-
-        from xrspatial import generate_terrain, curvature
-
-
-        # Generate Example Terrain
-        W = 500
-        H = 300
-
-        template_terrain = xr.DataArray(np.zeros((H, W)))
-        x_range=(-20e6, 20e6)
-        y_range=(-20e6, 20e6)
-
-        terrain_agg = generate_terrain(
-            template_terrain, x_range=x_range, y_range=y_range
-        )
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Curvature Aggregate Array
-        curvature_agg = curvature(agg = terrain_agg, name = 'Curvature')
-
-        # Edit Attributes
-        curvature_agg = curvature_agg.assign_attrs(
-            {
-                'Description': 'Curvature',
-                'units': 'rad',
-            }
-        )
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Curvature
-        curvature_agg.plot(aspect = 2, size = 4)
-        plt.title("Curvature")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
+    Curvature works with NumPy backed xarray DataArray
     .. sourcecode:: python
-
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02296597, 1261.947921  ],
-               [1285.37105519, 1282.48079719],
-               [1306.02339636, 1303.4069579 ]])
-        Coordinates:
-        * lon      (lon) float64 -3.96e+06 -3.88e+06
-        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import curvature
+        >>> flat_data = np.zeros((5, 5), dtype=np.float64)
+        >>> flat_raster = xr.DataArray(flat_data, attrs={'res': (1, 1)})
+        >>> flat_curv = curvature(flat_raster)
+        >>> print(flat_curv)
+        <xarray.DataArray 'curvature' (dim_0: 5, dim_1: 5)>
+        array([[nan, nan, nan, nan, nan],
+               [nan, -0., -0., -0., nan],
+               [nan, -0., -0., -0., nan],
+               [nan, -0., -0., -0., nan],
+               [nan, nan, nan, nan, nan]])
+        Dimensions without coordinates: dim_0, dim_1
         Attributes:
-            res:            (80000.0, 133333.3333333333)
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
+            res:      (1, 1)
 
+    Curvature works with Dask with NumPy backed xarray DataArray
     .. sourcecode:: python
-
-        >>> print(curvature_agg[200:203, 200:202])
-        <xarray.DataArray 'Curvature' (lat: 3, lon: 2)>
-        array([[-8.14280993e-08, -5.46873377e-08],
-               [ 2.85253552e-08,  1.24471207e-08],
-               [ 8.91172878e-08,  1.58492666e-07]])
-        Coordinates:
-        * lon      (lon) float64 -3.96e+06 -3.88e+06
-        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
+        >>> convex_data = np.array([
+            [0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0],
+            [0, 0, -1, 0, 0],
+            [0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0]], dtype=np.float64)
+        >>> convex_raster = xr.DataArray(
+            da.from_array(convex_data, chunks=(3, 3)),
+            attrs={'res': (10, 10)}, name='convex_dask_numpy_raster')
+        >>> print(convex_raster)
+        <xarray.DataArray 'convex_dask_numpy_raster' (dim_0: 5, dim_1: 5)>
+        dask.array<array, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        Dimensions without coordinates: dim_0, dim_1
         Attributes:
-            res:            (80000.0, 133333.3333333333)
-            Description:    Curvature
-            units:          rad
-            Max Elevation:  4000
+            res:      (10, 10)
+        >>> convex_curv = curvature(convex_raster, name='convex_curvature')
+        >>> print(convex_curv)  # return a xarray DataArray with Dask-backed array
+        <xarray.DataArray 'convex_curvature' (dim_0: 5, dim_1: 5)>
+        dask.array<_trim, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        Dimensions without coordinates: dim_0, dim_1
+        Attributes:
+            res:      (10, 10)
+        >>> print(convex_curv.compute())
+        <xarray.DataArray 'convex_curvature' (dim_0: 5, dim_1: 5)>
+        array([[nan, nan, nan, nan, nan],
+               [nan, -0.,  1., -0., nan],
+               [nan,  1., -4.,  1., nan],
+               [nan, -0.,  1., -0., nan],
+               [nan, nan, nan, nan, nan]])
+        Dimensions without coordinates: dim_0, dim_1
+        Attributes:
+            res:      (10, 10)
+
+    Curvature works with CuPy backed xarray DataArray.
+    .. sourcecode:: python
+        >>> import cupy
+        >>> concave_data = np.array([
+            [0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0],
+            [0, 0, 1, 0, 0],
+            [0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0]], dtype=np.float64)
+        >>> concave_raster = xr.DataArray(
+            cupy.asarray(concave_data),
+            attrs={'res': (10, 10)}, name='concave_cupy_raster')
+        >>> concave_curv = curvature(concave_raster)
+        >>> print(type(concave_curv))
+        <class 'cupy.core.core.ndarray'>
+        >>> print(concave_curv)
+        <xarray.DataArray 'curvature' (dim_0: 5, dim_1: 5)>
+        array([[nan, nan, nan, nan, nan],
+               [nan, -0., -1., -0., nan],
+               [nan, -1.,  4., -1., nan],
+               [nan, -0., -1., -0., nan],
+               [nan, nan, nan, nan, nan]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
+        Attributes:
+            res:      (10, 10)
     """
+
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
     cellsize = (cellsize_x + cellsize_y) / 2
 
