@@ -72,8 +72,14 @@
     //
     "matrix": {
         "pyct": [],
+        // Optional for cupy support; use correct cuda version.
         //"cupy-cuda101": [],
+        // Optional for ray-tracing support, need cupy too.
         //"rtxpy": [],
+        // Optional for polygonize.
+        //"geopandas": [],
+        //"rasterio": [],
+        //"spatialpandas": [],
     },
 
     // Combinations of libraries/python versions can be excluded/included
