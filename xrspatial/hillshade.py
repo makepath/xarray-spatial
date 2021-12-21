@@ -1,24 +1,14 @@
-# std lib
-from typing import Optional
+import dask.array as da
 from functools import partial
 import math
-
-# 3rd-party
-try:
-    import cupy
-except ImportError:
-    class cupy(object):
-        ndarray = False
-
 from numba import cuda
-
 import numpy as np
+from typing import Optional
 import xarray as xr
 
-# local modules
-from xrspatial.utils import cuda_args
-from xrspatial.utils import ArrayTypeFunctionMapping
-from xrspatial.utils import not_implemented_func
+from .gpu_rtx import has_rtx
+from .utils import (
+    calc_cuda_dims, has_cuda, has_cupy, is_cupy_array, is_cupy_backed)
 
 
 def _run_numpy(data, azimuth=225, angle_altitude=25):
@@ -83,8 +73,9 @@ def _run_cupy(d_data, azimuth, angle_altitude):
     azimuthrad = (360.0 - azimuth) * np.pi / 180.
 
     # Allocate output buffer and launch kernel with appropriate dimensions
+    import cupy
     output = cupy.empty(d_data.shape, np.float32)
-    griddim, blockdim = cuda_args(d_data.shape)
+    griddim, blockdim = calc_cuda_dims(d_data.shape)
     _gpu_calc_numba[griddim, blockdim](
         d_data, output, sin_altituderad, cos_altituderad, azimuthrad
     )
@@ -101,7 +92,8 @@ def _run_cupy(d_data, azimuth, angle_altitude):
 def hillshade(agg: xr.DataArray,
               azimuth: int = 225,
               angle_altitude: int = 25,
-              name: Optional[str] = 'hillshade') -> xr.DataArray:
+              name: Optional[str] = 'hillshade',
+              shadows: bool = False) -> xr.DataArray:
     """
     Calculates, for all cells in the array, an illumination value of
     each cell based on illumination from a specific azimuth and
@@ -120,6 +112,10 @@ def hillshade(agg: xr.DataArray,
         specified in degrees.
     name : str, default='hillshade'
         Name of output DataArray.
+    shadows : bool, default=False
+        Whether to calculate shadows or not. Shadows are available
+        only for Cupy-backed Dask arrays and only if rtxpy is
+        installed and appropriate graphics hardware is available.
 
     Returns
     -------
@@ -166,15 +162,34 @@ def hillshade(agg: xr.DataArray,
           * y        (y) int32 4 3 2 1 0
           * x        (x) int32 0 1 2 3 4
     """
-    mapper = ArrayTypeFunctionMapping(
-        numpy_func=_run_numpy,
-        cupy_func=_run_cupy,
-        dask_func=_run_dask_numpy,
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='hillshade() does not support dask with cupy backed DataArray'  # noqa
-        ),
-    )
-    out = mapper(agg)(agg.data, azimuth, angle_altitude)
+
+    if shadows and not has_rtx():
+        raise RuntimeError(
+            "Can only calculate shadows if cupy and rtxpy are available")
+
+    # numpy case
+    if isinstance(agg.data, np.ndarray):
+        out = _run_numpy(agg.data, azimuth, angle_altitude)
+
+    # cupy/numba case
+    elif has_cuda() and has_cupy() and is_cupy_array(agg.data):
+        if shadows and has_rtx():
+            from .gpu_rtx.hillshade import hillshade_rtx
+            out = hillshade_rtx(agg, azimuth, angle_altitude, shadows=shadows)
+        else:
+            out = _run_cupy(agg.data, azimuth, angle_altitude)
+
+    # dask + cupy case
+    elif (has_cuda() and has_cupy() and isinstance(agg.data, da.Array) and
+            is_cupy_backed(agg)):
+        out = _run_dask_cupy(agg.data, azimuth, angle_altitude)
+
+    # dask + numpy case
+    elif isinstance(agg.data, da.Array):
+        out = _run_dask_numpy(agg.data, azimuth, angle_altitude)
+
+    else:
+        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
 
     return xr.DataArray(out,
                         name=name,
