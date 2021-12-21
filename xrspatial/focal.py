@@ -15,7 +15,6 @@ except ImportError:
         ndarray = False
 
 from xrspatial.utils import cuda_args
-from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
 from xrspatial.utils import not_implemented_func
 from xrspatial.utils import ArrayTypeFunctionMapping
@@ -140,7 +139,7 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
     .. sourcecode:: python
         >>> import numpy as np
         >>> import xarray as xr
-        >>> from xrspatial import mean
+        >>> from xrspatial.focal import mean
         >>> data = np.zeros((5, 5), dtype=np.float64)
         >>> data[2, 2] = 9
         >>> raster = xr.DataArray(data)
@@ -165,15 +164,15 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
          [15 16 17 18 19]
          [20 21 22 23 24]]
         >>> data_da = da.from_array(data_da, chunks=(3, 3))
-        >>> raster_da = xr.DataArray(data_da, dims=['y', 'x'], name='raster_da')
+        >>> raster_da = xr.DataArray(data_da, dims=['y', 'x'], name='raster_da')  # noqa
         >>> print(raster_da)
         <xarray.DataArray 'raster_da' (y: 5, x: 5)>
-        dask.array<array, shape=(5, 5), dtype=int64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        dask.array<array, shape=(5, 5), dtype=int64, chunksize=(3, 3), chunktype=numpy.ndarray>  # noqa
         Dimensions without coordinates: y, x
         >>> mean_da = mean(raster_da)
         >>> print(mean_da)
         <xarray.DataArray 'mean' (y: 5, x: 5)>
-        dask.array<_trim, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        dask.array<_trim, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>  # noqa
         Dimensions without coordinates: y, x
         >>> print(mean_da.compute())
         <xarray.DataArray 'mean' (y: 5, x: 5)>
@@ -315,7 +314,7 @@ def _apply_cupy(data, kernel, func):
     return out
 
 
-def apply(raster, kernel, func=_calc_mean):
+def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
     """
     Returns custom function applied array using a user-created window.
 
@@ -335,7 +334,82 @@ def apply(raster, kernel, func=_calc_mean):
 
     Examples
     --------
+    Focal apply works with NumPy backed xarray DataArray
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.convolution import circle_kernel
+        >>> from xrspatial.focal import apply
+        >>> data = np.arange(20, dtype=np.float64).reshape(4, 5)
+        >>> raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
+        >>> print(raster)
+        <xarray.DataArray 'raster' (y: 4, x: 5)>
+        array([[ 0.,  1.,  2.,  3.,  4.],
+               [ 5.,  6.,  7.,  8.,  9.],
+               [10., 11., 12., 13., 14.],
+               [15., 16., 17., 18., 19.]])
+        Dimensions without coordinates: y, x
+        >>> kernel = circle_kernel(2, 2, 3)
+        >>> kernel
+        array([[0., 1., 0.],
+               [1., 1., 1.],
+               [0., 1., 0.]])
+        >>> # apply kernel mean by default
+        >>> apply_mean_agg = apply(raster, kernel)
+        <xarray.DataArray 'focal_apply' (y: 4, x: 5)>
+        array([[ 2.        ,  2.25   ,  3.25      ,  4.25      ,  5.33333333],
+               [ 5.25      ,  6.     ,  7.        ,  8.        ,  8.75      ],
+               [10.25      , 11.     , 12.        , 13.        , 13.75      ],
+               [13.66666667, 14.75   , 15.75      , 16.75      , 17.        ]])
+        Dimensions without coordinates: y, x
 
+    Focal apply works with Dask with NumPy backed xarray DataArray.
+    Note that if input raster is a numpy or dask with numpy backed data array,
+    the applied function must be decorated with ``numba.jit``
+    xrspatial already provides ``ngjit`` decorator, where:
+    ``ngjit = numba.jit(nopython=True, nogil=True)``
+    .. sourcecode:: python
+    >>> from xrspatial.utils import ngjit
+    >>> from xrspatial.convolution import custom_kernel
+    >>> kernel = custom_kernel(np.array([
+        [0, 1, 0],
+        [0, 1, 1],
+        [0, 1, 0],
+    ]))
+    >>> weight = np.array([
+        [0, 0.5, 0],
+        [0, 1, 0.5],
+        [0, 0.5, 0],
+    ])
+    >>> @ngjit
+    >>> def func(kernel_data):
+    >>>     weight = np.array([
+                [0, 0.5, 0],
+                [0, 1, 0.5],
+                [0, 0.5, 0],
+            ])
+    >>>    return np.nansum(kernel_data * weight)
+
+    >>> data_da = da.from_array(np.ones((6, 4), dtype=np.float64), chunks=(3, 2))
+    >>> raster_da = xr.DataArray(data_da, dims=['y', 'x'], name='raster_da')
+    >>> print(raster_da)
+    <xarray.DataArray 'raster_da' (y: 6, x: 4)>
+    dask.array<array, shape=(6, 4), dtype=float64, chunksize=(3, 2), chunktype=numpy.ndarray>  # noqa
+    Dimensions without coordinates: y, x
+    >>> apply_func_agg = apply(raster_da, kernel, func)
+    >>> print(apply_func_agg)
+    <xarray.DataArray 'focal_apply' (y: 6, x: 4)>
+    dask.array<_trim, shape=(6, 4), dtype=float64, chunksize=(3, 2), chunktype=numpy.ndarray>  # noqa
+    Dimensions without coordinates: y, x
+    >>> print(apply_func_agg.compute())
+    <xarray.DataArray 'focal_apply' (y: 6, x: 4)>
+    array([[2. , 2. , 2. , 1.5],
+           [2.5, 2.5, 2.5, 2. ],
+           [2.5, 2.5, 2.5, 2. ],
+           [2.5, 2.5, 2.5, 2. ],
+           [2.5, 2.5, 2.5, 2. ],
+           [2. , 2. , 2. , 1.5]])
+    Dimensions without coordinates: y, x
     """
     # validate raster
     if not isinstance(raster, DataArray):
@@ -358,6 +432,7 @@ def apply(raster, kernel, func=_calc_mean):
     )
     out = mapper(raster)(raster.data.astype(float), kernel, func)
     result = DataArray(out,
+                       name=name,
                        coords=raster.coords,
                        dims=raster.dims,
                        attrs=raster.attrs)
