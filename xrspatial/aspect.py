@@ -223,12 +223,12 @@ def aspect(agg: xr.DataArray,
         >>> aspect_agg = aspect(raster)
         >>> print(aspect_agg)
         <xarray.DataArray 'aspect' (y: 6, x: 5)>
-        array([[ nan,  nan,  nan,  nan, nan],
+        array([[ nan,  nan        ,   nan       ,   nan       , nan],
                [ nan,  -1.        ,   225.      ,   135.      , nan],
                [ nan, 343.61045967,   8.97262661,  33.69006753, nan],
                [ nan, 307.87498365,  71.56505118,  54.46232221, nan],
                [ nan, 191.30993247, 144.46232221, 255.96375653, nan],
-               [ nan,  nan        ,  nan        ,  nan        , nan]])
+               [ nan,  nan        ,   nan       ,   nan       , nan]])
         Dimensions without coordinates: y, x
 
     Aspect works with Dask with NumPy backed xarray DataArray
@@ -245,13 +245,14 @@ def aspect(agg: xr.DataArray,
         <xarray.DataArray 'aspect' (y: 6, x: 5)>
         dask.array<_trim, shape=(6, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
         Dimensions without coordinates: y, x
-        >>> aspect_da.compute()  # compute the results
-        <xarray.DataArray 'aspect' (y: 5, x: 5)>
-        array([[nan,     nan,        nan,        nan,          nan],
-               [nan, 120.96375653, 104.03624347, 135.        , nan],
-               [nan, 101.30993247, 108.43494882, 123.69006753, nan],
-               [nan,  98.13010235, 105.2551187 , 123.69006753, nan],
-               [nan,     nan,        nan,        nan,          nan]])
+        >>> print(aspect_da.compute())  # compute the results
+        <xarray.DataArray 'aspect' (y: 6, x: 5)>
+        array([[ nan,  nan        ,   nan       ,   nan       , nan],
+               [ nan,  -1.        ,   225.      ,   135.      , nan],
+               [ nan, 343.61045967,   8.97262661,  33.69006753, nan],
+               [ nan, 307.87498365,  71.56505118,  54.46232221, nan],
+               [ nan, 191.30993247, 144.46232221, 255.96375653, nan],
+               [ nan,  nan        ,   nan       ,   nan       , nan]])
         Dimensions without coordinates: y, x
 
     Aspect works with CuPy backed xarray DataArray.
@@ -265,12 +266,12 @@ def aspect(agg: xr.DataArray,
         <class 'cupy.core.core.ndarray'>
         >>> print(aspect_cupy)
         <xarray.DataArray 'aspect' (y: 6, x: 5)>
-        array([[       nan,        nan,        nan,        nan,        nan],
-               [       nan,  -1.      , 225.      , 135.      ,        nan],
-               [       nan, 343.61047 ,   8.972626,  33.690067,        nan],
-               [       nan, 307.87497 ,  71.56505 ,  54.462322,        nan],
-               [       nan, 191.30994 , 144.46233 , 255.96376 ,        nan],
-               [       nan,        nan,        nan,        nan,        nan]],
+        array([[       nan,       nan,        nan,        nan,        nan],
+               [       nan,       -1.,       225.,       135.,        nan],
+               [       nan, 343.61047,   8.972626,  33.690067,        nan],
+               [       nan, 307.87497,  71.56505 ,  54.462322,        nan],
+               [       nan, 191.30994, 144.46233 ,  255.96376,        nan],
+               [       nan,       nan,        nan,        nan,        nan]],
               dtype=float32)
         Dimensions without coordinates: y, x
     """
