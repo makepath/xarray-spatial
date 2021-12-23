@@ -1,7 +1,8 @@
+from typing import List, Optional
 from functools import partial
-import xarray as xr
+import warnings
 
-# 3rd-party
+import xarray as xr
 try:
     import cupy
 except ImportError:
@@ -11,7 +12,6 @@ except ImportError:
 import datashader.transfer_functions as tf
 import numpy as np
 from datashader.colors import rgb
-from xarray import DataArray
 
 import numba as nb
 import dask.array as da
@@ -19,14 +19,9 @@ import dask.array as da
 from numpy.random import RandomState
 
 from xrspatial.utils import cuda_args
-from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
-from xrspatial.utils import is_cupy_backed
-
-from typing import List, Optional
-
-
-import warnings
+from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import not_implemented_func
 
 
 def color_values(agg, color_key, alpha=255):
@@ -59,17 +54,17 @@ def binary(agg, values, name='binary'):
     else:
         vals = values
 
-    return DataArray(_binary(agg.data, vals),
-                     name=name,
-                     dims=agg.dims,
-                     coords=agg.coords,
-                     attrs=agg.attrs)
+    return xr.DataArray(_binary(agg.data, vals),
+                        name=name,
+                        dims=agg.dims,
+                        coords=agg.coords,
+                        attrs=agg.attrs)
 
 
 @ngjit
 def _cpu_bin(data, bins, new_values):
     out = np.zeros(data.shape, dtype=np.float32)
-    out[:, :] = np.nan
+    out[:] = np.nan
     rows, cols = data.shape
     nbins = len(bins)
     for y in range(0, rows):
@@ -99,6 +94,8 @@ def _cpu_bin(data, bins, new_values):
 
 
 def _run_numpy_bin(data, bins, new_values):
+    bins = np.asarray(bins)
+    new_values = np.asarray(new_values)
     out = _cpu_bin(data, bins, new_values)
     return out
 
@@ -146,7 +143,9 @@ def _run_gpu_bin(data, bins, new_values, out):
         out[i, j] = _gpu_bin(data[i:i+1, j:j+1], bins, new_values)
 
 
-def _run_cupy_bin(data, bins_cupy, new_values_cupy):
+def _run_cupy_bin(data, bins, new_values):
+    bins_cupy = cupy.asarray(bins)
+    new_values_cupy = cupy.asarray(new_values)
     out = cupy.empty(data.shape, dtype='f4')
     out[:] = cupy.nan
     griddim, blockdim = cuda_args(data.shape)
@@ -164,29 +163,13 @@ def _run_dask_cupy_bin(data, bins_cupy, new_values_cupy):
     return out
 
 
-def _bin(data, bins, new_values):
-    # numpy case
-    if isinstance(data, np.ndarray):
-        out = _run_numpy_bin(data, np.asarray(bins), np.asarray(new_values))
+def _bin(agg, bins, new_values):
+    mapper = ArrayTypeFunctionMapping(numpy_func=_run_numpy_bin,
+                                      dask_func=_run_dask_numpy_bin,
+                                      cupy_func=_run_cupy_bin,
+                                      dask_cupy_func=_run_dask_cupy_bin)
 
-    # cupy case
-    elif has_cuda() and isinstance(data, cupy.ndarray):
-        bins_cupy = cupy.asarray(bins, dtype='f4')
-        new_values_cupy = cupy.asarray(new_values, dtype='f4')
-        out = _run_cupy_bin(data, bins_cupy, new_values_cupy)
-
-    # dask + cupy case
-    elif has_cuda() and isinstance(data, da.Array) and \
-            type(data._meta).__module__.split('.')[0] == 'cupy':
-        bins_cupy = cupy.asarray(bins, dtype='f4')
-        new_values_cupy = cupy.asarray(new_values, dtype='f4')
-        out = _run_dask_cupy_bin(data, bins_cupy, new_values_cupy)
-
-    # dask + numpy case
-    elif isinstance(data, da.Array):
-        out = _run_dask_numpy_bin(data, np.asarray(bins),
-                                  np.asarray(new_values))
-
+    out = mapper(agg)(agg.data, bins, new_values)
     return out
 
 
@@ -222,95 +205,101 @@ def reclassify(agg: xr.DataArray,
 
     Examples
     --------
-    .. plot::
-       :include-source:
+    Reclassify works with NumPy backed xarray DataArray
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> import dask.array as da
+        >>> from xrspatial.classify import reclassify
 
-        import numpy as np
-        import xarray as xr
-        import dask.array as da
-        from xrspatial.classify import reclassify
-
-        elevation = np.array([
+        >>> data = np.array([
             [np.nan,  1.,  2.,  3.,  4.],
             [ 5.,  6.,  7.,  8.,  9.],
             [10., 11., 12., 13., 14.],
-            [15., 16., 17., 18., 19.],
-            [20., 21., 22., 23., np.inf]
+            [15., 16., 17., 18., np.inf],
         ])
-        data = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-        bins = [10, 20, 30]
-        new_values = [1, 2, 3]
-        data_reclassify = reclassify(data, bins=bins, new_values=new_values)
-
-    .. sourcecode:: python
-
-        >>> print(data)
-        <xarray.DataArray (dim_0: 5, dim_1: 5)>
+        >>> agg = xr.DataArray(data)
+        >>> print(agg)
+        <xarray.DataArray (dim_0: 4, dim_1: 5)>
         array([[nan,  1.,  2.,  3.,  4.],
                [ 5.,  6.,  7.,  8.,  9.],
                [10., 11., 12., 13., 14.],
-               [15., 16., 17., 18., 19.],
-               [20., 21., 22., 23., inf]])
+               [15., 16., 17., 18., inf]])
         Dimensions without coordinates: dim_0, dim_1
-        Attributes:
-            res:      (10.0, 10.0)
-
-        >>> print(data_reclassify)
-        <xarray.DataArray 'reclassify' (dim_0: 5, dim_1: 5)>
+        >>> bins=[10, 15, np.inf]
+        >>> new_values=[1, 2, 3]
+        >>> agg_reclassify = reclassify(agg, bins=bins, new_values=new_values)
+        >>> print(agg_reclassify)
+        <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
         array([[nan,  1.,  1.,  1.,  1.],
-               [ 1.,  1.,  1.,  1.,  1.],
                [ 1.,  2.,  2.,  2.,  2.],
                [ 2.,  2.,  2.,  2.,  2.],
-               [ 2.,  3.,  3.,  3., nan]], dtype=float32)
+               [ 2.,  3.,  3.,  3.,  3.]], dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
-        Attributes:
-            res:      (10.0, 10.0)
+
+    Reclassify works with Dask with NumPy backed xarray DataArray
+    .. sourcecode:: python
+        >>> import dask.array as da
+        >>> data_da = da.from_array(data, chunks=(3, 3))
+        >>> agg_da = xr.DataArray(data_da, name='agg_da')
+        >>> print(agg_da)
+        <xarray.DataArray 'agg_da' (dim_0: 4, dim_1: 5)>
+        dask.array<array, shape=(4, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        Dimensions without coordinates: dim_0, dim_1
+        >>> agg_reclassify_da = reclassify(agg_da, bins=bins, new_values=new_values)  # noqa
+        >>> print(agg_reclassify_da)
+        <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
+        dask.array<_run_numpy_bin, shape=(4, 5), dtype=float32, chunksize=(3, 3), chunktype=numpy.ndarray>
+        Dimensions without coordinates: dim_0, dim_1
+        >>> print(agg_reclassify_da.compute())  # print the computed the results
+        <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
+        array([[nan,  1.,  1.,  1.,  1.],
+               [ 1.,  2.,  2.,  2.,  2.],
+               [ 2.,  2.,  2.,  2.,  2.],
+               [ 2.,  3.,  3.,  3.,  3.]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
+
+    Reclassify works with CuPy backed xarray DataArray.
+    Make sure you have a GPU and CuPy installed to run this example.
+    .. sourcecode:: python
+        >>> import cupy
+        >>> data_cupy = cupy.asarray(data)
+        >>> agg_cupy = xr.DataArray(data_cupy)
+        >>> agg_reclassify_cupy = reclassify(agg_cupy, bins, new_values)
+        >>> print(type(agg_reclassify_cupy.data))
+        <class 'cupy.core.core.ndarray'>
+        >>> print(agg_reclassify_cupy)
+        <xarray.DataArray 'reclassify' (dim_0: 4, dim_1: 5)>
+        array([[nan,  1.,  1.,  1.,  1.],
+               [ 1.,  2.,  2.,  2.,  2.],
+               [ 2.,  2.,  2.,  2.,  2.],
+               [ 2.,  3.,  3.,  3.,  3.]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
+
+    Reclassify works with Dask with CuPy backed xarray DataArray.
     """
 
     if len(bins) != len(new_values):
-        raise ValueError('bins and new_values mismatch.'
-                         'Should have same length.')
-    out = _bin(agg.data, bins, new_values)
-    return DataArray(out,
-                     name=name,
-                     dims=agg.dims,
-                     coords=agg.coords,
-                     attrs=agg.attrs)
+        raise ValueError(
+            'bins and new_values mismatch. Should have same length.'
+        )
+    out = _bin(agg, bins, new_values)
+    return xr.DataArray(out,
+                        name=name,
+                        dims=agg.dims,
+                        coords=agg.coords,
+                        attrs=agg.attrs)
 
 
-def _run_cpu_quantile(data, k):
+def _run_quantile(data, k, module):
     w = 100.0 / k
-    p = np.arange(w, 100 + w, w)
+    p = module.arange(w, 100 + w, w)
 
     if p[-1] > 100.0:
         p[-1] = 100.0
 
-    q = np.percentile(data[np.isfinite(data)], p)
-    q = np.unique(q)
-    return q
-
-
-def _run_dask_numpy_quantile(data, k):
-    w = 100.0 / k
-    p = da.arange(w, 100 + w, w)
-
-    if p[-1] > 100.0:
-        p[-1] = 100.0
-
-    q = da.percentile(data[da.isfinite(data)].flatten(), p)
-    q = da.unique(q)
-    return q
-
-
-def _run_cupy_quantile(data, k):
-    w = 100.0 / k
-    p = cupy.arange(w, 100 + w, w)
-
-    if p[-1] > 100.0:
-        p[-1] = 100.0
-
-    q = cupy.percentile(data[cupy.isfinite(data)], p)
-    q = cupy.unique(q)
+    q = module.percentile(data[module.isfinite(data)], p)
+    q = module.unique(q)
     return q
 
 
@@ -322,28 +311,14 @@ def _run_dask_cupy_quantile(data, k):
 
 
 def _quantile(agg, k):
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        q = _run_cpu_quantile(agg.data, k)
-
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        q = _run_cupy_quantile(agg.data, k)
-
-    # dask + cupy case
-    elif has_cuda() and \
-        isinstance(agg.data, cupy.ndarray) and \
-            is_cupy_backed(agg):
-        q = _run_dask_cupy_quantile(agg.data, k)
-
-    # dask + numpy case
-    elif isinstance(agg.data, da.Array):
-        q = _run_dask_numpy_quantile(agg.data, k)
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
-
-    return q
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=lambda *args: _run_quantile(*args, module=np),
+        dask_func=lambda *args: _run_quantile(*args, module=da),
+        cupy_func=lambda *args: _run_quantile(*args, module=cupy),
+        dask_cupy_func=_run_dask_cupy_quantile
+    )
+    out = mapper(agg)(agg.data, k)
+    return out
 
 
 def quantile(agg: xr.DataArray,
@@ -431,13 +406,13 @@ def quantile(agg: xr.DataArray,
               "for k classes (using {} bins)".format(k_q))
         k = k_q
 
-    out = _bin(agg.data, bins=q, new_values=np.arange(k))
+    out = _bin(agg, bins=q, new_values=np.arange(k))
 
-    return DataArray(out,
-                     name=name,
-                     dims=agg.dims,
-                     coords=agg.coords,
-                     attrs=agg.attrs)
+    return xr.DataArray(out,
+                        name=name,
+                        dims=agg.dims,
+                        coords=agg.coords,
+                        attrs=agg.attrs)
 
 
 @nb.jit(nopython=True)
@@ -499,81 +474,6 @@ def _run_numpy_jenks_matrices(data, n_classes):
     return lower_class_limits, var_combinations
 
 
-def _run_numpy_jenks(data, n_classes):
-    # ported from existing cython implementation:
-    # https://github.com/perrygeo/jenks/blob/master/jenks.pyx
-
-    data.sort()
-
-    lower_class_limits, _ = _run_numpy_jenks_matrices(data, n_classes)
-
-    k = data.shape[0]
-    kclass = np.zeros(n_classes + 1, dtype=np.float64)
-    kclass[0] = data[0]
-    kclass[-1] = data[-1]
-    count_num = n_classes
-
-    while count_num > 1:
-        elt = int(lower_class_limits[k][count_num] - 2)
-        kclass[count_num - 1] = data[elt]
-        k = int(lower_class_limits[k][count_num] - 1)
-        count_num -= 1
-
-    return kclass
-
-
-def _run_numpy_natural_break(data, num_sample, k):
-    num_data = data.size
-
-    if num_sample is not None and num_sample < num_data:
-        # randomly select sample from the whole dataset
-        # create a pseudo random number generator
-        generator = RandomState(1234567890)
-        idx = np.linspace(
-            0, data.size, data.size, endpoint=False, dtype=np.uint32
-        )
-        generator.shuffle(idx)
-        sample_idx = idx[:num_sample]
-        sample_data = data.flatten()[sample_idx]
-    else:
-        sample_data = data.flatten()
-
-    # warning if number of total data points to fit the model bigger than 40k
-    if sample_data.size >= 40000:
-        with warnings.catch_warnings():
-            warnings.simplefilter('default')
-            warnings.warn('natural_breaks Warning: Natural break '
-                          'classification (Jenks) has a complexity of O(n^2), '
-                          'your classification with {} data points may take '
-                          'a long time.'.format(sample_data.size),
-                          Warning)
-
-    if not isinstance(sample_data, np.ndarray):
-        sample_data = np.asarray(sample_data)
-
-    # only include finite values
-    sample_data = sample_data[np.isfinite(sample_data)]
-    uv = np.unique(sample_data)
-    uvk = len(uv)
-
-    if uvk < k:
-        with warnings.catch_warnings():
-            warnings.simplefilter('default')
-            warnings.warn('natural_breaks Warning: Not enough unique values '
-                          'in data array for {} classes. '
-                          'n_samples={} should be >= n_clusters={}. '
-                          'Using k={} instead.'.format(k, uvk, k, uvk),
-                          Warning)
-        uv.sort()
-        bins = uv
-    else:
-        centroids = _run_numpy_jenks(sample_data, k)
-        bins = np.array(centroids[1:])
-
-    out = _bin(data, bins, np.arange(uvk))
-    return out
-
-
 def _run_cupy_jenks_matrices(data, n_classes):
     n_data = data.shape[0]
     lower_class_limits = cupy.zeros((n_data + 1, n_classes + 1), dtype='f4')
@@ -626,17 +526,22 @@ def _run_cupy_jenks_matrices(data, n_classes):
     return lower_class_limits, var_combinations
 
 
-def _run_cupy_jenks(data, n_classes):
+def _run_jenks(data, n_classes, module):
+    # ported from existing cython implementation:
+    # https://github.com/perrygeo/jenks/blob/master/jenks.pyx
+
     data.sort()
 
-    lower_class_limits, _ = _run_cupy_jenks_matrices(data, n_classes)
+    if module == np:
+        lower_class_limits, _ = _run_numpy_jenks_matrices(data, n_classes)
+    elif module == cupy:
+        lower_class_limits, _ = _run_cupy_jenks_matrices(data, n_classes)
 
     k = data.shape[0]
-    kclass = [0.] * (n_classes + 1)
-    count_num = n_classes
-
-    kclass[n_classes] = data[len(data) - 1]
+    kclass = np.zeros(n_classes + 1, dtype=np.float64)
     kclass[0] = data[0]
+    kclass[-1] = data[-1]
+    count_num = n_classes
 
     while count_num > 1:
         elt = int(lower_class_limits[k][count_num] - 2)
@@ -647,12 +552,17 @@ def _run_cupy_jenks(data, n_classes):
     return kclass
 
 
-def _run_cupy_natural_break(data, num_sample, k):
+def _run_natural_break(agg, num_sample, k, module):
+    data = agg.data
     num_data = data.size
 
     if num_sample is not None and num_sample < num_data:
-        generator = cupy.random.RandomState(1234567890)
-        idx = [i for i in range(0, data.size)]
+        # randomly select sample from the whole dataset
+        # create a pseudo random number generator
+        generator = RandomState(1234567890)
+        idx = module.linspace(
+            0, data.size, data.size, endpoint=False, dtype=module.uint32
+        )
         generator.shuffle(idx)
         sample_idx = idx[:num_sample]
         sample_data = data.flatten()[sample_idx]
@@ -669,10 +579,11 @@ def _run_cupy_natural_break(data, num_sample, k):
                           'a long time.'.format(sample_data.size),
                           Warning)
 
-    # only include non-nan values
-    sample_data = cupy.asarray([i for i in sample_data if cupy.isfinite(i)])
+    sample_data = module.asarray(sample_data)
 
-    uv = cupy.unique(sample_data[cupy.isfinite(sample_data)])
+    # only include finite values
+    sample_data = sample_data[module.isfinite(sample_data)]
+    uv = module.unique(sample_data)
     uvk = len(uv)
 
     if uvk < k:
@@ -686,10 +597,10 @@ def _run_cupy_natural_break(data, num_sample, k):
         uv.sort()
         bins = uv
     else:
-        centroids = _run_cupy_jenks(sample_data, k)
-        bins = cupy.array(centroids[1:])
+        centroids = _run_jenks(sample_data, k, module)
+        bins = module.array(centroids[1:])
 
-    out = _bin(data, bins, cupy.arange(uvk))
+    out = _bin(agg, bins, module.arange(uvk))
     return out
 
 
@@ -775,74 +686,52 @@ def natural_breaks(agg: xr.DataArray,
             res:      (10.0, 10.0)
     """
 
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        out = _run_numpy_natural_break(agg.data, num_sample, k)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=lambda *args: _run_natural_break(*args, module=np),
+        dask_func=not_implemented_func,
+        cupy_func=lambda *args: _run_natural_break(*args, module=cupy),
+        dask_cupy_func=not_implemented_func
+    )
+    out = mapper(agg)(agg, num_sample, k)
+    return xr.DataArray(out,
+                        name=name,
+                        coords=agg.coords,
+                        dims=agg.dims,
+                        attrs=agg.attrs)
 
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _run_cupy_natural_break(agg.data, num_sample, k)
 
+def _run_equal_interval(agg, k, module):
+    data = agg.data.ravel()
+    if module == cupy:
+        nan = cupy.nan
+        inf = cupy.inf
     else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
+        nan = np.nan
+        inf = np.inf
 
-    return DataArray(out,
-                     name=name,
-                     coords=agg.coords,
-                     dims=agg.dims,
-                     attrs=agg.attrs)
+    data = module.where(data == inf, nan, data)
+    max_data = module.nanmax(data)
+    min_data = module.nanmin(data)
+    if module == cupy:
+        min_data = min_data.get()
+        max_data = max_data.get()
 
-
-def _run_numpy_equal_interval(data, k):
-    max_data = np.nanmax(data[np.isfinite(data)])
-    min_data = np.nanmin(data[np.isfinite(data)])
-    rg = max_data - min_data
-    width = rg * 1.0 / k
-    cuts = np.arange(min_data + width, max_data + width, width)
-    l_cuts = len(cuts)
-    if l_cuts > k:
-        # handle overshooting
-        cuts = cuts[0:k]
-    cuts[-1] = max_data
-    out = _run_numpy_bin(data, cuts, np.arange(l_cuts))
-    return out
-
-
-def _run_dask_numpy_equal_interval(data, k):
-    data = da.where(data == np.inf, np.nan, data)
-    max_data = da.nanmax(data)
-    min_data = da.nanmin(data)
-    width = (max_data - min_data) / k
-    cuts = da.arange(min_data + width, max_data + width, width)
+    width = (max_data - min_data) * 1.0 / k
+    cuts = module.arange(min_data + width, max_data + width, width)
     l_cuts = cuts.shape[0]
     if l_cuts > k:
         # handle overshooting
         cuts = cuts[0:k]
-    # work around to assign cuts[-1] = max_data
-    bins = da.concatenate([cuts[:k-1], [max_data]])
-    out = _bin(data, bins, np.arange(l_cuts))
+
+    if module == da:
+        # work around to assign cuts[-1] = max_data
+        bins = da.concatenate([cuts[:k-1], [max_data]])
+        out = _bin(agg, bins, np.arange(l_cuts))
+    else:
+        cuts[-1] = max_data
+        out = _bin(agg, cuts, np.arange(l_cuts))
+
     return out
-
-
-def _run_cupy_equal_interval(data, k):
-    max_data = cupy.nanmax(data[cupy.isfinite(data)])
-    min_data = cupy.nanmin(data[cupy.isfinite(data)])
-    width = (max_data - min_data) / k
-    cuts = cupy.arange(min_data.get() +
-                       width.get(), max_data.get() +
-                       width.get(), width.get())
-    l_cuts = cuts.shape[0]
-    if l_cuts > k:
-        # handle overshooting
-        cuts = cuts[0:k]
-    cuts[-1] = max_data
-    out = _bin(data, cuts, cupy.arange(l_cuts))
-    return out
-
-
-def _run_dask_cupy_equal_interval(data, k):
-    msg = 'Not yet supported.'
-    raise NotImplementedError(msg)
 
 
 def equal_interval(agg: xr.DataArray,
@@ -917,30 +806,15 @@ def equal_interval(agg: xr.DataArray,
         Attributes:
             res:      (10.0, 10.0)
     """
-
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        out = _run_numpy_equal_interval(agg.data, k)
-
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _run_cupy_equal_interval(agg.data, k)
-
-    # dask + cupy case
-    elif (has_cuda() and
-          isinstance(agg.data, cupy.ndarray) and
-          is_cupy_backed(agg)):
-        out = _run_dask_cupy_equal_interval(agg.data, k)
-
-    # dask + numpy case
-    elif isinstance(agg.data, da.Array):
-        out = _run_dask_numpy_equal_interval(agg.data, k)
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
-
-    return DataArray(out,
-                     name=name,
-                     coords=agg.coords,
-                     dims=agg.dims,
-                     attrs=agg.attrs)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=lambda *args: _run_equal_interval(*args, module=np),
+        dask_func=lambda *args: _run_equal_interval(*args, module=da),
+        cupy_func=lambda *args: _run_equal_interval(*args, module=cupy),
+        dask_cupy_func=not_implemented_func
+    )
+    out = mapper(agg)(agg, k)
+    return xr.DataArray(out,
+                        name=name,
+                        coords=agg.coords,
+                        dims=agg.dims,
+                        attrs=agg.attrs)
