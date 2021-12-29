@@ -208,7 +208,8 @@ def curvature(agg: xr.DataArray,
         numpy_func=_run_numpy,
         cupy_func=_run_cupy,
         dask_func=_run_dask_numpy,
-        dask_cupy_func=not_implemented_func,
+        dask_cupy_func=lambda *args: not_implemented_func(
+            *args, messages='curvature() does not support dask with cupy backed DataArray.'),
     )
     out = mapper(agg)(agg.data, cellsize)
     return xr.DataArray(out,

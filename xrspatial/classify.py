@@ -209,7 +209,6 @@ def reclassify(agg: xr.DataArray,
     .. sourcecode:: python
         >>> import numpy as np
         >>> import xarray as xr
-        >>> import dask.array as da
         >>> from xrspatial.classify import reclassify
 
         >>> data = np.array([
@@ -356,38 +355,22 @@ def quantile(agg: xr.DataArray,
 
     Examples
     --------
-    .. plot::
-       :include-source:
+    Quantile work with numpy backed xarray DataArray
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.classify import quantile
 
-        import numpy as np
-        import xarray as xr
-        import dask.array as da
-        from xrspatial.classify import quantile
-
-        elevation = np.array([
+        >>> elevation = np.array([
             [np.nan,  1.,  2.,  3.,  4.],
             [ 5.,  6.,  7.,  8.,  9.],
             [10., 11., 12., 13., 14.],
             [15., 16., 17., 18., 19.],
             [20., 21., 22., 23., np.inf]
         ])
-        data = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-        data_quantile = quantile(data, k=5)
-
-    .. sourcecode:: python
-
-        >>> print(data)
-        <xarray.DataArray (dim_0: 5, dim_1: 5)>
-        array([[nan,  1.,  2.,  3.,  4.],
-               [ 5.,  6.,  7.,  8.,  9.],
-               [10., 11., 12., 13., 14.],
-               [15., 16., 17., 18., 19.],
-               [20., 21., 22., 23., inf]])
-        Dimensions without coordinates: dim_0, dim_1
-        Attributes:
-            res:      (10.0, 10.0)
-
-        >>> print(data_quantile)
+        >>> agg_numpy = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+        >>> numpy_quantile = quantile(agg_numpy, k=5)
+        >>> print(numpy_quantile)
         <xarray.DataArray 'quantile' (dim_0: 5, dim_1: 5)>
         array([[nan,  0.,  0.,  0.,  0.],
                [ 0.,  1.,  1.,  1.,  1.],
@@ -642,39 +625,23 @@ def natural_breaks(agg: xr.DataArray,
         - jenks: https://github.com/perrygeo/jenks/blob/master/jenks.pyx
 
     Examples
-    --------
-    .. plot::
-       :include-source:
+    -------
+    natural_breaks() works with numpy backed xarray DataArray.
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.classify import natural_breaks
 
-        import numpy as np
-        import xarray as xr
-        import dask.array as da
-        from xrspatial.classify import natural_breaks
-
-        elevation = np.array([
+        >>> elevation = np.array([
             [np.nan,  1.,  2.,  3.,  4.],
             [ 5.,  6.,  7.,  8.,  9.],
             [10., 11., 12., 13., 14.],
             [15., 16., 17., 18., 19.],
             [20., 21., 22., 23., np.inf]
         ])
-        data = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-        data_natural_breaks = natural_breaks(data, k=5)
-
-    .. sourcecode:: python
-
-        >>> print(data)
-        <xarray.DataArray (dim_0: 5, dim_1: 5)>
-        array([[nan,  1.,  2.,  3.,  4.],
-               [ 5.,  6.,  7.,  8.,  9.],
-               [10., 11., 12., 13., 14.],
-               [15., 16., 17., 18., 19.],
-               [20., 21., 22., 23., inf]])
-        Dimensions without coordinates: dim_0, dim_1
-        Attributes:
-            res:      (10.0, 10.0)
-
-        >>> print(data_natural_breaks)
+        >>> agg_numpy = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+        >>> numpy_natural_breaks = natural_breaks(agg_numpy, k=5)
+        >>> print(numpy_natural_breaks)
         <xarray.DataArray 'natural_breaks' (dim_0: 5, dim_1: 5)>
         array([[nan,  0.,  0.,  0.,  0.],
                [ 1.,  1.,  1.,  1.,  2.],
@@ -684,13 +651,31 @@ def natural_breaks(agg: xr.DataArray,
         Dimensions without coordinates: dim_0, dim_1
         Attributes:
             res:      (10.0, 10.0)
+
+    natural_breaks() works with cupy backed xarray DataArray.
+    .. sourcecode:: python
+        >>> import cupy
+        >>> agg_cupy = xr.DataArray(cupy.asarray(elevation))
+        >>> cupy_natural_breaks = natural_breaks(agg_cupy)
+        >>> print(type(cupy_natural_breaks))
+        <class 'xarray.core.dataarray.DataArray'>
+        >>> print(cupy_natural_breaks)
+        <xarray.DataArray 'natural_breaks' (dim_0: 5, dim_1: 5)>
+        array([[nan,  0.,  0.,  0.,  0.],
+               [ 1.,  1.,  1.,  1.,  2.],
+               [ 2.,  2.,  2.,  2.,  3.],
+               [ 3.,  3.,  3.,  3.,  4.],
+               [ 4.,  4.,  4.,  4., nan]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
     """
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=lambda *args: _run_natural_break(*args, module=np),
-        dask_func=not_implemented_func,
+        dask_func=lambda *args: not_implemented_func(
+            *args, messages='natural_breaks() does not support dask with numpy backed DataArray.'),
         cupy_func=lambda *args: _run_natural_break(*args, module=cupy),
-        dask_cupy_func=not_implemented_func
+        dask_cupy_func=lambda *args: not_implemented_func(
+            *args, messages='natural_breaks() does not support dask with cupy backed DataArray.'),
     )
     out = mapper(agg)(agg, num_sample, k)
     return xr.DataArray(out,
@@ -764,38 +749,20 @@ def equal_interval(agg: xr.DataArray,
 
     Examples
     --------
-    .. plot::
-       :include-source:
-
-        import numpy as np
-        import xarray as xr
-        import dask.array as da
-        from xrspatial.classify import equal_interval
-
-        elevation = np.array([
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.classify import equal_interval
+        >>> elevation = np.array([
             [np.nan,  1.,  2.,  3.,  4.],
             [ 5.,  6.,  7.,  8.,  9.],
             [10., 11., 12., 13., 14.],
             [15., 16., 17., 18., 19.],
             [20., 21., 22., 23., np.inf]
         ])
-        data = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-        data_equal_interval = equal_interval(data, k=5)
-
-    .. sourcecode:: python
-
-        >>> print(data)
-        <xarray.DataArray (dim_0: 5, dim_1: 5)>
-        array([[nan,  1.,  2.,  3.,  4.],
-               [ 5.,  6.,  7.,  8.,  9.],
-               [10., 11., 12., 13., 14.],
-               [15., 16., 17., 18., 19.],
-               [20., 21., 22., 23., inf]])
-        Dimensions without coordinates: dim_0, dim_1
-        Attributes:
-            res:      (10.0, 10.0)
-
-        >>> print(data_equal_interval)
+        >>> agg_numpy = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+        >>> numpy_equal_interval = equal_interval(agg_numpy, k=5)
+        >>> print(numpy_equal_interval)
         <xarray.DataArray 'equal_interval' (dim_0: 5, dim_1: 5)>
         array([[nan,  0.,  0.,  0.,  0.],
                [ 0.,  0.,  0.,  0.,  1.],
@@ -806,11 +773,13 @@ def equal_interval(agg: xr.DataArray,
         Attributes:
             res:      (10.0, 10.0)
     """
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=lambda *args: _run_equal_interval(*args, module=np),
         dask_func=lambda *args: _run_equal_interval(*args, module=da),
         cupy_func=lambda *args: _run_equal_interval(*args, module=cupy),
-        dask_cupy_func=not_implemented_func
+        dask_cupy_func=lambda *args: not_implemented_func(
+            *args, messages='equal_interval() does support dask with cupy backed DataArray.'),
     )
     out = mapper(agg)(agg, k)
     return xr.DataArray(out,
