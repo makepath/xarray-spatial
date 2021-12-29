@@ -16,8 +16,9 @@ from numba import cuda, jit
 import numba as nb
 
 # local modules
-from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
+from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import not_implemented_func
 
 
 @jit(nopython=True, nogil=True, parallel=True, cache=True)
@@ -233,19 +234,15 @@ def perlin(agg: xr.DataArray,
                [1.        , 0.8715414 , 0.41902685, 0.02916668]], dtype=float32)  # noqa
         Dimensions without coordinates: y, x
     """
-
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        out = _perlin_numpy(agg.data, freq, seed)
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _perlin_cupy(agg.data, freq, seed)
-    # dask + numpy case
-    elif isinstance(agg.data, da.Array):
-        out = _perlin_dask_numpy(agg.data, freq, seed)
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
-
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_perlin_numpy,
+        cupy_func=_perlin_cupy,
+        dask_func=_perlin_dask_numpy,
+        dask_cupy_func=lambda *args: not_implemented_func(
+            *args, messages='perlin() does not support dask with cupy backed DataArray',  # noqa
+        )
+    )
+    out = mapper(agg)(agg.data, freq, seed)
     result = xr.DataArray(out,
                           dims=agg.dims,
                           attrs=agg.attrs,
