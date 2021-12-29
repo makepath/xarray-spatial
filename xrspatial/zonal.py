@@ -11,6 +11,8 @@ import dask.dataframe as dd
 from dask import delayed
 
 from xrspatial.utils import ngjit, validate_arrays
+from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import not_implemented_func
 
 
 TOTAL_COUNT = '_total_count'
@@ -452,25 +454,19 @@ def stats(
     elif isinstance(stats_funcs, dict):
         stats_funcs_dict = stats_funcs.copy()
 
-    if isinstance(values.data, np.ndarray):
-        # numpy case
-        stats_df = _stats_numpy(
-            zones.data,
-            values.data,
-            zone_ids,
-            stats_funcs_dict,
-            nodata_values
-        )
-    else:
-        # dask case
-        stats_df = _stats_dask_numpy(
-            zones.data,
-            values.data,
-            zone_ids,
-            stats_funcs_dict,
-            nodata_values
-        )
-
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_stats_numpy,
+        dask_func=_stats_dask_numpy,
+        cupy_func=lambda *args: not_implemented_func(
+            *args, messages='stats() does not support cupy backed DataArray'
+        ),
+        dask_cupy_func=lambda *args: not_implemented_func(
+            *args, messages='stats() does not support dask with cupy backed DataArray'  # noqa
+        ),
+    )
+    stats_df = mapper(values)(
+        zones.data, values.data, zone_ids, stats_funcs_dict, nodata_values
+    )
     return stats_df
 
 
@@ -915,19 +911,20 @@ def crosstab(
     # find categories
     unique_cats, cat_ids = _find_cats(values, cat_ids, nodata_values)
 
-    if isinstance(values.data, np.ndarray):
-        # numpy case
-        crosstab_df = _crosstab_numpy(
-            zones.data, values.data,
-            zone_ids, unique_cats, cat_ids, nodata_values, agg
-        )
-    else:
-        # dask case
-        crosstab_df = _crosstab_dask_numpy(
-            zones.data, values.data,
-            zone_ids, unique_cats, cat_ids, nodata_values, agg
-        )
-
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_crosstab_numpy,
+        dask_func=_crosstab_dask_numpy,
+        cupy_func=lambda *args: not_implemented_func(
+            *args, messages='crosstab() does not support cupy backed DataArray'
+        ),
+        dask_cupy_func=lambda *args: not_implemented_func(
+            *args, messages='crosstab() does not support dask with cupy backed DataArray'  # noqa
+        ),
+    )
+    crosstab_df = mapper(values)(
+        zones.data, values.data,
+        zone_ids, unique_cats, cat_ids, nodata_values, agg
+    )
     return crosstab_df
 
 
