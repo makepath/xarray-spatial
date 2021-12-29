@@ -672,10 +672,10 @@ def natural_breaks(agg: xr.DataArray,
     mapper = ArrayTypeFunctionMapping(
         numpy_func=lambda *args: _run_natural_break(*args, module=np),
         dask_func=lambda *args: not_implemented_func(
-            *args, messages='natural_breaks() does not support dask with numpy backed DataArray.'),
+            *args, messages='natural_breaks() does not support dask with numpy backed DataArray.'),  # noqa
         cupy_func=lambda *args: _run_natural_break(*args, module=cupy),
         dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='natural_breaks() does not support dask with cupy backed DataArray.'),
+            *args, messages='natural_breaks() does not support dask with cupy backed DataArray.'),  # noqa
     )
     out = mapper(agg)(agg, num_sample, k)
     return xr.DataArray(out,
@@ -779,7 +779,7 @@ def equal_interval(agg: xr.DataArray,
         dask_func=lambda *args: _run_equal_interval(*args, module=da),
         cupy_func=lambda *args: _run_equal_interval(*args, module=cupy),
         dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='equal_interval() does support dask with cupy backed DataArray.'),
+            *args, messages='equal_interval() does support dask with cupy backed DataArray.'),  # noqa
     )
     out = mapper(agg)(agg, k)
     return xr.DataArray(out,

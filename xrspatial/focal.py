@@ -109,7 +109,7 @@ def _mean(data, excludes):
         cupy_func=_mean_cupy,
         dask_func=_mean_dask_numpy,
         dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='mean() does not support dask with cupy backed DataArray.'),
+            *args, messages='mean() does not support dask with cupy backed DataArray.'),  # noqa
     )
     out = mapper(agg)(agg.data, excludes)
     return out
@@ -430,7 +430,7 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
         cupy_func=_apply_cupy,
         dask_func=_apply_dask_numpy,
         dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='apply() does not support dask with cupy backed DataArray.'),
+            *args, messages='apply() does not support dask with cupy backed DataArray.'),  # noqa
     )
     out = mapper(raster)(raster.data.astype(float), kernel, func)
     result = DataArray(out,
@@ -768,7 +768,7 @@ def hotspots(raster, kernel):
         cupy_func=_hotspots_cupy,
         dask_func=_hotspots_dask_numpy,
         dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='hotspots() does not support dask with cupy backed DataArray.'),
+            *args, messages='hotspots() does not support dask with cupy backed DataArray.'),  # noqa
     )
     out = mapper(raster)(raster, kernel)
 
