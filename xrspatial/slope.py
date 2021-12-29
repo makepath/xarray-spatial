@@ -20,9 +20,9 @@ import xarray as xr
 # local modules
 from xrspatial.utils import cuda_args
 from xrspatial.utils import get_dataarray_resolution
-from xrspatial.utils import has_cuda
 from xrspatial.utils import ngjit
-from xrspatial.utils import is_dask_cupy
+from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import not_implemented_func
 
 
 @ngjit
@@ -111,24 +111,6 @@ def _run_cupy(data: cupy.ndarray,
                                 cellsize_x_arr,
                                 cellsize_y_arr,
                                 out)
-    return out
-
-
-def _run_dask_cupy(data: da.Array,
-                   cellsize_x: Union[int, float],
-                   cellsize_y: Union[int, float]) -> da.Array:
-    msg = 'Upstream bug in dask prevents cupy backed arrays'
-    raise NotImplementedError(msg)
-
-    _func = partial(_run_cupy,
-                    cellsize_x=cellsize_x,
-                    cellsize_y=cellsize_y)
-
-    out = data.map_overlap(_func,
-                           depth=(1, 1),
-                           boundary=cupy.nan,
-                           dtype=cupy.float32,
-                           meta=cupy.array(()))
     return out
 
 
@@ -240,25 +222,15 @@ def slope(agg: xr.DataArray,
             Max Elevation:  4000
     """
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
-
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        out = _run_numpy(agg.data, cellsize_x, cellsize_y)
-
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _run_cupy(agg.data, cellsize_x, cellsize_y)
-
-    # dask + cupy case
-    elif has_cuda() and is_dask_cupy(agg):
-        out = _run_dask_cupy(agg.data, cellsize_x, cellsize_y)
-
-    # dask + numpy case
-    elif isinstance(agg.data, da.Array):
-        out = _run_dask_numpy(agg.data, cellsize_x, cellsize_y)
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_run_numpy,
+        cupy_func=_run_cupy,
+        dask_func=_run_dask_numpy,
+        dask_cupy_func=lambda *args: not_implemented_func(
+            *args, messages='slope() does not support dask with cupy backed DataArray'  # noqa
+        ),
+    )
+    out = mapper(agg)(agg.data, cellsize_x, cellsize_y)
 
     return xr.DataArray(out,
                         name=name,
