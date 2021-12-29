@@ -21,17 +21,17 @@ from xrspatial.utils import ArrayTypeFunctionMapping
 from xrspatial.utils import not_implemented_func
 
 
-@jit(nopython=True, nogil=True, parallel=True, cache=True)
+@jit(nopython=True, nogil=True)
 def _lerp(a, b, x):
     return a + x * (b - a)
 
 
-@jit(nopython=True, nogil=True, parallel=True, cache=True)
+@jit(nopython=True, nogil=True)
 def _fade(t):
     return 6 * t ** 5 - 15 * t ** 4 + 10 * t ** 3
 
 
-@jit(nopython=True, nogil=True, parallel=True, cache=True)
+@jit(nopython=True, nogil=True)
 def _gradient(h, x, y):
     # assert(len(h.shape) == 2)
     vectors = np.array([[0, 1], [0, -1], [1, 0], [-1, 0]])

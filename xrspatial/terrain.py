@@ -18,9 +18,11 @@ except ImportError:
 import dask.array as da
 
 # local modules
-from xrspatial.utils import has_cuda
 from xrspatial.utils import cuda_args
 from xrspatial.utils import get_dataarray_resolution
+from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import not_implemented_func
+
 from .perlin import _perlin, _perlin_gpu
 
 
@@ -264,24 +266,15 @@ def generate_terrain(agg: xr.DataArray,
     y_range_scaled = (_scale(y_range[0], full_yrange, (0.0, 1.0)),
                       _scale(y_range[1], full_yrange, (0.0, 1.0)))
 
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        out = _terrain_numpy(
-            agg.data, seed, x_range_scaled, y_range_scaled, zfactor
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_terrain_numpy,
+        cupy_func=_terrain_cupy,
+        dask_func=_terrain_dask_numpy,
+        dask_cupy_func=lambda *args: not_implemented_func(
+            *args, messages='generate_terrain() does not support dask with cupy backed DataArray'  # noqa
         )
-    # cupy case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _terrain_cupy(
-            agg.data, seed, x_range_scaled, y_range_scaled, zfactor
-        )
-    # dask + numpy case
-    elif isinstance(agg.data, da.Array):
-        out = _terrain_dask_numpy(
-            agg.data, seed, x_range_scaled, y_range_scaled, zfactor
-        )
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
-
+    )
+    out = mapper(agg)(agg.data, seed, x_range_scaled, y_range_scaled, zfactor)
     canvas = ds.Canvas(
         plot_width=width, plot_height=height, x_range=x_range, y_range=y_range
     )
