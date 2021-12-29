@@ -13,6 +13,7 @@ from xrspatial.utils import cuda_args
 from xrspatial.utils import ngjit
 from xrspatial.utils import ArrayTypeFunctionMapping
 from xrspatial.utils import validate_arrays
+from xrspatial.utils import not_implemented_func
 
 import warnings
 # 3rd-party
@@ -1583,33 +1584,6 @@ def _normalize_data(agg, pixel_max, c, th):
     return out
 
 
-def _alpha_numpy(red, nodata):
-    a = np.where(np.logical_or(np.isnan(red), red <= nodata), 0, 255)
-    return a
-
-
-def _alpha_dask(red, nodata):
-    a = da.where(da.logical_or(da.isnan(red), red <= nodata), 0, 255)
-    return a
-
-
-def _alpha_cupy(red, nodata):
-    raise NotImplementedError('Not Supported')
-
-
-def _alpha_dask_cupy(red, nodata):
-    raise NotImplementedError('Not Supported')
-
-
-def _alpha(red, nodata=1):
-    mapper = ArrayTypeFunctionMapping(numpy_func=_alpha_numpy,
-                                      dask_func=_alpha_dask,
-                                      cupy_func=None,
-                                      dask_cupy_func=None)
-    out = mapper(red)(red.data, nodata)
-    return out
-
-
 def _true_color_numpy(r, g, b, nodata, c, th):
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
 
@@ -1626,22 +1600,17 @@ def _true_color_numpy(r, g, b, nodata, c, th):
 
 def _true_color_dask(r, g, b, nodata, c, th):
     pixel_max = 255
+
+    alpha = da.where(
+        da.logical_or(da.isnan(r), r <= nodata), 0, pixel_max
+    ).astype(np.uint8)
+
     red = (_normalize_data(r, pixel_max, c, th)).astype(np.uint8)
     green = (_normalize_data(g, pixel_max, c, th)).astype(np.uint8)
     blue = (_normalize_data(b, pixel_max, c, th)).astype(np.uint8)
 
-    alpha = _alpha(r, nodata).astype(np.uint8)
-
     out = da.stack([red, green, blue, alpha], axis=-1)
     return out
-
-
-def _true_color_cupy(r, g, b, nodata, c, th):
-    raise NotImplementedError('Not Supported')
-
-
-def _true_color_dask_cupy(r, g, b, nodata, c, th):
-    raise NotImplementedError('Not Supported')
 
 
 def true_color(r, g, b, nodata=1, c=10.0, th=0.125, name='true_color'):
@@ -1698,10 +1667,16 @@ def true_color(r, g, b, nodata=1, c=10.0, th=0.125, name='true_color'):
         true_color_img.plot.imshow()
     """
 
-    mapper = ArrayTypeFunctionMapping(numpy_func=_true_color_numpy,
-                                      dask_func=_true_color_dask,
-                                      cupy_func=_true_color_cupy,
-                                      dask_cupy_func=_true_color_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_true_color_numpy,
+        dask_func=_true_color_dask,
+        cupy_func=lambda *args: not_implemented_func(
+            *args, messages='true_color() does not support cupy backed DataArray',  # noqa
+        ),
+        dask_cupy_func=lambda *args: not_implemented_func(
+            *args, messages='true_color() does not support dask with cupy backed DataArray',  # noqa
+        ),
+    )
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         out = mapper(r)(r, g, b, nodata, c, th)
