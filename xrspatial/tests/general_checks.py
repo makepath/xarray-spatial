@@ -29,16 +29,16 @@ def general_output_checks(input_agg: xr.DataArray,
             )
 
     if expected_results is not None:
-        numpy_func = lambda output, expected: np.testing.assert_allclose(
+        numpy_func = lambda output, expected: np.testing.assert_allclose(  # noqa: E731, E501
             output, expected_results, equal_nan=True
         )
-        dask_func = lambda output, expected: np.testing.assert_allclose(
+        dask_func = lambda output, expected: np.testing.assert_allclose(  # noqa: E731, E501
             output.compute(), expected_results, equal_nan=True
         )
-        cupy_func = lambda output, expected: np.testing.assert_allclose(
+        cupy_func = lambda output, expected: np.testing.assert_allclose(  # noqa: E731, E501
             output.get(), expected_results, equal_nan=True
         )
-        dask_cupy_func = lambda output, expected: np.testing.assert_allclose(
+        dask_cupy_func = lambda output, expected: np.testing.assert_allclose(  # noqa: E731, E501
             output.compute().get(), expected_results, equal_nan=True
         )
         mapper = ArrayTypeFunctionMapping(
