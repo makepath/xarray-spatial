@@ -84,32 +84,32 @@ def test_curvature_gpu_equals_cpu():
 
     import cupy
 
-    small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
-    cpu = curvature(small_da, name='numpy_result')
+    agg_numpy = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    cpu = curvature(agg_numpy, name='numpy_result')
 
-    small_da_cupy = xr.DataArray(
+    agg_cupy = xr.DataArray(
         cupy.asarray(elevation), attrs={'res': (10.0, 10.0)}
     )
-    gpu = curvature(small_da_cupy, name='cupy_result')
+    gpu = curvature(agg_cupy, name='cupy_result')
 
-    general_output_checks(small_da_cupy, gpu)
+    general_output_checks(agg_cupy, gpu)
     np.testing.assert_allclose(cpu.data, gpu.data.get(), equal_nan=True)
+
+    # NOTE: Dask + GPU code paths don't currently work because of
+    # dask casting cupy arrays to numpy arrays during
+    # https://github.com/dask/dask/issues/4842
 
 
 def test_curvature_numpy_equals_dask():
-    small_numpy_based_data_array = xr.DataArray(
-        elevation, attrs={'res': (10.0, 10.0)}
-    )
-    small_dask_based_data_array = xr.DataArray(
+    agg_numpy = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    numpy_curvature = curvature(agg_numpy, name='numpy_curvature')
+
+    agg_dask = xr.DataArray(
         da.from_array(elevation, chunks=(3, 3)), attrs={'res': (10.0, 10.0)}
     )
+    dask_curvature = curvature(agg_dask, name='dask_curvature')
+    general_output_checks(agg_dask, dask_curvature)
 
-    numpy_curvature = curvature(small_numpy_based_data_array,
-                                name='numpy_curvature')
-    dask_curvature = curvature(small_dask_based_data_array,
-                               name='dask_curvature')
-
-    general_output_checks(small_dask_based_data_array, dask_curvature)
-
-    dask_curvature.data = dask_curvature.data.compute()
-    np.testing.assert_allclose(numpy_curvature, dask_curvature, equal_nan=True)
+    # both produce same results
+    np.testing.assert_allclose(
+        numpy_curvature.data, dask_curvature.data.compute(), equal_nan=True)

@@ -58,7 +58,7 @@ def test_mean_transfer_function_cpu():
 
     # both output same results
     np.testing.assert_allclose(
-        numpy_mean, dask_numpy_mean.compute(), equal_nan=True
+        numpy_mean.data, dask_numpy_mean.data.compute(), equal_nan=True
     )
 
 
@@ -76,7 +76,8 @@ def test_mean_transfer_function_gpu_equals_cpu():
     numpy_agg = xr.DataArray(data_random)
     numpy_mean = mean(numpy_agg)
 
-    np.testing.assert_allclose(numpy_mean, cupy_mean.get(), equal_nan=True)
+    np.testing.assert_allclose(
+        numpy_mean.data, cupy_mean.data.get(), equal_nan=True)
 
     # dask + cupy case not implemented
     dask_cupy_agg = xr.DataArray(
@@ -424,7 +425,7 @@ def test_hotspot_gpu_equals_cpu():
     cupy_hotspots = hotspots(cupy_agg, kernel)
 
     np.testing.assert_allclose(
-        numpy_hotspots.data, cupy_hotspots.data.get, equal_nan=True)
+        numpy_hotspots.data, cupy_hotspots.data.get(), equal_nan=True)
 
     # dask + cupy case not implemented
     dask_cupy_agg = xr.DataArray(

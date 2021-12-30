@@ -73,7 +73,8 @@ def test_hillshade_cpu():
     dask_result = hillshade(small_das_based_data_array, name='dask')
 
     general_output_checks(small_das_based_data_array, dask_result)
-    np.testing.assert_allclose(numpy_result, dask_result, equal_nan=True)
+    np.testing.assert_allclose(
+        numpy_result.data, dask_result.data.compute(), equal_nan=True)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")

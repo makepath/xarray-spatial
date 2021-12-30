@@ -38,9 +38,8 @@ def test_perlin_cpu():
     perlin_dask = perlin(data_dask)
     general_output_checks(data_dask, perlin_dask)
 
-    perlin_dask = perlin_dask.compute()
     np.testing.assert_allclose(
-        perlin_numpy.data, perlin_dask.data,
+        perlin_numpy.data, perlin_dask.data.compute(),
         rtol=1e-05, atol=1e-07, equal_nan=True
     )
 

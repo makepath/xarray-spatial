@@ -5,7 +5,6 @@ import xarray as xr
 
 from xrspatial import aspect
 from xrspatial.utils import doesnt_have_cuda
-from xrspatial.utils import is_cupy_backed
 
 from xrspatial.tests.general_checks import general_output_checks
 
@@ -73,8 +72,8 @@ def test_numpy_equals_dask():
     dask_result = aspect(small_dask_based_data_array,
                          name='dask_result')
     general_output_checks(small_dask_based_data_array, dask_result)
-    dask_result.data = dask_result.data.compute()
-    np.testing.assert_allclose(numpy_result, dask_result, equal_nan=True)
+    np.testing.assert_allclose(
+        numpy_result.data, dask_result.data.compute(), equal_nan=True)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -91,24 +90,3 @@ def test_cpu_equals_gpu():
     gpu = aspect(small_da_cupy, name='aspect_agg')
     general_output_checks(small_da_cupy, gpu)
     np.testing.assert_allclose(cpu.data, gpu.data.get(), equal_nan=True)
-
-
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _numpy_equals_dask_cupy():
-
-    # NOTE: Dask + GPU code paths don't currently work because of
-    # dask casting cupy arrays to numpy arrays during
-    # https://github.com/dask/dask/issues/4842
-
-    import cupy
-
-    cupy_data = cupy.asarray(INPUT_DATA)
-    dask_cupy_data = da.from_array(cupy_data, chunks=(3, 3))
-
-    small_da = xr.DataArray(INPUT_DATA, attrs={'res': (10.0, 10.0)})
-    cpu = aspect(small_da, name='numpy_result')
-
-    small_dask_cupy = xr.DataArray(dask_cupy_data, attrs={'res': (10.0, 10.0)})
-    gpu = aspect(small_dask_cupy, name='cupy_result')
-    assert is_cupy_backed(gpu)
-    np.testing.assert_allclose(cpu, gpu, equal_nan=True)
