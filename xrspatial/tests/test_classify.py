@@ -85,7 +85,7 @@ def test_reclassify_cpu_equals_gpu():
                      bins=bins,
                      new_values=new_values)
     general_output_checks(cupy_agg, gpu)
-    assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()
+    np.testing.assert_allclose(cpu, gpu.data.get(), equal_nan=True)
 
     # dask + cupy
     dask_cupy_agg = xr.DataArray(
@@ -97,7 +97,7 @@ def test_reclassify_cpu_equals_gpu():
     )
     general_output_checks(dask_cupy_agg, dask_gpu)
     dask_gpu.data = dask_gpu.data.compute()
-    assert np.isclose(cpu, dask_gpu.data.get(), equal_nan=True).all()
+    np.testing.assert_allclose(cpu, dask_gpu.data.get(), equal_nan=True)
 
 
 def test_quantile_cpu():
@@ -145,7 +145,7 @@ def test_quantile_cpu_equals_gpu():
         cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
     gpu = quantile(cupy_agg, k=k, name='cupy_result')
     general_output_checks(cupy_agg, gpu)
-    assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()
+    np.testing.assert_allclose(cpu, gpu.data.get(), equal_nan=True)
 
 
 def test_natural_breaks_cpu():
@@ -180,7 +180,9 @@ def test_natural_breaks_cpu_deterministic():
     # Check that the code is deterministic.
     # Multiple runs on same data should produce same results
     for i in range(numIters-1):
-        assert(np.all(results[i].data == results[i+1].data))
+        np.testing.assert_allclose(
+            results[i].data, results[i+1].data, equal_nan=True
+        )
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -196,7 +198,7 @@ def test_natural_breaks_cpu_equals_gpu():
                             attrs={'res': (10.0, 10.0)})
     gpu = natural_breaks(cupy_agg, k=k, name='cupy_result')
     general_output_checks(cupy_agg, gpu)
-    assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()
+    np.testing.assert_allclose(cpu.data, gpu.data.get(), equal_nan=True)
 
 
 def test_equal_interval_cpu():
@@ -216,7 +218,7 @@ def test_equal_interval_cpu():
     dask_ei = equal_interval(dask_numpy_agg, k=k, name='dask_reclassify')
     general_output_checks(dask_numpy_agg, dask_ei)
     dask_ei = dask_ei.compute()
-    assert np.isclose(numpy_ei, dask_ei, equal_nan=True).all()
+    np.testing.assert_allclose(numpy_ei, dask_ei, equal_nan=True)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -232,4 +234,4 @@ def test_equal_interval_cpu_equals_gpu():
         cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
     gpu = equal_interval(cupy_agg, k=k)
     general_output_checks(cupy_agg, gpu)
-    assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()
+    np.testing.assert_allclose(cpu.data, gpu.data.get(), equal_nan=True)
