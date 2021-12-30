@@ -87,12 +87,13 @@ def test_curvature_gpu_equals_cpu():
     small_da = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
     cpu = curvature(small_da, name='numpy_result')
 
-    small_da_cupy = xr.DataArray(cupy.asarray(elevation),
-                                 attrs={'res': (10.0, 10.0)})
+    small_da_cupy = xr.DataArray(
+        cupy.asarray(elevation), attrs={'res': (10.0, 10.0)}
+    )
     gpu = curvature(small_da_cupy, name='cupy_result')
-    general_output_checks(small_da_cupy, gpu)
 
-    assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()
+    general_output_checks(small_da_cupy, gpu)
+    np.testing.assert_allclose(cpu.data, gpu.data.get(), equal_nan=True)
 
 
 def test_curvature_numpy_equals_dask():
@@ -111,4 +112,4 @@ def test_curvature_numpy_equals_dask():
     general_output_checks(small_dask_based_data_array, dask_curvature)
 
     dask_curvature.data = dask_curvature.data.compute()
-    assert np.isclose(numpy_curvature, dask_curvature, equal_nan=True).all()
+    np.testing.assert_allclose(numpy_curvature, dask_curvature, equal_nan=True)
