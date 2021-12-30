@@ -3,6 +3,8 @@ import xarray as xr
 
 from xrspatial import a_star_search
 
+from xrspatial.tests.general_checks import general_output_checks
+
 
 def test_a_star_search():
     agg = xr.DataArray(np.array([[0, 1, 0, 0],
@@ -28,19 +30,14 @@ def test_a_star_search():
                     path_agg = a_star_search(
                         agg, start, goal, barriers, 'lon', 'lat'
                     )
-                    assert isinstance(path_agg, xr.DataArray)
+                    general_output_checks(agg, path_agg)
                     assert type(path_agg.values[0][0]) == np.float64
-                    assert path_agg.shape == agg.shape
-                    assert path_agg.dims == agg.dims
-                    assert path_agg.attrs == agg.attrs
-                    for c in path_agg.coords:
-                        assert (path_agg[c] == agg.coords[c]).all()
                     if start == goal:
-                        assert np.nanmax(path_agg) == 0 and \
-                               np.nanmin(path_agg) == 0
+                        assert np.nanmax(path_agg) == 0
+                        assert np.nanmin(path_agg) == 0
                     else:
-                        assert np.nanmax(path_agg) > 0 and \
-                               np.nanmin(path_agg) == 0
+                        assert np.nanmax(path_agg) > 0
+                        assert np.nanmin(path_agg) == 0
 
     barriers = [1]
     # set pixels with value 1 as barriers,
@@ -53,15 +50,10 @@ def test_a_star_search():
                 path_agg = a_star_search(
                     agg, start, goal, barriers, 'lon', 'lat'
                 )
-                assert isinstance(path_agg, xr.DataArray)
-                assert type(path_agg.values[0][0]) == np.float64
-                assert path_agg.shape == agg.shape
-                assert path_agg.dims == agg.dims
-                assert path_agg.attrs == agg.attrs
-                for c in path_agg.coords:
-                    assert (path_agg[c] == agg.coords[c]).all()
                 # no path, all cells in path_agg are nans
-                assert np.isnan(path_agg).all()
+                expected_results = np.full(agg.shape, np.nan)
+                general_output_checks(agg, path_agg, expected_results)
+
     # test with nans
     agg = xr.DataArray(np.array([[0, 1, 0, 0],
                                  [1, 1, np.nan, 0],
