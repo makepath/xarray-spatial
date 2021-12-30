@@ -238,8 +238,11 @@ data_apply = np.array([[0, 1, 2, 3, 4, 5],
                        [6, 7, 8, 9, 10, 11],
                        [12, 13, 14, 15, 16, 17],
                        [18, 19, 20, 21, 22, 23]])
-
-kernel_apply = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
+kernel_apply = np.array([
+    [0, 1, 0],
+    [1, 0, 1],
+    [0, 1, 0]
+])
 
 
 def test_apply_cpu():
@@ -293,134 +296,134 @@ def test_focal_stats_cpu():
     cellsize = (1, 1)
     kernel = circle_kernel(*cellsize, 1.5)
 
+    expected_results = np.asarray([
+        # mean
+        [[ 1.66666667,  2.        ,  3.        ,  4.        ],
+         [ 4.25      ,  5.        ,  6.        ,  6.75      ],
+         [ 8.25      ,  9.        , 10.        , 10.75      ],
+         [11.        , 12.        , 13.        , 13.33333333]],
+        # max
+        [[ 4.        ,  5.        ,  6.        ,  7.        ],
+         [ 8.        ,  9.        , 10.        , 11.        ],
+         [12.        , 13.        , 14.        , 15.        ],
+         [13.        , 14.        , 15.        , 15.        ]],
+        # min
+        [[ 0.        ,  0.        ,  1.        ,  2.        ],
+         [ 0.        ,  1.        ,  2.        ,  3.        ],
+         [ 4.        ,  5.        ,  6.        ,  7.        ],
+         [ 8.        ,  9.        , 10.        , 11.        ]],
+        # range
+        [[ 4.        ,  5.        ,  5.        ,  5.        ],
+         [ 8.        ,  8.        ,  8.        ,  8.        ],
+         [ 8.        ,  8.        ,  8.        ,  8.        ],
+         [ 5.        ,  5.        ,  5.        ,  4.        ]],
+        # std
+        [[ 1.69967317,  1.87082869,  1.87082869,  2.1602469 ],
+         [ 2.86138079,  2.60768096,  2.60768096,  2.86138079],
+         [ 2.86138079,  2.60768096,  2.60768096,  2.86138079],
+         [ 2.1602469 ,  1.87082869,  1.87082869,  1.69967317]],
+        # var
+        [[ 2.88888889,  3.5       ,  3.5       ,  4.66666667],
+         [ 8.1875    ,  6.8       ,  6.8       ,  8.1875    ],
+         [ 8.1875    ,  6.8       ,  6.8       ,  8.1875    ],
+         [ 4.66666667,  3.5       ,  3.5       ,  2.88888889]],
+        # sum
+        [[ 5.        ,  8.        , 12.        , 12.        ],
+         [17.        , 25.        , 30.        , 27.        ],
+         [33.        , 45.        , 50.        , 43.        ],
+         [33.        , 48.        , 52.        , 40.        ]]
+    ])
+
     numpy_focalstats = focal_stats(numpy_agg, kernel)
-    assert isinstance(numpy_focalstats.data, np.ndarray)
+    general_output_checks(
+        numpy_agg, numpy_focalstats,
+        verify_attrs=False, expected_results=expected_results
+    )
     assert numpy_focalstats.ndim == 3
-    assert numpy_agg.shape == numpy_focalstats.shape[1:]
 
     dask_numpy_focalstats = focal_stats(dask_numpy_agg, kernel)
-    assert isinstance(dask_numpy_focalstats.data, da.Array)
+    general_output_checks(
+        dask_numpy_agg, dask_numpy_focalstats,
+        verify_attrs=False, expected_results=expected_results
+    )
 
-    assert np.isclose(
-        numpy_focalstats, dask_numpy_focalstats.compute(), equal_nan=True
-    ).all()
 
-
-def test_hotspot():
+def test_hotspots():
     n, m = 10, 10
-    data = np.zeros((n, m), dtype=float)
-
-    all_idx = zip(*np.where(data == 0))
-
-    nan_cells = [(i, i) for i in range(m)]
-    for cell in nan_cells:
-        data[cell[0], cell[1]] = np.nan
-
-    # add some extreme values
-    hot_region = [(1, 1), (1, 2), (1, 3),
-                  (2, 1), (2, 2), (2, 3),
-                  (3, 1), (3, 2), (3, 3)]
-    cold_region = [(7, 7), (7, 8), (7, 9),
-                   (8, 7), (8, 8), (8, 9),
-                   (9, 7), (9, 8), (9, 9)]
-    for p in hot_region:
-        data[p[0], p[1]] = 10000
-    for p in cold_region:
-        data[p[0], p[1]] = -10000
-
+    data = np.asarray([
+        [np.nan, 0., 0., 0., 0., 0., 0., 0., 0., 0.],
+        [0., 10000., 10000., 10000., 0., 0., 0., 0., 0., 0.],
+        [0., 10000., 10000., 10000., 0., 0., 0., 0., 0., 0.],
+        [0., 10000., 10000., 10000., 0., 0., 0., 0., 0., 0.],
+        [0., 0., 0., 0., np.nan, 0., 0., 0., 0., 0.],
+        [0., 0., 0., 0., 0., np.nan, 0., 0., 0., 0.],
+        [0., 0., 0., 0., 0., 0., np.nan, 0., 0., 0.],
+        [0., 0., 0., 0., 0., 0., 0., -10000., -10000., -10000.],
+        [0., 0., 0., 0., 0., 0., 0., -10000., -10000., -10000.],
+        [0., 0., 0., 0., 0., 0., 0., -10000., -10000., -10000.]
+    ])
     numpy_agg = xr.DataArray(data, dims=['y', 'x'])
     numpy_agg['x'] = np.linspace(0, n, n)
     numpy_agg['y'] = np.linspace(0, m, m)
-    cellsize_x, cellsize_y = calc_cellsize(numpy_agg)
 
+    cellsize_x, cellsize_y = calc_cellsize(numpy_agg)
     kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
 
-    no_significant_region = [id for id in all_idx if id not in hot_region and
-                             id not in cold_region]
+    expected_results = np.array([
+        [0,   0,   0,   0,   0,   0,   0,   0,   0,   0],
+        [0,   0,  90,   0,   0,   0,   0,   0,   0,   0],
+        [0,  90,  95,  90,   0,   0,   0,   0,   0,   0],
+        [0,   0,  90,   0,   0,   0,   0,   0,   0,   0],
+        [0,   0,   0,   0,   0,   0,   0,   0,   0,   0],
+        [0,   0,   0,   0,   0,   0,   0,   0,   0,   0],
+        [0,   0,   0,   0,   0,   0,   0,   0,   0,   0],
+        [0,   0,   0,   0,   0,   0,   0,   0, -90,   0],
+        [0,   0,   0,   0,   0,   0,   0, -90, -95,   0],
+        [0,   0,   0,   0,   0,   0,   0,   0,   0,   0]
+    ], dtype=np.int8)
 
     # numpy case
     numpy_hotspots = hotspots(numpy_agg, kernel)
+    general_output_checks(numpy_agg, numpy_hotspots, expected_results)
 
     # dask + numpy
     dask_numpy_agg = xr.DataArray(da.from_array(data, chunks=(3, 3)))
-    dask_numpy_hotspots = hotspots(dask_numpy_agg, kernel)
-
-    assert isinstance(dask_numpy_hotspots.data, da.Array)
-
-    # both output same results
-    assert np.isclose(numpy_hotspots.data, dask_numpy_hotspots.data.compute(),
-                      equal_nan=True).all()
-
-    # check output's properties
-    # output must be an xarray DataArray
-    assert isinstance(numpy_hotspots, xr.DataArray)
-    assert isinstance(numpy_hotspots.values, np.ndarray)
-    assert issubclass(numpy_hotspots.values.dtype.type, np.int8)
-
-    # shape, dims, coords, attr preserved
-    assert numpy_agg.shape == numpy_hotspots.shape
-    assert numpy_agg.dims == numpy_hotspots.dims
-    assert numpy_agg.attrs == numpy_hotspots.attrs
-    for coord in numpy_agg.coords:
-        assert np.all(numpy_agg[coord] == numpy_hotspots[coord])
-
-    # no nan in output
-    assert not np.isnan(np.min(numpy_hotspots))
-
-    # output of extreme regions are non-zeros
-    # hot spots
-    hot_spot = np.asarray([numpy_hotspots[p] for p in hot_region])
-    assert np.all(hot_spot >= 0)
-    assert np.sum(hot_spot) > 0
-    # cold spots
-    cold_spot = np.asarray([numpy_hotspots[p] for p in cold_region])
-    assert np.all(cold_spot <= 0)
-    assert np.sum(cold_spot) < 0
-    # output of no significant regions are 0s
-    no_sign = np.asarray([numpy_hotspots[p] for p in no_significant_region])
-    assert np.all(no_sign == 0)
+    dask_numpy_hotspots = hotspots(dask_numpy_agg, kernel)    
+    general_output_checks(dask_numpy_agg, dask_numpy_hotspots, expected_results)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_hotspot_gpu_equals_cpu():
     n, m = 10, 10
-    data = np.zeros((n, m), dtype=float)
-
-    nan_cells = [(i, i) for i in range(m)]
-    for cell in nan_cells:
-        data[cell[0], cell[1]] = np.nan
-
-    # add some extreme values
-    hot_region = [(1, 1), (1, 2), (1, 3),
-                  (2, 1), (2, 2), (2, 3),
-                  (3, 1), (3, 2), (3, 3)]
-    cold_region = [(7, 7), (7, 8), (7, 9),
-                   (8, 7), (8, 8), (8, 9),
-                   (9, 7), (9, 8), (9, 9)]
-    for p in hot_region:
-        data[p[0], p[1]] = 10000
-    for p in cold_region:
-        data[p[0], p[1]] = -10000
-
+    data = np.asarray([
+        [np.nan, 0., 0., 0., 0., 0., 0., 0., 0., 0.],
+        [0., 10000., 10000., 10000., 0., 0., 0., 0., 0., 0.],
+        [0., 10000., 10000., 10000., 0., 0., 0., 0., 0., 0.],
+        [0., 10000., 10000., 10000., 0., 0., 0., 0., 0., 0.],
+        [0., 0., 0., 0., np.nan, 0., 0., 0., 0., 0.],
+        [0., 0., 0., 0., 0., np.nan, 0., 0., 0., 0.],
+        [0., 0., 0., 0., 0., 0., np.nan, 0., 0., 0.],
+        [0., 0., 0., 0., 0., 0., 0., -10000., -10000., -10000.],
+        [0., 0., 0., 0., 0., 0., 0., -10000., -10000., -10000.],
+        [0., 0., 0., 0., 0., 0., 0., -10000., -10000., -10000.]
+    ])
     numpy_agg = xr.DataArray(data, dims=['y', 'x'])
     numpy_agg['x'] = np.linspace(0, n, n)
     numpy_agg['y'] = np.linspace(0, m, m)
 
     cellsize_x, cellsize_y = calc_cellsize(numpy_agg)
     kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
+
     # numpy case
     numpy_hotspots = hotspots(numpy_agg, kernel)
 
     # cupy case
     import cupy
-
     cupy_agg = xr.DataArray(cupy.asarray(data))
     cupy_hotspots = hotspots(cupy_agg, kernel)
 
-    assert isinstance(cupy_hotspots.data, cupy.ndarray)
-    assert np.isclose(
-        numpy_hotspots, cupy_hotspots.data.get(), equal_nan=True
-    ).all()
+    np.testing.assert_allclose(
+        numpy_hotspots.data, cupy_hotspots.data.get, equal_nan=True)
 
     # dask + cupy case not implemented
     dask_cupy_agg = xr.DataArray(
