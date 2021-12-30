@@ -323,7 +323,7 @@ def custom_kernel(kernel):
     return kernel
 
 
-@jit(nopython=True, nogil=True, parallel=True)
+@jit(nopython=True, nogil=True)
 def _convolve_2d_numpy(data, kernel):
     """
     Apply kernel to data image.

@@ -10,8 +10,6 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-import dask.array as da
-
 from numba import cuda
 
 import numpy as np
@@ -19,8 +17,8 @@ import xarray as xr
 
 # local modules
 from xrspatial.utils import cuda_args
-from xrspatial.utils import has_cuda
-from xrspatial.utils import is_cupy_backed
+from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import not_implemented_func
 
 
 def _run_numpy(data, azimuth=225, angle_altitude=25):
@@ -46,11 +44,6 @@ def _run_dask_numpy(data, azimuth, angle_altitude):
                            boundary=np.nan,
                            meta=np.array(()))
     return out
-
-
-def _run_dask_cupy(data, azimuth, angle_altitude):
-    msg = 'Not implemented.'
-    raise NotImplementedError(msg)
 
 
 @cuda.jit
@@ -173,25 +166,15 @@ def hillshade(agg: xr.DataArray,
           * y        (y) int32 4 3 2 1 0
           * x        (x) int32 0 1 2 3 4
     """
-
-    # numpy case
-    if isinstance(agg.data, np.ndarray):
-        out = _run_numpy(agg.data, azimuth, angle_altitude)
-
-    # cupy/numba case
-    elif has_cuda() and isinstance(agg.data, cupy.ndarray):
-        out = _run_cupy(agg.data, azimuth, angle_altitude)
-
-    # dask + cupy case
-    elif has_cuda() and isinstance(agg.data, da.Array) and is_cupy_backed(agg):
-        out = _run_dask_cupy(agg.data, azimuth, angle_altitude)
-
-    # dask + numpy case
-    elif isinstance(agg.data, da.Array):
-        out = _run_dask_numpy(agg.data, azimuth, angle_altitude)
-
-    else:
-        raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_run_numpy,
+        cupy_func=_run_cupy,
+        dask_func=_run_dask_numpy,
+        dask_cupy_func=lambda *args: not_implemented_func(
+            *args, messages='hillshade() does not support dask with cupy backed DataArray'  # noqa
+        ),
+    )
+    out = mapper(agg)(agg.data, azimuth, angle_altitude)
 
     return xr.DataArray(out,
                         name=name,

@@ -98,8 +98,8 @@ def is_dask_cupy(agg: xr.DataArray):
     return isinstance(agg.data, da.Array) and is_cupy_backed(agg)
 
 
-def not_implemented_func(agg, *args):
-    raise NotImplementedError('Not yet implemented.')
+def not_implemented_func(agg, *args, messages='Not yet implemented.'):
+    raise NotImplementedError(messages)
 
 
 class ArrayTypeFunctionMapping(object):
