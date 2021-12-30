@@ -17,16 +17,16 @@ def general_output_checks(input_agg, output_agg, expected_results=None):
     assert output_agg.dims == input_agg.dims
     assert output_agg.attrs == input_agg.attrs
     for coord in input_agg.coords:
-        assert np.all(output_agg[coord] == input_agg[coord])
+        np.testing.assert_allclose(
+            output_agg[coord].data, input_agg[coord].data, equal_nan=True
+        )
 
     if expected_results is not None:
         if isinstance(input_agg.data, da.Array):
-            assert np.isclose(
-                output_agg.data.compute(),
-                expected_results.data,
-                equal_nan=True
-            ).all()
+            np.testing.assert_allclose(
+                output_agg.data.compute(), expected_results.data, equal_nan=True
+            )
         else:
-            assert np.isclose(
+            np.testing.assert_allclose(
                 output_agg.data, expected_results.data, equal_nan=True
-            ).all()
+            )
