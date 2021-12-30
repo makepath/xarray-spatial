@@ -1,8 +1,13 @@
 import numpy as np
 import dask.array as da
+import xarray as xr
+
+from xrspatial.utils import ArrayTypeFunctionMapping
 
 
-def general_output_checks(input_agg, output_agg, expected_results=None):
+def general_output_checks(input_agg: xr.DataArray,
+                          output_agg: xr.DataArray,
+                          expected_results: np.ndarray = None):
 
     # type of output is the same as of input
     assert isinstance(output_agg.data, type(input_agg.data))
@@ -22,11 +27,22 @@ def general_output_checks(input_agg, output_agg, expected_results=None):
         )
 
     if expected_results is not None:
-        if isinstance(input_agg.data, da.Array):
-            np.testing.assert_allclose(
-                output_agg.data.compute(), expected_results.data, equal_nan=True
-            )
-        else:
-            np.testing.assert_allclose(
-                output_agg.data, expected_results.data, equal_nan=True
-            )
+        numpy_func = lambda output, expected: np.testing.assert_allclose(
+            output, expected_results, equal_nan=True
+        )
+        dask_func = lambda output, expected: np.testing.assert_allclose(
+            output.compute(), expected_results, equal_nan=True
+        )
+        cupy_func = lambda output, expected: np.testing.assert_allclose(
+            output.get(), expected_results, equal_nan=True
+        )
+        dask_cupy_func = lambda output, expected: np.testing.assert_allclose(
+            output.compute().get(), expected_results, equal_nan=True
+        )
+        mapper = ArrayTypeFunctionMapping(
+            numpy_func=numpy_func,
+            dask_func=dask_func,
+            cupy_func=cupy_func,
+            dask_cupy_func=dask_cupy_func,
+        )
+        mapper(input_agg)(output_agg.data, expected_results)

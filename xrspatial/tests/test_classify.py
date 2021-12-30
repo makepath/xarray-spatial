@@ -85,7 +85,7 @@ def test_reclassify_cpu_equals_gpu():
                      bins=bins,
                      new_values=new_values)
     general_output_checks(cupy_agg, gpu)
-    np.testing.assert_allclose(cpu, gpu.data.get(), equal_nan=True)
+    np.testing.assert_allclose(cpu.data, gpu.data.get(), equal_nan=True)
 
     # dask + cupy
     dask_cupy_agg = xr.DataArray(
@@ -97,7 +97,7 @@ def test_reclassify_cpu_equals_gpu():
     )
     general_output_checks(dask_cupy_agg, dask_gpu)
     dask_gpu.data = dask_gpu.data.compute()
-    np.testing.assert_allclose(cpu, dask_gpu.data.get(), equal_nan=True)
+    np.testing.assert_allclose(cpu.data, dask_gpu.data.get(), equal_nan=True)
 
 
 def test_quantile_cpu():
@@ -145,7 +145,7 @@ def test_quantile_cpu_equals_gpu():
         cupy.asarray(elevation), attrs={'res': (10.0, 10.0)})
     gpu = quantile(cupy_agg, k=k, name='cupy_result')
     general_output_checks(cupy_agg, gpu)
-    np.testing.assert_allclose(cpu, gpu.data.get(), equal_nan=True)
+    np.testing.assert_allclose(cpu.data, gpu.data.get(), equal_nan=True)
 
 
 def test_natural_breaks_cpu():
