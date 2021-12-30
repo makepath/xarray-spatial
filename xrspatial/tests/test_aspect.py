@@ -46,7 +46,7 @@ def test_numpy_equals_qgis():
     # aspect is nan if nan input
     # aspect is invalid (-1) if slope equals 0
     # otherwise aspect are from 0 - 360
-    assert np.isclose(xrspatial_vals, qgis_vals, equal_nan=True).all()
+    np.testing.assert_allclose(xrspatial_vals, qgis_vals, equal_nan=True)
 
     # nan edge effect
     xrspatial_edges = [
@@ -56,8 +56,9 @@ def test_numpy_equals_qgis():
         xrspatial_aspect.data[:, -1],
     ]
     for edge in xrspatial_edges:
-        assert np.isclose(
-            edge, np.full(edge.shape, np.nan), equal_nan=True).all()
+        np.testing.assert_allclose(
+            edge, np.full(edge.shape, np.nan), equal_nan=True
+        )
 
 
 def test_numpy_equals_dask():
@@ -73,7 +74,7 @@ def test_numpy_equals_dask():
                          name='dask_result')
     general_output_checks(small_dask_based_data_array, dask_result)
     dask_result.data = dask_result.data.compute()
-    assert np.isclose(numpy_result, dask_result, equal_nan=True).all()
+    np.testing.assert_allclose(numpy_result, dask_result, equal_nan=True)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -89,7 +90,7 @@ def test_cpu_equals_gpu():
     cpu = aspect(small_da, name='aspect_agg')
     gpu = aspect(small_da_cupy, name='aspect_agg')
     general_output_checks(small_da_cupy, gpu)
-    assert np.isclose(cpu, gpu.data.get(), equal_nan=True).all()
+    np.testing.assert_allclose(cpu.data, gpu.data.get(), equal_nan=True)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -109,6 +110,5 @@ def _numpy_equals_dask_cupy():
 
     small_dask_cupy = xr.DataArray(dask_cupy_data, attrs={'res': (10.0, 10.0)})
     gpu = aspect(small_dask_cupy, name='cupy_result')
-
     assert is_cupy_backed(gpu)
-    assert np.isclose(cpu, gpu, equal_nan=True).all()
+    np.testing.assert_allclose(cpu, gpu, equal_nan=True)
