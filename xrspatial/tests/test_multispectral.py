@@ -86,7 +86,7 @@ swir2_data = np.array([[0, 13175, 13558, 14952.],
                        [14148, 13489, 13483, 13893.]])
 
 arvi_expected_results = np.array([
-    [0., 0.09832155, 0.0956943, 0.0688592],
+    [np.nan, 0.09832155, 0.0956943, 0.0688592],
     [0.08880479, 0.09804352, 0.09585208, np.nan],
     [0.10611779, 0.1164153, 0.11244237, 0.09396376],
     [0.0906375, 0.11409396, 0.12842213, 0.10752644],
@@ -106,7 +106,7 @@ evi_expected_results = np.array([
     [1.4805857, 1.5785736, np.nan, 1.2888849]], dtype=np.float32)
 
 nbr_expected_results = np.array([
-    [0., 0.09459506, 0.08678813, 0.04651979],
+    [np.nan, 0.09459506, 0.08678813, 0.04651979],
     [0.07953876, 0.09373278, 0.09194128, 0.0511995],
     [0.11172205, 0.13064948, np.nan, 0.09889686],
     [0.08206456, 0.1319056, 0.17204913, 0.13746998],
@@ -116,7 +116,7 @@ nbr_expected_results = np.array([
     [0.03162218, 0.06924271, 0.08484355, 0.08508396]], dtype=np.float32)
 
 nbr2_expected_results = np.array([
-    [0., np.nan, 0.11823621, 0.09696512],
+    [np.nan, np.nan, 0.11823621, 0.09696512],
     [0.12169173, 0.12360972, 0.11772577, 0.09825099],
     [0.12687474, 0.12918627, np.nan, 0.11132962],
     [0.12245033, 0.12765156, 0.1279828, 0.11668716],
@@ -126,7 +126,7 @@ nbr2_expected_results = np.array([
     [0.10932041, 0.121066, 0.12008093, 0.11099024]], dtype=np.float32)
 
 ndvi_expected_results = np.array([
-    [0., 0.21453354, 0.21365978, 0.1833718],
+    [np.nan, 0.21453354, 0.21365978, 0.1833718],
     [0.20180409, 0.21460803, 0.21499589, np.nan],
     [0.2272848, 0.23992178, 0.23989375, 0.21832769],
     [0.20453498, 0.23730709, 0.25933117, 0.23550354],
@@ -136,7 +136,7 @@ ndvi_expected_results = np.array([
     [0.17406037, 0.19757332, 0.21009994, 0.21029823]], dtype=np.float32)
 
 ndmi_expected_results = np.array([
-    [0.,  np.nan, -0.03177413, -0.05067392],
+    [np.nan, np.nan, -0.03177413, -0.05067392],
     [-0.04256495, -0.03022716, -0.02606663, -0.04728937],
     [-0.01537057,  0.00148832,  0.01682979, -0.01257116],
     [-0.04079571,  0.00432691,  0.04505849,  0.02112163],
@@ -155,8 +155,18 @@ savi_expected_results = np.array([
     [0.09097284, 0.0988547, 0.10404798, 0.10413785],
     [0.0870268, 0.09878284, 0.105046, 0.10514525]], dtype=np.float32)
 
+gci_expected_results = np.array([
+    [np.nan, 0.60418975, 0.6045147, 0.5452919],
+    [0.57248056, 0.6034935, 0.6154458, 0.5677431],
+    [0.64163196, 0.66963744, 0.6842626, 0.63812447],
+    [0.5827694, 0.66459376, 0.730165, 0.6859067],
+    [0.55937314, 0.6024133, 0.6888161, 0.6694254],
+    [0.534001, 0.58740693, 0.62780493, 0.62536764],
+    [np.nan, 0.55601203, 0.5912343, 0.6006171],
+    [0.4921295, 0.5541069, 0.5912983, 0.603601]], dtype=np.float32)
+
 sipi_expected_results = np.array([
-    [0., 1.2015283, 1.2210878, 1.3413291],
+    [np.nan, 1.2015283, 1.2210878, 1.3413291],
     [1.2290354, 1.2043835, 1.2258345, np.nan],
     [1.1927892, 1.1652038, 1.1971788, 1.2573901],
     [1.2247275, 1.1721647, 1.1583472, 1.2177818],
@@ -166,7 +176,7 @@ sipi_expected_results = np.array([
     [1.2499441, 1.2131821, np.nan, 1.2504367]], dtype=np.float32)
 
 ebbi_expected_results = np.array([
-    [0., np.nan, 4.0488696, 4.0370474],
+    [np.nan, np.nan, 4.0488696, 4.0370474],
     [3.9937027, 3.9902349, 3.9841716, np.nan],
     [3.9386337, 3.8569257, 3.6711047, 3.918455],
     [4.0096908, 3.7895138, 3.5027769, 3.6056597],
@@ -250,7 +260,7 @@ def test_ndvi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_ndvi_gpu():
+def test_ndvi_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     red_cupy = create_test_arr(red_data, backend='cupy')
@@ -286,7 +296,7 @@ def test_savi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_savi_gpu():
+def test_savi_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     red_cupy = create_test_arr(red_data, backend='cupy')
@@ -318,7 +328,7 @@ def test_arvi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_arvi_gpu():
+def test_arvi_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     red_cupy = create_test_arr(red_data, backend='cupy')
@@ -353,7 +363,7 @@ def test_evi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_evi_gpu():
+def test_evi_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     red_cupy = create_test_arr(red_data, backend='cupy')
@@ -371,31 +381,34 @@ def _test_evi_gpu():
 
 
 # GCI -------------
-def _test_gci_cpu():
+def test_gci_cpu():
     # vanilla numpy version
     nir_numpy = create_test_arr(nir_data)
     green_numpy = create_test_arr(green_data)
-    numpy_result = gci(nir_numpy, green_numpy)  # noqa
-    # general_output_checks(nir_numpy, numpy_result, gci_expected_results)
+    numpy_result = gci(nir_numpy, green_numpy)
+    general_output_checks(nir_numpy, numpy_result, gci_expected_results)
 
     # dask
     nir_dask = create_test_arr(nir_data, backend='dask')
     green_dask = create_test_arr(green_data, backend='dask')
-    dask_result = gci(nir_dask, green_dask)  # noqa
-    # general_output_checks(nir_dask, dask_result, gci_expected_results)
+    dask_result = gci(nir_dask, green_dask)
+    general_output_checks(nir_dask, dask_result, gci_expected_results)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_gci_gpu():
+def test_gci_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     green_cupy = create_test_arr(green_data, backend='cupy')
-    cupy_result = gci(nir_cupy, green_cupy)  # noqa
+    cupy_result = gci(nir_cupy, green_cupy)
+    general_output_checks(nir_cupy, cupy_result, gci_expected_results)
 
     # dask + cupy
     nir_dask_cupy = create_test_arr(nir_data, backend='dask+cupy')
     green_dask_cupy = create_test_arr(green_data, backend='dask+cupy')
-    dask_result = gci(nir_dask_cupy, green_dask_cupy)  # noqa
+    dask_cupy_result = gci(nir_dask_cupy, green_dask_cupy)
+    general_output_checks(
+        nir_dask_cupy, dask_cupy_result, gci_expected_results)
 
 
 # SIPI -------------
@@ -415,7 +428,7 @@ def test_sipi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_sipi_gpu():
+def test_sipi_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     red_cupy = create_test_arr(red_data, backend='cupy')
@@ -447,7 +460,7 @@ def test_nbr_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_nbr_gpu():
+def test_nbr_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     swir_cupy = create_test_arr(swir2_data, backend='cupy')
@@ -477,7 +490,7 @@ def test_nbr2_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Dnbr2ce not Available")
-def _test_nbr2_gpu():
+def test_nbr2_gpu():
     # cupy
     swir1_cupy = create_test_arr(swir1_data, backend='cupy')
     swir2_cupy = create_test_arr(swir2_data, backend='cupy')
@@ -507,7 +520,7 @@ def test_ndmi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_ndmi_gpu():
+def test_ndmi_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     swir1_cupy = create_test_arr(swir1_data, backend='cupy')
@@ -540,7 +553,7 @@ def test_ebbi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_ebbi_gpu():
+def test_ebbi_gpu():
     # cupy
     red_cupy = create_test_arr(red_data, backend='cupy')
     swir_cupy = create_test_arr(swir1_data, backend='cupy')
