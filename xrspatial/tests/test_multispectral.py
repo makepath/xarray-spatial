@@ -155,6 +155,16 @@ savi_expected_results = np.array([
     [0.09097284, 0.0988547, 0.10404798, 0.10413785],
     [0.0870268, 0.09878284, 0.105046, 0.10514525]], dtype=np.float32)
 
+gci_expected_results = np.array([
+    [np.nan, 0.60418975, 0.6045147, 0.5452919],
+    [0.57248056, 0.6034935, 0.6154458, 0.5677431],
+    [0.64163196, 0.66963744, 0.6842626, 0.63812447],
+    [0.5827694, 0.66459376, 0.730165, 0.6859067],
+    [0.55937314, 0.6024133, 0.6888161, 0.6694254],
+    [0.534001, 0.58740693, 0.62780493, 0.62536764],
+    [np.nan, 0.55601203, 0.5912343, 0.6006171],
+    [0.4921295, 0.5541069, 0.5912983, 0.603601]], dtype=np.float32)
+
 sipi_expected_results = np.array([
     [np.nan, 1.2015283, 1.2210878, 1.3413291],
     [1.2290354, 1.2043835, 1.2258345, np.nan],
@@ -371,18 +381,18 @@ def _test_evi_gpu():
 
 
 # GCI -------------
-def _test_gci_cpu():
+def test_gci_cpu():
     # vanilla numpy version
     nir_numpy = create_test_arr(nir_data)
     green_numpy = create_test_arr(green_data)
-    numpy_result = gci(nir_numpy, green_numpy)  # noqa
-    # general_output_checks(nir_numpy, numpy_result, gci_expected_results)
+    numpy_result = gci(nir_numpy, green_numpy)
+    general_output_checks(nir_numpy, numpy_result, gci_expected_results)
 
     # dask
     nir_dask = create_test_arr(nir_data, backend='dask')
     green_dask = create_test_arr(green_data, backend='dask')
-    dask_result = gci(nir_dask, green_dask)  # noqa
-    # general_output_checks(nir_dask, dask_result, gci_expected_results)
+    dask_result = gci(nir_dask, green_dask)
+    general_output_checks(nir_dask, dask_result, gci_expected_results)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -390,12 +400,15 @@ def _test_gci_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     green_cupy = create_test_arr(green_data, backend='cupy')
-    cupy_result = gci(nir_cupy, green_cupy)  # noqa
+    cupy_result = gci(nir_cupy, green_cupy)
+    general_output_checks(nir_cupy, cupy_result, gci_expected_results)
 
     # dask + cupy
     nir_dask_cupy = create_test_arr(nir_data, backend='dask+cupy')
     green_dask_cupy = create_test_arr(green_data, backend='dask+cupy')
-    dask_result = gci(nir_dask_cupy, green_dask_cupy)  # noqa
+    dask_cupy_result = gci(nir_dask_cupy, green_dask_cupy)
+    general_output_checks(
+        nir_dask_cupy, dask_cupy_result, gci_expected_results)
 
 
 # SIPI -------------
