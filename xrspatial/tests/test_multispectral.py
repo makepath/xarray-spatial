@@ -260,7 +260,7 @@ def test_ndvi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_ndvi_gpu():
+def test_ndvi_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     red_cupy = create_test_arr(red_data, backend='cupy')
@@ -296,7 +296,7 @@ def test_savi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_savi_gpu():
+def test_savi_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     red_cupy = create_test_arr(red_data, backend='cupy')
@@ -328,7 +328,7 @@ def test_arvi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_arvi_gpu():
+def test_arvi_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     red_cupy = create_test_arr(red_data, backend='cupy')
@@ -363,7 +363,7 @@ def test_evi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_evi_gpu():
+def test_evi_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     red_cupy = create_test_arr(red_data, backend='cupy')
@@ -396,7 +396,7 @@ def test_gci_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_gci_gpu():
+def test_gci_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     green_cupy = create_test_arr(green_data, backend='cupy')
@@ -428,7 +428,7 @@ def test_sipi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_sipi_gpu():
+def test_sipi_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     red_cupy = create_test_arr(red_data, backend='cupy')
@@ -460,7 +460,7 @@ def test_nbr_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_nbr_gpu():
+def test_nbr_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     swir_cupy = create_test_arr(swir2_data, backend='cupy')
@@ -490,7 +490,7 @@ def test_nbr2_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Dnbr2ce not Available")
-def _test_nbr2_gpu():
+def test_nbr2_gpu():
     # cupy
     swir1_cupy = create_test_arr(swir1_data, backend='cupy')
     swir2_cupy = create_test_arr(swir2_data, backend='cupy')
@@ -520,7 +520,7 @@ def test_ndmi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_ndmi_gpu():
+def test_ndmi_gpu():
     # cupy
     nir_cupy = create_test_arr(nir_data, backend='cupy')
     swir1_cupy = create_test_arr(swir1_data, backend='cupy')
@@ -553,7 +553,7 @@ def test_ebbi_cpu():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def _test_ebbi_gpu():
+def test_ebbi_gpu():
     # cupy
     red_cupy = create_test_arr(red_data, backend='cupy')
     swir_cupy = create_test_arr(swir1_data, backend='cupy')
