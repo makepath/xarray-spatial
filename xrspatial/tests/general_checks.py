@@ -30,16 +30,17 @@ def general_output_checks(input_agg: xr.DataArray,
 
     if expected_results is not None:
         numpy_func = lambda output, expected: np.testing.assert_allclose(  # noqa: E731, E501
-            output, expected_results, equal_nan=True
+            output, expected_results, equal_nan=True, rtol=1e-06
         )
         dask_func = lambda output, expected: np.testing.assert_allclose(  # noqa: E731, E501
-            output.compute(), expected_results, equal_nan=True
+            output.compute(), expected_results, equal_nan=True, rtol=1e-06
         )
         cupy_func = lambda output, expected: np.testing.assert_allclose(  # noqa: E731, E501
-            output.get(), expected_results, equal_nan=True
+            output.get(), expected_results, equal_nan=True, rtol=1e-06
         )
         dask_cupy_func = lambda output, expected: np.testing.assert_allclose(  # noqa: E731, E501
-            output.compute().get(), expected_results, equal_nan=True
+            output.compute().get(), expected_results,
+            equal_nan=True, rtol=1e-06
         )
         mapper = ArrayTypeFunctionMapping(
             numpy_func=numpy_func,
