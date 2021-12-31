@@ -26,7 +26,7 @@ except ImportError:
 
 @ngjit
 def _arvi_cpu(nir_data, red_data, blue_data):
-    out = np.zeros(nir_data.shape, dtype=np.float32)
+    out = np.full(nir_data.shape, np.nan, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -193,7 +193,7 @@ def arvi(nir_agg: xr.DataArray,
 # EVI ----------
 @ngjit
 def _evi_cpu(nir_data, red_data, blue_data, c1, c2, soil_factor, gain):
-    out = np.zeros(nir_data.shape, dtype=np.float32)
+    out = np.full(nir_data.shape, np.nan, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -391,13 +391,13 @@ def evi(nir_agg: xr.DataArray,
 # GCI ----------
 @ngjit
 def _gci_cpu(nir_data, green_data):
-    out = np.zeros(nir_data.shape, dtype=np.float32)
+    out = np.full(nir_data.shape, np.nan, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
             nir = nir_data[y, x]
             green = green_data[y, x]
-            if green - 1 != 0:
+            if green != 0:
                 out[y, x] = nir / green - 1
     return out
 
@@ -408,7 +408,7 @@ def _gci_gpu(nir_data, green_data, out):
     if y < out.shape[0] and x < out.shape[1]:
         nir = nir_data[y, x]
         green = green_data[y, x]
-        if green - 1 != 0:
+        if green != 0:
             out[y, x] = nir / green - 1
 
 
@@ -982,7 +982,7 @@ def ndmi(nir_agg: xr.DataArray,
 
 @ngjit
 def _normalized_ratio_cpu(arr1, arr2):
-    out = np.zeros(arr1.shape, dtype=np.float32)
+    out = np.full(arr1.shape, np.nan, dtype=np.float32)
     rows, cols = arr1.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -1033,7 +1033,7 @@ def _run_normalized_ratio_dask_cupy(arr1, arr2):
 
 @ngjit
 def _savi_cpu(nir_data, red_data, soil_factor):
-    out = np.zeros(nir_data.shape, dtype=np.float32)
+    out = np.full(nir_data.shape, np.nan, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -1198,7 +1198,7 @@ def savi(nir_agg: xr.DataArray,
 # SIPI ----------
 @ngjit
 def _sipi_cpu(nir_data, red_data, blue_data):
-    out = np.zeros(nir_data.shape, dtype=np.float32)
+    out = np.full(nir_data.shape, np.nan, dtype=np.float32)
     rows, cols = nir_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -1364,7 +1364,7 @@ def sipi(nir_agg: xr.DataArray,
 # EBBI ----------
 @ngjit
 def _ebbi_cpu(red_data, swir_data, tir_data):
-    out = np.zeros(red_data.shape, dtype=np.float32)
+    out = np.full(red_data.shape, np.nan, dtype=np.float32)
     rows, cols = red_data.shape
     for y in range(0, rows):
         for x in range(0, cols):
@@ -1530,8 +1530,7 @@ def ebbi(red_agg: xr.DataArray,
 
 @ngjit
 def _normalize_data_cpu(data, min_val, max_val, pixel_max, c, th):
-    out = np.zeros_like(data)
-    out[:] = np.nan
+    out = np.full(data.shape, np.nan, dtype=np.float32)
 
     range_val = max_val - min_val
     rows, cols = data.shape
