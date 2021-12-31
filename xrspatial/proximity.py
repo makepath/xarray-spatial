@@ -799,7 +799,6 @@ def allocation(
     distance_metric: str = "EUCLIDEAN",
 ):
     """
-    Calculates, for all cells in the array, the downward slope direction
     Calculates, for all pixels in the input raster, the nearest source
     based on a set of target values and a distance metric.
 
