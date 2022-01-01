@@ -12,6 +12,7 @@ import xarray as xr
 from xrspatial.utils import ngjit
 from xrspatial.utils import cuda_args
 from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import not_implemented_func
 
 from typing import Optional
 
@@ -112,22 +113,6 @@ def _run_cupy(data: cupy.ndarray) -> cupy.ndarray:
     out = cupy.empty(data.shape, dtype='f4')
     out[:] = cupy.nan
     _run_gpu[griddim, blockdim](data, out)
-    return out
-
-
-def _run_dask_cupy(data: da.Array) -> da.Array:
-    msg = 'Upstream bug in dask prevents cupy backed arrays'
-    raise NotImplementedError(msg)
-
-    # add any func args
-    # TODO: probably needs cellsize args
-    _func = partial(_run_cupy)
-
-    out = data.map_overlap(_func,
-                           depth=(1, 1),
-                           boundary=cupy.nan,
-                           dtype=cupy.float32,
-                           meta=cupy.array(()))
     return out
 
 
@@ -275,10 +260,13 @@ def aspect(agg: xr.DataArray,
               dtype=float32)
         Dimensions without coordinates: y, x
     """
-    mapper = ArrayTypeFunctionMapping(numpy_func=_run_numpy,
-                                      dask_func=_run_dask_numpy,
-                                      cupy_func=_run_cupy,
-                                      dask_cupy_func=_run_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_run_numpy,
+        dask_func=_run_dask_numpy,
+        cupy_func=_run_cupy,
+        dask_cupy_func=lambda *args: not_implemented_func(
+            *args, messages='aspect() does not support dask with cupy backed DataArray')  # noqa
+    )
 
     out = mapper(agg)(agg.data)
 
