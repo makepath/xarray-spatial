@@ -27,8 +27,9 @@ RADIAN = 180 / np.pi
 
 
 @ngjit
-def _cpu(data):
-    out = np.zeros_like(data, dtype=np.float64)
+def _run_numpy(data: np.ndarray):
+    data = data.astype(np.float32)
+    out = np.zeros_like(data, dtype=np.float32)
     out[:] = np.nan
     rows, cols = data.shape
     for y in range(1, rows-1):
@@ -109,6 +110,7 @@ def _run_gpu(arr, out):
 
 
 def _run_cupy(data: cupy.ndarray) -> cupy.ndarray:
+    data = data.astype(cupy.float32)
     griddim, blockdim = cuda_args(data.shape)
     out = cupy.empty(data.shape, dtype='f4')
     out[:] = cupy.nan
@@ -116,26 +118,13 @@ def _run_cupy(data: cupy.ndarray) -> cupy.ndarray:
     return out
 
 
-def _run_numpy(data: np.ndarray) -> np.ndarray:
-    out = _cpu(data)
-    return out
-
-
 def _run_dask_numpy(data: da.Array) -> da.Array:
-    _func = partial(_cpu)
-
+    data = data.astype(np.float32)
+    _func = partial(_run_numpy)
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=np.nan,
                            meta=np.array(()))
-
-    # # Fill borders with nans to ensure nan edge effect.
-    # require dask >= 2021.04.1
-    # out[0, :] = np.nan
-    # out[-1, :] = np.nan
-    # out[:,  0] = np.nan
-    # out[:, -1] = np.nan
-
     return out
 
 
@@ -194,7 +183,7 @@ def aspect(agg: xr.DataArray,
             [4, 4, 9, 2, 4],
             [1, 5, 0, 1, 4],
             [1, 5, 0, 5, 5]
-        ], dtype=np.float64)
+        ], dtype=np.float32)
         >>> raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
         >>> print(raster)
         <xarray.DataArray 'raster' (y: 6, x: 5)>
@@ -228,7 +217,7 @@ def aspect(agg: xr.DataArray,
         >>> aspect_da = aspect(raster_da)
         >>> print(aspect_da)
         <xarray.DataArray 'aspect' (y: 6, x: 5)>
-        dask.array<_trim, shape=(6, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        dask.array<_trim, shape=(6, 5), dtype=float32, chunksize=(3, 3), chunktype=numpy.ndarray>
         Dimensions without coordinates: y, x
         >>> print(aspect_da.compute())  # compute the results
         <xarray.DataArray 'aspect' (y: 6, x: 5)>
