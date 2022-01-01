@@ -443,7 +443,7 @@ def _process(
         pan_near_y = np.zeros(width, dtype=np.int64)
 
         # output of the function
-        output_img = np.zeros(shape=(height, width), dtype=np.float32)
+        output_img = np.full((height, width), np.nan, dtype=np.float32)
         img_distance = np.zeros(shape=(height, width), dtype=np.float32)
 
         # Loop from top to bottom of the image.
