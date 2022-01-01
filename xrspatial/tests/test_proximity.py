@@ -168,10 +168,10 @@ def test_allocation():
     # max_distance setting
     max_distance = 10
     expected_results_max_distance = np.array([
-        [0., 0., 0., 0., 2., 2.],
-        [0., 1., 1., 1., 0., 0.],
-        [0., 3., 3., 3., 0., 0.],
-        [4., 4., 0., 0., 0., 0.]
+        [np.nan, np.nan, np.nan, np.nan, 2., 2.],
+        [np.nan, 1., 1., 1., np.nan, np.nan],
+        [np.nan, 3., 3., 3., np.nan, np.nan],
+        [4., 4., np.nan, np.nan, np.nan, np.nan]
     ])
     # numpy case
     max_distance_alloc = allocation(
@@ -239,10 +239,10 @@ def test_direction():
     # max_distance setting
     max_distance = 10
     expected_results_max_distance = np.array([
-        [0.,   0.,   0.,   0.,  90.,   0.],
-        [0.,  90.,   0., 270.,   0.,   0.],
-        [0.,  90.,   0., 270.,   0.,   0.],
-        [0., 270.,   0.,   0.,   0.,   0.]
+        [np.nan, np.nan, np.nan, np.nan, 90., 0.],
+        [np.nan, 90., 0., 270., np.nan, np.nan],
+        [np.nan, 90., 0., 270., np.nan, np.nan],
+        [0., 270., np.nan, np.nan, np.nan, np.nan]
     ], dtype=np.float32)
     # numpy case
     max_distance_direction = direction(
