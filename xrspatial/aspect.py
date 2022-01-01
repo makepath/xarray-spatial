@@ -49,14 +49,14 @@ def _cpu(data):
                 # flat surface, slope = 0, thus invalid aspect
                 out[y, x] = -1.
             else:
-                aspect = np.arctan2(dz_dy, -dz_dx) * RADIAN
+                _aspect = np.arctan2(dz_dy, -dz_dx) * RADIAN
                 # convert to compass direction values (0-360 degrees)
-                if aspect < 0:
-                    out[y, x] = 90.0 - aspect
-                elif aspect > 90.0:
-                    out[y, x] = 360.0 - aspect + 90.0
+                if _aspect < 0:
+                    out[y, x] = 90.0 - _aspect
+                elif _aspect > 90.0:
+                    out[y, x] = 360.0 - _aspect + 90.0
                 else:
-                    out[y, x] = 90.0 - aspect
+                    out[y, x] = 90.0 - _aspect
 
     return out
 
@@ -78,21 +78,21 @@ def _gpu(arr):
 
     if dz_dx == 0 and dz_dy == 0:
         # flat surface, slope = 0, thus invalid aspect
-        aspect = -1
+        _aspect = -1
     else:
-        aspect = atan2(dz_dy, -dz_dx) * 57.29578
+        _aspect = atan2(dz_dy, -dz_dx) * 57.29578
         # convert to compass direction values (0-360 degrees)
-        if aspect < 0:
-            aspect = 90 - aspect
-        elif aspect > 90:
-            aspect = 360 - aspect + 90
+        if _aspect < 0:
+            _aspect = 90 - _aspect
+        elif _aspect > 90:
+            _aspect = 360 - _aspect + 90
         else:
-            aspect = 90 - aspect
+            _aspect = 90 - _aspect
 
-    if aspect > 359.999:  # lame float equality check...
+    if _aspect > 359.999:  # lame float equality check...
         return 0
     else:
-        return aspect
+        return _aspect
 
 
 @cuda.jit
