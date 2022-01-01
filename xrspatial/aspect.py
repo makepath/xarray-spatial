@@ -12,6 +12,7 @@ import xarray as xr
 from xrspatial.utils import ngjit
 from xrspatial.utils import cuda_args
 from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import not_implemented_func
 
 from typing import Optional
 
@@ -26,8 +27,9 @@ RADIAN = 180 / np.pi
 
 
 @ngjit
-def _cpu(data):
-    out = np.zeros_like(data, dtype=np.float64)
+def _run_numpy(data: np.ndarray):
+    data = data.astype(np.float32)
+    out = np.zeros_like(data, dtype=np.float32)
     out[:] = np.nan
     rows, cols = data.shape
     for y in range(1, rows-1):
@@ -49,14 +51,14 @@ def _cpu(data):
                 # flat surface, slope = 0, thus invalid aspect
                 out[y, x] = -1.
             else:
-                aspect = np.arctan2(dz_dy, -dz_dx) * RADIAN
+                _aspect = np.arctan2(dz_dy, -dz_dx) * RADIAN
                 # convert to compass direction values (0-360 degrees)
-                if aspect < 0:
-                    out[y, x] = 90.0 - aspect
-                elif aspect > 90.0:
-                    out[y, x] = 360.0 - aspect + 90.0
+                if _aspect < 0:
+                    out[y, x] = 90.0 - _aspect
+                elif _aspect > 90.0:
+                    out[y, x] = 360.0 - _aspect + 90.0
                 else:
-                    out[y, x] = 90.0 - aspect
+                    out[y, x] = 90.0 - _aspect
 
     return out
 
@@ -78,21 +80,21 @@ def _gpu(arr):
 
     if dz_dx == 0 and dz_dy == 0:
         # flat surface, slope = 0, thus invalid aspect
-        aspect = -1
+        _aspect = -1
     else:
-        aspect = atan2(dz_dy, -dz_dx) * 57.29578
+        _aspect = atan2(dz_dy, -dz_dx) * 57.29578
         # convert to compass direction values (0-360 degrees)
-        if aspect < 0:
-            aspect = 90 - aspect
-        elif aspect > 90:
-            aspect = 360 - aspect + 90
+        if _aspect < 0:
+            _aspect = 90 - _aspect
+        elif _aspect > 90:
+            _aspect = 360 - _aspect + 90
         else:
-            aspect = 90 - aspect
+            _aspect = 90 - _aspect
 
-    if aspect > 359.999:  # lame float equality check...
+    if _aspect > 359.999:  # lame float equality check...
         return 0
     else:
-        return aspect
+        return _aspect
 
 
 @cuda.jit
@@ -108,6 +110,7 @@ def _run_gpu(arr, out):
 
 
 def _run_cupy(data: cupy.ndarray) -> cupy.ndarray:
+    data = data.astype(cupy.float32)
     griddim, blockdim = cuda_args(data.shape)
     out = cupy.empty(data.shape, dtype='f4')
     out[:] = cupy.nan
@@ -115,42 +118,13 @@ def _run_cupy(data: cupy.ndarray) -> cupy.ndarray:
     return out
 
 
-def _run_dask_cupy(data: da.Array) -> da.Array:
-    msg = 'Upstream bug in dask prevents cupy backed arrays'
-    raise NotImplementedError(msg)
-
-    # add any func args
-    # TODO: probably needs cellsize args
-    _func = partial(_run_cupy)
-
-    out = data.map_overlap(_func,
-                           depth=(1, 1),
-                           boundary=cupy.nan,
-                           dtype=cupy.float32,
-                           meta=cupy.array(()))
-    return out
-
-
-def _run_numpy(data: np.ndarray) -> np.ndarray:
-    out = _cpu(data)
-    return out
-
-
 def _run_dask_numpy(data: da.Array) -> da.Array:
-    _func = partial(_cpu)
-
+    data = data.astype(np.float32)
+    _func = partial(_run_numpy)
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=np.nan,
                            meta=np.array(()))
-
-    # # Fill borders with nans to ensure nan edge effect.
-    # require dask >= 2021.04.1
-    # out[0, :] = np.nan
-    # out[-1, :] = np.nan
-    # out[:,  0] = np.nan
-    # out[:, -1] = np.nan
-
     return out
 
 
@@ -209,7 +183,7 @@ def aspect(agg: xr.DataArray,
             [4, 4, 9, 2, 4],
             [1, 5, 0, 1, 4],
             [1, 5, 0, 5, 5]
-        ], dtype=np.float64)
+        ], dtype=np.float32)
         >>> raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
         >>> print(raster)
         <xarray.DataArray 'raster' (y: 6, x: 5)>
@@ -243,7 +217,7 @@ def aspect(agg: xr.DataArray,
         >>> aspect_da = aspect(raster_da)
         >>> print(aspect_da)
         <xarray.DataArray 'aspect' (y: 6, x: 5)>
-        dask.array<_trim, shape=(6, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        dask.array<_trim, shape=(6, 5), dtype=float32, chunksize=(3, 3), chunktype=numpy.ndarray>
         Dimensions without coordinates: y, x
         >>> print(aspect_da.compute())  # compute the results
         <xarray.DataArray 'aspect' (y: 6, x: 5)>
@@ -275,10 +249,13 @@ def aspect(agg: xr.DataArray,
               dtype=float32)
         Dimensions without coordinates: y, x
     """
-    mapper = ArrayTypeFunctionMapping(numpy_func=_run_numpy,
-                                      dask_func=_run_dask_numpy,
-                                      cupy_func=_run_cupy,
-                                      dask_cupy_func=_run_dask_cupy)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_run_numpy,
+        dask_func=_run_dask_numpy,
+        cupy_func=_run_cupy,
+        dask_cupy_func=lambda *args: not_implemented_func(
+            *args, messages='aspect() does not support dask with cupy backed DataArray')  # noqa
+    )
 
     out = mapper(agg)(agg.data)
 
