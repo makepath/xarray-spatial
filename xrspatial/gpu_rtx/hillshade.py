@@ -114,7 +114,7 @@ def _shade_lambert_kernel(hits, normals, output, H, W, sun_dir, cast_shadows):
         temp = (cos_theta + 1) / 2
 
         if cast_shadows and hits[i, j, 0] >= 0:
-            temp = temp / 2.5
+            temp = temp / 2
 
         if temp > 1:
             temp = 1
