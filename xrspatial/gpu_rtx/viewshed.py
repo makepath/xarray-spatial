@@ -49,8 +49,10 @@ def _generate_primary_rays_kernel(data, x_coords, y_coords, H, W):
 
 def _generate_primary_rays(rays, x_coords, y_coords, H, W):
     griddim, blockdim = calc_cuda_dims((H, W))
+    d_y_coords = cupy.array(y_coords)
+    d_x_coords = cupy.array(x_coords)
     _generate_primary_rays_kernel[griddim, blockdim](
-        rays, x_coords, y_coords, H, W)
+        rays, d_x_coords, d_y_coords, H, W)
     return 0
 
 

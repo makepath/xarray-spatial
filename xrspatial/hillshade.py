@@ -182,7 +182,7 @@ def hillshade(agg: xr.DataArray,
     # dask + cupy case
     elif (has_cuda() and has_cupy() and isinstance(agg.data, da.Array) and
             is_cupy_backed(agg)):
-        out = _run_dask_cupy(agg.data, azimuth, angle_altitude)
+        raise NotImplementedError("Dask/CuPy hillshade not implemented")
 
     # dask + numpy case
     elif isinstance(agg.data, da.Array):

@@ -51,12 +51,12 @@ def _generate_primary_rays(rays, H, W):
 @nb.cuda.jit
 def _generate_shadow_rays_kernel(rays, hits, normals, H, W, sun_dir):
     """
-    A GPU kernel that given a set rays and their respective intersection
-    points, generates in rays (overwriting the original content) a new set of
-    rays (shadow rays) that have their origins at the point of intersection of
-    their parent ray and the direction towards the sun.
+    A GPU kernel that takes a set rays and their intersection points with the
+    triangulated surface, and calculates a set of shadow rays (overwriting the
+    original rays) that have their origins at the intersection points and
+    directions towards the sun.
     The normals vectors at the point of intersection of the original rays are
-    cached in @normals, thus we can later use them to do lambertian shading,
+    cached in normals, thus we can later use them to do Lambertian shading,
     after the shadow rays have been traced.
     """
     i, j = nb.cuda.grid(2)
@@ -114,7 +114,7 @@ def _shade_lambert_kernel(hits, normals, output, H, W, sun_dir, cast_shadows):
         temp = (cos_theta + 1) / 2
 
         if cast_shadows and hits[i, j, 0] >= 0:
-            temp = temp / 2
+            temp = temp / 2.5
 
         if temp > 1:
             temp = 1
