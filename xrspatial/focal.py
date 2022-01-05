@@ -147,7 +147,7 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
             [0., 0., 0., 0., 0.],
             [0., 0., 0., 0., 0.]])
         >>> raster = xr.DataArray(data)
-        >>> mean_agg = mean(raster, passes=1)
+        >>> mean_agg = mean(raster)
         >>> print(mean_agg)
         <xarray.DataArray 'mean' (dim_0: 5, dim_1: 5)>
         array([[0., 0., 0., 0., 0.],
@@ -157,37 +157,43 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
                [0., 0., 0., 0., 0.]])
         Dimensions without coordinates: dim_0, dim_1
 
-    Focal mean works with Dask with NumPy backed xarray DataArray
+    Focal mean works with Dask with NumPy backed xarray DataArray.
+    Increase number of runs by setting a specific value for parameter `passes`
     .. sourcecode:: python
         >>> import dask.array as da
-        >>> data_da = np.arange(25).reshape(5, 5)
-        >>> print(data_da)
-        [[ 0  1  2  3  4]
-         [ 5  6  7  8  9]
-         [10 11 12 13 14]
-         [15 16 17 18 19]
-         [20 21 22 23 24]]
-        >>> data_da = da.from_array(data_da, chunks=(3, 3))
+        >>> data_da = da.from_array(data, chunks=(3, 3))
         >>> raster_da = xr.DataArray(data_da, dims=['y', 'x'], name='raster_da')  # noqa
         >>> print(raster_da)
         <xarray.DataArray 'raster_da' (y: 5, x: 5)>
         dask.array<array, shape=(5, 5), dtype=int64, chunksize=(3, 3), chunktype=numpy.ndarray>  # noqa
         Dimensions without coordinates: y, x
-        >>> mean_da = mean(raster_da)
+        >>> mean_da = mean(raster_da, passes=2)
         >>> print(mean_da)
         <xarray.DataArray 'mean' (y: 5, x: 5)>
         dask.array<_trim, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>  # noqa
         Dimensions without coordinates: y, x
         >>> print(mean_da.compute())
-        <xarray.DataArray 'mean' (y: 5, x: 5)>
-        array([[ 3. ,  3.5,  4.5,  5.5,  6. ],
-               [ 5.5,  6. ,  7. ,  8. ,  8.5],
-               [10.5, 11. , 12. , 13. , 13.5],
-               [15.5, 16. , 17. , 18. , 18.5],
-               [18. , 18.5, 19.5, 20.5, 21. ]])
-        Dimensions without coordinates: y, x
+        <xarray.DataArray 'mean' (dim_0: 5, dim_1: 5)>
+        array([[0.25      , 0.33333333, 0.5       , 0.33333333, 0.25      ],
+               [0.33333333, 0.44444444, 0.66666667, 0.44444444, 0.33333333],
+               [0.5       , 0.66666667, 1.        , 0.66666667, 0.5       ],
+               [0.33333333, 0.44444444, 0.66666667, 0.44444444, 0.33333333],
+               [0.25      , 0.33333333, 0.5       , 0.33333333, 0.25      ]])
+        Dimensions without coordinates: dim_0, dim_1
 
     Focal mean works with CuPy backed xarray DataArray.
+    In this example, we set `passes` to the number of elements of the array,
+    we'll get a mean array where every element has the same value.
+    .. sourcecode:: python
+        >>> print(mean(raster, passes=25))
+        <xarray.DataArray 'mean' (dim_0: 5, dim_1: 5)>
+        array([[0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
+               [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
+               [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
+               [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
+               [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994]])
+        Dimensions without coordinates: dim_0, dim_1
+
     .. sourcecode:: python
         >>> import cupy
         >>> data_cupy = cupy.asarray([
