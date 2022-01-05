@@ -117,7 +117,7 @@ def _mean(data, excludes):
 def mean(agg, passes=1, excludes=[np.nan], name='mean'):
     """
     Returns Mean filtered array using a 3x3 window.
-    Default behaviour to 'mean' is to pad the borders with nans
+    Default behaviour to 'mean' is to exclude NaNs from calculations.
 
     Parameters
     ----------
@@ -140,17 +140,21 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.focal import mean
-        >>> data = np.zeros((5, 5), dtype=np.float64)
-        >>> data[2, 2] = 9
+        >>> data = np.array([
+            [0., 0., 0., 0., 0.],
+            [0., 0., 0., 0., 0.],
+            [0., 0., 9., 0., 0.],
+            [0., 0., 0., 0., 0.],
+            [0., 0., 0., 0., 0.]])
         >>> raster = xr.DataArray(data)
         >>> mean_agg = mean(raster, passes=1)
         >>> print(mean_agg)
         <xarray.DataArray 'mean' (dim_0: 5, dim_1: 5)>
-        array([[nan, nan, nan, nan, nan],
-               [nan,  1.,  1.,  1., nan],
-               [nan,  1.,  1.,  1., nan],
-               [nan,  1.,  1.,  1., nan],
-               [nan, nan, nan, nan, nan]])
+        array([[0., 0., 0., 0., 0.],
+               [0., 1., 1., 1., 0.],
+               [0., 1., 1., 1., 0.],
+               [0., 1., 1., 1., 0.],
+               [0., 0., 0., 0., 0.]])
         Dimensions without coordinates: dim_0, dim_1
 
     Focal mean works with Dask with NumPy backed xarray DataArray
@@ -176,11 +180,11 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
         Dimensions without coordinates: y, x
         >>> print(mean_da.compute())
         <xarray.DataArray 'mean' (y: 5, x: 5)>
-        array([[nan, nan, nan, nan, nan],
-               [nan,  6.,  7.,  8., nan],
-               [nan, 11., 12., 13., nan],
-               [nan, 16., 17., 18., nan],
-               [nan, nan, nan, nan, nan]])
+        array([[ 3. ,  3.5,  4.5,  5.5,  6. ],
+               [ 5.5,  6. ,  7. ,  8. ,  8.5],
+               [10.5, 11. , 12. , 13. , 13.5],
+               [15.5, 16. , 17. , 18. , 18.5],
+               [18. , 18.5, 19.5, 20.5, 21. ]])
         Dimensions without coordinates: y, x
 
     Focal mean works with CuPy backed xarray DataArray.
@@ -198,10 +202,10 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
         <class 'cupy.core.core.ndarray'>
         >>> print(mean_cupy)
         <xarray.DataArray 'mean' (y: 4, x: 6)>
-        array([[nan,         nan,         nan,         nan,         nan, nan],
-               [nan,  0.22222222,  0.6666667 ,  1.2222222 ,  1.6666666 , nan],
-               [nan, -0.5555556 ,  0.        ,  0.8888889 ,  1.4444444 , nan],
-               [nan,         nan,         nan,         nan,         nan, nan]], dtype=float32)
+        array([[0.25      , 0.5       , 0.8333333  , 1.1666666, 1.5      , 1.75     ],  # noqa
+               [0.        , 0.22222222, 0.6666667  , 1.2222222, 1.6666666, 1.8333334],  # noqa
+               [-0.8333333, -0.5555556, 0.         , 0.8888889, 1.4444444, 1.6666666],  # noqa
+               [-1.25      ,-1.       , -0.33333334, 0.6666667, 1.3333334, 1.5      ]], dtype=float32)  # noqa
         Dimensions without coordinates: y, x
     """
 
