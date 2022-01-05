@@ -33,13 +33,11 @@ def _equal_numpy(x, y):
 
 @ngjit
 def _mean_numpy(data, excludes):
-    # TODO: exclude nans, what if nans in the kernel?
     out = np.zeros_like(data)
-    out[:] = np.nan
     rows, cols = data.shape
 
-    for y in range(1, rows - 1):
-        for x in range(1, cols - 1):
+    for y in range(rows):
+        for x in range(cols):
 
             exclude = False
             for ex in excludes:
@@ -48,15 +46,12 @@ def _mean_numpy(data, excludes):
                     break
 
             if not exclude:
-                a, b, c, d, e, f, g, h, i = [data[y - 1, x - 1],
-                                             data[y, x - 1],
-                                             data[y + 1, x - 1],
-                                             data[y - 1, x], data[y, x],
-                                             data[y + 1, x],
-                                             data[y - 1, x + 1],
-                                             data[y, x + 1],
-                                             data[y + 1, x + 1]]
-                out[y, x] = (a + b + c + d + e + f + g + h + i) / 9
+                left = max(x-1, 0)
+                right = min(x+2, cols)
+                bottom = max(y-1, 0)
+                top = min(y+2, rows)
+                kernel_data = data[bottom:top, left:right]
+                out[y, x] = np.nanmean(kernel_data)
             else:
                 out[y, x] = data[y, x]
     return out
@@ -71,27 +66,31 @@ def _mean_dask_numpy(data, excludes):
     return out
 
 
-@cuda.jit(device=True)
-def _kernel_mean_gpu(data):
-    return (data[-1, -1] + data[-1, 0] + data[-1, 1]
-            + data[0, -1] + data[0, 0] + data[0, 1]
-            + data[1, -1] + data[1, 0] + data[1, 1]) / 9
-
-
 @cuda.jit
 def _mean_gpu(data, excludes, out):
     i, j = cuda.grid(2)
-    di = 1
-    dj = 1
 
     for ex in excludes:
         if (data[i, j] == ex) or (isnan(data[i, j]) and isnan(ex)):
             out[i, j] = data[i, j]
             return
 
-    if (i - di >= 0 and i + di <= out.shape[0] - 1 and
-            j - dj >= 0 and j + dj <= out.shape[1] - 1):
-        out[i, j] = _kernel_mean_gpu(data[i-1:i+2, j-1:j+2])
+    rows, cols = out.shape
+    if 0 <= i < rows and 0 <= j < cols:
+        left = max(j - 1, 0)
+        right = min(j + 2, cols)
+        bottom = max(i - 1, 0)
+        top = min(i + 2, rows)
+
+        sum = 0
+        num = 0
+        for y in range(bottom, top):
+            for x in range(left, right):
+                if not isnan(data[y, x]):
+                    sum += data[y, x]
+                    num += 1
+        if num > 0:
+            out[i, j] = sum / num
 
 
 def _mean_cupy(data, excludes):
