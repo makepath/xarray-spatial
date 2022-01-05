@@ -108,10 +108,10 @@ if __name__ == '__main__':
     stats_df = stats(zones=zones, values=values, stats_funcs=custom_stats)
     warm_up_sec = time.time() - start
 
-    if args.profile:
-        from pyprof import timing
-        timing.mode = 'timing'
-        timing.reset()
+    # if args.profile:
+    #     from pyprof import timing
+    #     timing.mode = 'timing'
+    #     timing.reset()
 
     elapsed_sec = 0
     for i in range(args.iterations):
@@ -125,14 +125,14 @@ if __name__ == '__main__':
         elapsed_sec/args.iterations, warm_up_sec))
     print('Result: ', stats_df)
 
-    if args.profile:
-        from datetime import datetime
-        now = datetime.now()
-        now = now.strftime("%H:%M:%S-%d-%m-%Y")
-        timing.report()
-        import os
-        if not os.path.isdir('./timings'):
-            os.makedirs('./timings')
-        timing.report(out_dir='./timings/',
-                      out_file=f'zonal-custom-{args.backend}-h{H}-w{W}-zh{zH}-zw{zW}-i{args.iterations}-{now}.csv')
+    # if args.profile:
+    #     from datetime import datetime
+    #     now = datetime.now()
+    #     now = now.strftime("%H:%M:%S-%d-%m-%Y")
+    #     timing.report()
+    #     import os
+    #     if not os.path.isdir('./timings'):
+    #         os.makedirs('./timings')
+    #     timing.report(out_dir='./timings/',
+    #                   out_file=f'zonal-custom-{args.backend}-h{H}-w{W}-zh{zH}-zw{zW}-i{args.iterations}-{now}.csv')
 

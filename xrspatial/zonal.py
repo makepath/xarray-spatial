@@ -18,8 +18,6 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-# from pyprof import timing
-
 # local modules
 from xrspatial.utils import ngjit
 from xrspatial.utils import has_cuda
@@ -39,7 +37,7 @@ def _stats_count(data):
         # cupy case
         # TODO validate count function
         stats_count = np.prod(data.shape)
-        #for dim in data.shape:
+        # for dim in data.shape:
         #    stats_count *= dim
     else:
         # dask case
@@ -57,15 +55,6 @@ _DEFAULT_STATS = dict(
     count=lambda z: _stats_count(z),
 )
 
-# _DEFAULT_STATS_CUPY = dict(
-#     mean=lambda z: z.mean(),
-#     max=lambda z: z.max(),
-#     min=lambda z: z.min(),
-#     sum=lambda z: z.sum(),
-#     std=lambda z: z.std(),
-#     var=lambda z: z.var(),
-#     count=lambda z: _stats_count(z),
-# )
 
 _DASK_BLOCK_STATS = dict(
     max=lambda z: z.max(),
@@ -170,7 +159,7 @@ def _single_stats_func(
     )
     return results
 
-# @timing.timeit(key="stats_cupy")
+
 def _stats_cupy(
     orig_zones: xr.DataArray,
     orig_values: xr.DataArray,
@@ -179,37 +168,32 @@ def _stats_cupy(
     nodata_zones: Union[int, float],
     nodata_values: Union[int, float],
 ) -> pd.DataFrame:
-    # TODO support 3D input
+
+    # TODO add support for 3D input
     if len(orig_values.shape) > 2:
         raise TypeError('3D inputs not supported for cupy backend')
-    
-    # with timing.timed_region('flatten', cupy=True):
+
     zones = cupy.ravel(orig_zones.data)
     values = cupy.ravel(orig_values.data)
 
-    # with timing.timed_region('argsort_zones', cupy=True):
     sorted_indices = cupy.argsort(zones)
 
-    # NaN should go at the end of the array
-    # with timing.timed_region('sorted_zones_and_values', cupy=True):
     sorted_zones = zones[sorted_indices]
     values_by_zone = values[sorted_indices]
 
     # filter out values that are non-finite or values equal to nodata_values
-    # with timing.timed_region('filter_values', cupy=True):
     if nodata_values:
-        filter_values = cupy.isfinite(values_by_zone) & (values_by_zone != nodata_values)
+        filter_values = cupy.isfinite(values_by_zone) & (
+            values_by_zone != nodata_values)
     else:
         filter_values = cupy.isfinite(values_by_zone)
     values_by_zone = values_by_zone[filter_values]
     sorted_zones = sorted_zones[filter_values]
 
     # Now I need to find the unique zones, and zone breaks
-    # with timing.timed_region('unique_values', cupy=True):
     unique_zones, unique_index = cupy.unique(sorted_zones, return_index=True)
-    
+
     # Transfer to the host
-    # with timing.timed_region('transfer_to_host', cupy=True):
     unique_index = unique_index.get()
     if zone_ids is None:
         unique_zones = unique_zones.get()
@@ -231,7 +215,6 @@ def _stats_cupy(
 
         stats_dict['zone'].append(zone_id)
         # extract zone_values
-        # with timing.timed_region('zone_values', cupy=True):
         if i < len(unique_zones) - 1:
             zone_values = values_by_zone[unique_index[i]:unique_index[i+1]]
         else:
@@ -242,15 +225,12 @@ def _stats_cupy(
             stats_func = stats_funcs.get(stats)
             if not callable(stats_func):
                 raise ValueError(stats)
-            # with timing.timed_region('calc:' + stats, cupy=True):
             result = stats_func(zone_values)
 
             assert(len(result.shape) == 0)
 
-            # with timing.timed_region('append_stats', cupy=True):
             stats_dict[stats].append(cupy.float(result))
 
-    # with timing.timed_region('dataframe'):
     stats_df = pd.DataFrame(stats_dict)
     stats_df.set_index("zone")
     return stats_df
@@ -358,6 +338,8 @@ def _stats_numpy(
     return stats_df
 
 # @timing.timeit(key="stats_numpy")
+
+
 def _stats_numpy(
     zones: xr.DataArray,
     values: xr.DataArray,
@@ -570,17 +552,6 @@ def stats(
             "`stats_funcs` must be a subset of default supported stats "
             "`[\'mean\', \'max\', \'min\', \'sum\', \'std\', \'var\', \'count\']`"  # noqa
         )
-
-    if isinstance(stats_funcs, list):
-        # create a dict of stats
-        stats_funcs_dict = {}
-
-    #     for stats in stats_funcs:
-    #         func = _DEFAULT_STATS_CUPY.get(stats, None)
-    #         if func is None:
-    #             err_str = f"Invalid stat name. {stats} option not supported."
-    #             raise ValueError(err_str)
-    #         stats_funcs_dict[stats] = func
 
     if isinstance(stats_funcs, list):
         # create a dict of stats
