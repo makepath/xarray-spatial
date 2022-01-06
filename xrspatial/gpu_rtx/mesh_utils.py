@@ -3,6 +3,33 @@ import numpy as np
 import cupy
 
 
+def create_triangulation(raster, optix):
+    datahash = np.uint64(hash(str(raster.data.get())))
+    optixhash = np.uint64(optix.getHash())
+    if optixhash != datahash:
+        H, W = raster.shape
+        num_tris = (H - 1) * (W - 1) * 2
+        verts = cupy.empty(H * W * 3, np.float32)
+        triangles = cupy.empty(num_tris * 3, np.int32)
+
+        # Generate a mesh from the terrain (buffers are on the GPU, so
+        # generation happens also on GPU)
+        res = _triangulate_terrain(verts, triangles, raster)
+        if res:
+            raise RuntimeError(
+                f"Failed to generate mesh from terrain, error code: {res}")
+
+        res = optix.build(datahash, verts, triangles)
+        if res:
+            raise RuntimeError(
+                f"OptiX failed to build GAS, error code: {res}")
+
+        # Clear some GPU memory that we no longer need
+        verts = None
+        triangles = None
+        cupy.get_default_memory_pool().free_all_blocks()
+
+
 @nb.cuda.jit
 def _triangulate_terrain_kernel(verts, triangles, data, H, W, scale, stride):
     global_id = stride + nb.cuda.grid(1)
@@ -11,7 +38,7 @@ def _triangulate_terrain_kernel(verts, triangles, data, H, W, scale, stride):
         w = global_id % W
         mesh_map_index = h * W + w
 
-        val = data[h, -w]
+        val = data[h, w]
 
         offset = 3*mesh_map_index
         verts[offset] = w
@@ -29,7 +56,7 @@ def _triangulate_terrain_kernel(verts, triangles, data, H, W, scale, stride):
 
 
 @nb.njit(parallel=True)
-def triangulate_cpu(verts, triangles, data, H, W, scale):
+def _triangulate_cpu(verts, triangles, data, H, W, scale):
     for h in nb.prange(H):
         for w in range(W):
             mesh_map_index = h * W + w
@@ -51,10 +78,10 @@ def triangulate_cpu(verts, triangles, data, H, W, scale):
                 triangles[offset+5] = np.int32(mesh_map_index)
 
 
-def triangulate_terrain(verts, triangles, terrain, scale=1):
+def _triangulate_terrain(verts, triangles, terrain, scale=1):
     H, W = terrain.shape
     if isinstance(terrain.data, np.ndarray):
-        triangulate_cpu(verts, triangles, terrain.data, H, W, scale)
+        _triangulate_cpu(verts, triangles, terrain.data, H, W, scale)
     if isinstance(terrain.data, cupy.ndarray):
         job_size = H*W
         blockdim = 1024

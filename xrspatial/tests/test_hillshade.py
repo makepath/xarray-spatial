@@ -1,11 +1,13 @@
 import pytest
 import xarray as xr
 import numpy as np
+from numpy.testing import assert_allclose, assert_array_less
 
 import dask.array as da
 
 from xrspatial import hillshade
 from xrspatial.utils import doesnt_have_cuda
+from ..gpu_rtx import has_rtx
 
 from xrspatial.tests.general_checks import general_output_checks
 
@@ -90,4 +92,31 @@ def test_hillshade_gpu_equals_cpu():
     gpu = hillshade(small_da_cupy, name='cupy_result')
 
     general_output_checks(small_da_cupy, gpu)
+    assert isinstance(gpu.data, cupy.ndarray)
+
     assert np.isclose(cpu.data, gpu.data.get(), equal_nan=True).all()
+
+
+@pytest.mark.skipif(not has_rtx(), reason="RTX not available")
+def test_hillshade_rtx_with_shadows():
+    import cupy
+
+    tall_gaussian = 400*data_gaussian
+    cpu = hillshade(xr.DataArray(tall_gaussian))
+
+    tall_gaussian = cupy.asarray(tall_gaussian)
+    rtx = hillshade(xr.DataArray(tall_gaussian))
+    rtx.data = cupy.asnumpy(rtx.data)
+
+    assert cpu.shape == rtx.shape
+    nhalf = cpu.shape[0] // 2
+
+    # Quadrant nearest sun direction should be almost identical.
+    quad_cpu = cpu.data[nhalf::, ::nhalf]
+    quad_rtx = cpu.data[nhalf::, ::nhalf]
+    assert_allclose(quad_cpu, quad_rtx, atol=0.03)
+
+    # Opposite diagonal should be in shadow.
+    diag_cpu = np.diagonal(cpu.data[::-1])[nhalf:]
+    diag_rtx = np.diagonal(rtx.data[::-1])[nhalf:]
+    assert_array_less(diag_rtx, diag_cpu + 1e-3)

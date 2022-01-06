@@ -5,19 +5,55 @@ import cupy
 import math
 import numba as nb
 import numpy as np
-from typing import Union
 from rtxpy import RTX
+from typing import Union
 import xarray as xr
 
-from .cuda_utils import (
-    add, diff, dot, float3, invert, make_float3, mul)
-from .mesh_utils import triangulate_terrain
+from .cuda_utils import add, diff, dot, float3, invert, make_float3, mul
+from .mesh_utils import create_triangulation
 
 from ..utils import calc_cuda_dims
 
 
 # If a cell is invisible, its value is set to -1
 INVISIBLE = -1
+
+
+@nb.cuda.jit
+def _generate_primary_rays_kernel(data, x_coords, y_coords, H, W):
+    """
+    A GPU kernel that given a set of x and y discrete coordinates on a raster
+    terrain generates in @data a list of parallel rays that represent camera
+    rays generated from an orthographic camera that is looking straight down
+    at the surface from an origin height 10000.
+    """
+    i, j = nb.cuda.grid(2)
+    if i >= 0 and i < H and j >= 0 and j < W:
+        if (j == W-1):
+            data[i, j, 0] = x_coords[j] - 1e-3
+        else:
+            data[i, j, 0] = x_coords[j] + 1e-3
+
+        if (i == H-1):
+            data[i, j, 1] = y_coords[i] - 1e-3
+        else:
+            data[i, j, 1] = y_coords[i] + 1e-3
+
+        data[i, j, 2] = 10000  # Location of the camera (height)
+        data[i, j, 3] = 1e-3
+        data[i, j, 4] = 0
+        data[i, j, 5] = 0
+        data[i, j, 6] = -1
+        data[i, j, 7] = np.inf
+
+
+def _generate_primary_rays(rays, x_coords, y_coords, H, W):
+    griddim, blockdim = calc_cuda_dims((H, W))
+    d_y_coords = cupy.array(y_coords)
+    d_x_coords = cupy.array(x_coords)
+    _generate_primary_rays_kernel[griddim, blockdim](
+        rays, d_x_coords, d_y_coords, H, W)
+    return 0
 
 
 @nb.cuda.jit
@@ -36,37 +72,6 @@ def _calc_viewshed_kernel(hits, visibility_grid, H, W):
 def _calc_viewshed(hits, visibility_grid, H, W):
     griddim, blockdim = calc_cuda_dims((H, W))
     _calc_viewshed_kernel[griddim, blockdim](hits, visibility_grid, H, W)
-    return 0
-
-
-@nb.cuda.jit
-def _generate_primary_rays_kernel(data, x_coords, y_coords, H, W):
-    i, j = nb.cuda.grid(2)
-    if i >= 0 and i < H and j >= 0 and j < W:
-        if (j == W-1):
-            data[i, j, 0] = x_coords[j] - 1e-6
-        else:
-            data[i, j, 0] = x_coords[j] + 1e-6
-
-        if (i == H-1):
-            data[i, j, 1] = y_coords[i] - 1e-6
-        else:
-            data[i, j, 1] = y_coords[i] + 1e-6
-
-        data[i, j, 2] = 10000  # Location of the camera (height)
-        data[i, j, 3] = 1e-3
-        data[i, j, 4] = 0
-        data[i, j, 5] = 0
-        data[i, j, 6] = -1
-        data[i, j, 7] = np.inf
-
-
-def _generate_primary_rays(rays, x_coords, y_coords, H, W):
-    griddim, blockdim = calc_cuda_dims((H, W))
-    d_y_coords = cupy.array(y_coords)
-    d_x_coords = cupy.array(x_coords)
-    _generate_primary_rays_kernel[griddim, blockdim](
-        rays, d_x_coords, d_y_coords, H, W)
     return 0
 
 
@@ -185,12 +190,15 @@ def _viewshed_rt(
     d_vsrays = cupy.empty((H, W, 8), np.float32)
 
     _generate_primary_rays(d_rays, x_coords, y_coords, H, W)
+    device = cupy.cuda.Device(0)
+    device.synchronize()
     res = optix.trace(d_rays, d_hits, W*H)
     if res:
         raise RuntimeError(f"Failed trace 1, error code: {res}")
 
     _generate_viewshed_rays(d_rays, d_hits, d_vsrays, d_visgrid, H, W,
                             (x_view, y_view, observer_elev, target_elev))
+    device.synchronize()
     res = optix.trace(d_vsrays, d_hits, W*H)
     if res:
         raise RuntimeError(f"Failed trace 2, error code: {res}")
@@ -222,32 +230,7 @@ def viewshed_gpu(
     if not isinstance(raster.data, cupy.ndarray):
         raise TypeError("raster.data must be a cupy array")
 
-    H, W = raster.shape
     optix = RTX()
+    create_triangulation(raster, optix)
 
-    data_hash = np.uint64(hash(str(raster.data.get())))
-    optix_hash = np.uint64(optix.getHash())
-    if (optix_hash != data_hash):
-        num_tris = (H - 1) * (W - 1) * 2
-        verts = cupy.empty(H * W * 3, np.float32)
-        triangles = cupy.empty(num_tris * 3, np.int32)
-
-        # Generate a mesh from the terrain (buffers are on the GPU, so
-        # generation happens also on GPU)
-        res = triangulate_terrain(verts, triangles, raster)
-        if res:
-            raise RuntimeError(
-                f"Failed to generate mesh from terrain, error code: {res}")
-
-        res = optix.build(data_hash, verts, triangles)
-        if res:
-            raise RuntimeError(
-                f"OptiX failed to build GAS, error code: {res}")
-
-        # Clear some GPU memory that we no longer need
-        verts = None
-        triangles = None
-        cupy.get_default_memory_pool().free_all_blocks()
-
-    view = _viewshed_rt(raster, optix, x, y, observer_elev, target_elev)
-    return view
+    return _viewshed_rt(raster, optix, x, y, observer_elev, target_elev)
