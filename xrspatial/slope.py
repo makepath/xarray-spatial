@@ -27,6 +27,7 @@ from xrspatial.utils import not_implemented_func
 
 @ngjit
 def _cpu(data, cellsize_x, cellsize_y):
+    data = data.astype(np.float32)
     out = np.zeros_like(data, dtype=np.float32)
     out[:] = np.nan
     rows, cols = data.shape
@@ -57,6 +58,7 @@ def _run_numpy(data: np.ndarray,
 def _run_dask_numpy(data: da.Array,
                     cellsize_x: Union[int, float],
                     cellsize_y: Union[int, float]) -> da.Array:
+    data = data.astype(np.float32)
     _func = partial(_cpu,
                     cellsize_x=cellsize_x,
                     cellsize_y=cellsize_y)
@@ -102,6 +104,7 @@ def _run_cupy(data: cupy.ndarray,
               cellsize_y: Union[int, float]) -> cupy.ndarray:
     cellsize_x_arr = cupy.array([float(cellsize_x)], dtype='f4')
     cellsize_y_arr = cupy.array([float(cellsize_y)], dtype='f4')
+    data = data.astype(cupy.float32)
 
     griddim, blockdim = cuda_args(data.shape)
     out = cupy.empty(data.shape, dtype='f4')
