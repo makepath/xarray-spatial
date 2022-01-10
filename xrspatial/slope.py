@@ -138,7 +138,25 @@ def slope(agg: xr.DataArray,
 
     Examples
     --------
-
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import slope
+        >>> data = np.array([
+        ...     [0, 0, 0, 0, 0],
+        ...     [0, 0, 0, -1, 2],
+        ...     [0, 0, 0, 0, 1],
+        ...     [0, 0, 0, 5, 0]])
+        >>> agg = xr.DataArray(data)
+        >>> slope_agg = slope(agg)
+        >>> slope_agg
+        <xarray.DataArray 'slope' (dim_0: 4, dim_1: 5)>
+        array([[      nan,       nan,       nan,       nan,       nan],
+               [      nan,  0.      , 14.036243, 32.512516,       nan],
+               [      nan,  0.      , 42.031113, 53.395725,       nan],
+               [      nan,       nan,       nan,       nan,       nan]],
+              dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
     """
 
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
