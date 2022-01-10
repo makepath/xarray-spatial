@@ -201,7 +201,7 @@ def circle_kernel(cellsize_x, cellsize_y, radius):
 
 def annulus_kernel(cellsize_x, cellsize_y, outer_radius, inner_radius):
     """
-    Generates a annulus (ring-shaped) kernel of a given cellsize and radius.
+    Generates an annulus (ring-shaped) kernel of a given cellsize and radius.
 
     Parameters
     ----------
@@ -388,7 +388,7 @@ def convolve_2d(data, kernel):
     return out
 
 
-def convolution_2d(agg, kernel):
+def convolution_2d(agg, kernel, name='convolution_2d'):
     """
     Calculates, for all inner cells of an array, the 2D convolution of
     each cell. Convolution is frequently used for image
@@ -399,7 +399,8 @@ def convolution_2d(agg, kernel):
     Parameters
     ----------
     agg : xarray.DataArray
-        2D array of values to processed and padded.
+        2D array of values to processed. Can be NumPy backed, CuPybacked,
+        or Dask with NumPy backed DataArray.
     kernel : array-like object
         Impulse kernel, determines area to apply impulse function for
         each cell.
@@ -408,9 +409,11 @@ def convolution_2d(agg, kernel):
     -------
     convolve_agg : xarray.DataArray
         2D array representation of the impulse function.
+        The backend array type is the same as of input.
 
     Examples
     --------
+    convolution_2d() works with NumPy backed DataArray.
     .. sourcecode:: python
         >>> import numpy as np
         >>> import xarray as xr
@@ -433,17 +436,73 @@ def convolution_2d(agg, kernel):
         >>> from xrspatial.convolution import convolution_2d
         >>> convolved_agg = convolution_2d(raster, kernel)
         >>> convolved_agg
-        <xarray.DataArray (dim_0: 4, dim_1: 6)>
+        <xarray.DataArray 'convolution_2d' (dim_0: 4, dim_1: 6)>
         array([[nan, nan, nan, nan, nan, nan],
                [nan, 35., 40., 45., 50., nan],
                [nan, 65., 70., 75., 80., nan],
                [nan, nan, nan, nan, nan, nan]], dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
+
+    convolution_2d() works with Dask with NumPy backed DataArray.
+    .. sourcecode:: python
+        >>> from xrspatial.convolution import annulus_kernel
+        >>> kernel = annulus_kernel(1, 1, 1.5, 0.5)
+        >>> kernel
+        array([[0., 1., 0.],
+               [1., 0., 1.],
+               [0., 1., 0.]])
+        >>> import dask.array as da
+        >>> data_da = da.from_array(np.ones((h, w)), chunks=(2, 2))
+        >>> raster_da = xr.DataArray(data_da, name='raster_da')
+        >>> raster_da
+        <xarray.DataArray 'raster_da' (dim_0: 4, dim_1: 6)>
+        dask.array<array, shape=(4, 6), dtype=float64, chunksize=(2, 2), chunktype=numpy.ndarray>  # noqa
+        Dimensions without coordinates: dim_0, dim_1
+        >>> convolved_agg = convolution_2d(raster_da, kernel)
+        >>> convolved_agg
+        <xarray.DataArray 'convolution_2d' (dim_0: 4, dim_1: 6)>
+        dask.array<_trim, shape=(4, 6), dtype=float64, chunksize=(2, 2), chunktype=numpy.ndarray>  # noqa
+        Dimensions without coordinates: dim_0, dim_1
+        >>> convolved_agg.compute()
+        <xarray.DataArray 'convolution_2d' (dim_0: 4, dim_1: 6)>
+        array([[nan, nan, nan, nan, nan, nan],
+               [nan,  4.,  4.,  4.,  4., nan],
+               [nan,  4.,  4.,  4.,  4., nan],
+               [nan, nan, nan, nan, nan, nan]], dtype=float32)
+
+        convolution_2d() works with CuPy backed DataArray.
+        >>> from xrspatial.convolution import custom_kernel
+        >>> kernel = custom_kernel(np.array([
+        ...    [1, 0, 0],
+        ...    [1, 1, 0],
+        ...    [1, 0, 0]
+        ... ]))
+        >>> import cupy
+        >>> data_cupy = cupy.arange(0, w * h * 2, 2).reshape(h, w)
+        >>> raster_cupy = xr.DataArray(data_cupy, name='raster_cupy')
+        >>> print(raster_cupy)
+        <xarray.DataArray 'raster_cupy' (dim_0: 4, dim_1: 6)>
+        array([[ 0,  2,  4,  6,  8, 10],
+               [12, 14, 16, 18, 20, 22],
+               [24, 26, 28, 30, 32, 34],
+               [36, 38, 40, 42, 44, 46]])
+        Dimensions without coordinates: dim_0, dim_1
+        >>> convolved_agg = convolution_2d(raster_cupy, kernel)
+        >>> type(convolved_agg.data)
+        <class 'cupy.core.core.ndarray'>
+        >>> convolved_agg
+        <xarray.DataArray 'convolution_2d' (dim_0: 4, dim_1: 6)>
+        array([[ nan,  nan,  nan,  nan,  nan,  nan],
+               [ nan,  56.,  64.,  72.,  80.,  nan],
+               [ nan, 104., 112., 120., 128.,  nan],
+               [ nan,  nan,  nan,  nan,  nan,  nan]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
     """
 
     # wrapper of convolve_2d
-    out = convolve_2d(agg, kernel)
+    out = convolve_2d(agg.data, kernel)
     return xr.DataArray(out,
+                        name=name,
                         coords=agg.coords,
                         dims=agg.dims,
                         attrs=agg.attrs)
