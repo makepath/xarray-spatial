@@ -287,9 +287,7 @@ def custom_kernel(kernel):
 
 @jit(nopython=True, nogil=True)
 def _convolve_2d_numpy(data, kernel):
-    """
-    Apply kernel to data image.
-    """
+    # apply kernel to data image.
     # TODO: handle nan
 
     nx = data.shape[0]

@@ -173,19 +173,24 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
         dask.array<_trim, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>  # noqa
         Dimensions without coordinates: y, x
         >>> print(mean_da.compute())
-        <xarray.DataArray 'mean' (dim_0: 5, dim_1: 5)>
+        <xarray.DataArray 'mean' (y: 5, x: 5)>
         array([[0.25      , 0.33333333, 0.5       , 0.33333333, 0.25      ],
                [0.33333333, 0.44444444, 0.66666667, 0.44444444, 0.33333333],
                [0.5       , 0.66666667, 1.        , 0.66666667, 0.5       ],
                [0.33333333, 0.44444444, 0.66666667, 0.44444444, 0.33333333],
                [0.25      , 0.33333333, 0.5       , 0.33333333, 0.25      ]])
-        Dimensions without coordinates: dim_0, dim_1
+        Dimensions without coordinates: y, x
 
     Focal mean works with CuPy backed xarray DataArray.
     In this example, we set `passes` to the number of elements of the array,
     we'll get a mean array where every element has the same value.
     .. sourcecode:: python
-        >>> print(mean(raster, passes=25))
+        >>> import cupy
+        >>> raster_cupy = xr.DataArray(cupy.asarray(data), name='raster_cupy')
+        >>> mean_cupy = mean(raster_cupy, passes=25)
+        >>> print(type(mean_cupy.data))
+        <class 'cupy.core.core.ndarray'>
+        >>> print(mean_cupy)
         <xarray.DataArray 'mean' (dim_0: 5, dim_1: 5)>
         array([[0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
                [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
@@ -193,26 +198,6 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
                [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
                [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994]])
         Dimensions without coordinates: dim_0, dim_1
-
-    .. sourcecode:: python
-        >>> import cupy
-        >>> data_cupy = cupy.asarray([
-            [0, 1, 1, 1, 1, 2],
-            [0, 0, 1, 1, 2, 2],
-            [0, -1, 0, 2, 2, 2],
-            [-2, -2, -1, 0, 1, 1],
-        ])
-        >>> raster_cupy = xr.DataArray(data_cupy, dims=['y', 'x'])
-        >>> mean_cupy = mean(raster_cupy)
-        >>> print(type(mean_cupy.data))
-        <class 'cupy.core.core.ndarray'>
-        >>> print(mean_cupy)
-        <xarray.DataArray 'mean' (y: 4, x: 6)>
-        array([[0.25      , 0.5       , 0.8333333  , 1.1666666, 1.5      , 1.75     ],  # noqa
-               [0.        , 0.22222222, 0.6666667  , 1.2222222, 1.6666666, 1.8333334],  # noqa
-               [-0.8333333, -0.5555556, 0.         , 0.8888889, 1.4444444, 1.6666666],  # noqa
-               [-1.25      ,-1.       , -0.33333334, 0.6666667, 1.3333334, 1.5      ]], dtype=float32)  # noqa
-        Dimensions without coordinates: y, x
     """
 
     out = agg.data
@@ -671,100 +656,10 @@ def hotspots(raster, kernel):
 
     Examples
     --------
-    .. plot::
-       :include-source:
 
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import xarray as xr
-
-        from xrspatial import generate_terrain, aspect
-        from xrspatial.convolution import circle_kernel
-        from xrspatial.focal import hotspots
-
-
-        # Generate Example Terrain
-        W = 500
-        H = 300
-
-        template_terrain = xr.DataArray(np.zeros((H, W)))
-        x_range=(-20e6, 20e6)
-        y_range=(-20e6, 20e6)
-
-        terrain_agg = generate_terrain(
-            template_terrain, x_range=x_range, y_range=y_range
-        )
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Kernel
-        kernel = circle_kernel(10, 10, 100)
-
-        # Create Hotspots Aggregate array
-        hotspots_agg = hotspots(raster = terrain_agg,
-                                kernel = kernel)
-
-        # Edit Attributes
-        hotspots_agg = hotspots_agg.rename('Significance')
-        hotspots_agg = hotspots_agg.assign_attrs(
-            {
-                'Description': 'Example Hotspots',
-                'units': '%',
-            }
-        )
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Hotspots
-        hotspots_agg.plot(aspect = 2, size = 4)
-        plt.title("Hotspots")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-    .. sourcecode:: python
-
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02296597, 1261.947921  ],
-               [1285.37105519, 1282.48079719],
-               [1306.02339636, 1303.4069579 ]])
-        Coordinates:
-        * lon      (lon) float64 -3.96e+06 -3.88e+06
-        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            res:            (80000.0, 133333.3333333333)
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
-
-        >>> print(hotspots_agg[200:203, 200:202])
-        <xarray.DataArray 'Significance' (lat: 3, lon: 2)>
-        array([[0, 0],
-               [0, 0],
-               [0, 0]], dtype=int8)
-        Coordinates:
-        * lon      (lon) float64 -3.96e+06 -3.88e+06
-        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            res:            (80000.0, 133333.3333333333)
-            Description:    Example Hotspots
-            units:          %
-            Max Elevation:  4000
     """
+    # TODO: edit unit of output raster to percent (%)
+
     # validate raster
     if not isinstance(raster, DataArray):
         raise TypeError("`raster` must be instance of DataArray")
