@@ -561,12 +561,13 @@ def _hotspots_numpy(raster, kernel):
             issubclass(raster.data.dtype.type, np.floating)):
         raise ValueError("data type must be integer or float")
 
+    data = raster.data.astype(np.float32)
     # apply kernel to raster values
-    mean_array = convolve_2d(raster.data, kernel / kernel.sum())
+    mean_array = convolve_2d(data, kernel / kernel.sum())
 
     # calculate z-scores
-    global_mean = np.nanmean(raster.data)
-    global_std = np.nanstd(raster.data)
+    global_mean = np.nanmean(data)
+    global_std = np.nanstd(data)
     if global_std == 0:
         raise ZeroDivisionError(
             "Standard deviation of the input raster values is 0."
@@ -578,13 +579,14 @@ def _hotspots_numpy(raster, kernel):
 
 
 def _hotspots_dask_numpy(raster, kernel):
+    data = raster.data.astype(np.float32)
 
     # apply kernel to raster values
-    mean_array = convolve_2d(raster.data, kernel / kernel.sum())
+    mean_array = convolve_2d(data, kernel / kernel.sum())
 
     # calculate z-scores
-    global_mean = da.nanmean(raster.data)
-    global_std = da.nanstd(raster.data)
+    global_mean = da.nanmean(data)
+    global_std = da.nanstd(data)
 
     # commented out to avoid early compute to check if global_std is zero
     # if global_std == 0:
@@ -646,12 +648,14 @@ def _hotspots_cupy(raster, kernel):
             issubclass(raster.data.dtype.type, cupy.floating)):
         raise ValueError("data type must be integer or float")
 
+    data = raster.data.astype(cupy.float32)
+
     # apply kernel to raster values
-    mean_array = convolve_2d(raster.data, kernel / kernel.sum())
+    mean_array = convolve_2d(data, kernel / kernel.sum())
 
     # calculate z-scores
-    global_mean = cupy.nanmean(raster.data)
-    global_std = cupy.nanstd(raster.data)
+    global_mean = cupy.nanmean(data)
+    global_std = cupy.nanstd(data)
     if global_std == 0:
         raise ZeroDivisionError(
             "Standard deviation of the input raster values is 0."
