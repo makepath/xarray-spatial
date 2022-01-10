@@ -462,6 +462,38 @@ def focal_stats(agg,
     stats_agg : xarray.DataArray of same type as `agg`
         3D array with dimensions of `(stat, y, x)` and with values
         indicating the focal stats.
+
+    Examples
+    --------
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.convolution import circle_kernel
+        >>> kernel = circle_kernel(1, 1, 1)
+        >>> kernel
+        array([[0., 1., 0.],
+               [1., 1., 1.],
+               [0., 1., 0.]])
+        >>> data = np.array([
+            [0, 0, 0, 0, 0, 0],
+            [1, 1, 2, 2, 1, 1],
+            [2, 2, 1, 1, 2, 2],
+            [3, 3, 0, 0, 3, 3],
+        ])
+        >>> from xrspatial.focal import focal_stats
+        >>> focal_stats(xr.DataArray(data), kernel, stats_funcs=['min', 'sum'])
+        <xarray.DataArray 'focal_apply' (stats: 2, dim_0: 4, dim_1: 6)>
+        array([[[0., 0., 0., 0., 0., 0.],
+                [0., 0., 0., 0., 0., 0.],
+                [1., 1., 0., 0., 1., 1.],
+                [2., 0., 0., 0., 0., 2.]],
+               [[1., 1., 2., 2., 1., 1.],
+                [4., 6., 6., 6., 6., 4.],
+                [8., 9., 6., 6., 9., 8.],
+                [8., 8., 4., 4., 8., 8.]]])
+        Coordinates:
+          * stats    (stats) object 'min' 'sum'
+        Dimensions without coordinates: dim_0, dim_1
     """
 
     _function_mapping = {
@@ -664,12 +696,12 @@ def hotspots(raster, kernel):
         >>> import xarray as xr
         >>> from xrspatial.convolution import custom_kernel
         >>> kernel = custom_kernel(np.array([1, 1, 0]))
-        >>> from xrspatial.focal import hotspots
         >>> data = np.array([
         ...    [0, 1000, 1000, 0, 0, 0],
         ...    [0, 0, 0, -1000, -1000, 0],
         ...    [0, -900, -900, 0, 0, 0],
         ...    [0, 100, 1000, 0, 0, 0]])
+        >>> from xrspatial.focal import hotspots
         >>> hotspots(xr.DataArray(data), kernel)
         array([[  0,   0,  95,   0,   0,   0],
                [  0,   0,   0,   0, -90,   0],
