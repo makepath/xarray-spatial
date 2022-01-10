@@ -218,34 +218,21 @@ def generate_terrain(agg: xr.DataArray,
     .. plot::
        :include-source:
 
-        import numpy as np
-        import xarray as xr
-        from xrspatial import generate_terrain
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import generate_terrain
 
-        W = 4
-        H = 3
-        data = np.zeros((H, W), dtype=np.float32)
-        raster = xr.DataArray(data, dims=['y', 'x'])
+        >>> W = 400
+        >>> H = 300
+        >>> data = np.zeros((H, W), dtype=np.float32)
+        >>> raster = xr.DataArray(data, dims=['y', 'x'])
+        >>> xrange = (-20e6, 20e6)
+        >>> yrange = (-20e6, 20e6)
+        >>> seed = 2
+        >>> zfactor = 10
 
-        xrange = (-20e6, 20e6)
-        yrange = (-20e6, 20e6)
-        seed = 2
-        zfactor = 10
-
-        terrain = generate_terrain(raster, xrange, yrange, seed, zfactor)
-
-    .. sourcecode:: python
-
-        >>> print(terrain)
-        <xarray.DataArray 'terrain' (y: 3, x: 4)>
-        array([[ 6.8067746,  5.263137 ,  4.664292 ,  6.821344 ],
-               [ 7.4834156,  6.9849734,  4.3545456,  0.       ],
-               [ 6.7674546, 10.       ,  7.0946655,  7.015267 ]], dtype=float32)  # noqa
-        Coordinates:
-          * x        (x) float64 -1.5e+07 -5e+06 5e+06 1.5e+07
-          * y        (y) float64 -1.333e+07 0.0 1.333e+07
-        Attributes:
-            res:      (10000000.0, -13333333.333333334)
+        >>> terrain = generate_terrain(raster, xrange, yrange, seed, zfactor)
+        >>> terrain.plot.imshow()
     """
 
     height, width = agg.shape

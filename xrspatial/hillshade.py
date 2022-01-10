@@ -128,29 +128,21 @@ def hillshade(agg: xr.DataArray,
 
     Examples
     --------
-    .. plot::
-       :include-source:
-
-            import numpy as np
-            import xarray as xr
-            from xrspatial import hillshade
-
-            data = np.array([
-                [0., 0., 0., 0., 0.],
-                [0., 1., 0., 2., 0.],
-                [0., 0., 3., 0., 0.],
-                [0., 0., 0., 0., 0.],
-                [0., 0., 0., 0., 0.]
-            ])
-            n, m = data.shape
-            raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
-            raster['y'] = np.arange(n)[::-1]
-            raster['x'] = np.arange(m)
-
-            hillshade_agg = hillshade(raster)
-
     .. sourcecode:: python
-
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import hillshade
+        >>> data = np.array([
+        ...    [0., 0., 0., 0., 0.],
+        ...    [0., 1., 0., 2., 0.],
+        ...    [0., 0., 3., 0., 0.],
+        ...    [0., 0., 0., 0., 0.],
+        ...    [0., 0., 0., 0., 0.]])
+        >>> n, m = data.shape
+        >>> raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
+        >>> raster['y'] = np.arange(n)[::-1]
+        >>> raster['x'] = np.arange(m)
+        >>> hillshade_agg = hillshade(raster)
         >>> print(hillshade_agg)
         <xarray.DataArray 'hillshade' (y: 5, x: 5)>
         array([[       nan,        nan,        nan,        nan,        nan],

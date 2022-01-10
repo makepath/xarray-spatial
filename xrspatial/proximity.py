@@ -60,22 +60,20 @@ def euclidean_distance(x1: float, x2: float, y1: float, y2: float) -> float:
     Examples
     --------
     .. sourcecode:: python
-
         >>> # Imports
         >>> from xrspatial import euclidean_distance
         >>> point_a = (142.32, 23.23)
         >>> point_b = (312.54, 432.01)
-
         >>> # Calculate Euclidean Distance
         >>> dist = euclidean_distance(
-                point_a[0],
-                point_b[0],
-                point_a[1],
-                point_b[1],
-            )
+        ...     point_a[0],
+        ...     point_b[0],
+        ...     point_a[1],
+        ...     point_b[1])
         >>> print(dist)
         442.80462599209596
     """
+
     x = x1 - x2
     y = y1 - y2
     return np.sqrt(x * x + y * y)
@@ -110,23 +108,19 @@ def manhattan_distance(x1: float, x2: float, y1: float, y2: float) -> float:
     Examples
     --------
     .. sourcecode:: python
-
-        >>> # Imports
         >>> from xrspatial import manhattan_distance
-
         >>> point_a = (142.32, 23.23)
         >>> point_b = (312.54, 432.01)
-
         >>> # Calculate Euclidean Distance
         >>> dist = manhattan_distance(
-                point_a[0],
-                point_b[0],
-                point_a[1],
-                point_b[1],
-            )
+        ...     point_a[0],
+        ...     point_b[0],
+        ...     point_a[1],
+        ...     point_b[1])
         >>> print(dist)
         196075.9368
     """
+
     x = x1 - x2
     y = y1 - y2
     return abs(x) + abs(y)
@@ -166,23 +160,19 @@ def great_circle_distance(
     Examples
     --------
     .. sourcecode:: python
-
-        >>> # Imports
         >>> from xrspatial import great_circle_distance
-
         >>> point_a = (123.2, 82.32)
         >>> point_b = (178.0, 65.09)
-
         >>> # Calculate Euclidean Distance
         >>> dist = great_circle_distance(
-                point_a[0],
-                point_b[0],
-                point_a[1],
-                point_b[1],
-            )
+        ...     point_a[0],
+        ...     point_b[0],
+        ...     point_a[1],
+        ...     point_b[1])
         >>> print(dist)
         2378290.489801402
     """
+
     if x1 > 180 or x1 < -180:
         raise ValueError(
             "Invalid x-coordinate of the first point."
@@ -722,41 +712,23 @@ def proximity(
 
     Examples
     --------
-    .. plot::
-       :include-source:
-
-        import numpy as np
-        import xarray as xr
-        from xrspatial import proximity
-
-        data = np.array([
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> data = np.array([
             [0., 0., 0., 0., 0.],
             [0., 0., 0., 1., 0.],
             [0., 0., 0., 0., 0.],
             [0., 0., 0., 0., 0.],
             [0., 0., 0., 0., 0.]
         ])
+        >>> n, m = data.shape
+        >>> raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
+        >>> raster['y'] = np.arange(n)[::-1]
+        >>> raster['x'] = np.arange(m)
 
-        n, m = data.shape
-        raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
-        raster['y'] = np.arange(n)[::-1]
-        raster['x'] = np.arange(m)
-
-        proximity_agg = proximity(raster)
-
-    .. sourcecode:: python
-
-        >>> raster
-        <xarray.DataArray 'raster' (y: 5, x: 5)>
-        array([[0., 0., 0., 0., 0.],
-               [0., 0., 0., 1., 0.],
-               [0., 0., 0., 0., 0.],
-               [0., 0., 0., 0., 0.],
-               [1., 0., 0., 0., 0.]])
-        Coordinates:
-          * y        (y) int64 4 3 2 1 0
-          * x        (x) int64 0 1 2 3 4
-
+        >>> from xrspatial import proximity
+        >>> proximity_agg = proximity(raster)
         >>> proximity_agg
         <xarray.DataArray (y: 5, x: 5)>
         array([[3.1622777, 2.236068 , 1.4142135, 1.       , 1.4142135],
@@ -872,40 +844,23 @@ def allocation(
 
     Examples
     --------
-    .. plot::
-       :include-source:
-
-        import numpy as np
-        import xarray as xr
-        from xrspatial import allocation
-
-        data = np.array([
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> data = np.array([
             [0., 0., 0., 0., 0.],
             [0., 1., 0., 2., 0.],
             [0., 0., 3., 0., 0.],
             [0., 0., 0., 0., 0.],
             [0., 0., 0., 0., 0.]
         ])
-        n, m = data.shape
-        raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
-        raster['y'] = np.arange(n)[::-1]
-        raster['x'] = np.arange(m)
+        >>> n, m = data.shape
+        >>> raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
+        >>> raster['y'] = np.arange(n)[::-1]
+        >>> raster['x'] = np.arange(m)
 
-        allocation_agg = allocation(raster)
-
-    .. sourcecode:: python
-
-        >>> raster
-        <xarray.DataArray 'raster' (y: 5, x: 5)>
-        array([[0., 0., 0., 0., 0.],
-               [0., 1., 0., 2., 0.],
-               [0., 0., 3., 0., 0.],
-               [0., 0., 0., 0., 0.],
-               [1., 0., 0., 0., 0.]])
-        Coordinates:
-          * y        (y) int64 4 3 2 1 0
-          * x        (x) int64 0 1 2 3 4
-
+        >>> from xrspatial import allocation
+        >>> allocation_agg = allocation(raster)
         >>> allocation_agg
         <xarray.DataArray (y: 5, x: 5)>
         array([[1., 1., 2., 2., 2.],
@@ -916,8 +871,8 @@ def allocation(
         Coordinates:
           * y        (y) int64 4 3 2 1 0
           * x        (x) int64 0 1 2 3 4
-
     """
+
     allocation_img = _process(
         raster,
         x=x,
@@ -1025,40 +980,23 @@ def direction(
 
     Examples
     --------
-    .. plot::
-       :include-source:
-
-        import numpy as np
-        import xarray as xr
-        from xrspatial import direction
-
-        data = np.array([
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> data = np.array([
             [0., 0., 0., 0., 0.],
             [0., 0., 0., 0., 0.],
             [0., 0., 1., 0., 0.],
             [0., 0., 0., 0., 0.],
             [1., 0., 0., 0., 0.]
         ])
-        n, m = data.shape
-        raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
-        raster['y'] = np.arange(n)[::-1]
-        raster['x'] = np.arange(m)
+        >>> n, m = data.shape
+        >>> raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
+        >>> raster['y'] = np.arange(n)[::-1]
+        >>> raster['x'] = np.arange(m)
 
-        direction_agg = direction(raster)
-
-    ... sourcecode:: python
-
-        >>> raster
-        <xarray.DataArray 'raster' (y: 5, x: 5)>
-        array([[0., 0., 0., 0., 0.],
-               [0., 0., 0., 0., 0.],
-               [0., 0., 1., 0., 0.],
-               [0., 0., 0., 0., 0.],
-               [1., 0., 0., 0., 0.]])
-        Coordinates:
-          * y        (y) int64 4 3 2 1 0
-          * x        (x) int64 0 1 2 3 4
-
+        >>> from xrspatial import direction
+        >>> direction_agg = direction(raster)
         >>> direction_agg
         <xarray.DataArray (y: 5, x: 5)>
         array([[ 45.      ,  26.56505 , 360.      , 333.43494 , 315.      ],
