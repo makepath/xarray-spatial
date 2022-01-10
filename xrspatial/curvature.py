@@ -41,12 +41,14 @@ def _cpu(data, cellsize):
 def _run_numpy(data: np.ndarray,
                cellsize: Union[int, float]) -> np.ndarray:
     # TODO: handle border edge effect
+    data = data.astype(np.float32)
     out = _cpu(data, cellsize)
     return out
 
 
 def _run_dask_numpy(data: da.Array,
                     cellsize: Union[int, float]) -> da.Array:
+    data = data.astype(np.float32)
     _func = partial(_cpu, cellsize=cellsize)
     out = data.map_overlap(_func,
                            depth=(1, 1),
@@ -76,6 +78,7 @@ def _run_gpu(arr, cellsize, out):
 def _run_cupy(data: cupy.ndarray,
               cellsize: Union[int, float]) -> cupy.ndarray:
 
+    data = data.astype(cupy.float32)
     cellsize_arr = cupy.array([float(cellsize)], dtype='f4')
 
     # TODO: add padding

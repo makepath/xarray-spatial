@@ -289,7 +289,7 @@ def custom_kernel(kernel):
 def _convolve_2d_numpy(data, kernel):
     # apply kernel to data image.
     # TODO: handle nan
-
+    data = data.astype(np.float32)
     nx = data.shape[0]
     ny = data.shape[1]
     nkx = kernel.shape[0]
@@ -317,6 +317,7 @@ def _convolve_2d_numpy(data, kernel):
 
 
 def _convolve_2d_dask_numpy(data, kernel):
+    data = data.astype(np.float32)
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
     _func = partial(_convolve_2d_numpy, kernel=kernel)
@@ -368,6 +369,7 @@ def _convolve_2d_cuda(data, kernel, out):
 
 
 def _convolve_2d_cupy(data, kernel):
+    data = data.astype(cupy.float32)
     out = cupy.empty(data.shape, dtype='f4')
     out[:, :] = cupy.nan
     griddim, blockdim = cuda_args(data.shape)

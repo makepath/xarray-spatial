@@ -12,6 +12,8 @@ from .utils import (
 
 
 def _run_numpy(data, azimuth=225, angle_altitude=25):
+    data = data.astype(np.float32)
+
     azimuth = 360.0 - azimuth
     x, y = np.gradient(data)
     slope = np.pi/2. - np.arctan(np.sqrt(x*x + y*y))
@@ -28,6 +30,8 @@ def _run_numpy(data, azimuth=225, angle_altitude=25):
 
 
 def _run_dask_numpy(data, azimuth, angle_altitude):
+    data = data.astype(np.float32)
+
     _func = partial(_run_numpy, azimuth=azimuth, angle_altitude=angle_altitude)
     out = data.map_overlap(_func,
                            depth=(1, 1),
@@ -74,6 +78,7 @@ def _run_cupy(d_data, azimuth, angle_altitude):
 
     # Allocate output buffer and launch kernel with appropriate dimensions
     import cupy
+    d_data = d_data.astype(cupy.float32)
     output = cupy.empty(d_data.shape, np.float32)
     griddim, blockdim = calc_cuda_dims(d_data.shape)
     _gpu_calc_numba[griddim, blockdim](
