@@ -1,5 +1,24 @@
 ## Xarray-Spatial Changelog
 -----------
+### Version 0.3.1 - 2022-01-10
+- Add benchmarking framework using asv (#595)
+- Fix classify bug with dask array (#599)
+- polygonize function on cpu for numpy-backed xarray DataArrays (#585)
+- Test python 3.9 on CI (#602)
+- crosstab: speedup dask case (#596)
+- Add benchmark for CPU polygonize (#605)
+- Change copyright year to include 2021 (#610)
+- Docs enhancement (#604, #628)
+- code refactor: use array function mapper, add messages param to not_implemented_func() (#612)
+- condense tests (#613)
+- Multispectral fixes (#617)
+- Change copyright year to 2022 (#622)
+- Aspect: convert to float if int dtype input raster (#619)
+- direction(), allocation(): set all NaNs at initalization (#618)
+- Add rtx gpu hillshade with shadows (#608)
+- Add hillshade benchmarking, for numpy, cupy and rtxpy (#625)
+- Focal mean: handle nans inside kernel (#623)
+- Convert to float32 if input raster is in int dtype (#629)
 
 ### Version 0.3.0 - 2021-12-01
 - Added a pure numba hillshade that is 10x faster compared to numpy (#542)
