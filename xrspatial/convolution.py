@@ -470,7 +470,8 @@ def convolution_2d(agg, kernel, name='convolution_2d'):
                [nan,  4.,  4.,  4.,  4., nan],
                [nan, nan, nan, nan, nan, nan]], dtype=float32)
 
-        convolution_2d() works with CuPy backed DataArray.
+    convolution_2d() works with CuPy backed DataArray.
+    .. sourcecode:: python
         >>> from xrspatial.convolution import custom_kernel
         >>> kernel = custom_kernel(np.array([
         ...    [1, 0, 0],

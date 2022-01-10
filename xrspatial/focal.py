@@ -316,8 +316,9 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
     Parameters
     ----------
     raster : xarray.DataArray
-        2D array of input values to be filtered.
-    kernel : numpy.array
+        2D array of input values to be filtered. Can be a NumPy backed,
+        CuPy backed, or Dask with NumPy backed DataArray.
+    kernel : numpy.ndarray
         2D array where values of 1 indicate the kernel.
     func : callable, default=xrspatial.focal._calc_mean
         Function which takes an input array and returns an array.
@@ -448,7 +449,8 @@ def focal_stats(agg,
     Parameters
     ----------
     agg : xarray.DataArray
-        2D array of input values to be analysed.
+        2D array of input values to be analysed. Can be a NumPy backed,
+        Cupy backed, or Dask with NumPy backed DataArray.
     kernel : numpy.array
         2D array where values of 1 indicate the kernel.
     stats_funcs: list of string
@@ -646,6 +648,7 @@ def hotspots(raster, kernel):
     ----------
     raster : xarray.DataArray
         2D Input raster image with `raster.shape` = (height, width).
+        Can be a NumPy backed, CuPy backed, or Dask with NumPy backed DataArray
     kernel : Numpy Array
         2D array where values of 1 indicate the kernel.
 
@@ -656,8 +659,25 @@ def hotspots(raster, kernel):
 
     Examples
     --------
-
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.convolution import custom_kernel
+        >>> kernel = custom_kernel(np.array([1, 1, 0]))
+        >>> from xrspatial.focal import hotspots
+        >>> data = np.array([
+        ...    [0, 1000, 1000, 0, 0, 0],
+        ...    [0, 0, 0, -1000, -1000, 0],
+        ...    [0, -900, -900, 0, 0, 0],
+        ...    [0, 100, 1000, 0, 0, 0]])
+        >>> hotspots(xr.DataArray(data), kernel)
+        array([[  0,   0,  95,   0,   0,   0],
+               [  0,   0,   0,   0, -90,   0],
+               [  0,   0, -90,   0,   0,   0],
+               [  0,   0,   0,   0,   0,   0]], dtype=int8)
+        Dimensions without coordinates: dim_0, dim_1
     """
+
     # TODO: edit unit of output raster to percent (%)
 
     # validate raster
