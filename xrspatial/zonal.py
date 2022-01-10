@@ -981,11 +981,13 @@ def apply(
     .. sourcecode:: python
         >>> import numpy as np
         >>> import xarray as xr
-        >>> zones_val = np.array([[1, 1, 0, 2],
-        >>>                       [0, 2, 1, 2]])
+        >>> zones_val = np.array([
+            [1, 1, 0, 2],
+            [0, 2, 1, 2]])
         >>> zones = xr.DataArray(zones_val)
-        >>> values_val = np.array([[2, -1, 5, 3],
-        >>>                        [3, np.nan, 20, 10]])
+        >>> values_val = np.array([
+            [2, -1, 5, 3],
+            [3, np.nan, 20, 10]])
         >>> agg = xr.DataArray(values_val)
         >>> func = lambda x: 0
         >>> apply(zones, agg, func)
