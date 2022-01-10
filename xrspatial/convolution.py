@@ -394,7 +394,7 @@ def convolution_2d(agg, kernel):
     each cell. Convolution is frequently used for image
     processing, such as smoothing, sharpening, and edge detection of
     images by eliminating spurious data or enhancing features in the
-    data.
+    data. Note that edges of output data array are filled with NaNs.
 
     Parameters
     ----------
@@ -412,9 +412,35 @@ def convolution_2d(agg, kernel):
     Examples
     --------
     .. sourcecode:: python
-    >>>
-
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.convolution import circle_kernel
+        >>> kernel = circle_kernel(1, 1, 1)
+        >>> kernel
+        array([[0., 1., 0.],
+               [1., 1., 1.],
+               [0., 1., 0.]])
+        >>> h, w = 4, 6
+        >>> data = np.arange(h*w).reshape(h, w)
+        >>> raster = xr.DataArray(data)
+        >>> raster
+        <xarray.DataArray (dim_0: 4, dim_1: 6)>
+        array([[ 0,  1,  2,  3,  4,  5],
+               [ 6,  7,  8,  9, 10, 11],
+               [12, 13, 14, 15, 16, 17],
+               [18, 19, 20, 21, 22, 23]])
+        Dimensions without coordinates: dim_0, dim_1
+        >>> from xrspatial.convolution import convolution_2d
+        >>> convolved_agg = convolution_2d(raster, kernel)
+        >>> convolved_agg
+        <xarray.DataArray (dim_0: 4, dim_1: 6)>
+        array([[nan, nan, nan, nan, nan, nan],
+               [nan, 35., 40., 45., 50., nan],
+               [nan, 65., 70., 75., 80., nan],
+               [nan, nan, nan, nan, nan, nan]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
     """
+
     # wrapper of convolve_2d
     out = convolve_2d(agg, kernel)
     return xr.DataArray(out,
