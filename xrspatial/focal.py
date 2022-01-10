@@ -250,6 +250,8 @@ def _calc_var(array):
 
 @ngjit
 def _apply_numpy(data, kernel, func):
+    data = data.astype(np.float32)
+
     out = np.zeros_like(data)
     rows, cols = data.shape
     krows, kcols = kernel.shape
@@ -271,6 +273,7 @@ def _apply_numpy(data, kernel, func):
 
 
 def _apply_dask_numpy(data, kernel, func):
+    data = data.astype(np.float32)
     _func = partial(_apply_numpy, kernel=kernel, func=func)
 
     pad_h = kernel.shape[0] // 2
@@ -284,6 +287,7 @@ def _apply_dask_numpy(data, kernel, func):
 
 
 def _apply_cupy(data, kernel, func):
+    data = data.astype(cupy.float32)
     kernel = cupy.asarray(kernel)
 
     out = cupy.zeros(data.shape, dtype=data.dtype)
@@ -427,7 +431,7 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
         dask_cupy_func=lambda *args: not_implemented_func(
             *args, messages='apply() does not support dask with cupy backed DataArray.'),  # noqa
     )
-    out = mapper(raster)(raster.data.astype(float), kernel, func)
+    out = mapper(raster)(raster.data, kernel, func)
     result = DataArray(out,
                        name=name,
                        coords=raster.coords,
