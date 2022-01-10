@@ -351,24 +351,37 @@ def stats(
 
     Examples
     --------
-    .. plot::
-       :include-source:
-
-        import numpy as np
-        import xarray as xr
-        from xrspatial.zonal import stats
-
-        height, width = 10, 10
-        # Values raster
-        values = xr.DataArray(np.arange(height * width).reshape(height, width))
-        # Zones raster
-        zones = xr.DataArray(np.zeros(height * width).reshape(height, width))
-        zones[:5, :5] = 0
-        zones[:5, 5:] = 10
-        zones[5:, :5] = 20
-        zones[5:, 5:] = 30
+    stats() works with NumPy backed DataArray
 
     .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.zonal import stats
+        >>> height, width = 10, 10
+        >>> values_data = np.array([
+            [ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9],
+            [10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+            [20, 21, 22, 23, 24, 25, 26, 27, 28, 29],
+            [30, 31, 32, 33, 34, 35, 36, 37, 38, 39],
+            [40, 41, 42, 43, 44, 45, 46, 47, 48, 49],
+            [50, 51, 52, 53, 54, 55, 56, 57, 58, 59],
+            [60, 61, 62, 63, 64, 65, 66, 67, 68, 69],
+            [70, 71, 72, 73, 74, 75, 76, 77, 78, 79],
+            [80, 81, 82, 83, 84, 85, 86, 87, 88, 89],
+            [90, 91, 92, 93, 94, 95, 96, 97, 98, 99]])
+        >>> values = xr.DataArray(values_data)
+        >>> zones_data = np.array([
+            [ 0.,  0.,  0.,  0.,  0., 10., 10., 10., 10., 10.],
+            [ 0.,  0.,  0.,  0.,  0., 10., 10., 10., 10., 10.],
+            [ 0.,  0.,  0.,  0.,  0., 10., 10., 10., 10., 10.],
+            [ 0.,  0.,  0.,  0.,  0., 10., 10., 10., 10., 10.],
+            [ 0.,  0.,  0.,  0.,  0., 10., 10., 10., 10., 10.],
+            [20., 20., 20., 20., 20., 30., 30., 30., 30., 30.],
+            [20., 20., 20., 20., 20., 30., 30., 30., 30., 30.],
+            [20., 20., 20., 20., 20., 30., 30., 30., 30., 30.],
+            [20., 20., 20., 20., 20., 30., 30., 30., 30., 30.],
+            [20., 20., 20., 20., 20., 30., 30., 30., 30., 30.]])
+        >>> zones = xr.DataArray(zones_data)
 
         >>> # Calculate Stats
         >>> stats_df = stats(zones=zones, values=values)
@@ -391,8 +404,14 @@ def stats(
         2  20     3600
         3  30     3850
 
+    stats() works with Dask with NumPy backed DataArray
+        >>> import dask.array as da
+        >>> import dask.array as da
+        >>> values_dask = xr.DataArray(da.from_array(values, chunks=(3, 3)))
+        >>> zones_dask = xr.DataArray(da.from_array(zones, chunks=(3, 3)))
+
         >>> # Calculate Stats with dask backed xarray DataArrays
-        >>> dask_stats_df = stats(zones=dask_zones, values=dask_values)
+        >>> dask_stats_df = stats(zones=zones_dask, values=values_dask)
         >>> print(type(dask_stats_df))
         <class 'dask.dataframe.core.DataFrame'>
         >>> print(dask_stats_df.compute())
@@ -405,7 +424,7 @@ def stats(
         >>> # Custom Stats with dask backed xarray DataArrays
         >>> dask_custom_stats ={'double_sum': lambda val: val.sum()*2}
         >>> dask_custom_stats_df = stats(
-        >>>      zones=dask_zones, values=dask_values, stats_funcs=custom_stats
+        >>>      zones=zones_dask, values=values_dask, stats_funcs=custom_stats
         >>> )
         >>> print(type(dask_custom_stats_df))
         <class 'dask.dataframe.core.DataFrame'>
@@ -781,33 +800,27 @@ def crosstab(
 
     Examples
     --------
-    .. plot::
-       :include-source:
-
-        import dask.array as da
-        import numpy as np
-        import xarray as xr
-        from xrspatial.zonal import crosstab
-
-        values_data = np.asarray([[0, 0, 10, 20],
-                                  [0, 0, 0, 10],
-                                  [0, np.nan, 20, 50],
-                                  [10, 30, 40, np.inf],
-                                  [10, 10, 50, 0]])
-        values = xr.DataArray(values_data)
-
-        zones_data = np.asarray([[1, 1, 6, 6],
-                                 [1, np.nan, 6, 6],
-                                 [3, 5, 6, 6],
-                                 [3, 5, 7, np.nan],
-                                 [3, 7, 7, 0]])
-        zones = xr.DataArray(zones_data)
-
-        values_dask = xr.DataArray(da.from_array(values, chunks=(3, 3)))
-        zones_dask = xr.DataArray(da.from_array(zones, chunks=(3, 3)))
+    crosstab() works with NumPy backed DataArray.
 
     .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.zonal import crosstab
 
+        >>> values_data = np.asarray([
+            [0, 0, 10, 20],
+            [0, 0, 0, 10],
+            [0, np.nan, 20, 50],
+            [10, 30, 40, np.inf],
+            [10, 10, 50, 0]])
+        >>> values = xr.DataArray(values_data)
+        >>> zones_data = np.asarray([
+            [1, 1, 6, 6],
+            [1, np.nan, 6, 6],
+            [3, 5, 6, 6],
+            [3, 5, 7, np.nan],
+            [3, 7, 7, 0]])
+        >>> zones = xr.DataArray(zones_data)
         >>> # Calculate Crosstab, numpy case
         >>> df = crosstab(zones=zones, values=values)
         >>> print(df)
@@ -819,7 +832,12 @@ def crosstab(
             4      6    1     2     2     0     0     1
             5      7    0     1     0     0     1     1
 
-        >>> # Calculate Crosstab, dask case
+    crosstab() works with Dask with NumPy backed DataArray.
+
+    .. sourcecode:: python
+        >>> import dask.array as da
+        >>> values_dask = xr.DataArray(da.from_array(values, chunks=(3, 3)))
+        >>> zones_dask = xr.DataArray(da.from_array(zones, chunks=(3, 3)))
         >>> df = crosstab(zones=zones_dask, values=values_dask)
         >>> print(df)
             Dask DataFrame Structure:
@@ -961,13 +979,14 @@ def apply(
     Examples
     --------
     .. sourcecode:: python
-
+        >>> import numpy as np
+        >>> import xarray as xr
         >>> zones_val = np.array([[1, 1, 0, 2],
         >>>                       [0, 2, 1, 2]])
-        >>> zones = xarray.DataArray(zones_val)
+        >>> zones = xr.DataArray(zones_val)
         >>> values_val = np.array([[2, -1, 5, 3],
         >>>                        [3, np.nan, 20, 10]])
-        >>> agg = xarray.DataArray(values_val)
+        >>> agg = xr.DataArray(values_val)
         >>> func = lambda x: 0
         >>> apply(zones, agg, func)
         >>> agg
