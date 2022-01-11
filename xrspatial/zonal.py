@@ -542,7 +542,7 @@ def stats(
         raise ValueError(
             "Got dask-backed DataArray as `values` aggregate. "
             "`stats_funcs` must be a subset of default supported stats "
-            "`[\'mean\', \'max\', \'min\', \'sum\', \'std\', \'var\', \'count\']`"  # noqa
+            "`[\'mean\', \'max\', \'min\', \'sum\', \'std\', \'var\', \'count\']`"
         )
 
     if isinstance(stats_funcs, list):
