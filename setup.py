@@ -44,7 +44,7 @@ extras_require = {
         'geopandas',
         'shapely',
         'spatialpandas',
-        # Optional for gpu_rtx functions.
+        # Optional for gpu_rtx functions. Also requires cupy.
         "rtxpy",
     ],
 }
