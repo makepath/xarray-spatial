@@ -1,92 +1,98 @@
-import dask.array as da
 import numpy as np
 import pytest
-import xarray as xr
 
 from xrspatial import aspect
 from xrspatial.utils import doesnt_have_cuda
 
+from xrspatial.tests.general_checks import create_test_raster
 from xrspatial.tests.general_checks import general_output_checks
+from xrspatial.tests.general_checks import assert_numpy_equals_dask_numpy
+from xrspatial.tests.general_checks import assert_numpy_equals_cupy
+from xrspatial.tests.general_checks import assert_nan_edges_effect
 
 
-INPUT_DATA = np.asarray([
-    [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-    [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
-    [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
-    [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
-    [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-    [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-    [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
-    dtype=np.float32
-)
-
-QGIS_OUTPUT = np.asarray([
-    [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-    [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-    [330.94687, 335.55496, 320.70786, 330.94464, 0., 0.],
-    [333.43494, 333.43494, 329.03394, 341.56897, 0., 18.434948],
-    [338.9621, 338.20062, 341.56506, 0., 0., 45.],
-    [341.56506, 351.8699, 26.56505, 45., -1., 90.],
-    [351.86676, 11.306906, 45., 45., 45., 108.431015]], dtype=np.float32
-)
+def input_data(backend='numpy'):
+    data = np.asarray([
+        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+        [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
+        [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
+        [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
+        [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+        [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
+        [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
+        dtype=np.float32
+    )
+    raster = create_test_raster(data, backend, attrs={'res': (10.0, 10.0)})
+    return raster
 
 
-def test_numpy_equals_qgis():
+@pytest.fixture
+def qgis_output():
+    result = np.array([
+        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+        [330.94687, 335.55496, 320.70786, 330.94464, 0., 0.],
+        [333.43494, 333.43494, 329.03394, 341.56897, 0., 18.434948],
+        [338.9621, 338.20062, 341.56506, 0., 0., 45.],
+        [341.56506, 351.8699, 26.56505, 45., -1., 90.],
+        [351.86676, 11.306906, 45., 45., 45., 108.431015]], dtype=np.float32
+    )
+    return result
 
-    small_da = xr.DataArray(INPUT_DATA, attrs={'res': (10.0, 10.0)})
-    xrspatial_aspect = aspect(small_da, name='numpy_aspect')
 
-    general_output_checks(small_da, xrspatial_aspect)
+@pytest.fixture
+def random_data(size, dtype):
+    data = np.random.randint(low=-100, high=100, size=size)
+    data = data.astype(dtype)
+    return data
+
+
+def test_numpy_equals_qgis(qgis_output):
+    numpy_agg = input_data()
+    xrspatial_aspect = aspect(numpy_agg, name='numpy_aspect')
+
+    general_output_checks(numpy_agg, xrspatial_aspect)
     assert xrspatial_aspect.name == 'numpy_aspect'
 
-    # validate output values
     xrspatial_vals = xrspatial_aspect.data[1:-1, 1:-1]
-    qgis_vals = QGIS_OUTPUT[1:-1, 1:-1]
+    qgis_vals = qgis_output[1:-1, 1:-1]
     # aspect is nan if nan input
     # aspect is invalid (-1) if slope equals 0
-    # otherwise aspect are from 0 - 360
+    # otherwise aspect are from 0 to 360
     np.testing.assert_allclose(xrspatial_vals, qgis_vals, equal_nan=True)
-
     # nan edge effect
-    xrspatial_edges = [
-        xrspatial_aspect.data[0, :],
-        xrspatial_aspect.data[-1, :],
-        xrspatial_aspect.data[:, 0],
-        xrspatial_aspect.data[:, -1],
-    ]
-    for edge in xrspatial_edges:
-        np.testing.assert_allclose(
-            edge, np.full(edge.shape, np.nan), equal_nan=True
-        )
+    assert_nan_edges_effect(xrspatial_aspect)
 
 
-def test_numpy_equals_dask():
-    small_numpy_based_data_array = xr.DataArray(
-        INPUT_DATA, attrs={'res': (10.0, 10.0)}
-    )
-    small_dask_based_data_array = xr.DataArray(
-        da.from_array(INPUT_DATA, chunks=(2, 2)), attrs={'res': (10.0, 10.0)}
-    )
+def test_numpy_equals_dask_qgis_data():
+    # compare using the data run through QGIS
+    numpy_agg = input_data('numpy')
+    dask_agg = input_data('dask+numpy')
+    assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, aspect)
 
-    numpy_result = aspect(small_numpy_based_data_array, name='numpy_result')
-    dask_result = aspect(small_dask_based_data_array,
-                         name='dask_result')
-    general_output_checks(small_dask_based_data_array, dask_result)
-    np.testing.assert_allclose(
-        numpy_result.data, dask_result.data.compute(), equal_nan=True)
+
+@pytest.mark.parametrize("size", [(2, 4), (10, 15)])
+@pytest.mark.parametrize(
+    "dtype", [np.int32, np.int64, np.uint32, np.uint64, np.float32, np.float64])
+def test_numpy_equals_dask_random_data(random_data):
+    numpy_agg = create_test_raster(random_data, backend='numpy')
+    dask_agg = create_test_raster(random_data, backend='dask')
+    assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, aspect)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_cpu_equals_gpu():
+def test_numpy_equals_cupy_qgis_data():
+    # compare using the data run through QGIS
+    numpy_agg = input_data()
+    cupy_agg = input_data('cupy')
+    assert_numpy_equals_cupy(numpy_agg, cupy_agg, aspect)
 
-    import cupy
 
-    small_da = xr.DataArray(INPUT_DATA, attrs={'res': (10.0, 10.0)})
-    small_da_cupy = xr.DataArray(cupy.asarray(INPUT_DATA),
-                                 attrs={'res': (10.0, 10.0)})
-
-    # aspect by xrspatial
-    cpu = aspect(small_da, name='aspect_agg')
-    gpu = aspect(small_da_cupy, name='aspect_agg')
-    general_output_checks(small_da_cupy, gpu)
-    np.testing.assert_allclose(cpu.data, gpu.data.get(), equal_nan=True)
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@pytest.mark.parametrize("size", [(2, 4), (10, 15)])
+@pytest.mark.parametrize(
+    "dtype", [np.int32, np.int64, np.uint32, np.uint64, np.float32, np.float64])
+def test_numpy_equals_cupy_random_data(random_data):
+    numpy_agg = create_test_raster(random_data, backend='numpy')
+    cupy_agg = create_test_raster(random_data, backend='cupy')
+    assert_numpy_equals_cupy(numpy_agg, cupy_agg, aspect)
