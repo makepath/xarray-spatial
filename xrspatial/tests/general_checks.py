@@ -2,7 +2,24 @@ import numpy as np
 import dask.array as da
 import xarray as xr
 
+from xrspatial.utils import has_cuda
 from xrspatial.utils import ArrayTypeFunctionMapping
+
+
+def create_test_raster(data, backend='numpy', dims=['y', 'x'], attrs=None, chunks=(3, 3)):
+    raster = xr.DataArray(data, dims=dims, attrs=attrs)
+    # set coords for test raster
+    for i, dim in enumerate(dims):
+        raster[dim] = np.linspace(0, data.shape[i], data.shape[i])
+
+    if has_cuda() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(raster.data)
+
+    if 'dask' in backend:
+        raster.data = da.from_array(raster.data, chunks=chunks)
+
+    return raster
 
 
 def general_output_checks(input_agg: xr.DataArray,
@@ -49,3 +66,37 @@ def general_output_checks(input_agg: xr.DataArray,
             dask_cupy_func=dask_cupy_func,
         )
         mapper(output_agg)(output_agg.data, expected_results)
+
+
+def assert_nan_edges_effect(result_agg):
+    # nan edge effect
+    edges = [
+        result_agg.data[0, :],
+        result_agg.data[-1, :],
+        result_agg.data[:, 0],
+        result_agg.data[:, -1],
+    ]
+    for edge in edges:
+        np.testing.assert_allclose(
+            edge, np.full(edge.shape, np.nan), equal_nan=True
+        )
+
+
+def assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, func, nan_edges=True):
+    numpy_result = func(numpy_agg)
+    if nan_edges:
+        assert_nan_edges_effect(numpy_result)
+
+    dask_result = func(dask_agg)
+    general_output_checks(dask_agg, dask_result)
+    np.testing.assert_allclose(numpy_result.data, dask_result.data.compute(), equal_nan=True)
+
+
+def assert_numpy_equals_cupy(numpy_agg, cupy_agg, func, nan_edges=True):
+    numpy_result = func(numpy_agg)
+    if nan_edges:
+        assert_nan_edges_effect(numpy_result)
+
+    cupy_result = func(cupy_agg)
+    general_output_checks(cupy_agg, cupy_result)
+    np.testing.assert_allclose(numpy_result.data, cupy_result.data.get(), equal_nan=True)
