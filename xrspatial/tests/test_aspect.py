@@ -5,10 +5,10 @@ from xrspatial import aspect
 from xrspatial.utils import doesnt_have_cuda
 
 from xrspatial.tests.general_checks import create_test_raster
-from xrspatial.tests.general_checks import general_output_checks
 from xrspatial.tests.general_checks import assert_numpy_equals_dask_numpy
 from xrspatial.tests.general_checks import assert_numpy_equals_cupy
 from xrspatial.tests.general_checks import assert_nan_edges_effect
+from xrspatial.tests.general_checks import general_output_checks
 
 
 def input_data(backend='numpy'):
@@ -38,13 +38,6 @@ def qgis_output():
         [351.86676, 11.306906, 45., 45., 45., 108.431015]], dtype=np.float32
     )
     return result
-
-
-@pytest.fixture
-def random_data(size, dtype):
-    data = np.random.randint(low=-100, high=100, size=size)
-    data = data.astype(dtype)
-    return data
 
 
 def test_numpy_equals_qgis(qgis_output):
