@@ -36,7 +36,7 @@ def convex_surface():
          [np.nan, 0,      100.,  -400.,   100.,   np.nan],
          [np.nan, 0,      0.,     100.,     0.,   np.nan],
          [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
-    ])
+    ], dtype=np.float32)
     return convex_data, expected_result
 
 
@@ -54,7 +54,7 @@ def concave_surface():
          [np.nan, 0,     -100.,   400.,  -100.,   np.nan],
          [np.nan, 0,      0.,    -100.,     0.,   np.nan],
          [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
-    ])
+    ], dtype=np.float32)
     return concave_data, expected_result
 
 

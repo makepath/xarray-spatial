@@ -25,7 +25,8 @@ def create_test_raster(data, backend='numpy', dims=['y', 'x'], attrs=None, chunk
 def general_output_checks(input_agg: xr.DataArray,
                           output_agg: xr.DataArray,
                           expected_results: np.ndarray = None,
-                          verify_attrs: bool = True):
+                          verify_attrs: bool = True,
+                          verify_dtype: bool = True):
 
     # type of output is the same as of input
     assert isinstance(output_agg.data, type(input_agg.data))
@@ -46,26 +47,22 @@ def general_output_checks(input_agg: xr.DataArray,
             )
 
     if expected_results is not None:
-        numpy_func = lambda output, expected: np.testing.assert_allclose(  # noqa: E731, E501
-            output, expected_results, equal_nan=True, rtol=1e-06
-        )
-        dask_func = lambda output, expected: np.testing.assert_allclose(  # noqa: E731, E501
-            output.compute(), expected_results, equal_nan=True, rtol=1e-06
-        )
-        cupy_func = lambda output, expected: np.testing.assert_allclose(  # noqa: E731, E501
-            output.get(), expected_results, equal_nan=True, rtol=1e-06
-        )
-        dask_cupy_func = lambda output, expected: np.testing.assert_allclose(  # noqa: E731, E501
-            output.compute().get(), expected_results,
-            equal_nan=True, rtol=1e-06
-        )
+        get_numpy_data = lambda output: output
+        get_dask_numpy_data = lambda output: output.compute()
+        get_cupy_data = lambda output: output.get()
+        get_dask_cupy_data = lambda output: output.compute().get()
+
         mapper = ArrayTypeFunctionMapping(
-            numpy_func=numpy_func,
-            dask_func=dask_func,
-            cupy_func=cupy_func,
-            dask_cupy_func=dask_cupy_func,
+            numpy_func=get_numpy_data,
+            dask_func=get_dask_numpy_data,
+            cupy_func=get_cupy_data,
+            dask_cupy_func=get_dask_cupy_data,
         )
-        mapper(output_agg)(output_agg.data, expected_results)
+        output_data = mapper(output_agg)(output_agg.data)
+        np.testing.assert_allclose(output_data, expected_results, equal_nan=True, rtol=1e-06)
+
+        if verify_dtype:
+            assert output_data.dtype == expected_results.dtype
 
 
 def assert_nan_edges_effect(result_agg):
