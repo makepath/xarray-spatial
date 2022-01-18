@@ -33,7 +33,7 @@ def result_reclassify():
         [1., 1., 1., 1., 1.],
         [1., 2., 2., 2., 2.],
         [2., 3., 3., 3., 3.]
-    ])
+    ], dtype=np.float32)
     return bins, new_values, expected_result
 
 
@@ -75,7 +75,7 @@ def result_quantile():
         [1., 1., 1., 2., 2.],
         [2., 2., 3., 3., 3.],
         [4., 4., 4., 4., np.nan]
-    ])
+    ], dtype=np.float32)
     return k, expected_result
 
 
@@ -121,7 +121,7 @@ def result_natural_breaks():
         [1., 1., 2., 2., 2.],
         [2., 3., 3., 3., 3.],
         [4., 4., 4., 4., np.nan]
-    ])
+    ], dtype=np.float32)
     return k, expected_result
 
 
@@ -172,7 +172,7 @@ def result_equal_interval():
         [0., 0., 1., 1., 1.],
         [1., 1., 1., 2., 2.],
         [2., 2., 2., 2., np.nan]
-    ])
+    ], dtype=np.float32)
     return k, expected_result
 
 
