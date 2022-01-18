@@ -1,5 +1,5 @@
 bokeh>2
 datashader
 noise >=1.2.2
-numpy>=1.7,<=1.20
+numba
 xarray
