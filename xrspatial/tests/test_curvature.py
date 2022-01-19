@@ -65,21 +65,21 @@ def test_curvature_on_flat_surface(flat_surface):
     flat_data, expected_result = flat_surface
     numpy_agg = create_test_raster(flat_data, attrs={'res': (1, 1)})
     numpy_result = curvature(numpy_agg)
-    general_output_checks(numpy_agg, numpy_result, expected_result)
+    general_output_checks(numpy_agg, numpy_result, expected_result, verify_dtype=True)
 
 
 def test_curvature_on_convex_surface(convex_surface):
     convex_data, expected_result = convex_surface
     numpy_agg = create_test_raster(convex_data, attrs={'res': (1, 1)})
     numpy_result = curvature(numpy_agg)
-    general_output_checks(numpy_agg, numpy_result, expected_result)
+    general_output_checks(numpy_agg, numpy_result, expected_result, verify_dtype=True)
 
 
 def test_curvature_on_concave_surface(concave_surface):
     concave_data, expected_result = concave_surface
     numpy_agg = create_test_raster(concave_data, attrs={'res': (1, 1)})
     numpy_result = curvature(numpy_agg)
-    general_output_checks(numpy_agg, numpy_result, expected_result)
+    general_output_checks(numpy_agg, numpy_result, expected_result, verify_dtype=True)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")

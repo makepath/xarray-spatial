@@ -44,7 +44,7 @@ def test_numpy_equals_qgis(qgis_output):
     numpy_agg = input_data()
     xrspatial_aspect = aspect(numpy_agg, name='numpy_aspect')
 
-    general_output_checks(numpy_agg, xrspatial_aspect)
+    general_output_checks(numpy_agg, xrspatial_aspect, verify_dtype=True)
     assert xrspatial_aspect.name == 'numpy_aspect'
 
     xrspatial_vals = xrspatial_aspect.data[1:-1, 1:-1]

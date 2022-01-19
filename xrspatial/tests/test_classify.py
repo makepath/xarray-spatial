@@ -41,14 +41,14 @@ def test_reclassify_numpy(result_reclassify):
     bins, new_values, expected_result = result_reclassify
     numpy_agg = input_data()
     numpy_result = reclassify(numpy_agg, bins=bins, new_values=new_values)
-    general_output_checks(numpy_agg, numpy_result, expected_result)
+    general_output_checks(numpy_agg, numpy_result, expected_result, verify_dtype=True)
 
 
 def test_reclassify_dask_numpy(result_reclassify):
     bins, new_values, expected_result = result_reclassify
     dask_agg = input_data(backend='dask')
     dask_result = reclassify(dask_agg, bins=bins, new_values=new_values)
-    general_output_checks(dask_agg, dask_result, expected_result)
+    general_output_checks(dask_agg, dask_result, expected_result, verify_dtype=True)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -56,7 +56,7 @@ def test_reclassify_cupy(result_reclassify):
     bins, new_values, expected_result = result_reclassify
     cupy_agg = input_data(backend='cupy')
     cupy_result = reclassify(cupy_agg, bins=bins, new_values=new_values)
-    general_output_checks(cupy_agg, cupy_result, expected_result)
+    general_output_checks(cupy_agg, cupy_result, expected_result, verify_dtype=True)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -64,7 +64,7 @@ def test_reclassify_dask_cupy(result_reclassify):
     bins, new_values, expected_result = result_reclassify
     dask_cupy_agg = input_data(backend='dask+cupy')
     dask_cupy_result = reclassify(dask_cupy_agg, bins=bins, new_values=new_values)
-    general_output_checks(dask_cupy_agg, dask_cupy_result, expected_result)
+    general_output_checks(dask_cupy_agg, dask_cupy_result, expected_result, verify_dtype=True)
 
 
 @pytest.fixture
@@ -83,7 +83,7 @@ def test_quantile_numpy(result_quantile):
     k, expected_result = result_quantile
     numpy_agg = input_data()
     numpy_quantile = quantile(numpy_agg, k=k)
-    general_output_checks(numpy_agg, numpy_quantile, expected_result)
+    general_output_checks(numpy_agg, numpy_quantile, expected_result, verify_dtype=True)
 
 
 def test_quantile_dask_numpy(result_quantile):
@@ -110,7 +110,7 @@ def test_quantile_cupy(result_quantile):
     k, expected_result = result_quantile
     cupy_agg = input_data('cupy')
     cupy_result = quantile(cupy_agg, k=k)
-    general_output_checks(cupy_agg, cupy_result, expected_result)
+    general_output_checks(cupy_agg, cupy_result, expected_result, verify_dtype=True)
 
 
 @pytest.fixture
@@ -129,7 +129,7 @@ def test_natural_breaks_numpy(result_natural_breaks):
     numpy_agg = input_data()
     k, expected_result = result_natural_breaks
     numpy_natural_breaks = natural_breaks(numpy_agg, k=k)
-    general_output_checks(numpy_agg, numpy_natural_breaks, expected_result)
+    general_output_checks(numpy_agg, numpy_natural_breaks, expected_result, verify_dtype=True)
 
 
 def test_natural_breaks_cpu_deterministic():
@@ -161,7 +161,7 @@ def test_natural_breaks_cupy():
     cupy_agg = input_data('cupy')
     k, expected_result = result_natural_breaks
     cupy_natural_breaks = natural_breaks(cupy_agg, k=k)
-    general_output_checks(cupy_agg, cupy_natural_breaks, expected_result)
+    general_output_checks(cupy_agg, cupy_natural_breaks, expected_result, verify_dtype=True)
 
 
 @pytest.fixture
@@ -180,14 +180,14 @@ def test_equal_interval_numpy(result_equal_interval):
     k, expected_result = result_equal_interval
     numpy_agg = input_data('numpy')
     numpy_result = equal_interval(numpy_agg, k=k)
-    general_output_checks(numpy_agg, numpy_result, expected_result)
+    general_output_checks(numpy_agg, numpy_result, expected_result, verify_dtype=True)
 
 
 def test_equal_interval_dask_numpy(result_equal_interval):
     k, expected_result = result_equal_interval
     dask_agg = input_data('dask+numpy')
     dask_numpy_result = equal_interval(dask_agg, k=k)
-    general_output_checks(dask_agg, dask_numpy_result, expected_result)
+    general_output_checks(dask_agg, dask_numpy_result, expected_result, verify_dtype=True)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -195,4 +195,4 @@ def test_equal_interval_cupy():
     k, expected_result = result_equal_interval
     cupy_agg = input_data(backend='cupy')
     cupy_result = equal_interval(cupy_agg, k=k)
-    general_output_checks(cupy_agg, cupy_result, expected_result)
+    general_output_checks(cupy_agg, cupy_result, expected_result, verify_dtype=True)
