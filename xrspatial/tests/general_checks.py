@@ -26,7 +26,7 @@ def general_output_checks(input_agg: xr.DataArray,
                           output_agg: xr.DataArray,
                           expected_results: np.ndarray = None,
                           verify_attrs: bool = True,
-                          verify_dtype: bool = True):
+                          verify_dtype: bool = False):
 
     # type of output is the same as of input
     assert isinstance(output_agg.data, type(input_agg.data))
