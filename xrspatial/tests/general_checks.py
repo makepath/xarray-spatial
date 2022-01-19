@@ -47,10 +47,10 @@ def general_output_checks(input_agg: xr.DataArray,
             )
 
     if expected_results is not None:
-        get_numpy_data = lambda output: output
-        get_dask_numpy_data = lambda output: output.compute()
-        get_cupy_data = lambda output: output.get()
-        get_dask_cupy_data = lambda output: output.compute().get()
+        get_numpy_data = lambda output: output  # noqa: E731
+        get_dask_numpy_data = lambda output: output.compute()  # noqa: E731
+        get_cupy_data = lambda output: output.get()  # noqa: E731
+        get_dask_cupy_data = lambda output: output.compute().get()  # noqa: E731
 
         mapper = ArrayTypeFunctionMapping(
             numpy_func=get_numpy_data,
