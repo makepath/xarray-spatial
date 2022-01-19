@@ -10,7 +10,7 @@ def create_test_raster(data, backend='numpy', dims=['y', 'x'], attrs=None, chunk
     raster = xr.DataArray(data, dims=dims, attrs=attrs)
     # set coords for test raster
     for i, dim in enumerate(dims):
-        raster[dim] = np.linspace(0, data.shape[i], data.shape[i])
+        raster[dim] = np.linspace(0, data.shape[i] - 1, data.shape[i])
 
     if has_cuda() and 'cupy' in backend:
         import cupy
@@ -26,7 +26,8 @@ def general_output_checks(input_agg: xr.DataArray,
                           output_agg: xr.DataArray,
                           expected_results: np.ndarray = None,
                           verify_attrs: bool = True,
-                          verify_dtype: bool = False):
+                          verify_dtype: bool = False,
+                          rtol=1e-06):
 
     # type of output is the same as of input
     assert isinstance(output_agg.data, type(input_agg.data))
@@ -59,7 +60,7 @@ def general_output_checks(input_agg: xr.DataArray,
             dask_cupy_func=get_dask_cupy_data,
         )
         output_data = mapper(output_agg)(output_agg.data)
-        np.testing.assert_allclose(output_data, expected_results, equal_nan=True, rtol=1e-06)
+        np.testing.assert_allclose(output_data, expected_results, equal_nan=True, rtol=rtol)
 
         if verify_dtype:
             assert output_data.dtype == expected_results.dtype
