@@ -52,6 +52,7 @@ def result_default_proximity():
     ], dtype=np.float32)
     return expected_result
 
+
 @pytest.fixture
 def result_target_proximity():
     target_values = [2, 3]
