@@ -303,7 +303,6 @@ def _stats_cupy(
     orig_values: xr.DataArray,
     zone_ids: List[Union[int, float]],
     stats_funcs: Dict,
-    nodata_zones: Union[int, float],
     nodata_values: Union[int, float],
 ) -> pd.DataFrame:
 
@@ -337,7 +336,7 @@ def _stats_cupy(
         unique_zones = unique_zones.get()
     else:
         unique_zones = zone_ids
-    unique_zones = list(map(_to_int, unique_zones))
+    # unique_zones = list(map(_to_int, unique_zones))
     unique_zones = np.asarray(unique_zones)
 
     # stats columns
@@ -348,7 +347,7 @@ def _stats_cupy(
     for i in range(len(unique_zones)):
         zone_id = unique_zones[i]
         # skip zone_id == nodata_zones, and non-finite zone ids
-        if ((nodata_zones) and (zone_id == nodata_zones)) or (not np.isfinite(zone_id)):
+        if (not np.isfinite(zone_id)):
             continue
 
         stats_dict['zone'].append(zone_id)
