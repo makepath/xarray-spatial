@@ -35,10 +35,7 @@ def _stats_count(data):
         stats_count = np.ma.count(data)
     elif isinstance(data, cupy.ndarray):
         # cupy case
-        # TODO validate count function
         stats_count = np.prod(data.shape)
-        # for dim in data.shape:
-        #    stats_count *= dim
     else:
         # dask case
         stats_count = data.size - da.ma.getmaskarray(data).sum()
@@ -160,85 +157,9 @@ def _single_stats_func(
     return results
 
 
-def _stats_cupy(
-    orig_zones: xr.DataArray,
-    orig_values: xr.DataArray,
-    zone_ids: List[Union[int, float]],
-    stats_funcs: Dict,
-    nodata_zones: Union[int, float],
-    nodata_values: Union[int, float],
-) -> pd.DataFrame:
-
-    # TODO add support for 3D input
-    if len(orig_values.shape) > 2:
-        raise TypeError('3D inputs not supported for cupy backend')
-
-    zones = cupy.ravel(orig_zones.data)
-    values = cupy.ravel(orig_values.data)
-
-    sorted_indices = cupy.argsort(zones)
-
-    sorted_zones = zones[sorted_indices]
-    values_by_zone = values[sorted_indices]
-
-    # filter out values that are non-finite or values equal to nodata_values
-    if nodata_values:
-        filter_values = cupy.isfinite(values_by_zone) & (
-            values_by_zone != nodata_values)
-    else:
-        filter_values = cupy.isfinite(values_by_zone)
-    values_by_zone = values_by_zone[filter_values]
-    sorted_zones = sorted_zones[filter_values]
-
-    # Now I need to find the unique zones, and zone breaks
-    unique_zones, unique_index = cupy.unique(sorted_zones, return_index=True)
-
-    # Transfer to the host
-    unique_index = unique_index.get()
-    if zone_ids is None:
-        unique_zones = unique_zones.get()
-    else:
-        unique_zones = zone_ids
-    unique_zones = list(map(_to_int, unique_zones))
-    unique_zones = np.asarray(unique_zones)
-
-    # stats columns
-    stats_dict = {'zone': []}
-    for stats in stats_funcs:
-        stats_dict[stats] = []
-
-    for i in range(len(unique_zones)):
-        zone_id = unique_zones[i]
-        # skip zone_id == nodata_zones, and non-finite zone ids
-        if ((nodata_zones) and (zone_id == nodata_zones)) or (not np.isfinite(zone_id)):
-            continue
-
-        stats_dict['zone'].append(zone_id)
-        # extract zone_values
-        if i < len(unique_zones) - 1:
-            zone_values = values_by_zone[unique_index[i]:unique_index[i+1]]
-        else:
-            zone_values = values_by_zone[unique_index[i]:]
-
-        # apply stats on the zone data
-        for j, stats in enumerate(stats_funcs):
-            stats_func = stats_funcs.get(stats)
-            if not callable(stats_func):
-                raise ValueError(stats)
-            result = stats_func(zone_values)
-
-            assert(len(result.shape) == 0)
-
-            stats_dict[stats].append(cupy.float(result))
-
-    stats_df = pd.DataFrame(stats_dict)
-    stats_df.set_index("zone")
-    return stats_df
-
-
-def _stats_numpy(
-    zones: xr.DataArray,
-    values: xr.DataArray,
+def _stats_dask_numpy(
+    zones: da.Array,
+    values: da.Array,
     zone_ids: List[Union[int, float]],
     stats_funcs: Dict,
     nodata_values: Union[int, float],
@@ -374,6 +295,82 @@ def _stats_numpy(
         stats_dict[stats] = stats_dict[stats][selected_indexes]
 
     stats_df = pd.DataFrame(stats_dict)
+    return stats_df
+
+
+def _stats_cupy(
+    orig_zones: xr.DataArray,
+    orig_values: xr.DataArray,
+    zone_ids: List[Union[int, float]],
+    stats_funcs: Dict,
+    nodata_zones: Union[int, float],
+    nodata_values: Union[int, float],
+) -> pd.DataFrame:
+
+    # TODO add support for 3D input
+    if len(orig_values.shape) > 2:
+        raise TypeError('3D inputs not supported for cupy backend')
+
+    zones = cupy.ravel(orig_zones)
+    values = cupy.ravel(orig_values)
+
+    sorted_indices = cupy.argsort(zones)
+
+    sorted_zones = zones[sorted_indices]
+    values_by_zone = values[sorted_indices]
+
+    # filter out values that are non-finite or values equal to nodata_values
+    if nodata_values:
+        filter_values = cupy.isfinite(values_by_zone) & (
+            values_by_zone != nodata_values)
+    else:
+        filter_values = cupy.isfinite(values_by_zone)
+    values_by_zone = values_by_zone[filter_values]
+    sorted_zones = sorted_zones[filter_values]
+
+    # Now I need to find the unique zones, and zone breaks
+    unique_zones, unique_index = cupy.unique(sorted_zones, return_index=True)
+
+    # Transfer to the host
+    unique_index = unique_index.get()
+    if zone_ids is None:
+        unique_zones = unique_zones.get()
+    else:
+        unique_zones = zone_ids
+    unique_zones = list(map(_to_int, unique_zones))
+    unique_zones = np.asarray(unique_zones)
+
+    # stats columns
+    stats_dict = {'zone': []}
+    for stats in stats_funcs:
+        stats_dict[stats] = []
+
+    for i in range(len(unique_zones)):
+        zone_id = unique_zones[i]
+        # skip zone_id == nodata_zones, and non-finite zone ids
+        if ((nodata_zones) and (zone_id == nodata_zones)) or (not np.isfinite(zone_id)):
+            continue
+
+        stats_dict['zone'].append(zone_id)
+        # extract zone_values
+        if i < len(unique_zones) - 1:
+            zone_values = values_by_zone[unique_index[i]:unique_index[i+1]]
+        else:
+            zone_values = values_by_zone[unique_index[i]:]
+
+        # apply stats on the zone data
+        for j, stats in enumerate(stats_funcs):
+            stats_func = stats_funcs.get(stats)
+            if not callable(stats_func):
+                raise ValueError(stats)
+            result = stats_func(zone_values)
+
+            assert(len(result.shape) == 0)
+
+            stats_dict[stats].append(cupy.float(result))
+
+    stats_df = pd.DataFrame(stats_dict)
+    stats_df.set_index("zone")
     return stats_df
 
 
