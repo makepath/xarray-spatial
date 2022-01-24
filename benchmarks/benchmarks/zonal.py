@@ -24,7 +24,7 @@ def create_arr(data=None, H=10, W=10, backend='numpy'):
 class Zonal:
     # Note that rtxpy hillshade includes shadow calculations so timings are
     # not comparable with numpy and cupy hillshade.
-    params = ([100, 400, 1600, 3200], [1, 2, 8], ["numpy", "cupy"])
+    params = ([400, 1600, 3200], [2, 4, 8], ["numpy", "cupy"])
     param_names = ("raster_dim", "zone_dim", "backend")
 
     def setup(self, raster_dim, zone_dim, backend):
@@ -90,9 +90,9 @@ class Zonal:
             }
 
 
-    def time_zonal_stats_default(self, raster_dim, zone_dim, backend):
+    def time_stats_default(self, raster_dim, zone_dim, backend):
         zonal.stats(zones=self.zones, values=self.values)
 
 
-    def time_zonal_stats_custom(self, raster_dim, zone_dim, backend):
+    def time_stats_custom(self, raster_dim, zone_dim, backend):
         zonal.stats(zones=self.zones, values=self.values, stats_funcs=self.custom_stats)
