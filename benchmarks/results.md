@@ -4,8 +4,11 @@ Benchmarking Results
 Windows 10
 --------------
 CUP: AMD Ryzen 5 1600
+
 Cores: 12
+
 GPU: GeForce RTX 3060
+
 RAM: 32GB
 
 ```
