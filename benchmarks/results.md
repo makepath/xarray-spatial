@@ -25,7 +25,7 @@ nx | numpy | cupy | rtxpy
 polygonize.Polygonize.time_polygonize
 ```
 nx | numpy | geopandas | spatialpandas | rasterio-geopandas
---- | --- | --- | --- | --- | ---
+--- | --- | --- | --- | ---
 100 | 3.74±0.8ms | failed | failed  | failed
 300 | 42.7±0.4ms | failed | failed  | failed
 1000 | 492±4ms | failed | failed | failed
