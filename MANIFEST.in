@@ -1,48 +1,10 @@
-include *.txt
-include *.md
+recursive-include xrspatial *.py
+recursive-include xrspatial *.nc
+
+include LICENSE.txt
 include xrspatial/.version
 
-graft xrspatial
 graft xrspatial/examples
-graft xrspatial/examples/user_guide
 
-prune docs
-prune *.egg-info
-
-global-exclude *.png
-prune conda.recipe
-prune img
-prune .idea
-
-exclude xrspatial/.DS_Store
-exclude examples/.ipynb_checkpoints/*
-exclude examples/user_guide/.ipynb_checkpoints/*
-exclude xrspatial/_version.py
-exclude xrspatial/.DS_Store
-exclude xrspatial/__pycache__/*
-
-exclude xrspatial/examples/user_guide_idea/*
-exclude xrspatial/tests/.DS_Store
-exclude xrspatial/tests/__pycache__/*
-
-exclude xrspatial/tests/__pycache__/*
-exclude xrspatial/tests/.DS_Store
-
-exclude xrspatial/tests/_qgis_results/__pycache__/*
-exclude tile_idea.py
-exclude *.enc
-exclude .gitignore
-exclude .isort.cfg
-exclude *.dot
-exclude *.gif
-exclude *.svg
-exclude tox.ini
-exclude test_examples_cli.py
-include *.yml
-
-recursive-include examples *.gif
-recursive-include examples *.ipynb
-recursive-include examples *.py
-recursive-include examples *.yml
-recursive-include test_pip_packaging *.py
-recursive-include test_pip_packaging *.sh
+graft docs
+prune docs/build
