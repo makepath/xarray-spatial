@@ -3,7 +3,7 @@ Benchmarking Results
 
 Windows 10
 --------------
-CUP: AMD Ryzen 5 1600
+CPU: AMD Ryzen 5 1600
 
 Cores: 12
 
@@ -24,14 +24,14 @@ nx | numpy | cupy | rtxpy
 ```
 polygonize.Polygonize.time_polygonize
 ```
-nx | numpy | geopandas | spatialpandas | spatialpandas | rasterio-geopandas
+nx | numpy | geopandas | spatialpandas | rasterio-geopandas
 --- | --- | --- | --- | --- | ---
-100 | 3.74±0.8ms | failed | failed  | failed | failed
-300 | 42.7±0.4ms | failed | failed  | failed | failed
-1000 | 492±4ms | failed | failed | failed | failed
+100 | 3.74±0.8ms | failed | failed  | failed
+300 | 42.7±0.4ms | failed | failed  | failed
+1000 | 492±4ms | failed | failed | failed
 
 ```
-slope.Slope.time_slop
+slope.Slope.time_slope
 ```
 nx | numpy | cupy 
 --- | --- | --- 
