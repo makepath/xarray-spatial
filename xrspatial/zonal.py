@@ -20,8 +20,6 @@ except ImportError:
 
 # local modules
 from xrspatial.utils import ngjit
-from xrspatial.utils import has_cuda
-from xrspatial.utils import cuda_args
 from xrspatial.utils import validate_arrays
 from xrspatial.utils import ArrayTypeFunctionMapping
 from xrspatial.utils import not_implemented_func
@@ -70,9 +68,9 @@ _DASK_STATS = dict(
     sum_squares=lambda block_sum_squares: np.nansum(block_sum_squares, axis=0),
     squared_sum=lambda block_sums: np.nansum(block_sums, axis=0)**2,
 )
-_dask_mean = lambda sums, counts: sums / counts  # noqa
-_dask_std = lambda sum_squares, squared_sum, n: np.sqrt((sum_squares - squared_sum/n) / n)  # noqa
-_dask_var = lambda sum_squares, squared_sum, n: (sum_squares - squared_sum/n) / n  # noqa
+def _dask_mean(sums, counts): return sums / counts  # noqa
+def _dask_std(sum_squares, squared_sum, n): return np.sqrt((sum_squares - squared_sum/n) / n)  # noqa
+def _dask_var(sum_squares, squared_sum, n): return (sum_squares - squared_sum/n) / n  # noqa
 
 
 @ngjit
