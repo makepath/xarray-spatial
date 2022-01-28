@@ -6,7 +6,10 @@ def main(args=None):
         from . import _missing_cmd
         print(_missing_cmd())
         sys.exit(1)
-    return pyct.cmd.substitute_main('xrspatial', args=args)
+    try:
+        return pyct.cmd.substitute_main('xrspatial', args=args)
+    except Exception as e:
+        print(e)
 
 
 if __name__ == "__main__":
