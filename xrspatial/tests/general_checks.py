@@ -75,9 +75,7 @@ def assert_nan_edges_effect(result_agg):
         result_agg.data[:, -1],
     ]
     for edge in edges:
-        np.testing.assert_allclose(
-            edge, np.full(edge.shape, np.nan), equal_nan=True
-        )
+        np.testing.assert_array_equal(edge, np.nan)
 
 
 def assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, func, nan_edges=True):

@@ -53,7 +53,7 @@ def result_4_connectivity():
     return expected_result
 
 
-def test_a_star_search_no_barries(input_data):
+def test_a_star_search_no_barriers(input_data):
     agg = input_data
     barriers = []
     # no barriers, there always path from a start location to a goal location
@@ -76,7 +76,7 @@ def test_a_star_search_no_barries(input_data):
                         assert np.nanmin(path_agg) == 0
 
 
-def test_a_star_search_with_barries(input_data):
+def test_a_star_search_with_barriers(input_data):
     agg = input_data
     barriers = [1]
     # set pixels with value 1 as barriers,
@@ -102,17 +102,17 @@ def test_a_star_search_snap(input_data_with_nans):
     # no snap
     no_snap_path_agg = a_star_search(agg, start, goal, barriers, 'lon', 'lat')
     # no path, all cells in path_agg are nans
-    assert np.isnan(no_snap_path_agg).all()
+    np.testing.assert_array_equal(no_snap_path_agg, np.nan)
 
     # set snap_start = True, snap_goal = False
     snap_start_path_agg = a_star_search(agg, start, goal, barriers, 'lon', 'lat', snap_start=True)
     # no path, all cells in path_agg are nans
-    assert np.isnan(snap_start_path_agg).all()
+    np.testing.assert_array_equal(snap_start_path_agg, np.nan)
 
     # set snap_start = False, snap_goal = True
     snap_goal_path_agg = a_star_search(agg, start, goal, barriers, 'lon', 'lat', snap_goal=True)
     # no path, all cells in path_agg are nans
-    assert np.isnan(snap_goal_path_agg).all()
+    np.testing.assert_array_equal(snap_goal_path_agg, np.nan)
 
 
 def test_a_star_search_connectivity(

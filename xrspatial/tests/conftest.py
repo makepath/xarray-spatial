@@ -5,6 +5,7 @@ import numpy as np
 
 @pytest.fixture
 def random_data(size, dtype):
-    data = np.random.randint(low=-100, high=100, size=size)
+    rng = np.random.default_rng(2841)
+    data = rng.integers(-100, 100, size=size)
     data = data.astype(dtype)
     return data
