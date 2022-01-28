@@ -7,7 +7,20 @@ requires = [
 ]
 [tool.check-manifest]
 ignore = [
-    'xrspatial/examples/*',
-    'xrspatial/examples/user_guide/*',
-    'xrspatial/.version',
+    '.appveyor.yml',
+    '.version',
+    'CHANGELOG.md',
+    'CODE_OF_CONDUCT.md',
+    'CONTRIBUTING.md',
+    'Citation-styles.md',
+    'RELEASE.md',
+    'requirements-dev.txt',
+    'requirements.txt',
+    'test_examples_cli.py',
+    'tox.ini',
+    'benchmarks/*',
+    'examples/*',
+    'examples/user_guide/*',
+    'img/*',
+    'test_pip_packaging/*',
 ]
