@@ -18,7 +18,6 @@ install_requires = [
     'dask',
     'datashader',
     'numba',
-    'numpy>=1.7,<=1.20',
     'pandas',
     'pillow',
     'requests',
@@ -44,7 +43,7 @@ extras_require = {
         'geopandas',
         'shapely',
         'spatialpandas',
-        # Optional for gpu_rtx functions.
+        # Optional for gpu_rtx functions. Also requires cupy.
         "rtxpy",
     ],
 }

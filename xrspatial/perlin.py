@@ -211,22 +211,18 @@ def perlin(agg: xr.DataArray,
 
     Examples
     --------
-    .. plot::
-       :include-source:
-
-        import numpy as np
-        import xarray as xr
-        from xrspatial import perlin
-
-        W = 4
-        H = 3
-        data = np.zeros((H, W), dtype=np.float32)
-        raster = xr.DataArray(data, dims=['y', 'x'])
-
-        perlin_noise = perlin(raster)
-
     .. sourcecode:: python
 
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import perlin
+
+        >>> W = 4
+        >>> H = 3
+        >>> data = np.zeros((H, W), dtype=np.float32)
+        >>> raster = xr.DataArray(data, dims=['y', 'x'])
+
+        >>> perlin_noise = perlin(raster)
         >>> print(perlin_noise)
         <xarray.DataArray 'perlin' (y: 3, x: 4)>
         array([[0.39268944, 0.27577767, 0.01621884, 0.05518942],
@@ -234,6 +230,7 @@ def perlin(agg: xr.DataArray,
                [1.        , 0.8715414 , 0.41902685, 0.02916668]], dtype=float32)  # noqa
         Dimensions without coordinates: y, x
     """
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_perlin_numpy,
         cupy_func=_perlin_cupy,

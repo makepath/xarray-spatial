@@ -33,13 +33,11 @@ def _equal_numpy(x, y):
 
 @ngjit
 def _mean_numpy(data, excludes):
-    # TODO: exclude nans, what if nans in the kernel?
     out = np.zeros_like(data)
-    out[:] = np.nan
     rows, cols = data.shape
 
-    for y in range(1, rows - 1):
-        for x in range(1, cols - 1):
+    for y in range(rows):
+        for x in range(cols):
 
             exclude = False
             for ex in excludes:
@@ -48,15 +46,12 @@ def _mean_numpy(data, excludes):
                     break
 
             if not exclude:
-                a, b, c, d, e, f, g, h, i = [data[y - 1, x - 1],
-                                             data[y, x - 1],
-                                             data[y + 1, x - 1],
-                                             data[y - 1, x], data[y, x],
-                                             data[y + 1, x],
-                                             data[y - 1, x + 1],
-                                             data[y, x + 1],
-                                             data[y + 1, x + 1]]
-                out[y, x] = (a + b + c + d + e + f + g + h + i) / 9
+                left = max(x-1, 0)
+                right = min(x+2, cols)
+                bottom = max(y-1, 0)
+                top = min(y+2, rows)
+                kernel_data = data[bottom:top, left:right]
+                out[y, x] = np.nanmean(kernel_data)
             else:
                 out[y, x] = data[y, x]
     return out
@@ -71,27 +66,31 @@ def _mean_dask_numpy(data, excludes):
     return out
 
 
-@cuda.jit(device=True)
-def _kernel_mean_gpu(data):
-    return (data[-1, -1] + data[-1, 0] + data[-1, 1]
-            + data[0, -1] + data[0, 0] + data[0, 1]
-            + data[1, -1] + data[1, 0] + data[1, 1]) / 9
-
-
 @cuda.jit
 def _mean_gpu(data, excludes, out):
     i, j = cuda.grid(2)
-    di = 1
-    dj = 1
 
     for ex in excludes:
         if (data[i, j] == ex) or (isnan(data[i, j]) and isnan(ex)):
             out[i, j] = data[i, j]
             return
 
-    if (i - di >= 0 and i + di <= out.shape[0] - 1 and
-            j - dj >= 0 and j + dj <= out.shape[1] - 1):
-        out[i, j] = _kernel_mean_gpu(data[i-1:i+2, j-1:j+2])
+    rows, cols = out.shape
+    if 0 <= i < rows and 0 <= j < cols:
+        left = max(j - 1, 0)
+        right = min(j + 2, cols)
+        bottom = max(i - 1, 0)
+        top = min(i + 2, rows)
+
+        sum = 0
+        num = 0
+        for y in range(bottom, top):
+            for x in range(left, right):
+                if not isnan(data[y, x]):
+                    sum += data[y, x]
+                    num += 1
+        if num > 0:
+            out[i, j] = sum / num
 
 
 def _mean_cupy(data, excludes):
@@ -118,7 +117,7 @@ def _mean(data, excludes):
 def mean(agg, passes=1, excludes=[np.nan], name='mean'):
     """
     Returns Mean filtered array using a 3x3 window.
-    Default behaviour to 'mean' is to pad the borders with nans
+    Default behaviour to 'mean' is to exclude NaNs from calculations.
 
     Parameters
     ----------
@@ -141,69 +140,64 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.focal import mean
-        >>> data = np.zeros((5, 5), dtype=np.float64)
-        >>> data[2, 2] = 9
+        >>> data = np.array([
+            [0., 0., 0., 0., 0.],
+            [0., 0., 0., 0., 0.],
+            [0., 0., 9., 0., 0.],
+            [0., 0., 0., 0., 0.],
+            [0., 0., 0., 0., 0.]])
         >>> raster = xr.DataArray(data)
-        >>> mean_agg = mean(raster, passes=1)
+        >>> mean_agg = mean(raster)
         >>> print(mean_agg)
         <xarray.DataArray 'mean' (dim_0: 5, dim_1: 5)>
-        array([[nan, nan, nan, nan, nan],
-               [nan,  1.,  1.,  1., nan],
-               [nan,  1.,  1.,  1., nan],
-               [nan,  1.,  1.,  1., nan],
-               [nan, nan, nan, nan, nan]])
+        array([[0., 0., 0., 0., 0.],
+               [0., 1., 1., 1., 0.],
+               [0., 1., 1., 1., 0.],
+               [0., 1., 1., 1., 0.],
+               [0., 0., 0., 0., 0.]])
         Dimensions without coordinates: dim_0, dim_1
 
-    Focal mean works with Dask with NumPy backed xarray DataArray
+    Focal mean works with Dask with NumPy backed xarray DataArray.
+    Increase number of runs by setting a specific value for parameter `passes`
     .. sourcecode:: python
         >>> import dask.array as da
-        >>> data_da = np.arange(25).reshape(5, 5)
-        >>> print(data_da)
-        [[ 0  1  2  3  4]
-         [ 5  6  7  8  9]
-         [10 11 12 13 14]
-         [15 16 17 18 19]
-         [20 21 22 23 24]]
-        >>> data_da = da.from_array(data_da, chunks=(3, 3))
+        >>> data_da = da.from_array(data, chunks=(3, 3))
         >>> raster_da = xr.DataArray(data_da, dims=['y', 'x'], name='raster_da')  # noqa
         >>> print(raster_da)
         <xarray.DataArray 'raster_da' (y: 5, x: 5)>
         dask.array<array, shape=(5, 5), dtype=int64, chunksize=(3, 3), chunktype=numpy.ndarray>  # noqa
         Dimensions without coordinates: y, x
-        >>> mean_da = mean(raster_da)
+        >>> mean_da = mean(raster_da, passes=2)
         >>> print(mean_da)
         <xarray.DataArray 'mean' (y: 5, x: 5)>
         dask.array<_trim, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>  # noqa
         Dimensions without coordinates: y, x
         >>> print(mean_da.compute())
         <xarray.DataArray 'mean' (y: 5, x: 5)>
-        array([[nan, nan, nan, nan, nan],
-               [nan,  6.,  7.,  8., nan],
-               [nan, 11., 12., 13., nan],
-               [nan, 16., 17., 18., nan],
-               [nan, nan, nan, nan, nan]])
+        array([[0.25      , 0.33333333, 0.5       , 0.33333333, 0.25      ],
+               [0.33333333, 0.44444444, 0.66666667, 0.44444444, 0.33333333],
+               [0.5       , 0.66666667, 1.        , 0.66666667, 0.5       ],
+               [0.33333333, 0.44444444, 0.66666667, 0.44444444, 0.33333333],
+               [0.25      , 0.33333333, 0.5       , 0.33333333, 0.25      ]])
         Dimensions without coordinates: y, x
 
     Focal mean works with CuPy backed xarray DataArray.
+    In this example, we set `passes` to the number of elements of the array,
+    we'll get a mean array where every element has the same value.
     .. sourcecode:: python
         >>> import cupy
-        >>> data_cupy = cupy.asarray([
-            [0, 1, 1, 1, 1, 2],
-            [0, 0, 1, 1, 2, 2],
-            [0, -1, 0, 2, 2, 2],
-            [-2, -2, -1, 0, 1, 1],
-        ])
-        >>> raster_cupy = xr.DataArray(data_cupy, dims=['y', 'x'])
-        >>> mean_cupy = mean(raster_cupy)
+        >>> raster_cupy = xr.DataArray(cupy.asarray(data), name='raster_cupy')
+        >>> mean_cupy = mean(raster_cupy, passes=25)
         >>> print(type(mean_cupy.data))
         <class 'cupy.core.core.ndarray'>
         >>> print(mean_cupy)
-        <xarray.DataArray 'mean' (y: 4, x: 6)>
-        array([[nan,         nan,         nan,         nan,         nan, nan],
-               [nan,  0.22222222,  0.6666667 ,  1.2222222 ,  1.6666666 , nan],
-               [nan, -0.5555556 ,  0.        ,  0.8888889 ,  1.4444444 , nan],
-               [nan,         nan,         nan,         nan,         nan, nan]], dtype=float32)
-        Dimensions without coordinates: y, x
+        <xarray.DataArray 'mean' (dim_0: 5, dim_1: 5)>
+        array([[0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
+               [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
+               [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
+               [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
+               [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994]])
+        Dimensions without coordinates: dim_0, dim_1
     """
 
     out = agg.data
@@ -256,6 +250,8 @@ def _calc_var(array):
 
 @ngjit
 def _apply_numpy(data, kernel, func):
+    data = data.astype(np.float32)
+
     out = np.zeros_like(data)
     rows, cols = data.shape
     krows, kcols = kernel.shape
@@ -277,6 +273,7 @@ def _apply_numpy(data, kernel, func):
 
 
 def _apply_dask_numpy(data, kernel, func):
+    data = data.astype(np.float32)
     _func = partial(_apply_numpy, kernel=kernel, func=func)
 
     pad_h = kernel.shape[0] // 2
@@ -290,6 +287,7 @@ def _apply_dask_numpy(data, kernel, func):
 
 
 def _apply_cupy(data, kernel, func):
+    data = data.astype(cupy.float32)
     kernel = cupy.asarray(kernel)
 
     out = cupy.zeros(data.shape, dtype=data.dtype)
@@ -322,8 +320,9 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
     Parameters
     ----------
     raster : xarray.DataArray
-        2D array of input values to be filtered.
-    kernel : numpy.array
+        2D array of input values to be filtered. Can be a NumPy backed,
+        CuPy backed, or Dask with NumPy backed DataArray.
+    kernel : numpy.ndarray
         2D array where values of 1 indicate the kernel.
     func : callable, default=xrspatial.focal._calc_mean
         Function which takes an input array and returns an array.
@@ -432,7 +431,7 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
         dask_cupy_func=lambda *args: not_implemented_func(
             *args, messages='apply() does not support dask with cupy backed DataArray.'),  # noqa
     )
-    out = mapper(raster)(raster.data.astype(float), kernel, func)
+    out = mapper(raster)(raster.data, kernel, func)
     result = DataArray(out,
                        name=name,
                        coords=raster.coords,
@@ -454,7 +453,8 @@ def focal_stats(agg,
     Parameters
     ----------
     agg : xarray.DataArray
-        2D array of input values to be analysed.
+        2D array of input values to be analysed. Can be a NumPy backed,
+        Cupy backed, or Dask with NumPy backed DataArray.
     kernel : numpy.array
         2D array where values of 1 indicate the kernel.
     stats_funcs: list of string
@@ -466,6 +466,38 @@ def focal_stats(agg,
     stats_agg : xarray.DataArray of same type as `agg`
         3D array with dimensions of `(stat, y, x)` and with values
         indicating the focal stats.
+
+    Examples
+    --------
+    .. sourcecode:: python
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.convolution import circle_kernel
+        >>> kernel = circle_kernel(1, 1, 1)
+        >>> kernel
+        array([[0., 1., 0.],
+               [1., 1., 1.],
+               [0., 1., 0.]])
+        >>> data = np.array([
+            [0, 0, 0, 0, 0, 0],
+            [1, 1, 2, 2, 1, 1],
+            [2, 2, 1, 1, 2, 2],
+            [3, 3, 0, 0, 3, 3],
+        ])
+        >>> from xrspatial.focal import focal_stats
+        >>> focal_stats(xr.DataArray(data), kernel, stats_funcs=['min', 'sum'])
+        <xarray.DataArray 'focal_apply' (stats: 2, dim_0: 4, dim_1: 6)>
+        array([[[0., 0., 0., 0., 0., 0.],
+                [0., 0., 0., 0., 0., 0.],
+                [1., 1., 0., 0., 1., 1.],
+                [2., 0., 0., 0., 0., 2.]],
+               [[1., 1., 2., 2., 1., 1.],
+                [4., 6., 6., 6., 6., 4.],
+                [8., 9., 6., 6., 9., 8.],
+                [8., 8., 4., 4., 8., 8.]]])
+        Coordinates:
+          * stats    (stats) object 'min' 'sum'
+        Dimensions without coordinates: dim_0, dim_1
     """
 
     _function_mapping = {
@@ -529,12 +561,13 @@ def _hotspots_numpy(raster, kernel):
             issubclass(raster.data.dtype.type, np.floating)):
         raise ValueError("data type must be integer or float")
 
+    data = raster.data.astype(np.float32)
     # apply kernel to raster values
-    mean_array = convolve_2d(raster.data, kernel / kernel.sum())
+    mean_array = convolve_2d(data, kernel / kernel.sum())
 
     # calculate z-scores
-    global_mean = np.nanmean(raster.data)
-    global_std = np.nanstd(raster.data)
+    global_mean = np.nanmean(data)
+    global_std = np.nanstd(data)
     if global_std == 0:
         raise ZeroDivisionError(
             "Standard deviation of the input raster values is 0."
@@ -546,13 +579,14 @@ def _hotspots_numpy(raster, kernel):
 
 
 def _hotspots_dask_numpy(raster, kernel):
+    data = raster.data.astype(np.float32)
 
     # apply kernel to raster values
-    mean_array = convolve_2d(raster.data, kernel / kernel.sum())
+    mean_array = convolve_2d(data, kernel / kernel.sum())
 
     # calculate z-scores
-    global_mean = da.nanmean(raster.data)
-    global_std = da.nanstd(raster.data)
+    global_mean = da.nanmean(data)
+    global_std = da.nanstd(data)
 
     # commented out to avoid early compute to check if global_std is zero
     # if global_std == 0:
@@ -614,12 +648,14 @@ def _hotspots_cupy(raster, kernel):
             issubclass(raster.data.dtype.type, cupy.floating)):
         raise ValueError("data type must be integer or float")
 
+    data = raster.data.astype(cupy.float32)
+
     # apply kernel to raster values
-    mean_array = convolve_2d(raster.data, kernel / kernel.sum())
+    mean_array = convolve_2d(data, kernel / kernel.sum())
 
     # calculate z-scores
-    global_mean = cupy.nanmean(raster.data)
-    global_std = cupy.nanstd(raster.data)
+    global_mean = cupy.nanmean(data)
+    global_std = cupy.nanstd(data)
     if global_std == 0:
         raise ZeroDivisionError(
             "Standard deviation of the input raster values is 0."
@@ -652,6 +688,7 @@ def hotspots(raster, kernel):
     ----------
     raster : xarray.DataArray
         2D Input raster image with `raster.shape` = (height, width).
+        Can be a NumPy backed, CuPy backed, or Dask with NumPy backed DataArray
     kernel : Numpy Array
         2D array where values of 1 indicate the kernel.
 
@@ -662,100 +699,27 @@ def hotspots(raster, kernel):
 
     Examples
     --------
-    .. plot::
-       :include-source:
-
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import xarray as xr
-
-        from xrspatial import generate_terrain, aspect
-        from xrspatial.convolution import circle_kernel
-        from xrspatial.focal import hotspots
-
-
-        # Generate Example Terrain
-        W = 500
-        H = 300
-
-        template_terrain = xr.DataArray(np.zeros((H, W)))
-        x_range=(-20e6, 20e6)
-        y_range=(-20e6, 20e6)
-
-        terrain_agg = generate_terrain(
-            template_terrain, x_range=x_range, y_range=y_range
-        )
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Kernel
-        kernel = circle_kernel(10, 10, 100)
-
-        # Create Hotspots Aggregate array
-        hotspots_agg = hotspots(raster = terrain_agg,
-                                kernel = kernel)
-
-        # Edit Attributes
-        hotspots_agg = hotspots_agg.rename('Significance')
-        hotspots_agg = hotspots_agg.assign_attrs(
-            {
-                'Description': 'Example Hotspots',
-                'units': '%',
-            }
-        )
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Hotspots
-        hotspots_agg.plot(aspect = 2, size = 4)
-        plt.title("Hotspots")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
     .. sourcecode:: python
-
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02296597, 1261.947921  ],
-               [1285.37105519, 1282.48079719],
-               [1306.02339636, 1303.4069579 ]])
-        Coordinates:
-        * lon      (lon) float64 -3.96e+06 -3.88e+06
-        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            res:            (80000.0, 133333.3333333333)
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
-
-        >>> print(hotspots_agg[200:203, 200:202])
-        <xarray.DataArray 'Significance' (lat: 3, lon: 2)>
-        array([[0, 0],
-               [0, 0],
-               [0, 0]], dtype=int8)
-        Coordinates:
-        * lon      (lon) float64 -3.96e+06 -3.88e+06
-        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            res:            (80000.0, 133333.3333333333)
-            Description:    Example Hotspots
-            units:          %
-            Max Elevation:  4000
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.convolution import custom_kernel
+        >>> kernel = custom_kernel(np.array([1, 1, 0]))
+        >>> data = np.array([
+        ...    [0, 1000, 1000, 0, 0, 0],
+        ...    [0, 0, 0, -1000, -1000, 0],
+        ...    [0, -900, -900, 0, 0, 0],
+        ...    [0, 100, 1000, 0, 0, 0]])
+        >>> from xrspatial.focal import hotspots
+        >>> hotspots(xr.DataArray(data), kernel)
+        array([[  0,   0,  95,   0,   0,   0],
+               [  0,   0,   0,   0, -90,   0],
+               [  0,   0, -90,   0,   0,   0],
+               [  0,   0,   0,   0,   0,   0]], dtype=int8)
+        Dimensions without coordinates: dim_0, dim_1
     """
+
+    # TODO: edit unit of output raster to percent (%)
+
     # validate raster
     if not isinstance(raster, DataArray):
         raise TypeError("`raster` must be instance of DataArray")

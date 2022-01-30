@@ -27,6 +27,7 @@ from xrspatial.utils import not_implemented_func
 
 @ngjit
 def _cpu(data, cellsize_x, cellsize_y):
+    data = data.astype(np.float32)
     out = np.zeros_like(data, dtype=np.float32)
     out[:] = np.nan
     rows, cols = data.shape
@@ -57,6 +58,7 @@ def _run_numpy(data: np.ndarray,
 def _run_dask_numpy(data: da.Array,
                     cellsize_x: Union[int, float],
                     cellsize_y: Union[int, float]) -> da.Array:
+    data = data.astype(np.float32)
     _func = partial(_cpu,
                     cellsize_x=cellsize_x,
                     cellsize_y=cellsize_y)
@@ -102,6 +104,7 @@ def _run_cupy(data: cupy.ndarray,
               cellsize_y: Union[int, float]) -> cupy.ndarray:
     cellsize_x_arr = cupy.array([float(cellsize_x)], dtype='f4')
     cellsize_y_arr = cupy.array([float(cellsize_y)], dtype='f4')
+    data = data.astype(cupy.float32)
 
     griddim, blockdim = cuda_args(data.shape)
     out = cupy.empty(data.shape, dtype='f4')
@@ -138,89 +141,27 @@ def slope(agg: xr.DataArray,
 
     Examples
     --------
-    .. plot::
-       :include-source:
-
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import xarray as xr
-
-        from xrspatial import generate_terrain, slope
-
-
-        # Generate Example Terrain
-        W = 500
-        H = 300
-
-        template_terrain = xr.DataArray(np.zeros((H, W)))
-        x_range=(-20e6, 20e6)
-        y_range=(-20e6, 20e6)
-
-        terrain_agg = generate_terrain(
-            template_terrain, x_range=x_range, y_range=y_range
-        )
-
-        # Edit Attributes
-        terrain_agg = terrain_agg.assign_attrs(
-            {
-                'Description': 'Example Terrain',
-                'units': 'km',
-                'Max Elevation': '4000',
-            }
-        )
-
-        terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
-        terrain_agg = terrain_agg.rename('Elevation')
-
-        # Create Slope Aggregate Array
-        slope_agg = slope(agg = terrain_agg, name = 'Slope')
-
-        # Edit Attributes
-        slope_agg = slope_agg.assign_attrs({'Description': 'Example Slope',
-                                            'units': 'deg'})
-
-        # Plot Terrain
-        terrain_agg.plot(cmap = 'terrain', aspect = 2, size = 4)
-        plt.title("Terrain")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
-        # Plot Slope
-        slope_agg.plot(aspect = 2, size = 4)
-        plt.title("Slope")
-        plt.ylabel("latitude")
-        plt.xlabel("longitude")
-
     .. sourcecode:: python
-
-        >>> print(terrain_agg[200:203, 200:202])
-        <xarray.DataArray 'Elevation' (lat: 3, lon: 2)>
-        array([[1264.02296597, 1261.947921  ],
-               [1285.37105519, 1282.48079719],
-               [1306.02339636, 1303.4069579 ]])
-        Coordinates:
-        * lon      (lon) float64 -3.96e+06 -3.88e+06
-        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            res:            (80000.0, 133333.3333333333)
-            Description:    Example Terrain
-            units:          km
-            Max Elevation:  4000
-
-        >>> print(slope_agg[200:203, 200:202])
-        <xarray.DataArray 'Slope' (lat: 3, lon: 2)>
-        array([[0.00757718, 0.00726441],
-               [0.00893266, 0.00916095],
-               [0.00773291, 0.00699103]], dtype=float32)
-        Coordinates:
-        * lon      (lon) float64 -3.96e+06 -3.88e+06
-        * lat      (lat) float64 6.733e+06 6.867e+06 7e+06
-        Attributes:
-            res:            (80000.0, 133333.3333333333)
-            Description:    Example Slope
-            units:          deg
-            Max Elevation:  4000
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import slope
+        >>> data = np.array([
+        ...     [0, 0, 0, 0, 0],
+        ...     [0, 0, 0, -1, 2],
+        ...     [0, 0, 0, 0, 1],
+        ...     [0, 0, 0, 5, 0]])
+        >>> agg = xr.DataArray(data)
+        >>> slope_agg = slope(agg)
+        >>> slope_agg
+        <xarray.DataArray 'slope' (dim_0: 4, dim_1: 5)>
+        array([[      nan,       nan,       nan,       nan,       nan],
+               [      nan,  0.      , 14.036243, 32.512516,       nan],
+               [      nan,  0.      , 42.031113, 53.395725,       nan],
+               [      nan,       nan,       nan,       nan,       nan]],
+              dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
     """
+
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_run_numpy,

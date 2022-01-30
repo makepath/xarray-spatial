@@ -293,36 +293,28 @@ def a_star_search(surface: xr.DataArray,
 
     Examples
     --------
-    .. plot::
-       :include-source:
-
-        import numpy as np
-        import xarray as xr
-        from xrspatial import a_star_search
-
-        agg = xr.DataArray(np.array([
-            [0, 1, 0, 0],
-             [1, 1, 0, 0],
-             [0, 1, 2, 2],
-             [1, 0, 2, 0],
-             [0, 2, 2, 2]
-        ]), dims=['lat', 'lon'])
-
-        height, width = agg.shape
-        _lon = np.linspace(0, width - 1, width)
-        _lat = np.linspace(height - 1, 0, height)
-        agg['lon'] = _lon
-        agg['lat'] = _lat
-
-        # set pixels with value 0 as barriers
-        barriers = [0]
-
-        start = (3, 0)
-        goal = (0, 1)
-        path_agg = a_star_search(agg, start, goal, barriers, 'lon', 'lat')
-
     ... sourcecode:: python
 
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import a_star_search
+        >>> agg = xr.DataArray(np.array([
+        ...     [0, 1, 0, 0],
+        ...     [1, 1, 0, 0],
+        ...     [0, 1, 2, 2],
+        ...     [1, 0, 2, 0],
+        ...     [0, 2, 2, 2]
+        ... ]), dims=['lat', 'lon'])
+        >>> height, width = agg.shape
+        >>> _lon = np.linspace(0, width - 1, width)
+        >>> _lat = np.linspace(height - 1, 0, height)
+        >>> agg['lon'] = _lon
+        >>> agg['lat'] = _lat
+
+        >>> barriers = [0]  # set pixels with value 0 as barriers
+        >>> start = (3, 0)
+        >>> goal = (0, 1)
+        >>> path_agg = a_star_search(agg, start, goal, barriers, 'lon', 'lat')
         >>> print(path_agg)
         <xarray.DataArray (lat: 5, lon: 4)>
         array([[       nan,        nan,        nan,        nan],

@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.abspath('../..'))
 # -- Project information -----------------------------------------------------
 
 project = u'xarray_spatial'
-copyright = u'2021, makepath'
+copyright = u'2020-2022, makepath'
 author = u'makepath'
 
 version = release = xrspatial.__version__
