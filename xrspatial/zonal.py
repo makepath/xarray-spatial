@@ -256,8 +256,6 @@ def _stats_dask_numpy(
 
     return stats_df
 
-# @timing.timeit(key="stats_numpy")
-
 
 def _stats_numpy(
     zones: xr.DataArray,
@@ -345,7 +343,7 @@ def _stats_cupy(
     for i in range(len(unique_zones)):
         zone_id = unique_zones[i]
         # skip zone_id == nodata_zones, and non-finite zone ids
-        if (not np.isfinite(zone_id)):
+        if not np.isfinite(zone_id):
             continue
 
         stats_dict['zone'].append(zone_id)

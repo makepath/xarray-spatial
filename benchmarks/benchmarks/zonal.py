@@ -39,7 +39,7 @@ class Zonal:
         self.values = get_xr_dataarray((H, W), backend)
 
         # initialize the zones raster
-        zones = xr.DataArray(np.zeros(H * W).reshape(H, W))
+        zones = xr.DataArray(np.zeros((H, W)))
         hstep = H//zH
         wstep = W//zW
         for i in range(zH):
@@ -92,9 +92,9 @@ class Zonal:
                 'l2normKernel': lambda val: l2normKernel(val)
             }
 
-    def time_stats_default(self, raster_dim, zone_dim, backend):
+    def time_zonal_stats_default(self, raster_dim, zone_dim, backend):
         zonal.stats(zones=self.zones, values=self.values)
 
-    def time_stats_custom(self, raster_dim, zone_dim, backend):
+    def time_zonal_stats_custom(self, raster_dim, zone_dim, backend):
         zonal.stats(zones=self.zones, values=self.values,
                     stats_funcs=self.custom_stats)
