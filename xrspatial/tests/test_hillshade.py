@@ -54,11 +54,11 @@ def test_hillshade_numpy_equals_dask_numpy(random_data):
 def test_hillshade_gpu_equals_cpu(random_data):
     numpy_agg = create_test_raster(random_data, backend='numpy')
     cupy_agg = create_test_raster(random_data, backend='cupy')
-    assert_numpy_equals_cupy(numpy_agg, cupy_agg, hillshade)
+    assert_numpy_equals_cupy(numpy_agg, cupy_agg, hillshade, rtol=1e-6)
 
 
 @pytest.mark.skipif(not has_rtx(), reason="RTX not available")
-def test_hillshade_rtx_with_shadows():
+def test_hillshade_rtx_with_shadows(data_gaussian):
     import cupy
 
     tall_gaussian = 400*data_gaussian

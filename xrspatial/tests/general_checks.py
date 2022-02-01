@@ -88,14 +88,15 @@ def assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, func, nan_edges=True):
     np.testing.assert_allclose(numpy_result.data, dask_result.data.compute(), equal_nan=True)
 
 
-def assert_numpy_equals_cupy(numpy_agg, cupy_agg, func, nan_edges=True):
+def assert_numpy_equals_cupy(numpy_agg, cupy_agg, func, nan_edges=True, atol=0, rtol=1e-7):
     numpy_result = func(numpy_agg)
     if nan_edges:
         assert_nan_edges_effect(numpy_result)
 
     cupy_result = func(cupy_agg)
     general_output_checks(cupy_agg, cupy_result)
-    np.testing.assert_allclose(numpy_result.data, cupy_result.data.get(), equal_nan=True)
+    np.testing.assert_allclose(
+        numpy_result.data, cupy_result.data.get(), equal_nan=True, atol=atol, rtol=rtol)
 
 
 def assert_numpy_equals_dask_cupy(numpy_agg, dask_cupy_agg, func, nan_edges=True):

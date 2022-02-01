@@ -88,4 +88,4 @@ def test_numpy_equals_cupy_qgis_data():
 def test_numpy_equals_cupy_random_data(random_data):
     numpy_agg = create_test_raster(random_data, backend='numpy')
     cupy_agg = create_test_raster(random_data, backend='cupy')
-    assert_numpy_equals_cupy(numpy_agg, cupy_agg, aspect)
+    assert_numpy_equals_cupy(numpy_agg, cupy_agg, aspect, atol=1e-6, rtol=1e-6)

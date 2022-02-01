@@ -221,7 +221,7 @@ def test_2d_convolution_gpu(
     np.testing.assert_allclose(result_kernel_custom.get(), convolve_2d_data, equal_nan=True)
 
     result_kernel_circle = convolve_2d(cupy_data, kernel_circle_1_1_1)
-    assert isinstance(result_kernel_circle, cupy.ndrray)
+    assert isinstance(result_kernel_circle, cupy.ndarray)
     np.testing.assert_allclose(
         result_kernel_circle.get(), convolution_kernel_circle_1_1_1, equal_nan=True
     )

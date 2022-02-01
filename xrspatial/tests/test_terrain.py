@@ -49,4 +49,4 @@ def test_terrain_gpu():
     data_cupy = create_test_arr(backend='cupy')
     terrain_cupy = generate_terrain(data_cupy)
 
-    np.testing.assert_allclose(terrain_numpy.data, terrain_cupy.data, rtol=1e-05, atol=1e-07)
+    np.testing.assert_allclose(terrain_numpy.data, terrain_cupy.data.get(), rtol=1e-05, atol=1e-07)

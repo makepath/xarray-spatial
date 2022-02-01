@@ -71,6 +71,6 @@ def test_numpy_equals_dask_qgis_data():
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
 def test_numpy_equals_cupy_qgis_data():
     # compare using the data run through QGIS
-    numpy_agg = input_data()
+    numpy_agg = input_data('numpy')
     cupy_agg = input_data('cupy')
     assert_numpy_equals_cupy(numpy_agg, cupy_agg, slope)

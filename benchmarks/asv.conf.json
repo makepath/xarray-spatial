@@ -73,7 +73,7 @@
     "matrix": {
         "pyct": [],
         // Optional for cupy support; use correct cuda version.
-        //"cupy-cuda101": [],
+        //"cupy-cuda113": [],
         // Optional for ray-tracing support, need cupy too.
         //"rtxpy": [],
         // Optional for polygonize.

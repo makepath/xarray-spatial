@@ -157,7 +157,7 @@ def test_natural_breaks_cpu_deterministic():
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_natural_breaks_cupy():
+def test_natural_breaks_cupy(result_natural_breaks):
     cupy_agg = input_data('cupy')
     k, expected_result = result_natural_breaks
     cupy_natural_breaks = natural_breaks(cupy_agg, k=k)
@@ -191,7 +191,7 @@ def test_equal_interval_dask_numpy(result_equal_interval):
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_equal_interval_cupy():
+def test_equal_interval_cupy(result_equal_interval):
     k, expected_result = result_equal_interval
     cupy_agg = input_data(backend='cupy')
     cupy_result = equal_interval(cupy_agg, k=k)
