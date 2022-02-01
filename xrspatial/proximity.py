@@ -885,7 +885,7 @@ def allocation(
 
     # convert to have same type as of input @raster
     result = xr.DataArray(
-        (allocation_img).astype(raster.dtype),
+        allocation_img,
         coords=raster.coords,
         dims=raster.dims,
         attrs=raster.attrs,

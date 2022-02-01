@@ -1,3 +1,5 @@
+import pytest
+
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -10,65 +12,45 @@ from xrspatial import zonal_crosstab as crosstab
 from xrspatial import suggest_zonal_canvas
 from xrspatial import trim
 from xrspatial import crop
-
-
 from xrspatial.zonal import regions
 
+from xrspatial.tests.general_checks import create_test_raster
 
-def create_zones_values(backend):
-    zones_val = np.array([[0, 0, 1, 1, 2, 2, 3, 3],
-                          [0, 0, 1, 1, 2, 2, 3, 3],
-                          [0, 0, 1, 1, 2, np.nan, 3, 3]])
-    zones = xr.DataArray(zones_val)
 
-    values_val_2d = np.asarray([
+@pytest.fixture
+def data_zones(backend):
+    data = np.array([[0, 0, 1, 1, 2, 2, 3, 3],
+                     [0, 0, 1, 1, 2, 2, 3, 3],
+                     [0, 0, 1, 1, 2, np.nan, 3, 3]])
+    agg = create_test_raster(data, backend)
+    return agg
+
+
+@pytest.fixture
+def data_values_2d(backend):
+    data = np.asarray([
         [0, 0, 1, 1, 2, 2, 3, np.inf],
         [0, 0, 1, 1, 2, np.nan, 3, 0],
         [np.inf, 0, 1, 1, 2, 2, 3, 3]
     ])
-    values_2d = xr.DataArray(values_val_2d)
+    agg = create_test_raster(data, backend)
+    return agg
 
-    values_val_3d = np.ones(4*3*8).reshape(3, 8, 4)
-    values_3d = xr.DataArray(
-        values_val_3d,
-        dims=['lat', 'lon', 'race']
-    )
-    values_3d['race'] = ['cat1', 'cat2', 'cat3', 'cat4']
 
+@pytest.fixture
+def data_values_3d(backend):
+    data = np.ones(4*3*8).reshape(3, 8, 4)
     if 'dask' in backend:
-        zones.data = da.from_array(zones.data, chunks=(3, 3))
-        values_2d.data = da.from_array(values_2d.data, chunks=(3, 3))
-        values_3d.data = da.from_array(values_3d.data, chunks=(3, 3, 1))
+        data = da.from_array(data, chunks=(3, 4, 2))
 
-    return zones, values_2d, values_3d
-
-
-def check_results(df_np, df_da, expected_results_dict):
-    # numpy case
-    assert isinstance(df_np, pd.DataFrame)
-    assert len(df_np.columns) == len(expected_results_dict)
-
-    # zone column
-    assert (df_np['zone'] == expected_results_dict['zone']).all()
-
-    for col in df_np.columns[1:]:
-        assert np.isclose(
-            df_np[col], expected_results_dict[col], equal_nan=True
-        ).all()
-
-    if df_da is not None:
-        # dask case
-        assert isinstance(df_da, dd.DataFrame)
-        df_da = df_da.compute()
-        assert isinstance(df_da, pd.DataFrame)
-
-        # numpy results equal dask results, ignoring their indexes
-        assert np.array_equal(df_np.values, df_da.values, equal_nan=True)
+    agg = xr.DataArray(data, dims=['lat', 'lon', 'race'])
+    agg['race'] = ['cat1', 'cat2', 'cat3', 'cat4']
+    return agg
 
 
-def test_stats():
-    # expected results
-    default_stats_results = {
+@pytest.fixture
+def result_default_stats():
+    expected_result = {
         'zone':  [0, 1, 2, 3],
         'mean':  [0, 1, 2, 2.4],
         'max':   [0, 1, 2, 3],
@@ -78,19 +60,13 @@ def test_stats():
         'var':   [0, 0, 0, 1.44],
         'count': [5, 6, 4, 5]
     }
+    return expected_result
 
-    # numpy case
-    zones_np, values_np, _ = create_zones_values(backend='numpy')
-    # default stats_funcs
-    df_np = stats(zones=zones_np, values=values_np)
 
-    # dask case
-    zones_da, values_da, _ = create_zones_values(backend='dask')
-    df_da = stats(zones=zones_da, values=values_da)
-    check_results(df_np, df_da, default_stats_results)
-
-    # expected results
-    stats_results_zone_0_3 = {
+@pytest.fixture
+def result_zone_ids_stats():
+    zone_ids = [0, 3]
+    expected_result = {
         'zone':  [0, 3],
         'mean':  [0, 2.4],
         'max':   [0, 3],
@@ -100,132 +76,166 @@ def test_stats():
         'var':   [0, 1.44],
         'count': [5, 5]
     }
+    return zone_ids, expected_result
 
-    # numpy case
-    df_np_zone_0_3 = stats(zones=zones_np, values=values_np, zone_ids=[0, 3])
 
-    # dask case
-    df_da_zone_0_3 = stats(zones=zones_da, values=values_da, zone_ids=[0, 3])
+def _double_sum(values):
+    return values.sum() * 2
 
-    check_results(df_np_zone_0_3, df_da_zone_0_3, stats_results_zone_0_3)
 
-    # ---- custom stats (NumPy only) ----
-    # expected results
-    custom_stats_results = {
+def _range(values):
+    return values.max() - values.min()
+
+
+@pytest.fixture
+def result_custom_stats():
+    zone_ids = [1, 2]
+    nodata_values = 0
+    expected_result = {
         'zone':       [1, 2],
         'double_sum': [12, 16],
         'range':      [0,   0],
     }
-
-    def _double_sum(values):
-        return values.sum() * 2
-
-    def _range(values):
-        return values.max() - values.min()
-
-    custom_stats = {
-        'double_sum': _double_sum,
-        'range': _range,
-    }
-
-    # numpy case
-    df_np = stats(
-        zones=zones_np, values=values_np, stats_funcs=custom_stats,
-        zone_ids=[1, 2], nodata_values=0
-    )
-    # dask case
-    df_da = None
-    check_results(df_np, df_da, custom_stats_results)
+    return nodata_values, zone_ids, expected_result
 
 
-def test_crosstab_2d():
-    # count agg, expected results
-    crosstab_2d_results = {
+@pytest.fixture
+def result_count_crosstab_2d():
+    zone_ids = [1, 2, 3]
+    cat_ids = [0, 1, 2]
+    expected_result = {
         'zone': [1, 2, 3],
         0:      [0, 0, 1],
         1:      [6, 0, 0],
         2:      [0, 4, 0],
     }
+    return zone_ids, cat_ids, expected_result
 
-    # numpy case
-    zones_np, values_np, _ = create_zones_values(backend='numpy')
-    df_np = crosstab(
-        zones=zones_np, values=values_np,
-        zone_ids=[1, 2, 3], cat_ids=[0, 1, 2],
-    )
-    # dask case
-    zones_da, values_da, _ = create_zones_values(backend='dask')
-    df_da = crosstab(
-        zones=zones_da, values=values_da, zone_ids=[1, 2, 3], nodata_values=3
-    )
-    check_results(df_np, df_da, crosstab_2d_results)
 
-    # percentage agg, expected results
-
-    crosstab_2d_percentage_results = {
+@pytest.fixture
+def result_percentage_crosstab_2d():
+    zone_ids = [1, 2]
+    cat_ids = [1, 2]
+    nodata_values = 3
+    expected_result = {
         'zone': [1,   2],
         1:      [100, 0],
         2:      [0,   100],
     }
-
-    # numpy case
-    df_np = crosstab(
-        zones=zones_np, values=values_np, zone_ids=[1, 2], cat_ids=[1, 2],
-        nodata_values=3, agg='percentage'
-    )
-    # dask case
-    df_da = crosstab(
-        zones=zones_da, values=values_da, zone_ids=[1, 2], cat_ids=[1, 2],
-        nodata_values=3, agg='percentage'
-    )
-    check_results(df_np, df_da, crosstab_2d_percentage_results)
+    return nodata_values, zone_ids, cat_ids, expected_result
 
 
-def test_crosstab_3d():
-    # expected results
-    crosstab_3d_results = {
+@pytest.fixture
+def result_crosstab_3d():
+    zone_ids = [1, 2, 3]
+    layer = -1
+    expected_result = {
         'zone': [1, 2, 3],
         'cat1': [6, 5, 6],
         'cat2': [6, 5, 6],
         'cat3': [6, 5, 6],
         'cat4': [6, 5, 6],
     }
+    return layer, zone_ids, expected_result
 
-    # numpy case
-    zones_np, _, values_np = create_zones_values(backend='numpy')
-    df_np = crosstab(
-        zones=zones_np, values=values_np, zone_ids=[1, 2, 3], layer=-1
-    )
-    # dask case
-    zones_da, _, values_da = create_zones_values(backend='dask')
-    df_da = crosstab(
-        zones=zones_da, values=values_da, zone_ids=[1, 2, 3],
-        cat_ids=['cat1', 'cat2', 'cat3', 'cat4'], layer=-1
-    )
-    check_results(df_np, df_da, crosstab_3d_results)
 
-    # ----- no values case ------
-    crosstab_3d_novalues_results = {
+@pytest.fixture
+def result_nodata_values_crosstab_3d():
+    zone_ids = [1, 2, 3]
+    layer = -1
+    nodata_values = 1
+    expected_result = {
         'zone': [1, 2, 3],
         'cat1': [0, 0, 0],
         'cat2': [0, 0, 0],
         'cat3': [0, 0, 0],
         'cat4': [0, 0, 0],
     }
+    return nodata_values, layer, zone_ids, expected_result
 
-    # numpy case
-    zones_np, _, values_np = create_zones_values(backend='numpy')
-    df_np = crosstab(
-        zones=zones_np, values=values_np, layer=-1,
-        zone_ids=[1, 2, 3], nodata_values=1
+
+def check_results(backend, df_result, expected_results_dict):
+    if 'dask' in backend:
+        # dask case, compute result
+        assert isinstance(df_result, dd.DataFrame)
+        df_result = df_result.compute()
+        assert isinstance(df_result, pd.DataFrame)
+
+    assert len(df_result.columns) == len(expected_results_dict)
+    # zone column
+    assert (df_result['zone'] == expected_results_dict['zone']).all()
+    # stats columns
+    for col in df_result.columns[1:]:
+        np.testing.assert_allclose(df_result[col], expected_results_dict[col])
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_default_stats(backend, data_zones, data_values_2d, result_default_stats):
+    df_result = stats(zones=data_zones, values=data_values_2d)
+    check_results(backend, df_result, result_default_stats)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_zone_ids_stats(backend, data_zones, data_values_2d, result_zone_ids_stats):
+    zone_ids, expected_result = result_zone_ids_stats
+    df_result = stats(zones=data_zones, values=data_values_2d, zone_ids=zone_ids)
+    check_results(backend, df_result, expected_result)
+
+
+@pytest.mark.parametrize("backend", ['numpy'])
+def test_custom_stats(backend, data_zones, data_values_2d, result_custom_stats):
+    # ---- custom stats (NumPy only) ----
+    custom_stats = {
+        'double_sum': _double_sum,
+        'range': _range,
+    }
+    nodata_values, zone_ids, expected_result = result_custom_stats
+    df_result = stats(
+        zones=data_zones, values=data_values_2d, stats_funcs=custom_stats,
+        zone_ids=zone_ids, nodata_values=nodata_values
     )
-    # dask case
-    zones_da, _, values_da = create_zones_values(backend='dask')
-    df_da = crosstab(
-        zones=zones_da, values=values_da, layer=-1,
-        zone_ids=[1, 2, 3], nodata_values=1
+    check_results(backend, df_result, expected_result)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_count_crosstab_2d(backend, data_zones, data_values_2d, result_count_crosstab_2d):
+    zone_ids, cat_ids, expected_result = result_count_crosstab_2d
+    df_result = crosstab(
+        zones=data_zones, values=data_values_2d, zone_ids=zone_ids, cat_ids=cat_ids,
     )
-    check_results(df_np, df_da, crosstab_3d_novalues_results)
+    check_results(backend, df_result, expected_result)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_percentage_crosstab_2d(backend, data_zones, data_values_2d, result_percentage_crosstab_2d):
+    nodata_values, zone_ids, cat_ids, expected_result = result_percentage_crosstab_2d
+    df_result = crosstab(
+        zones=data_zones, values=data_values_2d, zone_ids=zone_ids, cat_ids=cat_ids,
+        nodata_values=nodata_values, agg='percentage'
+    )
+    check_results(backend, df_result, expected_result)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_crosstab_3d(backend, data_zones, data_values_3d, result_crosstab_3d):
+    layer, zone_ids, expected_result = result_crosstab_3d
+    df_result = crosstab(zones=data_zones, values=data_values_3d, zone_ids=zone_ids, layer=layer)
+    check_results(backend, df_result, expected_result)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_nodata_values_crosstab_3d(
+    backend,
+    data_zones,
+    data_values_3d,
+    result_nodata_values_crosstab_3d
+):
+    nodata_values, layer, zone_ids, expected_result = result_nodata_values_crosstab_3d
+    df_result = crosstab(
+        zones=data_zones, values=data_values_3d, zone_ids=zone_ids,
+        layer=layer, nodata_values=nodata_values
+    )
+    check_results(backend, df_result, expected_result)
 
 
 def test_apply():

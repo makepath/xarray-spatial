@@ -10,9 +10,10 @@ from xrspatial.utils import ngjit
 from xrspatial import mean
 from xrspatial.focal import hotspots, apply, focal_stats
 from xrspatial.convolution import (
-    convolve_2d, calc_cellsize, circle_kernel, annulus_kernel
+    convolve_2d, circle_kernel, annulus_kernel
 )
 
+from xrspatial.tests.general_checks import create_test_raster
 from xrspatial.tests.general_checks import general_output_checks
 
 
@@ -88,65 +89,34 @@ def test_mean_transfer_function_gpu_equals_cpu():
         assert e_info
 
 
-convolve_2d_data = np.array([[0., 1., 1., 1., 1., 1.],
-                             [1., 0., 1., 1., 1., 1.],
-                             [1., 1., 0., 1., 1., 1.],
-                             [1., 1., 1., np.nan, 1., 1.],
-                             [1., 1., 1., 1., 0., 1.],
-                             [1., 1., 1., 1., 1., 0.]])
+@pytest.fixture
+def convolve_2d_data():
+    data = np.array([
+        [0., 1., 1., 1., 1., 1.],
+        [1., 0., 1., 1., 1., 1.],
+        [1., 1., 0., 1., 1., 1.],
+        [1., 1., 1., np.nan, 1., 1.],
+        [1., 1., 1., 1., 0., 1.],
+        [1., 1., 1., 1., 1., 0.]
+    ])
+    return data
 
 
-def test_kernel():
-    data = convolve_2d_data
-    m, n = data.shape
-    agg = xr.DataArray(data, dims=['y', 'x'])
-    agg['x'] = np.linspace(0, n, n)
-    agg['y'] = np.linspace(0, m, m)
-
-    cellsize_x, cellsize_y = calc_cellsize(agg)
-
-    kernel1 = circle_kernel(cellsize_x, cellsize_y, 2)
-    expected_kernel1 = np.array([[0, 1, 0],
-                                 [1, 1, 1],
-                                 [0, 1, 0]])
-    assert isinstance(kernel1, np.ndarray)
-    np.testing.assert_allclose(kernel1, expected_kernel1, equal_nan=True)
-
-    kernel2 = annulus_kernel(cellsize_x, cellsize_y, 2, 0.5)
-    expected_kernel2 = np.array([[0, 1, 0],
-                                 [1, 0, 1],
-                                 [0, 1, 0]])
-    assert isinstance(kernel2, np.ndarray)
-    np.testing.assert_allclose(kernel2, expected_kernel2, equal_nan=True)
+@pytest.fixture
+def kernel_circle_1_1_1():
+    result = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+    return result
 
 
-def test_convolution():
-    data = convolve_2d_data
-    dask_data = da.from_array(data, chunks=(3, 3))
+@pytest.fixture
+def kernel_annulus_2_2_2_1():
+    result = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
+    return result
 
-    kernel1 = np.ones((1, 1))
-    numpy_output_1 = convolve_2d(data, kernel1)
-    expected_output_1 = np.array([[0., 1., 1., 1., 1., 1.],
-                                  [1., 0., 1., 1., 1., 1.],
-                                  [1., 1., 0., 1., 1., 1.],
-                                  [1., 1., 1., np.nan, 1., 1.],
-                                  [1., 1., 1., 1., 0., 1.],
-                                  [1., 1., 1., 1., 1., 0.]])
-    assert isinstance(numpy_output_1, np.ndarray)
-    np.testing.assert_allclose(
-        numpy_output_1, expected_output_1, equal_nan=True)
 
-    dask_output_1 = convolve_2d(dask_data, kernel1)
-    assert isinstance(dask_output_1, da.Array)
-    np.testing.assert_allclose(
-        dask_output_1.compute(), expected_output_1, equal_nan=True
-    )
-
-    kernel2 = np.array([[0, 1, 0],
-                        [1, 1, 1],
-                        [0, 1, 0]])
-    numpy_output_2 = convolve_2d(data, kernel2)
-    expected_output_2 = np.array([
+@pytest.fixture
+def convolution_kernel_circle_1_1_1():
+    expected_result = np.array([
         [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
         [np.nan, 4., 3., 5., 5., np.nan],
         [np.nan, 3., np.nan, np.nan, np.nan, np.nan],
@@ -154,24 +124,12 @@ def test_convolution():
         [np.nan, 5., np.nan, np.nan, np.nan, np.nan],
         [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
     ])
-    # kernel2 is of 3x3, thus the border edge is 1 cell long.
-    # currently, ignoring border edge (i.e values in edges are all nans)
-    assert isinstance(numpy_output_2, np.ndarray)
-    np.testing.assert_allclose(
-        numpy_output_2, expected_output_2, equal_nan=True
-    )
+    return expected_result
 
-    dask_output_2 = convolve_2d(dask_data, kernel2)
-    assert isinstance(dask_output_2, da.Array)
-    np.testing.assert_allclose(
-        dask_output_2.compute(), expected_output_2, equal_nan=True
-    )
 
-    kernel3 = np.array([[0, 1, 0],
-                        [1, 0, 1],
-                        [0, 1, 0]])
-    numpy_output_3 = convolve_2d(data, kernel3)
-    expected_output_3 = np.array([
+@pytest.fixture
+def convolution_kernel_annulus_2_2_1():
+    expected_result = np.array([
         [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
         [np.nan, 4., 2., 4., 4., np.nan],
         [np.nan, 2., np.nan, np.nan, np.nan, np.nan],
@@ -179,125 +137,169 @@ def test_convolution():
         [np.nan, 4., np.nan, np.nan, np.nan, np.nan],
         [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
     ])
-    # kernel3 is of 3x3, thus the border edge is 1 cell long.
-    # currently, values in edges are all nans
-    assert isinstance(numpy_output_3, np.ndarray)
-    np.testing.assert_allclose(
-        numpy_output_3, expected_output_3, equal_nan=True)
+    return expected_result
 
-    dask_output_3 = convolve_2d(dask_data, kernel3)
-    assert isinstance(dask_output_3, da.Array)
+
+def test_kernel(kernel_circle_1_1_1, kernel_annulus_2_2_2_1):
+    kernel_circle = circle_kernel(1, 1, 1)
+    assert isinstance(kernel_circle, np.ndarray)
+    np.testing.assert_allclose(kernel_circle, kernel_circle_1_1_1, equal_nan=True)
+
+    kernel_annulus = annulus_kernel(2, 2, 2, 1)
+    assert isinstance(kernel_annulus, np.ndarray)
+    np.testing.assert_allclose(kernel_annulus, kernel_annulus_2_2_2_1, equal_nan=True)
+
+
+def test_convolution_numpy(
+    convolve_2d_data,
+    kernel_circle_1_1_1,
+    convolution_kernel_circle_1_1_1,
+    kernel_annulus_2_2_2_1,
+    convolution_kernel_annulus_2_2_1
+):
+    kernel_custom = np.ones((1, 1))
+    result_kernel_custom = convolve_2d(convolve_2d_data, kernel_custom)
+    assert isinstance(result_kernel_custom, np.ndarray)
+    # kernel is [[1]], thus the result equals input data
+    np.testing.assert_allclose(result_kernel_custom, convolve_2d_data, equal_nan=True)
+
+    result_kernel_circle = convolve_2d(convolve_2d_data, kernel_circle_1_1_1)
+    assert isinstance(result_kernel_circle, np.ndarray)
     np.testing.assert_allclose(
-        dask_output_3.compute(), expected_output_3, equal_nan=True
+        result_kernel_circle, convolution_kernel_circle_1_1_1, equal_nan=True
+    )
+
+    result_kernel_annulus = convolve_2d(convolve_2d_data, kernel_annulus_2_2_2_1)
+    assert isinstance(result_kernel_annulus, np.ndarray)
+    np.testing.assert_allclose(
+        result_kernel_annulus, convolution_kernel_annulus_2_2_1, equal_nan=True
+    )
+
+
+def test_convolution_dask_numpy(
+    convolve_2d_data,
+    kernel_circle_1_1_1,
+    convolution_kernel_circle_1_1_1,
+    kernel_annulus_2_2_2_1,
+    convolution_kernel_annulus_2_2_1
+):
+    dask_data = da.from_array(convolve_2d_data, chunks=(3, 3))
+    kernel_custom = np.ones((1, 1))
+    result_kernel_custom = convolve_2d(dask_data, kernel_custom)
+    assert isinstance(result_kernel_custom, da.Array)
+    # kernel is [[1]], thus the result equals input data
+    np.testing.assert_allclose(result_kernel_custom.compute(), convolve_2d_data, equal_nan=True)
+
+    result_kernel_circle = convolve_2d(dask_data, kernel_circle_1_1_1)
+    assert isinstance(result_kernel_circle, da.Array)
+    np.testing.assert_allclose(
+        result_kernel_circle.compute(), convolution_kernel_circle_1_1_1, equal_nan=True
+    )
+
+    result_kernel_annulus = convolve_2d(dask_data, kernel_annulus_2_2_2_1)
+    assert isinstance(result_kernel_annulus, da.Array)
+    np.testing.assert_allclose(
+        result_kernel_annulus.compute(), convolution_kernel_annulus_2_2_1, equal_nan=True
     )
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_2d_convolution_gpu_equals_cpu():
-
+def test_2d_convolution_gpu(
+    convolve_2d_data,
+    kernel_circle_1_1_1,
+    convolution_kernel_circle_1_1_1,
+    kernel_annulus_2_2_2_1,
+    convolution_kernel_annulus_2_2_1
+):
     import cupy
+    cupy_data = cupy.asarray(convolve_2d_data)
 
-    data = convolve_2d_data
-    numpy_agg = xr.DataArray(data)
-    cupy_agg = xr.DataArray(cupy.asarray(data))
+    kernel_custom = np.ones((1, 1))
+    result_kernel_custom = convolve_2d(cupy_data, kernel_custom)
+    assert isinstance(result_kernel_custom, cupy.ndarray)
+    # kernel is [[1]], thus the result equals input data
+    np.testing.assert_allclose(result_kernel_custom.get(), convolve_2d_data, equal_nan=True)
 
-    kernel1 = np.ones((1, 1))
-    output_numpy1 = convolve_2d(numpy_agg.data, kernel1)
-    output_cupy1 = convolve_2d(cupy_agg.data, kernel1)
-    assert isinstance(output_cupy1, cupy.ndarray)
+    result_kernel_circle = convolve_2d(cupy_data, kernel_circle_1_1_1)
+    assert isinstance(result_kernel_circle, cupy.ndarray)
     np.testing.assert_allclose(
-        output_numpy1, output_cupy1.get(), equal_nan=True)
+        result_kernel_circle.get(), convolution_kernel_circle_1_1_1, equal_nan=True
+    )
 
-    kernel2 = np.array([[0, 1, 0],
-                        [1, 1, 1],
-                        [0, 1, 0]])
-    output_numpy2 = convolve_2d(numpy_agg.data, kernel2)
-    output_cupy2 = convolve_2d(cupy_agg.data, kernel2)
-    assert isinstance(output_cupy2, cupy.ndarray)
+    result_kernel_annulus = convolve_2d(cupy_data, kernel_annulus_2_2_2_1)
+    assert isinstance(result_kernel_annulus, cupy.ndarray)
     np.testing.assert_allclose(
-        output_numpy2, output_cupy2.get(), equal_nan=True)
-
-    kernel3 = np.array([[0, 1, 0],
-                        [1, 0, 1],
-                        [0, 1, 0]])
-    output_numpy3 = convolve_2d(numpy_agg.data, kernel3)
-    output_cupy3 = convolve_2d(cupy_agg.data, kernel3)
-    assert isinstance(output_cupy3, cupy.ndarray)
-    np.testing.assert_allclose(
-        output_numpy3, output_cupy3.get(), equal_nan=True)
+        result_kernel_annulus.get(), convolution_kernel_annulus_2_2_1, equal_nan=True
+    )
 
     # dask + cupy case not implemented
     dask_cupy_agg = xr.DataArray(
-        da.from_array(cupy.asarray(data), chunks=(3, 3))
+        da.from_array(cupy.asarray(convolve_2d_data), chunks=(3, 3))
     )
     with pytest.raises(NotImplementedError) as e_info:
-        convolve_2d(dask_cupy_agg.data, kernel3)
+        convolve_2d(dask_cupy_agg.data, kernel_custom)
         assert e_info
 
 
-data_apply = np.array([[0, 1, 2, 3, 4, 5],
-                       [6, 7, 8, 9, 10, 11],
-                       [12, 13, 14, 15, 16, 17],
-                       [18, 19, 20, 21, 22, 23]])
-kernel_apply = np.array([
-    [0, 1, 0],
-    [1, 0, 1],
-    [0, 1, 0]
-])
+@pytest.fixture
+def data_apply():
+    data = np.array([[0, 1, 2, 3, 4, 5],
+                     [6, 7, 8, 9, 10, 11],
+                     [12, 13, 14, 15, 16, 17],
+                     [18, 19, 20, 21, 22, 23]])
+    kernel = np.array([
+        [0, 1, 0],
+        [1, 0, 1],
+        [0, 1, 0]
+    ])
+    expected_result = np.zeros_like(data)
+    return data, kernel, expected_result
 
 
-def test_apply_cpu():
-    @ngjit
-    def func_zero_cpu(x):
-        return 0
-    expected_results = np.zeros_like(data_apply)
+def func_zero(x):
+    return 0
 
-    # numpy case
-    numpy_agg = xr.DataArray(data_apply)
-    numpy_apply = apply(numpy_agg, kernel_apply, func_zero_cpu)
-    general_output_checks(numpy_agg, numpy_apply, expected_results)
 
-    # dask + numpy case
-    dask_numpy_agg = xr.DataArray(da.from_array(data_apply, chunks=(3, 3)))
-    dask_numpy_apply = apply(dask_numpy_agg, kernel_apply, func_zero_cpu)
-    general_output_checks(dask_numpy_agg, dask_numpy_apply, expected_results)
+@ngjit
+def func_zero_cpu(x):
+    return 0
+
+
+def test_apply_numpy(data_apply):
+    data, kernel, expected_result = data_apply
+    numpy_agg = create_test_raster(data)
+    numpy_apply = apply(numpy_agg, kernel, func_zero_cpu)
+    general_output_checks(numpy_agg, numpy_apply, expected_result)
+
+
+def test_apply_dask_numpy(data_apply):
+    data, kernel, expected_result = data_apply
+    dask_numpy_agg = create_test_raster(data, backend='dask')
+    dask_numpy_apply = apply(dask_numpy_agg, kernel, func_zero_cpu)
+    general_output_checks(dask_numpy_agg, dask_numpy_apply, expected_result)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_apply_gpu():
-    def func_zero(x):
-        return 0
-
-    @ngjit
-    def func_zero_cpu(x):
-        return 0
-
-    expected_results = np.zeros_like(data_apply)
-
+def test_apply_gpu(data_apply):
+    data, kernel, expected_result = data_apply
     # cupy case
-    import cupy
-    cupy_agg = xr.DataArray(cupy.asarray(data_apply))
-    cupy_apply = apply(cupy_agg, kernel_apply, func_zero)
-    general_output_checks(cupy_agg, cupy_apply, expected_results)
+    cupy_agg = create_test_raster(data, backend='cupy')
+    cupy_apply = apply(cupy_agg, kernel, func_zero)
+    general_output_checks(cupy_agg, cupy_apply, expected_result)
 
     # dask + cupy case not implemented
-    dask_cupy_agg = xr.DataArray(
-        da.from_array(cupy.asarray(data_apply), chunks=(3, 3))
-    )
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy')
     with pytest.raises(NotImplementedError) as e_info:
-        apply(dask_cupy_agg, kernel_apply, func_zero)
+        apply(dask_cupy_agg, kernel, func_zero)
         assert e_info
 
 
-def test_focal_stats_cpu():
+@pytest.fixture
+def data_focal_stats():
     data = np.arange(16).reshape(4, 4)
-    numpy_agg = xr.DataArray(data)
-    dask_numpy_agg = xr.DataArray(da.from_array(data, chunks=(3, 3)))
-
     cellsize = (1, 1)
     kernel = circle_kernel(*cellsize, 1.5)
-
-    expected_results = np.asarray([
+    expected_result = np.asarray([
         # mean
         [[1.66666667, 2., 3., 4.],
          [4.25, 5., 6., 6.75],
@@ -334,23 +336,30 @@ def test_focal_stats_cpu():
          [33., 45., 50., 43.],
          [33., 48., 52., 40.]]
     ])
+    return data, kernel, expected_result
 
+
+def test_focal_stats_numpy(data_focal_stats):
+    data, kernel, expected_result = data_focal_stats
+    numpy_agg = create_test_raster(data)
     numpy_focalstats = focal_stats(numpy_agg, kernel)
     general_output_checks(
-        numpy_agg, numpy_focalstats,
-        verify_attrs=False, expected_results=expected_results
+        numpy_agg, numpy_focalstats, verify_attrs=False, expected_results=expected_result
     )
     assert numpy_focalstats.ndim == 3
 
+
+def test_focal_stats_dask_numpy(data_focal_stats):
+    data, kernel, expected_result = data_focal_stats
+    dask_numpy_agg = create_test_raster(data, backend='dask')
     dask_numpy_focalstats = focal_stats(dask_numpy_agg, kernel)
     general_output_checks(
-        dask_numpy_agg, dask_numpy_focalstats,
-        verify_attrs=False, expected_results=expected_results
+        dask_numpy_agg, dask_numpy_focalstats, verify_attrs=False, expected_results=expected_result
     )
 
 
-def test_hotspots():
-    n, m = 10, 10
+@pytest.fixture
+def data_hotspots():
     data = np.asarray([
         [np.nan, 0., 0., 0., 0., 0., 0., 0., 0., 0.],
         [0., 10000., 10000., 10000., 0., 0., 0., 0., 0., 0.],
@@ -363,74 +372,46 @@ def test_hotspots():
         [0., 0., 0., 0., 0., 0., 0., -10000., -10000., -10000.],
         [0., 0., 0., 0., 0., 0., 0., -10000., -10000., -10000.]
     ])
-    numpy_agg = xr.DataArray(data, dims=['y', 'x'])
-    numpy_agg['x'] = np.linspace(0, n, n)
-    numpy_agg['y'] = np.linspace(0, m, m)
-
-    cellsize_x, cellsize_y = calc_cellsize(numpy_agg)
-    kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
-
-    expected_results = np.array([
-        [0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-        [0,  0, 90,  0,  0,  0,  0,  0,  0,  0],
-        [0, 90, 95, 90,  0,  0,  0,  0,  0,  0],
-        [0,  0, 90,  0,  0,  0,  0,  0,  0,  0],
-        [0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-        [0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-        [0,  0,  0,  0,  0,  0,  0,  0,  0,  0],
-        [0,  0,  0,  0,  0,  0,  0,  0, -90,  0],
-        [0,  0,  0,  0,  0,  0,  0, -90, -95,  0],
-        [0,  0,  0,  0,  0,  0,  0,  0,  0,  0]
+    kernel = np.array([[0., 1., 0.], [1., 1., 1.], [0., 1., 0.]])
+    expected_result = np.array([
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 90, 0, 0, 0, 0, 0, 0, 0],
+        [0, 90, 95, 90, 0, 0, 0, 0, 0, 0],
+        [0, 0, 90, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, -90, 0],
+        [0, 0, 0, 0, 0, 0, 0, -90, -95, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     ], dtype=np.int8)
 
-    # numpy case
-    numpy_hotspots = hotspots(numpy_agg, kernel)
-    general_output_checks(numpy_agg, numpy_hotspots, expected_results)
+    return data, kernel, expected_result
 
-    # dask + numpy
-    dask_numpy_agg = xr.DataArray(da.from_array(data, chunks=(3, 3)))
+
+def test_hotspots_numpy(data_hotspots):
+    data, kernel, expected_result = data_hotspots
+    numpy_agg = create_test_raster(data)
+    numpy_hotspots = hotspots(numpy_agg, kernel)
+    general_output_checks(numpy_agg, numpy_hotspots, expected_result)
+
+
+def test_hotspots_dask_numpy(data_hotspots):
+    data, kernel, expected_result = data_hotspots
+    dask_numpy_agg = create_test_raster(data, backend='dask')
     dask_numpy_hotspots = hotspots(dask_numpy_agg, kernel)
-    general_output_checks(
-        dask_numpy_agg, dask_numpy_hotspots, expected_results)
+    general_output_checks(dask_numpy_agg, dask_numpy_hotspots, expected_result)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_hotspot_gpu_equals_cpu():
-    n, m = 10, 10
-    data = np.asarray([
-        [np.nan, 0., 0., 0., 0., 0., 0., 0., 0., 0.],
-        [0., 10000., 10000., 10000., 0., 0., 0., 0., 0., 0.],
-        [0., 10000., 10000., 10000., 0., 0., 0., 0., 0., 0.],
-        [0., 10000., 10000., 10000., 0., 0., 0., 0., 0., 0.],
-        [0., 0., 0., 0., np.nan, 0., 0., 0., 0., 0.],
-        [0., 0., 0., 0., 0., np.nan, 0., 0., 0., 0.],
-        [0., 0., 0., 0., 0., 0., np.nan, 0., 0., 0.],
-        [0., 0., 0., 0., 0., 0., 0., -10000., -10000., -10000.],
-        [0., 0., 0., 0., 0., 0., 0., -10000., -10000., -10000.],
-        [0., 0., 0., 0., 0., 0., 0., -10000., -10000., -10000.]
-    ])
-    numpy_agg = xr.DataArray(data, dims=['y', 'x'])
-    numpy_agg['x'] = np.linspace(0, n, n)
-    numpy_agg['y'] = np.linspace(0, m, m)
-
-    cellsize_x, cellsize_y = calc_cellsize(numpy_agg)
-    kernel = circle_kernel(cellsize_x, cellsize_y, 2.0)
-
-    # numpy case
-    numpy_hotspots = hotspots(numpy_agg, kernel)
-
-    # cupy case
-    import cupy
-    cupy_agg = xr.DataArray(cupy.asarray(data))
+def test_hotspot_gpu(data_hotspots):
+    data, kernel, expected_result = data_hotspots
+    cupy_agg = create_test_raster(data, backend='cupy')
     cupy_hotspots = hotspots(cupy_agg, kernel)
-
-    np.testing.assert_allclose(
-        numpy_hotspots.data, cupy_hotspots.data.get(), equal_nan=True)
+    general_output_checks(cupy_agg, cupy_hotspots, expected_result)
 
     # dask + cupy case not implemented
-    dask_cupy_agg = xr.DataArray(
-        da.from_array(cupy.asarray(data), chunks=(3, 3))
-    )
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy')
     with pytest.raises(NotImplementedError) as e_info:
         hotspots(dask_cupy_agg, kernel)
         assert e_info
