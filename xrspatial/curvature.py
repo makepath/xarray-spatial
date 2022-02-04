@@ -125,6 +125,7 @@ def curvature(agg: xr.DataArray,
     --------
     Curvature works with NumPy backed xarray DataArray
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial import curvature
@@ -144,6 +145,7 @@ def curvature(agg: xr.DataArray,
 
     Curvature works with Dask with NumPy backed xarray DataArray
     .. sourcecode:: python
+
         >>> convex_data = np.array([
             [0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0],
@@ -179,6 +181,7 @@ def curvature(agg: xr.DataArray,
 
     Curvature works with CuPy backed xarray DataArray.
     .. sourcecode:: python
+
         >>> import cupy
         >>> concave_data = np.array([
             [0, 0, 0, 0, 0],

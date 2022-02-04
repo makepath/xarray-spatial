@@ -441,6 +441,7 @@ def stats(
     stats() works with NumPy backed DataArray
 
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.zonal import stats
@@ -886,6 +887,7 @@ def crosstab(
     crosstab() works with NumPy backed DataArray.
 
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.zonal import crosstab
@@ -918,6 +920,7 @@ def crosstab(
     crosstab() works with Dask with NumPy backed DataArray.
 
     .. sourcecode:: python
+
         >>> import dask.array as da
         >>> values_dask = xr.DataArray(da.from_array(values, chunks=(3, 3)))
         >>> zones_dask = xr.DataArray(da.from_array(zones, chunks=(3, 3)))
@@ -1062,6 +1065,7 @@ def apply(
     Examples
     --------
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> zones_val = np.array([
