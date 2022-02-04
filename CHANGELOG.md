@@ -1,5 +1,15 @@
 ## Xarray-Spatial Changelog
 -----------
+
+### Version 0.3.2 - 2022-02-04
+- Remove numpy version pin (#637)
+- aspect: added benchmarks (#640)
+- Clean gitignore and manifest files (#642)
+- Benchmark results (#643)
+- handle CLI errors #442 (#644)
+- Cupy zonal (#639)
+- Tests improvements (#636)
+
 ### Version 0.3.1 - 2022-01-10
 - Add benchmarking framework using asv (#595)
 - Fix classify bug with dask array (#599)
