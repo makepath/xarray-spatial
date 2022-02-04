@@ -207,6 +207,7 @@ def reclassify(agg: xr.DataArray,
     --------
     Reclassify works with NumPy backed xarray DataArray
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.classify import reclassify
@@ -238,6 +239,7 @@ def reclassify(agg: xr.DataArray,
 
     Reclassify works with Dask with NumPy backed xarray DataArray
     .. sourcecode:: python
+
         >>> import dask.array as da
         >>> data_da = da.from_array(data, chunks=(3, 3))
         >>> agg_da = xr.DataArray(data_da, name='agg_da')
@@ -261,6 +263,7 @@ def reclassify(agg: xr.DataArray,
     Reclassify works with CuPy backed xarray DataArray.
     Make sure you have a GPU and CuPy installed to run this example.
     .. sourcecode:: python
+
         >>> import cupy
         >>> data_cupy = cupy.asarray(data)
         >>> agg_cupy = xr.DataArray(data_cupy)
@@ -357,6 +360,7 @@ def quantile(agg: xr.DataArray,
     --------
     Quantile work with numpy backed xarray DataArray
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.classify import quantile
@@ -628,6 +632,7 @@ def natural_breaks(agg: xr.DataArray,
     -------
     natural_breaks() works with numpy backed xarray DataArray.
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.classify import natural_breaks
@@ -654,6 +659,7 @@ def natural_breaks(agg: xr.DataArray,
 
     natural_breaks() works with cupy backed xarray DataArray.
     .. sourcecode:: python
+
         >>> import cupy
         >>> agg_cupy = xr.DataArray(cupy.asarray(elevation))
         >>> cupy_natural_breaks = natural_breaks(agg_cupy)
@@ -750,6 +756,7 @@ def equal_interval(agg: xr.DataArray,
     Examples
     --------
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.classify import equal_interval

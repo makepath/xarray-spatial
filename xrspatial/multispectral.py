@@ -106,8 +106,10 @@ def arvi(nir_agg: xr.DataArray,
     Examples
     --------
     In this example, we'll use data available in xrspatial.datasets
+
     .. plot::
        :include-source:
+
         >>> from xrspatial.datasets import get_data
         >>> data = get_data('sentinel-2')  # Open Example Data
         >>> nir = data['NIR']
@@ -122,6 +124,7 @@ def arvi(nir_agg: xr.DataArray,
         >>> arvi_agg.plot(aspect=2, size=4)
 
     .. sourcecode:: python
+
         >>> y1, x1, y2, x2 = 100, 100, 103, 104
         >>> print(nir[y1:y2, x1:x2].data)
         [[1519. 1504. 1530. 1589.]
@@ -270,6 +273,7 @@ def evi(nir_agg: xr.DataArray,
         >>> evi_agg.plot(aspect=2, size=4)
 
     .. sourcecode:: python
+
         >>> y, x = 100, 100
         >>> m, n = 3, 4
         >>> print(nir[y1:y2, x1:x2].data)
@@ -409,6 +413,7 @@ def gci(nir_agg: xr.DataArray,
         >>> gci_agg.plot(aspect=2, size=4)
 
     .. sourcecode:: python
+
         >>> y1, x1, y2, x2 = 100, 100, 103, 104
         >>> print(nir[y1:y2, x1:x2].data)
         [[1519. 1504. 1530. 1589.]
@@ -472,6 +477,7 @@ def nbr(nir_agg: xr.DataArray,
     --------
     .. plot::
        :include-source:
+
         >>> from xrspatial.datasets import get_data
         >>> data = get_data('sentinel-2')  # Open Example Data
         >>> nir = data['NIR']
@@ -484,6 +490,7 @@ def nbr(nir_agg: xr.DataArray,
         >>> nbr_agg.plot(aspect=2, size=4)
 
     .. sourcecode:: python
+
         >>> y1, x1, y2, x2 = 100, 100, 103, 104
         >>> print(nir[y1:y2, x1:x2].data)
         [[1519. 1504. 1530. 1589.]
@@ -554,6 +561,7 @@ def nbr2(swir1_agg: xr.DataArray,
     --------
     .. plot::
        :include-source:
+
         >>> from xrspatial.datasets import get_data
         >>> data = get_data('sentinel-2')  # Open Example Data
         >>> swir1 = data['SWIR1']
@@ -566,6 +574,7 @@ def nbr2(swir1_agg: xr.DataArray,
         >>> nbr2_agg.plot(aspect=2, size=4)
 
     .. sourcecode:: python
+
         >>> y1, x1, y2, x2 = 100, 100, 103, 104
         >>> print(swir1[y1:y2, x1:x2].data)
         [[2092. 2242. 2333. 2382.]
@@ -630,7 +639,7 @@ def ndvi(nir_agg: xr.DataArray,
     --------
     .. plot::
        :include-source:
-        >>> from xrspatial.datasets import get_data        
+        >>> from xrspatial.datasets import get_data
         >>> data = get_data('sentinel-2')  # Open Example Data
         >>> nir = data['NIR']
         >>> red = data['Red']
@@ -642,6 +651,7 @@ def ndvi(nir_agg: xr.DataArray,
         >>> ndvi_agg.plot(aspect=2, size=4)
 
     .. sourcecode:: python
+
         >>> y1, x1, y2, x2 = 100, 100, 103, 104
         >>> print(nir[y1:y2, x1:x2].data)
         [[1519. 1504. 1530. 1589.]
@@ -710,6 +720,7 @@ def ndmi(nir_agg: xr.DataArray,
     --------
     .. plot::
        :include-source:
+
         >>> from xrspatial.datasets import get_data
         >>> data = get_data('sentinel-2')  # Open Example Data
         >>> nir = data['NIR']
@@ -722,6 +733,7 @@ def ndmi(nir_agg: xr.DataArray,
         >>> ndmi_agg.plot(aspect=2, size=4)
 
     .. sourcecode:: python
+
         >>> y1, x1, y2, x2 = 100, 100, 103, 104
         >>> print(nir[y1:y2, x1:x2].data)
         [[1519. 1504. 1530. 1589.]
@@ -892,6 +904,7 @@ def savi(nir_agg: xr.DataArray,
     --------
     .. plot::
        :include-source:
+
         >>> from xrspatial.datasets import get_data
         >>> data = get_data('sentinel-2')  # Open Example Data
         >>> nir = data['NIR']
@@ -904,6 +917,7 @@ def savi(nir_agg: xr.DataArray,
         >>> savi_agg.plot(aspect=2, size=4)
 
     .. sourcecode:: python
+
         >>> print(nir[y1:y2, x1:x2].data)
         [[1519. 1504. 1530. 1589.]
          [1491. 1473. 1542. 1609.]
@@ -1020,6 +1034,7 @@ def sipi(nir_agg: xr.DataArray,
     --------
     .. plot::
        :include-source:
+
         >>> from xrspatial.datasets import get_data
         >>> data = get_data('sentinel-2')  # Open Example Data
         >>> nir = data['NIR']
@@ -1034,6 +1049,7 @@ def sipi(nir_agg: xr.DataArray,
         >>> sipi_agg.plot(aspect=2, size=4)
 
     .. sourcecode:: python
+
         >>> y1, x1, y2, x2 = 100, 100, 103, 104
         >>> print(nir[y1:y2, x1:x2].data)
         [[1519. 1504. 1530. 1589.]
@@ -1357,6 +1373,7 @@ def true_color(r, g, b, nodata=1, c=10.0, th=0.125, name='true_color'):
     --------
     .. plot::
        :include-source:
+
         >>> from xrspatial.datasets import get_data
         >>> data = get_data('sentinel-2')  # Open Example Data
         >>> red = data['Red']

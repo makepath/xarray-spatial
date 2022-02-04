@@ -172,6 +172,7 @@ def aspect(agg: xr.DataArray,
     --------
     Aspect works with NumPy backed xarray DataArray
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial import aspect
@@ -207,6 +208,7 @@ def aspect(agg: xr.DataArray,
 
     Aspect works with Dask with NumPy backed xarray DataArray
     .. sourcecode:: python
+
         >>> import dask.array as da
         >>> data_da = da.from_array(data, chunks=(3, 3))
         >>> raster_da = xr.DataArray(data_da, dims=['y', 'x'], name='raster_da')
@@ -232,6 +234,7 @@ def aspect(agg: xr.DataArray,
     Aspect works with CuPy backed xarray DataArray.
     Make sure you have a GPU and CuPy installed to run this example.
     .. sourcecode:: python
+
         >>> import cupy
         >>> data_cupy = cupy.asarray(data)
         >>> raster_cupy = xr.DataArray(data_cupy, dims=['y', 'x'])

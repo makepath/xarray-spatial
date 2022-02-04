@@ -100,6 +100,7 @@ def calc_cellsize(raster):
     Examples
     --------
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> h, w = 100, 200
@@ -417,6 +418,7 @@ def convolution_2d(agg, kernel, name='convolution_2d'):
     --------
     convolution_2d() works with NumPy backed DataArray.
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.convolution import circle_kernel
@@ -447,6 +449,7 @@ def convolution_2d(agg, kernel, name='convolution_2d'):
 
     convolution_2d() works with Dask with NumPy backed DataArray.
     .. sourcecode:: python
+
         >>> from xrspatial.convolution import annulus_kernel
         >>> kernel = annulus_kernel(1, 1, 1.5, 0.5)
         >>> kernel
@@ -474,6 +477,7 @@ def convolution_2d(agg, kernel, name='convolution_2d'):
 
     convolution_2d() works with CuPy backed DataArray.
     .. sourcecode:: python
+
         >>> from xrspatial.convolution import custom_kernel
         >>> kernel = custom_kernel(np.array([
         ...    [1, 0, 0],

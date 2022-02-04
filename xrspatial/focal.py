@@ -137,6 +137,7 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
     --------
     Focal mean works with NumPy backed xarray DataArray
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.focal import mean
@@ -160,6 +161,7 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
     Focal mean works with Dask with NumPy backed xarray DataArray.
     Increase number of runs by setting a specific value for parameter `passes`
     .. sourcecode:: python
+
         >>> import dask.array as da
         >>> data_da = da.from_array(data, chunks=(3, 3))
         >>> raster_da = xr.DataArray(data_da, dims=['y', 'x'], name='raster_da')  # noqa
@@ -185,6 +187,7 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
     In this example, we set `passes` to the number of elements of the array,
     we'll get a mean array where every element has the same value.
     .. sourcecode:: python
+
         >>> import cupy
         >>> raster_cupy = xr.DataArray(cupy.asarray(data), name='raster_cupy')
         >>> mean_cupy = mean(raster_cupy, passes=25)
@@ -336,6 +339,7 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
     --------
     Focal apply works with NumPy backed xarray DataArray
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.convolution import circle_kernel
@@ -368,7 +372,9 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
     the applied function must be decorated with ``numba.jit``
     xrspatial already provides ``ngjit`` decorator, where:
     ``ngjit = numba.jit(nopython=True, nogil=True)``
+
     .. sourcecode:: python
+
     >>> from xrspatial.utils import ngjit
     >>> from xrspatial.convolution import custom_kernel
     >>> kernel = custom_kernel(np.array([
@@ -470,6 +476,7 @@ def focal_stats(agg,
     Examples
     --------
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.convolution import circle_kernel
@@ -700,6 +707,7 @@ def hotspots(raster, kernel):
     Examples
     --------
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.convolution import custom_kernel
