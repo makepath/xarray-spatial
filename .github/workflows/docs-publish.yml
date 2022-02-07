@@ -1,7 +1,10 @@
 name: Upload Docs To Azure Blob Storage
+
 on:
   release:
     types: [published]
+  workflow_dispatch:
+
 jobs:
   upload:
     runs-on: ubuntu-latest
@@ -14,11 +17,12 @@ jobs:
         run: |
           sudo apt-get -y install pandoc
           python -m pip install --upgrade pip
-          pip install -r docs/source/requirements.txt
+      - name: Install xarray-spatial
+        run: |
+          pip install .[docs]
+          pip list
       - name: Build
         run: |
-          pip install .
-          pip list
           make -C docs html
       - uses: lauchacarro/Azure-Storage-Action@v1.0
         with:
