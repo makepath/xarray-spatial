@@ -46,10 +46,20 @@ extras_require = {
         # Optional for gpu_rtx functions. Also requires cupy.
         "rtxpy",
     ],
+    'docs': [
+        'geopandas',
+        'ipykernel',
+        'matplotlib',
+        'nbsphinx',
+        'numpydoc',
+        'pandoc',
+        'pydata_sphinx_theme',
+        'sphinx',
+        'sphinx-multiversion',
+        'sphinx-panels',
+        'sphinx_rtd_theme',
+    ],
 }
-
-# additional doc dependencies may be needed
-extras_require['doc'] = extras_require['examples'] + ['numpydoc']
 
 extras_require['all'] = sorted(set(sum(extras_require.values(), [])))
 
