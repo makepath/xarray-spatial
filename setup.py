@@ -48,6 +48,7 @@ extras_require = {
     ],
     'docs': [
         'geopandas',
+        'Jinja2 >=2.11',
         'ipykernel',
         'matplotlib',
         'nbsphinx',
