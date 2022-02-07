@@ -47,3 +47,18 @@ def get_xr_dataarray(shape, type, different_each_call=False):
         raise RuntimeError(f"Unrecognised type {type}")
 
     return xr.DataArray(z, coords=dict(x=x, y=y), dims=["y", "x"])
+
+
+class Benchmarking:
+    params = ([100, 300, 1000, 3000, 10000], ["numpy", "cupy"])
+    param_names = ("nx", "type")
+
+    def __init__(self, func):
+        self.func = func
+
+    def setup(self, nx, type):
+        ny = nx // 2
+        self.xr = get_xr_dataarray((ny, nx), type)
+
+    def time(self, nx, type):
+        self.func(self.xr)
