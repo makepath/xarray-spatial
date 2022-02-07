@@ -6,8 +6,10 @@ from xrspatial.utils import has_cuda
 from xrspatial.utils import ArrayTypeFunctionMapping
 
 
-def create_test_raster(data, backend='numpy', dims=['y', 'x'], attrs=None, chunks=(3, 3)):
-    raster = xr.DataArray(data, dims=dims, attrs=attrs)
+def create_test_raster(
+    data, backend='numpy', name='myraster', dims=['y', 'x'], attrs=None, chunks=(3, 3)
+):
+    raster = xr.DataArray(data, name=name, dims=dims, attrs=attrs)
     # set coords for test raster
     for i, dim in enumerate(dims):
         raster[dim] = np.linspace(0, data.shape[i] - 1, data.shape[i])
