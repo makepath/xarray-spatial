@@ -36,10 +36,7 @@ def test_terrain_cpu():
     assert isinstance(terrain_dask.data, da.Array)
 
     terrain_dask = terrain_dask.compute()
-    assert np.isclose(
-        terrain_numpy.data, terrain_dask.data,
-        rtol=1e-05, atol=1e-07, equal_nan=True
-    ).all()
+    np.testing.assert_allclose(terrain_numpy.data, terrain_dask.data, rtol=1e-05, atol=1e-07)
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
@@ -52,7 +49,4 @@ def test_terrain_gpu():
     data_cupy = create_test_arr(backend='cupy')
     terrain_cupy = generate_terrain(data_cupy)
 
-    assert np.isclose(
-        terrain_numpy.data, terrain_cupy.data,
-        rtol=1e-05, atol=1e-07, equal_nan=True
-    ).all()
+    np.testing.assert_allclose(terrain_numpy.data, terrain_cupy.data.get(), rtol=1e-05, atol=1e-07)

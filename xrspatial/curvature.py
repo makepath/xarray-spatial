@@ -27,7 +27,7 @@ from xrspatial.utils import ArrayTypeFunctionMapping
 
 @ngjit
 def _cpu(data, cellsize):
-    out = np.empty(data.shape, np.float64)
+    out = np.empty(data.shape, np.float32)
     out[:] = np.nan
     rows, cols = data.shape
     for y in range(1, rows - 1):
@@ -125,10 +125,11 @@ def curvature(agg: xr.DataArray,
     --------
     Curvature works with NumPy backed xarray DataArray
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial import curvature
-        >>> flat_data = np.zeros((5, 5), dtype=np.float64)
+        >>> flat_data = np.zeros((5, 5), dtype=np.float32)
         >>> flat_raster = xr.DataArray(flat_data, attrs={'res': (1, 1)})
         >>> flat_curv = curvature(flat_raster)
         >>> print(flat_curv)
@@ -144,25 +145,26 @@ def curvature(agg: xr.DataArray,
 
     Curvature works with Dask with NumPy backed xarray DataArray
     .. sourcecode:: python
+
         >>> convex_data = np.array([
             [0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0],
             [0, 0, -1, 0, 0],
             [0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0]], dtype=np.float64)
+            [0, 0, 0, 0, 0]], dtype=np.float32)
         >>> convex_raster = xr.DataArray(
             da.from_array(convex_data, chunks=(3, 3)),
             attrs={'res': (10, 10)}, name='convex_dask_numpy_raster')
         >>> print(convex_raster)
         <xarray.DataArray 'convex_dask_numpy_raster' (dim_0: 5, dim_1: 5)>
-        dask.array<array, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        dask.array<array, shape=(5, 5), dtype=float32, chunksize=(3, 3), chunktype=numpy.ndarray>
         Dimensions without coordinates: dim_0, dim_1
         Attributes:
             res:      (10, 10)
         >>> convex_curv = curvature(convex_raster, name='convex_curvature')
         >>> print(convex_curv)  # return a xarray DataArray with Dask-backed array
         <xarray.DataArray 'convex_curvature' (dim_0: 5, dim_1: 5)>
-        dask.array<_trim, shape=(5, 5), dtype=float64, chunksize=(3, 3), chunktype=numpy.ndarray>
+        dask.array<_trim, shape=(5, 5), dtype=float32, chunksize=(3, 3), chunktype=numpy.ndarray>
         Dimensions without coordinates: dim_0, dim_1
         Attributes:
             res:      (10, 10)
@@ -179,13 +181,14 @@ def curvature(agg: xr.DataArray,
 
     Curvature works with CuPy backed xarray DataArray.
     .. sourcecode:: python
+
         >>> import cupy
         >>> concave_data = np.array([
             [0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0],
             [0, 0, 1, 0, 0],
             [0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0]], dtype=np.float64)
+            [0, 0, 0, 0, 0]], dtype=np.float32)
         >>> concave_raster = xr.DataArray(
             cupy.asarray(concave_data),
             attrs={'res': (10, 10)}, name='concave_cupy_raster')

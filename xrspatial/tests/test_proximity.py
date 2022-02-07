@@ -22,170 +22,196 @@ def test_great_circle_distance():
             assert e_info
 
 
-def create_test_raster():
+@pytest.fixture
+def test_raster(backend):
     height, width = 4, 6
+    # create test raster, all non-zero cells are unique,
+    # this is to test allocation and direction against corresponding proximity
     data = np.asarray([[0., 0., 0., 0., 0., 2.],
                        [0., 0., 1., 0., 0., 0.],
                        [0., np.inf, 3., 0., 0., 0.],
                        [4., 0., 0., 0., np.nan, 0.]])
     _lon = np.linspace(-20, 20, width)
     _lat = np.linspace(20, -20, height)
-
-    numpy_agg = xr.DataArray(data, dims=['lat', 'lon'])
-    dask_numpy_agg = xr.DataArray(
-        da.from_array(data, chunks=(4, 3)), dims=['lat', 'lon'])
-    numpy_agg['lon'] = dask_numpy_agg['lon'] = _lon
-    numpy_agg['lat'] = dask_numpy_agg['lat'] = _lat
-
-    return numpy_agg, dask_numpy_agg
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    if 'dask' in backend:
+        raster.data = da.from_array(data, chunks=(4, 3))
+    return raster
 
 
-def test_proximity():
-    raster_numpy, raster_dask = create_test_raster()
-
+@pytest.fixture
+def result_default_proximity():
     # DEFAULT SETTINGS
-    expected_results_default = np.array([
+    expected_result = np.array([
         [20.82733247, 15.54920505, 13.33333333, 15.54920505,  8., 0.],
         [16., 8., 0., 8., 15.54920505, 13.33333333],
         [13.33333333, 8., 0., 8., 16., 24.],
         [0., 8., 13.33333333, 15.54920505, 20.82733247, 27.45501371]
-    ])
-    # numpy case
-    default_prox = proximity(raster_numpy, x='lon', y='lat')
-    general_output_checks(raster_numpy, default_prox, expected_results_default)
-    # dask case
-    default_prox_dask = proximity(raster_dask, x='lon', y='lat')
-    general_output_checks(
-        raster_dask, default_prox_dask, expected_results_default)
+    ], dtype=np.float32)
+    return expected_result
 
-    # TARGET VALUES SETTING
+
+@pytest.fixture
+def result_target_proximity():
     target_values = [2, 3]
-    expected_results_target = np.array([
+    expected_result = np.array([
         [31.09841011, 27.84081736, 24., 16., 8., 0.],
-        [20.82733247, 15.54920505, 13.33333333, 15.54920505, 15.54920505, 13.33333333],  # noqa
+        [20.82733247, 15.54920505, 13.33333333, 15.54920505, 15.54920505, 13.33333333],
         [16., 8., 0., 8., 16., 24.],
-        [20.82733247, 15.54920505, 13.33333333, 15.54920505, 20.82733247, 27.45501371]  # noqa
-    ])
-    # numpy case
-    target_prox = proximity(
-        raster_numpy, x='lon', y='lat', target_values=target_values)
-    general_output_checks(raster_numpy, target_prox, expected_results_target)
-    # dask case
-    target_prox_dask = proximity(
-        raster_dask, x='lon', y='lat', target_values=target_values)
-    general_output_checks(
-        raster_dask, target_prox_dask, expected_results_target)
+        [20.82733247, 15.54920505, 13.33333333, 15.54920505, 20.82733247, 27.45501371]
+    ], dtype=np.float32)
+    return target_values, expected_result
 
+
+@pytest.fixture
+def result_manhattan_proximity():
     # distance_metric SETTING: MANHATTAN
-    expected_results_manhattan = np.array([
+    expected_result = np.array([
         [29.33333333, 21.33333333, 13.33333333, 16., 8., 0.],
         [16., 8., 0., 8., 16., 13.33333333],
         [13.33333333, 8., 0., 8., 16., 24.],
         [0., 8., 13.33333333, 21.33333333, 29.33333333, 37.33333333]
-    ])
-    # numpy case
-    manhattan_prox = proximity(
-        raster_numpy, x='lon', y='lat', distance_metric='MANHATTAN')
-    general_output_checks(
-        raster_numpy, manhattan_prox, expected_results_manhattan)
-    # dask case
-    manhattan_prox_dask = proximity(raster_dask, x='lon', y='lat',
-                                    distance_metric='MANHATTAN')
-    general_output_checks(
-        raster_dask, manhattan_prox_dask, expected_results_manhattan)
+    ], dtype=np.float32)
+    return expected_result
 
+
+@pytest.fixture
+def result_great_circle_proximity():
     # distance_metric SETTING: GREAT_CIRCLE
-    expected_results_great_circle = np.array([
-        [2278099.27025501, 1717528.97437217, 1484259.87724365, 1673057.17235307, 836769.1780019, 0.],  # noqa
-        [1768990.54084204, 884524.60324856, 0., 884524.60324856, 1717528.97437217, 1484259.87724365],  # noqa
-        [1484259.87724365, 884524.60324856, 0., 884524.60324856, 1768990.54084204, 2653336.85436932],  # noqa
-        [0., 836769.1780019, 1484259.87724365, 1717528.97437217, 2278099.27025501, 2986647.12982316]  # noqa
-    ])
-    great_circle_prox = proximity(raster_numpy, x='lon', y='lat',
-                                  distance_metric='GREAT_CIRCLE')
-    general_output_checks(
-        raster_numpy, great_circle_prox, expected_results_great_circle)
-    # dask case
-    great_circle_prox_dask = proximity(
-        raster_dask, x='lon', y='lat', distance_metric='GREAT_CIRCLE'
-    )
-    general_output_checks(
-        raster_dask, great_circle_prox_dask, expected_results_great_circle)
+    expected_result = np.array([
+        [2278099.27025501, 1717528.97437217, 1484259.87724365, 1673057.17235307, 836769.1780019, 0],
+        [1768990.54084204, 884524.60324856, 0, 884524.60324856, 1717528.97437217, 1484259.87724365],
+        [1484259.87724365, 884524.60324856, 0, 884524.60324856, 1768990.54084204, 2653336.85436932],
+        [0, 836769.1780019, 1484259.87724365, 1717528.97437217, 2278099.27025501, 2986647.12982316]
+    ], dtype=np.float32)
+    return expected_result
 
+
+@pytest.fixture
+def result_max_distance_proximity():
     # max_distance setting
     max_distance = 10
-    expected_result_max_distance = np.array([
+    expected_result = np.array([
         [np.nan, np.nan, np.nan, np.nan, 8., 0.],
         [np.nan, 8., 0., 8., np.nan, np.nan],
         [np.nan, 8., 0., 8., np.nan, np.nan],
         [0., 8., np.nan, np.nan, np.nan, np.nan]
-    ])
-    # numpy case
-    max_distance_prox = proximity(
-        raster_numpy, x='lon', y='lat', max_distance=max_distance
-    )
-    general_output_checks(
-        raster_numpy, max_distance_prox, expected_result_max_distance)
-    # dask case
-    max_distance_prox_dask = proximity(
-        raster_dask, x='lon', y='lat', max_distance=max_distance
-    )
-    general_output_checks(
-        raster_dask, max_distance_prox_dask, expected_result_max_distance
-    )
+    ], dtype=np.float32)
+    return max_distance, expected_result
 
 
-def test_allocation():
-    # create test raster, all non-zero cells are unique,
-    # this is to test against corresponding proximity
-    raster_numpy, raster_dask = create_test_raster()
-    expected_results = np.array([
+@pytest.fixture
+def result_default_allocation():
+    expected_result = np.array([
         [1., 1., 1., 1., 2., 2.],
         [1., 1., 1., 1., 2., 2.],
         [4., 3., 3., 3., 3., 3.],
         [4., 4., 3., 3., 3., 3.]
-    ])
-    allocation_agg = allocation(raster_numpy, x='lon', y='lat')
-    general_output_checks(raster_numpy, allocation_agg, expected_results)
+    ], dtype=np.float32)
+    return expected_result
 
-    # check against corresponding proximity
-    proximity_agg = proximity(raster_numpy, x='lon', y='lat')
-    xcoords = allocation_agg['lon'].data
-    ycoords = allocation_agg['lat'].data
-    for y in range(raster_numpy.shape[0]):
-        for x in range(raster_numpy.shape[1]):
-            a = allocation_agg.data[y, x]
-            py, px = np.where(raster_numpy.data == a)
-            # non-zero cells in raster are unique, thus len(px)=len(py)=1
-            d = euclidean_distance(xcoords[x], xcoords[px[0]],
-                                   ycoords[y], ycoords[py[0]])
-            assert proximity_agg.data[y, x] == np.float32(d)
 
-    # dask case
-    allocation_agg_dask = allocation(raster_dask, x='lon', y='lat')
-    general_output_checks(raster_dask, allocation_agg_dask, expected_results)
-
+@pytest.fixture
+def result_max_distance_allocation():
     # max_distance setting
     max_distance = 10
-    expected_results_max_distance = np.array([
+    expected_result = np.array([
         [np.nan, np.nan, np.nan, np.nan, 2., 2.],
         [np.nan, 1., 1., 1., np.nan, np.nan],
         [np.nan, 3., 3., 3., np.nan, np.nan],
         [4., 4., np.nan, np.nan, np.nan, np.nan]
-    ])
-    # numpy case
-    max_distance_alloc = allocation(
-        raster_numpy, x='lon', y='lat', max_distance=max_distance
-    )
+    ], dtype=np.float32)
+    return max_distance, expected_result
+
+
+@pytest.fixture
+def result_default_direction():
+    expected_result = np.array([
+        [50.194427, 30.963757, 360., 329.03625, 90., 0.],
+        [90., 90., 0., 270., 149.03624, 180.],
+        [360., 90., 0., 270., 270., 270.],
+        [0., 270., 180., 210.96376, 230.19443, 240.9454]
+    ], dtype=np.float32)
+    return expected_result
+
+
+@pytest.fixture
+def result_max_distance_direction():
+    # max_distance setting
+    max_distance = 10
+    expected_result = np.array([
+        [np.nan, np.nan, np.nan, np.nan, 90., 0.],
+        [np.nan, 90., 0., 270., np.nan, np.nan],
+        [np.nan, 90., 0., 270., np.nan, np.nan],
+        [0., 270., np.nan, np.nan, np.nan, np.nan]
+    ], dtype=np.float32)
+    return max_distance, expected_result
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_default_proximity(test_raster, result_default_proximity):
+    default_prox = proximity(test_raster, x='lon', y='lat')
+    general_output_checks(test_raster, default_prox, result_default_proximity, verify_dtype=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_target_proximity(test_raster, result_target_proximity):
+    target_values, expected_result = result_target_proximity
+    target_prox = proximity(test_raster, x='lon', y='lat', target_values=target_values)
+    general_output_checks(test_raster, target_prox, expected_result, verify_dtype=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_manhattan_proximity(test_raster, result_manhattan_proximity):
+    manhattan_prox = proximity(test_raster, x='lon', y='lat', distance_metric='MANHATTAN')
     general_output_checks(
-        raster_numpy, max_distance_alloc, expected_results_max_distance)
-    # dask case
-    max_distance_alloc_dask = allocation(
-        raster_dask, x='lon', y='lat', max_distance=max_distance
+        test_raster, manhattan_prox, result_manhattan_proximity, verify_dtype=True
     )
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_great_circle_proximity(test_raster, result_great_circle_proximity):
+    great_circle_prox = proximity(test_raster, x='lon', y='lat', distance_metric='GREAT_CIRCLE')
     general_output_checks(
-        raster_dask, max_distance_alloc_dask, expected_results_max_distance
+        test_raster, great_circle_prox, result_great_circle_proximity, verify_dtype=True
     )
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_max_distance_proximity(test_raster, result_max_distance_proximity):
+    max_distance, expected_result = result_max_distance_proximity
+    max_distance_prox = proximity(test_raster, x='lon', y='lat', max_distance=max_distance)
+    general_output_checks(test_raster, max_distance_prox, expected_result, verify_dtype=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_default_allocation(test_raster, result_default_allocation):
+    allocation_agg = allocation(test_raster, x='lon', y='lat')
+    general_output_checks(test_raster, allocation_agg, result_default_allocation, verify_dtype=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy'])
+def test_default_allocation_against_proximity(test_raster, result_default_proximity):
+    allocation_agg = allocation(test_raster, x='lon', y='lat')
+    # check against corresponding proximity
+    xcoords = allocation_agg['lon'].data
+    ycoords = allocation_agg['lat'].data
+    for y in range(test_raster.shape[0]):
+        for x in range(test_raster.shape[1]):
+            a = allocation_agg.data[y, x]
+            py, px = np.where(test_raster.data == a)
+            # non-zero cells in raster are unique, thus len(px)=len(py)=1
+            d = euclidean_distance(xcoords[x], xcoords[px[0]], ycoords[y], ycoords[py[0]])
+            np.testing.assert_allclose(result_default_proximity[y, x], d)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_max_distance_allocation(test_raster, result_max_distance_allocation):
+    max_distance, expected_result = result_max_distance_allocation
+    max_distance_alloc = allocation(test_raster, x='lon', y='lat', max_distance=max_distance)
+    general_output_checks(test_raster, max_distance_alloc, expected_result, verify_dtype=True)
 
 
 def test_calc_direction():
@@ -204,57 +230,28 @@ def test_calc_direction():
     assert (abs(output-expected_output) <= tolerance).all()
 
 
-def test_direction():
-    raster_numpy, raster_dask = create_test_raster()
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_default_direction(test_raster, result_default_direction):
+    direction_agg = direction(test_raster, x='lon', y='lat')
+    general_output_checks(test_raster, direction_agg, result_default_direction)
 
-    expected_results = np.array([
-        [50.194427, 30.963757, 360., 329.03625, 90., 0.],
-        [90., 90., 0., 270., 149.03624, 180.],
-        [360., 90., 0., 270., 270., 270.],
-        [0., 270., 180., 210.96376, 230.19443, 240.9454]
-    ], dtype=np.float32)
 
-    # numpy case
-    direction_agg = direction(raster_numpy, x='lon', y='lat')
-    # output must be an xarray DataArray
-    general_output_checks(raster_numpy, direction_agg, expected_results)
-
-    # test against allocation
-    allocation_agg = allocation(raster_numpy, x='lon', y='lat')
-    xcoords = allocation_agg['lon'].data
-    ycoords = allocation_agg['lat'].data
-    for y in range(raster_numpy.shape[0]):
-        for x in range(raster_numpy.shape[1]):
-            a = allocation_agg.data[y, x]
-            py, px = np.where(raster_numpy.data == a)
+@pytest.mark.parametrize("backend", ['numpy'])
+def test_default_direction_against_allocation(test_raster, result_default_allocation):
+    direction_agg = direction(test_raster, x='lon', y='lat')
+    xcoords = direction_agg['lon'].data
+    ycoords = direction_agg['lat'].data
+    for y in range(test_raster.shape[0]):
+        for x in range(test_raster.shape[1]):
+            a = result_default_allocation.data[y, x]
+            py, px = np.where(test_raster.data == a)
             # non-zero cells in raster are unique, thus len(px)=len(py)=1
-            d = _calc_direction(xcoords[x], xcoords[px[0]],
-                                ycoords[y], ycoords[py[0]])
-            assert direction_agg.data[y, x] == d
+            d = _calc_direction(xcoords[x], xcoords[px[0]], ycoords[y], ycoords[py[0]])
+            np.testing.assert_allclose(direction_agg.data[y, x], d)
 
-    # dask case
-    direction_agg_dask = direction(raster_dask, x='lon', y='lat')
-    general_output_checks(raster_dask, direction_agg_dask, expected_results)
 
-    # max_distance setting
-    max_distance = 10
-    expected_results_max_distance = np.array([
-        [np.nan, np.nan, np.nan, np.nan, 90., 0.],
-        [np.nan, 90., 0., 270., np.nan, np.nan],
-        [np.nan, 90., 0., 270., np.nan, np.nan],
-        [0., 270., np.nan, np.nan, np.nan, np.nan]
-    ], dtype=np.float32)
-    # numpy case
-    max_distance_direction = direction(
-        raster_numpy, x='lon', y='lat', max_distance=max_distance
-    )
-    general_output_checks(
-        raster_numpy, max_distance_direction, expected_results_max_distance
-    )
-    # dask case
-    max_distance_direction_dask = direction(
-        raster_dask, x='lon', y='lat', max_distance=max_distance
-    )
-    general_output_checks(
-        raster_dask, max_distance_direction_dask, expected_results_max_distance
-    )
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_max_distance_direction(test_raster, result_max_distance_direction):
+    max_distance, expected_result = result_max_distance_direction
+    max_distance_direction = direction(test_raster, x='lon', y='lat', max_distance=max_distance)
+    general_output_checks(test_raster, max_distance_direction, expected_result, verify_dtype=True)

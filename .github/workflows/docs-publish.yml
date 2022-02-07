@@ -18,6 +18,7 @@ jobs:
       - name: Build
         run: |
           pip install .
+          pip list
           make -C docs html
       - uses: lauchacarro/Azure-Storage-Action@v1.0
         with:

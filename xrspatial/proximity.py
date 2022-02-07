@@ -60,6 +60,7 @@ def euclidean_distance(x1: float, x2: float, y1: float, y2: float) -> float:
     Examples
     --------
     .. sourcecode:: python
+
         >>> # Imports
         >>> from xrspatial import euclidean_distance
         >>> point_a = (142.32, 23.23)
@@ -108,6 +109,7 @@ def manhattan_distance(x1: float, x2: float, y1: float, y2: float) -> float:
     Examples
     --------
     .. sourcecode:: python
+
         >>> from xrspatial import manhattan_distance
         >>> point_a = (142.32, 23.23)
         >>> point_b = (312.54, 432.01)
@@ -160,6 +162,7 @@ def great_circle_distance(
     Examples
     --------
     .. sourcecode:: python
+
         >>> from xrspatial import great_circle_distance
         >>> point_a = (123.2, 82.32)
         >>> point_b = (178.0, 65.09)
@@ -713,6 +716,7 @@ def proximity(
     Examples
     --------
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> data = np.array([
@@ -845,6 +849,7 @@ def allocation(
     Examples
     --------
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> data = np.array([
@@ -885,7 +890,7 @@ def allocation(
 
     # convert to have same type as of input @raster
     result = xr.DataArray(
-        (allocation_img).astype(raster.dtype),
+        allocation_img,
         coords=raster.coords,
         dims=raster.dims,
         attrs=raster.attrs,
@@ -981,6 +986,7 @@ def direction(
     Examples
     --------
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> data = np.array([
