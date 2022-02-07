@@ -1,14 +1,10 @@
 from xrspatial import aspect
-from .common import get_xr_dataarray
+from .common import Benchmarking
 
 
-class Aspect:
-    params = ([100, 300, 1000, 3000, 10000], ["numpy", "cupy"])
-    param_names = ("nx", "type")
-
-    def setup(self, nx, type):
-        ny = nx // 2
-        self.xr = get_xr_dataarray((ny, nx), type)
+class Aspect(Benchmarking):
+    def __init__(self):
+        super().__init__(func=aspect)
 
     def time_aspect(self, nx, type):
-        aspect(self.xr)
+        return self.time(nx, type)
