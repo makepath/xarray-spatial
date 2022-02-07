@@ -10,7 +10,9 @@ from xrspatial.tests.general_checks import create_test_raster
 
 
 @pytest.mark.parametrize("size", [(2, 4), (100, 150)])
-@pytest.mark.parametrize("dtype", [np.int32, np.int64, np.uint32, np.uint64, np.float32, np.float64])
+@pytest.mark.parametrize(
+    "dtype", [np.int32, np.int64, np.uint32, np.uint64, np.float32, np.float64]
+)
 def test_summarize_terrain(random_data):
     test_terrain = create_test_raster(random_data, name='myterrain')
     summarized_ds = summarize_terrain(test_terrain)
