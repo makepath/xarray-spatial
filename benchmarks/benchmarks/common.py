@@ -53,7 +53,7 @@ class Benchmarking:
     params = ([100, 300, 1000, 3000, 10000], ["numpy", "cupy"])
     param_names = ("nx", "type")
 
-    def __init__(self, func):
+    def __init__(self, func=None):
         self.func = func
 
     def setup(self, nx, type):
@@ -61,4 +61,5 @@ class Benchmarking:
         self.xr = get_xr_dataarray((ny, nx), type)
 
     def time(self, nx, type):
-        self.func(self.xr)
+        if self.func is not None:
+            self.func(self.xr)
