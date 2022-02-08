@@ -4,7 +4,7 @@ from xrspatial.gpu_rtx import has_rtx
 from xrspatial.utils import has_cuda, has_cupy
 
 
-def get_xr_dataarray(shape, type, different_each_call=False):
+def get_xr_dataarray(shape, type, different_each_call=False, seed=71942):
     # Gaussian bump with noise.
     #
     # Valid types are "numpy", "cupy" and "rtxpy". Using "numpy" will return
@@ -25,7 +25,7 @@ def get_xr_dataarray(shape, type, different_each_call=False):
     x2, y2 = np.meshgrid(x, y)
     z = 100.0*np.exp(-x2**2 / 5e5 - y2**2 / 2e5)
 
-    rng = np.random.default_rng(71942)
+    rng = np.random.default_rng(seed)
     z += rng.normal(0.0, 2.0, (ny, nx))
 
     if different_each_call:
