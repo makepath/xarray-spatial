@@ -29,6 +29,8 @@ class Quantile(Classify):
 
 
 class NaturalBreaks(Classify):
+    params = ([100, 300, 1000, 3000, 10000], [1, 10], ["numpy", "cupy"])
+
     def time_natural_breaks(self, nx, nbins, type):
         natural_breaks(self.agg, k=self.nbins)
 
