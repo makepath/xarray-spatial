@@ -4,7 +4,7 @@ from xrspatial.gpu_rtx import has_rtx
 from xrspatial.utils import has_cuda, has_cupy
 
 
-def get_xr_dataarray(shape, type, different_each_call=False, seed=71942):
+def get_xr_dataarray(shape, type, different_each_call=False, seed=71942, include_nan=False):
     # Gaussian bump with noise.
     #
     # Valid types are "numpy", "cupy" and "rtxpy". Using "numpy" will return
@@ -30,6 +30,9 @@ def get_xr_dataarray(shape, type, different_each_call=False, seed=71942):
 
     if different_each_call:
         z[-1, -1] = np.random.default_rng().normal(0.0, 2.0)
+
+    if include_nan:
+        z[0, 0] = np.nan
 
     if type == "numpy":
         pass
@@ -58,7 +61,7 @@ class Benchmarking:
 
     def setup(self, nx, type):
         ny = nx // 2
-        self.xr = get_xr_dataarray((ny, nx), type)
+        self.xr = get_xr_dataarray((ny, nx), type, include_nan=True)
 
     def time(self, nx, type):
         if self.func is not None:
