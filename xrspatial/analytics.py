@@ -24,6 +24,7 @@ def summarize_terrain(terrain: xr.DataArray):
     Examples
     --------
     .. sourcecode:: python
+
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.analytics import summarize_terrain
