@@ -28,7 +28,7 @@ def get_xr_dataarray(
     rng = np.random.default_rng(seed)
 
     if is_int:
-        z = rng.integers(-nx, nx, size=size).astype(np.float32)
+        z = rng.integers(-nx, nx, size=shape).astype(np.float32)
     else:
         z = 100.0*np.exp(-x2**2 / 5e5 - y2**2 / 2e5)
         z += rng.normal(0.0, 2.0, (ny, nx))
