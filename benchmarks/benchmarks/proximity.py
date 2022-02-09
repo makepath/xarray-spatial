@@ -33,5 +33,3 @@ class Allocation(Base):
 class Direction(Base):
     def time_direction(self, nx, n_target_values, distance_metric, type):
         direction(self.agg, target_values=self.target_values, distance_metric=distance_metric)
-
-
