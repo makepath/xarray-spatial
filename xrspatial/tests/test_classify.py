@@ -185,9 +185,9 @@ def test_natural_breaks_cupy(result_natural_breaks):
 
 
 @pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_natural_breaks_cupy(result_natural_breaks_num_sample):
+def test_natural_breaks_cupy_num_sample(result_natural_breaks_num_sample):
     cupy_agg = input_data('cupy')
-    k, num_sample, expected_result = result_natural_breaks
+    k, num_sample, expected_result = result_natural_breaks_num_sample
     cupy_natural_breaks = natural_breaks(cupy_agg, k=k, num_sample=num_sample)
     general_output_checks(cupy_agg, cupy_natural_breaks, expected_result, verify_dtype=True)
 
