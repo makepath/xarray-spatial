@@ -16,8 +16,6 @@ from datashader.colors import rgb
 import numba as nb
 import dask.array as da
 
-from numpy.random import RandomState
-
 from xrspatial.utils import cuda_args
 from xrspatial.utils import ngjit
 from xrspatial.utils import ArrayTypeFunctionMapping
@@ -555,7 +553,7 @@ def _run_natural_break(agg, num_sample, k, module):
     if num_sample is not None and num_sample < num_data:
         # randomly select sample from the whole dataset
         # create a pseudo random number generator
-        generator = RandomState(1234567890)
+        generator = module.random.RandomState(1234567890)
         idx = module.linspace(
             0, data.size, data.size, endpoint=False, dtype=module.uint32
         )
