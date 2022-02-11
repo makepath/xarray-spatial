@@ -125,10 +125,30 @@ def result_natural_breaks():
     return k, expected_result
 
 
+@pytest.fixture
+def result_natural_breaks_num_sample():
+    k = 5
+    num_sample = 8
+    expected_result = np.asarray([
+        [np.nan, 0., 0., 0., np.nan],
+        [0., 1., 1., 1., 2.],
+        [2., 3., 3., 3., 3.],
+        [4., 4., 4., 4., np.nan]
+    ], dtype=np.float32)
+    return k, num_sample, expected_result
+
+
 def test_natural_breaks_numpy(result_natural_breaks):
     numpy_agg = input_data()
     k, expected_result = result_natural_breaks
     numpy_natural_breaks = natural_breaks(numpy_agg, k=k)
+    general_output_checks(numpy_agg, numpy_natural_breaks, expected_result, verify_dtype=True)
+
+
+def test_natural_breaks_numpy_num_sample(result_natural_breaks_num_sample):
+    numpy_agg = input_data()
+    k, num_sample, expected_result = result_natural_breaks_num_sample
+    numpy_natural_breaks = natural_breaks(numpy_agg, k=k, num_sample=num_sample)
     general_output_checks(numpy_agg, numpy_natural_breaks, expected_result, verify_dtype=True)
 
 
@@ -161,6 +181,14 @@ def test_natural_breaks_cupy(result_natural_breaks):
     cupy_agg = input_data('cupy')
     k, expected_result = result_natural_breaks
     cupy_natural_breaks = natural_breaks(cupy_agg, k=k)
+    general_output_checks(cupy_agg, cupy_natural_breaks, expected_result, verify_dtype=True)
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_natural_breaks_cupy(result_natural_breaks_num_sample):
+    cupy_agg = input_data('cupy')
+    k, num_sample, expected_result = result_natural_breaks
+    cupy_natural_breaks = natural_breaks(cupy_agg, k=k, num_sample=num_sample)
     general_output_checks(cupy_agg, cupy_natural_breaks, expected_result, verify_dtype=True)
 
 

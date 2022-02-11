@@ -553,8 +553,10 @@ def _run_natural_break(agg, num_sample, k, module):
     if num_sample is not None and num_sample < num_data:
         # randomly select sample from the whole dataset
         # create a pseudo random number generator
-        generator = module.random.RandomState(1234567890)
-        idx = module.linspace(
+        # Note: cupy and nupy generate different random numbers
+        # use numpy.random to ensure the same result
+        generator = np.random.RandomState(1234567890)
+        idx = np.linspace(
             0, data.size, data.size, endpoint=False, dtype=module.uint32
         )
         generator.shuffle(idx)
