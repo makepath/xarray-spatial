@@ -78,7 +78,8 @@ def _cpu_bin(data, bins, new_values):
                 # first bin
                 if b == 0:
                     if val <= bins[b]:
-                        val_bin = b
+                        if (np.isfinite(bins[b]) and np.isfinite(val)) or not np.isfinite(bins[b]):
+                            val_bin = b
                         break
                 else:
                     if val > bins[b - 1] and val <= bins[b]:
