@@ -78,12 +78,13 @@ def _cpu_bin(data, bins, new_values):
                 # first bin
                 if b == 0:
                     if val <= bins[b]:
-                        if (np.isfinite(bins[b]) and np.isfinite(val)) or not np.isfinite(bins[b]):
+                        if np.isfinite(val):
                             val_bin = b
                         break
                 else:
                     if val > bins[b - 1] and val <= bins[b]:
-                        val_bin = b
+                        if np.isfinite(val):
+                            val_bin = b
                         break
 
             if val_bin > -1:
@@ -145,6 +146,10 @@ def _run_gpu_bin(data, bins, new_values, out):
 
 
 def _run_cupy_bin(data, bins, new_values):
+    # replace inf by nan to avoid classify these values as we want to treat them as outliers
+    data = cupy.where(data == cupy.inf, cupy.nan, data)
+    data = cupy.where(data == -cupy.inf, cupy.nan, data)
+
     bins_cupy = cupy.asarray(bins)
     new_values_cupy = cupy.asarray(new_values)
     out = cupy.empty(data.shape, dtype='f4')
@@ -543,6 +548,9 @@ def _run_jenks(data, n_classes, module):
 def _run_natural_break(agg, num_sample, k, module):
     data = agg.data
     num_data = data.size
+    max_data = module.max(data[module.isfinite(data)])
+    if module == cupy:
+        max_data = max_data.get()
 
     if num_sample is not None and num_sample < num_data:
         # randomly select sample from the whole dataset
@@ -587,6 +595,7 @@ def _run_natural_break(agg, num_sample, k, module):
     else:
         centroids = _run_jenks(sample_data, k, module)
         bins = module.array(centroids[1:])
+        bins[-1] = max_data
 
     out = _bin(agg, bins, module.arange(uvk))
     return out
@@ -702,6 +711,8 @@ def _run_equal_interval(agg, k, module):
         inf = np.inf
 
     data = module.where(data == inf, nan, data)
+    data = module.where(data == -inf, nan, data)
+
     max_data = module.nanmax(data)
     min_data = module.nanmin(data)
     if module == cupy:
