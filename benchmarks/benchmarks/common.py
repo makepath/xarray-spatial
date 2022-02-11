@@ -4,7 +4,9 @@ from xrspatial.gpu_rtx import has_rtx
 from xrspatial.utils import has_cuda, has_cupy
 
 
-def get_xr_dataarray(shape, type, different_each_call=False):
+def get_xr_dataarray(
+    shape, type, different_each_call=False, seed=71942, is_int=False, include_nan=False
+):
     # Gaussian bump with noise.
     #
     # Valid types are "numpy", "cupy" and "rtxpy". Using "numpy" will return
@@ -20,16 +22,25 @@ def get_xr_dataarray(shape, type, different_each_call=False):
     # optimistically fast benchmark times.
     ny, nx = shape
 
-    x = np.linspace(-1000, 1000, nx)
-    y = np.linspace(-800, 800, ny)
+    x = np.linspace(-180, 180, nx)
+    y = np.linspace(-90, 90, ny)
     x2, y2 = np.meshgrid(x, y)
-    z = 100.0*np.exp(-x2**2 / 5e5 - y2**2 / 2e5)
+    rng = np.random.default_rng(seed)
 
-    rng = np.random.default_rng(71942)
-    z += rng.normal(0.0, 2.0, (ny, nx))
+    if is_int:
+        z = rng.integers(-nx, nx, size=shape).astype(np.float32)
+    else:
+        z = 100.0*np.exp(-x2**2 / 5e5 - y2**2 / 2e5)
+        z += rng.normal(0.0, 2.0, (ny, nx))
 
     if different_each_call:
-        z[-1, -1] = np.random.default_rng().normal(0.0, 2.0)
+        if is_int:
+            z[-1, -1] = np.random.default_rng().integers(-nx, nx)
+        else:
+            z[-1, -1] = np.random.default_rng().normal(0.0, 2.0)
+
+    if include_nan:
+        z[0, 0] = np.nan
 
     if type == "numpy":
         pass
@@ -46,4 +57,20 @@ def get_xr_dataarray(shape, type, different_each_call=False):
     else:
         raise RuntimeError(f"Unrecognised type {type}")
 
-    return xr.DataArray(z, coords=dict(x=x, y=y), dims=["y", "x"])
+    return xr.DataArray(z, coords=dict(y=y, x=x), dims=["y", "x"])
+
+
+class Benchmarking:
+    params = ([100, 300, 1000, 3000, 10000], ["numpy", "cupy"])
+    param_names = ("nx", "type")
+
+    def __init__(self, func=None):
+        self.func = func
+
+    def setup(self, nx, type):
+        ny = nx // 2
+        self.xr = get_xr_dataarray((ny, nx), type)
+
+    def time(self, nx, type):
+        if self.func is not None:
+            self.func(self.xr)
