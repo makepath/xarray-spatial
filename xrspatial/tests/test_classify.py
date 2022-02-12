@@ -15,7 +15,7 @@ from xrspatial.tests.general_checks import create_test_raster
 
 def input_data(backend='numpy'):
     elevation = np.array([
-        [1.,  2.,  3.,  4., np.nan],
+        [-np.inf,  2.,  3.,  4., np.nan],
         [5.,  6.,  7.,  8.,  9.],
         [10., 11., 12., 13., 14.],
         [15., 16., 17., 18., np.inf],
@@ -29,10 +29,10 @@ def result_reclassify():
     bins = [10, 15, np.inf]
     new_values = [1, 2, 3]
     expected_result = np.asarray([
-        [1., 1., 1., 1., np.nan],
+        [np.nan, 1., 1., 1., np.nan],
         [1., 1., 1., 1., 1.],
         [1., 2., 2., 2., 2.],
-        [2., 3., 3., 3., 3.]
+        [2., 3., 3., 3., np.nan]
     ], dtype=np.float32)
     return bins, new_values, expected_result
 
@@ -71,8 +71,8 @@ def test_reclassify_dask_cupy(result_reclassify):
 def result_quantile():
     k = 5
     expected_result = np.asarray([
-        [0., 0., 0., 0., np.nan],
-        [1., 1., 1., 2., 2.],
+        [np.nan, 0., 0., 0., np.nan],
+        [0., 1., 1., 1., 2.],
         [2., 2., 3., 3., 3.],
         [4., 4., 4., 4., np.nan]
     ], dtype=np.float32)
@@ -117,18 +117,38 @@ def test_quantile_cupy(result_quantile):
 def result_natural_breaks():
     k = 5
     expected_result = np.asarray([
-        [0., 0., 0., 1., np.nan],
-        [1., 1., 2., 2., 2.],
+        [np.nan, 0., 0., 0., np.nan],
+        [1., 1., 1., 2., 2.],
         [2., 3., 3., 3., 3.],
         [4., 4., 4., 4., np.nan]
     ], dtype=np.float32)
     return k, expected_result
 
 
+@pytest.fixture
+def result_natural_breaks_num_sample():
+    k = 5
+    num_sample = 8
+    expected_result = np.asarray([
+        [np.nan, 0., 0., 0., np.nan],
+        [0., 1., 1., 1., 2.],
+        [2., 3., 3., 3., 3.],
+        [4., 4., 4., 4., np.nan]
+    ], dtype=np.float32)
+    return k, num_sample, expected_result
+
+
 def test_natural_breaks_numpy(result_natural_breaks):
     numpy_agg = input_data()
     k, expected_result = result_natural_breaks
     numpy_natural_breaks = natural_breaks(numpy_agg, k=k)
+    general_output_checks(numpy_agg, numpy_natural_breaks, expected_result, verify_dtype=True)
+
+
+def test_natural_breaks_numpy_num_sample(result_natural_breaks_num_sample):
+    numpy_agg = input_data()
+    k, num_sample, expected_result = result_natural_breaks_num_sample
+    numpy_natural_breaks = natural_breaks(numpy_agg, k=k, num_sample=num_sample)
     general_output_checks(numpy_agg, numpy_natural_breaks, expected_result, verify_dtype=True)
 
 
@@ -164,12 +184,20 @@ def test_natural_breaks_cupy(result_natural_breaks):
     general_output_checks(cupy_agg, cupy_natural_breaks, expected_result, verify_dtype=True)
 
 
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_natural_breaks_cupy_num_sample(result_natural_breaks_num_sample):
+    cupy_agg = input_data('cupy')
+    k, num_sample, expected_result = result_natural_breaks_num_sample
+    cupy_natural_breaks = natural_breaks(cupy_agg, k=k, num_sample=num_sample)
+    general_output_checks(cupy_agg, cupy_natural_breaks, expected_result, verify_dtype=True)
+
+
 @pytest.fixture
 def result_equal_interval():
     k = 3
     expected_result = np.asarray([
-        [0., 0., 0., 0., np.nan],
-        [0., 0., 1., 1., 1.],
+        [np.nan, 0., 0., 0., np.nan],
+        [0., 0., 0., 1., 1.],
         [1., 1., 1., 2., 2.],
         [2., 2., 2., 2., np.nan]
     ], dtype=np.float32)
