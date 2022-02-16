@@ -324,16 +324,34 @@ def _stats_cupy(
     sorted_zones = sorted_zones[filter_values]
 
     # Now I need to find the unique zones, and zone breaks
-    unique_zones, unique_index = cupy.unique(sorted_zones, return_index=True)
+    unique_zones, unique_index, unique_counts = cupy.unique(
+        sorted_zones, return_index=True, return_counts=True)
 
     # Transfer to the host
     unique_index = unique_index.get()
+    unique_counts = unique_counts.get()
+    unique_zones = unique_zones.get()
     if zone_ids is None:
-        unique_zones = unique_zones.get()
+        pass
+        # unique_zones = unique_zones.get()
     else:
+        # We need to extract the index and element count
+        # only for the elements in zone_ids
+        unique_index_lst = []
+        unique_counts_lst = []
+        unique_zones = list(unique_zones)
+        for z in zone_ids:
+            try:
+                idx = unique_zones.index(z)
+                unique_index_lst.append(unique_index[idx])
+                unique_counts_lst.append(unique_counts[idx])
+            except ValueError:
+                continue
         unique_zones = zone_ids
+        unique_counts = unique_counts_lst
+        unique_index = unique_index_lst
     # unique_zones = list(map(_to_int, unique_zones))
-    unique_zones = np.asarray(unique_zones)
+    # unique_zones = np.asarray(unique_zones)
 
     # stats columns
     stats_dict = {'zone': []}
