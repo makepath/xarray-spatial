@@ -1,4 +1,4 @@
-bokeh>2
+bokeh >2
 datashader
 noise >=1.2.2
 numba

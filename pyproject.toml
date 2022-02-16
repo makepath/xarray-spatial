@@ -1,10 +1,11 @@
 [build-system]
 requires = [
-    'param >=1.6.1',
-    'pyct >= 0.4.8',
+    'build',
+    'param',
+    'pyct',
     'setuptools >= 54.1.2',
-    'wheel >= 0.36.2',
 ]
+
 [tool.check-manifest]
 ignore = [
     '.appveyor.yml',

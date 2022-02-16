@@ -21,7 +21,7 @@ jobs:
         run: |
           pip install .[docs,tests]
           pip list
-      - name: Build
+      - name: Build docs
         run: |
           make -C docs html
       - uses: lauchacarro/Azure-Storage-Action@v1.0
