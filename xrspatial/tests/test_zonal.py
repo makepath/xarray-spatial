@@ -193,12 +193,6 @@ def test_custom_stats(backend, data_zones, data_values_2d, result_custom_stats):
     if backend == 'cupy' and doesnt_have_cuda():
         pytest.skip("CUDA Device not Available")
     
-    # if backend == 'cupy':
-    #     custom_stats = {
-    #         'double_sum': _double_sum,
-    #         'range': _range,
-    #     }
-    # else:        
     custom_stats = {
         'double_sum': _double_sum,
         'range': _range,
