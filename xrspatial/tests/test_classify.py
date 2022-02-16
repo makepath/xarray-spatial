@@ -3,7 +3,8 @@ import pytest
 import xarray as xr
 
 from xrspatial import binary, equal_interval, natural_breaks, quantile, reclassify
-from xrspatial.tests.general_checks import create_test_raster, general_output_checks
+from xrspatial.tests.general_checks import (create_test_raster, cuda_and_cupy_available,
+                                            general_output_checks)
 from xrspatial.utils import doesnt_have_cuda
 
 
@@ -96,7 +97,7 @@ def test_reclassify_dask_numpy(result_reclassify):
     general_output_checks(dask_agg, dask_result, expected_result, verify_dtype=True)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_reclassify_cupy(result_reclassify):
     bins, new_values, expected_result = result_reclassify
     cupy_agg = input_data(backend='cupy')
@@ -104,7 +105,7 @@ def test_reclassify_cupy(result_reclassify):
     general_output_checks(cupy_agg, cupy_result, expected_result, verify_dtype=True)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_reclassify_dask_cupy(result_reclassify):
     bins, new_values, expected_result = result_reclassify
     dask_cupy_agg = input_data(backend='dask+cupy')
@@ -159,7 +160,7 @@ def test_quantile_dask_numpy(result_quantile):
     assert len(unique_elements) == k
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_quantile_cupy(result_quantile):
     k, expected_result = result_quantile
     cupy_agg = input_data('cupy')
@@ -239,7 +240,7 @@ def test_natural_breaks_cpu_deterministic():
         )
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_natural_breaks_cupy(result_natural_breaks):
     cupy_agg = input_data('cupy')
     k, expected_result = result_natural_breaks
@@ -247,7 +248,7 @@ def test_natural_breaks_cupy(result_natural_breaks):
     general_output_checks(cupy_agg, cupy_natural_breaks, expected_result, verify_dtype=True)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_natural_breaks_cupy_num_sample(result_natural_breaks_num_sample):
     cupy_agg = input_data('cupy')
     k, num_sample, expected_result = result_natural_breaks_num_sample
@@ -281,7 +282,7 @@ def test_equal_interval_dask_numpy(result_equal_interval):
     general_output_checks(dask_agg, dask_numpy_result, expected_result, verify_dtype=True)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_equal_interval_cupy(result_equal_interval):
     k, expected_result = result_equal_interval
     cupy_agg = input_data(backend='cupy')

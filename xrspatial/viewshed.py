@@ -1,13 +1,12 @@
 from math import atan, fabs
 from math import pi as PI
 from math import sqrt
-from typing import Union
-
 import numpy as np
+from typing import Union
 import xarray
 
+from .utils import has_cuda_and_cupy, is_cupy_array, ngjit
 from .gpu_rtx import has_rtx
-from .utils import has_cupy, is_cupy_array, ngjit
 
 E_ROW_ID = 0
 E_COL_ID = 1
@@ -1656,7 +1655,7 @@ def viewshed(raster: xarray.DataArray,
     if isinstance(raster.data, np.ndarray):
         return _viewshed_cpu(raster, x, y, observer_elev, target_elev)
 
-    elif has_cupy() and is_cupy_array(raster.data):
+    elif has_cuda_and_cupy() and is_cupy_array(raster.data):
         if has_rtx():
             # Run on gpu
             from .gpu_rtx.viewshed import viewshed_gpu

@@ -27,15 +27,19 @@ except ImportError:
 ngjit = jit(nopython=True, nogil=True)
 
 
-def has_cupy():
+def has_cuda_and_cupy():
+    return _has_cuda() and _has_cupy()
+
+
+def _has_cupy():
     return cupy is not None
 
 
 def is_cupy_array(arr):
-    return has_cupy() and isinstance(arr, cupy.ndarray)
+    return _has_cupy() and isinstance(arr, cupy.ndarray)
 
 
-def has_cuda():
+def _has_cuda():
     """Check for supported CUDA device. If none found, return False"""
     local_cuda = False
     try:
@@ -45,10 +49,6 @@ def has_cuda():
         local_cuda = False
 
     return local_cuda
-
-
-def doesnt_have_cuda():
-    return not has_cuda()
 
 
 def cuda_args(shape):
@@ -116,15 +116,11 @@ class ArrayTypeFunctionMapping(object):
             return self.numpy_func
 
         # cupy case
-        elif (
-            has_cuda()
-            and cupy is not None
-            and isinstance(arr.data, cupy.ndarray)
-        ):
+        elif has_cuda_and_cupy() and is_cupy_array(arr.data):
             return self.cupy_func
 
         # dask + cupy case
-        elif has_cuda() and is_dask_cupy(arr):
+        elif has_cuda_and_cupy() and is_dask_cupy(arr):
             return self.dask_cupy_func
 
         # dask + numpy case

@@ -2,7 +2,7 @@ import numpy as np
 import xarray as xr
 
 from xrspatial import zonal
-from xrspatial.utils import has_cuda
+from xrspatial.utils import has_cuda_and_cupy
 
 from .common import get_xr_dataarray
 
@@ -13,7 +13,7 @@ def create_arr(data=None, H=10, W=10, backend='numpy'):
         data = np.zeros((H, W), dtype=np.float32)
     raster = xr.DataArray(data, dims=['y', 'x'])
 
-    if has_cuda() and 'cupy' in backend:
+    if has_cuda_and_cupy() and 'cupy' in backend:
         import cupy
         raster.data = cupy.asarray(raster.data)
 

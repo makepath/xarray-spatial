@@ -4,8 +4,7 @@ import pytest
 from xrspatial import slope
 from xrspatial.tests.general_checks import (assert_nan_edges_effect, assert_numpy_equals_cupy,
                                             assert_numpy_equals_dask_numpy, create_test_raster,
-                                            general_output_checks)
-from xrspatial.utils import doesnt_have_cuda
+                                            cuda_and_cupy_available, general_output_checks)
 
 
 def input_data(backend):
@@ -65,7 +64,7 @@ def test_numpy_equals_dask_qgis_data():
     assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, slope)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_numpy_equals_cupy_qgis_data():
     # compare using the data run through QGIS
     numpy_agg = input_data('numpy')

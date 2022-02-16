@@ -7,8 +7,9 @@ from xrspatial import mean
 from xrspatial.convolution import (annulus_kernel, calc_cellsize, circle_kernel, convolution_2d,
                                    convolve_2d, custom_kernel)
 from xrspatial.focal import apply, focal_stats, hotspots
-from xrspatial.tests.general_checks import create_test_raster, general_output_checks
-from xrspatial.utils import doesnt_have_cuda, ngjit
+from xrspatial.tests.general_checks import (create_test_raster, cuda_and_cupy_available,
+                                            general_output_checks)
+from xrspatial.utils import ngjit
 
 
 def _do_sparse_array(data_array):
@@ -57,7 +58,7 @@ def test_mean_transfer_function_cpu():
     )
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_mean_transfer_function_gpu_equals_cpu():
 
     import cupy
@@ -209,7 +210,7 @@ def test_convolution_dask_numpy(
     )
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_2d_convolution_gpu(
     convolve_2d_data,
     kernel_circle_1_1_1,
@@ -297,7 +298,7 @@ def test_apply_dask_numpy(data_apply):
     general_output_checks(dask_numpy_agg, dask_numpy_apply, expected_result)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_apply_gpu(data_apply):
     data, kernel, expected_result = data_apply
     # cupy case
@@ -430,7 +431,7 @@ def test_hotspots_dask_numpy(data_hotspots):
     general_output_checks(dask_numpy_agg, dask_numpy_hotspots, expected_result)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_hotspot_gpu(data_hotspots):
     data, kernel, expected_result = data_hotspots
     cupy_agg = create_test_raster(data, backend='cupy')

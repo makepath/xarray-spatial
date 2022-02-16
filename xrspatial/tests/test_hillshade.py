@@ -6,7 +6,7 @@ from numpy.testing import assert_allclose, assert_array_less
 from xrspatial import hillshade
 from xrspatial.tests.general_checks import (assert_numpy_equals_cupy,
                                             assert_numpy_equals_dask_numpy, create_test_raster,
-                                            general_output_checks)
+                                            cuda_and_cupy_available, general_output_checks)
 from xrspatial.utils import doesnt_have_cuda
 
 from ..gpu_rtx import has_rtx
@@ -46,7 +46,7 @@ def test_hillshade_numpy_equals_dask_numpy(random_data):
     assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, hillshade)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 @pytest.mark.parametrize("size", [(2, 4), (10, 15)])
 @pytest.mark.parametrize(
     "dtype", [np.int32, np.int64, np.float32, np.float64])

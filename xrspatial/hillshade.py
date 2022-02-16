@@ -8,7 +8,7 @@ import xarray as xr
 from numba import cuda
 
 from .gpu_rtx import has_rtx
-from .utils import calc_cuda_dims, has_cuda, has_cupy, is_cupy_array, is_cupy_backed
+from .utils import calc_cuda_dims, has_cuda_and_cupy, is_cupy_array, is_cupy_backed
 
 
 def _run_numpy(data, azimuth=225, angle_altitude=25):
@@ -170,7 +170,7 @@ def hillshade(agg: xr.DataArray,
         out = _run_numpy(agg.data, azimuth, angle_altitude)
 
     # cupy/numba case
-    elif has_cuda() and has_cupy() and is_cupy_array(agg.data):
+    elif has_cuda_and_cupy() and is_cupy_array(agg.data):
         if shadows and has_rtx():
             from .gpu_rtx.hillshade import hillshade_rtx
             out = hillshade_rtx(agg, azimuth, angle_altitude, shadows=shadows)
@@ -178,7 +178,7 @@ def hillshade(agg: xr.DataArray,
             out = _run_cupy(agg.data, azimuth, angle_altitude)
 
     # dask + cupy case
-    elif (has_cuda() and has_cupy() and isinstance(agg.data, da.Array) and
+    elif (has_cuda_and_cupy() and isinstance(agg.data, da.Array) and
             is_cupy_backed(agg)):
         raise NotImplementedError("Dask/CuPy hillshade not implemented")
 

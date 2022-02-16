@@ -1,10 +1,9 @@
-import dask.array as da
 import numpy as np
-import pytest
 import xarray as xr
 
 from xrspatial import generate_terrain
-from xrspatial.utils import doesnt_have_cuda, has_cuda
+from xrspatial.tests.general_checks import cuda_and_cupy_available
+from xrspatial.utils import has_cuda_and_cupy
 
 
 def create_test_arr(backend='numpy'):
@@ -13,7 +12,7 @@ def create_test_arr(backend='numpy'):
     data = np.zeros((H, W), dtype=np.float32)
     raster = xr.DataArray(data, dims=['y', 'x'])
 
-    if has_cuda() and 'cupy' in backend:
+    if has_cuda_and_cupy() and 'cupy' in backend:
         import cupy
         raster.data = cupy.asarray(raster.data)
 
@@ -37,7 +36,7 @@ def test_terrain_cpu():
     np.testing.assert_allclose(terrain_numpy.data, terrain_dask.data, rtol=1e-05, atol=1e-07)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_terrain_gpu():
     # vanilla numpy version
     data_numpy = create_test_arr()
