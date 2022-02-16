@@ -331,7 +331,7 @@ def _stats_cupy(
     unique_index = unique_index.get()
     unique_counts = unique_counts.get()
     unique_zones = unique_zones.get()
-    
+
     if zone_ids is not None:
         # We need to extract the index and element count
         # only for the elements in zone_ids
@@ -361,7 +361,7 @@ def _stats_cupy(
             continue
 
         stats_dict['zone'].append(zone_id)
-        
+
         # extract zone_values
         zone_values = values_by_zone[unique_index[i]:unique_index[i]+unique_counts[i]]
 
