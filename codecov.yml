@@ -1,0 +1,10 @@
+coverage:
+  status:
+    patch: off
+    project:
+      default:
+        target: auto
+        threshold: 1%
+
+comment:
+  require_changes: yes

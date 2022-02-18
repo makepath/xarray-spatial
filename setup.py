@@ -34,6 +34,7 @@ examples = [
 extras_require = {
     'tests': [
         'pytest',
+        'pytest-cov',
         'noise >=1.2.2',
     ],
     'examples': examples,
