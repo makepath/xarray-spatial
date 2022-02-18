@@ -13,4 +13,10 @@ install:
   - "%PYTHON%\\python.exe -m pip install .[tests]"
 
 test_script:
-  - "%PYTHON%\\python.exe -m pytest"
+  - "%PYTHON%\\python.exe -m pytest xrspatial --cov=./xrspatial --cov-report=xml"
+
+ # Upload coverage to Codecov
+ after_test:
+   - "SET PATH=C:\\Python39-x64;C:\\Python39-x64\\Scripts;%PATH%"
+   - pip install codecov
+   - codecov -f "coverage.xml"
