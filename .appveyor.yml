@@ -17,6 +17,8 @@ test_script:
 
 # Upload coverage to Codecov
 after_test:
-  - "SET PATH=C:\\Python39-x64;C:\\Python39-x64\\Scripts;%PATH%"
-  - pip install codecov
-  - codecov -f "coverage.xml"
+  - ps: |
+      Invoke-WebRequest -Uri 'https://codecov.io/bash' -OutFile codecov.sh
+      $env:APPVEYOR="true"
+      $env:CI="true"
+      bash codecov.sh -f "coverage.xml"
