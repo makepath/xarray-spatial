@@ -18,11 +18,10 @@ jobs:
         python-version: ${{ matrix.python }}
     - name: Install dependencies
       run: |
-        pip install --upgrade pip
-        pip install setuptools wheel twine tox
+        python -m pip install --upgrade pip
+        pip install .[tests]
     - name: Generate coverage report
       run: |
-        pip install .[tests]
         pytest --cov=./ --cov-report=xml
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v2
