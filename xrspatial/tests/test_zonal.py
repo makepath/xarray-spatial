@@ -9,9 +9,8 @@ from xrspatial import crop, suggest_zonal_canvas, trim
 from xrspatial import zonal_apply as apply
 from xrspatial import zonal_crosstab as crosstab
 from xrspatial import zonal_stats as stats
-from xrspatial.tests.general_checks import create_test_raster
-from xrspatial.utils import doesnt_have_cuda
 from xrspatial.zonal import regions
+from .general_checks import create_test_raster, has_cuda_and_cupy
 
 
 @pytest.fixture
@@ -168,16 +167,16 @@ def check_results(backend, df_result, expected_results_dict):
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy'])
 def test_default_stats(backend, data_zones, data_values_2d, result_default_stats):
-    if backend == 'cupy' and doesnt_have_cuda():
-        pytest.skip("CUDA Device not Available")
+    if backend == 'cupy' and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
     df_result = stats(zones=data_zones, values=data_values_2d)
     check_results(backend, df_result, result_default_stats)
 
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy'])
 def test_zone_ids_stats(backend, data_zones, data_values_2d, result_zone_ids_stats):
-    if backend == 'cupy' and doesnt_have_cuda():
-        pytest.skip("CUDA Device not Available")
+    if backend == 'cupy' and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
     zone_ids, expected_result = result_zone_ids_stats
     df_result = stats(zones=data_zones, values=data_values_2d,
                       zone_ids=zone_ids)
@@ -187,8 +186,8 @@ def test_zone_ids_stats(backend, data_zones, data_values_2d, result_zone_ids_sta
 @pytest.mark.parametrize("backend", ['numpy', 'cupy'])
 def test_custom_stats(backend, data_zones, data_values_2d, result_custom_stats):
     # ---- custom stats (NumPy and CuPy only) ----
-    if backend == 'cupy' and doesnt_have_cuda():
-        pytest.skip("CUDA Device not Available")
+    if backend == 'cupy' and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
 
     custom_stats = {
         'double_sum': _double_sum,
