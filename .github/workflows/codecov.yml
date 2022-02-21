@@ -18,7 +18,7 @@ jobs:
         python-version: ${{ matrix.python }}
     - name: Generate coverage report
       run: |
-        pip install -r  .[tests]
+        pip install .[tests]
         pytest --cov=./ --cov-report=xml
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v2
