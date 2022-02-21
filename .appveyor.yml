@@ -13,12 +13,4 @@ install:
   - "%PYTHON%\\python.exe -m pip install .[tests]"
 
 test_script:
-  - "%PYTHON%\\python.exe -m pytest xrspatial --cov=./xrspatial --cov-report=xml"
-
-# Upload coverage to Codecov
-after_test:
-  - ps: |
-      Invoke-WebRequest -Uri 'https://codecov.io/bash' -OutFile codecov.sh
-      $env:APPVEYOR="true"
-      $env:CI="true"
-      bash codecov.sh -f "coverage.xml"
+  - "%PYTHON%\\python.exe -m pytest"
