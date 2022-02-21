@@ -13,6 +13,8 @@ from xrspatial import suggest_zonal_canvas
 from xrspatial import trim
 from xrspatial import crop
 from xrspatial.zonal import regions
+from xrspatial.utils import doesnt_have_cuda
+
 
 from xrspatial.tests.general_checks import create_test_raster
 
@@ -169,26 +171,35 @@ def check_results(backend, df_result, expected_results_dict):
         np.testing.assert_allclose(df_result[col], expected_results_dict[col])
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy'])
 def test_default_stats(backend, data_zones, data_values_2d, result_default_stats):
+    if backend == 'cupy' and doesnt_have_cuda():
+        pytest.skip("CUDA Device not Available")
     df_result = stats(zones=data_zones, values=data_values_2d)
     check_results(backend, df_result, result_default_stats)
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy'])
 def test_zone_ids_stats(backend, data_zones, data_values_2d, result_zone_ids_stats):
+    if backend == 'cupy' and doesnt_have_cuda():
+        pytest.skip("CUDA Device not Available")
     zone_ids, expected_result = result_zone_ids_stats
-    df_result = stats(zones=data_zones, values=data_values_2d, zone_ids=zone_ids)
+    df_result = stats(zones=data_zones, values=data_values_2d,
+                      zone_ids=zone_ids)
     check_results(backend, df_result, expected_result)
 
 
-@pytest.mark.parametrize("backend", ['numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'cupy'])
 def test_custom_stats(backend, data_zones, data_values_2d, result_custom_stats):
-    # ---- custom stats (NumPy only) ----
+    # ---- custom stats (NumPy and CuPy only) ----
+    if backend == 'cupy' and doesnt_have_cuda():
+        pytest.skip("CUDA Device not Available")
+
     custom_stats = {
         'double_sum': _double_sum,
         'range': _range,
     }
+
     nodata_values, zone_ids, expected_result = result_custom_stats
     df_result = stats(
         zones=data_zones, values=data_values_2d, stats_funcs=custom_stats,
@@ -219,7 +230,8 @@ def test_percentage_crosstab_2d(backend, data_zones, data_values_2d, result_perc
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
 def test_crosstab_3d(backend, data_zones, data_values_3d, result_crosstab_3d):
     layer, zone_ids, expected_result = result_crosstab_3d
-    df_result = crosstab(zones=data_zones, values=data_values_3d, zone_ids=zone_ids, layer=layer)
+    df_result = crosstab(zones=data_zones, values=data_values_3d,
+                         zone_ids=zone_ids, layer=layer)
     check_results(backend, df_result, expected_result)
 
 

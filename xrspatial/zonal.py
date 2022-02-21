@@ -324,16 +324,30 @@ def _stats_cupy(
     sorted_zones = sorted_zones[filter_values]
 
     # Now I need to find the unique zones, and zone breaks
-    unique_zones, unique_index = cupy.unique(sorted_zones, return_index=True)
+    unique_zones, unique_index, unique_counts = cupy.unique(
+        sorted_zones, return_index=True, return_counts=True)
 
     # Transfer to the host
     unique_index = unique_index.get()
-    if zone_ids is None:
-        unique_zones = unique_zones.get()
-    else:
+    unique_counts = unique_counts.get()
+    unique_zones = unique_zones.get()
+
+    if zone_ids is not None:
+        # We need to extract the index and element count
+        # only for the elements in zone_ids
+        unique_index_lst = []
+        unique_counts_lst = []
+        unique_zones = list(unique_zones)
+        for z in zone_ids:
+            try:
+                idx = unique_zones.index(z)
+                unique_index_lst.append(unique_index[idx])
+                unique_counts_lst.append(unique_counts[idx])
+            except ValueError:
+                continue
         unique_zones = zone_ids
-    # unique_zones = list(map(_to_int, unique_zones))
-    unique_zones = np.asarray(unique_zones)
+        unique_counts = unique_counts_lst
+        unique_index = unique_index_lst
 
     # stats columns
     stats_dict = {'zone': []}
@@ -347,11 +361,9 @@ def _stats_cupy(
             continue
 
         stats_dict['zone'].append(zone_id)
+
         # extract zone_values
-        if i < len(unique_zones) - 1:
-            zone_values = values_by_zone[unique_index[i]:unique_index[i+1]]
-        else:
-            zone_values = values_by_zone[unique_index[i]:]
+        zone_values = values_by_zone[unique_index[i]:unique_index[i]+unique_counts[i]]
 
         # apply stats on the zone data
         for j, stats in enumerate(stats_funcs):
@@ -362,7 +374,7 @@ def _stats_cupy(
 
             assert(len(result.shape) == 0)
 
-            stats_dict[stats].append(cupy.float(result))
+            stats_dict[stats].append(cupy.float_(result))
 
     stats_df = pd.DataFrame(stats_dict)
     stats_df.set_index("zone")
