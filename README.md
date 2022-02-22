@@ -241,4 +241,4 @@ With the introduction of projects like Numba, Python gained new ways to provide 
 
 Cite our code:
 
-`makepath/xarray-spatial, https://github.com/makepath/xarray-spatial, ©2020-2021.`
+`makepath/xarray-spatial, https://github.com/makepath/xarray-spatial, ©2020-2022.`
