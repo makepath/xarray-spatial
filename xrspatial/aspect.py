@@ -1,20 +1,13 @@
-from math import atan2
-import numpy as np
-
 from functools import partial
+from math import atan2
+from typing import Optional
 
 import dask.array as da
-
+import numpy as np
+import xarray as xr
 from numba import cuda
 
-import xarray as xr
-
-from xrspatial.utils import ngjit
-from xrspatial.utils import cuda_args
-from xrspatial.utils import ArrayTypeFunctionMapping
-from xrspatial.utils import not_implemented_func
-
-from typing import Optional
+from xrspatial.utils import ArrayTypeFunctionMapping, cuda_args, ngjit, not_implemented_func
 
 # 3rd-party
 try:

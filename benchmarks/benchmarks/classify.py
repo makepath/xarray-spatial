@@ -1,6 +1,7 @@
 import numpy as np
 
-from xrspatial.classify import reclassify, equal_interval, quantile, natural_breaks
+from xrspatial.classify import equal_interval, natural_breaks, quantile, reclassify
+
 from .common import get_xr_dataarray
 
 

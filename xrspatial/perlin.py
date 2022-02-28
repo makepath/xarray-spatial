@@ -12,13 +12,11 @@ except ImportError:
         ndarray = False
 
 import dask.array as da
-from numba import cuda, jit
 import numba as nb
+from numba import cuda, jit
 
 # local modules
-from xrspatial.utils import cuda_args
-from xrspatial.utils import ArrayTypeFunctionMapping
-from xrspatial.utils import not_implemented_func
+from xrspatial.utils import ArrayTypeFunctionMapping, cuda_args, not_implemented_func
 
 
 @jit(nopython=True, nogil=True)

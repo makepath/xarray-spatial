@@ -1,14 +1,14 @@
-import dask.array as da
-from functools import partial
 import math
-from numba import cuda
-import numpy as np
+from functools import partial
 from typing import Optional
+
+import dask.array as da
+import numpy as np
 import xarray as xr
+from numba import cuda
 
 from .gpu_rtx import has_rtx
-from .utils import (
-    calc_cuda_dims, has_cuda, has_cupy, is_cupy_array, is_cupy_backed)
+from .utils import calc_cuda_dims, has_cuda, has_cupy, is_cupy_array, is_cupy_backed
 
 
 def _run_numpy(data, azimuth=225, angle_altitude=25):

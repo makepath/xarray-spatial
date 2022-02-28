@@ -1,11 +1,11 @@
+from functools import partial
+from math import isnan
+
+import dask.array as da
 import numpy as np
 import pandas as pd
 import xarray as xr
-import dask.array as da
-
-from functools import partial
-from math import isnan
-from numba import prange, cuda
+from numba import cuda, prange
 from xarray import DataArray
 
 try:
@@ -14,12 +14,8 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-from xrspatial.utils import cuda_args
-from xrspatial.utils import ngjit
-from xrspatial.utils import not_implemented_func
-from xrspatial.utils import ArrayTypeFunctionMapping
-
 from xrspatial.convolution import convolve_2d, custom_kernel
+from xrspatial.utils import ArrayTypeFunctionMapping, cuda_args, ngjit, not_implemented_func
 
 # TODO: Make convolution more generic with numba first-class functions.
 

@@ -1,10 +1,10 @@
 import os
+import shutil
+import sys
+
 import param
 import pyct.build
-import sys
-import shutil
 from setuptools import setup
-
 
 version = param.version.get_setup_version(
     __file__,

@@ -1,7 +1,8 @@
 import numpy as np
 
 from xrspatial.convolution import custom_kernel
-from xrspatial.focal import mean, apply, hotspots, focal_stats
+from xrspatial.focal import apply, focal_stats, hotspots, mean
+
 from .common import get_xr_dataarray
 
 

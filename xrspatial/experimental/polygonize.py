@@ -27,13 +27,13 @@
 # x and y coordinates are monotonically increasing or decreasing.
 
 from enum import Enum
+from typing import Dict, List, Optional, Tuple, Union
+
 import numba as nb
 import numpy as np
-from typing import Dict, List, Optional, Tuple, Union
 import xarray as xr
 
 from ..utils import ngjit
-
 
 _regions_dtype = np.uint32
 _visited_dtype = np.uint8

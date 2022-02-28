@@ -1,7 +1,6 @@
 # std lib
 from functools import partial
-from typing import Union
-from typing import Optional
+from typing import Optional, Union
 
 # 3rd-party
 try:
@@ -11,18 +10,13 @@ except ImportError:
         ndarray = False
 
 import dask.array as da
-
-from numba import cuda
-
 import numpy as np
 import xarray as xr
+from numba import cuda
 
 # local modules
-from xrspatial.utils import cuda_args
-from xrspatial.utils import get_dataarray_resolution
-from xrspatial.utils import ngjit
-from xrspatial.utils import not_implemented_func
-from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, get_dataarray_resolution, ngjit,
+                             not_implemented_func)
 
 
 @ngjit

@@ -1,22 +1,17 @@
-import pytest
-
-import numpy as np
-import pandas as pd
-import xarray as xr
 import dask.array as da
 import dask.dataframe as dd
+import numpy as np
+import pandas as pd
+import pytest
+import xarray as xr
 
-from xrspatial import zonal_stats as stats
+from xrspatial import crop, suggest_zonal_canvas, trim
 from xrspatial import zonal_apply as apply
 from xrspatial import zonal_crosstab as crosstab
-from xrspatial import suggest_zonal_canvas
-from xrspatial import trim
-from xrspatial import crop
-from xrspatial.zonal import regions
-from xrspatial.utils import doesnt_have_cuda
-
-
+from xrspatial import zonal_stats as stats
 from xrspatial.tests.general_checks import create_test_raster
+from xrspatial.utils import doesnt_have_cuda
+from xrspatial.zonal import regions
 
 
 @pytest.fixture

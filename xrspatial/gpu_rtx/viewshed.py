@@ -1,19 +1,18 @@
 # Only call functions in this file if has_rtx() returns True as this checks
 # that the required dependent libraries are installed.
 
-import cupy
 import math
+from typing import Union
+
+import cupy
 import numba as nb
 import numpy as np
-from rtxpy import RTX
-from typing import Union
 import xarray as xr
-
-from .cuda_utils import add, diff, dot, float3, invert, make_float3, mul
-from .mesh_utils import create_triangulation
+from rtxpy import RTX
 
 from ..utils import calc_cuda_dims
-
+from .cuda_utils import add, diff, dot, float3, invert, make_float3, mul
+from .mesh_utils import create_triangulation
 
 # If a cell is invisible, its value is set to -1
 INVISIBLE = -1

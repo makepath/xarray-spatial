@@ -1,5 +1,6 @@
-from xrspatial.multispectral import arvi, evi, gci, nbr, nbr2, ndvi, ndmi, savi, sipi, ebbi
-from .common import get_xr_dataarray, Benchmarking
+from xrspatial.multispectral import arvi, ebbi, evi, gci, nbr, nbr2, ndmi, ndvi, savi, sipi
+
+from .common import Benchmarking, get_xr_dataarray
 
 
 class Multispectral(Benchmarking):

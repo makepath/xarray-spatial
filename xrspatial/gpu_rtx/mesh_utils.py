@@ -1,6 +1,6 @@
+import cupy
 import numba as nb
 import numpy as np
-import cupy
 
 
 def create_triangulation(raster, optix):

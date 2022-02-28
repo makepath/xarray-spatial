@@ -1,13 +1,10 @@
-import xarray as xr
-import numpy as np
-
-from xrspatial.utils import ngjit
-from xrspatial.utils import get_dataarray_resolution
-
-from typing import Union, Optional
-
 import warnings
+from typing import Optional, Union
 
+import numpy as np
+import xarray as xr
+
+from xrspatial.utils import get_dataarray_resolution, ngjit
 
 NONE = -1
 

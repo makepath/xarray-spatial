@@ -1,15 +1,14 @@
 # standard library
 from math import sqrt
-from typing import Optional, Callable, Union, Dict, List
+from typing import Callable, Dict, List, Optional, Union
 
 # 3rd-party
 import dask.array as da
 import dask.dataframe as dd
-from dask import delayed
-
 import numpy as np
 import pandas as pd
 import xarray as xr
+from dask import delayed
 from xarray import DataArray
 
 try:
@@ -19,10 +18,7 @@ except ImportError:
         ndarray = False
 
 # local modules
-from xrspatial.utils import ngjit
-from xrspatial.utils import validate_arrays
-from xrspatial.utils import ArrayTypeFunctionMapping
-from xrspatial.utils import not_implemented_func
+from xrspatial.utils import ArrayTypeFunctionMapping, ngjit, not_implemented_func, validate_arrays
 
 TOTAL_COUNT = '_total_count'
 

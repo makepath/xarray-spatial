@@ -2,13 +2,10 @@ import numpy as np
 import pytest
 
 from xrspatial import aspect
+from xrspatial.tests.general_checks import (assert_nan_edges_effect, assert_numpy_equals_cupy,
+                                            assert_numpy_equals_dask_numpy, create_test_raster,
+                                            general_output_checks)
 from xrspatial.utils import doesnt_have_cuda
-
-from xrspatial.tests.general_checks import create_test_raster
-from xrspatial.tests.general_checks import assert_numpy_equals_dask_numpy
-from xrspatial.tests.general_checks import assert_numpy_equals_cupy
-from xrspatial.tests.general_checks import assert_nan_edges_effect
-from xrspatial.tests.general_checks import general_output_checks
 
 
 def input_data(backend='numpy'):

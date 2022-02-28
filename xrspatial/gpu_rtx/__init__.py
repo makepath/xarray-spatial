@@ -1,6 +1,5 @@
 from ..utils import has_cuda, has_cupy
 
-
 try:
     from rtxpy import RTX
 except ImportError:

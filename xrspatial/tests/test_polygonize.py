@@ -1,8 +1,9 @@
 import itertools
-import pytest
+
 import numpy as np
-from numpy.testing import assert_allclose
+import pytest
 import xarray as xr
+from numpy.testing import assert_allclose
 
 try:
     import awkward as ak

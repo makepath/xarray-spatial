@@ -2,18 +2,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.local import (
-    cell_stats,
-    combine,
-    lesser_frequency,
-    equal_frequency,
-    greater_frequency,
-    lowest_position,
-    highest_position,
-    popularity,
-    rank,
-)
-
+from xrspatial.local import (cell_stats, combine, equal_frequency, greater_frequency,
+                             highest_position, lesser_frequency, lowest_position, popularity, rank)
 
 arr = xr.DataArray([[2, 2, 2, 2],
                     [2, 2, 2, 2],

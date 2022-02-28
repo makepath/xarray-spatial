@@ -1,14 +1,13 @@
-import pytest
-
+import datashader as ds
 import numpy as np
 import pandas as pd
+import pytest
 import xarray as xa
 
-import datashader as ds
-from ..gpu_rtx import has_rtx
 from xrspatial import viewshed
-
 from xrspatial.tests.general_checks import general_output_checks
+
+from ..gpu_rtx import has_rtx
 
 
 @pytest.fixture

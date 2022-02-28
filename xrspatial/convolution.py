@@ -1,16 +1,12 @@
-from functools import partial
-
 import re
+from functools import partial
 
 import numpy as np
 import xarray as xr
+from numba import cuda, float32, jit, prange
 
-from numba import cuda, float32, prange, jit
-
-from xrspatial.utils import cuda_args
-from xrspatial.utils import get_dataarray_resolution
-from xrspatial.utils import not_implemented_func
-from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, get_dataarray_resolution,
+                             not_implemented_func)
 
 # 3rd-party
 try:

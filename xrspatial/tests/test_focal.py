@@ -1,20 +1,13 @@
+import dask.array as da
+import numpy as np
 import pytest
 import xarray as xr
-import numpy as np
-
-import dask.array as da
-
-from xrspatial.utils import doesnt_have_cuda
-from xrspatial.utils import ngjit
 
 from xrspatial import mean
-from xrspatial.focal import hotspots, apply, focal_stats
-from xrspatial.convolution import (
-    convolve_2d, circle_kernel, annulus_kernel
-)
-
-from xrspatial.tests.general_checks import create_test_raster
-from xrspatial.tests.general_checks import general_output_checks
+from xrspatial.convolution import annulus_kernel, circle_kernel, convolve_2d
+from xrspatial.focal import apply, focal_stats, hotspots
+from xrspatial.tests.general_checks import create_test_raster, general_output_checks
+from xrspatial.utils import doesnt_have_cuda, ngjit
 
 
 def _do_sparse_array(data_array):

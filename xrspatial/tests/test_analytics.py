@@ -1,11 +1,8 @@
-import pytest
 import numpy as np
+import pytest
 
-from xrspatial import aspect
-from xrspatial import curvature
-from xrspatial import slope
+from xrspatial import aspect, curvature, slope
 from xrspatial.analytics import summarize_terrain
-
 from xrspatial.tests.general_checks import create_test_raster
 
 

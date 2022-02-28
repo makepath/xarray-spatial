@@ -3,10 +3,9 @@ from math import ceil
 import dask.array as da
 import datashader as ds
 import datashader.transfer_functions as tf
-from numba import cuda, jit
 import numpy as np
 import xarray as xr
-
+from numba import cuda, jit
 
 try:
     import cupy

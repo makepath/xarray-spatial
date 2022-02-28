@@ -1,25 +1,22 @@
-from typing import List, Optional
-from functools import partial
 import warnings
+from functools import partial
+from typing import List, Optional
 
 import xarray as xr
+
 try:
     import cupy
 except ImportError:
     class cupy(object):
         ndarray = False
 
+import dask.array as da
 import datashader.transfer_functions as tf
+import numba as nb
 import numpy as np
 from datashader.colors import rgb
 
-import numba as nb
-import dask.array as da
-
-from xrspatial.utils import cuda_args
-from xrspatial.utils import ngjit
-from xrspatial.utils import ArrayTypeFunctionMapping
-from xrspatial.utils import not_implemented_func
+from xrspatial.utils import ArrayTypeFunctionMapping, cuda_args, ngjit, not_implemented_func
 
 
 def color_values(agg, color_key, alpha=255):
