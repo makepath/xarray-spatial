@@ -1,6 +1,11 @@
-name: flake8 Lint
-
-on: [push, pull_request]
+name: Linter
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+    - '*'
 
 jobs:
   flake8-lint:
@@ -15,4 +20,4 @@ jobs:
           use-flake8: true
           use-black: false
           use-mypy: false
-          use-isort: false
+          use-isort: true
