@@ -1,16 +1,15 @@
+import numpy as np
 import pytest
 import xarray as xr
-import numpy as np
 from numpy.testing import assert_allclose, assert_array_less
 
 from xrspatial import hillshade
+from xrspatial.tests.general_checks import (assert_numpy_equals_cupy,
+                                            assert_numpy_equals_dask_numpy, create_test_raster,
+                                            general_output_checks)
 from xrspatial.utils import doesnt_have_cuda
-from ..gpu_rtx import has_rtx
 
-from xrspatial.tests.general_checks import general_output_checks
-from xrspatial.tests.general_checks import create_test_raster
-from xrspatial.tests.general_checks import assert_numpy_equals_dask_numpy
-from xrspatial.tests.general_checks import assert_numpy_equals_cupy
+from ..gpu_rtx import has_rtx
 
 
 @pytest.fixture

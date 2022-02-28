@@ -1,13 +1,12 @@
 # std lib
 from functools import partial
-from typing import Union, Tuple, List
-from typing import Optional
+from typing import List, Optional, Tuple, Union
 
+import datashader as ds
 # 3rd-party
 import numpy as np
-import xarray as xr
 import pandas as pd
-import datashader as ds
+import xarray as xr
 
 try:
     import cupy
@@ -18,10 +17,8 @@ except ImportError:
 import dask.array as da
 
 # local modules
-from xrspatial.utils import cuda_args
-from xrspatial.utils import get_dataarray_resolution
-from xrspatial.utils import ArrayTypeFunctionMapping
-from xrspatial.utils import not_implemented_func
+from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, get_dataarray_resolution,
+                             not_implemented_func)
 
 from .perlin import _perlin, _perlin_gpu
 

@@ -1,16 +1,10 @@
-import pytest
-
-import xarray as xr
 import numpy as np
+import pytest
+import xarray as xr
 
+from xrspatial import equal_interval, natural_breaks, quantile, reclassify
+from xrspatial.tests.general_checks import create_test_raster, general_output_checks
 from xrspatial.utils import doesnt_have_cuda
-from xrspatial import equal_interval
-from xrspatial import natural_breaks
-from xrspatial import quantile
-from xrspatial import reclassify
-
-from xrspatial.tests.general_checks import general_output_checks
-from xrspatial.tests.general_checks import create_test_raster
 
 
 def input_data(backend='numpy'):

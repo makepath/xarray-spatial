@@ -2,9 +2,7 @@ import numpy as np
 import pytest
 
 from xrspatial import a_star_search
-
-from xrspatial.tests.general_checks import general_output_checks
-from xrspatial.tests.general_checks import create_test_raster
+from xrspatial.tests.general_checks import create_test_raster, general_output_checks
 
 
 @pytest.fixture

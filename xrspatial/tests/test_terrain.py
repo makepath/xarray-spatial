@@ -1,12 +1,10 @@
-import pytest
-
-import numpy as np
-import xarray as xr
 import dask.array as da
+import numpy as np
+import pytest
+import xarray as xr
 
-from xrspatial.utils import has_cuda
-from xrspatial.utils import doesnt_have_cuda
 from xrspatial import generate_terrain
+from xrspatial.utils import doesnt_have_cuda, has_cuda
 
 
 def create_test_arr(backend='numpy'):

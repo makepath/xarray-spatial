@@ -1,12 +1,11 @@
 from math import sqrt
 
 import dask.array as da
-from numba import prange
 import numpy as np
 import xarray as xr
+from numba import prange
 
-from xrspatial.utils import ngjit, get_dataarray_resolution
-
+from xrspatial.utils import get_dataarray_resolution, ngjit
 
 EUCLIDEAN = 0
 GREAT_CIRCLE = 1

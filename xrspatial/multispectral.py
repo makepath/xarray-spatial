@@ -1,21 +1,16 @@
-from math import sqrt
-import numpy as np
-import numba as nb
-
-from numba import cuda
-
-
-import xarray as xr
-from xarray import DataArray
-import dask.array as da
-
-from xrspatial.utils import cuda_args
-from xrspatial.utils import ngjit
-from xrspatial.utils import ArrayTypeFunctionMapping
-from xrspatial.utils import validate_arrays
-from xrspatial.utils import not_implemented_func
-
 import warnings
+from math import sqrt
+
+import dask.array as da
+import numba as nb
+import numpy as np
+import xarray as xr
+from numba import cuda
+from xarray import DataArray
+
+from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, ngjit, not_implemented_func,
+                             validate_arrays)
+
 # 3rd-party
 try:
     import cupy

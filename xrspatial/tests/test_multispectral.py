@@ -1,23 +1,11 @@
+import numpy as np
 import pytest
 import xarray as xr
-import numpy as np
 
+from xrspatial.multispectral import (arvi, ebbi, evi, gci, nbr, nbr2, ndmi, ndvi, savi, sipi,
+                                     true_color)
+from xrspatial.tests.general_checks import create_test_raster, general_output_checks
 from xrspatial.utils import doesnt_have_cuda
-
-from xrspatial.multispectral import arvi
-from xrspatial.multispectral import ebbi
-from xrspatial.multispectral import evi
-from xrspatial.multispectral import nbr
-from xrspatial.multispectral import nbr2
-from xrspatial.multispectral import ndmi
-from xrspatial.multispectral import ndvi
-from xrspatial.multispectral import savi
-from xrspatial.multispectral import gci
-from xrspatial.multispectral import sipi
-from xrspatial.multispectral import true_color
-
-from xrspatial.tests.general_checks import general_output_checks
-from xrspatial.tests.general_checks import create_test_raster
 
 
 @pytest.fixture

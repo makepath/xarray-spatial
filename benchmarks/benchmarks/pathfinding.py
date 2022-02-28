@@ -1,4 +1,5 @@
 from xrspatial.pathfinding import a_star_search
+
 from .common import get_xr_dataarray
 
 

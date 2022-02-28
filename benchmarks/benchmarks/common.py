@@ -1,5 +1,6 @@
 import numpy as np
 import xarray as xr
+
 from xrspatial.gpu_rtx import has_rtx
 from xrspatial.utils import has_cuda, has_cupy
 

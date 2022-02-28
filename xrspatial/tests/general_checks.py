@@ -1,9 +1,8 @@
-import numpy as np
 import dask.array as da
+import numpy as np
 import xarray as xr
 
-from xrspatial.utils import has_cuda
-from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import ArrayTypeFunctionMapping, has_cuda
 
 
 def create_test_raster(

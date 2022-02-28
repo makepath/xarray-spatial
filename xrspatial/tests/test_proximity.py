@@ -1,14 +1,10 @@
-import pytest
-
-import numpy as np
-import xarray as xr
 import dask.array as da
+import numpy as np
+import pytest
+import xarray as xr
 
-from xrspatial import proximity, allocation, direction
-from xrspatial import great_circle_distance
-from xrspatial import euclidean_distance
+from xrspatial import allocation, direction, euclidean_distance, great_circle_distance, proximity
 from xrspatial.proximity import _calc_direction
-
 from xrspatial.tests.general_checks import general_output_checks
 
 

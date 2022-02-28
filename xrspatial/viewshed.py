@@ -1,13 +1,13 @@
-from math import atan, sqrt, fabs
+from math import atan, fabs
 from math import pi as PI
+from math import sqrt
 from typing import Union
 
 import numpy as np
-from .utils import has_cupy, is_cupy_array, ngjit
-from .gpu_rtx import has_rtx
-
-
 import xarray
+
+from .gpu_rtx import has_rtx
+from .utils import has_cupy, is_cupy_array, ngjit
 
 E_ROW_ID = 0
 E_COL_ID = 1

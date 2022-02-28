@@ -1,4 +1,5 @@
 from xrspatial import viewshed
+
 from .common import get_xr_dataarray
 
 

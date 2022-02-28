@@ -1,16 +1,11 @@
-import numpy as np
-import datashader as ds
-from datashader.transfer_functions import shade
-from datashader.transfer_functions import stack
-from datashader.colors import Elevation
-
-
-from xrspatial import generate_terrain
-from xrspatial import hillshade
-from xrspatial import bump
-from xrspatial import mean
 from functools import partial
 
+import datashader as ds
+import numpy as np
+from datashader.colors import Elevation
+from datashader.transfer_functions import shade, stack
+
+from xrspatial import bump, generate_terrain, hillshade, mean
 
 W = 600
 H = 400

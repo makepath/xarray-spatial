@@ -3,6 +3,7 @@ def main(args=None):
         import pyct.cmd
     except ImportError:
         import sys
+
         from . import _missing_cmd
         print(_missing_cmd())
         sys.exit(1)

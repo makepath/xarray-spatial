@@ -1,15 +1,12 @@
 from __future__ import absolute_import, division, print_function
 
-from io import BytesIO
-
 import math
 import os
+from io import BytesIO
 
 import dask
 import dask.bag as db
-
 import numpy as np
-
 from PIL.Image import fromarray
 
 __all__ = ['render_tiles', 'MercatorTileDefinition']
@@ -32,8 +29,8 @@ with warnings.catch_warnings():
 
 
 def _create_dir(path):
-    import os
     import errno
+    import os
 
     try:
         os.makedirs(path)
@@ -374,10 +371,11 @@ def tile_previewer(full_extent, tileset_url,
         - supply an output_dir to write figure to disk.
     """
     try:
-        from bokeh.plotting import figure
-        from bokeh.models.tiles import WMTSTileSource
-        from bokeh.io import output_file, save
         from os import path
+
+        from bokeh.io import output_file, save
+        from bokeh.models.tiles import WMTSTileSource
+        from bokeh.plotting import figure
     except ImportError:
         raise ImportError('conda install bokeh to enable creation '
                           'of simple tile viewer')

@@ -3,7 +3,6 @@ from collections import Counter
 import numpy as np
 import xarray as xr
 
-
 funcs = {
     'max': np.max,
     'mean': np.mean,

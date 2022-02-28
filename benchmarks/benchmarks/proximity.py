@@ -1,6 +1,7 @@
 import numpy as np
 
-from xrspatial.proximity import proximity, allocation, direction
+from xrspatial.proximity import allocation, direction, proximity
+
 from .common import get_xr_dataarray
 
 

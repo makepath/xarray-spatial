@@ -1,8 +1,6 @@
-from xrspatial import slope
-from xrspatial import curvature
-from xrspatial import aspect
-
 import xarray as xr
+
+from xrspatial import aspect, curvature, slope
 
 
 def summarize_terrain(terrain: xr.DataArray):

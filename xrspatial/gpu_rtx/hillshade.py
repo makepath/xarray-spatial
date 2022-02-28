@@ -4,14 +4,13 @@
 import cupy
 import numba as nb
 import numpy as np
+import xarray as xr
 from rtxpy import RTX
 from scipy.spatial.transform import Rotation as R
-import xarray as xr
-
-from .cuda_utils import add, dot, invert, make_float3, mul
-from .mesh_utils import create_triangulation
 
 from ..utils import calc_cuda_dims
+from .cuda_utils import add, dot, invert, make_float3, mul
+from .mesh_utils import create_triangulation
 
 
 @nb.cuda.jit

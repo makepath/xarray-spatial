@@ -2,16 +2,12 @@ from __future__ import absolute_import
 
 import datashader as ds
 import datashader.transfer_functions as tf
-
-from datashader.colors import viridis
-
-from xrspatial.tiles import render_tiles
-from xrspatial.tiles import _get_super_tile_min_max
-from xrspatial.tiles import calculate_zoom_level_stats
-from xrspatial.tiles import MercatorTileDefinition
-
 import numpy as np
 import pandas as pd
+from datashader.colors import viridis
+
+from xrspatial.tiles import (MercatorTileDefinition, _get_super_tile_min_max,
+                             calculate_zoom_level_stats, render_tiles)
 
 TOLERANCE = 0.01
 

@@ -1,11 +1,10 @@
-import numpy as np
+from typing import Optional
 
+import numpy as np
 import xarray as xr
 from xarray import DataArray
 
 from xrspatial.utils import ngjit
-
-from typing import Optional
 
 # TODO: change parameters to take agg instead of height / width
 

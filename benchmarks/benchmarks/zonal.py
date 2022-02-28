@@ -1,8 +1,9 @@
-import xarray as xr
 import numpy as np
+import xarray as xr
 
 from xrspatial import zonal
 from xrspatial.utils import has_cuda
+
 from .common import get_xr_dataarray
 
 
