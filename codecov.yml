@@ -8,6 +8,3 @@ coverage:
 
 comment:
   require_changes: yes
-
-ignore:
-  - "xrspatial/tests/test_polygonize.py"
