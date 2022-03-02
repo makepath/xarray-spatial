@@ -41,7 +41,7 @@ def _gen_terrain(height_map, seed, x_range=(0, 1), y_range=(0, 1)):
         y_range[0], y_range[1], height, endpoint=False, dtype=np.float32
     )
     x, y = np.meshgrid(linx, liny)
-    nrange = np.arange(2**20, dtype=int)
+    nrange = np.arange(2**20, dtype=np.int32)
     for i, (m, (xfreq, yfreq)) in enumerate(NOISE_LAYERS):
         np.random.seed(seed+i)
         p = np.random.permutation(nrange)
@@ -93,7 +93,7 @@ def _terrain_dask_numpy(data: da.Array,
     )
     x, y = da.meshgrid(linx, liny)
 
-    nrange = np.arange(2 ** 20, dtype=int)
+    nrange = np.arange(2 ** 20, dtype=np.int32)
 
     # multiplier, (xfreq, yfreq)
     NOISE_LAYERS = ((1 / 2 ** i, (2 ** i, 2 ** i)) for i in range(16))

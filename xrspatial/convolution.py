@@ -294,7 +294,7 @@ def _convolve_2d_numpy(data, kernel):
     wkx = nkx // 2
     wky = nky // 2
 
-    out = np.zeros(data.shape, dtype=float32)
+    out = np.zeros(data.shape, dtype=np.float32)
     out[:] = np.nan
     for i in prange(wkx, nx-wkx):
         iimin = max(i - wkx, 0)
