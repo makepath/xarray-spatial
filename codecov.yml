@@ -1,10 +1,16 @@
 coverage:
-   status:
-     patch: off
-     project:
-       default:
-         target: auto
-         threshold: 1%
+  status:
+    patch: off
+    project:
+      default:
+        target: auto
+        threshold: 0.5%
 
- comment:
-   require_changes: yes
+comment:
+  require_changes: yes
+
+ignore:
+  - "xrspatial/tests/test_polygonize.py"
+  - "xrspatial/experimental/*"
+  - "xrspatial/gpu_rtx/*"
+  - "xrspatial/tests/*"

@@ -3,7 +3,7 @@ from functools import partial
 
 import numpy as np
 import xarray as xr
-from numba import cuda, float32, jit, prange
+from numba import cuda, jit, prange
 
 from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, get_dataarray_resolution,
                              not_implemented_func)
@@ -294,7 +294,7 @@ def _convolve_2d_numpy(data, kernel):
     wkx = nkx // 2
     wky = nky // 2
 
-    out = np.zeros(data.shape, dtype=float32)
+    out = np.zeros(data.shape, dtype=np.float32)
     out[:] = np.nan
     for i in prange(wkx, nx-wkx):
         iimin = max(i - wkx, 0)

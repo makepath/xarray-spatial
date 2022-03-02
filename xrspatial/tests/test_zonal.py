@@ -250,7 +250,7 @@ def test_apply():
     def func(x):
         return 0
 
-    zones_val = np.zeros((3, 3), dtype=int)
+    zones_val = np.zeros((3, 3), dtype=np.int32)
     # define some zones
     zones_val[1] = 1
     zones_val[2] = 2
