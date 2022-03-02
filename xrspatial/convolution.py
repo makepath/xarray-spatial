@@ -3,7 +3,7 @@ from functools import partial
 
 import numpy as np
 import xarray as xr
-from numba import cuda, float32, jit, prange
+from numba import cuda, jit, prange
 
 from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, get_dataarray_resolution,
                              not_implemented_func)
