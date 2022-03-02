@@ -22,7 +22,7 @@ jobs:
         pip install -e .[tests]
     - name: Generate coverage report
       run: |
-        pytest --cov=./ --cov-report=xml
+        NUMBA_DISABLE_JIT=1 pytest --cov=./ --cov-report=xml
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v2
       with:
