@@ -4,7 +4,8 @@ import pytest
 import xarray as xr
 
 from xrspatial import mean
-from xrspatial.convolution import annulus_kernel, circle_kernel, convolution_2d, convolve_2d
+from xrspatial.convolution import (annulus_kernel, calc_cellsize, circle_kernel, convolution_2d,
+                                   convolve_2d)
 from xrspatial.focal import apply, focal_stats, hotspots
 from xrspatial.tests.general_checks import create_test_raster, general_output_checks
 from xrspatial.utils import doesnt_have_cuda, ngjit
@@ -232,6 +233,18 @@ def test_2d_convolution_gpu(
     with pytest.raises(NotImplementedError) as e_info:
         convolution_2d(dask_cupy_agg, kernel_custom)
         assert e_info
+
+
+def test_calc_cellsize_unit_input_attrs(convolve_2d_data):
+    agg = create_test_raster(convolve_2d_data, attrs={'res': 1, 'unit': 'km'})
+    cellsize = calc_cellsize(agg)
+    assert cellsize == (1000, 1000)
+
+
+def test_calc_cellsize_no_attrs(convolve_2d_data):
+    agg = create_test_raster(convolve_2d_data)
+    cellsize = calc_cellsize(agg)
+    assert cellsize == (1, 1)
 
 
 @pytest.fixture
