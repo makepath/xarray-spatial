@@ -4,7 +4,7 @@ import pytest
 import xarray as xr
 
 from xrspatial import mean
-from xrspatial.convolution import annulus_kernel, circle_kernel, convolve_2d
+from xrspatial.convolution import annulus_kernel, circle_kernel, convolution_2d, convolve_2d
 from xrspatial.focal import apply, focal_stats, hotspots
 from xrspatial.tests.general_checks import create_test_raster, general_output_checks
 from xrspatial.utils import doesnt_have_cuda, ngjit
@@ -176,21 +176,21 @@ def test_convolution_dask_numpy(
     kernel_annulus_2_2_2_1,
     convolution_kernel_annulus_2_2_1
 ):
-    dask_data = da.from_array(convolve_2d_data, chunks=(3, 3))
+    dask_agg = create_test_raster(convolve_2d_data, backend='dask+numpy')
     kernel_custom = np.ones((1, 1))
-    result_kernel_custom = convolve_2d(dask_data, kernel_custom)
-    assert isinstance(result_kernel_custom, da.Array)
+    result_kernel_custom = convolution_2d(dask_agg, kernel_custom)
+    assert isinstance(result_kernel_custom.data, da.Array)
     # kernel is [[1]], thus the result equals input data
     np.testing.assert_allclose(result_kernel_custom.compute(), convolve_2d_data, equal_nan=True)
 
-    result_kernel_circle = convolve_2d(dask_data, kernel_circle_1_1_1)
-    assert isinstance(result_kernel_circle, da.Array)
+    result_kernel_circle = convolution_2d(dask_agg, kernel_circle_1_1_1)
+    assert isinstance(result_kernel_circle.data, da.Array)
     np.testing.assert_allclose(
         result_kernel_circle.compute(), convolution_kernel_circle_1_1_1, equal_nan=True
     )
 
-    result_kernel_annulus = convolve_2d(dask_data, kernel_annulus_2_2_2_1)
-    assert isinstance(result_kernel_annulus, da.Array)
+    result_kernel_annulus = convolution_2d(dask_agg, kernel_annulus_2_2_2_1)
+    assert isinstance(result_kernel_annulus.data, da.Array)
     np.testing.assert_allclose(
         result_kernel_annulus.compute(), convolution_kernel_annulus_2_2_1, equal_nan=True
     )
@@ -230,7 +230,7 @@ def test_2d_convolution_gpu(
         da.from_array(cupy.asarray(convolve_2d_data), chunks=(3, 3))
     )
     with pytest.raises(NotImplementedError) as e_info:
-        convolve_2d(dask_cupy_agg.data, kernel_custom)
+        convolution_2d(dask_cupy_agg, kernel_custom)
         assert e_info
 
 
