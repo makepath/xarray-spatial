@@ -10,7 +10,10 @@ comment:
   require_changes: yes
 
 ignore:
-  - "xrspatial/tests/test_polygonize.py"
+  - "./setup.py"
+  - "xrspatial/tests/*"
   - "xrspatial/experimental/*"
   - "xrspatial/gpu_rtx/*"
-  - "xrspatial/tests/*"
+  - "xrspatial/datasets/*"
+  - "xrspatial/__init__.py"
+  - "xrspatial/__main__.py"
