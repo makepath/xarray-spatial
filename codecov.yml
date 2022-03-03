@@ -10,6 +10,6 @@ comment:
   require_changes: yes
 
 ignore:
+  - "xrspatial/tests/*"
   - "xrspatial/experimental/*"
   - "xrspatial/gpu_rtx/*"
-  - "xrspatial/tests/*"
