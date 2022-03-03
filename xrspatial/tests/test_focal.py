@@ -395,6 +395,15 @@ def data_hotspots():
     return data, kernel, expected_result
 
 
+def test_hotspots_zero_global_std():
+    data = np.zeros((10, 20))
+    agg = create_test_raster(data)
+    kernel = np.zeros((3, 3))
+    msg = "Standard deviation of the input raster values is 0."
+    with pytest.raises(ZeroDivisionError, match=msg):
+        hotspots(agg, kernel)
+
+
 def test_hotspots_numpy(data_hotspots):
     data, kernel, expected_result = data_hotspots
     numpy_agg = create_test_raster(data)
