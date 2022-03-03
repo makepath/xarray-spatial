@@ -124,6 +124,15 @@ def result_quantile():
     return k, expected_result
 
 
+def test_quantile_not_enough_unique_values():
+    agg = input_data()
+    n_uniques = np.isfinite(agg.data).sum()
+    k = n_uniques + 1
+    result_quantile = quantile(agg, k=k)
+    n_uniques_result = np.isfinite(result_quantile.data).sum()
+    np.testing.assert_allclose(n_uniques_result, n_uniques)
+
+
 def test_quantile_numpy(result_quantile):
     k, expected_result = result_quantile
     numpy_agg = input_data()
