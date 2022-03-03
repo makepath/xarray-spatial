@@ -73,6 +73,15 @@ def result_reclassify():
     return bins, new_values, expected_result
 
 
+def test_reclassify_numpy_mismatch_length():
+    bins = [10]
+    new_values = [1, 2, 3]
+    numpy_agg = input_data()
+    msg = 'bins and new_values mismatch. Should have same length.'
+    with pytest.raises(ValueError, match=msg):
+        reclassify(numpy_agg, bins, new_values)
+
+
 def test_reclassify_numpy(result_reclassify):
     bins, new_values, expected_result = result_reclassify
     numpy_agg = input_data()
