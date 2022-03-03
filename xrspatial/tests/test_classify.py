@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial import equal_interval, natural_breaks, quantile, reclassify
+from xrspatial import binary, equal_interval, natural_breaks, quantile, reclassify
 from xrspatial.tests.general_checks import create_test_raster, general_output_checks
 from xrspatial.utils import doesnt_have_cuda
 
@@ -16,6 +16,48 @@ def input_data(backend='numpy'):
     ])
     raster = create_test_raster(elevation, backend, attrs={'res': (10.0, 10.0)})
     return raster
+
+
+@pytest.fixture
+def result_binary():
+    values = [1, 2, 3]
+    expected_result = np.asarray([
+        [0, 1, 1, 0, 0],
+        [0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0]
+    ], dtype=np.float32)
+    return values, expected_result
+
+
+def test_binary_numpy(result_binary):
+    values, expected_result = result_binary
+    numpy_agg = input_data()
+    numpy_result = binary(numpy_agg, values)
+    general_output_checks(numpy_agg, numpy_result, expected_result)
+
+
+def test_binary_dask_numpy(result_binary):
+    values, expected_result = result_binary
+    dask_agg = input_data(backend='dask')
+    dask_result = binary(dask_agg, values)
+    general_output_checks(dask_agg, dask_result, expected_result)
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_binary_cupy(result_reclassify):
+    values, expected_result = result_binary
+    cupy_agg = input_data(backend='cupy')
+    cupy_result = binary(cupy_agg, values)
+    general_output_checks(cupy_agg, cupy_result, expected_result)
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_binary_dask_cupy(result_binary):
+    values, expected_result = result_binary
+    dask_cupy_agg = input_data(backend='dask+cupy')
+    dask_cupy_result = binary(dask_cupy_agg, values)
+    general_output_checks(dask_cupy_agg, dask_cupy_result, expected_result)
 
 
 @pytest.fixture
