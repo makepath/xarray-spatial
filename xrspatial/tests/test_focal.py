@@ -5,7 +5,7 @@ import xarray as xr
 
 from xrspatial import mean
 from xrspatial.convolution import (annulus_kernel, calc_cellsize, circle_kernel, convolution_2d,
-                                   convolve_2d)
+                                   convolve_2d, custom_kernel)
 from xrspatial.focal import apply, focal_stats, hotspots
 from xrspatial.tests.general_checks import create_test_raster, general_output_checks
 from xrspatial.utils import doesnt_have_cuda, ngjit
@@ -132,6 +132,18 @@ def convolution_kernel_annulus_2_2_1():
         [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
     ])
     return expected_result
+
+
+def test_kernel_custom_kernel_invalid_type():
+    kernel = [1, 0, 0]  # only arrays are accepted, not lists
+    with pytest.raises(ValueError):
+        custom_kernel(kernel)
+
+
+def test_kernel_custom_kernel_invalid_shape():
+    kernel = np.ones((4, 6))
+    with pytest.raises(ValueError):
+        custom_kernel(kernel)
 
 
 def test_kernel(kernel_circle_1_1_1, kernel_annulus_2_2_2_1):
