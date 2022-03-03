@@ -192,6 +192,15 @@ def result_natural_breaks_num_sample():
     return k, num_sample, expected_result
 
 
+def test_natural_breaks_not_enough_unique_values():
+    agg = input_data()
+    n_uniques = np.isfinite(agg.data).sum()
+    k = n_uniques + 1
+    result_natural_breaks = natural_breaks(agg, k=k)
+    n_uniques_result = np.isfinite(result_natural_breaks.data).sum()
+    np.testing.assert_allclose(n_uniques_result, n_uniques)
+
+
 def test_natural_breaks_numpy(result_natural_breaks):
     numpy_agg = input_data()
     k, expected_result = result_natural_breaks
