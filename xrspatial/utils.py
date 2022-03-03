@@ -5,6 +5,7 @@ import datashader as ds
 import datashader.transfer_functions as tf
 import numpy as np
 import xarray as xr
+from datashader.colors import rgb
 from numba import cuda, jit
 
 try:
@@ -433,3 +434,13 @@ def canvas_like(
     out = cvs.raster(raster, **kwargs)
 
     return out
+
+
+def color_values(agg, color_key, alpha=255):
+    def _convert_color(c):
+        r, g, b = rgb(c)
+        return np.array([r, g, b, alpha]).astype(np.uint8).view(np.uint32)[0]
+
+    _converted_colors = {k: _convert_color(v) for k, v in color_key.items()}
+    f = np.vectorize(lambda v: _converted_colors.get(v, 0))
+    return tf.Image(f(agg.data))

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial import equal_interval, natural_breaks, quantile, reclassify
+from xrspatial import binary, equal_interval, natural_breaks, quantile, reclassify
 from xrspatial.tests.general_checks import create_test_raster, general_output_checks
 from xrspatial.utils import doesnt_have_cuda
 
@@ -19,6 +19,48 @@ def input_data(backend='numpy'):
 
 
 @pytest.fixture
+def result_binary():
+    values = [1, 2, 3]
+    expected_result = np.asarray([
+        [0, 1, 1, 0, 0],
+        [0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0]
+    ], dtype=np.float32)
+    return values, expected_result
+
+
+def test_binary_numpy(result_binary):
+    values, expected_result = result_binary
+    numpy_agg = input_data()
+    numpy_result = binary(numpy_agg, values)
+    general_output_checks(numpy_agg, numpy_result, expected_result)
+
+
+def test_binary_dask_numpy(result_binary):
+    values, expected_result = result_binary
+    dask_agg = input_data(backend='dask')
+    dask_result = binary(dask_agg, values)
+    general_output_checks(dask_agg, dask_result, expected_result)
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_binary_cupy(result_reclassify):
+    values, expected_result = result_binary
+    cupy_agg = input_data(backend='cupy')
+    cupy_result = binary(cupy_agg, values)
+    general_output_checks(cupy_agg, cupy_result, expected_result)
+
+
+@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+def test_binary_dask_cupy(result_binary):
+    values, expected_result = result_binary
+    dask_cupy_agg = input_data(backend='dask+cupy')
+    dask_cupy_result = binary(dask_cupy_agg, values)
+    general_output_checks(dask_cupy_agg, dask_cupy_result, expected_result)
+
+
+@pytest.fixture
 def result_reclassify():
     bins = [10, 15, np.inf]
     new_values = [1, 2, 3]
@@ -29,6 +71,15 @@ def result_reclassify():
         [2., 3., 3., 3., np.nan]
     ], dtype=np.float32)
     return bins, new_values, expected_result
+
+
+def test_reclassify_numpy_mismatch_length():
+    bins = [10]
+    new_values = [1, 2, 3]
+    numpy_agg = input_data()
+    msg = 'bins and new_values mismatch. Should have same length.'
+    with pytest.raises(ValueError, match=msg):
+        reclassify(numpy_agg, bins, new_values)
 
 
 def test_reclassify_numpy(result_reclassify):
@@ -71,6 +122,15 @@ def result_quantile():
         [4., 4., 4., 4., np.nan]
     ], dtype=np.float32)
     return k, expected_result
+
+
+def test_quantile_not_enough_unique_values():
+    agg = input_data()
+    n_uniques = np.isfinite(agg.data).sum()
+    k = n_uniques + 1
+    result_quantile = quantile(agg, k=k)
+    n_uniques_result = np.isfinite(result_quantile.data).sum()
+    np.testing.assert_allclose(n_uniques_result, n_uniques)
 
 
 def test_quantile_numpy(result_quantile):
@@ -130,6 +190,15 @@ def result_natural_breaks_num_sample():
         [4., 4., 4., 4., np.nan]
     ], dtype=np.float32)
     return k, num_sample, expected_result
+
+
+def test_natural_breaks_not_enough_unique_values():
+    agg = input_data()
+    n_uniques = np.isfinite(agg.data).sum()
+    k = n_uniques + 1
+    result_natural_breaks = natural_breaks(agg, k=k)
+    n_uniques_result = np.isfinite(result_natural_breaks.data).sum()
+    np.testing.assert_allclose(n_uniques_result, n_uniques)
 
 
 def test_natural_breaks_numpy(result_natural_breaks):

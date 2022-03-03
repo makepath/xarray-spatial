@@ -11,26 +11,14 @@ except ImportError:
         ndarray = False
 
 import dask.array as da
-import datashader.transfer_functions as tf
 import numba as nb
 import numpy as np
-from datashader.colors import rgb
 
 from xrspatial.utils import ArrayTypeFunctionMapping, cuda_args, ngjit, not_implemented_func
 
 
-def color_values(agg, color_key, alpha=255):
-    def _convert_color(c):
-        r, g, b = rgb(c)
-        return np.array([r, g, b, alpha]).astype(np.uint8).view(np.uint32)[0]
-
-    _converted_colors = {k: _convert_color(v) for k, v in color_key.items()}
-    f = np.vectorize(lambda v: _converted_colors.get(v, 0))
-    return tf.Image(f(agg.data))
-
-
 @ngjit
-def _binary(data, values):
+def _cpu_binary(data, values):
     out = np.zeros_like(data)
     rows, cols = data.shape
     for y in range(0, rows):
@@ -42,14 +30,103 @@ def _binary(data, values):
     return out
 
 
+def _run_numpy_binary(data, values):
+    values = np.asarray(values)
+    out = _cpu_binary(data, values)
+    return out
+
+
+def _run_dask_numpy_binary(data, values):
+    _func = partial(_run_numpy_binary, values=values)
+    out = data.map_blocks(_func)
+    return out
+
+
+@nb.cuda.jit(device=True)
+def _gpu_binary(data, values):
+    val = data[0, 0]
+    for v in values:
+        if val == v:
+            return 1
+    return 0
+
+
+@nb.cuda.jit
+def _run_gpu_binary(data, values, out):
+    i, j = nb.cuda.grid(2)
+    if i >= 0 and i < out.shape[0] and j >= 0 and j < out.shape[1]:
+        out[i, j] = _gpu_binary(data[i:i+1, j:j+1], values)
+
+
+def _run_cupy_binary(data, values):
+    values_cupy = cupy.asarray(values)
+    out = cupy.empty(data.shape, dtype='f4')
+    out[:] = cupy.nan
+    griddim, blockdim = cuda_args(data.shape)
+    _run_gpu_binary[griddim, blockdim](data, values_cupy, out)
+    return out
+
+
+def _run_dask_cupy_binary(data, values_cupy):
+    out = data.map_blocks(lambda da: _run_cupy_binary(da, values_cupy), meta=cupy.array(()))
+    return out
+
+
 def binary(agg, values, name='binary'):
+    """
+    Binarize a data array based on a set of values. Data that equals to a value in the set will be
+    set to 1. In contrast, data that does not equal to any value in the set will be set to 0.
 
-    if isinstance(values, (list, tuple)):
-        vals = np.array(values)
-    else:
-        vals = values
+    Parameters
+    ----------
+    agg : xarray.DataArray
+        2D NumPy, CuPy, NumPy-backed Dask, or Cupy-backed Dask array
+        of values to be reclassified.
+    values : array-like object
+        Values to keep in the binarized array.
+    name : str, default='binary'
+        Name of output aggregate array.
 
-    return xr.DataArray(_binary(agg.data, vals),
+    Returns
+    -------
+    binarized_agg : xarray.DataArray, of the same type as `agg`
+        2D aggregate array of binarized data array.
+        All other input attributes are preserved.
+
+    Examples
+    --------
+    Binary works with NumPy backed xarray DataArray
+
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.classify import binary
+
+        >>> data = np.array([
+            [np.nan,  1.,  2.,  3.,  4.],
+            [5.,  6.,  7.,  8.,  9.],
+            [10., 11., 12., 13., 14.],
+            [15., 16., 17., 18., np.inf],
+        ], dtype=np.float32)
+        >>> agg = xr.DataArray(data)
+        >>> values = [1, 2, 3]
+        >>> agg_binary = binary(agg, values)
+        >>> print(agg_binary)
+        <xarray.DataArray 'binary' (dim_0: 4, dim_1: 5)>
+        array([[0.,  1.,  1.,  1.,  0.],
+               [0.,  0.,  0.,  0.,  0.],
+               [0.,  0.,  0.,  0.,  0.],
+               [0.,  0.,  0.,  0.,  0.]], dtype=float32)
+        Dimensions without coordinates: dim_0, dim_1
+    """
+
+    mapper = ArrayTypeFunctionMapping(numpy_func=_run_numpy_binary,
+                                      dask_func=_run_dask_numpy_binary,
+                                      cupy_func=_run_cupy_binary,
+                                      dask_cupy_func=_run_dask_cupy_binary)
+    out = mapper(agg)(agg.data, values)
+    return xr.DataArray(out,
                         name=name,
                         dims=agg.dims,
                         coords=agg.coords,
