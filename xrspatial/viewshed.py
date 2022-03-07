@@ -1039,13 +1039,16 @@ def _calculate_angle(event_x, event_y, viewpoint_x, viewpoint_y):
     if event_x == viewpoint_x and event_y == viewpoint_y:
         return 0
 
-    # Calculate angle between (x1, y1) and (x2, y2)
-    ang = atan(fabs(event_y - viewpoint_y) / fabs(event_x - viewpoint_x))
-
-    # M_PI is defined in math.h to represent 3.14159...
     if viewpoint_y == event_y and event_x > viewpoint_x:
         # between 1st and 4th quadrant
         return 0
+
+    if viewpoint_x > event_x and viewpoint_y == event_y:
+        # between 1st and 3rd quadrant
+        return PI
+
+    # Calculate angle between (x1, y1) and (x2, y2)
+    ang = atan(fabs(event_y - viewpoint_y) / fabs(event_x - viewpoint_x))
 
     if event_x > viewpoint_x and event_y < viewpoint_y:
         # first quadrant
@@ -1054,10 +1057,6 @@ def _calculate_angle(event_x, event_y, viewpoint_x, viewpoint_y):
     if viewpoint_x > event_x and viewpoint_y > event_y:
         # 2nd quadrant
         return PI - ang
-
-    if viewpoint_x > event_x and viewpoint_y == event_y:
-        # between 1st and 3rd quadrant
-        return PI
 
     if viewpoint_x > event_x and viewpoint_y < event_y:
         # 3rd quadrant
