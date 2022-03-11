@@ -5,7 +5,6 @@ import xarray as xr
 from xrspatial import binary, equal_interval, natural_breaks, quantile, reclassify
 from xrspatial.tests.general_checks import (create_test_raster, cuda_and_cupy_available,
                                             general_output_checks)
-from xrspatial.utils import doesnt_have_cuda
 
 
 def input_data(backend='numpy'):
@@ -45,15 +44,15 @@ def test_binary_dask_numpy(result_binary):
     general_output_checks(dask_agg, dask_result, expected_result)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
-def test_binary_cupy(result_reclassify):
+@cuda_and_cupy_available
+def test_binary_cupy(result_binary):
     values, expected_result = result_binary
     cupy_agg = input_data(backend='cupy')
     cupy_result = binary(cupy_agg, values)
     general_output_checks(cupy_agg, cupy_result, expected_result)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_binary_dask_cupy(result_binary):
     values, expected_result = result_binary
     dask_cupy_agg = input_data(backend='dask+cupy')

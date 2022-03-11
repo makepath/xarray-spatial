@@ -7,7 +7,6 @@ from xrspatial import hillshade
 from xrspatial.tests.general_checks import (assert_numpy_equals_cupy,
                                             assert_numpy_equals_dask_numpy, create_test_raster,
                                             cuda_and_cupy_available, general_output_checks)
-from xrspatial.utils import doesnt_have_cuda
 
 from ..gpu_rtx import has_rtx
 

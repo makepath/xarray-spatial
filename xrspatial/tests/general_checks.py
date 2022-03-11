@@ -1,9 +1,9 @@
 import dask.array as da
 import numpy as np
+import pytest
 import xarray as xr
 
 from xrspatial.utils import ArrayTypeFunctionMapping, has_cuda_and_cupy
-
 
 # Use this as a decorator to skip tests if do not have both CUDA and CuPy available.
 cuda_and_cupy_available = pytest.mark.skipif(

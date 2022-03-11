@@ -10,6 +10,7 @@ from xrspatial import zonal_apply as apply
 from xrspatial import zonal_crosstab as crosstab
 from xrspatial import zonal_stats as stats
 from xrspatial.zonal import regions
+
 from .general_checks import create_test_raster, has_cuda_and_cupy
 
 
