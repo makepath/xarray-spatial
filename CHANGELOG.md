@@ -1,6 +1,26 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.3.3 - 2022-03-21
+- Don't calculate angle when not needed (#677)
+- codecov: ignore all tests at once (#674)
+- add more tests to focal module (#676)
+- classify: more tests (#675)
+- Codecov: disable Numba; ignore tests, experimental, and gpu_rtx (#673)
+- Improve linter: add isort (#672)
+- removed stale test files from project root (#670)
+- User guide fixes (#665)
+- license year in README to include 2022 (#668)
+- install dependencies specified in test config (#666)
+- Pytests for CuPy zonal stats (#658)
+- add Codecov badge to README
+- codecov with github action (#663)
+- Modernise build system (#654)
+- classify tools: classify infinite values as nans, natural_breaks: classify all data points when using sub sample (#653)
+- Add more benchmarks (#648)
+- Stubbed out function for Analytics module (#621)
+- Fix doc build failure due to Jinja2 version (#651)
+
 ### Version 0.3.2 - 2022-02-04
 - Remove numpy version pin (#637)
 - aspect: added benchmarks (#640)
