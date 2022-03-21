@@ -2,6 +2,7 @@
 -----------
 
 ### Version 0.3.3 - 2022-03-21
+- fixed ubuntu version (#681)
 - Don't calculate angle when not needed (#677)
 - codecov: ignore all tests at once (#674)
 - add more tests to focal module (#676)
