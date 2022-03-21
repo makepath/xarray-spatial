@@ -19,7 +19,7 @@ jobs:
           python -m pip install --upgrade pip
       - name: Install xarray-spatial
         run: |
-          pip install .[docs,tests]
+          pip install .[doc,tests]
           pip list
       - name: Build docs
         run: |
