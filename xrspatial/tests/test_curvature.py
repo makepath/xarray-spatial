@@ -4,8 +4,7 @@ import pytest
 from xrspatial import curvature
 from xrspatial.tests.general_checks import (assert_numpy_equals_cupy,
                                             assert_numpy_equals_dask_numpy, create_test_raster,
-                                            general_output_checks)
-from xrspatial.utils import doesnt_have_cuda
+                                            cuda_and_cupy_available, general_output_checks)
 
 
 @pytest.fixture
@@ -80,7 +79,7 @@ def test_curvature_on_concave_surface(concave_surface):
     general_output_checks(numpy_agg, numpy_result, expected_result, verify_dtype=True)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 @pytest.mark.parametrize("size", [(2, 4), (10, 15)])
 @pytest.mark.parametrize(
     "dtype", [np.int32, np.int64, np.uint32, np.uint64, np.float32, np.float64])

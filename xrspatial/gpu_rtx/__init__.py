@@ -1,4 +1,4 @@
-from ..utils import has_cuda, has_cupy
+from ..utils import has_cuda_and_cupy
 
 try:
     from rtxpy import RTX
@@ -7,4 +7,4 @@ except ImportError:
 
 
 def has_rtx():
-    return has_cupy() and has_cuda() and RTX is not None
+    return has_cuda_and_cupy and RTX is not None

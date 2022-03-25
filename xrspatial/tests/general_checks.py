@@ -1,8 +1,13 @@
 import dask.array as da
 import numpy as np
+import pytest
 import xarray as xr
 
-from xrspatial.utils import ArrayTypeFunctionMapping, has_cuda
+from xrspatial.utils import ArrayTypeFunctionMapping, has_cuda_and_cupy
+
+# Use this as a decorator to skip tests if do not have both CUDA and CuPy available.
+cuda_and_cupy_available = pytest.mark.skipif(
+    not has_cuda_and_cupy(), reason="Requires CUDA and CuPy")
 
 
 def create_test_raster(
@@ -13,7 +18,7 @@ def create_test_raster(
     for i, dim in enumerate(dims):
         raster[dim] = np.linspace(0, data.shape[i] - 1, data.shape[i])
 
-    if has_cuda() and 'cupy' in backend:
+    if has_cuda_and_cupy() and 'cupy' in backend:
         import cupy
         raster.data = cupy.asarray(raster.data)
 

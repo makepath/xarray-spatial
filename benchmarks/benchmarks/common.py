@@ -2,7 +2,7 @@ import numpy as np
 import xarray as xr
 
 from xrspatial.gpu_rtx import has_rtx
-from xrspatial.utils import has_cuda, has_cupy
+from xrspatial.utils import has_cuda_and_cupy
 
 
 def get_xr_dataarray(
@@ -46,7 +46,7 @@ def get_xr_dataarray(
     if type == "numpy":
         pass
     elif type == "cupy":
-        if not (has_cuda() and has_cupy()):
+        if not has_cuda_and_cupy:
             raise NotImplementedError()
         import cupy
         z = cupy.asarray(z)

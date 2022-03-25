@@ -1,11 +1,10 @@
 import dask.array as da
 import numpy as np
-import pytest
 import xarray as xr
 
 from xrspatial import perlin
-from xrspatial.tests.general_checks import general_output_checks
-from xrspatial.utils import doesnt_have_cuda, has_cuda
+from xrspatial.tests.general_checks import cuda_and_cupy_available, general_output_checks
+from xrspatial.utils import has_cuda_and_cupy
 
 
 def create_test_arr(backend='numpy'):
@@ -14,7 +13,7 @@ def create_test_arr(backend='numpy'):
     data = np.zeros((H, W), dtype=np.float32)
     raster = xr.DataArray(data, dims=['y', 'x'])
 
-    if has_cuda() and 'cupy' in backend:
+    if has_cuda_and_cupy() and 'cupy' in backend:
         import cupy
         raster.data = cupy.asarray(raster.data)
 
@@ -41,7 +40,7 @@ def test_perlin_cpu():
     )
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 def test_perlin_gpu():
     # vanilla numpy version
     data_numpy = create_test_arr()

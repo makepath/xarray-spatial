@@ -4,8 +4,8 @@ import xarray as xr
 
 from xrspatial.multispectral import (arvi, ebbi, evi, gci, nbr, nbr2, ndmi, ndvi, savi, sipi,
                                      true_color)
-from xrspatial.tests.general_checks import create_test_raster, general_output_checks
-from xrspatial.utils import doesnt_have_cuda
+from xrspatial.tests.general_checks import (create_test_raster, cuda_and_cupy_available,
+                                            general_output_checks)
 
 
 @pytest.fixture
@@ -275,7 +275,7 @@ def test_ndvi_cpu(nir_data, red_data, result_ndvi):
     general_output_checks(nir_data, result, result_ndvi, verify_dtype=True)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_ndvi_gpu(nir_data, red_data, result_ndvi):
     result = ndvi(nir_data, red_data)
@@ -304,7 +304,7 @@ def test_savi_cpu(nir_data, red_data, result_savi):
     general_output_checks(nir_data, result, result_savi)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_savi_gpu(nir_data, red_data, result_savi):
     # test default savi where soil_factor = 1.0
@@ -319,7 +319,7 @@ def test_arvi_cpu(nir_data, red_data, blue_data, result_arvi):
     general_output_checks(nir_data, result, result_arvi)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_arvi_gpu(nir_data, red_data, blue_data, result_arvi):
     result = arvi(nir_data, red_data, blue_data)
@@ -333,7 +333,7 @@ def test_evi_cpu(nir_data, red_data, blue_data, result_evi):
     general_output_checks(nir_data, result, result_evi)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_evi_gpu(nir_data, red_data, blue_data, result_evi):
     result = evi(nir_data, red_data, blue_data)
@@ -347,7 +347,7 @@ def test_gci_cpu(nir_data, green_data, result_gci):
     general_output_checks(nir_data, result, result_gci)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_gci_gpu(nir_data, green_data, result_gci):
     result = gci(nir_data, green_data)
@@ -361,7 +361,7 @@ def test_sipi_cpu(nir_data, red_data, blue_data, result_sipi):
     general_output_checks(nir_data, result, result_sipi)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_sipi_gpu(nir_data, red_data, blue_data, result_sipi):
     result = sipi(nir_data, red_data, blue_data)
@@ -375,7 +375,7 @@ def test_nbr_cpu(nir_data, swir2_data, result_nbr):
     general_output_checks(nir_data, result, result_nbr)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_nbr_gpu(nir_data, swir2_data, result_nbr):
     result = nbr(nir_data, swir2_data)
@@ -389,7 +389,7 @@ def test_nbr2_cpu(swir1_data, swir2_data, result_nbr2):
     general_output_checks(swir1_data, result, result_nbr2)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_nbr2_gpu(swir1_data, swir2_data, result_nbr2):
     result = nbr2(swir1_data, swir2_data)
@@ -403,7 +403,7 @@ def test_ndmi_cpu(nir_data, swir1_data, result_ndmi):
     general_output_checks(nir_data, result, result_ndmi)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_ndmi_gpu(nir_data, swir1_data, result_ndmi):
     result = ndmi(nir_data, swir1_data)
@@ -417,7 +417,7 @@ def test_ebbi_cpu(red_data, swir1_data, tir_data, result_ebbi):
     general_output_checks(red_data, result, result_ebbi)
 
 
-@pytest.mark.skipif(doesnt_have_cuda(), reason="CUDA Device not Available")
+@cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_ebbi_gpu(red_data, swir1_data, tir_data, result_ebbi):
     result = ebbi(red_data, swir1_data, tir_data)
