@@ -141,7 +141,7 @@ def _single_stats_func(
 ) -> pd.DataFrame:
 
     _, values_by_zones, zone_breaks = _sort_and_stride(zones_block, values_block, unique_zones)
-    results = _calc_stats(values_by_zones, zone_breaks,unique_zones, zone_ids, func, nodata_values)
+    results = _calc_stats(values_by_zones, zone_breaks, unique_zones, zone_ids, func, nodata_values)
     return results
 
 
@@ -291,7 +291,7 @@ def _stats_numpy(
                 if iz == 0:
                     zs = sorted_indices[: zone_breaks[iz]]
                 else:
-                    zs = sorted_indices[zone_breaks[iz-1] : zone_breaks[iz]]
+                    zs = sorted_indices[zone_breaks[iz-1]: zone_breaks[iz]]
                 result[stats_id][zs] = stats_results[iz]
             stats_id += 1
         result = result.reshape(len(stats_funcs), *values.shape)
