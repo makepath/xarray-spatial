@@ -11,7 +11,7 @@ from xrspatial import zonal_crosstab as crosstab
 from xrspatial import zonal_stats as stats
 from xrspatial.zonal import regions
 
-from .general_checks import create_test_raster, has_cuda_and_cupy
+from .general_checks import create_test_raster, general_output_checks, has_cuda_and_cupy
 
 
 @pytest.fixture
@@ -61,6 +61,40 @@ def result_default_stats():
 
 
 @pytest.fixture
+def result_default_stats_dataarray():
+    expected_result = np.array(
+        [[[0., 0., 1., 1., 2., 2., 2.4, 2.4],
+          [0., 0., 1., 1., 2., 2., 2.4, 2.4],
+          [0., 0., 1., 1., 2., np.nan, 2.4, 2.4]],
+
+         [[0., 0., 1., 1., 2., 2., 3., 3.],
+          [0., 0., 1., 1., 2., 2., 3., 3.],
+          [0., 0., 1., 1., 2., np.nan, 3., 3.]],
+
+         [[0., 0., 1., 1., 2., 2., 0., 0.],
+          [0., 0., 1., 1., 2., 2., 0., 0.],
+          [0., 0., 1., 1., 2., np.nan, 0., 0.]],
+
+         [[0., 0., 6., 6., 8., 8., 12., 12.],
+          [0., 0., 6., 6., 8., 8., 12., 12.],
+          [0., 0., 6., 6., 8., np.nan, 12., 12.]],
+
+         [[0., 0., 0., 0., 0., 0., 1.2, 1.2],
+          [0., 0., 0., 0., 0., 0., 1.2, 1.2],
+          [0., 0., 0., 0., 0., np.nan, 1.2, 1.2]],
+
+         [[0., 0., 0., 0., 0., 0., 1.44, 1.44],
+          [0., 0., 0., 0., 0., 0., 1.44, 1.44],
+          [0., 0., 0., 0., 0., np.nan, 1.44, 1.44]],
+
+         [[5., 5., 6., 6., 4., 4., 5., 5.],
+          [5., 5., 6., 6., 4., 4., 5., 5.],
+          [5., 5., 6., 6., 4., np.nan, 5., 5.]]]
+    )
+    return expected_result
+
+
+@pytest.fixture
 def result_zone_ids_stats():
     zone_ids = [0, 3]
     expected_result = {
@@ -73,6 +107,41 @@ def result_zone_ids_stats():
         'var':   [0, 1.44],
         'count': [5, 5]
     }
+    return zone_ids, expected_result
+
+
+@pytest.fixture
+def result_zone_ids_stats_dataarray():
+    zone_ids = [0, 3]
+    expected_result = np.array(
+        [[[0., 0., np.nan, np.nan, np.nan, np.nan, 2.4, 2.4],
+          [0., 0., np.nan, np.nan, np.nan, np.nan, 2.4, 2.4],
+          [0., 0., np.nan, np.nan, np.nan, np.nan, 2.4, 2.4]],
+
+         [[0., 0., np.nan, np.nan, np.nan, np.nan, 3., 3.],
+          [0., 0., np.nan, np.nan, np.nan, np.nan, 3., 3.],
+          [0., 0., np.nan, np.nan, np.nan, np.nan, 3., 3.]],
+
+         [[0., 0., np.nan, np.nan, np.nan, np.nan, 0., 0.],
+          [0., 0., np.nan, np.nan, np.nan, np.nan, 0., 0.],
+          [0., 0., np.nan, np.nan, np.nan, np.nan, 0., 0.]],
+
+         [[0., 0., np.nan, np.nan, np.nan, np.nan, 12., 12.],
+          [0., 0., np.nan, np.nan, np.nan, np.nan, 12., 12.],
+          [0., 0., np.nan, np.nan, np.nan, np.nan, 12., 12.]],
+
+         [[0., 0., np.nan, np.nan, np.nan, np.nan, 1.2, 1.2],
+          [0., 0., np.nan, np.nan, np.nan, np.nan, 1.2, 1.2],
+          [0., 0., np.nan, np.nan, np.nan, np.nan, 1.2, 1.2]],
+
+         [[0., 0., np.nan, np.nan, np.nan, np.nan, 1.44, 1.44],
+          [0., 0., np.nan, np.nan, np.nan, np.nan, 1.44, 1.44],
+          [0., 0., np.nan, np.nan, np.nan, np.nan, 1.44, 1.44]],
+
+         [[5., 5., np.nan, np.nan, np.nan, np.nan, 5., 5.],
+          [5., 5., np.nan, np.nan, np.nan, np.nan, 5., 5.],
+          [5., 5., np.nan, np.nan, np.nan, np.nan, 5., 5.]]])
+
     return zone_ids, expected_result
 
 
@@ -93,6 +162,22 @@ def result_custom_stats():
         'double_sum': [12, 16],
         'range':      [0,   0],
     }
+    return nodata_values, zone_ids, expected_result
+
+
+@pytest.fixture
+def result_custom_stats_dataarray():
+    zone_ids = [1, 2]
+    nodata_values = 0
+    expected_result = np.array(
+        [[[np.nan, np.nan, 12., 12., 16., 16., np.nan, np.nan],
+          [np.nan, np.nan, 12., 12., 16., 16., np.nan, np.nan],
+          [np.nan, np.nan, 12., 12., 16., np.nan, np.nan, np.nan]],
+
+         [[np.nan, np.nan, 0., 0., 0., 0., np.nan, np.nan],
+          [np.nan, np.nan, 0., 0., 0., 0., np.nan, np.nan],
+          [np.nan, np.nan, 0., 0., 0., np.nan, np.nan, np.nan]]]
+    )
     return nodata_values, zone_ids, expected_result
 
 
@@ -174,6 +259,22 @@ def test_default_stats(backend, data_zones, data_values_2d, result_default_stats
     check_results(backend, df_result, result_default_stats)
 
 
+@pytest.mark.parametrize("backend", ['numpy'])
+def test_default_stats_dataarray(
+    backend, data_zones, data_values_2d, result_default_stats_dataarray
+):
+    dataarray_result = stats(
+        zones=data_zones, values=data_values_2d, return_type='xarray.DataArray'
+    )
+    general_output_checks(
+        data_values_2d,
+        dataarray_result,
+        result_default_stats_dataarray,
+        verify_dtype=False,
+        verify_attrs=False,
+    )
+
+
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy'])
 def test_zone_ids_stats(backend, data_zones, data_values_2d, result_zone_ids_stats):
     if backend == 'cupy' and not has_cuda_and_cupy():
@@ -182,6 +283,19 @@ def test_zone_ids_stats(backend, data_zones, data_values_2d, result_zone_ids_sta
     df_result = stats(zones=data_zones, values=data_values_2d,
                       zone_ids=zone_ids)
     check_results(backend, df_result, expected_result)
+
+
+@pytest.mark.parametrize("backend", ['numpy'])
+def test_zone_ids_stats_dataarray(
+    backend, data_zones, data_values_2d, result_zone_ids_stats_dataarray
+):
+    zone_ids, expected_result = result_zone_ids_stats_dataarray
+    dataarray_result = stats(
+        zones=data_zones, values=data_values_2d, zone_ids=zone_ids, return_type='xarray.DataArray'
+    )
+    general_output_checks(
+        data_values_2d, dataarray_result, expected_result, verify_dtype=False, verify_attrs=False
+    )
 
 
 @pytest.mark.parametrize("backend", ['numpy', 'cupy'])
@@ -201,6 +315,23 @@ def test_custom_stats(backend, data_zones, data_values_2d, result_custom_stats):
         zone_ids=zone_ids, nodata_values=nodata_values
     )
     check_results(backend, df_result, expected_result)
+
+
+@pytest.mark.parametrize("backend", ['numpy'])
+def test_custom_stats_dataarray(backend, data_zones, data_values_2d, result_custom_stats_dataarray):
+    # ---- custom stats returns a xr.DataArray (NumPy only) ----
+    custom_stats = {
+        'double_sum': _double_sum,
+        'range': _range,
+    }
+    nodata_values, zone_ids, expected_result = result_custom_stats_dataarray
+    dataarray_result = stats(
+        zones=data_zones, values=data_values_2d, stats_funcs=custom_stats,
+        zone_ids=zone_ids, nodata_values=nodata_values, return_type='xarray.DataArray'
+    )
+    general_output_checks(
+        data_values_2d, dataarray_result, expected_result, verify_dtype=False, verify_attrs=False
+    )
 
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
