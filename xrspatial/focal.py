@@ -1,3 +1,4 @@
+import copy
 from functools import partial
 from math import isnan
 
@@ -740,7 +741,10 @@ def hotspots(raster, kernel):
     )
     out = mapper(raster)(raster, kernel)
 
+    attrs = copy.deepcopy(raster.attrs)
+    attrs['unit'] = '%'
+
     return DataArray(out,
                      coords=raster.coords,
                      dims=raster.dims,
-                     attrs=raster.attrs)
+                     attrs=attrs)

@@ -421,14 +421,30 @@ def test_hotspots_numpy(data_hotspots):
     data, kernel, expected_result = data_hotspots
     numpy_agg = create_test_raster(data)
     numpy_hotspots = hotspots(numpy_agg, kernel)
-    general_output_checks(numpy_agg, numpy_hotspots, expected_result)
+    general_output_checks(numpy_agg, numpy_hotspots, expected_result, verify_attrs=False)
+    # validate attrs
+    assert numpy_hotspots.shape == numpy_agg.shape
+    assert numpy_hotspots.dims == numpy_agg.dims
+    for coord in numpy_agg.coords:
+        np.testing.assert_allclose(
+            numpy_hotspots[coord].data, numpy_agg[coord].data, equal_nan=True
+        )
+    assert numpy_hotspots.attrs['unit'] == '%'
 
 
 def test_hotspots_dask_numpy(data_hotspots):
     data, kernel, expected_result = data_hotspots
     dask_numpy_agg = create_test_raster(data, backend='dask')
     dask_numpy_hotspots = hotspots(dask_numpy_agg, kernel)
-    general_output_checks(dask_numpy_agg, dask_numpy_hotspots, expected_result)
+    general_output_checks(dask_numpy_agg, dask_numpy_hotspots, expected_result, verify_attrs=False)
+    # validate attrs
+    assert dask_numpy_hotspots.shape == dask_numpy_agg.shape
+    assert dask_numpy_hotspots.dims == dask_numpy_agg.dims
+    for coord in dask_numpy_agg.coords:
+        np.testing.assert_allclose(
+            dask_numpy_hotspots[coord].data, dask_numpy_agg[coord].data, equal_nan=True
+        )
+    assert dask_numpy_hotspots.attrs['unit'] == '%'
 
 
 @cuda_and_cupy_available
