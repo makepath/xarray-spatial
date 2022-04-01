@@ -634,46 +634,51 @@ def _get_zone_values(values_by_zones, start, end):
         return values_by_zones[:, start:end]
 
 
-def _single_zone_crosstab(
+def _single_zone_crosstab_2d(
     zone_values,
     unique_cats,
     cat_ids,
     nodata_values,
     crosstab_dict,
 ):
-    if len(zone_values.shape) == 1:
-        # 1D flatten, i.e, original data is 2D
+    # 1D flatten zone_values, i.e, original data is 2D
+    # filter out non-finite and nodata_values
+    zone_values = zone_values[
+        np.isfinite(zone_values) & (zone_values != nodata_values)
+    ]
+    total_count = zone_values.shape[0]
+    crosstab_dict[TOTAL_COUNT].append(total_count)
 
-        # filter out non-finite and nodata_values
-        zone_values = zone_values[
-            np.isfinite(zone_values) & (zone_values != nodata_values)
-        ]
-        total_count = zone_values.shape[0]
-        crosstab_dict[TOTAL_COUNT].append(total_count)
+    sorted_zone_values = np.sort(zone_values)
+    zone_cat_breaks = _strides(sorted_zone_values, unique_cats)
 
-        sorted_zone_values = np.sort(zone_values)
-        zone_cat_breaks = _strides(sorted_zone_values, unique_cats)
+    cat_start = 0
 
-        cat_start = 0
+    for j, cat in enumerate(unique_cats):
+        if cat in cat_ids:
+            count = zone_cat_breaks[j] - cat_start
+            crosstab_dict[cat].append(count)
+            cat_start = zone_cat_breaks[j]
 
-        for j, cat in enumerate(unique_cats):
-            if cat in cat_ids:
-                count = zone_cat_breaks[j] - cat_start
-                crosstab_dict[cat].append(count)
-                cat_start = zone_cat_breaks[j]
 
-    else:
-        # 2D flatten, i.e, original data is 3D
-        for j, cat in enumerate(unique_cats):
-            if cat in cat_ids:
-                zone_cat_data = zone_values[j]
-                # filter out non-finite and nodata_values
-                zone_cat_data = zone_cat_data[
-                    np.isfinite(zone_cat_data)
-                    & (zone_cat_data != nodata_values)
-                ]
-                count = zone_cat_data.shape[0]
-                crosstab_dict[cat].append(count)
+def _single_zone_crosstab_3d(
+    zone_values,
+    unique_cats,
+    cat_ids,
+    nodata_values,
+    crosstab_dict,
+    stats_func
+):
+    # 2D flatten `zone_values`, i.e, original data is 3D
+    for j, cat in enumerate(unique_cats):
+        if cat in cat_ids:
+            zone_cat_data = zone_values[j]
+            # filter out non-finite and nodata_values
+            zone_cat_data = zone_cat_data[
+                np.isfinite(zone_cat_data)
+                & (zone_cat_data != nodata_values)
+            ]
+            crosstab_dict[cat].append(stats_func(zone_cat_data))
 
 
 def _crosstab_numpy(
@@ -712,10 +717,14 @@ def _crosstab_numpy(
         if unique_zones[i] in zone_ids:
             # get data for zone unique_zones[i]
             zone_values = _get_zone_values(values_by_zones, start, end)
-            _single_zone_crosstab(
-                zone_values, unique_cats, cat_ids,
-                nodata_values, crosstab_dict
-            )
+            if len(values.shape) == 2:
+                _single_zone_crosstab_2d(
+                    zone_values, unique_cats, cat_ids, nodata_values, crosstab_dict
+                )
+            else:
+                _single_zone_crosstab_3d(
+                    zone_values, unique_cats, cat_ids, nodata_values, crosstab_dict, _DEFAULT_STATS[agg]  # noqa
+                )
         start = end
 
     if TOTAL_COUNT in crosstab_dict:
@@ -763,10 +772,15 @@ def _single_chunk_crosstab(
         if unique_zones[i] in zone_ids:
             # get data for zone unique_zones[i]
             zone_values = _get_zone_values(values_by_zones, start, end)
-            _single_zone_crosstab(
-                zone_values, unique_cats, cat_ids,
-                nodata_values, results
-            )
+            if len(values_block.shape) == 2:
+                _single_zone_crosstab_2d(
+                    zone_values, unique_cats, cat_ids, nodata_values, results
+                )
+            else:
+                _single_zone_crosstab_3d(
+                    zone_values, unique_cats, cat_ids, nodata_values, results, _DEFAULT_STATS['count']
+                )
+
         start = end
 
     if TOTAL_COUNT in results:
@@ -896,8 +910,10 @@ def crosstab(
 
     agg: str, default = 'count'
         Aggregation method.
-        If the data is 2D, available options are: percentage, count.
-        If the data is 3D, available option is: count.
+        If the `values` data is 2D, available options are: `percentage`, and `count`.
+        If `values` is 3D and is numpy-backed, available options are:
+        `min`, `max`, `mean`, `sum`, `std`, `var`, and `count`.
+        If `values` is 3D and is dask with numpy-backed, the only available option is `count`.
 
     nodata_values: int, float, default=None
         Nodata value in `values` raster.
@@ -999,17 +1015,23 @@ def crosstab(
         raise ValueError("`values` must use either 2D or 3D coordinates.")
 
     agg_2d = ["percentage", "count"]
-    agg_3d = ["count"]
+    agg_3d_numpy = _DEFAULT_STATS.keys()
+    agg_3d_dask = ["count"]
 
     if values.ndim == 2 and agg not in agg_2d:
         raise ValueError(
             f"`agg` method for 2D data array must be one of following {agg_2d}"
         )
 
-    if values.ndim == 3 and agg not in agg_3d:
-        raise ValueError(
-            f"`agg` method for 3D data array must be one of following {agg_3d}"
-        )
+    if values.ndim == 3:
+        if isinstance(values.data, np.ndarray) and agg not in agg_3d_numpy:
+            raise ValueError(
+                f"`agg` method for 3D numpy backed data array must be one of following {agg_3d_numpy}"  # noqa
+            )
+        if isinstance(values.data, da.Array) and agg not in agg_3d_dask:
+            raise ValueError(
+                f"`agg` method for 3D dask backed data array must be one of following {agg_3d_dask}"
+            )
 
     if len(values.shape) == 3:
         # 3D case
