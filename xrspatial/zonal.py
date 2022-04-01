@@ -778,7 +778,7 @@ def _single_chunk_crosstab(
                 )
             else:
                 _single_zone_crosstab_3d(
-                    zone_values, unique_cats, cat_ids, nodata_values, results, _DEFAULT_STATS['count']
+                    zone_values, unique_cats, cat_ids, nodata_values, results, _DEFAULT_STATS['count']  # noqa
                 )
 
         start = end
