@@ -212,11 +212,55 @@ def result_crosstab_3d():
     zone_ids = [1, 2, 3]
     layer = -1
     expected_result = {
-        'zone': [1, 2, 3],
-        'cat1': [6, 5, 6],
-        'cat2': [6, 5, 6],
-        'cat3': [6, 5, 6],
-        'cat4': [6, 5, 6],
+        'mean': {
+            'zone': [1, 2, 3],
+            'cat1': [1., 1., 1.],
+            'cat2': [1., 1., 1.],
+            'cat3': [1., 1., 1.],
+            'cat4': [1., 1., 1.]
+        },
+        'max': {
+            'zone': [1, 2, 3],
+            'cat1': [1., 1., 1.],
+            'cat2': [1., 1., 1.],
+            'cat3': [1., 1., 1.],
+            'cat4': [1., 1., 1.]
+        },
+        'min': {
+            'zone': [1, 2, 3],
+            'cat1': [1., 1., 1.],
+            'cat2': [1., 1., 1.],
+            'cat3': [1., 1., 1.],
+            'cat4': [1., 1., 1.]
+        },
+        'sum': {
+            'zone': [1, 2, 3],
+            'cat1': [6., 5., 6.],
+            'cat2': [6., 5., 6.],
+            'cat3': [6., 5., 6.],
+            'cat4': [6., 5., 6.]
+        },
+        'std': {
+            'zone': [1, 2, 3],
+            'cat1': [0., 0., 0.],
+            'cat2': [0., 0., 0.],
+            'cat3': [0., 0., 0.],
+            'cat4': [0., 0., 0.]
+        },
+        'var': {
+            'zone': [1, 2, 3],
+            'cat1': [0., 0., 0.],
+            'cat2': [0., 0., 0.],
+            'cat3': [0., 0., 0.],
+            'cat4': [0., 0., 0.]
+        },
+        'count': {
+            'zone': [1, 2, 3],
+            'cat1': [6, 5, 6],
+            'cat2': [6, 5, 6],
+            'cat3': [6, 5, 6],
+            'cat4': [6, 5, 6]
+        }
     }
     return layer, zone_ids, expected_result
 
@@ -354,11 +398,21 @@ def test_percentage_crosstab_2d(backend, data_zones, data_values_2d, result_perc
 
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
-def test_crosstab_3d(backend, data_zones, data_values_3d, result_crosstab_3d):
+def test_crosstab_3d_count(backend, data_zones, data_values_3d, result_crosstab_3d):
     layer, zone_ids, expected_result = result_crosstab_3d
     df_result = crosstab(zones=data_zones, values=data_values_3d,
-                         zone_ids=zone_ids, layer=layer)
-    check_results(backend, df_result, expected_result)
+                         zone_ids=zone_ids, layer=layer, agg='count')
+    check_results(backend, df_result, expected_result['count'])
+
+
+@pytest.mark.parametrize("backend", ['numpy'])
+def test_crosstab_3d_agg_method(backend, data_zones, data_values_3d, result_crosstab_3d):
+    layer, zone_ids, expected_result = result_crosstab_3d
+    agg_methods = ['min', 'max', 'mean', 'sum', 'std', 'var', 'count']
+    for agg in agg_methods:
+        df_result = crosstab(zones=data_zones, values=data_values_3d,
+                             zone_ids=zone_ids, layer=layer, agg=agg)
+        check_results(backend, df_result, expected_result[agg])
 
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
