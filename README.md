@@ -1,4 +1,5 @@
-[![Build status](https://ci.appveyor.com/api/projects/status/4aco2mfbk14vds77?svg=true)](https://ci.appveyor.com/project/brendancol/xarray-spatial)
+![pypi](https://github.com/makepath/xarray-spatial/actions/workflows/pypi-publish.yml/badge.svg)
+![pytest](https://github.com/makepath/xarray-spatial/actions/workflows/test.yml/badge.svg)
 [![codecov](https://codecov.io/gh/makepath/xarray-spatial/branch/master/graph/badge.svg)](https://codecov.io/gh/makepath/xarray-spatial)
 [![PyPI version](https://badge.fury.io/py/xarray-spatial.svg)](https://badge.fury.io/py/xarray-spatial)
 [![Downloads](https://img.shields.io/pypi/dm/xarray-spatial.svg)]()
