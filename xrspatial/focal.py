@@ -3,6 +3,7 @@ from functools import partial
 from math import isnan
 
 import dask.array as da
+import numba as nb
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -611,40 +612,42 @@ def _hotspots_dask_numpy(raster, kernel):
     return out
 
 
-def _calc_hotspots_cupy(z_array):
-    out = cupy.zeros_like(z_array, dtype=cupy.int8)
-    rows, cols = z_array.shape
+@nb.cuda.jit(device=True)
+def _gpu_hotspots(data):
+    zscore = data[0, 0]
 
-    for y in prange(rows):
-        for x in prange(cols):
-            zscore = z_array[y, x]
+    # find p value
+    p_value = 1.0
+    if abs(zscore) >= 2.33:
+        p_value = 0.0099
+    elif abs(zscore) >= 1.65:
+        p_value = 0.0495
+    elif abs(zscore) >= 1.29:
+        p_value = 0.0985
 
-            # find p value
-            p_value = 1.0
-            if abs(zscore) >= 2.33:
-                p_value = 0.0099
-            elif abs(zscore) >= 1.65:
-                p_value = 0.0495
-            elif abs(zscore) >= 1.29:
-                p_value = 0.0985
+    # confidence
+    confidence = 0
+    if abs(zscore) > 2.58 and p_value < 0.01:
+        confidence = 99
+    elif abs(zscore) > 1.96 and p_value < 0.05:
+        confidence = 95
+    elif abs(zscore) > 1.65 and p_value < 0.1:
+        confidence = 90
 
-            # confidence
-            confidence = 0
-            if abs(zscore) > 2.58 and p_value < 0.01:
-                confidence = 99
-            elif abs(zscore) > 1.96 and p_value < 0.05:
-                confidence = 95
-            elif abs(zscore) > 1.65 and p_value < 0.1:
-                confidence = 90
+    hot_cold = 0
+    if zscore > 0:
+        hot_cold = 1
+    elif zscore < 0:
+        hot_cold = -1
 
-            hot_cold = 0
-            if zscore > 0:
-                hot_cold = 1
-            elif zscore < 0:
-                hot_cold = -1
+    return hot_cold * confidence
 
-            out[y, x] = hot_cold * confidence
-    return out
+
+@nb.cuda.jit
+def _run_gpu_hotspots(data, out):
+    i, j = nb.cuda.grid(2)
+    if i >= 0 and i < out.shape[0] and j >= 0 and j < out.shape[1]:
+        out[i, j] = _gpu_hotspots(data[i:i + 1, j:j + 1])
 
 
 def _hotspots_cupy(raster, kernel):
@@ -666,7 +669,9 @@ def _hotspots_cupy(raster, kernel):
         )
     z_array = (mean_array - global_mean) / global_std
 
-    out = _calc_hotspots_cupy(z_array)
+    out = cupy.zeros_like(z_array, dtype=cupy.int8)
+    griddim, blockdim = cuda_args(z_array.shape)
+    _run_gpu_hotspots[griddim, blockdim](z_array, out)
     return out
 
 
