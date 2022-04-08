@@ -452,7 +452,15 @@ def test_hotspot_gpu(data_hotspots):
     data, kernel, expected_result = data_hotspots
     cupy_agg = create_test_raster(data, backend='cupy')
     cupy_hotspots = hotspots(cupy_agg, kernel)
-    general_output_checks(cupy_agg, cupy_hotspots, expected_result)
+    general_output_checks(cupy_agg, cupy_hotspots, expected_result, verify_attrs=False)
+    # validate attrs
+    assert cupy_hotspots.shape == cupy_agg.shape
+    assert cupy_hotspots.dims == cupy_agg.dims
+    for coord in cupy_agg.coords:
+        np.testing.assert_allclose(
+            cupy_hotspots[coord].data, cupy_agg[coord].data, equal_nan=True
+        )
+    assert cupy_hotspots.attrs['unit'] == '%'
 
     # dask + cupy case not implemented
     dask_cupy_agg = create_test_raster(data, backend='dask+cupy')

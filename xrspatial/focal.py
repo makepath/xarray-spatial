@@ -728,8 +728,6 @@ def hotspots(raster, kernel):
         Dimensions without coordinates: dim_0, dim_1
     """
 
-    # TODO: edit unit of output raster to percent (%)
-
     # validate raster
     if not isinstance(raster, DataArray):
         raise TypeError("`raster` must be instance of DataArray")
