@@ -84,7 +84,7 @@ xarray-spatial does not depend on GDAL / GEOS, which makes it fully extensible i
       :target: https://github.com/makepath/xarray-spatial/blob/master/examples
    ---
    .. image:: _static/img/4-0.png
-      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/Path-finding_City-of-Austin-Road-Network.ipynb
+      :target: https://github.com/makepath/xarray-spatial/blob/master/examples/Pathfinding_Austin_Road_Network.ipynb
    ---
    .. image:: _static/img/4-1.png
       :target: user_guide/surface.html#Hillshade
