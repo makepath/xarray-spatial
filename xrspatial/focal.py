@@ -109,6 +109,11 @@ def _mean(data, excludes):
             *args, messages='mean() does not support dask with cupy backed DataArray.'),  # noqa
     )
     out = mapper(agg)(agg.data, excludes)
+
+    # free memory after each iteration to avoid CUDARuntimeError illegal memory access was encountered  # noqa
+    cupy.get_default_memory_pool().free_all_blocks()
+    cupy.get_default_pinned_memory_pool().free_all_blocks()
+
     return out
 
 
