@@ -100,7 +100,7 @@ def _mean_cupy(data, excludes):
 
 
 def _mean(data, excludes):
-    agg = xr.DataArray(data.astype(float))
+    agg = xr.DataArray(data)
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_mean_numpy,
         cupy_func=_mean_cupy,
@@ -109,11 +109,6 @@ def _mean(data, excludes):
             *args, messages='mean() does not support dask with cupy backed DataArray.'),  # noqa
     )
     out = mapper(agg)(agg.data, excludes)
-
-    # free memory after each iteration to avoid CUDARuntimeError illegal memory access was encountered  # noqa
-    cupy.get_default_memory_pool().free_all_blocks()
-    cupy.get_default_pinned_memory_pool().free_all_blocks()
-
     return out
 
 
@@ -206,7 +201,7 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
         Dimensions without coordinates: dim_0, dim_1
     """
 
-    out = agg.data
+    out = agg.data.astype(float)
     for i in range(passes):
         out = _mean(out, tuple(excludes))
 
