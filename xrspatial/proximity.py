@@ -112,14 +112,14 @@ def manhattan_distance(x1: float, x2: float, y1: float, y2: float) -> float:
         >>> from xrspatial import manhattan_distance
         >>> point_a = (142.32, 23.23)
         >>> point_b = (312.54, 432.01)
-        >>> # Calculate Euclidean Distance
+        >>> # Calculate Manhattan Distance
         >>> dist = manhattan_distance(
         ...     point_a[0],
         ...     point_b[0],
         ...     point_a[1],
         ...     point_b[1])
         >>> print(dist)
-        196075.9368
+        579.0
     """
 
     x = x1 - x2
@@ -165,7 +165,7 @@ def great_circle_distance(
         >>> from xrspatial import great_circle_distance
         >>> point_a = (123.2, 82.32)
         >>> point_b = (178.0, 65.09)
-        >>> # Calculate Euclidean Distance
+        >>> # Calculate Great Circle Distance
         >>> dist = great_circle_distance(
         ...     point_a[0],
         ...     point_b[0],
