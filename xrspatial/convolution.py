@@ -351,7 +351,7 @@ def _convolve_2d_cuda(data, kernel, out):
         return
 
     # The out at coordinates (i, j) is equal to
-    # sum_{k, h} kernel[k, h] * data[i - k + delta_rows, j - h + delta_cols]
+    # sum_{k, h} kernel[k, h] * data[i + k - delta_rows, j + h - delta_cols]
     # with k and h going through the whole kernel array:
     s = 0
     for k in range(kernel.shape[0]):
