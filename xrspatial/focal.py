@@ -193,11 +193,11 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean'):
         <class 'cupy.core.core.ndarray'>
         >>> print(mean_cupy)
         <xarray.DataArray 'mean' (dim_0: 5, dim_1: 5)>
-        array([[0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
-               [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
-               [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
-               [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994],
-               [0.47928994, 0.47928994, 0.47928994, 0.47928994, 0.47928994]])
+        array([[0.47928995, 0.47928995, 0.47928995, 0.47928995, 0.47928995],
+               [0.47928995, 0.47928995, 0.47928995, 0.47928995, 0.47928995],
+               [0.47928995, 0.47928995, 0.47928995, 0.47928995, 0.47928995],
+               [0.47928995, 0.47928995, 0.47928995, 0.47928995, 0.47928995],
+               [0.47928995, 0.47928995, 0.47928995, 0.47928995, 0.47928995]])
         Dimensions without coordinates: dim_0, dim_1
     """
 
@@ -358,6 +358,7 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
                [0., 1., 0.]])
         >>> # apply kernel mean by default
         >>> apply_mean_agg = apply(raster, kernel)
+        >>> apply_mean_agg
         <xarray.DataArray 'focal_apply' (y: 4, x: 5)>
         array([[ 2.        ,  2.25   ,  3.25      ,  4.25      ,  5.33333333],
                [ 5.25      ,  6.     ,  7.        ,  8.        ,  8.75      ],
@@ -387,13 +388,14 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
     ])
     >>> @ngjit
     >>> def func(kernel_data):
-    >>>     weight = np.array([
-                [0, 0.5, 0],
-                [0, 1, 0.5],
-                [0, 0.5, 0],
-            ])
-    >>>    return np.nansum(kernel_data * weight)
+    ...     weight = np.array([
+    ...         [0, 0.5, 0],
+    ...         [0, 1, 0.5],
+    ...         [0, 0.5, 0],
+    ...     ])
+    ...     return np.nansum(kernel_data * weight)
 
+    >>> import dask.array as da
     >>> data_da = da.from_array(np.ones((6, 4), dtype=np.float64), chunks=(3, 2))
     >>> raster_da = xr.DataArray(data_da, dims=['y', 'x'], name='raster_da')
     >>> print(raster_da)
@@ -713,7 +715,7 @@ def hotspots(raster, kernel):
         >>> import numpy as np
         >>> import xarray as xr
         >>> from xrspatial.convolution import custom_kernel
-        >>> kernel = custom_kernel(np.array([1, 1, 0]))
+        >>> kernel = custom_kernel(np.array([[1, 1, 0]]))
         >>> data = np.array([
         ...    [0, 1000, 1000, 0, 0, 0],
         ...    [0, 0, 0, -1000, -1000, 0],
