@@ -14,6 +14,10 @@ from xrspatial.zonal import regions
 from .general_checks import create_test_raster, general_output_checks, has_cuda_and_cupy
 
 
+import dask
+print('dask.__version__', dask.__version__)
+
+
 @pytest.fixture
 def data_zones(backend):
     data = np.array([[0, 0, 1, 1, 2, 2, 3, 3],
