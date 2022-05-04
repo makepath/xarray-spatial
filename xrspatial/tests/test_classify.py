@@ -239,22 +239,6 @@ def test_natural_breaks_cpu_deterministic():
         )
 
 
-@cuda_and_cupy_available
-def test_natural_breaks_cupy(result_natural_breaks):
-    cupy_agg = input_data('cupy')
-    k, expected_result = result_natural_breaks
-    cupy_natural_breaks = natural_breaks(cupy_agg, k=k)
-    general_output_checks(cupy_agg, cupy_natural_breaks, expected_result, verify_dtype=True)
-
-
-@cuda_and_cupy_available
-def test_natural_breaks_cupy_num_sample(result_natural_breaks_num_sample):
-    cupy_agg = input_data('cupy')
-    k, num_sample, expected_result = result_natural_breaks_num_sample
-    cupy_natural_breaks = natural_breaks(cupy_agg, k=k, num_sample=num_sample)
-    general_output_checks(cupy_agg, cupy_natural_breaks, expected_result, verify_dtype=True)
-
-
 @pytest.fixture
 def result_equal_interval():
     k = 3
