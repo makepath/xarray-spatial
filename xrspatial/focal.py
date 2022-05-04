@@ -287,33 +287,6 @@ def _apply_dask_numpy(data, kernel, func):
     return out
 
 
-def _apply_cupy(data, kernel, func):
-    data = data.astype(cupy.float32)
-    kernel = cupy.asarray(kernel)
-
-    out = cupy.zeros(data.shape, dtype=data.dtype)
-    out[:] = cupy.nan
-
-    rows, cols = data.shape
-    krows, kcols = kernel.shape
-    hrows, hcols = int(krows / 2), int(kcols / 2)
-    kernel_values = cupy.zeros_like(kernel, dtype=data.dtype)
-
-    for y in prange(rows):
-        for x in prange(cols):
-            # kernel values are all nans at the beginning of each step
-            kernel_values.fill(np.nan)
-            for ky in range(y - hrows, y + hrows + 1):
-                for kx in range(x - hcols, x + hcols + 1):
-                    if ky >= 0 and ky < rows and kx >= 0 and kx < cols:
-                        kyidx, kxidx = ky - (y - hrows), kx - (x - hcols)
-                        if kernel[kyidx, kxidx] == 1:
-                            kernel_values[kyidx, kxidx] = data[ky, kx]
-            out[y, x] = func(kernel_values)
-
-    return out
-
-
 def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
     """
     Returns custom function applied array using a user-created window.
@@ -322,7 +295,7 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
     ----------
     raster : xarray.DataArray
         2D array of input values to be filtered. Can be a NumPy backed,
-        CuPy backed, or Dask with NumPy backed DataArray.
+        or Dask with NumPy backed DataArray.
     kernel : numpy.ndarray
         2D array where values of 1 indicate the kernel.
     func : callable, default=xrspatial.focal._calc_mean
@@ -432,10 +405,11 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
     # the function func must be a @ngjit
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_apply_numpy,
-        cupy_func=_apply_cupy,
+        cupy_func=lambda *args: not_implemented_func(
+            *args, messages='apply() does not support cupy backed DataArray.'),
         dask_func=_apply_dask_numpy,
         dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='apply() does not support dask with cupy backed DataArray.'),  # noqa
+            *args, messages='apply() does not support dask with cupy backed DataArray.'),
     )
     out = mapper(raster)(raster.data, kernel, func)
     result = DataArray(out,

@@ -319,21 +319,6 @@ def test_apply_dask_numpy(data_apply):
     general_output_checks(dask_numpy_agg, dask_numpy_apply, expected_result)
 
 
-@cuda_and_cupy_available
-def test_apply_gpu(data_apply):
-    data, kernel, expected_result = data_apply
-    # cupy case
-    cupy_agg = create_test_raster(data, backend='cupy')
-    cupy_apply = apply(cupy_agg, kernel, func_zero)
-    general_output_checks(cupy_agg, cupy_apply, expected_result)
-
-    # dask + cupy case not implemented
-    dask_cupy_agg = create_test_raster(data, backend='dask+cupy')
-    with pytest.raises(NotImplementedError) as e_info:
-        apply(dask_cupy_agg, kernel, func_zero)
-        assert e_info
-
-
 @pytest.fixture
 def data_focal_stats():
     data = np.arange(16).reshape(4, 4)
