@@ -517,9 +517,8 @@ def stats(
     stats() works with Dask with NumPy backed DataArray
         >>> import dask.array as da
         >>> import dask.array as da
-        >>> values_dask = xr.DataArray(da.from_array(values, chunks=(3, 3)))
-        >>> zones_dask = xr.DataArray(da.from_array(zones, chunks=(3, 3)))
-
+        >>> values_dask = xr.DataArray(da.from_array(values_data, chunks=(3, 3)))
+        >>> zones_dask = xr.DataArray(da.from_array(zones_data, chunks=(3, 3)))
         >>> # Calculate Stats with dask backed xarray DataArrays
         >>> dask_stats_df = stats(zones=zones_dask, values=values_dask)
         >>> print(type(dask_stats_df))
@@ -530,20 +529,6 @@ def stats(
         1    10  27.0   49    5   675  14.21267  202.0     25
         2    20  72.0   94   50  1800  14.21267  202.0     25
         3    30  77.0   99   55  1925  14.21267  202.0     25
-
-        >>> # Custom Stats with dask backed xarray DataArrays
-        >>> dask_custom_stats ={'double_sum': lambda val: val.sum()*2}
-        >>> dask_custom_stats_df = stats(
-        >>>      zones=zones_dask, values=values_dask, stats_funcs=custom_stats
-        >>> )
-        >>> print(type(dask_custom_stats_df))
-        <class 'dask.dataframe.core.DataFrame'>
-        >>> print(dask_custom_stats_df.compute())
-            zone  double_sum
-        0     0        1100
-        1    10        1350
-        2    20        3600
-        3    30        3850
     """
 
     validate_arrays(zones, values)
@@ -968,10 +953,10 @@ def crosstab(
     .. sourcecode:: python
 
         >>> import dask.array as da
-        >>> values_dask = xr.DataArray(da.from_array(values, chunks=(3, 3)))
-        >>> zones_dask = xr.DataArray(da.from_array(zones, chunks=(3, 3)))
-        >>> df = crosstab(zones=zones_dask, values=values_dask)
-        >>> print(df)
+        >>> values_dask = xr.DataArray(da.from_array(values_data, chunks=(3, 3)))
+        >>> zones_dask = xr.DataArray(da.from_array(zones_data, chunks=(3, 3)))
+        >>> dask_df = crosstab(zones=zones_dask, values=values_dask)
+        >>> print(dask_df)
             Dask DataFrame Structure:
             zone    0.0 10.0    20.0    30.0    40.0    50.0
             npartitions=5
@@ -981,7 +966,7 @@ def crosstab(
             4   ... ... ... ... ... ... ...
             5   ... ... ... ... ... ... ...
             Dask Name: astype, 1186 tasks
-        >>> print(dask_df.compute)
+        >>> print(dask_df.compute())
                 zone  0.0  10.0  20.0  30.0  40.0  50.0
             0      0    1     0     0     0     0     0
             1      1    3     0     0     0     0     0
@@ -1120,6 +1105,7 @@ def apply(
 
         >>> import numpy as np
         >>> import xarray as xr
+        >>> from xrspatial.zonal import apply
         >>> zones_val = np.array([
             [1, 1, 0, 2],
             [0, 2, 1, 2]])
@@ -1132,7 +1118,7 @@ def apply(
         >>> apply(zones, agg, func)
         >>> agg
         array([[0, 0, 5, 0],
-               [3, 0, 0, 0]])
+               [3, np.nan, 0, 0]])
     """
     if not isinstance(zones, xr.DataArray):
         raise TypeError("zones must be instance of DataArray")
@@ -1276,6 +1262,7 @@ def suggest_zonal_canvas(
         >>> from spatialpandas import GeoDataFrame
         >>> import geopandas as gpd
         >>> import datashader as ds
+        >>> from xrspatial.zonal import suggest_zonal_canvas
 
         >>> df = gpd.read_file(gpd.datasets.get_path('naturalearth_lowres'))
         >>> df = df.to_crs("EPSG:3857")
@@ -1298,12 +1285,16 @@ def suggest_zonal_canvas(
                 crs='Mercator',
                 min_pixels=min_pixels,
             )
+        >>> height, width
+        (1537, 2376)
         >>> cvs = ds.Canvas(x_range=x_range, y_range=y_range,
         >>>             plot_height=height, plot_width=width)
         >>> spatial_df = GeoDataFrame(df, geometry='geometry')
         >>> agg = cvs.polygons(spatial_df, 'geometry', agg=ds.max('id'))
         >>> min_poly_id = df.area.argmin()
         >>> actual_min_pixels = len(np.where(agg.data==min_poly_id)[0])
+        >>> actual_min_pixels
+        22
     """
     full_xrange, full_yrange = get_full_extent(crs)
     xmin, xmax = full_xrange
