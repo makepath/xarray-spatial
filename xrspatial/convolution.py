@@ -351,13 +351,13 @@ def _convolve_2d_cuda(data, kernel, out):
         return
 
     # The out at coordinates (i, j) is equal to
-    # sum_{k, h} kernel[k, h] * data[i - k + delta_rows, j - h + delta_cols]
+    # sum_{k, h} kernel[k, h] * data[i + k - delta_rows, j + h - delta_cols]
     # with k and h going through the whole kernel array:
     s = 0
     for k in range(kernel.shape[0]):
         for h in range(kernel.shape[1]):
-            i_k = i - k + delta_rows
-            j_h = j - h + delta_cols
+            i_k = i + k - delta_rows
+            j_h = j + h - delta_cols
             # (-4-) Check if (i_k, j_h) coordinates are inside the array:
             if (i_k >= 0) and (i_k < data_rows) and \
                     (j_h >= 0) and (j_h < data_cols):
@@ -496,8 +496,8 @@ def convolution_2d(agg, kernel, name='convolution_2d'):
         >>> convolved_agg
         <xarray.DataArray 'convolution_2d' (dim_0: 4, dim_1: 6)>
         array([[ nan,  nan,  nan,  nan,  nan,  nan],
-               [ nan,  56.,  64.,  72.,  80.,  nan],
-               [ nan, 104., 112., 120., 128.,  nan],
+               [ nan,  50.,  58.,  66.,  74.,  nan],
+               [ nan,  98., 106., 114., 122.,  nan],
                [ nan,  nan,  nan,  nan,  nan,  nan]], dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
     """

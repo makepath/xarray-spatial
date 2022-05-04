@@ -135,6 +135,20 @@ def convolution_kernel_annulus_2_2_1():
     return expected_result
 
 
+@pytest.fixture
+def convolution_custom_kernel():
+    kernel = np.array([[1, 0, 0], [1, 1, 0], [1, 0, 0]])
+    expected_result = np.array([
+        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+        [np.nan, 2., 3., 3., 4., np.nan],
+        [np.nan, 4., np.nan, np.nan, np.nan, np.nan],
+        [np.nan, 4., np.nan, np.nan, np.nan, np.nan],
+        [np.nan, 4., np.nan, np.nan, np.nan, np.nan],
+        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
+    ])
+    return kernel, expected_result
+
+
 def test_kernel_custom_kernel_invalid_type():
     kernel = [1, 0, 0]  # only arrays are accepted, not lists
     with pytest.raises(ValueError):
@@ -159,16 +173,18 @@ def test_kernel(kernel_circle_1_1_1, kernel_annulus_2_2_2_1):
 
 def test_convolution_numpy(
     convolve_2d_data,
+    convolution_custom_kernel,
     kernel_circle_1_1_1,
     convolution_kernel_circle_1_1_1,
     kernel_annulus_2_2_2_1,
     convolution_kernel_annulus_2_2_1
 ):
-    kernel_custom = np.ones((1, 1))
+    kernel_custom, expected_result_custom = convolution_custom_kernel
     result_kernel_custom = convolve_2d(convolve_2d_data, kernel_custom)
     assert isinstance(result_kernel_custom, np.ndarray)
-    # kernel is [[1]], thus the result equals input data
-    np.testing.assert_allclose(result_kernel_custom, convolve_2d_data, equal_nan=True)
+    np.testing.assert_allclose(
+        result_kernel_custom, expected_result_custom, equal_nan=True
+    )
 
     result_kernel_circle = convolve_2d(convolve_2d_data, kernel_circle_1_1_1)
     assert isinstance(result_kernel_circle, np.ndarray)
@@ -185,17 +201,20 @@ def test_convolution_numpy(
 
 def test_convolution_dask_numpy(
     convolve_2d_data,
+    convolution_custom_kernel,
     kernel_circle_1_1_1,
     convolution_kernel_circle_1_1_1,
     kernel_annulus_2_2_2_1,
     convolution_kernel_annulus_2_2_1
 ):
     dask_agg = create_test_raster(convolve_2d_data, backend='dask+numpy')
-    kernel_custom = np.ones((1, 1))
+
+    kernel_custom, expected_result_custom = convolution_custom_kernel
     result_kernel_custom = convolution_2d(dask_agg, kernel_custom)
     assert isinstance(result_kernel_custom.data, da.Array)
-    # kernel is [[1]], thus the result equals input data
-    np.testing.assert_allclose(result_kernel_custom.compute(), convolve_2d_data, equal_nan=True)
+    np.testing.assert_allclose(
+        result_kernel_custom.compute(), expected_result_custom, equal_nan=True
+    )
 
     result_kernel_circle = convolution_2d(dask_agg, kernel_circle_1_1_1)
     assert isinstance(result_kernel_circle.data, da.Array)
@@ -213,6 +232,7 @@ def test_convolution_dask_numpy(
 @cuda_and_cupy_available
 def test_2d_convolution_gpu(
     convolve_2d_data,
+    convolution_custom_kernel,
     kernel_circle_1_1_1,
     convolution_kernel_circle_1_1_1,
     kernel_annulus_2_2_2_1,
@@ -221,11 +241,12 @@ def test_2d_convolution_gpu(
     import cupy
     cupy_data = cupy.asarray(convolve_2d_data)
 
-    kernel_custom = np.ones((1, 1))
+    kernel_custom, expected_result_custom = convolution_custom_kernel
     result_kernel_custom = convolve_2d(cupy_data, kernel_custom)
     assert isinstance(result_kernel_custom, cupy.ndarray)
-    # kernel is [[1]], thus the result equals input data
-    np.testing.assert_allclose(result_kernel_custom.get(), convolve_2d_data, equal_nan=True)
+    np.testing.assert_allclose(
+        result_kernel_custom.get(), expected_result_custom, equal_nan=True
+    )
 
     result_kernel_circle = convolve_2d(cupy_data, kernel_circle_1_1_1)
     assert isinstance(result_kernel_circle, cupy.ndarray)
