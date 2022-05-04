@@ -1637,7 +1637,7 @@ def viewshed(raster: xarray.DataArray,
         array([[ 0,  0,  1,  0,  0],
                [ 1,  3,  0,  0,  0],
                [10,  2,  5,  2, -1],
-               [20,  1,  2,  9,  0]])
+               [11,  1,  2,  9,  0]])
         Coordinates:
           * y        (y) float64 1.0 2.0 3.0 4.0
           * x        (x) float64 1.0 2.0 3.0 4.0 5.0
