@@ -232,6 +232,7 @@ def test_convolution_dask_numpy(
 @cuda_and_cupy_available
 def test_2d_convolution_gpu(
     convolve_2d_data,
+    convolution_custom_kernel,
     kernel_circle_1_1_1,
     convolution_kernel_circle_1_1_1,
     kernel_annulus_2_2_2_1,
@@ -244,7 +245,7 @@ def test_2d_convolution_gpu(
     result_kernel_custom = convolve_2d(cupy_data, kernel_custom)
     assert isinstance(result_kernel_custom, cupy.ndarray)
     np.testing.assert_allclose(
-        result_kernel_custom, expected_result_custom, equal_nan=True
+        result_kernel_custom.get(), expected_result_custom, equal_nan=True
     )
 
     result_kernel_circle = convolve_2d(cupy_data, kernel_circle_1_1_1)
