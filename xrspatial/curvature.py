@@ -121,6 +121,7 @@ def curvature(agg: xr.DataArray,
     .. sourcecode:: python
 
         >>> import numpy as np
+        >>> import dask.array as da
         >>> import xarray as xr
         >>> from xrspatial import curvature
         >>> flat_data = np.zeros((5, 5), dtype=np.float32)
@@ -187,7 +188,7 @@ def curvature(agg: xr.DataArray,
             cupy.asarray(concave_data),
             attrs={'res': (10, 10)}, name='concave_cupy_raster')
         >>> concave_curv = curvature(concave_raster)
-        >>> print(type(concave_curv))
+        >>> print(type(concave_curv.data))
         <class 'cupy.core.core.ndarray'>
         >>> print(concave_curv)
         <xarray.DataArray 'curvature' (dim_0: 5, dim_1: 5)>
