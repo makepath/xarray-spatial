@@ -19,6 +19,7 @@ class Focal:
 
 class FocalApply(Focal):
     params = ([100, 300, 1000, 3000], [(5, 5), (25, 25)], ["numpy"])
+
     def time_apply(self, nx, kernelsize, type):
         apply(self.agg, self.kernel)
 
