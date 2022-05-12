@@ -382,6 +382,16 @@ def test_focal_stats_dask_numpy(data_focal_stats):
     )
 
 
+@cuda_and_cupy_available
+def test_focal_stats_gpu(data_focal_stats):
+    data, kernel, expected_result = data_focal_stats
+    cupy_agg = create_test_raster(data, backend='cupy')
+    cupy_focalstats = focal_stats(cupy_agg, kernel)
+    general_output_checks(
+        cupy_agg, cupy_focalstats, verify_attrs=False, expected_results=expected_result
+    )
+
+
 @pytest.fixture
 def data_hotspots():
     data = np.asarray([

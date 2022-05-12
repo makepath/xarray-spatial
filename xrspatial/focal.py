@@ -469,8 +469,8 @@ def _focal_max_cuda(data, kernel, out):
 
 
 def _focal_range_cupy(data, kernel):
-    focal_min = _focal_stats_cupy(data, kernel, _focal_min_cuda)
-    focal_max = _focal_stats_cupy(data, kernel, _focal_max_cuda)
+    focal_min = _focal_stats_func_cupy(data, kernel, _focal_min_cuda)
+    focal_max = _focal_stats_func_cupy(data, kernel, _focal_max_cuda)
     out = focal_max - focal_min
     return out
 
