@@ -1,6 +1,6 @@
 import copy
 from functools import partial
-from math import isnan
+from math import isnan, sqrt
 
 import dask.array as da
 import numba as nb
@@ -542,11 +542,11 @@ def _focal_sum_cupy(data, kernel):
 
 
 def _focal_stats_func_cupy(data, kernel, func=_focal_max_cuda):
-      out = cupy.empty(data.shape, dtype='f4')
-      out[:, :] = cupy.nan
-      griddim, blockdim = cuda_args(data.shape)
-      func[griddim, blockdim](data, kernel, cupy.asarray(out))
-      return out
+    out = cupy.empty(data.shape, dtype='f4')
+    out[:, :] = cupy.nan
+    griddim, blockdim = cuda_args(data.shape)
+    func[griddim, blockdim](data, kernel, cupy.asarray(out))
+    return out
 
 
 def _focal_stats_cupy(agg, kernel, stats_funcs):
