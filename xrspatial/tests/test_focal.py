@@ -322,44 +322,43 @@ def test_apply_dask_numpy(data_apply):
 @pytest.fixture
 def data_focal_stats():
     data = np.arange(16).reshape(4, 4)
-    cellsize = (1, 1)
-    kernel = circle_kernel(*cellsize, 1.5)
+    kernel = custom_kernel(np.array([[1, 0, 0], [0, 1, 0], [0, 0, 0]]))
     expected_result = np.asarray([
         # mean
-        [[1.66666667, 2., 3., 4.],
-         [4.25, 5., 6., 6.75],
-         [8.25, 9., 10., 10.75],
-         [11., 12., 13., 13.33333333]],
+        [[0, 1, 2, 3.],
+         [4, 2.5,  3.5,  4.5],
+         [8, 6.5,  7.5,  8.5],
+         [12, 10.5,  11.5,  12.5]],
         # max
-        [[4., 5., 6., 7.],
-         [8., 9., 10., 11.],
-         [12., 13., 14., 15.],
-         [13., 14., 15., 15.]],
+        [[0, 1, 2, 3.],
+         [4, 5, 6, 7.],
+         [8, 9, 10, 11.],
+         [12, 13, 14, 15.]],
         # min
-        [[0., 0., 1., 2.],
-         [0., 1., 2., 3.],
-         [4., 5., 6., 7.],
-         [8., 9., 10., 11.]],
+        [[0, 1, 2, 3.],
+         [4, 0, 1, 2.],
+         [8, 4, 5, 6.],
+         [12, 8, 9, 10.]],
         # range
-        [[4., 5., 5., 5.],
-         [8., 8., 8., 8.],
-         [8., 8., 8., 8.],
-         [5., 5., 5., 4.]],
+        [[0, 0, 0, 0.],
+         [0, 5, 5, 5.],
+         [0, 5, 5, 5.],
+         [0, 5, 5, 5.]],
         # std
-        [[1.69967317, 1.87082869, 1.87082869, 2.1602469],
-         [2.86138079, 2.60768096, 2.60768096, 2.86138079],
-         [2.86138079, 2.60768096, 2.60768096, 2.86138079],
-         [2.1602469, 1.87082869, 1.87082869, 1.69967317]],
+        [[0, 0, 0, 0.],
+         [0, 2.5,  2.5,  2.5],
+         [0, 2.5,  2.5,  2.5],
+         [0, 2.5,  2.5,  2.5]],
         # var
-        [[2.88888889, 3.5, 3.5, 4.66666667],
-         [8.1875, 6.8, 6.8, 8.1875],
-         [8.1875, 6.8, 6.8, 8.1875],
-         [4.66666667, 3.5, 3.5, 2.88888889]],
+        [[0, 0, 0, 0.],
+         [0, 6.25, 6.25, 6.25],
+         [0, 6.25, 6.25, 6.25],
+         [0, 6.25, 6.25, 6.25]],
         # sum
-        [[5., 8., 12., 12.],
-         [17., 25., 30., 27.],
-         [33., 45., 50., 43.],
-         [33., 48., 52., 40.]]
+        [[0, 1, 2, 3.],
+         [4, 5, 7, 9.],
+         [8, 13, 15, 17.],
+         [12, 21, 23, 25.]]
     ])
     return data, kernel, expected_result
 
@@ -380,6 +379,16 @@ def test_focal_stats_dask_numpy(data_focal_stats):
     dask_numpy_focalstats = focal_stats(dask_numpy_agg, kernel)
     general_output_checks(
         dask_numpy_agg, dask_numpy_focalstats, verify_attrs=False, expected_results=expected_result
+    )
+
+
+@cuda_and_cupy_available
+def test_focal_stats_gpu(data_focal_stats):
+    data, kernel, expected_result = data_focal_stats
+    cupy_agg = create_test_raster(data, backend='cupy')
+    cupy_focalstats = focal_stats(cupy_agg, kernel)
+    general_output_checks(
+        cupy_agg, cupy_focalstats, verify_attrs=False, expected_results=expected_result
     )
 
 

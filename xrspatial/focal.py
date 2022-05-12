@@ -1,6 +1,6 @@
 import copy
 from functools import partial
-from math import isnan
+from math import isnan, sqrt
 
 import dask.array as da
 import numba as nb
@@ -420,6 +420,178 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
     return result
 
 
+@cuda.jit
+def _focal_min_cuda(data, kernel, out):
+    i, j = cuda.grid(2)
+
+    delta_rows = kernel.shape[0] // 2
+    delta_cols = kernel.shape[1] // 2
+
+    data_rows, data_cols = data.shape
+
+    if i < delta_rows or i >= data_rows - delta_rows or \
+            j < delta_cols or j >= data_cols - delta_cols:
+        return
+
+    s = data[i, j]
+    for k in range(kernel.shape[0]):
+        for h in range(kernel.shape[1]):
+            i_k = i + k - delta_rows
+            j_h = j + h - delta_cols
+            if (i_k >= 0) and (i_k < data_rows) and (j_h >= 0) and (j_h < data_cols):
+                if (kernel[k, h] != 0) and s > data[i_k, j_h]:
+                    s = data[i_k, j_h]
+    out[i, j] = s
+
+
+@cuda.jit
+def _focal_max_cuda(data, kernel, out):
+    i, j = cuda.grid(2)
+
+    delta_rows = kernel.shape[0] // 2
+    delta_cols = kernel.shape[1] // 2
+
+    data_rows, data_cols = data.shape
+
+    if i < delta_rows or i >= data_rows - delta_rows or \
+            j < delta_cols or j >= data_cols - delta_cols:
+        return
+
+    s = data[i, j]
+    for k in range(kernel.shape[0]):
+        for h in range(kernel.shape[1]):
+            i_k = i + k - delta_rows
+            j_h = j + h - delta_cols
+            if (i_k >= 0) and (i_k < data_rows) and (j_h >= 0) and (j_h < data_cols):
+                if (kernel[k, h] != 0) and s < data[i_k, j_h]:
+                    s = data[i_k, j_h]
+    out[i, j] = s
+
+
+def _focal_range_cupy(data, kernel):
+    focal_min = _focal_stats_func_cupy(data, kernel, _focal_min_cuda)
+    focal_max = _focal_stats_func_cupy(data, kernel, _focal_max_cuda)
+    out = focal_max - focal_min
+    return out
+
+
+@cuda.jit
+def _focal_std_cuda(data, kernel, out):
+    i, j = cuda.grid(2)
+
+    delta_rows = kernel.shape[0] // 2
+    delta_cols = kernel.shape[1] // 2
+
+    data_rows, data_cols = data.shape
+
+    if i < delta_rows or i >= data_rows - delta_rows or \
+            j < delta_cols or j >= data_cols - delta_cols:
+        return
+
+    sum_squares = 0
+    sum = 0
+    count = 0
+    for k in range(kernel.shape[0]):
+        for h in range(kernel.shape[1]):
+            i_k = i + k - delta_rows
+            j_h = j + h - delta_cols
+            if (i_k >= 0) and (i_k < data_rows) and (j_h >= 0) and (j_h < data_cols):
+                sum_squares += (kernel[k, h]*data[i_k, j_h])**2
+                sum += kernel[k, h]*data[i_k, j_h]
+                count += kernel[k, h]
+    squared_sum = sum**2
+    out[i, j] = sqrt((sum_squares - squared_sum/count) / count)
+
+
+@cuda.jit
+def _focal_var_cuda(data, kernel, out):
+    i, j = cuda.grid(2)
+
+    delta_rows = kernel.shape[0] // 2
+    delta_cols = kernel.shape[1] // 2
+
+    data_rows, data_cols = data.shape
+
+    if i < delta_rows or i >= data_rows - delta_rows or \
+            j < delta_cols or j >= data_cols - delta_cols:
+        return
+
+    sum_squares = 0
+    sum = 0
+    count = 0
+    for k in range(kernel.shape[0]):
+        for h in range(kernel.shape[1]):
+            i_k = i + k - delta_rows
+            j_h = j + h - delta_cols
+            if (i_k >= 0) and (i_k < data_rows) and (j_h >= 0) and (j_h < data_cols):
+                sum_squares += (kernel[k, h]*data[i_k, j_h])**2
+                sum += kernel[k, h]*data[i_k, j_h]
+                count += kernel[k, h]
+    squared_sum = sum**2
+    out[i, j] = (sum_squares - squared_sum/count) / count
+
+
+def _focal_mean_cupy(data, kernel):
+    out = convolve_2d(data, kernel / kernel.sum())
+    return out
+
+
+def _focal_sum_cupy(data, kernel):
+    out = convolve_2d(data, kernel)
+    return out
+
+
+def _focal_stats_func_cupy(data, kernel, func=_focal_max_cuda):
+    out = cupy.empty(data.shape, dtype='f4')
+    out[:, :] = cupy.nan
+    griddim, blockdim = cuda_args(data.shape)
+    func[griddim, blockdim](data, kernel, cupy.asarray(out))
+    return out
+
+
+def _focal_stats_cupy(agg, kernel, stats_funcs):
+    _stats_cupy_mapper = dict(
+        mean=_focal_mean_cupy,
+        sum=_focal_sum_cupy,
+        range=_focal_range_cupy,
+        max=lambda *args: _focal_stats_func_cupy(*args, func=_focal_max_cuda),
+        min=lambda *args: _focal_stats_func_cupy(*args, func=_focal_min_cuda),
+        std=lambda *args: _focal_stats_func_cupy(*args, func=_focal_std_cuda),
+        var=lambda *args: _focal_stats_func_cupy(*args, func=_focal_var_cuda),
+    )
+    stats_aggs = []
+    for stats in stats_funcs:
+        data = agg.data.astype(cupy.float32)
+        stats_data = _stats_cupy_mapper[stats](data, kernel)
+        stats_agg = xr.DataArray(
+            stats_data,
+            dims=agg.dims,
+            coords=agg.coords,
+            attrs=agg.attrs
+          )
+        stats_aggs.append(stats_agg)
+    stats = xr.concat(stats_aggs, pd.Index(stats_funcs, name='stats'))
+    return stats
+
+
+def _focal_stats_cpu(agg, kernel, stats_funcs):
+    _function_mapping = {
+        'mean': _calc_mean,
+        'max': _calc_max,
+        'min': _calc_min,
+        'range': _calc_range,
+        'std': _calc_std,
+        'var': _calc_var,
+        'sum': _calc_sum
+    }
+    stats_aggs = []
+    for stats in stats_funcs:
+        stats_agg = apply(agg, kernel, func=_function_mapping[stats])
+        stats_aggs.append(stats_agg)
+    stats = xr.concat(stats_aggs, pd.Index(stats_funcs, name='stats'))
+    return stats
+
+
 def focal_stats(agg,
                 kernel,
                 stats_funcs=[
@@ -480,24 +652,25 @@ def focal_stats(agg,
           * stats    (stats) object 'min' 'sum'
         Dimensions without coordinates: dim_0, dim_1
     """
+    # validate raster
+    if not isinstance(agg, DataArray):
+        raise TypeError("`agg` must be instance of DataArray")
 
-    _function_mapping = {
-        'mean': _calc_mean,
-        'max': _calc_max,
-        'min': _calc_min,
-        'range': _calc_range,
-        'std': _calc_std,
-        'var': _calc_var,
-        'sum': _calc_sum
-    }
+    if agg.ndim != 2:
+        raise ValueError("`agg` must be 2D")
 
-    stats_aggs = []
-    for stats in stats_funcs:
-        stats_agg = apply(agg, kernel, func=_function_mapping[stats])
-        stats_aggs.append(stats_agg)
+    # Validate the kernel
+    kernel = custom_kernel(kernel)
 
-    stats = xr.concat(stats_aggs, pd.Index(stats_funcs, name='stats'))
-    return stats
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_focal_stats_cpu,
+        cupy_func=_focal_stats_cupy,
+        dask_func=_focal_stats_cpu,
+        dask_cupy_func=lambda *args: not_implemented_func(
+            *args, messages='focal_stats() does not support dask with cupy backed DataArray.'),
+    )
+    result = mapper(agg)(agg, kernel, stats_funcs)
+    return result
 
 
 @ngjit
