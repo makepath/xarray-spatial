@@ -41,6 +41,7 @@ def create_triangulation(raster, optix):
         cupy.get_default_memory_pool().free_all_blocks()
     return scale
 
+
 @nb.cuda.jit
 def _triangulate_terrain_kernel(verts, triangles, data, H, W, scale, stride):
     global_id = stride + nb.cuda.grid(1)
