@@ -7,12 +7,12 @@ def create_triangulation(raster, optix):
     datahash = np.uint64(hash(str(raster.data.get())))
     optixhash = np.uint64(optix.getHash())
 
-    #Calculate a scale factor for the height that maintains the ratio
-    #width/height
+    # Calculate a scale factor for the height that maintains the ratio
+    # width/height
     x_coords = raster.indexes.get('x').values
     x_range = x_coords.max() - x_coords.min()
     H, W = raster.shape
-    #Get the scale factor of the terrain height vs terrain size
+    # Get the scale factor of the terrain height vs terrain size
     scaleFactor = x_range / raster.res[1]
     scale = scaleFactor * W / raster.res[1]
 
