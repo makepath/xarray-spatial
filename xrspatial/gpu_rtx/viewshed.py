@@ -17,28 +17,29 @@ from .mesh_utils import create_triangulation
 # If a cell is invisible, its value is set to -1
 INVISIBLE = -1
 
+CAMERA_HEIGHT = 10000
 
 @nb.cuda.jit
-def _generate_primary_rays_kernel(data, x_coords, y_coords, H, W):
+def _generate_primary_rays_kernel(data, H, W):
     """
     A GPU kernel that given a set of x and y discrete coordinates on a raster
     terrain generates in @data a list of parallel rays that represent camera
     rays generated from an orthographic camera that is looking straight down
-    at the surface from an origin height 10000.
+    at the surface from an origin height CAMERA_HEIGHT.
     """
     i, j = nb.cuda.grid(2)
     if i >= 0 and i < H and j >= 0 and j < W:
         if (j == W-1):
-            data[i, j, 0] = x_coords[j] - 1e-3
+            data[i, j, 0] = j - 1e-3
         else:
-            data[i, j, 0] = x_coords[j] + 1e-3
+            data[i, j, 0] = j + 1e-3
 
         if (i == H-1):
-            data[i, j, 1] = y_coords[i] - 1e-3
+            data[i, j, 1] = i - 1e-3
         else:
-            data[i, j, 1] = y_coords[i] + 1e-3
+            data[i, j, 1] = i + 1e-3
 
-        data[i, j, 2] = 10000  # Location of the camera (height)
+        data[i, j, 2] = CAMERA_HEIGHT  # Location of the camera (height)
         data[i, j, 3] = 1e-3
         data[i, j, 4] = 0
         data[i, j, 5] = 0
@@ -46,12 +47,9 @@ def _generate_primary_rays_kernel(data, x_coords, y_coords, H, W):
         data[i, j, 7] = np.inf
 
 
-def _generate_primary_rays(rays, x_coords, y_coords, H, W):
+def _generate_primary_rays(rays, H, W):
     griddim, blockdim = calc_cuda_dims((H, W))
-    d_y_coords = cupy.array(y_coords)
-    d_x_coords = cupy.array(x_coords)
-    _generate_primary_rays_kernel[griddim, blockdim](
-        rays, d_x_coords, d_y_coords, H, W)
+    _generate_primary_rays_kernel[griddim, blockdim](rays, H, W)
     return 0
 
 
@@ -94,6 +92,8 @@ def _generate_viewshed_rays_kernel(
         ray_dir = make_float3(camera_ray, 4)
         # calculate intersection point
         hit_p = add(ray_origin, mul(ray_dir, dist))
+
+        surfaceHit = hit_p
         # generate new ray origin, and a little offset to avoid
         # self-intersection
         new_origin = add(hit_p, mul(norm, 1e-3))
@@ -117,7 +117,7 @@ def _generate_viewshed_rays_kernel(
         viewshed_point = add(hit_p, float3(0, 0, observer_elev))
 
         # calculate vector from SurfaceHit to VP
-        new_dir = diff(viewshed_point, new_origin)
+        new_dir = diff(viewshed_point, surfaceHit)
         # calculate distance from surface to VP
         length = math.sqrt(dot(new_dir, new_dir))
         # normalize the direction (vector v)
@@ -188,7 +188,7 @@ def _viewshed_rt(
     d_visgrid = cupy.empty((H, W), np.float32)
     d_vsrays = cupy.empty((H, W, 8), np.float32)
 
-    _generate_primary_rays(d_rays, x_coords, y_coords, H, W)
+    _generate_primary_rays(d_rays, H, W)
     device = cupy.cuda.Device(0)
     device.synchronize()
     res = optix.trace(d_rays, d_hits, W*H)
@@ -230,6 +230,6 @@ def viewshed_gpu(
         raise TypeError("raster.data must be a cupy array")
 
     optix = RTX()
-    create_triangulation(raster, optix)
+    scale = create_triangulation(raster, optix)
 
-    return _viewshed_rt(raster, optix, x, y, observer_elev, target_elev)
+    return _viewshed_rt(raster, optix, x, y, observer_elev*scale, target_elev*scale)
