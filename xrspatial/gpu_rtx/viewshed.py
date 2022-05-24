@@ -19,6 +19,7 @@ INVISIBLE = -1
 
 CAMERA_HEIGHT = 10000
 
+
 @nb.cuda.jit
 def _generate_primary_rays_kernel(data, H, W):
     """
