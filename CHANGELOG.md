@@ -1,5 +1,36 @@
 ## Xarray-Spatial Changelog
 -----------
+### Version 0.3.4 - 2022-06-01
+The 0.3.4 release primarily a bug fix release but also includes a number of enhancements with a focus on GPU supports.
+Many thanks to @mkeenan195, @a7az0th, and the maintainers @ianthomas23 and @thuydotm for contributing to this release.
+
+#### Enhancements
+- NumPy zonal stats: return a data array of calculated stats (#685)
+- set unit for hotspots output (#686)
+- More robust cuda and cupy identification (#657)
+- Remove deprecated tiles module (#698)
+- Test on python 3.10, remove 3.6 (#694)
+- moved all tests to github actions (#689)
+- Add isort to pytest (#700)
+- Add flake8 to pytest (#697)
+- Remove unnecessary executable flags (#696)
+- updated test hotspots gpu (#692)
+- 3D numpy zonal_crosstab to support more agg methods (#687)
+
+#### Bug Fixes
+- Fix rtx viewshed rendering blank image (#711)
+- Convolve_2d gpu fixes (#702)
+- focal.mean(): only do data type conversion once (#699)
+- Update to remote sensing notebook (#688)
+- focal_stats(): gpu case (#709)
+- focal apply: drop gpu support (#706)
+- drop gpu support (#705)
+- enabled numba.cuda.jit in hotspots cupy (#691)
+
+#### Documentation
+- Correct examples in docstrings (#703)
+- Fix doc build dependencies in CI (#683)
+- Fix link to Austin road network notebook (#695)
 
 ### Version 0.3.3 - 2022-03-21
 - fixed ubuntu version (#681)
