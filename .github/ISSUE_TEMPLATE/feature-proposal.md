@@ -3,6 +3,7 @@
 | name	| about| title|lables|asignees|
 | ----| ---- |------| ------| ------- |
 |Feature proposal| Suggest an idea | | proposal|
+
 **Author of Proposal:**
 ## Reason or Problem
 Describe what the need for this new feature is or what problem this new feature will address.
@@ -23,7 +24,7 @@ What are potential reasons why this feature should not be implemented?
 ## Alternatives
 Describe other solutions or features you have considered when coming up with this proposal.
 
-##Unresolved Questions
+## Unresolved Questions
 What are parts of this feature's design that are undecided.
-##Additional Notes or Context
+## Additional Notes or Context
 Anything elses that is important to know for the implementation of this new feature.
