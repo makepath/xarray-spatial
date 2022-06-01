@@ -6,15 +6,23 @@ import numpy as np
 def create_triangulation(raster, optix):
     datahash = np.uint64(hash(str(raster.data.get())))
     optixhash = np.uint64(optix.getHash())
+
+    # Calculate a scale factor for the height that maintains the ratio
+    # width/height
+    x_coords = raster.indexes.get('x').values
+    x_range = x_coords.max() - x_coords.min()
+    H, W = raster.shape
+    # Get the scale factor of the terrain height vs terrain size
+    scaleFactor = x_range / raster.res[1]
+    scale = scaleFactor * W / raster.res[1]
+
     if optixhash != datahash:
-        H, W = raster.shape
         num_tris = (H - 1) * (W - 1) * 2
         verts = cupy.empty(H * W * 3, np.float32)
         triangles = cupy.empty(num_tris * 3, np.int32)
-
         # Generate a mesh from the terrain (buffers are on the GPU, so
         # generation happens also on GPU)
-        res = _triangulate_terrain(verts, triangles, raster)
+        res = _triangulate_terrain(verts, triangles, raster, scale)
         if res:
             raise RuntimeError(
                 f"Failed to generate mesh from terrain, error code: {res}")
@@ -24,10 +32,14 @@ def create_triangulation(raster, optix):
             raise RuntimeError(
                 f"OptiX failed to build GAS, error code: {res}")
 
+        # Enable for debug purposes
+        if False:
+            write("mesh.stl", verts, triangles)
         # Clear some GPU memory that we no longer need
         verts = None
         triangles = None
         cupy.get_default_memory_pool().free_all_blocks()
+    return scale
 
 
 @nb.cuda.jit
