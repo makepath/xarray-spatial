@@ -54,8 +54,22 @@ def _generate_primary_rays(rays, H, W):
     return 0
 
 
+@nb.cuda.jit(device=True)
+def _get_vertical_ang(diff_elev, distance_to_viewpoint):
+    # Find the vertical angle in degrees between the vp
+    # and the point represented by the StatusNode
+
+    # 0 above, 180 below
+    if diff_elev == 0.0:
+        return 90
+    elif diff_elev > 0:
+        return math.atan(distance_to_viewpoint / diff_elev) * 180 / math.pi
+
+    return math.atan(-diff_elev / distance_to_viewpoint) * 180 / math.pi + 90
+
+
 @nb.cuda.jit
-def _calc_viewshed_kernel(hits, visibility_grid, H, W):
+def _calc_viewshed_kernel(hits, visibility_grid, H, W, hmap, v, oe, te, ew_range, ns_range):
     i, j = nb.cuda.grid(2)
     if i >= 0 and i < H and j >= 0 and j < W:
         dist = hits[i, j, 0]
@@ -63,19 +77,40 @@ def _calc_viewshed_kernel(hits, visibility_grid, H, W):
         # data.  If dist > 0, then we were able to hit something along the
         # length of the ray which means that the pixel we targeted is not
         # directly visible from the view point.
+        t = (i, j)  # t for target, v for viewer
         if dist >= 0:
-            visibility_grid[i, j] = INVISIBLE
+            visibility_grid[t] = INVISIBLE
+        else:
+            if t == v:
+                visibility_grid[t] = 180
+            else:
+                diff_elev = (hmap[v]+oe) - (hmap[t]+te)
+                dy = (v[0]-t[0])*ns_range
+                dx = (v[1]-t[1])*ew_range
+                distance_to_viewpoint = math.sqrt(dx*dx + dy*dy)
+                visibility_grid[t] = _get_vertical_ang(diff_elev, distance_to_viewpoint)
 
 
-def _calc_viewshed(hits, visibility_grid, H, W):
+def _calc_viewshed(hits, visibility_grid, H, W, hmap, vp, oe, te, ew_range, ns_range):
     griddim, blockdim = calc_cuda_dims((H, W))
-    _calc_viewshed_kernel[griddim, blockdim](hits, visibility_grid, H, W)
+    _calc_viewshed_kernel[griddim, blockdim](
+        hits,
+        visibility_grid,
+        H,
+        W,
+        hmap,
+        vp,
+        oe,
+        te,
+        ew_range,
+        ns_range
+    )
     return 0
 
 
 @nb.cuda.jit
 def _generate_viewshed_rays_kernel(
-    camera_rays, hits, vsrays, visibility_grid, H, W, vp
+    camera_rays, hits, vsrays, H, W, vp
 ):
     i, j = nb.cuda.grid(2)
     if i >= 0 and i < H and j >= 0 and j < W:
@@ -124,11 +159,6 @@ def _generate_viewshed_rays_kernel(
         # normalize the direction (vector v)
         new_dir = mul(new_dir, 1/length)
 
-        # cosine of the angle between n and v
-        cosine = dot(norm, new_dir)
-        theta = math.acos(cosine)  # Cosine angle in radians
-        theta = (180*theta)/math.pi  # Cosine angle in degrees
-
         # prepare a viewshed ray to cast to determine visibility
         vsray = vsrays[i, j]
         vsray[0] = new_origin[0]
@@ -140,13 +170,11 @@ def _generate_viewshed_rays_kernel(
         vsray[6] = new_dir[2]
         vsray[7] = length
 
-        visibility_grid[i, j] = theta
 
-
-def _generate_viewshed_rays(rays, hits, vsrays, visibility_grid, H, W, vp):
+def _generate_viewshed_rays(rays, hits, vsrays, H, W, vp):
     griddim, blockdim = calc_cuda_dims((H, W))
     _generate_viewshed_rays_kernel[griddim, blockdim](
-        rays, hits, vsrays, visibility_grid, H, W, vp)
+        rays, hits, vsrays, H, W, vp)
     return 0
 
 
@@ -157,6 +185,7 @@ def _viewshed_rt(
     y: Union[int, float],
     observer_elev: float,
     target_elev: float,
+    scale: float,
 ) -> xr.DataArray:
 
     H, W = raster.shape
@@ -183,6 +212,12 @@ def _viewshed_rt(
     y_view = np.where(y_coords == y)[0][0]
     x_view = np.where(x_coords == x)[0][0]
 
+    y_range = (y_coords[0], y_coords[-1])
+    x_range = (x_coords[0], x_coords[-1])
+
+    ew_res = (x_range[1] - x_range[0]) / (W - 1)
+    ns_res = (y_range[1] - y_range[0]) / (H - 1)
+
     # Device buffers
     d_rays = cupy.empty((H, W, 8), np.float32)
     d_hits = cupy.empty((H, W, 4), np.float32)
@@ -196,14 +231,25 @@ def _viewshed_rt(
     if res:
         raise RuntimeError(f"Failed trace 1, error code: {res}")
 
-    _generate_viewshed_rays(d_rays, d_hits, d_vsrays, d_visgrid, H, W,
-                            (x_view, y_view, observer_elev, target_elev))
+    _generate_viewshed_rays(d_rays, d_hits, d_vsrays, H, W,
+                            (x_view, y_view, observer_elev*scale, target_elev*scale))
     device.synchronize()
     res = optix.trace(d_vsrays, d_hits, W*H)
     if res:
         raise RuntimeError(f"Failed trace 2, error code: {res}")
 
-    _calc_viewshed(d_hits, d_visgrid, H, W)
+    _calc_viewshed(
+        d_hits,
+        d_visgrid,
+        H,
+        W,
+        raster.data,
+        (y_view, x_view),
+        observer_elev,
+        target_elev,
+        ew_res,
+        ns_res
+    )
 
     if isinstance(raster.data, np.ndarray):
         visgrid = cupy.asnumpy(d_visgrid)
@@ -233,4 +279,4 @@ def viewshed_gpu(
     optix = RTX()
     scale = create_triangulation(raster, optix)
 
-    return _viewshed_rt(raster, optix, x, y, observer_elev*scale, target_elev*scale)
+    return _viewshed_rt(raster, optix, x, y, observer_elev, target_elev, scale)
