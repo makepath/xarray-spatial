@@ -1,8 +1,20 @@
 ## Xarray-Spatial Changelog
 -----------
+### Version 0.3.5 - 2022-06-05
+The 0.3.5 release mainly addresses the scaling issue in GPU viewshed to gain better accurate triangulation.
+The GPU raytraced viewshed should now give comparable results to the CPU version.
+However, the 2 versions use 2 different approaches, there can be slightly differences at some points
+where a version returns visible while the other considers them as invisible.
+
+#### Enhancements
+- command to get change log (#716)
+- Added Feature Proposal Template (#714)
+
+#### Bug Fixes
+- Improved viewshed rtx. Now result should match the CPU version (#715)
+
 ### Version 0.3.4 - 2022-06-01
 The 0.3.4 release primarily a bug fix release but also includes a number of enhancements with a focus on GPU supports.
-Many thanks to @mkeenan195, @a7az0th, and the maintainers @ianthomas23 and @thuydotm for contributing to this release.
 
 #### Enhancements
 - NumPy zonal stats: return a data array of calculated stats (#685)
