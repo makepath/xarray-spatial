@@ -10,14 +10,14 @@ def create_triangulation(raster, optix):
     # Calculate a scale factor for the height that maintains the ratio
     # width/height
     H, W = raster.shape
-   
+
     # Scale the terrain so that the width is proportional to the height
     # Thus the terrain would be neither too flat nor too steep and
     # raytracing will give best accuracy
     maxH = float(cupy.amax(raster.data))
-    maxDim = max(H,W)
+    maxDim = max(H, W)
     scale = maxDim / maxH
-    
+
     if optixhash != datahash:
         num_tris = (H - 1) * (W - 1) * 2
         verts = cupy.empty(H * W * 3, np.float32)
