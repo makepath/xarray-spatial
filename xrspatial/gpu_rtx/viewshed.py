@@ -77,7 +77,7 @@ def _calc_viewshed_kernel(hits, visibility_grid, H, W, hmap, v, oe, te, ew_range
         # data.  If dist > 0, then we were able to hit something along the
         # length of the ray which means that the pixel we targeted is not
         # directly visible from the view point.
-        t = (i, j) #t for target, v for viewer
+        t = (i, j)  # t for target, v for viewer
         if dist >= 0:
             visibility_grid[t] = INVISIBLE
         else:
@@ -90,7 +90,8 @@ def _calc_viewshed_kernel(hits, visibility_grid, H, W, hmap, v, oe, te, ew_range
                 distance_to_viewpoint = math.sqrt(dx*dx + dy*dy)
                 visibility_grid[t] = _get_vertical_ang(diff_elev, distance_to_viewpoint)
 
-def _calc_viewshed(hits, visibility_grid, H, W, hmap, vp, oe, te,ew_range, ns_range):
+
+def _calc_viewshed(hits, visibility_grid, H, W, hmap, vp, oe, te, ew_range, ns_range):
     griddim, blockdim = calc_cuda_dims((H, W))
     _calc_viewshed_kernel[griddim, blockdim](
         hits,
