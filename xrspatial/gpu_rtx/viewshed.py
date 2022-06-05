@@ -53,13 +53,11 @@ def _generate_primary_rays(rays, H, W):
     _generate_primary_rays_kernel[griddim, blockdim](rays, H, W)
     return 0
 
+
 @nb.cuda.jit(device=True)
 def _get_vertical_ang(diff_elev, distance_to_viewpoint):
     # Find the vertical angle in degrees between the vp
     # and the point represented by the StatusNode
-
-    # calculate and return the ang in degrees
-    #assert abs(distance_to_viewpoint) > 0.0
 
     # 0 above, 180 below
     if diff_elev == 0.0:
@@ -68,6 +66,7 @@ def _get_vertical_ang(diff_elev, distance_to_viewpoint):
         return math.atan(distance_to_viewpoint / diff_elev) * 180 / math.pi
 
     return math.atan(-diff_elev / distance_to_viewpoint) * 180 / math.pi + 90
+
 
 @nb.cuda.jit
 def _calc_viewshed_kernel(hits, visibility_grid, H, W, hmap, v, oe, te, ew_range, ns_range):
@@ -78,7 +77,7 @@ def _calc_viewshed_kernel(hits, visibility_grid, H, W, hmap, v, oe, te, ew_range
         # data.  If dist > 0, then we were able to hit something along the
         # length of the ray which means that the pixel we targeted is not
         # directly visible from the view point.
-        t = (i,j) #t for target, v for viewer
+        t = (i, j) #t for target, v for viewer
         if dist >= 0:
             visibility_grid[t] = INVISIBLE
         else:
@@ -96,13 +95,13 @@ def _calc_viewshed(hits, visibility_grid, H, W, hmap, vp, oe, te,ew_range, ns_ra
     _calc_viewshed_kernel[griddim, blockdim](
         hits,
         visibility_grid,
-        H, 
-        W, 
-        hmap, 
-        vp, 
-        oe, 
-        te, 
-        ew_range, 
+        H,
+        W,
+        hmap,
+        vp,
+        oe,
+        te,
+        ew_range,
         ns_range
     )
     return 0
@@ -241,10 +240,10 @@ def _viewshed_rt(
     _calc_viewshed(
         d_hits,
         d_visgrid,
-        H, 
+        H,
         W,
         raster.data,
-        (y_view, x_view), 
+        (y_view, x_view),
         observer_elev,
         target_elev,
         ew_res,
