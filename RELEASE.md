@@ -2,7 +2,7 @@
 
 ### Preparation
 - Create a new branch containing the following changes:
-  - Update CHANGELOG.md with new version number and list of changes extracted from `git log`.
+  - Update CHANGELOG.md with new version number and list of changes extracted from `git log --pretty=oneline --pretty=format:"- %s" <lastest_release_tag>..HEAD`.
   - Add the new version reference in `xarray-spatial/docs/source/releases.json`
   - Check that the new version number is included in `smv_tag_whitelist` in `docs/source/conf.py` so that the docs will be built and uploaded by CI.
 - Commit changes and submit them as a PR to the `master` branch.
