@@ -1,8 +1,11 @@
-# FEATURE_NAME
+---
+name: Feature proposal
+about: Suggest an idea
+title: ''
+labels: proposal
+assignees: ''
 
-| name	| about| title|lables|asignees|
-| ----| ---- |------| ------| ------- |
-|Feature proposal| Suggest an idea | | proposal|
+---
 
 **Author of Proposal:**
 ## Reason or Problem
