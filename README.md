@@ -65,7 +65,7 @@ In all the above, the command will download and store the files into your curren
 `xarray-spatial` does not depend on GDAL / GEOS, which makes it fully extensible in Python but does limit the breadth of operations that can be covered.  xarray-spatial is meant to include the core raster-analysis functions needed for GIS developers / analysts, implemented independently of the non-Python geo stack.
 
 
-Our documentation is still under constructions, but [docs can be found here](https://xarray-spatial.org/).
+Our documentation is still under construction, but [docs can be found here](https://xarray-spatial.org/).
 
 
 #### Raster-huh?
