@@ -1,11 +1,74 @@
-![pypi](https://github.com/makepath/xarray-spatial/actions/workflows/pypi-publish.yml/badge.svg)
-![pytest](https://github.com/makepath/xarray-spatial/actions/workflows/test.yml/badge.svg)
-[![codecov](https://codecov.io/gh/makepath/xarray-spatial/branch/master/graph/badge.svg)](https://codecov.io/gh/makepath/xarray-spatial)
-[![PyPI version](https://badge.fury.io/py/xarray-spatial.svg)](https://badge.fury.io/py/xarray-spatial)
-[![Downloads](https://img.shields.io/pypi/dm/xarray-spatial.svg)]()
-[![License](https://img.shields.io/pypi/l/xarray-spatial.svg)]()
-
 <img src="img/Xarray-Spatial-logo.svg"/>
+
+<table>
+<tr>
+  <td>Latest Release</td>
+  <td>
+    <div>
+    <img src="https://badge.fury.io/py/xarray-spatial.svg" alt="pypi version" />
+    </div>
+    </a>
+  </td>
+
+  <td>Downloads</td>
+  <td>
+    <div>
+    <a href="https://xarray-spatial.org/getting_started/installation.html">
+    <img src="https://img.shields.io/pypi/dm/xarray-spatial?label=PyPI"
+         alt="PyPI downloads per month" />
+    </a>
+    </div>
+  </td>
+</tr>
+
+<tr>
+  <td>License</td>
+  <td>
+    <a href="https://github.com/makepath/xarray-spatial/blob/master/LICENSE.txt">
+    <img src="https://img.shields.io/pypi/l/xarray-spatial.svg"
+         alt="MIT" />
+    </a>
+  </td>
+
+  <td>People</td>
+  <td>
+    <img src="https://img.shields.io/github/contributors/makepath/xarray-spatial"
+         alt="GitHub contributors" />
+  </td>
+</tr>
+
+<tr>
+  <td>Build Status</td>
+  <td>
+    <div>
+    <a href="https://github.com/makepath/xarray-spatial/actions/workflows/test.yml">
+    <img src="https://github.com/makepath/xarray-spatial/actions/workflows/test.yml/badge.svg"
+         alt="Current github actions build status" />
+    </a>
+    </div>
+    <div>
+    <a href="https://github.com/makepath/xarray-spatial/actions/workflows/pypi-publish.yml">
+    <img src="https://github.com/makepath/xarray-spatial/actions/workflows/pypi-publish.yml/badge.svg"
+         alt="Current github actions build status" />
+    </a>
+    </div>
+  </td>
+  <td>Static Analysis</td>
+  <td>
+    <div>
+      <a href="https:https://codecov.io/gh/makepath/xarray-spatial">
+      <img alt="Language grade: JavaScript" src="https://codecov.io/gh/makepath/xarray-spatial/branch/master/graph/badge.svg"/>
+      </a>
+    </div>
+    <div>
+      <a href="https://lgtm.com/projects/g/makepath/xarray-spatial/context:python">
+      <img alt="Language grade: Python" src="https://img.shields.io/lgtm/grade/python/g/makepath/xarray-spatial.svg?"/>
+      </a>
+    </div>
+  </td>
+
+</tr>
+</table>
 
 -------
 
