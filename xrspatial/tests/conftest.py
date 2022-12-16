@@ -11,9 +11,9 @@ def random_data(size, dtype):
 
 
 @pytest.fixture
-def elevation_raster_float():
+def elevation_raster():
     elevation = np.array([
-        [      nan,       nan,       nan,       nan,       nan,       nan],
+        [   np.nan,    np.nan,    np.nan,    np.nan,    np.nan,    np.nan],
         [704.237  , 242.24084, 429.3324 , 779.8816 , 193.29506, 984.6926 ],
         [226.56795, 815.7483 , 290.6041 ,  76.49687, 820.89716,  32.27882],
         [344.8238 , 256.34998, 806.8326 , 602.0442 , 721.1633 , 496.95636],
@@ -21,6 +21,6 @@ def elevation_raster_float():
         [302.4271 , 151.49211, 442.32797, 358.4702 , 659.8187 , 447.1241 ],
         [148.04834, 819.2133 , 468.97913, 977.11694, 597.69666, 999.14185],
         [268.1575 , 625.96466, 840.26483, 448.28333, 859.2699 , 528.04095]
-    ], dtype=float32)
+    ], dtype=np.float32)
     return elevation
 
