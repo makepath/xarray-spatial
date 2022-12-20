@@ -53,16 +53,11 @@
     </a>
     </div>
   </td>
-  <td>Static Analysis</td>
+  <td>Coverage</td>
   <td>
     <div>
       <a href="https:https://codecov.io/gh/makepath/xarray-spatial">
-      <img alt="Language grade: JavaScript" src="https://codecov.io/gh/makepath/xarray-spatial/branch/master/graph/badge.svg"/>
-      </a>
-    </div>
-    <div>
-      <a href="https://lgtm.com/projects/g/makepath/xarray-spatial/context:python">
-      <img alt="Language grade: Python" src="https://img.shields.io/lgtm/grade/python/g/makepath/xarray-spatial.svg?"/>
+      <img alt="Language grade: Python" src="https://codecov.io/gh/makepath/xarray-spatial/branch/master/graph/badge.svg"/>
       </a>
     </div>
   </td>
@@ -285,6 +280,7 @@ However, wrapping GDAL has a few drawbacks for Python developers and data scient
 
 With the introduction of projects like Numba, Python gained new ways to provide high-performance code directly in Python, without depending on or being constrained by separate C/C++ extensions. `xarray-spatial` implements algorithms using Numba and Dask, making all of its source code available as pure Python without any "black box" barriers that obscure what is going on and prevent full optimization. Projects can make use of the functionality provided by `xarray-spatial` where available, while still using GDAL where required for other tasks.
 
-**Cite our code:**
+#### Citation
+Cite our code:
 
 `makepath/xarray-spatial, https://github.com/makepath/xarray-spatial, ©2020-2022.`
