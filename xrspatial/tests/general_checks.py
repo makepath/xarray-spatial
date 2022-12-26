@@ -14,9 +14,16 @@ def create_test_raster(
     data, backend='numpy', name='myraster', dims=['y', 'x'], attrs=None, chunks=(3, 3)
 ):
     raster = xr.DataArray(data, name=name, dims=dims, attrs=attrs)
+
+    # default res if none provided
+    res = (0.5, 0.5)
+    if attrs is not None:
+        if 'res' in attrs:
+            res = attrs['res']
+
     # set coords for test raster
     for i, dim in enumerate(dims):
-        raster[dim] = np.linspace(0, (data.shape[i] - 1)/2, data.shape[i])
+        raster[dim] = np.linspace(0, (data.shape[i] - 1)*res[0], data.shape[i])
 
     if has_cuda_and_cupy() and 'cupy' in backend:
         import cupy
