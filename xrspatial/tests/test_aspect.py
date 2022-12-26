@@ -8,7 +8,7 @@ from xrspatial.tests.general_checks import (assert_nan_edges_effect, assert_nump
 
 
 def input_data(data, backend='numpy'):
-    raster = create_test_raster(data, backend, attrs={'res': (10.0, 10.0)})
+    raster = create_test_raster(data, backend)
     return raster
 
 
