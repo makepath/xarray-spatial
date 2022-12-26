@@ -26,8 +26,8 @@ def input_data_with_nans():
     agg = create_test_raster(data, dims=['lat', 'lon'])
 
     # start and end at a nan pixel, coordinate in (lat, lon) format
-    start = (1, 2)
-    goal = (4, 1)
+    start = (0.5, 1)
+    goal = (2, 0.5)
     return agg, start, goal
 
 
