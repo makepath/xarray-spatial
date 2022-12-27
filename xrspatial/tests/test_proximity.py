@@ -5,7 +5,7 @@ import xarray as xr
 
 from xrspatial import allocation, direction, euclidean_distance, great_circle_distance, proximity
 from xrspatial.proximity import _calc_direction
-from xrspatial.tests.general_checks import general_output_checks
+from xrspatial.tests.general_checks import general_output_checks, create_test_raster
 
 
 def test_great_circle_distance():
@@ -146,6 +146,21 @@ def result_max_distance_direction():
     return max_distance, expected_result
 
 
+@pytest.fixture
+def qgis_proximity_distance_target_values():
+    target_values = [1]
+    qgis_result = np.array([
+        [1.802776, 1.414214, 1.118034, 1., 0.5, 0.],
+        [1.581139, 1.118034, 0.707107, 0.5, 0.707107, 0.5],
+        [1.118034, 1., 0.5, 0., 0.5, 1.],
+        [0.707107, 0.5, 0.707107, 0.5, 0.707107, 1.118034],
+        [0.5, 0., 0.5, 1., 1.118034, 1.414214],
+        [0.707107, 0.5, 0.707107, 1.118034, 1., 1.],
+        [0.5, 0., 0.5, 0.707107, 0.5, 0.5],
+        [0.707107, 0.5, 0.707107, 0.5, 0., 0.]], dtype=np.float32)
+    return target_values, qgis_result
+
+
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
 def test_default_proximity(test_raster, result_default_proximity):
     default_prox = proximity(test_raster, x='lon', y='lat')
@@ -251,3 +266,14 @@ def test_max_distance_direction(test_raster, result_max_distance_direction):
     max_distance, expected_result = result_max_distance_direction
     max_distance_direction = direction(test_raster, x='lon', y='lat', max_distance=max_distance)
     general_output_checks(test_raster, max_distance_direction, expected_result, verify_dtype=True)
+
+
+def test_proximity_distance_against_qgis(raster, qgis_proximity_distance_target_values):
+    target_values, qgis_result = qgis_proximity_distance_target_values
+    input_raster = create_test_raster(raster)
+
+    # proximity by xrspatial
+    xrspatial_result = proximity(input_raster, target_values=target_values)
+
+    general_output_checks(input_raster, xrspatial_result)
+    np.testing.assert_allclose(xrspatial_result.data, qgis_result.data, rtol=1e-05, equal_nan=True)
