@@ -445,6 +445,19 @@ def test_custom_stats_dataarray(backend, data_zones, data_values_2d, result_cust
     )
 
 
+def _test_zonal_stats_against_qgis(elevation_raster_no_nans, raster, qgis_zonal_stats):
+    qgis_df_result = pd.DataFrame(qgis_zonal_stats).T
+
+    stats_funcs = list(set(qgis_zonal_stats.keys()) - set(['zone']))
+    zones_agg = create_test_raster(raster)
+    values_agg = create_test_raster(elevation_raster_no_nans)
+
+    xrspatial_df_result = stats(
+        zones=zones_agg, values=values_agg, stats_funcs=stats_funcs
+    )
+    check_results('numpy', xrspatial_df_result, qgis_df_result)
+
+
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
 def test_count_crosstab_2d(backend, data_zones, data_values_2d, result_count_crosstab_2d):
     zone_ids, cat_ids, expected_result = result_count_crosstab_2d
