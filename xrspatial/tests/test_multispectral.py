@@ -146,6 +146,9 @@ def qgis_evi():
 
 @pytest.fixture
 def qgis_nbr():
+    # this result is obtained by using NIR, and SWIR2 band data
+    # running through QGIS Raster Calculator with formula:
+    # nbr = (nir - swir2) / (nir + swir2)
     result = np.array([
         [np.nan, 0.09459506, 0.08678813, 0.04651979],
         [0.07953876, 0.09373278, 0.09194128, 0.0511995],
@@ -160,6 +163,9 @@ def qgis_nbr():
 
 @pytest.fixture
 def qgis_nbr2():
+    # this result is obtained by using SWIR1, and SWIR2 band data
+    # running through QGIS Raster Calculator with formula:
+    # nbr2 = (swir1 - swir2) / (swir1 + swir2)
     result = np.array([
         [np.nan, np.nan, 0.11823621, 0.09696512],
         [0.12169173, 0.12360972, 0.11772577, 0.09825099],
@@ -174,6 +180,9 @@ def qgis_nbr2():
 
 @pytest.fixture
 def qgis_ndvi():
+    # this result is obtained by using NIR, and red band data
+    # running through QGIS Raster Calculator with formula:
+    # ndvi = (nir - red) / (nir + red)
     result = np.array([
         [np.nan, 0.21453354, 0.21365978, 0.1833718],
         [0.20180409, 0.21460803, 0.21499589, np.nan],
@@ -188,6 +197,9 @@ def qgis_ndvi():
 
 @pytest.fixture
 def qgis_ndmi():
+    # this result is obtained by using NIR, and SWIR1 band data
+    # running through QGIS Raster Calculator with formula:
+    # ndvi = (nir - swir1) / (nir + swir1)
     result = np.array([
         [np.nan, np.nan, -0.03177413, -0.05067392],
         [-0.04256495, -0.03022716, -0.02606663, -0.04728937],
@@ -202,6 +214,10 @@ def qgis_ndmi():
 
 @pytest.fixture
 def qgis_savi():
+    # this result is obtained by using NIR, and red band data
+    # running through QGIS Raster Calculator with formula:
+    # savi = (nir - red) / ((nir + red + soil_factor) * (1 + soil_factor))
+    # with default value of soil_factor=1
     result = np.array([
         [0., 0.10726268, 0.10682587, 0.09168259],
         [0.10089815, 0.10729991, 0.10749393, np.nan],
@@ -216,6 +232,9 @@ def qgis_savi():
 
 @pytest.fixture
 def qgis_gci():
+    # this result is obtained by using NIR, and green band data
+    # running through QGIS Raster Calculator with formula:
+    # gci = nir / green - 1
     result = np.array([
         [np.nan, 0.60418975, 0.6045147, 0.5452919],
         [0.57248056, 0.6034935, 0.6154458, 0.5677431],
@@ -230,6 +249,9 @@ def qgis_gci():
 
 @pytest.fixture
 def qgis_sipi():
+    # this result is obtained by using NIR, red and blue band data
+    # running through QGIS Raster Calculator with formula:
+    # sipi = (nir - blue) / (nir - red)
     result = np.array([
         [np.nan, 1.2015283, 1.2210878, 1.3413291],
         [1.2290354, 1.2043835, 1.2258345, np.nan],
@@ -244,6 +266,9 @@ def qgis_sipi():
 
 @pytest.fixture
 def qgis_ebbi():
+    # this result is obtained by using red, swir1 and tir band data
+    # running through QGIS Raster Calculator with formula:
+    # ebbi = (swir1 - red) / (10 * sqrt(swir1 + tir))
     result = np.array([
         [np.nan, np.nan, 4.0488696, 4.0370474],
         [3.9937027, 3.9902349, 3.9841716, np.nan],
