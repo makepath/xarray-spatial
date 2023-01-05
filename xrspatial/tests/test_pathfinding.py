@@ -26,8 +26,8 @@ def input_data_with_nans():
     agg = create_test_raster(data, dims=['lat', 'lon'])
 
     # start and end at a nan pixel, coordinate in (lat, lon) format
-    start = (0.5, 1)
-    goal = (2, 0.5)
+    start = (1.5, 1)
+    goal = (0, 0.5)
     return agg, start, goal
 
 
@@ -79,7 +79,7 @@ def test_a_star_search_with_barriers(input_data):
     barriers = [1]
     # set pixels with value 1 as barriers,
     # cannot go from (0, 0) to anywhere since it is surrounded by 1s
-    start = (0, 0)
+    start = (2, 0)
     for x1 in agg['lon']:
         for y1 in agg['lat']:
             goal = (y1, x1)
