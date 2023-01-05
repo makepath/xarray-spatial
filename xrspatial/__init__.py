@@ -1,5 +1,3 @@
-import param
-
 from xrspatial.aspect import aspect  # noqa
 from xrspatial.bump import bump  # noqa
 from xrspatial.classify import binary  # noqa
@@ -35,13 +33,11 @@ from xrspatial.zonal import regions as regions  # noqa
 from xrspatial.zonal import stats as zonal_stats  # noqa
 from xrspatial.zonal import suggest_zonal_canvas as suggest_zonal_canvas  # noqa
 
-__version__ = str(
-    param.version.Version(
-        fpath=__file__,
-        archive_commit='$Format:%h$',
-        reponame='xrspatial',
-    )
-)
+
+try:
+    from ._version import version as __version__
+except ImportError:
+    __version__ = "unknown"
 
 
 def test():
