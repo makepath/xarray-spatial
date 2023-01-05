@@ -21,9 +21,9 @@ def create_test_raster(
         if 'res' in attrs:
             res = attrs['res']
 
-    # set coords for test raster
-    for i, dim in enumerate(dims):
-        raster[dim] = np.linspace(0, (data.shape[i] - 1)*res[0], data.shape[i])
+    # set coords for test raster, 2D coords only
+    raster[dims[0]] = np.linspace((data.shape[0] - 1)/2, 0, data.shape[0])
+    raster[dims[1]] = np.linspace(0, (data.shape[1] - 1)/2, data.shape[1])
 
     if has_cuda_and_cupy() and 'cupy' in backend:
         import cupy
