@@ -1,4 +1,5 @@
 # standard library
+import copy
 from math import sqrt
 from typing import Callable, Dict, List, Optional, Union
 
@@ -92,7 +93,7 @@ def _sort_and_stride(zones, values, unique_zones):
 
     values_shape = values.shape
     if len(values_shape) == 3:
-        values_by_zones = values.reshape(
+        values_by_zones = copy.deepcopy(values).reshape(
             values_shape[0], values_shape[1] * values_shape[2])
         for i in range(values_shape[0]):
             values_by_zones[i] = values_by_zones[i][sorted_indices]
