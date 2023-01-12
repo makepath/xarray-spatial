@@ -1,3 +1,5 @@
+import copy
+
 import dask.array as da
 import dask.dataframe as dd
 import numpy as np
@@ -11,7 +13,9 @@ from xrspatial import zonal_crosstab as crosstab
 from xrspatial import zonal_stats as stats
 from xrspatial.zonal import regions
 
-from .general_checks import create_test_raster, general_output_checks, has_cuda_and_cupy
+from .general_checks import (
+    assert_input_data_unmodified, create_test_raster, general_output_checks, has_cuda_and_cupy
+)
 
 
 @pytest.fixture
@@ -299,14 +303,26 @@ def check_results(backend, df_result, expected_results_dict):
 def test_default_stats(backend, data_zones, data_values_2d, result_default_stats):
     if backend == 'cupy' and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
+
+    # copy input data to verify they're unchanged after running the function
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_2d = copy.deepcopy(data_values_2d)
+
     df_result = stats(zones=data_zones, values=data_values_2d)
     check_results(backend, df_result, result_default_stats)
+
+    assert_input_data_unmodified(data_zones, copied_data_zones)
+    assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
 
 
 @pytest.mark.parametrize("backend", ['numpy'])
 def test_default_stats_dataarray(
     backend, data_zones, data_values_2d, result_default_stats_dataarray
 ):
+    # copy input data to verify they're unchanged after running the function
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_2d = copy.deepcopy(data_values_2d)
+
     dataarray_result = stats(
         zones=data_zones, values=data_values_2d, return_type='xarray.DataArray'
     )
@@ -317,22 +333,34 @@ def test_default_stats_dataarray(
         verify_dtype=False,
         verify_attrs=False,
     )
-
+    assert_input_data_unmodified(data_zones, copied_data_zones)
+    assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy'])
 def test_zone_ids_stats(backend, data_zones, data_values_2d, result_zone_ids_stats):
     if backend == 'cupy' and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
+
+    # copy input data to verify they're unchanged after running the function
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_2d = copy.deepcopy(data_values_2d)
+
     zone_ids, expected_result = result_zone_ids_stats
     df_result = stats(zones=data_zones, values=data_values_2d,
                       zone_ids=zone_ids)
     check_results(backend, df_result, expected_result)
+    assert_input_data_unmodified(data_zones, copied_data_zones)
+    assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
 
 
 @pytest.mark.parametrize("backend", ['numpy'])
 def test_zone_ids_stats_dataarray(
     backend, data_zones, data_values_2d, result_zone_ids_stats_dataarray
 ):
+    # copy input data to verify they're unchanged after running the function
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_2d = copy.deepcopy(data_values_2d)
+
     zone_ids, expected_result = result_zone_ids_stats_dataarray
     dataarray_result = stats(
         zones=data_zones, values=data_values_2d, zone_ids=zone_ids, return_type='xarray.DataArray'
@@ -340,6 +368,8 @@ def test_zone_ids_stats_dataarray(
     general_output_checks(
         data_values_2d, dataarray_result, expected_result, verify_dtype=False, verify_attrs=False
     )
+    assert_input_data_unmodified(data_zones, copied_data_zones)
+    assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
 
 
 @pytest.mark.parametrize("backend", ['numpy', 'cupy'])
@@ -347,6 +377,10 @@ def test_custom_stats(backend, data_zones, data_values_2d, result_custom_stats):
     # ---- custom stats (NumPy and CuPy only) ----
     if backend == 'cupy' and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
+
+    # copy input data to verify they're unchanged after running the function
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_2d = copy.deepcopy(data_values_2d)
 
     custom_stats = {
         'double_sum': _double_sum,
@@ -359,10 +393,15 @@ def test_custom_stats(backend, data_zones, data_values_2d, result_custom_stats):
         zone_ids=zone_ids, nodata_values=nodata_values
     )
     check_results(backend, df_result, expected_result)
+    assert_input_data_unmodified(data_zones, copied_data_zones)
+    assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
 
 
 @pytest.mark.parametrize("backend", ['numpy'])
 def test_custom_stats_dataarray(backend, data_zones, data_values_2d, result_custom_stats_dataarray):
+    # copy input data to verify they're unchanged after running the function
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_2d = copy.deepcopy(data_values_2d)
     # ---- custom stats returns a xr.DataArray (NumPy only) ----
     custom_stats = {
         'double_sum': _double_sum,
@@ -376,43 +415,69 @@ def test_custom_stats_dataarray(backend, data_zones, data_values_2d, result_cust
     general_output_checks(
         data_values_2d, dataarray_result, expected_result, verify_dtype=False, verify_attrs=False
     )
+    assert_input_data_unmodified(data_zones, copied_data_zones)
+    assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
 
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
 def test_count_crosstab_2d(backend, data_zones, data_values_2d, result_count_crosstab_2d):
+    # copy input data to verify they're unchanged after running the function
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_2d = copy.deepcopy(data_values_2d)
+
     zone_ids, cat_ids, expected_result = result_count_crosstab_2d
     df_result = crosstab(
         zones=data_zones, values=data_values_2d, zone_ids=zone_ids, cat_ids=cat_ids,
     )
     check_results(backend, df_result, expected_result)
+    assert_input_data_unmodified(data_zones, copied_data_zones)
+    assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
 
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
 def test_percentage_crosstab_2d(backend, data_zones, data_values_2d, result_percentage_crosstab_2d):
+    # copy input data to verify they're unchanged after running the function
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_2d = copy.deepcopy(data_values_2d)
+
     nodata_values, zone_ids, cat_ids, expected_result = result_percentage_crosstab_2d
     df_result = crosstab(
         zones=data_zones, values=data_values_2d, zone_ids=zone_ids, cat_ids=cat_ids,
         nodata_values=nodata_values, agg='percentage'
     )
     check_results(backend, df_result, expected_result)
+    assert_input_data_unmodified(data_zones, copied_data_zones)
+    assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
 
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
 def test_crosstab_3d_count(backend, data_zones, data_values_3d, result_crosstab_3d):
+    # copy input data to verify they're unchanged after running the function
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_3d = copy.deepcopy(data_values_3d)
+
     layer, zone_ids, expected_result = result_crosstab_3d
     df_result = crosstab(zones=data_zones, values=data_values_3d,
                          zone_ids=zone_ids, layer=layer, agg='count')
     check_results(backend, df_result, expected_result['count'])
+    assert_input_data_unmodified(data_zones, copied_data_zones)
+    assert_input_data_unmodified(data_values_3d, copied_data_values_3d)
 
 
 @pytest.mark.parametrize("backend", ['numpy'])
 def test_crosstab_3d_agg_method(backend, data_zones, data_values_3d, result_crosstab_3d):
+    # copy input data to verify they're unchanged after running the function
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_3d = copy.deepcopy(data_values_3d)
+
     layer, zone_ids, expected_result = result_crosstab_3d
     agg_methods = ['min', 'max', 'mean', 'sum', 'std', 'var', 'count']
     for agg in agg_methods:
         df_result = crosstab(zones=data_zones, values=data_values_3d,
                              zone_ids=zone_ids, layer=layer, agg=agg)
         check_results(backend, df_result, expected_result[agg])
+        assert_input_data_unmodified(data_zones, copied_data_zones)
+        assert_input_data_unmodified(data_values_3d, copied_data_values_3d)
 
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
@@ -422,12 +487,18 @@ def test_nodata_values_crosstab_3d(
     data_values_3d,
     result_nodata_values_crosstab_3d
 ):
+    # copy input data to verify they're unchanged after running the function
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_3d = copy.deepcopy(data_values_3d)
+
     nodata_values, layer, zone_ids, expected_result = result_nodata_values_crosstab_3d
     df_result = crosstab(
         zones=data_zones, values=data_values_3d, zone_ids=zone_ids,
         layer=layer, nodata_values=nodata_values
     )
     check_results(backend, df_result, expected_result)
+    assert_input_data_unmodified(data_zones, copied_data_zones)
+    assert_input_data_unmodified(data_values_3d, copied_data_values_3d)
 
 
 def test_apply():
