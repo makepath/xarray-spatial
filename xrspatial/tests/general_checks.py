@@ -72,6 +72,10 @@ def general_output_checks(input_agg: xr.DataArray,
             assert output_data.dtype == expected_results.dtype
 
 
+def assert_input_data_unmodified(data_before, data_after):
+    assert data_before.equals(data_after)
+
+
 def assert_nan_edges_effect(result_agg):
     # nan edge effect
     edges = [
