@@ -246,6 +246,60 @@ def result_ebbi():
     return result
 
 
+@pytest.fixture
+def data_uint_dtype_normalized_ratio(dtype):
+    # test data for input data array of uint dtype
+    # normalized ratio is applied with different bands for NBR, NBR2, NDVI, NDMI.
+    band1 = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
+    band2 = xr.DataArray(np.array([[0, 2], [1, 2]], dtype=dtype))
+    result = np.array([[1, -0.33333334], [0, -0.33333334]], dtype=np.float32)
+    return band1, band2, result
+
+
+@pytest.fixture
+def data_uint_dtype_arvi(dtype):
+    nir = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
+    red = xr.DataArray(np.array([[0, 1], [0, 2]], dtype=dtype))
+    blue = xr.DataArray(np.array([[0, 2], [1, 2]], dtype=dtype))
+    result = np.array([[1, 0.2], [1, -0.14285715]], dtype=np.float32)
+    return nir, red, blue, result
+
+
+@pytest.fixture
+def data_uint_dtype_evi(dtype):
+    nir = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
+    red = xr.DataArray(np.array([[0, 1], [0, 2]], dtype=dtype))
+    blue = xr.DataArray(np.array([[0, 2], [1, 2]], dtype=dtype))
+    result = np.array([[1.25, 0.], [-0.45454547, 2.5]], dtype=np.float32)
+    return nir, red, blue, result
+
+
+@pytest.fixture
+def data_uint_dtype_savi(dtype):
+    nir = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
+    red = xr.DataArray(np.array([[0, 1], [0, 2]], dtype=dtype))
+    result = np.array([[0.25, 0.], [0.25, -0.125]], dtype=np.float32)
+    return nir, red, result
+
+
+@pytest.fixture
+def data_uint_dtype_sipi(dtype):
+    nir = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
+    red = xr.DataArray(np.array([[0, 0], [0, 2]], dtype=dtype))
+    blue = xr.DataArray(np.array([[0, 2], [1, 2]], dtype=dtype))
+    result = np.array([[1, -1], [0, 1]], dtype=np.float32)
+    return nir, red, blue, result
+
+
+@pytest.fixture
+def data_uint_dtype_ebbi(dtype):
+    red = xr.DataArray(np.array([[0, 0], [0, 2]], dtype=dtype))
+    swir = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
+    tir = xr.DataArray(np.array([[0, 2], [1, 2]], dtype=dtype))
+    result = np.array([[0.1, 0.05773503], [0.07071068, -0.05773503]], dtype=np.float32)
+    return red, swir, tir, result
+
+
 # NDVI -------------
 def test_ndvi_data_contains_valid_values():
     _x = np.mgrid[1:0:21j]
@@ -275,6 +329,13 @@ def test_ndvi_cpu(nir_data, red_data, result_ndvi):
     general_output_checks(nir_data, result, result_ndvi, verify_dtype=True)
 
 
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_ndvi_uint_dtype(data_uint_dtype_normalized_ratio):
+    nir_data, red_data, result_ndvi = data_uint_dtype_normalized_ratio
+    result = ndvi(nir_data, red_data)
+    general_output_checks(nir_data, result, result_ndvi, verify_dtype=True)
+
+
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_ndvi_gpu(nir_data, red_data, result_ndvi):
@@ -290,6 +351,7 @@ def test_savi_zero_soil_factor_cpu(nir_data, red_data, result_ndvi):
     general_output_checks(nir_data, result_savi, result_ndvi, verify_dtype=True)
 
 
+@cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_savi_zero_soil_factor_gpu(nir_data, red_data, result_ndvi):
     # savi should be same as ndvi at soil_factor=0
@@ -302,6 +364,13 @@ def test_savi_cpu(nir_data, red_data, result_savi):
     # test default savi where soil_factor = 1.0
     result = savi(nir_data, red_data, soil_factor=1.0)
     general_output_checks(nir_data, result, result_savi)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_savi_uint_dtype(data_uint_dtype_savi):
+    nir_data, red_data, result_savi = data_uint_dtype_savi
+    result = savi(nir_data, red_data)
+    general_output_checks(nir_data, result, result_savi, verify_dtype=True)
 
 
 @cuda_and_cupy_available
@@ -319,6 +388,13 @@ def test_arvi_cpu(nir_data, red_data, blue_data, result_arvi):
     general_output_checks(nir_data, result, result_arvi)
 
 
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_arvi_uint_dtype(data_uint_dtype_arvi):
+    nir_data, red_data, blue_data, result_arvi = data_uint_dtype_arvi
+    result = arvi(nir_data, red_data, blue_data)
+    general_output_checks(nir_data, result, result_arvi, verify_dtype=True)
+
+
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_arvi_gpu(nir_data, red_data, blue_data, result_arvi):
@@ -331,6 +407,13 @@ def test_arvi_gpu(nir_data, red_data, blue_data, result_arvi):
 def test_evi_cpu(nir_data, red_data, blue_data, result_evi):
     result = evi(nir_data, red_data, blue_data)
     general_output_checks(nir_data, result, result_evi)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_evi_uint_dtype(data_uint_dtype_evi):
+    nir_data, red_data, blue_data, result_evi = data_uint_dtype_evi
+    result = evi(nir_data, red_data, blue_data)
+    general_output_checks(nir_data, result, result_evi, verify_dtype=True)
 
 
 @cuda_and_cupy_available
@@ -361,6 +444,13 @@ def test_sipi_cpu(nir_data, red_data, blue_data, result_sipi):
     general_output_checks(nir_data, result, result_sipi)
 
 
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_sipi_uint_dtype(data_uint_dtype_sipi):
+    nir_data, red_data, blue_data, result_sipi = data_uint_dtype_sipi
+    result = sipi(nir_data, red_data, blue_data)
+    general_output_checks(nir_data, result, result_sipi, verify_dtype=True)
+
+
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_sipi_gpu(nir_data, red_data, blue_data, result_sipi):
@@ -373,6 +463,13 @@ def test_sipi_gpu(nir_data, red_data, blue_data, result_sipi):
 def test_nbr_cpu(nir_data, swir2_data, result_nbr):
     result = nbr(nir_data, swir2_data)
     general_output_checks(nir_data, result, result_nbr)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_nbr_uint_dtype(data_uint_dtype_normalized_ratio):
+    nir_data, red_data, result_nbr = data_uint_dtype_normalized_ratio
+    result = nbr(nir_data, red_data)
+    general_output_checks(nir_data, result, result_nbr, verify_dtype=True)
 
 
 @cuda_and_cupy_available
@@ -389,6 +486,13 @@ def test_nbr2_cpu(swir1_data, swir2_data, result_nbr2):
     general_output_checks(swir1_data, result, result_nbr2)
 
 
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_nbr2_uint_dtype(data_uint_dtype_normalized_ratio):
+    nir_data, red_data, result_nbr2 = data_uint_dtype_normalized_ratio
+    result = nbr2(nir_data, red_data)
+    general_output_checks(nir_data, result, result_nbr2, verify_dtype=True)
+
+
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_nbr2_gpu(swir1_data, swir2_data, result_nbr2):
@@ -403,6 +507,13 @@ def test_ndmi_cpu(nir_data, swir1_data, result_ndmi):
     general_output_checks(nir_data, result, result_ndmi)
 
 
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_ndmi_uint_dtype(data_uint_dtype_normalized_ratio):
+    nir_data, red_data, result_ndmi = data_uint_dtype_normalized_ratio
+    result = ndmi(nir_data, red_data)
+    general_output_checks(nir_data, result, result_ndmi, verify_dtype=True)
+
+
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
 def test_ndmi_gpu(nir_data, swir1_data, result_ndmi):
@@ -415,6 +526,13 @@ def test_ndmi_gpu(nir_data, swir1_data, result_ndmi):
 def test_ebbi_cpu(red_data, swir1_data, tir_data, result_ebbi):
     result = ebbi(red_data, swir1_data, tir_data)
     general_output_checks(red_data, result, result_ebbi)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_ebbi_uint_dtype(data_uint_dtype_ebbi):
+    red_data, swir_data, tir_data, result_ebbi = data_uint_dtype_ebbi
+    result = ebbi(red_data, swir_data, tir_data)
+    general_output_checks(red_data, result, result_ebbi, verify_dtype=True)
 
 
 @cuda_and_cupy_available
