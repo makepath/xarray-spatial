@@ -145,19 +145,23 @@ def _cpu_bin(data, bins, new_values):
             val_bin = -1
 
             # find bin
-            for b in range(0, nbins):
+            if np.isfinite(val):
+                if val <= bins[0]:
+                    val_bin = 0
+                elif val <= bins[nbins - 1]:
+                    start = 0
+                    end = nbins - 1
+                    mid = (end + start) // 2
+                    while start <= end:
+                        if bins[mid] < val:
+                            start = mid + 1
+                        elif val > bins[mid - 1]:
+                            break
+                        else:
+                            end = mid - 1
+                        mid = (end + start) // 2
 
-                # first bin
-                if b == 0:
-                    if val <= bins[b]:
-                        if np.isfinite(val):
-                            val_bin = b
-                        break
-                else:
-                    if val > bins[b - 1] and val <= bins[b]:
-                        if np.isfinite(val):
-                            val_bin = b
-                        break
+                    val_bin = mid
 
             if val_bin > -1:
                 out[y, x] = new_values[val_bin]
