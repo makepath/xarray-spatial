@@ -209,7 +209,7 @@ def _gpu_bin(data, bins, new_values):
     if val_bin > -1:
         out = new_values[val_bin]
     else:
-        out = np.nan
+        out = cupy.nan
 
     return out
 
