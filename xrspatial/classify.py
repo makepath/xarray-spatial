@@ -56,7 +56,8 @@ def _gpu_binary(data, values):
 def _run_gpu_binary(data, values, out):
     i, j = nb.cuda.grid(2)
     if i >= 0 and i < out.shape[0] and j >= 0 and j < out.shape[1]:
-        out[i, j] = _gpu_binary(data[i:i+1, j:j+1], values)
+        if cupy.isfinite(data[i:i+1, j:j+1]):
+            out[i, j] = _gpu_binary(data[i:i+1, j:j+1], values)
 
 
 def _run_cupy_binary(data, values):
