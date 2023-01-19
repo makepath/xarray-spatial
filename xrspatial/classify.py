@@ -20,12 +20,13 @@ from xrspatial.utils import ArrayTypeFunctionMapping, cuda_args, ngjit, not_impl
 @ngjit
 def _cpu_binary(data, values):
     out = np.zeros_like(data)
+    out[:] = np.nan
     rows, cols = data.shape
     for y in range(0, rows):
         for x in range(0, cols):
             if np.any(values == data[y, x]):
                 out[y, x] = 1
-            else:
+            elif np.isfinite(data[y, x]):
                 out[y, x] = 0
     return out
 
