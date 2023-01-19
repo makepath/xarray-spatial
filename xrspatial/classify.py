@@ -194,23 +194,22 @@ def _gpu_bin(data, bins, new_values):
     val_bin = -1
 
     # find bin
-    if cupy.isfinite(val):
-        if val <= bins[0]:
-            val_bin = 0
-        elif val <= bins[nbins - 1]:
-            start = 0
-            end = nbins - 1
+    if val <= bins[0]:
+        val_bin = 0
+    elif val <= bins[nbins - 1]:
+        start = 0
+        end = nbins - 1
+        mid = (end + start) // 2
+        while start <= end:
+            if bins[mid] < val:
+                start = mid + 1
+            elif val > bins[mid - 1]:
+                break
+            else:
+                end = mid - 1
             mid = (end + start) // 2
-            while start <= end:
-                if bins[mid] < val:
-                    start = mid + 1
-                elif val > bins[mid - 1]:
-                    break
-                else:
-                    end = mid - 1
-                mid = (end + start) // 2
 
-            val_bin = mid
+        val_bin = mid
 
     if val_bin > -1:
         out = new_values[val_bin]
