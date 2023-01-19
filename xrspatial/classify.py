@@ -76,6 +76,7 @@ def binary(agg, values, name='binary'):
     """
     Binarize a data array based on a set of values. Data that equals to a value in the set will be
     set to 1. In contrast, data that does not equal to any value in the set will be set to 0.
+    Note that NaNs and infinite values will be set to NaNs.
 
     Parameters
     ----------
@@ -114,10 +115,10 @@ def binary(agg, values, name='binary'):
         >>> agg_binary = binary(agg, values)
         >>> print(agg_binary)
         <xarray.DataArray 'binary' (dim_0: 4, dim_1: 5)>
-        array([[0.,  1.,  1.,  1.,  0.],
+        array([[np.nan,  1.,  1.,  1.,  0.],
                [0.,  0.,  0.,  0.,  0.],
                [0.,  0.,  0.,  0.,  0.],
-               [0.,  0.,  0.,  0.,  0.]], dtype=float32)
+               [0.,  0.,  0.,  0.,  np.nan]], dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
     """
 
