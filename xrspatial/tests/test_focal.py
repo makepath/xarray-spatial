@@ -270,7 +270,7 @@ def test_2d_convolution_gpu(
 
 
 def test_calc_cellsize_unit_input_attrs(convolve_2d_data):
-    agg = create_test_raster(convolve_2d_data, attrs={'res': 1, 'unit': 'km'})
+    agg = create_test_raster(convolve_2d_data, attrs={'res': (1, 1), 'unit': 'km'})
     cellsize = calc_cellsize(agg)
     assert cellsize == (1000, 1000)
 
@@ -278,7 +278,7 @@ def test_calc_cellsize_unit_input_attrs(convolve_2d_data):
 def test_calc_cellsize_no_attrs(convolve_2d_data):
     agg = create_test_raster(convolve_2d_data)
     cellsize = calc_cellsize(agg)
-    assert cellsize == (1, 1)
+    assert cellsize == (0.5, 0.5)
 
 
 @pytest.fixture

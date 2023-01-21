@@ -284,7 +284,58 @@ def result_nodata_values_crosstab_3d():
     return nodata_values, layer, zone_ids, expected_result
 
 
-def check_results(backend, df_result, expected_results_dict):
+@pytest.fixture
+def qgis_zonal_stats():
+    qgis_result = {
+        'zone': [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+        'mean': [748.04910278,
+                 619.62845612,
+                 363.29403178,
+                 582.55223301,
+                 356.15832265,
+                 730.03720856,
+                 468.15884018,
+                 388.61296272,
+                 706.54189046,
+                 677.92201742],
+        'max': [999.14184570,
+                859.26989746,
+                752.95483398,
+                845.27789307,
+                704.23699951,
+                977.11694336,
+                870.53448486,
+                721.16333008,
+                990.82781982,
+                984.69262695],
+        'min': [496.95635986,
+                76.49687195,
+                151.49211121,
+                290.60409546,
+                51.21858978,
+                447.12411499,
+                49.61272812,
+                32.27882004,
+                468.97912598,
+                242.24084473],
+        'sum': [1496.09820557,
+                3717.77073669,
+                1089.88209534,
+                4077.86563110,
+                3205.42490387,
+                2920.14883423,
+                2340.79420090,
+                2331.67777634,
+                2119.62567139,
+                2033.76605225],
+        'count': [2, 6, 3, 7, 9, 4, 5, 6, 3, 3]
+    }
+    return qgis_result
+
+
+def check_results(
+        backend, df_result, expected_results_dict, rtol=1e-05, atol=1e-07, equal_nan=True
+):
     if 'dask' in backend:
         # dask case, compute result
         assert isinstance(df_result, dd.DataFrame)
@@ -296,7 +347,9 @@ def check_results(backend, df_result, expected_results_dict):
     assert (df_result['zone'] == expected_results_dict['zone']).all()
     # stats columns
     for col in df_result.columns[1:]:
-        np.testing.assert_allclose(df_result[col], expected_results_dict[col])
+        np.testing.assert_allclose(
+            df_result[col], expected_results_dict[col], rtol=rtol, atol=atol, equal_nan=equal_nan
+        )
 
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy'])
@@ -417,6 +470,17 @@ def test_custom_stats_dataarray(backend, data_zones, data_values_2d, result_cust
     )
     assert_input_data_unmodified(data_zones, copied_data_zones)
     assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
+
+
+def test_zonal_stats_against_qgis(elevation_raster_no_nans, raster, qgis_zonal_stats):
+    stats_funcs = list(set(qgis_zonal_stats.keys()) - set(['zone']))
+    zones_agg = create_test_raster(raster)
+    values_agg = create_test_raster(elevation_raster_no_nans)
+
+    xrspatial_df_result = stats(
+        zones=zones_agg, values=values_agg, stats_funcs=stats_funcs
+    )
+    check_results('numpy', xrspatial_df_result, qgis_zonal_stats, atol=1e-5)
 
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
