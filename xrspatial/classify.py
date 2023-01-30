@@ -2,6 +2,8 @@ import warnings
 from functools import partial
 from typing import List, Optional
 
+import cmath
+
 import xarray as xr
 
 try:
@@ -44,8 +46,7 @@ def _run_dask_numpy_binary(data, values):
 
 
 @nb.cuda.jit(device=True)
-def _gpu_binary(data, values):
-    val = data[0, 0]
+def _gpu_binary(val, values):
     for v in values:
         if val == v:
             return 1
@@ -56,7 +57,8 @@ def _gpu_binary(data, values):
 def _run_gpu_binary(data, values, out):
     i, j = nb.cuda.grid(2)
     if i >= 0 and i < out.shape[0] and j >= 0 and j < out.shape[1]:
-        out[i, j] = _gpu_binary(data[i:i+1, j:j+1], values)
+        if cmath.isfinite(data[i, j]):
+            out[i, j] = _gpu_binary(data[i, j], values)
 
 
 def _run_cupy_binary(data, values):
