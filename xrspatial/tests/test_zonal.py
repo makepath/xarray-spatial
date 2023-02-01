@@ -483,6 +483,21 @@ def test_zonal_stats_against_qgis(elevation_raster_no_nans, raster, qgis_zonal_s
     check_results('numpy', xrspatial_df_result, qgis_zonal_stats, atol=1e-5)
 
 
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy'])
+def test_zonal_stats_inputs_unmodified(backend, data_zones, data_values_2d, result_default_stats):
+    if backend == 'cupy' and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    # copy input data to verify they're unchanged after running the function
+    copied_data_zones = copy.deepcopy(data_zones)
+    copied_data_values_2d = copy.deepcopy(data_values_2d)
+
+    df_result = stats(zones=data_zones, values=data_values_2d)
+
+    assert_input_data_unmodified(data_zones, copied_data_zones)
+    assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
+
+
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
 def test_count_crosstab_2d(backend, data_zones, data_values_2d, result_count_crosstab_2d):
     # copy input data to verify they're unchanged after running the function
