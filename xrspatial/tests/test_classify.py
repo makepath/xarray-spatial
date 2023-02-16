@@ -22,10 +22,10 @@ def input_data(backend='numpy'):
 def result_binary():
     values = [1, 2, 3]
     expected_result = np.asarray([
-        [0, 1, 1, 0, 0],
+        [np.nan, 1, 1, 0, np.nan],
         [0, 0, 0, 0, 0],
         [0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0]
+        [0, 0, 0, 0, np.nan]
     ], dtype=np.float32)
     return values, expected_result
 

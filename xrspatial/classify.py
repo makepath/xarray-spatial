@@ -2,6 +2,8 @@ import warnings
 from functools import partial
 from typing import List, Optional
 
+import cmath
+
 import xarray as xr
 
 try:
@@ -20,12 +22,13 @@ from xrspatial.utils import ArrayTypeFunctionMapping, cuda_args, ngjit, not_impl
 @ngjit
 def _cpu_binary(data, values):
     out = np.zeros_like(data)
+    out[:] = np.nan
     rows, cols = data.shape
     for y in range(0, rows):
         for x in range(0, cols):
             if np.any(values == data[y, x]):
                 out[y, x] = 1
-            else:
+            elif np.isfinite(data[y, x]):
                 out[y, x] = 0
     return out
 
@@ -43,8 +46,7 @@ def _run_dask_numpy_binary(data, values):
 
 
 @nb.cuda.jit(device=True)
-def _gpu_binary(data, values):
-    val = data[0, 0]
+def _gpu_binary(val, values):
     for v in values:
         if val == v:
             return 1
@@ -55,7 +57,8 @@ def _gpu_binary(data, values):
 def _run_gpu_binary(data, values, out):
     i, j = nb.cuda.grid(2)
     if i >= 0 and i < out.shape[0] and j >= 0 and j < out.shape[1]:
-        out[i, j] = _gpu_binary(data[i:i+1, j:j+1], values)
+        if cmath.isfinite(data[i, j]):
+            out[i, j] = _gpu_binary(data[i, j], values)
 
 
 def _run_cupy_binary(data, values):
@@ -76,6 +79,7 @@ def binary(agg, values, name='binary'):
     """
     Binarize a data array based on a set of values. Data that equals to a value in the set will be
     set to 1. In contrast, data that does not equal to any value in the set will be set to 0.
+    Note that NaNs and infinite values will be set to NaNs.
 
     Parameters
     ----------
@@ -114,10 +118,10 @@ def binary(agg, values, name='binary'):
         >>> agg_binary = binary(agg, values)
         >>> print(agg_binary)
         <xarray.DataArray 'binary' (dim_0: 4, dim_1: 5)>
-        array([[0.,  1.,  1.,  1.,  0.],
+        array([[np.nan,  1.,  1.,  1.,  0.],
                [0.,  0.,  0.,  0.,  0.],
                [0.,  0.,  0.,  0.,  0.],
-               [0.,  0.,  0.,  0.,  0.]], dtype=float32)
+               [0.,  0.,  0.,  0.,  np.nan]], dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
     """
 
