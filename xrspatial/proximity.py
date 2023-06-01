@@ -139,13 +139,13 @@ def great_circle_distance(
     Parameters
     ----------
     x1 : float
-        x-coordinate (latitude) between -180 and 180 of the first point.
+        x-coordinate (longitude) between -180 and 180 of the first point.
     x2: float
-        x-coordinate (latitude) between -180 and 180 of the second point.
+        x-coordinate (longitude) between -180 and 180 of the second point.
     y1: float
-        y-coordinate (longitude) between -90 and 90 of the first point.
+        y-coordinate (latitude) between -90 and 90 of the first point.
     y2: float
-        y-coordinate (longitude) between -90 and 90 of the second point.
+        y-coordinate (latitude) between -90 and 90 of the second point.
     radius: float, default=6378137
         Radius of sphere (earth).
 
