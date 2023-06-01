@@ -146,7 +146,9 @@ def arvi(nir_agg: xr.DataArray,
                                       cupy_func=_arvi_cupy,
                                       dask_cupy_func=_arvi_dask_cupy)
 
-    out = mapper(red_agg)(nir_agg.data, red_agg.data, blue_agg.data)
+    out = mapper(red_agg)(
+        nir_agg.data.astype('f4'), red_agg.data.astype('f4'), blue_agg.data.astype('f4')
+    )
 
     return DataArray(out,
                      name=name,
@@ -311,8 +313,10 @@ def evi(nir_agg: xr.DataArray,
                                       cupy_func=_evi_cupy,
                                       dask_cupy_func=_evi_dask_cupy)
 
-    out = mapper(red_agg)(nir_agg.data, red_agg.data, blue_agg.data, c1, c2,
-                          soil_factor, gain)
+    out = mapper(red_agg)(
+        nir_agg.data.astype('f4'), red_agg.data.astype('f4'), blue_agg.data.astype('f4'),
+        c1, c2, soil_factor, gain
+    )
 
     return DataArray(out,
                      name=name,
@@ -431,7 +435,7 @@ def gci(nir_agg: xr.DataArray,
                                       cupy_func=_gci_cupy,
                                       dask_cupy_func=_gci_dask_cupy)
 
-    out = mapper(nir_agg)(nir_agg.data, green_agg.data)
+    out = mapper(nir_agg)(nir_agg.data.astype('f4'), green_agg.data.astype('f4'))
 
     return DataArray(out,
                      name=name,
@@ -510,7 +514,7 @@ def nbr(nir_agg: xr.DataArray,
         dask_cupy_func=_run_normalized_ratio_dask_cupy,
     )
 
-    out = mapper(nir_agg)(nir_agg.data, swir2_agg.data)
+    out = mapper(nir_agg)(nir_agg.data.astype('f4'), swir2_agg.data.astype('f4'))
 
     return DataArray(out,
                      name=name,
@@ -594,7 +598,7 @@ def nbr2(swir1_agg: xr.DataArray,
         dask_cupy_func=_run_normalized_ratio_dask_cupy,
     )
 
-    out = mapper(swir1_agg)(swir1_agg.data, swir2_agg.data)
+    out = mapper(swir1_agg)(swir1_agg.data.astype('f4'), swir2_agg.data.astype('f4'))
 
     return DataArray(out,
                      name=name,
@@ -671,7 +675,7 @@ def ndvi(nir_agg: xr.DataArray,
         dask_cupy_func=_run_normalized_ratio_dask_cupy,
     )
 
-    out = mapper(nir_agg)(nir_agg.data, red_agg.data)
+    out = mapper(nir_agg)(nir_agg.data.astype('f4'), red_agg.data.astype('f4'))
 
     return DataArray(out,
                      name=name,
@@ -753,7 +757,7 @@ def ndmi(nir_agg: xr.DataArray,
         dask_cupy_func=_run_normalized_ratio_dask_cupy,
     )
 
-    out = mapper(nir_agg)(nir_agg.data, swir1_agg.data)
+    out = mapper(nir_agg)(nir_agg.data.astype('f4'), swir1_agg.data.astype('f4'))
 
     return DataArray(out,
                      name=name,
@@ -937,7 +941,7 @@ def savi(nir_agg: xr.DataArray,
                                       cupy_func=_savi_cupy,
                                       dask_cupy_func=_savi_dask_cupy)
 
-    out = mapper(red_agg)(nir_agg.data, red_agg.data, soil_factor)
+    out = mapper(red_agg)(nir_agg.data.astype('f4'), red_agg.data.astype('f4'), soil_factor)
 
     return DataArray(out,
                      name=name,
@@ -1071,7 +1075,9 @@ def sipi(nir_agg: xr.DataArray,
                                       cupy_func=_sipi_cupy,
                                       dask_cupy_func=_sipi_dask_cupy)
 
-    out = mapper(red_agg)(nir_agg.data, red_agg.data, blue_agg.data)
+    out = mapper(red_agg)(
+        nir_agg.data.astype('f4'), red_agg.data.astype('f4'), blue_agg.data.astype('f4')
+    )
 
     return DataArray(out,
                      name=name,
@@ -1238,7 +1244,9 @@ def ebbi(red_agg: xr.DataArray,
                                       cupy_func=_ebbi_cupy,
                                       dask_cupy_func=_ebbi_dask_cupy)
 
-    out = mapper(red_agg)(red_agg.data, swir_agg.data, tir_agg.data)
+    out = mapper(red_agg)(
+        red_agg.data.astype('f4'), swir_agg.data.astype('f4'), tir_agg.data.astype('f4')
+    )
 
     return DataArray(out,
                      name=name,
@@ -1298,7 +1306,7 @@ def _normalize_data(agg, pixel_max, c, th):
                                       dask_func=_normalize_data_dask,
                                       cupy_func=_normalize_data_cupy,
                                       dask_cupy_func=_normalize_data_dask_cupy)
-    out = mapper(agg)(agg.data, pixel_max, c, th)
+    out = mapper(agg)(agg.data.astype('f4'), pixel_max, c, th)
     return out
 
 

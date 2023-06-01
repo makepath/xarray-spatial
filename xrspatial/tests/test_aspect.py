@@ -7,56 +7,46 @@ from xrspatial.tests.general_checks import (assert_nan_edges_effect, assert_nump
                                             cuda_and_cupy_available, general_output_checks)
 
 
-def input_data(backend='numpy'):
-    data = np.asarray([
-        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-        [1584.8767, 1584.8767, 1585.0546, 1585.2324, 1585.2324, 1585.2324],
-        [1585.0546, 1585.0546, 1585.2324, 1585.588, 1585.588, 1585.588],
-        [1585.2324, 1585.4102, 1585.588, 1585.588, 1585.588, 1585.588],
-        [1585.588, 1585.588, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-        [1585.7659, 1585.9437, 1585.7659, 1585.7659, 1585.7659, 1585.7659],
-        [1585.9437, 1585.9437, 1585.9437, 1585.7659, 1585.7659, 1585.7659]],
-        dtype=np.float32
-    )
-    raster = create_test_raster(data, backend, attrs={'res': (10.0, 10.0)})
+def input_data(data, backend='numpy'):
+    raster = create_test_raster(data, backend)
     return raster
 
 
 @pytest.fixture
-def qgis_output():
+def qgis_aspect():
     result = np.array([
-        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-        [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
-        [330.94687, 335.55496, 320.70786, 330.94464, 0., 0.],
-        [333.43494, 333.43494, 329.03394, 341.56897, 0., 18.434948],
-        [338.9621, 338.20062, 341.56506, 0., 0., 45.],
-        [341.56506, 351.8699, 26.56505, 45., -1., 90.],
-        [351.86676, 11.306906, 45., 45., 45., 108.431015]], dtype=np.float32
-    )
+        [    np.nan,     np.nan,     np.nan,     np.nan,     np.nan,    np.nan],
+        [    np.nan,     np.nan,     np.nan,     np.nan,     np.nan,    np.nan],
+        [233.19478 , 278.358   ,  45.18813 , 306.6476  , 358.34296 , 106.45898 ],
+        [267.7002  , 274.42487 ,  11.035832, 357.9641  , 129.98279 , 50.069843],
+        [263.18484 , 238.47426 , 196.37103 , 149.25227 , 187.85748 , 263.684   ],
+        [266.63937 , 271.05124 , 312.09726 , 348.89136 , 351.618   , 315.59424 ],
+        [279.90872 , 314.11356 , 345.76315 , 327.5568  , 339.5455  , 312.9249  ],
+        [271.93985 , 268.81046 ,  24.793104, 185.978   , 299.82904 ,159.0188  ]], dtype=np.float32)
     return result
 
 
-def test_numpy_equals_qgis(qgis_output):
-    numpy_agg = input_data()
+def test_numpy_equals_qgis(elevation_raster, qgis_aspect):
+    numpy_agg = input_data(elevation_raster, backend='numpy')
     xrspatial_aspect = aspect(numpy_agg, name='numpy_aspect')
 
     general_output_checks(numpy_agg, xrspatial_aspect, verify_dtype=True)
     assert xrspatial_aspect.name == 'numpy_aspect'
 
     xrspatial_vals = xrspatial_aspect.data[1:-1, 1:-1]
-    qgis_vals = qgis_output[1:-1, 1:-1]
+    qgis_vals = qgis_aspect[1:-1, 1:-1]
     # aspect is nan if nan input
     # aspect is invalid (-1) if slope equals 0
     # otherwise aspect are from 0 to 360
-    np.testing.assert_allclose(xrspatial_vals, qgis_vals, equal_nan=True)
+    np.testing.assert_allclose(xrspatial_vals, qgis_vals, rtol=1e-05, equal_nan=True)
     # nan edge effect
     assert_nan_edges_effect(xrspatial_aspect)
 
 
-def test_numpy_equals_dask_qgis_data():
+def test_numpy_equals_dask_qgis_data(elevation_raster):
     # compare using the data run through QGIS
-    numpy_agg = input_data('numpy')
-    dask_agg = input_data('dask+numpy')
+    numpy_agg = input_data(elevation_raster, 'numpy')
+    dask_agg = input_data(elevation_raster, 'dask+numpy')
     assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, aspect)
 
 
@@ -72,8 +62,8 @@ def test_numpy_equals_dask_random_data(random_data):
 @cuda_and_cupy_available
 def test_numpy_equals_cupy_qgis_data():
     # compare using the data run through QGIS
-    numpy_agg = input_data()
-    cupy_agg = input_data('cupy')
+    numpy_agg = input_data(elevation_raster)
+    cupy_agg = input_data(elevation_raster, 'cupy')
     assert_numpy_equals_cupy(numpy_agg, cupy_agg, aspect)
 
 

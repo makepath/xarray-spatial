@@ -11,12 +11,26 @@ cuda_and_cupy_available = pytest.mark.skipif(
 
 
 def create_test_raster(
-    data, backend='numpy', name='myraster', dims=['y', 'x'], attrs=None, chunks=(3, 3)
+        data,
+        backend='numpy',
+        name='myraster',
+        dims=['y', 'x'],
+        attrs={'res': (0.5, 0.5), 'crs': 'EPSG: 4326'},
+        chunks=(3, 3)
 ):
     raster = xr.DataArray(data, name=name, dims=dims, attrs=attrs)
-    # set coords for test raster
-    for i, dim in enumerate(dims):
-        raster[dim] = np.linspace(0, data.shape[i] - 1, data.shape[i])
+
+    # default res if none provided
+    res = (0.5, 0.5)
+    if attrs is not None:
+        if 'res' in attrs:
+            res = attrs['res']
+    # set coords for test raster, 2D coords only
+    raster[dims[0]] = np.linspace((data.shape[0] - 1) * res[0], 0, data.shape[0])
+    raster[dims[1]] = np.linspace(0, (data.shape[1] - 1) * res[1], data.shape[1])
+
+    raster[dims[0]] = np.linspace((data.shape[0] - 1)/2, 0, data.shape[0])
+    raster[dims[1]] = np.linspace(0, (data.shape[1] - 1)/2, data.shape[1])
 
     if has_cuda_and_cupy() and 'cupy' in backend:
         import cupy
@@ -70,6 +84,10 @@ def general_output_checks(input_agg: xr.DataArray,
 
         if verify_dtype:
             assert output_data.dtype == expected_results.dtype
+
+
+def assert_input_data_unmodified(data_before, data_after):
+    assert data_before.equals(data_after)
 
 
 def assert_nan_edges_effect(result_agg):

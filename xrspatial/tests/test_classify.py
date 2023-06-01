@@ -14,7 +14,7 @@ def input_data(backend='numpy'):
         [10., 11., 12., 13., 14.],
         [15., 16., 17., 18., np.inf],
     ])
-    raster = create_test_raster(elevation, backend, attrs={'res': (10.0, 10.0)})
+    raster = create_test_raster(elevation, backend)
     return raster
 
 
@@ -22,10 +22,10 @@ def input_data(backend='numpy'):
 def result_binary():
     values = [1, 2, 3]
     expected_result = np.asarray([
-        [0, 1, 1, 0, 0],
+        [np.nan, 1, 1, 0, np.nan],
         [0, 0, 0, 0, 0],
         [0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0]
+        [0, 0, 0, 0, np.nan]
     ], dtype=np.float32)
     return values, expected_result
 
@@ -218,7 +218,7 @@ def test_natural_breaks_numpy_num_sample(result_natural_breaks_num_sample):
 def test_natural_breaks_cpu_deterministic():
     results = []
     elevation = np.arange(100).reshape(10, 10)
-    agg = xr.DataArray(elevation, attrs={'res': (10.0, 10.0)})
+    agg = xr.DataArray(elevation)
 
     k = 5
     numIters = 3

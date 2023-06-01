@@ -19,6 +19,9 @@ def blue_data(backend):
                      [9393, 9278, 9251, 9347.],
                      [9486, 9293, np.nan, 9317.]])
     agg = create_test_raster(data, backend=backend)
+    # to run this data on QGIS, save this raster to tif file
+    # blue = green_data(backend='numpy')
+    # blue.rio.to_raster('blue.tif')
     return agg
 
 
@@ -107,7 +110,10 @@ def swir2_data(backend):
 
 
 @pytest.fixture
-def result_arvi():
+def qgis_arvi():
+    # this result is obtained by using NIR, red and blue band data
+    # running through QGIS Raster Calculator with formula:
+    # arvi = (nir - 2*red + blue) / (nir + 2*red + blue)
     result = np.array([
         [np.nan, 0.09832155, 0.0956943, 0.0688592],
         [0.08880479, 0.09804352, 0.09585208, np.nan],
@@ -121,7 +127,11 @@ def result_arvi():
 
 
 @pytest.fixture
-def result_evi():
+def qgis_evi():
+    # this result is obtained by using NIR, red and blue band data
+    # running through QGIS Raster Calculator with formula:
+    # evi = gain * (nir - red) / (nir + c1*red -c2*blue + soil_factor)
+    # with default values of gain = 2.5, c1=6, c2=7.5, and soil_factor=1
     result = np.array([
         [0., 1.5661007, 1.4382279, 1.0217365],
         [1.4458131, 1.544984, 1.4036115, np.nan],
@@ -135,7 +145,10 @@ def result_evi():
 
 
 @pytest.fixture
-def result_nbr():
+def qgis_nbr():
+    # this result is obtained by using NIR, and SWIR2 band data
+    # running through QGIS Raster Calculator with formula:
+    # nbr = (nir - swir2) / (nir + swir2)
     result = np.array([
         [np.nan, 0.09459506, 0.08678813, 0.04651979],
         [0.07953876, 0.09373278, 0.09194128, 0.0511995],
@@ -149,7 +162,10 @@ def result_nbr():
 
 
 @pytest.fixture
-def result_nbr2():
+def qgis_nbr2():
+    # this result is obtained by using SWIR1, and SWIR2 band data
+    # running through QGIS Raster Calculator with formula:
+    # nbr2 = (swir1 - swir2) / (swir1 + swir2)
     result = np.array([
         [np.nan, np.nan, 0.11823621, 0.09696512],
         [0.12169173, 0.12360972, 0.11772577, 0.09825099],
@@ -163,7 +179,10 @@ def result_nbr2():
 
 
 @pytest.fixture
-def result_ndvi():
+def qgis_ndvi():
+    # this result is obtained by using NIR, and red band data
+    # running through QGIS Raster Calculator with formula:
+    # ndvi = (nir - red) / (nir + red)
     result = np.array([
         [np.nan, 0.21453354, 0.21365978, 0.1833718],
         [0.20180409, 0.21460803, 0.21499589, np.nan],
@@ -177,7 +196,10 @@ def result_ndvi():
 
 
 @pytest.fixture
-def result_ndmi():
+def qgis_ndmi():
+    # this result is obtained by using NIR, and SWIR1 band data
+    # running through QGIS Raster Calculator with formula:
+    # ndvi = (nir - swir1) / (nir + swir1)
     result = np.array([
         [np.nan, np.nan, -0.03177413, -0.05067392],
         [-0.04256495, -0.03022716, -0.02606663, -0.04728937],
@@ -191,7 +213,11 @@ def result_ndmi():
 
 
 @pytest.fixture
-def result_savi():
+def qgis_savi():
+    # this result is obtained by using NIR, and red band data
+    # running through QGIS Raster Calculator with formula:
+    # savi = (nir - red) / ((nir + red + soil_factor) * (1 + soil_factor))
+    # with default value of soil_factor=1
     result = np.array([
         [0., 0.10726268, 0.10682587, 0.09168259],
         [0.10089815, 0.10729991, 0.10749393, np.nan],
@@ -205,7 +231,10 @@ def result_savi():
 
 
 @pytest.fixture
-def result_gci():
+def qgis_gci():
+    # this result is obtained by using NIR, and green band data
+    # running through QGIS Raster Calculator with formula:
+    # gci = nir / green - 1
     result = np.array([
         [np.nan, 0.60418975, 0.6045147, 0.5452919],
         [0.57248056, 0.6034935, 0.6154458, 0.5677431],
@@ -219,7 +248,10 @@ def result_gci():
 
 
 @pytest.fixture
-def result_sipi():
+def qgis_sipi():
+    # this result is obtained by using NIR, red and blue band data
+    # running through QGIS Raster Calculator with formula:
+    # sipi = (nir - blue) / (nir - red)
     result = np.array([
         [np.nan, 1.2015283, 1.2210878, 1.3413291],
         [1.2290354, 1.2043835, 1.2258345, np.nan],
@@ -233,7 +265,10 @@ def result_sipi():
 
 
 @pytest.fixture
-def result_ebbi():
+def qgis_ebbi():
+    # this result is obtained by using red, swir1 and tir band data
+    # running through QGIS Raster Calculator with formula:
+    # ebbi = (swir1 - red) / (10 * sqrt(swir1 + tir))
     result = np.array([
         [np.nan, np.nan, 4.0488696, 4.0370474],
         [3.9937027, 3.9902349, 3.9841716, np.nan],
@@ -244,6 +279,60 @@ def result_ebbi():
         [4.131501, 4.013487, 4.009527, 4.049455],
         [4.172874, 4.08833, 4.038202, 3.954431]], dtype=np.float32)
     return result
+
+
+@pytest.fixture
+def data_uint_dtype_normalized_ratio(dtype):
+    # test data for input data array of uint dtype
+    # normalized ratio is applied with different bands for NBR, NBR2, NDVI, NDMI.
+    band1 = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
+    band2 = xr.DataArray(np.array([[0, 2], [1, 2]], dtype=dtype))
+    result = np.array([[1, -0.33333334], [0, -0.33333334]], dtype=np.float32)
+    return band1, band2, result
+
+
+@pytest.fixture
+def data_uint_dtype_arvi(dtype):
+    nir = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
+    red = xr.DataArray(np.array([[0, 1], [0, 2]], dtype=dtype))
+    blue = xr.DataArray(np.array([[0, 2], [1, 2]], dtype=dtype))
+    result = np.array([[1, 0.2], [1, -0.14285715]], dtype=np.float32)
+    return nir, red, blue, result
+
+
+@pytest.fixture
+def data_uint_dtype_evi(dtype):
+    nir = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
+    red = xr.DataArray(np.array([[0, 1], [0, 2]], dtype=dtype))
+    blue = xr.DataArray(np.array([[0, 2], [1, 2]], dtype=dtype))
+    result = np.array([[1.25, 0.], [-0.45454547, 2.5]], dtype=np.float32)
+    return nir, red, blue, result
+
+
+@pytest.fixture
+def data_uint_dtype_savi(dtype):
+    nir = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
+    red = xr.DataArray(np.array([[0, 1], [0, 2]], dtype=dtype))
+    result = np.array([[0.25, 0.], [0.25, -0.125]], dtype=np.float32)
+    return nir, red, result
+
+
+@pytest.fixture
+def data_uint_dtype_sipi(dtype):
+    nir = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
+    red = xr.DataArray(np.array([[0, 0], [0, 2]], dtype=dtype))
+    blue = xr.DataArray(np.array([[0, 2], [1, 2]], dtype=dtype))
+    result = np.array([[1, -1], [0, 1]], dtype=np.float32)
+    return nir, red, blue, result
+
+
+@pytest.fixture
+def data_uint_dtype_ebbi(dtype):
+    red = xr.DataArray(np.array([[0, 0], [0, 2]], dtype=dtype))
+    swir = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
+    tir = xr.DataArray(np.array([[0, 2], [1, 2]], dtype=dtype))
+    result = np.array([[0.1, 0.05773503], [0.07071068, -0.05773503]], dtype=np.float32)
+    return red, swir, tir, result
 
 
 # NDVI -------------
@@ -270,158 +359,222 @@ def test_ndvi_data_contains_valid_values():
 
 
 @pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
-def test_ndvi_cpu(nir_data, red_data, result_ndvi):
+def test_ndvi_cpu_against_qgis(nir_data, red_data, qgis_ndvi):
+    result = ndvi(nir_data, red_data)
+    general_output_checks(nir_data, result, qgis_ndvi, verify_dtype=True)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_ndvi_uint_dtype(data_uint_dtype_normalized_ratio):
+    nir_data, red_data, result_ndvi = data_uint_dtype_normalized_ratio
     result = ndvi(nir_data, red_data)
     general_output_checks(nir_data, result, result_ndvi, verify_dtype=True)
 
 
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
-def test_ndvi_gpu(nir_data, red_data, result_ndvi):
+def test_ndvi_gpu(nir_data, red_data, qgis_ndvi):
     result = ndvi(nir_data, red_data)
-    general_output_checks(nir_data, result, result_ndvi, verify_dtype=True)
+    general_output_checks(nir_data, result, qgis_ndvi, verify_dtype=True)
 
 
 # SAVI -------------
 @pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
-def test_savi_zero_soil_factor_cpu(nir_data, red_data, result_ndvi):
+def test_savi_zero_soil_factor_cpu_against_qgis(nir_data, red_data, qgis_ndvi):
     # savi should be same as ndvi at soil_factor=0
-    result_savi = savi(nir_data, red_data, soil_factor=0.0)
-    general_output_checks(nir_data, result_savi, result_ndvi, verify_dtype=True)
-
-
-@pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
-def test_savi_zero_soil_factor_gpu(nir_data, red_data, result_ndvi):
-    # savi should be same as ndvi at soil_factor=0
-    result_savi = savi(nir_data, red_data, soil_factor=0.0)
-    general_output_checks(nir_data, result_savi, result_ndvi, verify_dtype=True)
-
-
-@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
-def test_savi_cpu(nir_data, red_data, result_savi):
-    # test default savi where soil_factor = 1.0
-    result = savi(nir_data, red_data, soil_factor=1.0)
-    general_output_checks(nir_data, result, result_savi)
+    qgis_savi = savi(nir_data, red_data, soil_factor=0.0)
+    general_output_checks(nir_data, qgis_savi, qgis_ndvi, verify_dtype=True)
 
 
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
-def test_savi_gpu(nir_data, red_data, result_savi):
+def test_savi_zero_soil_factor_gpu(nir_data, red_data, qgis_ndvi):
+    # savi should be same as ndvi at soil_factor=0
+    qgis_savi = savi(nir_data, red_data, soil_factor=0.0)
+    general_output_checks(nir_data, qgis_savi, qgis_ndvi, verify_dtype=True)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_savi_cpu_against_qgis(nir_data, red_data, qgis_savi):
     # test default savi where soil_factor = 1.0
     result = savi(nir_data, red_data, soil_factor=1.0)
-    general_output_checks(nir_data, result, result_savi)
+    general_output_checks(nir_data, result, qgis_savi)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_savi_uint_dtype(data_uint_dtype_savi):
+    nir_data, red_data, result_savi = data_uint_dtype_savi
+    result = savi(nir_data, red_data)
+    general_output_checks(nir_data, result, result_savi, verify_dtype=True)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+def test_savi_gpu(nir_data, red_data, qgis_savi):
+    # test default savi where soil_factor = 1.0
+    result = savi(nir_data, red_data, soil_factor=1.0)
+    general_output_checks(nir_data, result, qgis_savi)
 
 
 # arvi -------------
 @pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
-def test_arvi_cpu(nir_data, red_data, blue_data, result_arvi):
+def test_arvi_cpu_against_qgis(nir_data, red_data, blue_data, qgis_arvi):
     result = arvi(nir_data, red_data, blue_data)
-    general_output_checks(nir_data, result, result_arvi)
+    general_output_checks(nir_data, result, qgis_arvi)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_arvi_uint_dtype(data_uint_dtype_arvi):
+    nir_data, red_data, blue_data, result_arvi = data_uint_dtype_arvi
+    result = arvi(nir_data, red_data, blue_data)
+    general_output_checks(nir_data, result, result_arvi, verify_dtype=True)
 
 
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
-def test_arvi_gpu(nir_data, red_data, blue_data, result_arvi):
+def test_arvi_gpu(nir_data, red_data, blue_data, qgis_arvi):
     result = arvi(nir_data, red_data, blue_data)
-    general_output_checks(nir_data, result, result_arvi)
+    general_output_checks(nir_data, result, qgis_arvi)
 
 
 # EVI -------------
 @pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
-def test_evi_cpu(nir_data, red_data, blue_data, result_evi):
+def test_evi_cpu_against_qgis(nir_data, red_data, blue_data, qgis_evi):
     result = evi(nir_data, red_data, blue_data)
-    general_output_checks(nir_data, result, result_evi)
+    general_output_checks(nir_data, result, qgis_evi)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_evi_uint_dtype(data_uint_dtype_evi):
+    nir_data, red_data, blue_data, result_evi = data_uint_dtype_evi
+    result = evi(nir_data, red_data, blue_data)
+    general_output_checks(nir_data, result, result_evi, verify_dtype=True)
 
 
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
-def test_evi_gpu(nir_data, red_data, blue_data, result_evi):
+def test_evi_gpu(nir_data, red_data, blue_data, qgis_evi):
     result = evi(nir_data, red_data, blue_data)
-    general_output_checks(nir_data, result, result_evi)
+    general_output_checks(nir_data, result, qgis_evi)
 
 
 # GCI -------------
 @pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
-def test_gci_cpu(nir_data, green_data, result_gci):
+def test_gci_cpu_against_qgis(nir_data, green_data, qgis_gci):
     result = gci(nir_data, green_data)
-    general_output_checks(nir_data, result, result_gci)
+    general_output_checks(nir_data, result, qgis_gci)
 
 
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
-def test_gci_gpu(nir_data, green_data, result_gci):
+def test_gci_gpu(nir_data, green_data, qgis_gci):
     result = gci(nir_data, green_data)
-    general_output_checks(nir_data, result, result_gci)
+    general_output_checks(nir_data, result, qgis_gci)
 
 
 # SIPI -------------
 @pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
-def test_sipi_cpu(nir_data, red_data, blue_data, result_sipi):
+def test_sipi_cpu_against_qgis(nir_data, red_data, blue_data, qgis_sipi):
     result = sipi(nir_data, red_data, blue_data)
-    general_output_checks(nir_data, result, result_sipi)
+    general_output_checks(nir_data, result, qgis_sipi)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_sipi_uint_dtype(data_uint_dtype_sipi):
+    nir_data, red_data, blue_data, result_sipi = data_uint_dtype_sipi
+    result = sipi(nir_data, red_data, blue_data)
+    general_output_checks(nir_data, result, result_sipi, verify_dtype=True)
 
 
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
-def test_sipi_gpu(nir_data, red_data, blue_data, result_sipi):
+def test_sipi_gpu(nir_data, red_data, blue_data, qgis_sipi):
     result = sipi(nir_data, red_data, blue_data)
-    general_output_checks(nir_data, result, result_sipi)
+    general_output_checks(nir_data, result, qgis_sipi)
 
 
 # NBR -------------
 @pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
-def test_nbr_cpu(nir_data, swir2_data, result_nbr):
+def test_nbr_cpu_against_qgis(nir_data, swir2_data, qgis_nbr):
     result = nbr(nir_data, swir2_data)
-    general_output_checks(nir_data, result, result_nbr)
+    general_output_checks(nir_data, result, qgis_nbr)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_nbr_uint_dtype(data_uint_dtype_normalized_ratio):
+    nir_data, red_data, result_nbr = data_uint_dtype_normalized_ratio
+    result = nbr(nir_data, red_data)
+    general_output_checks(nir_data, result, result_nbr, verify_dtype=True)
 
 
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
-def test_nbr_gpu(nir_data, swir2_data, result_nbr):
+def test_nbr_gpu(nir_data, swir2_data, qgis_nbr):
     result = nbr(nir_data, swir2_data)
-    general_output_checks(nir_data, result, result_nbr)
+    general_output_checks(nir_data, result, qgis_nbr)
 
 
 # NBR2 -------------
 @pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
-def test_nbr2_cpu(swir1_data, swir2_data, result_nbr2):
+def test_nbr2_cpu_against_qgis(swir1_data, swir2_data, qgis_nbr2):
     result = nbr2(swir1_data, swir2_data)
-    general_output_checks(swir1_data, result, result_nbr2)
+    general_output_checks(swir1_data, result, qgis_nbr2)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_nbr2_uint_dtype(data_uint_dtype_normalized_ratio):
+    nir_data, red_data, result_nbr2 = data_uint_dtype_normalized_ratio
+    result = nbr2(nir_data, red_data)
+    general_output_checks(nir_data, result, result_nbr2, verify_dtype=True)
 
 
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
-def test_nbr2_gpu(swir1_data, swir2_data, result_nbr2):
+def test_nbr2_gpu(swir1_data, swir2_data, qgis_nbr2):
     result = nbr2(swir1_data, swir2_data)
-    general_output_checks(swir1_data, result, result_nbr2)
+    general_output_checks(swir1_data, result, qgis_nbr2)
 
 
 # NDMI -------------
 @pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
-def test_ndmi_cpu(nir_data, swir1_data, result_ndmi):
+def test_ndmi_cpu_against_qgis(nir_data, swir1_data, qgis_ndmi):
     result = ndmi(nir_data, swir1_data)
-    general_output_checks(nir_data, result, result_ndmi)
+    general_output_checks(nir_data, result, qgis_ndmi)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_ndmi_uint_dtype(data_uint_dtype_normalized_ratio):
+    nir_data, red_data, result_ndmi = data_uint_dtype_normalized_ratio
+    result = ndmi(nir_data, red_data)
+    general_output_checks(nir_data, result, result_ndmi, verify_dtype=True)
 
 
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
-def test_ndmi_gpu(nir_data, swir1_data, result_ndmi):
+def test_ndmi_gpu(nir_data, swir1_data, qgis_ndmi):
     result = ndmi(nir_data, swir1_data)
-    general_output_checks(nir_data, result, result_ndmi)
+    general_output_checks(nir_data, result, qgis_ndmi)
 
 
 # EBBI -------------
 @pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
-def test_ebbi_cpu(red_data, swir1_data, tir_data, result_ebbi):
+def test_ebbi_cpu_against_qgis(red_data, swir1_data, tir_data, qgis_ebbi):
     result = ebbi(red_data, swir1_data, tir_data)
-    general_output_checks(red_data, result, result_ebbi)
+    general_output_checks(red_data, result, qgis_ebbi)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_ebbi_uint_dtype(data_uint_dtype_ebbi):
+    red_data, swir_data, tir_data, result_ebbi = data_uint_dtype_ebbi
+    result = ebbi(red_data, swir_data, tir_data)
+    general_output_checks(red_data, result, result_ebbi, verify_dtype=True)
 
 
 @cuda_and_cupy_available
 @pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
-def test_ebbi_gpu(red_data, swir1_data, tir_data, result_ebbi):
+def test_ebbi_gpu(red_data, swir1_data, tir_data, qgis_ebbi):
     result = ebbi(red_data, swir1_data, tir_data)
-    general_output_checks(red_data, result, result_ebbi)
+    general_output_checks(red_data, result, qgis_ebbi)
 
 
 # true_color ----------
