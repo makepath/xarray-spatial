@@ -1,5 +1,35 @@
 ## Xarray-Spatial Changelog
 -----------
+
+### Version 0.3.6 - 2023-06-02
+With the 0.3.6 release, xarray-spatial now supports python 3.11.
+This release focuses on demonstrating the reliability of the library by adding more tests
+against GDAL/QGIS. 
+
+#### Enhancements
+- Test on Python 3.11 (#750)
+- Pin numpy version (#780)
+- zonal stats (#764)
+- updated citation (#769)
+- classify.binary: handle NaNs and infinite values (#763)
+- Test against QGIS, GDAL (#744)
+- Zonal crosstab user guide notebook enhancement (#759)
+- cpu_bin with binary search (#760)
+- outline for housing price feature engineering nb (#725)
+- More examples to user guide (#742)
+- Use setuptools (#749)
+- Update contributor badge (#740)
+- update pharmacy desserts notebook (#723)
+- Update README.md (#719)
+- viewshed gpu notebook (#720)
+- Fixed feature-proposal.md config (#718)
+
+#### Bug Fixes
+- correct docs for proximity (#778)
+- Zonal_crosstab 3D: Ensure content of input param `values` is preserved (#754)
+- Multispectral tools: convert data to float32 dtype before doing calculations (#755)
+
+
 ### Version 0.3.5 - 2022-06-05
 The 0.3.5 release mainly addresses the scaling issue in GPU viewshed to gain better accurate triangulation.
 The GPU raytraced viewshed should now give comparable results to the CPU version.
