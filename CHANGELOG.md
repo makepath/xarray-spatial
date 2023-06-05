@@ -1,6 +1,14 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.3.7 - 2023-06-05
+The 0.3.7 release is a hot fix for 0.3.6, which has problem with publishing to PyPi
+as the package exceeds the limit of 100MB. In this new release, example notebooks are
+cleaned up to reduce the package size.
+
+#### Enhancements
+- clear example notebook outputs (#786)
+
 ### Version 0.3.6 - 2023-06-02
 With the 0.3.6 release, xarray-spatial now supports python 3.11.
 This release focuses on demonstrating the reliability of the library by adding more tests
