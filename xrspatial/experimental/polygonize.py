@@ -39,6 +39,33 @@ _regions_dtype = np.uint32
 _visited_dtype = np.uint8
 
 
+def generated_jit(function=None, cache=False,
+                  pipeline_class=None, **options):
+    """
+    This decorator allows flexible type-based compilation
+    of a jitted function.  It works as `@jit`, except that the decorated
+    function is called at compile-time with the *types* of the arguments
+    and should return an implementation function for those types.
+    """
+    from numba.extending import overload
+    jit_options = dict()
+    if pipeline_class is not None:
+        jit_options['pipeline_class'] = pipeline_class
+    jit_options['cache'] = cache
+    jit_options |= options
+
+    if function is not None:
+        overload(function, jit_options=jit_options,
+                    strict=False)(function)
+        return function
+    else:
+        def wrapper(func):
+            overload(func, jit_options=jit_options,
+                        strict=False)(func)
+            return func
+        return wrapper
+
+
 class Turn(Enum):
     Left = -1
     Straight = 0
@@ -183,7 +210,7 @@ def _follow(
 # Generator of numba-compatible comparison functions for values.
 # If both values are integers use a fast equality operator, otherwise use a
 # slower floating-point comparison like numpy.isclose.
-@nb.generated_jit(nogil=True, nopython=True)
+@generated_jit(nogil=True, nopython=True)
 def _is_close(
     reference: Union[int, float],
     value: Union[int, float],
