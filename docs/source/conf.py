@@ -92,17 +92,6 @@ html_logo = '_static/img/Xarray-Spatial-logo.svg'
 
 html_favicon = '_static/img/favicon.ico'
 
-# # sphinx-multiversion config
-# smv_branch_whitelist = 'master'
-# if os.getenv('THEME') == 'sphinx_rtd_theme':
-#     smv_tag_whitelist = r'^v([0-9]\.[2-9]\.[0-9])'
-# else:
-#     smv_tag_whitelist = r'^v([0-9]\.[2-9]\.[0-9])'
-
-# Load releases
-# with open("releases.json") as f:
-#     releases = json.load(f)
-
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
 # documentation.
@@ -115,7 +104,6 @@ html_theme_options = {
 
 html_context = {
     'css_files': ['_static/css/styles.css'],
-    # 'releases': [(release, url) for release, url in releases.items()],
     "default_mode": "light",
 }
 
