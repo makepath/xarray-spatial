@@ -13,10 +13,8 @@
   <td>Downloads</td>
   <td>
     <div>
-    <a href="https://xarray-spatial.org/getting_started/installation.html">
     <img src="https://img.shields.io/pypi/dm/xarray-spatial?label=PyPI"
          alt="PyPI downloads per month" />
-    </a>
     </div>
   </td>
 </tr>
@@ -121,9 +119,6 @@ In all the above, the command will download and store the files into your curren
 `xarray-spatial` grew out of the [Datashader project](https://datashader.org/), which provides fast rasterization of vector data (points, lines, polygons, meshes, and rasters) for use with xarray-spatial.
 
 `xarray-spatial` does not depend on GDAL / GEOS, which makes it fully extensible in Python but does limit the breadth of operations that can be covered.  xarray-spatial is meant to include the core raster-analysis functions needed for GIS developers / analysts, implemented independently of the non-Python geo stack.
-
-
-Our documentation is still under construction, but [docs can be found here](https://xarray-spatial.org/).
 
 
 #### Raster-huh?
@@ -283,4 +278,4 @@ With the introduction of projects like Numba, Python gained new ways to provide 
 #### Citation
 Cite our code:
 
-`makepath/xarray-spatial, https://github.com/makepath/xarray-spatial, ©2020-2023.`
+`makepath/xarray-spatial, https://github.com/makepath/xarray-spatial, ©2020-2024.`
