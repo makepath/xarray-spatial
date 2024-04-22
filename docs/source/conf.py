@@ -92,12 +92,12 @@ html_logo = '_static/img/Xarray-Spatial-logo.svg'
 
 html_favicon = '_static/img/favicon.ico'
 
-# sphinx-multiversion config
-smv_branch_whitelist = 'master'
-if os.getenv('THEME') == 'sphinx_rtd_theme':
-    smv_tag_whitelist = r'^v([0-9]\.[2-9]\.[0-9])'
-else:
-    smv_tag_whitelist = r'^v([0-9]\.[2-9]\.[0-9])'
+# # sphinx-multiversion config
+# smv_branch_whitelist = 'master'
+# if os.getenv('THEME') == 'sphinx_rtd_theme':
+#     smv_tag_whitelist = r'^v([0-9]\.[2-9]\.[0-9])'
+# else:
+#     smv_tag_whitelist = r'^v([0-9]\.[2-9]\.[0-9])'
 
 # Load releases
 # with open("releases.json") as f:
