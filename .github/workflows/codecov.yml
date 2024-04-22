@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        python: [3.9]
+        python: [3.12]
     env:
       OS: ${{ matrix.os }}
       PYTHON: ${{ matrix.python }}
