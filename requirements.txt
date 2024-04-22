@@ -1,4 +1,5 @@
 datashader
+dask[dataframe]
 noise >=1.2.2
 numba
 xarray
