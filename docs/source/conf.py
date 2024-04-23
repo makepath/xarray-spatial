@@ -83,10 +83,8 @@ pygments_style = None
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-if os.getenv('THEME') == 'sphinx_rtd_theme':
-    html_theme = 'sphinx_rtd_theme'
-else:
-    html_theme = 'pydata_sphinx_theme'
+
+html_theme = 'pydata_sphinx_theme'
 
 html_logo = '_static/img/Xarray-Spatial-logo.svg'
 
@@ -124,7 +122,6 @@ html_static_path = ['_static']
 # default: ``['localtoc.html', 'relations.html', 'sourcelink.html',
 # 'searchbox.html']``.
 #
-# html_sidebars = {}
 
 
 # -- Options for HTMLHelp output ---------------------------------------------
