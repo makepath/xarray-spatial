@@ -1,0 +1,17 @@
+dask[dataframe]
+geopandas
+Jinja2 >=2.11
+ipykernel
+matplotlib
+nbsphinx
+numpydoc
+pandoc
+pydata_sphinx_theme
+sphinx
+sphinx-panels
+sphinx_rtd_theme
+flake8
+isort
+noise >= 1.2.2
+pytest
+pytest-cov
