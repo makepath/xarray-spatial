@@ -8,6 +8,7 @@
 
 # -- Path setup --------------------------------------------------------------
 
+from datetime import datetime
 import json
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
@@ -23,7 +24,7 @@ sys.path.insert(0, os.path.abspath('../..'))
 # -- Project information -----------------------------------------------------
 
 project = u'xarray_spatial'
-copyright = u'2020-2022, makepath'
+copyright = u'2020-{}, makepath'.format(datetime.now().year)
 author = u'makepath'
 
 version = release = xrspatial.__version__
@@ -66,7 +67,7 @@ master_doc = 'index'
 #
 # This is also used if you do content translation via gettext catalogs.
 # Usually you set "language" from the command line for these cases.
-language = None
+language = 'en'
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
@@ -82,25 +83,12 @@ pygments_style = None
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-if os.getenv('THEME') == 'sphinx_rtd_theme':
-    html_theme = 'sphinx_rtd_theme'
-else:
-    html_theme = 'pydata_sphinx_theme'
+
+html_theme = 'pydata_sphinx_theme'
 
 html_logo = '_static/img/Xarray-Spatial-logo.svg'
 
 html_favicon = '_static/img/favicon.ico'
-
-# sphinx-multiversion config
-smv_branch_whitelist = 'master'
-if os.getenv('THEME') == 'sphinx_rtd_theme':
-    smv_tag_whitelist = r'^v([0-9]\.[2-9]\.[0-9])'
-else:
-    smv_tag_whitelist = r'^v([0-9]\.[2-9]\.[0-9])'
-
-# Load releases
-with open("releases.json") as f:
-    releases = json.load(f)
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
@@ -109,11 +97,12 @@ with open("releases.json") as f:
 html_theme_options = {
     "external_links": [],
     "github_url": "https://github.com/makepath/xarray-spatial",
+    "navbar_end": ["navbar-icon-links"],
 }
 
 html_context = {
     'css_files': ['_static/css/styles.css'],
-    'releases': [(release, url) for release, url in releases.items()],
+    "default_mode": "light",
 }
 
 autosummary_generate = True
@@ -133,7 +122,6 @@ html_static_path = ['_static']
 # default: ``['localtoc.html', 'relations.html', 'sourcelink.html',
 # 'searchbox.html']``.
 #
-# html_sidebars = {}
 
 
 # -- Options for HTMLHelp output ---------------------------------------------
