@@ -1,6 +1,19 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.4.0 - 2024-04-25
+- Python 3.12 is now supported!
+- Python 3.9 & 3.8 are no longer supported.
+- Documentation has also been moved to https://xarray-spatial.readthedocs.io/
+
+Pull Requests merged in this release include:
+- Add links to docs to readme (#800)
+- Update readthedocs configuration (#798)
+- Fix typo in readthedocs config (#799)
+- Move docs to readthedocs (#797)
+- Bunch of CI/CD-related fixes (#796)
+- chore: Remove numpy pin, pin datashader, drop Python 3.7 (#789)
+
 ### Version 0.3.7 - 2023-06-05
 The 0.3.7 release is a hot fix for 0.3.6, which has problem with publishing to PyPi
 as the package exceeds the limit of 100MB. In this new release, example notebooks are
