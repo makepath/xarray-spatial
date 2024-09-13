@@ -4,7 +4,7 @@ import numpy as np
 
 
 def create_triangulation(raster, optix):
-    datahash = np.uint64(hash(str(raster.data.get())))
+    datahash = np.uint64(hash(str(raster.data.get())) % (1 << 64))
     optixhash = np.uint64(optix.getHash())
 
     # Calculate a scale factor for the height that maintains the ratio
