@@ -1606,7 +1606,9 @@ def viewshed(raster: xarray.DataArray,
     observer_elev : float
         Observer elevation above the terrain.
     target_elev : float
-        Target elevation offset above the terrain.
+        Target elevation offset above the terrain, which is the height
+        in surface units to be added to the z-value of each pixel
+        when it is being analyzed for visibility.
 
     Returns
     -------
@@ -1614,7 +1616,9 @@ def viewshed(raster: xarray.DataArray,
         A cell x in the visibility grid is recorded as follows:
         If it is invisible, then x is set to INVISIBLE.
         If it is visible,  then x is set to the vertical angle w.r.t
-        the viewpoint.
+        the viewpoint. The value returned is in [0, 180]. A value of 0 is
+        directly below the specified viewing position,
+        90 is due horizontal, and 180 is directly above the observer.
 
     Examples
     --------
