@@ -64,6 +64,21 @@ def _run_dask_numpy(data: da.Array,
                            meta=np.array(()))
     return out
 
+def _run_dask_cupy(data: da.Array,
+                   cellsize_x: Union[int, float],
+                   cellsize_y: Union[int, float]) -> da.Array:
+    data = data.astype(cupy.float32)
+    _func = partial(_run_cupy,
+                    cellsize_x=cellsize_x,
+                    cellsize_y=cellsize_y)
+
+    out = data.map_overlap(_func,
+                           depth=(1, 1),
+                           boundary=cupy.nan,
+                           meta=cupy.array(()))
+    return out
+
+
 
 @cuda.jit(device=True)
 def _gpu(arr, cellsize_x, cellsize_y):
@@ -163,9 +178,7 @@ def slope(agg: xr.DataArray,
         numpy_func=_run_numpy,
         cupy_func=_run_cupy,
         dask_func=_run_dask_numpy,
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='slope() does not support dask with cupy backed DataArray'  # noqa
-        ),
+        dask_cupy_func=_run_dask_cupy,
     )
     out = mapper(agg)(agg.data, cellsize_x, cellsize_y)
 
