@@ -121,6 +121,16 @@ def _run_dask_numpy(data: da.Array) -> da.Array:
     return out
 
 
+def _run_dask_cupy(data: da.Array) -> da.Array:
+    data = data.astype(cupy.float32)
+    _func = partial(_run_cupy)
+    out = data.map_overlap(_func,
+                           depth=(1, 1),
+                           boundary=cupy.nan,
+                           meta=cupy.array(()))
+    return out
+
+
 def aspect(agg: xr.DataArray,
            name: Optional[str] = 'aspect') -> xr.DataArray:
     """
@@ -249,8 +259,7 @@ def aspect(agg: xr.DataArray,
         numpy_func=_run_numpy,
         dask_func=_run_dask_numpy,
         cupy_func=_run_cupy,
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='aspect() does not support dask with cupy backed DataArray')  # noqa
+        dask_cupy_func=_run_dask_cupy,
     )
 
     out = mapper(agg)(agg.data)

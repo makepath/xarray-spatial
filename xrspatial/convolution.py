@@ -373,15 +373,24 @@ def _convolve_2d_cupy(data, kernel):
     _convolve_2d_cuda[griddim, blockdim](data, kernel, cupy.asarray(out))
     return out
 
+def _convolve_2d_dask_cupy(data, kernel):
+    data = data.astype(cupy.float32)
+    pad_h = kernel.shape[0] // 2
+    pad_w = kernel.shape[1] // 2
+    _func = partial(_convolve_2d_cupy, kernel=kernel)
+    out = data.map_overlap(_func,
+                           depth=(pad_h, pad_w),
+                           boundary=cupy.nan,
+                           meta=cupy.array(()))
+    return out
+
 
 def convolve_2d(data, kernel):
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_convolve_2d_numpy,
         cupy_func=_convolve_2d_cupy,
         dask_func=_convolve_2d_dask_numpy,
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='convolution_2d() does not support dask with cupy backed xr.DataArray'  # noqa
-        )
+        dask_cupy_func=_convolve_2d_dask_cupy
     )
     out = mapper(xr.DataArray(data))(data, kernel)
     return out
