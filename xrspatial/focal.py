@@ -1,6 +1,7 @@
 import copy
 from functools import partial
-from math import isnan, sqrt
+from math import isnan
+import math
 
 import dask.array as da
 import numba as nb
@@ -66,36 +67,71 @@ def _mean_dask_numpy(data, excludes):
 
 @cuda.jit
 def _mean_gpu(data, excludes, out):
-    i, j = cuda.grid(2)
+    # 1. Get coordinates: x is Column, y is Row
+    x, y = cuda.grid(2)
 
-    for ex in excludes:
-        if (data[i, j] == ex) or (isnan(data[i, j]) and isnan(ex)):
-            out[i, j] = data[i, j]
+    rows, cols = data.shape
+
+    # 2. BOUNDS CHECK FIRST
+    # Strictly ensure this thread is inside the image before touching any memory.
+    if 0 <= x < cols and 0 <= y < rows:
+
+        # Safe to read the center pixel now
+        val = data[y, x]
+
+        # 3. Check Excludes (Center pixel only)
+        # Matches numpy behavior: if center is excluded, don't calculate mean.
+        is_excluded = False
+        for ex in excludes:
+            if (val == ex) or (isnan(val) and isnan(ex)):
+                is_excluded = True
+                break
+
+        if is_excluded:
+            out[y, x] = val
             return
 
-    rows, cols = out.shape
-    if 0 <= i < rows and 0 <= j < cols:
-        left = max(j - 1, 0)
-        right = min(j + 2, cols)
-        bottom = max(i - 1, 0)
-        top = min(i + 2, rows)
+        # 4. Define Window Bounds (The Safety Check)
+        # We clamp the window edges to the image borders here.
+        # This guarantees 'r' and 'c' in the loops below are always valid.
+        left = max(x - 1, 0)
+        right = min(x + 2, cols)      # range is exclusive, so +2 covers neighbor x+1
+        bottom = max(y - 1, 0)
+        top = min(y + 2, rows)
 
-        sum = 0
+        sum_val = 0.0
         num = 0
-        for y in range(bottom, top):
-            for x in range(left, right):
-                if not isnan(data[y, x]):
-                    sum += data[y, x]
+
+        # 5. Iterate Window
+        for r in range(bottom, top):
+            for c in range(left, right):
+                neighbor_val = data[r, c]
+
+                # Standard nanmean behavior: skip NaNs, no exclude check on neighbors
+                if not isnan(neighbor_val):
+                    sum_val += neighbor_val
                     num += 1
+
+        # 6. Write Output
         if num > 0:
-            out[i, j] = sum / num
+            out[y, x] = sum_val / num
+        else:
+            # Fallback: If mean cannot be calculated (e.g. all neighbors are NaN),
+            # keep the original value as requested.
+            out[y, x] = val
 
 
 def _mean_cupy(data, excludes):
-    griddim, blockdim = cuda_args(data.shape)
-    out = cupy.empty(data.shape, dtype='f4')
-    out[:] = cupy.nan
-    _mean_gpu[griddim, blockdim](data, cupy.asarray(excludes), out)
+    # ensure cupy arrays and a float dtype
+    data_cu = cupy.asarray(data, dtype=cupy.float32)
+    excludes_cu = cupy.asarray(excludes, dtype=cupy.float32)
+
+    griddim, blockdim = cuda_args(data_cu.shape)
+
+    # Match NumPy's out = np.zeros_like(data)
+    out = cupy.zeros_like(data_cu)
+
+    _mean_gpu[griddim, blockdim](data_cu, excludes_cu, out)
     return out
 
 
@@ -424,48 +460,69 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply'):
 def _focal_min_cuda(data, kernel, out):
     i, j = cuda.grid(2)
 
-    delta_rows = kernel.shape[0] // 2
-    delta_cols = kernel.shape[1] // 2
-
-    data_rows, data_cols = data.shape
-
-    if i < delta_rows or i >= data_rows - delta_rows or \
-            j < delta_cols or j >= data_cols - delta_cols:
+    rows, cols = data.shape
+    if i >= rows or j >= cols:
         return
 
-    s = data[i, j]
+    dr = kernel.shape[0] // 2
+    dc = kernel.shape[1] // 2
+
+    # Start with +inf so any real value replaces it
+    m = math.inf
+    found = False
+
     for k in range(kernel.shape[0]):
         for h in range(kernel.shape[1]):
-            i_k = i + k - delta_rows
-            j_h = j + h - delta_cols
-            if (i_k >= 0) and (i_k < data_rows) and (j_h >= 0) and (j_h < data_cols):
-                if (kernel[k, h] != 0) and s > data[i_k, j_h]:
-                    s = data[i_k, j_h]
-    out[i, j] = s
+            if kernel[k, h] == 0:
+                continue  # mask says ignore
+
+            ii = i + k - dr
+            jj = j + h - dc
+
+            if 0 <= ii < rows and 0 <= jj < cols:
+                v = data[ii, jj]
+                if (not found) or (v < m):
+                    m = v
+                    found = True
+
+    # With your mask containing the center, found should be True.
+    # But keep a safe fallback anyway.
+    out[i, j] = m if found else data[i, j]
 
 
 @cuda.jit
 def _focal_max_cuda(data, kernel, out):
     i, j = cuda.grid(2)
 
-    delta_rows = kernel.shape[0] // 2
-    delta_cols = kernel.shape[1] // 2
-
-    data_rows, data_cols = data.shape
-
-    if i < delta_rows or i >= data_rows - delta_rows or \
-            j < delta_cols or j >= data_cols - delta_cols:
+    rows, cols = data.shape
+    if i >= rows or j >= cols:
         return
 
-    s = data[i, j]
+    dr = kernel.shape[0] // 2
+    dc = kernel.shape[1] // 2
+
+    # Start with -inf so any real value replaces it
+    m = -math.inf
+    found = False
+
     for k in range(kernel.shape[0]):
         for h in range(kernel.shape[1]):
-            i_k = i + k - delta_rows
-            j_h = j + h - delta_cols
-            if (i_k >= 0) and (i_k < data_rows) and (j_h >= 0) and (j_h < data_cols):
-                if (kernel[k, h] != 0) and s < data[i_k, j_h]:
-                    s = data[i_k, j_h]
-    out[i, j] = s
+            w = kernel[k, h]
+            if w == 0:
+                continue  # mask says "ignore this neighbor"
+
+            ii = i + k - dr
+            jj = j + h - dc
+
+            if 0 <= ii < rows and 0 <= jj < cols:
+                v = data[ii, jj]
+                if (not found) or (v > m):
+                    m = v
+                    found = True
+
+    # With your mask containing the center (1), found should always be True.
+    # But keep this for safety.
+    out[i, j] = m if found else data[i, j]
 
 
 def _focal_range_cupy(data, kernel):
@@ -476,59 +533,128 @@ def _focal_range_cupy(data, kernel):
 
 
 @cuda.jit
+def _focal_range_cuda(data, kernel, out):
+    i, j = cuda.grid(2)
+
+    rows, cols = data.shape
+    if i >= rows or j >= cols:
+        return
+
+    dr = kernel.shape[0] // 2
+    dc = kernel.shape[1] // 2
+
+    mx = -math.inf
+    mn = math.inf
+    found = False
+
+    for k in range(kernel.shape[0]):
+        for h in range(kernel.shape[1]):
+            if kernel[k, h] == 0:
+                continue  # mask says ignore
+
+            ii = i + k - dr
+            jj = j + h - dc
+
+            if 0 <= ii < rows and 0 <= jj < cols:
+                v = data[ii, jj]
+                if not found:
+                    mx = v
+                    mn = v
+                    found = True
+                else:
+                    if v > mx:
+                        mx = v
+                    if v < mn:
+                        mn = v
+
+    out[i, j] = (mx - mn) if found else 0.0
+
+
+@cuda.jit
 def _focal_std_cuda(data, kernel, out):
     i, j = cuda.grid(2)
 
-    delta_rows = kernel.shape[0] // 2
-    delta_cols = kernel.shape[1] // 2
-
-    data_rows, data_cols = data.shape
-
-    if i < delta_rows or i >= data_rows - delta_rows or \
-            j < delta_cols or j >= data_cols - delta_cols:
+    rows, cols = data.shape
+    if i >= rows or j >= cols:
         return
 
-    sum_squares = 0
-    sum = 0
-    count = 0
+    dr = kernel.shape[0] // 2
+    dc = kernel.shape[1] // 2
+
+    w_sum = 0.0
+    sum_wx = 0.0
+    sum_wx2 = 0.0
+
     for k in range(kernel.shape[0]):
         for h in range(kernel.shape[1]):
-            i_k = i + k - delta_rows
-            j_h = j + h - delta_cols
-            if (i_k >= 0) and (i_k < data_rows) and (j_h >= 0) and (j_h < data_cols):
-                sum_squares += (kernel[k, h]*data[i_k, j_h])**2
-                sum += kernel[k, h]*data[i_k, j_h]
-                count += kernel[k, h]
-    squared_sum = sum**2
-    out[i, j] = sqrt((sum_squares - squared_sum/count) / count)
+            w = kernel[k, h]
+            if w == 0:
+                continue  # mask says ignore
+
+            ii = i + k - dr
+            jj = j + h - dc
+
+            if 0 <= ii < rows and 0 <= jj < cols:
+                x = data[ii, jj]
+                w_sum += w
+                sum_wx += w * x
+                sum_wx2 += w * x * x
+
+    # With your mask including the center, w_sum should be > 0. Guard anyway.
+    if w_sum > 0.0:
+        mean = sum_wx / w_sum
+        var = (sum_wx2 / w_sum) - (mean * mean)
+
+        # Numerical safety (tiny negative due to floating point)
+        if var < 0.0:
+            var = 0.0
+
+        out[i, j] = math.sqrt(var)
+    else:
+        out[i, j] = 0.0
 
 
 @cuda.jit
 def _focal_var_cuda(data, kernel, out):
     i, j = cuda.grid(2)
 
-    delta_rows = kernel.shape[0] // 2
-    delta_cols = kernel.shape[1] // 2
-
-    data_rows, data_cols = data.shape
-
-    if i < delta_rows or i >= data_rows - delta_rows or \
-            j < delta_cols or j >= data_cols - delta_cols:
+    rows, cols = data.shape
+    if i >= rows or j >= cols:
         return
 
-    sum_squares = 0
-    sum = 0
-    count = 0
+    dr = kernel.shape[0] // 2
+    dc = kernel.shape[1] // 2
+
+    w_sum = 0.0
+    sum_wx = 0.0
+    sum_wx2 = 0.0
+
     for k in range(kernel.shape[0]):
         for h in range(kernel.shape[1]):
-            i_k = i + k - delta_rows
-            j_h = j + h - delta_cols
-            if (i_k >= 0) and (i_k < data_rows) and (j_h >= 0) and (j_h < data_cols):
-                sum_squares += (kernel[k, h]*data[i_k, j_h])**2
-                sum += kernel[k, h]*data[i_k, j_h]
-                count += kernel[k, h]
-    squared_sum = sum**2
-    out[i, j] = (sum_squares - squared_sum/count) / count
+            w = kernel[k, h]
+            if w == 0:
+                continue  # mask says ignore
+
+            ii = i + k - dr
+            jj = j + h - dc
+
+            if 0 <= ii < rows and 0 <= jj < cols:
+                x = data[ii, jj]
+                w_sum += w
+                sum_wx += w * x
+                sum_wx2 += w * x * x
+
+    if w_sum > 0.0:
+        mean = sum_wx / w_sum
+        var = (sum_wx2 / w_sum) - (mean * mean)
+
+        # numerical guard for tiny negative due to float rounding
+        if var < 0.0:
+            var = 0.0
+
+        out[i, j] = var
+    else:
+        out[i, j] = 0.0
 
 
 def _focal_mean_cupy(data, kernel):
@@ -541,6 +667,33 @@ def _focal_sum_cupy(data, kernel):
     return out
 
 
+@cuda.jit
+def _focal_sum_cuda(data, kernel, out):
+    i, j = cuda.grid(2)
+
+    rows, cols = data.shape
+    if i >= rows or j >= cols:
+        return
+
+    dr = kernel.shape[0] // 2
+    dc = kernel.shape[1] // 2
+
+    s = 0.0
+    for k in range(kernel.shape[0]):
+        for h in range(kernel.shape[1]):
+            w = kernel[k, h]
+            if w == 0:
+                continue  # mask says ignore
+
+            ii = i + k - dr
+            jj = j + h - dc
+
+            if 0 <= ii < rows and 0 <= jj < cols:
+                s += w * data[ii, jj]
+
+    out[i, j] = s
+
+
 def _focal_stats_func_cupy(data, kernel, func=_focal_max_cuda):
     out = cupy.empty(data.shape, dtype='f4')
     out[:, :] = cupy.nan
@@ -549,11 +702,46 @@ def _focal_stats_func_cupy(data, kernel, func=_focal_max_cuda):
     return out
 
 
+@cuda.jit
+def _focal_mean_cuda(data, kernel, out):
+    i, j = cuda.grid(2)
+
+    rows, cols = data.shape
+    if i >= rows or j >= cols:
+        return
+
+    dr = kernel.shape[0] // 2
+    dc = kernel.shape[1] // 2
+
+    s = 0.0
+    w_sum = 0.0
+
+    for k in range(kernel.shape[0]):
+        for h in range(kernel.shape[1]):
+            w = kernel[k, h]
+            if w == 0:
+                continue  # mask says ignore
+
+            ii = i + k - dr
+            jj = j + h - dc
+
+            if 0 <= ii < rows and 0 <= jj < cols:
+                s += w * data[ii, jj]
+                w_sum += w
+
+    # With your mask including the center, w_sum should be > 0.
+    # Guard anyway to avoid divide-by-zero.
+    if w_sum > 0.0:
+        out[i, j] = s / w_sum
+    else:
+        out[i, j] = data[i, j]
+
+
 def _focal_stats_cupy(agg, kernel, stats_funcs):
     _stats_cupy_mapper = dict(
-        mean=_focal_mean_cupy,
-        sum=_focal_sum_cupy,
-        range=_focal_range_cupy,
+        mean=lambda *args: _focal_stats_func_cupy(*args, func=_focal_mean_cuda),
+        sum=lambda *args: _focal_stats_func_cupy(*args, func=_focal_sum_cuda),
+        range=lambda *args: _focal_stats_func_cupy(*args, func=_focal_range_cuda),
         max=lambda *args: _focal_stats_func_cupy(*args, func=_focal_max_cuda),
         min=lambda *args: _focal_stats_func_cupy(*args, func=_focal_min_cuda),
         std=lambda *args: _focal_stats_func_cupy(*args, func=_focal_std_cuda),

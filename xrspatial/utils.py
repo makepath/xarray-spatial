@@ -10,17 +10,6 @@ from numba import cuda, jit
 
 try:
     import cupy
-
-    if cupy.result_type is np.result_type:
-        # hack until cupy release of https://github.com/cupy/cupy/pull/2249
-        # Without this, cupy.histogram raises an error that cupy.result_type
-        # is not defined.
-        cupy.result_type = lambda *args: np.result_type(
-            *[
-                arg.dtype if isinstance(arg, cupy.ndarray)
-                else arg for arg in args
-            ]
-        )
 except ImportError:
     cupy = None
 

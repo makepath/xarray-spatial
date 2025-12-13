@@ -24,7 +24,7 @@ def empty_agg():
        'y': np.random.normal(.5, 1, 0)
     })
     agg = canvas.points(empty_df, 'x', 'y')
-    return agg
+    return agg.astype('i8')
 
 
 def test_viewshed_invalid_x_view(empty_agg):
@@ -44,6 +44,7 @@ def test_viewshed_invalid_y_view(empty_agg):
 
 
 def test_viewshed(empty_agg):
+
     H, W = empty_agg.shape
 
     # coordinates

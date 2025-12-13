@@ -60,7 +60,7 @@ def test_numpy_equals_dask_random_data(random_data):
 
 
 @cuda_and_cupy_available
-def test_numpy_equals_cupy_qgis_data():
+def test_numpy_equals_cupy_qgis_data(elevation_raster):
     # compare using the data run through QGIS
     numpy_agg = input_data(elevation_raster)
     cupy_agg = input_data(elevation_raster, 'cupy')
