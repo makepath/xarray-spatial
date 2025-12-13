@@ -1538,7 +1538,7 @@ def _viewshed_cpu(
     viewpoint_col = x_view
     viewpoint_elev = raster.values[y_view, x_view] + observer_elev
     viewpoint_target = 0.0
-    if target_elev > 0:
+    if abs(target_elev) > 0:
         viewpoint_target = target_elev
 
     # int getgrdhead(FILE * fd, struct Cell_head *cellhd)
