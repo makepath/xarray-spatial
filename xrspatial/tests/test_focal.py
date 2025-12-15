@@ -264,9 +264,11 @@ def test_2d_convolution_gpu(
     dask_cupy_agg = xr.DataArray(
         da.from_array(cupy.asarray(convolve_2d_data), chunks=(3, 3))
     )
-    with pytest.raises(NotImplementedError) as e_info:
-        convolution_2d(dask_cupy_agg, kernel_custom)
-        assert e_info
+    result_kernel_annulus = convolve_2d(dask_cupy_agg.data, kernel_annulus_2_2_2_1)
+    assert isinstance(result_kernel_annulus, da.Array)
+    np.testing.assert_allclose(
+        result_kernel_annulus.compute().get(), convolution_kernel_annulus_2_2_1, equal_nan=True
+    )
 
 
 def test_calc_cellsize_unit_input_attrs(convolve_2d_data):
