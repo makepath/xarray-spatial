@@ -1,6 +1,20 @@
 ## Xarray-Spatial Changelog
 -----------
 
+### Version 0.5.0 - 2025-12-15
+- Python 3.14 is now supported!
+- Fixed bug in curvature dask+cupy args and added unit test for curvature(#824)
+- Added dask cupy test for slope func (#824)
+- Added dask cupy test for aspect func (#824)
+- Added in dask-cupy convolve_2d test (#823)
+- Now ensures the hash value fits into an unsigned 64-bit integer for NumPy 2.0.0 (#805)
+- Added dask and pyarrow to setup.cfg test area (#822)
+- Allow Negative Target Height in Viewshed Analysis (viewshed.py) (#812)
+- Small Fixes while testing Cuda 13 (#818)
+- Support for certain Dask+Cupy (#815)
+- Update docstring for viewshed (#807)
+
+
 ### Version 0.4.0 - 2024-04-25
 - Python 3.12 is now supported!
 - Python 3.9 & 3.8 are no longer supported.

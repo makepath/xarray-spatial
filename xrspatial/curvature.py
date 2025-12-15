@@ -15,8 +15,7 @@ import xarray as xr
 from numba import cuda
 
 # local modules
-from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, get_dataarray_resolution, ngjit,
-                             not_implemented_func)
+from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, get_dataarray_resolution, ngjit)
 
 
 @ngjit
@@ -84,10 +83,14 @@ def _run_cupy(data: cupy.ndarray,
 
     return out
 
+
 def _run_dask_cupy(data: da.Array,
-                    cellsize: Union[int, float]) -> da.Array:
+                   cellsize: Union[int, float]) -> da.Array:
     data = data.astype(cupy.float32)
-    _func = partial(_cpu, cellsize=cellsize)
+    cellsize_arr = cupy.array([float(cellsize)], dtype='f4')
+
+    _func = partial(_run_cupy, cellsize=cellsize_arr)
+
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=cupy.nan,

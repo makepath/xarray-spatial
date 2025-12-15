@@ -3,6 +3,7 @@ import pytest
 
 from xrspatial import curvature
 from xrspatial.tests.general_checks import (assert_numpy_equals_cupy,
+                                            assert_numpy_equals_dask_cupy,
                                             assert_numpy_equals_dask_numpy, create_test_raster,
                                             cuda_and_cupy_available, general_output_checks)
 
@@ -87,9 +88,6 @@ def test_numpy_equals_cupy_random_data(random_data):
     numpy_agg = create_test_raster(random_data, backend='numpy')
     cupy_agg = create_test_raster(random_data, backend='cupy')
     assert_numpy_equals_cupy(numpy_agg, cupy_agg, curvature)
-    # NOTE: Dask + GPU code paths don't currently work because of
-    # dask casting cupy arrays to numpy arrays during
-    # https://github.com/dask/dask/issues/4842
 
 
 @pytest.mark.parametrize("size", [(2, 4), (10, 15)])
@@ -99,3 +97,13 @@ def test_numpy_equals_dask_random_data(random_data):
     numpy_agg = create_test_raster(random_data, backend='numpy')
     dask_agg = create_test_raster(random_data, backend='dask')
     assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, curvature)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("size", [(2, 4), (10, 15)])
+@pytest.mark.parametrize(
+    "dtype", [np.int32, np.int64, np.uint32, np.uint64, np.float32, np.float64])
+def test_numpy_equals_dask_cupy_random_data(random_data):
+    numpy_agg = create_test_raster(random_data, backend='numpy')
+    dask_cupy_agg = create_test_raster(random_data, backend='dask+cupy')
+    assert_numpy_equals_dask_cupy(numpy_agg, dask_cupy_agg, curvature, atol=1e-6, rtol=1e-6)

@@ -3,6 +3,7 @@ import pytest
 
 from xrspatial import slope
 from xrspatial.tests.general_checks import (assert_nan_edges_effect, assert_numpy_equals_cupy,
+                                            assert_numpy_equals_dask_cupy,
                                             assert_numpy_equals_dask_numpy, create_test_raster,
                                             cuda_and_cupy_available, general_output_checks)
 
@@ -63,3 +64,13 @@ def test_numpy_equals_cupy_qgis_data(elevation_raster):
     numpy_agg = input_data(elevation_raster, 'numpy')
     cupy_agg = input_data(elevation_raster, 'cupy')
     assert_numpy_equals_cupy(numpy_agg, cupy_agg, slope)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("size", [(2, 4), (10, 15)])
+@pytest.mark.parametrize(
+    "dtype", [np.int32, np.int64, np.uint32, np.uint64, np.float32, np.float64])
+def test_numpy_equals_dask_cupy_random_data(random_data):
+    numpy_agg = create_test_raster(random_data, backend='numpy')
+    dask_cupy_agg = create_test_raster(random_data, backend='dask+cupy')
+    assert_numpy_equals_dask_cupy(numpy_agg, dask_cupy_agg, slope, atol=1e-6, rtol=1e-6)
