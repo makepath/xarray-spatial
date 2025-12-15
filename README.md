@@ -208,7 +208,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Aspect](xrspatial/aspect.py) | ✅️ | ✅️ | ✅️ | ⚠️ |
+| [Aspect](xrspatial/aspect.py) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Curvature](xrspatial/curvature.py) | ✅️ | | | ⚠️  |
 | [Hillshade](xrspatial/hillshade.py) | ✅️ | ✅️  | | |
 | [Slope](xrspatial/slope.py) | ✅️  | ✅️  | ✅️ | ⚠️  |
