@@ -211,7 +211,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Aspect](xrspatial/aspect.py) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Curvature](xrspatial/curvature.py) | ✅️ | | | ⚠️  |
 | [Hillshade](xrspatial/hillshade.py) | ✅️ | ✅️  | | |
-| [Slope](xrspatial/slope.py) | ✅️  | ✅️  | ✅️ | ⚠️  |
+| [Slope](xrspatial/slope.py) | ✅️  | ✅️  | ✅️ | ⚠️✅️  |
 | [Terrain Generation](xrspatial/terrain.py) | ✅️ | ✅️ | ✅️ | |
 | [Viewshed](xrspatial/viewshed.py) | ✅️ |  | | |
 | [Perlin Noise](xrspatial/perlin.py) | ✅️ | ✅️ | ✅️ | |
