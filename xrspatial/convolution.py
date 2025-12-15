@@ -373,6 +373,7 @@ def _convolve_2d_cupy(data, kernel):
     _convolve_2d_cuda[griddim, blockdim](data, kernel, cupy.asarray(out))
     return out
 
+
 def _convolve_2d_dask_cupy(data, kernel):
     data = data.astype(cupy.float32)
     pad_h = kernel.shape[0] // 2
