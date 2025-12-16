@@ -4,7 +4,7 @@ As stated in [Xarray Spatial code of conduct](https://github.com/makepath/xarray
 
 ### Getting Started
 
-Information about installation and setting up a development environment can be found at the [Getting Started page] https://xarray-spatial.org/getting_started/index.html.
+Information about installation and setting up a development environment can be found at the [Getting Started page] https://xarray-spatial.readthedocs.io/getting_started/index.html.
 
 ### Choosing something to work on 
 
