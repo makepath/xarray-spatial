@@ -1,6 +1,11 @@
 ## Xarray-Spatial Changelog
 -----------
 
+
+### Version 0.5.1 - 2025-12-16
+- updated runner, python setup action and checkout actions for PyPI publish
+
+
 ### Version 0.5.0 - 2025-12-15
 - Python 3.14 is now supported!
 - Fixed bug in curvature dask+cupy args and added unit test for curvature(#824)
