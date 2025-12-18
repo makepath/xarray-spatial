@@ -2,6 +2,12 @@
 -----------
 
 
+### Version 0.5.2 - 2025-12-18
+- Make dask optional (#835)
+- Fixes 832 update citation info in readme (#834)
+- Removed references to xarray-spatial.org (#827)
+
+
 ### Version 0.5.1 - 2025-12-16
 - updated runner, python setup action and checkout actions for PyPI publish
 
