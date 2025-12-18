@@ -89,6 +89,18 @@ def test_mean_transfer_function_gpu_equals_cpu():
     np.testing.assert_allclose(
         numpy_mean.data, cupy_mean.data.get(), equal_nan=True)
 
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_mean_transfer_dask_gpu_raise_not_implemented():
+
+    import cupy
+
+    # cupy case
+    cupy_agg = xr.DataArray(cupy.asarray(data_random))
+    cupy_mean = mean(cupy_agg)
+    general_output_checks(cupy_agg, cupy_mean)
+
     # dask + cupy case not implemented
     dask_cupy_agg = xr.DataArray(
         da.from_array(cupy.asarray(data_random), chunks=(3, 3))
@@ -466,6 +478,7 @@ def test_hotspots_numpy(data_hotspots):
     assert numpy_hotspots.attrs['unit'] == '%'
 
 
+@dask_array_available
 def test_hotspots_dask_numpy(data_hotspots):
     data, kernel, expected_result = data_hotspots
     dask_numpy_agg = create_test_raster(data, backend='dask')
@@ -495,9 +508,3 @@ def test_hotspot_gpu(data_hotspots):
             cupy_hotspots[coord].data, cupy_agg[coord].data, equal_nan=True
         )
     assert cupy_hotspots.attrs['unit'] == '%'
-
-    # dask + cupy case not implemented
-    dask_cupy_agg = create_test_raster(data, backend='dask+cupy')
-    with pytest.raises(NotImplementedError) as e_info:
-        hotspots(dask_cupy_agg, kernel)
-        assert e_info

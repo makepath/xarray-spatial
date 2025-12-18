@@ -20,6 +20,7 @@ def create_test_arr(backend='numpy'):
         raster.data = cupy.asarray(raster.data)
 
     if 'dask' in backend:
+        import dask.array as da
         raster.data = da.from_array(raster.data, chunks=(10, 10))
 
     return raster

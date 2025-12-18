@@ -68,6 +68,7 @@ def test_numpy_equals_cupy_qgis_data(elevation_raster):
     assert_numpy_equals_cupy(numpy_agg, cupy_agg, slope)
 
 
+@dask_array_available
 @cuda_and_cupy_available
 @pytest.mark.parametrize("size", [(2, 4), (10, 15)])
 @pytest.mark.parametrize(
