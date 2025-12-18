@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import warnings
 from functools import partial
 from typing import List, Optional
@@ -12,7 +14,11 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-import dask.array as da
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 import numba as nb
 import numpy as np
 

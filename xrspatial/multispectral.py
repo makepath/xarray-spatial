@@ -1,7 +1,8 @@
+from __future__ import annotations
+
 import warnings
 from math import sqrt
 
-import dask.array as da
 import numba as nb
 import numpy as np
 import xarray as xr
@@ -17,6 +18,11 @@ try:
 except ImportError:
     class cupy(object):
         ndarray = False
+
+try:
+    import dask.array as da
+except ImportError:
+    da = None
 
 
 @ngjit

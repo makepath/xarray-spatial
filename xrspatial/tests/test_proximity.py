@@ -1,4 +1,8 @@
-import dask.array as da
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -32,7 +36,7 @@ def test_raster(backend):
     raster = xr.DataArray(data, dims=['lat', 'lon'])
     raster['lon'] = _lon
     raster['lat'] = _lat
-    if 'dask' in backend:
+    if 'dask' in backend and da is not None:
         raster.data = da.from_array(data, chunks=(4, 3))
     return raster
 

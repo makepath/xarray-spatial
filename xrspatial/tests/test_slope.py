@@ -5,7 +5,8 @@ from xrspatial import slope
 from xrspatial.tests.general_checks import (assert_nan_edges_effect, assert_numpy_equals_cupy,
                                             assert_numpy_equals_dask_cupy,
                                             assert_numpy_equals_dask_numpy, create_test_raster,
-                                            cuda_and_cupy_available, general_output_checks)
+                                            cuda_and_cupy_available,
+                                            dask_array_available, general_output_checks)
 
 
 def input_data(data, backend):
@@ -51,6 +52,7 @@ def test_numpy_equals_qgis(elevation_raster, qgis_slope):
     assert_nan_edges_effect(xrspatial_slope_numpy)
 
 
+@dask_array_available
 def test_numpy_equals_dask_qgis_data(elevation_raster):
     # compare using the data run through QGIS
     numpy_agg = input_data(elevation_raster, 'numpy')
@@ -66,6 +68,7 @@ def test_numpy_equals_cupy_qgis_data(elevation_raster):
     assert_numpy_equals_cupy(numpy_agg, cupy_agg, slope)
 
 
+@dask_array_available
 @cuda_and_cupy_available
 @pytest.mark.parametrize("size", [(2, 4), (10, 15)])
 @pytest.mark.parametrize(

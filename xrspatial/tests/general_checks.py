@@ -1,13 +1,30 @@
-import dask.array as da
+from __future__ import annotations
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.utils import ArrayTypeFunctionMapping, has_cuda_and_cupy
+from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import has_cuda_and_cupy
+from xrspatial.utils import has_dask_array
+from xrspatial.utils import has_dask_dataframe
 
 # Use this as a decorator to skip tests if do not have both CUDA and CuPy available.
 cuda_and_cupy_available = pytest.mark.skipif(
     not has_cuda_and_cupy(), reason="Requires CUDA and CuPy")
+
+
+# Use this as a decorator to skip tests if do not have dask array
+dask_array_available = pytest.mark.skipif(
+    not has_dask_array(), reason="Requires dask.Array")
+
+# Use this as a decorator to skip tests if do not have dask array
+dask_dataframe_available = pytest.mark.skipif(
+    not has_dask_dataframe(), reason="Requires dask.DataFrame")
 
 
 def create_test_raster(
@@ -36,7 +53,7 @@ def create_test_raster(
         import cupy
         raster.data = cupy.asarray(raster.data)
 
-    if 'dask' in backend:
+    if 'dask' in backend and has_dask_array():
         raster.data = da.from_array(raster.data, chunks=chunks)
 
     return raster
@@ -52,7 +69,7 @@ def general_output_checks(input_agg: xr.DataArray,
     # type of output is the same as of input
     assert isinstance(output_agg.data, type(input_agg.data))
 
-    if isinstance(input_agg.data, da.Array):
+    if has_dask_array() and isinstance(input_agg.data, da.Array):
         # dask case
         assert isinstance(
             output_agg.data.compute(), type(input_agg.data.compute()))
@@ -123,13 +140,13 @@ def assert_numpy_equals_cupy(numpy_agg, cupy_agg, func, nan_edges=True, atol=0, 
         numpy_result.data, cupy_result.data.get(), equal_nan=True, atol=atol, rtol=rtol)
 
 
-def assert_numpy_equals_dask_cupy(numpy_agg, dask_cupy_agg, func, nan_edges=True, atol=0, rtol=1e-7):
+def assert_numpy_equals_dask_cupy(numpy_agg, dask_cupy_agg, func,
+                                  nan_edges=True, atol=0, rtol=1e-7):
     numpy_result = func(numpy_agg)
     if nan_edges:
         assert_nan_edges_effect(numpy_result)
 
     dask_cupy_result = func(dask_cupy_agg)
     general_output_checks(dask_cupy_agg, dask_cupy_result)
-    np.testing.assert_allclose(
-        numpy_result.data, dask_cupy_result.data.compute().get(), equal_nan=True, atol=atol, rtol=rtol
-    )
+    np.testing.assert_allclose(numpy_result.data, dask_cupy_result.data.compute().get(),
+                               equal_nan=True, atol=atol, rtol=rtol)

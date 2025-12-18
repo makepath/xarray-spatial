@@ -1,6 +1,10 @@
 from math import sqrt
 
-import dask.array as da
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 import numpy as np
 import xarray as xr
 from numba import prange
@@ -619,7 +623,7 @@ def _process(
         # numpy case
         result = _process_numpy(raster.data, xs, ys)
 
-    elif isinstance(raster.data, da.Array):
+    elif da is not None and isinstance(raster.data, da.Array):
         # dask + numpy case
         xs = da.from_array(xs, chunks=(raster.chunks))
         ys = da.from_array(ys, chunks=(raster.chunks))

@@ -1,15 +1,30 @@
+from __future__ import annotations
+
 # standard library
 import copy
 from math import sqrt
 from typing import Callable, Dict, List, Optional, Union
 
+
 # 3rd-party
-import dask.array as da
-import dask.dataframe as dd
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
+try:
+    import dask.dataframe as dd
+except ImportError:
+    dd = None
+
+try:
+    from dask import delayed
+except ImportError:
+    delayed = lambda x: None  # noqa
+
 import numpy as np
 import pandas as pd
 import xarray as xr
-from dask import delayed
 from xarray import DataArray
 
 try:
@@ -20,6 +35,7 @@ except ImportError:
 
 # local modules
 from xrspatial.utils import ArrayTypeFunctionMapping, ngjit, not_implemented_func, validate_arrays
+from xrspatial.utils import has_dask_array
 
 TOTAL_COUNT = '_total_count'
 
@@ -377,7 +393,7 @@ def _stats_cupy(
                 raise ValueError(stats)
             result = stats_func(zone_values)
 
-            assert(len(result.shape) == 0)
+            assert (len(result.shape) == 0)
 
             stats_dict[stats].append(cupy.float_(result))
 
@@ -547,7 +563,7 @@ def stats(
         raise ValueError("`values` must be an array of integers or floats.")
 
     # validate stats_funcs
-    if isinstance(values.data, da.Array) and not isinstance(stats_funcs, list):
+    if has_dask_array() and isinstance(values.data, da.Array) and not isinstance(stats_funcs, list):
         raise ValueError(
             "Got dask-backed DataArray as `values` aggregate. "
             "`stats_funcs` must be a subset of default supported stats "
@@ -1014,7 +1030,7 @@ def crosstab(
             raise ValueError(
                 f"`agg` method for 3D numpy backed data array must be one of following {agg_3d_numpy}"  # noqa
             )
-        if isinstance(values.data, da.Array) and agg not in agg_3d_dask:
+        if has_dask_array() and isinstance(values.data, da.Array) and agg not in agg_3d_dask:
             raise ValueError(
                 f"`agg` method for 3D dask backed data array must be one of following {agg_3d_dask}"
             )
@@ -1036,7 +1052,7 @@ def crosstab(
         if zones.shape != values.shape[1:]:
             raise ValueError("Incompatible shapes")
 
-        if isinstance(values.data, da.Array):
+        if has_dask_array() and isinstance(values.data, da.Array):
             # dask case, rechunk if necessary
             zones_chunks = zones.chunks
             expected_values_chunks = {

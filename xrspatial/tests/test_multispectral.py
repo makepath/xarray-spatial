@@ -5,6 +5,7 @@ import xarray as xr
 from xrspatial.multispectral import (arvi, ebbi, evi, gci, nbr, nbr2, ndmi, ndvi, savi, sipi,
                                      true_color)
 from xrspatial.tests.general_checks import (create_test_raster, cuda_and_cupy_available,
+                                            dask_array_available,
                                             general_output_checks)
 
 
@@ -358,8 +359,15 @@ def test_ndvi_data_contains_valid_values():
     assert da_ndvi[15, 10] == da_ndvi[10, 15] == 0.5
 
 
-@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+@pytest.mark.parametrize("backend", ["numpy"])
 def test_ndvi_cpu_against_qgis(nir_data, red_data, qgis_ndvi):
+    result = ndvi(nir_data, red_data)
+    general_output_checks(nir_data, result, qgis_ndvi, verify_dtype=True)
+
+
+@dask_array_available
+@pytest.mark.parametrize("backend", ["dask+numpy"])
+def test_ndvi_dask_cpu_against_qgis(nir_data, red_data, qgis_ndvi):
     result = ndvi(nir_data, red_data)
     general_output_checks(nir_data, result, qgis_ndvi, verify_dtype=True)
 

@@ -5,7 +5,9 @@ from xrspatial import aspect
 from xrspatial.tests.general_checks import (assert_nan_edges_effect,
                                             assert_numpy_equals_cupy,
                                             assert_numpy_equals_dask_cupy,
-                                            assert_numpy_equals_dask_numpy, create_test_raster,
+                                            assert_numpy_equals_dask_numpy,
+                                            dask_array_available,
+                                            create_test_raster,
                                             cuda_and_cupy_available, general_output_checks)
 
 
@@ -45,6 +47,7 @@ def test_numpy_equals_qgis(elevation_raster, qgis_aspect):
     assert_nan_edges_effect(xrspatial_aspect)
 
 
+@dask_array_available
 def test_numpy_equals_dask_qgis_data(elevation_raster):
     # compare using the data run through QGIS
     numpy_agg = input_data(elevation_raster, 'numpy')
@@ -52,6 +55,7 @@ def test_numpy_equals_dask_qgis_data(elevation_raster):
     assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, aspect)
 
 
+@dask_array_available
 @pytest.mark.parametrize("size", [(2, 4), (10, 15)])
 @pytest.mark.parametrize(
     "dtype", [np.int32, np.int64, np.uint32, np.uint64, np.float32, np.float64])
@@ -79,6 +83,7 @@ def test_numpy_equals_cupy_random_data(random_data):
     assert_numpy_equals_cupy(numpy_agg, cupy_agg, aspect, atol=1e-6, rtol=1e-6)
 
 
+@dask_array_available
 @cuda_and_cupy_available
 @pytest.mark.parametrize("size", [(2, 4), (10, 15)])
 @pytest.mark.parametrize(

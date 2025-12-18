@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # std lib
 from functools import partial
 from typing import Optional, Union
@@ -9,7 +11,11 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-import dask.array as da
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 import numpy as np
 import xarray as xr
 from numba import cuda

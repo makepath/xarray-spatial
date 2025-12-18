@@ -1,9 +1,14 @@
-import dask.array as da
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 import numpy as np
 import xarray as xr
 
 from xrspatial import generate_terrain
 from xrspatial.tests.general_checks import cuda_and_cupy_available
+from xrspatial.tests.general_checks import dask_array_available
 from xrspatial.utils import has_cuda_and_cupy
 
 
@@ -17,7 +22,8 @@ def create_test_arr(backend='numpy'):
         import cupy
         raster.data = cupy.asarray(raster.data)
 
-    if 'dask' in backend:
+    # TODO: restructure dask test cases to use skips if da is None
+    if 'dask' in backend and da is not None:
         raster.data = da.from_array(raster.data, chunks=(10, 10))
 
     return raster
@@ -27,8 +33,14 @@ def test_terrain_cpu():
     # vanilla numpy version
     data_numpy = create_test_arr()
     terrain_numpy = generate_terrain(data_numpy)
+    assert isinstance(terrain_numpy, xr.DataArray)
 
-    # dask
+
+@dask_array_available
+def test_terrain_dask_cpu():
+    # vanilla numpy version
+    data_numpy = create_test_arr()
+    terrain_numpy = generate_terrain(data_numpy)
     data_dask = create_test_arr(backend='dask')
     terrain_dask = generate_terrain(data_dask)
     assert isinstance(terrain_dask.data, da.Array)
