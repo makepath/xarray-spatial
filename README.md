@@ -5,7 +5,9 @@
   <td>Latest Release</td>
   <td>
     <div>
-    <img src="https://badge.fury.io/py/xarray-spatial.svg" alt="pypi version" />
+    <img src="https://anaconda.org/conda-forge/xarray-spatial/badges/latest_release_date.svg" alt="Last Conda Release"/>
+        <img src="https://badge.fury.io/py/xarray-spatial.svg" alt="pypi version" />
+        <img src="https://anaconda.org/conda-forge/xarray-spatial/badges/version.svg" alt="conda-forge version" />
     </div>
     </a>
   </td>
@@ -282,6 +284,6 @@ However, wrapping GDAL has a few drawbacks for Python developers and data scient
 With the introduction of projects like Numba, Python gained new ways to provide high-performance code directly in Python, without depending on or being constrained by separate C/C++ extensions. `xarray-spatial` implements algorithms using Numba and Dask, making all of its source code available as pure Python without any "black box" barriers that obscure what is going on and prevent full optimization. Projects can make use of the functionality provided by `xarray-spatial` where available, while still using GDAL where required for other tasks.
 
 #### Citation
-Cite our code:
+Cite this code:
 
-`makepath/xarray-spatial, https://github.com/makepath/xarray-spatial, ©2020-2024.`
+`makepath/xarray-spatial, https://github.com/makepath/xarray-spatial, ©2020-2026.`
