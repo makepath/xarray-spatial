@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # std lib
 from functools import partial
 from math import atan
@@ -10,14 +12,17 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-import dask.array as da
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 import numpy as np
 import xarray as xr
 from numba import cuda
 
 # local modules
-from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, get_dataarray_resolution, ngjit,
-                             not_implemented_func)
+from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, get_dataarray_resolution, ngjit)
 
 
 @ngjit
@@ -64,6 +69,7 @@ def _run_dask_numpy(data: da.Array,
                            meta=np.array(()))
     return out
 
+
 def _run_dask_cupy(data: da.Array,
                    cellsize_x: Union[int, float],
                    cellsize_y: Union[int, float]) -> da.Array:
@@ -77,7 +83,6 @@ def _run_dask_cupy(data: da.Array,
                            boundary=cupy.nan,
                            meta=cupy.array(()))
     return out
-
 
 
 @cuda.jit(device=True)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # std lib
 from functools import partial
 
@@ -11,7 +13,11 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-import dask.array as da
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 import numba as nb
 from numba import cuda, jit
 

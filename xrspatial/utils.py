@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 from math import ceil
 
-import dask.array as da
 import datashader as ds
 import datashader.transfer_functions as tf
 import numpy as np
@@ -12,6 +13,19 @@ try:
     import cupy
 except ImportError:
     cupy = None
+
+
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
+
+try:
+    import dask.dataframe as dd
+except ImportError:
+    dd = None
+
 
 ngjit = jit(nopython=True, nogil=True)
 
@@ -26,6 +40,14 @@ def _has_cupy():
 
 def is_cupy_array(arr):
     return _has_cupy() and isinstance(arr, cupy.ndarray)
+
+
+def has_dask_array():
+    return da is not None
+
+
+def has_dask_dataframe():
+    return dd is not None
 
 
 def _has_cuda():
@@ -113,7 +135,7 @@ class ArrayTypeFunctionMapping(object):
             return self.dask_cupy_func
 
         # dask + numpy case
-        elif isinstance(arr.data, da.Array):
+        elif has_dask_array() and isinstance(arr.data, da.Array):
             return self.dask_func
 
         else:
@@ -136,7 +158,7 @@ def validate_arrays(*arrays):
             raise ValueError("input arrays must have same type")
 
     # ensure dask chunksizes of all arrays are the same
-    if isinstance(first_array.data, da.Array):
+    if has_dask_array() and isinstance(first_array.data, da.Array):
         for i in range(1, len(arrays)):
             if first_array.chunks != arrays[i].chunks:
                 arrays[i].data = arrays[i].data.rechunk(first_array.chunks)
@@ -154,9 +176,7 @@ def get_xy_range(raster, xdim=None, ydim=None):
         If not provided, assume xdim is `raster.dims[-1]`
     ydim: str, default = None
         Name of the y coordinate dimension in input `raster`
-        If not provided, assume ydim is `raster.dims[-2]`
-
-    Returns
+        If not provided, assume ydim is `raturns
     ----------
     xrange, yrange
         Tuple of tuples: (x, y-range).

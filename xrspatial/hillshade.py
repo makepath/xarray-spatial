@@ -2,8 +2,13 @@ import math
 from functools import partial
 from typing import Optional
 
-import dask.array as da
 import numpy as np
+
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 import xarray as xr
 from numba import cuda
 
@@ -178,12 +183,12 @@ def hillshade(agg: xr.DataArray,
             out = _run_cupy(agg.data, azimuth, angle_altitude)
 
     # dask + cupy case
-    elif (has_cuda_and_cupy() and isinstance(agg.data, da.Array) and
+    elif (has_cuda_and_cupy() and da is not None and isinstance(agg.data, da.Array) and
             is_cupy_backed(agg)):
         raise NotImplementedError("Dask/CuPy hillshade not implemented")
 
     # dask + numpy case
-    elif isinstance(agg.data, da.Array):
+    elif da is not None and isinstance(agg.data, da.Array):
         out = _run_dask_numpy(agg.data, azimuth, angle_altitude)
 
     else:

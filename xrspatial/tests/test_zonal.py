@@ -1,7 +1,15 @@
 import copy
 
-import dask.array as da
-import dask.dataframe as dd
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
+try:
+    import dask.dataframe as dd
+except ImportError:
+    dd = None
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -14,7 +22,8 @@ from xrspatial import zonal_stats as stats
 from xrspatial.zonal import regions
 
 from .general_checks import (
-    assert_input_data_unmodified, create_test_raster, general_output_checks, has_cuda_and_cupy
+    assert_input_data_unmodified, create_test_raster, general_output_checks, has_cuda_and_cupy,
+    dask_array_available, has_dask_array, has_dask_dataframe
 )
 
 
@@ -41,7 +50,7 @@ def data_values_2d(backend):
 @pytest.fixture
 def data_values_3d(backend):
     data = np.ones(4*3*8).reshape(3, 8, 4)
-    if 'dask' in backend:
+    if has_dask_array() and 'dask' in backend:
         data = da.from_array(data, chunks=(3, 4, 2))
 
     agg = xr.DataArray(data, dims=['lat', 'lon', 'race'])
@@ -336,7 +345,7 @@ def qgis_zonal_stats():
 def check_results(
         backend, df_result, expected_results_dict, rtol=1e-05, atol=1e-07, equal_nan=True
 ):
-    if 'dask' in backend:
+    if has_dask_dataframe() and 'dask' in backend:
         # dask case, compute result
         assert isinstance(df_result, dd.DataFrame)
         df_result = df_result.compute()
@@ -356,6 +365,9 @@ def check_results(
 def test_default_stats(backend, data_zones, data_values_2d, result_default_stats):
     if backend == 'cupy' and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
+
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
 
     # copy input data to verify they're unchanged after running the function
     copied_data_zones = copy.deepcopy(data_zones)
@@ -389,10 +401,14 @@ def test_default_stats_dataarray(
     assert_input_data_unmodified(data_zones, copied_data_zones)
     assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
 
+
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy'])
 def test_zone_ids_stats(backend, data_zones, data_values_2d, result_zone_ids_stats):
     if backend == 'cupy' and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
+
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
 
     # copy input data to verify they're unchanged after running the function
     copied_data_zones = copy.deepcopy(data_zones)
@@ -430,6 +446,9 @@ def test_custom_stats(backend, data_zones, data_values_2d, result_custom_stats):
     # ---- custom stats (NumPy and CuPy only) ----
     if backend == 'cupy' and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
+
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
 
     # copy input data to verify they're unchanged after running the function
     copied_data_zones = copy.deepcopy(data_zones)
@@ -488,11 +507,14 @@ def test_zonal_stats_inputs_unmodified(backend, data_zones, data_values_2d, resu
     if backend == 'cupy' and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
 
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
     # copy input data to verify they're unchanged after running the function
     copied_data_zones = copy.deepcopy(data_zones)
     copied_data_values_2d = copy.deepcopy(data_values_2d)
 
-    df_result = stats(zones=data_zones, values=data_values_2d)
+    _ = stats(zones=data_zones, values=data_values_2d)
 
     assert_input_data_unmodified(data_zones, copied_data_zones)
     assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
@@ -501,6 +523,10 @@ def test_zonal_stats_inputs_unmodified(backend, data_zones, data_values_2d, resu
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
 def test_count_crosstab_2d(backend, data_zones, data_values_2d, result_count_crosstab_2d):
     # copy input data to verify they're unchanged after running the function
+
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
     copied_data_zones = copy.deepcopy(data_zones)
     copied_data_values_2d = copy.deepcopy(data_values_2d)
 
@@ -516,6 +542,10 @@ def test_count_crosstab_2d(backend, data_zones, data_values_2d, result_count_cro
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
 def test_percentage_crosstab_2d(backend, data_zones, data_values_2d, result_percentage_crosstab_2d):
     # copy input data to verify they're unchanged after running the function
+
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
     copied_data_zones = copy.deepcopy(data_zones)
     copied_data_values_2d = copy.deepcopy(data_values_2d)
 
@@ -531,6 +561,10 @@ def test_percentage_crosstab_2d(backend, data_zones, data_values_2d, result_perc
 
 @pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
 def test_crosstab_3d_count(backend, data_zones, data_values_3d, result_crosstab_3d):
+
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
     # copy input data to verify they're unchanged after running the function
     copied_data_zones = copy.deepcopy(data_zones)
     copied_data_values_3d = copy.deepcopy(data_values_3d)
@@ -566,6 +600,10 @@ def test_nodata_values_crosstab_3d(
     data_values_3d,
     result_nodata_values_crosstab_3d
 ):
+
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
     # copy input data to verify they're unchanged after running the function
     copied_data_zones = copy.deepcopy(data_zones)
     copied_data_values_3d = copy.deepcopy(data_values_3d)

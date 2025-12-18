@@ -1,15 +1,25 @@
+from __future__ import annotations
+
+
 import copy
 from functools import partial
 from math import isnan
 import math
 
-import dask.array as da
 import numba as nb
 import numpy as np
 import pandas as pd
 import xarray as xr
+
 from numba import cuda, prange
 from xarray import DataArray
+
+
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 
 try:
     import cupy

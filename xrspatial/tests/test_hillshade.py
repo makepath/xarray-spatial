@@ -5,8 +5,11 @@ from numpy.testing import assert_allclose, assert_array_less
 
 from xrspatial import hillshade
 from xrspatial.tests.general_checks import (assert_numpy_equals_cupy,
-                                            assert_numpy_equals_dask_numpy, create_test_raster,
-                                            cuda_and_cupy_available, general_output_checks)
+                                            assert_numpy_equals_dask_numpy,
+                                            create_test_raster,
+                                            cuda_and_cupy_available,
+                                            dask_array_available,
+                                            general_output_checks)
 
 from ..gpu_rtx import has_rtx
 
@@ -36,6 +39,7 @@ def test_hillshade(data_gaussian):
     assert da_gaussian_shade[60, 60] > 0
 
 
+@dask_array_available
 @pytest.mark.parametrize("size", [(2, 4), (10, 15)])
 @pytest.mark.parametrize(
     "dtype", [np.int32, np.int64, np.float32, np.float64])

@@ -1,6 +1,10 @@
 import os
 
-import dask.array as da
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 import datashader as ds
 import noise
 import numpy as np
@@ -76,6 +80,10 @@ def make_terrain(
     terrain : xarray.DataArray
         2D array of generated terrain values.
     """
+
+    if da is None:
+        raise Exception("make terrain requires dask.Array (pip install dask)")
+
     def _func(arr, block_id=None):
         block_ystart = block_id[0] * arr.shape[0]
         block_xstart = block_id[1] * arr.shape[1]

@@ -1,4 +1,8 @@
-import dask.array as da
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -7,7 +11,9 @@ from xrspatial import mean
 from xrspatial.convolution import (annulus_kernel, calc_cellsize, circle_kernel, convolution_2d,
                                    convolve_2d, custom_kernel)
 from xrspatial.focal import apply, focal_stats, hotspots
-from xrspatial.tests.general_checks import (create_test_raster, cuda_and_cupy_available,
+from xrspatial.tests.general_checks import (create_test_raster,
+                                            cuda_and_cupy_available,
+                                            dask_array_available,
                                             general_output_checks)
 from xrspatial.utils import ngjit
 
@@ -42,6 +48,14 @@ data_gaussian = _do_gaussian_array()
 
 
 def test_mean_transfer_function_cpu():
+    # numpy case
+    numpy_agg = xr.DataArray(data_random)
+    numpy_mean = mean(numpy_agg)
+    general_output_checks(numpy_agg, numpy_mean)
+
+
+@dask_array_available
+def test_mean_transfer_function_dask_cpu():
     # numpy case
     numpy_agg = xr.DataArray(data_random)
     numpy_mean = mean(numpy_agg)
@@ -199,6 +213,7 @@ def test_convolution_numpy(
     )
 
 
+@dask_array_available
 def test_convolution_dask_numpy(
     convolve_2d_data,
     convolution_custom_kernel,
@@ -261,14 +276,16 @@ def test_2d_convolution_gpu(
     )
 
     # dask + cupy case not implemented
-    dask_cupy_agg = xr.DataArray(
-        da.from_array(cupy.asarray(convolve_2d_data), chunks=(3, 3))
-    )
-    result_kernel_annulus = convolve_2d(dask_cupy_agg.data, kernel_annulus_2_2_2_1)
-    assert isinstance(result_kernel_annulus, da.Array)
-    np.testing.assert_allclose(
-        result_kernel_annulus.compute().get(), convolution_kernel_annulus_2_2_1, equal_nan=True
-    )
+    # TODO: break this into its own test.
+    if da is not None:
+        dask_cupy_agg = xr.DataArray(
+            da.from_array(cupy.asarray(convolve_2d_data), chunks=(3, 3))
+        )
+        result_kernel_annulus = convolve_2d(dask_cupy_agg.data, kernel_annulus_2_2_2_1)
+        assert isinstance(result_kernel_annulus, da.Array)
+        np.testing.assert_allclose(
+            result_kernel_annulus.compute().get(), convolution_kernel_annulus_2_2_1, equal_nan=True
+        )
 
 
 def test_calc_cellsize_unit_input_attrs(convolve_2d_data):

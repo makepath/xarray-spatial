@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # std lib
 from functools import partial
 from typing import List, Optional, Tuple, Union
@@ -14,7 +16,10 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-import dask.array as da
+try:
+    import dask.array as da
+except ImportError:
+    da = None
 
 # local modules
 from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, get_dataarray_resolution,

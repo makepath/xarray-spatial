@@ -1,9 +1,11 @@
-import dask.array as da
 import numpy as np
 import xarray as xr
 
 from xrspatial import perlin
-from xrspatial.tests.general_checks import cuda_and_cupy_available, general_output_checks
+from xrspatial.tests.general_checks import cuda_and_cupy_available
+from xrspatial.tests.general_checks import dask_array_available
+from xrspatial.tests.general_checks import general_output_checks
+
 from xrspatial.utils import has_cuda_and_cupy
 
 
@@ -24,6 +26,14 @@ def create_test_arr(backend='numpy'):
 
 
 def test_perlin_cpu():
+    # vanilla numpy version
+    data_numpy = create_test_arr()
+    perlin_numpy = perlin(data_numpy)
+    general_output_checks(data_numpy, perlin_numpy)
+
+
+@dask_array_available
+def test_perlin_dask_cpu():
     # vanilla numpy version
     data_numpy = create_test_arr()
     perlin_numpy = perlin(data_numpy)
