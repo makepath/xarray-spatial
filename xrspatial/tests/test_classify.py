@@ -3,7 +3,9 @@ import pytest
 import xarray as xr
 
 from xrspatial import binary, equal_interval, natural_breaks, quantile, reclassify
-from xrspatial.tests.general_checks import (create_test_raster, cuda_and_cupy_available,
+from xrspatial.tests.general_checks import (create_test_raster,
+                                            cuda_and_cupy_available,
+                                            dask_array_available,
                                             general_output_checks)
 
 try:
@@ -42,7 +44,7 @@ def test_binary_numpy(result_binary):
     general_output_checks(numpy_agg, numpy_result, expected_result)
 
 
-@pytest.mark.skipif(da is not None, reason="dask is not installed")
+@dask_array_available
 def test_binary_dask_numpy(result_binary):
     values, expected_result = result_binary
     dask_agg = input_data(backend='dask')
@@ -58,6 +60,7 @@ def test_binary_cupy(result_binary):
     general_output_checks(cupy_agg, cupy_result, expected_result)
 
 
+@dask_array_available
 @cuda_and_cupy_available
 def test_binary_dask_cupy(result_binary):
     values, expected_result = result_binary
@@ -95,7 +98,7 @@ def test_reclassify_numpy(result_reclassify):
     general_output_checks(numpy_agg, numpy_result, expected_result, verify_dtype=True)
 
 
-@pytest.mark.skipif(da is not None, reason="dask is not installed")
+@dask_array_available
 def test_reclassify_dask_numpy(result_reclassify):
     bins, new_values, expected_result = result_reclassify
     dask_agg = input_data(backend='dask')
@@ -111,8 +114,8 @@ def test_reclassify_cupy(result_reclassify):
     general_output_checks(cupy_agg, cupy_result, expected_result, verify_dtype=True)
 
 
+@dask_array_available
 @cuda_and_cupy_available
-@pytest.mark.skipif(da is not None, reason="dask is not installed")
 def test_reclassify_dask_cupy(result_reclassify):
     bins, new_values, expected_result = result_reclassify
     dask_cupy_agg = input_data(backend='dask+cupy')
@@ -148,7 +151,7 @@ def test_quantile_numpy(result_quantile):
     general_output_checks(numpy_agg, numpy_quantile, expected_result, verify_dtype=True)
 
 
-@pytest.mark.skipif(da is not None, reason="dask is not installed")
+@dask_array_available
 def test_quantile_dask_numpy(result_quantile):
     #     Note that dask's percentile algorithm is
     #     approximate, while numpy's is exact.
@@ -267,7 +270,7 @@ def test_equal_interval_numpy(result_equal_interval):
     general_output_checks(numpy_agg, numpy_result, expected_result, verify_dtype=True)
 
 
-@pytest.mark.skipif(da is not None, reason="dask is not installed")
+@dask_array_available
 def test_equal_interval_dask_numpy(result_equal_interval):
     k, expected_result = result_equal_interval
     dask_agg = input_data('dask+numpy')
