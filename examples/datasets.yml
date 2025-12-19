@@ -49,3 +49,6 @@ data:
   - url: https://xarrayspatial.blob.core.windows.net/examples-data/LC80030172015001LGN00_BQA.tiff
     title: 'qa'
     files: LC80030172015001LGN00_BQA.TIF
+  - url: https://makepath-gpu-dataset.s3.us-east-1.amazonaws.com/colorado_merge_3arc_resamp.tif
+    title: 'Colorado Elevation Data'
+    files: colorado_merge_3arc_resamp.tif
