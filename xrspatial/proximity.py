@@ -1,9 +1,15 @@
+from functools import partial
 from math import sqrt
 
 try:
     import dask.array as da
 except ImportError:
     da = None
+
+try:
+    from scipy.spatial import cKDTree
+except ImportError:
+    cKDTree = None
 
 import numpy as np
 import xarray as xr
@@ -398,6 +404,79 @@ def _process_proximity_line(
     return
 
 
+def _kdtree_chunk_fn(block, y_coords_1d, x_coords_1d,
+                     tree, block_info, max_distance, p):
+    """Query k-d tree for nearest target distance for every pixel in block."""
+    if block_info is None or block_info == []:
+        return np.full(block.shape, np.nan, dtype=np.float32)
+
+    y_start = block_info[0]['array-location'][0][0]
+    x_start = block_info[0]['array-location'][1][0]
+    h, w = block.shape
+
+    chunk_ys = y_coords_1d[y_start:y_start + h]
+    chunk_xs = x_coords_1d[x_start:x_start + w]
+    yy, xx = np.meshgrid(chunk_ys, chunk_xs, indexing='ij')
+    query_pts = np.column_stack([yy.ravel(), xx.ravel()])
+
+    dists, _ = tree.query(query_pts, p=p,
+                          distance_upper_bound=max_distance)
+    dists = dists.reshape(h, w).astype(np.float32)
+    dists[dists == np.inf] = np.nan
+    return dists
+
+
+def _process_dask_kdtree(raster, x_coords, y_coords,
+                         target_values, max_distance, distance_metric):
+    """Two-phase k-d tree proximity for unbounded dask arrays."""
+    p = 2 if distance_metric == EUCLIDEAN else 1  # Manhattan: p=1
+
+    # Phase 1: stream through chunks to collect target coordinates
+    target_list = []
+    chunks_y, chunks_x = raster.data.chunks
+    y_offset = 0
+    for iy, cy in enumerate(chunks_y):
+        x_offset = 0
+        for ix, cx in enumerate(chunks_x):
+            chunk_data = raster.data.blocks[iy, ix].compute()
+            if len(target_values) == 0:
+                mask = np.isfinite(chunk_data) & (chunk_data != 0)
+            else:
+                mask = np.isin(chunk_data, target_values) & np.isfinite(chunk_data)
+            rows, cols = np.where(mask)
+            if len(rows) > 0:
+                coords = np.column_stack([
+                    y_coords[y_offset + rows],
+                    x_coords[x_offset + cols],
+                ])
+                target_list.append(coords)
+            x_offset += cx
+        y_offset += cy
+
+    if len(target_list) == 0:
+        return da.full(raster.shape, np.nan, dtype=np.float32,
+                       chunks=raster.data.chunks)
+
+    target_coords = np.concatenate(target_list)
+    tree = cKDTree(target_coords)
+
+    # Phase 2: query tree per chunk via map_blocks
+    chunk_fn = partial(_kdtree_chunk_fn,
+                       y_coords_1d=y_coords,
+                       x_coords_1d=x_coords,
+                       tree=tree,
+                       max_distance=max_distance if np.isfinite(max_distance) else np.inf,
+                       p=p)
+
+    result = da.map_blocks(
+        chunk_fn,
+        raster.data,
+        dtype=np.float32,
+        meta=np.array((), dtype=np.float32),
+    )
+    return result
+
+
 def _process(
     raster,
     x,
@@ -633,16 +712,26 @@ def _process(
         result = _process_numpy(raster.data, xs, ys)
 
     elif da is not None and isinstance(raster.data, da.Array):
-        # dask case - create coordinate arrays as dask arrays directly
-        # This avoids materializing the full arrays in memory
-        # Convert 1D coords to dask arrays first
-        x_coords_da = da.from_array(x_coords, chunks=x_coords.shape[0])
-        y_coords_da = da.from_array(y_coords, chunks=y_coords.shape[0])
-        xs = da.tile(x_coords_da, (raster.shape[0], 1))
-        ys = da.repeat(y_coords_da, raster.shape[1]).reshape(raster.shape)
-        xs = xs.rechunk(raster.chunks)
-        ys = ys.rechunk(raster.chunks)
-        result = _process_dask(raster, xs, ys)
+        use_kdtree = (
+            cKDTree is not None
+            and process_mode == PROXIMITY
+            and distance_metric in (EUCLIDEAN, MANHATTAN)
+            and max_distance >= max_possible_distance
+        )
+        if use_kdtree:
+            result = _process_dask_kdtree(
+                raster, x_coords, y_coords,
+                target_values, max_distance, distance_metric,
+            )
+        else:
+            # Existing path: build 2D coordinate arrays as dask arrays
+            x_coords_da = da.from_array(x_coords, chunks=x_coords.shape[0])
+            y_coords_da = da.from_array(y_coords, chunks=y_coords.shape[0])
+            xs = da.tile(x_coords_da, (raster.shape[0], 1))
+            ys = da.repeat(y_coords_da, raster.shape[1]).reshape(raster.shape)
+            xs = xs.rechunk(raster.chunks)
+            ys = ys.rechunk(raster.chunks)
+            result = _process_dask(raster, xs, ys)
 
     return result
 

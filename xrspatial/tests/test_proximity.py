@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 try:
     import dask.array as da
 except ImportError:
@@ -350,3 +352,193 @@ def test_proximity_dask_coord_arrays_are_lazy():
     assert computed.data[90, 100] == 0.0
     # Check that non-target pixels have positive distance
     assert computed.data[0, 0] > 0.0
+
+
+def _make_kdtree_raster(height=20, width=30, chunks=(10, 15)):
+    """Helper: build a small dask-backed raster with a few target pixels."""
+    data = np.zeros((height, width), dtype=np.float64)
+    data[3, 5] = 1.0
+    data[12, 20] = 2.0
+    data[18, 2] = 3.0
+    _lon = np.linspace(0, 29, width)
+    _lat = np.linspace(19, 0, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    raster.data = da.from_array(data, chunks=chunks)
+    return raster
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("metric", ["EUCLIDEAN", "MANHATTAN"])
+def test_proximity_dask_kdtree_matches_numpy(metric):
+    """k-d tree dask result must match numpy result for the same raster."""
+    raster = _make_kdtree_raster()
+    numpy_raster = raster.copy()
+    numpy_raster.data = raster.data.compute()
+
+    numpy_result = proximity(numpy_raster, x='lon', y='lat',
+                             distance_metric=metric)
+    dask_result = proximity(raster, x='lon', y='lat',
+                            distance_metric=metric)
+
+    assert isinstance(dask_result.data, da.Array)
+    np.testing.assert_allclose(
+        dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_kdtree_no_large_arrays():
+    """No full-raster-sized numpy arrays should be created in k-d tree path."""
+    height, width = 100, 120
+    data = np.zeros((height, width), dtype=np.float64)
+    data[10, 10] = 1.0
+    data[50, 60] = 2.0
+
+    _lon = np.linspace(0, 119, width)
+    _lat = np.linspace(99, 0, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    raster.data = da.from_array(data, chunks=(25, 30))
+
+    original_tile = np.tile
+    original_repeat = np.repeat
+    large_numpy_created = []
+
+    def tracking_tile(A, reps):
+        result = original_tile(A, reps)
+        if result.size >= height * width:
+            large_numpy_created.append(('tile', result.shape))
+        return result
+
+    def tracking_repeat(a, repeats, axis=None):
+        result = original_repeat(a, repeats, axis=axis)
+        if result.size >= height * width:
+            large_numpy_created.append(('repeat', result.shape))
+        return result
+
+    with patch.object(np, 'tile', tracking_tile):
+        with patch.object(np, 'repeat', tracking_repeat):
+            result = proximity(raster, x='lon', y='lat')
+
+    assert len(large_numpy_created) == 0, (
+        f"Large numpy arrays created: {large_numpy_created}"
+    )
+    assert isinstance(result.data, da.Array)
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_kdtree_with_target_values():
+    """target_values filtering works through the k-d tree path."""
+    raster = _make_kdtree_raster()
+    numpy_raster = raster.copy()
+    numpy_raster.data = raster.data.compute()
+
+    target_values = [2, 3]
+    numpy_result = proximity(numpy_raster, x='lon', y='lat',
+                             target_values=target_values)
+    dask_result = proximity(raster, x='lon', y='lat',
+                            target_values=target_values)
+
+    assert isinstance(dask_result.data, da.Array)
+    np.testing.assert_allclose(
+        dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_kdtree_no_targets():
+    """No target pixels found → result is all NaN."""
+    data = np.zeros((10, 10), dtype=np.float64)
+    _lon = np.arange(10, dtype=np.float64)
+    _lat = np.arange(10, dtype=np.float64)[::-1]
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    raster.data = da.from_array(data, chunks=(5, 5))
+
+    result = proximity(raster, x='lon', y='lat')
+    assert isinstance(result.data, da.Array)
+    computed = result.values
+    assert np.all(np.isnan(computed))
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_kdtree_max_distance():
+    """max_distance truncation works via distance_upper_bound in tree query."""
+    raster = _make_kdtree_raster()
+    numpy_raster = raster.copy()
+    numpy_raster.data = raster.data.compute()
+
+    max_dist = 5.0
+    numpy_result = proximity(numpy_raster, x='lon', y='lat',
+                             max_distance=max_dist)
+    dask_result = proximity(raster, x='lon', y='lat',
+                            max_distance=max_dist)
+
+    np.testing.assert_allclose(
+        dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_kdtree_fallback_no_scipy():
+    """When cKDTree is None, falls back to single-chunk path."""
+    import sys
+    prox_mod = sys.modules['xrspatial.proximity']
+
+    height, width = 8, 10
+    data = np.zeros((height, width), dtype=np.float64)
+    data[2, 3] = 1.0
+    data[6, 8] = 2.0
+    _lon = np.linspace(0, 9, width)
+    _lat = np.linspace(7, 0, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    raster.data = da.from_array(data, chunks=(4, 5))
+
+    original_ckdtree = prox_mod.cKDTree
+    try:
+        prox_mod.cKDTree = None
+        result = proximity(raster, x='lon', y='lat')
+        assert isinstance(result.data, da.Array)
+        # Should still produce correct results via fallback
+        computed = result.values
+        assert computed[2, 3] == 0.0
+    finally:
+        prox_mod.cKDTree = original_ckdtree
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_kdtree_fallback_great_circle():
+    """GREAT_CIRCLE metric falls back to single-chunk, not k-d tree."""
+    import sys
+    prox_mod = sys.modules['xrspatial.proximity']
+
+    height, width = 8, 10
+    data = np.zeros((height, width), dtype=np.float64)
+    data[2, 3] = 1.0
+    _lon = np.linspace(-10, 10, width)
+    _lat = np.linspace(10, -10, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    raster.data = da.from_array(data, chunks=(4, 5))
+
+    # Patch _process_dask_kdtree to detect if it's called
+    kdtree_called = []
+    original_fn = prox_mod._process_dask_kdtree
+
+    def spy(*args, **kwargs):
+        kdtree_called.append(True)
+        return original_fn(*args, **kwargs)
+
+    with patch.object(prox_mod, '_process_dask_kdtree', spy):
+        result = proximity(raster, x='lon', y='lat',
+                           distance_metric='GREAT_CIRCLE')
+
+    assert len(kdtree_called) == 0, "k-d tree path should not be used for GREAT_CIRCLE"
+    assert isinstance(result.data, da.Array)
