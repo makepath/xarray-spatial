@@ -1,12 +1,24 @@
+import heapq
 import warnings
+from collections import OrderedDict
 from math import sqrt
 from typing import Optional, Union
 
 import numpy as np
 import xarray as xr
 
+try:
+    import dask.array as da
+    import dask
+except ImportError:
+    da = None
+    dask = None
+
 from xrspatial.cost_distance import _heap_push, _heap_pop
-from xrspatial.utils import get_dataarray_resolution, ngjit
+from xrspatial.utils import (
+    get_dataarray_resolution, ngjit,
+    has_cuda_and_cupy, is_cupy_array, is_dask_cupy, has_dask_array,
+)
 
 NONE = -1
 
@@ -40,6 +52,16 @@ def _is_not_crossable(cell_value, barriers):
 
     for i in barriers:
         if cell_value == i:
+            return True
+    return False
+
+
+def _is_not_crossable_py(cell_value, barriers):
+    """Pure Python version of _is_not_crossable for the dask A* loop."""
+    if np.isnan(cell_value):
+        return True
+    for b in barriers:
+        if cell_value == b:
             return True
     return False
 
@@ -233,6 +255,239 @@ def _a_star_search(data, path_img, start_py, start_px, goal_py, goal_px,
     return
 
 
+# ---------------------------------------------------------------------------
+# LRU chunk cache for dask A*
+# ---------------------------------------------------------------------------
+
+class _ChunkCache:
+    """OrderedDict-based LRU cache for dask chunks."""
+
+    def __init__(self, maxsize=128):
+        self._cache = OrderedDict()
+        self._maxsize = maxsize
+
+    def get(self, key, loader):
+        """Return cached chunk or call *loader()*, evicting oldest if full."""
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
+        value = loader()
+        if len(self._cache) >= self._maxsize:
+            self._cache.popitem(last=False)
+        self._cache[key] = value
+        return value
+
+
+# ---------------------------------------------------------------------------
+# Sparse dask A*
+# ---------------------------------------------------------------------------
+
+def _a_star_dask(surface_da, friction_da, start_py, start_px,
+                 goal_py, goal_px, barriers, dy, dx, dd,
+                 f_min, use_friction, cellsize_x, cellsize_y, is_cupy):
+    """Run A* on a dask-backed array, loading chunks on demand.
+
+    Returns a list of (row, col, cost) tuples for path pixels,
+    or [] if no path exists.
+    """
+    height, width = surface_da.shape
+    n_neighbors = len(dy)
+
+    # Chunk boundaries (cumulative sums of chunk sizes)
+    row_chunks = np.array(surface_da.chunks[0])
+    col_chunks = np.array(surface_da.chunks[1])
+    row_bounds = np.cumsum(row_chunks)
+    col_bounds = np.cumsum(col_chunks)
+
+    surface_cache = _ChunkCache()
+    friction_cache = _ChunkCache() if use_friction else None
+
+    def _load_chunk(da_arr, cache, iy, ix):
+        """Load and cache a single chunk, converting cupy->numpy."""
+        def loader():
+            block = da_arr.blocks[iy, ix].compute()
+            if is_cupy:
+                block = block.get()
+            return np.asarray(block, dtype=np.float64)
+        return cache.get((iy, ix), loader)
+
+    def _get_value(da_arr, cache, r, c):
+        """Get a scalar value at global (r, c) via chunk cache."""
+        iy = int(np.searchsorted(row_bounds, r, side='right'))
+        ix = int(np.searchsorted(col_bounds, c, side='right'))
+        chunk = _load_chunk(da_arr, cache, iy, ix)
+        local_r = r - (int(row_bounds[iy - 1]) if iy > 0 else 0)
+        local_c = c - (int(col_bounds[ix - 1]) if ix > 0 else 0)
+        return float(chunk[local_r, local_c])
+
+    # Check start
+    start_val = _get_value(surface_da, surface_cache, start_py, start_px)
+    if _is_not_crossable_py(start_val, barriers):
+        return []
+
+    if use_friction:
+        f_start = _get_value(friction_da, friction_cache, start_py, start_px)
+        if not (np.isfinite(f_start) and f_start > 0.0):
+            return []
+
+    # A* data structures (sparse — dict/set, not full arrays)
+    g_cost = {(start_py, start_px): 0.0}
+    parent = {}
+    visited = set()
+
+    counter = 0  # tie-breaker for stable heap ordering
+
+    # Heuristic for start
+    dy_goal = abs(start_py - goal_py) * cellsize_y
+    dx_goal = abs(start_px - goal_px) * cellsize_x
+    h = sqrt(dy_goal ** 2 + dx_goal ** 2)
+    if use_friction:
+        h *= f_min
+
+    heap = [(h, counter, start_py, start_px)]
+
+    while heap:
+        f_u, _, py, px = heapq.heappop(heap)
+
+        if (py, px) in visited:
+            continue
+        visited.add((py, px))
+
+        # Found goal — reconstruct path
+        if py == goal_py and px == goal_px:
+            path = []
+            cr, cc = goal_py, goal_px
+            path.append((cr, cc, g_cost[(cr, cc)]))
+            while (cr, cc) in parent:
+                cr, cc = parent[(cr, cc)]
+                path.append((cr, cc, g_cost[(cr, cc)]))
+            return path
+
+        g_u = g_cost[(py, px)]
+
+        for i in range(n_neighbors):
+            ny = py + int(dy[i])
+            nx = px + int(dx[i])
+
+            if ny < 0 or ny >= height or nx < 0 or nx >= width:
+                continue
+            if (ny, nx) in visited:
+                continue
+
+            n_val = _get_value(surface_da, surface_cache, ny, nx)
+            if _is_not_crossable_py(n_val, barriers):
+                continue
+
+            if use_friction:
+                f_u_val = _get_value(friction_da, friction_cache, py, px)
+                f_v_val = _get_value(friction_da, friction_cache, ny, nx)
+                if not (np.isfinite(f_v_val) and f_v_val > 0.0):
+                    continue
+                edge_cost = float(dd[i]) * (f_u_val + f_v_val) * 0.5
+            else:
+                edge_cost = float(dd[i])
+
+            new_g = g_u + edge_cost
+
+            if new_g < g_cost.get((ny, nx), float('inf')):
+                g_cost[(ny, nx)] = new_g
+                parent[(ny, nx)] = (py, px)
+
+                dy_goal = abs(ny - goal_py) * cellsize_y
+                dx_goal = abs(nx - goal_px) * cellsize_x
+                h = sqrt(dy_goal ** 2 + dx_goal ** 2)
+                if use_friction:
+                    h *= f_min
+
+                counter += 1
+                heapq.heappush(heap, (new_g + h, counter, ny, nx))
+
+    return []  # no path
+
+
+# ---------------------------------------------------------------------------
+# Sparse path → lazy dask output
+# ---------------------------------------------------------------------------
+
+def _path_to_dask_array(path_pixels, shape, chunks, is_cupy):
+    """Convert sparse path list to a lazy dask array of the original shape.
+
+    *path_pixels* is a list of ``(row, col, cost)`` tuples.
+    Non-path pixels are NaN.
+    """
+    height, width = shape
+    row_chunks = chunks[0]
+    col_chunks = chunks[1]
+    row_bounds = np.cumsum(row_chunks)
+    col_bounds = np.cumsum(col_chunks)
+
+    # Group path pixels by chunk
+    chunk_pixels = {}  # {(iy, ix): [(local_r, local_c, cost), ...]}
+    for r, c, cost in path_pixels:
+        iy = int(np.searchsorted(row_bounds, r, side='right'))
+        ix = int(np.searchsorted(col_bounds, c, side='right'))
+        local_r = r - (int(row_bounds[iy - 1]) if iy > 0 else 0)
+        local_c = c - (int(col_bounds[ix - 1]) if ix > 0 else 0)
+        chunk_pixels.setdefault((iy, ix), []).append(
+            (local_r, local_c, cost))
+
+    n_row_chunks = len(row_chunks)
+    n_col_chunks = len(col_chunks)
+
+    if is_cupy:
+        import cupy
+
+        @dask.delayed
+        def _make_block_cupy(ch, cw, pixels):
+            block = np.full((ch, cw), np.nan, dtype=np.float64)
+            for lr, lc, cost in pixels:
+                block[lr, lc] = cost
+            return cupy.asarray(block)
+
+        blocks = []
+        for iy in range(n_row_chunks):
+            row = []
+            for ix in range(n_col_chunks):
+                ch = int(row_chunks[iy])
+                cw = int(col_chunks[ix])
+                pixels = chunk_pixels.get((iy, ix), [])
+                row.append(
+                    da.from_delayed(
+                        _make_block_cupy(ch, cw, pixels),
+                        shape=(ch, cw),
+                        dtype=np.float64,
+                        meta=cupy.array((), dtype=np.float64),
+                    )
+                )
+            blocks.append(row)
+    else:
+        @dask.delayed
+        def _make_block(ch, cw, pixels):
+            block = np.full((ch, cw), np.nan, dtype=np.float64)
+            for lr, lc, cost in pixels:
+                block[lr, lc] = cost
+            return block
+
+        blocks = []
+        for iy in range(n_row_chunks):
+            row = []
+            for ix in range(n_col_chunks):
+                ch = int(row_chunks[iy])
+                cw = int(col_chunks[ix])
+                pixels = chunk_pixels.get((iy, ix), [])
+                row.append(
+                    da.from_delayed(
+                        _make_block(ch, cw, pixels),
+                        shape=(ch, cw),
+                        dtype=np.float64,
+                        meta=np.array((), dtype=np.float64),
+                    )
+                )
+            blocks.append(row)
+
+    return da.block(blocks)
+
+
 def a_star_search(surface: xr.DataArray,
                   start: Union[tuple, list, np.array],
                   goal: Union[tuple, list, np.array],
@@ -335,6 +590,16 @@ def a_star_search(surface: xr.DataArray,
     if connectivity != 4 and connectivity != 8:
         raise ValueError("Use either 4 or 8-connectivity.")
 
+    # Detect backend
+    surface_data = surface.data
+    _is_dask = da is not None and isinstance(surface_data, da.Array)
+    _is_cupy_backend = (
+        not _is_dask
+        and has_cuda_and_cupy()
+        and is_cupy_array(surface_data)
+    )
+    _is_dask_cupy = _is_dask and has_cuda_and_cupy() and is_dask_cupy(surface)
+
     # compute cellsize
     cellsize_x, cellsize_y = get_dataarray_resolution(surface, x, y)
     cellsize_x = abs(float(cellsize_x))
@@ -354,53 +619,142 @@ def a_star_search(surface: xr.DataArray,
 
     barriers = np.array(barriers)
 
-    if snap_start:
-        # find nearest valid pixel to the start location
-        start_py, start_px = _find_nearest_pixel(
-            start_py, start_px, surface.data, barriers
-        )
-    if _is_not_crossable(surface.data[start_py, start_px], barriers):
-        warnings.warn("Start at a non crossable location", Warning)
-
-    if snap_goal:
-        # find nearest valid pixel to the goal location
-        goal_py, goal_px = _find_nearest_pixel(
-            goal_py, goal_px, surface.data, barriers
-        )
-    if _is_not_crossable(surface.data[goal_py, goal_px], barriers):
-        warnings.warn("End at a non crossable location", Warning)
-
-    # Handle friction
-    if friction is not None:
-        if friction.shape != surface.shape:
-            raise ValueError("friction must have the same shape as surface")
-        use_friction = True
-        friction_data = np.asarray(friction.data, dtype=np.float64)
-        # Compute f_min: minimum positive finite friction
-        mask = np.isfinite(friction_data) & (friction_data > 0)
-        if not np.any(mask):
-            raise ValueError("friction has no positive finite values")
-        f_min = float(np.min(friction_data[mask]))
+    # --- Snap / crossability checks ---
+    if _is_dask:
+        # Snapping requires O(h*w) scan — not supported for dask
+        if snap_start:
+            raise ValueError(
+                "snap_start is not supported with dask-backed arrays; "
+                "ensure the start pixel is valid before calling a_star_search"
+            )
+        if snap_goal:
+            raise ValueError(
+                "snap_goal is not supported with dask-backed arrays; "
+                "ensure the goal pixel is valid before calling a_star_search"
+            )
+        # Single-pixel crossability check via .compute()
+        start_val = float(surface_data[start_py, start_px].compute())
+        if _is_not_crossable_py(start_val, barriers):
+            warnings.warn("Start at a non crossable location", Warning)
+        goal_val = float(surface_data[goal_py, goal_px].compute())
+        if _is_not_crossable_py(goal_val, barriers):
+            warnings.warn("End at a non crossable location", Warning)
+    elif _is_cupy_backend:
+        # CuPy: use .get() for scalar access in numpy-land
+        surface_np = surface_data.get()
+        if snap_start:
+            start_py, start_px = _find_nearest_pixel(
+                start_py, start_px, surface_np, barriers
+            )
+        if _is_not_crossable(surface_np[start_py, start_px], barriers):
+            warnings.warn("Start at a non crossable location", Warning)
+        if snap_goal:
+            goal_py, goal_px = _find_nearest_pixel(
+                goal_py, goal_px, surface_np, barriers
+            )
+        if _is_not_crossable(surface_np[goal_py, goal_px], barriers):
+            warnings.warn("End at a non crossable location", Warning)
     else:
-        use_friction = False
-        friction_data = np.ones((h, w), dtype=np.float64)
-        f_min = 1.0
+        # numpy path
+        if snap_start:
+            start_py, start_px = _find_nearest_pixel(
+                start_py, start_px, surface_data, barriers
+            )
+        if _is_not_crossable(surface_data[start_py, start_px], barriers):
+            warnings.warn("Start at a non crossable location", Warning)
+        if snap_goal:
+            goal_py, goal_px = _find_nearest_pixel(
+                goal_py, goal_px, surface_data, barriers
+            )
+        if _is_not_crossable(surface_data[goal_py, goal_px], barriers):
+            warnings.warn("End at a non crossable location", Warning)
 
     # Build neighborhood with cellsize-scaled distances
     dy, dx, dd = _neighborhood_structure(cellsize_x, cellsize_y, connectivity)
 
-    # 2d output image that stores the path
-    path_img = np.zeros_like(surface.data, dtype=np.float64)
-    # first, initialize all cells as np.nans
-    path_img[:] = np.nan
+    # --- Handle friction ---
+    if friction is not None:
+        if friction.shape != surface.shape:
+            raise ValueError("friction must have the same shape as surface")
+        use_friction = True
+    else:
+        use_friction = False
 
-    if start_py != NONE:
-        _a_star_search(surface.data, path_img, start_py, start_px,
-                       goal_py, goal_px, barriers, dy, dx, dd,
-                       friction_data, f_min, use_friction,
-                       cellsize_x, cellsize_y)
+    # --- Backend dispatch ---
+    if _is_dask:
+        # Dask or dask+cupy path
+        if use_friction:
+            friction_data = friction.data
+            # Rechunk friction to match surface if needed
+            if isinstance(friction_data, da.Array):
+                friction_data = friction_data.rechunk(surface_data.chunks)
+            else:
+                friction_data = da.from_array(
+                    friction_data, chunks=surface_data.chunks)
+            # f_min via dask (same pattern as cost_distance)
+            positive_friction = da.where(
+                friction_data > 0, friction_data, np.inf)
+            f_min = float(da.nanmin(positive_friction).compute())
+            if not (np.isfinite(f_min) and f_min > 0):
+                raise ValueError("friction has no positive finite values")
+        else:
+            friction_data = None
+            f_min = 1.0
 
-    path_agg = xr.DataArray(path_img,
+        path_pixels = _a_star_dask(
+            surface_data, friction_data,
+            start_py, start_px, goal_py, goal_px,
+            barriers, dy, dx, dd,
+            f_min, use_friction, cellsize_x, cellsize_y,
+            _is_dask_cupy,
+        )
+        path_data = _path_to_dask_array(
+            path_pixels, surface.shape, surface_data.chunks, _is_dask_cupy)
+
+    elif _is_cupy_backend:
+        import cupy
+        # Transfer to CPU, run numpy kernel, transfer back
+        if 'surface_np' not in dir():
+            surface_np = surface_data.get()
+        if use_friction:
+            friction_np = np.asarray(friction.data.get(), dtype=np.float64)
+            mask = np.isfinite(friction_np) & (friction_np > 0)
+            if not np.any(mask):
+                raise ValueError("friction has no positive finite values")
+            f_min = float(np.min(friction_np[mask]))
+        else:
+            friction_np = np.ones((h, w), dtype=np.float64)
+            f_min = 1.0
+
+        path_img = np.full(surface.shape, np.nan, dtype=np.float64)
+        if start_py != NONE:
+            _a_star_search(surface_np, path_img, start_py, start_px,
+                           goal_py, goal_px, barriers, dy, dx, dd,
+                           friction_np, f_min, use_friction,
+                           cellsize_x, cellsize_y)
+        path_data = cupy.asarray(path_img)
+
+    else:
+        # numpy path (existing, unchanged)
+        if use_friction:
+            friction_data = np.asarray(friction.data, dtype=np.float64)
+            mask = np.isfinite(friction_data) & (friction_data > 0)
+            if not np.any(mask):
+                raise ValueError("friction has no positive finite values")
+            f_min = float(np.min(friction_data[mask]))
+        else:
+            friction_data = np.ones((h, w), dtype=np.float64)
+            f_min = 1.0
+
+        path_img = np.full(surface.shape, np.nan, dtype=np.float64)
+        if start_py != NONE:
+            _a_star_search(surface_data, path_img, start_py, start_px,
+                           goal_py, goal_px, barriers, dy, dx, dd,
+                           friction_data, f_min, use_friction,
+                           cellsize_x, cellsize_y)
+        path_data = path_img
+
+    path_agg = xr.DataArray(path_data,
                             coords=surface.coords,
                             dims=surface.dims,
                             attrs=surface.attrs)
