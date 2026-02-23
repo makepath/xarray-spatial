@@ -131,6 +131,8 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 #### Supported Spatial Functions with Supported Inputs
 
+✅ = native backend &nbsp;&nbsp; 🔄 = accepted (CPU fallback)
+
 -------
 
 ### **Classification**
@@ -183,7 +185,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [A* Pathfinding](xrspatial/pathfinding.py) | Finds the least-cost path between two cells on a cost surface | ✅️ |  | | |
+| [A* Pathfinding](xrspatial/pathfinding.py) | Finds the least-cost path between two cells on a cost surface | ✅️ | ✅ | 🔄 | 🔄 |
 
 ----------
 

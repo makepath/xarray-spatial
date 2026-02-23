@@ -1,8 +1,18 @@
 import numpy as np
 import pytest
 
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
 from xrspatial import a_star_search
-from xrspatial.tests.general_checks import create_test_raster, general_output_checks
+from xrspatial.cost_distance import cost_distance
+from xrspatial.tests.general_checks import (
+    create_test_raster, general_output_checks,
+    cuda_and_cupy_available, dask_array_available,
+)
+from xrspatial.utils import has_cuda_and_cupy, has_dask_array
 
 
 @pytest.fixture
@@ -33,20 +43,27 @@ def input_data_with_nans():
 
 @pytest.fixture
 def result_8_connectivity():
+    # cellsize=0.5: diagonal=sqrt(0.5)≈0.7071, cardinal=0.5
+    # Path: (0,2)→(1,1)→(2,1)→(3,1)
+    # Costs: 0, sqrt(0.5), sqrt(0.5)+0.5, sqrt(0.5)+1.0
+    s = np.sqrt(0.5)
     expected_result = np.array([[np.nan, np.nan, 0., np.nan],
-                                [np.nan, 1.41421356, np.nan, np.nan],
-                                [np.nan, 2.41421356, np.nan, np.nan],
-                                [np.nan, 3.41421356, np.nan, np.nan],
+                                [np.nan, s, np.nan, np.nan],
+                                [np.nan, s + 0.5, np.nan, np.nan],
+                                [np.nan, s + 1.0, np.nan, np.nan],
                                 [np.nan, np.nan, np.nan, np.nan]])
     return expected_result
 
 
 @pytest.fixture
 def result_4_connectivity():
-    expected_result = np.array([[np.nan, 1, 0., np.nan],
-                                [np.nan, 2, np.nan, np.nan],
-                                [np.nan, 3, np.nan, np.nan],
-                                [np.nan, 4, np.nan, np.nan],
+    # cellsize=0.5: cardinal=0.5
+    # Path: (0,2)→(0,1)→(1,1)→(2,1)→(3,1)
+    # Costs: 0, 0.5, 1.0, 1.5, 2.0
+    expected_result = np.array([[np.nan, 0.5, 0., np.nan],
+                                [np.nan, 1.0, np.nan, np.nan],
+                                [np.nan, 1.5, np.nan, np.nan],
+                                [np.nan, 2.0, np.nan, np.nan],
                                 [np.nan, np.nan, np.nan, np.nan]])
     return expected_result
 
@@ -138,3 +155,413 @@ def test_a_star_search_connectivity(
         agg, start, goal, barriers, 'lon', 'lat', snap_start=True, snap_goal=True, connectivity=4
     )
     np.testing.assert_allclose(path_agg_4, result_4_connectivity, equal_nan=True)
+
+
+# -----------------------------------------------------------------------
+# Helper for multi-backend test rasters
+# -----------------------------------------------------------------------
+
+def _make_raster(data, dims=None, res=None, backend='numpy', chunks=(3, 3)):
+    """Build a simple DataArray for weighted A* tests."""
+    if dims is None:
+        dims = ['y', 'x']
+    if res is None:
+        res = (1.0, 1.0)
+    import xarray as xr
+    h, w = data.shape
+    raster = xr.DataArray(
+        data.astype(np.float64),
+        dims=dims,
+        attrs={'res': res},
+    )
+    raster[dims[0]] = np.linspace((h - 1) * res[0], 0, h)
+    raster[dims[1]] = np.linspace(0, (w - 1) * res[1], w)
+
+    if 'dask' in backend and da is not None:
+        raster.data = da.from_array(raster.data, chunks=chunks)
+    if 'cupy' in backend and has_cuda_and_cupy():
+        import cupy
+        if isinstance(raster.data, da.Array):
+            raster.data = raster.data.map_blocks(cupy.asarray)
+        else:
+            raster.data = cupy.asarray(raster.data)
+
+    return raster
+
+
+# -----------------------------------------------------------------------
+# Weighted A* tests — parametrized for numpy and dask
+# -----------------------------------------------------------------------
+
+_backends = ['numpy']
+if has_dask_array():
+    _backends.append('dask+numpy')
+
+
+@pytest.mark.parametrize("backend", _backends)
+def test_uniform_friction_matches_no_friction(backend):
+    """Uniform friction=1 should give the same path and costs as no friction."""
+    data = np.ones((5, 5))
+    agg = _make_raster(data, backend=backend)
+    friction_agg = _make_raster(np.ones((5, 5)), backend=backend)
+
+    # coordinate space: y goes 4..0, x goes 0..4
+    start = (4.0, 0.0)   # pixel (0,0)
+    goal = (0.0, 4.0)    # pixel (4,4)
+
+    path_no_friction = a_star_search(agg, start, goal)
+    path_with_friction = a_star_search(agg, start, goal, friction=friction_agg)
+
+    np.testing.assert_allclose(
+        np.asarray(path_with_friction.values),
+        np.asarray(path_no_friction.values),
+        equal_nan=True, atol=1e-10,
+    )
+
+
+@pytest.mark.parametrize("backend", _backends)
+def test_high_friction_detour(backend):
+    """A* should route around a high-friction column."""
+    # 3x5 grid, cellsize=1
+    data = np.ones((3, 5))
+    friction_data = np.ones((3, 5))
+    friction_data[0, 2] = 100.0  # high friction in direct path
+    friction_data[1, 2] = 100.0
+
+    agg = _make_raster(data, backend=backend)
+    friction_agg = _make_raster(friction_data, backend=backend)
+
+    # start=pixel(0,0), goal=pixel(0,4)
+    # coords: y=[2,1,0], x=[0,1,2,3,4]
+    start = (2.0, 0.0)
+    goal = (2.0, 4.0)
+
+    # Without friction: direct straight path (0,0)→(0,1)→(0,2)→(0,3)→(0,4)
+    path_no = a_star_search(agg, start, goal)
+    assert np.isfinite(np.asarray(path_no.values)[0, 2])  # goes through column 2
+
+    # With friction: should detour around column 2
+    path_fr = a_star_search(agg, start, goal, friction=friction_agg)
+    vals = np.asarray(path_fr.values)
+    assert np.isnan(vals[0, 2])  # does NOT go through (0,2)
+    # detour should go through row 2 (pixel row 2)
+    assert np.isfinite(vals[2, 2])  # goes through (2,2) instead
+
+    # Weighted path should be cheaper than going through high-friction zone
+    assert np.nanmax(vals) < 10.0
+
+
+@pytest.mark.parametrize("backend", _backends)
+def test_friction_barrier_nan(backend):
+    """NaN friction blocks passage, forcing a detour."""
+    data = np.ones((3, 5))
+    friction_data = np.ones((3, 5))
+    friction_data[0, 2] = np.nan  # impassable
+
+    agg = _make_raster(data, backend=backend)
+    friction_agg = _make_raster(friction_data, backend=backend)
+
+    start = (2.0, 0.0)  # pixel (0,0)
+    goal = (2.0, 4.0)   # pixel (0,4)
+
+    path = a_star_search(agg, start, goal, friction=friction_agg)
+    vals = np.asarray(path.values)
+    # Path must not go through (0,2)
+    assert np.isnan(vals[0, 2])
+    # But a path should still exist
+    assert np.isfinite(vals[0, 4])
+
+
+@pytest.mark.parametrize("backend", _backends)
+def test_friction_barrier_zero(backend):
+    """Zero friction blocks passage, forcing a detour."""
+    data = np.ones((3, 5))
+    friction_data = np.ones((3, 5))
+    friction_data[0, 2] = 0.0  # impassable
+
+    agg = _make_raster(data, backend=backend)
+    friction_agg = _make_raster(friction_data, backend=backend)
+
+    start = (2.0, 0.0)
+    goal = (2.0, 4.0)
+
+    path = a_star_search(agg, start, goal, friction=friction_agg)
+    vals = np.asarray(path.values)
+    assert np.isnan(vals[0, 2])
+    assert np.isfinite(vals[0, 4])
+
+
+@pytest.mark.parametrize("backend", _backends)
+def test_a_star_matches_cost_distance(backend):
+    """A* path cost at goal should equal cost_distance value at that pixel."""
+    # 5x5 grid with single source at (0,0), non-uniform friction
+    source = np.zeros((5, 5))
+    source[0, 0] = 1.0  # source/start pixel
+
+    friction_data = np.ones((5, 5))
+    friction_data[1, 1] = 3.0
+    friction_data[2, 2] = 2.0
+
+    surface = _make_raster(np.ones((5, 5)), backend=backend)
+    source_r = _make_raster(source, backend=backend)
+    friction_r = _make_raster(friction_data, backend=backend)
+
+    # Run cost_distance from source at (0,0) — always numpy for comparison
+    source_np = _make_raster(source, backend='numpy')
+    friction_np = _make_raster(friction_data, backend='numpy')
+    cd = cost_distance(source_np, friction_np)
+    cd_val = cd.values
+
+    # Run A* from (0,0) to (4,4)
+    # coords: y=[4,3,2,1,0], x=[0,1,2,3,4]
+    start = (4.0, 0.0)   # pixel (0,0)
+    goal = (0.0, 4.0)    # pixel (4,4)
+
+    path = a_star_search(surface, start, goal, friction=friction_r)
+    a_star_cost_at_goal = float(np.asarray(path.values)[4, 4])
+
+    # cost_distance gives minimum cost from source to every pixel
+    cd_cost_at_goal = float(cd_val[4, 4])
+
+    np.testing.assert_allclose(a_star_cost_at_goal, cd_cost_at_goal, rtol=1e-5)
+
+
+@pytest.mark.parametrize("backend", _backends)
+def test_analytic_3x3_weighted(backend):
+    """Hand-computed costs on a 3x3 grid with known friction."""
+    # Surface all 1s, friction has high center
+    data = np.ones((3, 3))
+    friction_data = np.array([
+        [1.0, 2.0, 1.0],
+        [1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0],
+    ])
+
+    agg = _make_raster(data, backend=backend)
+    friction_agg = _make_raster(friction_data, backend=backend)
+
+    # start=pixel(0,0), goal=pixel(0,2)
+    # coords: y=[2,1,0], x=[0,1,2]
+    start = (2.0, 0.0)
+    goal = (2.0, 2.0)
+
+    path = a_star_search(agg, start, goal, friction=friction_agg)
+    vals = np.asarray(path.values)
+
+    # Direct path through (0,1) with friction=2:
+    #   (0,0)→(0,1): 1*(1+2)/2 = 1.5
+    #   (0,1)→(0,2): 1*(2+1)/2 = 1.5
+    #   total = 3.0
+    #
+    # Detour through (1,1) with friction=1:
+    #   (0,0)→(1,1): sqrt(2)*(1+1)/2 = sqrt(2) ≈ 1.4142
+    #   (1,1)→(0,2): sqrt(2)*(1+1)/2 = sqrt(2) ≈ 1.4142
+    #   total = 2*sqrt(2) ≈ 2.8284
+    #
+    # A* picks the cheaper detour
+    expected_cost_at_goal = 2.0 * np.sqrt(2.0)
+    np.testing.assert_allclose(vals[0, 2], expected_cost_at_goal, rtol=1e-5)
+
+    # Path should not go through (0,1) — the high-friction direct route
+    assert np.isnan(vals[0, 1])
+    # Path should go through (1,1) — the low-friction detour
+    np.testing.assert_allclose(vals[1, 1], np.sqrt(2.0), rtol=1e-5)
+
+
+# -----------------------------------------------------------------------
+# Dask-specific tests
+# -----------------------------------------------------------------------
+
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+@pytest.mark.parametrize("chunks", [(2, 2), (3, 3), (5, 5)])
+def test_dask_matches_numpy(chunks):
+    """Dask A* with various chunk sizes should match numpy results exactly."""
+    data = np.ones((5, 5))
+    friction_data = np.ones((5, 5))
+    friction_data[1, 1] = 3.0
+    friction_data[2, 2] = 2.0
+
+    agg_np = _make_raster(data, backend='numpy')
+    friction_np = _make_raster(friction_data, backend='numpy')
+
+    agg_dask = _make_raster(data, backend='dask+numpy', chunks=chunks)
+    friction_dask = _make_raster(friction_data, backend='dask+numpy',
+                                 chunks=chunks)
+
+    start = (4.0, 0.0)
+    goal = (0.0, 4.0)
+
+    path_np = a_star_search(agg_np, start, goal, friction=friction_np)
+    path_dask = a_star_search(agg_dask, start, goal, friction=friction_dask)
+
+    np.testing.assert_allclose(
+        np.asarray(path_dask.values),
+        path_np.values,
+        equal_nan=True, atol=1e-10,
+    )
+
+
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_dask_no_large_numpy_arrays():
+    """Dask path should not materialise full-size numpy arrays."""
+    height, width = 50, 60
+    data = np.ones((height, width))
+    friction_data = np.ones((height, width))
+
+    agg = _make_raster(data, backend='dask+numpy', chunks=(25, 30))
+    friction_agg = _make_raster(friction_data, backend='dask+numpy',
+                                chunks=(25, 30))
+
+    start = (float(height - 1), 0.0)
+    goal = (0.0, float(width - 1))
+
+    # Track large numpy allocations
+    original_full = np.full
+    large_allocs = []
+
+    def tracking_full(shape, *args, **kwargs):
+        result = original_full(shape, *args, **kwargs)
+        if hasattr(shape, '__len__'):
+            total = 1
+            for s in shape:
+                total *= s
+        else:
+            total = shape
+        if total >= height * width:
+            large_allocs.append(('full', shape))
+        return result
+
+    from unittest.mock import patch
+    with patch('numpy.full', side_effect=tracking_full):
+        result = a_star_search(agg, start, goal, friction=friction_agg)
+
+    # Result should be dask-backed
+    assert isinstance(result.data, da.Array)
+
+    # No full-size arrays should have been allocated
+    assert len(large_allocs) == 0, (
+        f"Unexpected large allocations: {large_allocs}")
+
+
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_dask_snap_raises():
+    """snap_start/snap_goal should raise ValueError for dask arrays."""
+    data = np.ones((5, 5))
+    agg = _make_raster(data, backend='dask+numpy', chunks=(3, 3))
+    start = (4.0, 0.0)
+    goal = (0.0, 4.0)
+
+    with pytest.raises(ValueError, match="snap_start is not supported"):
+        a_star_search(agg, start, goal, snap_start=True)
+
+    with pytest.raises(ValueError, match="snap_goal is not supported"):
+        a_star_search(agg, start, goal, snap_goal=True)
+
+
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_dask_no_friction():
+    """Dask A* without friction should match numpy."""
+    data = np.ones((5, 5))
+    agg_np = _make_raster(data, backend='numpy')
+    agg_dask = _make_raster(data, backend='dask+numpy', chunks=(3, 3))
+
+    start = (4.0, 0.0)
+    goal = (0.0, 4.0)
+
+    path_np = a_star_search(agg_np, start, goal)
+    path_dask = a_star_search(agg_dask, start, goal)
+
+    np.testing.assert_allclose(
+        np.asarray(path_dask.values),
+        path_np.values,
+        equal_nan=True, atol=1e-10,
+    )
+
+
+# -----------------------------------------------------------------------
+# CuPy tests
+# -----------------------------------------------------------------------
+
+@cuda_and_cupy_available
+def test_cupy_matches_numpy():
+    """CuPy path should produce identical results to numpy."""
+    data = np.ones((5, 5))
+    friction_data = np.ones((5, 5))
+    friction_data[1, 1] = 3.0
+    friction_data[2, 2] = 2.0
+
+    agg_np = _make_raster(data, backend='numpy')
+    friction_np = _make_raster(friction_data, backend='numpy')
+
+    agg_cupy = _make_raster(data, backend='cupy')
+    friction_cupy = _make_raster(friction_data, backend='cupy')
+
+    start = (4.0, 0.0)
+    goal = (0.0, 4.0)
+
+    path_np = a_star_search(agg_np, start, goal, friction=friction_np)
+    path_cupy = a_star_search(agg_cupy, start, goal, friction=friction_cupy)
+
+    np.testing.assert_allclose(
+        path_cupy.data.get(),
+        path_np.values,
+        equal_nan=True, atol=1e-10,
+    )
+
+
+@cuda_and_cupy_available
+def test_cupy_no_friction():
+    """CuPy without friction should match numpy."""
+    data = np.ones((5, 5))
+    agg_np = _make_raster(data, backend='numpy')
+    agg_cupy = _make_raster(data, backend='cupy')
+
+    start = (4.0, 0.0)
+    goal = (0.0, 4.0)
+
+    path_np = a_star_search(agg_np, start, goal)
+    path_cupy = a_star_search(agg_cupy, start, goal)
+
+    np.testing.assert_allclose(
+        path_cupy.data.get(),
+        path_np.values,
+        equal_nan=True, atol=1e-10,
+    )
+
+
+# -----------------------------------------------------------------------
+# Dask + CuPy tests
+# -----------------------------------------------------------------------
+
+@cuda_and_cupy_available
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_dask_cupy_matches_numpy():
+    """Dask+CuPy path should produce identical results to numpy."""
+    data = np.ones((5, 5))
+    friction_data = np.ones((5, 5))
+    friction_data[1, 1] = 3.0
+    friction_data[2, 2] = 2.0
+
+    agg_np = _make_raster(data, backend='numpy')
+    friction_np = _make_raster(friction_data, backend='numpy')
+
+    agg_dc = _make_raster(data, backend='dask+cupy', chunks=(3, 3))
+    friction_dc = _make_raster(friction_data, backend='dask+cupy',
+                               chunks=(3, 3))
+
+    start = (4.0, 0.0)
+    goal = (0.0, 4.0)
+
+    path_np = a_star_search(agg_np, start, goal, friction=friction_np)
+    path_dc = a_star_search(agg_dc, start, goal, friction=friction_dc)
+
+    # dask+cupy: compute dask graph, then .get() the cupy array to numpy
+    dc_computed = path_dc.data.compute()
+    if hasattr(dc_computed, 'get'):
+        dc_computed = dc_computed.get()
+
+    np.testing.assert_allclose(
+        dc_computed,
+        path_np.values,
+        equal_nan=True, atol=1e-10,
+    )
