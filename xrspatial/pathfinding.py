@@ -514,6 +514,22 @@ def a_star_search(surface: xr.DataArray,
     The output is an equal-sized ``xr.DataArray`` with NaN for non-path
     pixels and the accumulated cost at each path pixel.
 
+    **Backend support**
+
+    =============  ===========================================================
+    Backend        Strategy
+    =============  ===========================================================
+    NumPy          Numba-jitted kernel (fast, in-memory)
+    Dask           Sparse Python A* with LRU chunk cache — loads chunks on
+                   demand so the full grid never needs to fit in RAM
+    CuPy           CPU fallback (transfers to numpy, runs numba kernel,
+                   transfers back)
+    Dask + CuPy    Same sparse A* as Dask, with cupy→numpy chunk conversion
+    =============  ===========================================================
+
+    ``snap_start`` and ``snap_goal`` are not supported with Dask-backed
+    arrays (raises ``ValueError``).
+
     Parameters
     ----------
     surface : xr.DataArray
