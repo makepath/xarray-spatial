@@ -10,10 +10,12 @@ import pytest
 import xarray as xr
 
 from xrspatial.cost_distance import cost_distance
+from xrspatial.tests.general_checks import cuda_and_cupy_available
+from xrspatial.utils import has_cuda_and_cupy, has_dask_array
 
 
 def _make_raster(data, backend='numpy', chunks=(3, 3)):
-    """Build a DataArray with y/x coords, optionally dask-backed."""
+    """Build a DataArray with y/x coords, optionally dask/cupy-backed."""
     h, w = data.shape
     raster = xr.DataArray(
         data.astype(np.float64),
@@ -24,13 +26,24 @@ def _make_raster(data, backend='numpy', chunks=(3, 3)):
     raster['x'] = np.arange(w, dtype=np.float64)
     if 'dask' in backend and da is not None:
         raster.data = da.from_array(raster.data, chunks=chunks)
+    if 'cupy' in backend and has_cuda_and_cupy():
+        import cupy
+        if isinstance(raster.data, da.Array):
+            raster.data = raster.data.map_blocks(cupy.asarray)
+        else:
+            raster.data = cupy.asarray(raster.data)
     return raster
 
 
 def _compute(arr):
-    """Extract numpy data from DataArray (works for numpy or dask)."""
+    """Extract numpy data from DataArray (works for numpy, dask, or cupy)."""
     if da is not None and isinstance(arr.data, da.Array):
-        return arr.values
+        val = arr.data.compute()
+        if hasattr(val, 'get'):
+            return val.get()
+        return val
+    if hasattr(arr.data, 'get'):
+        return arr.data.get()
     return arr.data
 
 
@@ -400,3 +413,91 @@ def test_source_on_impassable_cell(backend):
 
     # Everything should be NaN — the only source is on impassable terrain
     assert np.all(np.isnan(out))
+
+
+# -----------------------------------------------------------------------
+# CuPy GPU spill-to-CPU tests
+# -----------------------------------------------------------------------
+
+@cuda_and_cupy_available
+def test_cupy_matches_numpy():
+    """CuPy (CPU fallback) path should produce identical results to numpy."""
+    np.random.seed(42)
+    source = np.zeros((7, 7))
+    source[3, 3] = 1.0
+
+    friction_data = np.random.uniform(0.5, 5.0, (7, 7))
+
+    result_np = _compute(cost_distance(
+        _make_raster(source, backend='numpy'),
+        _make_raster(friction_data, backend='numpy'),
+    ))
+    result_cupy = _compute(cost_distance(
+        _make_raster(source, backend='cupy'),
+        _make_raster(friction_data, backend='cupy'),
+    ))
+
+    np.testing.assert_allclose(result_cupy, result_np, equal_nan=True, atol=1e-5)
+
+
+@cuda_and_cupy_available
+def test_cupy_max_cost():
+    """CuPy path respects max_cost truncation."""
+    source = np.zeros((1, 10))
+    source[0, 0] = 1.0
+    friction_data = np.ones((1, 10))
+
+    result = _compute(cost_distance(
+        _make_raster(source, backend='cupy'),
+        _make_raster(friction_data, backend='cupy'),
+        max_cost=3.5,
+    ))
+
+    np.testing.assert_allclose(result[0, 3], 3.0, atol=1e-5)
+    assert np.isnan(result[0, 4])
+
+
+@cuda_and_cupy_available
+def test_cupy_returns_cupy_array():
+    """Result should be CuPy-backed when input is CuPy-backed."""
+    import cupy
+    from xrspatial.utils import is_cupy_array
+
+    source = np.zeros((3, 3))
+    source[1, 1] = 1.0
+    friction_data = np.ones((3, 3))
+
+    result = cost_distance(
+        _make_raster(source, backend='cupy'),
+        _make_raster(friction_data, backend='cupy'),
+    )
+    assert is_cupy_array(result.data)
+
+
+# -----------------------------------------------------------------------
+# Dask + CuPy GPU spill-to-CPU tests
+# -----------------------------------------------------------------------
+
+@cuda_and_cupy_available
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_dask_cupy_matches_numpy():
+    """Dask+CuPy (CPU fallback) should produce identical results to numpy."""
+    np.random.seed(42)
+    source = np.zeros((10, 12))
+    source[2, 3] = 1.0
+    source[7, 9] = 2.0
+
+    friction_data = np.random.uniform(0.5, 5.0, (10, 12))
+
+    result_np = _compute(cost_distance(
+        _make_raster(source, backend='numpy'),
+        _make_raster(friction_data, backend='numpy'),
+        max_cost=20.0,
+    ))
+    result_dc = _compute(cost_distance(
+        _make_raster(source, backend='dask+cupy', chunks=(5, 6)),
+        _make_raster(friction_data, backend='dask+cupy', chunks=(5, 6)),
+        max_cost=20.0,
+    ))
+
+    np.testing.assert_allclose(result_dc, result_np, equal_nan=True, atol=1e-5)
