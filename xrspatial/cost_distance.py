@@ -38,7 +38,10 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import get_dataarray_resolution, ngjit
+from xrspatial.utils import (
+    get_dataarray_resolution, ngjit,
+    has_cuda_and_cupy, is_cupy_array, is_dask_cupy,
+)
 from xrspatial.dataset_support import supports_dataset
 
 # ---------------------------------------------------------------------------
@@ -391,7 +394,15 @@ def cost_distance(
     source_data = raster.data
     friction_data = friction.data
 
-    if da is not None and isinstance(source_data, da.Array):
+    _is_dask = da is not None and isinstance(source_data, da.Array)
+    _is_cupy_backend = (
+        not _is_dask
+        and has_cuda_and_cupy()
+        and is_cupy_array(source_data)
+    )
+    _is_dask_cupy = _is_dask and has_cuda_and_cupy() and is_dask_cupy(raster)
+
+    if _is_dask:
         # Rechunk friction to match raster
         if isinstance(friction_data, da.Array):
             friction_data = friction_data.rechunk(source_data.chunks)
@@ -399,7 +410,34 @@ def cost_distance(
             friction_data = da.from_array(friction_data,
                                           chunks=source_data.chunks)
 
-    if isinstance(source_data, np.ndarray):
+    if _is_cupy_backend:
+        import cupy
+        # Transfer to CPU, run numpy kernel, transfer back
+        source_np = source_data.get()
+        friction_np = np.asarray(friction.data.get(), dtype=np.float64)
+        result_data = cupy.asarray(
+            _cost_distance_numpy(
+                source_np, friction_np,
+                cellsize_x, cellsize_y, max_cost_f,
+                target_values, dy, dx, dd,
+            )
+        )
+    elif _is_dask_cupy:
+        # Spill each chunk to CPU via map_overlap, then wrap back as dask
+        source_data = source_data.map_blocks(
+            lambda b: b.get(), dtype=source_data.dtype,
+            meta=np.array((), dtype=source_data.dtype),
+        )
+        friction_data = friction_data.map_blocks(
+            lambda b: b.get(), dtype=friction_data.dtype,
+            meta=np.array((), dtype=friction_data.dtype),
+        )
+        result_data = _cost_distance_dask(
+            source_data, friction_data,
+            cellsize_x, cellsize_y, max_cost_f,
+            target_values, dy, dx, dd,
+        )
+    elif isinstance(source_data, np.ndarray):
         if isinstance(friction_data, np.ndarray):
             result_data = _cost_distance_numpy(
                 source_data, friction_data,
@@ -408,7 +446,7 @@ def cost_distance(
             )
         else:
             raise TypeError("friction must be numpy-backed when raster is")
-    elif da is not None and isinstance(source_data, da.Array):
+    elif _is_dask:
         result_data = _cost_distance_dask(
             source_data, friction_data,
             cellsize_x, cellsize_y, max_cost_f,
