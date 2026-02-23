@@ -2,15 +2,25 @@
 -----------
 
 
-### Version 0.5.3 (unreleased)
-- Fixes #134: Add `xr.Dataset` as input type for appropriate modules.
-  Most public functions now transparently accept `xr.Dataset` in addition
-  to `xr.DataArray`. Single-input functions (slope, aspect, curvature,
-  hillshade, focal.mean, all classification functions, proximity/allocation/
-  direction) iterate over data variables and return a Dataset. Multi-input
-  functions (all multispectral indices) accept a Dataset with band-name
-  keyword arguments. `zonal.stats` computes per-variable statistics and
-  returns a merged DataFrame with prefixed columns.
+### Version 0.5.3 - 2026-02-22
+- Fixes #733: add cost_distance() for weighted proximity (#859)
+- Fixes #734: make noise a lazy import so datasets module is usable without it (#858)
+- Fixes #774: suppress dd.concat unknown divisions warning in zonal_stats (#857)
+- Fixes #392: document and test 3D time-series zonal stats via Dataset (#856)
+- Fix hotspots dask performance: 2-pass streaming with O(chunk_size) memory (#855)
+- Fixes #134: add xr.Dataset as input type for appropriate modules (#854)
+- Warnings(17) filtering for non-GPU (#850)
+- Fixes #190: GPU-enable all classification operations (#852)
+- updating links and text (#849)
+- fixes 766 document handling of f32 vs. f64 data when using xarray spatial (#847)
+- Fix rioxarray band_as_variable DataArray extraction (#846)
+- added majority as default stat for zonal operations with numpy and cupy (#844)
+- fixed proximity intermediate large numpy array problem and proximity output coords are now lazy if input is dask array (#843)
+- Changed regions parameter connections to neighborhood and updated docstring (#842)
+- Testing and Updating Examples (#837)
+- added horizontal vertical unit mismatch heuristic to help address issue #840 (#841)
+- Fixes #838 update legacy repo url links (#839)
+- added colorado dem to examples datasets yaml
 
 
 ### Version 0.5.2 - 2025-12-18

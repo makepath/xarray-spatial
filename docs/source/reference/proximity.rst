@@ -27,3 +27,10 @@ Proximity
     xrspatial.proximity.great_circle_distance
     xrspatial.proximity.manhattan_distance
     xrspatial.proximity.proximity
+
+Cost Distance
+==============
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.cost_distance.cost_distance
