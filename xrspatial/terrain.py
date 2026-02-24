@@ -17,8 +17,10 @@ except ImportError:
         ndarray = False
 
 try:
+    import dask
     import dask.array as da
 except ImportError:
+    dask = None
     da = None
 
 # local modules
@@ -120,8 +122,9 @@ def _terrain_dask_numpy(data: da.Array,
     data /= (1.00 + 0.50 + 0.25 + 0.13 + 0.06 + 0.03)
     data = data ** 3
 
-    data = (data - np.min(data)) / np.ptp(data)
-    data[data < 0.3] = 0  # create water
+    min_val, ptp_val = dask.compute(da.min(data), da.ptp(data))
+    data = (data - min_val) / ptp_val
+    data = da.where(data < 0.3, 0, data)
     data *= zfactor
 
     return data

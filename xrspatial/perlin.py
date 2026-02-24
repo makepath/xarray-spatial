@@ -14,8 +14,10 @@ except ImportError:
         ndarray = False
 
 try:
+    import dask
     import dask.array as da
 except ImportError:
+    dask = None
     da = None
 
 import numba as nb
@@ -108,7 +110,8 @@ def _perlin_dask_numpy(data: da.Array,
     _func = partial(_perlin, p)
     data = da.map_blocks(_func, x, y, meta=np.array((), dtype=np.float32))
 
-    data = (data - da.min(data)) / da.ptp(data)
+    min_val, ptp_val = dask.compute(da.min(data), da.ptp(data))
+    data = (data - min_val) / ptp_val
     return data
 
 
