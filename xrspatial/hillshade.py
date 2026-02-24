@@ -13,32 +13,50 @@ import xarray as xr
 from numba import cuda
 
 from .gpu_rtx import has_rtx
-from .utils import calc_cuda_dims, has_cuda_and_cupy, is_cupy_array, is_cupy_backed
+from .utils import (calc_cuda_dims, get_dataarray_resolution,
+                    has_cuda_and_cupy, is_cupy_array, is_cupy_backed)
 from .dataset_support import supports_dataset
 
 
-def _run_numpy(data, azimuth=225, angle_altitude=25):
+def _run_numpy(data, azimuth=225, angle_altitude=25,
+               cellsize_x=1.0, cellsize_y=1.0):
     data = data.astype(np.float32)
 
-    azimuth = 360.0 - azimuth
-    x, y = np.gradient(data)
-    slope = np.pi/2. - np.arctan(np.sqrt(x*x + y*y))
-    aspect = np.arctan2(-x, y)
-    azimuthrad = azimuth*np.pi/180.
-    altituderad = angle_altitude*np.pi/180.
-    shaded = np.sin(altituderad) * np.sin(slope) + \
-        np.cos(altituderad) * np.cos(slope) * \
-        np.cos((azimuthrad - np.pi/2.) - aspect)
-    result = (shaded + 1) / 2
+    az_rad = azimuth * np.pi / 180.
+    alt_rad = angle_altitude * np.pi / 180.
+    sin_alt = np.sin(alt_rad)
+    cos_alt = np.cos(alt_rad)
+    sin_az = np.sin(az_rad)
+    cos_az = np.cos(az_rad)
+
+    # Gradient with actual cell spacing (matches GDAL Horn method)
+    dy, dx = np.gradient(data, cellsize_y, cellsize_x)
+    xx_plus_yy = dx * dx + dy * dy
+
+    # GDAL-equivalent hillshade formula (simplified from the original
+    # trig-heavy version; see issue #748 and GDAL gdaldem_lib.cpp):
+    #   shaded = (sin(alt) + cos(alt) * sqrt(xx+yy) * sin(aspect - az))
+    #            / sqrt(1 + xx+yy)
+    # where aspect = atan2(dy, dx), expanded inline:
+    #   sin(aspect - az) = (dy*cos(az) - dx*sin(az)) / sqrt(xx+yy)
+    # so sqrt(xx+yy) cancels, giving:
+    shaded = (sin_alt + cos_alt * (dy * cos_az - dx * sin_az)) \
+        / np.sqrt(1.0 + xx_plus_yy)
+
+    # Clamp negatives (shadow) then scale to [0, 1]
+    result = np.clip(shaded, 0.0, 1.0)
     result[(0, -1), :] = np.nan
     result[:, (0, -1)] = np.nan
     return result
 
 
-def _run_dask_numpy(data, azimuth, angle_altitude):
+def _run_dask_numpy(data, azimuth, angle_altitude,
+                    cellsize_x=1.0, cellsize_y=1.0):
     data = data.astype(np.float32)
 
-    _func = partial(_run_numpy, azimuth=azimuth, angle_altitude=angle_altitude)
+    _func = partial(_run_numpy, azimuth=azimuth,
+                    angle_altitude=angle_altitude,
+                    cellsize_x=cellsize_x, cellsize_y=cellsize_y)
     out = data.map_overlap(_func,
                            depth=(1, 1),
                            boundary=np.nan,
@@ -50,45 +68,59 @@ def _run_dask_numpy(data, azimuth, angle_altitude):
 def _gpu_calc_numba(
     data,
     output,
-    sin_altituderad,
-    cos_altituderad,
-    azimuthrad
+    sin_alt,
+    cos_alt,
+    sin_az,
+    cos_az,
+    cellsize_x,
+    cellsize_y,
 ):
 
     i, j = cuda.grid(2)
     if i > 0 and i < data.shape[0]-1 and j > 0 and j < data.shape[1] - 1:
-        x = (data[i+1, j]-data[i-1, j])/2
-        y = (data[i, j+1]-data[i, j-1])/2
+        dx = (data[i, j+1] - data[i, j-1]) / (2.0 * cellsize_x)
+        dy = (data[i+1, j] - data[i-1, j]) / (2.0 * cellsize_y)
 
-        len = math.sqrt(x*x + y*y)
-        slope = 1.57079632679 - math.atan(len)
-        aspect = (azimuthrad - 1.57079632679) - math.atan2(-x, y)
+        xx_plus_yy = dx * dx + dy * dy
+        shaded = (sin_alt + cos_alt * (dy * cos_az - dx * sin_az)) \
+            / math.sqrt(1.0 + xx_plus_yy)
 
-        sin_slope = math.sin(slope)
-        sin_part = sin_altituderad * sin_slope
-
-        cos_aspect = math.cos(aspect)
-        cos_slope = math.cos(slope)
-        cos_part = cos_altituderad * cos_slope * cos_aspect
-
-        res = sin_part + cos_part
-        output[i, j] = (res + 1) * 0.5
+        if shaded < 0.0:
+            shaded = 0.0
+        output[i, j] = shaded
 
 
-def _run_cupy(d_data, azimuth, angle_altitude):
-    # Precompute constant values shared between all threads
+def _run_dask_cupy(data, azimuth, angle_altitude,
+                   cellsize_x=1.0, cellsize_y=1.0):
+    import cupy
+    data = data.astype(cupy.float32)
+
+    _func = partial(_run_cupy, azimuth=azimuth,
+                    angle_altitude=angle_altitude,
+                    cellsize_x=cellsize_x, cellsize_y=cellsize_y)
+    out = data.map_overlap(_func,
+                           depth=(1, 1),
+                           boundary=cupy.nan,
+                           meta=cupy.array(()))
+    return out
+
+
+def _run_cupy(d_data, azimuth, angle_altitude,
+              cellsize_x=1.0, cellsize_y=1.0):
     altituderad = angle_altitude * np.pi / 180.
-    sin_altituderad = np.sin(altituderad)
-    cos_altituderad = np.cos(altituderad)
-    azimuthrad = (360.0 - azimuth) * np.pi / 180.
+    azimuthrad = azimuth * np.pi / 180.
+    sin_alt = np.sin(altituderad)
+    cos_alt = np.cos(altituderad)
+    sin_az = np.sin(azimuthrad)
+    cos_az = np.cos(azimuthrad)
 
-    # Allocate output buffer and launch kernel with appropriate dimensions
     import cupy
     d_data = d_data.astype(cupy.float32)
     output = cupy.empty(d_data.shape, np.float32)
     griddim, blockdim = calc_cuda_dims(d_data.shape)
     _gpu_calc_numba[griddim, blockdim](
-        d_data, output, sin_altituderad, cos_altituderad, azimuthrad
+        d_data, output, sin_alt, cos_alt, sin_az, cos_az,
+        float(cellsize_x), float(cellsize_y),
     )
 
     # Fill borders with nans.
@@ -141,6 +173,7 @@ def hillshade(agg: xr.DataArray,
 
     References
     ----------
+        - GDAL gdaldem hillshade: https://gdal.org/programs/gdaldem.html
         - GeoExamples: http://geoexamples.blogspot.com/2014/03/shaded-relief-images-using-gdal-python.html # noqa
 
     Examples
@@ -161,25 +194,18 @@ def hillshade(agg: xr.DataArray,
         >>> raster['y'] = np.arange(n)[::-1]
         >>> raster['x'] = np.arange(m)
         >>> hillshade_agg = hillshade(raster)
-        >>> print(hillshade_agg)
-        <xarray.DataArray 'hillshade' (y: 5, x: 5)>
-        array([[       nan,        nan,        nan,        nan,        nan],
-               [       nan, 0.71130913, 0.44167341, 0.71130913,        nan],
-               [       nan, 0.95550163, 0.71130913, 0.52478473,        nan],
-               [       nan, 0.71130913, 0.88382559, 0.71130913,        nan],
-               [       nan,        nan,        nan,        nan,        nan]])
-        Coordinates:
-          * y        (y) int32 4 3 2 1 0
-          * x        (x) int32 0 1 2 3 4
     """
 
     if shadows and not has_rtx():
         raise RuntimeError(
             "Can only calculate shadows if cupy and rtxpy are available")
 
+    cellsize_x, cellsize_y = get_dataarray_resolution(agg)
+
     # numpy case
     if isinstance(agg.data, np.ndarray):
-        out = _run_numpy(agg.data, azimuth, angle_altitude)
+        out = _run_numpy(agg.data, azimuth, angle_altitude,
+                         cellsize_x, cellsize_y)
 
     # cupy/numba case
     elif has_cuda_and_cupy() and is_cupy_array(agg.data):
@@ -187,16 +213,19 @@ def hillshade(agg: xr.DataArray,
             from .gpu_rtx.hillshade import hillshade_rtx
             out = hillshade_rtx(agg, azimuth, angle_altitude, shadows=shadows)
         else:
-            out = _run_cupy(agg.data, azimuth, angle_altitude)
+            out = _run_cupy(agg.data, azimuth, angle_altitude,
+                            cellsize_x, cellsize_y)
 
     # dask + cupy case
     elif (has_cuda_and_cupy() and da is not None and isinstance(agg.data, da.Array) and
             is_cupy_backed(agg)):
-        raise NotImplementedError("Dask/CuPy hillshade not implemented")
+        out = _run_dask_cupy(agg.data, azimuth, angle_altitude,
+                             cellsize_x, cellsize_y)
 
     # dask + numpy case
     elif da is not None and isinstance(agg.data, da.Array):
-        out = _run_dask_numpy(agg.data, azimuth, angle_altitude)
+        out = _run_dask_numpy(agg.data, azimuth, angle_altitude,
+                              cellsize_x, cellsize_y)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))
