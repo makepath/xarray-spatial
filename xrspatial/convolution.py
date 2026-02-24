@@ -381,6 +381,7 @@ def _convolve_2d_cuda(data, kernel, out):
 
 
 def _convolve_2d_cupy(data, kernel, boundary='nan'):
+    kernel = cupy.asarray(kernel)
     if boundary != 'nan':
         pad_h = kernel.shape[0] // 2
         pad_w = kernel.shape[1] // 2
