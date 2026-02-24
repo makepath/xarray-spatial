@@ -236,28 +236,63 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 #### Usage
 
-##### Basic Pattern
-```python
-import xarray as xr
-from xrspatial import hillshade
+##### Quick Start
 
-my_dataarray = xr.DataArray(...)
-hillshaded_dataarray = hillshade(my_dataarray)
+Importing `xrspatial` registers an `.xrs` accessor on DataArrays and Datasets, giving you tab-completable access to every spatial operation:
+
+```python
+import numpy as np
+import xarray as xr
+import xrspatial
+
+# Create or load a raster
+elevation = xr.DataArray(np.random.rand(100, 100) * 1000, dims=['y', 'x'])
+
+# Surface analysis — call operations directly on the DataArray
+slope = elevation.xrs.slope()
+hillshaded = elevation.xrs.hillshade(azimuth=315, angle_altitude=45)
+aspect = elevation.xrs.aspect()
+
+# Classification
+classes = elevation.xrs.equal_interval(k=5)
+breaks = elevation.xrs.natural_breaks(k=10)
+
+# Proximity
+distance = elevation.xrs.proximity(target_values=[1])
+
+# Multispectral — call on the NIR band, pass other bands as arguments
+nir = xr.DataArray(np.random.rand(100, 100), dims=['y', 'x'])
+red = xr.DataArray(np.random.rand(100, 100), dims=['y', 'x'])
+blue = xr.DataArray(np.random.rand(100, 100), dims=['y', 'x'])
+
+vegetation = nir.xrs.ndvi(red)
+enhanced_vi = nir.xrs.evi(red, blue)
 ```
 
 ##### Dataset Support
 
-Most functions also accept an `xr.Dataset`. Single-input functions (surface, classification, focal, proximity) apply the operation to each data variable and return a Dataset. Multi-input functions (multispectral indices) accept a Dataset with band-name keyword arguments.
+The `.xrs` accessor works on Datasets too. Single-input functions apply the operation to each data variable. Multi-input functions (multispectral indices) accept string kwargs that map band aliases to variable names:
 
 ```python
-# Single-input: returns a Dataset with slope computed for each variable
-slope_ds = slope(my_dataset)
+ds = xr.Dataset({'band_4': red, 'band_5': nir})
 
-# Multi-input: map Dataset variables to band parameters
-ndvi_result = ndvi(my_dataset, nir='band_5', red='band_4')
+# Single-input: slope computed for each variable
+slope_ds = ds.xrs.slope()
 
-# Zonal stats: columns prefixed by variable name
-stats_df = zonal.stats(zones, my_dataset)  # → elevation_mean, temperature_mean, ...
+# Multi-input: map variable names to band parameters
+ndvi_result = ds.xrs.ndvi(nir='band_5', red='band_4')
+```
+
+##### Function Import Style
+
+All operations are also available as standalone functions if you prefer explicit imports:
+
+```python
+from xrspatial import hillshade, slope, ndvi
+
+hillshaded = hillshade(elevation)
+slope_result = slope(elevation)
+vegetation = ndvi(nir, red)
 ```
 
 Check out the user guide [here](/examples/user_guide/).
