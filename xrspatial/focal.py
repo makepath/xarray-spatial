@@ -750,6 +750,7 @@ def _focal_sum_cuda(data, kernel, out):
 
 
 def _focal_stats_func_cupy(data, kernel, func=_focal_max_cuda):
+    kernel = cupy.asarray(kernel)
     out = cupy.empty(data.shape, dtype='f4')
     out[:, :] = cupy.nan
     griddim, blockdim = cuda_args(data.shape)

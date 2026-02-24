@@ -94,7 +94,7 @@ def _run_cupy(data: cupy.ndarray,
         return result[1:-1, 1:-1]
 
     data = data.astype(cupy.float32)
-    cellsize_arr = cupy.array([float(cellsize)], dtype='f4')
+    cellsize_arr = cupy.array([float(cupy.asnumpy(cellsize).item())], dtype='f4')
 
     griddim, blockdim = cuda_args(data.shape)
     out = cupy.empty(data.shape, dtype='f4')
@@ -109,7 +109,7 @@ def _run_dask_cupy(data: da.Array,
                    cellsize: Union[int, float],
                    boundary: str = 'nan') -> da.Array:
     data = data.astype(cupy.float32)
-    cellsize_arr = cupy.array([float(cellsize)], dtype='f4')
+    cellsize_arr = cupy.array([float(cupy.asnumpy(cellsize).item())], dtype='f4')
 
     _func = partial(_run_cupy, cellsize=cellsize_arr)
 

@@ -840,8 +840,10 @@ def _run_equal_interval(agg, k, module):
     # Replace ±inf with nan in a single pass (no ravel needed)
     data_clean = module.where(module.isinf(data), np.nan, data)
 
-    min_lazy = module.nanmin(data_clean)
-    max_lazy = module.nanmax(data_clean)
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', 'All-NaN slice', RuntimeWarning)
+        min_lazy = module.nanmin(data_clean)
+        max_lazy = module.nanmax(data_clean)
 
     if module == cupy:
         min_data = float(min_lazy.get())
