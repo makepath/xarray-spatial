@@ -90,11 +90,11 @@ def _terrain_dask_numpy(data: da.Array,
     height, width = data.shape
     linx = da.linspace(
         x_range_scaled[0], x_range_scaled[1], width, endpoint=False,
-        dtype=np.float32
+        dtype=np.float32, chunks=data.chunks[1][0]
     )
     liny = da.linspace(
         y_range_scaled[0], y_range_scaled[1], height, endpoint=False,
-        dtype=np.float32
+        dtype=np.float32, chunks=data.chunks[0][0]
     )
     x, y = da.meshgrid(linx, liny)
 
