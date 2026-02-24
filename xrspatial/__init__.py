@@ -40,6 +40,8 @@ from xrspatial.zonal import regions as regions  # noqa
 from xrspatial.zonal import stats as zonal_stats  # noqa
 from xrspatial.zonal import suggest_zonal_canvas as suggest_zonal_canvas  # noqa
 
+import xrspatial.accessor  # noqa: F401  — registers .xrs accessors
+
 
 try:
     from ._version import version as __version__

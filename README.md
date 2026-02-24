@@ -260,6 +260,31 @@ ndvi_result = ndvi(my_dataset, nir='band_5', red='band_4')
 stats_df = zonal.stats(zones, my_dataset)  # → elevation_mean, temperature_mean, ...
 ```
 
+##### xarray Accessor (`.xrs`)
+
+Importing `xrspatial` registers an `.xrs` accessor on DataArrays and Datasets, enabling tab-completable spatial operations:
+
+```python
+import xrspatial
+
+# Surface operations
+slope_result = my_dataarray.xrs.slope()
+hillshaded = my_dataarray.xrs.hillshade(azimuth=315, angle_altitude=45)
+
+# Classification
+classes = my_dataarray.xrs.equal_interval(k=5)
+
+# Multispectral — self is the NIR band
+vegetation = nir.xrs.ndvi(red)
+enhanced_vi = nir.xrs.evi(red, blue)
+
+# Dataset — single-input applies to each variable
+slope_ds = my_dataset.xrs.slope()
+
+# Dataset — multispectral with band mapping
+ndvi_result = my_dataset.xrs.ndvi(nir='band_8', red='band_4')
+```
+
 Check out the user guide [here](/examples/user_guide/).
 
 ------
