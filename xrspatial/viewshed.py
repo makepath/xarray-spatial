@@ -1620,6 +1620,23 @@ def viewshed(raster: xarray.DataArray,
         directly below the specified viewing position,
         90 is due horizontal, and 180 is directly above the observer.
 
+    Notes
+    -----
+    The CPU (numpy) and GPU (cupy with RTX) backends use different
+    algorithms and may produce slightly different results for the same
+    input.
+
+    - **CPU**: Angular sweep algorithm ported from GRASS GIS
+      ``r.viewshed``. Operates directly on the grid and produces exact
+      visibility angles.
+    - **GPU**: Ray tracing via NVIDIA OptiX RTX against a triangulated
+      mesh of the terrain. The mesh discretisation can introduce small
+      angular errors (typically < 0.03 degrees for visible cells).
+
+    Both backends agree on which cells are visible vs invisible in the
+    vast majority of cases, but the reported vertical angles may differ
+    by a small amount near cell boundaries.
+
     Examples
     --------
     .. sourcecode:: python
