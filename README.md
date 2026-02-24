@@ -181,6 +181,14 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 -------
 
 
+### **Multivariate**
+
+| Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Mahalanobis Distance](xrspatial/mahalanobis.py) | Measures statistical distance from a multi-band reference distribution, accounting for band correlations | ✅️ |✅️ | ✅️ |✅️ |
+
+-------
+
 ### **Pathfinding**
 
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |

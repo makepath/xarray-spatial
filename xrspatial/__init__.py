@@ -15,6 +15,7 @@ from xrspatial.classify import reclassify  # noqa
 from xrspatial.curvature import curvature  # noqa
 from xrspatial.focal import mean  # noqa
 from xrspatial.hillshade import hillshade  # noqa
+from xrspatial.mahalanobis import mahalanobis  # noqa
 from xrspatial.multispectral import arvi  # noqa
 from xrspatial.multispectral import evi  # noqa
 from xrspatial.multispectral import nbr  # noqa
