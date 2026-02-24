@@ -1371,11 +1371,35 @@ def _normalize_data_dask(data, pixel_max, c, th):
 
 
 def _normalize_data_cupy(data, pixel_max, c, th):
-    raise NotImplementedError('Not Supported')
+    min_val = cupy.nanmin(data)
+    max_val = cupy.nanmax(data)
+    range_val = max_val - min_val
+    out = cupy.full(data.shape, cupy.nan, dtype=cupy.float32)
+    if range_val != 0:
+        norm = (data - min_val) / range_val
+        norm = 1 / (1 + cupy.exp(c * (th - norm)))
+        out = norm * pixel_max
+    return out
+
+
+def _normalize_data_cupy_block(data, min_val, max_val, pixel_max, c, th):
+    range_val = max_val - min_val
+    out = cupy.full(data.shape, cupy.nan, dtype=cupy.float32)
+    if range_val != 0:
+        norm = (data - min_val) / range_val
+        norm = 1 / (1 + cupy.exp(c * (th - norm)))
+        out = norm * pixel_max
+    return out
 
 
 def _normalize_data_dask_cupy(data, pixel_max, c, th):
-    raise NotImplementedError('Not Supported')
+    min_val = da.nanmin(data)
+    max_val = da.nanmax(data)
+    out = da.map_blocks(
+        _normalize_data_cupy_block, data, min_val, max_val, pixel_max,
+        c, th, meta=cupy.array(())
+    )
+    return out
 
 
 def _normalize_data(agg, pixel_max, c, th):
@@ -1412,6 +1436,32 @@ def _true_color_dask(r, g, b, nodata, c, th):
     green = (_normalize_data(g, pixel_max, c, th)).astype(np.uint8)
     blue = (_normalize_data(b, pixel_max, c, th)).astype(np.uint8)
 
+    out = da.stack([red, green, blue, alpha], axis=-1)
+    return out
+
+
+def _true_color_cupy(r, g, b, nodata, c, th):
+    pixel_max = 255
+    r_data = r.data
+    a = cupy.where(
+        cupy.logical_or(cupy.isnan(r_data), r_data <= nodata), 0, pixel_max
+    ).astype(cupy.uint8)
+    red = (_normalize_data(r, pixel_max, c, th)).astype(cupy.uint8)
+    green = (_normalize_data(g, pixel_max, c, th)).astype(cupy.uint8)
+    blue = (_normalize_data(b, pixel_max, c, th)).astype(cupy.uint8)
+    out = cupy.stack([red, green, blue, a], axis=-1)
+    return out
+
+
+def _true_color_dask_cupy(r, g, b, nodata, c, th):
+    pixel_max = 255
+    r_data = r.data
+    alpha = da.where(
+        da.logical_or(da.isnan(r_data), r_data <= nodata), 0, pixel_max
+    ).astype(cupy.uint8)
+    red = (_normalize_data(r, pixel_max, c, th)).astype(cupy.uint8)
+    green = (_normalize_data(g, pixel_max, c, th)).astype(cupy.uint8)
+    blue = (_normalize_data(b, pixel_max, c, th)).astype(cupy.uint8)
     out = da.stack([red, green, blue, alpha], axis=-1)
     return out
 
@@ -1468,12 +1518,8 @@ def true_color(r, g, b, nodata=1, c=10.0, th=0.125, name='true_color'):
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_true_color_numpy,
         dask_func=_true_color_dask,
-        cupy_func=lambda *args: not_implemented_func(
-            *args, messages='true_color() does not support cupy backed DataArray',  # noqa
-        ),
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='true_color() does not support dask with cupy backed DataArray',  # noqa
-        ),
+        cupy_func=_true_color_cupy,
+        dask_cupy_func=_true_color_dask_cupy,
     )
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
