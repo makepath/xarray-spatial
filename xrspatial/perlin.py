@@ -99,8 +99,10 @@ def _perlin_dask_numpy(data: da.Array,
     p = np.append(p, p)
 
     height, width = data.shape
-    linx = da.linspace(0, freq[0], width, endpoint=False, dtype=np.float32)
-    liny = da.linspace(0, freq[1], height, endpoint=False, dtype=np.float32)
+    linx = da.linspace(0, freq[0], width, endpoint=False, dtype=np.float32,
+                       chunks=data.chunks[1][0])
+    liny = da.linspace(0, freq[1], height, endpoint=False, dtype=np.float32,
+                       chunks=data.chunks[0][0])
     x, y = da.meshgrid(linx, liny)
 
     _func = partial(_perlin, p)
