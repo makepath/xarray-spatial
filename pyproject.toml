@@ -15,8 +15,6 @@ ignore = [
     'CONTRIBUTING.md',
     'Citation-styles.md',
     'RELEASE.md',
-    'requirements-dev.txt',
-    'requirements.txt',
     'test_examples_cli.py',
     'tox.ini',
     'benchmarks/*',
