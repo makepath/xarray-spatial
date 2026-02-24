@@ -613,3 +613,34 @@ def test_true_color_numpy_equals_dask_numpy(random_data):
     np.testing.assert_allclose(
         numpy_result.data, dask_result.compute().data, equal_nan=True
     )
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("size", [(2, 4), (10, 15)])
+@pytest.mark.parametrize(
+    "dtype", [np.int32, np.int64, np.uint32, np.uint64, np.float32, np.float64])
+@pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+def test_true_color_gpu(random_data, backend):
+    # numpy baseline
+    red_np = create_test_raster(random_data, backend="numpy")
+    green_np = create_test_raster(random_data, backend="numpy")
+    blue_np = create_test_raster(random_data, backend="numpy")
+    numpy_result = true_color(red_np, green_np, blue_np)
+
+    # gpu version
+    red_gpu = create_test_raster(random_data, backend=backend)
+    green_gpu = create_test_raster(random_data, backend=backend)
+    blue_gpu = create_test_raster(random_data, backend=backend)
+    gpu_result = true_color(red_gpu, green_gpu, blue_gpu)
+
+    general_output_checks(red_gpu, gpu_result, verify_attrs=False)
+
+    gpu_data = gpu_result.data
+    if hasattr(gpu_data, 'compute'):
+        gpu_data = gpu_data.compute()
+    if hasattr(gpu_data, 'get'):
+        gpu_data = gpu_data.get()
+
+    np.testing.assert_allclose(
+        numpy_result.data, gpu_data, equal_nan=True
+    )
