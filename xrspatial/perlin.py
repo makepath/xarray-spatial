@@ -14,8 +14,10 @@ except ImportError:
         ndarray = False
 
 try:
+    import dask
     import dask.array as da
 except ImportError:
+    dask = None
     da = None
 
 import numba as nb
@@ -99,14 +101,17 @@ def _perlin_dask_numpy(data: da.Array,
     p = np.append(p, p)
 
     height, width = data.shape
-    linx = da.linspace(0, freq[0], width, endpoint=False, dtype=np.float32)
-    liny = da.linspace(0, freq[1], height, endpoint=False, dtype=np.float32)
+    linx = da.linspace(0, freq[0], width, endpoint=False, dtype=np.float32,
+                       chunks=data.chunks[1][0])
+    liny = da.linspace(0, freq[1], height, endpoint=False, dtype=np.float32,
+                       chunks=data.chunks[0][0])
     x, y = da.meshgrid(linx, liny)
 
     _func = partial(_perlin, p)
     data = da.map_blocks(_func, x, y, meta=np.array((), dtype=np.float32))
 
-    data = (data - da.min(data)) / da.ptp(data)
+    min_val, ptp_val = dask.compute(da.min(data), da.ptp(data))
+    data = (data - min_val) / ptp_val
     return data
 
 
