@@ -501,3 +501,126 @@ def test_dask_cupy_matches_numpy():
     ))
 
     np.testing.assert_allclose(result_dc, result_np, equal_nan=True, atol=1e-5)
+
+
+# -----------------------------------------------------------------------
+# Iterative tile Dijkstra tests (Issue #880)
+# -----------------------------------------------------------------------
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_iterative_matches_numpy():
+    """100x100 raster, dask chunks (25x25), max_cost=inf => iterative path."""
+    np.random.seed(42)
+    source = np.zeros((100, 100))
+    source[50, 50] = 1.0
+
+    friction_data = np.random.uniform(0.5, 5.0, (100, 100))
+
+    raster_np = _make_raster(source, backend='numpy')
+    friction_np = _make_raster(friction_data, backend='numpy')
+    result_np = cost_distance(raster_np, friction_np)
+
+    raster_da = _make_raster(source, backend='dask+numpy', chunks=(25, 25))
+    friction_da = _make_raster(friction_data, backend='dask+numpy', chunks=(25, 25))
+    with pytest.warns(UserWarning, match="iterative tile Dijkstra"):
+        result_da = cost_distance(raster_da, friction_da)
+
+    np.testing.assert_allclose(
+        _compute(result_da), result_np.data, equal_nan=True, atol=1e-3,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_iterative_multi_source_across_chunks():
+    """Sources in different chunks produce correct Voronoi cost partition."""
+    source = np.zeros((40, 40))
+    source[5, 5] = 1.0     # chunk (0, 0)
+    source[35, 35] = 2.0   # chunk (1, 1)
+
+    friction_data = np.ones((40, 40))
+
+    raster_np = _make_raster(source, backend='numpy')
+    friction_np = _make_raster(friction_data, backend='numpy')
+    result_np = cost_distance(raster_np, friction_np)
+
+    raster_da = _make_raster(source, backend='dask+numpy', chunks=(20, 20))
+    friction_da = _make_raster(friction_data, backend='dask+numpy', chunks=(20, 20))
+    result_da = cost_distance(raster_da, friction_da)
+
+    np.testing.assert_allclose(
+        _compute(result_da), result_np.data, equal_nan=True, atol=1e-4,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_iterative_narrow_corridor():
+    """1px corridor spanning 4+ tile boundaries with barriers elsewhere."""
+    source = np.zeros((8, 80))
+    source[4, 0] = 1.0  # source at left edge of corridor
+
+    friction_data = np.full((8, 80), np.nan)  # all impassable
+    friction_data[4, :] = 1.0  # 1px-wide corridor at row 4
+
+    raster_np = _make_raster(source, backend='numpy')
+    friction_np = _make_raster(friction_data, backend='numpy')
+    result_np = cost_distance(raster_np, friction_np)
+
+    raster_da = _make_raster(source, backend='dask+numpy', chunks=(8, 16))
+    friction_da = _make_raster(friction_data, backend='dask+numpy', chunks=(8, 16))
+    result_da = cost_distance(raster_da, friction_da)
+
+    np.testing.assert_allclose(
+        _compute(result_da), result_np.data, equal_nan=True, atol=1e-4,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_iterative_diagonal_propagation():
+    """Source in one corner, target in opposite; verify 8-connectivity."""
+    source = np.zeros((40, 40))
+    source[0, 0] = 1.0
+
+    friction_data = np.ones((40, 40))
+
+    raster_np = _make_raster(source, backend='numpy')
+    friction_np = _make_raster(friction_data, backend='numpy')
+    result_np = cost_distance(raster_np, friction_np)
+
+    raster_da = _make_raster(source, backend='dask+numpy', chunks=(10, 10))
+    friction_da = _make_raster(friction_data, backend='dask+numpy', chunks=(10, 10))
+    result_da = cost_distance(raster_da, friction_da)
+
+    np.testing.assert_allclose(
+        _compute(result_da), result_np.data, equal_nan=True, atol=1e-4,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_iterative_no_rechunk_to_single():
+    """Iterative path must NOT rechunk to a single chunk."""
+    from unittest.mock import patch
+
+    source = np.zeros((40, 40))
+    source[20, 20] = 1.0
+
+    friction_data = np.ones((40, 40))
+
+    raster = _make_raster(source, backend='dask+numpy', chunks=(10, 10))
+    friction = _make_raster(friction_data, backend='dask+numpy', chunks=(10, 10))
+
+    original_rechunk = da.Array.rechunk
+    single_chunk_detected = [False]
+
+    def _tracking_rechunk(self, *args, **kwargs):
+        result = original_rechunk(self, *args, **kwargs)
+        if all(len(c) == 1 for c in result.chunks):
+            if result.shape == (40, 40):
+                single_chunk_detected[0] = True
+        return result
+
+    with patch.object(da.Array, 'rechunk', _tracking_rechunk):
+        result = cost_distance(raster, friction)
+        _ = _compute(result)
+
+    assert not single_chunk_detected[0], \
+        "cost_distance rechunked to a single chunk (OOM risk)"

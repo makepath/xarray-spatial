@@ -21,8 +21,9 @@ friction (a tiny ``.compute()``).  This radius becomes the ``depth``
 parameter to ``dask.array.map_overlap``, giving **exact** results within
 the cost budget.
 
-If ``max_cost`` is infinite or the implied radius exceeds half the raster,
-fall back to single-chunk mode (same trade-off as ``proximity()``).
+If ``max_cost`` is infinite or the implied radius exceeds chunk dimensions,
+an iterative boundary-only Dijkstra is used that processes tiles one at a
+time, keeping memory usage bounded regardless of raster size.
 """
 
 from __future__ import annotations
@@ -236,6 +237,550 @@ def _cost_distance_numpy(source_data, friction_data, cellsize_x, cellsize_y,
 
 
 # ---------------------------------------------------------------------------
+# Tile kernel for iterative boundary Dijkstra
+# ---------------------------------------------------------------------------
+
+@ngjit
+def _cost_distance_tile_kernel(
+    source_data, friction_data, height, width,
+    cellsize_x, cellsize_y, max_cost, target_values,
+    dy, dx, dd,
+    seed_top, seed_bottom, seed_left, seed_right,
+    seed_tl, seed_tr, seed_bl, seed_br,
+):
+    """Seeded multi-source Dijkstra.  Returns float64 dist array.
+
+    Like ``_cost_distance_kernel`` but additionally seeds boundary pixels
+    from neighbouring-tile distance arrays.  Seeds already include the
+    edge-crossing cost.
+    """
+    n_values = len(target_values)
+    n_neighbors = len(dy)
+
+    dist = np.full((height, width), np.inf, dtype=np.float64)
+
+    max_heap = height * width
+    h_keys = np.empty(max_heap, dtype=np.float64)
+    h_rows = np.empty(max_heap, dtype=np.int64)
+    h_cols = np.empty(max_heap, dtype=np.int64)
+    h_size = 0
+
+    visited = np.zeros((height, width), dtype=np.int8)
+
+    # Phase 1: seed source pixels at cost 0
+    for r in range(height):
+        for c in range(width):
+            val = source_data[r, c]
+            is_target = False
+            if n_values == 0:
+                if val != 0.0 and np.isfinite(val):
+                    is_target = True
+            else:
+                for k in range(n_values):
+                    if val == target_values[k]:
+                        is_target = True
+                        break
+            if is_target:
+                f = friction_data[r, c]
+                if np.isfinite(f) and f > 0.0:
+                    dist[r, c] = 0.0
+                    h_size = _heap_push(h_keys, h_rows, h_cols, h_size,
+                                        0.0, r, c)
+
+    # Phase 2: seed boundary pixels from neighbour tiles
+    # Top edge
+    for c in range(width):
+        s = seed_top[c]
+        if s < dist[0, c]:
+            f = friction_data[0, c]
+            if np.isfinite(f) and f > 0.0:
+                dist[0, c] = s
+                h_size = _heap_push(h_keys, h_rows, h_cols, h_size,
+                                    s, 0, c)
+    # Bottom edge
+    for c in range(width):
+        s = seed_bottom[c]
+        if s < dist[height - 1, c]:
+            f = friction_data[height - 1, c]
+            if np.isfinite(f) and f > 0.0:
+                dist[height - 1, c] = s
+                h_size = _heap_push(h_keys, h_rows, h_cols, h_size,
+                                    s, height - 1, c)
+    # Left edge
+    for r in range(height):
+        s = seed_left[r]
+        if s < dist[r, 0]:
+            f = friction_data[r, 0]
+            if np.isfinite(f) and f > 0.0:
+                dist[r, 0] = s
+                h_size = _heap_push(h_keys, h_rows, h_cols, h_size,
+                                    s, r, 0)
+    # Right edge
+    for r in range(height):
+        s = seed_right[r]
+        if s < dist[r, width - 1]:
+            f = friction_data[r, width - 1]
+            if np.isfinite(f) and f > 0.0:
+                dist[r, width - 1] = s
+                h_size = _heap_push(h_keys, h_rows, h_cols, h_size,
+                                    s, r, width - 1)
+    # Diagonal corner seeds (8-connectivity; caller sets to inf for 4-conn)
+    # Top-left
+    s = seed_tl
+    if s < dist[0, 0]:
+        f = friction_data[0, 0]
+        if np.isfinite(f) and f > 0.0:
+            dist[0, 0] = s
+            h_size = _heap_push(h_keys, h_rows, h_cols, h_size, s, 0, 0)
+    # Top-right
+    s = seed_tr
+    if s < dist[0, width - 1]:
+        f = friction_data[0, width - 1]
+        if np.isfinite(f) and f > 0.0:
+            dist[0, width - 1] = s
+            h_size = _heap_push(h_keys, h_rows, h_cols, h_size,
+                                s, 0, width - 1)
+    # Bottom-left
+    s = seed_bl
+    if s < dist[height - 1, 0]:
+        f = friction_data[height - 1, 0]
+        if np.isfinite(f) and f > 0.0:
+            dist[height - 1, 0] = s
+            h_size = _heap_push(h_keys, h_rows, h_cols, h_size,
+                                s, height - 1, 0)
+    # Bottom-right
+    s = seed_br
+    if s < dist[height - 1, width - 1]:
+        f = friction_data[height - 1, width - 1]
+        if np.isfinite(f) and f > 0.0:
+            dist[height - 1, width - 1] = s
+            h_size = _heap_push(h_keys, h_rows, h_cols, h_size,
+                                s, height - 1, width - 1)
+
+    # Phase 3: Dijkstra main loop (identical to _cost_distance_kernel)
+    while h_size > 0:
+        cost_u, ur, uc, h_size = _heap_pop(h_keys, h_rows, h_cols, h_size)
+
+        if visited[ur, uc]:
+            continue
+        visited[ur, uc] = 1
+
+        if cost_u > max_cost:
+            break
+
+        f_u = friction_data[ur, uc]
+
+        for i in range(n_neighbors):
+            vr = ur + dy[i]
+            vc = uc + dx[i]
+            if vr < 0 or vr >= height or vc < 0 or vc >= width:
+                continue
+            if visited[vr, vc]:
+                continue
+
+            f_v = friction_data[vr, vc]
+            if not (np.isfinite(f_v) and f_v > 0.0):
+                continue
+
+            edge_cost = dd[i] * (f_u + f_v) * 0.5
+            new_cost = cost_u + edge_cost
+
+            if new_cost < dist[vr, vc]:
+                dist[vr, vc] = new_cost
+                h_size = _heap_push(h_keys, h_rows, h_cols, h_size,
+                                    new_cost, vr, vc)
+
+    return dist
+
+
+@ngjit
+def _dist_to_float32(dist, height, width, max_cost):
+    """Convert float64 dist -> float32, mapping inf / over-budget to NaN."""
+    out = np.empty((height, width), dtype=np.float32)
+    for r in range(height):
+        for c in range(width):
+            d = dist[r, c]
+            if d == np.inf or d > max_cost:
+                out[r, c] = np.nan
+            else:
+                out[r, c] = np.float32(d)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Iterative boundary-only Dijkstra for dask arrays
+# ---------------------------------------------------------------------------
+
+def _preprocess_tiles(source_da, friction_da, chunks_y, chunks_x,
+                      target_values):
+    """Extract friction boundary strips and identify source tiles.
+
+    Streams one tile at a time so only one chunk is in RAM.
+    """
+    n_tile_y = len(chunks_y)
+    n_tile_x = len(chunks_x)
+    n_values = len(target_values)
+
+    friction_bdry = {
+        side: [[None] * n_tile_x for _ in range(n_tile_y)]
+        for side in ('top', 'bottom', 'left', 'right')
+    }
+    has_source = [[False] * n_tile_x for _ in range(n_tile_y)]
+
+    for iy in range(n_tile_y):
+        for ix in range(n_tile_x):
+            fchunk = friction_da.blocks[iy, ix].compute()
+            friction_bdry['top'][iy][ix] = fchunk[0, :].astype(np.float32)
+            friction_bdry['bottom'][iy][ix] = fchunk[-1, :].astype(np.float32)
+            friction_bdry['left'][iy][ix] = fchunk[:, 0].astype(np.float32)
+            friction_bdry['right'][iy][ix] = fchunk[:, -1].astype(np.float32)
+
+            schunk = source_da.blocks[iy, ix].compute()
+            if n_values == 0:
+                has_source[iy][ix] = bool(
+                    np.any((schunk != 0) & np.isfinite(schunk))
+                )
+            else:
+                for tv in target_values:
+                    if np.any(schunk == tv):
+                        has_source[iy][ix] = True
+                        break
+
+    return friction_bdry, has_source
+
+
+def _init_boundaries(chunks_y, chunks_x):
+    """Create boundary distance arrays, all initialised to inf (float32)."""
+    n_y = len(chunks_y)
+    n_x = len(chunks_x)
+    return {
+        'top': [
+            [np.full(chunks_x[ix], np.inf, dtype=np.float32)
+             for ix in range(n_x)]
+            for _ in range(n_y)
+        ],
+        'bottom': [
+            [np.full(chunks_x[ix], np.inf, dtype=np.float32)
+             for ix in range(n_x)]
+            for _ in range(n_y)
+        ],
+        'left': [
+            [np.full(chunks_y[iy], np.inf, dtype=np.float32)
+             for _ in range(n_x)]
+            for iy in range(n_y)
+        ],
+        'right': [
+            [np.full(chunks_y[iy], np.inf, dtype=np.float32)
+             for _ in range(n_x)]
+            for iy in range(n_y)
+        ],
+    }
+
+
+def _compute_seeds(iy, ix, boundaries, friction_bdry,
+                   cellsize_x, cellsize_y, chunks_y, chunks_x,
+                   n_tile_y, n_tile_x, connectivity):
+    """Compute seed arrays for tile (iy, ix) from neighbour boundaries.
+
+    Returns (seed_top, seed_bottom, seed_left, seed_right,
+             seed_tl, seed_tr, seed_bl, seed_br).
+    Cardinal seeds are 1-D float64 arrays; corner seeds are float64 scalars.
+    """
+    tile_h = chunks_y[iy]
+    tile_w = chunks_x[ix]
+    diag_dist = sqrt(cellsize_x ** 2 + cellsize_y ** 2)
+
+    seed_top = np.full(tile_w, np.inf)
+    seed_bottom = np.full(tile_w, np.inf)
+    seed_left = np.full(tile_h, np.inf)
+    seed_right = np.full(tile_h, np.inf)
+    seed_tl = np.inf
+    seed_tr = np.inf
+    seed_bl = np.inf
+    seed_br = np.inf
+
+    my_top = friction_bdry['top'][iy][ix].astype(np.float64)
+    my_bottom = friction_bdry['bottom'][iy][ix].astype(np.float64)
+    my_left = friction_bdry['left'][iy][ix].astype(np.float64)
+    my_right = friction_bdry['right'][iy][ix].astype(np.float64)
+
+    def _edge_seeds(nb_dist, nb_fric, my_fric, cardinal_dist):
+        """Minimum-cost seed per boundary pixel (cardinal + diagonal)."""
+        d = nb_dist.astype(np.float64)
+        nf = nb_fric.astype(np.float64)
+        mf = my_fric
+        n = len(d)
+        # Cardinal: pixel c <- c
+        cost = d + cardinal_dist * (nf + mf) * 0.5
+        valid = (np.isfinite(d) & np.isfinite(nf) & (nf > 0)
+                 & np.isfinite(mf) & (mf > 0))
+        seed = np.where(valid, cost, np.inf)
+        if connectivity == 8 and n > 1:
+            # Diagonal: pixel c <- c-1
+            dl = d[:-1]
+            nl = nf[:-1]
+            cl = dl + diag_dist * (nl + mf[1:]) * 0.5
+            vl = (np.isfinite(dl) & np.isfinite(nl) & (nl > 0)
+                  & np.isfinite(mf[1:]) & (mf[1:] > 0))
+            seed[1:] = np.minimum(seed[1:], np.where(vl, cl, np.inf))
+            # Diagonal: pixel c <- c+1
+            dr = d[1:]
+            nr = nf[1:]
+            cr = dr + diag_dist * (nr + mf[:-1]) * 0.5
+            vr = (np.isfinite(dr) & np.isfinite(nr) & (nr > 0)
+                  & np.isfinite(mf[:-1]) & (mf[:-1] > 0))
+            seed[:-1] = np.minimum(seed[:-1], np.where(vr, cr, np.inf))
+        return seed
+
+    # Edge neighbours (cardinal + diagonal along shared boundary)
+    if iy > 0:
+        seed_top = _edge_seeds(
+            boundaries['bottom'][iy - 1][ix],
+            friction_bdry['bottom'][iy - 1][ix],
+            my_top, cellsize_y,
+        )
+    if iy < n_tile_y - 1:
+        seed_bottom = _edge_seeds(
+            boundaries['top'][iy + 1][ix],
+            friction_bdry['top'][iy + 1][ix],
+            my_bottom, cellsize_y,
+        )
+    if ix > 0:
+        seed_left = _edge_seeds(
+            boundaries['right'][iy][ix - 1],
+            friction_bdry['right'][iy][ix - 1],
+            my_left, cellsize_x,
+        )
+    if ix < n_tile_x - 1:
+        seed_right = _edge_seeds(
+            boundaries['left'][iy][ix + 1],
+            friction_bdry['left'][iy][ix + 1],
+            my_right, cellsize_x,
+        )
+
+    # Diagonal corner seeds (8-connectivity only)
+    if connectivity == 8:
+        def _corner(nb_d, nb_f, my_f):
+            nb_d = float(nb_d)
+            nb_f = float(nb_f)
+            my_f = float(my_f)
+            if (np.isfinite(nb_d) and np.isfinite(nb_f) and nb_f > 0
+                    and np.isfinite(my_f) and my_f > 0):
+                return nb_d + diag_dist * (nb_f + my_f) * 0.5
+            return np.inf
+
+        if iy > 0 and ix > 0:
+            seed_tl = _corner(
+                boundaries['bottom'][iy - 1][ix - 1][-1],
+                friction_bdry['bottom'][iy - 1][ix - 1][-1],
+                my_top[0],
+            )
+        if iy > 0 and ix < n_tile_x - 1:
+            seed_tr = _corner(
+                boundaries['bottom'][iy - 1][ix + 1][0],
+                friction_bdry['bottom'][iy - 1][ix + 1][0],
+                my_top[-1],
+            )
+        if iy < n_tile_y - 1 and ix > 0:
+            seed_bl = _corner(
+                boundaries['top'][iy + 1][ix - 1][-1],
+                friction_bdry['top'][iy + 1][ix - 1][-1],
+                my_bottom[0],
+            )
+        if iy < n_tile_y - 1 and ix < n_tile_x - 1:
+            seed_br = _corner(
+                boundaries['top'][iy + 1][ix + 1][0],
+                friction_bdry['top'][iy + 1][ix + 1][0],
+                my_bottom[-1],
+            )
+
+    return (seed_top, seed_bottom, seed_left, seed_right,
+            seed_tl, seed_tr, seed_bl, seed_br)
+
+
+def _can_skip(iy, ix, has_source, boundaries,
+              n_tile_y, n_tile_x, connectivity):
+    """True when a tile cannot possibly receive any cost information."""
+    if has_source[iy][ix]:
+        return False
+    # Cardinal neighbours
+    if iy > 0 and np.any(np.isfinite(boundaries['bottom'][iy - 1][ix])):
+        return False
+    if (iy < n_tile_y - 1
+            and np.any(np.isfinite(boundaries['top'][iy + 1][ix]))):
+        return False
+    if ix > 0 and np.any(np.isfinite(boundaries['right'][iy][ix - 1])):
+        return False
+    if (ix < n_tile_x - 1
+            and np.any(np.isfinite(boundaries['left'][iy][ix + 1]))):
+        return False
+    # Diagonal corners
+    if connectivity == 8:
+        if (iy > 0 and ix > 0
+                and np.isfinite(boundaries['bottom'][iy - 1][ix - 1][-1])):
+            return False
+        if (iy > 0 and ix < n_tile_x - 1
+                and np.isfinite(boundaries['bottom'][iy - 1][ix + 1][0])):
+            return False
+        if (iy < n_tile_y - 1 and ix > 0
+                and np.isfinite(boundaries['top'][iy + 1][ix - 1][-1])):
+            return False
+        if (iy < n_tile_y - 1 and ix < n_tile_x - 1
+                and np.isfinite(boundaries['top'][iy + 1][ix + 1][0])):
+            return False
+    return True
+
+
+def _process_tile(iy, ix, source_da, friction_da,
+                  boundaries, friction_bdry,
+                  cellsize_x, cellsize_y, max_cost, target_values,
+                  dy, dx, dd, chunks_y, chunks_x,
+                  n_tile_y, n_tile_x, connectivity):
+    """Run seeded Dijkstra on one tile; update boundaries in-place.
+
+    Returns the maximum absolute boundary change (float).
+    """
+    source_chunk = source_da.blocks[iy, ix].compute()
+    friction_chunk = friction_da.blocks[iy, ix].compute()
+    h, w = source_chunk.shape
+
+    seeds = _compute_seeds(
+        iy, ix, boundaries, friction_bdry,
+        cellsize_x, cellsize_y, chunks_y, chunks_x,
+        n_tile_y, n_tile_x, connectivity,
+    )
+
+    dist = _cost_distance_tile_kernel(
+        source_chunk, friction_chunk, h, w,
+        cellsize_x, cellsize_y, max_cost, target_values,
+        dy, dx, dd, *seeds,
+    )
+
+    # Extract new boundary strips (float32)
+    new_top = dist[0, :].astype(np.float32)
+    new_bottom = dist[-1, :].astype(np.float32)
+    new_left = dist[:, 0].astype(np.float32)
+    new_right = dist[:, -1].astype(np.float32)
+
+    # Compute max absolute change versus old boundaries
+    change = 0.0
+    for old, new in ((boundaries['top'][iy][ix], new_top),
+                     (boundaries['bottom'][iy][ix], new_bottom),
+                     (boundaries['left'][iy][ix], new_left),
+                     (boundaries['right'][iy][ix], new_right)):
+        with np.errstate(invalid='ignore'):
+            diff = np.abs(new.astype(np.float64) - old.astype(np.float64))
+        # inf - inf -> nan: treat as no change
+        diff = np.where(np.isnan(diff), 0.0, diff)
+        m = float(np.max(diff))
+        if m > change:
+            change = m
+
+    # Store updated boundaries
+    boundaries['top'][iy][ix] = new_top
+    boundaries['bottom'][iy][ix] = new_bottom
+    boundaries['left'][iy][ix] = new_left
+    boundaries['right'][iy][ix] = new_right
+
+    return change
+
+
+def _cost_distance_dask_iterative(source_da, friction_da,
+                                   cellsize_x, cellsize_y,
+                                   max_cost, target_values,
+                                   dy, dx, dd):
+    """Iterative boundary-only Dijkstra for arbitrarily large dask arrays.
+
+    Memory usage is O(sqrt(N)) for inter-iteration storage.
+    """
+    connectivity = len(dy)
+    chunks_y = source_da.chunks[0]
+    chunks_x = source_da.chunks[1]
+    n_tile_y = len(chunks_y)
+    n_tile_x = len(chunks_x)
+
+    # Phase 0: pre-extract friction boundaries & source tile flags
+    friction_bdry, has_source = _preprocess_tiles(
+        source_da, friction_da, chunks_y, chunks_x, target_values,
+    )
+
+    # Phase 1: initialise distance boundaries to inf
+    boundaries = _init_boundaries(chunks_y, chunks_x)
+
+    # Phase 2: iterative forward/backward sweeps
+    max_iterations = max(n_tile_y, n_tile_x) + 10
+    args = (source_da, friction_da, boundaries, friction_bdry,
+            cellsize_x, cellsize_y, max_cost, target_values,
+            dy, dx, dd, chunks_y, chunks_x,
+            n_tile_y, n_tile_x, connectivity)
+
+    for _iteration in range(max_iterations):
+        max_change = 0.0
+
+        # Forward sweep (top-left -> bottom-right)
+        for iy in range(n_tile_y):
+            for ix in range(n_tile_x):
+                if _can_skip(iy, ix, has_source, boundaries,
+                             n_tile_y, n_tile_x, connectivity):
+                    continue
+                c = _process_tile(iy, ix, *args)
+                if c > max_change:
+                    max_change = c
+
+        # Backward sweep (bottom-right -> top-left)
+        for iy in reversed(range(n_tile_y)):
+            for ix in reversed(range(n_tile_x)):
+                if _can_skip(iy, ix, has_source, boundaries,
+                             n_tile_y, n_tile_x, connectivity):
+                    continue
+                c = _process_tile(iy, ix, *args)
+                if c > max_change:
+                    max_change = c
+
+        if max_change == 0.0:
+            break
+
+    # Phase 3: lazy final assembly via da.map_blocks
+    return _assemble_result(
+        source_da, friction_da, boundaries, friction_bdry,
+        cellsize_x, cellsize_y, max_cost, target_values,
+        dy, dx, dd, chunks_y, chunks_x,
+        n_tile_y, n_tile_x, connectivity,
+    )
+
+
+def _assemble_result(source_da, friction_da, boundaries, friction_bdry,
+                     cellsize_x, cellsize_y, max_cost, target_values,
+                     dy, dx, dd, chunks_y, chunks_x,
+                     n_tile_y, n_tile_x, connectivity):
+    """Build a lazy dask array by re-running each tile with converged seeds."""
+
+    def _tile_fn(source_block, friction_block, block_info=None):
+        if block_info is None or 0 not in block_info:
+            return np.full(source_block.shape, np.nan, dtype=np.float32)
+        iy, ix = block_info[0]['chunk-location']
+        h, w = source_block.shape
+        seeds = _compute_seeds(
+            iy, ix, boundaries, friction_bdry,
+            cellsize_x, cellsize_y, chunks_y, chunks_x,
+            n_tile_y, n_tile_x, connectivity,
+        )
+        dist = _cost_distance_tile_kernel(
+            source_block, friction_block, h, w,
+            cellsize_x, cellsize_y, max_cost, target_values,
+            dy, dx, dd, *seeds,
+        )
+        return _dist_to_float32(dist, h, w, max_cost)
+
+    return da.map_blocks(
+        _tile_fn,
+        source_da, friction_da,
+        dtype=np.float32,
+        meta=np.array((), dtype=np.float32),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Dask wrapper
 # ---------------------------------------------------------------------------
 
@@ -277,13 +822,22 @@ def _cost_distance_dask(source_da, friction_da, cellsize_x, cellsize_y,
     pad = int(max_radius + 1) if np.isfinite(max_radius) else max_dim
 
     if not np.isfinite(max_radius) or pad >= height or pad >= width:
-        # Fall back to single-chunk when depth would exceed array size
-        source_da = source_da.rechunk({0: height, 1: width})
-        friction_da = friction_da.rechunk({0: height, 1: width})
-        pad_y = pad_x = 0
-    else:
-        pad_y = pad
-        pad_x = pad
+        # Use iterative tile Dijkstra — bounded memory, no single-chunk rechunk
+        import warnings
+        warnings.warn(
+            "cost_distance: max_cost is infinite or the implied radius "
+            "exceeds chunk dimensions; using iterative tile Dijkstra. "
+            "Setting a finite max_cost enables faster single-pass "
+            "processing.",
+            UserWarning,
+            stacklevel=4,
+        )
+        return _cost_distance_dask_iterative(
+            source_da, friction_da, cellsize_x, cellsize_y,
+            max_cost, target_values, dy, dx, dd,
+        )
+    pad_y = pad
+    pad_x = pad
 
     chunk_func = _make_chunk_func(
         cellsize_x, cellsize_y, max_cost, target_values, dy, dx, dd,
