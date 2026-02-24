@@ -5,7 +5,8 @@ from numpy.testing import assert_allclose, assert_array_less
 
 from xrspatial import hillshade
 from xrspatial.hillshade import _run_numpy
-from xrspatial.tests.general_checks import (assert_numpy_equals_cupy,
+from xrspatial.tests.general_checks import (assert_boundary_mode_correctness,
+                                            assert_numpy_equals_cupy,
                                             assert_numpy_equals_dask_cupy,
                                             assert_numpy_equals_dask_numpy,
                                             create_test_raster,
@@ -188,3 +189,53 @@ def test_hillshade_rtx_with_shadows(data_gaussian):
     diag_cpu = np.diagonal(cpu.data[::-1])[nhalf:]
     diag_rtx = np.diagonal(rtx.data[::-1])[nhalf:]
     assert_array_less(diag_rtx, diag_cpu + 1e-3)
+
+
+@dask_array_available
+def test_boundary_modes(data_gaussian):
+    numpy_agg = create_test_raster(data_gaussian, backend='numpy')
+    dask_agg = create_test_raster(data_gaussian, backend='dask+numpy')
+    assert_boundary_mode_correctness(numpy_agg, dask_agg, hillshade)
+
+
+@dask_array_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+@pytest.mark.parametrize("size,chunks", [
+    ((6, 8), (3, 4)),
+    ((7, 9), (3, 3)),
+    ((10, 15), (5, 5)),
+    ((10, 15), (10, 15)),
+    ((5, 5), (2, 2)),
+])
+def test_boundary_numpy_equals_dask(boundary, size, chunks):
+    rng = np.random.default_rng(42)
+    data = rng.random(size).astype(np.float64) * 500
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_agg = create_test_raster(data, backend='dask+numpy', chunks=chunks)
+    np_result = hillshade(numpy_agg, boundary=boundary)
+    da_result = hillshade(dask_agg, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
+
+
+@dask_array_available
+@pytest.mark.parametrize("boundary", ['nearest', 'reflect', 'wrap'])
+def test_boundary_no_nan_edges(boundary):
+    """Non-nan modes produce no NaN output when source has no NaN."""
+    rng = np.random.default_rng(99)
+    data = rng.random((12, 14)).astype(np.float64) * 100
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_agg = create_test_raster(data, backend='dask+numpy', chunks=(4, 7))
+    np_result = hillshade(numpy_agg, boundary=boundary)
+    da_result = hillshade(dask_agg, boundary=boundary)
+    assert not np.any(np.isnan(np_result.data))
+    assert not np.any(np.isnan(da_result.data.compute()))
+    np.testing.assert_allclose(
+        np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
+
+
+def test_boundary_invalid():
+    data = np.ones((4, 5), dtype=np.float32)
+    agg = _make_raster(data)
+    with pytest.raises(ValueError, match="boundary must be one of"):
+        hillshade(agg, boundary='invalid')

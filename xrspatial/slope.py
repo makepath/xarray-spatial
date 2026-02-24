@@ -23,8 +23,12 @@ from numba import cuda
 
 # local modules
 from xrspatial.utils import ArrayTypeFunctionMapping
+from xrspatial.utils import VALID_BOUNDARY_MODES
 from xrspatial.utils import Z_UNITS
+from xrspatial.utils import _boundary_to_dask
 from xrspatial.utils import _extract_latlon_coords
+from xrspatial.utils import _pad_array
+from xrspatial.utils import _validate_boundary
 from xrspatial.utils import cuda_args
 from xrspatial.utils import get_dataarray_resolution
 from xrspatial.utils import ngjit
@@ -78,14 +82,19 @@ def _cpu(data, cellsize_x, cellsize_y):
 
 def _run_numpy(data: np.ndarray,
                cellsize_x: Union[int, float],
-               cellsize_y: Union[int, float]) -> np.ndarray:
-    out = _cpu(data, cellsize_x, cellsize_y)
-    return out
+               cellsize_y: Union[int, float],
+               boundary: str = 'nan') -> np.ndarray:
+    if boundary == 'nan':
+        return _cpu(data, cellsize_x, cellsize_y)
+    padded = _pad_array(data, 1, boundary)
+    result = _cpu(padded, cellsize_x, cellsize_y)
+    return result[1:-1, 1:-1]
 
 
 def _run_dask_numpy(data: da.Array,
                     cellsize_x: Union[int, float],
-                    cellsize_y: Union[int, float]) -> da.Array:
+                    cellsize_y: Union[int, float],
+                    boundary: str = 'nan') -> da.Array:
     data = data.astype(np.float32)
     _func = partial(_cpu,
                     cellsize_x=cellsize_x,
@@ -93,14 +102,15 @@ def _run_dask_numpy(data: da.Array,
 
     out = data.map_overlap(_func,
                            depth=(1, 1),
-                           boundary=np.nan,
+                           boundary=_boundary_to_dask(boundary),
                            meta=np.array(()))
     return out
 
 
 def _run_dask_cupy(data: da.Array,
                    cellsize_x: Union[int, float],
-                   cellsize_y: Union[int, float]) -> da.Array:
+                   cellsize_y: Union[int, float],
+                   boundary: str = 'nan') -> da.Array:
     data = data.astype(cupy.float32)
     _func = partial(_run_cupy,
                     cellsize_x=cellsize_x,
@@ -108,7 +118,7 @@ def _run_dask_cupy(data: da.Array,
 
     out = data.map_overlap(_func,
                            depth=(1, 1),
-                           boundary=cupy.nan,
+                           boundary=_boundary_to_dask(boundary, is_cupy=True),
                            meta=cupy.array(()))
     return out
 
@@ -144,7 +154,13 @@ def _run_gpu(arr, cellsize_x_arr, cellsize_y_arr, out):
 
 def _run_cupy(data: cupy.ndarray,
               cellsize_x: Union[int, float],
-              cellsize_y: Union[int, float]) -> cupy.ndarray:
+              cellsize_y: Union[int, float],
+              boundary: str = 'nan') -> cupy.ndarray:
+    if boundary != 'nan':
+        padded = _pad_array(data, 1, boundary)
+        result = _run_cupy(padded, cellsize_x, cellsize_y)
+        return result[1:-1, 1:-1]
+
     cellsize_x_arr = cupy.array([float(cellsize_x)], dtype='f4')
     cellsize_y_arr = cupy.array([float(cellsize_y)], dtype='f4')
     data = data.astype(cupy.float32)
@@ -164,7 +180,14 @@ def _run_cupy(data: cupy.ndarray,
 # Geodesic backend functions
 # =====================================================================
 
-def _run_numpy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor):
+def _run_numpy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='nan'):
+    if boundary != 'nan':
+        data_p = _pad_array(data.astype(np.float64), 1, boundary)
+        lat_p = _pad_array(lat_2d, 1, boundary)
+        lon_p = _pad_array(lon_2d, 1, boundary)
+        stacked = np.stack([data_p, lat_p, lon_p], axis=0)
+        result = _cpu_geodesic_slope(stacked, a2, b2, z_factor)
+        return result[1:-1, 1:-1]
     stacked = np.stack([
         data.astype(np.float64),
         lat_2d,
@@ -173,7 +196,22 @@ def _run_numpy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor):
     return _cpu_geodesic_slope(stacked, a2, b2, z_factor)
 
 
-def _run_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor):
+def _run_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='nan'):
+    if boundary != 'nan':
+        data_p = _pad_array(data.astype(cupy.float64), 1, boundary)
+        lat_p = _pad_array(cupy.asarray(lat_2d, dtype=cupy.float64), 1, boundary)
+        lon_p = _pad_array(cupy.asarray(lon_2d, dtype=cupy.float64), 1, boundary)
+        stacked = cupy.stack([data_p, lat_p, lon_p], axis=0)
+        H, W = data_p.shape
+        out = cupy.full((H, W), cupy.nan, dtype=cupy.float32)
+        a2_arr = cupy.array([a2], dtype=cupy.float64)
+        b2_arr = cupy.array([b2], dtype=cupy.float64)
+        zf_arr = cupy.array([z_factor], dtype=cupy.float64)
+        inv_2r_arr = cupy.array([INV_2R], dtype=cupy.float64)
+        griddim, blockdim = _geodesic_cuda_dims((H, W))
+        _run_gpu_geodesic_slope[griddim, blockdim](stacked, a2_arr, b2_arr, zf_arr, inv_2r_arr, out)
+        return out[1:-1, 1:-1]
+
     lat_2d_gpu = cupy.asarray(lat_2d, dtype=cupy.float64)
     lon_2d_gpu = cupy.asarray(lon_2d, dtype=cupy.float64)
     stacked = cupy.stack([
@@ -224,7 +262,7 @@ def _dask_geodesic_slope_chunk_cupy(stacked_chunk, a2, b2, z_factor):
     return out
 
 
-def _run_dask_numpy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor):
+def _run_dask_numpy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='nan'):
     lat_dask = da.from_array(lat_2d, chunks=data.chunksize)
     lon_dask = da.from_array(lon_2d, chunks=data.chunksize)
     stacked = da.stack([
@@ -234,16 +272,17 @@ def _run_dask_numpy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor):
     ], axis=0).rechunk({0: 3})  # all 3 channels in one chunk
 
     _func = partial(_dask_geodesic_slope_chunk, a2=a2, b2=b2, z_factor=z_factor)
+    dask_bnd = _boundary_to_dask(boundary)
     out = stacked.map_overlap(
         _func,
         depth=(0, 1, 1),
-        boundary=np.nan,
+        boundary={0: np.nan, 1: dask_bnd, 2: dask_bnd},
         meta=np.array((), dtype=np.float32),
     )
     return out[0]
 
 
-def _run_dask_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor):
+def _run_dask_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor, boundary='nan'):
     lat_dask = da.from_array(cupy.asarray(lat_2d, dtype=cupy.float64),
                              chunks=data.chunksize)
     lon_dask = da.from_array(cupy.asarray(lon_2d, dtype=cupy.float64),
@@ -255,10 +294,11 @@ def _run_dask_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor):
     ], axis=0).rechunk({0: 3})  # all 3 channels in one chunk
 
     _func = partial(_dask_geodesic_slope_chunk_cupy, a2=a2, b2=b2, z_factor=z_factor)
+    dask_bnd = _boundary_to_dask(boundary, is_cupy=True)
     out = stacked.map_overlap(
         _func,
         depth=(0, 1, 1),
-        boundary=cupy.nan,
+        boundary={0: cupy.nan, 1: dask_bnd, 2: dask_bnd},
         meta=cupy.array((), dtype=cupy.float32),
     )
     return out[0]
@@ -272,7 +312,8 @@ def _run_dask_cupy_geodesic(data, lat_2d, lon_2d, a2, b2, z_factor):
 def slope(agg: xr.DataArray,
           name: str = 'slope',
           method: str = 'planar',
-          z_unit: str = 'meter') -> xr.DataArray:
+          z_unit: str = 'meter',
+          boundary: str = 'nan') -> xr.DataArray:
     """
     Returns slope of input aggregate in degrees.
 
@@ -293,6 +334,12 @@ def slope(agg: xr.DataArray,
         Unit of the elevation values.  Only used when ``method='geodesic'``.
         Accepted values: ``'meter'``, ``'foot'``, ``'kilometer'``, ``'mile'``
         (and common aliases).
+    boundary : str, default='nan'
+        How to handle edges where the kernel extends beyond the raster.
+        ``'nan'``     — fill missing neighbours with NaN (default).
+        ``'nearest'`` — repeat edge values.
+        ``'reflect'`` — mirror at boundary.
+        ``'wrap'``    — periodic / toroidal.
 
     Returns
     -------
@@ -335,6 +382,7 @@ def slope(agg: xr.DataArray,
         raise ValueError(
             f"method must be 'planar' or 'geodesic', got {method!r}"
         )
+    _validate_boundary(boundary)
 
     if method == 'planar':
         cellsize_x, cellsize_y = get_dataarray_resolution(agg)
@@ -344,7 +392,7 @@ def slope(agg: xr.DataArray,
             dask_func=_run_dask_numpy,
             dask_cupy_func=_run_dask_cupy,
         )
-        out = mapper(agg)(agg.data, cellsize_x, cellsize_y)
+        out = mapper(agg)(agg.data, cellsize_x, cellsize_y, boundary)
 
     else:  # geodesic
         if z_unit not in Z_UNITS:
@@ -362,7 +410,7 @@ def slope(agg: xr.DataArray,
             dask_func=_run_dask_numpy_geodesic,
             dask_cupy_func=_run_dask_cupy_geodesic,
         )
-        out = mapper(agg)(agg.data, lat_2d, lon_2d, WGS84_A2, WGS84_B2, z_factor)
+        out = mapper(agg)(agg.data, lat_2d, lon_2d, WGS84_A2, WGS84_B2, z_factor, boundary)
 
     return xr.DataArray(out,
                         name=name,

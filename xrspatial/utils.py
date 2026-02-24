@@ -31,6 +31,66 @@ except ImportError:
 ngjit = jit(nopython=True, nogil=True)
 
 
+# ---------- Boundary mode utilities ----------
+VALID_BOUNDARY_MODES = ('nan', 'nearest', 'reflect', 'wrap')
+
+
+def _validate_boundary(boundary):
+    """Raise ValueError if *boundary* is not a recognised mode."""
+    if boundary not in VALID_BOUNDARY_MODES:
+        raise ValueError(
+            f"boundary must be one of {VALID_BOUNDARY_MODES}, "
+            f"got {boundary!r}"
+        )
+
+
+def _boundary_to_dask(boundary, is_cupy=False):
+    """Convert a boundary mode string to the value expected by
+    ``dask.array.map_overlap``'s *boundary* parameter."""
+    if boundary == 'nan':
+        if is_cupy:
+            import cupy as _cp
+            return _cp.nan
+        return np.nan
+    _mode_map = {
+        'nearest': 'nearest',
+        'reflect': 'reflect',
+        'wrap': 'periodic',
+    }
+    return _mode_map[boundary]
+
+
+def _pad_array(data, depth, boundary):
+    """Pad a 2-D numpy or cupy array according to *boundary* mode.
+
+    Parameters
+    ----------
+    data : array-like
+        2-D array to pad.
+    depth : int or tuple of int
+        Number of cells to pad on each side.  An int pads all axes
+        equally; a tuple ``(d0, d1)`` pads each axis independently.
+    boundary : str
+        One of ``'nearest'``, ``'reflect'``, ``'wrap'``.
+        ``'nan'`` should be handled before calling this function.
+    """
+    # numpy.pad 'symmetric' matches dask map_overlap 'reflect'
+    # (both include the edge element in the reflection)
+    _np_mode_map = {
+        'nearest': 'edge',
+        'reflect': 'symmetric',
+        'wrap': 'wrap',
+    }
+    mode = _np_mode_map[boundary]
+    if isinstance(depth, int):
+        pad_width = ((depth, depth), (depth, depth))
+    else:
+        pad_width = tuple((d, d) for d in depth)
+    if is_cupy_array(data):
+        return cupy.pad(data, pad_width, mode=mode)
+    return np.pad(data, pad_width, mode=mode)
+
+
 def has_cuda_and_cupy():
     return _has_cuda() and _has_cupy()
 
