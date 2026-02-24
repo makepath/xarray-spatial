@@ -43,6 +43,10 @@ class XrsSpatialDataArrayAccessor:
         from .viewshed import viewshed
         return viewshed(self._obj, x, y, **kwargs)
 
+    def min_observable_height(self, x, y, **kwargs):
+        from .experimental.min_observable_height import min_observable_height
+        return min_observable_height(self._obj, x, y, **kwargs)
+
     # ---- Classification ----
 
     def natural_breaks(self, **kwargs):
