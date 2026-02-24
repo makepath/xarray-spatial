@@ -135,6 +135,12 @@ class XrsSpatialDataArrayAccessor:
         from .perlin import perlin
         return perlin(self._obj, **kwargs)
 
+    # ---- Mahalanobis ----
+
+    def mahalanobis(self, other_bands, **kwargs):
+        from .mahalanobis import mahalanobis
+        return mahalanobis([self._obj] + list(other_bands), **kwargs)
+
     # ---- Multispectral (self = NIR band) ----
 
     def ndvi(self, red_agg, **kwargs):
