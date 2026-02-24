@@ -234,22 +234,6 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Zonal Statistics](xrspatial/zonal.py) | Computes summary statistics for a value raster within each zone | ✅️ | ✅️| | |
 | [Zonal Cross Tabulate](xrspatial/zonal.py) | Cross-tabulates agreement between two categorical rasters | ✅️ | ✅️| | |
 
------------
-
-### **Local**
-
-| Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Cell Stats](xrspatial/local.py) | Computes summary statistics across multiple rasters per cell | ✅️ |  | | |
-| [Combine](xrspatial/local.py) | Assigns unique IDs to each distinct combination across rasters | ✅️ | | | |
-| [Lesser Frequency](xrspatial/local.py) | Counts how many rasters have values less than a reference | ✅️ |  | | |
-| [Equal Frequency](xrspatial/local.py) | Counts how many rasters have values equal to a reference | ✅️ |  | | |
-| [Greater Frequency](xrspatial/local.py) | Counts how many rasters have values greater than a reference | ✅️ |  | | |
-| [Lowest Position](xrspatial/local.py) | Identifies which raster has the minimum value at each cell | ✅️ | | | |
-| [Highest Position](xrspatial/local.py) | Identifies which raster has the maximum value at each cell | ✅️ | | | |
-| [Popularity](xrspatial/local.py) | Returns the value from the most common position across rasters | ✅️ | | | |
-| [Rank](xrspatial/local.py) | Ranks cell values across multiple rasters per cell | ✅️ | | | |
-
 #### Usage
 
 ##### Basic Pattern

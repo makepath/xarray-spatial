@@ -15,4 +15,4 @@ User Guide
    proximity
    surface
    zonal
-   local
+   local-migration
