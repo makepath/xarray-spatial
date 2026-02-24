@@ -121,6 +121,59 @@ def assert_nan_edges_effect(result_agg):
         np.testing.assert_array_equal(edge, np.nan)
 
 
+def assert_boundary_mode_correctness(numpy_agg, dask_agg, func, depth=1, rtol=1e-5,
+                                     nan_edges=True):
+    """Verify that all boundary modes produce correct output.
+
+    Checks:
+    - 'nan' mode: edges are NaN (preserves existing behaviour) if nan_edges=True.
+    - 'nearest', 'reflect', 'wrap': shape matches input and
+      numpy matches dask result. When source data has no NaN,
+      edge cells should also have no NaN.
+
+    Parameters
+    ----------
+    nan_edges : bool
+        If True, verify that boundary='nan' produces NaN at edges.
+        Set to False for functions like mean/apply/hotspots that don't
+        produce NaN edges even with boundary='nan'.
+    """
+    from xrspatial.utils import VALID_BOUNDARY_MODES
+    from functools import partial as _partial
+
+    source_has_nan = np.any(np.isnan(numpy_agg.data))
+
+    for mode in VALID_BOUNDARY_MODES:
+        _func = _partial(func, boundary=mode)
+        result_np = _func(numpy_agg)
+
+        assert result_np.shape == numpy_agg.shape, (
+            f"boundary={mode!r}: shape mismatch "
+            f"{result_np.shape} vs {numpy_agg.shape}"
+        )
+
+        if mode == 'nan' and nan_edges:
+            assert_nan_edges_effect(result_np)
+        elif mode != 'nan' and not source_has_nan:
+            result_data = result_np.data
+            if has_dask_array() and isinstance(result_data, da.Array):
+                result_data = result_data.compute()
+            assert not np.any(np.isnan(result_data)), (
+                f"boundary={mode!r}: output should have no NaN values "
+                f"when source data has none"
+            )
+
+        if dask_agg is not None and has_dask_array():
+            result_da = _func(dask_agg)
+            da_data = result_da.data
+            if isinstance(da_data, da.Array):
+                da_data = da_data.compute()
+            np.testing.assert_allclose(
+                result_np.data, da_data,
+                equal_nan=True, rtol=rtol,
+            )
+
+
 def assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, func, nan_edges=True):
     numpy_result = func(numpy_agg)
     if nan_edges:

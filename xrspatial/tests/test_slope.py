@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 
 from xrspatial import slope
-from xrspatial.tests.general_checks import (assert_nan_edges_effect, assert_numpy_equals_cupy,
+from xrspatial.tests.general_checks import (assert_boundary_mode_correctness,
+                                            assert_nan_edges_effect, assert_numpy_equals_cupy,
                                             assert_numpy_equals_dask_cupy,
                                             assert_numpy_equals_dask_numpy, create_test_raster,
                                             cuda_and_cupy_available,
@@ -77,3 +78,72 @@ def test_numpy_equals_dask_cupy_random_data(random_data):
     numpy_agg = create_test_raster(random_data, backend='numpy')
     dask_cupy_agg = create_test_raster(random_data, backend='dask+cupy')
     assert_numpy_equals_dask_cupy(numpy_agg, dask_cupy_agg, slope, atol=1e-6, rtol=1e-6)
+
+
+@dask_array_available
+def test_boundary_modes(elevation_raster):
+    numpy_agg = input_data(elevation_raster, 'numpy')
+    dask_agg = input_data(elevation_raster, 'dask+numpy')
+    assert_boundary_mode_correctness(numpy_agg, dask_agg, slope)
+
+
+@dask_array_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+@pytest.mark.parametrize("size,chunks", [
+    ((6, 8), (3, 4)),      # chunks evenly divide array
+    ((7, 9), (3, 3)),      # ragged last chunk
+    ((10, 15), (5, 5)),    # larger array, medium chunks
+    ((10, 15), (10, 15)),  # single chunk (no overlap needed)
+    ((5, 5), (2, 2)),      # many small chunks
+])
+def test_boundary_numpy_equals_dask(boundary, size, chunks):
+    rng = np.random.default_rng(42)
+    data = rng.random(size).astype(np.float64) * 500
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_agg = create_test_raster(data, backend='dask+numpy',
+                                  attrs={'res': (1, 1)}, chunks=chunks)
+    np_result = slope(numpy_agg, boundary=boundary)
+    da_result = slope(dask_agg, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
+
+
+@dask_array_available
+@pytest.mark.parametrize("boundary", ['nearest', 'reflect', 'wrap'])
+def test_boundary_no_nan_edges(boundary, elevation_raster_no_nans):
+    """Non-nan modes produce no NaN output when source has no NaN."""
+    numpy_agg = create_test_raster(elevation_raster_no_nans, backend='numpy',
+                                   attrs={'res': (1, 1)})
+    dask_agg = create_test_raster(elevation_raster_no_nans, backend='dask+numpy',
+                                  attrs={'res': (1, 1)}, chunks=(4, 3))
+    np_result = slope(numpy_agg, boundary=boundary)
+    da_result = slope(dask_agg, boundary=boundary)
+    assert not np.any(np.isnan(np_result.data))
+    assert not np.any(np.isnan(da_result.data.compute()))
+    np.testing.assert_allclose(
+        np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
+
+
+@dask_array_available
+def test_boundary_constant_surface():
+    """Constant surface should produce zero slope for all boundary modes."""
+    data = np.full((8, 10), 42.0, dtype=np.float64)
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_agg = create_test_raster(data, backend='dask+numpy',
+                                  attrs={'res': (1, 1)}, chunks=(4, 5))
+    for mode in ('nan', 'nearest', 'reflect', 'wrap'):
+        np_result = slope(numpy_agg, boundary=mode)
+        da_result = slope(dask_agg, boundary=mode)
+        np_data = np_result.data
+        da_data = da_result.data.compute()
+        # Interior should be zero; edges depend on mode
+        if mode != 'nan':
+            np.testing.assert_allclose(np_data, 0.0, atol=1e-10)
+        np.testing.assert_allclose(np_data, da_data, equal_nan=True, rtol=1e-6)
+
+
+def test_boundary_invalid():
+    data = np.ones((4, 5), dtype=np.float32)
+    agg = create_test_raster(data, attrs={'res': (1, 1)})
+    with pytest.raises(ValueError, match="boundary must be one of"):
+        slope(agg, boundary='invalid')

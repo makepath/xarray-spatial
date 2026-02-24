@@ -13,13 +13,20 @@ import xarray as xr
 from numba import cuda
 
 from .gpu_rtx import has_rtx
-from .utils import (calc_cuda_dims, get_dataarray_resolution,
+from .utils import (_boundary_to_dask, _pad_array, _validate_boundary,
+                    calc_cuda_dims, get_dataarray_resolution,
                     has_cuda_and_cupy, is_cupy_array, is_cupy_backed)
 from .dataset_support import supports_dataset
 
 
 def _run_numpy(data, azimuth=225, angle_altitude=25,
-               cellsize_x=1.0, cellsize_y=1.0):
+               cellsize_x=1.0, cellsize_y=1.0, boundary='nan'):
+    if boundary != 'nan':
+        padded = _pad_array(data.astype(np.float32), 1, boundary)
+        result = _run_numpy(padded, azimuth, angle_altitude,
+                            cellsize_x, cellsize_y)
+        return result[1:-1, 1:-1]
+
     data = data.astype(np.float32)
 
     az_rad = azimuth * np.pi / 180.
@@ -51,7 +58,7 @@ def _run_numpy(data, azimuth=225, angle_altitude=25,
 
 
 def _run_dask_numpy(data, azimuth, angle_altitude,
-                    cellsize_x=1.0, cellsize_y=1.0):
+                    cellsize_x=1.0, cellsize_y=1.0, boundary='nan'):
     data = data.astype(np.float32)
 
     _func = partial(_run_numpy, azimuth=azimuth,
@@ -59,7 +66,7 @@ def _run_dask_numpy(data, azimuth, angle_altitude,
                     cellsize_x=cellsize_x, cellsize_y=cellsize_y)
     out = data.map_overlap(_func,
                            depth=(1, 1),
-                           boundary=np.nan,
+                           boundary=_boundary_to_dask(boundary),
                            meta=np.array(()))
     return out
 
@@ -91,7 +98,7 @@ def _gpu_calc_numba(
 
 
 def _run_dask_cupy(data, azimuth, angle_altitude,
-                   cellsize_x=1.0, cellsize_y=1.0):
+                   cellsize_x=1.0, cellsize_y=1.0, boundary='nan'):
     import cupy
     data = data.astype(cupy.float32)
 
@@ -100,13 +107,20 @@ def _run_dask_cupy(data, azimuth, angle_altitude,
                     cellsize_x=cellsize_x, cellsize_y=cellsize_y)
     out = data.map_overlap(_func,
                            depth=(1, 1),
-                           boundary=cupy.nan,
+                           boundary=_boundary_to_dask(boundary, is_cupy=True),
                            meta=cupy.array(()))
     return out
 
 
 def _run_cupy(d_data, azimuth, angle_altitude,
-              cellsize_x=1.0, cellsize_y=1.0):
+              cellsize_x=1.0, cellsize_y=1.0, boundary='nan'):
+    if boundary != 'nan':
+        import cupy
+        padded = _pad_array(d_data.astype(cupy.float32), 1, boundary)
+        result = _run_cupy(padded, azimuth, angle_altitude,
+                           cellsize_x, cellsize_y)
+        return result[1:-1, 1:-1]
+
     altituderad = angle_altitude * np.pi / 180.
     azimuthrad = azimuth * np.pi / 180.
     sin_alt = np.sin(altituderad)
@@ -137,7 +151,8 @@ def hillshade(agg: xr.DataArray,
               azimuth: int = 225,
               angle_altitude: int = 25,
               name: Optional[str] = 'hillshade',
-              shadows: bool = False) -> xr.DataArray:
+              shadows: bool = False,
+              boundary: str = 'nan') -> xr.DataArray:
     """
     Calculates, for all cells in the array, an illumination value of
     each cell based on illumination from a specific azimuth and
@@ -162,6 +177,12 @@ def hillshade(agg: xr.DataArray,
         Whether to calculate shadows or not. Shadows are available
         only for Cupy-backed Dask arrays and only if rtxpy is
         installed and appropriate graphics hardware is available.
+    boundary : str, default='nan'
+        How to handle edges where the kernel extends beyond the raster.
+        ``'nan'``     — fill missing neighbours with NaN (default).
+        ``'nearest'`` — repeat edge values.
+        ``'reflect'`` — mirror at boundary.
+        ``'wrap'``    — periodic / toroidal.
 
     Returns
     -------
@@ -200,12 +221,14 @@ def hillshade(agg: xr.DataArray,
         raise RuntimeError(
             "Can only calculate shadows if cupy and rtxpy are available")
 
+    _validate_boundary(boundary)
+
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
 
     # numpy case
     if isinstance(agg.data, np.ndarray):
         out = _run_numpy(agg.data, azimuth, angle_altitude,
-                         cellsize_x, cellsize_y)
+                         cellsize_x, cellsize_y, boundary)
 
     # cupy/numba case
     elif has_cuda_and_cupy() and is_cupy_array(agg.data):
@@ -214,18 +237,18 @@ def hillshade(agg: xr.DataArray,
             out = hillshade_rtx(agg, azimuth, angle_altitude, shadows=shadows)
         else:
             out = _run_cupy(agg.data, azimuth, angle_altitude,
-                            cellsize_x, cellsize_y)
+                            cellsize_x, cellsize_y, boundary)
 
     # dask + cupy case
     elif (has_cuda_and_cupy() and da is not None and isinstance(agg.data, da.Array) and
             is_cupy_backed(agg)):
         out = _run_dask_cupy(agg.data, azimuth, angle_altitude,
-                             cellsize_x, cellsize_y)
+                             cellsize_x, cellsize_y, boundary)
 
     # dask + numpy case
     elif da is not None and isinstance(agg.data, da.Array):
         out = _run_dask_numpy(agg.data, azimuth, angle_altitude,
-                              cellsize_x, cellsize_y)
+                              cellsize_x, cellsize_y, boundary)
 
     else:
         raise TypeError('Unsupported Array Type: {}'.format(type(agg.data)))

@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 
 from xrspatial import curvature
-from xrspatial.tests.general_checks import (assert_numpy_equals_cupy,
+from xrspatial.tests.general_checks import (assert_boundary_mode_correctness,
+                                            assert_numpy_equals_cupy,
                                             assert_numpy_equals_dask_cupy,
                                             assert_numpy_equals_dask_numpy,
                                             create_test_raster,
@@ -112,3 +113,54 @@ def test_numpy_equals_dask_cupy_random_data(random_data):
     numpy_agg = create_test_raster(random_data, backend='numpy')
     dask_cupy_agg = create_test_raster(random_data, backend='dask+cupy')
     assert_numpy_equals_dask_cupy(numpy_agg, dask_cupy_agg, curvature, atol=1e-6, rtol=1e-6)
+
+
+@dask_array_available
+def test_boundary_modes():
+    data = np.random.default_rng(42).random((8, 10)).astype(np.float64) * 100
+    numpy_agg = create_test_raster(data, attrs={'res': (1, 1)})
+    dask_agg = create_test_raster(data, backend='dask+numpy', attrs={'res': (1, 1)})
+    assert_boundary_mode_correctness(numpy_agg, dask_agg, curvature)
+
+
+@dask_array_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+@pytest.mark.parametrize("size,chunks", [
+    ((6, 8), (3, 4)),
+    ((7, 9), (3, 3)),
+    ((10, 15), (5, 5)),
+    ((10, 15), (10, 15)),
+    ((5, 5), (2, 2)),
+])
+def test_boundary_numpy_equals_dask(boundary, size, chunks):
+    rng = np.random.default_rng(42)
+    data = rng.random(size).astype(np.float64) * 100
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_agg = create_test_raster(data, backend='dask+numpy',
+                                  attrs={'res': (1, 1)}, chunks=chunks)
+    np_result = curvature(numpy_agg, boundary=boundary)
+    da_result = curvature(dask_agg, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
+
+
+@dask_array_available
+@pytest.mark.parametrize("boundary", ['nearest', 'reflect', 'wrap'])
+def test_boundary_no_nan_flat(boundary):
+    """Flat surface with non-nan boundary should produce all zeros, no NaN."""
+    data = np.full((8, 10), 50.0, dtype=np.float64)
+    numpy_agg = create_test_raster(data, backend='numpy', attrs={'res': (1, 1)})
+    dask_agg = create_test_raster(data, backend='dask+numpy',
+                                  attrs={'res': (1, 1)}, chunks=(4, 5))
+    np_result = curvature(numpy_agg, boundary=boundary)
+    da_result = curvature(dask_agg, boundary=boundary)
+    np.testing.assert_allclose(np_result.data, 0.0, atol=1e-10)
+    np.testing.assert_allclose(np_result.data, da_result.data.compute(),
+                               equal_nan=True, rtol=1e-6)
+
+
+def test_boundary_invalid():
+    data = np.ones((4, 5), dtype=np.float32)
+    agg = create_test_raster(data, attrs={'res': (1, 1)})
+    with pytest.raises(ValueError, match="boundary must be one of"):
+        curvature(agg, boundary='invalid')

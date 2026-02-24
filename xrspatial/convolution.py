@@ -5,7 +5,8 @@ import numpy as np
 import xarray as xr
 from numba import cuda, jit, prange
 
-from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, get_dataarray_resolution,
+from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
+                             _validate_boundary, cuda_args, get_dataarray_resolution,
                              not_implemented_func)
 
 # 3rd-party
@@ -313,14 +314,28 @@ def _convolve_2d_numpy(data, kernel):
     return out
 
 
-def _convolve_2d_dask_numpy(data, kernel):
+def _convolve_2d_numpy_boundary(data, kernel, boundary='nan'):
+    if boundary == 'nan':
+        return _convolve_2d_numpy(data, kernel)
+    pad_h = kernel.shape[0] // 2
+    pad_w = kernel.shape[1] // 2
+    padded = _pad_array(data, (pad_h, pad_w), boundary)
+    result = _convolve_2d_numpy(padded, kernel)
+    r0 = pad_h if pad_h else None
+    r1 = -pad_h if pad_h else None
+    c0 = pad_w if pad_w else None
+    c1 = -pad_w if pad_w else None
+    return result[r0:r1, c0:c1]
+
+
+def _convolve_2d_dask_numpy(data, kernel, boundary='nan'):
     data = data.astype(np.float32)
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
     _func = partial(_convolve_2d_numpy, kernel=kernel)
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
-                           boundary=np.nan,
+                           boundary=_boundary_to_dask(boundary),
                            meta=np.array(()))
     return out
 
@@ -365,7 +380,18 @@ def _convolve_2d_cuda(data, kernel, out):
     out[i, j] = s
 
 
-def _convolve_2d_cupy(data, kernel):
+def _convolve_2d_cupy(data, kernel, boundary='nan'):
+    if boundary != 'nan':
+        pad_h = kernel.shape[0] // 2
+        pad_w = kernel.shape[1] // 2
+        padded = _pad_array(data, (pad_h, pad_w), boundary)
+        result = _convolve_2d_cupy(padded, kernel)
+        r0 = pad_h if pad_h else None
+        r1 = -pad_h if pad_h else None
+        c0 = pad_w if pad_w else None
+        c1 = -pad_w if pad_w else None
+        return result[r0:r1, c0:c1]
+
     data = data.astype(cupy.float32)
     out = cupy.empty(data.shape, dtype='f4')
     out[:, :] = cupy.nan
@@ -374,30 +400,31 @@ def _convolve_2d_cupy(data, kernel):
     return out
 
 
-def _convolve_2d_dask_cupy(data, kernel):
+def _convolve_2d_dask_cupy(data, kernel, boundary='nan'):
     data = data.astype(cupy.float32)
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
     _func = partial(_convolve_2d_cupy, kernel=kernel)
     out = data.map_overlap(_func,
                            depth=(pad_h, pad_w),
-                           boundary=cupy.nan,
+                           boundary=_boundary_to_dask(boundary, is_cupy=True),
                            meta=cupy.array(()))
     return out
 
 
-def convolve_2d(data, kernel):
+def convolve_2d(data, kernel, boundary='nan'):
+    _validate_boundary(boundary)
     mapper = ArrayTypeFunctionMapping(
-        numpy_func=_convolve_2d_numpy,
+        numpy_func=_convolve_2d_numpy_boundary,
         cupy_func=_convolve_2d_cupy,
         dask_func=_convolve_2d_dask_numpy,
         dask_cupy_func=_convolve_2d_dask_cupy
     )
-    out = mapper(xr.DataArray(data))(data, kernel)
+    out = mapper(xr.DataArray(data))(data, kernel, boundary)
     return out
 
 
-def convolution_2d(agg, kernel, name='convolution_2d'):
+def convolution_2d(agg, kernel, name='convolution_2d', boundary='nan'):
     """
     Calculates, for all inner cells of an array, the 2D convolution of
     each cell. Convolution is frequently used for image
@@ -413,6 +440,12 @@ def convolution_2d(agg, kernel, name='convolution_2d'):
     kernel : array-like object
         Impulse kernel, determines area to apply impulse function for
         each cell.
+    boundary : str, default='nan'
+        How to handle edges where the kernel extends beyond the raster.
+        ``'nan'``     -- fill missing neighbours with NaN (default).
+        ``'nearest'`` -- repeat edge values.
+        ``'reflect'`` -- mirror at boundary.
+        ``'wrap'``    -- periodic / toroidal.
 
     Returns
     -------
@@ -513,7 +546,7 @@ def convolution_2d(agg, kernel, name='convolution_2d'):
     """
 
     # wrapper of convolve_2d
-    out = convolve_2d(agg.data, kernel)
+    out = convolve_2d(agg.data, kernel, boundary)
     return xr.DataArray(out,
                         name=name,
                         coords=agg.coords,

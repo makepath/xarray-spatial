@@ -11,7 +11,8 @@ from xrspatial import mean
 from xrspatial.convolution import (annulus_kernel, calc_cellsize, circle_kernel, convolution_2d,
                                    convolve_2d, custom_kernel)
 from xrspatial.focal import apply, focal_stats, hotspots
-from xrspatial.tests.general_checks import (create_test_raster,
+from xrspatial.tests.general_checks import (assert_boundary_mode_correctness,
+                                            create_test_raster,
                                             cuda_and_cupy_available,
                                             dask_array_available,
                                             general_output_checks)
@@ -508,3 +509,175 @@ def test_hotspot_gpu(data_hotspots):
             cupy_hotspots[coord].data, cupy_agg[coord].data, equal_nan=True
         )
     assert cupy_hotspots.attrs['unit'] == '%'
+
+
+@dask_array_available
+def test_convolution_2d_boundary_modes():
+    data = np.random.default_rng(42).random((8, 10)).astype(np.float64)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+    numpy_agg = create_test_raster(data)
+    dask_agg = create_test_raster(data, backend='dask+numpy')
+    from functools import partial
+    func = partial(convolution_2d, kernel=kernel)
+    assert_boundary_mode_correctness(numpy_agg, dask_agg, func)
+
+
+def test_convolution_2d_boundary_invalid():
+    data = np.ones((4, 5), dtype=np.float32)
+    agg = create_test_raster(data)
+    kernel = np.ones((3, 3))
+    with pytest.raises(ValueError, match="boundary must be one of"):
+        convolution_2d(agg, kernel, boundary='invalid')
+
+
+@dask_array_available
+def test_mean_boundary_modes():
+    data = np.random.default_rng(42).random((8, 10)).astype(np.float64)
+    numpy_agg = xr.DataArray(data, dims=['y', 'x'])
+    dask_numpy_agg = xr.DataArray(da.from_array(data, chunks=(4, 5)), dims=['y', 'x'])
+    assert_boundary_mode_correctness(numpy_agg, dask_numpy_agg, mean, nan_edges=False)
+
+
+def test_mean_boundary_invalid():
+    data = np.ones((4, 5), dtype=np.float32)
+    agg = xr.DataArray(data, dims=['y', 'x'])
+    with pytest.raises(ValueError, match="boundary must be one of"):
+        mean(agg, boundary='invalid')
+
+
+@dask_array_available
+def test_apply_boundary_modes():
+    data = np.random.default_rng(42).random((8, 10)).astype(np.float64)
+    kernel = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
+    numpy_agg = create_test_raster(data)
+    dask_agg = create_test_raster(data, backend='dask+numpy')
+    from functools import partial
+    func = partial(apply, kernel=kernel, func=func_zero_cpu)
+    assert_boundary_mode_correctness(numpy_agg, dask_agg, func, nan_edges=False)
+
+
+def test_apply_boundary_invalid():
+    data = np.ones((4, 5), dtype=np.float32)
+    agg = create_test_raster(data)
+    kernel = np.ones((3, 3))
+    with pytest.raises(ValueError, match="boundary must be one of"):
+        apply(agg, kernel, func_zero_cpu, boundary='invalid')
+
+
+@dask_array_available
+def test_hotspots_boundary_modes():
+    data = np.random.default_rng(42).standard_normal((10, 12)).astype(np.float64)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+    numpy_agg = create_test_raster(data)
+    dask_agg = create_test_raster(data, backend='dask+numpy')
+    from functools import partial
+    func = partial(hotspots, kernel=kernel)
+    assert_boundary_mode_correctness(numpy_agg, dask_agg, func, nan_edges=False)
+
+
+def test_hotspots_boundary_invalid():
+    data = np.random.default_rng(42).standard_normal((10, 12)).astype(np.float64)
+    agg = create_test_raster(data)
+    kernel = np.ones((3, 3))
+    with pytest.raises(ValueError, match="boundary must be one of"):
+        hotspots(agg, kernel, boundary='invalid')
+
+
+# --- Parametrized numpy-vs-dask cross-backend boundary tests ---
+
+
+@dask_array_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+@pytest.mark.parametrize("size,chunks", [
+    ((6, 8), (3, 4)),
+    ((7, 9), (3, 3)),
+    ((10, 15), (5, 5)),
+    ((10, 15), (10, 15)),
+    ((5, 5), (2, 2)),
+])
+def test_convolution_2d_boundary_numpy_equals_dask(boundary, size, chunks):
+    rng = np.random.default_rng(42)
+    data = rng.random(size).astype(np.float64)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_agg = create_test_raster(data, backend='dask+numpy', chunks=chunks)
+    np_result = convolution_2d(numpy_agg, kernel, boundary=boundary)
+    da_result = convolution_2d(dask_agg, kernel, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
+
+
+@dask_array_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+@pytest.mark.parametrize("size,chunks", [
+    ((8, 10), (4, 5)),
+    ((7, 9), (3, 3)),
+    ((12, 12), (6, 4)),
+    ((5, 5), (2, 2)),
+])
+def test_mean_boundary_numpy_equals_dask(boundary, size, chunks):
+    rng = np.random.default_rng(42)
+    data = rng.random(size).astype(np.float64)
+    numpy_agg = xr.DataArray(data, dims=['y', 'x'])
+    dask_agg = xr.DataArray(da.from_array(data, chunks=chunks), dims=['y', 'x'])
+    np_result = mean(numpy_agg, boundary=boundary)
+    da_result = mean(dask_agg, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
+
+
+@dask_array_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+@pytest.mark.parametrize("size,chunks", [
+    ((6, 8), (3, 4)),
+    ((7, 9), (3, 3)),
+    ((10, 15), (5, 5)),
+    ((5, 5), (2, 2)),
+])
+def test_apply_boundary_numpy_equals_dask(boundary, size, chunks):
+    rng = np.random.default_rng(42)
+    data = rng.random(size).astype(np.float64)
+    kernel = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_agg = create_test_raster(data, backend='dask+numpy', chunks=chunks)
+    np_result = apply(numpy_agg, kernel, func_zero_cpu, boundary=boundary)
+    da_result = apply(dask_agg, kernel, func_zero_cpu, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
+
+
+@dask_array_available
+@pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
+@pytest.mark.parametrize("size,chunks", [
+    ((8, 10), (4, 5)),
+    ((7, 9), (3, 3)),
+    ((10, 12), (5, 6)),
+    ((5, 6), (2, 3)),
+])
+def test_hotspots_boundary_numpy_equals_dask(boundary, size, chunks):
+    rng = np.random.default_rng(42)
+    data = rng.standard_normal(size).astype(np.float64)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_agg = create_test_raster(data, backend='dask+numpy', chunks=chunks)
+    np_result = hotspots(numpy_agg, kernel, boundary=boundary)
+    da_result = hotspots(dask_agg, kernel, boundary=boundary)
+    np.testing.assert_allclose(
+        np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
+
+
+@dask_array_available
+@pytest.mark.parametrize("boundary", ['nearest', 'reflect', 'wrap'])
+def test_convolution_2d_boundary_no_nan(boundary):
+    """Non-nan modes produce no NaN output when source has no NaN."""
+    rng = np.random.default_rng(99)
+    data = rng.random((10, 12)).astype(np.float64)
+    kernel = np.ones((3, 3), dtype=np.float64)
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_agg = create_test_raster(data, backend='dask+numpy', chunks=(5, 4))
+    np_result = convolution_2d(numpy_agg, kernel, boundary=boundary)
+    da_result = convolution_2d(dask_agg, kernel, boundary=boundary)
+    assert not np.any(np.isnan(np_result.data))
+    assert not np.any(np.isnan(da_result.data.compute()))
+    np.testing.assert_allclose(
+        np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
