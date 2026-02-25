@@ -1,4 +1,5 @@
-from math import atan, fabs
+from collections import OrderedDict
+from math import atan, atan2, fabs
 from math import pi as PI
 from math import sqrt
 from typing import Union
@@ -7,7 +8,8 @@ import numpy as np
 import xarray
 
 from .gpu_rtx import has_rtx
-from .utils import has_cuda_and_cupy, is_cupy_array, ngjit
+from .utils import (has_cuda_and_cupy, has_dask_array, is_cupy_array,
+                    is_cupy_backed, is_dask_cupy, ngjit)
 
 E_ROW_ID = 0
 E_COL_ID = 1
@@ -1590,7 +1592,8 @@ def viewshed(raster: xarray.DataArray,
              x: Union[int, float],
              y: Union[int, float],
              observer_elev: float = OBS_ELEV,
-             target_elev: float = TARGET_ELEV) -> xarray.DataArray:
+             target_elev: float = TARGET_ELEV,
+             max_distance: float = None) -> xarray.DataArray:
     """
     Calculate viewshed of a raster (the visible cells in the raster)
     for the given viewpoint (observer) location.
@@ -1609,6 +1612,12 @@ def viewshed(raster: xarray.DataArray,
         Target elevation offset above the terrain, which is the height
         in surface units to be added to the z-value of each pixel
         when it is being analyzed for visibility.
+    max_distance : float, optional
+        Maximum analysis distance from the observer in surface units.
+        Cells beyond this distance are marked INVISIBLE without being
+        evaluated. When set and the raster is dask-backed, only the
+        chunks within the distance window are loaded — this is the most
+        efficient way to run viewshed on very large dask rasters.
 
     Returns
     -------
@@ -1622,9 +1631,9 @@ def viewshed(raster: xarray.DataArray,
 
     Notes
     -----
-    The CPU (numpy) and GPU (cupy with RTX) backends use different
-    algorithms and may produce slightly different results for the same
-    input.
+    The CPU (numpy), GPU (cupy with RTX), and dask backends use
+    different algorithms and may produce slightly different results for
+    the same input.
 
     - **CPU**: Angular sweep algorithm ported from GRASS GIS
       ``r.viewshed``. Operates directly on the grid and produces exact
@@ -1632,6 +1641,12 @@ def viewshed(raster: xarray.DataArray,
     - **GPU**: Ray tracing via NVIDIA OptiX RTX against a triangulated
       mesh of the terrain. The mesh discretisation can introduce small
       angular errors (typically < 0.03 degrees for visible cells).
+    - **Dask**: When ``max_distance`` is set or the grid fits in memory,
+      the exact CPU algorithm is used on the relevant window. For very
+      large grids that exceed memory, a horizon-profile distance-sweep
+      algorithm is used instead. This algorithm discretises angles and
+      may produce minor visibility differences near the boundary of
+      occluded regions.
 
     Both backends agree on which cells are visible vs invisible in the
     vast majority of cases, but the reported vertical angles may differ
@@ -1674,6 +1689,11 @@ def viewshed(raster: xarray.DataArray,
 
     """
 
+    # --- max_distance: extract spatial window for any backend ---
+    if max_distance is not None:
+        return _viewshed_windowed(raster, x, y, observer_elev, target_elev,
+                                  max_distance)
+
     if isinstance(raster.data, np.ndarray):
         return _viewshed_cpu(raster, x, y, observer_elev, target_elev)
 
@@ -1688,5 +1708,514 @@ def viewshed(raster: xarray.DataArray,
             raster.data = cp.asnumpy(raster.data)
             return _viewshed_cpu(raster, x, y, observer_elev, target_elev)
 
+    elif has_dask_array():
+        import dask.array as da
+        if isinstance(raster.data, da.Array):
+            return _viewshed_dask(raster, x, y, observer_elev, target_elev)
+
+    raise TypeError(f"Unsupported raster array type: {type(raster.data)}")
+
+
+# ---------------------------------------------------------------------------
+# Dask backend helpers
+# ---------------------------------------------------------------------------
+
+def _dask_embed_window(window_np, H, W, r_lo, r_hi, c_lo, c_hi, chunks):
+    """Embed a small numpy result into a full-size lazy dask INVISIBLE array.
+
+    Builds the output chunk-by-chunk: chunks that overlap the window get a
+    numpy array with the window values pasted in; all other chunks are
+    created via ``dask.array.full`` so they consume no memory until
+    materialised.
+    """
+    import dask.array as da
+
+    y_offsets = _chunk_offsets(chunks[0])
+    x_offsets = _chunk_offsets(chunks[1])
+    n_yc = len(chunks[0])
+    n_xc = len(chunks[1])
+
+    rows = []
+    for yi in range(n_yc):
+        row_blocks = []
+        cy0, cy1 = int(y_offsets[yi]), int(y_offsets[yi + 1])
+        cy_size = cy1 - cy0
+        for xi in range(n_xc):
+            cx0, cx1 = int(x_offsets[xi]), int(x_offsets[xi + 1])
+            cx_size = cx1 - cx0
+
+            # Does this chunk overlap the result window?
+            ov_r0 = max(cy0, r_lo)
+            ov_r1 = min(cy1, r_hi)
+            ov_c0 = max(cx0, c_lo)
+            ov_c1 = min(cx1, c_hi)
+
+            if ov_r0 < ov_r1 and ov_c0 < ov_c1:
+                # This chunk overlaps — build a concrete numpy block
+                block = np.full((cy_size, cx_size), INVISIBLE,
+                                dtype=np.float64)
+                # Local indices within the block and within window_np
+                block[ov_r0 - cy0:ov_r1 - cy0,
+                      ov_c0 - cx0:ov_c1 - cx0] = \
+                    window_np[ov_r0 - r_lo:ov_r1 - r_lo,
+                              ov_c0 - c_lo:ov_c1 - c_lo]
+                row_blocks.append(da.from_delayed(
+                    _identity_delayed(block),
+                    shape=(cy_size, cx_size), dtype=np.float64))
+            else:
+                # No overlap — lazy INVISIBLE block (zero memory)
+                row_blocks.append(
+                    da.full((cy_size, cx_size), INVISIBLE,
+                            dtype=np.float64, chunks=(cy_size, cx_size)))
+        rows.append(da.concatenate(row_blocks, axis=1))
+    return da.concatenate(rows, axis=0)
+
+
+def _identity_delayed(x):
+    """Wrap a concrete value in a dask delayed for da.from_delayed."""
+    import dask
+    return dask.delayed(lambda v: v)(x)
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _chunk_offsets(chunk_sizes):
+    """Convert a tuple of chunk sizes to cumulative offset boundaries.
+
+    Returns an array of length len(chunk_sizes)+1 where offsets[i] is the
+    start index of chunk i and offsets[-1] is the total length.
+    """
+    offsets = np.empty(len(chunk_sizes) + 1, dtype=np.int64)
+    offsets[0] = 0
+    for i, s in enumerate(chunk_sizes):
+        offsets[i + 1] = offsets[i] + s
+    return offsets
+
+
+def _chunk_index_for(offsets, idx):
+    """Return the chunk index that contains global index *idx*."""
+    # Binary search
+    lo, hi = 0, len(offsets) - 2
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if offsets[mid + 1] <= idx:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
+class _ChunkCache:
+    """LRU cache for computed dask chunks with a byte budget."""
+
+    def __init__(self, budget_bytes):
+        self._cache = OrderedDict()   # key → numpy array
+        self._bytes = 0
+        self._budget = budget_bytes
+
+    def get(self, key, dask_data):
+        """Return the numpy chunk for *key* = (ty, tx), loading if needed."""
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
+        arr = dask_data.blocks[key].compute()
+        nbytes = arr.nbytes
+        # Evict LRU entries until we have room
+        while self._bytes + nbytes > self._budget and self._cache:
+            _, evicted = self._cache.popitem(last=False)
+            self._bytes -= evicted.nbytes
+        self._cache[key] = arr
+        self._bytes += nbytes
+        return arr
+
+
+@ngjit
+def _sweep_ring(rows, cols, elevs, n_cells,
+                obs_r, obs_c, obs_elev, target_elev,
+                ew_res, ns_res, horizon, visibility, n_angles):
+    """Process all cells on one Chebyshev ring through the horizon profile.
+
+    Uses a two-pass approach: first check visibility of all ring cells
+    against the *pre-ring* horizon, then update the horizon. This prevents
+    cells within the same ring from incorrectly occluding each other.
+    """
+    bin_width = 2.0 * PI / n_angles
+    INF = 1e30
+
+    # Pre-compute per-cell values
+    gradients = np.empty(n_cells, dtype=np.float64)
+    center_bins = np.empty(n_cells, dtype=np.int64)
+    half_bins_arr = np.empty(n_cells, dtype=np.int64)
+    dist_sqs = np.empty(n_cells, dtype=np.float64)
+    eff_elevs = np.empty(n_cells, dtype=np.float64)
+    valid = np.empty(n_cells, dtype=np.int64)
+
+    cell_size = max(fabs(ew_res), fabs(ns_res))
+
+    for i in range(n_cells):
+        elev = elevs[i]
+        if elev != elev:  # NaN check (numba-safe)
+            valid[i] = 0
+            continue
+        r = rows[i]
+        c = cols[i]
+        dx = (c - obs_c) * ew_res
+        dy = (r - obs_r) * ns_res
+        dist_sq = dx * dx + dy * dy
+        if dist_sq == 0.0:
+            valid[i] = 0
+            continue
+        valid[i] = 1
+        dist = sqrt(dist_sq)
+        eff_elev = elev + target_elev
+        eff_elevs[i] = eff_elev
+        dist_sqs[i] = dist_sq
+        gradients[i] = atan((eff_elev - obs_elev) / dist)
+
+        angle = atan2(dy, dx)
+        ang_width = cell_size / dist
+        hb = int(ang_width / bin_width / 2.0)
+        if hb < 0:
+            hb = 0
+        half_bins_arr[i] = hb
+        center_bins[i] = int((angle + PI) / bin_width) % n_angles
+
+    # Pass 1: check visibility against current (pre-ring) horizon
+    for i in range(n_cells):
+        if valid[i] == 0:
+            continue
+        max_h = -INF
+        cb = center_bins[i]
+        hb = half_bins_arr[i]
+        for b in range(-hb, hb + 1):
+            idx = (cb + b) % n_angles
+            if horizon[idx] > max_h:
+                max_h = horizon[idx]
+        if gradients[i] > max_h:
+            r = rows[i]
+            c = cols[i]
+            visibility[r, c] = _get_vertical_ang(
+                obs_elev, dist_sqs[i], eff_elevs[i])
+
+    # Pass 2: update horizon with all ring cells
+    for i in range(n_cells):
+        if valid[i] == 0:
+            continue
+        cb = center_bins[i]
+        hb = half_bins_arr[i]
+        grad = gradients[i]
+        for b in range(-hb, hb + 1):
+            idx = (cb + b) % n_angles
+            if grad > horizon[idx]:
+                horizon[idx] = grad
+
+
+def _ring_cells(d, obs_r, obs_c, H, W):
+    """Generate row/col arrays for cells on the Chebyshev ring at distance d.
+
+    Traverses the four edges of the square ring in order:
+    top (left→right), right (top→bottom), bottom (right→left),
+    left (bottom→top), excluding corners already counted.
+    """
+    r_min = max(0, obs_r - d)
+    r_max = min(H - 1, obs_r + d)
+    c_min = max(0, obs_c - d)
+    c_max = min(W - 1, obs_c + d)
+
+    rows_list = []
+    cols_list = []
+
+    # Top edge: row = obs_r - d, cols from c_min to c_max
+    if obs_r - d >= 0:
+        cols_top = np.arange(c_min, c_max + 1, dtype=np.int64)
+        rows_list.append(np.full(len(cols_top), obs_r - d, dtype=np.int64))
+        cols_list.append(cols_top)
+
+    # Bottom edge: row = obs_r + d, cols from c_min to c_max
+    if obs_r + d <= H - 1:
+        cols_bot = np.arange(c_min, c_max + 1, dtype=np.int64)
+        rows_list.append(np.full(len(cols_bot), obs_r + d, dtype=np.int64))
+        cols_list.append(cols_bot)
+
+    # Left edge: col = obs_c - d, rows from r_min+1 to r_max-1
+    # (exclude corners already in top/bottom)
+    inner_r_min = r_min + (1 if obs_r - d >= 0 else 0)
+    inner_r_max = r_max - (1 if obs_r + d <= H - 1 else 0)
+    if obs_c - d >= 0 and inner_r_min <= inner_r_max:
+        rows_left = np.arange(inner_r_min, inner_r_max + 1, dtype=np.int64)
+        rows_list.append(rows_left)
+        cols_list.append(np.full(len(rows_left), obs_c - d, dtype=np.int64))
+
+    # Right edge: col = obs_c + d, rows from r_min+1 to r_max-1
+    if obs_c + d <= W - 1 and inner_r_min <= inner_r_max:
+        rows_right = np.arange(inner_r_min, inner_r_max + 1, dtype=np.int64)
+        rows_list.append(rows_right)
+        cols_list.append(np.full(len(rows_right), obs_c + d, dtype=np.int64))
+
+    if rows_list:
+        return np.concatenate(rows_list), np.concatenate(cols_list)
+    return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
+
+
+def _extract_elevations(rows, cols, dask_data, cache, y_offsets, x_offsets):
+    """Look up elevations for given (row, col) pairs from cached chunks."""
+    n = len(rows)
+    elevs = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        r, c = int(rows[i]), int(cols[i])
+        ty = _chunk_index_for(y_offsets, r)
+        tx = _chunk_index_for(x_offsets, c)
+        chunk = cache.get((ty, tx), dask_data)
+        local_r = r - int(y_offsets[ty])
+        local_c = c - int(x_offsets[tx])
+        elevs[i] = chunk[local_r, local_c]
+    return elevs
+
+
+def _viewshed_distance_sweep(dask_data, H, W, obs_r, obs_c,
+                              obs_elev, target_elev, ew_res, ns_res,
+                              chunks_y, chunks_x, max_distance):
+    """Out-of-core horizon-profile distance sweep viewshed."""
+    # Maximum Chebyshev distance in cells
+    max_d_cells = max(obs_r, H - 1 - obs_r, obs_c, W - 1 - obs_c)
+    if max_distance is not None:
+        cell_size = max(abs(ew_res), abs(ns_res))
+        max_d_dist = int(np.ceil(max_distance / cell_size))
+        max_d_cells = min(max_d_cells, max_d_dist)
+
+    n_angles = 16 * int(np.ceil(np.sqrt(2) * max_d_cells)) + 16
+    # Clamp to reasonable bounds
+    n_angles = max(n_angles, 360)
+    n_angles = min(n_angles, 1_000_000)
+
+    horizon = np.full(n_angles, -1e30, dtype=np.float64)
+    visibility = np.full((H, W), INVISIBLE, dtype=np.float64)
+    visibility[obs_r, obs_c] = 180.0
+
+    y_offsets = _chunk_offsets(chunks_y)
+    x_offsets = _chunk_offsets(chunks_x)
+
+    budget = max(int(0.25 * _available_memory_bytes()), 64 * 1024 * 1024)
+    cache = _ChunkCache(budget)
+
+    for d in range(1, max_d_cells + 1):
+        rows, cols = _ring_cells(d, obs_r, obs_c, H, W)
+        if len(rows) == 0:
+            continue
+        elevs = _extract_elevations(rows, cols, dask_data, cache,
+                                    y_offsets, x_offsets)
+        _sweep_ring(rows, cols, elevs, len(rows),
+                    obs_r, obs_c, obs_elev, target_elev,
+                    ew_res, ns_res, horizon, visibility, n_angles)
+
+    return visibility
+
+
+def _viewshed_windowed(raster, x, y, observer_elev, target_elev,
+                       max_distance):
+    """Run viewshed on a spatial window around the observer.
+
+    Works for any backend: numpy, cupy, dask+numpy, dask+cupy.  The window
+    is extracted via xarray slicing, computed to an in-memory array, then
+    dispatched to the appropriate single-array backend.  The result is
+    embedded in a full-size INVISIBLE output.
+    """
+    height, width = raster.shape
+    y_coords = raster.indexes.get('y').values
+    x_coords = raster.indexes.get('x').values
+
+    if not (x_coords.min() <= x <= x_coords.max()):
+        raise ValueError("x argument outside of raster x_range")
+    if not (y_coords.min() <= y <= y_coords.max()):
+        raise ValueError("y argument outside of raster y_range")
+
+    selection = raster.sel(x=[x], y=[y], method='nearest')
+    x = selection.x.values[0]
+    y = selection.y.values[0]
+
+    obs_r = int(np.where(y_coords == y)[0][0])
+    obs_c = int(np.where(x_coords == x)[0][0])
+
+    y_range = (y_coords[0], y_coords[-1])
+    x_range = (x_coords[0], x_coords[-1])
+    ew_res = (x_range[1] - x_range[0]) / (width - 1) if width > 1 else 1.0
+    ns_res = (y_range[1] - y_range[0]) / (height - 1) if height > 1 else 1.0
+    cell_size = max(abs(ew_res), abs(ns_res))
+    radius_cells = int(np.ceil(max_distance / cell_size))
+
+    r_lo = max(0, obs_r - radius_cells)
+    r_hi = min(height, obs_r + radius_cells + 1)
+    c_lo = max(0, obs_c - radius_cells)
+    c_hi = min(width, obs_c + radius_cells + 1)
+
+    window = raster.isel(y=slice(r_lo, r_hi), x=slice(c_lo, c_hi))
+
+    # Materialise to in-memory array (numpy or cupy)
+    is_cupy = has_cuda_and_cupy() and (
+        is_cupy_array(raster.data) or is_cupy_backed(raster))
+    if has_dask_array():
+        import dask.array as da
+        if isinstance(window.data, da.Array):
+            window = window.copy()
+            window.data = window.data.compute()
+
+    if is_cupy and has_rtx():
+        import cupy as cp
+        if not is_cupy_array(window.data):
+            window.data = cp.asarray(window.data)
+        from .gpu_rtx.viewshed import viewshed_gpu
+        local_result = viewshed_gpu(
+            window, x, y, observer_elev, target_elev)
     else:
-        raise TypeError(f"Unsupported raster array type: {type(raster.data)}")
+        if is_cupy:
+            import cupy as cp
+            window.data = cp.asnumpy(window.data)
+        elif not isinstance(window.data, np.ndarray):
+            window.data = np.asarray(window.data)
+        local_result = _viewshed_cpu(
+            window, x, y, observer_elev, target_elev)
+
+    # Mask cells beyond max_distance (the window is a square, not a circle)
+    win_y = local_result.coords['y'].values
+    win_x = local_result.coords['x'].values
+    wx, wy = np.meshgrid(win_x, win_y)
+    dist_sq = (wx - x) ** 2 + (wy - y) ** 2
+    outside = dist_sq > max_distance ** 2
+    if isinstance(local_result.data, np.ndarray):
+        local_result.values[outside] = INVISIBLE
+    else:
+        # cupy path
+        import cupy as cp
+        local_result.data[cp.asarray(outside)] = INVISIBLE
+
+    # Embed in full-size INVISIBLE output, preserving array type
+    is_dask = has_dask_array() and isinstance(raster.data, da.Array)
+
+    if is_dask:
+        # Build output lazily to avoid allocating the full grid in memory.
+        # The window result is a small numpy array; the surrounding region
+        # is filled with INVISIBLE via dask.array.full.
+        local_vals = local_result.values if isinstance(
+            local_result.data, np.ndarray) else local_result.data.get()
+        full_vis = _dask_embed_window(
+            local_vals, height, width, r_lo, r_hi, c_lo, c_hi,
+            raster.data.chunks)
+    elif is_cupy and has_rtx():
+        import cupy as cp
+        full_vis = cp.full((height, width), INVISIBLE, dtype=np.float64)
+        full_vis[r_lo:r_hi, c_lo:c_hi] = local_result.data
+    else:
+        local_vals = local_result.values
+        full_vis = np.full((height, width), INVISIBLE, dtype=np.float64)
+        full_vis[r_lo:r_hi, c_lo:c_hi] = local_vals
+
+    return xarray.DataArray(full_vis, coords=raster.coords,
+                            dims=raster.dims, attrs=raster.attrs)
+
+
+def _viewshed_dask(raster, x, y, observer_elev, target_elev):
+    """Dask-backed viewshed (no max_distance — handled by caller).
+
+    Two-tier strategy:
+    - Tier B: grid fits in memory → compute and run exact R2 (CPU or GPU).
+    - Tier C: out-of-core horizon-profile distance sweep.
+    """
+    import dask.array as da
+
+    height, width = raster.shape
+    y_coords = raster.indexes.get('y').values
+    x_coords = raster.indexes.get('x').values
+
+    if not (x_coords.min() <= x <= x_coords.max()):
+        raise ValueError("x argument outside of raster x_range")
+    if not (y_coords.min() <= y <= y_coords.max()):
+        raise ValueError("y argument outside of raster y_range")
+
+    selection = raster.sel(x=[x], y=[y], method='nearest')
+    x = selection.x.values[0]
+    y = selection.y.values[0]
+
+    obs_r = int(np.where(y_coords == y)[0][0])
+    obs_c = int(np.where(x_coords == x)[0][0])
+
+    y_range = (y_coords[0], y_coords[-1])
+    x_range = (x_coords[0], x_coords[-1])
+    ew_res = (x_range[1] - x_range[0]) / (width - 1) if width > 1 else 1.0
+    ns_res = (y_range[1] - y_range[0]) / (height - 1) if height > 1 else 1.0
+
+    cupy_backed = is_dask_cupy(raster)
+
+    # --- Tier B: full grid fits in memory → compute and run exact algo ---
+    r2_bytes = 280 * height * width
+    avail = _available_memory_bytes()
+    if r2_bytes < 0.5 * avail:
+        raster_mem = raster.copy()
+        raster_mem.data = raster.data.compute()
+        if cupy_backed and has_rtx():
+            from .gpu_rtx.viewshed import viewshed_gpu
+            result = viewshed_gpu(raster_mem, x, y,
+                                  observer_elev, target_elev)
+        else:
+            if cupy_backed:
+                import cupy as cp
+                raster_mem.data = cp.asnumpy(raster_mem.data)
+            result = _viewshed_cpu(raster_mem, x, y,
+                                   observer_elev, target_elev)
+        result_np = result.values if isinstance(result.data, np.ndarray) \
+            else result.data.get()
+        vis_da = da.from_array(result_np, chunks=raster.data.chunks)
+        return xarray.DataArray(vis_da, coords=raster.coords,
+                                dims=raster.dims, attrs=raster.attrs)
+
+    # --- Tier C: out-of-core distance sweep (CPU only) ---
+    output_bytes = height * width * 8
+    if output_bytes > 0.8 * avail:
+        raise MemoryError(
+            f"Output grid ({output_bytes / 1e9:.1f} GB) exceeds 80% of "
+            f"available RAM ({avail / 1e9:.1f} GB). "
+            f"Use max_distance to limit the analysis area."
+        )
+
+    # For dask+cupy, chunks compute to cupy arrays — cache needs numpy
+    dask_data = raster.data
+    if cupy_backed:
+        dask_data = dask_data.map_blocks(
+            lambda block: block.get(), dtype=np.float64,
+            meta=np.array(()))
+
+    obs_elev_val = dask_data.blocks[
+        _chunk_index_for(_chunk_offsets(dask_data.chunks[0]), obs_r),
+        _chunk_index_for(_chunk_offsets(dask_data.chunks[1]), obs_c),
+    ].compute()
+    local_r = obs_r - int(_chunk_offsets(dask_data.chunks[0])[
+        _chunk_index_for(_chunk_offsets(dask_data.chunks[0]), obs_r)])
+    local_c = obs_c - int(_chunk_offsets(dask_data.chunks[1])[
+        _chunk_index_for(_chunk_offsets(dask_data.chunks[1]), obs_c)])
+    terrain_elev = float(obs_elev_val[local_r, local_c])
+    vp_elev = terrain_elev + observer_elev
+
+    visibility = _viewshed_distance_sweep(
+        dask_data, height, width, obs_r, obs_c,
+        vp_elev, target_elev, ew_res, ns_res,
+        dask_data.chunks[0], dask_data.chunks[1],
+        None,
+    )
+
+    vis_da = da.from_array(visibility, chunks=raster.data.chunks)
+    return xarray.DataArray(vis_da, coords=raster.coords,
+                            dims=raster.dims, attrs=raster.attrs)
