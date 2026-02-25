@@ -261,3 +261,69 @@ def test_viewshed_dask_distance_sweep():
     assert result[5, 5] == 180.0
     # All cells on flat terrain should be visible
     assert (result > INVISIBLE).all()
+
+
+def test_viewshed_numpy_max_distance():
+    """max_distance should work on plain numpy raster too."""
+    ny, nx = 20, 20
+    arr_np = np.zeros((ny, nx))
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+
+    raster_np = xa.DataArray(arr_np, coords=dict(x=xs, y=ys),
+                             dims=["y", "x"])
+    v = viewshed(raster_np, x=10.0, y=10.0,
+                 observer_elev=5, max_distance=5.0)
+    result = v.values
+
+    assert result[10, 10] == 180.0
+    assert result[0, 0] == INVISIBLE
+    assert result[19, 19] == INVISIBLE
+    assert result[10, 12] > INVISIBLE
+
+
+@pytest.mark.parametrize("backend", ["numpy", "cupy"])
+def test_viewshed_max_distance_matches_full(backend):
+    """max_distance results should match full viewshed within the radius."""
+    if backend == "cupy":
+        if not has_rtx():
+            pytest.skip("rtxpy not available")
+        else:
+            import cupy as cp
+
+    ny, nx = 10, 8
+    np.random.seed(123)
+    arr = np.random.uniform(0, 3, (ny, nx))
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+    if backend == "cupy":
+        arr_backend = cp.asarray(arr)
+    else:
+        arr_backend = arr.copy()
+
+    raster = xa.DataArray(arr_backend, coords=dict(x=xs, y=ys),
+                          dims=["y", "x"])
+    v_full = viewshed(raster, x=4.0, y=5.0, observer_elev=10)
+
+    if backend == "cupy":
+        arr_backend = cp.asarray(arr)
+    else:
+        arr_backend = arr.copy()
+    raster2 = xa.DataArray(arr_backend, coords=dict(x=xs, y=ys),
+                           dims=["y", "x"])
+    v_dist = viewshed(raster2, x=4.0, y=5.0, observer_elev=10,
+                      max_distance=3.5)
+
+    full_vals = v_full.values if isinstance(v_full.data, np.ndarray) \
+        else v_full.data.get()
+    dist_vals = v_dist.values if isinstance(v_dist.data, np.ndarray) \
+        else v_dist.data.get()
+
+    # Within the window, results should match
+    obs_r, obs_c = 5, 4
+    for r in range(max(0, obs_r - 3), min(ny, obs_r + 4)):
+        for c in range(max(0, obs_c - 3), min(nx, obs_c + 4)):
+            np.testing.assert_allclose(
+                dist_vals[r, c], full_vals[r, c],
+                atol=0.03,
+                err_msg=f"Mismatch at ({r},{c})")

@@ -8,7 +8,8 @@ import numpy as np
 import xarray
 
 from .gpu_rtx import has_rtx
-from .utils import has_cuda_and_cupy, has_dask_array, is_cupy_array, ngjit
+from .utils import (has_cuda_and_cupy, has_dask_array, is_cupy_array,
+                    is_cupy_backed, is_dask_cupy, ngjit)
 
 E_ROW_ID = 0
 E_COL_ID = 1
@@ -1688,6 +1689,11 @@ def viewshed(raster: xarray.DataArray,
 
     """
 
+    # --- max_distance: extract spatial window for any backend ---
+    if max_distance is not None:
+        return _viewshed_windowed(raster, x, y, observer_elev, target_elev,
+                                  max_distance)
+
     if isinstance(raster.data, np.ndarray):
         return _viewshed_cpu(raster, x, y, observer_elev, target_elev)
 
@@ -1705,8 +1711,7 @@ def viewshed(raster: xarray.DataArray,
     elif has_dask_array():
         import dask.array as da
         if isinstance(raster.data, da.Array):
-            return _viewshed_dask(raster, x, y, observer_elev, target_elev,
-                                  max_distance)
+            return _viewshed_dask(raster, x, y, observer_elev, target_elev)
 
     raise TypeError(f"Unsupported raster array type: {type(raster.data)}")
 
@@ -1964,8 +1969,95 @@ def _viewshed_distance_sweep(dask_data, H, W, obs_r, obs_c,
     return visibility
 
 
-def _viewshed_dask(raster, x, y, observer_elev, target_elev, max_distance):
-    """Dask-backed viewshed with three-tier strategy."""
+def _viewshed_windowed(raster, x, y, observer_elev, target_elev,
+                       max_distance):
+    """Run viewshed on a spatial window around the observer.
+
+    Works for any backend: numpy, cupy, dask+numpy, dask+cupy.  The window
+    is extracted via xarray slicing, computed to an in-memory array, then
+    dispatched to the appropriate single-array backend.  The result is
+    embedded in a full-size INVISIBLE output.
+    """
+    height, width = raster.shape
+    y_coords = raster.indexes.get('y').values
+    x_coords = raster.indexes.get('x').values
+
+    if not (x_coords.min() <= x <= x_coords.max()):
+        raise ValueError("x argument outside of raster x_range")
+    if not (y_coords.min() <= y <= y_coords.max()):
+        raise ValueError("y argument outside of raster y_range")
+
+    selection = raster.sel(x=[x], y=[y], method='nearest')
+    x = selection.x.values[0]
+    y = selection.y.values[0]
+
+    obs_r = int(np.where(y_coords == y)[0][0])
+    obs_c = int(np.where(x_coords == x)[0][0])
+
+    y_range = (y_coords[0], y_coords[-1])
+    x_range = (x_coords[0], x_coords[-1])
+    ew_res = (x_range[1] - x_range[0]) / (width - 1) if width > 1 else 1.0
+    ns_res = (y_range[1] - y_range[0]) / (height - 1) if height > 1 else 1.0
+    cell_size = max(abs(ew_res), abs(ns_res))
+    radius_cells = int(np.ceil(max_distance / cell_size))
+
+    r_lo = max(0, obs_r - radius_cells)
+    r_hi = min(height, obs_r + radius_cells + 1)
+    c_lo = max(0, obs_c - radius_cells)
+    c_hi = min(width, obs_c + radius_cells + 1)
+
+    window = raster.isel(y=slice(r_lo, r_hi), x=slice(c_lo, c_hi))
+
+    # Materialise to in-memory array (numpy or cupy)
+    is_cupy = has_cuda_and_cupy() and (
+        is_cupy_array(raster.data) or is_cupy_backed(raster))
+    if has_dask_array():
+        import dask.array as da
+        if isinstance(window.data, da.Array):
+            window = window.copy()
+            window.data = window.data.compute()
+
+    if is_cupy and has_rtx():
+        import cupy as cp
+        if not is_cupy_array(window.data):
+            window.data = cp.asarray(window.data)
+        from .gpu_rtx.viewshed import viewshed_gpu
+        local_result = viewshed_gpu(
+            window, x, y, observer_elev, target_elev)
+    else:
+        if is_cupy:
+            import cupy as cp
+            window.data = cp.asnumpy(window.data)
+        elif not isinstance(window.data, np.ndarray):
+            window.data = np.asarray(window.data)
+        local_result = _viewshed_cpu(
+            window, x, y, observer_elev, target_elev)
+
+    # Embed in full-size INVISIBLE output, preserving array type
+    if is_cupy and has_rtx():
+        import cupy as cp
+        full_vis = cp.full((height, width), INVISIBLE, dtype=np.float64)
+        full_vis[r_lo:r_hi, c_lo:c_hi] = local_result.data
+    else:
+        local_vals = local_result.values
+        full_vis = np.full((height, width), INVISIBLE, dtype=np.float64)
+        full_vis[r_lo:r_hi, c_lo:c_hi] = local_vals
+
+    # Wrap in the same array type as the input
+    if has_dask_array() and isinstance(raster.data, da.Array):
+        full_vis = da.from_array(full_vis, chunks=raster.data.chunks)
+
+    return xarray.DataArray(full_vis, coords=raster.coords,
+                            dims=raster.dims, attrs=raster.attrs)
+
+
+def _viewshed_dask(raster, x, y, observer_elev, target_elev):
+    """Dask-backed viewshed (no max_distance — handled by caller).
+
+    Two-tier strategy:
+    - Tier B: grid fits in memory → compute and run exact R2 (CPU or GPU).
+    - Tier C: out-of-core horizon-profile distance sweep.
+    """
     import dask.array as da
 
     height, width = raster.shape
@@ -1989,46 +2081,31 @@ def _viewshed_dask(raster, x, y, observer_elev, target_elev, max_distance):
     ew_res = (x_range[1] - x_range[0]) / (width - 1) if width > 1 else 1.0
     ns_res = (y_range[1] - y_range[0]) / (height - 1) if height > 1 else 1.0
 
-    # --- Tier A: max_distance → extract window, run CPU R2 ---
-    if max_distance is not None:
-        cell_size = max(abs(ew_res), abs(ns_res))
-        radius_cells = int(np.ceil(max_distance / cell_size))
+    cupy_backed = is_dask_cupy(raster)
 
-        r_lo = max(0, obs_r - radius_cells)
-        r_hi = min(height, obs_r + radius_cells + 1)
-        c_lo = max(0, obs_c - radius_cells)
-        c_hi = min(width, obs_c + radius_cells + 1)
-
-        window = raster.isel(y=slice(r_lo, r_hi), x=slice(c_lo, c_hi))
-        window_np = window.copy()
-        window_np.data = window.data.compute()
-
-        local_result = _viewshed_cpu(
-            window_np,
-            x=x, y=y,
-            observer_elev=observer_elev,
-            target_elev=target_elev,
-        )
-
-        # Embed in full-size INVISIBLE array
-        full_vis = np.full((height, width), INVISIBLE, dtype=np.float64)
-        full_vis[r_lo:r_hi, c_lo:c_hi] = local_result.values
-        vis_da = da.from_array(full_vis, chunks=raster.data.chunks)
-        return xarray.DataArray(vis_da, coords=raster.coords,
-                                dims=raster.dims, attrs=raster.attrs)
-
-    # --- Tier B: full grid fits in memory → compute and run CPU R2 ---
+    # --- Tier B: full grid fits in memory → compute and run exact algo ---
     r2_bytes = 280 * height * width
     avail = _available_memory_bytes()
     if r2_bytes < 0.5 * avail:
-        raster_np = raster.copy()
-        raster_np.data = raster.data.compute()
-        result = _viewshed_cpu(raster_np, x, y, observer_elev, target_elev)
-        vis_da = da.from_array(result.values, chunks=raster.data.chunks)
+        raster_mem = raster.copy()
+        raster_mem.data = raster.data.compute()
+        if cupy_backed and has_rtx():
+            from .gpu_rtx.viewshed import viewshed_gpu
+            result = viewshed_gpu(raster_mem, x, y,
+                                  observer_elev, target_elev)
+        else:
+            if cupy_backed:
+                import cupy as cp
+                raster_mem.data = cp.asnumpy(raster_mem.data)
+            result = _viewshed_cpu(raster_mem, x, y,
+                                   observer_elev, target_elev)
+        result_np = result.values if isinstance(result.data, np.ndarray) \
+            else result.data.get()
+        vis_da = da.from_array(result_np, chunks=raster.data.chunks)
         return xarray.DataArray(vis_da, coords=raster.coords,
                                 dims=raster.dims, attrs=raster.attrs)
 
-    # --- Tier C: out-of-core distance sweep ---
+    # --- Tier C: out-of-core distance sweep (CPU only) ---
     output_bytes = height * width * 8
     if output_bytes > 0.8 * avail:
         raise MemoryError(
@@ -2037,22 +2114,29 @@ def _viewshed_dask(raster, x, y, observer_elev, target_elev, max_distance):
             f"Use max_distance to limit the analysis area."
         )
 
-    obs_elev_val = raster.data.blocks[
-        _chunk_index_for(_chunk_offsets(raster.data.chunks[0]), obs_r),
-        _chunk_index_for(_chunk_offsets(raster.data.chunks[1]), obs_c),
+    # For dask+cupy, chunks compute to cupy arrays — cache needs numpy
+    dask_data = raster.data
+    if cupy_backed:
+        dask_data = dask_data.map_blocks(
+            lambda block: block.get(), dtype=np.float64,
+            meta=np.array(()))
+
+    obs_elev_val = dask_data.blocks[
+        _chunk_index_for(_chunk_offsets(dask_data.chunks[0]), obs_r),
+        _chunk_index_for(_chunk_offsets(dask_data.chunks[1]), obs_c),
     ].compute()
-    local_r = obs_r - int(_chunk_offsets(raster.data.chunks[0])[
-        _chunk_index_for(_chunk_offsets(raster.data.chunks[0]), obs_r)])
-    local_c = obs_c - int(_chunk_offsets(raster.data.chunks[1])[
-        _chunk_index_for(_chunk_offsets(raster.data.chunks[1]), obs_c)])
+    local_r = obs_r - int(_chunk_offsets(dask_data.chunks[0])[
+        _chunk_index_for(_chunk_offsets(dask_data.chunks[0]), obs_r)])
+    local_c = obs_c - int(_chunk_offsets(dask_data.chunks[1])[
+        _chunk_index_for(_chunk_offsets(dask_data.chunks[1]), obs_c)])
     terrain_elev = float(obs_elev_val[local_r, local_c])
     vp_elev = terrain_elev + observer_elev
 
     visibility = _viewshed_distance_sweep(
-        raster.data, height, width, obs_r, obs_c,
+        dask_data, height, width, obs_r, obs_c,
         vp_elev, target_elev, ew_res, ns_res,
-        raster.data.chunks[0], raster.data.chunks[1],
-        max_distance,
+        dask_data.chunks[0], dask_data.chunks[1],
+        None,
     )
 
     vis_da = da.from_array(visibility, chunks=raster.data.chunks)
