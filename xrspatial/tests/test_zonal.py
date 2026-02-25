@@ -996,52 +996,121 @@ def create_test_arr(arr):
     return raster
 
 
-def test_regions_four_pixel_connectivity_int():
+def _make_regions_raster(arr, backend):
+    """Create a test raster from *arr* for the given backend."""
+    raster = create_test_raster(arr, backend)
+    return raster
+
+
+def _count_unique(raster_regions):
+    """Count unique values in a regions result, computing dask if needed."""
+    data = raster_regions.data
+    if da is not None and isinstance(data, da.Array):
+        data = data.compute()
+    return len(np.unique(data))
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_regions_four_pixel_connectivity_int(backend):
     arr = np.array([[0, 0, 0, 0],
                     [0, 4, 0, 0],
                     [1, 4, 4, 0],
                     [1, 1, 1, 0],
                     [0, 0, 0, 0]], dtype=np.int64)
-    raster = create_test_arr(arr)
+    raster = _make_regions_raster(arr, backend)
     raster_regions = regions(raster, neighborhood=4)
-    assert len(np.unique(raster_regions.data)) == 3
+    assert _count_unique(raster_regions) == 3
     assert raster.shape == raster_regions.shape
 
 
-def test_regions_four_pixel_connectivity_float():
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_regions_four_pixel_connectivity_float(backend):
     arr = np.array([[0, 0, 0, np.nan],
                     [0, 4, 0, 0],
                     [1, 4, 4, 0],
                     [1, 1, 1, 0],
                     [0, 0, 0, 0]], dtype=np.float64)
-    raster = create_test_arr(arr)
+    raster = _make_regions_raster(arr, backend)
     raster_regions = regions(raster, neighborhood=4)
-    assert len(np.unique(raster_regions.data)) == 4
+    assert _count_unique(raster_regions) == 4
     assert raster.shape == raster_regions.shape
 
 
-def test_regions_eight_pixel_connectivity_int():
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_regions_eight_pixel_connectivity_int(backend):
     arr = np.array([[1, 0, 0, 0],
                     [0, 1, 0, 0],
                     [0, 0, 1, 0],
                     [0, 0, 0, 1],
                     [0, 0, 0, 1]], dtype=np.int64)
-    raster = create_test_arr(arr)
+    raster = _make_regions_raster(arr, backend)
     raster_regions = regions(raster, neighborhood=8)
-    assert len(np.unique(raster_regions.data)) == 2
+    assert _count_unique(raster_regions) == 2
     assert raster.shape == raster_regions.shape
 
 
-def test_regions_eight_pixel_connectivity_float():
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_regions_eight_pixel_connectivity_float(backend):
     arr = np.array([[1, 0, 0, np.nan],
                     [0, 1, 0, 0],
                     [0, 0, 1, 0],
                     [0, 0, 0, 1],
                     [0, 0, 0, 1]], dtype=np.float64)
-    raster = create_test_arr(arr)
+    raster = _make_regions_raster(arr, backend)
     raster_regions = regions(raster, neighborhood=8)
-    assert len(np.unique(raster_regions.data)) == 3
+    assert _count_unique(raster_regions) == 3
     assert raster.shape == raster_regions.shape
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_regions_single_pixel(backend):
+    arr = np.array([[np.nan, np.nan],
+                    [np.nan, 5.0]], dtype=np.float64)
+    raster = _make_regions_raster(arr, backend)
+    raster_regions = regions(raster, neighborhood=4)
+    data = raster_regions.data
+    if da is not None and isinstance(data, da.Array):
+        data = data.compute()
+    assert np.nansum(data > 0) == 1
+    assert raster.shape == raster_regions.shape
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_regions_all_same_value(backend):
+    arr = np.full((4, 4), 7.0, dtype=np.float64)
+    raster = _make_regions_raster(arr, backend)
+    raster_regions = regions(raster, neighborhood=4)
+    assert _count_unique(raster_regions) == 1
+    assert raster.shape == raster_regions.shape
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_regions_all_nan(backend):
+    arr = np.full((3, 3), np.nan, dtype=np.float64)
+    raster = _make_regions_raster(arr, backend)
+    raster_regions = regions(raster, neighborhood=4)
+    data = raster_regions.data
+    if da is not None and isinstance(data, da.Array):
+        data = data.compute()
+    assert np.all(np.isnan(data))
+    assert raster.shape == raster_regions.shape
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_regions_numpy_dask_match(backend):
+    """Verify numpy and dask backends produce identical results."""
+    arr = np.array([[1, 1, 0, 2],
+                    [1, 1, 0, 2],
+                    [0, 0, 0, 0],
+                    [3, 3, 0, 3]], dtype=np.float64)
+    raster = _make_regions_raster(arr, backend)
+    result = regions(raster, neighborhood=4)
+    data = result.data
+    if da is not None and isinstance(data, da.Array):
+        data = data.compute()
+    # 0-region is connected, 1-region, 2-region, and two separate 3-regions
+    assert _count_unique(result) == 5
+    assert result.shape == arr.shape
 
 
 def test_trim():
