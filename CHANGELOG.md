@@ -2,6 +2,27 @@
 -----------
 
 
+### Version 0.6.0 - 2026-02-24
+
+Highlights: xarray accessor (`.xrs`) is now available, providing a convenient
+interface for all spatial operations directly on DataArrays and Datasets.
+
+- Fixes #880: replace single-chunk rechunk in cost_distance with iterative tile Dijkstra (#888)
+- Fix test warnings: suppress expected GPU/NaN warnings, fix scalar conversion and host-array copies (#887)
+- Fixes #804: add min_observable_height() to experimental (#875) (#886)
+- Fixes #845: add configurable boundary mode to kernel-based spatial ops (#874)
+- Fixes #587: unify project requirements around setup.cfg (#873)
+- Document CPU vs GPU algorithm difference in viewshed docstring (#872)
+- Fixes #114: add Mahalanobis distance metric (#871)
+- Fix perlin/terrain dask backends: enable parallelism and out-of-core support (#870)
+- Fixes #790: add .xrs xarray accessors (#868)
+- Fixes #748: align hillshade with GDAL and add dask+cupy backend (#867)
+- Added cupy support to true_color function (#866)
+- Fixes #864: remove local analysis module, add migration guide (#865)
+- Add GPU spill-to-CPU fallback for cost_distance (#863)
+- Fixes #560: weighted A* pathfinding with friction surface (#862)
+
+
 ### Version 0.5.3 - 2026-02-22
 - Fixes #733: add cost_distance() for weighted proximity (#859)
 - Fixes #734: make noise a lazy import so datasets module is usable without it (#858)
