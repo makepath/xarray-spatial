@@ -263,6 +263,29 @@ def test_viewshed_dask_distance_sweep():
     assert (result > INVISIBLE).all()
 
 
+def test_viewshed_dask_max_distance_lazy_output():
+    """max_distance on a large dask raster should produce a lazy output
+    without allocating the full grid in memory."""
+    ny, nx = 100_000, 100_000  # 80 GB if materialized
+    # Don't actually create the data — just define a lazy dask array
+    single_chunk = da.zeros((1000, 1000), chunks=(1000, 1000),
+                            dtype=np.float64)
+    # Tile to 100k x 100k via dask (no memory allocated)
+    big = da.tile(single_chunk, (100, 100))
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+    raster = xa.DataArray(big, coords=dict(x=xs, y=ys), dims=["y", "x"])
+    v = viewshed(raster, x=50000.0, y=50000.0,
+                 observer_elev=5, max_distance=10.0)
+    # Output should be a dask array (lazy), not numpy
+    assert isinstance(v.data, da.Array)
+    assert v.shape == (ny, nx)
+    # Only compute a small slice to verify correctness
+    center = v.isel(y=slice(49990, 50011), x=slice(49990, 50011)).values
+    assert center[10, 10] == 180.0  # observer cell
+    assert (center > INVISIBLE).all()  # flat terrain, all visible
+
+
 def test_viewshed_numpy_max_distance():
     """max_distance should work on plain numpy raster too."""
     ny, nx = 20, 20

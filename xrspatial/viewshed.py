@@ -1720,6 +1720,63 @@ def viewshed(raster: xarray.DataArray,
 # Dask backend helpers
 # ---------------------------------------------------------------------------
 
+def _dask_embed_window(window_np, H, W, r_lo, r_hi, c_lo, c_hi, chunks):
+    """Embed a small numpy result into a full-size lazy dask INVISIBLE array.
+
+    Builds the output chunk-by-chunk: chunks that overlap the window get a
+    numpy array with the window values pasted in; all other chunks are
+    created via ``dask.array.full`` so they consume no memory until
+    materialised.
+    """
+    import dask.array as da
+
+    y_offsets = _chunk_offsets(chunks[0])
+    x_offsets = _chunk_offsets(chunks[1])
+    n_yc = len(chunks[0])
+    n_xc = len(chunks[1])
+
+    rows = []
+    for yi in range(n_yc):
+        row_blocks = []
+        cy0, cy1 = int(y_offsets[yi]), int(y_offsets[yi + 1])
+        cy_size = cy1 - cy0
+        for xi in range(n_xc):
+            cx0, cx1 = int(x_offsets[xi]), int(x_offsets[xi + 1])
+            cx_size = cx1 - cx0
+
+            # Does this chunk overlap the result window?
+            ov_r0 = max(cy0, r_lo)
+            ov_r1 = min(cy1, r_hi)
+            ov_c0 = max(cx0, c_lo)
+            ov_c1 = min(cx1, c_hi)
+
+            if ov_r0 < ov_r1 and ov_c0 < ov_c1:
+                # This chunk overlaps — build a concrete numpy block
+                block = np.full((cy_size, cx_size), INVISIBLE,
+                                dtype=np.float64)
+                # Local indices within the block and within window_np
+                block[ov_r0 - cy0:ov_r1 - cy0,
+                      ov_c0 - cx0:ov_c1 - cx0] = \
+                    window_np[ov_r0 - r_lo:ov_r1 - r_lo,
+                              ov_c0 - c_lo:ov_c1 - c_lo]
+                row_blocks.append(da.from_delayed(
+                    _identity_delayed(block),
+                    shape=(cy_size, cx_size), dtype=np.float64))
+            else:
+                # No overlap — lazy INVISIBLE block (zero memory)
+                row_blocks.append(
+                    da.full((cy_size, cx_size), INVISIBLE,
+                            dtype=np.float64, chunks=(cy_size, cx_size)))
+        rows.append(da.concatenate(row_blocks, axis=1))
+    return da.concatenate(rows, axis=0)
+
+
+def _identity_delayed(x):
+    """Wrap a concrete value in a dask delayed for da.from_delayed."""
+    import dask
+    return dask.delayed(lambda v: v)(x)
+
+
 def _available_memory_bytes():
     """Best-effort estimate of available memory in bytes."""
     try:
@@ -2034,7 +2091,18 @@ def _viewshed_windowed(raster, x, y, observer_elev, target_elev,
             window, x, y, observer_elev, target_elev)
 
     # Embed in full-size INVISIBLE output, preserving array type
-    if is_cupy and has_rtx():
+    is_dask = has_dask_array() and isinstance(raster.data, da.Array)
+
+    if is_dask:
+        # Build output lazily to avoid allocating the full grid in memory.
+        # The window result is a small numpy array; the surrounding region
+        # is filled with INVISIBLE via dask.array.full.
+        local_vals = local_result.values if isinstance(
+            local_result.data, np.ndarray) else local_result.data.get()
+        full_vis = _dask_embed_window(
+            local_vals, height, width, r_lo, r_hi, c_lo, c_hi,
+            raster.data.chunks)
+    elif is_cupy and has_rtx():
         import cupy as cp
         full_vis = cp.full((height, width), INVISIBLE, dtype=np.float64)
         full_vis[r_lo:r_hi, c_lo:c_hi] = local_result.data
@@ -2042,10 +2110,6 @@ def _viewshed_windowed(raster, x, y, observer_elev, target_elev,
         local_vals = local_result.values
         full_vis = np.full((height, width), INVISIBLE, dtype=np.float64)
         full_vis[r_lo:r_hi, c_lo:c_hi] = local_vals
-
-    # Wrap in the same array type as the input
-    if has_dask_array() and isinstance(raster.data, da.Array):
-        full_vis = da.from_array(full_vis, chunks=raster.data.chunks)
 
     return xarray.DataArray(full_vis, coords=raster.coords,
                             dims=raster.dims, attrs=raster.attrs)
