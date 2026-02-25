@@ -405,17 +405,31 @@ def _run_quantile(data, k, module):
     return q
 
 
+def _run_dask_quantile(data, k):
+    # Avoid boolean fancy indexing (data[da.isfinite(data)]) which creates
+    # unknown dask chunk sizes.  Instead, replace inf with nan (preserves
+    # known chunks), compute to numpy, then use np.nanpercentile (#884).
+    w = 100.0 / k
+    p = np.arange(w, 100 + w, w)
+    if p[-1] > 100.0:
+        p[-1] = 100.0
+    clean = da.where(da.isinf(data), np.nan, data)
+    values = clean.ravel().compute()
+    q = np.nanpercentile(values, p)
+    q = np.unique(q)
+    return q
+
+
 def _run_dask_cupy_quantile(data, k):
-    # Convert dask+cupy chunks to numpy one at a time via map_blocks,
-    # then use dask's streaming approximate percentile (no full materialization).
+    # Convert dask+cupy chunks to numpy, then same safe path as dask (#884).
     data_cpu = data.map_blocks(cupy.asnumpy, dtype=data.dtype, meta=np.array(()))
-    return _run_quantile(data_cpu, k, da)
+    return _run_dask_quantile(data_cpu, k)
 
 
 def _quantile(agg, k):
     mapper = ArrayTypeFunctionMapping(
         numpy_func=lambda *args: _run_quantile(*args, module=np),
-        dask_func=lambda *args: _run_quantile(*args, module=da),
+        dask_func=_run_dask_quantile,
         cupy_func=lambda *args: _run_quantile(*args, module=cupy),
         dask_cupy_func=_run_dask_cupy_quantile
     )
@@ -1105,9 +1119,21 @@ def _run_percentiles(data, pct, module):
     return q
 
 
+def _run_dask_percentiles(data, pct):
+    # Avoid boolean fancy indexing (data[da.isfinite(data)]) which creates
+    # unknown dask chunk sizes.  Replace inf with nan, compute to numpy,
+    # then use np.nanpercentile (#884).
+    clean = da.where(da.isinf(data), np.nan, data)
+    values = clean.ravel().compute()
+    q = np.nanpercentile(values, pct)
+    q = np.unique(q)
+    return q
+
+
 def _run_dask_cupy_percentiles(data, pct):
+    # Convert dask+cupy chunks to numpy, then same safe path as dask (#884).
     data_cpu = data.map_blocks(cupy.asnumpy, dtype=data.dtype, meta=np.array(()))
-    return _run_percentiles(data_cpu, pct, da)
+    return _run_dask_percentiles(data_cpu, pct)
 
 
 @supports_dataset
@@ -1144,7 +1170,7 @@ def percentiles(agg: xr.DataArray,
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=lambda *args: _run_percentiles(*args, module=np),
-        dask_func=lambda *args: _run_percentiles(*args, module=da),
+        dask_func=_run_dask_percentiles,
         cupy_func=lambda *args: _run_percentiles(*args, module=cupy),
         dask_cupy_func=_run_dask_cupy_percentiles,
     )
