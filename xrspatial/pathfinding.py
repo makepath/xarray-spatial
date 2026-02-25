@@ -123,6 +123,47 @@ def _neighborhood_structure(cellsize_x, cellsize_y, connectivity=8):
     return dy, dx, dd
 
 
+# ---------------------------------------------------------------------------
+# Memory safety helpers
+# ---------------------------------------------------------------------------
+
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    # Try /proc/meminfo (Linux)
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB → bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    # Try psutil
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    # Fallback: 2 GB
+    return 2 * 1024 ** 3
+
+
+def _check_memory(height, width):
+    """Raise MemoryError if A* arrays would exceed 80% of available RAM.
+
+    The numba A* kernel allocates ~65 bytes per pixel (parent arrays,
+    g-cost, visited, heap arrays, path image, friction).
+    """
+    required = height * width * 65
+    available = _available_memory_bytes()
+    if required > 0.8 * available:
+        raise MemoryError(
+            f"A* on a {height}x{width} grid requires ~{required / 1e9:.1f} GB "
+            f"but only {available / 1e9:.1f} GB is available. "
+            f"Use search_radius to limit the search area, "
+            f"or use a dask-backed array for out-of-core pathfinding."
+        )
+
+
 @ngjit
 def _reconstruct_path(path_img, parent_ys, parent_xs, g_cost,
                       start_py, start_px, goal_py, goal_px):
@@ -253,6 +294,243 @@ def _a_star_search(data, path_img, start_py, start_px, goal_py, goal_px,
                                     f_val, ny, nx)
 
     return
+
+
+# ---------------------------------------------------------------------------
+# Bounded A* (sub-region search)
+# ---------------------------------------------------------------------------
+
+def _bounded_a_star_sub(surface_data, friction_data, start_py, start_px,
+                        goal_py, goal_px, barriers, dy, dx, dd,
+                        f_min, use_friction, cellsize_x, cellsize_y,
+                        search_radius, h, w):
+    """Run A* on a sub-region around start and goal.
+
+    Returns ``(sub_path_img, min_row, min_col)`` where *sub_path_img*
+    is a small 2-D array covering only the bounding box.
+    """
+    min_row = max(0, min(start_py, goal_py) - search_radius)
+    max_row = min(h, max(start_py, goal_py) + search_radius + 1)
+    min_col = max(0, min(start_px, goal_px) - search_radius)
+    max_col = min(w, max(start_px, goal_px) + search_radius + 1)
+
+    sub_surface = np.ascontiguousarray(
+        surface_data[min_row:max_row, min_col:max_col])
+    if use_friction:
+        sub_friction = np.ascontiguousarray(
+            friction_data[min_row:max_row, min_col:max_col])
+    else:
+        sub_h = max_row - min_row
+        sub_w = max_col - min_col
+        sub_friction = np.ones((sub_h, sub_w), dtype=np.float64)
+
+    local_start_py = start_py - min_row
+    local_start_px = start_px - min_col
+    local_goal_py = goal_py - min_row
+    local_goal_px = goal_px - min_col
+
+    sub_path_img = np.full(sub_surface.shape, np.nan, dtype=np.float64)
+    _a_star_search(sub_surface, sub_path_img,
+                   local_start_py, local_start_px,
+                   local_goal_py, local_goal_px,
+                   barriers, dy, dx, dd,
+                   sub_friction, f_min, use_friction,
+                   cellsize_x, cellsize_y)
+
+    return sub_path_img, min_row, min_col
+
+
+def _bounded_a_star(surface_data, friction_data, start_py, start_px,
+                    goal_py, goal_px, barriers, dy, dx, dd,
+                    f_min, use_friction, cellsize_x, cellsize_y,
+                    search_radius, h, w):
+    """Run bounded A* and embed the result into a full-size path array."""
+    sub_path, min_row, min_col = _bounded_a_star_sub(
+        surface_data, friction_data, start_py, start_px,
+        goal_py, goal_px, barriers, dy, dx, dd,
+        f_min, use_friction, cellsize_x, cellsize_y,
+        search_radius, h, w)
+
+    path_img = np.full((h, w), np.nan, dtype=np.float64)
+    sh, sw = sub_path.shape
+    path_img[min_row:min_row + sh, min_col:min_col + sw] = sub_path
+    return path_img
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical pathfinding (HPA*)
+# ---------------------------------------------------------------------------
+
+@ngjit
+def _coarsen_surface(data, factor, barriers):
+    """Coarsen surface by *factor*.
+
+    A coarse cell is passable if ANY fine cell in the block is
+    non-barrier.  Value is the mean of non-barrier fine cells.
+    """
+    h, w = data.shape
+    ch = (h + factor - 1) // factor
+    cw = (w + factor - 1) // factor
+    coarse = np.full((ch, cw), np.nan, dtype=np.float64)
+
+    for ci in range(ch):
+        for cj in range(cw):
+            r0 = ci * factor
+            r1 = min(r0 + factor, h)
+            c0 = cj * factor
+            c1 = min(c0 + factor, w)
+            total = 0.0
+            count = 0
+            for r in range(r0, r1):
+                for c in range(c0, c1):
+                    if not _is_not_crossable(data[r, c], barriers):
+                        total += data[r, c]
+                        count += 1
+            if count > 0:
+                coarse[ci, cj] = total / count
+
+    return coarse
+
+
+@ngjit
+def _coarsen_friction(friction, factor):
+    """Coarsen friction by *factor*. Mean of positive finite values."""
+    h, w = friction.shape
+    ch = (h + factor - 1) // factor
+    cw = (w + factor - 1) // factor
+    coarse = np.full((ch, cw), np.nan, dtype=np.float64)
+
+    for ci in range(ch):
+        for cj in range(cw):
+            r0 = ci * factor
+            r1 = min(r0 + factor, h)
+            c0 = cj * factor
+            c1 = min(c0 + factor, w)
+            total = 0.0
+            count = 0
+            for r in range(r0, r1):
+                for c in range(c0, c1):
+                    v = friction[r, c]
+                    if np.isfinite(v) and v > 0:
+                        total += v
+                        count += 1
+            if count > 0:
+                coarse[ci, cj] = total / count
+
+    return coarse
+
+
+def _hpa_star_search(surface_data, friction_data, start_py, start_px,
+                     goal_py, goal_px, barriers, dy, dx, dd,
+                     f_min, use_friction, cellsize_x, cellsize_y, h, w):
+    """Hierarchical pathfinding: coarsen -> route on coarse grid -> refine.
+
+    Uses the existing ``_a_star_search`` kernel on a coarsened grid to
+    find a global route, then refines each segment with bounded A*.
+    """
+    factor = max(16, int(np.sqrt(max(h, w))))
+
+    # --- Coarsen ---
+    coarse_surface = _coarsen_surface(surface_data, factor, barriers)
+    if use_friction:
+        coarse_friction = _coarsen_friction(friction_data, factor)
+    else:
+        coarse_friction = np.ones(coarse_surface.shape, dtype=np.float64)
+
+    ch, cw = coarse_surface.shape
+
+    # Coarse start / goal (clamped)
+    cs_py = min(start_py // factor, ch - 1)
+    cs_px = min(start_px // factor, cw - 1)
+    cg_py = min(goal_py // factor, ch - 1)
+    cg_px = min(goal_px // factor, cw - 1)
+
+    # Neighbourhood for coarse grid
+    coarse_cx = cellsize_x * factor
+    coarse_cy = cellsize_y * factor
+    c_dy, c_dx, c_dd = _neighborhood_structure(coarse_cx, coarse_cy, 8)
+
+    # --- Route on coarse grid ---
+    coarse_path = np.full((ch, cw), np.nan, dtype=np.float64)
+    _a_star_search(coarse_surface, coarse_path,
+                   cs_py, cs_px, cg_py, cg_px,
+                   barriers, c_dy, c_dx, c_dd,
+                   coarse_friction, f_min, use_friction,
+                   coarse_cx, coarse_cy)
+
+    # Extract ordered waypoints (sorted by ascending cost)
+    path_cells = []
+    for r in range(ch):
+        for c in range(cw):
+            if np.isfinite(coarse_path[r, c]):
+                path_cells.append((coarse_path[r, c], r, c))
+
+    if not path_cells:
+        return np.full((h, w), np.nan, dtype=np.float64)
+
+    path_cells.sort()
+
+    # Convert coarse waypoints to fine-grid coordinates (block centres)
+    waypoints = []
+    for _, cr, cc in path_cells:
+        fr = min(cr * factor + factor // 2, h - 1)
+        fc = min(cc * factor + factor // 2, w - 1)
+        waypoints.append((fr, fc))
+
+    # Exact start / goal
+    waypoints[0] = (start_py, start_px)
+    waypoints[-1] = (goal_py, goal_px)
+
+    # --- Refine segment by segment ---
+    path_img = np.full((h, w), np.nan, dtype=np.float64)
+    cumulative_cost = 0.0
+
+    for seg_idx in range(len(waypoints) - 1):
+        s_py, s_px = waypoints[seg_idx]
+        g_py, g_px = waypoints[seg_idx + 1]
+
+        if s_py == g_py and s_px == g_px:
+            continue
+
+        base_radius = 2 * factor
+        sub_path = None
+        min_row = min_col = 0
+
+        for multiplier in (1, 2, 4, 8):
+            radius = base_radius * multiplier
+            sub_path, min_row, min_col = _bounded_a_star_sub(
+                surface_data, friction_data,
+                s_py, s_px, g_py, g_px,
+                barriers, dy, dx, dd,
+                f_min, use_friction, cellsize_x, cellsize_y,
+                radius, h, w)
+
+            local_gy = g_py - min_row
+            local_gx = g_px - min_col
+            if np.isfinite(sub_path[local_gy, local_gx]):
+                break
+
+        local_gy = g_py - min_row
+        local_gx = g_px - min_col
+        if sub_path is None or not np.isfinite(sub_path[local_gy, local_gx]):
+            return path_img  # partial result
+
+        seg_goal_cost = sub_path[local_gy, local_gx]
+        sh, sw = sub_path.shape
+
+        # Stitch into full output with cost offset
+        mask = np.isfinite(sub_path)
+        if seg_idx > 0:
+            # Don't overwrite junction (already written as previous goal)
+            local_sy = s_py - min_row
+            local_sx = s_px - min_col
+            mask[local_sy, local_sx] = False
+
+        target = path_img[min_row:min_row + sh, min_col:min_col + sw]
+        target[mask] = sub_path[mask] + cumulative_cost
+        cumulative_cost += seg_goal_cost
+
+    return path_img
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +775,8 @@ def a_star_search(surface: xr.DataArray,
                   connectivity: int = 8,
                   snap_start: bool = False,
                   snap_goal: bool = False,
-                  friction: xr.DataArray = None) -> xr.DataArray:
+                  friction: xr.DataArray = None,
+                  search_radius: Optional[int] = None) -> xr.DataArray:
     """
     Calculate the least-cost path from a starting point to a goal through
     a surface graph, optionally weighted by a friction surface.
@@ -526,6 +805,17 @@ def a_star_search(surface: xr.DataArray,
                    transfers back)
     Dask + CuPy    Same sparse A* as Dask, with cupy→numpy chunk conversion
     =============  ===========================================================
+
+    **Memory safety**
+
+    Before allocating arrays, the numpy and cupy backends check
+    whether the grid would exceed 80 % of available RAM.  If so, a
+    ``MemoryError`` is raised suggesting ``search_radius`` or dask.
+    When ``search_radius=None`` and the grid would exceed 50 % of
+    RAM, an automatic radius is computed.  For very long paths
+    (manhattan distance > 1000 pixels) with auto-radius, hierarchical
+    pathfinding (HPA*) is used: the grid is coarsened, a global route
+    is found, then refined segment by segment.
 
     ``snap_start`` and ``snap_goal`` are not supported with Dask-backed
     arrays (raises ``ValueError``).
@@ -558,6 +848,14 @@ def a_star_search(surface: xr.DataArray,
         cells; NaN or ``<= 0`` marks impassable barriers.  When
         provided, edge costs become
         ``geometric_distance * mean_friction_of_endpoints``.
+    search_radius : int, optional
+        Limit the A* search to a bounding box of
+        ``±search_radius`` pixels around the start and goal.
+        Dramatically reduces memory for large grids when start and
+        goal are relatively close.  If ``None`` (default) and the
+        full grid would exceed 50 % of available RAM, an automatic
+        radius is computed.  Ignored for dask-backed arrays (already
+        memory-safe).
 
     Returns
     -------
@@ -739,19 +1037,55 @@ def a_star_search(surface: xr.DataArray,
                 raise ValueError("friction has no positive finite values")
             f_min = float(np.min(friction_np[mask]))
         else:
-            friction_np = np.ones((h, w), dtype=np.float64)
+            friction_np = None
             f_min = 1.0
 
-        path_img = np.full(surface.shape, np.nan, dtype=np.float64)
-        if start_py != NONE:
-            _a_star_search(surface_np, path_img, start_py, start_px,
-                           goal_py, goal_px, barriers, dy, dx, dd,
-                           friction_np, f_min, use_friction,
-                           cellsize_x, cellsize_y)
+        # Determine effective search radius
+        _radius = search_radius
+        _auto_radius = False
+        if _radius is None:
+            required = h * w * 65
+            avail = _available_memory_bytes()
+            if required > 0.5 * avail:
+                manhattan = abs(start_py - goal_py) + abs(start_px - goal_px)
+                _radius = 2 * manhattan
+                _auto_radius = True
+
+        if _radius is not None and start_py != NONE:
+            manhattan = abs(start_py - goal_py) + abs(start_px - goal_px)
+            sub_h = (min(h, max(start_py, goal_py) + _radius + 1)
+                     - max(0, min(start_py, goal_py) - _radius))
+            sub_w = (min(w, max(start_px, goal_px) + _radius + 1)
+                     - max(0, min(start_px, goal_px) - _radius))
+            _check_memory(sub_h, sub_w)
+
+            if _auto_radius and manhattan > 1000:
+                path_img = _hpa_star_search(
+                    surface_np, friction_np,
+                    start_py, start_px, goal_py, goal_px,
+                    barriers, dy, dx, dd,
+                    f_min, use_friction, cellsize_x, cellsize_y, h, w)
+            else:
+                path_img = _bounded_a_star(
+                    surface_np, friction_np,
+                    start_py, start_px, goal_py, goal_px,
+                    barriers, dy, dx, dd,
+                    f_min, use_friction, cellsize_x, cellsize_y,
+                    _radius, h, w)
+        else:
+            _check_memory(h, w)
+            if friction_np is None:
+                friction_np = np.ones((h, w), dtype=np.float64)
+            path_img = np.full(surface.shape, np.nan, dtype=np.float64)
+            if start_py != NONE:
+                _a_star_search(surface_np, path_img, start_py, start_px,
+                               goal_py, goal_px, barriers, dy, dx, dd,
+                               friction_np, f_min, use_friction,
+                               cellsize_x, cellsize_y)
         path_data = cupy.asarray(path_img)
 
     else:
-        # numpy path (existing, unchanged)
+        # numpy path
         if use_friction:
             friction_data = np.asarray(friction.data, dtype=np.float64)
             mask = np.isfinite(friction_data) & (friction_data > 0)
@@ -759,15 +1093,52 @@ def a_star_search(surface: xr.DataArray,
                 raise ValueError("friction has no positive finite values")
             f_min = float(np.min(friction_data[mask]))
         else:
-            friction_data = np.ones((h, w), dtype=np.float64)
+            friction_data = None
             f_min = 1.0
 
-        path_img = np.full(surface.shape, np.nan, dtype=np.float64)
-        if start_py != NONE:
-            _a_star_search(surface_data, path_img, start_py, start_px,
-                           goal_py, goal_px, barriers, dy, dx, dd,
-                           friction_data, f_min, use_friction,
-                           cellsize_x, cellsize_y)
+        # Determine effective search radius
+        _radius = search_radius
+        _auto_radius = False
+        if _radius is None:
+            required = h * w * 65
+            avail = _available_memory_bytes()
+            if required > 0.5 * avail:
+                manhattan = abs(start_py - goal_py) + abs(start_px - goal_px)
+                _radius = 2 * manhattan
+                _auto_radius = True
+
+        if _radius is not None and start_py != NONE:
+            manhattan = abs(start_py - goal_py) + abs(start_px - goal_px)
+            sub_h = (min(h, max(start_py, goal_py) + _radius + 1)
+                     - max(0, min(start_py, goal_py) - _radius))
+            sub_w = (min(w, max(start_px, goal_px) + _radius + 1)
+                     - max(0, min(start_px, goal_px) - _radius))
+            _check_memory(sub_h, sub_w)
+
+            if _auto_radius and manhattan > 1000:
+                path_img = _hpa_star_search(
+                    surface_data, friction_data,
+                    start_py, start_px, goal_py, goal_px,
+                    barriers, dy, dx, dd,
+                    f_min, use_friction, cellsize_x, cellsize_y, h, w)
+            else:
+                path_img = _bounded_a_star(
+                    surface_data, friction_data,
+                    start_py, start_px, goal_py, goal_px,
+                    barriers, dy, dx, dd,
+                    f_min, use_friction, cellsize_x, cellsize_y,
+                    _radius, h, w)
+        else:
+            # Full-grid A*
+            _check_memory(h, w)
+            if friction_data is None:
+                friction_data = np.ones((h, w), dtype=np.float64)
+            path_img = np.full(surface.shape, np.nan, dtype=np.float64)
+            if start_py != NONE:
+                _a_star_search(surface_data, path_img, start_py, start_px,
+                               goal_py, goal_px, barriers, dy, dx, dd,
+                               friction_data, f_min, use_friction,
+                               cellsize_x, cellsize_y)
         path_data = path_img
 
     path_agg = xr.DataArray(path_data,
