@@ -1212,3 +1212,72 @@ def test_crop_nothing_to_crop():
     assert result.shape == arr.shape
     compare = arr == result.data
     assert compare.all()
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for #881: np.unique / np.isfinite must not materialise
+# the full dask array.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(not has_dask_array(), reason="dask.array not available")
+def test_stats_does_not_materialise_dask_zones():
+    """stats() with dask backend must never pass a dask array to np.unique."""
+    from unittest import mock
+
+    zones_np = np.array([[0, 0, 1, 1, 2, 2, 3, 3],
+                         [0, 0, 1, 1, 2, 2, 3, 3],
+                         [0, 0, 1, 1, 2, np.nan, 3, 3]])
+    values_np = np.array([[0, 0, 1, 1, 2, 2, 3, np.inf],
+                          [0, 0, 1, 1, 2, np.nan, 3, 0],
+                          [np.inf, 0, 1, 1, 2, 2, 3, 3]])
+
+    zones = xr.DataArray(da.from_array(zones_np, chunks=(3, 4)), dims=['y', 'x'])
+    values = xr.DataArray(da.from_array(values_np, chunks=(3, 4)), dims=['y', 'x'])
+
+    _real_np_unique = np.unique
+
+    def _guarded_unique(a, *args, **kwargs):
+        if isinstance(a, da.Array):
+            raise AssertionError("np.unique called with a dask array — would materialise")
+        return _real_np_unique(a, *args, **kwargs)
+
+    with mock.patch("xrspatial.zonal.np.unique", side_effect=_guarded_unique):
+        result = stats(zones, values)
+
+    # dask path returns a lazy dask DataFrame; compute to verify correctness
+    if hasattr(result, 'compute'):
+        result = result.compute()
+    assert isinstance(result, pd.DataFrame)
+    assert len(result) > 0
+
+
+@pytest.mark.skipif(not has_dask_array(), reason="dask.array not available")
+def test_crosstab_does_not_materialise_dask_zones():
+    """crosstab() with dask backend must never pass a dask array to np.unique."""
+    from unittest import mock
+
+    zones_np = np.array([[0, 0, 1, 1, 2, 2, 3, 3],
+                         [0, 0, 1, 1, 2, 2, 3, 3],
+                         [0, 0, 1, 1, 2, np.nan, 3, 3]])
+    values_np = np.array([[0, 0, 1, 1, 2, 2, 3, 3],
+                          [0, 0, 1, 1, 2, np.nan, 3, 0],
+                          [0, 0, 1, 1, 2, 2, 3, 3]])
+
+    zones = xr.DataArray(da.from_array(zones_np, chunks=(3, 4)), dims=['y', 'x'])
+    values = xr.DataArray(da.from_array(values_np, chunks=(3, 4)), dims=['y', 'x'])
+
+    _real_np_unique = np.unique
+
+    def _guarded_unique(a, *args, **kwargs):
+        if isinstance(a, da.Array):
+            raise AssertionError("np.unique called with a dask array — would materialise")
+        return _real_np_unique(a, *args, **kwargs)
+
+    with mock.patch("xrspatial.zonal.np.unique", side_effect=_guarded_unique):
+        result = crosstab(zones, values)
+
+    # dask path returns a lazy dask DataFrame; compute to verify correctness
+    if hasattr(result, 'compute'):
+        result = result.compute()
+    assert isinstance(result, pd.DataFrame)
+    assert len(result) > 0
