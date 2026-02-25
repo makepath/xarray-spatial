@@ -393,7 +393,8 @@ def reclassify(agg: xr.DataArray,
                         attrs=agg.attrs)
 
 
-def _run_quantile(data, k, module):
+def _run_quantile(data, num_sample, k, module):
+    # num_sample ignored for in-memory backends
     w = 100.0 / k
     p = module.arange(w, 100 + w, w)
 
@@ -405,41 +406,47 @@ def _run_quantile(data, k, module):
     return q
 
 
-def _run_dask_quantile(data, k):
+def _run_dask_quantile(data, num_sample, k):
     # Avoid boolean fancy indexing (data[da.isfinite(data)]) which creates
-    # unknown dask chunk sizes.  Instead, replace inf with nan (preserves
-    # known chunks), compute to numpy, then use np.nanpercentile (#884).
+    # unknown dask chunk sizes.  Use sampling via indexed access to avoid
+    # materialising the full array (#884).
     w = 100.0 / k
     p = np.arange(w, 100 + w, w)
     if p[-1] > 100.0:
         p[-1] = 100.0
     clean = da.where(da.isinf(data), np.nan, data)
-    values = clean.ravel().compute()
-    q = np.nanpercentile(values, p)
+    num_data = data.size
+    if num_sample is None or num_sample >= num_data:
+        num_sample = num_data
+    sample_idx = _generate_sample_indices(num_data, num_sample)
+    values = np.asarray(clean.ravel()[sample_idx].compute())
+    values = values[np.isfinite(values)]
+    q = np.percentile(values, p)
     q = np.unique(q)
     return q
 
 
-def _run_dask_cupy_quantile(data, k):
+def _run_dask_cupy_quantile(data, num_sample, k):
     # Convert dask+cupy chunks to numpy, then same safe path as dask (#884).
     data_cpu = data.map_blocks(cupy.asnumpy, dtype=data.dtype, meta=np.array(()))
-    return _run_dask_quantile(data_cpu, k)
+    return _run_dask_quantile(data_cpu, num_sample, k)
 
 
-def _quantile(agg, k):
+def _quantile(agg, num_sample, k):
     mapper = ArrayTypeFunctionMapping(
         numpy_func=lambda *args: _run_quantile(*args, module=np),
         dask_func=_run_dask_quantile,
         cupy_func=lambda *args: _run_quantile(*args, module=cupy),
         dask_cupy_func=_run_dask_cupy_quantile
     )
-    out = mapper(agg)(agg.data, k)
+    out = mapper(agg)(agg.data, num_sample, k)
     return out
 
 
 @supports_dataset
 def quantile(agg: xr.DataArray,
              k: int = 4,
+             num_sample: Optional[int] = 20_000,
              name: Optional[str] = 'quantile') -> xr.DataArray:
     """
     Reclassifies data for array `agg` into new values based on quantile
@@ -452,6 +459,12 @@ def quantile(agg: xr.DataArray,
         of values to be reclassified.
     k : int, default=4
         Number of quantiles to be produced.
+    num_sample : int or None, default=20000
+        Number of sample data points used to compute percentile
+        breakpoints.  For dask-backed arrays the sample is drawn
+        lazily to avoid materialising the entire array into RAM.
+        ``None`` means use all data (safe for numpy/cupy,
+        automatically capped for dask).
     name : str, default='quantile'
         Name of the output aggregate array.
 
@@ -503,7 +516,7 @@ def quantile(agg: xr.DataArray,
             res:      (10.0, 10.0)
     """
 
-    q = _quantile(agg, k)
+    q = _quantile(agg, num_sample, k)
     k_q = q.shape[0]
     if k_q < k:
         print("Quantile Warning: Not enough unique values"
@@ -1113,32 +1126,39 @@ def head_tail_breaks(agg: xr.DataArray,
                         attrs=agg.attrs)
 
 
-def _run_percentiles(data, pct, module):
+def _run_percentiles(data, num_sample, pct, module):
+    # num_sample ignored for in-memory backends
     q = module.percentile(data[module.isfinite(data)], pct)
     q = module.unique(q)
     return q
 
 
-def _run_dask_percentiles(data, pct):
+def _run_dask_percentiles(data, num_sample, pct):
     # Avoid boolean fancy indexing (data[da.isfinite(data)]) which creates
-    # unknown dask chunk sizes.  Replace inf with nan, compute to numpy,
-    # then use np.nanpercentile (#884).
+    # unknown dask chunk sizes.  Use sampling via indexed access to avoid
+    # materialising the full array (#884).
     clean = da.where(da.isinf(data), np.nan, data)
-    values = clean.ravel().compute()
-    q = np.nanpercentile(values, pct)
+    num_data = data.size
+    if num_sample is None or num_sample >= num_data:
+        num_sample = num_data
+    sample_idx = _generate_sample_indices(num_data, num_sample)
+    values = np.asarray(clean.ravel()[sample_idx].compute())
+    values = values[np.isfinite(values)]
+    q = np.percentile(values, pct)
     q = np.unique(q)
     return q
 
 
-def _run_dask_cupy_percentiles(data, pct):
+def _run_dask_cupy_percentiles(data, num_sample, pct):
     # Convert dask+cupy chunks to numpy, then same safe path as dask (#884).
     data_cpu = data.map_blocks(cupy.asnumpy, dtype=data.dtype, meta=np.array(()))
-    return _run_dask_percentiles(data_cpu, pct)
+    return _run_dask_percentiles(data_cpu, num_sample, pct)
 
 
 @supports_dataset
 def percentiles(agg: xr.DataArray,
                 pct: Optional[List] = None,
+                num_sample: Optional[int] = 20_000,
                 name: Optional[str] = 'percentiles') -> xr.DataArray:
     """
     Classify data based on percentile breakpoints.
@@ -1150,6 +1170,12 @@ def percentiles(agg: xr.DataArray,
         of values to be classified.
     pct : list of float, default=[1, 10, 50, 90, 99]
         Percentile values to use as breakpoints.
+    num_sample : int or None, default=20000
+        Number of sample data points used to compute percentile
+        breakpoints.  For dask-backed arrays the sample is drawn
+        lazily to avoid materialising the entire array into RAM.
+        ``None`` means use all data (safe for numpy/cupy,
+        automatically capped for dask).
     name : str, default='percentiles'
         Name of output aggregate array.
 
@@ -1174,7 +1200,7 @@ def percentiles(agg: xr.DataArray,
         cupy_func=lambda *args: _run_percentiles(*args, module=cupy),
         dask_cupy_func=_run_dask_cupy_percentiles,
     )
-    q = mapper(agg)(agg.data, pct)
+    q = mapper(agg)(agg.data, num_sample, pct)
 
     # Materialize bin edges to numpy
     if hasattr(q, 'compute'):
