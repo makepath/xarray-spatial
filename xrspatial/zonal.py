@@ -40,6 +40,35 @@ from xrspatial.utils import has_dask_array
 TOTAL_COUNT = '_total_count'
 
 
+def _unique_finite_zones(arr):
+    """Sorted unique finite values from *arr* without full materialisation.
+
+    For dask arrays uses ``da.unique`` (per-chunk reduction) so the full
+    array is never pulled into RAM.
+    """
+    if da is not None and isinstance(arr, da.Array):
+        uniq = da.unique(arr).compute()
+        return uniq[np.isfinite(uniq)]
+    return np.unique(arr[np.isfinite(arr)])
+
+
+def _unique_finite_cats(arr, nodata_values):
+    """Sorted unique values excluding NaN, Inf, and *nodata_values*.
+
+    Dask-safe: uses ``da.unique`` so the full array is never materialised.
+    """
+    if da is not None and isinstance(arr, da.Array):
+        uniq = da.unique(arr).compute()
+        mask = np.isfinite(uniq)
+        if nodata_values is not None:
+            mask &= (uniq != nodata_values)
+        return uniq[mask]
+    mask = np.isfinite(arr)
+    if nodata_values is not None:
+        mask &= (arr != nodata_values)
+    return np.unique(arr[mask])
+
+
 def _stats_count(data):
     if isinstance(data, np.ndarray):
         # numpy case
@@ -187,7 +216,7 @@ def _stats_dask_numpy(
 ) -> pd.DataFrame:
 
     # find ids for all zones
-    unique_zones = np.unique(zones[np.isfinite(zones)])
+    unique_zones = _unique_finite_zones(zones)
 
     select_all_zones = False
     # selecte zones to do analysis
@@ -199,7 +228,10 @@ def _stats_dask_numpy(
     values_blocks = values.to_delayed().ravel()
 
     stats_dict = {}
-    stats_dict["zone"] = unique_zones  # zone column
+    stats_dict["zone"] = da.from_delayed(  # zone column
+        delayed(lambda x: x)(unique_zones),
+        shape=(np.nan,), dtype=unique_zones.dtype,
+    )
 
     compute_sum_squares = False
     compute_sum = False
@@ -287,7 +319,7 @@ def _stats_numpy(
 ) -> Union[pd.DataFrame, np.ndarray]:
 
     # find ids for all zones
-    unique_zones = np.unique(zones[np.isfinite(zones)])
+    unique_zones = _unique_finite_zones(zones)
     # selected zones to do analysis
     if zone_ids is None:
         zone_ids = unique_zones
@@ -670,9 +702,7 @@ def stats(
 def _find_cats(values, cat_ids, nodata_values):
     if len(values.shape) == 2:
         # 2D case
-        unique_cats = np.unique(values.data[
-            np.isfinite(values.data) & (values.data != nodata_values)
-        ])
+        unique_cats = _unique_finite_cats(values.data, nodata_values)
     else:
         # 3D case
         unique_cats = values[values.dims[0]].data
@@ -756,7 +786,7 @@ def _crosstab_numpy(
 ) -> pd.DataFrame:
 
     # find ids for all zones
-    unique_zones = np.unique(zones[np.isfinite(zones)])
+    unique_zones = _unique_finite_zones(zones)
     # selected zones to do analysis
     if zone_ids is None:
         zone_ids = unique_zones
@@ -894,7 +924,7 @@ def _crosstab_dask_numpy(
     agg: str,
 ):
     # find ids for all zones
-    unique_zones = np.unique(zones[np.isfinite(zones)])
+    unique_zones = _unique_finite_zones(zones)
     if zone_ids is None:
         zone_ids = unique_zones
     else:
