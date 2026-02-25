@@ -542,3 +542,172 @@ def test_proximity_dask_kdtree_fallback_great_circle():
 
     assert len(kdtree_called) == 0, "k-d tree path should not be used for GREAT_CIRCLE"
     assert isinstance(result.data, da.Array)
+
+
+# ---------------------------------------------------------------------------
+# Tiled KDTree fallback tests (memory-guarded path)
+# ---------------------------------------------------------------------------
+
+def _force_tiled_proximity(raster, **kwargs):
+    """Run proximity with _available_memory_bytes mocked to force tiled path.
+
+    Uses a counter-based side_effect:
+      call 1 (_stream_target_counts cache budget): returns 1  → tiny cache
+      call 2 (_process_dask_kdtree decision):      returns 1  → forces tiled
+      call 3+ (_build_tiled_kdtree result check):  returns 10 GB → passes guard
+    """
+    call_count = [0]
+
+    def _small_then_large():
+        call_count[0] += 1
+        if call_count[0] <= 2:
+            return 1
+        return 10 * 1024 ** 3
+
+    with patch('xrspatial.proximity._available_memory_bytes',
+               side_effect=_small_then_large):
+        return proximity(raster, **kwargs)
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_kdtree_tiled_matches_numpy():
+    """Dense raster forced through tiled path must match numpy baseline."""
+    height, width = 20, 30
+    rng = np.random.RandomState(42)
+    data = rng.choice([0.0, 1.0, 2.0], size=(height, width), p=[0.3, 0.4, 0.3])
+    _lon = np.linspace(0, 29, width)
+    _lat = np.linspace(19, 0, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+
+    numpy_result = proximity(raster, x='lon', y='lat')
+
+    raster.data = da.from_array(data, chunks=(5, 10))
+    dask_result = _force_tiled_proximity(raster, x='lon', y='lat')
+
+    assert isinstance(dask_result.data, da.Array)
+    np.testing.assert_allclose(
+        dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_kdtree_tiled_manhattan():
+    """Tiled path with MANHATTAN metric matches numpy."""
+    height, width = 16, 20
+    rng = np.random.RandomState(99)
+    data = rng.choice([0.0, 1.0, 2.0], size=(height, width), p=[0.3, 0.4, 0.3])
+    _lon = np.linspace(0, 19, width)
+    _lat = np.linspace(15, 0, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+
+    numpy_result = proximity(raster, x='lon', y='lat',
+                             distance_metric='MANHATTAN')
+
+    raster.data = da.from_array(data, chunks=(4, 5))
+    dask_result = _force_tiled_proximity(raster, x='lon', y='lat',
+                                         distance_metric='MANHATTAN')
+
+    assert isinstance(dask_result.data, da.Array)
+    np.testing.assert_allclose(
+        dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_kdtree_tiled_single_target():
+    """One target in a corner, many chunks → exercises max ring expansion."""
+    height, width = 20, 20
+    data = np.zeros((height, width), dtype=np.float64)
+    data[0, 0] = 1.0
+
+    _lon = np.linspace(0, 19, width)
+    _lat = np.linspace(19, 0, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+
+    numpy_result = proximity(raster, x='lon', y='lat')
+
+    raster.data = da.from_array(data, chunks=(5, 5))
+    dask_result = _force_tiled_proximity(raster, x='lon', y='lat')
+
+    assert isinstance(dask_result.data, da.Array)
+    np.testing.assert_allclose(
+        dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_kdtree_tiled_all_targets():
+    """Every pixel is a target → result should be all zeros."""
+    height, width = 12, 12
+    data = np.ones((height, width), dtype=np.float64)
+    _lon = np.linspace(0, 11, width)
+    _lat = np.linspace(11, 0, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+
+    raster.data = da.from_array(data, chunks=(4, 4))
+    dask_result = _force_tiled_proximity(raster, x='lon', y='lat')
+
+    assert isinstance(dask_result.data, da.Array)
+    np.testing.assert_allclose(dask_result.values, 0.0)
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_kdtree_tiled_no_targets():
+    """No targets, forced tiled path → all NaN."""
+    data = np.zeros((10, 10), dtype=np.float64)
+    _lon = np.arange(10, dtype=np.float64)
+    _lat = np.arange(10, dtype=np.float64)[::-1]
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    raster.data = da.from_array(data, chunks=(5, 5))
+
+    # Even with tiny memory, zero targets should return early (all NaN)
+    dask_result = _force_tiled_proximity(raster, x='lon', y='lat')
+    assert isinstance(dask_result.data, da.Array)
+    assert np.all(np.isnan(dask_result.values))
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_kdtree_tiled_warns():
+    """Verify ResourceWarning fires when tiled fallback is selected."""
+    height, width = 10, 10
+    data = np.zeros((height, width), dtype=np.float64)
+    data[5, 5] = 1.0
+    _lon = np.linspace(0, 9, width)
+    _lat = np.linspace(9, 0, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    raster.data = da.from_array(data, chunks=(5, 5))
+
+    with pytest.warns(ResourceWarning, match="tiled KDTree fallback"):
+        _force_tiled_proximity(raster, x='lon', y='lat')
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_kdtree_global_uses_cache():
+    """Global path still works correctly after Phase 0 restructure."""
+    raster = _make_kdtree_raster()
+    numpy_raster = raster.copy()
+    numpy_raster.data = raster.data.compute()
+
+    numpy_result = proximity(numpy_raster, x='lon', y='lat')
+
+    # Global path (default): _available_memory_bytes returns large value
+    with patch('xrspatial.proximity._available_memory_bytes',
+               return_value=10 * 1024**3):
+        dask_result = proximity(raster, x='lon', y='lat')
+
+    assert isinstance(dask_result.data, da.Array)
+    np.testing.assert_allclose(
+        dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
+    )
