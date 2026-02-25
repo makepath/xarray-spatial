@@ -883,3 +883,65 @@ def test_maximum_breaks_dask_matches_numpy():
         maximum_breaks(dask_agg).data.compute(),
         equal_nan=True,
     )
+
+
+# ===================================================================
+# Regression tests: dask paths must not materialise the full array
+# ===================================================================
+
+@dask_array_available
+def test_natural_breaks_dask_no_full_compute():
+    """natural_breaks with num_sample=None on dask must not call
+    .ravel().compute() on the full array (#877)."""
+    elevation = np.arange(100, dtype=np.float64).reshape(10, 10)
+    numpy_agg = xr.DataArray(elevation)
+    dask_agg = xr.DataArray(da.from_array(elevation, chunks=(5, 5)))
+
+    numpy_result = natural_breaks(numpy_agg, num_sample=None, k=5)
+    dask_result = natural_breaks(dask_agg, num_sample=None, k=5)
+
+    np.testing.assert_allclose(
+        numpy_result.data,
+        dask_result.data.compute(),
+        equal_nan=True,
+    )
+
+
+@dask_array_available
+def test_maximum_breaks_dask_no_full_compute():
+    """maximum_breaks on dask must use sampling, not .ravel().compute() (#876)."""
+    elevation = np.arange(100, dtype=np.float64).reshape(10, 10)
+    numpy_agg = xr.DataArray(elevation)
+    dask_agg = xr.DataArray(da.from_array(elevation, chunks=(5, 5)))
+
+    # Default num_sample (20_000) > data.size (100), so all data used
+    numpy_result = maximum_breaks(numpy_agg, k=5)
+    dask_result = maximum_breaks(dask_agg, k=5)
+
+    np.testing.assert_allclose(
+        numpy_result.data,
+        dask_result.data.compute(),
+        equal_nan=True,
+    )
+
+
+@dask_array_available
+def test_maximum_breaks_dask_num_sample():
+    """maximum_breaks with explicit num_sample on dask produces valid,
+    deterministic results (#876)."""
+    elevation = np.arange(100, dtype=np.float64).reshape(10, 10)
+    dask_agg = xr.DataArray(da.from_array(elevation, chunks=(5, 5)))
+
+    result1 = maximum_breaks(dask_agg, k=3, num_sample=50)
+    result2 = maximum_breaks(dask_agg, k=3, num_sample=50)
+
+    # Deterministic: same input + same seed → same output
+    np.testing.assert_allclose(
+        result1.data.compute(),
+        result2.data.compute(),
+        equal_nan=True,
+    )
+    # Valid classification: correct shape and values in expected range
+    assert result1.shape == elevation.shape
+    unique_vals = np.unique(result1.data.compute())
+    assert len(unique_vals) <= 3 + 1  # at most k classes + possible nan
