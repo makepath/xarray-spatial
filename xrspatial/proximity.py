@@ -266,6 +266,21 @@ def _calc_direction(x1, x2, y1, y2):
     return np.float32(d)
 
 
+def _vectorized_calc_direction(x1, x2, y1, y2):
+    """Array-based compass direction from (x1, y1) to (x2, y2).
+
+    Uses the same conversion constant (57.29578) as _calc_direction
+    to ensure identical floating-point behaviour.
+    """
+    dx = x2 - x1
+    dy = y2 - y1
+    d = np.arctan2(-dy, dx) * 57.29578
+    result = np.where(d < 0, 90.0 - d,
+             np.where(d > 90.0, 360.0 - d + 90.0, 90.0 - d))
+    result[(x1 == x2) & (y1 == y2)] = 0.0
+    return result.astype(np.float32)
+
+
 @ngjit
 def _process_proximity_line(
     source_line,
@@ -407,8 +422,9 @@ def _process_proximity_line(
 
 
 def _kdtree_chunk_fn(block, y_coords_1d, x_coords_1d,
-                     tree, block_info, max_distance, p):
-    """Query k-d tree for nearest target distance for every pixel in block."""
+                     tree, block_info, max_distance, p,
+                     process_mode, target_vals, target_coords):
+    """Query k-d tree for nearest target for every pixel in block."""
     if block_info is None or block_info == []:
         return np.full(block.shape, np.nan, dtype=np.float32)
 
@@ -421,11 +437,30 @@ def _kdtree_chunk_fn(block, y_coords_1d, x_coords_1d,
     yy, xx = np.meshgrid(chunk_ys, chunk_xs, indexing='ij')
     query_pts = np.column_stack([yy.ravel(), xx.ravel()])
 
-    dists, _ = tree.query(query_pts, p=p,
-                          distance_upper_bound=max_distance)
-    dists = dists.reshape(h, w).astype(np.float32)
-    dists[dists == np.inf] = np.nan
-    return dists
+    dists, indices = tree.query(query_pts, p=p,
+                                distance_upper_bound=max_distance)
+
+    n_targets = len(target_vals)
+    oob = indices >= n_targets
+    safe_idx = np.where(oob, 0, indices)
+
+    if process_mode == PROXIMITY:
+        result = dists.astype(np.float32)
+        result[result == np.inf] = np.nan
+    elif process_mode == ALLOCATION:
+        result = target_vals[safe_idx].astype(np.float32)
+        result[oob] = np.nan
+    else:  # DIRECTION
+        query_x = xx.ravel()
+        query_y = yy.ravel()
+        target_x = target_coords[safe_idx, 1]
+        target_y = target_coords[safe_idx, 0]
+        result = _vectorized_calc_direction(
+            query_x, target_x, query_y, target_y)
+        result[oob] = np.nan
+        result[dists == 0] = 0.0
+
+    return result.reshape(h, w)
 
 
 def _target_mask(chunk_data, target_values):
@@ -439,19 +474,21 @@ def _stream_target_counts(raster, target_values, y_coords, x_coords,
                           chunks_y, chunks_x):
     """Stream all dask chunks, counting targets per chunk.
 
-    Caches per-chunk coordinate arrays within a 25% memory budget to
-    reduce re-reads in later phases.
+    Caches per-chunk coordinate arrays and pixel values within a 25%
+    memory budget to reduce re-reads in later phases.
 
     Returns
     -------
     target_counts : ndarray, shape (n_tile_y, n_tile_x), dtype int64
     total_targets : int
     coords_cache : dict  (iy, ix) -> ndarray shape (N, 2)
+    values_cache : dict  (iy, ix) -> ndarray shape (N,), dtype float32
     """
     n_tile_y = len(chunks_y)
     n_tile_x = len(chunks_x)
     target_counts = np.zeros((n_tile_y, n_tile_x), dtype=np.int64)
     coords_cache = {}
+    values_cache = {}
     cache_bytes = 0
     budget = int(0.25 * _available_memory_bytes())
 
@@ -472,13 +509,15 @@ def _stream_target_counts(raster, target_values, y_coords, x_coords,
                     y_coords[y_offsets[iy] + rows],
                     x_coords[x_offsets[ix] + cols],
                 ])
-                entry_bytes = coords.nbytes
+                vals = chunk_data[rows, cols].astype(np.float32)
+                entry_bytes = coords.nbytes + vals.nbytes
                 if cache_bytes + entry_bytes <= budget:
                     coords_cache[(iy, ix)] = coords
+                    values_cache[(iy, ix)] = vals
                     cache_bytes += entry_bytes
 
     total_targets = int(target_counts.sum())
-    return target_counts, total_targets, coords_cache
+    return target_counts, total_targets, coords_cache, values_cache
 
 
 def _chunk_offsets(chunks):
@@ -491,19 +530,22 @@ def _chunk_offsets(chunks):
 def _collect_region_targets(raster, jy_lo, jy_hi, jx_lo, jx_hi,
                             target_values, target_counts,
                             y_coords, x_coords,
-                            y_offsets, x_offsets, coords_cache):
-    """Collect target (y, x) coords from chunks in [jy_lo:jy_hi, jx_lo:jx_hi].
+                            y_offsets, x_offsets,
+                            coords_cache, values_cache):
+    """Collect target (y, x) coords and pixel values from chunks.
 
     Uses cache where available, re-reads uncached chunks via .compute().
-    Returns ndarray shape (N, 2) or None if no targets in region.
+    Returns (coords ndarray (N, 2), vals ndarray (N,)) or (None, None).
     """
-    parts = []
+    coord_parts = []
+    val_parts = []
     for iy in range(jy_lo, jy_hi):
         for ix in range(jx_lo, jx_hi):
             if target_counts[iy, ix] == 0:
                 continue
             if (iy, ix) in coords_cache:
-                parts.append(coords_cache[(iy, ix)])
+                coord_parts.append(coords_cache[(iy, ix)])
+                val_parts.append(values_cache[(iy, ix)])
             else:
                 chunk_data = raster.data.blocks[iy, ix].compute()
                 mask = _target_mask(chunk_data, target_values)
@@ -513,10 +555,13 @@ def _collect_region_targets(raster, jy_lo, jy_hi, jx_lo, jx_hi,
                         y_coords[y_offsets[iy] + rows],
                         x_coords[x_offsets[ix] + cols],
                     ])
-                    parts.append(coords)
-    if not parts:
-        return None
-    return np.concatenate(parts)
+                    coord_parts.append(coords)
+                    val_parts.append(
+                        chunk_data[rows, cols].astype(np.float32)
+                    )
+    if not coord_parts:
+        return None, None
+    return np.concatenate(coord_parts), np.concatenate(val_parts)
 
 
 def _min_boundary_distance(iy, ix, y_coords, x_coords,
@@ -568,11 +613,12 @@ def _min_boundary_distance(iy, ix, y_coords, x_coords,
     return min(gaps) if gaps else np.inf
 
 
-def _tiled_chunk_proximity(raster, iy, ix, y_coords, x_coords,
-                           y_offsets, x_offsets,
-                           target_values, target_counts,
-                           coords_cache, max_distance, p,
-                           n_tile_y, n_tile_x):
+def _tiled_chunk_query(raster, iy, ix, y_coords, x_coords,
+                       y_offsets, x_offsets,
+                       target_values, target_counts,
+                       coords_cache, values_cache,
+                       max_distance, p,
+                       n_tile_y, n_tile_x, process_mode):
     """Expanding-ring local KDTree for one output chunk.
 
     Returns ndarray shape (h, w), dtype float32.
@@ -596,10 +642,11 @@ def _tiled_chunk_proximity(raster, iy, ix, y_coords, x_coords,
         covers_full = (jy_lo == 0 and jy_hi == n_tile_y
                        and jx_lo == 0 and jx_hi == n_tile_x)
 
-        target_coords = _collect_region_targets(
+        target_coords, target_vals = _collect_region_targets(
             raster, jy_lo, jy_hi, jx_lo, jx_hi,
             target_values, target_counts,
-            y_coords, x_coords, y_offsets, x_offsets, coords_cache,
+            y_coords, x_coords, y_offsets, x_offsets,
+            coords_cache, values_cache,
         )
 
         if target_coords is None:
@@ -611,29 +658,53 @@ def _tiled_chunk_proximity(raster, iy, ix, y_coords, x_coords,
 
         tree = cKDTree(target_coords)
         ub = max_distance if np.isfinite(max_distance) else np.inf
-        dists, _ = tree.query(query_pts, p=p, distance_upper_bound=ub)
-        dists = dists.reshape(h, w).astype(np.float32)
-        dists[dists == np.inf] = np.nan
+        dists, indices = tree.query(query_pts, p=p, distance_upper_bound=ub)
 
-        if covers_full:
-            return dists
+        n_targets = len(target_vals)
+        oob = indices >= n_targets
+        safe_idx = np.where(oob, 0, indices)
 
-        # Validate: max_nearest_dist < min_boundary_distance
-        max_nearest = np.nanmax(dists) if not np.all(np.isnan(dists)) else 0.0
-        min_bd = _min_boundary_distance(
-            iy, ix, y_coords, x_coords, y_offsets, x_offsets,
-            jy_lo, jy_hi, jx_lo, jx_hi, n_tile_y, n_tile_x,
-        )
-        if max_nearest < min_bd:
-            return dists
+        # Always compute dists for convergence check
+        dist_result = dists.reshape(h, w).astype(np.float32)
+        dist_result[dist_result == np.inf] = np.nan
+
+        def _converged():
+            if covers_full:
+                return True
+            max_nearest = (np.nanmax(dist_result)
+                           if not np.all(np.isnan(dist_result)) else 0.0)
+            min_bd = _min_boundary_distance(
+                iy, ix, y_coords, x_coords, y_offsets, x_offsets,
+                jy_lo, jy_hi, jx_lo, jx_hi, n_tile_y, n_tile_x,
+            )
+            return max_nearest < min_bd
+
+        if _converged():
+            if process_mode == PROXIMITY:
+                return dist_result
+            elif process_mode == ALLOCATION:
+                result = target_vals[safe_idx].astype(np.float32)
+                result[oob] = np.nan
+                return result.reshape(h, w)
+            else:  # DIRECTION
+                query_x = xx.ravel()
+                query_y = yy.ravel()
+                target_x = target_coords[safe_idx, 1]
+                target_y = target_coords[safe_idx, 0]
+                result = _vectorized_calc_direction(
+                    query_x, target_x, query_y, target_y)
+                result[oob] = np.nan
+                result[dists == 0] = 0.0
+                return result.reshape(h, w)
 
         ring += 1
 
 
 def _build_tiled_kdtree(raster, y_coords, x_coords, target_values,
-                        max_distance, p, target_counts, coords_cache,
-                        chunks_y, chunks_x):
-    """Tiled (eager) KDTree proximity — memory-safe fallback."""
+                        max_distance, p, target_counts,
+                        coords_cache, values_cache,
+                        chunks_y, chunks_x, process_mode):
+    """Tiled (eager) KDTree query — memory-safe fallback."""
     H, W = raster.shape
     result_bytes = H * W * 4  # float32
     avail = _available_memory_bytes()
@@ -659,11 +730,12 @@ def _build_tiled_kdtree(raster, y_coords, x_coords, target_values,
 
     for iy in range(n_tile_y):
         for ix in range(n_tile_x):
-            chunk_result = _tiled_chunk_proximity(
+            chunk_result = _tiled_chunk_query(
                 raster, iy, ix, y_coords, x_coords,
                 y_offsets, x_offsets,
-                target_values, target_counts, coords_cache,
-                max_distance, p, n_tile_y, n_tile_x,
+                target_values, target_counts,
+                coords_cache, values_cache,
+                max_distance, p, n_tile_y, n_tile_x, process_mode,
             )
             r0 = int(y_offsets[iy])
             r1 = int(y_offsets[iy + 1])
@@ -675,18 +747,20 @@ def _build_tiled_kdtree(raster, y_coords, x_coords, target_values,
 
 
 def _build_global_kdtree(raster, y_coords, x_coords, target_values,
-                         max_distance, p, target_counts, coords_cache,
-                         chunks_y, chunks_x):
-    """Global KDTree proximity — fast, lazy via da.map_blocks."""
+                         max_distance, p, target_counts,
+                         coords_cache, values_cache,
+                         chunks_y, chunks_x, process_mode):
+    """Global KDTree query — fast, lazy via da.map_blocks."""
     n_tile_y = len(chunks_y)
     n_tile_x = len(chunks_x)
     y_offsets = _chunk_offsets(chunks_y)
     x_offsets = _chunk_offsets(chunks_x)
 
-    target_coords = _collect_region_targets(
+    target_coords, target_vals = _collect_region_targets(
         raster, 0, n_tile_y, 0, n_tile_x,
         target_values, target_counts,
-        y_coords, x_coords, y_offsets, x_offsets, coords_cache,
+        y_coords, x_coords, y_offsets, x_offsets,
+        coords_cache, values_cache,
     )
 
     tree = cKDTree(target_coords)
@@ -698,6 +772,9 @@ def _build_global_kdtree(raster, y_coords, x_coords, target_values,
         tree=tree,
         max_distance=max_distance if np.isfinite(max_distance) else np.inf,
         p=p,
+        process_mode=process_mode,
+        target_vals=target_vals,
+        target_coords=target_coords,
     )
 
     return da.map_blocks(
@@ -709,8 +786,9 @@ def _build_global_kdtree(raster, y_coords, x_coords, target_values,
 
 
 def _process_dask_kdtree(raster, x_coords, y_coords,
-                         target_values, max_distance, distance_metric):
-    """Memory-guarded k-d tree proximity for dask arrays.
+                         target_values, max_distance, distance_metric,
+                         process_mode):
+    """Memory-guarded k-d tree query for dask arrays.
 
     Phase 0: stream through chunks counting targets (with caching).
     Then choose global tree (fast, lazy) or tiled tree (memory-safe, eager)
@@ -721,29 +799,32 @@ def _process_dask_kdtree(raster, x_coords, y_coords,
     chunks_y, chunks_x = raster.data.chunks
 
     # Phase 0: streaming count pass
-    target_counts, total_targets, coords_cache = _stream_target_counts(
-        raster, target_values, y_coords, x_coords, chunks_y, chunks_x,
-    )
+    target_counts, total_targets, coords_cache, values_cache = \
+        _stream_target_counts(
+            raster, target_values, y_coords, x_coords, chunks_y, chunks_x,
+        )
 
     if total_targets == 0:
         return da.full(raster.shape, np.nan, dtype=np.float32,
                        chunks=raster.data.chunks)
 
-    # Memory decision: 16 bytes per coord pair + ~32 bytes tree overhead
-    estimate = total_targets * 48
+    # Memory decision: 16 bytes coords + 4 bytes value + ~32 bytes tree overhead
+    estimate = total_targets * 52
     avail = _available_memory_bytes()
 
     if estimate < 0.5 * avail:
         return _build_global_kdtree(
             raster, y_coords, x_coords, target_values,
-            max_distance, p, target_counts, coords_cache,
-            chunks_y, chunks_x,
+            max_distance, p, target_counts,
+            coords_cache, values_cache,
+            chunks_y, chunks_x, process_mode,
         )
     else:
         return _build_tiled_kdtree(
             raster, y_coords, x_coords, target_values,
-            max_distance, p, target_counts, coords_cache,
-            chunks_y, chunks_x,
+            max_distance, p, target_counts,
+            coords_cache, values_cache,
+            chunks_y, chunks_x, process_mode,
         )
 
 
@@ -984,7 +1065,6 @@ def _process(
     elif da is not None and isinstance(raster.data, da.Array):
         use_kdtree = (
             cKDTree is not None
-            and process_mode == PROXIMITY
             and distance_metric in (EUCLIDEAN, MANHATTAN)
             and max_distance >= max_possible_distance
         )
@@ -992,8 +1072,29 @@ def _process(
             result = _process_dask_kdtree(
                 raster, x_coords, y_coords,
                 target_values, max_distance, distance_metric,
+                process_mode,
             )
         else:
+            # Memory guard: unbounded distance on large rasters can OOM
+            if max_distance >= max_possible_distance:
+                H, W = raster.shape
+                required = H * W * 4 * 3  # raster + xs + ys, float32
+                avail = _available_memory_bytes()
+                if required > 0.8 * avail:
+                    if cKDTree is None:
+                        raise MemoryError(
+                            "Raster too large for single-chunk processing "
+                            "and scipy is not installed for memory-safe "
+                            "KDTree path. Install scipy or set a finite "
+                            "max_distance."
+                        )
+                    else:  # must be GREAT_CIRCLE
+                        raise MemoryError(
+                            "GREAT_CIRCLE with unbounded max_distance on "
+                            "this raster would exceed available memory. "
+                            "Set a finite max_distance."
+                        )
+
             # Existing path: build 2D coordinate arrays as dask arrays
             x_coords_da = da.from_array(x_coords, chunks=x_coords.shape[0])
             y_coords_da = da.from_array(y_coords, chunks=y_coords.shape[0])

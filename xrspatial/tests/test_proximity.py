@@ -711,3 +711,248 @@ def test_proximity_dask_kdtree_global_uses_cache():
     np.testing.assert_allclose(
         dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Allocation / Direction KDTree tests
+# ---------------------------------------------------------------------------
+
+def _check_allocation_consistency(raster_data, alloc_data, prox_data,
+                                   x_coords, y_coords, metric):
+    """Verify allocation is consistent: distance to allocated target == proximity."""
+    from xrspatial.proximity import euclidean_distance, manhattan_distance
+    dist_fn = euclidean_distance if metric == "EUCLIDEAN" else manhattan_distance
+
+    h, w = raster_data.shape
+    for y in range(h):
+        for x in range(w):
+            a = alloc_data[y, x]
+            p = prox_data[y, x]
+            if np.isnan(a):
+                assert np.isnan(p), f"NaN allocation but non-NaN proximity at ({y},{x})"
+                continue
+            # Find target pixel(s) with this value
+            ty, tx = np.where(raster_data == a)
+            assert len(ty) > 0, f"Allocated value {a} not found in raster"
+            min_d = min(
+                dist_fn(x_coords[x], x_coords[tx[i]],
+                        y_coords[y], y_coords[ty[i]])
+                for i in range(len(ty))
+            )
+            np.testing.assert_allclose(p, min_d, rtol=1e-4,
+                                       err_msg=f"at ({y},{x})")
+
+
+def _check_direction_consistency(raster_data, dir_data, alloc_data,
+                                  x_coords, y_coords):
+    """Verify direction is consistent with allocation."""
+    h, w = raster_data.shape
+    for y in range(h):
+        for x in range(w):
+            d = dir_data[y, x]
+            a = alloc_data[y, x]
+            if np.isnan(d):
+                assert np.isnan(a), f"NaN direction but non-NaN allocation at ({y},{x})"
+                continue
+            ty, tx = np.where(raster_data == a)
+            assert len(ty) > 0
+            expected = _calc_direction(x_coords[x], x_coords[tx[0]],
+                                       y_coords[y], y_coords[ty[0]])
+            # 0 and 360 are equivalent for north
+            if abs(d - expected) > 359.0:
+                np.testing.assert_allclose(
+                    d % 360.0, expected % 360.0, atol=0.5,
+                    err_msg=f"at ({y},{x})")
+            else:
+                np.testing.assert_allclose(d, expected, rtol=1e-4, atol=0.5,
+                                           err_msg=f"at ({y},{x})")
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("metric", ["EUCLIDEAN", "MANHATTAN"])
+def test_allocation_dask_kdtree_matches_numpy(metric):
+    """k-d tree dask allocation is correct (consistent with proximity)."""
+    raster = _make_kdtree_raster()
+
+    dask_alloc = allocation(raster, x='lon', y='lat',
+                            distance_metric=metric)
+    dask_prox = proximity(raster, x='lon', y='lat',
+                          distance_metric=metric)
+
+    assert isinstance(dask_alloc.data, da.Array)
+    _check_allocation_consistency(
+        raster.data.compute(), dask_alloc.values, dask_prox.values,
+        raster['lon'].values, raster['lat'].values, metric,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+@pytest.mark.parametrize("metric", ["EUCLIDEAN", "MANHATTAN"])
+def test_direction_dask_kdtree_matches_numpy(metric):
+    """k-d tree dask direction is correct (consistent with allocation)."""
+    raster = _make_kdtree_raster()
+
+    dask_dir = direction(raster, x='lon', y='lat', distance_metric=metric)
+    dask_alloc = allocation(raster, x='lon', y='lat', distance_metric=metric)
+
+    assert isinstance(dask_dir.data, da.Array)
+    _check_direction_consistency(
+        raster.data.compute(), dask_dir.values, dask_alloc.values,
+        raster['lon'].values, raster['lat'].values,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_allocation_dask_kdtree_with_target_values():
+    """target_values filtering works through the k-d tree allocation path."""
+    raster = _make_kdtree_raster()
+
+    target_values = [2, 3]
+    dask_alloc = allocation(raster, x='lon', y='lat',
+                            target_values=target_values)
+    dask_prox = proximity(raster, x='lon', y='lat',
+                          target_values=target_values)
+
+    assert isinstance(dask_alloc.data, da.Array)
+    alloc_vals = dask_alloc.values
+    valid_vals = np.isnan(alloc_vals) | np.isin(alloc_vals, target_values)
+    assert np.all(valid_vals), "Allocation produced values outside target set"
+    _check_allocation_consistency(
+        raster.data.compute(), alloc_vals, dask_prox.values,
+        raster['lon'].values, raster['lat'].values, "EUCLIDEAN",
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_direction_dask_kdtree_with_target_values():
+    """target_values filtering works through the k-d tree direction path."""
+    raster = _make_kdtree_raster()
+
+    target_values = [2, 3]
+    dask_dir = direction(raster, x='lon', y='lat',
+                         target_values=target_values)
+    dask_alloc = allocation(raster, x='lon', y='lat',
+                            target_values=target_values)
+
+    assert isinstance(dask_dir.data, da.Array)
+    vals = dask_dir.values
+    valid = vals[~np.isnan(vals)]
+    assert np.all((valid >= 0) & (valid <= 360))
+    _check_direction_consistency(
+        raster.data.compute(), dask_dir.values, dask_alloc.values,
+        raster['lon'].values, raster['lat'].values,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_allocation_dask_kdtree_no_targets():
+    """No target pixels -> allocation result is all NaN."""
+    data = np.zeros((10, 10), dtype=np.float64)
+    _lon = np.arange(10, dtype=np.float64)
+    _lat = np.arange(10, dtype=np.float64)[::-1]
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    raster.data = da.from_array(data, chunks=(5, 5))
+
+    result = allocation(raster, x='lon', y='lat')
+    assert isinstance(result.data, da.Array)
+    assert np.all(np.isnan(result.values))
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_direction_dask_kdtree_no_targets():
+    """No target pixels -> direction result is all NaN."""
+    data = np.zeros((10, 10), dtype=np.float64)
+    _lon = np.arange(10, dtype=np.float64)
+    _lat = np.arange(10, dtype=np.float64)[::-1]
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    raster.data = da.from_array(data, chunks=(5, 5))
+
+    result = direction(raster, x='lon', y='lat')
+    assert isinstance(result.data, da.Array)
+    assert np.all(np.isnan(result.values))
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_allocation_dask_kdtree_max_distance():
+    """Pixels beyond max_distance are NaN in allocation via KDTree."""
+    raster = _make_kdtree_raster()
+    numpy_raster = raster.copy()
+    numpy_raster.data = raster.data.compute()
+
+    max_dist = 5.0
+    numpy_result = allocation(numpy_raster, x='lon', y='lat',
+                              max_distance=max_dist)
+    dask_result = allocation(raster, x='lon', y='lat',
+                             max_distance=max_dist)
+
+    np.testing.assert_allclose(
+        dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_direction_dask_kdtree_max_distance():
+    """Pixels beyond max_distance are NaN in direction via KDTree."""
+    raster = _make_kdtree_raster()
+    numpy_raster = raster.copy()
+    numpy_raster.data = raster.data.compute()
+
+    max_dist = 5.0
+    numpy_result = direction(numpy_raster, x='lon', y='lat',
+                             max_distance=max_dist)
+    dask_result = direction(raster, x='lon', y='lat',
+                            max_distance=max_dist)
+
+    np.testing.assert_allclose(
+        dask_result.values, numpy_result.values, rtol=1e-5, equal_nan=True,
+    )
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_great_circle_dask_unbounded_memory_guard():
+    """GREAT_CIRCLE with unbounded max_distance raises MemoryError when OOM."""
+    height, width = 100, 100
+    data = np.zeros((height, width), dtype=np.float64)
+    data[50, 50] = 1.0
+    _lon = np.linspace(-10, 10, width)
+    _lat = np.linspace(10, -10, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    raster.data = da.from_array(data, chunks=(25, 25))
+
+    with patch('xrspatial.proximity._available_memory_bytes', return_value=1):
+        with pytest.raises(MemoryError, match="GREAT_CIRCLE"):
+            proximity(raster, x='lon', y='lat',
+                      distance_metric='GREAT_CIRCLE')
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_no_scipy_dask_unbounded_memory_guard():
+    """No scipy + large raster + unbounded distance raises MemoryError."""
+    import sys
+    prox_mod = sys.modules['xrspatial.proximity']
+
+    height, width = 100, 100
+    data = np.zeros((height, width), dtype=np.float64)
+    data[50, 50] = 1.0
+    _lon = np.linspace(0, 99, width)
+    _lat = np.linspace(99, 0, height)
+    raster = xr.DataArray(data, dims=['lat', 'lon'])
+    raster['lon'] = _lon
+    raster['lat'] = _lat
+    raster.data = da.from_array(data, chunks=(25, 25))
+
+    original_ckdtree = prox_mod.cKDTree
+    try:
+        prox_mod.cKDTree = None
+        with patch('xrspatial.proximity._available_memory_bytes',
+                   return_value=1):
+            with pytest.raises(MemoryError, match="scipy"):
+                proximity(raster, x='lon', y='lat')
+    finally:
+        prox_mod.cKDTree = original_ckdtree
