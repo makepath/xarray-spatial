@@ -93,22 +93,24 @@ def test_mean_transfer_function_gpu_equals_cpu():
 
 @dask_array_available
 @cuda_and_cupy_available
-def test_mean_transfer_dask_gpu_raise_not_implemented():
+def test_mean_transfer_function_dask_gpu():
 
     import cupy
 
-    # cupy case
-    cupy_agg = xr.DataArray(cupy.asarray(data_random))
-    cupy_mean = mean(cupy_agg)
-    general_output_checks(cupy_agg, cupy_mean)
+    # numpy reference
+    numpy_agg = xr.DataArray(data_random)
+    numpy_mean = mean(numpy_agg)
 
-    # dask + cupy case not implemented
+    # dask + cupy case
     dask_cupy_agg = xr.DataArray(
         da.from_array(cupy.asarray(data_random), chunks=(3, 3))
     )
-    with pytest.raises(NotImplementedError) as e_info:
-        mean(dask_cupy_agg)
-        assert e_info
+    dask_cupy_mean = mean(dask_cupy_agg)
+    general_output_checks(dask_cupy_agg, dask_cupy_mean)
+
+    np.testing.assert_allclose(
+        numpy_mean.data, dask_cupy_mean.data.compute().get(),
+        equal_nan=True, rtol=1e-4)
 
 
 @pytest.fixture
@@ -351,6 +353,53 @@ def test_apply_dask_numpy(data_apply):
     general_output_checks(dask_numpy_agg, dask_numpy_apply, expected_result)
 
 
+@cuda_and_cupy_available
+def test_apply_cupy(data_apply):
+    from xrspatial.focal import _focal_mean_cuda
+
+    data, kernel, expected_result_zero = data_apply
+    # numpy reference using _calc_mean
+    numpy_agg = create_test_raster(data)
+    numpy_apply = apply(numpy_agg, kernel)
+
+    # cupy case with equivalent CUDA kernel
+    cupy_agg = create_test_raster(data, backend='cupy')
+    cupy_apply = apply(cupy_agg, kernel, _focal_mean_cuda)
+    general_output_checks(cupy_agg, cupy_apply)
+
+    np.testing.assert_allclose(
+        numpy_apply.data, cupy_apply.data.get(),
+        equal_nan=True, rtol=1e-4)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_apply_dask_cupy():
+    from xrspatial.focal import _focal_mean_cuda
+
+    # Use a larger array so chunk interiors are meaningful
+    rng = np.random.default_rng(42)
+    data = rng.random((20, 24)).astype(np.float64)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+
+    # cupy reference (same CUDA kernel)
+    cupy_agg = create_test_raster(data, backend='cupy')
+    cupy_apply = apply(cupy_agg, kernel, _focal_mean_cuda)
+
+    # dask + cupy case
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy', chunks=(10, 12))
+    dask_cupy_apply = apply(dask_cupy_agg, kernel, _focal_mean_cuda)
+    general_output_checks(dask_cupy_agg, dask_cupy_apply, verify_attrs=False)
+
+    # Compare interior (boundary='nan' causes edge differences between
+    # cupy single-GPU bounds-clamping and dask map_overlap NaN-padding)
+    pad = kernel.shape[0] // 2
+    np.testing.assert_allclose(
+        cupy_apply.data[pad:-pad, pad:-pad].get(),
+        dask_cupy_apply.data[pad:-pad, pad:-pad].compute().get(),
+        equal_nan=True, rtol=1e-4)
+
+
 @pytest.fixture
 def data_focal_stats():
     data = np.arange(16).reshape(4, 4)
@@ -422,6 +471,32 @@ def test_focal_stats_gpu(data_focal_stats):
     general_output_checks(
         cupy_agg, cupy_focalstats, verify_attrs=False, expected_results=expected_result
     )
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_focal_stats_dask_cupy():
+    # Use larger data so chunk interiors are meaningful
+    rng = np.random.default_rng(42)
+    data = rng.random((20, 24)).astype(np.float64)
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+
+    # cupy reference
+    cupy_agg = create_test_raster(data, backend='cupy')
+    cupy_focalstats = focal_stats(cupy_agg, kernel)
+
+    # dask + cupy case
+    dask_cupy_agg = create_test_raster(data, backend='dask+cupy', chunks=(10, 12))
+    dask_cupy_focalstats = focal_stats(dask_cupy_agg, kernel)
+    assert dask_cupy_focalstats.ndim == 3
+
+    # Compare interior (boundary='nan' causes edge differences between
+    # cupy single-GPU bounds-clamping and dask map_overlap NaN-padding)
+    pad = kernel.shape[0] // 2
+    np.testing.assert_allclose(
+        cupy_focalstats.data[:, pad:-pad, pad:-pad].get(),
+        dask_cupy_focalstats.data[:, pad:-pad, pad:-pad].compute().get(),
+        equal_nan=True, rtol=1e-4)
 
 
 @pytest.fixture
