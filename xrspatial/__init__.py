@@ -13,6 +13,7 @@ from xrspatial.classify import natural_breaks  # noqa
 from xrspatial.classify import quantile  # noqa
 from xrspatial.classify import reclassify  # noqa
 from xrspatial.curvature import curvature  # noqa
+from xrspatial.emerging_hotspots import emerging_hotspots  # noqa
 from xrspatial.focal import mean  # noqa
 from xrspatial.hillshade import hillshade  # noqa
 from xrspatial.mahalanobis import mahalanobis  # noqa
