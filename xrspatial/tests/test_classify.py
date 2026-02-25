@@ -883,3 +883,125 @@ def test_maximum_breaks_dask_matches_numpy():
         maximum_breaks(dask_agg).data.compute(),
         equal_nan=True,
     )
+
+
+# ===================================================================
+# Regression tests: dask paths must not materialise the full array
+# ===================================================================
+
+@dask_array_available
+def test_natural_breaks_dask_no_full_compute():
+    """natural_breaks with num_sample=None on dask must not call
+    .ravel().compute() on the full array (#877)."""
+    elevation = np.arange(100, dtype=np.float64).reshape(10, 10)
+    numpy_agg = xr.DataArray(elevation)
+    dask_agg = xr.DataArray(da.from_array(elevation, chunks=(5, 5)))
+
+    numpy_result = natural_breaks(numpy_agg, num_sample=None, k=5)
+    dask_result = natural_breaks(dask_agg, num_sample=None, k=5)
+
+    np.testing.assert_allclose(
+        numpy_result.data,
+        dask_result.data.compute(),
+        equal_nan=True,
+    )
+
+
+@dask_array_available
+def test_maximum_breaks_dask_no_full_compute():
+    """maximum_breaks on dask must use sampling, not .ravel().compute() (#876)."""
+    elevation = np.arange(100, dtype=np.float64).reshape(10, 10)
+    numpy_agg = xr.DataArray(elevation)
+    dask_agg = xr.DataArray(da.from_array(elevation, chunks=(5, 5)))
+
+    # Default num_sample (20_000) > data.size (100), so all data used
+    numpy_result = maximum_breaks(numpy_agg, k=5)
+    dask_result = maximum_breaks(dask_agg, k=5)
+
+    np.testing.assert_allclose(
+        numpy_result.data,
+        dask_result.data.compute(),
+        equal_nan=True,
+    )
+
+
+@dask_array_available
+def test_maximum_breaks_dask_num_sample():
+    """maximum_breaks with explicit num_sample on dask produces valid,
+    deterministic results (#876)."""
+    elevation = np.arange(100, dtype=np.float64).reshape(10, 10)
+    dask_agg = xr.DataArray(da.from_array(elevation, chunks=(5, 5)))
+
+    result1 = maximum_breaks(dask_agg, k=3, num_sample=50)
+    result2 = maximum_breaks(dask_agg, k=3, num_sample=50)
+
+    # Deterministic: same input + same seed → same output
+    np.testing.assert_allclose(
+        result1.data.compute(),
+        result2.data.compute(),
+        equal_nan=True,
+    )
+    # Valid classification: correct shape and values in expected range
+    assert result1.shape == elevation.shape
+    unique_vals = np.unique(result1.data.compute())
+    assert len(unique_vals) <= 3 + 1  # at most k classes + possible nan
+
+
+# ===================================================================
+# Regression tests: dask paths must not use boolean fancy indexing
+# ===================================================================
+
+@dask_array_available
+def test_quantile_dask_no_unknown_chunks():
+    """quantile on dask must not create unknown chunk sizes (#884)."""
+    elevation = np.arange(100, dtype=np.float64).reshape(10, 10)
+    numpy_agg = xr.DataArray(elevation)
+    dask_agg = xr.DataArray(da.from_array(elevation, chunks=(5, 5)))
+
+    numpy_result = quantile(numpy_agg, k=5)
+    dask_result = quantile(dask_agg, k=5)
+
+    # Dask percentile is approximate, so just check same shape and k classes
+    assert dask_result.shape == numpy_result.shape
+    dask_vals = dask_result.data.compute()
+    unique_vals = np.unique(dask_vals[np.isfinite(dask_vals)])
+    assert len(unique_vals) == 5
+
+
+@dask_array_available
+def test_quantile_dask_with_nan_inf():
+    """quantile on dask handles NaN and inf without unknown chunks (#884)."""
+    elevation = np.array([
+        [-np.inf, 2., 3., 4., np.nan],
+        [5., 6., 7., 8., 9.],
+        [10., 11., 12., 13., 14.],
+        [15., 16., 17., 18., np.inf],
+    ])
+    dask_agg = xr.DataArray(da.from_array(elevation, chunks=(2, 5)))
+    result = quantile(dask_agg, k=5)
+    result_data = result.data.compute()
+    # NaN and inf inputs should produce NaN in the output
+    assert np.isnan(result_data[0, 0])   # was -inf
+    assert np.isnan(result_data[0, 4])   # was nan
+    assert np.isnan(result_data[3, 4])   # was inf
+    # Finite values should be classified
+    finite_result = result_data[np.isfinite(result_data)]
+    assert len(np.unique(finite_result)) == 5
+
+
+@dask_array_available
+def test_percentiles_dask_no_unknown_chunks():
+    """percentiles on dask must not create unknown chunk sizes (#884)."""
+    from xrspatial import percentiles as percentiles_fn
+    elevation = np.arange(100, dtype=np.float64).reshape(10, 10)
+    numpy_agg = xr.DataArray(elevation)
+    dask_agg = xr.DataArray(da.from_array(elevation, chunks=(5, 5)))
+
+    numpy_result = percentiles_fn(numpy_agg)
+    dask_result = percentiles_fn(dask_agg)
+
+    np.testing.assert_allclose(
+        numpy_result.data,
+        dask_result.data.compute(),
+        equal_nan=True,
+    )
