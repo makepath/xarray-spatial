@@ -2090,6 +2090,19 @@ def _viewshed_windowed(raster, x, y, observer_elev, target_elev,
         local_result = _viewshed_cpu(
             window, x, y, observer_elev, target_elev)
 
+    # Mask cells beyond max_distance (the window is a square, not a circle)
+    win_y = local_result.coords['y'].values
+    win_x = local_result.coords['x'].values
+    wx, wy = np.meshgrid(win_x, win_y)
+    dist_sq = (wx - x) ** 2 + (wy - y) ** 2
+    outside = dist_sq > max_distance ** 2
+    if isinstance(local_result.data, np.ndarray):
+        local_result.values[outside] = INVISIBLE
+    else:
+        # cupy path
+        import cupy as cp
+        local_result.data[cp.asarray(outside)] = INVISIBLE
+
     # Embed in full-size INVISIBLE output, preserving array type
     is_dask = has_dask_array() and isinstance(raster.data, da.Array)
 

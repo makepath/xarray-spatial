@@ -281,9 +281,14 @@ def test_viewshed_dask_max_distance_lazy_output():
     assert isinstance(v.data, da.Array)
     assert v.shape == (ny, nx)
     # Only compute a small slice to verify correctness
-    center = v.isel(y=slice(49990, 50011), x=slice(49990, 50011)).values
-    assert center[10, 10] == 180.0  # observer cell
-    assert (center > INVISIBLE).all()  # flat terrain, all visible
+    # max_distance=10 → radius_cells=10 → window is obs ± 10
+    center = v.isel(y=slice(49989, 50012), x=slice(49989, 50012)).values
+    # Observer is at index 11 within this 23-cell slice
+    assert center[11, 11] == 180.0  # observer cell
+    # Cells within the circle should be visible (flat terrain, observer up)
+    assert center[11, 13] > INVISIBLE  # 2 cells away
+    # Corner (49989,49989) is sqrt(11^2+11^2) ≈ 15.6 from observer → outside
+    assert center[0, 0] == INVISIBLE
 
 
 def test_viewshed_numpy_max_distance():
@@ -342,10 +347,15 @@ def test_viewshed_max_distance_matches_full(backend):
     dist_vals = v_dist.values if isinstance(v_dist.data, np.ndarray) \
         else v_dist.data.get()
 
-    # Within the window, results should match
+    # Within the circular radius, results should match
     obs_r, obs_c = 5, 4
+    max_d = 3.5
     for r in range(max(0, obs_r - 3), min(ny, obs_r + 4)):
         for c in range(max(0, obs_c - 3), min(nx, obs_c + 4)):
+            dr = (r - obs_r) * 1.0  # ns_res = 1
+            dc = (c - obs_c) * 1.0  # ew_res = 1
+            if np.sqrt(dr**2 + dc**2) > max_d:
+                continue  # outside circle — correctly INVISIBLE
             np.testing.assert_allclose(
                 dist_vals[r, c], full_vals[r, c],
                 atol=0.03,
