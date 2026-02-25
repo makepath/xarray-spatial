@@ -34,7 +34,10 @@ except ImportError:
         ndarray = False
 
 # local modules
-from xrspatial.utils import ArrayTypeFunctionMapping, ngjit, not_implemented_func, validate_arrays
+from xrspatial.utils import (
+    ArrayTypeFunctionMapping, has_cuda_and_cupy, is_cupy_array, is_dask_cupy,
+    ngjit, not_implemented_func, validate_arrays,
+)
 from xrspatial.utils import has_dask_array
 
 TOTAL_COUNT = '_total_count'
@@ -1433,150 +1436,98 @@ def suggest_zonal_canvas(
     return canvas_h, canvas_w
 
 
-@ngjit
-def _area_connectivity(data, n=4):
-    out = np.zeros_like(data)
-    rows, cols = data.shape
+def _regions_numpy(data, neighborhood):
+    """Connected-component labeling using scipy.ndimage.label (union-find)."""
+    from scipy.ndimage import label
+
+    if neighborhood == 4:
+        structure = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+    else:
+        structure = np.ones((3, 3), dtype=int)
+
+    is_float = np.issubdtype(data.dtype, np.floating)
+    valid = ~np.isnan(data) if is_float else np.ones(data.shape, dtype=bool)
+    unique_vals = np.unique(data[valid])
+
+    out = np.full(data.shape, np.nan, dtype=np.float64)
     uid = 1
-
-    src_window = np.zeros(shape=(n,), dtype=data.dtype)
-    area_window = np.zeros(shape=(n,), dtype=data.dtype)
-
-    for y in range(0, rows):
-        for x in range(0, cols):
-
-            val = data[y, x]
-
-            if np.isnan(val):
-                out[y, x] = val
-                continue
-
-            if n == 8:
-                src_window[0] = data[max(y - 1, 0), max(x - 1, 0)]
-                src_window[1] = data[y, max(x - 1, 0)]
-                src_window[2] = data[min(y + 1, rows - 1), max(x - 1, 0)]
-                src_window[3] = data[max(y - 1, 0), x]
-                src_window[4] = data[min(y + 1, rows - 1), x]
-                src_window[5] = data[max(y - 1, 0), min(x + 1, cols - 1)]
-                src_window[6] = data[y, min(x + 1, cols - 1)]
-                src_window[7] = data[min(y + 1, rows - 1), min(x + 1, cols - 1)]  # noqa
-
-                area_window[0] = out[max(y - 1, 0), max(x - 1, 0)]
-                area_window[1] = out[y, max(x - 1, 0)]
-                area_window[2] = out[min(y + 1, rows - 1), max(x - 1, 0)]
-                area_window[3] = out[max(y - 1, 0), x]
-                area_window[4] = out[min(y + 1, rows - 1), x]
-                area_window[5] = out[max(y - 1, 0), min(x + 1, cols - 1)]
-                area_window[6] = out[y, min(x + 1, cols - 1)]
-                area_window[7] = out[min(y + 1, rows - 1), min(x + 1, cols - 1)]  # noqa
-
-            else:
-                src_window[0] = data[y, max(x - 1, 0)]
-                src_window[1] = data[max(y - 1, 0), x]
-                src_window[2] = data[min(y + 1, rows - 1), x]
-                src_window[3] = data[y, min(x + 1, cols - 1)]
-
-                area_window[0] = out[y, max(x - 1, 0)]
-                area_window[1] = out[max(y - 1, 0), x]
-                area_window[2] = out[min(y + 1, rows - 1), x]
-                area_window[3] = out[y, min(x + 1, cols - 1)]
-
-            # check in has matching value in neighborhood
-            rtol = 1e-05
-            atol = 1e-08
-            is_close = np.abs(src_window - val) <= (atol + rtol * np.abs(val))
-            neighbor_matches = np.where(is_close)[0]
-
-            if len(neighbor_matches) > 0:
-
-                # check in has area already assigned
-                assigned_value = None
-                for j in range(len(neighbor_matches)):
-                    area_val = area_window[neighbor_matches[j]]
-                    if area_val > 0:
-                        assigned_value = area_val
-                        break
-
-                if assigned_value is not None:
-                    out[y, x] = assigned_value
-                else:
-                    out[y, x] = uid
-                    uid += 1
-            else:
-                out[y, x] = uid
-                uid += 1
-
-    for y in range(0, rows):
-        for x in range(0, cols):
-
-            if n == 8:
-                src_window[0] = data[max(y - 1, 0), max(x - 1, 0)]
-                src_window[1] = data[y, max(x - 1, 0)]
-                src_window[2] = data[min(y + 1, rows - 1), max(x - 1, 0)]
-                src_window[3] = data[max(y - 1, 0), x]
-                src_window[4] = data[min(y + 1, rows - 1), x]
-                src_window[5] = data[max(y - 1, 0), min(x + 1, cols - 1)]
-                src_window[6] = data[y, min(x + 1, cols - 1)]
-                src_window[7] = data[min(y + 1, rows - 1), min(x + 1, cols - 1)]  # noqa
-
-                area_window[0] = out[max(y - 1, 0), max(x - 1, 0)]
-                area_window[1] = out[y, max(x - 1, 0)]
-                area_window[2] = out[min(y + 1, rows - 1), max(x - 1, 0)]
-                area_window[3] = out[max(y - 1, 0), x]
-                area_window[4] = out[min(y + 1, rows - 1), x]
-                area_window[5] = out[max(y - 1, 0), min(x + 1, cols - 1)]
-                area_window[6] = out[y, min(x + 1, cols - 1)]
-                area_window[7] = out[min(y + 1, rows - 1), min(x + 1, cols - 1)]  # noqa
-
-            else:
-                src_window[0] = data[y, max(x - 1, 0)]
-                src_window[1] = data[max(y - 1, 0), x]
-                src_window[2] = data[min(y + 1, rows - 1), x]
-                src_window[3] = data[y, min(x + 1, cols - 1)]
-
-                area_window[0] = out[y, max(x - 1, 0)]
-                area_window[1] = out[max(y - 1, 0), x]
-                area_window[2] = out[min(y + 1, rows - 1), x]
-                area_window[3] = out[y, min(x + 1, cols - 1)]
-
-            val = data[y, x]
-
-            if np.isnan(val):
-                continue
-
-            # check in has matching value in neighborhood
-            rtol = 1e-05
-            atol = 1e-08
-            is_close = np.abs(src_window - val) <= (atol + rtol * np.abs(val))
-            neighbor_matches = np.where(is_close)[0]
-
-            # check in has area already assigned
-            assigned_values_min = None
-            for j in range(len(neighbor_matches)):
-                area_val = area_window[neighbor_matches[j]]
-                nn = assigned_values_min is not None
-                if nn and assigned_values_min != area_val:
-                    if assigned_values_min > area_val:
-
-                        # replace
-                        for y1 in range(0, rows):
-                            for x1 in range(0, cols):
-                                if out[y1, x1] == assigned_values_min:
-                                    out[y1, x1] = area_val
-
-                        assigned_values_min = area_val
-
-                    else:
-                        # replace
-                        for y1 in range(0, rows):
-                            for x1 in range(0, cols):
-                                if out[y1, x1] == area_val:
-                                    out[y1, x1] = assigned_values_min
-
-                elif assigned_values_min is None:
-                    assigned_values_min = area_val
+    for v in unique_vals:
+        mask = (data == v)
+        if is_float:
+            mask &= valid
+        labeled, n_features = label(mask, structure=structure)
+        for region_id in range(1, n_features + 1):
+            out[labeled == region_id] = uid
+            uid += 1
 
     return out
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _regions_dask(data, neighborhood):
+    """Dask backend: compute to numpy and run scipy label."""
+    avail = _available_memory_bytes()
+    nbytes = data.nbytes
+    if nbytes * 5 > 0.5 * avail:
+        raise MemoryError(
+            f"regions() requires ~{nbytes * 5 / 1e9:.1f} GB but only "
+            f"{avail / 1e9:.1f} GB available."
+        )
+
+    np_data = data.compute()
+    result = _regions_numpy(np_data, neighborhood)
+    return da.from_array(result, chunks=data.chunks)
+
+
+def _regions_cupy(data, neighborhood):
+    """CuPy GPU backend using cupyx.scipy.ndimage.label."""
+    import cupy as cp
+    from cupyx.scipy.ndimage import label as cp_label
+
+    if neighborhood == 4:
+        structure = cp.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+    else:
+        structure = cp.ones((3, 3), dtype=int)
+
+    is_float = cp.issubdtype(data.dtype, cp.floating)
+    valid = ~cp.isnan(data) if is_float else cp.ones(data.shape, dtype=bool)
+    unique_vals = cp.unique(data[valid])
+
+    out = cp.full(data.shape, cp.nan, dtype=cp.float64)
+    uid = 1
+    for v in unique_vals:
+        mask = (data == v)
+        if is_float:
+            mask &= valid
+        labeled, n_features = cp_label(mask, structure=structure)
+        for region_id in range(1, n_features + 1):
+            out[labeled == region_id] = uid
+            uid += 1
+
+    return out
+
+
+def _regions_dask_cupy(data, neighborhood):
+    """Dask+CuPy backend: compute to cupy and run GPU label."""
+    cp_data = data.compute()
+    result = _regions_cupy(cp_data, neighborhood)
+    return da.from_array(result, chunks=data.chunks)
 
 
 def regions(
@@ -1659,7 +1610,21 @@ def regions(
     if neighborhood not in (4, 8):
         raise ValueError("`neighborhood` value must be either 4 or 8)")
 
-    out = _area_connectivity(raster.data, n=neighborhood)
+    data = raster.data
+
+    if isinstance(data, np.ndarray):
+        out = _regions_numpy(data, neighborhood)
+    elif has_cuda_and_cupy() and is_cupy_array(data):
+        out = _regions_cupy(data, neighborhood)
+    elif da is not None and isinstance(data, da.Array):
+        if is_dask_cupy(raster):
+            out = _regions_dask_cupy(data, neighborhood)
+        else:
+            out = _regions_dask(data, neighborhood)
+    else:
+        raise TypeError(
+            f"Unsupported array type {type(data).__name__} for regions()"
+        )
 
     return DataArray(
         out,
