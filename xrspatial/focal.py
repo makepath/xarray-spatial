@@ -77,6 +77,16 @@ def _mean_dask_numpy(data, excludes, boundary='nan'):
     return out
 
 
+def _mean_dask_cupy(data, excludes, boundary='nan'):
+    data = data.astype(cupy.float32)
+    _func = partial(_mean_cupy, excludes=excludes)
+    out = data.map_overlap(_func,
+                           depth=(1, 1),
+                           boundary=_boundary_to_dask(boundary, is_cupy=True),
+                           meta=cupy.array(()))
+    return out
+
+
 @cuda.jit
 def _mean_gpu(data, excludes, out):
     # 1. Get coordinates: x is Column, y is Row
@@ -161,8 +171,7 @@ def _mean(data, excludes, boundary='nan'):
         numpy_func=partial(_mean_numpy_boundary, boundary=boundary),
         cupy_func=_mean_cupy,
         dask_func=partial(_mean_dask_numpy, boundary=boundary),
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='mean() does not support dask with cupy backed DataArray.'),  # noqa
+        dask_cupy_func=partial(_mean_dask_cupy, boundary=boundary),
     )
     out = mapper(agg)(agg.data, excludes)
     return out
@@ -370,6 +379,22 @@ def _apply_dask_numpy(data, kernel, func, boundary='nan'):
     return out
 
 
+def _apply_cupy(data, kernel, func):
+    return _focal_stats_func_cupy(data.astype(cupy.float32), kernel, func)
+
+
+def _apply_dask_cupy(data, kernel, func, boundary='nan'):
+    data = data.astype(cupy.float32)
+    pad_h = kernel.shape[0] // 2
+    pad_w = kernel.shape[1] // 2
+    _func = partial(_focal_stats_func_cupy, kernel=kernel, func=func)
+    out = data.map_overlap(_func,
+                           depth=(pad_h, pad_w),
+                           boundary=_boundary_to_dask(boundary, is_cupy=True),
+                           meta=cupy.array(()))
+    return out
+
+
 def apply(raster, kernel, func=_calc_mean, name='focal_apply', boundary='nan'):
     """
     Returns custom function applied array using a user-created window.
@@ -378,11 +403,14 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply', boundary='nan'):
     ----------
     raster : xarray.DataArray
         2D array of input values to be filtered. Can be a NumPy backed,
-        or Dask with NumPy backed DataArray.
+        CuPy backed, Dask with NumPy backed, or Dask with CuPy backed
+        DataArray.
     kernel : numpy.ndarray
         2D array where values of 1 indicate the kernel.
     func : callable, default=xrspatial.focal._calc_mean
         Function which takes an input array and returns an array.
+        For cupy and dask+cupy backends the function must be a
+        ``@cuda.jit`` global kernel with signature ``(data, kernel, out)``.
     boundary : str, default='nan'
         How to handle edges where the kernel extends beyond the raster.
         ``'nan'``     -- fill missing neighbours with NaN (default).
@@ -496,11 +524,9 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply', boundary='nan'):
     # the function func must be a @ngjit
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_apply_numpy_boundary, boundary=boundary),
-        cupy_func=lambda *args: not_implemented_func(
-            *args, messages='apply() does not support cupy backed DataArray.'),
+        cupy_func=_apply_cupy,
         dask_func=partial(_apply_dask_numpy, boundary=boundary),
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='apply() does not support dask with cupy backed DataArray.'),
+        dask_cupy_func=partial(_apply_dask_cupy, boundary=boundary),
     )
     out = mapper(raster)(raster.data, kernel, func)
     result = DataArray(out,
@@ -818,6 +844,32 @@ def _focal_stats_cupy(agg, kernel, stats_funcs):
     return stats
 
 
+def _focal_stats_dask_cupy(agg, kernel, stats_funcs, boundary='nan'):
+    _stats_cuda_mapper = dict(
+        mean=_focal_mean_cuda, sum=_focal_sum_cuda,
+        range=_focal_range_cuda, max=_focal_max_cuda,
+        min=_focal_min_cuda, std=_focal_std_cuda, var=_focal_var_cuda,
+    )
+    pad_h = kernel.shape[0] // 2
+    pad_w = kernel.shape[1] // 2
+    dask_bnd = _boundary_to_dask(boundary, is_cupy=True)
+
+    stats_aggs = []
+    for stat_name in stats_funcs:
+        cuda_kernel = _stats_cuda_mapper[stat_name]
+        _func = partial(_focal_stats_func_cupy, kernel=kernel, func=cuda_kernel)
+        data = agg.data.astype(cupy.float32)
+        stats_data = data.map_overlap(
+            _func, depth=(pad_h, pad_w),
+            boundary=dask_bnd, meta=cupy.array(()))
+        stats_agg = xr.DataArray(
+            stats_data, dims=agg.dims, coords=agg.coords, attrs=agg.attrs)
+        stats_aggs.append(stats_agg)
+    stats = xr.concat(stats_aggs,
+                      pd.Index(stats_funcs, name='stats', dtype=object))
+    return stats
+
+
 def _focal_stats_cpu(agg, kernel, stats_funcs, boundary='nan'):
     _function_mapping = {
         'mean': _calc_mean,
@@ -852,7 +904,8 @@ def focal_stats(agg,
     ----------
     agg : xarray.DataArray
         2D array of input values to be analysed. Can be a NumPy backed,
-        Cupy backed, or Dask with NumPy backed DataArray.
+        CuPy backed, Dask with NumPy backed, or Dask with CuPy backed
+        DataArray.
     kernel : numpy.array
         2D array where values of 1 indicate the kernel.
     stats_funcs: list of string
@@ -920,8 +973,7 @@ def focal_stats(agg,
         numpy_func=partial(_focal_stats_cpu, boundary=boundary),
         cupy_func=_focal_stats_cupy,
         dask_func=partial(_focal_stats_cpu, boundary=boundary),
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='focal_stats() does not support dask with cupy backed DataArray.'),
+        dask_cupy_func=partial(_focal_stats_dask_cupy, boundary=boundary),
     )
     result = mapper(agg)(agg, kernel, stats_funcs)
     return result
