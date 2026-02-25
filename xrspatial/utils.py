@@ -704,9 +704,9 @@ def _extract_latlon_coords(agg: xr.DataArray):
     if lat_vals.ndim == 1 and lon_vals.ndim == 1:
         # Regular grid: broadcast to 2-D
         lat_2d = np.broadcast_to(lat_vals[:, np.newaxis],
-                                 (agg.sizes[dim_y], agg.sizes[dim_x])).copy()
+                                 (agg.sizes[dim_y], agg.sizes[dim_x]))
         lon_2d = np.broadcast_to(lon_vals[np.newaxis, :],
-                                 (agg.sizes[dim_y], agg.sizes[dim_x])).copy()
+                                 (agg.sizes[dim_y], agg.sizes[dim_x]))
     elif lat_vals.ndim == 2 and lon_vals.ndim == 2:
         lat_2d = lat_vals
         lon_2d = lon_vals
