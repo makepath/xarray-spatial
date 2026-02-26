@@ -11,7 +11,9 @@ import xarray as xr
 
 from xrspatial import allocation, direction, euclidean_distance, great_circle_distance, proximity
 from xrspatial.proximity import _calc_direction
-from xrspatial.tests.general_checks import general_output_checks, create_test_raster
+from xrspatial.tests.general_checks import (
+    general_output_checks, create_test_raster, has_cuda_and_cupy,
+)
 
 
 def test_great_circle_distance():
@@ -38,8 +40,11 @@ def test_raster(backend):
     raster = xr.DataArray(data, dims=['lat', 'lon'])
     raster['lon'] = _lon
     raster['lat'] = _lat
+    if has_cuda_and_cupy() and 'cupy' in backend:
+        import cupy
+        raster.data = cupy.asarray(data)
     if 'dask' in backend and da is not None:
-        raster.data = da.from_array(data, chunks=(4, 3))
+        raster.data = da.from_array(raster.data, chunks=(4, 3))
     return raster
 
 
@@ -167,20 +172,20 @@ def qgis_proximity_distance_target_values():
     return target_values, qgis_result
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_default_proximity(test_raster, result_default_proximity):
     default_prox = proximity(test_raster, x='lon', y='lat')
     general_output_checks(test_raster, default_prox, result_default_proximity, verify_dtype=True)
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_target_proximity(test_raster, result_target_proximity):
     target_values, expected_result = result_target_proximity
     target_prox = proximity(test_raster, x='lon', y='lat', target_values=target_values)
     general_output_checks(test_raster, target_prox, expected_result, verify_dtype=True)
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_manhattan_proximity(test_raster, result_manhattan_proximity):
     manhattan_prox = proximity(test_raster, x='lon', y='lat', distance_metric='MANHATTAN')
     general_output_checks(
@@ -188,7 +193,7 @@ def test_manhattan_proximity(test_raster, result_manhattan_proximity):
     )
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_great_circle_proximity(test_raster, result_great_circle_proximity):
     great_circle_prox = proximity(test_raster, x='lon', y='lat', distance_metric='GREAT_CIRCLE')
     general_output_checks(
@@ -196,14 +201,14 @@ def test_great_circle_proximity(test_raster, result_great_circle_proximity):
     )
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_max_distance_proximity(test_raster, result_max_distance_proximity):
     max_distance, expected_result = result_max_distance_proximity
     max_distance_prox = proximity(test_raster, x='lon', y='lat', max_distance=max_distance)
     general_output_checks(test_raster, max_distance_prox, expected_result, verify_dtype=True)
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_default_allocation(test_raster, result_default_allocation):
     allocation_agg = allocation(test_raster, x='lon', y='lat')
     general_output_checks(test_raster, allocation_agg, result_default_allocation, verify_dtype=True)
@@ -224,7 +229,7 @@ def test_default_allocation_against_proximity(test_raster, result_default_proxim
             np.testing.assert_allclose(result_default_proximity[y, x], d)
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_max_distance_allocation(test_raster, result_max_distance_allocation):
     max_distance, expected_result = result_max_distance_allocation
     max_distance_alloc = allocation(test_raster, x='lon', y='lat', max_distance=max_distance)
@@ -247,7 +252,7 @@ def test_calc_direction():
     assert (abs(output-expected_output) <= tolerance).all()
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_default_direction(test_raster, result_default_direction):
     direction_agg = direction(test_raster, x='lon', y='lat')
     general_output_checks(test_raster, direction_agg, result_default_direction)
@@ -267,7 +272,7 @@ def test_default_direction_against_allocation(test_raster, result_default_alloca
             np.testing.assert_allclose(direction_agg.data[y, x], d)
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_max_distance_direction(test_raster, result_max_distance_direction):
     max_distance, expected_result = result_max_distance_direction
     max_distance_direction = direction(test_raster, x='lon', y='lat', max_distance=max_distance)
