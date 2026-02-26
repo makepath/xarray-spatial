@@ -423,13 +423,49 @@ def _process_cupy(raster_data, x_coords, y_coords, target_values,
 
 def _process_dask_cupy(raster, x_coords, y_coords, target_values,
                        max_distance, distance_metric, process_mode):
-    """Dask+CuPy backend: compute to cupy, run GPU kernel."""
+    """Dask+CuPy bounded proximity via map_overlap with per-chunk GPU kernel.
+
+    Each chunk (plus overlap padding of ``max_distance / cellsize`` pixels)
+    is processed on GPU independently.  Only valid for finite max_distance
+    where the padding guarantees all relevant targets are visible within
+    each overlapped chunk.
+    """
     import cupy as cp
 
-    cp_data = raster.data.compute()
-    result = _process_cupy(cp_data, x_coords, y_coords, target_values,
-                           max_distance, distance_metric, process_mode)
-    return da.from_array(result, chunks=raster.data.chunks)
+    cellsize_x, cellsize_y = get_dataarray_resolution(raster)
+    pad_y = int(max_distance / abs(cellsize_y) + 0.5)
+    pad_x = int(max_distance / abs(cellsize_x) + 0.5)
+
+    # Build 2D coordinate grids as dask+cupy arrays matching raster chunks.
+    # Each chunk is small (chunk_h x chunk_w x 8 bytes); the full grid is
+    # never materialised.
+    x_cp = cp.asarray(x_coords, dtype=cp.float64)
+    y_cp = cp.asarray(y_coords, dtype=cp.float64)
+    x_da = da.from_array(x_cp, chunks=(x_cp.shape[0],))
+    y_da = da.from_array(y_cp, chunks=(y_cp.shape[0],))
+    xs = da.tile(x_da, (raster.shape[0], 1)).rechunk(raster.data.chunks)
+    ys = da.repeat(y_da, raster.shape[1]).reshape(
+        raster.shape).rechunk(raster.data.chunks)
+
+    # Capture closure vars for the chunk function
+    tv = target_values
+    md = max_distance
+    dm = distance_metric
+    pm = process_mode
+
+    def _chunk_func(data_chunk, xs_chunk, ys_chunk):
+        # Use middle row/col to avoid NaN from boundary padding
+        x_1d = xs_chunk[xs_chunk.shape[0] // 2, :]
+        y_1d = ys_chunk[:, ys_chunk.shape[1] // 2]
+        return _process_cupy(data_chunk, x_1d, y_1d, tv, md, dm, pm)
+
+    return da.map_overlap(
+        _chunk_func,
+        raster.data, xs, ys,
+        depth=(pad_y, pad_x),
+        boundary=np.nan,
+        meta=cp.array((), dtype=cp.float32),
+    )
 
 
 @ngjit
@@ -1220,12 +1256,28 @@ def _process(
         )
 
     elif da is not None and isinstance(raster.data, da.Array):
-        if has_cuda_and_cupy() and is_dask_cupy(raster):
+        if (has_cuda_and_cupy() and is_dask_cupy(raster)
+                and max_distance < max_possible_distance):
+            # Bounded dask+cupy: out-of-core GPU via map_overlap
             result = _process_dask_cupy(
                 raster, x_coords, y_coords,
                 target_values, max_distance, distance_metric, process_mode,
             )
         else:
+            # dask+numpy path (or unbounded dask+cupy → convert first)
+            was_dask_cupy = has_cuda_and_cupy() and is_dask_cupy(raster)
+            if was_dask_cupy:
+                import cupy as cp
+                # Unbounded: convert to dask+numpy for KDTree/line-sweep
+                # (KDTree is CPU-only; O(N log T) beats brute-force O(NT))
+                original_chunks = raster.data.chunks
+                raster = raster.copy(
+                    data=raster.data.map_blocks(
+                        lambda x: x.get(), dtype=raster.dtype,
+                        meta=np.array(()),
+                    )
+                )
+
             use_kdtree = (
                 cKDTree is not None
                 and distance_metric in (EUCLIDEAN, MANHATTAN)
@@ -1267,6 +1319,13 @@ def _process(
                 xs = xs.rechunk(raster.chunks)
                 ys = ys.rechunk(raster.chunks)
                 result = _process_dask(raster, xs, ys)
+
+            # Convert result back to dask+cupy if input was dask+cupy
+            if was_dask_cupy:
+                result = result.map_blocks(
+                    cp.asarray, dtype=result.dtype,
+                    meta=cp.array((), dtype=result.dtype),
+                )
 
     else:
         raise TypeError(
