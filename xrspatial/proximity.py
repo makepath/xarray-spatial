@@ -12,12 +12,23 @@ try:
 except ImportError:
     cKDTree = None
 
+import math as _math
+
 import numpy as np
 import xarray as xr
-from numba import prange
+from numba import cuda, prange
+
+try:
+    import cupy
+except ImportError:
+    class cupy(object):
+        ndarray = False
 
 from xrspatial.pathfinding import _available_memory_bytes
-from xrspatial.utils import get_dataarray_resolution, ngjit
+from xrspatial.utils import (
+    cuda_args, get_dataarray_resolution, has_cuda_and_cupy,
+    is_cupy_array, is_dask_cupy, ngjit,
+)
 from xrspatial.dataset_support import supports_dataset
 
 EUCLIDEAN = 0
@@ -279,6 +290,146 @@ def _vectorized_calc_direction(x1, x2, y1, y2):
              np.where(d > 90.0, 360.0 - d + 90.0, 90.0 - d))
     result[(x1 == x2) & (y1 == y2)] = 0.0
     return result.astype(np.float32)
+
+
+# =====================================================================
+# GPU (CuPy / CUDA) backend
+# =====================================================================
+
+@cuda.jit(device=True)
+def _gpu_euclidean_distance(x1, x2, y1, y2):
+    dx = x1 - x2
+    dy = y1 - y2
+    return _math.sqrt(dx * dx + dy * dy)
+
+
+@cuda.jit(device=True)
+def _gpu_manhattan_distance(x1, x2, y1, y2):
+    return abs(x1 - x2) + abs(y1 - y2)
+
+
+@cuda.jit(device=True)
+def _gpu_great_circle_distance(x1, x2, y1, y2):
+    if x1 == x2 and y1 == y2:
+        return 0.0
+    lat1 = y1 * 0.017453292519943295
+    lon1 = x1 * 0.017453292519943295
+    lat2 = y2 * 0.017453292519943295
+    lon2 = x2 * 0.017453292519943295
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = (_math.sin(dlat / 2.0) ** 2
+         + _math.cos(lat1) * _math.cos(lat2)
+         * _math.sin(dlon / 2.0) ** 2)
+    return 6378137.0 * 2.0 * _math.asin(_math.sqrt(a))
+
+
+@cuda.jit(device=True)
+def _gpu_distance(x1, x2, y1, y2, metric):
+    if metric == EUCLIDEAN:
+        return _gpu_euclidean_distance(x1, x2, y1, y2)
+    elif metric == GREAT_CIRCLE:
+        return _gpu_great_circle_distance(x1, x2, y1, y2)
+    else:
+        return _gpu_manhattan_distance(x1, x2, y1, y2)
+
+
+@cuda.jit(device=True)
+def _gpu_calc_direction(x1, x2, y1, y2):
+    if x1 == x2 and y1 == y2:
+        return 0.0
+    dx = x2 - x1
+    dy = y2 - y1
+    d = _math.atan2(-dy, dx) * 57.29578
+    if d < 0.0:
+        d = 90.0 - d
+    elif d > 90.0:
+        d = 360.0 - d + 90.0
+    else:
+        d = 90.0 - d
+    return d
+
+
+@cuda.jit
+def _proximity_cuda_kernel(target_xs, target_ys, target_vals, n_targets,
+                           y_coords, x_coords, max_distance,
+                           distance_metric, process_mode, out):
+    iy, ix = cuda.grid(2)
+    if iy >= out.shape[0] or ix >= out.shape[1]:
+        return
+
+    px = x_coords[ix]
+    py = y_coords[iy]
+
+    best_dist = 1.0e38
+    best_idx = -1
+
+    for k in range(n_targets):
+        d = _gpu_distance(px, target_xs[k], py, target_ys[k], distance_metric)
+        if d < best_dist:
+            best_dist = d
+            best_idx = k
+
+    if best_idx >= 0 and best_dist <= max_distance:
+        if process_mode == PROXIMITY:
+            out[iy, ix] = best_dist
+        elif process_mode == ALLOCATION:
+            out[iy, ix] = target_vals[best_idx]
+        else:
+            out[iy, ix] = _gpu_calc_direction(
+                px, target_xs[best_idx], py, target_ys[best_idx])
+
+
+def _process_cupy(raster_data, x_coords, y_coords, target_values,
+                  max_distance, distance_metric, process_mode):
+    """GPU proximity using CUDA brute-force nearest-target kernel."""
+    import cupy as cp
+
+    # Find target pixels on GPU
+    if len(target_values) == 0:
+        mask = cp.isfinite(raster_data) & (raster_data != 0)
+    else:
+        mask = cp.isin(raster_data, cp.asarray(target_values))
+        mask &= cp.isfinite(raster_data)
+
+    target_rows, target_cols = cp.where(mask)
+    n_targets = int(target_rows.shape[0])
+
+    if n_targets == 0:
+        return cp.full(raster_data.shape, cp.nan, dtype=cp.float32)
+
+    # Collect target world-coordinates and values
+    y_dev = cp.asarray(y_coords, dtype=cp.float64)
+    x_dev = cp.asarray(x_coords, dtype=cp.float64)
+    target_ys = y_dev[target_rows]
+    target_xs = x_dev[target_cols]
+    target_vals = raster_data[target_rows, target_cols].astype(cp.float32)
+
+    # Pre-fill output with NaN (pixels with no target within range stay NaN)
+    out = cp.full(raster_data.shape, cp.nan, dtype=cp.float32)
+
+    griddim, blockdim = cuda_args(raster_data.shape)
+    _proximity_cuda_kernel[griddim, blockdim](
+        target_xs, target_ys, target_vals, n_targets,
+        y_dev, x_dev,
+        np.float64(max_distance),
+        np.int32(distance_metric),
+        np.int32(process_mode),
+        out,
+    )
+
+    return out
+
+
+def _process_dask_cupy(raster, x_coords, y_coords, target_values,
+                       max_distance, distance_metric, process_mode):
+    """Dask+CuPy backend: compute to cupy, run GPU kernel."""
+    import cupy as cp
+
+    cp_data = raster.data.compute()
+    result = _process_cupy(cp_data, x_coords, y_coords, target_values,
+                           max_distance, distance_metric, process_mode)
+    return da.from_array(result, chunks=raster.data.chunks)
 
 
 @ngjit
@@ -1062,47 +1213,66 @@ def _process(
         ys = np.repeat(y_coords, raster.shape[1]).reshape(raster.shape)
         result = _process_numpy(raster.data, xs, ys)
 
-    elif da is not None and isinstance(raster.data, da.Array):
-        use_kdtree = (
-            cKDTree is not None
-            and distance_metric in (EUCLIDEAN, MANHATTAN)
-            and max_distance >= max_possible_distance
+    elif has_cuda_and_cupy() and is_cupy_array(raster.data):
+        result = _process_cupy(
+            raster.data, x_coords, y_coords,
+            target_values, max_distance, distance_metric, process_mode,
         )
-        if use_kdtree:
-            result = _process_dask_kdtree(
+
+    elif da is not None and isinstance(raster.data, da.Array):
+        if has_cuda_and_cupy() and is_dask_cupy(raster):
+            result = _process_dask_cupy(
                 raster, x_coords, y_coords,
-                target_values, max_distance, distance_metric,
-                process_mode,
+                target_values, max_distance, distance_metric, process_mode,
             )
         else:
-            # Memory guard: unbounded distance on large rasters can OOM
-            if max_distance >= max_possible_distance:
-                H, W = raster.shape
-                required = H * W * 4 * 3  # raster + xs + ys, float32
-                avail = _available_memory_bytes()
-                if required > 0.8 * avail:
-                    if cKDTree is None:
-                        raise MemoryError(
-                            "Raster too large for single-chunk processing "
-                            "and scipy is not installed for memory-safe "
-                            "KDTree path. Install scipy or set a finite "
-                            "max_distance."
-                        )
-                    else:  # must be GREAT_CIRCLE
-                        raise MemoryError(
-                            "GREAT_CIRCLE with unbounded max_distance on "
-                            "this raster would exceed available memory. "
-                            "Set a finite max_distance."
-                        )
+            use_kdtree = (
+                cKDTree is not None
+                and distance_metric in (EUCLIDEAN, MANHATTAN)
+                and max_distance >= max_possible_distance
+            )
+            if use_kdtree:
+                result = _process_dask_kdtree(
+                    raster, x_coords, y_coords,
+                    target_values, max_distance, distance_metric,
+                    process_mode,
+                )
+            else:
+                # Memory guard: unbounded distance on large rasters can OOM
+                if max_distance >= max_possible_distance:
+                    H, W = raster.shape
+                    required = H * W * 4 * 3  # raster + xs + ys, float32
+                    avail = _available_memory_bytes()
+                    if required > 0.8 * avail:
+                        if cKDTree is None:
+                            raise MemoryError(
+                                "Raster too large for single-chunk processing "
+                                "and scipy is not installed for memory-safe "
+                                "KDTree path. Install scipy or set a finite "
+                                "max_distance."
+                            )
+                        else:  # must be GREAT_CIRCLE
+                            raise MemoryError(
+                                "GREAT_CIRCLE with unbounded max_distance on "
+                                "this raster would exceed available memory. "
+                                "Set a finite max_distance."
+                            )
 
-            # Existing path: build 2D coordinate arrays as dask arrays
-            x_coords_da = da.from_array(x_coords, chunks=x_coords.shape[0])
-            y_coords_da = da.from_array(y_coords, chunks=y_coords.shape[0])
-            xs = da.tile(x_coords_da, (raster.shape[0], 1))
-            ys = da.repeat(y_coords_da, raster.shape[1]).reshape(raster.shape)
-            xs = xs.rechunk(raster.chunks)
-            ys = ys.rechunk(raster.chunks)
-            result = _process_dask(raster, xs, ys)
+                # Existing path: build 2D coordinate arrays as dask arrays
+                x_coords_da = da.from_array(x_coords, chunks=x_coords.shape[0])
+                y_coords_da = da.from_array(y_coords, chunks=y_coords.shape[0])
+                xs = da.tile(x_coords_da, (raster.shape[0], 1))
+                ys = da.repeat(y_coords_da, raster.shape[1]).reshape(
+                    raster.shape)
+                xs = xs.rechunk(raster.chunks)
+                ys = ys.rechunk(raster.chunks)
+                result = _process_dask(raster, xs, ys)
+
+    else:
+        raise TypeError(
+            f"Unsupported array type {type(raster.data).__name__} "
+            f"for proximity/allocation/direction"
+        )
 
     return result
 
