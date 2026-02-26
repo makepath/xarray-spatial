@@ -51,7 +51,7 @@ def _compute(arr):
 # Uniform friction = 1 should match Euclidean proximity
 # -----------------------------------------------------------------------
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_uniform_friction_matches_euclidean(backend):
     """With uniform friction=1, cost_distance ≈ Euclidean distance."""
     data = np.zeros((7, 7), dtype=np.float64)
@@ -87,7 +87,7 @@ def test_uniform_friction_matches_euclidean(backend):
 # Hand-computed analytic case
 # -----------------------------------------------------------------------
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_analytic_small_grid(backend):
     """3x3 grid with known costs, single source at (0,0)."""
     source = np.zeros((3, 3))
@@ -129,7 +129,7 @@ def test_analytic_small_grid(backend):
 # Barriers: NaN and zero-friction cells are impassable
 # -----------------------------------------------------------------------
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_barriers_nan_and_zero(backend):
     """NaN and zero-friction cells block paths."""
     source = np.zeros((3, 5))
@@ -162,7 +162,7 @@ def test_barriers_nan_and_zero(backend):
 # Multiple sources: verify nearest-by-cost wins
 # -----------------------------------------------------------------------
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_multiple_sources(backend):
     """Two sources — each pixel gets cost from the cheaper one."""
     source = np.zeros((1, 5))
@@ -194,7 +194,7 @@ def test_multiple_sources(backend):
 # max_cost truncation
 # -----------------------------------------------------------------------
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_max_cost_truncation(backend):
     """Pixels beyond max_cost should be NaN."""
     source = np.zeros((1, 10))
@@ -251,7 +251,7 @@ def test_dask_matches_numpy():
 # 4-connectivity vs 8-connectivity
 # -----------------------------------------------------------------------
 
-@pytest.mark.parametrize("backend", ['numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'cupy'])
 def test_connectivity_4_vs_8(backend):
     """4-connectivity diagonal cost should be higher than 8-connectivity."""
     source = np.zeros((3, 3))
@@ -277,7 +277,7 @@ def test_connectivity_4_vs_8(backend):
 # target_values parameter
 # -----------------------------------------------------------------------
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_target_values(backend):
     """Only specified target values should be sources."""
     source = np.array([
@@ -396,7 +396,7 @@ def test_wrong_dims():
 # Source at impassable cell
 # -----------------------------------------------------------------------
 
-@pytest.mark.parametrize("backend", ['numpy'])
+@pytest.mark.parametrize("backend", ['numpy', 'cupy'])
 def test_source_on_impassable_cell(backend):
     """Source on NaN-friction cell should not seed Dijkstra."""
     source = np.zeros((3, 3))
@@ -416,12 +416,12 @@ def test_source_on_impassable_cell(backend):
 
 
 # -----------------------------------------------------------------------
-# CuPy GPU spill-to-CPU tests
+# CuPy GPU tests
 # -----------------------------------------------------------------------
 
 @cuda_and_cupy_available
 def test_cupy_matches_numpy():
-    """CuPy (CPU fallback) path should produce identical results to numpy."""
+    """CuPy GPU path should produce identical results to numpy."""
     np.random.seed(42)
     source = np.zeros((7, 7))
     source[3, 3] = 1.0
@@ -475,13 +475,13 @@ def test_cupy_returns_cupy_array():
 
 
 # -----------------------------------------------------------------------
-# Dask + CuPy GPU spill-to-CPU tests
+# Dask + CuPy GPU tests
 # -----------------------------------------------------------------------
 
 @cuda_and_cupy_available
 @pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
 def test_dask_cupy_matches_numpy():
-    """Dask+CuPy (CPU fallback) should produce identical results to numpy."""
+    """Dask+CuPy GPU path should produce identical results to numpy."""
     np.random.seed(42)
     source = np.zeros((10, 12))
     source[2, 3] = 1.0
@@ -501,6 +501,49 @@ def test_dask_cupy_matches_numpy():
     ))
 
     np.testing.assert_allclose(result_dc, result_np, equal_nan=True, atol=1e-5)
+
+
+@cuda_and_cupy_available
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_dask_cupy_unbounded_matches_numpy():
+    """Dask+CuPy unbounded (CPU fallback via iterative) matches numpy."""
+    np.random.seed(42)
+    source = np.zeros((10, 12))
+    source[5, 6] = 1.0
+
+    friction_data = np.random.uniform(0.5, 5.0, (10, 12))
+
+    result_np = _compute(cost_distance(
+        _make_raster(source, backend='numpy'),
+        _make_raster(friction_data, backend='numpy'),
+    ))
+    with pytest.warns(UserWarning, match="iterative tile Dijkstra"):
+        result_dc = _compute(cost_distance(
+            _make_raster(source, backend='dask+cupy', chunks=(5, 6)),
+            _make_raster(friction_data, backend='dask+cupy', chunks=(5, 6)),
+        ))
+
+    np.testing.assert_allclose(result_dc, result_np, equal_nan=True, atol=1e-5)
+
+
+@cuda_and_cupy_available
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_dask_cupy_returns_cupy_chunks():
+    """Dask+CuPy result should have cupy-backed chunks."""
+    from xrspatial.utils import is_dask_cupy
+
+    source = np.zeros((12, 12))
+    source[6, 6] = 1.0
+    friction_data = np.ones((12, 12))
+
+    # max_cost=2 -> pad=3, chunk=6 -> pad < chunk => map_overlap GPU path
+    result = cost_distance(
+        _make_raster(source, backend='dask+cupy', chunks=(6, 6)),
+        _make_raster(friction_data, backend='dask+cupy', chunks=(6, 6)),
+        max_cost=2.0,
+    )
+    assert isinstance(result.data, da.Array)
+    assert is_dask_cupy(result)
 
 
 # -----------------------------------------------------------------------

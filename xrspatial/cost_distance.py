@@ -28,6 +28,7 @@ time, keeping memory usage bounded regardless of raster size.
 
 from __future__ import annotations
 
+import math as _math
 from functools import partial
 from math import sqrt
 
@@ -39,8 +40,16 @@ try:
 except ImportError:
     da = None
 
+from numba import cuda
+
+try:
+    import cupy
+except ImportError:
+    class cupy:  # type: ignore[no-redef]
+        ndarray = False
+
 from xrspatial.utils import (
-    get_dataarray_resolution, ngjit,
+    cuda_args, get_dataarray_resolution, ngjit,
     has_cuda_and_cupy, is_cupy_array, is_dask_cupy,
 )
 from xrspatial.dataset_support import supports_dataset
@@ -233,6 +242,191 @@ def _cost_distance_numpy(source_data, friction_data, cellsize_x, cellsize_y,
         source_data, friction_data, height, width,
         cellsize_x, cellsize_y, max_cost,
         target_values, dy, dx, dd,
+    )
+
+
+# ---------------------------------------------------------------------------
+# CuPy GPU backend — iterative parallel relaxation (parallel Bellman-Ford)
+# ---------------------------------------------------------------------------
+
+@cuda.jit
+def _cost_distance_relax_kernel(friction, dist, changed,
+                                height, width,
+                                dy, dx, dd, n_neighbors,
+                                max_cost):
+    """One relaxation pass: each pixel checks all neighbours for shorter paths.
+
+    Iterate until *changed* stays 0.  Convergence is guaranteed because
+    dist values only decrease and the graph has finite edge weights.
+    """
+    iy, ix = cuda.grid(2)
+    if iy >= height or ix >= width:
+        return
+
+    f_u = friction[iy, ix]
+    if not (_math.isfinite(f_u) and f_u > 0.0):
+        return
+
+    current = dist[iy, ix]
+    best = current
+
+    for k in range(n_neighbors):
+        vy = iy + dy[k]
+        vx = ix + dx[k]
+        if vy < 0 or vy >= height or vx < 0 or vx >= width:
+            continue
+
+        d_v = dist[vy, vx]
+        if d_v >= best:
+            continue
+
+        f_v = friction[vy, vx]
+        if not (_math.isfinite(f_v) and f_v > 0.0):
+            continue
+
+        edge_cost = dd[k] * (f_u + f_v) * 0.5
+        new_cost = d_v + edge_cost
+
+        if new_cost < best:
+            best = new_cost
+
+    if best < current and best <= max_cost:
+        dist[iy, ix] = best
+        changed[0] = 1
+
+
+def _cost_distance_cupy(source_data, friction_data, cellsize_x, cellsize_y,
+                        max_cost, target_values, dy, dx, dd):
+    """GPU cost-distance via iterative parallel relaxation.
+
+    Each CUDA thread processes one pixel per iteration, checking all
+    neighbours for shorter paths (parallel Bellman-Ford).  The wavefront
+    advances at least one pixel per iteration, so convergence takes at
+    most O(height + width) iterations.
+    """
+    import cupy as cp
+
+    height, width = source_data.shape
+    src = source_data.astype(cp.float64) if source_data.dtype != cp.float64 \
+        else source_data
+    fric = friction_data.astype(cp.float64) if friction_data.dtype != cp.float64 \
+        else friction_data
+
+    # Initialize all distances to inf
+    dist = cp.full((height, width), cp.inf, dtype=cp.float64)
+
+    # Find source pixels
+    if len(target_values) == 0:
+        source_mask = cp.isfinite(src) & (src != 0)
+    else:
+        source_mask = cp.isin(src, cp.asarray(target_values, dtype=cp.float64))
+        source_mask &= cp.isfinite(src)
+
+    # Only seed sources on passable terrain
+    passable = cp.isfinite(fric) & (fric > 0)
+    source_mask &= passable
+    dist[source_mask] = 0.0
+
+    if not cp.any(source_mask):
+        return cp.full((height, width), cp.nan, dtype=cp.float32)
+
+    # Transfer neighbor offsets to device
+    dy_d = cp.asarray(dy, dtype=cp.int64)
+    dx_d = cp.asarray(dx, dtype=cp.int64)
+    dd_d = cp.asarray(dd, dtype=cp.float64)
+    n_neighbors = len(dy)
+
+    changed = cp.zeros(1, dtype=cp.int32)
+    griddim, blockdim = cuda_args((height, width))
+
+    max_iterations = height + width
+    for _ in range(max_iterations):
+        changed[0] = 0
+        _cost_distance_relax_kernel[griddim, blockdim](
+            fric, dist, changed,
+            height, width,
+            dy_d, dx_d, dd_d, n_neighbors,
+            np.float64(max_cost),
+        )
+        if int(changed[0]) == 0:
+            break
+
+    # Convert: inf or over-budget -> NaN, else float32
+    out = cp.where(
+        cp.isinf(dist) | (dist > max_cost), cp.nan, dist,
+    ).astype(cp.float32)
+    return out
+
+
+def _cost_distance_dask_cupy(source_da, friction_da,
+                              cellsize_x, cellsize_y, max_cost,
+                              target_values, dy, dx, dd):
+    """Dask+CuPy cost distance.
+
+    Bounded max_cost: ``da.map_overlap`` with per-chunk GPU relaxation.
+    Unbounded / large radius: convert to dask+numpy, use CPU iterative path
+    (Dijkstra is O(N log N) vs parallel relaxation's O(N * diameter), so CPU
+    is more efficient for unbounded global shortest paths).
+    """
+    import cupy as cp
+
+    height, width = source_da.shape
+
+    use_map_overlap = False
+    if np.isfinite(max_cost):
+        positive_friction = da.where(friction_da > 0, friction_da, np.inf)
+        f_min = float(da.nanmin(positive_friction).compute())
+        if np.isfinite(f_min) and f_min > 0:
+            min_cellsize = min(cellsize_x, cellsize_y)
+            max_radius = max_cost / (f_min * min_cellsize)
+            pad = int(max_radius + 1)
+            chunks_y, chunks_x = source_da.chunks
+            if pad < max(chunks_y) and pad < max(chunks_x):
+                use_map_overlap = True
+
+    if use_map_overlap:
+        pad_y = int(max_cost / (f_min * cellsize_y) + 1)
+        pad_x = int(max_cost / (f_min * cellsize_x) + 1)
+
+        # Closure captures the scalar parameters
+        tv = target_values
+        mc = max_cost
+        cx, cy = cellsize_x, cellsize_y
+        _dy, _dx, _dd = dy, dx, dd
+
+        def _chunk_func(source_block, friction_block):
+            return _cost_distance_cupy(
+                source_block, friction_block,
+                cx, cy, mc, tv, _dy, _dx, _dd,
+            )
+
+        return da.map_overlap(
+            _chunk_func,
+            source_da, friction_da,
+            depth=(pad_y, pad_x),
+            boundary=np.nan,
+            dtype=np.float32,
+            meta=cp.array((), dtype=cp.float32),
+        )
+
+    # Unbounded or padding too large: convert to dask+numpy, use CPU path
+    source_np = source_da.map_blocks(
+        lambda b: b.get(), dtype=source_da.dtype,
+        meta=np.array((), dtype=source_da.dtype),
+    )
+    friction_np = friction_da.map_blocks(
+        lambda b: b.get(), dtype=friction_da.dtype,
+        meta=np.array((), dtype=friction_da.dtype),
+    )
+    result = _cost_distance_dask(
+        source_np, friction_np,
+        cellsize_x, cellsize_y, max_cost,
+        target_values, dy, dx, dd,
+    )
+    # Convert back to dask+cupy
+    return result.map_blocks(
+        cp.asarray, dtype=result.dtype,
+        meta=cp.array((), dtype=result.dtype),
     )
 
 
@@ -965,28 +1159,13 @@ def cost_distance(
                                           chunks=source_data.chunks)
 
     if _is_cupy_backend:
-        import cupy
-        # Transfer to CPU, run numpy kernel, transfer back
-        source_np = source_data.get()
-        friction_np = np.asarray(friction.data.get(), dtype=np.float64)
-        result_data = cupy.asarray(
-            _cost_distance_numpy(
-                source_np, friction_np,
-                cellsize_x, cellsize_y, max_cost_f,
-                target_values, dy, dx, dd,
-            )
+        result_data = _cost_distance_cupy(
+            source_data, friction_data,
+            cellsize_x, cellsize_y, max_cost_f,
+            target_values, dy, dx, dd,
         )
     elif _is_dask_cupy:
-        # Spill each chunk to CPU via map_overlap, then wrap back as dask
-        source_data = source_data.map_blocks(
-            lambda b: b.get(), dtype=source_data.dtype,
-            meta=np.array((), dtype=source_data.dtype),
-        )
-        friction_data = friction_data.map_blocks(
-            lambda b: b.get(), dtype=friction_data.dtype,
-            meta=np.array((), dtype=friction_data.dtype),
-        )
-        result_data = _cost_distance_dask(
+        result_data = _cost_distance_dask_cupy(
             source_data, friction_data,
             cellsize_x, cellsize_y, max_cost_f,
             target_values, dy, dx, dd,
