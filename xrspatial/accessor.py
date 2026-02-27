@@ -145,6 +145,12 @@ class XrsSpatialDataArrayAccessor:
         from .mahalanobis import mahalanobis
         return mahalanobis([self._obj] + list(other_bands), **kwargs)
 
+    # ---- Raster to vector ----
+
+    def polygonize(self, **kwargs):
+        from .polygonize import polygonize
+        return polygonize(self._obj, **kwargs)
+
     # ---- Multispectral (self = NIR band) ----
 
     def ndvi(self, red_agg, **kwargs):

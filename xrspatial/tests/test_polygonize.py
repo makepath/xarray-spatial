@@ -26,7 +26,7 @@ except ImportError:
     sp = None
 
 
-from ..experimental.polygonize import polygonize
+from ..polygonize import polygonize
 from .general_checks import cuda_and_cupy_available, dask_array_available
 
 
@@ -202,6 +202,36 @@ def test_polygonize_invalid_return_type(raster_3x3):
     msg = f"Invalid return_type '{return_type}'"
     with pytest.raises(ValueError, match=msg):
         polygonize(raster, return_type=return_type)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [np.int32, np.int64, np.float32, np.float64])
+@pytest.mark.parametrize("connectivity", [4, 8])
+def test_polygonize_geojson(raster_3x3, connectivity):
+    raster = xr.DataArray(raster_3x3)
+    fc = polygonize(
+        raster, return_type="geojson", connectivity=connectivity)
+    assert isinstance(fc, dict)
+    assert fc["type"] == "FeatureCollection"
+    features = fc["features"]
+    assert len(features) == 3
+
+    values = [f["properties"]["DN"] for f in features]
+    assert_allclose(values, [0, 1, 4])
+
+    for f in features:
+        assert f["type"] == "Feature"
+        assert f["geometry"]["type"] == "Polygon"
+        coords = f["geometry"]["coordinates"]
+        assert isinstance(coords, list)
+        assert len(coords) >= 1
+        for ring in coords:
+            # Ring is a list of [x, y] pairs.
+            assert isinstance(ring, list)
+            assert len(ring) >= 4
+            # Ring is closed.
+            assert ring[0] == ring[-1]
 
 
 @pytest.mark.parametrize("transform", [

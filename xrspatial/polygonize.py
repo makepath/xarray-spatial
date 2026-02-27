@@ -45,7 +45,7 @@ try:
 except ImportError:
     cupy = None
 
-from ..utils import is_cupy_array, ngjit
+from .utils import ArrayTypeFunctionMapping, is_cupy_array, ngjit
 
 _regions_dtype = np.uint32
 _visited_dtype = np.uint8
@@ -417,6 +417,7 @@ def _transform_points(
 
 @ngjit
 def _scan(
+    regions: np.ndarray,              # _regions_dtype, shape (nx*ny,)
     values: np.ndarray,               # shape (nx*ny,)
     mask: Optional[np.ndarray],       # shape (nx*ny,)
     connectivity_8: bool,
@@ -424,8 +425,6 @@ def _scan(
     nx: int,
     ny: int,
 ) -> Tuple[List[Union[int, float]], List[List[np.ndarray]]]:
-    regions = _calculate_regions(values, mask, connectivity_8, nx, ny)
-
     # Visited flags used to denote where boundaries have already been
     # followed and hence are not future start positions.
     visited = np.zeros_like(values, dtype=_visited_dtype)
@@ -503,6 +502,23 @@ def _to_spatialpandas(
     return df
 
 
+def _to_geojson(
+    column: List[Union[int, float]],
+    polygon_points: List[List[np.ndarray]],
+    column_name: str,
+):
+    """Convert to GeoJSON FeatureCollection dict."""
+    features = []
+    for value, rings in zip(column, polygon_points):
+        coords = [ring.tolist() for ring in rings]
+        features.append({
+            "type": "Feature",
+            "properties": {column_name: value},
+            "geometry": {"type": "Polygon", "coordinates": coords},
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
 def _polygonize_numpy(
     values: np.ndarray,
     mask: Optional[np.ndarray],
@@ -523,18 +539,112 @@ def _polygonize_numpy(
             mask = np.zeros_like(values, dtype=bool)
             mask[:, 0] = True
 
-    values = values.ravel()
-    if mask is not None:
-        mask = mask.ravel()
+    values_flat = values.ravel()
+    mask_flat = mask.ravel() if mask is not None else None
 
+    regions = _calculate_regions(values_flat, mask_flat, connectivity_8, nx, ny)
     column, polygon_points = _scan(
-        values, mask, connectivity_8, transform, nx, ny)
+        regions, values_flat, mask_flat, connectivity_8, transform, nx, ny)
 
     return column, polygon_points
 
 
 # CW angle order for grid-aligned directions (y increases downward).
 _DIR_ANGLE = {(1, 0): 0, (0, 1): 1, (-1, 0): 2, (0, -1): 3}
+
+
+def _calculate_regions_cupy(data, mask_data, connectivity_8):
+    """CuPy GPU backend for connected-component labeling.
+
+    Uses cupyx.scipy.ndimage.label per unique value to produce a regions
+    array compatible with _scan.  Returns a cupy uint32 2D array.
+    """
+    import cupy as cp
+    from cupyx.scipy.ndimage import label as cp_label
+
+    if connectivity_8:
+        structure = cp.ones((3, 3), dtype=cp.int32)
+    else:
+        structure = cp.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=cp.int32)
+
+    regions = cp.zeros(data.shape, dtype=cp.uint32)
+
+    # Build valid mask (unmask + handle float NaN).
+    is_float = cp.issubdtype(data.dtype, cp.floating)
+    if mask_data is not None:
+        valid = cp.asarray(mask_data, dtype=bool)
+        if is_float:
+            valid &= ~cp.isnan(data)
+    else:
+        valid = ~cp.isnan(data) if is_float else None
+
+    unique_vals = data[valid] if valid is not None else data.ravel()
+    unique_vals = cp.unique(unique_vals)
+
+    uid = 1
+    for v in unique_vals:
+        bin_mask = (data == v)
+        if valid is not None:
+            bin_mask &= valid
+        labeled, n_features = cp_label(bin_mask, structure=structure)
+        if n_features == 0:
+            continue
+        # Vectorized assignment: offset labeled region IDs by (uid - 1) so
+        # label 1 → uid, label 2 → uid+1, etc.  Single kernel, no Python loop.
+        where = labeled > 0
+        regions[where] = (labeled[where].astype(cp.uint32) +
+                          cp.uint32(uid - 1))
+        uid += n_features
+
+    return regions
+
+
+@ngjit
+def _renumber_regions(regions, nx, ny):
+    """Renumber regions so IDs are sequential in raster-scan order.
+
+    _scan expects region 1 to have the smallest ij, region 2 the next, etc.
+    GPU CCL numbers regions per-value, not spatially.  This pass assigns
+    new sequential IDs in the order regions are first encountered.
+    """
+    n = nx * ny
+    max_old = 0
+    for i in range(n):
+        if regions[i] > max_old:
+            max_old = regions[i]
+
+    # Map from old region ID to new sequential ID.
+    remap = np.zeros(max_old + 1, dtype=_regions_dtype)
+    new_id = _regions_dtype(0)
+    for ij in range(n):
+        old = regions[ij]
+        if old == 0:
+            continue
+        if remap[old] == 0:
+            new_id += 1
+            remap[old] = new_id
+        regions[ij] = remap[old]
+
+    return regions
+
+
+def _polygonize_cupy(data, mask_data, connectivity_8, transform):
+    """Hybrid GPU/CPU: GPU CCL, CPU boundary tracing."""
+    np_data = cupy.asnumpy(data)
+    np_mask = cupy.asnumpy(mask_data) if mask_data is not None else None
+    ny, nx = np_data.shape
+    if nx == 1:
+        # Edge case: fall back to full numpy path (pads array).
+        return _polygonize_numpy(np_data, np_mask, connectivity_8, transform)
+    regions_gpu = _calculate_regions_cupy(data, mask_data, connectivity_8)
+    regions = cupy.asnumpy(regions_gpu).ravel()
+    # Renumber into raster-scan order for _scan compatibility.
+    regions = _renumber_regions(regions, nx, ny)
+    column, polygon_points = _scan(
+        regions, np_data.ravel(),
+        np_mask.ravel() if np_mask is not None else None,
+        connectivity_8, transform, nx, ny)
+    return column, polygon_points
 
 
 def _to_numpy(arr):
@@ -921,8 +1031,8 @@ def polygonize(
 
     return_type: str, default="numpy"
         Format of returned data.  Allowed values are "numpy", "spatialpandas",
-        "geopandas" and "awkward".  Only "numpy" is always available, the
-        others require optional dependencies.
+        "geopandas", "awkward" and "geojson".  "numpy" and "geojson" are
+        always available, the others require optional dependencies.
 
     Returns
     -------
@@ -970,22 +1080,14 @@ def polygonize(
             raise ValueError(
                 f"Incorrect transform length of {len(transform)} instead of 6")
 
-    if isinstance(raster.data, np.ndarray):
-        column, polygon_points = _polygonize_numpy(
-            raster.data, mask_data, connectivity_8, transform)
-    elif cupy is not None and is_cupy_array(raster.data):
-        # Hybrid GPU/CPU: transfer to CPU for boundary tracing.
-        np_data = cupy.asnumpy(raster.data)
-        np_mask = cupy.asnumpy(mask_data) if mask_data is not None else None
-        column, polygon_points = _polygonize_numpy(
-            np_data, np_mask, connectivity_8, transform)
-    elif da is not None and isinstance(raster.data, da.Array):
-        # Handles both dask+numpy and dask+cupy (chunks converted in
-        # _polygonize_chunk).
-        column, polygon_points = _polygonize_dask(
-            raster.data, mask_data, connectivity_8, transform)
-    else:
-        raise TypeError(f"Unsupported array type: {type(raster.data)}")
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_polygonize_numpy,
+        cupy_func=_polygonize_cupy,
+        dask_func=_polygonize_dask,
+        dask_cupy_func=_polygonize_dask,
+    )
+    column, polygon_points = mapper(raster)(
+        raster.data, mask_data, connectivity_8, transform)
 
     # Convert to requested return_type.
     if return_type == "numpy":
@@ -996,5 +1098,7 @@ def polygonize(
         return _to_geopandas(column, polygon_points, column_name)
     elif return_type == "spatialpandas":
         return _to_spatialpandas(column, polygon_points, column_name)
+    elif return_type == "geojson":
+        return _to_geojson(column, polygon_points, column_name)
     else:
         raise ValueError(f"Invalid return_type '{return_type}'")
