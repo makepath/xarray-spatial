@@ -8,8 +8,10 @@ from typing import Callable, Dict, List, Optional, Union
 
 # 3rd-party
 try:
+    import dask
     import dask.array as da
 except ImportError:
+    dask = None
     da = None
 
 try:
@@ -35,7 +37,7 @@ except ImportError:
 
 # local modules
 from xrspatial.utils import (
-    ArrayTypeFunctionMapping, _validate_raster, has_cuda_and_cupy,
+    ArrayTypeFunctionMapping, _validate_raster, cuda_args, has_cuda_and_cupy,
     is_cupy_array, is_dask_cupy,
     ngjit, not_implemented_func, validate_arrays,
 )
@@ -1232,9 +1234,51 @@ def _apply_numpy(zones_data, values_data, func, nodata):
     return out
 
 
+def _make_apply_kernel(func):
+    """Build a CUDA kernel that applies *func* element-wise."""
+    from numba import cuda as nb_cuda
+
+    device_func = nb_cuda.jit(device=True)(func)
+
+    @nb_cuda.jit
+    def _kernel(zones, values, out, nodata_val, has_nodata):
+        y, x = nb_cuda.grid(2)
+        if y < zones.shape[0] and x < zones.shape[1]:
+            if has_nodata and zones[y, x] == nodata_val:
+                return
+            out[y, x] = device_func(values[y, x])
+
+    return _kernel
+
+
+def _apply_cupy_gpu(zones_data, values_data, kernel, nodata):
+    """Run the CUDA apply kernel on cupy arrays."""
+    out = values_data.copy()
+    has_nodata = nodata is not None
+    nodata_val = nodata if has_nodata else 0
+
+    griddim, blockdim = cuda_args(values_data.shape[:2])
+
+    if values_data.ndim == 2:
+        kernel[griddim, blockdim](
+            zones_data, values_data, out, nodata_val, has_nodata,
+        )
+    else:
+        for k in range(values_data.shape[2]):
+            kernel[griddim, blockdim](
+                zones_data, values_data[:, :, k], out[:, :, k],
+                nodata_val, has_nodata,
+            )
+    return out
+
+
 def _apply_cupy(zones_data, values_data, func, nodata):
-    result_np = _apply_numpy(zones_data.get(), values_data.get(), func, nodata)
-    return cupy.asarray(result_np)
+    try:
+        kernel = _make_apply_kernel(func)
+        return _apply_cupy_gpu(zones_data, values_data, kernel, nodata)
+    except Exception:
+        result_np = _apply_numpy(zones_data.get(), values_data.get(), func, nodata)
+        return cupy.asarray(result_np)
 
 
 def _apply_dask_numpy(zones_data, values_data, func, nodata):
@@ -1258,16 +1302,43 @@ def _apply_dask_numpy(zones_data, values_data, func, nodata):
 
 
 def _apply_dask_cupy(zones_data, values_data, func, nodata):
-    zones_cpu = zones_data.map_blocks(
-        lambda x: x.get(), dtype=zones_data.dtype, meta=np.array(()),
-    )
-    values_cpu = values_data.map_blocks(
-        lambda x: x.get(), dtype=values_data.dtype, meta=np.array(()),
-    )
-    result = _apply_dask_numpy(zones_cpu, values_cpu, func, nodata)
-    return result.map_blocks(
-        cupy.asarray, dtype=result.dtype, meta=cupy.array(()),
-    )
+    # Try GPU: build kernel once, reuse across all chunks
+    try:
+        kernel = _make_apply_kernel(func)
+        gpu_ok = True
+    except Exception:
+        gpu_ok = False
+
+    if gpu_ok:
+        def _chunk_fn(zones_chunk, values_chunk):
+            try:
+                return _apply_cupy_gpu(zones_chunk, values_chunk, kernel, nodata)
+            except Exception:
+                result_np = _apply_numpy(
+                    zones_chunk.get(), values_chunk.get(), func, nodata,
+                )
+                return cupy.asarray(result_np)
+    else:
+        def _chunk_fn(zones_chunk, values_chunk):
+            result_np = _apply_numpy(
+                zones_chunk.get(), values_chunk.get(), func, nodata,
+            )
+            return cupy.asarray(result_np)
+
+    if values_data.ndim == 2:
+        return da.map_blocks(
+            _chunk_fn, zones_data, values_data,
+            dtype=values_data.dtype, meta=cupy.array(()),
+        )
+    else:
+        layers = []
+        for k in range(values_data.shape[2]):
+            layer = values_data[:, :, k].rechunk(zones_data.chunks)
+            layers.append(da.map_blocks(
+                _chunk_fn, zones_data, layer,
+                dtype=values_data.dtype, meta=cupy.array(()),
+            ))
+        return da.stack(layers, axis=2)
 
 
 def apply(
@@ -1783,6 +1854,35 @@ def _trim(data, excludes):
     return top, bottom, left, right
 
 
+def _trim_bounds_dask(data, excludes):
+    """Find trim bounds using lazy dask reductions (O(rows+cols) memory)."""
+    excluded = da.zeros_like(data, dtype=bool)
+    for v in excludes:
+        if isinstance(v, float) and np.isnan(v):
+            excluded = excluded | da.isnan(data)
+        else:
+            excluded = excluded | (data == v)
+
+    all_excl_rows = excluded.all(axis=1)
+    all_excl_cols = excluded.all(axis=0)
+    row_mask, col_mask = dask.compute(all_excl_rows, all_excl_cols)
+
+    # dask+cupy computes to cupy arrays; move to numpy for np.where
+    if is_cupy_array(row_mask):
+        row_mask = row_mask.get()
+    if is_cupy_array(col_mask):
+        col_mask = col_mask.get()
+
+    data_rows = np.where(~np.asarray(row_mask))[0]
+    data_cols = np.where(~np.asarray(col_mask))[0]
+
+    if len(data_rows) == 0 or len(data_cols) == 0:
+        return 0, -1, 0, -1  # empty slice
+
+    return (int(data_rows[0]), int(data_rows[-1]),
+            int(data_cols[0]), int(data_cols[-1]))
+
+
 def trim(
     raster: xr.DataArray,
     values: Union[list, tuple] = (np.nan,),
@@ -1891,15 +1991,13 @@ def trim(
     _validate_raster(raster, func_name='trim', name='raster', ndim=2)
 
     data = raster.data
-    # _trim needs element access; materialise to numpy for non-numpy backends
-    if is_cupy_array(data):
-        data = data.get()
-    elif has_dask_array() and isinstance(data, da.Array):
-        data = data.compute()
+    if has_dask_array() and isinstance(data, da.Array):
+        top, bottom, left, right = _trim_bounds_dask(data, values)
+    else:
         if is_cupy_array(data):
             data = data.get()
+        top, bottom, left, right = _trim(data, values)
 
-    top, bottom, left, right = _trim(data, values)
     arr = raster[top: bottom + 1, left: right + 1]
     arr.name = name
     return arr
@@ -2001,6 +2099,32 @@ def _crop(data, values):
                 break
 
     return top, bottom, left, right
+
+
+def _crop_bounds_dask(data, target_values):
+    """Find crop bounds using lazy dask reductions (O(rows+cols) memory)."""
+    matched = da.zeros_like(data, dtype=bool)
+    for v in target_values:
+        matched = matched | (data == v)
+
+    any_match_rows = matched.any(axis=1)
+    any_match_cols = matched.any(axis=0)
+    row_mask, col_mask = dask.compute(any_match_rows, any_match_cols)
+
+    # dask+cupy computes to cupy arrays; move to numpy for np.where
+    if is_cupy_array(row_mask):
+        row_mask = row_mask.get()
+    if is_cupy_array(col_mask):
+        col_mask = col_mask.get()
+
+    match_rows = np.where(np.asarray(row_mask))[0]
+    match_cols = np.where(np.asarray(col_mask))[0]
+
+    if len(match_rows) == 0 or len(match_cols) == 0:
+        return 0, data.shape[0] - 1, 0, data.shape[1] - 1
+
+    return (int(match_rows[0]), int(match_rows[-1]),
+            int(match_cols[0]), int(match_cols[-1]))
 
 
 def crop(
@@ -2123,15 +2247,13 @@ def crop(
     _validate_raster(values, func_name='crop', name='values', ndim=2)
 
     data = zones.data
-    # _crop is @ngjit; materialise to numpy for non-numpy backends
-    if is_cupy_array(data):
-        data = data.get()
-    elif has_dask_array() and isinstance(data, da.Array):
-        data = data.compute()
+    if has_dask_array() and isinstance(data, da.Array):
+        top, bottom, left, right = _crop_bounds_dask(data, zones_ids)
+    else:
         if is_cupy_array(data):
             data = data.get()
+        top, bottom, left, right = _crop(data, zones_ids)
 
-    top, bottom, left, right = _crop(data, zones_ids)
     arr = values[top: bottom + 1, left: right + 1]
     arr.name = name
     return arr

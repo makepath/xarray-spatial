@@ -1,4 +1,4 @@
-"""Tests for dask+cupy backends: perlin, terrain, crosstab, trim, crop."""
+"""Tests for dask+cupy backends: perlin, terrain, crosstab, trim, crop, apply."""
 
 import numpy as np
 import xarray as xr
@@ -6,7 +6,7 @@ import xarray as xr
 from xrspatial import generate_terrain, perlin
 from xrspatial.tests.general_checks import cuda_and_cupy_available, dask_array_available
 from xrspatial.utils import has_cuda_and_cupy
-from xrspatial.zonal import crop, trim
+from xrspatial.zonal import apply, crop, trim
 
 
 def _make_raster(shape=(50, 50), backend='numpy', chunks=(10, 10)):
@@ -184,6 +184,18 @@ def test_trim_dask():
     np.testing.assert_array_equal(result.data.compute(), _TRIM_EXPECTED)
 
 
+@dask_array_available
+def test_trim_dask_lazy():
+    """trim() on a dask DataArray returns a dask-backed result (not computed)."""
+    import dask.array as da
+
+    raster = xr.DataArray(
+        da.from_array(_TRIM_ARR, chunks=(3, 2)), dims=['y', 'x'],
+    )
+    result = trim(raster, values=(0,))
+    assert isinstance(result.data, da.Array)
+
+
 @cuda_and_cupy_available
 def test_trim_cupy():
     import cupy
@@ -239,6 +251,18 @@ def test_crop_dask():
     np.testing.assert_array_equal(result.data.compute(), _CROP_EXPECTED)
 
 
+@dask_array_available
+def test_crop_dask_lazy():
+    """crop() on a dask DataArray returns a dask-backed result (not computed)."""
+    import dask.array as da
+
+    raster = xr.DataArray(
+        da.from_array(_CROP_ARR, chunks=(3, 2)), dims=['y', 'x'],
+    )
+    result = crop(raster, raster, zones_ids=(1, 3))
+    assert isinstance(result.data, da.Array)
+
+
 @cuda_and_cupy_available
 def test_crop_cupy():
     import cupy
@@ -262,3 +286,86 @@ def test_crop_dask_cupy():
     computed = result.data.compute()
     assert isinstance(computed, cupy.ndarray)
     np.testing.assert_array_equal(computed.get(), _CROP_EXPECTED)
+
+
+# ---- apply: cupy, dask+cupy, fallback ----
+
+_APPLY_ZONES = np.array([
+    [1, 1, 0, 2],
+    [1, 1, 0, 2],
+    [3, 3, 3, 2],
+], dtype=np.int64)
+
+_APPLY_VALUES = np.array([
+    [10.0, 20.0, 30.0, 40.0],
+    [50.0, 60.0, 70.0, 80.0],
+    [90.0, 100.0, 110.0, 120.0],
+], dtype=np.float64)
+
+
+def _double(x):
+    return x * 2
+
+
+@cuda_and_cupy_available
+def test_apply_cupy():
+    import cupy
+
+    zones_np = xr.DataArray(_APPLY_ZONES, dims=['y', 'x'])
+    values_np = xr.DataArray(_APPLY_VALUES, dims=['y', 'x'])
+    result_np = apply(zones_np, values_np, _double)
+
+    zones_cupy = xr.DataArray(cupy.asarray(_APPLY_ZONES), dims=['y', 'x'])
+    values_cupy = xr.DataArray(cupy.asarray(_APPLY_VALUES), dims=['y', 'x'])
+    result_cupy = apply(zones_cupy, values_cupy, _double)
+
+    assert isinstance(result_cupy.data, cupy.ndarray)
+    np.testing.assert_allclose(result_cupy.data.get(), result_np.values)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+def test_apply_dask_cupy():
+    import cupy
+    import dask.array as da
+
+    zones_np = xr.DataArray(_APPLY_ZONES, dims=['y', 'x'])
+    values_np = xr.DataArray(_APPLY_VALUES, dims=['y', 'x'])
+    result_np = apply(zones_np, values_np, _double)
+
+    zones_gpu = cupy.asarray(_APPLY_ZONES)
+    values_gpu = cupy.asarray(_APPLY_VALUES)
+    zones_dask = xr.DataArray(
+        da.from_array(zones_gpu, chunks=(2, 2)), dims=['y', 'x'],
+    )
+    values_dask = xr.DataArray(
+        da.from_array(values_gpu, chunks=(2, 2)), dims=['y', 'x'],
+    )
+    result = apply(zones_dask, values_dask, _double)
+
+    assert isinstance(result.data, da.Array)
+    computed = result.data.compute()
+    assert isinstance(computed, cupy.ndarray)
+    np.testing.assert_allclose(computed.get(), result_np.values)
+
+
+@cuda_and_cupy_available
+def test_apply_cupy_fallback():
+    """A func that CUDA can't compile still works via CPU fallback."""
+    import cupy
+
+    lookup = {10.0: 100.0, 50.0: 500.0}
+
+    def _dict_func(x):
+        return lookup.get(x, x)
+
+    zones_np = xr.DataArray(_APPLY_ZONES, dims=['y', 'x'])
+    values_np = xr.DataArray(_APPLY_VALUES, dims=['y', 'x'])
+    result_np = apply(zones_np, values_np, _dict_func)
+
+    zones_cupy = xr.DataArray(cupy.asarray(_APPLY_ZONES), dims=['y', 'x'])
+    values_cupy = xr.DataArray(cupy.asarray(_APPLY_VALUES), dims=['y', 'x'])
+    result_cupy = apply(zones_cupy, values_cupy, _dict_func)
+
+    assert isinstance(result_cupy.data, cupy.ndarray)
+    np.testing.assert_allclose(result_cupy.data.get(), result_np.values)

@@ -236,10 +236,10 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Apply](xrspatial/zonal.py) | Applies a custom function to each zone in a classified raster | ✅️ | ✅️ | 🔄 | 🔄 |
-| [Crop](xrspatial/zonal.py) | Extracts the bounding rectangle of a specific zone | ✅️ | 🔄 | 🔄 | 🔄 |
+| [Apply](xrspatial/zonal.py) | Applies a custom function to each zone in a classified raster | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Crop](xrspatial/zonal.py) | Extracts the bounding rectangle of a specific zone | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Regions](xrspatial/zonal.py) | Identifies connected regions of non-zero cells | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Trim](xrspatial/zonal.py) | Removes nodata border rows and columns from a raster | ✅️ | 🔄 | 🔄 | 🔄 |
+| [Trim](xrspatial/zonal.py) | Removes nodata border rows and columns from a raster | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Zonal Statistics](xrspatial/zonal.py) | Computes summary statistics for a value raster within each zone | ✅️ | ✅️| ✅️ | 🔄 |
 | [Zonal Cross Tabulate](xrspatial/zonal.py) | Cross-tabulates agreement between two categorical rasters | ✅️ | ✅️| 🔄 | 🔄 |
 
