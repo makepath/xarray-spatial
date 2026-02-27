@@ -454,6 +454,24 @@ def _stats_cupy(
     return stats_df
 
 
+def _stats_dask_cupy(
+    zones,
+    values,
+    zone_ids,
+    stats_funcs,
+    nodata_values,
+):
+    zones_cpu = zones.map_blocks(
+        lambda x: x.get(), dtype=zones.dtype, meta=np.array(()),
+    )
+    values_cpu = values.map_blocks(
+        lambda x: x.get(), dtype=values.dtype, meta=np.array(()),
+    )
+    return _stats_dask_numpy(
+        zones_cpu, values_cpu, zone_ids, stats_funcs, nodata_values,
+    )
+
+
 def stats(
     zones: xr.DataArray,
     values: xr.DataArray,
@@ -684,9 +702,7 @@ def stats(
         numpy_func=lambda *args: _stats_numpy(*args, return_type=return_type),
         dask_func=_stats_dask_numpy,
         cupy_func=_stats_cupy,
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='stats() does not support dask with cupy backed DataArray'  # noqa
-        ),
+        dask_cupy_func=_stats_dask_cupy,
     )
     result = mapper(values)(
         zones.data, values.data, zone_ids, stats_funcs_dict, nodata_values,
