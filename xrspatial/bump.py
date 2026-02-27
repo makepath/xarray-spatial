@@ -4,9 +4,18 @@ import numpy as np
 import xarray as xr
 from xarray import DataArray
 
-from xrspatial.utils import _validate_scalar, ngjit
+try:
+    import cupy
+except ImportError:
+    class cupy(object):
+        ndarray = False
 
-# TODO: change parameters to take agg instead of height / width
+try:
+    import dask.array as da
+except ImportError:
+    da = None
+
+from xrspatial.utils import ArrayTypeFunctionMapping, _validate_scalar, ngjit
 
 
 @ngjit
@@ -28,11 +37,75 @@ def _finish_bump(width, height, locs, heights, spread):
     return out
 
 
-def bump(width: int,
-         height: int,
+def _bump_numpy(data, width, height, locs, heights, spread):
+    return _finish_bump(width, height, locs, heights, spread)
+
+
+def _bump_cupy(data, width, height, locs, heights, spread):
+    return cupy.asarray(_finish_bump(width, height, locs, heights, spread))
+
+
+def _bump_dask_numpy(data, width, height, locs, heights, spread):
+    def _chunk_bump(block, block_info=None):
+        info = block_info[0]
+        y_start, y_end = info['array-location'][0]
+        x_start, x_end = info['array-location'][1]
+        chunk_h, chunk_w = block.shape
+
+        mask = ((locs[:, 0] >= x_start) & (locs[:, 0] < x_end) &
+                (locs[:, 1] >= y_start) & (locs[:, 1] < y_end))
+
+        if not np.any(mask):
+            return np.zeros((chunk_h, chunk_w))
+
+        local_locs = locs[mask].copy()
+        local_locs[:, 0] -= x_start
+        local_locs[:, 1] -= y_start
+
+        return _finish_bump(chunk_w, chunk_h, local_locs, heights[mask], spread)
+
+    return da.map_blocks(
+        _chunk_bump, data,
+        dtype=np.float64,
+        meta=np.array((), dtype=np.float64),
+    )
+
+
+def _bump_dask_cupy(data, width, height, locs, heights, spread):
+    def _chunk_bump(block, block_info=None):
+        info = block_info[0]
+        y_start, y_end = info['array-location'][0]
+        x_start, x_end = info['array-location'][1]
+        chunk_h, chunk_w = block.shape
+
+        mask = ((locs[:, 0] >= x_start) & (locs[:, 0] < x_end) &
+                (locs[:, 1] >= y_start) & (locs[:, 1] < y_end))
+
+        if not np.any(mask):
+            return cupy.zeros((chunk_h, chunk_w))
+
+        local_locs = locs[mask].copy()
+        local_locs[:, 0] -= x_start
+        local_locs[:, 1] -= y_start
+
+        return cupy.asarray(
+            _finish_bump(chunk_w, chunk_h, local_locs, heights[mask], spread)
+        )
+
+    return da.map_blocks(
+        _chunk_bump, data,
+        dtype=np.float64,
+        meta=cupy.array((), dtype=np.float64),
+    )
+
+
+def bump(width: int = None,
+         height: int = None,
          count: Optional[int] = None,
          height_func=None,
-         spread: int = 1) -> xr.DataArray:
+         spread: int = 1,
+         *,
+         agg: xr.DataArray = None) -> xr.DataArray:
     """
     Generate a simple bump map to simulate the appearance of land
     features.
@@ -43,10 +116,12 @@ def bump(width: int,
 
     Parameters
     ----------
-    width : int
+    width : int, optional
         Total width, in pixels, of the image.
-    height : int
+        Not required when ``agg`` is provided.
+    height : int, optional
         Total height, in pixels, of the image.
+        Not required when ``agg`` is provided.
     count : int
         Number of bumps to generate.
     height_func : function which takes x, y and returns a height value
@@ -54,6 +129,10 @@ def bump(width: int,
         elevations.
     spread : int, default=1
         Number of pixels to spread on all sides.
+    agg : xarray.DataArray, optional
+        Template raster whose shape, chunks, and backend (NumPy, CuPy,
+        Dask, Dask+CuPy) determine the output type.  When provided,
+        ``width`` and ``height`` are inferred from ``agg.shape``.
 
     Returns
     -------
@@ -194,17 +273,23 @@ def bump(width: int,
             Description:  Example Bump Map
             units:        km
     """
-    _validate_scalar(width, func_name='bump', name='width', dtype=int, min_val=1)
-    _validate_scalar(height, func_name='bump', name='height', dtype=int, min_val=1)
+    if agg is not None:
+        h, w = agg.shape
+    else:
+        _validate_scalar(width, func_name='bump', name='width',
+                         dtype=int, min_val=1)
+        _validate_scalar(height, func_name='bump', name='height',
+                         dtype=int, min_val=1)
+        w, h = width, height
 
-    linx = range(width)
-    liny = range(height)
+    linx = range(w)
+    liny = range(h)
 
     if count is None:
-        count = width * height // 10
+        count = w * h // 10
 
     if height_func is None:
-        height_func = lambda bumps: np.ones(len(bumps)) # noqa
+        height_func = lambda bumps: np.ones(len(bumps))  # noqa
 
     # create 2d array of random x, y for bump locations
     locs = np.empty((count, 2), dtype=np.uint16)
@@ -213,5 +298,18 @@ def bump(width: int,
 
     heights = height_func(locs)
 
-    bumps = _finish_bump(width, height, locs, heights, spread)
-    return DataArray(bumps, dims=['y', 'x'], attrs=dict(res=1))
+    if agg is not None:
+        mapper = ArrayTypeFunctionMapping(
+            numpy_func=_bump_numpy,
+            cupy_func=_bump_cupy,
+            dask_func=_bump_dask_numpy,
+            dask_cupy_func=_bump_dask_cupy,
+        )
+        out = mapper(agg)(agg.data, w, h, locs, heights, spread)
+        return DataArray(out,
+                         coords=agg.coords,
+                         dims=agg.dims,
+                         attrs=dict(res=1))
+    else:
+        bumps = _finish_bump(w, h, locs, heights, spread)
+        return DataArray(bumps, dims=['y', 'x'], attrs=dict(res=1))
