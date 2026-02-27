@@ -1890,7 +1890,16 @@ def trim(
     """
     _validate_raster(raster, func_name='trim', name='raster', ndim=2)
 
-    top, bottom, left, right = _trim(raster.data, values)
+    data = raster.data
+    # _trim needs element access; materialise to numpy for non-numpy backends
+    if is_cupy_array(data):
+        data = data.get()
+    elif has_dask_array() and isinstance(data, da.Array):
+        data = data.compute()
+        if is_cupy_array(data):
+            data = data.get()
+
+    top, bottom, left, right = _trim(data, values)
     arr = raster[top: bottom + 1, left: right + 1]
     arr.name = name
     return arr
@@ -2113,7 +2122,16 @@ def crop(
     _validate_raster(zones, func_name='crop', name='zones', ndim=2)
     _validate_raster(values, func_name='crop', name='values', ndim=2)
 
-    top, bottom, left, right = _crop(zones.data, zones_ids)
+    data = zones.data
+    # _crop is @ngjit; materialise to numpy for non-numpy backends
+    if is_cupy_array(data):
+        data = data.get()
+    elif has_dask_array() and isinstance(data, da.Array):
+        data = data.compute()
+        if is_cupy_array(data):
+            data = data.get()
+
+    top, bottom, left, right = _crop(data, zones_ids)
     arr = values[top: bottom + 1, left: right + 1]
     arr.name = name
     return arr

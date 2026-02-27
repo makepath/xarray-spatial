@@ -1,4 +1,4 @@
-"""Tests for dask+cupy backends: perlin, terrain, crosstab."""
+"""Tests for dask+cupy backends: perlin, terrain, crosstab, trim, crop."""
 
 import numpy as np
 import xarray as xr
@@ -6,6 +6,7 @@ import xarray as xr
 from xrspatial import generate_terrain, perlin
 from xrspatial.tests.general_checks import cuda_and_cupy_available, dask_array_available
 from xrspatial.utils import has_cuda_and_cupy
+from xrspatial.zonal import crop, trim
 
 
 def _make_raster(shape=(50, 50), backend='numpy', chunks=(10, 10)):
@@ -156,3 +157,108 @@ def test_crosstab_dask_cupy():
     np.testing.assert_array_equal(
         df_numpy_sorted.values, df_computed_sorted.values,
     )
+
+
+# ---- trim: dask, cupy, dask+cupy ----
+
+_TRIM_ARR = np.array([
+    [0, 0, 0, 0],
+    [0, 4, 0, 0],
+    [0, 4, 4, 0],
+    [0, 1, 1, 0],
+    [0, 0, 0, 0],
+], dtype=np.int64)
+_TRIM_EXPECTED_SHAPE = (3, 2)
+_TRIM_EXPECTED = np.array([[4, 0], [4, 4], [1, 1]], dtype=np.int64)
+
+
+@dask_array_available
+def test_trim_dask():
+    import dask.array as da
+
+    raster = xr.DataArray(
+        da.from_array(_TRIM_ARR, chunks=(3, 2)), dims=['y', 'x'],
+    )
+    result = trim(raster, values=(0,))
+    assert result.shape == _TRIM_EXPECTED_SHAPE
+    np.testing.assert_array_equal(result.data.compute(), _TRIM_EXPECTED)
+
+
+@cuda_and_cupy_available
+def test_trim_cupy():
+    import cupy
+
+    raster = xr.DataArray(cupy.asarray(_TRIM_ARR), dims=['y', 'x'])
+    result = trim(raster, values=(0,))
+    assert result.shape == _TRIM_EXPECTED_SHAPE
+    np.testing.assert_array_equal(result.data.get(), _TRIM_EXPECTED)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+def test_trim_dask_cupy():
+    import cupy
+    import dask.array as da
+
+    gpu = cupy.asarray(_TRIM_ARR)
+    raster = xr.DataArray(da.from_array(gpu, chunks=(3, 2)), dims=['y', 'x'])
+    result = trim(raster, values=(0,))
+    assert result.shape == _TRIM_EXPECTED_SHAPE
+    computed = result.data.compute()
+    assert isinstance(computed, cupy.ndarray)
+    np.testing.assert_array_equal(computed.get(), _TRIM_EXPECTED)
+
+
+# ---- crop: dask, cupy, dask+cupy ----
+
+_CROP_ARR = np.array([
+    [0, 4, 0, 3],
+    [0, 4, 4, 3],
+    [0, 1, 1, 3],
+    [0, 1, 1, 3],
+    [0, 0, 0, 0],
+], dtype=np.int64)
+_CROP_EXPECTED_SHAPE = (4, 3)
+_CROP_EXPECTED = np.array([
+    [4, 0, 3],
+    [4, 4, 3],
+    [1, 1, 3],
+    [1, 1, 3],
+], dtype=np.int64)
+
+
+@dask_array_available
+def test_crop_dask():
+    import dask.array as da
+
+    raster = xr.DataArray(
+        da.from_array(_CROP_ARR, chunks=(3, 2)), dims=['y', 'x'],
+    )
+    result = crop(raster, raster, zones_ids=(1, 3))
+    assert result.shape == _CROP_EXPECTED_SHAPE
+    np.testing.assert_array_equal(result.data.compute(), _CROP_EXPECTED)
+
+
+@cuda_and_cupy_available
+def test_crop_cupy():
+    import cupy
+
+    raster = xr.DataArray(cupy.asarray(_CROP_ARR), dims=['y', 'x'])
+    result = crop(raster, raster, zones_ids=(1, 3))
+    assert result.shape == _CROP_EXPECTED_SHAPE
+    np.testing.assert_array_equal(result.data.get(), _CROP_EXPECTED)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+def test_crop_dask_cupy():
+    import cupy
+    import dask.array as da
+
+    gpu = cupy.asarray(_CROP_ARR)
+    raster = xr.DataArray(da.from_array(gpu, chunks=(3, 2)), dims=['y', 'x'])
+    result = crop(raster, raster, zones_ids=(1, 3))
+    assert result.shape == _CROP_EXPECTED_SHAPE
+    computed = result.data.compute()
+    assert isinstance(computed, cupy.ndarray)
+    np.testing.assert_array_equal(computed.get(), _CROP_EXPECTED)
