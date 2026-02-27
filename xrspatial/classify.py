@@ -24,7 +24,14 @@ except ImportError:
 import numba as nb
 import numpy as np
 
-from xrspatial.utils import ArrayTypeFunctionMapping, cuda_args, ngjit, not_implemented_func
+from xrspatial.utils import (
+    ArrayTypeFunctionMapping,
+    _validate_raster,
+    _validate_scalar,
+    cuda_args,
+    ngjit,
+    not_implemented_func,
+)
 from xrspatial.dataset_support import supports_dataset
 
 
@@ -136,6 +143,7 @@ def binary(agg, values, name='binary'):
                [0.,  0.,  0.,  0.,  np.nan]], dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
     """
+    _validate_raster(agg, func_name='binary', name='agg', ndim=None)
 
     mapper = ArrayTypeFunctionMapping(numpy_func=_run_numpy_binary,
                                       dask_func=_run_dask_numpy_binary,
@@ -380,6 +388,7 @@ def reclassify(agg: xr.DataArray,
 
     Reclassify works with Dask with CuPy backed xarray DataArray.
     """
+    _validate_raster(agg, func_name='reclassify', name='agg', ndim=None)
 
     if len(bins) != len(new_values):
         raise ValueError(
@@ -515,6 +524,8 @@ def quantile(agg: xr.DataArray,
         Attributes:
             res:      (10.0, 10.0)
     """
+    _validate_raster(agg, func_name='quantile', name='agg', ndim=None)
+    _validate_scalar(k, func_name='quantile', name='k', dtype=int, min_val=2)
 
     q = _quantile(agg, num_sample, k)
     k_q = q.shape[0]
@@ -836,6 +847,8 @@ def natural_breaks(agg: xr.DataArray,
                [ 4.,  4.,  4.,  4., nan]], dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
     """
+    _validate_raster(agg, func_name='natural_breaks', name='agg', ndim=None)
+    _validate_scalar(k, func_name='natural_breaks', name='k', dtype=int, min_val=2)
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_run_natural_break,
@@ -944,6 +957,8 @@ def equal_interval(agg: xr.DataArray,
         Attributes:
             res:      (10.0, 10.0)
     """
+    _validate_raster(agg, func_name='equal_interval', name='agg', ndim=None)
+    _validate_scalar(k, func_name='equal_interval', name='k', dtype=int, min_val=1)
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=lambda *args: _run_equal_interval(*args, module=np),
@@ -1015,6 +1030,8 @@ def std_mean(agg: xr.DataArray,
     ----------
         - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#StdMean
     """
+    _validate_raster(agg, func_name='std_mean', name='agg', ndim=None)
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=lambda *args: _run_std_mean(*args, module=np),
         dask_func=lambda *args: _run_std_mean(*args, module=da),
@@ -1112,6 +1129,8 @@ def head_tail_breaks(agg: xr.DataArray,
     ----------
         - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#HeadTailBreaks
     """
+    _validate_raster(agg, func_name='head_tail_breaks', name='agg', ndim=None)
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=lambda *args: _run_head_tail_breaks(*args, module=np),
         dask_func=_run_dask_head_tail_breaks,
@@ -1191,6 +1210,8 @@ def percentiles(agg: xr.DataArray,
     ----------
         - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#Percentiles
     """
+    _validate_raster(agg, func_name='percentiles', name='agg', ndim=None)
+
     if pct is None:
         pct = [1, 10, 50, 90, 99]
 
@@ -1328,6 +1349,9 @@ def maximum_breaks(agg: xr.DataArray,
     ----------
         - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#MaximumBreaks
     """
+    _validate_raster(agg, func_name='maximum_breaks', name='agg', ndim=None)
+    _validate_scalar(k, func_name='maximum_breaks', name='k', dtype=int, min_val=2)
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=lambda *args: _run_maximum_breaks(*args, module=np),
         dask_func=_run_dask_maximum_breaks,
@@ -1431,6 +1455,8 @@ def box_plot(agg: xr.DataArray,
     ----------
         - PySAL: https://pysal.org/mapclassify/_modules/mapclassify/classifiers.html#BoxPlot
     """
+    _validate_raster(agg, func_name='box_plot', name='agg', ndim=None)
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=lambda *args: _run_box_plot(*args, module=np),
         dask_func=lambda *args: _run_box_plot(*args, module=da),

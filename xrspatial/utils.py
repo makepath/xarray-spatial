@@ -44,6 +44,143 @@ def _validate_boundary(boundary):
         )
 
 
+def _validate_raster(
+    agg,
+    *,
+    func_name: str,
+    name: str = 'raster',
+    ndim: int | tuple[int, ...] | None = 2,
+    numeric: bool = True,
+    integer_only: bool = False,
+):
+    """Validate that *agg* is an xarray.DataArray with expected properties.
+
+    Parameters
+    ----------
+    agg : object
+        Value to validate.
+    func_name : str
+        Name of the calling function (for error messages).
+    name : str
+        Parameter name (for error messages).
+    ndim : int, tuple of int, or None
+        Allowed number of dimensions.  ``None`` skips the check.
+    numeric : bool
+        If True, require a numeric dtype (int or float).
+    integer_only : bool
+        If True, require an integer dtype specifically.
+
+    Raises
+    ------
+    TypeError
+        If *agg* is not an ``xr.DataArray``.
+    ValueError
+        If the dimensionality or dtype is wrong.
+    """
+    if not isinstance(agg, xr.DataArray):
+        raise TypeError(
+            f"{func_name}(): `{name}` must be an xarray.DataArray, "
+            f"got {type(agg).__module__}.{type(agg).__qualname__}"
+        )
+
+    if ndim is not None:
+        allowed = (ndim,) if isinstance(ndim, int) else tuple(ndim)
+        if agg.ndim not in allowed:
+            expected = 'or '.join(f'{d}D' for d in allowed)
+            raise ValueError(
+                f"{func_name}(): `{name}` must be {expected}, "
+                f"got {agg.ndim}D"
+            )
+
+    if numeric:
+        if integer_only:
+            if not np.issubdtype(agg.dtype, np.integer):
+                raise ValueError(
+                    f"{func_name}(): `{name}` must have an integer dtype, "
+                    f"got {agg.dtype}"
+                )
+        else:
+            if not np.issubdtype(agg.dtype, np.number):
+                raise ValueError(
+                    f"{func_name}(): `{name}` must have a numeric dtype "
+                    f"(integer or float), got {agg.dtype}"
+                )
+
+
+def _validate_scalar(
+    value,
+    *,
+    func_name: str,
+    name: str,
+    dtype: type | tuple = (int, float),
+    min_val=None,
+    max_val=None,
+    min_exclusive: bool = False,
+):
+    """Validate that *value* is a scalar of the expected type and range.
+
+    Parameters
+    ----------
+    value : object
+        Value to validate.
+    func_name : str
+        Name of the calling function (for error messages).
+    name : str
+        Parameter name (for error messages).
+    dtype : type or tuple of types
+        Allowed Python types (checked with ``isinstance``).
+    min_val, max_val : numeric or None
+        Inclusive bounds (or exclusive lower bound if *min_exclusive*).
+    min_exclusive : bool
+        If True, the lower bound is exclusive (``>`` instead of ``>=``).
+
+    Raises
+    ------
+    TypeError
+        If *value* is not an instance of *dtype*.
+    ValueError
+        If *value* is outside the allowed range.
+    """
+    # Expand dtype to also accept numpy scalar equivalents so that
+    # e.g. np.int64(5) passes a check for dtype=int.
+    _dtype = dtype if isinstance(dtype, tuple) else (dtype,)
+    _expanded = list(_dtype)
+    if int in _dtype:
+        _expanded.append(np.integer)
+    if float in _dtype:
+        _expanded.append(np.floating)
+    _expanded = tuple(_expanded)
+
+    if not isinstance(value, _expanded):
+        expected = dtype.__name__ if isinstance(dtype, type) else \
+            ' or '.join(t.__name__ for t in _dtype)
+        raise TypeError(
+            f"{func_name}(): `{name}` must be {expected}, "
+            f"got {type(value).__name__}"
+        )
+
+    if min_val is not None:
+        if min_exclusive:
+            if value <= min_val:
+                raise ValueError(
+                    f"{func_name}(): `{name}` must be > {min_val}, "
+                    f"got {value}"
+                )
+        else:
+            if value < min_val:
+                raise ValueError(
+                    f"{func_name}(): `{name}` must be >= {min_val}, "
+                    f"got {value}"
+                )
+
+    if max_val is not None:
+        if value > max_val:
+            raise ValueError(
+                f"{func_name}(): `{name}` must be <= {max_val}, "
+                f"got {value}"
+            )
+
+
 def _boundary_to_dask(boundary, is_cupy=False):
     """Convert a boundary mode string to the value expected by
     ``dask.array.map_overlap``'s *boundary* parameter."""

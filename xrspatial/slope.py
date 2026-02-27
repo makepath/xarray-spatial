@@ -29,6 +29,7 @@ from xrspatial.utils import _boundary_to_dask
 from xrspatial.utils import _extract_latlon_coords
 from xrspatial.utils import _pad_array
 from xrspatial.utils import _validate_boundary
+from xrspatial.utils import _validate_raster
 from xrspatial.utils import cuda_args
 from xrspatial.utils import get_dataarray_resolution
 from xrspatial.utils import ngjit
@@ -377,6 +378,8 @@ def slope(agg: xr.DataArray,
               dtype=float32)
         Dimensions without coordinates: dim_0, dim_1
     """
+
+    _validate_raster(agg, func_name='slope', name='agg')
 
     if method not in ('planar', 'geodesic'):
         raise ValueError(

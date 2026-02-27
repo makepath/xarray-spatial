@@ -14,6 +14,7 @@ from numba import cuda
 
 from .gpu_rtx import has_rtx
 from .utils import (_boundary_to_dask, _pad_array, _validate_boundary,
+                    _validate_raster, _validate_scalar,
                     calc_cuda_dims, get_dataarray_resolution,
                     has_cuda_and_cupy, is_cupy_array, is_cupy_backed)
 from .dataset_support import supports_dataset
@@ -216,6 +217,10 @@ def hillshade(agg: xr.DataArray,
         >>> raster['x'] = np.arange(m)
         >>> hillshade_agg = hillshade(raster)
     """
+
+    _validate_raster(agg, func_name='hillshade', name='agg')
+    _validate_scalar(azimuth, func_name='hillshade', name='azimuth', min_val=0, max_val=360)
+    _validate_scalar(angle_altitude, func_name='hillshade', name='angle_altitude', min_val=0, max_val=90)
 
     if shadows and not has_rtx():
         raise RuntimeError(

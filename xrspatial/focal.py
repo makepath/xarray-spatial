@@ -29,7 +29,8 @@ except ImportError:
 
 from xrspatial.convolution import convolve_2d, custom_kernel, _convolve_2d_numpy
 from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
-                             _validate_boundary, cuda_args, ngjit, not_implemented_func)
+                             _validate_boundary, _validate_raster, _validate_scalar,
+                             cuda_args, ngjit, not_implemented_func)
 from xrspatial.dataset_support import supports_dataset
 
 # TODO: Make convolution more generic with numba first-class functions.
@@ -278,6 +279,8 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean', boundary='nan'):
         Dimensions without coordinates: dim_0, dim_1
     """
 
+    _validate_raster(agg, func_name='mean', name='agg')
+    _validate_scalar(passes, func_name='mean', name='passes', dtype=int, min_val=1)
     _validate_boundary(boundary)
     out = agg.data.astype(float)
     for i in range(passes):
@@ -507,12 +510,7 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply', boundary='nan'):
            [2. , 2. , 2. , 1.5]])
     Dimensions without coordinates: y, x
     """
-    # validate raster
-    if not isinstance(raster, DataArray):
-        raise TypeError("`raster` must be instance of DataArray")
-
-    if raster.ndim != 2:
-        raise ValueError("`raster` must be 2D")
+    _validate_raster(raster, func_name='apply', name='raster')
 
     # Validate the kernel
     kernel = custom_kernel(kernel)
@@ -957,12 +955,7 @@ def focal_stats(agg,
           * stats    (stats) object 'min' 'sum'
         Dimensions without coordinates: dim_0, dim_1
     """
-    # validate raster
-    if not isinstance(agg, DataArray):
-        raise TypeError("`agg` must be instance of DataArray")
-
-    if agg.ndim != 2:
-        raise ValueError("`agg` must be 2D")
+    _validate_raster(agg, func_name='focal_stats', name='agg')
 
     # Validate the kernel
     kernel = custom_kernel(kernel)
@@ -1207,12 +1200,7 @@ def hotspots(raster, kernel, boundary='nan'):
         Dimensions without coordinates: dim_0, dim_1
     """
 
-    # validate raster
-    if not isinstance(raster, DataArray):
-        raise TypeError("`raster` must be instance of DataArray")
-
-    if raster.ndim != 2:
-        raise ValueError("`raster` must be 2D")
+    _validate_raster(raster, func_name='hotspots', name='raster')
 
     _validate_boundary(boundary)
 

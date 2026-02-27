@@ -35,7 +35,8 @@ except ImportError:
 
 # local modules
 from xrspatial.utils import (
-    ArrayTypeFunctionMapping, has_cuda_and_cupy, is_cupy_array, is_dask_cupy,
+    ArrayTypeFunctionMapping, _validate_raster, has_cuda_and_cupy,
+    is_cupy_array, is_dask_cupy,
     ngjit, not_implemented_func, validate_arrays,
 )
 from xrspatial.utils import has_dask_array
@@ -663,19 +664,10 @@ def stats(
             result = result.merge(df, on='zone', how='outer')
         return result
 
+    _validate_raster(zones, func_name='stats', name='zones', ndim=2)
+    _validate_raster(values, func_name='stats', name='values', ndim=(2, 3))
+
     validate_arrays(zones, values)
-
-    if not (
-        issubclass(zones.data.dtype.type, np.integer)
-        or issubclass(zones.data.dtype.type, np.floating)
-    ):
-        raise ValueError("`zones` must be an array of integers or floats.")
-
-    if not (
-        issubclass(values.data.dtype.type, np.integer)
-        or issubclass(values.data.dtype.type, np.floating)
-    ):
-        raise ValueError("`values` must be an array of integers or floats.")
 
     # validate stats_funcs
     if has_dask_array() and isinstance(values.data, da.Array) and not isinstance(stats_funcs, list):
@@ -1104,28 +1096,8 @@ def crosstab(
             5      7    0     1     0     0     1     1
     """
 
-    if not isinstance(zones, xr.DataArray):
-        raise TypeError("zones must be instance of DataArray")
-
-    if not isinstance(values, xr.DataArray):
-        raise TypeError("values must be instance of DataArray")
-
-    if zones.ndim != 2:
-        raise ValueError("zones must be 2D")
-
-    if not (
-            issubclass(zones.data.dtype.type, np.integer)
-            or issubclass(zones.data.dtype.type, np.floating)
-    ):
-        raise ValueError("`zones` must be an xarray of integers or floats")
-
-    if not issubclass(values.data.dtype.type, np.integer) and not issubclass(
-            values.data.dtype.type, np.floating
-    ):
-        raise ValueError("`values` must be an xarray of integers or floats")
-
-    if values.ndim not in [2, 3]:
-        raise ValueError("`values` must use either 2D or 3D coordinates.")
+    _validate_raster(zones, func_name='crosstab', name='zones', ndim=2)
+    _validate_raster(values, func_name='crosstab', name='values', ndim=(2, 3))
 
     # For 2D values, validate and align chunks between zones and values
     # This is critical for dask arrays that may come from different sources
@@ -1314,29 +1286,11 @@ def apply(
         array([[0, 0, 5, 0],
                [3, np.nan, 0, 0]])
     """
-    if not isinstance(zones, xr.DataArray):
-        raise TypeError("zones must be instance of DataArray")
-
-    if not isinstance(values, xr.DataArray):
-        raise TypeError("values must be instance of DataArray")
-
-    if zones.ndim != 2:
-        raise ValueError("zones must be 2D")
-
-    if values.ndim != 2 and values.ndim != 3:
-        raise ValueError("values must be either 2D or 3D coordinates")
+    _validate_raster(zones, func_name='apply', name='zones', ndim=2, integer_only=True)
+    _validate_raster(values, func_name='apply', name='values', ndim=(2, 3))
 
     if zones.shape != values.shape[:2]:
         raise ValueError("Incompatible shapes between `zones` and `values`")
-
-    if not issubclass(zones.data.dtype.type, np.integer):
-        raise ValueError("`zones.values` must be an array of integers")
-
-    if not (
-        issubclass(values.data.dtype.type, np.integer)
-        or issubclass(values.data.dtype.type, np.floating)
-    ):
-        raise ValueError("`values` must be an array of integers or float")
 
     # align chunks for 2D values
     if values.ndim == 2:
@@ -1666,6 +1620,8 @@ def regions(
         >>> print(f"Number of unique regions: {len(np.unique(result_8.values))}")
         Number of unique regions: 2
     """
+    _validate_raster(raster, func_name='regions', name='raster', ndim=2)
+
     if neighborhood not in (4, 8):
         raise ValueError("`neighborhood` value must be either 4 or 8)")
 
@@ -1890,6 +1846,8 @@ def trim(
             'Max Elevation': '4000',
         }
     """
+    _validate_raster(raster, func_name='trim', name='raster', ndim=2)
+
     top, bottom, left, right = _trim(raster.data, values)
     arr = raster[top: bottom + 1, left: right + 1]
     arr.name = name
@@ -2110,6 +2068,9 @@ def crop(
             'Max Elevation': '4000',
         }
     """
+    _validate_raster(zones, func_name='crop', name='zones', ndim=2)
+    _validate_raster(values, func_name='crop', name='values', ndim=2)
+
     top, bottom, left, right = _crop(zones.data, zones_ids)
     arr = values[top: bottom + 1, left: right + 1]
     arr.name = name

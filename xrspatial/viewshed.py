@@ -8,8 +8,8 @@ import numpy as np
 import xarray
 
 from .gpu_rtx import has_rtx
-from .utils import (has_cuda_and_cupy, has_dask_array, is_cupy_array,
-                    is_cupy_backed, is_dask_cupy, ngjit)
+from .utils import (_validate_raster, has_cuda_and_cupy, has_dask_array,
+                    is_cupy_array, is_cupy_backed, is_dask_cupy, ngjit)
 
 E_ROW_ID = 0
 E_COL_ID = 1
@@ -1688,6 +1688,7 @@ def viewshed(raster: xarray.DataArray,
           * y        (y) float64 1.0 2.0 3.0 4.0
 
     """
+    _validate_raster(raster, func_name='viewshed', name='raster')
 
     # --- max_distance: extract spatial window for any backend ---
     if max_distance is not None:

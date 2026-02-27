@@ -26,6 +26,7 @@ except ImportError:
 
 from xrspatial.pathfinding import _available_memory_bytes
 from xrspatial.utils import (
+    _validate_raster,
     cuda_args, get_dataarray_resolution, has_cuda_and_cupy,
     is_cupy_array, is_dask_cupy, ngjit,
 )
@@ -1459,6 +1460,8 @@ def proximity(
           * x        (x) int64 0 1 2 3 4
     """
 
+    _validate_raster(raster, func_name='proximity', name='raster')
+
     proximity_img = _process(
         raster,
         x=x,
@@ -1596,6 +1599,8 @@ def allocation(
           * y        (y) int64 4 3 2 1 0
           * x        (x) int64 0 1 2 3 4
     """
+
+    _validate_raster(raster, func_name='allocation', name='raster')
 
     allocation_img = _process(
         raster,
@@ -1740,6 +1745,8 @@ def direction(
           * y        (y) int64 4 3 2 1 0
           * x        (x) int64 0 1 2 3 4
     """
+
+    _validate_raster(raster, func_name='direction', name='raster')
 
     direction_img = _process(
         raster,

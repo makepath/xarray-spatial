@@ -4,7 +4,7 @@ import numpy as np
 import xarray as xr
 from xarray import DataArray
 
-from xrspatial.utils import ngjit
+from xrspatial.utils import _validate_scalar, ngjit
 
 # TODO: change parameters to take agg instead of height / width
 
@@ -194,6 +194,9 @@ def bump(width: int,
             Description:  Example Bump Map
             units:        km
     """
+    _validate_scalar(width, func_name='bump', name='width', dtype=int, min_val=1)
+    _validate_scalar(height, func_name='bump', name='height', dtype=int, min_val=1)
+
     linx = range(width)
     liny = range(height)
 

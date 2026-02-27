@@ -25,6 +25,7 @@ from xrspatial.utils import ArrayTypeFunctionMapping
 from xrspatial.utils import _boundary_to_dask
 from xrspatial.utils import _pad_array
 from xrspatial.utils import _validate_boundary
+from xrspatial.utils import _validate_raster
 from xrspatial.utils import cuda_args
 from xrspatial.utils import get_dataarray_resolution
 from xrspatial.utils import ngjit
@@ -249,6 +250,8 @@ def curvature(agg: xr.DataArray,
         Attributes:
             res:      (10, 10)
     """
+    _validate_raster(agg, func_name='curvature', name='agg')
+
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
     cellsize = (cellsize_x + cellsize_y) / 2
 
