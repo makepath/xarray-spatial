@@ -420,19 +420,40 @@ class TestEmergeDask:
 
 
 # ---------------------------------------------------------------------------
-# Dask + CuPy stub
+# Dask + CuPy backend
 # ---------------------------------------------------------------------------
 
 class TestEmergeDaskCuPy:
-    def test_raises_not_implemented(self):
+    def test_dask_cupy_matches_numpy(self):
         cupy = pytest.importorskip("cupy")
         da = pytest.importorskip("dask.array")
 
         rng = np.random.default_rng(42)
-        np_data = rng.standard_normal((5, 10, 10)).astype('f4')
+        np_data = rng.standard_normal((8, 20, 20)).astype('f4')
+
+        ds_np = emerging_hotspots(_make_raster(np_data), _kernel_3x3())
+
         dask_cupy_data = da.from_array(
-            cupy.asarray(np_data), chunks=(5, 5, 5)
+            cupy.asarray(np_data), chunks=(8, 10, 10)
         )
-        raster = _make_raster(dask_cupy_data)
-        with pytest.raises(NotImplementedError):
-            emerging_hotspots(raster, _kernel_3x3())
+        ds_dc = emerging_hotspots(
+            _make_raster(dask_cupy_data), _kernel_3x3()
+        ).compute()
+
+        for var in ('category', 'gi_bin'):
+            dc_vals = ds_dc[var].data
+            if isinstance(dc_vals, cupy.ndarray):
+                dc_vals = dc_vals.get()
+            np.testing.assert_array_equal(
+                dc_vals, ds_np[var].values,
+                err_msg=f"mismatch in {var}",
+            )
+
+        for var in ('gi_zscore', 'trend_zscore', 'trend_pvalue'):
+            dc_vals = ds_dc[var].data
+            if isinstance(dc_vals, cupy.ndarray):
+                dc_vals = dc_vals.get()
+            np.testing.assert_allclose(
+                dc_vals, ds_np[var].values, atol=1e-5,
+                err_msg=f"mismatch in {var}",
+            )

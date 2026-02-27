@@ -27,7 +27,9 @@ except ImportError:
     class cupy(object):
         ndarray = False
 
-from xrspatial.convolution import convolve_2d, custom_kernel, _convolve_2d_numpy
+from xrspatial.convolution import (
+    convolve_2d, custom_kernel, _convolve_2d_numpy, _convolve_2d_cupy,
+)
 from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
                              _validate_boundary, _validate_raster, _validate_scalar,
                              cuda_args, ngjit, not_implemented_func)
@@ -1078,6 +1080,41 @@ def _hotspots_chunk(chunk, kernel, global_mean, global_std):
     return _calc_hotspots_numpy(z)
 
 
+def _hotspots_dask_cupy(raster, kernel, boundary='nan'):
+    data = raster.data
+    if not cupy.issubdtype(data.dtype, cupy.floating):
+        data = data.astype(cupy.float32)
+
+    # Pass 1: global statistics (two scalars, eager)
+    global_mean, global_std = da.compute(da.nanmean(data), da.nanstd(data))
+    global_mean = np.float32(float(global_mean))
+    global_std = np.float32(float(global_std))
+
+    if global_std == 0:
+        raise ZeroDivisionError(
+            "Standard deviation of the input raster values is 0."
+        )
+
+    norm_kernel = (kernel / kernel.sum()).astype(np.float32)
+    pad_h = norm_kernel.shape[0] // 2
+    pad_w = norm_kernel.shape[1] // 2
+
+    # Pass 2: fuse convolution + z-score + classification
+    # Convolution on GPU, classification on CPU (branching-heavy)
+    def _chunk_fn(chunk):
+        convolved = _convolve_2d_cupy(chunk, norm_kernel)
+        z = (convolved - global_mean) / global_std
+        return cupy.asarray(_calc_hotspots_numpy(cupy.asnumpy(z)))
+
+    out = data.map_overlap(
+        _chunk_fn,
+        depth=(pad_h, pad_w),
+        boundary=_boundary_to_dask(boundary, is_cupy=True),
+        meta=cupy.array((), dtype=cupy.int8),
+    )
+    return out
+
+
 @nb.cuda.jit(device=True)
 def _gpu_hotspots(data):
     zscore = data[0, 0]
@@ -1208,8 +1245,7 @@ def hotspots(raster, kernel, boundary='nan'):
         numpy_func=partial(_hotspots_numpy, boundary=boundary),
         cupy_func=partial(_hotspots_cupy, boundary=boundary),
         dask_func=partial(_hotspots_dask_numpy, boundary=boundary),
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='hotspots() does not support dask with cupy backed DataArray.'),  # noqa
+        dask_cupy_func=partial(_hotspots_dask_cupy, boundary=boundary),
     )
     out = mapper(raster)(raster, kernel)
 

@@ -22,7 +22,7 @@ import numpy as np
 import xarray as xr
 from numba import prange
 
-from xrspatial.convolution import convolve_2d, _convolve_2d_numpy
+from xrspatial.convolution import convolve_2d, _convolve_2d_numpy, _convolve_2d_cupy
 from xrspatial.focal import _calc_hotspots_numpy
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
@@ -528,6 +528,106 @@ def _emerging_hotspots_dask_numpy(raster, kernel, boundary='nan'):
 
 
 # ---------------------------------------------------------------------------
+# Dask + CuPy backend (GPU convolution, CPU Mann-Kendall)
+# ---------------------------------------------------------------------------
+
+def _convolve_and_zscore_cupy_chunk(chunk, kernel, global_mean, global_std):
+    """Dask chunk function: GPU convolve -> z-score."""
+    convolved = _convolve_2d_cupy(chunk, kernel)
+    return ((convolved - global_mean) / global_std).astype(cupy.float32)
+
+
+def _gi_bin_cupy_chunk(block):
+    """Dask chunk function: z-scores -> confidence bins (CPU classify, CuPy I/O)."""
+    block_cpu = cupy.asnumpy(block)
+    n_times = block_cpu.shape[0]
+    out = np.empty_like(block_cpu, dtype=np.int8)
+    for t in range(n_times):
+        out[t] = _calc_hotspots_numpy(block_cpu[t])
+    return cupy.asarray(out)
+
+
+def _mk_classify_dask_cupy_chunk(block):
+    """Dask chunk function: Mann-Kendall + classification (CPU, CuPy I/O)."""
+    block_cpu = cupy.asnumpy(block)
+    n_times, ny, nx = block_cpu.shape
+    gi_bin_cpu = np.empty((n_times, ny, nx), dtype=np.int8)
+    for t in range(n_times):
+        gi_bin_cpu[t] = _calc_hotspots_numpy(block_cpu[t])
+    category, trend_z, trend_p = _mk_classify_numpy(
+        block_cpu, gi_bin_cpu, n_times, ny, nx
+    )
+    out = np.empty((3, ny, nx), dtype=np.float32)
+    out[0] = category.astype(np.float32)
+    out[1] = trend_z
+    out[2] = trend_p
+    return cupy.asarray(out)
+
+
+def _emerging_hotspots_dask_cupy(raster, kernel, boundary='nan'):
+    data = raster.data
+    if not cupy.issubdtype(data.dtype, cupy.floating):
+        data = data.astype(cupy.float32)
+
+    n_times = data.shape[0]
+
+    # Pass 1: eagerly compute global statistics (two scalars)
+    global_mean, global_std = da.compute(da.nanmean(data), da.nanstd(data))
+    global_mean = np.float32(float(global_mean))
+    global_std = np.float32(float(global_std))
+
+    if global_std == 0:
+        raise ZeroDivisionError(
+            "Standard deviation of the input raster values is 0."
+        )
+
+    norm_kernel = (kernel / kernel.sum()).astype(np.float32)
+    pad_h = norm_kernel.shape[0] // 2
+    pad_w = norm_kernel.shape[1] // 2
+
+    # Pass 2: per time step, GPU convolve + z-score via map_overlap, then stack
+    _func = partial(
+        _convolve_and_zscore_cupy_chunk,
+        kernel=norm_kernel,
+        global_mean=global_mean,
+        global_std=global_std,
+    )
+    zscore_slices = []
+    for t in range(n_times):
+        z_t = data[t].map_overlap(
+            _func,
+            depth=(pad_h, pad_w),
+            boundary=_boundary_to_dask(boundary, is_cupy=True),
+            meta=cupy.array((), dtype=cupy.float32),
+        )
+        zscore_slices.append(z_t)
+
+    gi_zscore = da.stack(zscore_slices, axis=0)
+    gi_zscore = gi_zscore.rechunk({0: n_times})
+
+    # gi_bin via map_blocks (element-wise, no overlap needed)
+    gi_bin = da.map_blocks(
+        _gi_bin_cupy_chunk,
+        gi_zscore,
+        dtype=np.int8,
+        meta=cupy.array((), dtype=cupy.int8),
+    )
+
+    # Pass 3: Mann-Kendall + classification via map_blocks
+    mk_result = da.map_blocks(
+        _mk_classify_dask_cupy_chunk,
+        gi_zscore,
+        dtype=np.float32,
+        chunks=((3,), *gi_zscore.chunks[1:]),
+        drop_axis=0,
+        new_axis=0,
+        meta=cupy.array((), dtype=cupy.float32),
+    )
+
+    return gi_zscore, gi_bin, mk_result
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -598,10 +698,8 @@ def emerging_hotspots(raster, kernel, boundary='nan'):
         numpy_func=partial(_emerging_hotspots_numpy, boundary=boundary),
         cupy_func=partial(_emerging_hotspots_cupy, boundary=boundary),
         dask_func=partial(_emerging_hotspots_dask_numpy, boundary=boundary),
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args,
-            messages='emerging_hotspots() does not support '
-                     'dask with cupy backed DataArray.',
+        dask_cupy_func=partial(
+            _emerging_hotspots_dask_cupy, boundary=boundary,
         ),
     )
 
