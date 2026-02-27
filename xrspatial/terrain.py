@@ -162,6 +162,55 @@ def _terrain_gpu(height_map, seed, x_range=(0, 1), y_range=(0, 1)):
     return height_map
 
 
+def _terrain_dask_cupy(data: da.Array,
+                       seed: int,
+                       x_range_scaled: tuple,
+                       y_range_scaled: tuple,
+                       zfactor: int) -> da.Array:
+    data = data * 0
+    height, width = data.shape
+
+    NOISE_LAYERS = ((1 / 2**i, (2**i, 2**i)) for i in range(16))
+
+    nrange = np.arange(2**20, dtype=np.int32)
+
+    for i, (m, (xfreq, yfreq)) in enumerate(NOISE_LAYERS):
+        np.random.seed(seed + i)
+        p = cupy.asarray(np.random.permutation(nrange))
+        p = cupy.append(p, p)
+
+        def _chunk_noise(block, block_info=None, _p=p, _m=m,
+                         _xr=x_range_scaled, _yr=y_range_scaled,
+                         _xf=xfreq, _yf=yfreq):
+            info = block_info[0]
+            y_start, y_end = info['array-location'][0]
+            x_start, x_end = info['array-location'][1]
+            x0 = _xr[0] + (_xr[1] - _xr[0]) * x_start / width
+            x1 = _xr[0] + (_xr[1] - _xr[0]) * x_end / width
+            y0 = _yr[0] + (_yr[1] - _yr[0]) * y_start / height
+            y1 = _yr[0] + (_yr[1] - _yr[0]) * y_end / height
+
+            out = cupy.empty(block.shape, dtype=cupy.float32)
+            griddim, blockdim = cuda_args(block.shape)
+            _perlin_gpu[griddim, blockdim](
+                _p, x0 * _xf, x1 * _xf, y0 * _yf, y1 * _yf, _m, out
+            )
+            return out
+
+        noise = da.map_blocks(_chunk_noise, data, dtype=cupy.float32,
+                              meta=cupy.array((), dtype=cupy.float32))
+        data = data + noise
+
+    data /= (1.00 + 0.50 + 0.25 + 0.13 + 0.06 + 0.03)
+    data = data ** 3
+
+    min_val, max_val = dask.compute(da.min(data), da.max(data))
+    data = (data - min_val) / (max_val - min_val)
+    data = da.where(data < 0.3, 0, data)
+    data *= zfactor
+    return data
+
+
 def _terrain_cupy(data: cupy.ndarray,
                   seed: int,
                   x_range_scaled: tuple,
@@ -263,9 +312,7 @@ def generate_terrain(agg: xr.DataArray,
         numpy_func=_terrain_numpy,
         cupy_func=_terrain_cupy,
         dask_func=_terrain_dask_numpy,
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='generate_terrain() does not support dask with cupy backed DataArray'  # noqa
-        )
+        dask_cupy_func=_terrain_dask_cupy
     )
     out = mapper(agg)(agg.data, seed, x_range_scaled, y_range_scaled, zfactor)
     canvas = ds.Canvas(

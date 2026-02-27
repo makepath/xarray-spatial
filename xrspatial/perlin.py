@@ -192,6 +192,37 @@ def _perlin_cupy(data: cupy.ndarray,
     return data
 
 
+def _perlin_dask_cupy(data: da.Array,
+                      freq: tuple,
+                      seed: int) -> da.Array:
+    np.random.seed(seed)
+    p = cupy.asarray(np.random.permutation(2**20))
+    p = cupy.append(p, p)
+
+    height, width = data.shape
+
+    def _chunk_perlin(block, block_info=None):
+        info = block_info[0]
+        y_start, y_end = info['array-location'][0]
+        x_start, x_end = info['array-location'][1]
+        x0 = freq[0] * x_start / width
+        x1 = freq[0] * x_end / width
+        y0 = freq[1] * y_start / height
+        y1 = freq[1] * y_end / height
+
+        out = cupy.empty(block.shape, dtype=cupy.float32)
+        griddim, blockdim = cuda_args(block.shape)
+        _perlin_gpu[griddim, blockdim](p, x0, x1, y0, y1, 1.0, out)
+        return out
+
+    data = da.map_blocks(_chunk_perlin, data, dtype=cupy.float32,
+                         meta=cupy.array((), dtype=cupy.float32))
+
+    min_val, max_val = dask.compute(da.min(data), da.max(data))
+    data = (data - min_val) / (max_val - min_val)
+    return data
+
+
 def perlin(agg: xr.DataArray,
            freq: tuple = (1, 1),
            seed: int = 5,
@@ -246,9 +277,7 @@ def perlin(agg: xr.DataArray,
         numpy_func=_perlin_numpy,
         cupy_func=_perlin_cupy,
         dask_func=_perlin_dask_numpy,
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='perlin() does not support dask with cupy backed DataArray',  # noqa
-        )
+        dask_cupy_func=_perlin_dask_cupy
     )
     out = mapper(agg)(agg.data, freq, seed)
     result = xr.DataArray(out,

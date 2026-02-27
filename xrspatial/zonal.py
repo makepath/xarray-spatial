@@ -721,7 +721,7 @@ def _find_cats(values, cat_ids, nodata_values):
     if cat_ids is None:
         cat_ids = unique_cats
     else:
-        if isinstance(values.data, np.ndarray):
+        if isinstance(values.data, np.ndarray) or is_cupy_array(values.data):
             # remove cats that do not exist in `values` raster
             cat_ids = [c for c in cat_ids if c in unique_cats]
         else:
@@ -960,6 +960,52 @@ def _crosstab_dask_numpy(
     return dd.from_delayed(crosstab_df)
 
 
+def _crosstab_cupy(
+    zones: np.ndarray,
+    values: np.ndarray,
+    zone_ids,
+    unique_cats,
+    cat_ids,
+    nodata_values,
+    agg: str,
+):
+    # unique_cats / cat_ids may be cupy arrays from _find_cats
+    if is_cupy_array(unique_cats):
+        unique_cats = cupy.asnumpy(unique_cats)
+    if is_cupy_array(cat_ids):
+        cat_ids = cupy.asnumpy(cat_ids)
+    return _crosstab_numpy(
+        cupy.asnumpy(zones), cupy.asnumpy(values),
+        zone_ids, unique_cats, cat_ids, nodata_values, agg,
+    )
+
+
+def _crosstab_dask_cupy(
+    zones,
+    values,
+    zone_ids,
+    unique_cats,
+    cat_ids,
+    nodata_values,
+    agg: str,
+):
+    zones_cpu = zones.map_blocks(
+        lambda x: x.get(), dtype=zones.dtype, meta=np.array(()),
+    )
+    values_cpu = values.map_blocks(
+        lambda x: x.get(), dtype=values.dtype, meta=np.array(()),
+    )
+    # unique_cats / cat_ids may be cupy arrays from _find_cats
+    if is_cupy_array(unique_cats):
+        unique_cats = cupy.asnumpy(unique_cats)
+    if is_cupy_array(cat_ids):
+        cat_ids = cupy.asnumpy(cat_ids)
+    return _crosstab_dask_numpy(
+        zones_cpu, values_cpu, zone_ids, unique_cats, cat_ids,
+        nodata_values, agg,
+    )
+
+
 def crosstab(
     zones: xr.DataArray,
     values: xr.DataArray,
@@ -1161,12 +1207,8 @@ def crosstab(
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_crosstab_numpy,
         dask_func=_crosstab_dask_numpy,
-        cupy_func=lambda *args: not_implemented_func(
-            *args, messages='crosstab() does not support cupy backed DataArray'
-        ),
-        dask_cupy_func=lambda *args: not_implemented_func(
-            *args, messages='crosstab() does not support dask with cupy backed DataArray'  # noqa
-        ),
+        cupy_func=_crosstab_cupy,
+        dask_cupy_func=_crosstab_dask_cupy,
     )
     crosstab_df = mapper(values)(
         zones.data, values.data,
