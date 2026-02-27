@@ -404,10 +404,10 @@ def check_results(
         )
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_default_stats(backend, data_zones, data_values_2d, result_default_stats,
                        result_default_stats_no_majority):
-    if backend == 'cupy' and not has_cuda_and_cupy():
+    if 'cupy' in backend and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
 
     if 'dask' in backend and not dask_array_available():
@@ -449,10 +449,10 @@ def test_default_stats_dataarray(
 
 @pytest.mark.filterwarnings("ignore:All-NaN slice encountered:RuntimeWarning")
 @pytest.mark.filterwarnings("ignore:invalid value encountered in divide:RuntimeWarning")
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy'])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_zone_ids_stats(backend, data_zones, data_values_2d, result_zone_ids_stats,
                         result_zone_ids_stats_no_majority):
-    if backend == 'cupy' and not has_cuda_and_cupy():
+    if 'cupy' in backend and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
 
     if 'dask' in backend and not dask_array_available():
@@ -590,6 +590,47 @@ def test_majority_with_ties(backend):
     check_results(backend, df_result, expected_result)
 
 
+@pytest.mark.parametrize("stats_funcs, expected_cols", [
+    (['min', 'max'], ['zone', 'min', 'max']),
+    (['mean'], ['zone', 'mean']),
+    (['std'], ['zone', 'std']),
+    (['var'], ['zone', 'var']),
+    (['count'], ['zone', 'count']),
+    (['sum'], ['zone', 'sum']),
+    (['min', 'max', 'count'], ['zone', 'min', 'max', 'count']),
+])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_stats_subset_columns(backend, data_zones, data_values_2d,
+                              stats_funcs, expected_cols):
+    """Requesting a subset of stats returns only those columns.
+
+    Regression test for GH-899: the dask path had a boolean short-circuit
+    bug (``if 'mean' or 'std' or 'var' in stats_funcs``) that always
+    evaluated to True, causing unnecessary intermediate stats to be
+    computed.  After the fix, each subset exercises a distinct code path
+    for compute_sum / compute_count / compute_sum_squares flags.
+    """
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
+    df_result = stats(zones=data_zones, values=data_values_2d,
+                      stats_funcs=stats_funcs)
+
+    # Verify values are correct for the requested stats
+    all_expected = {
+        'zone':  [0, 1, 2, 3],
+        'mean':  [0, 1, 2, 2.4],
+        'max':   [0, 1, 2, 3],
+        'min':   [0, 1, 2, 0],
+        'sum':   [0, 6, 8, 12],
+        'std':   [0, 0, 0, 1.2],
+        'var':   [0, 0, 0, 1.44],
+        'count': [5, 6, 4, 5],
+    }
+    expected = {k: all_expected[k] for k in expected_cols}
+    check_results(backend, df_result, expected)
+
+
 def test_zonal_stats_against_qgis(elevation_raster_no_nans, raster, qgis_zonal_stats):
     stats_funcs = list(set(qgis_zonal_stats.keys()) - set(['zone']))
     zones_agg = create_test_raster(raster)
@@ -601,7 +642,215 @@ def test_zonal_stats_against_qgis(elevation_raster_no_nans, raster, qgis_zonal_s
     check_results('numpy', xrspatial_df_result, qgis_zonal_stats, atol=1e-5)
 
 
-@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy'])
+@pytest.mark.filterwarnings("ignore:All-NaN slice encountered:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Mean of empty slice:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:invalid value encountered in divide:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Degrees of freedom:RuntimeWarning")
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_stats_all_nan_zone(backend):
+    """Zone where every value is NaN should not crash.
+
+    Backend quirks: numpy keeps the empty zone with all-NaN stats; the dask
+    path uses nansum for count/sum so those become 0; cupy drops the empty
+    zone from the result entirely.
+    """
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
+    zones_data = np.array([[1, 1],
+                            [2, 2]])
+    values_data = np.array([[np.nan, np.nan],   # zone 1: all NaN
+                             [5.0,    7.0]])     # zone 2: normal
+
+    zones = create_test_raster(zones_data, backend, chunks=(2, 2))
+    values = create_test_raster(values_data, backend, chunks=(2, 2))
+
+    funcs = ['mean', 'max', 'min', 'sum', 'count']
+    df_result = stats(zones=zones, values=values, stats_funcs=funcs)
+
+    if 'cupy' in backend and 'dask' not in backend:
+        # cupy drops zones with no valid values
+        expected = {
+            'zone':  [2],
+            'mean':  [6.0],
+            'max':   [7.0],
+            'min':   [5.0],
+            'sum':   [12.0],
+            'count': [2],
+        }
+    elif 'dask' in backend:
+        # dask uses nansum reduction, so count/sum of all-NaN become 0
+        expected = {
+            'zone':  [1, 2],
+            'mean':  [np.nan, 6.0],
+            'max':   [np.nan, 7.0],
+            'min':   [np.nan, 5.0],
+            'sum':   [0.0, 12.0],
+            'count': [0, 2],
+        }
+    else:
+        # numpy keeps empty zone with NaN for every stat
+        expected = {
+            'zone':  [1, 2],
+            'mean':  [np.nan, 6.0],
+            'max':   [np.nan, 7.0],
+            'min':   [np.nan, 5.0],
+            'sum':   [np.nan, 12.0],
+            'count': [np.nan, 2],
+        }
+    check_results(backend, df_result, expected)
+
+
+@pytest.mark.filterwarnings("ignore:invalid value encountered in divide:RuntimeWarning")
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_stats_single_cell_zones(backend):
+    """Each zone has exactly one cell — std and var must be 0, not NaN."""
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
+    zones_data = np.array([[1, 2, 3]])
+    values_data = np.array([[10.0, 20.0, 30.0]])
+
+    zones = create_test_raster(zones_data, backend, chunks=(1, 3))
+    values = create_test_raster(values_data, backend, chunks=(1, 3))
+
+    funcs = ['mean', 'max', 'min', 'std', 'var', 'count']
+    df_result = stats(zones=zones, values=values, stats_funcs=funcs)
+
+    expected = {
+        'zone':  [1, 2, 3],
+        'mean':  [10.0, 20.0, 30.0],
+        'max':   [10.0, 20.0, 30.0],
+        'min':   [10.0, 20.0, 30.0],
+        'std':   [0.0, 0.0, 0.0],
+        'var':   [0.0, 0.0, 0.0],
+        'count': [1, 1, 1],
+    }
+    check_results(backend, df_result, expected)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_stats_negative_zone_ids(backend):
+    """Negative integers are valid zone IDs."""
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
+    zones_data = np.array([[-1, -1, 2, 2],
+                            [-1, -1, 2, 2]])
+    values_data = np.array([[1.0, 3.0, 10.0, 20.0],
+                             [5.0, 7.0, 30.0, 40.0]])
+
+    zones = create_test_raster(zones_data, backend, chunks=(2, 2))
+    values = create_test_raster(values_data, backend, chunks=(2, 2))
+
+    funcs = ['mean', 'max', 'min', 'sum', 'count']
+    df_result = stats(zones=zones, values=values, stats_funcs=funcs)
+
+    expected = {
+        'zone':  [-1, 2],
+        'mean':  [4.0, 25.0],
+        'max':   [7.0, 40.0],
+        'min':   [1.0, 10.0],
+        'sum':   [16.0, 100.0],
+        'count': [4, 4],
+    }
+    check_results(backend, df_result, expected)
+
+
+@pytest.mark.filterwarnings("ignore:All-NaN slice encountered:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Mean of empty slice:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:invalid value encountered in divide:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Degrees of freedom:RuntimeWarning")
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_stats_nodata_wipes_zone(backend):
+    """When nodata_values filters out every finite value in a zone, stats are NaN.
+
+    Same per-backend quirks as test_stats_all_nan_zone.
+    """
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
+    zones_data = np.array([[1, 1],
+                            [2, 2]])
+    values_data = np.array([[5.0, 5.0],   # zone 1: all values equal to nodata
+                             [3.0, 7.0]])  # zone 2: normal
+
+    zones = create_test_raster(zones_data, backend, chunks=(2, 2))
+    values = create_test_raster(values_data, backend, chunks=(2, 2))
+
+    funcs = ['mean', 'max', 'min', 'sum', 'count']
+    df_result = stats(zones=zones, values=values, stats_funcs=funcs, nodata_values=5)
+
+    if 'cupy' in backend and 'dask' not in backend:
+        expected = {
+            'zone':  [2],
+            'mean':  [5.0],
+            'max':   [7.0],
+            'min':   [3.0],
+            'sum':   [10.0],
+            'count': [2],
+        }
+    elif 'dask' in backend:
+        expected = {
+            'zone':  [1, 2],
+            'mean':  [np.nan, 5.0],
+            'max':   [np.nan, 7.0],
+            'min':   [np.nan, 3.0],
+            'sum':   [0.0, 10.0],
+            'count': [0, 2],
+        }
+    else:
+        expected = {
+            'zone':  [1, 2],
+            'mean':  [np.nan, 5.0],
+            'max':   [np.nan, 7.0],
+            'min':   [np.nan, 3.0],
+            'sum':   [np.nan, 10.0],
+            'count': [np.nan, 2],
+        }
+    check_results(backend, df_result, expected)
+
+
+@pytest.mark.skipif(not dask_array_available(), reason="Requires Dask")
+@pytest.mark.parametrize("backend", ['dask+numpy', 'dask+cupy'])
+def test_stats_zone_in_subset_of_blocks(backend):
+    """A zone present in only some dask blocks must still be reduced correctly."""
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    # 2x6 grid, chunked into two 2x3 blocks.
+    # Zone 1 only in left block, zone 3 only in right block, zone 2 spans both.
+    zones_data = np.array([[1, 1, 2, 2, 3, 3],
+                            [1, 1, 2, 2, 3, 3]], dtype=float)
+    values_data = np.array([[2.0, 4.0, 10.0, 20.0, 100.0, 200.0],
+                             [6.0, 8.0, 30.0, 40.0, 300.0, 400.0]])
+
+    zones = create_test_raster(zones_data, backend, chunks=(2, 3))
+    values = create_test_raster(values_data, backend, chunks=(2, 3))
+
+    funcs = ['mean', 'max', 'min', 'sum', 'count']
+    df_result = stats(zones=zones, values=values, stats_funcs=funcs)
+
+    expected = {
+        'zone':  [1, 2, 3],
+        'mean':  [5.0, 25.0, 250.0],
+        'max':   [8.0, 40.0, 400.0],
+        'min':   [2.0, 10.0, 100.0],
+        'sum':   [20.0, 100.0, 1000.0],
+        'count': [4, 4, 4],
+    }
+    check_results(backend, df_result, expected)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
 def test_zonal_stats_inputs_unmodified(backend, data_zones, data_values_2d, result_default_stats):
     if backend == 'cupy' and not has_cuda_and_cupy():
         pytest.skip("Requires CUDA and CuPy")
@@ -930,36 +1179,123 @@ def test_crosstab_dask_from_dataset():
     check_results('dask+numpy', result, expected)
 
 
-def test_apply():
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_apply_2d(backend):
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip('cupy not available')
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip('dask not available')
 
-    def func(x):
-        return 0
+    zones_data = np.array([[1, 1, 0],
+                           [0, 2, 2],
+                           [3, 3, 3]], dtype=np.int32)
+    values_data = np.array([[10.0, 20.0, 30.0],
+                            [40.0, 50.0, 60.0],
+                            [70.0, 80.0, 90.0]])
+    zones = create_test_raster(zones_data, backend)
+    values = create_test_raster(values_data, backend)
 
+    result = apply(zones, values, lambda x: x * 2, nodata=0)
+
+    expected = np.array([[20.0, 40.0, 30.0],
+                         [40.0, 100.0, 120.0],
+                         [140.0, 160.0, 180.0]])
+    general_output_checks(values, result, expected, verify_attrs=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_apply_does_not_mutate_input(backend):
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip('dask not available')
+
+    zones_data = np.array([[1, 1], [2, 2]], dtype=np.int32)
+    values_data = np.array([[10.0, 20.0], [30.0, 40.0]])
+    zones = create_test_raster(zones_data, backend, chunks=(2, 2))
+    values = create_test_raster(values_data, backend, chunks=(2, 2))
+    values_before = values.copy(deep=True)
+
+    apply(zones, values, lambda x: x * 0)
+
+    assert_input_data_unmodified(values_before, values)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_apply_3d(backend):
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip('dask not available')
+
+    zones_data = np.array([[1, 0],
+                           [0, 2]], dtype=np.int32)
+    values_data = np.ones((2, 2, 3)) * 5.0
+
+    zones = xr.DataArray(zones_data, dims=['y', 'x'])
+    vals = xr.DataArray(values_data, dims=['y', 'x', 'band'])
+
+    if 'dask' in backend:
+        zones.data = da.from_array(zones.data, chunks=(2, 2))
+        vals.data = da.from_array(vals.data, chunks=(2, 2, 3))
+
+    result = apply(zones, vals, lambda x: x + 10, nodata=0)
+
+    assert result.shape == vals.shape
+    # zone 1 cell (0,0) and zone 2 cell (1,1) should be 15
+    result_np = result.values if not hasattr(result.data, 'compute') else result.data.compute()
+    np.testing.assert_equal(result_np[0, 0, :], [15.0, 15.0, 15.0])
+    np.testing.assert_equal(result_np[1, 1, :], [15.0, 15.0, 15.0])
+    # nodata cells (0,1) and (1,0) remain 5
+    np.testing.assert_equal(result_np[0, 1, :], [5.0, 5.0, 5.0])
+    np.testing.assert_equal(result_np[1, 0, :], [5.0, 5.0, 5.0])
+
+
+def test_apply_nodata_none():
+    zones_data = np.array([[0, 1], [2, 3]], dtype=np.int32)
+    values_data = np.array([[1.0, 2.0], [3.0, 4.0]])
+    zones = xr.DataArray(zones_data, dims=['y', 'x'])
+    values = xr.DataArray(values_data, dims=['y', 'x'])
+
+    result = apply(zones, values, lambda x: x * 10, nodata=None)
+    expected = np.array([[10.0, 20.0], [30.0, 40.0]])
+    np.testing.assert_array_equal(result.values, expected)
+
+
+def test_apply_backward_compat():
+    """Same scenario as original test, but with new return semantics."""
     zones_val = np.zeros((3, 3), dtype=np.int32)
-    # define some zones
     zones_val[1] = 1
     zones_val[2] = 2
-    zones = xr.DataArray(zones_val)
+    zones = xr.DataArray(zones_val, dims=['y', 'x'])
 
-    values_val = np.array([[0, 1, 2],
-                           [3, 4, 5],
-                           [6, 7, np.nan]])
-    values = xr.DataArray(values_val)
+    values_val = np.array([[0.0, 1.0, 2.0],
+                           [3.0, 4.0, 5.0],
+                           [6.0, 7.0, np.nan]])
+    values = xr.DataArray(values_val, dims=['y', 'x'])
 
-    values_copy = values.copy()
-    apply(zones, values, func, nodata=2)
+    result = apply(zones, values, lambda x: 0, nodata=2)
 
-    # agg.shape remains the same
-    assert values.shape == values_copy.shape
+    assert result.shape == values.shape
+    result_np = result.values
+    # zones 0 and 1 → func applied (all become 0)
+    assert (result_np[0] == [0, 0, 0]).all()
+    assert (result_np[1] == [0, 0, 0]).all()
+    # zone 2 = nodata → values unchanged
+    assert np.isclose(result_np[2], values_val[2], equal_nan=True).all()
 
-    values_val = values.values
-    # values within zones are all 0s
-    assert (values_val[0] == [0, 0, 0]).all()
-    assert (values_val[1] == [0, 0, 0]).all()
-    # values outside zones remain
-    assert np.isclose(
-        values_val[2], values_copy.values[2], equal_nan=True
-    ).all()
+
+def test_apply_validation_errors():
+    zones_float = xr.DataArray(np.array([[1.0, 2.0]], dtype=np.float64), dims=['y', 'x'])
+    values = xr.DataArray(np.array([[1.0, 2.0]]), dims=['y', 'x'])
+
+    with pytest.raises(ValueError, match="integers"):
+        apply(zones_float, values, lambda x: x)
+
+    zones_ok = xr.DataArray(np.array([[1, 2]], dtype=np.int32), dims=['y', 'x'])
+    values_wrong_shape = xr.DataArray(np.array([[1.0, 2.0, 3.0]]), dims=['y', 'x'])
+    with pytest.raises(ValueError, match="Incompatible shapes"):
+        apply(zones_ok, values_wrong_shape, lambda x: x)
+
+    zones_3d = xr.DataArray(np.ones((2, 2, 2), dtype=np.int32), dims=['y', 'x', 'z'])
+    with pytest.raises(ValueError, match="2D"):
+        apply(zones_3d, values, lambda x: x)
 
 
 def test_suggest_zonal_canvas():
