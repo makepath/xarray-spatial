@@ -49,6 +49,7 @@ except ImportError:
         ndarray = False
 
 from xrspatial.utils import (
+    _validate_raster,
     cuda_args, get_dataarray_resolution, ngjit,
     has_cuda_and_cupy, is_cupy_array, is_dask_cupy,
 )
@@ -1098,10 +1099,8 @@ def cost_distance(
         Source pixels have cost 0.  Unreachable pixels are NaN.
     """
     # --- validation ---
-    if raster.ndim != 2:
-        raise ValueError("raster must be 2-D")
-    if friction.ndim != 2:
-        raise ValueError("friction must be 2-D")
+    _validate_raster(raster, func_name='cost_distance', name='raster')
+    _validate_raster(friction, func_name='cost_distance', name='friction')
     if raster.shape != friction.shape:
         raise ValueError("raster and friction must have the same shape")
     if raster.dims != (y, x):

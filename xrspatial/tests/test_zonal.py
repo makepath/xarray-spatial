@@ -1285,7 +1285,7 @@ def test_apply_validation_errors():
     zones_float = xr.DataArray(np.array([[1.0, 2.0]], dtype=np.float64), dims=['y', 'x'])
     values = xr.DataArray(np.array([[1.0, 2.0]]), dims=['y', 'x'])
 
-    with pytest.raises(ValueError, match="integers"):
+    with pytest.raises(ValueError, match="integer dtype"):
         apply(zones_float, values, lambda x: x)
 
     zones_ok = xr.DataArray(np.array([[1, 2]], dtype=np.int32), dims=['y', 'x'])

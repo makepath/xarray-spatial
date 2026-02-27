@@ -20,6 +20,7 @@ from xrspatial.utils import _boundary_to_dask
 from xrspatial.utils import _extract_latlon_coords
 from xrspatial.utils import _pad_array
 from xrspatial.utils import _validate_boundary
+from xrspatial.utils import _validate_raster
 from xrspatial.utils import cuda_args
 from xrspatial.utils import ngjit
 from xrspatial.dataset_support import supports_dataset
@@ -395,6 +396,8 @@ def aspect(agg: xr.DataArray,
         >>> raster = xr.DataArray(data, dims=['y', 'x'], name='raster')
         >>> aspect_agg = aspect(raster)
     """
+
+    _validate_raster(agg, func_name='aspect', name='agg')
 
     if method not in ('planar', 'geodesic'):
         raise ValueError(

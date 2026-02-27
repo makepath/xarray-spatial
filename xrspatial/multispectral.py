@@ -9,8 +9,8 @@ import xarray as xr
 from numba import cuda
 from xarray import DataArray
 
-from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, ngjit, not_implemented_func,
-                             validate_arrays)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, cuda_args, ngjit,
+                             not_implemented_func, validate_arrays)
 from xrspatial.dataset_support import supports_dataset_bands
 
 # 3rd-party
@@ -152,6 +152,10 @@ def arvi(nir_agg: xr.DataArray,
          [ 0.02130841  0.01114413 -0.0042343   0.01214013]
          [ 0.02488688  0.00816024  0.00068681  0.02650602]]
     """
+
+    _validate_raster(nir_agg, func_name='arvi', name='nir_agg')
+    _validate_raster(red_agg, func_name='arvi', name='red_agg')
+    _validate_raster(blue_agg, func_name='arvi', name='blue_agg')
 
     validate_arrays(red_agg, nir_agg, blue_agg)
 
@@ -312,6 +316,10 @@ def evi(nir_agg: xr.DataArray,
          [-8.53211    5.486726   0.8394608  3.5043988]]
     """
 
+    _validate_raster(nir_agg, func_name='evi', name='nir_agg')
+    _validate_raster(red_agg, func_name='evi', name='red_agg')
+    _validate_raster(blue_agg, func_name='evi', name='blue_agg')
+
     if not red_agg.shape == nir_agg.shape == blue_agg.shape:
         raise ValueError("input layers expected to have equal shapes")
 
@@ -456,6 +464,9 @@ def gci(nir_agg: xr.DataArray,
          [0.34822243 0.28270411 0.29641694 0.359375  ]]
     """
 
+    _validate_raster(nir_agg, func_name='gci', name='nir_agg')
+    _validate_raster(green_agg, func_name='gci', name='green_agg')
+
     validate_arrays(nir_agg, green_agg)
 
     mapper = ArrayTypeFunctionMapping(numpy_func=_gci_cpu,
@@ -539,6 +550,9 @@ def nbr(nir_agg: xr.DataArray,
          [-0.09691096 -0.12659353 -0.13224536 -0.11835616]
          [-0.10823033 -0.14486392 -0.12981689 -0.12121212]]
     """
+
+    _validate_raster(nir_agg, func_name='nbr', name='nir_agg')
+    _validate_raster(swir2_agg, func_name='nbr', name='swir2_agg')
 
     validate_arrays(nir_agg, swir2_agg)
 
@@ -631,6 +645,9 @@ def nbr2(swir1_agg: xr.DataArray,
          [0.07218576 0.06857143 0.067659   0.07520281]]
     """
 
+    _validate_raster(swir1_agg, func_name='nbr2', name='swir1_agg')
+    _validate_raster(swir2_agg, func_name='nbr2', name='swir2_agg')
+
     validate_arrays(swir1_agg, swir2_agg)
 
     mapper = ArrayTypeFunctionMapping(
@@ -714,6 +731,9 @@ def ndvi(nir_agg: xr.DataArray,
          [0.065      0.05064194 0.04013491 0.06099571]
          [0.06709956 0.04431737 0.04496226 0.07792632]]
     """
+
+    _validate_raster(nir_agg, func_name='ndvi', name='nir_agg')
+    _validate_raster(red_agg, func_name='ndvi', name='red_agg')
 
     validate_arrays(nir_agg, red_agg)
 
@@ -803,6 +823,9 @@ def ndmi(nir_agg: xr.DataArray,
          [-0.149943   -0.18686172 -0.19791937 -0.18593474]
          [-0.17901748 -0.21133603 -0.19575651 -0.19464068]]
     """
+
+    _validate_raster(nir_agg, func_name='ndmi', name='nir_agg')
+    _validate_raster(swir1_agg, func_name='ndmi', name='swir1_agg')
 
     validate_arrays(nir_agg, swir1_agg)
 
@@ -994,6 +1017,9 @@ def savi(nir_agg: xr.DataArray,
          [0.03353769 0.02215077 0.02247375 0.03895046]]
     """
 
+    _validate_raster(nir_agg, func_name='savi', name='nir_agg')
+    _validate_raster(red_agg, func_name='savi', name='red_agg')
+
     validate_arrays(red_agg, nir_agg)
 
     if not -1.0 <= soil_factor <= 1.0:
@@ -1137,6 +1163,10 @@ def sipi(nir_agg: xr.DataArray,
          [1.3736264 1.5774648 2.2016807 1.6216216]
          [1.2903225 1.6451613 1.9708029 1.3556485]]
     """
+
+    _validate_raster(nir_agg, func_name='sipi', name='nir_agg')
+    _validate_raster(red_agg, func_name='sipi', name='red_agg')
+    _validate_raster(blue_agg, func_name='sipi', name='blue_agg')
 
     validate_arrays(red_agg, nir_agg, blue_agg)
 
@@ -1313,6 +1343,10 @@ def ebbi(red_agg: xr.DataArray,
             * lat      (lat) float64 0.0 1.0 2.0 3.0
             * lon      (lon) float64 0.0 1.0 2.0 3.0
     """
+
+    _validate_raster(red_agg, func_name='ebbi', name='red_agg')
+    _validate_raster(swir_agg, func_name='ebbi', name='swir_agg')
+    _validate_raster(tir_agg, func_name='ebbi', name='tir_agg')
 
     validate_arrays(red_agg, swir_agg, tir_agg)
 
@@ -1514,6 +1548,10 @@ def true_color(r, g, b, nodata=1, c=10.0, th=0.125, name='true_color'):
         >>> true_color_img = true_color(r=red, g=green, b=blue)
         >>> true_color_img.plot.imshow()
     """
+
+    _validate_raster(r, func_name='true_color', name='r')
+    _validate_raster(g, func_name='true_color', name='g')
+    _validate_raster(b, func_name='true_color', name='b')
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_true_color_numpy,

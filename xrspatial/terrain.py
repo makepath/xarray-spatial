@@ -24,8 +24,8 @@ except ImportError:
     da = None
 
 # local modules
-from xrspatial.utils import (ArrayTypeFunctionMapping, cuda_args, get_dataarray_resolution,
-                             not_implemented_func)
+from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, cuda_args,
+                             get_dataarray_resolution, not_implemented_func)
 
 from .perlin import _perlin, _perlin_gpu
 
@@ -239,6 +239,7 @@ def generate_terrain(agg: xr.DataArray,
         >>> terrain = generate_terrain(raster, xrange, yrange, seed, zfactor)
         >>> terrain.plot.imshow()
     """
+    _validate_raster(agg, func_name='generate_terrain', name='agg')
 
     height, width = agg.shape
 

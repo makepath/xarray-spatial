@@ -24,7 +24,8 @@ import numba as nb
 from numba import cuda, jit
 
 # local modules
-from xrspatial.utils import ArrayTypeFunctionMapping, cuda_args, not_implemented_func
+from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, cuda_args,
+                             not_implemented_func)
 
 
 @jit(nopython=True, nogil=True)
@@ -239,6 +240,7 @@ def perlin(agg: xr.DataArray,
                [1.        , 0.8715414 , 0.41902685, 0.02916668]], dtype=float32)  # noqa
         Dimensions without coordinates: y, x
     """
+    _validate_raster(agg, func_name='perlin', name='agg')
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_perlin_numpy,
