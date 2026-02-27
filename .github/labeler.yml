@@ -1,0 +1,6 @@
+performance:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'xrspatial/*.py'
+      - 'xrspatial/**/*.py'
+      - '!xrspatial/tests/**'

@@ -1,0 +1,67 @@
+name: Benchmarks
+
+on:
+  pull_request:
+    types: [labeled]
+  push:
+    branches: [master]
+
+env:
+  ASV_FACTOR: "1.2"
+
+jobs:
+  benchmarks:
+    if: >
+      (github.event_name == 'push') ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'performance')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ASV and virtualenv
+        run: pip install asv virtualenv
+
+      - name: Configure ASV machine
+        working-directory: benchmarks
+        run: asv machine --yes
+
+      - name: Run benchmarks (PR)
+        if: github.event_name == 'pull_request'
+        working-directory: benchmarks
+        run: |
+          asv continuous origin/master HEAD \
+            --factor $ASV_FACTOR \
+            --bench "^(Slope|Proximity|Zonal|CostDistance|Focal)" \
+            | tee bench_output.txt
+
+      - name: Run benchmarks (push to master)
+        if: github.event_name == 'push'
+        working-directory: benchmarks
+        run: |
+          asv run HEAD^! \
+            --bench "^(Slope|Proximity|Zonal|CostDistance|Focal)" \
+            | tee bench_output.txt
+
+      - name: Check for regressions
+        working-directory: benchmarks
+        run: |
+          if grep -q "REGRESSION" bench_output.txt; then
+            echo "::error::Performance regression detected (>${ASV_FACTOR}x slower)"
+            cat bench_output.txt
+            exit 1
+          fi
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            benchmarks/bench_output.txt
+            benchmarks/.asv/results/

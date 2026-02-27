@@ -27,7 +27,7 @@ def create_arr(data=None, H=10, W=10, backend='numpy'):
 class Zonal:
     # Note that rtxpy hillshade includes shadow calculations so timings are
     # not comparable with numpy and cupy hillshade.
-    params = ([400, 1600, 3200], [2, 4, 8], ["numpy", "cupy"])
+    params = ([400, 1600, 3200], [2, 4, 8], ["numpy", "cupy", "dask"])
     param_names = ("raster_dim", "zone_dim", "backend")
 
     def setup(self, raster_dim, zone_dim, backend):
@@ -64,7 +64,22 @@ class Zonal:
         self.zones = create_arr(zones, backend=backend)
 
         # Now setup the custom stat funcs
-        if backend == 'cupy':
+        if backend == 'dask':
+            from xrspatial.utils import ngjit
+
+            @ngjit
+            def l2normKernel(arr):
+                acc = 0
+                for x in arr:
+                    acc += x * x
+                return np.sqrt(acc)
+
+            self.custom_stats = {
+                'double_sum': lambda val: val.sum()*2,
+                'l2norm': lambda val: np.sqrt(np.sum(val * val)),
+                'l2normKernel': lambda val: l2normKernel(val)
+            }
+        elif backend == 'cupy':
             import cupy
             l2normKernel = cupy.ReductionKernel(
                 in_params='T x', out_params='float64 y',

@@ -7,7 +7,7 @@ from .common import get_xr_dataarray
 
 
 class Focal:
-    params = ([100, 300, 1000, 3000], [(5, 5), (25, 25)], ["numpy", "cupy"])
+    params = ([100, 300, 1000, 3000], [(5, 5), (25, 25)], ["numpy", "cupy", "dask"])
     param_names = ("nx", "kernelsize", "type")
 
     def setup(self, nx, kernelsize, type):
@@ -18,7 +18,7 @@ class Focal:
 
 
 class FocalApply(Focal):
-    params = ([100, 300, 1000, 3000], [(5, 5), (25, 25)], ["numpy"])
+    params = ([100, 300, 1000, 3000], [(5, 5), (25, 25)], ["numpy", "dask"])
 
     def time_apply(self, nx, kernelsize, type):
         apply(self.agg, self.kernel)
@@ -30,14 +30,14 @@ class FocalHotspots(Focal):
 
 
 class FocalStats(Focal):
-    params = ([100, 300, 1000, 3000], [(5, 5), (15, 15)], ["numpy", "cupy"])
+    params = ([100, 300, 1000, 3000], [(5, 5), (15, 15)], ["numpy", "cupy", "dask"])
 
     def time_focal_stats(self, nx, kernelsize, type):
         focal_stats(self.agg, self.kernel)
 
 
 class FocalMean:
-    params = ([100, 300, 1000, 3000, 10000], [1, 10], ["numpy", "cupy"])
+    params = ([100, 300, 1000, 3000, 10000], [1, 10], ["numpy", "cupy", "dask"])
     param_names = ("nx", "passes", "type")
 
     def setup(self, nx, passes, type):

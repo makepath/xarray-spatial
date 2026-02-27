@@ -10,7 +10,7 @@ class Base:
         [100, 1000],
         [1, 10, 100],
         ["EUCLIDEAN", "GREAT_CIRCLE", "MANHATTAN"],
-        ["numpy"]
+        ["numpy", "dask"]
     )
     param_names = ("nx", "n_target_values", "distance_metric", "type")
 
