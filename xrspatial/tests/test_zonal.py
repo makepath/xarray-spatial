@@ -971,36 +971,123 @@ def test_crosstab_dask_from_dataset():
     check_results('dask+numpy', result, expected)
 
 
-def test_apply():
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_apply_2d(backend):
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip('cupy not available')
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip('dask not available')
 
-    def func(x):
-        return 0
+    zones_data = np.array([[1, 1, 0],
+                           [0, 2, 2],
+                           [3, 3, 3]], dtype=np.int32)
+    values_data = np.array([[10.0, 20.0, 30.0],
+                            [40.0, 50.0, 60.0],
+                            [70.0, 80.0, 90.0]])
+    zones = create_test_raster(zones_data, backend)
+    values = create_test_raster(values_data, backend)
 
+    result = apply(zones, values, lambda x: x * 2, nodata=0)
+
+    expected = np.array([[20.0, 40.0, 30.0],
+                         [40.0, 100.0, 120.0],
+                         [140.0, 160.0, 180.0]])
+    general_output_checks(values, result, expected, verify_attrs=True)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_apply_does_not_mutate_input(backend):
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip('dask not available')
+
+    zones_data = np.array([[1, 1], [2, 2]], dtype=np.int32)
+    values_data = np.array([[10.0, 20.0], [30.0, 40.0]])
+    zones = create_test_raster(zones_data, backend, chunks=(2, 2))
+    values = create_test_raster(values_data, backend, chunks=(2, 2))
+    values_before = values.copy(deep=True)
+
+    apply(zones, values, lambda x: x * 0)
+
+    assert_input_data_unmodified(values_before, values)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_apply_3d(backend):
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip('dask not available')
+
+    zones_data = np.array([[1, 0],
+                           [0, 2]], dtype=np.int32)
+    values_data = np.ones((2, 2, 3)) * 5.0
+
+    zones = xr.DataArray(zones_data, dims=['y', 'x'])
+    vals = xr.DataArray(values_data, dims=['y', 'x', 'band'])
+
+    if 'dask' in backend:
+        zones.data = da.from_array(zones.data, chunks=(2, 2))
+        vals.data = da.from_array(vals.data, chunks=(2, 2, 3))
+
+    result = apply(zones, vals, lambda x: x + 10, nodata=0)
+
+    assert result.shape == vals.shape
+    # zone 1 cell (0,0) and zone 2 cell (1,1) should be 15
+    result_np = result.values if not hasattr(result.data, 'compute') else result.data.compute()
+    np.testing.assert_equal(result_np[0, 0, :], [15.0, 15.0, 15.0])
+    np.testing.assert_equal(result_np[1, 1, :], [15.0, 15.0, 15.0])
+    # nodata cells (0,1) and (1,0) remain 5
+    np.testing.assert_equal(result_np[0, 1, :], [5.0, 5.0, 5.0])
+    np.testing.assert_equal(result_np[1, 0, :], [5.0, 5.0, 5.0])
+
+
+def test_apply_nodata_none():
+    zones_data = np.array([[0, 1], [2, 3]], dtype=np.int32)
+    values_data = np.array([[1.0, 2.0], [3.0, 4.0]])
+    zones = xr.DataArray(zones_data, dims=['y', 'x'])
+    values = xr.DataArray(values_data, dims=['y', 'x'])
+
+    result = apply(zones, values, lambda x: x * 10, nodata=None)
+    expected = np.array([[10.0, 20.0], [30.0, 40.0]])
+    np.testing.assert_array_equal(result.values, expected)
+
+
+def test_apply_backward_compat():
+    """Same scenario as original test, but with new return semantics."""
     zones_val = np.zeros((3, 3), dtype=np.int32)
-    # define some zones
     zones_val[1] = 1
     zones_val[2] = 2
-    zones = xr.DataArray(zones_val)
+    zones = xr.DataArray(zones_val, dims=['y', 'x'])
 
-    values_val = np.array([[0, 1, 2],
-                           [3, 4, 5],
-                           [6, 7, np.nan]])
-    values = xr.DataArray(values_val)
+    values_val = np.array([[0.0, 1.0, 2.0],
+                           [3.0, 4.0, 5.0],
+                           [6.0, 7.0, np.nan]])
+    values = xr.DataArray(values_val, dims=['y', 'x'])
 
-    values_copy = values.copy()
-    apply(zones, values, func, nodata=2)
+    result = apply(zones, values, lambda x: 0, nodata=2)
 
-    # agg.shape remains the same
-    assert values.shape == values_copy.shape
+    assert result.shape == values.shape
+    result_np = result.values
+    # zones 0 and 1 → func applied (all become 0)
+    assert (result_np[0] == [0, 0, 0]).all()
+    assert (result_np[1] == [0, 0, 0]).all()
+    # zone 2 = nodata → values unchanged
+    assert np.isclose(result_np[2], values_val[2], equal_nan=True).all()
 
-    values_val = values.values
-    # values within zones are all 0s
-    assert (values_val[0] == [0, 0, 0]).all()
-    assert (values_val[1] == [0, 0, 0]).all()
-    # values outside zones remain
-    assert np.isclose(
-        values_val[2], values_copy.values[2], equal_nan=True
-    ).all()
+
+def test_apply_validation_errors():
+    zones_float = xr.DataArray(np.array([[1.0, 2.0]], dtype=np.float64), dims=['y', 'x'])
+    values = xr.DataArray(np.array([[1.0, 2.0]]), dims=['y', 'x'])
+
+    with pytest.raises(ValueError, match="integers"):
+        apply(zones_float, values, lambda x: x)
+
+    zones_ok = xr.DataArray(np.array([[1, 2]], dtype=np.int32), dims=['y', 'x'])
+    values_wrong_shape = xr.DataArray(np.array([[1.0, 2.0, 3.0]]), dims=['y', 'x'])
+    with pytest.raises(ValueError, match="Incompatible shapes"):
+        apply(zones_ok, values_wrong_shape, lambda x: x)
+
+    zones_3d = xr.DataArray(np.ones((2, 2, 2), dtype=np.int32), dims=['y', 'x', 'z'])
+    with pytest.raises(ValueError, match="2D"):
+        apply(zones_3d, values, lambda x: x)
 
 
 def test_suggest_zonal_canvas():

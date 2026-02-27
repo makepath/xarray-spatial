@@ -1187,6 +1187,59 @@ def crosstab(
     return crosstab_df
 
 
+def _apply_numpy(zones_data, values_data, func, nodata):
+    out = values_data.copy()
+    if nodata is not None:
+        zone_mask = zones_data != nodata
+    else:
+        zone_mask = np.ones(zones_data.shape, dtype=bool)
+    vfunc = np.vectorize(func)
+    if values_data.ndim == 2:
+        out[zone_mask] = vfunc(values_data[zone_mask])
+    else:  # 3D
+        for k in range(values_data.shape[2]):
+            out[:, :, k][zone_mask] = vfunc(values_data[:, :, k][zone_mask])
+    return out
+
+
+def _apply_cupy(zones_data, values_data, func, nodata):
+    result_np = _apply_numpy(zones_data.get(), values_data.get(), func, nodata)
+    return cupy.asarray(result_np)
+
+
+def _apply_dask_numpy(zones_data, values_data, func, nodata):
+    def _chunk_fn(zones_chunk, values_chunk):
+        return _apply_numpy(zones_chunk, values_chunk, func, nodata)
+
+    if values_data.ndim == 2:
+        return da.map_blocks(
+            _chunk_fn, zones_data, values_data,
+            dtype=values_data.dtype, meta=np.array(()),
+        )
+    else:
+        layers = []
+        for k in range(values_data.shape[2]):
+            layer = values_data[:, :, k].rechunk(zones_data.chunks)
+            layers.append(da.map_blocks(
+                _chunk_fn, zones_data, layer,
+                dtype=values_data.dtype, meta=np.array(()),
+            ))
+        return da.stack(layers, axis=2)
+
+
+def _apply_dask_cupy(zones_data, values_data, func, nodata):
+    zones_cpu = zones_data.map_blocks(
+        lambda x: x.get(), dtype=zones_data.dtype, meta=np.array(()),
+    )
+    values_cpu = values_data.map_blocks(
+        lambda x: x.get(), dtype=values_data.dtype, meta=np.array(()),
+    )
+    result = _apply_dask_numpy(zones_cpu, values_cpu, func, nodata)
+    return result.map_blocks(
+        cupy.asarray, dtype=result.dtype, meta=cupy.array(()),
+    )
+
+
 def apply(
     zones: xr.DataArray,
     values: xr.DataArray,
@@ -1195,7 +1248,7 @@ def apply(
 ):
     """
     Apply a function to the `values` agg within zones in `zones` agg.
-    Change the agg content.
+    Returns a new DataArray with the function applied.
 
     Parameters
     ----------
@@ -1206,16 +1259,23 @@ def apply(
         locations of the zones. An integer field in the zone input is
         specified to define the zones.
 
-    agg : xr.DataArray
-        agg.values is either a 2D or 3D array of integers or floats.
+    values : xr.DataArray
+        values.data is either a 2D or 3D array of integers or floats.
         The input value raster.
 
     func : callable function to apply.
 
-    nodata: int, default=None
+    nodata: int, default=0
         Nodata value in `zones` raster.
         Cells with `nodata` does not belong to any zone,
         and thus excluded from calculation.
+        Set to None to apply func to all cells.
+
+    Returns
+    -------
+    result : xr.DataArray
+        A new DataArray with the same shape, dims, coords, and attrs
+        as `values`, with `func` applied to cells within zones.
 
     Examples
     --------
@@ -1233,8 +1293,8 @@ def apply(
             [3, np.nan, 20, 10]])
         >>> agg = xr.DataArray(values_val)
         >>> func = lambda x: 0
-        >>> apply(zones, agg, func)
-        >>> agg
+        >>> result = apply(zones, agg, func)
+        >>> result
         array([[0, 0, 5, 0],
                [3, np.nan, 0, 0]])
     """
@@ -1253,46 +1313,29 @@ def apply(
     if zones.shape != values.shape[:2]:
         raise ValueError("Incompatible shapes between `zones` and `values`")
 
-    if not issubclass(zones.values.dtype.type, np.integer):
+    if not issubclass(zones.data.dtype.type, np.integer):
         raise ValueError("`zones.values` must be an array of integers")
 
     if not (
-        issubclass(values.values.dtype.type, np.integer)
-        or issubclass(values.values.dtype.type, np.floating)
+        issubclass(values.data.dtype.type, np.integer)
+        or issubclass(values.data.dtype.type, np.floating)
     ):
         raise ValueError("`values` must be an array of integers or float")
 
-    # entries of nodata remain the same
-    remain_entries = zones.data == nodata
+    # align chunks for 2D values
+    if values.ndim == 2:
+        validate_arrays(zones, values)
 
-    # entries with to be included in calculation
-    zones_entries = zones.data != nodata
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_apply_numpy,
+        dask_func=_apply_dask_numpy,
+        cupy_func=_apply_cupy,
+        dask_cupy_func=_apply_dask_cupy,
+    )
+    out = mapper(values)(zones.data, values.data, func, nodata)
 
-    if len(values.shape) == 3:
-        z = values.shape[-1]
-        # add new z-dimension in case 3D `values` aggregate
-        remain_entries = np.repeat(
-            remain_entries[:, :, np.newaxis],
-            z,
-            axis=-1
-        )
-        zones_entries = np.repeat(
-            zones_entries[:, :, np.newaxis],
-            z,
-            axis=-1
-        )
-
-    remain_mask = np.ma.masked_array(values.data, mask=remain_entries)
-    zones_mask = np.ma.masked_array(values.data, mask=zones_entries)
-
-    # apply func to corresponding `values` of `zones`
-    vfunc = np.vectorize(func)
-    values_func = vfunc(zones_mask)
-    values.values = (
-        remain_mask.data
-        * remain_mask.mask
-        + values_func.data
-        * values_func.mask
+    return xr.DataArray(
+        out, dims=values.dims, coords=values.coords, attrs=values.attrs,
     )
 
 
