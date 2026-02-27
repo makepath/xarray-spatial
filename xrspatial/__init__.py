@@ -33,6 +33,7 @@ from xrspatial.proximity import manhattan_distance  # noqa
 from xrspatial.proximity import proximity  # noqa
 from xrspatial.slope import slope  # noqa
 from xrspatial.terrain import generate_terrain  # noqa
+from xrspatial.polygonize import polygonize  # noqa
 from xrspatial.viewshed import viewshed  # noqa
 from xrspatial.zonal import apply as zonal_apply  # noqa
 from xrspatial.zonal import crop  # noqa

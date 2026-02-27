@@ -33,7 +33,19 @@ import numba as nb
 import numpy as np
 import xarray as xr
 
-from ..utils import ngjit
+try:
+    import dask
+    import dask.array as da
+except ImportError:
+    dask = None
+    da = None
+
+try:
+    import cupy
+except ImportError:
+    cupy = None
+
+from .utils import ArrayTypeFunctionMapping, is_cupy_array, ngjit
 
 _regions_dtype = np.uint32
 _visited_dtype = np.uint8
@@ -405,6 +417,7 @@ def _transform_points(
 
 @ngjit
 def _scan(
+    regions: np.ndarray,              # _regions_dtype, shape (nx*ny,)
     values: np.ndarray,               # shape (nx*ny,)
     mask: Optional[np.ndarray],       # shape (nx*ny,)
     connectivity_8: bool,
@@ -412,8 +425,6 @@ def _scan(
     nx: int,
     ny: int,
 ) -> Tuple[List[Union[int, float]], List[List[np.ndarray]]]:
-    regions = _calculate_regions(values, mask, connectivity_8, nx, ny)
-
     # Visited flags used to denote where boundaries have already been
     # followed and hence are not future start positions.
     visited = np.zeros_like(values, dtype=_visited_dtype)
@@ -491,6 +502,23 @@ def _to_spatialpandas(
     return df
 
 
+def _to_geojson(
+    column: List[Union[int, float]],
+    polygon_points: List[List[np.ndarray]],
+    column_name: str,
+):
+    """Convert to GeoJSON FeatureCollection dict."""
+    features = []
+    for value, rings in zip(column, polygon_points):
+        coords = [ring.tolist() for ring in rings]
+        features.append({
+            "type": "Feature",
+            "properties": {column_name: value},
+            "geometry": {"type": "Polygon", "coordinates": coords},
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
 def _polygonize_numpy(
     values: np.ndarray,
     mask: Optional[np.ndarray],
@@ -511,14 +539,452 @@ def _polygonize_numpy(
             mask = np.zeros_like(values, dtype=bool)
             mask[:, 0] = True
 
-    values = values.ravel()
-    if mask is not None:
-        mask = mask.ravel()
+    values_flat = values.ravel()
+    mask_flat = mask.ravel() if mask is not None else None
 
+    regions = _calculate_regions(values_flat, mask_flat, connectivity_8, nx, ny)
     column, polygon_points = _scan(
-        values, mask, connectivity_8, transform, nx, ny)
+        regions, values_flat, mask_flat, connectivity_8, transform, nx, ny)
 
     return column, polygon_points
+
+
+# CW angle order for grid-aligned directions (y increases downward).
+_DIR_ANGLE = {(1, 0): 0, (0, 1): 1, (-1, 0): 2, (0, -1): 3}
+
+
+def _calculate_regions_cupy(data, mask_data, connectivity_8):
+    """CuPy GPU backend for connected-component labeling.
+
+    Uses cupyx.scipy.ndimage.label per unique value to produce a regions
+    array compatible with _scan.  Returns a cupy uint32 2D array.
+    """
+    import cupy as cp
+    from cupyx.scipy.ndimage import label as cp_label
+
+    if connectivity_8:
+        structure = cp.ones((3, 3), dtype=cp.int32)
+    else:
+        structure = cp.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=cp.int32)
+
+    regions = cp.zeros(data.shape, dtype=cp.uint32)
+
+    # Build valid mask (unmask + handle float NaN).
+    is_float = cp.issubdtype(data.dtype, cp.floating)
+    if mask_data is not None:
+        valid = cp.asarray(mask_data, dtype=bool)
+        if is_float:
+            valid &= ~cp.isnan(data)
+    else:
+        valid = ~cp.isnan(data) if is_float else None
+
+    unique_vals = data[valid] if valid is not None else data.ravel()
+    unique_vals = cp.unique(unique_vals)
+
+    uid = 1
+    for v in unique_vals:
+        bin_mask = (data == v)
+        if valid is not None:
+            bin_mask &= valid
+        labeled, n_features = cp_label(bin_mask, structure=structure)
+        if n_features == 0:
+            continue
+        # Vectorized assignment: offset labeled region IDs by (uid - 1) so
+        # label 1 → uid, label 2 → uid+1, etc.  Single kernel, no Python loop.
+        where = labeled > 0
+        regions[where] = (labeled[where].astype(cp.uint32) +
+                          cp.uint32(uid - 1))
+        uid += n_features
+
+    return regions
+
+
+@ngjit
+def _renumber_regions(regions, nx, ny):
+    """Renumber regions so IDs are sequential in raster-scan order.
+
+    _scan expects region 1 to have the smallest ij, region 2 the next, etc.
+    GPU CCL numbers regions per-value, not spatially.  This pass assigns
+    new sequential IDs in the order regions are first encountered.
+    """
+    n = nx * ny
+    max_old = 0
+    for i in range(n):
+        if regions[i] > max_old:
+            max_old = regions[i]
+
+    # Map from old region ID to new sequential ID.
+    remap = np.zeros(max_old + 1, dtype=_regions_dtype)
+    new_id = _regions_dtype(0)
+    for ij in range(n):
+        old = regions[ij]
+        if old == 0:
+            continue
+        if remap[old] == 0:
+            new_id += 1
+            remap[old] = new_id
+        regions[ij] = remap[old]
+
+    return regions
+
+
+def _polygonize_cupy(data, mask_data, connectivity_8, transform):
+    """Hybrid GPU/CPU: GPU CCL, CPU boundary tracing."""
+    np_data = cupy.asnumpy(data)
+    np_mask = cupy.asnumpy(mask_data) if mask_data is not None else None
+    ny, nx = np_data.shape
+    if nx == 1:
+        # Edge case: fall back to full numpy path (pads array).
+        return _polygonize_numpy(np_data, np_mask, connectivity_8, transform)
+    regions_gpu = _calculate_regions_cupy(data, mask_data, connectivity_8)
+    regions = cupy.asnumpy(regions_gpu).ravel()
+    # Renumber into raster-scan order for _scan compatibility.
+    regions = _renumber_regions(regions, nx, ny)
+    column, polygon_points = _scan(
+        regions, np_data.ravel(),
+        np_mask.ravel() if np_mask is not None else None,
+        connectivity_8, transform, nx, ny)
+    return column, polygon_points
+
+
+def _to_numpy(arr):
+    """Convert array to numpy, handling cupy arrays."""
+    if cupy is not None and isinstance(arr, cupy.ndarray):
+        return cupy.asnumpy(arr)
+    return np.asarray(arr)
+
+
+def _polygonize_chunk(block, mask_block, connectivity_8, row_offset, col_offset,
+                      ny_total, nx_total):
+    """Run _polygonize_numpy on a single chunk, offset coords to global space.
+
+    Polygons are classified as "interior" (no vertex on an inter-chunk
+    boundary, already final) or "boundary" (touches an inter-chunk edge,
+    needs merge with neighbours).  Raster-edge boundaries are NOT counted
+    as inter-chunk boundaries.
+    """
+    block = _to_numpy(block)
+    if mask_block is not None:
+        mask_block = _to_numpy(mask_block)
+    ny, nx = block.shape
+    column, polygon_points = _polygonize_numpy(
+        block, mask_block, connectivity_8, transform=None)
+
+    interior = []  # (value, [ring, ...])
+    boundary = []  # (value, [ring, ...])
+
+    for val, rings in zip(column, polygon_points):
+        offset_rings = []
+        for ring in rings:
+            ring = ring.copy()
+            ring[:, 0] += col_offset
+            ring[:, 1] += row_offset
+            offset_rings.append(ring)
+
+        # Check if any vertex touches an INTERNAL chunk boundary.
+        # Internal boundaries are chunk edges that are not raster edges.
+        exterior = offset_rings[0]
+        xs = exterior[:, 0]
+        ys = exterior[:, 1]
+        on_boundary = False
+        if col_offset > 0:
+            on_boundary |= np.any(xs == col_offset)
+        if col_offset + nx < nx_total:
+            on_boundary |= np.any(xs == col_offset + nx)
+        if row_offset > 0:
+            on_boundary |= np.any(ys == row_offset)
+        if row_offset + ny < ny_total:
+            on_boundary |= np.any(ys == row_offset + ny)
+
+        if on_boundary:
+            boundary.append((val, offset_rings))
+        else:
+            interior.append((val, offset_rings))
+
+    return interior, boundary
+
+
+def _add_or_cancel_edge(edge_set, x1, y1, x2, y2):
+    """Add a directed unit edge, canceling with its reverse if present."""
+    reverse = (x2, y2, x1, y1)
+    if reverse in edge_set:
+        edge_set[reverse] -= 1
+        if edge_set[reverse] == 0:
+            del edge_set[reverse]
+    else:
+        edge = (x1, y1, x2, y2)
+        edge_set[edge] = edge_set.get(edge, 0) + 1
+
+
+def _rings_to_unit_edges(polys_list, edge_set):
+    """Split polygon ring edges into unit-length directed segments.
+
+    Edges longer than 1 pixel (collinear segments) are decomposed into
+    individual unit edges so that partial overlaps cancel correctly.
+    """
+    for rings in polys_list:
+        for ring in rings:
+            for k in range(len(ring) - 1):
+                x1, y1 = int(ring[k, 0]), int(ring[k, 1])
+                x2, y2 = int(ring[k + 1, 0]), int(ring[k + 1, 1])
+                if x1 == x2:  # vertical
+                    step = 1 if y2 > y1 else -1
+                    y = y1
+                    while y != y2:
+                        _add_or_cancel_edge(edge_set, x1, y, x1, y + step)
+                        y += step
+                else:  # horizontal
+                    step = 1 if x2 > x1 else -1
+                    x = x1
+                    while x != x2:
+                        _add_or_cancel_edge(edge_set, x, y1, x + step, y1)
+                        x += step
+
+
+def _pick_next_edge(adj, prev_vertex, current_vertex):
+    """Pick the next outgoing edge using the rightmost-turn rule.
+
+    At a vertex with multiple outgoing edges, picks the first edge clockwise
+    from the incoming direction (= smallest right turn).  This correctly
+    traces individual polygon rings even when separate same-value polygons
+    share a vertex, because it follows the ring that keeps the polygon
+    interior to the left.
+    """
+    targets = adj[current_vertex]
+    if len(targets) == 1:
+        return next(iter(targets))
+
+    dx_in = current_vertex[0] - prev_vertex[0]
+    dy_in = current_vertex[1] - prev_vertex[1]
+    incoming_angle = _DIR_ANGLE[(dx_in, dy_in)]
+
+    best = None
+    best_rel = 5
+    for target in targets:
+        dx = target[0] - current_vertex[0]
+        dy = target[1] - current_vertex[1]
+        out_angle = _DIR_ANGLE[(dx, dy)]
+        rel = (out_angle - incoming_angle) % 4
+        if rel == 0:
+            rel = 4  # straight ahead → last priority (u-turn equivalent)
+        if rel < best_rel:
+            best_rel = rel
+            best = target
+    return best
+
+
+def _remove_directed_edge(adj, from_v, to_v):
+    """Remove one instance of directed edge from adj."""
+    targets = adj[from_v]
+    targets[to_v] -= 1
+    if targets[to_v] == 0:
+        del targets[to_v]
+
+
+def _trace_rings(edge_set):
+    """Trace directed unit edges into closed rings.
+
+    Uses CW planar face ordering to correctly handle vertices with degree > 2
+    (e.g. where two same-value regions share a corner vertex).
+    """
+    # Build adjacency: vertex -> {successor_vertex: count}.
+    adj = {}
+    for (x1, y1, x2, y2), count in edge_set.items():
+        v = (x1, y1)
+        t = (x2, y2)
+        entry = adj.setdefault(v, {})
+        entry[t] = entry.get(t, 0) + count
+
+    rings = []
+    while adj:
+        start = next(iter(adj))
+        first_target = next(iter(adj[start]))
+
+        ring = [start]
+        _remove_directed_edge(adj, start, first_target)
+        prev = start
+        current = first_target
+
+        while current != start:
+            ring.append(current)
+            next_v = _pick_next_edge(adj, prev, current)
+            _remove_directed_edge(adj, current, next_v)
+            prev = current
+            current = next_v
+
+        ring.append(start)  # close the ring
+        rings.append(np.array(ring, dtype=np.float64))
+
+        # Clean up empty vertices.
+        for v in list(adj.keys()):
+            if not adj[v]:
+                del adj[v]
+
+    return rings
+
+
+def _simplify_ring(ring):
+    """Remove collinear (redundant) vertices from a closed ring."""
+    n = len(ring) - 1  # exclude closing point
+    if n <= 3:
+        return ring
+    keep = []
+    for i in range(n):
+        prev = ring[(i - 1) % n]
+        curr = ring[i]
+        nxt = ring[(i + 1) % n]
+        if not ((prev[0] == curr[0] == nxt[0]) or
+                (prev[1] == curr[1] == nxt[1])):
+            keep.append(curr)
+    if len(keep) < n:
+        keep.append(keep[0])
+        return np.array(keep, dtype=np.float64)
+    return ring
+
+
+def _signed_ring_area(ring):
+    """Shoelace formula for signed area of a closed ring."""
+    x = ring[:, 0]
+    y = ring[:, 1]
+    return 0.5 * (np.dot(x[:-1], y[1:]) - np.dot(x[1:], y[:-1]))
+
+
+def _point_in_ring(px, py, ring):
+    """Ray-casting point-in-polygon test."""
+    n = len(ring) - 1
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = ring[i, 0], ring[i, 1]
+        xj, yj = ring[j, 0], ring[j, 1]
+        if ((yi > py) != (yj > py)) and \
+           (px < (xj - xi) * (py - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def _group_rings_into_polygons(rings):
+    """Classify rings as exteriors/holes and assign holes to exteriors.
+
+    Returns list of [exterior_ring, *hole_rings].
+    """
+    exteriors = []
+    holes = []
+    for ring in rings:
+        area = _signed_ring_area(ring)
+        if area > 0:
+            exteriors.append(ring)
+        elif area < 0:
+            holes.append(ring)
+
+    result = [[ext] for ext in exteriors]
+    for hole in holes:
+        px, py = hole[0, 0], hole[0, 1]
+        for i, ext in enumerate(exteriors):
+            if _point_in_ring(px, py, ext):
+                result[i].append(hole)
+                break
+    return result
+
+
+def _merge_polygon_rings(polys_list):
+    """Merge polygon ring sets that share chunk-boundary edges.
+
+    Uses edge cancellation: splits all rings into unit-length directed edges,
+    cancels opposing edges (which occur at chunk boundaries where the same
+    value continues across), and traces the remaining edges into closed rings.
+
+    polys_list: list of [exterior_ring, *hole_rings] lists (same pixel value)
+    Returns: list of [exterior_ring, *hole_rings] lists (merged)
+    """
+    edge_set = {}
+    _rings_to_unit_edges(polys_list, edge_set)
+
+    if not edge_set:
+        return []
+
+    raw_rings = _trace_rings(edge_set)
+    simplified = [_simplify_ring(r) for r in raw_rings]
+    return _group_rings_into_polygons(simplified)
+
+
+def _merge_chunk_polygons(chunk_results, transform):
+    """Merge polygons from all chunks and return final output."""
+    all_interior = []
+    boundary_by_value = {}
+
+    for interior, boundary in chunk_results:
+        all_interior.extend(interior)
+        for val, rings in boundary:
+            boundary_by_value.setdefault(val, []).append(rings)
+
+    # Merge boundary polygons per value using edge cancellation.
+    merged = []
+    for val, polys_list in boundary_by_value.items():
+        if len(polys_list) == 1:
+            # Single polygon set for this value — nothing to merge.
+            merged.append((val, polys_list[0]))
+        else:
+            merged_polys = _merge_polygon_rings(polys_list)
+            for rings in merged_polys:
+                merged.append((val, rings))
+
+    # Combine interior and merged boundary polygons.
+    all_polys = all_interior + merged
+
+    # Sort by min (y, x) of exterior to approximate numpy row-major order.
+    def sort_key(item):
+        ext = item[1][0]
+        min_y = np.min(ext[:, 1])
+        min_x = np.min(ext[ext[:, 1] == min_y, 0])
+        return (min_y, min_x, item[0])
+
+    all_polys.sort(key=sort_key)
+
+    # Apply transform and format output.
+    column = []
+    polygon_points = []
+    for val, rings in all_polys:
+        if transform is not None:
+            for ring in rings:
+                _transform_points(ring, transform)
+        column.append(val)
+        polygon_points.append(rings)
+
+    return column, polygon_points
+
+
+def _polygonize_dask(dask_data, mask_data, connectivity_8, transform):
+    """Dask backend for polygonize: per-chunk polygonize + edge merge."""
+    # Ensure mask chunks match raster chunks.
+    if mask_data is not None and mask_data.chunks != dask_data.chunks:
+        mask_data = mask_data.rechunk(dask_data.chunks)
+
+    # Compute row/col offsets for each chunk.
+    row_chunks = dask_data.chunks[0]
+    col_chunks = dask_data.chunks[1]
+    row_offsets = np.concatenate([[0], np.cumsum(row_chunks[:-1])])
+    col_offsets = np.concatenate([[0], np.cumsum(col_chunks[:-1])])
+
+    ny_total = int(sum(row_chunks))
+    nx_total = int(sum(col_chunks))
+
+    delayed_results = []
+    for iy in range(len(row_chunks)):
+        for ix in range(len(col_chunks)):
+            block = dask_data.blocks[iy, ix]
+            mask_block = (mask_data.blocks[iy, ix]
+                          if mask_data is not None else None)
+            delayed_results.append(
+                dask.delayed(_polygonize_chunk)(
+                    block, mask_block, connectivity_8,
+                    int(row_offsets[iy]), int(col_offsets[ix]),
+                    ny_total, nx_total,
+                ))
+
+    chunk_results = dask.compute(*delayed_results)
+    return _merge_chunk_polygons(chunk_results, transform)
 
 
 def polygonize(
@@ -552,6 +1018,10 @@ def polygonize(
         increasing or decreasing.  Connectivity of 8 does not necessarily
         return valid polygons.
 
+        Note: when using Dask arrays, 8-connectivity may produce extra polygon
+        splits at chunk corners where diagonal-only adjacency crosses a chunk
+        boundary.  4-connectivity works perfectly with Dask chunking.
+
     transform: ndarray, optional
         Optional affine transform to apply to return polygon coordinates.
 
@@ -561,13 +1031,24 @@ def polygonize(
 
     return_type: str, default="numpy"
         Format of returned data.  Allowed values are "numpy", "spatialpandas",
-        "geopandas" and "awkward".  Only "numpy" is always available, the
-        others require optional dependencies.
+        "geopandas", "awkward" and "geojson".  "numpy" and "geojson" are
+        always available, the others require optional dependencies.
 
     Returns
     -------
     Polygons and their corresponding values in a format determined by
     return_type.
+
+    Notes
+    -----
+    CuPy and Dask+CuPy arrays are accepted as input.  Data is transferred
+    to CPU for processing because boundary tracing is an inherently
+    sequential graph traversal (each step depends on the previous turn
+    direction), preventing GPU parallelism.  Output is always CPU-side
+    numpy coordinate arrays regardless of input type.
+
+    For Dask+CuPy, each chunk is transferred independently, keeping peak
+    CPU memory proportional to chunk size rather than full raster size.
     """
     if raster.ndim != 2 or raster.shape[0] < 1 or raster.shape[1] < 1:
         raise ValueError(
@@ -599,11 +1080,14 @@ def polygonize(
             raise ValueError(
                 f"Incorrect transform length of {len(transform)} instead of 6")
 
-    if isinstance(raster.data, np.ndarray):
-        column, polygon_points = _polygonize_numpy(
-            raster.data, mask_data, connectivity_8, transform)
-    else:
-        raise TypeError(f"Unsupported array type: {type(raster.data)}")
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_polygonize_numpy,
+        cupy_func=_polygonize_cupy,
+        dask_func=_polygonize_dask,
+        dask_cupy_func=_polygonize_dask,
+    )
+    column, polygon_points = mapper(raster)(
+        raster.data, mask_data, connectivity_8, transform)
 
     # Convert to requested return_type.
     if return_type == "numpy":
@@ -614,5 +1098,7 @@ def polygonize(
         return _to_geopandas(column, polygon_points, column_name)
     elif return_type == "spatialpandas":
         return _to_spatialpandas(column, polygon_points, column_name)
+    elif return_type == "geojson":
+        return _to_geojson(column, polygon_points, column_name)
     else:
         raise ValueError(f"Invalid return_type '{return_type}'")

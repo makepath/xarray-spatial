@@ -213,7 +213,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:-----|:------------|:------------------:|:-----------------:|:---------------------:|:---------------------:|
-| [Polygonize](xrspatial/experimental/polygonize.py) | Converts contiguous regions of equal value into vector polygons | ✅️ | | | |
+| [Polygonize](xrspatial/polygonize.py) | Converts contiguous regions of equal value into vector polygons | ✅️ | ✅️ | ✅️ | ✅️ |
 
 --------
 
