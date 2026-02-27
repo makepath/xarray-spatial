@@ -156,7 +156,8 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Apply](xrspatial/focal.py) | Applies a custom function over a sliding neighborhood window | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Hotspots](xrspatial/focal.py) | Identifies statistically significant spatial clusters using Getis-Ord Gi* | ✅️ | ✅️ | ✅️ |  |
+| [Hotspots](xrspatial/focal.py) | Identifies statistically significant spatial clusters using Getis-Ord Gi* | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Emerging Hotspots](xrspatial/emerging_hotspots.py) | Classifies time-series hot/cold spot trends using Gi* and Mann-Kendall | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Mean](xrspatial/focal.py) | Computes the mean value within a sliding neighborhood window | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Focal Statistics](xrspatial/focal.py) | Computes summary statistics over a sliding neighborhood window | ✅️ | ✅️ | ✅️ | ✅️ |
 
@@ -228,7 +229,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Viewshed](xrspatial/viewshed.py) | Determines visible cells from a given observer point on terrain | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Min Observable Height](xrspatial/experimental/min_observable_height.py) | Finds the minimum observer height needed to see each cell *(experimental)* | ✅️ | | | |
 | [Perlin Noise](xrspatial/perlin.py) | Generates smooth continuous random noise for procedural textures | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Bump Mapping](xrspatial/bump.py) | Adds randomized bump features to simulate natural terrain variation | ✅️ | | | |
+| [Bump Mapping](xrspatial/bump.py) | Adds randomized bump features to simulate natural terrain variation | ✅️ | ✅️ | ✅️ | ✅️ |
 
 -----------
 

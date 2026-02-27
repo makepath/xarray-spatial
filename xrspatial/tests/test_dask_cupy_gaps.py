@@ -369,3 +369,77 @@ def test_apply_cupy_fallback():
 
     assert isinstance(result_cupy.data, cupy.ndarray)
     np.testing.assert_allclose(result_cupy.data.get(), result_np.values)
+
+
+# ---- hotspots dask+cupy ----
+
+@cuda_and_cupy_available
+@dask_array_available
+def test_hotspots_dask_cupy():
+    import cupy
+    import dask.array as da
+    from xrspatial.convolution import custom_kernel
+    from xrspatial.focal import hotspots
+
+    rng = np.random.default_rng(42)
+    np_data = rng.standard_normal((20, 20)).astype('f4')
+    # Add hot/cold clusters
+    np_data[2:5, 2:5] += 5.0
+    np_data[15:18, 15:18] -= 5.0
+
+    kernel = custom_kernel(np.ones((3, 3)))
+
+    # numpy reference
+    raster_np = xr.DataArray(np_data, dims=['y', 'x'])
+    result_np = hotspots(raster_np, kernel)
+
+    # dask+cupy
+    gpu = cupy.asarray(np_data)
+    raster_dask_cupy = xr.DataArray(
+        da.from_array(gpu, chunks=(10, 10)), dims=['y', 'x'],
+    )
+    result_dc = hotspots(raster_dask_cupy, kernel)
+
+    assert isinstance(result_dc.data, da.Array)
+    computed = result_dc.data.compute()
+    assert isinstance(computed, cupy.ndarray)
+    np.testing.assert_array_equal(computed.get(), result_np.values)
+
+
+# ---- emerging_hotspots dask+cupy ----
+
+@cuda_and_cupy_available
+@dask_array_available
+def test_emerging_hotspots_dask_cupy():
+    import cupy
+    import dask.array as da
+    from xrspatial.convolution import custom_kernel
+    from xrspatial.emerging_hotspots import emerging_hotspots
+
+    rng = np.random.default_rng(42)
+    np_data = rng.standard_normal((5, 15, 15)).astype('f4')
+    # Add an intensifying hot cluster
+    for t in range(5):
+        np_data[t, 3:6, 3:6] += 2.0 + t * 0.5
+
+    kernel = custom_kernel(np.ones((3, 3)))
+
+    # numpy reference
+    raster_np = xr.DataArray(np_data, dims=['time', 'y', 'x'])
+    ds_np = emerging_hotspots(raster_np, kernel)
+
+    # dask+cupy
+    gpu = cupy.asarray(np_data)
+    raster_dc = xr.DataArray(
+        da.from_array(gpu, chunks=(5, 8, 8)), dims=['time', 'y', 'x'],
+    )
+    ds_dc = emerging_hotspots(raster_dc, kernel).compute()
+
+    for var in ('category', 'gi_zscore', 'gi_bin', 'trend_zscore', 'trend_pvalue'):
+        dc_vals = ds_dc[var].data
+        if isinstance(dc_vals, cupy.ndarray):
+            dc_vals = dc_vals.get()
+        np.testing.assert_allclose(
+            dc_vals, ds_np[var].values, atol=1e-5,
+            err_msg=f"mismatch in {var}",
+        )
