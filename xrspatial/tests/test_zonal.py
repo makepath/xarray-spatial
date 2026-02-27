@@ -590,6 +590,47 @@ def test_majority_with_ties(backend):
     check_results(backend, df_result, expected_result)
 
 
+@pytest.mark.parametrize("stats_funcs, expected_cols", [
+    (['min', 'max'], ['zone', 'min', 'max']),
+    (['mean'], ['zone', 'mean']),
+    (['std'], ['zone', 'std']),
+    (['var'], ['zone', 'var']),
+    (['count'], ['zone', 'count']),
+    (['sum'], ['zone', 'sum']),
+    (['min', 'max', 'count'], ['zone', 'min', 'max', 'count']),
+])
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_stats_subset_columns(backend, data_zones, data_values_2d,
+                              stats_funcs, expected_cols):
+    """Requesting a subset of stats returns only those columns.
+
+    Regression test for GH-899: the dask path had a boolean short-circuit
+    bug (``if 'mean' or 'std' or 'var' in stats_funcs``) that always
+    evaluated to True, causing unnecessary intermediate stats to be
+    computed.  After the fix, each subset exercises a distinct code path
+    for compute_sum / compute_count / compute_sum_squares flags.
+    """
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
+    df_result = stats(zones=data_zones, values=data_values_2d,
+                      stats_funcs=stats_funcs)
+
+    # Verify values are correct for the requested stats
+    all_expected = {
+        'zone':  [0, 1, 2, 3],
+        'mean':  [0, 1, 2, 2.4],
+        'max':   [0, 1, 2, 3],
+        'min':   [0, 1, 2, 0],
+        'sum':   [0, 6, 8, 12],
+        'std':   [0, 0, 0, 1.2],
+        'var':   [0, 0, 0, 1.44],
+        'count': [5, 6, 4, 5],
+    }
+    expected = {k: all_expected[k] for k in expected_cols}
+    check_results(backend, df_result, expected)
+
+
 def test_zonal_stats_against_qgis(elevation_raster_no_nans, raster, qgis_zonal_stats):
     stats_funcs = list(set(qgis_zonal_stats.keys()) - set(['zone']))
     zones_agg = create_test_raster(raster)

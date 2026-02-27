@@ -240,11 +240,11 @@ def _stats_dask_numpy(
     compute_sum = False
     compute_count = False
 
-    if 'mean' or 'std' or 'var' in stats_funcs:
+    if any(s in stats_funcs for s in ('mean', 'std', 'var')):
         compute_sum = True
         compute_count = True
 
-    if 'std' or 'var' in stats_funcs:
+    if any(s in stats_funcs for s in ('std', 'var')):
         compute_sum_squares = True
 
     basis_stats = [s for s in _DASK_BLOCK_STATS if s in stats_funcs]
