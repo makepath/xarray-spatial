@@ -14,6 +14,7 @@ from xrspatial.classify import quantile  # noqa
 from xrspatial.classify import reclassify  # noqa
 from xrspatial.curvature import curvature  # noqa
 from xrspatial.emerging_hotspots import emerging_hotspots  # noqa
+from xrspatial.flow_direction import flow_direction  # noqa
 from xrspatial.focal import mean  # noqa
 from xrspatial.hillshade import hillshade  # noqa
 from xrspatial.mahalanobis import mahalanobis  # noqa

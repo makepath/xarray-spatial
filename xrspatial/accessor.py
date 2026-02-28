@@ -53,6 +53,12 @@ class XrsSpatialDataArrayAccessor:
         from .terrain_metrics import roughness
         return roughness(self._obj, **kwargs)
 
+    # ---- Hydrology ----
+
+    def flow_direction(self, **kwargs):
+        from .flow_direction import flow_direction
+        return flow_direction(self._obj, **kwargs)
+
     def viewshed(self, x, y, **kwargs):
         from .viewshed import viewshed
         return viewshed(self._obj, x, y, **kwargs)
@@ -248,6 +254,12 @@ class XrsSpatialDatasetAccessor:
     def roughness(self, **kwargs):
         from .terrain_metrics import roughness
         return roughness(self._obj, **kwargs)
+
+    # ---- Hydrology ----
+
+    def flow_direction(self, **kwargs):
+        from .flow_direction import flow_direction
+        return flow_direction(self._obj, **kwargs)
 
     # ---- Classification ----
 

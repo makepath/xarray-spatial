@@ -239,6 +239,14 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 -----------
 
+### **Hydrology**
+
+| Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Flow Direction (D8)](xrspatial/flow_direction.py) | Computes D8 flow direction from each cell toward the steepest downhill neighbor | ✅️ | ✅️ | ✅️ | ✅️ |
+
+-----------
+
 ### **Zonal**
 
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
