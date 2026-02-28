@@ -5,11 +5,9 @@
   <td>Latest Release</td>
   <td>
     <div>
-    <img src="https://anaconda.org/conda-forge/xarray-spatial/badges/latest_release_date.svg" alt="Last Conda Release"/>
         <img src="https://badge.fury.io/py/xarray-spatial.svg" alt="pypi version" />
-        <img src="https://anaconda.org/conda-forge/xarray-spatial/badges/version.svg" alt="conda-forge version" />
+        <img src="https://img.shields.io/conda/vn/conda-forge/xarray-spatial.svg" alt="conda-forge version" />
     </div>
-    </a>
   </td>
 
   <td>Downloads</td>
@@ -17,6 +15,8 @@
     <div>
     <img src="https://img.shields.io/pypi/dm/xarray-spatial?label=PyPI"
          alt="PyPI downloads per month" />
+    <img src="https://img.shields.io/conda/dn/conda-forge/xarray-spatial?label=conda-forge"
+         alt="conda-forge downloads" />
     </div>
   </td>
 </tr>

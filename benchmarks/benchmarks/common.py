@@ -55,6 +55,9 @@ def get_xr_dataarray(
             raise NotImplementedError()
         import cupy
         z = cupy.asarray(z)
+    elif type == "dask":
+        import dask.array as da
+        z = da.from_array(z, chunks=(max(1, ny // 2), max(1, nx // 2)))
     else:
         raise RuntimeError(f"Unrecognised type {type}")
 
@@ -62,7 +65,7 @@ def get_xr_dataarray(
 
 
 class Benchmarking:
-    params = ([100, 300, 1000, 3000, 10000], ["numpy", "cupy"])
+    params = ([100, 300, 1000, 3000, 10000], ["numpy", "cupy", "dask"])
     param_names = ("nx", "type")
 
     def __init__(self, func=None):

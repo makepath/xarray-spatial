@@ -27,7 +27,7 @@ def create_arr(data=None, H=10, W=10, backend='numpy'):
 class Zonal:
     # Note that rtxpy hillshade includes shadow calculations so timings are
     # not comparable with numpy and cupy hillshade.
-    params = ([400, 1600, 3200], [2, 4, 8], ["numpy", "cupy"])
+    params = ([400, 1600, 3200], [2, 4, 8], ["numpy", "cupy", "dask"])
     param_names = ("raster_dim", "zone_dim", "backend")
 
     def setup(self, raster_dim, zone_dim, backend):
@@ -64,6 +64,8 @@ class Zonal:
         self.zones = create_arr(zones, backend=backend)
 
         # Now setup the custom stat funcs
+        # Dask backend only supports default stats, so custom_stats is None.
+        self.custom_stats = None
         if backend == 'cupy':
             import cupy
             l2normKernel = cupy.ReductionKernel(
@@ -77,7 +79,7 @@ class Zonal:
                 'l2norm': lambda val: np.sqrt(cupy.sum(val * val)),
                 'l2normKernel': lambda val: l2normKernel(val)
             }
-        else:
+        elif backend == 'numpy':
             from xrspatial.utils import ngjit
 
             @ngjit
@@ -97,5 +99,7 @@ class Zonal:
         zonal.stats(zones=self.zones, values=self.values)
 
     def time_zonal_stats_custom(self, raster_dim, zone_dim, backend):
+        if self.custom_stats is None:
+            raise NotImplementedError()
         zonal.stats(zones=self.zones, values=self.values,
                     stats_funcs=self.custom_stats)

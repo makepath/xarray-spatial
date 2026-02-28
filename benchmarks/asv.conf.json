@@ -72,6 +72,7 @@
     //
     "matrix": {
         "pyct": [],
+        "dask": [],
         // Optional for cupy support; use correct cuda version.
         //"cupy-cuda113": [],
         // Optional for ray-tracing support, need cupy too.

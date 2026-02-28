@@ -10,14 +10,17 @@ class Base:
         [100, 1000],
         [1, 10, 100],
         ["EUCLIDEAN", "GREAT_CIRCLE", "MANHATTAN"],
-        ["numpy"]
+        ["numpy", "dask"]
     )
     param_names = ("nx", "n_target_values", "distance_metric", "type")
 
     def setup(self, nx, n_target_values, distance_metric, type):
         ny = nx // 2
         self.agg = get_xr_dataarray((ny, nx), type, is_int=True)
-        unique_values = np.unique(self.agg.data)
+        data = self.agg.data
+        if type == "dask":
+            data = data.compute()
+        unique_values = np.unique(data)
         self.target_values = unique_values[:n_target_values]
 
 
