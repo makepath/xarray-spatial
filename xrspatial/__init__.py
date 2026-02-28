@@ -36,6 +36,9 @@ from xrspatial.surface_distance import surface_allocation  # noqa
 from xrspatial.surface_distance import surface_direction  # noqa
 from xrspatial.surface_distance import surface_distance  # noqa
 from xrspatial.terrain import generate_terrain  # noqa
+from xrspatial.terrain_metrics import roughness  # noqa
+from xrspatial.terrain_metrics import tpi  # noqa
+from xrspatial.terrain_metrics import tri  # noqa
 from xrspatial.polygonize import polygonize  # noqa
 from xrspatial.viewshed import viewshed  # noqa
 from xrspatial.zonal import apply as zonal_apply  # noqa
