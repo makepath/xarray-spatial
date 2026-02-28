@@ -39,6 +39,20 @@ class XrsSpatialDataArrayAccessor:
         from .curvature import curvature
         return curvature(self._obj, **kwargs)
 
+    # ---- Terrain Metrics ----
+
+    def tri(self, **kwargs):
+        from .terrain_metrics import tri
+        return tri(self._obj, **kwargs)
+
+    def tpi(self, **kwargs):
+        from .terrain_metrics import tpi
+        return tpi(self._obj, **kwargs)
+
+    def roughness(self, **kwargs):
+        from .terrain_metrics import roughness
+        return roughness(self._obj, **kwargs)
+
     def viewshed(self, x, y, **kwargs):
         from .viewshed import viewshed
         return viewshed(self._obj, x, y, **kwargs)
@@ -220,6 +234,20 @@ class XrsSpatialDatasetAccessor:
     def curvature(self, **kwargs):
         from .curvature import curvature
         return curvature(self._obj, **kwargs)
+
+    # ---- Terrain Metrics ----
+
+    def tri(self, **kwargs):
+        from .terrain_metrics import tri
+        return tri(self._obj, **kwargs)
+
+    def tpi(self, **kwargs):
+        from .terrain_metrics import tpi
+        return tpi(self._obj, **kwargs)
+
+    def roughness(self, **kwargs):
+        from .terrain_metrics import roughness
+        return roughness(self._obj, **kwargs)
 
     # ---- Classification ----
 
