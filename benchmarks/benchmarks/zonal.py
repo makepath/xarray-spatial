@@ -64,22 +64,9 @@ class Zonal:
         self.zones = create_arr(zones, backend=backend)
 
         # Now setup the custom stat funcs
-        if backend == 'dask':
-            from xrspatial.utils import ngjit
-
-            @ngjit
-            def l2normKernel(arr):
-                acc = 0
-                for x in arr:
-                    acc += x * x
-                return np.sqrt(acc)
-
-            self.custom_stats = {
-                'double_sum': lambda val: val.sum()*2,
-                'l2norm': lambda val: np.sqrt(np.sum(val * val)),
-                'l2normKernel': lambda val: l2normKernel(val)
-            }
-        elif backend == 'cupy':
+        # Dask backend only supports default stats, so custom_stats is None.
+        self.custom_stats = None
+        if backend == 'cupy':
             import cupy
             l2normKernel = cupy.ReductionKernel(
                 in_params='T x', out_params='float64 y',
@@ -92,7 +79,7 @@ class Zonal:
                 'l2norm': lambda val: np.sqrt(cupy.sum(val * val)),
                 'l2normKernel': lambda val: l2normKernel(val)
             }
-        else:
+        elif backend == 'numpy':
             from xrspatial.utils import ngjit
 
             @ngjit
@@ -112,5 +99,7 @@ class Zonal:
         zonal.stats(zones=self.zones, values=self.values)
 
     def time_zonal_stats_custom(self, raster_dim, zone_dim, backend):
+        if self.custom_stats is None:
+            raise NotImplementedError()
         zonal.stats(zones=self.zones, values=self.values,
                     stats_funcs=self.custom_stats)
