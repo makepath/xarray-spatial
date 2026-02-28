@@ -206,6 +206,9 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Cost Distance](xrspatial/cost_distance.py) | Computes minimum accumulated cost to the nearest source through a friction surface | ✅️ | ✅ | ✅️ | ✅️ |
 | [Direction](xrspatial/proximity.py) | Computes the direction from each cell to the nearest source feature | ✅️ | ✅ | ✅️ | ✅️ |
 | [Proximity](xrspatial/proximity.py) | Computes the distance from each cell to the nearest source feature | ✅️ | ✅ | ✅️ | ✅️ |
+| [Surface Distance](xrspatial/surface_distance.py) | Computes distance along the 3D terrain surface to the nearest source | ✅️ | ✅ | ✅️ | ✅️ |
+| [Surface Allocation](xrspatial/surface_distance.py) | Assigns each cell to the nearest source by terrain surface distance | ✅️ | ✅ | ✅️ | ✅️ |
+| [Surface Direction](xrspatial/surface_distance.py) | Computes compass direction to the nearest source by terrain surface distance | ✅️ | ✅ | ✅️ | ✅️ |
 
 --------
 
