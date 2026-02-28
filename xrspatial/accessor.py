@@ -97,6 +97,18 @@ class XrsSpatialDataArrayAccessor:
         from .cost_distance import cost_distance
         return cost_distance(self._obj, friction, **kwargs)
 
+    def surface_distance(self, elevation, **kwargs):
+        from .surface_distance import surface_distance
+        return surface_distance(self._obj, elevation, **kwargs)
+
+    def surface_allocation(self, elevation, **kwargs):
+        from .surface_distance import surface_allocation
+        return surface_allocation(self._obj, elevation, **kwargs)
+
+    def surface_direction(self, elevation, **kwargs):
+        from .surface_distance import surface_direction
+        return surface_direction(self._obj, elevation, **kwargs)
+
     # ---- Pathfinding ----
 
     def a_star_search(self, start, goal, **kwargs):
@@ -258,6 +270,18 @@ class XrsSpatialDatasetAccessor:
     def cost_distance(self, friction, **kwargs):
         from .cost_distance import cost_distance
         return cost_distance(self._obj, friction, **kwargs)
+
+    def surface_distance(self, elevation, **kwargs):
+        from .surface_distance import surface_distance
+        return surface_distance(self._obj, elevation, **kwargs)
+
+    def surface_allocation(self, elevation, **kwargs):
+        from .surface_distance import surface_allocation
+        return surface_allocation(self._obj, elevation, **kwargs)
+
+    def surface_direction(self, elevation, **kwargs):
+        from .surface_distance import surface_direction
+        return surface_direction(self._obj, elevation, **kwargs)
 
     # ---- Multispectral (band mapping via kwargs) ----
 

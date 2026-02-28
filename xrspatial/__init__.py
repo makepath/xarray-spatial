@@ -32,6 +32,9 @@ from xrspatial.proximity import great_circle_distance  # noqa
 from xrspatial.proximity import manhattan_distance  # noqa
 from xrspatial.proximity import proximity  # noqa
 from xrspatial.slope import slope  # noqa
+from xrspatial.surface_distance import surface_allocation  # noqa
+from xrspatial.surface_distance import surface_direction  # noqa
+from xrspatial.surface_distance import surface_distance  # noqa
 from xrspatial.terrain import generate_terrain  # noqa
 from xrspatial.polygonize import polygonize  # noqa
 from xrspatial.viewshed import viewshed  # noqa
