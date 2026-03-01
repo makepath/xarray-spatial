@@ -14,6 +14,8 @@ from xrspatial.classify import quantile  # noqa
 from xrspatial.classify import reclassify  # noqa
 from xrspatial.curvature import curvature  # noqa
 from xrspatial.emerging_hotspots import emerging_hotspots  # noqa
+from xrspatial.fill import fill  # noqa
+from xrspatial.flow_accumulation import flow_accumulation  # noqa
 from xrspatial.flow_direction import flow_direction  # noqa
 from xrspatial.focal import mean  # noqa
 from xrspatial.hillshade import hillshade  # noqa
@@ -32,6 +34,8 @@ from xrspatial.proximity import euclidean_distance  # noqa
 from xrspatial.proximity import great_circle_distance  # noqa
 from xrspatial.proximity import manhattan_distance  # noqa
 from xrspatial.proximity import proximity  # noqa
+from xrspatial.sink import sink  # noqa
+from xrspatial.stream_order import stream_order  # noqa
 from xrspatial.slope import slope  # noqa
 from xrspatial.surface_distance import surface_allocation  # noqa
 from xrspatial.surface_distance import surface_direction  # noqa
@@ -42,6 +46,8 @@ from xrspatial.terrain_metrics import tpi  # noqa
 from xrspatial.terrain_metrics import tri  # noqa
 from xrspatial.polygonize import polygonize  # noqa
 from xrspatial.viewshed import viewshed  # noqa
+from xrspatial.watershed import basins  # noqa
+from xrspatial.watershed import watershed  # noqa
 from xrspatial.zonal import apply as zonal_apply  # noqa
 from xrspatial.zonal import crop  # noqa
 from xrspatial.zonal import trim  # noqa
