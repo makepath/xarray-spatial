@@ -598,6 +598,7 @@ def _flow_accum_dask_iterative(flow_dir_da):
 
     # Phase 0: extract boundary flow dirs
     flow_bdry = _preprocess_tiles(flow_dir_da, chunks_y, chunks_x)
+    flow_bdry = flow_bdry.snapshot()  # read-only from here; release temp files
 
     # Phase 1: initialise boundary accum to 0
     boundaries = BoundaryStore(chunks_y, chunks_x, fill_value=0.0)
@@ -608,7 +609,7 @@ def _flow_accum_dask_iterative(flow_dir_da):
     for _iteration in range(max_iterations):
         max_change = 0.0
 
-        # Forward sweep (top-left → bottom-right)
+        # Forward sweep (top-left -> bottom-right)
         for iy in range(n_tile_y):
             for ix in range(n_tile_x):
                 c = _process_tile(iy, ix, flow_dir_da, boundaries,
@@ -617,7 +618,7 @@ def _flow_accum_dask_iterative(flow_dir_da):
                 if c > max_change:
                     max_change = c
 
-        # Backward sweep (bottom-right → top-left)
+        # Backward sweep (bottom-right -> top-left)
         for iy in reversed(range(n_tile_y)):
             for ix in reversed(range(n_tile_x)):
                 c = _process_tile(iy, ix, flow_dir_da, boundaries,
@@ -628,6 +629,9 @@ def _flow_accum_dask_iterative(flow_dir_da):
 
         if max_change == 0.0:
             break
+
+    # Snapshot converged boundaries before assembly (releases temp files)
+    boundaries = boundaries.snapshot()
 
     # Phase 3: lazy assembly via da.map_blocks
     return _assemble_result(flow_dir_da, boundaries, flow_bdry,

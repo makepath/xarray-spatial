@@ -67,6 +67,10 @@ class XrsSpatialDataArrayAccessor:
         from .watershed import watershed
         return watershed(self._obj, pour_points, **kwargs)
 
+    def basin(self, **kwargs):
+        from .basin import basin
+        return basin(self._obj, **kwargs)
+
     def basins(self, **kwargs):
         from .watershed import basins
         return basins(self._obj, **kwargs)
@@ -292,6 +296,10 @@ class XrsSpatialDatasetAccessor:
     def watershed(self, pour_points, **kwargs):
         from .watershed import watershed
         return watershed(self._obj, pour_points, **kwargs)
+
+    def basin(self, **kwargs):
+        from .basin import basin
+        return basin(self._obj, **kwargs)
 
     def basins(self, **kwargs):
         from .watershed import basins

@@ -46,6 +46,7 @@ from xrspatial.terrain_metrics import tpi  # noqa
 from xrspatial.terrain_metrics import tri  # noqa
 from xrspatial.polygonize import polygonize  # noqa
 from xrspatial.viewshed import viewshed  # noqa
+from xrspatial.basin import basin  # noqa
 from xrspatial.watershed import basins  # noqa
 from xrspatial.watershed import watershed  # noqa
 from xrspatial.zonal import apply as zonal_apply  # noqa

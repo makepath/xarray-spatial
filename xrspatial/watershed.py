@@ -139,54 +139,6 @@ def _watershed_cpu(flow_dir, labels, h, w):
     return labels
 
 
-@ngjit
-def _basins_init_labels(flow_dir, h, w, total_h, total_w, row_off, col_off):
-    """Initialize labels for basins mode.
-
-    Pits (code 0) and cells that exit the **global** grid get unique
-    IDs.  Unique ID = (row_off + r) * total_w + (col_off + c) + 1.
-    Other valid cells = -1.  NaN cells = NaN.
-
-    The global boundary check (total_h × total_w) ensures that cells
-    flowing into an adjacent dask tile are NOT treated as edge-exits.
-    """
-    labels = np.empty((h, w), dtype=np.float64)
-
-    for r in range(h):
-        for c in range(w):
-            v = flow_dir[r, c]
-            if v != v:  # NaN
-                labels[r, c] = np.nan
-                continue
-
-            dy, dx = _code_to_offset(v)
-            if dy == 0 and dx == 0:
-                # Pit → assign unique ID
-                labels[r, c] = float((row_off + r) * total_w +
-                                     (col_off + c) + 1)
-                continue
-
-            # Check against GLOBAL grid boundaries
-            gr = row_off + r + dy
-            gc = col_off + c + dx
-            if gr < 0 or gr >= total_h or gc < 0 or gc >= total_w:
-                # Global edge-exit → assign unique ID
-                labels[r, c] = float((row_off + r) * total_w +
-                                     (col_off + c) + 1)
-                continue
-
-            # Check if flows into NaN within this tile
-            nr, nc = r + dy, c + dx
-            if 0 <= nr < h and 0 <= nc < w:
-                nv = flow_dir[nr, nc]
-                if nv != nv:  # flows into NaN
-                    labels[r, c] = float((row_off + r) * total_w +
-                                         (col_off + c) + 1)
-                    continue
-
-            labels[r, c] = -1.0  # unresolved
-
-    return labels
 
 
 # =====================================================================
@@ -215,59 +167,6 @@ def _init_watershed_gpu(flow_dir, pour_points, labels, state, H, W):
         state[i, j] = 1  # active
 
 
-@cuda.jit
-def _init_basins_gpu(flow_dir, labels, state, H, W):
-    """Pits/edge-exits → labeled + frontier. NaN → state 0. Others → state 1."""
-    i, j = cuda.grid(2)
-    if i >= H or j >= W:
-        return
-
-    v = flow_dir[i, j]
-    if v != v:  # NaN
-        state[i, j] = 0
-        labels[i, j] = 0.0
-        return
-
-    # Decode direction inline
-    code = int(v)
-    dy = 0
-    dx = 0
-    if code == 1:
-        dy, dx = 0, 1
-    elif code == 2:
-        dy, dx = 1, 1
-    elif code == 4:
-        dy, dx = 1, 0
-    elif code == 8:
-        dy, dx = 1, -1
-    elif code == 16:
-        dy, dx = 0, -1
-    elif code == 32:
-        dy, dx = -1, -1
-    elif code == 64:
-        dy, dx = -1, 0
-    elif code == 128:
-        dy, dx = -1, 1
-
-    is_outlet = False
-    if dy == 0 and dx == 0:
-        is_outlet = True  # pit
-    else:
-        ni = i + dy
-        nj = j + dx
-        if ni < 0 or ni >= H or nj < 0 or nj >= W:
-            is_outlet = True  # edge-exit
-        else:
-            nv = flow_dir[ni, nj]
-            if nv != nv:  # flows into NaN
-                is_outlet = True
-
-    if is_outlet:
-        labels[i, j] = float(i * W + j + 1)
-        state[i, j] = 2  # frontier
-    else:
-        labels[i, j] = 0.0
-        state[i, j] = 1  # active
 
 
 @cuda.jit
@@ -360,34 +259,6 @@ def _watershed_cupy(flow_dir_data, pour_points_data):
     return labels
 
 
-def _basins_cupy(flow_dir_data):
-    """GPU driver for basins."""
-    import cupy as cp
-
-    H, W = flow_dir_data.shape
-    flow_dir_f64 = flow_dir_data.astype(cp.float64)
-
-    labels = cp.zeros((H, W), dtype=cp.float64)
-    state = cp.zeros((H, W), dtype=cp.int32)
-    changed = cp.zeros(1, dtype=cp.int32)
-
-    griddim, blockdim = cuda_args((H, W))
-
-    _init_basins_gpu[griddim, blockdim](
-        flow_dir_f64, labels, state, H, W)
-
-    max_iter = H * W
-    for _ in range(max_iter):
-        changed[0] = 0
-        _propagate_labels_gpu[griddim, blockdim](
-            flow_dir_f64, labels, state, changed, H, W)
-        if int(changed[0]) == 0:
-            break
-        _advance_frontier_gpu[griddim, blockdim](state, H, W)
-
-    # Invalid (state=0) → NaN; unresolved should not exist for basins
-    labels = cp.where(state == 0, cp.nan, labels)
-    return labels
 
 
 # =====================================================================
@@ -769,6 +640,8 @@ def _watershed_dask_iterative(flow_dir_da, pour_points_da):
     n_tile_x = len(chunks_x)
 
     flow_bdry = _preprocess_tiles(flow_dir_da, chunks_y, chunks_x)
+    flow_bdry = flow_bdry.snapshot()  # read-only from here; release temp files
+
     boundaries = BoundaryStore(chunks_y, chunks_x, fill_value=np.nan)
 
     max_iterations = max(n_tile_y, n_tile_x) * 2 + 10
@@ -798,6 +671,9 @@ def _watershed_dask_iterative(flow_dir_da, pour_points_da):
 
         if not any_changed:
             break
+
+    # Snapshot converged boundaries before assembly (releases temp files)
+    boundaries = boundaries.snapshot()
 
     return _assemble_watershed(flow_dir_da, pour_points_da,
                                boundaries, flow_bdry,
@@ -835,36 +711,6 @@ def _assemble_watershed(flow_dir_da, pour_points_da,
     )
 
 
-def _basins_dask_iterative(flow_dir_da):
-    """Iterative boundary-propagation for basins on dask arrays."""
-    chunks_y = flow_dir_da.chunks[0]
-    chunks_x = flow_dir_da.chunks[1]
-    n_tile_y = len(chunks_y)
-    n_tile_x = len(chunks_x)
-    total_h = sum(chunks_y)
-    total_w = sum(chunks_x)
-
-    flow_bdry = _preprocess_tiles(flow_dir_da, chunks_y, chunks_x)
-    boundaries = BoundaryStore(chunks_y, chunks_x, fill_value=np.nan)
-
-    # Build basins pour_points lazily via map_blocks (never holds the
-    # full array in memory).
-    def _basins_make_pp_block(flow_dir_block, block_info=None):
-        if block_info is None or 0 not in block_info:
-            return np.full(flow_dir_block.shape, np.nan, dtype=np.float64)
-        row_off = block_info[0]['array-location'][0][0]
-        col_off = block_info[0]['array-location'][1][0]
-        h, w = flow_dir_block.shape
-        chunk = np.asarray(flow_dir_block, dtype=np.float64)
-        pp = _basins_init_labels(chunk, h, w, total_h, total_w,
-                                 row_off, col_off)
-        return np.where(pp >= 0, pp, np.nan)
-
-    pour_points_da = da.map_blocks(
-        _basins_make_pp_block, flow_dir_da,
-        dtype=np.float64, meta=np.array((), dtype=np.float64))
-
-    return _watershed_dask_iterative(flow_dir_da, pour_points_da)
 
 
 def _watershed_dask_cupy(flow_dir_da, pour_points_da):
@@ -886,19 +732,6 @@ def _watershed_dask_cupy(flow_dir_da, pour_points_da):
     )
 
 
-def _basins_dask_cupy(flow_dir_da):
-    """Dask+CuPy basins: convert to numpy, run CPU iterative, convert back."""
-    import cupy as cp
-
-    flow_dir_np = flow_dir_da.map_blocks(
-        lambda b: b.get(), dtype=flow_dir_da.dtype,
-        meta=np.array((), dtype=flow_dir_da.dtype),
-    )
-    result = _basins_dask_iterative(flow_dir_np)
-    return result.map_blocks(
-        cp.asarray, dtype=result.dtype,
-        meta=cp.array((), dtype=result.dtype),
-    )
 
 
 # =====================================================================
@@ -973,53 +806,7 @@ def watershed(flow_dir: xr.DataArray,
                         attrs=flow_dir.attrs)
 
 
-@supports_dataset
-def basins(flow_dir: xr.DataArray,
-           name: str = 'basins') -> xr.DataArray:
-    """Delineate drainage basins: every cell labeled with its outlet ID.
-
-    Automatically identifies all outlets (pits and edge-exit cells)
-    and assigns each a unique ID.  Every valid cell is then labeled
-    with the ID of the outlet it drains to.  NaN flow_dir cells
-    produce NaN.
-
-    Parameters
-    ----------
-    flow_dir : xarray.DataArray or xr.Dataset
-        2D D8 flow direction grid.
-    name : str, default='basins'
-        Name of output DataArray.
-
-    Returns
-    -------
-    xarray.DataArray or xr.Dataset
-        2D float64 array where each cell = unique ID of its outlet.
-        NaN for nodata cells.
-    """
-    _validate_raster(flow_dir, func_name='basins', name='flow_dir')
-
-    data = flow_dir.data
-
-    if isinstance(data, np.ndarray):
-        fd = data.astype(np.float64)
-        h, w = fd.shape
-        labels = _basins_init_labels(fd, h, w, h, w, 0, 0)
-        out = _watershed_cpu(fd, labels, h, w)
-
-    elif has_cuda_and_cupy() and is_cupy_array(data):
-        out = _basins_cupy(data)
-
-    elif has_cuda_and_cupy() and is_dask_cupy(flow_dir):
-        out = _basins_dask_cupy(data)
-
-    elif da is not None and isinstance(data, da.Array):
-        out = _basins_dask_iterative(data)
-
-    else:
-        raise TypeError(f"Unsupported array type: {type(data)}")
-
-    return xr.DataArray(out,
-                        name=name,
-                        coords=flow_dir.coords,
-                        dims=flow_dir.dims,
-                        attrs=flow_dir.attrs)
+def basins(flow_dir, name='basins'):
+    """Backward-compatible wrapper; use :func:`basin` instead."""
+    from .basin import basin
+    return basin(flow_dir, name=name)

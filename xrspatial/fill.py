@@ -398,6 +398,9 @@ def _fill_dask_iterative(dem_da):
 
         dirty = backward_dirty
 
+    # Snapshot converged boundaries before assembly (releases temp files)
+    boundaries = boundaries.snapshot()
+
     return _assemble_fill_result(dem_da, boundaries,
                                   chunks_y, chunks_x,
                                   n_tile_y, n_tile_x)

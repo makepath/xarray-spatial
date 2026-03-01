@@ -29,14 +29,12 @@ def test_single_pour_point():
     fd_da = create_test_raster(flow_dir)
     pp_da = create_test_raster(pour_points)
     result = watershed(fd_da, pp_da)
-    # All cells drain to center → all label 42
     expected = np.full((5, 5), 42.0, dtype=np.float64)
     np.testing.assert_allclose(result.data, expected)
 
 
 def test_two_pour_points():
     """4x6 grid with two separate drainage areas."""
-    # Left 3 cols flow east to pit at (1,2), right 3 cols flow east to pit at (1,5)
     flow_dir = np.array([
         [1.0, 1.0, 4.0, 1.0, 1.0, 4.0],
         [1.0, 1.0, 0.0, 1.0, 1.0, 0.0],
@@ -61,9 +59,7 @@ def test_two_pour_points():
 
 
 def test_unreachable_cells():
-    """Cells not draining to any pour point → NaN."""
-    # Two pits, only one has a pour point
-    # (0,0)→E→(0,1) pit w/ pp;  (0,2)→E→(0,3) pit w/o pp
+    """Cells not draining to any pour point produce NaN."""
     flow_dir = np.array([
         [1.0, 0.0, 1.0, 0.0],
     ], dtype=np.float64)
@@ -76,12 +72,12 @@ def test_unreachable_cells():
 
     assert result.data[0, 0] == 5.0
     assert result.data[0, 1] == 5.0
-    assert np.isnan(result.data[0, 2])  # flows to pit at (0,3) with no pp
+    assert np.isnan(result.data[0, 2])
     assert np.isnan(result.data[0, 3])
 
 
 def test_nan_handling():
-    """NaN flow_dir → NaN label."""
+    """NaN flow_dir produces NaN label."""
     flow_dir = np.array([
         [1.0, 0.0],
         [np.nan, 1.0],
@@ -95,8 +91,7 @@ def test_nan_handling():
 
     assert result.data[0, 0] == 7.0
     assert result.data[0, 1] == 7.0
-    assert np.isnan(result.data[1, 0])  # NaN flow_dir
-    # (1,1) flows east, goes off grid → NaN (no pour point reached)
+    assert np.isnan(result.data[1, 0])
     assert np.isnan(result.data[1, 1])
 
 
@@ -104,7 +99,7 @@ def test_linear_chain():
     """Row of cells flowing east to a pour point at the end."""
     N = 6
     flow_dir = np.full((1, N), 1.0, dtype=np.float64)
-    flow_dir[0, -1] = 0.0  # pit
+    flow_dir[0, -1] = 0.0
     pour_points = np.full((1, N), np.nan, dtype=np.float64)
     pour_points[0, -1] = 99.0
 
@@ -122,16 +117,14 @@ def test_pour_point_at_non_pit():
         [1.0, 1.0, 0.0],
     ], dtype=np.float64)
     pour_points = np.full((1, 3), np.nan, dtype=np.float64)
-    pour_points[0, 1] = 50.0  # not a pit, flows east
+    pour_points[0, 1] = 50.0
 
     fd_da = create_test_raster(flow_dir)
     pp_da = create_test_raster(pour_points)
     result = watershed(fd_da, pp_da)
 
-    # (0,0) drains through (0,1) which is a pour point → label 50
     assert result.data[0, 0] == 50.0
     assert result.data[0, 1] == 50.0
-    # (0,2) is a pit with no pour point → NaN
     assert np.isnan(result.data[0, 2])
 
 
@@ -154,101 +147,22 @@ def test_multiple_paths_to_same_pour_point():
 
 
 # ====================================================================
-# Basins tests
+# Backward-compat: basins() still works via wrapper
 # ====================================================================
 
-def test_basins_two_pits():
-    """Grid with two pits: each pit and its upstream cells form a basin."""
-    flow_dir = np.array([
-        [1.0, 0.0, 16.0, 0.0],
-        [1.0, 0.0, 16.0, 0.0],
-    ], dtype=np.float64)
-    fd_da = create_test_raster(flow_dir)
-    result = basins(fd_da)
+def test_basins_backward_compat():
+    """basins() wrapper delegates to basin() correctly."""
+    from xrspatial import basin
 
-    # Cells in left half drain to pit at (0,1) or (1,1)
-    # Cells in right half drain to pit at (0,3) or (1,3)
-    # Left pits: (0,1) and (1,1) — they are both pits, cells flow into them
-    # (0,0)→E→(0,1) pit, (1,0)→E→(1,1) pit
-    # (0,2)→W→(0,1) should go to same basin... wait no:
-    # (0,2) flows W to (0,1) which is a pit → same basin as (0,1)
-    # (1,2) flows W to (1,1) which is a pit → same basin as (1,1)
-    # But (0,1) and (1,1) are separate pits with separate IDs
-
-    data = result.data
-    # Each pit gets unique ID
-    assert data[0, 1] != data[1, 1]  # different pits
-    assert data[0, 3] != data[1, 3]  # different pits
-    # Cells flow to their respective pits
-    assert data[0, 0] == data[0, 1]  # (0,0) → (0,1)
-    assert data[0, 2] == data[0, 1]  # (0,2) → (0,1)
-    assert data[1, 0] == data[1, 1]  # (1,0) → (1,1)
-    assert data[1, 2] == data[1, 1]  # (1,2) → (1,1)
-    assert data[0, 3] == data[0, 3]  # pit itself
-
-
-def test_basins_edge_exits():
-    """Cells flowing off-grid form their own basins."""
-    # All cells flow east, rightmost column exits grid
-    flow_dir = np.array([
-        [1.0, 1.0, 1.0],
-        [1.0, 1.0, 1.0],
-    ], dtype=np.float64)
-    fd_da = create_test_raster(flow_dir)
-    result = basins(fd_da)
-
-    data = result.data
-    # Right column cells are edge-exits, each gets unique ID
-    assert data[0, 2] != data[1, 2]
-    # Cells in row 0 all drain to (0,2)
-    assert data[0, 0] == data[0, 2]
-    assert data[0, 1] == data[0, 2]
-    # Cells in row 1 all drain to (1,2)
-    assert data[1, 0] == data[1, 2]
-    assert data[1, 1] == data[1, 2]
-
-
-def test_basins_all_pits():
-    """Every cell code=0 → each cell is its own basin."""
-    flow_dir = np.zeros((3, 4), dtype=np.float64)
-    fd_da = create_test_raster(flow_dir)
-    result = basins(fd_da)
-
-    data = result.data
-    # All IDs should be unique
-    unique_ids = np.unique(data[~np.isnan(data)])
-    assert len(unique_ids) == 12  # 3*4
-
-
-def test_basins_single_basin():
-    """All cells drain to one pit → all get same label."""
     flow_dir = np.array([
         [2.0,  4.0,  8.0],
         [1.0,  0.0, 16.0],
         [128.0, 64.0, 32.0],
     ], dtype=np.float64)
     fd_da = create_test_raster(flow_dir)
-    result = basins(fd_da)
-
-    data = result.data
-    # All cells should have the same label (the pit's ID)
-    assert np.all(data == data[1, 1])
-
-
-def test_basins_nan_handling():
-    """NaN flow_dir → NaN in basins output."""
-    flow_dir = np.array([
-        [1.0, 0.0],
-        [np.nan, 64.0],
-    ], dtype=np.float64)
-    fd_da = create_test_raster(flow_dir)
-    result = basins(fd_da)
-
-    data = result.data
-    assert np.isnan(data[1, 0])
-    assert not np.isnan(data[0, 0])
-    assert not np.isnan(data[0, 1])
-    assert not np.isnan(data[1, 1])
+    old_result = basins(fd_da)
+    new_result = basin(fd_da)
+    np.testing.assert_allclose(old_result.data, new_result.data, equal_nan=True)
 
 
 # ====================================================================
@@ -282,17 +196,6 @@ def test_watershed_dataset_support():
     pp['y'] = np.linspace(1, 0, 3)
     pp['x'] = np.linspace(0, 1.5, 4)
     result = watershed(ds, pp)
-    assert isinstance(result, xr.Dataset)
-
-
-def test_basins_dataset_support():
-    """@supports_dataset works for basins."""
-    flow_dir = np.zeros((3, 4), dtype=np.float64)
-    da1 = xr.DataArray(flow_dir, dims=['y', 'x'], attrs={'res': (0.5, 0.5)})
-    da1['y'] = np.linspace(1, 0, 3)
-    da1['x'] = np.linspace(0, 1.5, 4)
-    ds = xr.Dataset({'fd1': da1, 'fd2': da1.copy()})
-    result = basins(ds)
     assert isinstance(result, xr.Dataset)
 
 
@@ -369,61 +272,6 @@ def test_watershed_dask_two_pour_points():
 
 
 @dask_array_available
-@pytest.mark.parametrize("chunks", [
-    (2, 2), (3, 4), (1, 1), (3, 3),
-])
-def test_basins_numpy_equals_dask(chunks):
-    """Multiple chunk sizes match numpy result for basins."""
-    flow_dir = np.array([
-        [2.0,  4.0,  8.0],
-        [1.0,  0.0, 16.0],
-        [128.0, 64.0, 32.0],
-    ], dtype=np.float64)
-    np_fd = create_test_raster(flow_dir, backend='numpy')
-    dk_fd = create_test_raster(flow_dir, backend='dask', chunks=chunks)
-    np_result = basins(np_fd)
-    dk_result = basins(dk_fd)
-    np.testing.assert_allclose(
-        np_result.data, dk_result.data.compute(), equal_nan=True)
-
-
-@dask_array_available
-def test_basins_dask_edge_exits():
-    """Dask basins with edge-exit cells matches numpy."""
-    flow_dir = np.array([
-        [1.0, 1.0, 1.0],
-        [1.0, 1.0, 1.0],
-    ], dtype=np.float64)
-    np_fd = create_test_raster(flow_dir, backend='numpy')
-    dk_fd = create_test_raster(flow_dir, backend='dask', chunks=(1, 2))
-    np_result = basins(np_fd)
-    dk_result = basins(dk_fd)
-    np.testing.assert_allclose(
-        np_result.data, dk_result.data.compute(), equal_nan=True)
-
-
-@dask_array_available
-def test_basins_dask_random():
-    """Random acyclic flow_dir: dask basins matches numpy."""
-    from xrspatial import flow_direction
-
-    rng = np.random.default_rng(123)
-    elev = rng.random((8, 10)).astype(np.float64)
-    elev_da = create_test_raster(elev, backend='numpy')
-    fd_data = flow_direction(elev_da).data
-
-    np_fd = create_test_raster(fd_data, backend='numpy')
-    np_result = basins(np_fd)
-
-    for chunks in [(3, 3), (4, 5), (2, 2)]:
-        dk_fd = create_test_raster(fd_data, backend='dask', chunks=chunks)
-        dk_result = basins(dk_fd)
-        np.testing.assert_allclose(
-            np_result.data, dk_result.data.compute(), equal_nan=True,
-        ), f"Mismatch with chunks={chunks}"
-
-
-@dask_array_available
 def test_watershed_dask_random():
     """Random acyclic flow_dir: dask watershed matches numpy."""
     from xrspatial import flow_direction, flow_accumulation
@@ -433,7 +281,6 @@ def test_watershed_dask_random():
     elev_da = create_test_raster(elev, backend='numpy')
     fd_data = flow_direction(elev_da).data
 
-    # Use pits as pour points (cells with code 0)
     pp = np.full_like(fd_data, np.nan)
     pit_mask = fd_data == 0
     pp[pit_mask] = np.arange(1, pit_mask.sum() + 1, dtype=np.float64)
@@ -465,22 +312,6 @@ def test_watershed_numpy_equals_cupy():
     cp_pp = create_test_raster(pour_points, backend='cupy')
     np_result = watershed(np_fd, np_pp)
     cp_result = watershed(cp_fd, cp_pp)
-    np.testing.assert_allclose(
-        np_result.data, cp_result.data.get(), equal_nan=True)
-
-
-@cuda_and_cupy_available
-def test_basins_numpy_equals_cupy():
-    """GPU matches CPU for basins."""
-    flow_dir = np.array([
-        [2.0,  4.0,  8.0],
-        [1.0,  0.0, 16.0],
-        [128.0, 64.0, 32.0],
-    ], dtype=np.float64)
-    np_fd = create_test_raster(flow_dir, backend='numpy')
-    cp_fd = create_test_raster(flow_dir, backend='cupy')
-    np_result = basins(np_fd)
-    cp_result = basins(cp_fd)
     np.testing.assert_allclose(
         np_result.data, cp_result.data.get(), equal_nan=True)
 

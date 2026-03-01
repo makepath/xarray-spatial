@@ -1061,6 +1061,9 @@ def _stream_order_dask_strahler(flow_dir_da, accum_da, threshold):
 
     flow_bdry, mask_bdry = _preprocess_stream_tiles(
         flow_dir_da, accum_da, threshold, chunks_y, chunks_x)
+    # Read-only from here; release temp files
+    flow_bdry = flow_bdry.snapshot()
+    mask_bdry = mask_bdry.snapshot()
 
     bdry_max = BoundaryStore(chunks_y, chunks_x, fill_value=0.0)
     bdry_cnt = BoundaryStore(chunks_y, chunks_x, fill_value=0.0)
@@ -1087,9 +1090,9 @@ def _stream_order_dask_strahler(flow_dir_da, accum_da, threshold):
         if max_change == 0.0:
             break
 
-    # Assemble final result
-    _bdry_max = bdry_max
-    _bdry_cnt = bdry_cnt
+    # Snapshot converged boundaries before assembly (releases temp files)
+    _bdry_max = bdry_max.snapshot()
+    _bdry_cnt = bdry_cnt.snapshot()
     _flow_bdry = flow_bdry
     _mask_bdry = mask_bdry
     _threshold = threshold
@@ -1122,6 +1125,9 @@ def _stream_order_dask_shreve(flow_dir_da, accum_da, threshold):
 
     flow_bdry, mask_bdry = _preprocess_stream_tiles(
         flow_dir_da, accum_da, threshold, chunks_y, chunks_x)
+    # Read-only from here; release temp files
+    flow_bdry = flow_bdry.snapshot()
+    mask_bdry = mask_bdry.snapshot()
 
     boundaries = BoundaryStore(chunks_y, chunks_x, fill_value=0.0)
 
@@ -1147,7 +1153,8 @@ def _stream_order_dask_shreve(flow_dir_da, accum_da, threshold):
         if max_change == 0.0:
             break
 
-    _boundaries = boundaries
+    # Snapshot converged boundaries before assembly (releases temp files)
+    _boundaries = boundaries.snapshot()
     _flow_bdry = flow_bdry
     _mask_bdry = mask_bdry
     _threshold = threshold

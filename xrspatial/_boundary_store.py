@@ -97,8 +97,48 @@ class BoundaryStore:
     def __del__(self):
         self.close()
 
+    def snapshot(self):
+        """Return a lightweight in-memory copy and close this store.
+
+        The returned ``BoundarySnapshot`` has the same ``.get()``
+        interface but holds plain numpy arrays instead of memmaps,
+        so no temp files remain referenced.
+        """
+        snap = BoundarySnapshot(self)
+        self.close()
+        return snap
+
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         self.close()
+
+
+class BoundarySnapshot:
+    """Read-only in-memory copy of converged boundary strips.
+
+    Created via ``BoundaryStore.snapshot()``; exposes the same
+    ``.get(side, iy, ix)`` interface so callers need no changes.
+    """
+
+    def __init__(self, store):
+        self._cum_x = store._cum_x
+        self._cum_y = store._cum_y
+        # Copy memmap data to plain numpy arrays
+        for name in ('top', 'bottom', 'left', 'right'):
+            src = getattr(store, f'_{name}')
+            setattr(self, f'_{name}', np.array(src))
+
+    def get(self, side, iy, ix):
+        """Return a numpy view of the boundary strip for tile (iy, ix)."""
+        if side == 'top':
+            return self._top[iy, self._cum_x[ix]:self._cum_x[ix + 1]]
+        elif side == 'bottom':
+            return self._bottom[iy, self._cum_x[ix]:self._cum_x[ix + 1]]
+        elif side == 'left':
+            return self._left[ix, self._cum_y[iy]:self._cum_y[iy + 1]]
+        elif side == 'right':
+            return self._right[ix, self._cum_y[iy]:self._cum_y[iy + 1]]
+        else:
+            raise ValueError(f"Unknown side: {side!r}")
