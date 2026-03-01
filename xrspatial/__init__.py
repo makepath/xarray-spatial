@@ -17,6 +17,7 @@ from xrspatial.emerging_hotspots import emerging_hotspots  # noqa
 from xrspatial.fill import fill  # noqa
 from xrspatial.flow_accumulation import flow_accumulation  # noqa
 from xrspatial.flow_direction import flow_direction  # noqa
+from xrspatial.flow_path import flow_path  # noqa
 from xrspatial.focal import mean  # noqa
 from xrspatial.hillshade import hillshade  # noqa
 from xrspatial.mahalanobis import mahalanobis  # noqa

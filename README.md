@@ -250,6 +250,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Stream Order](xrspatial/stream_order.py) | Assigns Strahler or Shreve stream order to cells in a drainage network | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Stream Link](xrspatial/stream_link.py) | Assigns unique IDs to each stream segment between junctions | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Snap Pour Point](xrspatial/snap_pour_point.py) | Snaps pour points to the highest-accumulation cell within a search radius | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Flow Path](xrspatial/flow_path.py) | Traces downstream flow paths from start points through a D8 direction grid | ✅️ | ✅️ | ✅️ | ✅️ |
 
 -----------
 

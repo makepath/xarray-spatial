@@ -95,6 +95,10 @@ class XrsSpatialDataArrayAccessor:
         from .snap_pour_point import snap_pour_point
         return snap_pour_point(self._obj, pour_points, **kwargs)
 
+    def flow_path(self, start_points, **kwargs):
+        from .flow_path import flow_path
+        return flow_path(self._obj, start_points, **kwargs)
+
     def viewshed(self, x, y, **kwargs):
         from .viewshed import viewshed
         return viewshed(self._obj, x, y, **kwargs)
@@ -332,6 +336,10 @@ class XrsSpatialDatasetAccessor:
     def snap_pour_point(self, pour_points, **kwargs):
         from .snap_pour_point import snap_pour_point
         return snap_pour_point(self._obj, pour_points, **kwargs)
+
+    def flow_path(self, start_points, **kwargs):
+        from .flow_path import flow_path
+        return flow_path(self._obj, start_points, **kwargs)
 
     # ---- Classification ----
 
