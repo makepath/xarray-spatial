@@ -91,6 +91,10 @@ class XrsSpatialDataArrayAccessor:
         from .stream_link import stream_link
         return stream_link(self._obj, flow_accum, **kwargs)
 
+    def snap_pour_point(self, pour_points, **kwargs):
+        from .snap_pour_point import snap_pour_point
+        return snap_pour_point(self._obj, pour_points, **kwargs)
+
     def viewshed(self, x, y, **kwargs):
         from .viewshed import viewshed
         return viewshed(self._obj, x, y, **kwargs)
@@ -324,6 +328,10 @@ class XrsSpatialDatasetAccessor:
     def stream_link(self, flow_accum, **kwargs):
         from .stream_link import stream_link
         return stream_link(self._obj, flow_accum, **kwargs)
+
+    def snap_pour_point(self, pour_points, **kwargs):
+        from .snap_pour_point import snap_pour_point
+        return snap_pour_point(self._obj, pour_points, **kwargs)
 
     # ---- Classification ----
 
