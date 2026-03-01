@@ -322,7 +322,7 @@ def tpi(agg: xr.DataArray,
     References
     ----------
     Weiss, A. (2001). Topographic Position and Landforms Analysis.
-    Poster presentation, ESRI User Conference, San Diego, CA.
+    Poster presentation, International User Conference, San Diego, CA.
     """
     _validate_raster(agg, func_name='tpi', name='agg')
     _validate_boundary(boundary)

@@ -272,8 +272,8 @@ def flow_direction(agg: xr.DataArray,
     """Compute D8 flow direction for each cell.
 
     Determines which of the 8 neighbors has the steepest downhill
-    gradient from the center cell.  Uses the ESRI direction encoding
-    (power-of-2), compatible with GDAL and ArcGIS::
+    gradient from the center cell.  Uses the standard power-of-two D8
+    direction encoding::
 
          32  64  128
          16   0    1
