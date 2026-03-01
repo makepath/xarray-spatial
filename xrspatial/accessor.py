@@ -87,6 +87,10 @@ class XrsSpatialDataArrayAccessor:
         from .stream_order import stream_order
         return stream_order(self._obj, flow_accum, **kwargs)
 
+    def stream_link(self, flow_accum, **kwargs):
+        from .stream_link import stream_link
+        return stream_link(self._obj, flow_accum, **kwargs)
+
     def viewshed(self, x, y, **kwargs):
         from .viewshed import viewshed
         return viewshed(self._obj, x, y, **kwargs)
@@ -316,6 +320,10 @@ class XrsSpatialDatasetAccessor:
     def stream_order(self, flow_accum, **kwargs):
         from .stream_order import stream_order
         return stream_order(self._obj, flow_accum, **kwargs)
+
+    def stream_link(self, flow_accum, **kwargs):
+        from .stream_link import stream_link
+        return stream_link(self._obj, flow_accum, **kwargs)
 
     # ---- Classification ----
 

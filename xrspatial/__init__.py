@@ -35,6 +35,7 @@ from xrspatial.proximity import great_circle_distance  # noqa
 from xrspatial.proximity import manhattan_distance  # noqa
 from xrspatial.proximity import proximity  # noqa
 from xrspatial.sink import sink  # noqa
+from xrspatial.stream_link import stream_link  # noqa
 from xrspatial.stream_order import stream_order  # noqa
 from xrspatial.slope import slope  # noqa
 from xrspatial.surface_distance import surface_allocation  # noqa
