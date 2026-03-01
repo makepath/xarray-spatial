@@ -59,6 +59,10 @@ class XrsSpatialDataArrayAccessor:
         from .flow_direction import flow_direction
         return flow_direction(self._obj, **kwargs)
 
+    def flow_direction_dinf(self, **kwargs):
+        from .flow_direction_dinf import flow_direction_dinf
+        return flow_direction_dinf(self._obj, **kwargs)
+
     def flow_accumulation(self, **kwargs):
         from .flow_accumulation import flow_accumulation
         return flow_accumulation(self._obj, **kwargs)
@@ -300,6 +304,10 @@ class XrsSpatialDatasetAccessor:
     def flow_direction(self, **kwargs):
         from .flow_direction import flow_direction
         return flow_direction(self._obj, **kwargs)
+
+    def flow_direction_dinf(self, **kwargs):
+        from .flow_direction_dinf import flow_direction_dinf
+        return flow_direction_dinf(self._obj, **kwargs)
 
     def flow_accumulation(self, **kwargs):
         from .flow_accumulation import flow_accumulation
