@@ -15,6 +15,13 @@ from xrspatial.classify import reclassify  # noqa
 from xrspatial.curvature import curvature  # noqa
 from xrspatial.emerging_hotspots import emerging_hotspots  # noqa
 from xrspatial.fill import fill  # noqa
+from xrspatial.fire import burn_severity_class  # noqa
+from xrspatial.fire import dnbr  # noqa
+from xrspatial.fire import fireline_intensity  # noqa
+from xrspatial.fire import flame_length  # noqa
+from xrspatial.fire import kbdi  # noqa
+from xrspatial.fire import rate_of_spread  # noqa
+from xrspatial.fire import rdnbr  # noqa
 from xrspatial.flood import curve_number_runoff  # noqa
 from xrspatial.flood import flood_depth  # noqa
 from xrspatial.flood import inundation  # noqa
