@@ -103,6 +103,18 @@ class XrsSpatialDataArrayAccessor:
         from .flow_path import flow_path
         return flow_path(self._obj, start_points, **kwargs)
 
+    def flow_length(self, **kwargs):
+        from .flow_length import flow_length
+        return flow_length(self._obj, **kwargs)
+
+    def twi(self, slope_agg, **kwargs):
+        from .twi import twi
+        return twi(self._obj, slope_agg, **kwargs)
+
+    def hand(self, flow_accum, elevation, **kwargs):
+        from .hand import hand
+        return hand(self._obj, flow_accum, elevation, **kwargs)
+
     def viewshed(self, x, y, **kwargs):
         from .viewshed import viewshed
         return viewshed(self._obj, x, y, **kwargs)
@@ -348,6 +360,18 @@ class XrsSpatialDatasetAccessor:
     def flow_path(self, start_points, **kwargs):
         from .flow_path import flow_path
         return flow_path(self._obj, start_points, **kwargs)
+
+    def flow_length(self, **kwargs):
+        from .flow_length import flow_length
+        return flow_length(self._obj, **kwargs)
+
+    def twi(self, slope_agg, **kwargs):
+        from .twi import twi
+        return twi(self._obj, slope_agg, **kwargs)
+
+    def hand(self, flow_accum, elevation, **kwargs):
+        from .hand import hand
+        return hand(self._obj, flow_accum, elevation, **kwargs)
 
     # ---- Classification ----
 

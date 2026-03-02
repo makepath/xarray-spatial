@@ -18,8 +18,10 @@ from xrspatial.fill import fill  # noqa
 from xrspatial.flow_accumulation import flow_accumulation  # noqa
 from xrspatial.flow_direction import flow_direction  # noqa
 from xrspatial.flow_direction_dinf import flow_direction_dinf  # noqa
+from xrspatial.flow_length import flow_length  # noqa
 from xrspatial.flow_path import flow_path  # noqa
 from xrspatial.focal import mean  # noqa
+from xrspatial.hand import hand  # noqa
 from xrspatial.hillshade import hillshade  # noqa
 from xrspatial.mahalanobis import mahalanobis  # noqa
 from xrspatial.multispectral import arvi  # noqa
@@ -48,6 +50,7 @@ from xrspatial.terrain import generate_terrain  # noqa
 from xrspatial.terrain_metrics import roughness  # noqa
 from xrspatial.terrain_metrics import tpi  # noqa
 from xrspatial.terrain_metrics import tri  # noqa
+from xrspatial.twi import twi  # noqa
 from xrspatial.polygonize import polygonize  # noqa
 from xrspatial.viewshed import viewshed  # noqa
 from xrspatial.basin import basin  # noqa
