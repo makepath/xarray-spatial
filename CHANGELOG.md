@@ -2,6 +2,39 @@
 -----------
 
 
+### Version 0.7.0 - 2026-03-02
+
+Highlights: new hydrology, terrain metrics, and surface distance modules; 3D
+multi-band support for focal functions; GPU-accelerated polygonize with
+connected-component labelling; and broad dask+cupy backend coverage across the
+library.
+
+#### New Features
+- Add 3D multi-band support to focal functions (#924)
+- Add foundational hydrology tools (#921)
+- Add terrain metrics module: TRI, TPI, and Roughness (#920)
+- Add surface_distance module: 3D terrain distance via multi-source Dijkstra (#918)
+- Add CI benchmark workflow with regression detection (#917)
+- Polygonize: GPU CCL, promotion, dispatcher, GeoJSON output, and benchmarks (#916)
+- Add GPU (CuPy) backends for proximity, allocation, direction (#909)
+- Add GPU (CuPy) backend for cost_distance (#910)
+- Add out-of-core dask CPU viewshed (#897)
+- Add dask+cupy backends for focal tools (#896)
+- Add emerging_hotspots() for time-series trend analysis (#890)
+- Replace O(n^4) regions() with scipy union-find, add dask/cupy backends (#898)
+
+#### Bug Fixes & Improvements
+- Make dask backends truly lazy, add agg parameter (#914)
+- Fill remaining dask+cupy gaps (terrain, perlin, crosstab) (#913)
+- Add comprehensive input validation across public API (#912)
+- Fix dask zonal.stats() bug, add dask+cupy backend, edge-case tests (#911)
+- Prevent OOM and unknown chunks in classify.py dask paths (#895)
+- Replace np.unique/np.isfinite with dask-safe helpers in zonal.py (#894)
+- Extend KDTree path to allocation/direction to prevent OOM (#893)
+- Add memory guard and tiled KDTree fallback to proximity (#892)
+- Add memory guard, bounded A*, and HPA* to prevent OOM (#891)
+
+
 ### Version 0.6.0 - 2026-02-24
 
 Highlights: xarray accessor (`.xrs`) is now available, providing a convenient
