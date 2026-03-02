@@ -14,7 +14,14 @@ from xrspatial.classify import quantile  # noqa
 from xrspatial.classify import reclassify  # noqa
 from xrspatial.curvature import curvature  # noqa
 from xrspatial.emerging_hotspots import emerging_hotspots  # noqa
+from xrspatial.fill import fill  # noqa
+from xrspatial.flow_accumulation import flow_accumulation  # noqa
+from xrspatial.flow_direction import flow_direction  # noqa
+from xrspatial.flow_direction_dinf import flow_direction_dinf  # noqa
+from xrspatial.flow_length import flow_length  # noqa
+from xrspatial.flow_path import flow_path  # noqa
 from xrspatial.focal import mean  # noqa
+from xrspatial.hand import hand  # noqa
 from xrspatial.hillshade import hillshade  # noqa
 from xrspatial.mahalanobis import mahalanobis  # noqa
 from xrspatial.multispectral import arvi  # noqa
@@ -31,6 +38,10 @@ from xrspatial.proximity import euclidean_distance  # noqa
 from xrspatial.proximity import great_circle_distance  # noqa
 from xrspatial.proximity import manhattan_distance  # noqa
 from xrspatial.proximity import proximity  # noqa
+from xrspatial.sink import sink  # noqa
+from xrspatial.snap_pour_point import snap_pour_point  # noqa
+from xrspatial.stream_link import stream_link  # noqa
+from xrspatial.stream_order import stream_order  # noqa
 from xrspatial.slope import slope  # noqa
 from xrspatial.surface_distance import surface_allocation  # noqa
 from xrspatial.surface_distance import surface_direction  # noqa
@@ -39,8 +50,12 @@ from xrspatial.terrain import generate_terrain  # noqa
 from xrspatial.terrain_metrics import roughness  # noqa
 from xrspatial.terrain_metrics import tpi  # noqa
 from xrspatial.terrain_metrics import tri  # noqa
+from xrspatial.twi import twi  # noqa
 from xrspatial.polygonize import polygonize  # noqa
 from xrspatial.viewshed import viewshed  # noqa
+from xrspatial.basin import basin  # noqa
+from xrspatial.watershed import basins  # noqa
+from xrspatial.watershed import watershed  # noqa
 from xrspatial.zonal import apply as zonal_apply  # noqa
 from xrspatial.zonal import crop  # noqa
 from xrspatial.zonal import trim  # noqa

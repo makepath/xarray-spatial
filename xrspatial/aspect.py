@@ -374,7 +374,7 @@ def aspect(agg: xr.DataArray,
 
     References
     ----------
-        - arcgis: http://desktop.arcgis.com/en/arcmap/10.3/tools/spatial-analyst-toolbox/how-aspect-works.htm#ESRI_SECTION1_4198691F8852475A9F4BC71246579FAA # noqa
+
 
     Examples
     --------
