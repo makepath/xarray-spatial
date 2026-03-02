@@ -35,6 +35,21 @@ from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_a
                              cuda_args, ngjit, not_implemented_func)
 from xrspatial.dataset_support import supports_dataset
 
+
+def _apply_per_band(band_func, agg, *args, **kwargs):
+    """Apply a 2D focal function independently to each band of a 3D array.
+
+    Slices along the first dimension, calls *band_func* on each 2D slice,
+    and stacks the results back together.
+    """
+    band_dim = agg.dims[0]
+    slices = []
+    for i in range(agg.sizes[band_dim]):
+        band = agg.isel({band_dim: i})
+        slices.append(band_func(band, *args, **kwargs))
+    return xr.concat(slices, dim=band_dim)
+
+
 # TODO: Make convolution more generic with numba first-class functions.
 
 
@@ -281,9 +296,14 @@ def mean(agg, passes=1, excludes=[np.nan], name='mean', boundary='nan'):
         Dimensions without coordinates: dim_0, dim_1
     """
 
-    _validate_raster(agg, func_name='mean', name='agg')
+    _validate_raster(agg, func_name='mean', name='agg', ndim=(2, 3))
     _validate_scalar(passes, func_name='mean', name='passes', dtype=int, min_val=1)
     _validate_boundary(boundary)
+
+    if agg.ndim == 3:
+        return _apply_per_band(mean, agg, passes=passes, excludes=excludes,
+                               name=name, boundary=boundary)
+
     out = agg.data.astype(float)
     for i in range(passes):
         out = _mean(out, tuple(excludes), boundary)
@@ -512,7 +532,11 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply', boundary='nan'):
            [2. , 2. , 2. , 1.5]])
     Dimensions without coordinates: y, x
     """
-    _validate_raster(raster, func_name='apply', name='raster')
+    _validate_raster(raster, func_name='apply', name='raster', ndim=(2, 3))
+
+    if raster.ndim == 3:
+        return _apply_per_band(apply, raster, kernel=kernel, func=func,
+                               name=name, boundary=boundary)
 
     # Validate the kernel
     kernel = custom_kernel(kernel)
@@ -957,7 +981,11 @@ def focal_stats(agg,
           * stats    (stats) object 'min' 'sum'
         Dimensions without coordinates: dim_0, dim_1
     """
-    _validate_raster(agg, func_name='focal_stats', name='agg')
+    _validate_raster(agg, func_name='focal_stats', name='agg', ndim=(2, 3))
+
+    if agg.ndim == 3:
+        return _apply_per_band(focal_stats, agg, kernel=kernel,
+                               stats_funcs=stats_funcs, boundary=boundary)
 
     # Validate the kernel
     kernel = custom_kernel(kernel)
@@ -1237,7 +1265,11 @@ def hotspots(raster, kernel, boundary='nan'):
         Dimensions without coordinates: dim_0, dim_1
     """
 
-    _validate_raster(raster, func_name='hotspots', name='raster')
+    _validate_raster(raster, func_name='hotspots', name='raster', ndim=(2, 3))
+
+    if raster.ndim == 3:
+        return _apply_per_band(hotspots, raster, kernel=kernel,
+                               boundary=boundary)
 
     _validate_boundary(boundary)
 

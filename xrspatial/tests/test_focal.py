@@ -756,3 +756,119 @@ def test_convolution_2d_boundary_no_nan(boundary):
     assert not np.any(np.isnan(da_result.data.compute()))
     np.testing.assert_allclose(
         np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
+
+
+# --- 3D (multi-band) focal tests ---
+
+
+@pytest.fixture
+def rgb_data():
+    rng = np.random.default_rng(123)
+    return rng.random((3, 12, 14)).astype(np.float64)
+
+
+def test_mean_3d_numpy(rgb_data):
+    agg = xr.DataArray(rgb_data, dims=['band', 'y', 'x'])
+    result = mean(agg)
+    assert result.shape == (3, 12, 14)
+    assert result.dims == ('band', 'y', 'x')
+    for i in range(3):
+        band_result = mean(agg.isel(band=i))
+        np.testing.assert_allclose(result.isel(band=i).data, band_result.data)
+
+
+@dask_array_available
+def test_mean_3d_dask(rgb_data):
+    dask_data = da.from_array(rgb_data, chunks=(1, 6, 7))
+    agg = xr.DataArray(dask_data, dims=['band', 'y', 'x'])
+    result = mean(agg)
+    assert result.shape == (3, 12, 14)
+    # compare against numpy per-band
+    numpy_agg = xr.DataArray(rgb_data, dims=['band', 'y', 'x'])
+    numpy_result = mean(numpy_agg)
+    np.testing.assert_allclose(
+        result.data.compute(), numpy_result.data, equal_nan=True, rtol=1e-5)
+
+
+def test_apply_3d_numpy(rgb_data):
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+    agg = xr.DataArray(rgb_data, dims=['band', 'y', 'x'])
+    result = apply(agg, kernel)
+    assert result.shape == (3, 12, 14)
+    assert result.dims == ('band', 'y', 'x')
+    for i in range(3):
+        band_result = apply(agg.isel(band=i), kernel)
+        np.testing.assert_allclose(result.isel(band=i).data, band_result.data)
+
+
+@dask_array_available
+def test_apply_3d_dask(rgb_data):
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+    dask_data = da.from_array(rgb_data, chunks=(1, 6, 7))
+    agg = xr.DataArray(dask_data, dims=['band', 'y', 'x'])
+    result = apply(agg, kernel)
+    assert result.shape == (3, 12, 14)
+    numpy_agg = xr.DataArray(rgb_data, dims=['band', 'y', 'x'])
+    numpy_result = apply(numpy_agg, kernel)
+    np.testing.assert_allclose(
+        result.data.compute(), numpy_result.data, equal_nan=True, rtol=1e-5)
+
+
+def test_focal_stats_3d_numpy(rgb_data):
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+    stats = ['mean', 'max']
+    agg = xr.DataArray(rgb_data, dims=['band', 'y', 'x'])
+    result = focal_stats(agg, kernel, stats_funcs=stats)
+    # 3D input -> 4D output: (band, stats, y, x)
+    assert result.shape == (3, 2, 12, 14)
+    for i in range(3):
+        band_result = focal_stats(agg.isel(band=i), kernel, stats_funcs=stats)
+        np.testing.assert_allclose(
+            result.isel(band=i).data, band_result.data, equal_nan=True)
+
+
+@dask_array_available
+def test_focal_stats_3d_dask(rgb_data):
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+    stats = ['mean', 'max']
+    dask_data = da.from_array(rgb_data, chunks=(1, 6, 7))
+    agg = xr.DataArray(dask_data, dims=['band', 'y', 'x'])
+    result = focal_stats(agg, kernel, stats_funcs=stats)
+    assert result.shape == (3, 2, 12, 14)
+    numpy_agg = xr.DataArray(rgb_data, dims=['band', 'y', 'x'])
+    numpy_result = focal_stats(numpy_agg, kernel, stats_funcs=stats)
+    np.testing.assert_allclose(
+        result.data.compute(), numpy_result.data, equal_nan=True, rtol=1e-5)
+
+
+def test_hotspots_3d_numpy():
+    rng = np.random.default_rng(42)
+    data_2d = rng.standard_normal((10, 12)).astype(np.float64)
+    # stack 3 copies with different scales to avoid zero-std bands
+    data_3d = np.stack([data_2d, data_2d * 2, data_2d * 0.5])
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+    agg = xr.DataArray(data_3d, dims=['band', 'y', 'x'])
+    result = hotspots(agg, kernel)
+    assert result.shape == (3, 10, 12)
+    assert result.dims == ('band', 'y', 'x')
+    for i in range(3):
+        band_result = hotspots(agg.isel(band=i), kernel)
+        np.testing.assert_array_equal(result.isel(band=i).data, band_result.data)
+
+
+@dask_array_available
+def test_hotspots_3d_dask():
+    rng = np.random.default_rng(42)
+    data_2d = rng.standard_normal((10, 12)).astype(np.float64)
+    data_3d = np.stack([data_2d, data_2d * 2, data_2d * 0.5])
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+    # numpy reference
+    numpy_agg = xr.DataArray(data_3d, dims=['band', 'y', 'x'])
+    numpy_result = hotspots(numpy_agg, kernel)
+    # dask
+    dask_data = da.from_array(data_3d, chunks=(1, 5, 6))
+    dask_agg = xr.DataArray(dask_data, dims=['band', 'y', 'x'])
+    dask_result = hotspots(dask_agg, kernel)
+    assert dask_result.shape == (3, 10, 12)
+    np.testing.assert_array_equal(
+        dask_result.data.compute(), numpy_result.data)

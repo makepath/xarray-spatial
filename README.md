@@ -139,13 +139,13 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Box Plot](xrspatial/classify.py) | Classifies values into bins based on box plot quartile boundaries | ✅️ |✅ | ✅ |✅ |
+| [Box Plot](xrspatial/classify.py) | Classifies values into bins based on box plot quartile boundaries | ✅️ |✅ | ✅ | 🔄 |
 | [Equal Interval](xrspatial/classify.py) | Divides the value range into equal-width bins | ✅️ |✅ | ✅ |✅ |
-| [Head/Tail Breaks](xrspatial/classify.py) | Classifies heavy-tailed distributions using recursive mean splitting | ✅️ |✅ | ✅ |✅ |
-| [Maximum Breaks](xrspatial/classify.py) | Finds natural groupings by maximizing differences between sorted values | ✅️ |✅ | ✅ |✅ |
-| [Natural Breaks](xrspatial/classify.py) | Optimizes class boundaries to minimize within-class variance (Jenks) | ✅️ |✅ | ✅ |✅ |
-| [Percentiles](xrspatial/classify.py) | Assigns classes based on user-defined percentile breakpoints | ✅️ |✅ | ✅ |✅ |
-| [Quantile](xrspatial/classify.py) | Distributes values into classes with equal observation counts | ✅️ |✅ | ✅ |✅ |
+| [Head/Tail Breaks](xrspatial/classify.py) | Classifies heavy-tailed distributions using recursive mean splitting | ✅️ |✅ | 🔄 | 🔄 |
+| [Maximum Breaks](xrspatial/classify.py) | Finds natural groupings by maximizing differences between sorted values | ✅️ |✅ | 🔄 | 🔄 |
+| [Natural Breaks](xrspatial/classify.py) | Optimizes class boundaries to minimize within-class variance (Jenks) | ✅️ |✅ | 🔄 | 🔄 |
+| [Percentiles](xrspatial/classify.py) | Assigns classes based on user-defined percentile breakpoints | ✅️ |✅ | ✅ | 🔄 |
+| [Quantile](xrspatial/classify.py) | Distributes values into classes with equal observation counts | ✅️ |✅ | ✅ | 🔄 |
 | [Reclassify](xrspatial/classify.py) | Remaps pixel values to new classes using a user-defined lookup | ✅️ |✅ | ✅ |✅ |
 | [Std Mean](xrspatial/classify.py) | Classifies values by standard deviation intervals from the mean | ✅️ |✅ | ✅ |✅ |
 
@@ -216,7 +216,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:-----|:------------|:------------------:|:-----------------:|:---------------------:|:---------------------:|
-| [Polygonize](xrspatial/polygonize.py) | Converts contiguous regions of equal value into vector polygons | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Polygonize](xrspatial/polygonize.py) | Converts contiguous regions of equal value into vector polygons | ✅️ | ✅️ | ✅️ | 🔄 |
 
 --------
 
@@ -245,13 +245,13 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 |:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Flow Direction (D8)](xrspatial/flow_direction.py) | Computes D8 flow direction from each cell toward the steepest downhill neighbor | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Flow Direction (Dinf)](xrspatial/flow_direction_dinf.py) | Computes D-infinity flow direction as a continuous angle toward the steepest downslope facet | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Flow Accumulation (D8)](xrspatial/flow_accumulation.py) | Counts upstream cells draining through each cell in a D8 flow direction grid | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Watershed](xrspatial/watershed.py) | Labels each cell with the pour point it drains to via D8 flow direction | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Basins](xrspatial/watershed.py) | Delineates drainage basins by labeling each cell with its outlet ID | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Stream Order](xrspatial/stream_order.py) | Assigns Strahler or Shreve stream order to cells in a drainage network | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Stream Link](xrspatial/stream_link.py) | Assigns unique IDs to each stream segment between junctions | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Snap Pour Point](xrspatial/snap_pour_point.py) | Snaps pour points to the highest-accumulation cell within a search radius | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Flow Path](xrspatial/flow_path.py) | Traces downstream flow paths from start points through a D8 direction grid | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Flow Accumulation (D8)](xrspatial/flow_accumulation.py) | Counts upstream cells draining through each cell in a D8 flow direction grid | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Watershed](xrspatial/watershed.py) | Labels each cell with the pour point it drains to via D8 flow direction | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Basins](xrspatial/watershed.py) | Delineates drainage basins by labeling each cell with its outlet ID | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Stream Order](xrspatial/stream_order.py) | Assigns Strahler or Shreve stream order to cells in a drainage network | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Stream Link](xrspatial/stream_link.py) | Assigns unique IDs to each stream segment between junctions | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Snap Pour Point](xrspatial/snap_pour_point.py) | Snaps pour points to the highest-accumulation cell within a search radius | ✅️ | ✅️ | 🔄 | 🔄 |
+| [Flow Path](xrspatial/flow_path.py) | Traces downstream flow paths from start points through a D8 direction grid | ✅️ | ✅️ | 🔄 | 🔄 |
 
 -----------
 
