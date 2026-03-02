@@ -120,6 +120,8 @@ def _perlin_dask_numpy(data: da.Array,
     _func = partial(_perlin, p)
     data = da.map_blocks(_func, x, y, meta=np.array((), dtype=np.float32))
 
+    # persist so min/ptp don't recompute the noise from scratch
+    (data,) = dask.persist(data)
     min_val, ptp_val = dask.compute(da.min(data), da.ptp(data))
     data = (data - min_val) / ptp_val
     return data
@@ -267,6 +269,8 @@ def _perlin_dask_cupy(data: da.Array,
     data = da.map_blocks(_chunk_perlin, data, dtype=cupy.float32,
                          meta=cupy.array((), dtype=cupy.float32))
 
+    # persist so min/max don't recompute the noise from scratch
+    (data,) = dask.persist(data)
     min_val, max_val = dask.compute(da.min(data), da.max(data))
     data = (data - min_val) / (max_val - min_val)
     return data

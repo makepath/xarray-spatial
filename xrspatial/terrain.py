@@ -178,6 +178,9 @@ def _terrain_dask_numpy(data, seed, x_range_scaled, y_range_scaled, zfactor,
         warp_y /= warp_norm
         x = x + warp_x * warp_strength
         y = y + warp_y * warp_strength
+        # persist warped coords so the octave loop doesn't rebuild the
+        # warp subgraph on every iteration
+        (x, y) = dask.persist(x, y)
 
     # --- octave noise loop ---
     norm = sum(persistence ** i for i in range(octaves))
@@ -222,6 +225,8 @@ def _terrain_dask_numpy(data, seed, x_range_scaled, y_range_scaled, zfactor,
         w_noise = da.map_blocks(
             _wfunc, x, y, meta=np.array((), dtype=np.float32)
         )
+        # persist so min/max don't recompute worley (and warped coords)
+        (w_noise,) = dask.persist(w_noise)
         w_min, w_max = dask.compute(da.min(w_noise), da.max(w_noise))
         w_ptp = w_max - w_min
         if w_ptp > 0:
@@ -264,9 +269,15 @@ def _terrain_gpu(height_map, seed, x_range=(0, 1), y_range=(0, 1),
         y_arr, x_arr = cupy.meshgrid(liny, linx, indexing='ij')
 
     # --- domain warping ---
+    # pre-allocate reusable buffers for scaled coordinates (GPU)
+    if use_xy_kernel:
+        scaled_x = cupy.empty_like(x_arr)
+        scaled_y = cupy.empty_like(y_arr)
+
     if warp_strength > 0:
         warp_x = cupy.zeros((h, w), dtype=cupy.float32)
         warp_y = cupy.zeros((h, w), dtype=cupy.float32)
+        tmp = cupy.empty_like(noise)
 
         for wi in range(warp_octaves):
             w_amp = persistence ** wi
@@ -274,14 +285,16 @@ def _terrain_gpu(height_map, seed, x_range=(0, 1), y_range=(0, 1),
             p_wx = cupy.asarray(_make_perm_table(seed + 100 + wi))
             p_wy = cupy.asarray(_make_perm_table(seed + 200 + wi))
 
-            tmp = cupy.empty_like(noise)
+            cupy.multiply(x_arr, w_freq, out=scaled_x)
+            cupy.multiply(y_arr, w_freq, out=scaled_y)
+
             _perlin_gpu_xy[griddim, blockdim](
-                p_wx, x_arr * w_freq, y_arr * w_freq, 1.0, tmp
+                p_wx, scaled_x, scaled_y, 1.0, tmp
             )
             warp_x += tmp * w_amp
 
             _perlin_gpu_xy[griddim, blockdim](
-                p_wy, x_arr * w_freq, y_arr * w_freq, 1.0, tmp
+                p_wy, scaled_x, scaled_y, 1.0, tmp
             )
             warp_y += tmp * w_amp
 
@@ -302,8 +315,10 @@ def _terrain_gpu(height_map, seed, x_range=(0, 1), y_range=(0, 1),
             p = cupy.asarray(_make_perm_table(seed + i))
 
             if use_xy_kernel:
+                cupy.multiply(x_arr, freq, out=scaled_x)
+                cupy.multiply(y_arr, freq, out=scaled_y)
                 _perlin_gpu_xy[griddim, blockdim](
-                    p, x_arr * freq, y_arr * freq, 1.0, noise
+                    p, scaled_x, scaled_y, 1.0, noise
                 )
             else:
                 _perlin_gpu[griddim, blockdim](
@@ -323,8 +338,10 @@ def _terrain_gpu(height_map, seed, x_range=(0, 1), y_range=(0, 1),
             p = cupy.asarray(_make_perm_table(seed + i))
 
             if use_xy_kernel:
+                cupy.multiply(x_arr, freq, out=scaled_x)
+                cupy.multiply(y_arr, freq, out=scaled_y)
                 _perlin_gpu_xy[griddim, blockdim](
-                    p, x_arr * freq, y_arr * freq, amp, noise
+                    p, scaled_x, scaled_y, amp, noise
                 )
             else:
                 _perlin_gpu[griddim, blockdim](
