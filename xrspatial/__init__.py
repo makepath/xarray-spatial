@@ -15,6 +15,10 @@ from xrspatial.classify import reclassify  # noqa
 from xrspatial.curvature import curvature  # noqa
 from xrspatial.emerging_hotspots import emerging_hotspots  # noqa
 from xrspatial.fill import fill  # noqa
+from xrspatial.flood import curve_number_runoff  # noqa
+from xrspatial.flood import flood_depth  # noqa
+from xrspatial.flood import inundation  # noqa
+from xrspatial.flood import travel_time  # noqa
 from xrspatial.flow_accumulation import flow_accumulation  # noqa
 from xrspatial.flow_direction import flow_direction  # noqa
 from xrspatial.flow_direction_dinf import flow_direction_dinf  # noqa
