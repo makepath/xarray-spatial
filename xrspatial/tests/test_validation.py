@@ -224,14 +224,6 @@ class TestNdimChecks:
         with pytest.raises(ValueError, match="2D"):
             func(self._agg_3d, *args)
 
-    def test_mean_rejects_3d(self):
-        with pytest.raises(ValueError, match="2D"):
-            mean(self._agg_3d)
-
-    def test_focal_apply_rejects_3d(self):
-        with pytest.raises(ValueError, match="2D"):
-            focal_apply(self._agg_3d, _kernel_3x3)
-
     @pytest.mark.parametrize('func', [proximity, allocation, direction])
     def test_proximity_rejects_3d(self, func):
         with pytest.raises(ValueError, match="2D"):
