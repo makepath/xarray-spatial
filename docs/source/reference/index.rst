@@ -8,6 +8,7 @@ Reference
    :maxdepth: 2
 
    classification
+   flood
    focal
    multispectral
    pathfinding

@@ -115,6 +115,24 @@ class XrsSpatialDataArrayAccessor:
         from .hand import hand
         return hand(self._obj, flow_accum, elevation, **kwargs)
 
+    # ---- Flood ----
+
+    def flood_depth(self, water_level, **kwargs):
+        from .flood import flood_depth
+        return flood_depth(self._obj, water_level, **kwargs)
+
+    def inundation(self, water_level, **kwargs):
+        from .flood import inundation
+        return inundation(self._obj, water_level, **kwargs)
+
+    def curve_number_runoff(self, curve_number, **kwargs):
+        from .flood import curve_number_runoff
+        return curve_number_runoff(self._obj, curve_number, **kwargs)
+
+    def travel_time(self, slope_agg, mannings_n, **kwargs):
+        from .flood import travel_time
+        return travel_time(self._obj, slope_agg, mannings_n, **kwargs)
+
     def viewshed(self, x, y, **kwargs):
         from .viewshed import viewshed
         return viewshed(self._obj, x, y, **kwargs)
@@ -372,6 +390,24 @@ class XrsSpatialDatasetAccessor:
     def hand(self, flow_accum, elevation, **kwargs):
         from .hand import hand
         return hand(self._obj, flow_accum, elevation, **kwargs)
+
+    # ---- Flood ----
+
+    def flood_depth(self, water_level, **kwargs):
+        from .flood import flood_depth
+        return flood_depth(self._obj, water_level, **kwargs)
+
+    def inundation(self, water_level, **kwargs):
+        from .flood import inundation
+        return inundation(self._obj, water_level, **kwargs)
+
+    def curve_number_runoff(self, curve_number, **kwargs):
+        from .flood import curve_number_runoff
+        return curve_number_runoff(self._obj, curve_number, **kwargs)
+
+    def travel_time(self, slope_agg, mannings_n, **kwargs):
+        from .flood import travel_time
+        return travel_time(self._obj, slope_agg, mannings_n, **kwargs)
 
     # ---- Classification ----
 

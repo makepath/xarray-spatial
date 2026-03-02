@@ -255,6 +255,17 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 -----------
 
+### **Flood**
+
+| Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Flood Depth](xrspatial/flood.py) | Computes water depth above terrain from a HAND raster and water level | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Inundation](xrspatial/flood.py) | Produces a binary flood/no-flood mask from a HAND raster and water level | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Curve Number Runoff](xrspatial/flood.py) | Estimates runoff depth from rainfall using the SCS/NRCS curve number method | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Travel Time](xrspatial/flood.py) | Estimates overland flow travel time via simplified Manning's equation | ✅️ | ✅️ | ✅️ | ✅️ |
+
+-----------
+
 ### **Zonal**
 
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
