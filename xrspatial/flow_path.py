@@ -98,6 +98,72 @@ def _flow_path_cupy(flow_dir_data, start_points_data):
 # Dask backend
 # =====================================================================
 
+def _group_cells_by_chunk(rows, cols, labels, chunks_y, chunks_x):
+    """Group path cells by destination chunk using vectorized operations.
+
+    Parameters
+    ----------
+    rows, cols : np.ndarray[int64]
+        Global row/col coordinates of path cells.
+    labels : np.ndarray[float64]
+        Label for each path cell.
+    chunks_y, chunks_x : tuple[int, ...]
+        Chunk sizes along each axis.
+
+    Returns
+    -------
+    dict[(iy, ix)] -> (local_rows, local_cols, labels)
+        Cells grouped by chunk, with coordinates converted to chunk-local.
+    """
+    if len(rows) == 0:
+        return {}
+
+    # Cumulative offsets for chunk boundary lookup
+    row_offsets = np.cumsum(chunks_y)
+    col_offsets = np.cumsum(chunks_x)
+    n_tile_x = len(chunks_x)
+
+    # Map each cell to its chunk index
+    chunk_iy = np.searchsorted(row_offsets, rows, side='right')
+    chunk_ix = np.searchsorted(col_offsets, cols, side='right')
+
+    # Composite key for grouping; stable sort preserves raster-scan order
+    keys = chunk_iy * n_tile_x + chunk_ix
+    order = np.argsort(keys, kind='stable')
+
+    sorted_keys = keys[order]
+    sorted_rows = rows[order]
+    sorted_cols = cols[order]
+    sorted_labels = labels[order]
+
+    # Find group boundaries
+    breaks = np.nonzero(np.diff(sorted_keys))[0] + 1
+    starts = np.empty(len(breaks) + 1, dtype=np.intp)
+    starts[0] = 0
+    starts[1:] = breaks
+    ends = np.empty(len(breaks) + 1, dtype=np.intp)
+    ends[:-1] = breaks
+    ends[-1] = len(sorted_keys)
+
+    # Row/col offsets with a leading zero for local coord conversion
+    row_off = np.empty(len(chunks_y), dtype=np.int64)
+    row_off[0] = 0
+    row_off[1:] = row_offsets[:-1]
+    col_off = np.empty(len(chunks_x), dtype=np.int64)
+    col_off[0] = 0
+    col_off[1:] = col_offsets[:-1]
+
+    result = {}
+    for g in range(len(starts)):
+        s, e = starts[g], ends[g]
+        iy = int(chunk_iy[order[s]])
+        ix = int(chunk_ix[order[s]])
+        local_r = sorted_rows[s:e] - row_off[iy]
+        local_c = sorted_cols[s:e] - col_off[ix]
+        result[(iy, ix)] = (local_r, local_c, sorted_labels[s:e])
+    return result
+
+
 def _flow_path_dask(flow_dir_data, start_points_data):
     """Dask: extract sparse start points, trace paths, lazy assembly.
 
@@ -159,7 +225,14 @@ def _flow_path_dask(flow_dir_data, start_points_data):
     for i, cx in enumerate(fd_chunks_x):
         fd_col_offsets[i + 1] = fd_col_offsets[i] + cx
 
-    @lru_cache(maxsize=32)
+    # Adaptive LRU: cap cached chunks at ~512 MB total
+    max_chunk_bytes = max(
+        int(cy) * int(cx) * 8
+        for cy in fd_chunks_y for cx in fd_chunks_x
+    )
+    cache_size = max(4, (512 * 1024 * 1024) // max(max_chunk_bytes, 1))
+
+    @lru_cache(maxsize=cache_size)
     def _get_chunk(iy, ix):
         return np.asarray(
             flow_dir_data.blocks[iy, ix].compute(), dtype=np.float64)
@@ -170,11 +243,35 @@ def _flow_path_dask(flow_dir_data, start_points_data):
         ix = int(np.searchsorted(fd_col_offsets[1:], c, side='right'))
         return iy, ix, r - int(fd_row_offsets[iy]), c - int(fd_col_offsets[ix])
 
-    path_cells = []  # list of (r, c, label)
+    # Growable numpy buffers instead of list-of-tuples (~24 bytes/cell
+    # vs ~164 bytes/cell for Python tuples).
+    _init_cap = max(1024, len(points) * 4)
+    _buf_rows = np.empty(_init_cap, dtype=np.int64)
+    _buf_cols = np.empty(_init_cap, dtype=np.int64)
+    _buf_labels = np.empty(_init_cap, dtype=np.float64)
+    _buf_len = 0
+
     for r, c, label in points:
         cr, cc = r, c
         while True:
-            path_cells.append((cr, cc, label))
+            # Grow buffers if needed (doubling strategy)
+            if _buf_len >= len(_buf_rows):
+                new_cap = len(_buf_rows) * 2
+                _new_rows = np.empty(new_cap, dtype=np.int64)
+                _new_rows[:_buf_len] = _buf_rows[:_buf_len]
+                _buf_rows = _new_rows
+                _new_cols = np.empty(new_cap, dtype=np.int64)
+                _new_cols[:_buf_len] = _buf_cols[:_buf_len]
+                _buf_cols = _new_cols
+                _new_labels = np.empty(new_cap, dtype=np.float64)
+                _new_labels[:_buf_len] = _buf_labels[:_buf_len]
+                _buf_labels = _new_labels
+
+            _buf_rows[_buf_len] = cr
+            _buf_cols[_buf_len] = cc
+            _buf_labels[_buf_len] = label
+            _buf_len += 1
+
             iy, ix, lr, lc = _find_chunk(cr, cc)
             chunk = _get_chunk(iy, ix)
             code = chunk[lr, lc]
@@ -189,27 +286,29 @@ def _flow_path_dask(flow_dir_data, start_points_data):
                 break
             cr, cc = nr, nc
 
-    # --- Phase 4: lazy output assembly via map_blocks -----------------
-    path_rows = np.array([p[0] for p in path_cells], dtype=np.int64) if path_cells else np.array([], dtype=np.int64)
-    path_cols = np.array([p[1] for p in path_cells], dtype=np.int64) if path_cells else np.array([], dtype=np.int64)
-    path_labels = np.array([p[2] for p in path_cells], dtype=np.float64) if path_cells else np.array([], dtype=np.float64)
+    # Trim to actual length (slice view, no copy)
+    path_rows = _buf_rows[:_buf_len]
+    path_cols = _buf_cols[:_buf_len]
+    path_labels = _buf_labels[:_buf_len]
 
-    _path_rows = path_rows
-    _path_cols = path_cols
-    _path_labels = path_labels
+    # Release cached flow_dir chunks before assembly
+    _get_chunk.cache_clear()
+
+    # --- Phase 4: chunk-indexed assembly via map_blocks ---------------
+    _grouped = _group_cells_by_chunk(
+        path_rows, path_cols, path_labels,
+        flow_dir_data.chunks[0], flow_dir_data.chunks[1],
+    )
 
     def _assemble_block(block, block_info=None):
         if block_info is None or 0 not in block_info:
             return np.full(block.shape, np.nan, dtype=np.float64)
-        row_start, row_end = block_info[0]['array-location'][0]
-        col_start, col_end = block_info[0]['array-location'][1]
-        h, w = block.shape
-        out = np.full((h, w), np.nan, dtype=np.float64)
-        for k in range(len(_path_rows)):
-            pr = _path_rows[k]
-            pc = _path_cols[k]
-            if row_start <= pr < row_end and col_start <= pc < col_end:
-                out[pr - row_start, pc - col_start] = _path_labels[k]
+        loc = block_info[0]['chunk-location']
+        out = np.full(block.shape, np.nan, dtype=np.float64)
+        group = _grouped.get((loc[0], loc[1]))
+        if group is not None:
+            local_r, local_c, lbls = group
+            out[local_r, local_c] = lbls
         return out
 
     dummy = da.zeros((H, W), chunks=flow_dir_data.chunks, dtype=np.float64)
