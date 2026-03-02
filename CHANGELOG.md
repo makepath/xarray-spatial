@@ -10,6 +10,7 @@ connected-component labelling; and broad dask+cupy backend coverage across the
 library.
 
 #### New Features
+- Add fire module: dNBR, RdNBR, burn severity class, fireline intensity, flame length, rate of spread (Rothermel), and KBDI (#922)
 - Add 3D multi-band support to focal functions (#924)
 - Add foundational hydrology tools (#921)
 - Add terrain metrics module: TRI, TPI, and Roughness (#920)

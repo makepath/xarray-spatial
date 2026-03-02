@@ -8,6 +8,7 @@ Reference
    :maxdepth: 2
 
    classification
+   fire
    flood
    focal
    multispectral

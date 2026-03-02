@@ -257,6 +257,36 @@ class XrsSpatialDataArrayAccessor:
         from .polygonize import polygonize
         return polygonize(self._obj, **kwargs)
 
+    # ---- Fire ----
+
+    def dnbr(self, post_nbr_agg, **kwargs):
+        from .fire import dnbr
+        return dnbr(self._obj, post_nbr_agg, **kwargs)
+
+    def rdnbr(self, pre_nbr_agg, **kwargs):
+        from .fire import rdnbr
+        return rdnbr(self._obj, pre_nbr_agg, **kwargs)
+
+    def burn_severity_class(self, **kwargs):
+        from .fire import burn_severity_class
+        return burn_severity_class(self._obj, **kwargs)
+
+    def fireline_intensity(self, spread_rate_agg, **kwargs):
+        from .fire import fireline_intensity
+        return fireline_intensity(self._obj, spread_rate_agg, **kwargs)
+
+    def flame_length(self, **kwargs):
+        from .fire import flame_length
+        return flame_length(self._obj, **kwargs)
+
+    def rate_of_spread(self, wind_speed_agg, fuel_moisture_agg, **kwargs):
+        from .fire import rate_of_spread
+        return rate_of_spread(self._obj, wind_speed_agg, fuel_moisture_agg, **kwargs)
+
+    def kbdi(self, max_temp_agg, precip_agg, annual_precip, **kwargs):
+        from .fire import kbdi
+        return kbdi(self._obj, max_temp_agg, precip_agg, annual_precip, **kwargs)
+
     # ---- Multispectral (self = NIR band) ----
 
     def ndvi(self, red_agg, **kwargs):
@@ -470,6 +500,16 @@ class XrsSpatialDatasetAccessor:
     def surface_direction(self, elevation, **kwargs):
         from .surface_distance import surface_direction
         return surface_direction(self._obj, elevation, **kwargs)
+
+    # ---- Fire ----
+
+    def burn_severity_class(self, **kwargs):
+        from .fire import burn_severity_class
+        return burn_severity_class(self._obj, **kwargs)
+
+    def flame_length(self, **kwargs):
+        from .fire import flame_length
+        return flame_length(self._obj, **kwargs)
 
     # ---- Multispectral (band mapping via kwargs) ----
 
