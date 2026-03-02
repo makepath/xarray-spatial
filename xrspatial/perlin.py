@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # std lib
+import math
 from functools import partial
 
 # 3rd-party
@@ -61,17 +62,19 @@ def _gradient(h, x, y):
 
 
 def _perlin(p, x, y):
-    # coordinates of the top-left
-    xi = x.astype(int)
-    yi = y.astype(int)
+    # coordinates of the top-left (floor, not truncate, so negatives work)
+    x_floor = np.floor(x)
+    y_floor = np.floor(y)
+    xi = x_floor.astype(int)
+    yi = y_floor.astype(int)
 
     # mask to 0-255 range for 512-element table
     xi = xi & 255
     yi = yi & 255
 
     # internal coordinates
-    xf = x - x.astype(int)
-    yf = y - y.astype(int)
+    xf = x - x_floor
+    yf = y - y_floor
 
     # fade factors
     u = _fade(xf)
@@ -166,12 +169,13 @@ def _perlin_gpu(p, x0, x1, y0, y1, m, out):
         x = x0 + j * (x1 - x0) / out.shape[1]
 
         # integer coordinates masked to table range
-        x_int = int(x) & 255
-        y_int = int(y) & 255
+        # floor, not truncate, so negative coords work correctly
+        x_int = int(math.floor(x)) & 255
+        y_int = int(math.floor(y)) & 255
 
         # internal coordinates
-        xf = x - int(x)
-        yf = y - int(y)
+        xf = x - math.floor(x)
+        yf = y - math.floor(y)
 
         # fade factors
         u = _fade_gpu(xf)
@@ -211,11 +215,11 @@ def _perlin_gpu_xy(p, x_arr, y_arr, m, out):
         x = x_arr[i, j]
         y = y_arr[i, j]
 
-        x_int = int(x) & 255
-        y_int = int(y) & 255
+        x_int = int(math.floor(x)) & 255
+        y_int = int(math.floor(y)) & 255
 
-        xf = x - int(x)
-        yf = y - int(y)
+        xf = x - math.floor(x)
+        yf = y - math.floor(y)
 
         u = _fade_gpu(xf)
         v = _fade_gpu(yf)

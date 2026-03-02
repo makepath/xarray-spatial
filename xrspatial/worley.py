@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import math
 from functools import partial
-from math import sqrt
 
 import numpy as np
 import xarray as xr
@@ -51,8 +51,8 @@ def _worley_cpu(p, x, y, out):
         for j in range(width):
             px = x[i, j]
             py = y[i, j]
-            cell_x = int(px)
-            cell_y = int(py)
+            cell_x = int(math.floor(px))
+            cell_y = int(math.floor(py))
             min_dist = 1e10
 
             for dy in range(-1, 2):
@@ -113,8 +113,8 @@ def _worley_gpu(p, x0, x1, y0, y1, out):
     if i < out.shape[0] and j < out.shape[1]:
         px = x0 + j * (x1 - x0) / out.shape[1]
         py = y0 + i * (y1 - y0) / out.shape[0]
-        cell_x = int(px)
-        cell_y = int(py)
+        cell_x = int(math.floor(px))
+        cell_y = int(math.floor(py))
         min_dist = 1e10
 
         for dy in range(-1, 2):
@@ -129,7 +129,7 @@ def _worley_gpu(p, x0, x1, y0, y1, out):
                 if dist < min_dist:
                     min_dist = dist
 
-        out[i, j] = dist ** 0.5
+        out[i, j] = min_dist ** 0.5
 
 
 @cuda.jit(fastmath=True, opt=True)
@@ -150,8 +150,8 @@ def _worley_gpu_xy(p, x_arr, y_arr, out):
     if i < out.shape[0] and j < out.shape[1]:
         px = x_arr[i, j]
         py = y_arr[i, j]
-        cell_x = int(px)
-        cell_y = int(py)
+        cell_x = int(math.floor(px))
+        cell_y = int(math.floor(py))
         min_dist = 1e10
 
         for dy in range(-1, 2):

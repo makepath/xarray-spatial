@@ -65,3 +65,29 @@ def test_perlin_gpu():
         perlin_numpy.data, perlin_cupy.data.get(),
         rtol=1e-05, atol=1e-07, equal_nan=True
     )
+
+
+@cuda_and_cupy_available
+@dask_array_available
+def test_perlin_dask_gpu():
+    # numpy baseline
+    data_numpy = create_test_arr()
+    perlin_numpy = perlin(data_numpy)
+
+    # cupy baseline
+    data_cupy = create_test_arr(backend='cupy')
+    perlin_cupy = perlin(data_cupy)
+
+    # dask + cupy
+    data_dask_cupy = create_test_arr(backend='dask+cupy')
+    perlin_dask_cupy = perlin(data_dask_cupy)
+    general_output_checks(data_dask_cupy, perlin_dask_cupy)
+
+    np.testing.assert_allclose(
+        perlin_numpy.data, perlin_dask_cupy.data.compute().get(),
+        rtol=1e-4, atol=1e-4, equal_nan=True
+    )
+    np.testing.assert_allclose(
+        perlin_cupy.data.get(), perlin_dask_cupy.data.compute().get(),
+        rtol=1e-4, atol=1e-4, equal_nan=True
+    )

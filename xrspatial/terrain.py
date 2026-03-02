@@ -250,7 +250,8 @@ def _terrain_dask_numpy(data, seed, x_range_scaled, y_range_scaled, zfactor,
 def _terrain_gpu(height_map, seed, x_range=(0, 1), y_range=(0, 1),
                  octaves=16, lacunarity=2.0, persistence=0.5,
                  noise_mode='fbm', warp_strength=0.0, warp_octaves=4,
-                 worley_blend=0.0, worley_seed=None):
+                 worley_blend=0.0, worley_seed=None,
+                 worley_norm_range=None):
 
     h, w = height_map.shape
     griddim, blockdim = cuda_args(height_map.shape)
@@ -367,8 +368,12 @@ def _terrain_gpu(height_map, seed, x_range=(0, 1), y_range=(0, 1),
                 w_p, x_range[0], x_range[1], y_range[0], y_range[1], w_noise
             )
 
-        w_min = cupy.amin(w_noise)
-        w_ptp = cupy.amax(w_noise) - w_min
+        if worley_norm_range is not None:
+            w_min, w_max = worley_norm_range
+            w_ptp = w_max - w_min
+        else:
+            w_min = cupy.amin(w_noise)
+            w_ptp = cupy.amax(w_noise) - w_min
         if float(w_ptp) > 0:
             w_noise = (w_noise - w_min) / w_ptp
         height_map = height_map * (1 - worley_blend) + w_noise * worley_blend
@@ -407,10 +412,74 @@ def _terrain_dask_cupy(data, seed, x_range_scaled, y_range_scaled, zfactor,
     """Inline the entire terrain computation into a single map_blocks call.
 
     Each chunk computes its own warp + octave + worley pipeline independently
-    using the GPU kernels.
+    using the GPU kernels.  When worley blending is enabled, a pre-pass
+    computes global worley noise range so normalization is consistent across
+    chunk boundaries.
     """
     data = data * 0
     height, width = data.shape
+
+    # --- worley pre-pass: get global min/max to avoid per-chunk seams ---
+    w_norm_range = None
+    if worley_blend > 0:
+        _w_seed = worley_seed if worley_seed is not None else seed + 1000
+
+        def _chunk_worley_raw(block, block_info=None):
+            """Compute raw worley noise for this chunk (with warp)."""
+            info = block_info[0]
+            y_start, y_end = info['array-location'][0]
+            x_start, x_end = info['array-location'][1]
+            x0 = x_range_scaled[0] + (x_range_scaled[1] - x_range_scaled[0]) * x_start / width
+            x1 = x_range_scaled[0] + (x_range_scaled[1] - x_range_scaled[0]) * x_end / width
+            y0 = y_range_scaled[0] + (y_range_scaled[1] - y_range_scaled[0]) * y_start / height
+            y1 = y_range_scaled[0] + (y_range_scaled[1] - y_range_scaled[0]) * y_end / height
+
+            h, w = block.shape
+            griddim, blockdim = cuda_args(block.shape)
+
+            linx = cupy.linspace(x0, x1, w, endpoint=False, dtype=cupy.float32)
+            liny = cupy.linspace(y0, y1, h, endpoint=False, dtype=cupy.float32)
+            y_arr, x_arr = cupy.meshgrid(liny, linx, indexing='ij')
+
+            # apply the same warp as _terrain_gpu
+            if warp_strength > 0:
+                warp_x = cupy.zeros((h, w), dtype=cupy.float32)
+                warp_y = cupy.zeros((h, w), dtype=cupy.float32)
+                tmp = cupy.empty((h, w), dtype=cupy.float32)
+                scaled_x = cupy.empty_like(x_arr)
+                scaled_y = cupy.empty_like(y_arr)
+
+                for wi in range(warp_octaves):
+                    w_amp = persistence ** wi
+                    w_freq = lacunarity ** wi
+                    p_wx = cupy.asarray(_make_perm_table(seed + 100 + wi))
+                    p_wy = cupy.asarray(_make_perm_table(seed + 200 + wi))
+                    cupy.multiply(x_arr, w_freq, out=scaled_x)
+                    cupy.multiply(y_arr, w_freq, out=scaled_y)
+                    _perlin_gpu_xy[griddim, blockdim](p_wx, scaled_x, scaled_y, 1.0, tmp)
+                    warp_x += tmp * w_amp
+                    _perlin_gpu_xy[griddim, blockdim](p_wy, scaled_x, scaled_y, 1.0, tmp)
+                    warp_y += tmp * w_amp
+
+                warp_norm = sum(persistence ** i for i in range(warp_octaves))
+                warp_x /= warp_norm
+                warp_y /= warp_norm
+                x_arr = x_arr + warp_x * warp_strength
+                y_arr = y_arr + warp_y * warp_strength
+
+            w_p = cupy.asarray(_make_perm_table(_w_seed))
+            w_noise = cupy.empty((h, w), dtype=cupy.float32)
+            _worley_gpu_xy[griddim, blockdim](w_p, x_arr, y_arr, w_noise)
+            return w_noise
+
+        raw_worley = da.map_blocks(
+            _chunk_worley_raw, data, dtype=cupy.float32,
+            meta=cupy.array((), dtype=cupy.float32),
+        )
+        (raw_worley,) = dask.persist(raw_worley)
+        w_min, w_max = dask.compute(da.min(raw_worley), da.max(raw_worley))
+        w_norm_range = (float(w_min), float(w_max))
+        del raw_worley
 
     def _chunk_terrain(block, block_info=None):
         info = block_info[0]
@@ -428,6 +497,7 @@ def _terrain_dask_cupy(data, seed, x_range_scaled, y_range_scaled, zfactor,
             persistence=persistence, noise_mode=noise_mode,
             warp_strength=warp_strength, warp_octaves=warp_octaves,
             worley_blend=worley_blend, worley_seed=worley_seed,
+            worley_norm_range=w_norm_range,
         )
         return out
 

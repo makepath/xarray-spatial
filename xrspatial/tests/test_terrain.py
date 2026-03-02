@@ -261,6 +261,50 @@ def test_all_features_dask():
 
 
 # ---------------------------------------------------------------------------
+# Chunk-boundary continuity (edge effects)
+# ---------------------------------------------------------------------------
+
+@dask_array_available
+def test_warp_dask_different_chunks_match():
+    """Warped terrain with different chunk sizes should produce the same result."""
+    data_np = create_test_arr()
+    t_np = generate_terrain(data_np, warp_strength=0.5)
+
+    # use a chunk size that doesn't evenly divide 50
+    data_dask = create_test_arr()
+    data_dask.data = da.from_array(data_dask.data, chunks=(13, 17))
+    t_dask = generate_terrain(data_dask, warp_strength=0.5)
+    np.testing.assert_allclose(t_np.data, t_dask.compute().data, rtol=1e-5, atol=1e-7)
+
+
+@dask_array_available
+def test_worley_dask_different_chunks_match():
+    """Worley blended terrain should match across chunk boundaries."""
+    data_np = create_test_arr()
+    t_np = generate_terrain(data_np, worley_blend=0.2)
+
+    data_dask = create_test_arr()
+    data_dask.data = da.from_array(data_dask.data, chunks=(13, 17))
+    t_dask = generate_terrain(data_dask, worley_blend=0.2)
+    np.testing.assert_allclose(t_np.data, t_dask.compute().data, rtol=1e-5, atol=1e-7)
+
+
+@dask_array_available
+def test_ridged_warp_worley_dask_matches_numpy():
+    """All features combined should match numpy vs dask with odd chunk sizes."""
+    data_np = create_test_arr()
+    t_np = generate_terrain(
+        data_np, noise_mode='ridged', warp_strength=0.4, worley_blend=0.1,
+    )
+    data_dask = create_test_arr()
+    data_dask.data = da.from_array(data_dask.data, chunks=(13, 17))
+    t_dask = generate_terrain(
+        data_dask, noise_mode='ridged', warp_strength=0.4, worley_blend=0.1,
+    )
+    np.testing.assert_allclose(t_np.data, t_dask.compute().data, rtol=1e-5, atol=1e-7)
+
+
+# ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
 
