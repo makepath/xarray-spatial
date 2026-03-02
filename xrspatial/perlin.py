@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # std lib
+import math
 from functools import partial
 
 # 3rd-party
@@ -28,6 +29,16 @@ from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, cuda_ar
                              not_implemented_func)
 
 
+def _make_perm_table(seed):
+    """Build a 512-element permutation table (256 unique values, doubled for wrap-around).
+
+    Uses RandomState to avoid mutating the global numpy RNG.
+    """
+    rs = np.random.RandomState(seed)
+    p = rs.permutation(256).astype(np.int32)
+    return np.append(p, p)
+
+
 @jit(nopython=True, nogil=True)
 def _lerp(a, b, x):
     return a + x * (b - a)
@@ -40,25 +51,30 @@ def _fade(t):
 
 @jit(nopython=True, nogil=True)
 def _gradient(h, x, y):
-    # assert(len(h.shape) == 2)
-    vectors = np.array([[0, 1], [0, -1], [1, 0], [-1, 0]])
     out = np.zeros(h.shape)
     for j in nb.prange(h.shape[1]):
         for i in nb.prange(h.shape[0]):
-            f = np.mod(h[i, j], 4)
-            g = vectors[f]
-            out[i, j] = g[0] * x[i, j] + g[1] * y[i, j]
+            hv = h[i, j] & 3
+            sel = (hv >> 1) & 1  # 0 -> y axis, 1 -> x axis
+            u = x[i, j] * sel + y[i, j] * (1 - sel)
+            out[i, j] = u * (1 - 2 * (hv & 1))
     return out
 
 
 def _perlin(p, x, y):
-    # coordinates of the top-left
-    xi = x.astype(int)
-    yi = y.astype(int)
+    # coordinates of the top-left (floor, not truncate, so negatives work)
+    x_floor = np.floor(x)
+    y_floor = np.floor(y)
+    xi = x_floor.astype(int)
+    yi = y_floor.astype(int)
+
+    # mask to 0-255 range for 512-element table
+    xi = xi & 255
+    yi = yi & 255
 
     # internal coordinates
-    xf = x - xi
-    yf = y - yi
+    xf = x - x_floor
+    yf = y - y_floor
 
     # fade factors
     u = _fade(xf)
@@ -80,9 +96,7 @@ def _perlin(p, x, y):
 def _perlin_numpy(data: np.ndarray,
                   freq: tuple,
                   seed: int) -> np.ndarray:
-    np.random.seed(seed)
-    p = np.random.permutation(2**20)
-    p = np.append(p, p)
+    p = _make_perm_table(seed)
 
     height, width = data.shape
     linx = np.linspace(0, freq[0], width, endpoint=False, dtype=np.float32)
@@ -97,9 +111,7 @@ def _perlin_numpy(data: np.ndarray,
 def _perlin_dask_numpy(data: da.Array,
                        freq: tuple,
                        seed: int) -> da.Array:
-    np.random.seed(seed)
-    p = np.random.permutation(2**20)
-    p = np.append(p, p)
+    p = _make_perm_table(seed)
 
     height, width = data.shape
     linx = da.linspace(0, freq[0], width, endpoint=False, dtype=np.float32,
@@ -111,6 +123,8 @@ def _perlin_dask_numpy(data: da.Array,
     _func = partial(_perlin, p)
     data = da.map_blocks(_func, x, y, meta=np.array((), dtype=np.float32))
 
+    # persist so min/ptp don't recompute the noise from scratch
+    (data,) = dask.persist(data)
     min_val, ptp_val = dask.compute(da.min(data), da.ptp(data))
     data = (data - min_val) / ptp_val
     return data
@@ -127,18 +141,26 @@ def _fade_gpu(t):
 
 
 @cuda.jit(device=True)
-def _gradient_gpu(vec, h, x, y):
-    f = h % 4
-    return vec[f][0] * x + vec[f][1] * y
+def _gradient_gpu(h, x, y):
+    hv = h & 3
+    sel = (hv >> 1) & 1
+    u = x * sel + y * (1 - sel)
+    return u * (1 - 2 * (hv & 1))
 
 
 @cuda.jit(fastmath=True, opt=True)
 def _perlin_gpu(p, x0, x1, y0, y1, m, out):
-    # alloc and initialize array to be used in the gradient routine
-    vec = cuda.local.array((4, 2), nb.int32)
-    vec[0][0] = vec[1][0] = vec[2][1] = vec[3][1] = 0
-    vec[0][1] = vec[2][0] = 1
-    vec[1][1] = vec[3][0] = -1
+    # cooperative load of permutation table into shared memory
+    sp = cuda.shared.array(512, nb.int32)
+    tx = cuda.threadIdx.x
+    ty = cuda.threadIdx.y
+    bw = cuda.blockDim.x
+    bh = cuda.blockDim.y
+    tid = ty * bw + tx
+    block_size = bw * bh
+    for k in range(tid, 512, block_size):
+        sp[k] = p[k]
+    cuda.syncthreads()
 
     i, j = nb.cuda.grid(2)
     if i < out.shape[0] and j < out.shape[1]:
@@ -146,25 +168,67 @@ def _perlin_gpu(p, x0, x1, y0, y1, m, out):
         y = y0 + i * (y1 - y0) / out.shape[0]
         x = x0 + j * (x1 - x0) / out.shape[1]
 
-        # coordinates of the top-left
-        x_int = int(x)
-        y_int = int(y)
+        # integer coordinates masked to table range
+        # floor, not truncate, so negative coords work correctly
+        x_int = int(math.floor(x)) & 255
+        y_int = int(math.floor(y)) & 255
 
         # internal coordinates
-        xf = x - x_int
-        yf = y - y_int
+        xf = x - math.floor(x)
+        yf = y - math.floor(y)
 
         # fade factors
         u = _fade_gpu(xf)
         v = _fade_gpu(yf)
 
-        # noise components
-        n00 = _gradient_gpu(vec, p[p[x_int] + y_int], xf, yf)
-        n01 = _gradient_gpu(vec, p[p[x_int] + y_int + 1], xf, yf - 1)
-        n11 = _gradient_gpu(vec, p[p[x_int + 1] + y_int + 1], xf - 1, yf - 1)
-        n10 = _gradient_gpu(vec, p[p[x_int + 1] + y_int], xf - 1, yf)
+        # noise components (all reads from shared memory)
+        n00 = _gradient_gpu(sp[sp[x_int] + y_int], xf, yf)
+        n01 = _gradient_gpu(sp[sp[x_int] + y_int + 1], xf, yf - 1)
+        n11 = _gradient_gpu(sp[sp[x_int + 1] + y_int + 1], xf - 1, yf - 1)
+        n10 = _gradient_gpu(sp[sp[x_int + 1] + y_int], xf - 1, yf)
 
         # combine noises
+        x1 = _lerp_gpu(n00, n10, u)
+        x2 = _lerp_gpu(n01, n11, u)
+        out[i, j] = m * _lerp_gpu(x1, x2, v)
+
+
+@cuda.jit(fastmath=True, opt=True)
+def _perlin_gpu_xy(p, x_arr, y_arr, m, out):
+    """Like _perlin_gpu but takes 2D coordinate arrays instead of linear ranges.
+
+    Needed for domain warping where per-pixel coordinates are non-linear.
+    """
+    sp = cuda.shared.array(512, nb.int32)
+    tx = cuda.threadIdx.x
+    ty = cuda.threadIdx.y
+    bw = cuda.blockDim.x
+    bh = cuda.blockDim.y
+    tid = ty * bw + tx
+    block_size = bw * bh
+    for k in range(tid, 512, block_size):
+        sp[k] = p[k]
+    cuda.syncthreads()
+
+    i, j = nb.cuda.grid(2)
+    if i < out.shape[0] and j < out.shape[1]:
+        x = x_arr[i, j]
+        y = y_arr[i, j]
+
+        x_int = int(math.floor(x)) & 255
+        y_int = int(math.floor(y)) & 255
+
+        xf = x - math.floor(x)
+        yf = y - math.floor(y)
+
+        u = _fade_gpu(xf)
+        v = _fade_gpu(yf)
+
+        n00 = _gradient_gpu(sp[sp[x_int] + y_int], xf, yf)
+        n01 = _gradient_gpu(sp[sp[x_int] + y_int + 1], xf, yf - 1)
+        n11 = _gradient_gpu(sp[sp[x_int + 1] + y_int + 1], xf - 1, yf - 1)
+        n10 = _gradient_gpu(sp[sp[x_int + 1] + y_int], xf - 1, yf)
+
         x1 = _lerp_gpu(n00, n10, u)
         x2 = _lerp_gpu(n01, n11, u)
         out[i, j] = m * _lerp_gpu(x1, x2, v)
@@ -174,14 +238,7 @@ def _perlin_cupy(data: cupy.ndarray,
                  freq: tuple,
                  seed: int) -> cupy.ndarray:
 
-    # cupy.random.seed(seed)
-    # p = cupy.random.permutation(2**20)
-
-    # use numpy.random then transfer data to GPU to ensure the same result
-    # when running numpy backed and cupy backed data array.
-    np.random.seed(seed)
-    p = cupy.asarray(np.random.permutation(2**20))
-    p = cupy.append(p, p)
+    p = cupy.asarray(_make_perm_table(seed))
 
     griddim, blockdim = cuda_args(data.shape)
     _perlin_gpu[griddim, blockdim](p, 0, freq[0], 0, freq[1], 1, data)
@@ -195,9 +252,7 @@ def _perlin_cupy(data: cupy.ndarray,
 def _perlin_dask_cupy(data: da.Array,
                       freq: tuple,
                       seed: int) -> da.Array:
-    np.random.seed(seed)
-    p = cupy.asarray(np.random.permutation(2**20))
-    p = cupy.append(p, p)
+    p = cupy.asarray(_make_perm_table(seed))
 
     height, width = data.shape
 
@@ -218,6 +273,8 @@ def _perlin_dask_cupy(data: da.Array,
     data = da.map_blocks(_chunk_perlin, data, dtype=cupy.float32,
                          meta=cupy.array((), dtype=cupy.float32))
 
+    # persist so min/max don't recompute the noise from scratch
+    (data,) = dask.persist(data)
     min_val, max_val = dask.compute(da.min(data), da.max(data))
     data = (data - min_val) / (max_val - min_val)
     return data
@@ -266,9 +323,9 @@ def perlin(agg: xr.DataArray,
         >>> perlin_noise = perlin(raster)
         >>> print(perlin_noise)
         <xarray.DataArray 'perlin' (y: 3, x: 4)>
-        array([[0.39268944, 0.27577767, 0.01621884, 0.05518942],
-               [1.        , 0.8229485 , 0.2935367 , 0.        ],
-               [1.        , 0.8715414 , 0.41902685, 0.02916668]], dtype=float32)  # noqa
+        array([[0.        , 0.58311844, 0.96620274, 0.58311844],
+               [0.        , 0.5796199 , 1.        , 0.7346118 ],
+               [0.        , 0.5172636 , 0.83896613, 0.697184  ]], dtype=float32)
         Dimensions without coordinates: y, x
     """
     _validate_raster(agg, func_name='perlin', name='agg')
