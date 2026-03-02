@@ -163,6 +163,20 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 -------
 
+### **Fire**
+
+| Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [dNBR](xrspatial/fire.py) | Differenced Normalized Burn Ratio (pre minus post NBR) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [RdNBR](xrspatial/fire.py) | Relative dNBR normalized by pre-fire vegetation density | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Burn Severity Class](xrspatial/fire.py) | USGS 7-class burn severity from dNBR thresholds | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Fireline Intensity](xrspatial/fire.py) | Byram's fireline intensity from fuel load and spread rate (kW/m) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Flame Length](xrspatial/fire.py) | Flame length derived from fireline intensity (m) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Rate of Spread](xrspatial/fire.py) | Simplified Rothermel spread rate with Anderson 13 fuel models (m/min) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [KBDI](xrspatial/fire.py) | Keetch-Byram Drought Index single time-step update (0-800 mm) | ✅️ | ✅️ | ✅️ | ✅️ |
+
+-------
+
 ### **Multispectral**
 
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
