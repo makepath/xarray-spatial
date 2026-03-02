@@ -9,6 +9,7 @@ User Guide
 
    data_types
    classification
+   fire
    focal
    multispectral
    pathfinding
