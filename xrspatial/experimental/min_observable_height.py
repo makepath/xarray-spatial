@@ -128,7 +128,7 @@ def min_observable_height(
                        target_elev=target_elev)
         # viewshed returns INVISIBLE (-1) for invisible, positive angle
         # for visible.  The observer cell itself gets 180.
-        vs_data = vs.values if isinstance(vs.data, np.ndarray) else vs.data.get()
+        vs_data = vs.data if isinstance(vs.data, np.ndarray) else vs.data.get()
         visibility_stack[k] = vs_data != INVISIBLE
 
     # ---- per-cell binary search on the precomputed stack -----------------

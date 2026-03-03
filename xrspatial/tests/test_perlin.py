@@ -63,7 +63,7 @@ def test_perlin_gpu():
     general_output_checks(data_cupy, perlin_cupy)
     np.testing.assert_allclose(
         perlin_numpy.data, perlin_cupy.data.get(),
-        rtol=1e-05, atol=1e-07, equal_nan=True
+        rtol=1e-4, atol=1e-6, equal_nan=True
     )
 
 

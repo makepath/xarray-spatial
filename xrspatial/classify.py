@@ -37,7 +37,7 @@ from xrspatial.dataset_support import supports_dataset
 
 @ngjit
 def _cpu_binary(data, values):
-    out = np.zeros_like(data)
+    out = np.empty(data.shape, dtype=data.dtype)
     out[:] = np.nan
     rows, cols = data.shape
     for y in range(0, rows):

@@ -931,7 +931,7 @@ def a_star_search(surface: xr.DataArray,
     if not _is_inside(goal_py, goal_px, h, w):
         raise ValueError("goal location outside the surface graph.")
 
-    barriers = np.array(barriers)
+    barriers = np.asarray(barriers)
 
     # --- Snap / crossability checks ---
     if _is_dask:

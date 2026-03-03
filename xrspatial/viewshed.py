@@ -1538,7 +1538,7 @@ def _viewshed_cpu(
     # viewpoint properties
     viewpoint_row = y_view
     viewpoint_col = x_view
-    viewpoint_elev = raster.values[y_view, x_view] + observer_elev
+    viewpoint_elev = raster.data[y_view, x_view] + observer_elev
     viewpoint_target = 0.0
     if abs(target_elev) > 0:
         viewpoint_target = target_elev
@@ -1560,9 +1560,9 @@ def _viewshed_cpu(
     num_events = 3 * (n_rows * n_cols - 1)
     event_list = np.zeros((num_events, 7), dtype=np.float64)
 
-    raster.values = raster.values.astype(np.float64)
+    raster.data = raster.data.astype(np.float64)
 
-    _init_event_list(event_list=event_list, raster=raster.values,
+    _init_event_list(event_list=event_list, raster=raster.data,
                      vp_row=viewpoint_row, vp_col=viewpoint_col,
                      data=data, visibility_grid=visibility_grid)
 
@@ -1574,10 +1574,10 @@ def _viewshed_cpu(
     # split event into 2 arrays: one of 3 integer elements: row, col, type;
     #                          and one of 4 float elements: angle, elevations.
     event_rcts = np.array(event_list[:, :3], dtype=np.int64)
-    event_aes = np.array(event_list[:, 3:], dtype=np.float64)
+    event_aes = event_list[:, 3:].copy()
 
     viewshed_img = _viewshed_cpu_sweep(
-        raster.values, viewpoint_row, viewpoint_col, viewpoint_elev,
+        raster.data, viewpoint_row, viewpoint_col, viewpoint_elev,
         viewpoint_target, ew_res, ns_res, event_rcts, event_aes, data,
         visibility_grid)
 
@@ -2177,7 +2177,7 @@ def _viewshed_dask(raster, x, y, observer_elev, target_elev):
                 raster_mem.data = cp.asnumpy(raster_mem.data)
             result = _viewshed_cpu(raster_mem, x, y,
                                    observer_elev, target_elev)
-        result_np = result.values if isinstance(result.data, np.ndarray) \
+        result_np = result.data if isinstance(result.data, np.ndarray) \
             else result.data.get()
         vis_da = da.from_array(result_np, chunks=raster.data.chunks)
         return xarray.DataArray(vis_da, coords=raster.coords,

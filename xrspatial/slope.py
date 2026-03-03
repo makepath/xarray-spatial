@@ -61,7 +61,7 @@ from xrspatial.geodesic import (
 @ngjit
 def _cpu(data, cellsize_x, cellsize_y):
     data = data.astype(np.float32)
-    out = np.zeros_like(data, dtype=np.float32)
+    out = np.empty(data.shape, dtype=np.float32)
     out[:] = np.nan
     rows, cols = data.shape
     for y in range(1, rows - 1):
