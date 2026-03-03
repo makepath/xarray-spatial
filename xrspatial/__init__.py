@@ -16,6 +16,9 @@ from xrspatial.curvature import curvature  # noqa
 from xrspatial.emerging_hotspots import emerging_hotspots  # noqa
 from xrspatial.erosion import erode  # noqa
 from xrspatial.fill import fill  # noqa
+from xrspatial.interpolate import idw  # noqa
+from xrspatial.interpolate import kriging  # noqa
+from xrspatial.interpolate import spline  # noqa
 from xrspatial.fire import burn_severity_class  # noqa
 from xrspatial.fire import dnbr  # noqa
 from xrspatial.fire import fireline_intensity  # noqa

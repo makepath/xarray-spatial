@@ -251,6 +251,20 @@ class XrsSpatialDataArrayAccessor:
         from .mahalanobis import mahalanobis
         return mahalanobis([self._obj] + list(other_bands), **kwargs)
 
+    # ---- Interpolation ----
+
+    def idw(self, x, y, z, **kwargs):
+        from .interpolate import idw
+        return idw(x, y, z, self._obj, **kwargs)
+
+    def kriging(self, x, y, z, **kwargs):
+        from .interpolate import kriging
+        return kriging(x, y, z, self._obj, **kwargs)
+
+    def spline(self, x, y, z, **kwargs):
+        from .interpolate import spline
+        return spline(x, y, z, self._obj, **kwargs)
+
     # ---- Raster to vector ----
 
     def polygonize(self, **kwargs):
