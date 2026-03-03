@@ -2,6 +2,14 @@
 -----------
 
 
+### Version 0.8.0 - 2026-03-03
+
+#### New Features
+- Add enhanced terrain generation features (#929)
+- Add fire module: dNBR, RdNBR, burn severity, fireline intensity, flame length, rate of spread (Rothermel), and KBDI (#927)
+- Add flood prediction tools (#926)
+
+
 ### Version 0.7.0 - 2026-03-02
 
 Highlights: new hydrology, terrain metrics, and surface distance modules; 3D
