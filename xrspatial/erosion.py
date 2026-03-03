@@ -201,7 +201,7 @@ def erode(agg, iterations=50000, seed=42, params=None):
 
     # work on a copy
     if is_gpu:
-        hm = cupy.asnumpy(data).astype(np.float64).copy()
+        hm = cupy.asnumpy(data).astype(np.float64)
     else:
         hm = data.astype(np.float64).copy()
 

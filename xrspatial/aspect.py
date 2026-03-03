@@ -60,7 +60,7 @@ RADIAN = 180 / np.pi
 @ngjit
 def _cpu(data: np.ndarray):
     data = data.astype(np.float32)
-    out = np.zeros_like(data, dtype=np.float32)
+    out = np.empty(data.shape, dtype=np.float32)
     out[:] = np.nan
     rows, cols = data.shape
     for y in range(1, rows-1):

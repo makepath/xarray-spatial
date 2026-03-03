@@ -58,7 +58,7 @@ def _bump_dask_numpy(data, width, height, locs, heights, spread):
         if not np.any(mask):
             return np.zeros((chunk_h, chunk_w))
 
-        local_locs = locs[mask].copy()
+        local_locs = locs[mask]
         local_locs[:, 0] -= x_start
         local_locs[:, 1] -= y_start
 
@@ -84,7 +84,7 @@ def _bump_dask_cupy(data, width, height, locs, heights, spread):
         if not np.any(mask):
             return cupy.zeros((chunk_h, chunk_w))
 
-        local_locs = locs[mask].copy()
+        local_locs = locs[mask]
         local_locs[:, 0] -= x_start
         local_locs[:, 1] -= y_start
 
