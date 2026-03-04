@@ -70,6 +70,8 @@ from xrspatial.surface_distance import surface_allocation  # noqa
 from xrspatial.surface_distance import surface_direction  # noqa
 from xrspatial.surface_distance import surface_distance  # noqa
 from xrspatial.terrain import generate_terrain  # noqa
+from xrspatial.terrain_metrics import landforms  # noqa
+from xrspatial.terrain_metrics import LANDFORM_CLASSES  # noqa
 from xrspatial.terrain_metrics import roughness  # noqa
 from xrspatial.terrain_metrics import tpi  # noqa
 from xrspatial.terrain_metrics import tri  # noqa

@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial import tri, tpi, roughness
+from xrspatial import tri, tpi, roughness, landforms
+from xrspatial.terrain_metrics import LANDFORM_CLASSES
 from xrspatial.tests.general_checks import (assert_boundary_mode_correctness,
                                             assert_numpy_equals_cupy,
                                             assert_numpy_equals_dask_cupy,
@@ -348,3 +349,150 @@ def test_dataset_support(func, expected_name):
         expected = func(ds[var], name=var)
         np.testing.assert_allclose(
             result[var].data, expected.data, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# Landforms tests
+# ---------------------------------------------------------------------------
+
+def _gaussian_peak(rows=50, cols=60, sigma=8):
+    """Gaussian peak centered in the raster."""
+    y = np.arange(rows, dtype=np.float64)
+    x = np.arange(cols, dtype=np.float64)
+    Y, X = np.meshgrid(y, x, indexing='ij')
+    return 100 * np.exp(-((Y - rows / 2)**2 + (X - cols / 2)**2)
+                        / (2 * sigma**2))
+
+
+def test_landforms_flat():
+    """Flat surface should classify as plains (class 5)."""
+    data = np.full((30, 40), 100.0, dtype=np.float64)
+    agg = create_test_raster(data)
+    result = landforms(agg, inner_radius=2, outer_radius=5)
+    valid = ~np.isnan(result.data)
+    np.testing.assert_array_equal(result.data[valid], 5.0)
+
+
+def test_landforms_gaussian_peak():
+    """Gaussian peak center should classify as mountain top."""
+    data = _gaussian_peak()
+    agg = create_test_raster(data)
+    result = landforms(agg, inner_radius=2, outer_radius=8)
+    center_class = result.data[25, 30]
+    assert center_class == 10.0, (
+        f"Expected class 10 (mountain top) at peak, got {center_class}")
+
+
+def test_landforms_multiple_classes():
+    """Varied terrain should produce several distinct classes."""
+    rows, cols = 80, 100
+    y = np.arange(rows, dtype=np.float64)
+    x = np.arange(cols, dtype=np.float64)
+    Y, X = np.meshgrid(y, x, indexing='ij')
+    data = (50 * np.sin(Y / 8) * np.cos(X / 12)
+            + 30 * np.sin(Y / 4) + 200)
+    agg = create_test_raster(data)
+    result = landforms(agg, inner_radius=2, outer_radius=8)
+    unique = np.unique(result.data[~np.isnan(result.data)])
+    assert len(unique) >= 3, f"Expected >= 3 classes, got {unique}"
+
+
+def test_landforms_nan_propagation():
+    """NaN in elevation should propagate to output."""
+    data = np.random.default_rng(42).random((30, 40)) * 100
+    data[15, 20] = np.nan
+    agg = create_test_raster(data)
+    result = landforms(agg, inner_radius=2, outer_radius=5)
+    assert np.isnan(result.data[15, 20])
+
+
+def test_landforms_input_nan_preserved():
+    """Cells with NaN elevation should remain NaN in output."""
+    data = np.random.default_rng(42).random((30, 40)) * 100
+    data[5, 10] = np.nan
+    data[20, 30] = np.nan
+    agg = create_test_raster(data)
+    result = landforms(agg, inner_radius=2, outer_radius=5)
+    assert np.isnan(result.data[5, 10])
+    assert np.isnan(result.data[20, 30])
+
+
+def test_landforms_invalid_inner_radius():
+    data = np.ones((10, 10), dtype=np.float64)
+    agg = create_test_raster(data)
+    with pytest.raises(ValueError, match="inner_radius must be >= 1"):
+        landforms(agg, inner_radius=0)
+
+
+def test_landforms_invalid_outer_radius():
+    data = np.ones((10, 10), dtype=np.float64)
+    agg = create_test_raster(data)
+    with pytest.raises(ValueError, match="outer_radius.*must be greater"):
+        landforms(agg, inner_radius=5, outer_radius=3)
+
+
+def test_landforms_output_shape_and_attrs():
+    data = np.random.default_rng(42).random((30, 40)) * 100
+    agg = create_test_raster(data)
+    result = landforms(agg, inner_radius=2, outer_radius=5)
+    assert result.shape == agg.shape
+    assert result.dims == agg.dims
+    assert result.name == 'landforms'
+    assert result.attrs == agg.attrs
+
+
+def test_landforms_valid_class_range():
+    """All non-NaN outputs should be in 1..10."""
+    data = np.random.default_rng(42).random((30, 40)) * 100
+    agg = create_test_raster(data)
+    result = landforms(agg, inner_radius=2, outer_radius=5)
+    valid = result.data[~np.isnan(result.data)]
+    assert np.all((valid >= 1) & (valid <= 10))
+
+
+def test_landforms_class_labels_complete():
+    """LANDFORM_CLASSES should have entries for classes 1-10."""
+    assert set(LANDFORM_CLASSES.keys()) == set(range(1, 11))
+
+
+@dask_array_available
+def test_landforms_numpy_equals_dask():
+    """Numpy and dask backends should produce matching classifications."""
+    data = np.random.default_rng(42).random((30, 40)) * 100
+    numpy_agg = create_test_raster(data, backend='numpy')
+    dask_agg = create_test_raster(data, backend='dask', chunks=(15, 20))
+    np_result = landforms(numpy_agg, inner_radius=2, outer_radius=5)
+    da_result = landforms(dask_agg, inner_radius=2, outer_radius=5)
+    np_data = np_result.data
+    da_data = da_result.data.compute()
+    # Allow tiny fraction of boundary-cell mismatches from floating point
+    valid = ~np.isnan(np_data) & ~np.isnan(da_data)
+    matches = np.sum(np_data[valid] == da_data[valid])
+    total = np.sum(valid)
+    assert matches / total > 0.98, (
+        f"Only {matches}/{total} cells match between numpy and dask")
+
+
+def test_landforms_slope_threshold():
+    """Adjusting slope_threshold should shift cells between class 5 and 6."""
+    data = np.random.default_rng(42).random((30, 40)) * 100
+    agg = create_test_raster(data)
+    low_thresh = landforms(agg, inner_radius=2, outer_radius=5,
+                           slope_threshold=1.0)
+    high_thresh = landforms(agg, inner_radius=2, outer_radius=5,
+                            slope_threshold=80.0)
+    # With very low threshold: fewer plains (class 5), more open slopes (6)
+    low_plains = np.sum(low_thresh.data == 5.0)
+    high_plains = np.sum(high_thresh.data == 5.0)
+    assert high_plains >= low_plains
+
+
+def test_landforms_dataset_support():
+    data = np.random.default_rng(42).random((30, 40)).astype(np.float64) * 100
+    da1 = xr.DataArray(data, dims=['y', 'x'], attrs={'res': (0.5, 0.5)})
+    da1['y'] = np.linspace(14.5, 0, 30)
+    da1['x'] = np.linspace(0, 19.5, 40)
+    ds = xr.Dataset({'elev1': da1, 'elev2': da1 * 2})
+    result = landforms(ds, inner_radius=2, outer_radius=5)
+    assert isinstance(result, xr.Dataset)
+    assert set(result.data_vars) == {'elev1', 'elev2'}
