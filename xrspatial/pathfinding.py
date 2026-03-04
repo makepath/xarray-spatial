@@ -1147,3 +1147,324 @@ def a_star_search(surface: xr.DataArray,
                             attrs=surface.attrs)
 
     return path_agg
+
+
+# ---------------------------------------------------------------------------
+# Multi-stop routing
+# ---------------------------------------------------------------------------
+
+def _held_karp(dist, start, end):
+    """Exact TSP with fixed start and end via Held-Karp bitmask DP.
+
+    Parameters
+    ----------
+    dist : 2-D array-like, shape (N, N)
+        Pairwise costs.  ``dist[i][j]`` is the cost from city *i* to *j*.
+    start, end : int
+        Indices that must be first and last in the tour.
+
+    Returns
+    -------
+    (order, total_cost) : (list[int], float)
+    """
+    n = len(dist)
+    if n == 2:
+        return [start, end], dist[start][end]
+
+    # Cities to visit between start and end
+    mid = [i for i in range(n) if i != start and i != end]
+    nm = len(mid)
+    INF = float('inf')
+
+    # dp[(mask, city_idx_in_mid)] = min cost to reach city from start
+    # visiting exactly the cities indicated by mask
+    dp = [[INF] * nm for _ in range(1 << nm)]
+    parent = [[-1] * nm for _ in range(1 << nm)]
+
+    # Base: start -> each mid city
+    for j, c in enumerate(mid):
+        dp[1 << j][j] = dist[start][c]
+
+    for mask in range(1, 1 << nm):
+        for j in range(nm):
+            if not (mask & (1 << j)):
+                continue
+            if dp[mask][j] == INF:
+                continue
+            for k in range(nm):
+                if mask & (1 << k):
+                    continue
+                new_mask = mask | (1 << k)
+                new_cost = dp[mask][j] + dist[mid[j]][mid[k]]
+                if new_cost < dp[new_mask][k]:
+                    dp[new_mask][k] = new_cost
+                    parent[new_mask][k] = j
+
+    # Close tour to end
+    full = (1 << nm) - 1
+    best_cost = INF
+    best_last = -1
+    for j in range(nm):
+        cost = dp[full][j] + dist[mid[j]][end]
+        if cost < best_cost:
+            best_cost = cost
+            best_last = j
+
+    # Reconstruct
+    order_mid = []
+    mask = full
+    cur = best_last
+    while cur != -1:
+        order_mid.append(mid[cur])
+        prev = parent[mask][cur]
+        mask ^= (1 << cur)
+        cur = prev
+    order_mid.reverse()
+
+    return [start] + order_mid + [end], best_cost
+
+
+def _nearest_neighbor_2opt(dist, start, end):
+    """Heuristic TSP for large N: nearest-neighbor + 2-opt with fixed endpoints.
+
+    Parameters
+    ----------
+    dist : 2-D array-like, shape (N, N)
+        Pairwise costs.
+    start, end : int
+        Fixed first and last indices.
+
+    Returns
+    -------
+    (order, total_cost) : (list[int], float)
+    """
+    n = len(dist)
+    remaining = set(range(n)) - {start, end}
+
+    # Greedy nearest-neighbor construction
+    tour = [start]
+    cur = start
+    while remaining:
+        nearest = min(remaining, key=lambda c: dist[cur][c])
+        tour.append(nearest)
+        remaining.remove(nearest)
+        cur = nearest
+    tour.append(end)
+
+    # 2-opt local search (only swap interior segment, keep endpoints fixed)
+    def _tour_cost(t):
+        return sum(dist[t[i]][t[i + 1]] for i in range(len(t) - 1))
+
+    improved = True
+    while improved:
+        improved = False
+        for i in range(1, len(tour) - 2):
+            for j in range(i + 1, len(tour) - 1):
+                # Reverse segment tour[i:j+1]
+                new_tour = tour[:i] + tour[i:j + 1][::-1] + tour[j + 1:]
+                if _tour_cost(new_tour) < _tour_cost(tour):
+                    tour = new_tour
+                    improved = True
+
+    return tour, _tour_cost(tour)
+
+
+def _optimize_waypoint_order(surface, waypoints, barriers, x, y,
+                             connectivity, snap, friction, search_radius):
+    """Build pairwise cost matrix and solve TSP with fixed endpoints.
+
+    Returns reordered waypoints list.
+    """
+    n = len(waypoints)
+    INF = float('inf')
+    dist = [[INF] * n for _ in range(n)]
+
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                dist[i][j] = 0.0
+                continue
+            seg = a_star_search(
+                surface, waypoints[i], waypoints[j],
+                barriers=barriers, x=x, y=y,
+                connectivity=connectivity,
+                snap_start=snap, snap_goal=snap,
+                friction=friction, search_radius=search_radius,
+            )
+            seg_data = seg.data
+            if hasattr(seg_data, 'get'):
+                seg_vals = seg_data.get()
+            else:
+                seg_vals = np.asarray(seg.values)
+            goal_py, goal_px = _get_pixel_id(waypoints[j], surface, x, y)
+            goal_cost = seg_vals[goal_py, goal_px]
+            if np.isfinite(goal_cost):
+                dist[i][j] = goal_cost
+
+    # Fixed endpoints: first=0, last=n-1
+    if n <= 12:
+        order, _ = _held_karp(dist, 0, n - 1)
+    else:
+        order, _ = _nearest_neighbor_2opt(dist, 0, n - 1)
+
+    return [waypoints[i] for i in order]
+
+
+def multi_stop_search(surface: xr.DataArray,
+                      waypoints: list,
+                      barriers: list = [],
+                      x: Optional[str] = 'x',
+                      y: Optional[str] = 'y',
+                      connectivity: int = 8,
+                      snap: bool = False,
+                      friction: xr.DataArray = None,
+                      search_radius: Optional[int] = None,
+                      optimize_order: bool = False) -> xr.DataArray:
+    """Find the least-cost path visiting a sequence of waypoints in order.
+
+    Wraps :func:`a_star_search` to route through *N* waypoints,
+    stitching segments into a single cumulative-cost surface.  When
+    ``optimize_order=True``, the interior waypoints are reordered to
+    minimize total travel cost (TSP), keeping the first and last
+    waypoints fixed.
+
+    Parameters
+    ----------
+    surface : xr.DataArray
+        2-D elevation / cost surface.
+    waypoints : list of array-like
+        Sequence of ``(y, x)`` coordinate pairs to visit.  Must contain
+        at least two points.
+    barriers : list, default=[]
+        Surface values that are impassable.
+    x, y : str, default ``'x'`` / ``'y'``
+        Coordinate dimension names.
+    connectivity : int, default=8
+        4 or 8 connectivity.
+    snap : bool, default=False
+        Snap each waypoint to the nearest valid pixel.  Not supported
+        with dask-backed arrays.
+    friction : xr.DataArray, optional
+        Friction surface (same shape as *surface*).
+    search_radius : int, optional
+        Passed to each :func:`a_star_search` call.
+    optimize_order : bool, default=False
+        Reorder interior waypoints to minimize total cost.  Uses exact
+        Held-Karp when N <= 12, nearest-neighbor + 2-opt otherwise.
+
+    Returns
+    -------
+    xr.DataArray
+        Cumulative path cost surface.  Attributes include
+        ``waypoint_order``, ``segment_costs``, and ``total_cost``.
+
+    Raises
+    ------
+    ValueError
+        If the surface is not 2-D, fewer than two waypoints are given,
+        waypoints fall outside the surface bounds, or a segment is
+        unreachable.
+    """
+    # --- Input validation ---
+    if surface.ndim != 2:
+        raise ValueError("input `surface` must be 2D")
+
+    if len(waypoints) < 2:
+        raise ValueError("at least 2 waypoints are required")
+
+    for idx, wp in enumerate(waypoints):
+        if len(wp) != 2:
+            raise ValueError(
+                f"waypoint {idx} must have exactly 2 elements (y, x)")
+
+    h, w = surface.shape
+    for idx, wp in enumerate(waypoints):
+        py, px = _get_pixel_id(wp, surface, x, y)
+        if not _is_inside(py, px, h, w):
+            raise ValueError(
+                f"waypoint {idx} ({wp}) is outside the surface bounds")
+
+    if friction is not None and friction.shape != surface.shape:
+        raise ValueError("friction must have the same shape as surface")
+
+    surface_data = surface.data
+    _is_dask = da is not None and isinstance(surface_data, da.Array)
+    if snap and _is_dask:
+        raise ValueError(
+            "snap is not supported with dask-backed arrays; "
+            "ensure waypoints are valid before calling multi_stop_search")
+
+    if optimize_order:
+        if len(waypoints) < 3:
+            warnings.warn(
+                "optimize_order has no effect with fewer than 3 waypoints",
+                stacklevel=2,
+            )
+        else:
+            waypoints = _optimize_waypoint_order(
+                surface, list(waypoints), barriers, x, y,
+                connectivity, snap, friction, search_radius,
+            )
+
+    # --- Segment-by-segment routing ---
+    path_data = np.full(surface.shape, np.nan, dtype=np.float64)
+    cumulative_cost = 0.0
+    segment_costs = []
+
+    # Pre-compute pixel coords for all waypoints
+    waypoint_pixels = [_get_pixel_id(wp, surface, x, y) for wp in waypoints]
+
+    for i in range(len(waypoints) - 1):
+        seg = a_star_search(
+            surface, waypoints[i], waypoints[i + 1],
+            barriers=barriers, x=x, y=y,
+            connectivity=connectivity,
+            snap_start=snap, snap_goal=snap,
+            friction=friction, search_radius=search_radius,
+        )
+        seg_data = seg.data
+        if hasattr(seg_data, 'get'):
+            seg_vals = seg_data.get()  # cupy -> numpy
+        else:
+            seg_vals = np.asarray(seg.values)
+
+        goal_py, goal_px = waypoint_pixels[i + 1]
+
+        # If snap is on, the actual goal pixel may differ from the
+        # requested one.  Find the pixel with maximum finite cost
+        # (the true goal of this segment).
+        if snap and not np.isfinite(seg_vals[goal_py, goal_px]):
+            finite = np.isfinite(seg_vals)
+            if finite.any():
+                max_idx = np.nanargmax(seg_vals)
+                goal_py, goal_px = np.unravel_index(max_idx, seg_vals.shape)
+                waypoint_pixels[i + 1] = (goal_py, goal_px)
+
+        seg_goal_cost = seg_vals[goal_py, goal_px]
+
+        if not np.isfinite(seg_goal_cost):
+            raise ValueError(
+                f"no path between waypoints {i} and {i + 1}")
+
+        mask = np.isfinite(seg_vals)
+        if i > 0:
+            # Don't overwrite the junction pixel (set by previous segment)
+            sp_y, sp_x = waypoint_pixels[i]
+            mask[sp_y, sp_x] = False
+
+        path_data[mask] = seg_vals[mask] + cumulative_cost
+        segment_costs.append(float(seg_goal_cost))
+        cumulative_cost += seg_goal_cost
+
+    path_agg = xr.DataArray(
+        path_data,
+        coords=surface.coords,
+        dims=surface.dims,
+        attrs={
+            'waypoint_order': [tuple(wp) for wp in waypoints],
+            'segment_costs': segment_costs,
+            'total_cost': cumulative_cost,
+        },
+    )
+
+    return path_agg

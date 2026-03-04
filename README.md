@@ -209,6 +209,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [A* Pathfinding](xrspatial/pathfinding.py) | Finds the least-cost path between two cells on a cost surface | ✅️ | ✅ | 🔄 | 🔄 |
+| [Multi-Stop Search](xrspatial/pathfinding.py) | Routes through N waypoints in sequence, with optional TSP reordering | ✅️ | ✅ | 🔄 | 🔄 |
 
 ----------
 
