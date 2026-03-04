@@ -173,6 +173,24 @@ class XrsSpatialDataArrayAccessor:
         from .focal import mean
         return mean(self._obj, **kwargs)
 
+    # ---- Morphological ----
+
+    def morph_erode(self, **kwargs):
+        from .morphology import morph_erode
+        return morph_erode(self._obj, **kwargs)
+
+    def morph_dilate(self, **kwargs):
+        from .morphology import morph_dilate
+        return morph_dilate(self._obj, **kwargs)
+
+    def morph_opening(self, **kwargs):
+        from .morphology import morph_opening
+        return morph_opening(self._obj, **kwargs)
+
+    def morph_closing(self, **kwargs):
+        from .morphology import morph_closing
+        return morph_closing(self._obj, **kwargs)
+
     # ---- Proximity / Distance ----
 
     def proximity(self, **kwargs):
@@ -500,6 +518,24 @@ class XrsSpatialDatasetAccessor:
     def focal_mean(self, **kwargs):
         from .focal import mean
         return mean(self._obj, **kwargs)
+
+    # ---- Morphological ----
+
+    def morph_erode(self, **kwargs):
+        from .morphology import morph_erode
+        return morph_erode(self._obj, **kwargs)
+
+    def morph_dilate(self, **kwargs):
+        from .morphology import morph_dilate
+        return morph_dilate(self._obj, **kwargs)
+
+    def morph_opening(self, **kwargs):
+        from .morphology import morph_opening
+        return morph_opening(self._obj, **kwargs)
+
+    def morph_closing(self, **kwargs):
+        from .morphology import morph_closing
+        return morph_closing(self._obj, **kwargs)
 
     # ---- Diffusion ----
 

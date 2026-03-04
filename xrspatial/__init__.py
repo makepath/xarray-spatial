@@ -41,6 +41,10 @@ from xrspatial.flow_direction_dinf import flow_direction_dinf  # noqa
 from xrspatial.flow_length import flow_length  # noqa
 from xrspatial.flow_path import flow_path  # noqa
 from xrspatial.focal import mean  # noqa
+from xrspatial.morphology import morph_closing  # noqa
+from xrspatial.morphology import morph_dilate  # noqa
+from xrspatial.morphology import morph_erode  # noqa
+from xrspatial.morphology import morph_opening  # noqa
 from xrspatial.hand import hand  # noqa
 from xrspatial.hillshade import hillshade  # noqa
 from xrspatial.mahalanobis import mahalanobis  # noqa
