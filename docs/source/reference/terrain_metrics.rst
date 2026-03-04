@@ -24,3 +24,10 @@ Terrain Ruggedness Index (TRI)
     :toctree: _autosummary
 
     xrspatial.terrain_metrics.tri
+
+Landform Classification
+=======================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.terrain_metrics.landforms

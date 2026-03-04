@@ -27,6 +27,7 @@ from xrspatial.utils import _validate_raster
 from xrspatial.utils import cuda_args
 from xrspatial.utils import ngjit
 from xrspatial.dataset_support import supports_dataset
+from xrspatial.slope import slope as _slope_func
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +393,221 @@ def roughness(agg: xr.DataArray,
     )
     out = mapper(agg)(agg.data, boundary)
     return xr.DataArray(out,
+                        name=name,
+                        coords=agg.coords,
+                        dims=agg.dims,
+                        attrs=agg.attrs)
+
+
+# ---------------------------------------------------------------------------
+# TPI at arbitrary radius (helpers for landforms)
+# ---------------------------------------------------------------------------
+
+def _circular_kernel(radius):
+    """Circular boolean kernel with center excluded."""
+    y, x = np.ogrid[-radius:radius + 1, -radius:radius + 1]
+    k = (x * x + y * y <= radius * radius).astype(np.float64)
+    k[radius, radius] = 0.0
+    return k
+
+
+def _tpi_radius_np(data, kernel):
+    """TPI via NaN-aware circular convolution (numpy)."""
+    from scipy.ndimage import convolve
+    data = data.astype(np.float64)
+    valid = np.isfinite(data)
+    filled = np.where(valid, data, 0.0)
+    s = convolve(filled, kernel, mode='constant', cval=0.0)
+    c = convolve(valid.astype(np.float64), kernel, mode='constant', cval=0.0)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        mean = np.where(c > 0, s / c, np.nan)
+    return data - mean
+
+
+def _tpi_radius_cupy(data, kernel_np):
+    """TPI via NaN-aware circular convolution (cupy)."""
+    from cupyx.scipy.ndimage import convolve
+    kernel = cupy.asarray(kernel_np)
+    data = data.astype(cupy.float64)
+    valid = cupy.isfinite(data)
+    filled = cupy.where(valid, data, 0.0)
+    s = convolve(filled, kernel, mode='constant', cval=0.0)
+    c = convolve(valid.astype(cupy.float64), kernel, mode='constant', cval=0.0)
+    mean = cupy.where(c > 0, s / c, cupy.nan)
+    return data - mean
+
+
+def _tpi_radius_dask_np(data, radius, kernel):
+    """TPI via map_overlap (dask + numpy)."""
+    _func = partial(_tpi_radius_np, kernel=kernel)
+    return data.map_overlap(
+        _func, depth=(radius, radius),
+        boundary=np.nan, meta=np.array(()))
+
+
+def _tpi_radius_dask_cupy(data, radius, kernel_np):
+    """TPI via map_overlap (dask + cupy)."""
+    _func = partial(_tpi_radius_cupy, kernel_np=kernel_np)
+    return data.map_overlap(
+        _func, depth=(radius, radius),
+        boundary=cupy.nan, meta=cupy.array(()))
+
+
+def _compute_tpi_at_radius(agg, radius):
+    """Dispatch TPI-at-radius to the appropriate backend."""
+    kernel = _circular_kernel(radius)
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=partial(_tpi_radius_np, kernel=kernel),
+        cupy_func=partial(_tpi_radius_cupy, kernel_np=kernel),
+        dask_func=partial(_tpi_radius_dask_np,
+                          radius=radius, kernel=kernel),
+        dask_cupy_func=partial(_tpi_radius_dask_cupy,
+                               radius=radius, kernel_np=kernel),
+    )
+    out = mapper(agg)(agg.data)
+    return xr.DataArray(out, coords=agg.coords, dims=agg.dims,
+                        attrs=agg.attrs)
+
+
+# ---------------------------------------------------------------------------
+# Weiss (2001) landform classification
+# ---------------------------------------------------------------------------
+
+LANDFORM_CLASSES = {
+    1: 'Canyon / deeply incised stream',
+    2: 'Midslope drainage / shallow valley',
+    3: 'Upland drainage / headwater',
+    4: 'U-shaped valley',
+    5: 'Plain',
+    6: 'Open slope',
+    7: 'Upper slope / mesa',
+    8: 'Local ridge / hill in valley',
+    9: 'Midslope ridge / small hill',
+    10: 'Mountain top / high ridge',
+}
+
+
+@supports_dataset
+def landforms(agg: xr.DataArray,
+              inner_radius: int = 3,
+              outer_radius: int = 15,
+              slope_threshold: float = 5.0,
+              name: Optional[str] = 'landforms') -> xr.DataArray:
+    """Classify terrain into landform types using the Weiss (2001) scheme.
+
+    Computes TPI at two neighborhood scales, standardizes to z-scores,
+    and classifies each cell into one of 10 landform categories based
+    on its relative position at both scales and its slope.
+
+    Parameters
+    ----------
+    agg : xarray.DataArray or xr.Dataset
+        2D NumPy, CuPy, NumPy-backed Dask, or CuPy-backed Dask
+        xarray DataArray of elevation values.
+        If a Dataset is passed, the operation is applied to each
+        data variable independently.
+    inner_radius : int, default=3
+        Radius in cells for the small-scale TPI neighborhood.
+    outer_radius : int, default=15
+        Radius in cells for the large-scale TPI neighborhood.
+    slope_threshold : float, default=5.0
+        Slope in degrees separating plains (class 5) from open
+        slopes (class 6).
+    name : str, default='landforms'
+        Name of the output DataArray.
+
+    Returns
+    -------
+    xarray.DataArray or xr.Dataset
+        Integer-coded raster of landform classes:
+
+        ==  =================================
+        1   Canyon / deeply incised stream
+        2   Midslope drainage / shallow valley
+        3   Upland drainage / headwater
+        4   U-shaped valley
+        5   Plain
+        6   Open slope
+        7   Upper slope / mesa
+        8   Local ridge / hill in valley
+        9   Midslope ridge / small hill
+        10  Mountain top / high ridge
+        ==  =================================
+
+    References
+    ----------
+    Weiss, A. (2001). Topographic Position and Landforms Analysis.
+    Poster presentation, ESRI International User Conference,
+    San Diego, CA.
+    """
+    _validate_raster(agg, func_name='landforms', name='agg')
+
+    if inner_radius < 1:
+        raise ValueError(
+            f"inner_radius must be >= 1, got {inner_radius}")
+    if outer_radius <= inner_radius:
+        raise ValueError(
+            f"outer_radius ({outer_radius}) must be greater than "
+            f"inner_radius ({inner_radius})")
+
+    # 1. TPI at two scales
+    tpi_s = _compute_tpi_at_radius(agg, inner_radius)
+    tpi_l = _compute_tpi_at_radius(agg, outer_radius)
+
+    # 2. Standardize to z-scores.
+    #    Global mean/std are needed, so for dask we compute all four
+    #    reductions in one call to share the task graph.
+    if da is not None and isinstance(agg.data, da.Array):
+        import dask
+        s_mean, s_std, l_mean, l_std = dask.compute(
+            da.nanmean(tpi_s.data), da.nanstd(tpi_s.data),
+            da.nanmean(tpi_l.data), da.nanstd(tpi_l.data),
+        )
+        s_mean, s_std = float(s_mean), float(s_std)
+        l_mean, l_std = float(l_mean), float(l_std)
+    else:
+        s_mean = float(tpi_s.mean(skipna=True))
+        s_std = float(tpi_s.std(skipna=True))
+        l_mean = float(tpi_l.mean(skipna=True))
+        l_std = float(tpi_l.std(skipna=True))
+
+    if s_std > 0:
+        tpi_s_z = (tpi_s - s_mean) / s_std
+    else:
+        tpi_s_z = tpi_s * 0
+
+    if l_std > 0:
+        tpi_l_z = (tpi_l - l_mean) / l_std
+    else:
+        tpi_l_z = tpi_l * 0
+
+    # 3. Slope (used only to split plains from open slopes)
+    slp = _slope_func(agg)
+
+    # 4. Classify into 10 Weiss landform classes
+    s_lo = tpi_s_z < -1
+    s_hi = tpi_s_z > 1
+    s_mid = ~s_lo & ~s_hi
+    l_lo = tpi_l_z < -1
+    l_hi = tpi_l_z > 1
+    l_mid = ~l_lo & ~l_hi
+
+    out = xr.full_like(agg, np.nan, dtype=np.float64)
+    out = xr.where(s_lo & l_lo, 1.0, out)
+    out = xr.where(s_lo & l_mid, 2.0, out)
+    out = xr.where(s_lo & l_hi, 3.0, out)
+    out = xr.where(s_mid & l_lo, 4.0, out)
+    out = xr.where(s_mid & l_mid & (slp <= slope_threshold), 5.0, out)
+    out = xr.where(s_mid & l_mid & (slp > slope_threshold), 6.0, out)
+    out = xr.where(s_mid & l_hi, 7.0, out)
+    out = xr.where(s_hi & l_lo, 8.0, out)
+    out = xr.where(s_hi & l_mid, 9.0, out)
+    out = xr.where(s_hi & l_hi, 10.0, out)
+
+    # Preserve original NaN
+    out = xr.where(agg.isnull(), np.nan, out)
+
+    return xr.DataArray(out.data,
                         name=name,
                         coords=agg.coords,
                         dims=agg.dims,

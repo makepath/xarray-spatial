@@ -1502,7 +1502,7 @@ def suggest_zonal_canvas(
     --------
     .. sourcecode:: python
 
-        >>> # Imports
+        >>> # Imports (datashader is optional: pip install datashader)
         >>> from spatialpandas import GeoDataFrame
         >>> import geopandas as gpd
         >>> import datashader as ds

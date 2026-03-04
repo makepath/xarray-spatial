@@ -268,3 +268,28 @@ def test_stream_link_numpy_equals_dask_cupy():
     dcp_result = stream_link(dcp_fd, dcp_fa, threshold=1)
     np.testing.assert_allclose(
         np_result.data, dcp_result.data.compute().get(), equal_nan=True)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_stream_link_dask_cupy_random():
+    """Random acyclic flow: dask+cupy stream_link matches numpy."""
+    from xrspatial import flow_direction, flow_accumulation
+
+    rng = np.random.default_rng(952)
+    elev = rng.random((8, 10)).astype(np.float64)
+    elev_da = create_test_raster(elev, backend='numpy')
+    fd = flow_direction(elev_da)
+    fa = flow_accumulation(fd)
+
+    np_result = stream_link(fd, fa, threshold=3)
+
+    fd_data = fd.data
+    fa_data = fa.data
+    for chunks in [(3, 3), (4, 5), (2, 2)]:
+        dcp_fd = create_test_raster(fd_data, backend='dask+cupy', chunks=chunks)
+        dcp_fa = create_test_raster(fa_data, backend='dask+cupy', chunks=chunks)
+        dcp_result = stream_link(dcp_fd, dcp_fa, threshold=3)
+        np.testing.assert_allclose(
+            np_result.data, dcp_result.data.compute().get(), equal_nan=True,
+        ), f"Mismatch with chunks={chunks}"

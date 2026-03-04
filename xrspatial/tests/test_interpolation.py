@@ -24,11 +24,35 @@ def _make_template(y_coords, x_coords, backend='numpy', chunks=(3, 3)):
     da_out['y'] = np.asarray(y_coords, dtype=np.float64)
     da_out['x'] = np.asarray(x_coords, dtype=np.float64)
 
-    if 'dask' in backend:
+    if backend == 'cupy':
+        import cupy
+        da_out.data = cupy.asarray(da_out.data)
+    elif backend == 'dask_cupy':
+        import cupy
+        import dask.array as da
+        da_out.data = da.from_array(
+            cupy.asarray(da_out.data), chunks=chunks,
+            meta=cupy.array((), dtype=np.float64),
+        )
+    elif 'dask' in backend:
         import dask.array as da
         da_out.data = da.from_array(da_out.data, chunks=chunks)
 
     return da_out
+
+
+def _to_numpy(da_result):
+    """Extract numpy array from any-backend DataArray."""
+    data = da_result.data
+    try:
+        import dask.array as dask_array
+        if isinstance(data, dask_array.Array):
+            data = data.compute()
+    except ImportError:
+        pass
+    if hasattr(data, 'get'):
+        return data.get()
+    return np.asarray(data)
 
 
 def _grid_points():
@@ -262,6 +286,71 @@ class TestKriging:
         da_result = kriging(x, y, z, da_template)
         np.testing.assert_allclose(
             np_result.values, da_result.values, rtol=1e-10)
+
+    @cuda_and_cupy_available
+    def test_cupy_matches_numpy(self):
+        """CuPy backend produces same results as numpy."""
+        x, y, z = self._spatial_data()
+        np_template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        cp_template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                     backend='cupy')
+        np_result = kriging(x, y, z, np_template)
+        cp_result = kriging(x, y, z, cp_template)
+        np.testing.assert_allclose(
+            np_result.values, _to_numpy(cp_result), rtol=1e-10)
+
+    @cuda_and_cupy_available
+    def test_cupy_variogram_models(self):
+        """All variogram models produce finite output on GPU."""
+        x, y, z = self._spatial_data()
+        cp_template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                     backend='cupy')
+        for model in ('spherical', 'exponential', 'gaussian'):
+            result = kriging(x, y, z, cp_template, variogram_model=model)
+            assert np.all(np.isfinite(_to_numpy(result))), \
+                f"model={model} produced non-finite values on CuPy"
+
+    @cuda_and_cupy_available
+    def test_cupy_return_variance(self):
+        """Variance is returned correctly on GPU."""
+        x, y, z = self._spatial_data()
+        np_template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        cp_template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                     backend='cupy')
+        np_pred, np_var = kriging(x, y, z, np_template, return_variance=True)
+        cp_pred, cp_var = kriging(x, y, z, cp_template, return_variance=True)
+        np.testing.assert_allclose(
+            np_pred.values, _to_numpy(cp_pred), rtol=1e-10)
+        np.testing.assert_allclose(
+            np_var.values, _to_numpy(cp_var), atol=1e-12)
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_matches_numpy(self):
+        """Dask+CuPy backend produces same results as numpy."""
+        x, y, z = self._spatial_data()
+        np_template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        dc_template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                     backend='dask_cupy', chunks=(2, 2))
+        np_result = kriging(x, y, z, np_template)
+        dc_result = kriging(x, y, z, dc_template)
+        np.testing.assert_allclose(
+            np_result.values, _to_numpy(dc_result), rtol=1e-10)
+
+    @cuda_and_cupy_available
+    @dask_array_available
+    def test_dask_cupy_return_variance(self):
+        """Dask+CuPy variance matches numpy."""
+        x, y, z = self._spatial_data()
+        np_template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0])
+        dc_template = _make_template([0.0, 2.0, 4.0], [0.0, 2.0, 4.0],
+                                     backend='dask_cupy', chunks=(2, 2))
+        np_pred, np_var = kriging(x, y, z, np_template, return_variance=True)
+        dc_pred, dc_var = kriging(x, y, z, dc_template, return_variance=True)
+        np.testing.assert_allclose(
+            np_pred.values, _to_numpy(dc_pred), rtol=1e-10)
+        np.testing.assert_allclose(
+            np_var.values, _to_numpy(dc_var), atol=1e-12)
 
 
 # ===================================================================

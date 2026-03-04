@@ -15,6 +15,7 @@ Reference
    focal
    hydrology
    interpolation
+   morphology
    multispectral
    pathfinding
    proximity

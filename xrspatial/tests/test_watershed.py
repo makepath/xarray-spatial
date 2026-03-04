@@ -329,3 +329,31 @@ def test_watershed_numpy_equals_dask_cupy():
     dcp_result = watershed(dcp_fd, dcp_pp)
     np.testing.assert_allclose(
         np_result.data, dcp_result.data.compute().get(), equal_nan=True)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_watershed_dask_cupy_random():
+    """Random acyclic flow_dir: dask+cupy watershed matches numpy."""
+    from xrspatial import flow_direction, flow_accumulation
+
+    rng = np.random.default_rng(952)
+    elev = rng.random((8, 10)).astype(np.float64)
+    elev_da = create_test_raster(elev, backend='numpy')
+    fd_data = flow_direction(elev_da).data
+
+    pp = np.full_like(fd_data, np.nan)
+    pit_mask = fd_data == 0
+    pp[pit_mask] = np.arange(1, pit_mask.sum() + 1, dtype=np.float64)
+
+    np_fd = create_test_raster(fd_data, backend='numpy')
+    np_pp = create_test_raster(pp, backend='numpy')
+    np_result = watershed(np_fd, np_pp)
+
+    for chunks in [(3, 3), (4, 5), (2, 2)]:
+        dcp_fd = create_test_raster(fd_data, backend='dask+cupy', chunks=chunks)
+        dcp_pp = create_test_raster(pp, backend='dask+cupy', chunks=chunks)
+        dcp_result = watershed(dcp_fd, dcp_pp)
+        np.testing.assert_allclose(
+            np_result.data, dcp_result.data.compute().get(), equal_nan=True,
+        ), f"Mismatch with chunks={chunks}"

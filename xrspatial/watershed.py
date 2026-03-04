@@ -43,6 +43,13 @@ from xrspatial._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
 
 
+def _to_numpy_f64(arr):
+    """Convert *arr* to a contiguous numpy float64 array (handles CuPy)."""
+    if hasattr(arr, 'get'):
+        arr = arr.get()
+    return np.asarray(arr, dtype=np.float64)
+
+
 # =====================================================================
 # Direction helpers
 # =====================================================================
@@ -386,14 +393,10 @@ def _preprocess_tiles(flow_dir_da, chunks_y, chunks_x):
     for iy in range(n_tile_y):
         for ix in range(n_tile_x):
             chunk = flow_dir_da.blocks[iy, ix].compute()
-            flow_bdry.set('top', iy, ix,
-                          np.asarray(chunk[0, :], dtype=np.float64))
-            flow_bdry.set('bottom', iy, ix,
-                          np.asarray(chunk[-1, :], dtype=np.float64))
-            flow_bdry.set('left', iy, ix,
-                          np.asarray(chunk[:, 0], dtype=np.float64))
-            flow_bdry.set('right', iy, ix,
-                          np.asarray(chunk[:, -1], dtype=np.float64))
+            flow_bdry.set('top', iy, ix, _to_numpy_f64(chunk[0, :]))
+            flow_bdry.set('bottom', iy, ix, _to_numpy_f64(chunk[-1, :]))
+            flow_bdry.set('left', iy, ix, _to_numpy_f64(chunk[:, 0]))
+            flow_bdry.set('right', iy, ix, _to_numpy_f64(chunk[:, -1]))
 
     return flow_bdry
 
@@ -713,23 +716,182 @@ def _assemble_watershed(flow_dir_da, pour_points_da,
 
 
 
-def _watershed_dask_cupy(flow_dir_da, pour_points_da):
-    """Dask+CuPy: convert to numpy, run CPU iterative path, convert back."""
+def _watershed_tile_cupy(flow_dir_data, pour_points_data,
+                          exit_top, exit_bottom, exit_left, exit_right,
+                          exit_tl, exit_tr, exit_bl, exit_br):
+    """GPU seeded watershed for a single tile.
+
+    Uses GPU label propagation with exit labels injected at boundary
+    cells before iteration.
+    """
     import cupy as cp
 
-    flow_dir_np = flow_dir_da.map_blocks(
-        lambda b: b.get(), dtype=flow_dir_da.dtype,
-        meta=np.array((), dtype=flow_dir_da.dtype),
+    H, W = flow_dir_data.shape
+    flow_dir_f64 = flow_dir_data.astype(cp.float64)
+    pp_f64 = pour_points_data.astype(cp.float64)
+
+    labels = cp.zeros((H, W), dtype=cp.float64)
+    state = cp.zeros((H, W), dtype=cp.int32)
+    changed = cp.zeros(1, dtype=cp.int32)
+
+    griddim, blockdim = cuda_args((H, W))
+
+    _init_watershed_gpu[griddim, blockdim](
+        flow_dir_f64, pp_f64, labels, state, H, W)
+
+    # Inject exit labels at boundary cells where active (state==1)
+    # and exit label is resolved (not NaN, >= 0).
+    exit_top_cp = cp.asarray(exit_top)
+    m = (state[0, :] == 1) & ~cp.isnan(exit_top_cp) & (exit_top_cp >= 0)
+    labels[0, :] = cp.where(m, exit_top_cp, labels[0, :])
+    state[0, :] = cp.where(m, 2, state[0, :])
+
+    exit_bot_cp = cp.asarray(exit_bottom)
+    m = (state[H - 1, :] == 1) & ~cp.isnan(exit_bot_cp) & (exit_bot_cp >= 0)
+    labels[H - 1, :] = cp.where(m, exit_bot_cp, labels[H - 1, :])
+    state[H - 1, :] = cp.where(m, 2, state[H - 1, :])
+
+    exit_left_cp = cp.asarray(exit_left)
+    m = (state[:, 0] == 1) & ~cp.isnan(exit_left_cp) & (exit_left_cp >= 0)
+    labels[:, 0] = cp.where(m, exit_left_cp, labels[:, 0])
+    state[:, 0] = cp.where(m, 2, state[:, 0])
+
+    exit_right_cp = cp.asarray(exit_right)
+    m = (state[:, W - 1] == 1) & ~cp.isnan(exit_right_cp) & (exit_right_cp >= 0)
+    labels[:, W - 1] = cp.where(m, exit_right_cp, labels[:, W - 1])
+    state[:, W - 1] = cp.where(m, 2, state[:, W - 1])
+
+    # Corner exit labels
+    for r, c, val in [(0, 0, exit_tl), (0, W - 1, exit_tr),
+                       (H - 1, 0, exit_bl), (H - 1, W - 1, exit_br)]:
+        if val == val and val >= 0 and int(state[r, c]) == 1:
+            labels[r, c] = val
+            state[r, c] = 2
+
+    max_iter = H * W
+    for _ in range(max_iter):
+        changed[0] = 0
+        _propagate_labels_gpu[griddim, blockdim](
+            flow_dir_f64, labels, state, changed, H, W)
+        if int(changed[0]) == 0:
+            break
+        _advance_frontier_gpu[griddim, blockdim](state, H, W)
+
+    labels = cp.where((state == 1) | (state == 0), cp.nan, labels)
+    return labels
+
+
+def _process_tile_watershed_cupy(iy, ix, flow_dir_da, pour_points_da,
+                                  boundaries, flow_bdry,
+                                  chunks_y, chunks_x, n_tile_y, n_tile_x):
+    """Run seeded GPU watershed on one tile; update boundaries."""
+    import cupy as cp
+
+    chunk = cp.asarray(
+        flow_dir_da.blocks[iy, ix].compute(), dtype=cp.float64)
+    pp_chunk = cp.asarray(
+        pour_points_da.blocks[iy, ix].compute(), dtype=cp.float64)
+
+    exits = _compute_exit_labels(
+        iy, ix, boundaries, flow_bdry,
+        chunks_y, chunks_x, n_tile_y, n_tile_x)
+
+    result = _watershed_tile_cupy(chunk, pp_chunk, *exits)
+
+    new_top = result[0, :].get().copy()
+    new_bottom = result[-1, :].get().copy()
+    new_left = result[:, 0].get().copy()
+    new_right = result[:, -1].get().copy()
+
+    changed = False
+    for side, new in (('top', new_top), ('bottom', new_bottom),
+                      ('left', new_left), ('right', new_right)):
+        old = boundaries.get(side, iy, ix).copy()
+        with np.errstate(invalid='ignore'):
+            mask = ~(np.isnan(old) & np.isnan(new))
+            if mask.any():
+                diff = old[mask] != new[mask]
+                if np.any(diff):
+                    changed = True
+                    break
+
+    boundaries.set('top', iy, ix, new_top)
+    boundaries.set('bottom', iy, ix, new_bottom)
+    boundaries.set('left', iy, ix, new_left)
+    boundaries.set('right', iy, ix, new_right)
+
+    return changed
+
+
+def _assemble_watershed_cupy(flow_dir_da, pour_points_da,
+                              boundaries, flow_bdry,
+                              chunks_y, chunks_x, n_tile_y, n_tile_x):
+    """Build lazy dask+cupy array using GPU watershed tile kernel."""
+    import cupy as cp
+
+    def _tile_fn(flow_dir_block, pp_block, block_info=None):
+        if block_info is None or 0 not in block_info:
+            return cp.full(flow_dir_block.shape, cp.nan, dtype=cp.float64)
+        iy, ix = block_info[0]['chunk-location']
+        exits = _compute_exit_labels(
+            iy, ix, boundaries, flow_bdry,
+            chunks_y, chunks_x, n_tile_y, n_tile_x)
+        return _watershed_tile_cupy(
+            cp.asarray(flow_dir_block, dtype=cp.float64),
+            cp.asarray(pp_block, dtype=cp.float64),
+            *exits)
+
+    return da.map_blocks(
+        _tile_fn,
+        flow_dir_da, pour_points_da,
+        dtype=np.float64,
+        meta=cp.array((), dtype=cp.float64),
     )
-    pp_np = pour_points_da.map_blocks(
-        lambda b: b.get(), dtype=pour_points_da.dtype,
-        meta=np.array((), dtype=pour_points_da.dtype),
-    )
-    result = _watershed_dask_iterative(flow_dir_np, pp_np)
-    return result.map_blocks(
-        cp.asarray, dtype=result.dtype,
-        meta=cp.array((), dtype=result.dtype),
-    )
+
+
+def _watershed_dask_cupy(flow_dir_da, pour_points_da):
+    """Dask+CuPy watershed: native GPU processing per tile."""
+    chunks_y = flow_dir_da.chunks[0]
+    chunks_x = flow_dir_da.chunks[1]
+    n_tile_y = len(chunks_y)
+    n_tile_x = len(chunks_x)
+
+    flow_bdry = _preprocess_tiles(flow_dir_da, chunks_y, chunks_x)
+    flow_bdry = flow_bdry.snapshot()
+
+    boundaries = BoundaryStore(chunks_y, chunks_x, fill_value=np.nan)
+
+    max_iterations = max(n_tile_y, n_tile_x) * 2 + 10
+
+    for _iteration in range(max_iterations):
+        any_changed = False
+
+        for iy in range(n_tile_y):
+            for ix in range(n_tile_x):
+                c = _process_tile_watershed_cupy(
+                    iy, ix, flow_dir_da, pour_points_da,
+                    boundaries, flow_bdry,
+                    chunks_y, chunks_x, n_tile_y, n_tile_x)
+                if c:
+                    any_changed = True
+
+        for iy in reversed(range(n_tile_y)):
+            for ix in reversed(range(n_tile_x)):
+                c = _process_tile_watershed_cupy(
+                    iy, ix, flow_dir_da, pour_points_da,
+                    boundaries, flow_bdry,
+                    chunks_y, chunks_x, n_tile_y, n_tile_x)
+                if c:
+                    any_changed = True
+
+        if not any_changed:
+            break
+
+    boundaries = boundaries.snapshot()
+
+    return _assemble_watershed_cupy(flow_dir_da, pour_points_da,
+                                     boundaries, flow_bdry,
+                                     chunks_y, chunks_x, n_tile_y, n_tile_x)
 
 
 

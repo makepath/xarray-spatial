@@ -845,6 +845,161 @@ def ndmi(nir_agg: xr.DataArray,
                      attrs=nir_agg.attrs)
 
 
+# NDWI ----------
+@supports_dataset_bands(green='green_agg', nir='nir_agg')
+def ndwi(green_agg: xr.DataArray,
+         nir_agg: xr.DataArray,
+         name='ndwi'):
+    """
+    Computes Normalized Difference Water Index (NDWI).
+
+    NDWI highlights open water features while suppressing vegetation
+    and soil signal.
+
+    Parameters
+    ----------
+    green_agg : xr.DataArray
+        2D array of green band data.
+        (Landsat 8: Band 3)
+        (Sentinel-2: Band 3)
+    nir_agg : xr.DataArray
+        2D array of near-infrared band data.
+        (Landsat 8: Band 5)
+        (Sentinel-2: Band 8)
+    name : str, default='ndwi'
+        Name of output DataArray.
+
+    Alternatively, a single ``xr.Dataset`` may be passed as the first
+    argument with keyword arguments mapping band names to Dataset
+    variables. For example::
+
+        ndwi(ds, green='B3', nir='B8')
+
+    Returns
+    -------
+    ndwi_agg : xr.DataArray of same type as inputs
+        2D array of ndwi values in the range [-1, 1].
+        All other input attributes are preserved.
+
+    References
+    ----------
+        - McFeeters, S.K., 1996. The use of the Normalized Difference
+          Water Index (NDWI) in the delineation of open water features.
+          International Journal of Remote Sensing, 17(7), pp.1425-1432.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.multispectral import ndwi
+        >>> green = xr.DataArray(np.array([[600., 500.], [400., 300.]]))
+        >>> nir = xr.DataArray(np.array([[300., 400.], [500., 600.]]))
+        >>> ndwi(green, nir).values
+        array([[ 0.33333334,  0.11111111],
+               [-0.11111111, -0.33333334]], dtype=float32)
+    """
+
+    _validate_raster(green_agg, func_name='ndwi', name='green_agg')
+    _validate_raster(nir_agg, func_name='ndwi', name='nir_agg')
+
+    validate_arrays(green_agg, nir_agg)
+
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
+
+    out = mapper(green_agg)(green_agg.data.astype('f4'), nir_agg.data.astype('f4'))
+
+    return DataArray(out,
+                     name=name,
+                     coords=green_agg.coords,
+                     dims=green_agg.dims,
+                     attrs=green_agg.attrs)
+
+
+# MNDWI ----------
+@supports_dataset_bands(green='green_agg', swir='swir_agg')
+def mndwi(green_agg: xr.DataArray,
+          swir_agg: xr.DataArray,
+          name='mndwi'):
+    """
+    Computes Modified Normalized Difference Water Index (MNDWI).
+
+    MNDWI improves on NDWI for urban areas by substituting SWIR for
+    NIR, which reduces false positives from built-up surfaces.
+
+    Parameters
+    ----------
+    green_agg : xr.DataArray
+        2D array of green band data.
+        (Landsat 8: Band 3)
+        (Sentinel-2: Band 3)
+    swir_agg : xr.DataArray
+        2D array of shortwave infrared band data.
+        (Landsat 8: Band 6)
+        (Sentinel-2: Band 11)
+    name : str, default='mndwi'
+        Name of output DataArray.
+
+    Alternatively, a single ``xr.Dataset`` may be passed as the first
+    argument with keyword arguments mapping band names to Dataset
+    variables. For example::
+
+        mndwi(ds, green='B3', swir='B11')
+
+    Returns
+    -------
+    mndwi_agg : xr.DataArray of same type as inputs
+        2D array of mndwi values in the range [-1, 1].
+        All other input attributes are preserved.
+
+    References
+    ----------
+        - Xu, H., 2006. Modification of normalised difference water
+          index (NDWI) to enhance open water features in remotely
+          sensed imagery. International Journal of Remote Sensing,
+          27(14), pp.3025-3033.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.multispectral import mndwi
+        >>> green = xr.DataArray(np.array([[600., 500.], [400., 300.]]))
+        >>> swir = xr.DataArray(np.array([[300., 400.], [500., 600.]]))
+        >>> mndwi(green, swir).values
+        array([[ 0.33333334,  0.11111111],
+               [-0.11111111, -0.33333334]], dtype=float32)
+    """
+
+    _validate_raster(green_agg, func_name='mndwi', name='green_agg')
+    _validate_raster(swir_agg, func_name='mndwi', name='swir_agg')
+
+    validate_arrays(green_agg, swir_agg)
+
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
+
+    out = mapper(green_agg)(green_agg.data.astype('f4'), swir_agg.data.astype('f4'))
+
+    return DataArray(out,
+                     name=name,
+                     coords=green_agg.coords,
+                     dims=green_agg.dims,
+                     attrs=green_agg.attrs)
+
+
 @ngjit
 def _normalized_ratio_cpu(arr1, arr2):
     out = np.full(arr1.shape, np.nan, dtype=np.float32)

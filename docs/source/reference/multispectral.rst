@@ -53,6 +53,20 @@ Normalized Difference Moisture Index (NDMI)
 
     xrspatial.multispectral.ndmi
 
+Normalized Difference Water Index (NDWI)
+========================================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.ndwi
+
+Modified Normalized Difference Water Index (MNDWI)
+==================================================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.mndwi
+
 Normalized Difference Vegetation Index (NDVI)
 =============================================
 .. autosummary::

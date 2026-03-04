@@ -4,10 +4,8 @@ from __future__ import annotations
 from functools import partial
 from typing import Dict, List, Optional, Tuple, Union
 
-import datashader as ds
 # 3rd-party
 import numpy as np
-import pandas as pd
 import xarray as xr
 
 try:
@@ -633,18 +631,16 @@ def generate_terrain(agg: xr.DataArray,
                       octaves, lacunarity, persistence, noise_mode,
                       warp_strength, warp_octaves, worley_blend, worley_seed)
 
-    canvas = ds.Canvas(
-        plot_width=width, plot_height=height, x_range=x_range, y_range=y_range
-    )
-
-    # DataArray coords were coming back different from cvs.points...
-    hack_agg = canvas.points(pd.DataFrame({'x': [], 'y': []}), 'x', 'y')
-    res = get_dataarray_resolution(hack_agg)
+    # Build pixel-center coordinates (matches datashader Canvas convention)
+    dx = (x_range[1] - x_range[0]) / width
+    dy = (y_range[1] - y_range[0]) / height
+    xs = np.linspace(x_range[0] + dx / 2, x_range[1] - dx / 2, width)
+    ys = np.linspace(y_range[0] + dy / 2, y_range[1] - dy / 2, height)
     result = xr.DataArray(out,
                           name=name,
-                          coords=hack_agg.coords,
-                          dims=hack_agg.dims,
-                          attrs={'res': res})
+                          coords={'y': ys, 'x': xs},
+                          dims=['y', 'x'],
+                          attrs={'res': (dx, dy)})
 
     # --- hydraulic erosion ---
     if erode:
