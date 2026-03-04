@@ -34,3 +34,24 @@ Cost Distance
     :toctree: _autosummary
 
     xrspatial.cost_distance.cost_distance
+
+Surface Distance
+================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.surface_distance.surface_distance
+
+Surface Allocation
+==================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.surface_distance.surface_allocation
+
+Surface Direction
+=================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.surface_distance.surface_direction
