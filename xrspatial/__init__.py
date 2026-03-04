@@ -11,6 +11,7 @@ from xrspatial.classify import maximum_breaks  # noqa
 from xrspatial.classify import percentiles  # noqa
 from xrspatial.classify import std_mean  # noqa
 from xrspatial.diagnostics import diagnose  # noqa
+from xrspatial.diffusion import diffuse  # noqa
 from xrspatial.classify import equal_interval  # noqa
 from xrspatial.classify import natural_breaks  # noqa
 from xrspatial.classify import quantile  # noqa
