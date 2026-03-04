@@ -297,7 +297,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [IDW](xrspatial/interpolate/_idw.py) | Inverse Distance Weighting from scattered points to a raster grid | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Kriging](xrspatial/interpolate/_kriging.py) | Ordinary Kriging with automatic variogram fitting (spherical, exponential, gaussian) | ✅️ | ✅️ | | |
+| [Kriging](xrspatial/interpolate/_kriging.py) | Ordinary Kriging with automatic variogram fitting (spherical, exponential, gaussian) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Spline](xrspatial/interpolate/_spline.py) | Thin Plate Spline interpolation with optional smoothing | ✅️ | ✅️ | ✅️ | ✅️ |
 
 -----------
