@@ -59,3 +59,10 @@ Bump Mapping
     :toctree: _autosummary
 
     xrspatial.bump.bump
+
+Erosion
+=======
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.erosion.erode
