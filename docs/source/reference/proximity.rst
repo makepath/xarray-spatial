@@ -35,6 +35,13 @@ Cost Distance
 
     xrspatial.cost_distance.cost_distance
 
+Least-Cost Corridor
+====================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.corridor.least_cost_corridor
+
 Balanced Allocation
 ====================
 .. autosummary::

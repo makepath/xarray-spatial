@@ -241,6 +241,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Allocation](xrspatial/proximity.py) | Assigns each cell to the identity of the nearest source feature | ✅️ | ✅ | ✅️ | ✅️ |
 | [Balanced Allocation](xrspatial/balanced_allocation.py) | Partitions a cost surface into territories of roughly equal cost-weighted area | ✅️ | ✅ | ✅️ | ✅️ |
 | [Cost Distance](xrspatial/cost_distance.py) | Computes minimum accumulated cost to the nearest source through a friction surface | ✅️ | ✅ | ✅️ | ✅️ |
+| [Least-Cost Corridor](xrspatial/corridor.py) | Identifies zones of low cumulative cost between two source locations | ✅️ | ✅ | ✅️ | ✅️ |
 | [Direction](xrspatial/proximity.py) | Computes the direction from each cell to the nearest source feature | ✅️ | ✅ | ✅️ | ✅️ |
 | [Proximity](xrspatial/proximity.py) | Computes the distance from each cell to the nearest source feature | ✅️ | ✅ | ✅️ | ✅️ |
 | [Surface Distance](xrspatial/surface_distance.py) | Computes distance along the 3D terrain surface to the nearest source | ✅️ | ✅ | ✅️ | ✅️ |

@@ -1,6 +1,7 @@
 from xrspatial.aspect import aspect  # noqa
 from xrspatial.balanced_allocation import balanced_allocation  # noqa
 from xrspatial.bump import bump  # noqa
+from xrspatial.corridor import least_cost_corridor  # noqa
 from xrspatial.cost_distance import cost_distance  # noqa
 from xrspatial.dasymetric import disaggregate  # noqa
 from xrspatial.dasymetric import pycnophylactic  # noqa
