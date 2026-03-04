@@ -25,6 +25,13 @@ Mean
 
    xrspatial.focal.mean
 
+Bilateral
+=========
+.. autosummary::
+   :toctree: _autosummary
+
+   xrspatial.bilateral.bilateral
+
 
 Focal Statistics
 ================
