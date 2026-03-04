@@ -3,11 +3,8 @@ from __future__ import annotations
 from math import ceil
 import warnings
 
-import datashader as ds
-import datashader.transfer_functions as tf
 import numpy as np
 import xarray as xr
-from datashader.colors import rgb
 from numba import cuda, jit
 
 try:
@@ -558,6 +555,8 @@ def height_implied_by_aspect_ratio(W, X, Y):
 
 
 def bands_to_img(r, g, b, nodata=1):
+    from PIL import Image
+
     h, w = r.shape
     data = np.zeros((h, w, 4), dtype=np.uint8)
     data[:, :, 0] = (r).astype(np.uint8)
@@ -565,7 +564,7 @@ def bands_to_img(r, g, b, nodata=1):
     data[:, :, 2] = (b).astype(np.uint8)
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
     data[:, :, 3] = a.astype(np.uint8)
-    return tf.Image.fromarray(data, "RGBA")
+    return Image.fromarray(data, "RGBA")
 
 
 def canvas_like(
@@ -631,6 +630,13 @@ def canvas_like(
         # set width and height
         height = height_implied_by_aspect_ratio(width, x_range, y_range)
 
+    try:
+        import datashader as ds
+    except ImportError:
+        raise ImportError(
+            "canvas_like requires datashader: pip install datashader"
+        )
+
     cvs = ds.Canvas(
         plot_width=width, plot_height=height, x_range=x_range, y_range=y_range
     )
@@ -639,14 +645,23 @@ def canvas_like(
     return out
 
 
+def _hex_to_rgb(c):
+    """Convert a hex color string (e.g. '#ff0000' or 'ff0000') to (r, g, b)."""
+    c = c.lstrip('#')
+    return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+
+
 def color_values(agg, color_key, alpha=255):
+    from PIL import Image
+
     def _convert_color(c):
-        r, g, b = rgb(c)
+        r, g, b = _hex_to_rgb(c)
         return np.array([r, g, b, alpha]).astype(np.uint8).view(np.uint32)[0]
 
     _converted_colors = {k: _convert_color(v) for k, v in color_key.items()}
     f = np.vectorize(lambda v: _converted_colors.get(v, 0))
-    return tf.Image(f(agg.data))
+    return Image.fromarray(f(agg.data).astype(np.uint32).view(np.uint8).reshape(
+        agg.data.shape + (4,)), "RGBA")
 
 
 def _infer_coord_unit_type(coord: xr.DataArray, cellsize: float) -> str:

@@ -1,7 +1,5 @@
 import dask.array as da
-import datashader as ds
 import numpy as np
-import pandas as pd
 import pytest
 import xarray as xa
 
@@ -14,19 +12,23 @@ from ..gpu_rtx import has_rtx
 
 @pytest.fixture
 def empty_agg():
-    # create an empty image of size 5*5
+    # create an empty DataArray of size 5x5 with coordinates
     H = 5
     W = 5
+    x_range = (-20, 20)
+    y_range = (-20, 20)
 
-    canvas = ds.Canvas(plot_width=W, plot_height=H,
-                       x_range=(-20, 20), y_range=(-20, 20))
+    dx = (x_range[1] - x_range[0]) / W
+    dy = (y_range[1] - y_range[0]) / H
+    xs = np.linspace(x_range[0] + dx / 2, x_range[1] - dx / 2, W)
+    ys = np.linspace(y_range[0] + dy / 2, y_range[1] - dy / 2, H)
 
-    empty_df = pd.DataFrame({
-       'x': np.random.normal(.5, 1, 0),
-       'y': np.random.normal(.5, 1, 0)
-    })
-    agg = canvas.points(empty_df, 'x', 'y')
-    return agg.astype('i8')
+    agg = xa.DataArray(
+        np.zeros((H, W), dtype='i8'),
+        coords={'y': ys, 'x': xs},
+        dims=['y', 'x'],
+    )
+    return agg
 
 
 def test_viewshed_invalid_x_view(empty_agg):
