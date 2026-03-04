@@ -38,6 +38,7 @@ from xrspatial.flood import travel_time  # noqa
 from xrspatial.flow_accumulation import flow_accumulation  # noqa
 from xrspatial.flow_direction import flow_direction  # noqa
 from xrspatial.flow_direction_dinf import flow_direction_dinf  # noqa
+from xrspatial.flow_direction_mfd import flow_direction_mfd  # noqa
 from xrspatial.flow_length import flow_length  # noqa
 from xrspatial.flow_path import flow_path  # noqa
 from xrspatial.focal import mean  # noqa
