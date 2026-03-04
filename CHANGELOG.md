@@ -2,6 +2,31 @@
 -----------
 
 
+### Version 0.9.0 - 2026-03-04
+
+#### New Features
+- Add least-cost corridor analysis (#965) (#968)
+- Add native Dask+CuPy backends for hydrology core functions (#952) (#966)
+- Add native CUDA kernel for hydraulic erosion (#961) (#967)
+- Add CuPy and Dask+CuPy backends for kriging (#951) (#960)
+- Add NDWI and MNDWI water indices (#959)
+- Add morphological raster operators (#949) (#958)
+- Add TPI-based landform classification (#950) (#957)
+- Add MFD flow direction and accumulation (#946) (#956)
+- Add balanced service area partitioning (#939) (#943)
+- Add Dinf support to flow_accumulation() (#945)
+- Add scalar diffusion solver (#940) (#944)
+- Add multi_stop_search for multi-waypoint routing (#935) (#937)
+- Add raster-based dasymetric mapping module (#930) (#936)
+- Add interpolation tools: IDW, Kriging, and Spline (#932) (#934)
+
+#### Bug Fixes & Improvements
+- Remove esri.py and datashader from core dependencies (#953)
+- Add HAND and TWI to README feature matrix (#954) (#955)
+- Add missing API reference docs for ~30 undocumented functions (#941) (#942)
+- Remove unnecessary array copies to reduce memory allocations (#933)
+
+
 ### Version 0.8.0 - 2026-03-03
 
 #### New Features
