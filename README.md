@@ -151,6 +151,14 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 -------
 
+### **Diffusion**
+
+| Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Diffuse](xrspatial/diffusion.py) | Runs explicit forward-Euler diffusion on a 2D scalar field | ✅️ | ✅️ | ✅️ | ✅️ |
+
+-------
+
 ### **Focal**
 
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |

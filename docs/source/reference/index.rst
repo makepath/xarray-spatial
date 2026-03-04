@@ -9,6 +9,7 @@ Reference
 
    classification
    dasymetric
+   diffusion
    fire
    flood
    focal

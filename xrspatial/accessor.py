@@ -235,6 +235,12 @@ class XrsSpatialDataArrayAccessor:
         from .zonal import regions
         return regions(self._obj, **kwargs)
 
+    # ---- Diffusion ----
+
+    def diffuse(self, **kwargs):
+        from .diffusion import diffuse
+        return diffuse(self._obj, **kwargs)
+
     # ---- Dasymetric ----
 
     def disaggregate(self, values, weight, **kwargs):
@@ -494,6 +500,12 @@ class XrsSpatialDatasetAccessor:
     def focal_mean(self, **kwargs):
         from .focal import mean
         return mean(self._obj, **kwargs)
+
+    # ---- Diffusion ----
+
+    def diffuse(self, **kwargs):
+        from .diffusion import diffuse
+        return diffuse(self._obj, **kwargs)
 
     # ---- Proximity ----
 
