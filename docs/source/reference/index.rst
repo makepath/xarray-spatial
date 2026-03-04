@@ -8,6 +8,7 @@ Reference
    :maxdepth: 2
 
    classification
+   dasymetric
    fire
    flood
    focal
