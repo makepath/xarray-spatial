@@ -18,6 +18,13 @@ Flow Direction (D-infinity)
 
     xrspatial.flow_direction_dinf.flow_direction_dinf
 
+Flow Direction (MFD)
+====================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.flow_direction_mfd.flow_direction_mfd
+
 Flow Accumulation
 =================
 .. autosummary::
