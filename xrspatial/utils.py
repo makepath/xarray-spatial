@@ -6,7 +6,6 @@ import warnings
 import numpy as np
 import xarray as xr
 from numba import cuda, jit
-from PIL import Image
 
 try:
     import cupy
@@ -556,6 +555,8 @@ def height_implied_by_aspect_ratio(W, X, Y):
 
 
 def bands_to_img(r, g, b, nodata=1):
+    from PIL import Image
+
     h, w = r.shape
     data = np.zeros((h, w, 4), dtype=np.uint8)
     data[:, :, 0] = (r).astype(np.uint8)
@@ -651,6 +652,8 @@ def _hex_to_rgb(c):
 
 
 def color_values(agg, color_key, alpha=255):
+    from PIL import Image
+
     def _convert_color(c):
         r, g, b = _hex_to_rgb(c)
         return np.array([r, g, b, alpha]).astype(np.uint8).view(np.uint32)[0]
