@@ -256,6 +256,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Terrain Generation](xrspatial/terrain.py) | Generates synthetic terrain from fBm or ridged fractal noise with optional domain warping, Worley blending, and hydraulic erosion | ✅️ | ✅️ | ✅️ | ✅️ |
 | [TPI](xrspatial/terrain_metrics.py) | Computes Topographic Position Index (center minus mean of neighbors) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [TRI](xrspatial/terrain_metrics.py) | Computes Terrain Ruggedness Index (local elevation variation) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Landforms](xrspatial/terrain_metrics.py) | Classifies terrain into 10 landform types using the Weiss (2001) TPI scheme | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Viewshed](xrspatial/viewshed.py) | Determines visible cells from a given observer point on terrain | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Min Observable Height](xrspatial/experimental/min_observable_height.py) | Finds the minimum observer height needed to see each cell *(experimental)* | ✅️ | | | |
 | [Perlin Noise](xrspatial/perlin.py) | Generates smooth continuous random noise for procedural textures | ✅️ | ✅️ | ✅️ | ✅️ |
