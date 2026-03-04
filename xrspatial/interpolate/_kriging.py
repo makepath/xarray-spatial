@@ -26,12 +26,20 @@ except ImportError:
     da = None
 
 
+def _get_xp(arr):
+    """Return the array module (numpy or cupy) for *arr*."""
+    if cupy is not None and isinstance(arr, cupy.ndarray):
+        return cupy
+    return np
+
+
 # ---------------------------------------------------------------------------
 # Variogram models
 # ---------------------------------------------------------------------------
 
 def _spherical(h, c0, c, a):
-    return np.where(
+    xp = _get_xp(h)
+    return xp.where(
         h < a,
         c0 + c * (1.5 * h / a - 0.5 * (h / a) ** 3),
         c0 + c,
@@ -39,11 +47,13 @@ def _spherical(h, c0, c, a):
 
 
 def _exponential(h, c0, c, a):
-    return c0 + c * (1.0 - np.exp(-3.0 * h / a))
+    xp = _get_xp(h)
+    return c0 + c * (1.0 - xp.exp(-3.0 * h / a))
 
 
 def _gaussian(h, c0, c, a):
-    return c0 + c * (1.0 - np.exp(-3.0 * (h / a) ** 2))
+    xp = _get_xp(h)
+    return c0 + c * (1.0 - xp.exp(-3.0 * (h / a) ** 2))
 
 
 _VARIOGRAM_MODELS = {
@@ -230,14 +240,96 @@ def _kriging_dask_numpy(x_pts, y_pts, z_pts, x_grid, y_grid,
 
 
 # ---------------------------------------------------------------------------
-# GPU stubs
+# CuPy prediction
 # ---------------------------------------------------------------------------
 
-def _kriging_gpu_not_impl(*args, **kwargs):
-    raise NotImplementedError(
-        "kriging(): GPU (CuPy) backend is not supported. "
-        "Use numpy or dask+numpy backend."
+def _kriging_predict_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
+                          vario_func, K_inv, return_variance):
+    """Vectorised kriging prediction on GPU via CuPy."""
+    n = len(x_pts)
+
+    x_gpu = cupy.asarray(x_pts)
+    y_gpu = cupy.asarray(y_pts)
+    z_gpu = cupy.asarray(z_pts)
+    xg_gpu = cupy.asarray(x_grid)
+    yg_gpu = cupy.asarray(y_grid)
+    K_inv_gpu = cupy.asarray(K_inv)
+
+    gx, gy = cupy.meshgrid(xg_gpu, yg_gpu)
+    gx_flat = gx.ravel()
+    gy_flat = gy.ravel()
+
+    dx = gx_flat[:, None] - x_gpu[None, :]
+    dy = gy_flat[:, None] - y_gpu[None, :]
+    dists = cupy.sqrt(dx ** 2 + dy ** 2)
+
+    k0 = cupy.empty((len(gx_flat), n + 1), dtype=np.float64)
+    k0[:, :n] = vario_func(dists)
+    k0[:, n] = 1.0
+
+    w = k0 @ K_inv_gpu
+
+    prediction = (w[:, :n] * z_gpu[None, :]).sum(axis=1)
+    prediction = prediction.reshape(len(y_grid), len(x_grid))
+
+    variance = None
+    if return_variance:
+        variance = cupy.sum(w * k0, axis=1)
+        variance = variance.reshape(len(y_grid), len(x_grid))
+
+    return prediction, variance
+
+
+# ---------------------------------------------------------------------------
+# CuPy backend wrapper
+# ---------------------------------------------------------------------------
+
+def _kriging_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
+                  vario_func, K_inv, return_variance, template_data):
+    return _kriging_predict_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
+                                 vario_func, K_inv, return_variance)
+
+
+# ---------------------------------------------------------------------------
+# Dask + CuPy backend
+# ---------------------------------------------------------------------------
+
+def _kriging_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
+                       vario_func, K_inv, return_variance, template_data):
+
+    def _chunk_pred(block, block_info=None):
+        if block_info is None:
+            return block
+        loc = block_info[0]['array-location']
+        y_sl = y_grid[loc[0][0]:loc[0][1]]
+        x_sl = x_grid[loc[1][0]:loc[1][1]]
+        pred, _ = _kriging_predict_cupy(x_pts, y_pts, z_pts, x_sl, y_sl,
+                                        vario_func, K_inv, False)
+        return pred
+
+    prediction = da.map_blocks(
+        _chunk_pred, template_data, dtype=np.float64,
+        meta=cupy.array((), dtype=np.float64),
     )
+
+    variance = None
+    if return_variance:
+        def _chunk_var(block, block_info=None):
+            if block_info is None:
+                return block
+            loc = block_info[0]['array-location']
+            y_sl = y_grid[loc[0][0]:loc[0][1]]
+            x_sl = x_grid[loc[1][0]:loc[1][1]]
+            _, var = _kriging_predict_cupy(x_pts, y_pts, z_pts, x_sl, y_sl,
+                                          vario_func, K_inv, True)
+            return var
+
+        variance = da.map_blocks(
+            _chunk_var, template_data, dtype=np.float64,
+            meta=cupy.array((), dtype=np.float64),
+        )
+
+    return prediction, variance
 
 
 # ---------------------------------------------------------------------------
@@ -320,9 +412,9 @@ def kriging(x, y, z, template, variogram_model='spherical', nlags=15,
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_kriging_numpy,
-        cupy_func=_kriging_gpu_not_impl,
+        cupy_func=_kriging_cupy,
         dask_func=_kriging_dask_numpy,
-        dask_cupy_func=_kriging_gpu_not_impl,
+        dask_cupy_func=_kriging_dask_cupy,
     )
 
     pred_arr, var_arr = mapper(template)(
