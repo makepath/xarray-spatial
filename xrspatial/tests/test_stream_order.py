@@ -441,3 +441,29 @@ def test_dask_cupy_equivalence(method):
     dcp_result = stream_order(dcp_fd, dcp_fa, threshold=1, method=method)
     np.testing.assert_allclose(
         np_result.data, dcp_result.data.compute().get(), equal_nan=True)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+@pytest.mark.parametrize("method", ['strahler', 'shreve'])
+def test_dask_cupy_random(method):
+    """Random acyclic flow: dask+cupy matches numpy."""
+    from xrspatial import flow_direction, flow_accumulation
+
+    rng = np.random.default_rng(952)
+    elev = rng.random((8, 10)).astype(np.float64)
+    elev_da = create_test_raster(elev, backend='numpy')
+    fd = flow_direction(elev_da)
+    fa = flow_accumulation(fd)
+
+    np_result = stream_order(fd, fa, threshold=3, method=method)
+
+    fd_data = fd.data
+    fa_data = fa.data
+    for chunks in [(3, 3), (4, 5), (2, 2)]:
+        dcp_fd = create_test_raster(fd_data, backend='dask+cupy', chunks=chunks)
+        dcp_fa = create_test_raster(fa_data, backend='dask+cupy', chunks=chunks)
+        dcp_result = stream_order(dcp_fd, dcp_fa, threshold=3, method=method)
+        np.testing.assert_allclose(
+            np_result.data, dcp_result.data.compute().get(), equal_nan=True,
+        ), f"Mismatch with chunks={chunks}, method={method}"

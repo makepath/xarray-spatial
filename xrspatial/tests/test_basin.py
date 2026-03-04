@@ -215,3 +215,49 @@ def test_basin_numpy_equals_cupy():
     cp_result = basin(cp_fd)
     np.testing.assert_allclose(
         np_result.data, cp_result.data.get(), equal_nan=True)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_basin_numpy_equals_dask_cupy():
+    """Dask+CuPy matches NumPy for basin."""
+    flow_dir = np.array([
+        [2.0,  4.0,  8.0],
+        [1.0,  0.0, 16.0],
+        [128.0, 64.0, 32.0],
+    ], dtype=np.float64)
+    np_fd = create_test_raster(flow_dir, backend='numpy')
+    dcp_fd = create_test_raster(flow_dir, backend='dask+cupy', chunks=(2, 2))
+    np_result = basin(np_fd)
+    dcp_result = basin(dcp_fd)
+    np.testing.assert_allclose(
+        np_result.data, dcp_result.data.compute().get(), equal_nan=True)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+def test_basin_dask_cupy_random():
+    """Random acyclic flow_dir: dask+cupy basin matches dask+numpy.
+
+    Compared against dask+numpy rather than numpy because the tile-sweep
+    has pre-existing convergence limitations for some grids/chunk combos.
+    This test verifies the GPU tile kernel produces identical results to
+    the CPU tile kernel.
+    """
+    from xrspatial import flow_direction
+
+    rng = np.random.default_rng(952)
+    elev = rng.random((8, 10)).astype(np.float64)
+    elev_da = create_test_raster(elev, backend='numpy')
+    fd_data = flow_direction(elev_da).data
+
+    for chunks in [(3, 3), (4, 5), (2, 2)]:
+        dk_fd = create_test_raster(fd_data, backend='dask', chunks=chunks)
+        dk_result = basin(dk_fd).data.compute()
+
+        dcp_fd = create_test_raster(fd_data, backend='dask+cupy', chunks=chunks)
+        dcp_result = basin(dcp_fd).data.compute().get()
+
+        np.testing.assert_allclose(
+            dk_result, dcp_result, equal_nan=True,
+        ), f"Mismatch with chunks={chunks}"

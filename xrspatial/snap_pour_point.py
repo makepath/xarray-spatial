@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import numpy as np
 import xarray as xr
+from numba import cuda
 
 try:
     import cupy
@@ -35,12 +36,20 @@ except ImportError:
 
 from xrspatial.utils import (
     _validate_raster,
+    cuda_args,
     has_cuda_and_cupy,
     is_cupy_array,
     is_dask_cupy,
     ngjit,
 )
 from xrspatial.dataset_support import supports_dataset
+
+
+def _to_numpy_f64(arr):
+    """Convert *arr* to a contiguous numpy float64 array (handles CuPy)."""
+    if hasattr(arr, 'get'):
+        arr = arr.get()
+    return np.asarray(arr, dtype=np.float64)
 
 
 # =====================================================================
@@ -106,17 +115,99 @@ def _snap_pour_point_cpu(flow_accum, pour_points, search_radius, H, W):
 # CuPy backend
 # =====================================================================
 
+@cuda.jit
+def _snap_pour_point_gpu(flow_accum, pp_rows, pp_cols,
+                          snap_rows, snap_cols, search_radius,
+                          n_pp, H, W):
+    """Each thread handles one pour point: windowed max search on GPU."""
+    k = cuda.grid(1)
+    if k >= n_pp:
+        return
+
+    r = pp_rows[k]
+    c = pp_cols[k]
+
+    best_r = r
+    best_c = c
+    fa_val = flow_accum[r, c]
+    if fa_val == fa_val:  # not NaN
+        best_accum = fa_val
+    else:
+        best_accum = -1e308
+
+    radius_sq = search_radius * search_radius
+
+    r_lo = r - search_radius
+    if r_lo < 0:
+        r_lo = 0
+    r_hi = r + search_radius
+    if r_hi >= H:
+        r_hi = H - 1
+    c_lo = c - search_radius
+    if c_lo < 0:
+        c_lo = 0
+    c_hi = c + search_radius
+    if c_hi >= W:
+        c_hi = W - 1
+
+    for nr in range(r_lo, r_hi + 1):
+        for nc in range(c_lo, c_hi + 1):
+            dr = nr - r
+            dc = nc - c
+            if dr * dr + dc * dc > radius_sq:
+                continue
+            fa_n = flow_accum[nr, nc]
+            if fa_n != fa_n:  # NaN
+                continue
+            if fa_n > best_accum:
+                best_accum = fa_n
+                best_r = nr
+                best_c = nc
+
+    snap_rows[k] = best_r
+    snap_cols[k] = best_c
+
+
 def _snap_pour_point_cupy(flow_accum_data, pour_points_data, search_radius):
-    """CuPy: convert to numpy, run CPU kernel, convert back."""
+    """Native CuPy: CUDA kernel for windowed max search per pour point.
+
+    Flow accumulation data stays on GPU.  Only pour point coordinates
+    (sparse, typically < 100) are transferred CPU/GPU.
+    """
     import cupy as cp
 
-    fa_np = flow_accum_data.get() if hasattr(flow_accum_data, 'get') else np.asarray(flow_accum_data)
-    pp_np = pour_points_data.get() if hasattr(pour_points_data, 'get') else np.asarray(pour_points_data)
-    fa_np = fa_np.astype(np.float64)
-    pp_np = pp_np.astype(np.float64)
-    H, W = fa_np.shape
-    out = _snap_pour_point_cpu(fa_np, pp_np, search_radius, H, W)
-    return cp.asarray(out)
+    H, W = flow_accum_data.shape
+    fa = flow_accum_data.astype(cp.float64)
+    pp = pour_points_data.astype(cp.float64)
+    out = cp.full((H, W), cp.nan, dtype=cp.float64)
+
+    mask = ~cp.isnan(pp)
+    if not cp.any(mask):
+        return out
+
+    rows, cols = cp.where(mask)
+    labels = pp[rows, cols]
+    n_pp = len(rows)
+
+    snap_rows = cp.empty(n_pp, dtype=cp.int64)
+    snap_cols = cp.empty(n_pp, dtype=cp.int64)
+
+    threads = min(256, n_pp)
+    blocks = (n_pp + threads - 1) // threads
+
+    _snap_pour_point_gpu[blocks, threads](
+        fa, rows, cols, snap_rows, snap_cols,
+        search_radius, n_pp, H, W)
+
+    # Write labels in raster-scan order (last wins if overlap)
+    # Sort by raster-scan position to ensure deterministic ordering
+    raster_pos = rows * W + cols
+    sort_idx = cp.argsort(raster_pos)
+
+    for k in sort_idx.get():
+        out[int(snap_rows[k]), int(snap_cols[k])] = float(labels[k])
+
+    return out
 
 
 # =====================================================================
@@ -247,22 +338,114 @@ def _snap_pour_point_dask(flow_accum_data, pour_points_data, search_radius):
 # =====================================================================
 
 def _snap_pour_point_dask_cupy(flow_accum_data, pour_points_data, search_radius):
-    """Dask+CuPy: convert cupy chunks to numpy, run dask path, convert back."""
+    """Dask+CuPy: sparse pour-point processing with GPU-resident flow_accum.
+
+    Extracts sparse pour point coordinates from CuPy chunks (small
+    transfers), performs windowed search via dask slicing, and assembles
+    output as dask+cupy.
+    """
     import cupy as cp
 
-    fa_np = flow_accum_data.map_blocks(
-        lambda b: b.get(), dtype=flow_accum_data.dtype,
-        meta=np.array((), dtype=flow_accum_data.dtype),
-    )
-    pp_np = pour_points_data.map_blocks(
-        lambda b: b.get(), dtype=pour_points_data.dtype,
-        meta=np.array((), dtype=pour_points_data.dtype),
-    )
+    H, W = flow_accum_data.shape
+    chunks_y = pour_points_data.chunks[0]
+    chunks_x = pour_points_data.chunks[1]
 
-    result = _snap_pour_point_dask(fa_np, pp_np, search_radius)
-    return result.map_blocks(
-        cp.asarray, dtype=result.dtype,
-        meta=cp.array((), dtype=result.dtype),
+    # Phase 1: identify chunks with pour points
+    def _has_pp(block):
+        b = block.get() if hasattr(block, 'get') else np.asarray(block)
+        return np.array([[np.any(~np.isnan(b)).item()]], dtype=np.int8)
+
+    flags = da.map_blocks(
+        _has_pp, pour_points_data,
+        dtype=np.int8,
+        chunks=tuple((1,) * len(c) for c in pour_points_data.chunks),
+    ).compute()
+
+    # Phase 2: extract coordinates from flagged chunks
+    points = []
+    row_off = 0
+    for iy, cy in enumerate(chunks_y):
+        col_off = 0
+        for ix, cx in enumerate(chunks_x):
+            if flags[iy, ix]:
+                chunk = _to_numpy_f64(
+                    pour_points_data.blocks[iy, ix].compute())
+                rs, cs = np.where(~np.isnan(chunk))
+                for k in range(len(rs)):
+                    points.append((
+                        row_off + int(rs[k]),
+                        col_off + int(cs[k]),
+                        float(chunk[rs[k], cs[k]]),
+                    ))
+            col_off += cx
+        row_off += cy
+
+    # Phase 3: windowed search
+    snapped = []
+    radius_sq = search_radius * search_radius
+
+    for r, c, label in points:
+        r_lo = max(0, r - search_radius)
+        r_hi = min(H - 1, r + search_radius)
+        c_lo = max(0, c - search_radius)
+        c_hi = min(W - 1, c + search_radius)
+
+        window = _to_numpy_f64(
+            flow_accum_data[r_lo:r_hi + 1, c_lo:c_hi + 1].compute())
+
+        best_r, best_c = r, c
+        fa_val = window[r - r_lo, c - c_lo]
+        best_accum = fa_val if not np.isnan(fa_val) else -np.inf
+
+        for wr in range(window.shape[0]):
+            for wc in range(window.shape[1]):
+                nr = r_lo + wr
+                nc = c_lo + wc
+                dr = nr - r
+                dc = nc - c
+                if dr * dr + dc * dc > radius_sq:
+                    continue
+                fa_n = window[wr, wc]
+                if np.isnan(fa_n):
+                    continue
+                if fa_n > best_accum:
+                    best_accum = fa_n
+                    best_r = nr
+                    best_c = nc
+
+        snapped.append((best_r, best_c, label))
+
+    # Phase 4: lazy output assembly as dask+cupy
+    snap_rows = np.array([s[0] for s in snapped], dtype=np.int64) \
+        if snapped else np.array([], dtype=np.int64)
+    snap_cols = np.array([s[1] for s in snapped], dtype=np.int64) \
+        if snapped else np.array([], dtype=np.int64)
+    snap_labels = np.array([s[2] for s in snapped], dtype=np.float64) \
+        if snapped else np.array([], dtype=np.float64)
+
+    _snap_rows = snap_rows
+    _snap_cols = snap_cols
+    _snap_labels = snap_labels
+
+    def _assemble_block(block, block_info=None):
+        if block_info is None or 0 not in block_info:
+            return cp.full(block.shape, cp.nan, dtype=cp.float64)
+        row_start, row_end = block_info[0]['array-location'][0]
+        col_start, col_end = block_info[0]['array-location'][1]
+        h, w = block.shape
+        out = np.full((h, w), np.nan, dtype=np.float64)
+        for k in range(len(_snap_rows)):
+            sr = _snap_rows[k]
+            sc = _snap_cols[k]
+            if row_start <= sr < row_end and col_start <= sc < col_end:
+                out[sr - row_start, sc - col_start] = _snap_labels[k]
+        return cp.asarray(out)
+
+    dummy = da.zeros((H, W), chunks=flow_accum_data.chunks, dtype=np.float64)
+    return da.map_blocks(
+        _assemble_block, dummy,
+        dtype=np.float64,
+        meta=cp.array((), dtype=cp.float64),
     )
 
 

@@ -45,7 +45,7 @@ from xrspatial.utils import (
 from xrspatial._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
 from xrspatial.flow_accumulation import _code_to_offset, _code_to_offset_py
-from xrspatial.stream_order import _preprocess_stream_tiles
+from xrspatial.stream_order import _preprocess_stream_tiles, _to_numpy_f64
 
 
 # =====================================================================
@@ -318,6 +318,100 @@ def _stream_link_cupy(flow_dir_data, stream_mask_data):
         changed[0] = 0
         _stream_link_find_ready[griddim, blockdim](
             in_degree, orig_indeg, state, link_id, changed, H, W)
+
+        if int(changed[0]) == 0:
+            break
+
+        _stream_link_pull[griddim, blockdim](
+            flow_dir_f64, stream_mask_i8, in_degree, orig_indeg,
+            state, link_id, H, W)
+
+    link_id = cp.where(stream_mask_i8 == 0, cp.nan, link_id)
+    return link_id
+
+
+@cuda.jit
+def _stream_link_find_ready_tile(in_degree, orig_indeg, state, link_id,
+                                  changed, H, W, row_off, col_off, total_w):
+    """Tile-aware find_ready: uses global coordinates for link IDs."""
+    i, j = cuda.grid(2)
+    if i >= H or j >= W:
+        return
+
+    if state[i, j] == 2:
+        state[i, j] = 3
+
+    if state[i, j] == 1 and in_degree[i, j] == 0:
+        state[i, j] = 2
+        if orig_indeg[i, j] == 0 or orig_indeg[i, j] >= 2:
+            gi = row_off + i
+            gj = col_off + j
+            link_id[i, j] = float(gi * total_w + gj + 1)
+        cuda.atomic.add(changed, 0, 1)
+
+
+def _stream_link_tile_cupy(flow_dir_data, stream_mask_data,
+                            seed_id_top, seed_id_bottom,
+                            seed_id_left, seed_id_right,
+                            seed_ext_top, seed_ext_bottom,
+                            seed_ext_left, seed_ext_right,
+                            row_offset, col_offset, total_width):
+    """GPU seeded stream link for a single tile.
+
+    Uses GPU frontier peeling with tile-aware global ID assignment.
+    """
+    import cupy as cp
+
+    H, W = flow_dir_data.shape
+    flow_dir_f64 = flow_dir_data.astype(cp.float64)
+    stream_mask_i8 = stream_mask_data.astype(cp.int8)
+
+    in_degree = cp.zeros((H, W), dtype=cp.int32)
+    orig_indeg = cp.zeros((H, W), dtype=cp.int32)
+    state = cp.zeros((H, W), dtype=cp.int32)
+    link_id = cp.zeros((H, W), dtype=cp.float64)
+    changed = cp.zeros(1, dtype=cp.int32)
+
+    griddim, blockdim = cuda_args((H, W))
+
+    _stream_link_init_gpu[griddim, blockdim](
+        flow_dir_f64, stream_mask_i8, in_degree, orig_indeg,
+        state, link_id, H, W)
+
+    _stream_link_save_indeg[griddim, blockdim](
+        in_degree, orig_indeg, stream_mask_i8, H, W)
+
+    # Add external in-degree counts to orig_indeg (for junction detection)
+    for r_idx, ext in [
+        ((0, slice(None)), seed_ext_top),
+        ((H - 1, slice(None)), seed_ext_bottom),
+        ((slice(None), 0), seed_ext_left),
+        ((slice(None), W - 1), seed_ext_right),
+    ]:
+        ext_cp = cp.asarray(ext).astype(cp.int32)
+        is_stream = stream_mask_i8[r_idx] == 1
+        orig_indeg[r_idx] += cp.where(is_stream, ext_cp, 0)
+
+    # Pre-set link_ids for non-junction boundary cells with seed values
+    for r_idx, s_id in [
+        ((0, slice(None)), seed_id_top),
+        ((H - 1, slice(None)), seed_id_bottom),
+        ((slice(None), 0), seed_id_left),
+        ((slice(None), W - 1), seed_id_right),
+    ]:
+        sid_cp = cp.asarray(s_id)
+        is_stream = stream_mask_i8[r_idx] == 1
+        non_junction = orig_indeg[r_idx] < 2
+        has_seed = sid_cp > 0
+        mask = is_stream & non_junction & has_seed
+        link_id[r_idx] = cp.where(mask, sid_cp, link_id[r_idx])
+
+    max_iter = H * W
+    for _ in range(max_iter):
+        changed[0] = 0
+        _stream_link_find_ready_tile[griddim, blockdim](
+            in_degree, orig_indeg, state, link_id, changed,
+            H, W, row_offset, col_offset, total_width)
 
         if int(changed[0]) == 0:
             break
@@ -765,21 +859,122 @@ def _stream_link_dask(flow_dir_da, accum_da, threshold):
         dtype=np.float64, meta=np.array((), dtype=np.float64))
 
 
-def _stream_link_dask_cupy(flow_dir_da, accum_da, threshold):
-    """Dask+CuPy: convert to numpy, run CPU dask path, convert back."""
+def _process_link_tile_cupy(iy, ix, flow_dir_da, accum_da, threshold,
+                             boundaries, indeg_bdry, flow_bdry, mask_bdry,
+                             chunks_y, chunks_x, n_tile_y, n_tile_x,
+                             row_offsets, col_offsets, total_width):
+    """Run seeded GPU stream link on one tile; update boundary stores."""
     import cupy as cp
 
-    fd_np = flow_dir_da.map_blocks(
-        lambda b: b.get(), dtype=flow_dir_da.dtype,
-        meta=np.array((), dtype=flow_dir_da.dtype))
-    ac_np = accum_da.map_blocks(
-        lambda b: b.get(), dtype=accum_da.dtype,
-        meta=np.array((), dtype=accum_da.dtype))
+    fd_chunk = cp.asarray(
+        flow_dir_da.blocks[iy, ix].compute(), dtype=cp.float64)
+    ac_chunk = _to_numpy_f64(accum_da.blocks[iy, ix].compute())
+    fd_np = fd_chunk.get()
+    sm = np.where(ac_chunk >= threshold, 1, 0).astype(np.int8)
+    sm = np.where(np.isnan(ac_chunk), 0, sm).astype(np.int8)
+    sm = np.where(np.isnan(fd_np), 0, sm).astype(np.int8)
+    sm_cp = cp.asarray(sm)
 
-    result = _stream_link_dask(fd_np, ac_np, threshold)
-    return result.map_blocks(
-        cp.asarray, dtype=result.dtype,
-        meta=cp.array((), dtype=result.dtype))
+    seeds = _compute_link_seeds(
+        iy, ix, boundaries, indeg_bdry, flow_bdry, mask_bdry,
+        chunks_y, chunks_x, n_tile_y, n_tile_x)
+
+    link = _stream_link_tile_cupy(
+        fd_chunk, sm_cp, *seeds,
+        row_offsets[iy], col_offsets[ix], total_width)
+
+    change = 0.0
+    for side, strip_cp in [('top', link[0, :]),
+                           ('bottom', link[-1, :]),
+                           ('left', link[:, 0]),
+                           ('right', link[:, -1])]:
+        new_vals = strip_cp.get().copy()
+        new_vals = np.where(np.isnan(new_vals), 0.0, new_vals)
+        old = boundaries.get(side, iy, ix).copy()
+        with np.errstate(invalid='ignore'):
+            diff = np.abs(new_vals - old)
+        diff = np.where(np.isnan(diff), 0.0, diff)
+        m = float(np.max(diff))
+        if m > change:
+            change = m
+        boundaries.set(side, iy, ix, new_vals)
+
+    return change
+
+
+def _stream_link_dask_cupy(flow_dir_da, accum_da, threshold):
+    """Dask+CuPy: native GPU processing per tile."""
+    import cupy as cp
+
+    chunks_y = flow_dir_da.chunks[0]
+    chunks_x = flow_dir_da.chunks[1]
+    n_tile_y = len(chunks_y)
+    n_tile_x = len(chunks_x)
+    total_width = sum(chunks_x)
+
+    row_offsets = np.zeros(n_tile_y, dtype=np.int64)
+    col_offsets = np.zeros(n_tile_x, dtype=np.int64)
+    if n_tile_y > 1:
+        np.cumsum(chunks_y[:-1], out=row_offsets[1:])
+    if n_tile_x > 1:
+        np.cumsum(chunks_x[:-1], out=col_offsets[1:])
+
+    flow_bdry, mask_bdry = _preprocess_stream_tiles(
+        flow_dir_da, accum_da, threshold, chunks_y, chunks_x)
+    flow_bdry = flow_bdry.snapshot()
+    mask_bdry = mask_bdry.snapshot()
+
+    boundaries = BoundaryStore(chunks_y, chunks_x, fill_value=0.0)
+    indeg_bdry = BoundaryStore(chunks_y, chunks_x, fill_value=0.0)
+
+    max_iterations = max(n_tile_y, n_tile_x) + 10
+    for _ in range(max_iterations):
+        max_change = 0.0
+        for iy in range(n_tile_y):
+            for ix in range(n_tile_x):
+                c = _process_link_tile_cupy(
+                    iy, ix, flow_dir_da, accum_da, threshold,
+                    boundaries, indeg_bdry, flow_bdry, mask_bdry,
+                    chunks_y, chunks_x, n_tile_y, n_tile_x,
+                    row_offsets, col_offsets, total_width)
+                if c > max_change:
+                    max_change = c
+        for iy in reversed(range(n_tile_y)):
+            for ix in reversed(range(n_tile_x)):
+                c = _process_link_tile_cupy(
+                    iy, ix, flow_dir_da, accum_da, threshold,
+                    boundaries, indeg_bdry, flow_bdry, mask_bdry,
+                    chunks_y, chunks_x, n_tile_y, n_tile_x,
+                    row_offsets, col_offsets, total_width)
+                if c > max_change:
+                    max_change = c
+        if max_change == 0.0:
+            break
+
+    _boundaries = boundaries.snapshot()
+    _indeg_bdry = indeg_bdry.snapshot()
+
+    def _tile_fn(block, accum_block, block_info=None):
+        if block_info is None or 0 not in block_info:
+            return cp.full(block.shape, cp.nan, dtype=cp.float64)
+        iy, ix = block_info[0]['chunk-location']
+        fd = cp.asarray(block, dtype=cp.float64)
+        ac_np = _to_numpy_f64(accum_block)
+        fd_np = fd.get()
+        sm = np.where(ac_np >= threshold, 1, 0).astype(np.int8)
+        sm = np.where(np.isnan(ac_np), 0, sm).astype(np.int8)
+        sm = np.where(np.isnan(fd_np), 0, sm).astype(np.int8)
+        sm_cp = cp.asarray(sm)
+        seeds = _compute_link_seeds(
+            iy, ix, _boundaries, _indeg_bdry, flow_bdry, mask_bdry,
+            chunks_y, chunks_x, n_tile_y, n_tile_x)
+        return _stream_link_tile_cupy(
+            fd, sm_cp, *seeds,
+            row_offsets[iy], col_offsets[ix], total_width)
+
+    return da.map_blocks(
+        _tile_fn, flow_dir_da, accum_da,
+        dtype=np.float64, meta=cp.array((), dtype=cp.float64))
 
 
 # =====================================================================

@@ -298,18 +298,33 @@ def _basins_dask_iterative(flow_dir_da):
 
 
 def _basins_dask_cupy(flow_dir_da):
-    """Dask+CuPy basins: convert to numpy, run CPU iterative, convert back."""
+    """Dask+CuPy basins: native GPU via watershed infrastructure."""
     import cupy as cp
+    from xrspatial.watershed import _watershed_dask_cupy
 
-    flow_dir_np = flow_dir_da.map_blocks(
-        lambda b: b.get(), dtype=flow_dir_da.dtype,
-        meta=np.array((), dtype=flow_dir_da.dtype),
-    )
-    result = _basins_dask_iterative(flow_dir_np)
-    return result.map_blocks(
-        cp.asarray, dtype=result.dtype,
-        meta=cp.array((), dtype=result.dtype),
-    )
+    chunks_y = flow_dir_da.chunks[0]
+    chunks_x = flow_dir_da.chunks[1]
+    total_h = sum(chunks_y)
+    total_w = sum(chunks_x)
+
+    def _basins_make_pp_block(flow_dir_block, block_info=None):
+        if block_info is None or 0 not in block_info:
+            return cp.full(flow_dir_block.shape, cp.nan, dtype=cp.float64)
+        row_off = block_info[0]['array-location'][0][0]
+        col_off = block_info[0]['array-location'][1][0]
+        h, w = flow_dir_block.shape
+        chunk_np = flow_dir_block.get() if hasattr(flow_dir_block, 'get') \
+            else np.asarray(flow_dir_block)
+        chunk_np = np.asarray(chunk_np, dtype=np.float64)
+        pp = _basins_init_labels(chunk_np, h, w, total_h, total_w,
+                                  row_off, col_off)
+        return cp.asarray(np.where(pp >= 0, pp, np.nan))
+
+    pour_points_da = da.map_blocks(
+        _basins_make_pp_block, flow_dir_da,
+        dtype=np.float64, meta=cp.array((), dtype=cp.float64))
+
+    return _watershed_dask_cupy(flow_dir_da, pour_points_da)
 
 
 # =====================================================================

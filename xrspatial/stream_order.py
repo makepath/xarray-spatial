@@ -49,6 +49,13 @@ from xrspatial.dataset_support import supports_dataset
 from xrspatial.flow_accumulation import _code_to_offset, _code_to_offset_py
 
 
+def _to_numpy_f64(arr):
+    """Convert *arr* to a contiguous numpy float64 array (handles CuPy)."""
+    if hasattr(arr, 'get'):
+        arr = arr.get()
+    return np.asarray(arr, dtype=np.float64)
+
+
 # =====================================================================
 # CPU kernels
 # =====================================================================
@@ -681,12 +688,11 @@ def _preprocess_stream_tiles(flow_dir_da, accum_da, threshold,
 
     for iy in range(n_tile_y):
         for ix in range(n_tile_x):
-            fd_chunk = np.asarray(
-                flow_dir_da.blocks[iy, ix].compute(), dtype=np.float64)
-            ac_chunk = np.asarray(
-                accum_da.blocks[iy, ix].compute(), dtype=np.float64)
+            fd_chunk = _to_numpy_f64(
+                flow_dir_da.blocks[iy, ix].compute())
+            ac_chunk = _to_numpy_f64(
+                accum_da.blocks[iy, ix].compute())
             sm = np.where(ac_chunk >= threshold, 1.0, 0.0)
-            # NaN in accum → not stream
             sm = np.where(np.isnan(ac_chunk), 0.0, sm)
 
             for side, row_data_fd, row_data_sm in [
@@ -1178,25 +1184,270 @@ def _stream_order_dask_shreve(flow_dir_da, accum_da, threshold):
         dtype=np.float64, meta=np.array((), dtype=np.float64))
 
 
-def _stream_order_dask_cupy(flow_dir_da, accum_da, threshold, method):
-    """Dask+CuPy: convert to numpy, run CPU dask path, convert back."""
+def _stream_order_tile_cupy(flow_dir_data, stream_mask_data, method,
+                             seeds):
+    """GPU seeded stream order for a single tile.
+
+    Uses GPU frontier peeling with seeds injected after initialisation.
+    For Strahler, seeds are (max_top, cnt_top, max_bot, cnt_bot, ...).
+    For Shreve, seeds are (top, bot, left, right).
+    """
     import cupy as cp
 
-    fd_np = flow_dir_da.map_blocks(
-        lambda b: b.get(), dtype=flow_dir_da.dtype,
-        meta=np.array((), dtype=flow_dir_da.dtype))
-    ac_np = accum_da.map_blocks(
-        lambda b: b.get(), dtype=accum_da.dtype,
-        meta=np.array((), dtype=accum_da.dtype))
+    H, W = flow_dir_data.shape
+    flow_dir_f64 = flow_dir_data.astype(cp.float64)
+    stream_mask_i8 = stream_mask_data.astype(cp.int8)
+
+    in_degree = cp.zeros((H, W), dtype=cp.int32)
+    state = cp.zeros((H, W), dtype=cp.int32)
+    order = cp.zeros((H, W), dtype=cp.float64)
+    max_in = cp.zeros((H, W), dtype=cp.float64)
+    cnt_max = cp.zeros((H, W), dtype=cp.int32)
+    changed = cp.zeros(1, dtype=cp.int32)
+
+    griddim, blockdim = cuda_args((H, W))
+
+    _stream_order_init_gpu[griddim, blockdim](
+        flow_dir_f64, stream_mask_i8, in_degree, state,
+        order, max_in, cnt_max, H, W)
 
     if method == 'strahler':
-        result = _stream_order_dask_strahler(fd_np, ac_np, threshold)
+        (smax_top, scnt_top, smax_bot, scnt_bot,
+         smax_left, scnt_left, smax_right, scnt_right) = seeds
+        # Inject Strahler seeds at boundaries.
+        # After init, max_in is 0.0 everywhere.  Where seed_max > 0,
+        # set max_in and cnt_max.
+        for r_idx, s_max, s_cnt in [
+            ((0, slice(None)), smax_top, scnt_top),
+            ((H - 1, slice(None)), smax_bot, scnt_bot),
+            ((slice(None), 0), smax_left, scnt_left),
+            ((slice(None), W - 1), smax_right, scnt_right),
+        ]:
+            sm_cp = cp.asarray(s_max)
+            sc_cp = cp.asarray(s_cnt).astype(cp.int32)
+            is_stream = stream_mask_i8[r_idx] == 1
+            has_seed = sm_cp > 0
+            mask = is_stream & has_seed
+            # Since max_in starts at 0, seed_max > 0 always wins
+            max_in[r_idx] = cp.where(mask, sm_cp, max_in[r_idx])
+            cnt_max[r_idx] = cp.where(mask, sc_cp, cnt_max[r_idx])
     else:
-        result = _stream_order_dask_shreve(fd_np, ac_np, threshold)
+        (seed_top, seed_bot, seed_left, seed_right) = seeds
+        # Inject Shreve seeds: additive, same as flow_accumulation
+        order[0, :] += cp.asarray(seed_top)
+        order[H - 1, :] += cp.asarray(seed_bot)
+        order[:, 0] += cp.asarray(seed_left)
+        order[:, W - 1] += cp.asarray(seed_right)
 
-    return result.map_blocks(
-        cp.asarray, dtype=result.dtype,
-        meta=cp.array((), dtype=result.dtype))
+    max_iter = H * W
+    for _ in range(max_iter):
+        changed[0] = 0
+        _stream_order_find_ready[griddim, blockdim](
+            in_degree, state, order, changed, H, W)
+
+        if int(changed[0]) == 0:
+            break
+
+        if method == 'strahler':
+            _stream_order_pull_strahler[griddim, blockdim](
+                flow_dir_f64, stream_mask_i8, in_degree, state,
+                order, max_in, cnt_max, H, W)
+        else:
+            _stream_order_pull_shreve[griddim, blockdim](
+                flow_dir_f64, stream_mask_i8, in_degree, state,
+                order, H, W)
+
+    order = cp.where(stream_mask_i8 == 0, cp.nan, order)
+    return order
+
+
+def _make_stream_mask_np(ac_chunk, fd_chunk, threshold):
+    """Build stream mask as numpy int8 from accumulation chunk."""
+    sm = np.where(ac_chunk >= threshold, 1, 0).astype(np.int8)
+    sm = np.where(np.isnan(ac_chunk), 0, sm).astype(np.int8)
+    sm = np.where(np.isnan(fd_chunk), 0, sm).astype(np.int8)
+    return sm
+
+
+def _process_strahler_tile_cupy(iy, ix, flow_dir_da, accum_da, threshold,
+                                  bdry_max, bdry_cnt, flow_bdry, mask_bdry,
+                                  chunks_y, chunks_x, n_tile_y, n_tile_x):
+    """Run seeded GPU Strahler on one tile; update boundary stores."""
+    import cupy as cp
+
+    fd_chunk = cp.asarray(
+        flow_dir_da.blocks[iy, ix].compute(), dtype=cp.float64)
+    ac_chunk = _to_numpy_f64(accum_da.blocks[iy, ix].compute())
+    fd_np = fd_chunk.get()
+    sm_np = _make_stream_mask_np(ac_chunk, fd_np, threshold)
+    sm_cp = cp.asarray(sm_np)
+
+    seeds = _compute_strahler_seeds(
+        iy, ix, bdry_max, bdry_cnt, flow_bdry, mask_bdry,
+        chunks_y, chunks_x, n_tile_y, n_tile_x)
+
+    order = _stream_order_tile_cupy(fd_chunk, sm_cp, 'strahler', seeds)
+
+    change = 0.0
+    for side, strip_cp in [('top', order[0, :]),
+                           ('bottom', order[-1, :]),
+                           ('left', order[:, 0]),
+                           ('right', order[:, -1])]:
+        new_vals = strip_cp.get().copy()
+        new_max = np.where(np.isnan(new_vals), 0.0, new_vals)
+        new_cnt = np.where(new_max > 0, 1.0, 0.0)
+
+        old_max = bdry_max.get(side, iy, ix).copy()
+        with np.errstate(invalid='ignore'):
+            diff = np.abs(new_max - old_max)
+        diff = np.where(np.isnan(diff), 0.0, diff)
+        m = float(np.max(diff))
+        if m > change:
+            change = m
+
+        bdry_max.set(side, iy, ix, new_max)
+        bdry_cnt.set(side, iy, ix, new_cnt)
+
+    return change
+
+
+def _process_shreve_tile_cupy(iy, ix, flow_dir_da, accum_da, threshold,
+                                boundaries, flow_bdry, mask_bdry,
+                                chunks_y, chunks_x, n_tile_y, n_tile_x):
+    """Run seeded GPU Shreve on one tile; update boundaries."""
+    import cupy as cp
+
+    fd_chunk = cp.asarray(
+        flow_dir_da.blocks[iy, ix].compute(), dtype=cp.float64)
+    ac_chunk = _to_numpy_f64(accum_da.blocks[iy, ix].compute())
+    fd_np = fd_chunk.get()
+    sm_np = _make_stream_mask_np(ac_chunk, fd_np, threshold)
+    sm_cp = cp.asarray(sm_np)
+
+    seeds = _compute_shreve_seeds(
+        iy, ix, boundaries, flow_bdry, mask_bdry,
+        chunks_y, chunks_x, n_tile_y, n_tile_x)
+
+    order = _stream_order_tile_cupy(fd_chunk, sm_cp, 'shreve', seeds)
+
+    change = 0.0
+    for side, strip_cp in [('top', order[0, :]),
+                           ('bottom', order[-1, :]),
+                           ('left', order[:, 0]),
+                           ('right', order[:, -1])]:
+        new_vals = strip_cp.get().copy()
+        new_vals = np.where(np.isnan(new_vals), 0.0, new_vals)
+        old = boundaries.get(side, iy, ix).copy()
+        with np.errstate(invalid='ignore'):
+            diff = np.abs(new_vals - old)
+        diff = np.where(np.isnan(diff), 0.0, diff)
+        m = float(np.max(diff))
+        if m > change:
+            change = m
+        boundaries.set(side, iy, ix, new_vals)
+
+    return change
+
+
+def _stream_order_dask_cupy(flow_dir_da, accum_da, threshold, method):
+    """Dask+CuPy: native GPU processing per tile."""
+    import cupy as cp
+
+    chunks_y = flow_dir_da.chunks[0]
+    chunks_x = flow_dir_da.chunks[1]
+    n_tile_y = len(chunks_y)
+    n_tile_x = len(chunks_x)
+
+    flow_bdry, mask_bdry = _preprocess_stream_tiles(
+        flow_dir_da, accum_da, threshold, chunks_y, chunks_x)
+    flow_bdry = flow_bdry.snapshot()
+    mask_bdry = mask_bdry.snapshot()
+
+    max_iterations = max(n_tile_y, n_tile_x) + 10
+
+    if method == 'strahler':
+        bdry_max = BoundaryStore(chunks_y, chunks_x, fill_value=0.0)
+        bdry_cnt = BoundaryStore(chunks_y, chunks_x, fill_value=0.0)
+
+        for _ in range(max_iterations):
+            max_change = 0.0
+            for iy in range(n_tile_y):
+                for ix in range(n_tile_x):
+                    c = _process_strahler_tile_cupy(
+                        iy, ix, flow_dir_da, accum_da, threshold,
+                        bdry_max, bdry_cnt, flow_bdry, mask_bdry,
+                        chunks_y, chunks_x, n_tile_y, n_tile_x)
+                    if c > max_change:
+                        max_change = c
+            for iy in reversed(range(n_tile_y)):
+                for ix in reversed(range(n_tile_x)):
+                    c = _process_strahler_tile_cupy(
+                        iy, ix, flow_dir_da, accum_da, threshold,
+                        bdry_max, bdry_cnt, flow_bdry, mask_bdry,
+                        chunks_y, chunks_x, n_tile_y, n_tile_x)
+                    if c > max_change:
+                        max_change = c
+            if max_change == 0.0:
+                break
+
+        _bdry_max = bdry_max.snapshot()
+        _bdry_cnt = bdry_cnt.snapshot()
+
+        def _tile_fn(block, accum_block, block_info=None):
+            if block_info is None or 0 not in block_info:
+                return cp.full(block.shape, cp.nan, dtype=cp.float64)
+            iy, ix = block_info[0]['chunk-location']
+            fd = cp.asarray(block, dtype=cp.float64)
+            ac_np = _to_numpy_f64(accum_block)
+            fd_np = fd.get()
+            sm = cp.asarray(_make_stream_mask_np(ac_np, fd_np, threshold))
+            seeds = _compute_strahler_seeds(
+                iy, ix, _bdry_max, _bdry_cnt, flow_bdry, mask_bdry,
+                chunks_y, chunks_x, n_tile_y, n_tile_x)
+            return _stream_order_tile_cupy(fd, sm, 'strahler', seeds)
+
+    else:  # shreve
+        boundaries = BoundaryStore(chunks_y, chunks_x, fill_value=0.0)
+
+        for _ in range(max_iterations):
+            max_change = 0.0
+            for iy in range(n_tile_y):
+                for ix in range(n_tile_x):
+                    c = _process_shreve_tile_cupy(
+                        iy, ix, flow_dir_da, accum_da, threshold,
+                        boundaries, flow_bdry, mask_bdry,
+                        chunks_y, chunks_x, n_tile_y, n_tile_x)
+                    if c > max_change:
+                        max_change = c
+            for iy in reversed(range(n_tile_y)):
+                for ix in reversed(range(n_tile_x)):
+                    c = _process_shreve_tile_cupy(
+                        iy, ix, flow_dir_da, accum_da, threshold,
+                        boundaries, flow_bdry, mask_bdry,
+                        chunks_y, chunks_x, n_tile_y, n_tile_x)
+                    if c > max_change:
+                        max_change = c
+            if max_change == 0.0:
+                break
+
+        _boundaries = boundaries.snapshot()
+
+        def _tile_fn(block, accum_block, block_info=None):
+            if block_info is None or 0 not in block_info:
+                return cp.full(block.shape, cp.nan, dtype=cp.float64)
+            iy, ix = block_info[0]['chunk-location']
+            fd = cp.asarray(block, dtype=cp.float64)
+            ac_np = _to_numpy_f64(accum_block)
+            fd_np = fd.get()
+            sm = cp.asarray(_make_stream_mask_np(ac_np, fd_np, threshold))
+            seeds = _compute_shreve_seeds(
+                iy, ix, _boundaries, flow_bdry, mask_bdry,
+                chunks_y, chunks_x, n_tile_y, n_tile_x)
+            return _stream_order_tile_cupy(fd, sm, 'shreve', seeds)
+
+    return da.map_blocks(
+        _tile_fn, flow_dir_da, accum_da,
+        dtype=np.float64, meta=cp.array((), dtype=cp.float64))
 
 
 # =====================================================================

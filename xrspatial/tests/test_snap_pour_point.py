@@ -302,3 +302,29 @@ def test_numpy_equals_dask_cupy():
 
     np.testing.assert_allclose(
         np_result.data, dcp_result.data.compute().get(), equal_nan=True)
+
+
+@dask_array_available
+@cuda_and_cupy_available
+@pytest.mark.parametrize("chunks", [(2, 2), (3, 3), (1, 5), (5, 1)])
+def test_dask_cupy_chunk_configs(chunks):
+    """Dask+CuPy matches NumPy across chunk sizes."""
+    accum = np.array([
+        [50.0, 1.0, 1.0, 1.0, 80.0],
+        [1.0,  1.0, 1.0, 1.0, 1.0],
+        [1.0,  1.0, 1.0, 1.0, 1.0],
+    ])
+    pp = np.full((3, 5), np.nan)
+    pp[0, 1] = 10.0
+    pp[0, 3] = 20.0
+
+    fa_np, pp_np = _make_accum_and_pp(accum, pp, backend='numpy')
+    fa_dcp, pp_dcp = _make_accum_and_pp(accum, pp, backend='dask+cupy',
+                                         chunks=chunks)
+
+    np_result = snap_pour_point(fa_np, pp_np, search_radius=2)
+    dcp_result = snap_pour_point(fa_dcp, pp_dcp, search_radius=2)
+
+    np.testing.assert_allclose(
+        np_result.data, dcp_result.data.compute().get(), equal_nan=True,
+    ), f"Mismatch with chunks={chunks}"
