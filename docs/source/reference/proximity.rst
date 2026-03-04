@@ -35,6 +35,13 @@ Cost Distance
 
     xrspatial.cost_distance.cost_distance
 
+Balanced Allocation
+====================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.balanced_allocation.balanced_allocation
+
 Surface Distance
 ================
 .. autosummary::
