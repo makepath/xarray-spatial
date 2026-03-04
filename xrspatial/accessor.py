@@ -63,9 +63,17 @@ class XrsSpatialDataArrayAccessor:
         from .flow_direction_dinf import flow_direction_dinf
         return flow_direction_dinf(self._obj, **kwargs)
 
+    def flow_direction_mfd(self, **kwargs):
+        from .flow_direction_mfd import flow_direction_mfd
+        return flow_direction_mfd(self._obj, **kwargs)
+
     def flow_accumulation(self, **kwargs):
         from .flow_accumulation import flow_accumulation
         return flow_accumulation(self._obj, **kwargs)
+
+    def flow_accumulation_mfd(self, **kwargs):
+        from .flow_accumulation_mfd import flow_accumulation_mfd
+        return flow_accumulation_mfd(self._obj, **kwargs)
 
     def watershed(self, pour_points, **kwargs):
         from .watershed import watershed
@@ -399,9 +407,17 @@ class XrsSpatialDatasetAccessor:
         from .flow_direction_dinf import flow_direction_dinf
         return flow_direction_dinf(self._obj, **kwargs)
 
+    def flow_direction_mfd(self, **kwargs):
+        from .flow_direction_mfd import flow_direction_mfd
+        return flow_direction_mfd(self._obj, **kwargs)
+
     def flow_accumulation(self, **kwargs):
         from .flow_accumulation import flow_accumulation
         return flow_accumulation(self._obj, **kwargs)
+
+    def flow_accumulation_mfd(self, **kwargs):
+        from .flow_accumulation_mfd import flow_accumulation_mfd
+        return flow_accumulation_mfd(self._obj, **kwargs)
 
     def watershed(self, pour_points, **kwargs):
         from .watershed import watershed
