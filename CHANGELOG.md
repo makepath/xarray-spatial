@@ -5,6 +5,7 @@
 ### Version 0.8.0 - 2026-03-03
 
 #### New Features
+- Add raster-based dasymetric mapping: disaggregate, pycnophylactic interpolation, and validation helper (#930)
 - Add enhanced terrain generation features (#929)
 - Add fire module: dNBR, RdNBR, burn severity, fireline intensity, flame length, rate of spread (Rothermel), and KBDI (#927)
 - Add flood prediction tools (#926)

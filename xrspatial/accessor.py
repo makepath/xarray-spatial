@@ -235,6 +235,16 @@ class XrsSpatialDataArrayAccessor:
         from .zonal import regions
         return regions(self._obj, **kwargs)
 
+    # ---- Dasymetric ----
+
+    def disaggregate(self, values, weight, **kwargs):
+        from .dasymetric import disaggregate
+        return disaggregate(self._obj, values, weight, **kwargs)
+
+    def pycnophylactic(self, values, **kwargs):
+        from .dasymetric import pycnophylactic
+        return pycnophylactic(self._obj, values, **kwargs)
+
     # ---- Terrain generation ----
 
     def generate_terrain(self, **kwargs):

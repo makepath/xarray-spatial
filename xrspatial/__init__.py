@@ -1,6 +1,9 @@
 from xrspatial.aspect import aspect  # noqa
 from xrspatial.bump import bump  # noqa
 from xrspatial.cost_distance import cost_distance  # noqa
+from xrspatial.dasymetric import disaggregate  # noqa
+from xrspatial.dasymetric import pycnophylactic  # noqa
+from xrspatial.dasymetric import validate_disaggregation  # noqa
 from xrspatial.classify import binary  # noqa
 from xrspatial.classify import box_plot  # noqa
 from xrspatial.classify import head_tail_breaks  # noqa
