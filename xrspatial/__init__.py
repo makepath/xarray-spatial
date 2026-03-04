@@ -52,8 +52,10 @@ from xrspatial.hillshade import hillshade  # noqa
 from xrspatial.mahalanobis import mahalanobis  # noqa
 from xrspatial.multispectral import arvi  # noqa
 from xrspatial.multispectral import evi  # noqa
+from xrspatial.multispectral import mndwi  # noqa
 from xrspatial.multispectral import nbr  # noqa
 from xrspatial.multispectral import ndvi  # noqa
+from xrspatial.multispectral import ndwi  # noqa
 from xrspatial.multispectral import savi  # noqa
 from xrspatial.multispectral import sipi  # noqa
 from xrspatial.pathfinding import a_star_search  # noqa

@@ -343,6 +343,16 @@ class XrsSpatialDataArrayAccessor:
         from .fire import kbdi
         return kbdi(self._obj, max_temp_agg, precip_agg, annual_precip, **kwargs)
 
+    # ---- Multispectral (self = green band for water indices) ----
+
+    def ndwi(self, nir_agg, **kwargs):
+        from .multispectral import ndwi
+        return ndwi(self._obj, nir_agg, **kwargs)
+
+    def mndwi(self, swir_agg, **kwargs):
+        from .multispectral import mndwi
+        return mndwi(self._obj, swir_agg, **kwargs)
+
     # ---- Multispectral (self = NIR band) ----
 
     def ndvi(self, red_agg, **kwargs):
@@ -600,6 +610,14 @@ class XrsSpatialDatasetAccessor:
         return flame_length(self._obj, **kwargs)
 
     # ---- Multispectral (band mapping via kwargs) ----
+
+    def ndwi(self, green, nir, **kwargs):
+        from .multispectral import ndwi
+        return ndwi(self._obj, green=green, nir=nir, **kwargs)
+
+    def mndwi(self, green, swir, **kwargs):
+        from .multispectral import mndwi
+        return mndwi(self._obj, green=green, swir=swir, **kwargs)
 
     def ndvi(self, nir, red, **kwargs):
         from .multispectral import ndvi

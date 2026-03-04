@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.multispectral import (arvi, ebbi, evi, gci, nbr, nbr2, ndmi, ndvi, savi, sipi,
-                                     true_color)
+from xrspatial.multispectral import (arvi, ebbi, evi, gci, mndwi, nbr, nbr2, ndmi, ndvi, ndwi,
+                                     savi, sipi, true_color)
 from xrspatial.tests.general_checks import (create_test_raster, cuda_and_cupy_available,
                                             dask_array_available,
                                             general_output_checks)
@@ -562,6 +562,78 @@ def test_ndmi_uint_dtype(data_uint_dtype_normalized_ratio):
 def test_ndmi_gpu(nir_data, swir1_data, qgis_ndmi):
     result = ndmi(nir_data, swir1_data)
     general_output_checks(nir_data, result, qgis_ndmi)
+
+
+# NDWI -------------
+@pytest.fixture
+def qgis_ndwi():
+    # ndwi = (green - nir) / (green + nir) (McFeeters 1996)
+    result = np.array([
+        [np.nan, -0.2320068, -0.23210263, -0.21423551],
+        [-0.22254029, -0.23180144, -0.235312, -0.2211059],
+        [-0.24289227, -0.25083458, -0.2549164, -0.24188565],
+        [-0.22563742, -0.24941655, -0.26744354, -0.2553725],
+        [-0.21855864, -0.23148255, -0.2561782, -0.2507751],
+        [-0.21073432, -0.22702534, -0.2389085, -0.23820192],
+        [np.nan, -0.21753107, -0.22816707, -0.23095176],
+        [-0.19747348, -0.21694742, -0.22818612, -0.23183313]], dtype=np.float32)
+    return result
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_ndwi_cpu(green_data, nir_data, qgis_ndwi):
+    result = ndwi(green_data, nir_data)
+    general_output_checks(green_data, result, qgis_ndwi, verify_dtype=True)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_ndwi_uint_dtype(data_uint_dtype_normalized_ratio):
+    band1, band2, expected = data_uint_dtype_normalized_ratio
+    result = ndwi(band1, band2)
+    general_output_checks(band1, result, expected, verify_dtype=True)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+def test_ndwi_gpu(green_data, nir_data, qgis_ndwi):
+    result = ndwi(green_data, nir_data)
+    general_output_checks(green_data, result, qgis_ndwi, verify_dtype=True)
+
+
+# MNDWI -------------
+@pytest.fixture
+def qgis_mndwi():
+    # mndwi = (green - swir) / (green + swir) (Xu 2006)
+    result = np.array([
+        [np.nan, np.nan, -0.26194495, -0.26206443],
+        [-0.26261762, -0.26020542, -0.25978518, -0.26561797],
+        [-0.25730222, -0.2494394, -0.23911245, -0.2536854],
+        [-0.26400298, -0.24535443, -0.22509761, -0.23552124],
+        [-0.26765746, -0.25924546, -0.24043757, -0.23135419],
+        [-0.26640218, -0.26112, -0.25202343, -0.24712521],
+        [np.nan, -0.26235265, -0.26109785, -0.26053476],
+        [-0.2712647, -0.26619077, -0.2616606, -0.2564316]], dtype=np.float32)
+    return result
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_mndwi_cpu(green_data, swir1_data, qgis_mndwi):
+    result = mndwi(green_data, swir1_data)
+    general_output_checks(green_data, result, qgis_mndwi, verify_dtype=True)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_mndwi_uint_dtype(data_uint_dtype_normalized_ratio):
+    band1, band2, expected = data_uint_dtype_normalized_ratio
+    result = mndwi(band1, band2)
+    general_output_checks(band1, result, expected, verify_dtype=True)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+def test_mndwi_gpu(green_data, swir1_data, qgis_mndwi):
+    result = mndwi(green_data, swir1_data)
+    general_output_checks(green_data, result, qgis_mndwi, verify_dtype=True)
 
 
 # EBBI -------------
