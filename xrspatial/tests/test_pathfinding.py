@@ -734,3 +734,273 @@ def test_backward_compatibility():
     path2 = a_star_search(agg, start, goal, search_radius=None)
     np.testing.assert_allclose(
         path2.values, path.values, equal_nan=True, atol=1e-10)
+
+
+# -----------------------------------------------------------------------
+# multi_stop_search tests
+# -----------------------------------------------------------------------
+
+from xrspatial import multi_stop_search
+from xrspatial.pathfinding import _held_karp, _nearest_neighbor_2opt
+
+
+# --- TSP solver unit tests ---
+
+def test_held_karp_basic():
+    """Held-Karp finds optimal tour on a small symmetric graph."""
+    # 4 cities in a line: 0 -- 1 -- 2 -- 3
+    dist = [
+        [0, 1, 2, 3],
+        [1, 0, 1, 2],
+        [2, 1, 0, 1],
+        [3, 2, 1, 0],
+    ]
+    order, cost = _held_karp(dist, 0, 3)
+    assert order[0] == 0
+    assert order[-1] == 3
+    assert cost == 3.0  # 0->1->2->3
+    assert order == [0, 1, 2, 3]
+
+
+def test_held_karp_asymmetric():
+    """Held-Karp handles directed (asymmetric) costs."""
+    # Going 0->1 costs 1, but 1->0 costs 10
+    dist = [
+        [0,  1, 5],
+        [10, 0, 1],
+        [5,  1, 0],
+    ]
+    order, cost = _held_karp(dist, 0, 2)
+    assert order[0] == 0
+    assert order[-1] == 2
+    # Optimal: 0->1->2 = 1+1 = 2 (not 0->2 = 5)
+    assert cost == 2.0
+    assert order == [0, 1, 2]
+
+
+def test_nearest_neighbor_2opt_fixed_endpoints():
+    """Nearest-neighbor + 2-opt preserves start and end."""
+    dist = [
+        [0, 1, 4, 3],
+        [1, 0, 2, 5],
+        [4, 2, 0, 1],
+        [3, 5, 1, 0],
+    ]
+    order, cost = _nearest_neighbor_2opt(dist, 0, 3)
+    assert order[0] == 0
+    assert order[-1] == 3
+    assert set(order) == {0, 1, 2, 3}
+
+
+def test_nearest_neighbor_2opt_vs_held_karp():
+    """Heuristic should match or be close to exact on small inputs."""
+    dist = [
+        [0, 2, 9, 10],
+        [2, 0, 6, 4],
+        [9, 6, 0, 8],
+        [10, 4, 8, 0],
+    ]
+    exact_order, exact_cost = _held_karp(dist, 0, 3)
+    heur_order, heur_cost = _nearest_neighbor_2opt(dist, 0, 3)
+
+    assert heur_order[0] == 0
+    assert heur_order[-1] == 3
+    # Heuristic should be within 50% of optimal for 4 cities
+    assert heur_cost <= exact_cost * 1.5
+
+
+# --- Multi-stop functional tests ---
+
+def test_two_waypoints_matches_a_star():
+    """Two waypoints should produce the same result as a single A* call."""
+    data = np.ones((8, 8))
+    agg = _make_raster(data)
+
+    start = (7.0, 0.0)  # pixel (0, 0)
+    goal = (0.0, 7.0)   # pixel (7, 7)
+
+    path_single = a_star_search(agg, start, goal)
+    path_multi = multi_stop_search(agg, [start, goal])
+
+    np.testing.assert_allclose(
+        path_multi.values, path_single.values,
+        equal_nan=True, atol=1e-10,
+    )
+
+
+def test_three_waypoints_cost_continuity():
+    """Costs should increase monotonically across segments; attrs correct."""
+    data = np.ones((10, 10))
+    agg = _make_raster(data)
+
+    # Three waypoints along the diagonal
+    wp0 = (9.0, 0.0)   # pixel (0, 0)
+    wp1 = (5.0, 4.0)   # pixel (4, 4)
+    wp2 = (0.0, 9.0)   # pixel (9, 9)
+
+    result = multi_stop_search(agg, [wp0, wp1, wp2])
+
+    vals = result.values
+    # All three waypoint pixels should be on the path
+    assert np.isfinite(vals[0, 0])
+    assert np.isfinite(vals[4, 4])
+    assert np.isfinite(vals[9, 9])
+
+    # Cost at start should be 0
+    assert vals[0, 0] == 0.0
+    # Cost should increase: start < mid < end
+    assert vals[4, 4] < vals[9, 9]
+    assert vals[0, 0] < vals[4, 4]
+
+    # Check attrs
+    assert len(result.attrs['segment_costs']) == 2
+    assert result.attrs['total_cost'] > 0
+    np.testing.assert_allclose(
+        sum(result.attrs['segment_costs']),
+        result.attrs['total_cost'],
+        atol=1e-10,
+    )
+    assert len(result.attrs['waypoint_order']) == 3
+
+
+def test_three_waypoints_with_friction():
+    """Multi-stop with friction surface produces valid monotonic costs."""
+    data = np.ones((10, 10))
+    friction_data = np.ones((10, 10))
+    friction_data[3:7, 3:7] = 5.0  # high-friction zone
+
+    agg = _make_raster(data)
+    friction_agg = _make_raster(friction_data)
+
+    wp0 = (9.0, 0.0)
+    wp1 = (5.0, 4.0)
+    wp2 = (0.0, 9.0)
+
+    result = multi_stop_search(agg, [wp0, wp1, wp2], friction=friction_agg)
+
+    vals = result.values
+    assert np.isfinite(vals[0, 0])
+    assert np.isfinite(vals[9, 9])
+    assert vals[0, 0] == 0.0
+    assert result.attrs['total_cost'] > 0
+
+
+def test_unreachable_segment_raises():
+    """Barrier blocking a segment should raise ValueError."""
+    data = np.ones((8, 8))
+    # Wall across row 4
+    data[4, :] = np.nan
+
+    agg = _make_raster(data)
+
+    wp0 = (7.0, 0.0)   # pixel (0, 0) — above the wall
+    wp1 = (0.0, 0.0)   # pixel (7, 0) — below the wall
+
+    with pytest.raises(ValueError, match="no path between waypoints"):
+        multi_stop_search(agg, [wp0, wp1])
+
+
+def test_waypoint_outside_bounds_raises():
+    """Waypoint outside the surface should raise ValueError."""
+    data = np.ones((5, 5))
+    agg = _make_raster(data)
+
+    wp0 = (4.0, 0.0)
+    wp_bad = (100.0, 100.0)
+
+    with pytest.raises(ValueError, match="outside the surface bounds"):
+        multi_stop_search(agg, [wp0, wp_bad])
+
+
+def test_too_few_waypoints_raises():
+    """Fewer than 2 waypoints should raise ValueError."""
+    data = np.ones((5, 5))
+    agg = _make_raster(data)
+
+    with pytest.raises(ValueError, match="at least 2 waypoints"):
+        multi_stop_search(agg, [(4.0, 0.0)])
+
+    with pytest.raises(ValueError, match="at least 2 waypoints"):
+        multi_stop_search(agg, [])
+
+
+# --- optimize_order tests ---
+
+def test_optimize_order_finds_better_route():
+    """Reordering interior waypoints should give equal or lower total cost."""
+    data = np.ones((10, 10))
+    agg = _make_raster(data)
+
+    # Deliberately suboptimal order: zigzag
+    wp0 = (9.0, 0.0)   # pixel (0, 0) — fixed start
+    wp1 = (0.0, 9.0)   # pixel (9, 9) — far corner
+    wp2 = (9.0, 4.0)   # pixel (0, 4) — back near start
+    wp3 = (0.0, 4.0)   # pixel (9, 4) — fixed end
+
+    naive = multi_stop_search(agg, [wp0, wp1, wp2, wp3])
+    optimized = multi_stop_search(
+        agg, [wp0, wp1, wp2, wp3], optimize_order=True)
+
+    assert optimized.attrs['total_cost'] <= naive.attrs['total_cost'] + 1e-10
+
+
+def test_optimize_order_preserves_endpoints():
+    """First and last waypoints should remain fixed after optimization."""
+    data = np.ones((10, 10))
+    agg = _make_raster(data)
+
+    wp0 = (9.0, 0.0)
+    wp1 = (5.0, 5.0)
+    wp2 = (5.0, 0.0)
+    wp3 = (0.0, 9.0)
+
+    result = multi_stop_search(
+        agg, [wp0, wp1, wp2, wp3], optimize_order=True)
+
+    order = result.attrs['waypoint_order']
+    assert tuple(order[0]) == wp0
+    assert tuple(order[-1]) == wp3
+
+
+# --- Cross-backend tests ---
+
+@pytest.mark.skipif(not has_dask_array(), reason="Requires dask.Array")
+def test_multi_stop_dask_matches_numpy():
+    """Dask multi-stop should match numpy results."""
+    data = np.ones((8, 8))
+    wp0 = (7.0, 0.0)
+    wp1 = (4.0, 3.0)
+    wp2 = (0.0, 7.0)
+
+    agg_np = _make_raster(data, backend='numpy')
+    agg_dask = _make_raster(data, backend='dask+numpy', chunks=(4, 4))
+
+    path_np = multi_stop_search(agg_np, [wp0, wp1, wp2])
+    path_dask = multi_stop_search(agg_dask, [wp0, wp1, wp2])
+
+    np.testing.assert_allclose(
+        np.asarray(path_dask.values),
+        path_np.values,
+        equal_nan=True, atol=1e-10,
+    )
+
+
+@cuda_and_cupy_available
+def test_multi_stop_cupy_matches_numpy():
+    """CuPy multi-stop should match numpy results."""
+    data = np.ones((8, 8))
+    wp0 = (7.0, 0.0)
+    wp1 = (4.0, 3.0)
+    wp2 = (0.0, 7.0)
+
+    agg_np = _make_raster(data, backend='numpy')
+    agg_cupy = _make_raster(data, backend='cupy')
+
+    path_np = multi_stop_search(agg_np, [wp0, wp1, wp2])
+    path_cupy = multi_stop_search(agg_cupy, [wp0, wp1, wp2])
+
+    np.testing.assert_allclose(
+        path_cupy.data if not hasattr(path_cupy.data, 'get') else path_cupy.data,
+        path_np.values,
+        equal_nan=True, atol=1e-10,
+    )
