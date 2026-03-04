@@ -9,6 +9,14 @@ from xrspatial import utils
 from xrspatial.tests.general_checks import dask_array_available
 
 
+try:
+    import datashader  # noqa: F401
+    _has_datashader = True
+except ImportError:
+    _has_datashader = False
+
+
+@pytest.mark.skipif(not _has_datashader, reason="datashader not installed")
 @dask_array_available
 def test_canvas_like():
     # aspect ratio is 1:1
