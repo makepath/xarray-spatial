@@ -171,6 +171,17 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 -------
 
+### **Morphological**
+
+| Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Erode](xrspatial/morphology.py) | Morphological erosion (local minimum over structuring element) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Dilate](xrspatial/morphology.py) | Morphological dilation (local maximum over structuring element) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Opening](xrspatial/morphology.py) | Erosion then dilation (removes small bright features) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Closing](xrspatial/morphology.py) | Dilation then erosion (fills small dark gaps) | ✅️ | ✅️ | ✅️ | ✅️ |
+
+-------
+
 ### **Fire**
 
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
