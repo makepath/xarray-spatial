@@ -44,6 +44,16 @@ from xrspatial._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
 
 
+def _to_numpy_f64(arr):
+    """Convert *arr* to a contiguous numpy float64 array.
+
+    Handles CuPy arrays transparently via ``.get()``.
+    """
+    if hasattr(arr, 'get'):
+        arr = arr.get()
+    return np.asarray(arr, dtype=np.float64)
+
+
 # =====================================================================
 # Direction helpers
 # =====================================================================
@@ -481,6 +491,58 @@ def _flow_accum_cupy(flow_dir_data):
     return accum
 
 
+def _flow_accum_tile_cupy(flow_dir_data,
+                           seed_top, seed_bottom, seed_left, seed_right,
+                           seed_tl, seed_tr, seed_bl, seed_br):
+    """GPU seeded flow accumulation for a single tile.
+
+    Same algorithm as ``_flow_accum_cupy`` but injects external seed
+    values at boundary cells before frontier peeling.  Seeds are
+    NumPy arrays; they are transferred to GPU inside this function.
+    """
+    import cupy as cp
+
+    H, W = flow_dir_data.shape
+    flow_dir_f64 = flow_dir_data.astype(cp.float64)
+
+    accum = cp.zeros((H, W), dtype=cp.float64)
+    in_degree = cp.zeros((H, W), dtype=cp.int32)
+    state = cp.zeros((H, W), dtype=cp.int32)
+    changed = cp.zeros(1, dtype=cp.int32)
+
+    griddim, blockdim = cuda_args((H, W))
+
+    _init_accum_indegree[griddim, blockdim](
+        flow_dir_f64, accum, in_degree, state, H, W)
+
+    # Inject seeds at boundary cells.  Invalid cells (state==0) are
+    # masked to NaN at the end and never enter frontier peeling, so
+    # adding seeds to them is harmless.
+    accum[0, :] += cp.asarray(seed_top)
+    accum[H - 1, :] += cp.asarray(seed_bottom)
+    accum[:, 0] += cp.asarray(seed_left)
+    accum[:, W - 1] += cp.asarray(seed_right)
+    accum[0, 0] += seed_tl
+    accum[0, W - 1] += seed_tr
+    accum[H - 1, 0] += seed_bl
+    accum[H - 1, W - 1] += seed_br
+
+    max_iter = H * W
+    for _ in range(max_iter):
+        changed[0] = 0
+        _find_ready_and_finalize[griddim, blockdim](
+            in_degree, state, changed, H, W)
+
+        if int(changed[0]) == 0:
+            break
+
+        _pull_from_frontier[griddim, blockdim](
+            flow_dir_f64, accum, in_degree, state, H, W)
+
+    accum = cp.where(state == 0, cp.nan, accum)
+    return accum
+
+
 # =====================================================================
 # Dinf GPU kernels
 # =====================================================================
@@ -663,6 +725,50 @@ def _flow_accum_dinf_cupy(flow_dir_data):
     return accum
 
 
+def _flow_accum_dinf_tile_cupy(flow_dir_data,
+                                seed_top, seed_bottom, seed_left, seed_right,
+                                seed_tl, seed_tr, seed_bl, seed_br):
+    """GPU seeded Dinf flow accumulation for a single tile."""
+    import cupy as cp
+
+    H, W = flow_dir_data.shape
+    flow_dir_f64 = flow_dir_data.astype(cp.float64)
+
+    accum = cp.zeros((H, W), dtype=cp.float64)
+    in_degree = cp.zeros((H, W), dtype=cp.int32)
+    state = cp.zeros((H, W), dtype=cp.int32)
+    changed = cp.zeros(1, dtype=cp.int32)
+
+    griddim, blockdim = cuda_args((H, W))
+
+    _init_accum_indegree_dinf[griddim, blockdim](
+        flow_dir_f64, accum, in_degree, state, H, W)
+
+    accum[0, :] += cp.asarray(seed_top)
+    accum[H - 1, :] += cp.asarray(seed_bottom)
+    accum[:, 0] += cp.asarray(seed_left)
+    accum[:, W - 1] += cp.asarray(seed_right)
+    accum[0, 0] += seed_tl
+    accum[0, W - 1] += seed_tr
+    accum[H - 1, 0] += seed_bl
+    accum[H - 1, W - 1] += seed_br
+
+    max_iter = H * W
+    for _ in range(max_iter):
+        changed[0] = 0
+        _find_ready_and_finalize[griddim, blockdim](
+            in_degree, state, changed, H, W)
+
+        if int(changed[0]) == 0:
+            break
+
+        _pull_from_frontier_dinf[griddim, blockdim](
+            flow_dir_f64, accum, in_degree, state, H, W)
+
+    accum = cp.where(state == 0, cp.nan, accum)
+    return accum
+
+
 # =====================================================================
 # Tile kernel for dask iterative path
 # =====================================================================
@@ -773,14 +879,10 @@ def _preprocess_tiles(flow_dir_da, chunks_y, chunks_x):
     for iy in range(n_tile_y):
         for ix in range(n_tile_x):
             chunk = flow_dir_da.blocks[iy, ix].compute()
-            flow_bdry.set('top', iy, ix,
-                          np.asarray(chunk[0, :], dtype=np.float64))
-            flow_bdry.set('bottom', iy, ix,
-                          np.asarray(chunk[-1, :], dtype=np.float64))
-            flow_bdry.set('left', iy, ix,
-                          np.asarray(chunk[:, 0], dtype=np.float64))
-            flow_bdry.set('right', iy, ix,
-                          np.asarray(chunk[:, -1], dtype=np.float64))
+            flow_bdry.set('top', iy, ix, _to_numpy_f64(chunk[0, :]))
+            flow_bdry.set('bottom', iy, ix, _to_numpy_f64(chunk[-1, :]))
+            flow_bdry.set('left', iy, ix, _to_numpy_f64(chunk[:, 0]))
+            flow_bdry.set('right', iy, ix, _to_numpy_f64(chunk[:, -1]))
 
     return flow_bdry
 
@@ -1016,19 +1118,108 @@ def _assemble_result(flow_dir_da, boundaries, flow_bdry,
     )
 
 
-def _flow_accum_dask_cupy(flow_dir_da):
-    """Dask+CuPy: convert to numpy, run CPU iterative path, convert back."""
+def _process_tile_cupy(iy, ix, flow_dir_da, boundaries, flow_bdry,
+                        chunks_y, chunks_x, n_tile_y, n_tile_x):
+    """Run seeded GPU flow accumulation on one tile; update boundaries."""
     import cupy as cp
 
-    flow_dir_np = flow_dir_da.map_blocks(
-        lambda b: b.get(), dtype=flow_dir_da.dtype,
-        meta=np.array((), dtype=flow_dir_da.dtype),
+    chunk = cp.asarray(
+        flow_dir_da.blocks[iy, ix].compute(), dtype=cp.float64)
+
+    seeds = _compute_seeds(
+        iy, ix, boundaries, flow_bdry,
+        chunks_y, chunks_x, n_tile_y, n_tile_x)
+
+    accum = _flow_accum_tile_cupy(chunk, *seeds)
+
+    # Extract boundaries to CPU (small 1-D strips)
+    new_top = accum[0, :].get().copy()
+    new_bottom = accum[-1, :].get().copy()
+    new_left = accum[:, 0].get().copy()
+    new_right = accum[:, -1].get().copy()
+
+    change = 0.0
+    for side, new in (('top', new_top), ('bottom', new_bottom),
+                      ('left', new_left), ('right', new_right)):
+        old = boundaries.get(side, iy, ix)
+        with np.errstate(invalid='ignore'):
+            diff = np.abs(new - old)
+        diff = np.where(np.isnan(diff), 0.0, diff)
+        m = float(np.max(diff))
+        if m > change:
+            change = m
+
+    boundaries.set('top', iy, ix, new_top)
+    boundaries.set('bottom', iy, ix, new_bottom)
+    boundaries.set('left', iy, ix, new_left)
+    boundaries.set('right', iy, ix, new_right)
+
+    return change
+
+
+def _assemble_result_cupy(flow_dir_da, boundaries, flow_bdry,
+                           chunks_y, chunks_x, n_tile_y, n_tile_x):
+    """Build a lazy dask+cupy array using GPU tile kernel."""
+    import cupy as cp
+
+    def _tile_fn(flow_dir_block, block_info=None):
+        if block_info is None or 0 not in block_info:
+            return cp.full(flow_dir_block.shape, cp.nan, dtype=cp.float64)
+        iy, ix = block_info[0]['chunk-location']
+        seeds = _compute_seeds(
+            iy, ix, boundaries, flow_bdry,
+            chunks_y, chunks_x, n_tile_y, n_tile_x)
+        return _flow_accum_tile_cupy(
+            cp.asarray(flow_dir_block, dtype=cp.float64), *seeds)
+
+    return da.map_blocks(
+        _tile_fn,
+        flow_dir_da,
+        dtype=np.float64,
+        meta=cp.array((), dtype=cp.float64),
     )
-    result = _flow_accum_dask_iterative(flow_dir_np)
-    return result.map_blocks(
-        cp.asarray, dtype=result.dtype,
-        meta=cp.array((), dtype=result.dtype),
-    )
+
+
+def _flow_accum_dask_cupy(flow_dir_da):
+    """Dask+CuPy D8: native GPU processing per tile."""
+    chunks_y = flow_dir_da.chunks[0]
+    chunks_x = flow_dir_da.chunks[1]
+    n_tile_y = len(chunks_y)
+    n_tile_x = len(chunks_x)
+
+    flow_bdry = _preprocess_tiles(flow_dir_da, chunks_y, chunks_x)
+    flow_bdry = flow_bdry.snapshot()
+
+    boundaries = BoundaryStore(chunks_y, chunks_x, fill_value=0.0)
+
+    max_iterations = max(n_tile_y, n_tile_x) + 10
+
+    for _iteration in range(max_iterations):
+        max_change = 0.0
+
+        for iy in range(n_tile_y):
+            for ix in range(n_tile_x):
+                c = _process_tile_cupy(iy, ix, flow_dir_da, boundaries,
+                                        flow_bdry, chunks_y, chunks_x,
+                                        n_tile_y, n_tile_x)
+                if c > max_change:
+                    max_change = c
+
+        for iy in reversed(range(n_tile_y)):
+            for ix in reversed(range(n_tile_x)):
+                c = _process_tile_cupy(iy, ix, flow_dir_da, boundaries,
+                                        flow_bdry, chunks_y, chunks_x,
+                                        n_tile_y, n_tile_x)
+                if c > max_change:
+                    max_change = c
+
+        if max_change == 0.0:
+            break
+
+    boundaries = boundaries.snapshot()
+
+    return _assemble_result_cupy(flow_dir_da, boundaries, flow_bdry,
+                                  chunks_y, chunks_x, n_tile_y, n_tile_x)
 
 
 # =====================================================================
@@ -1357,19 +1548,109 @@ def _assemble_result_dinf(flow_dir_da, boundaries, flow_bdry,
     )
 
 
-def _flow_accum_dinf_dask_cupy(flow_dir_da):
-    """Dask+CuPy Dinf: convert to numpy, run iterative, convert back."""
+def _process_tile_dinf_cupy(iy, ix, flow_dir_da, boundaries, flow_bdry,
+                             chunks_y, chunks_x, n_tile_y, n_tile_x):
+    """Run seeded GPU Dinf flow accumulation on one tile."""
     import cupy as cp
 
-    flow_dir_np = flow_dir_da.map_blocks(
-        lambda b: b.get(), dtype=flow_dir_da.dtype,
-        meta=np.array((), dtype=flow_dir_da.dtype),
+    chunk = cp.asarray(
+        flow_dir_da.blocks[iy, ix].compute(), dtype=cp.float64)
+
+    seeds = _compute_seeds_dinf(
+        iy, ix, boundaries, flow_bdry,
+        chunks_y, chunks_x, n_tile_y, n_tile_x)
+
+    accum = _flow_accum_dinf_tile_cupy(chunk, *seeds)
+
+    new_top = accum[0, :].get().copy()
+    new_bottom = accum[-1, :].get().copy()
+    new_left = accum[:, 0].get().copy()
+    new_right = accum[:, -1].get().copy()
+
+    change = 0.0
+    for side, new in (('top', new_top), ('bottom', new_bottom),
+                      ('left', new_left), ('right', new_right)):
+        old = boundaries.get(side, iy, ix)
+        with np.errstate(invalid='ignore'):
+            diff = np.abs(new - old)
+        diff = np.where(np.isnan(diff), 0.0, diff)
+        m = float(np.max(diff))
+        if m > change:
+            change = m
+
+    boundaries.set('top', iy, ix, new_top)
+    boundaries.set('bottom', iy, ix, new_bottom)
+    boundaries.set('left', iy, ix, new_left)
+    boundaries.set('right', iy, ix, new_right)
+
+    return change
+
+
+def _assemble_result_dinf_cupy(flow_dir_da, boundaries, flow_bdry,
+                                chunks_y, chunks_x, n_tile_y, n_tile_x):
+    """Build lazy dask+cupy array using GPU Dinf tile kernel."""
+    import cupy as cp
+
+    def _tile_fn(flow_dir_block, block_info=None):
+        if block_info is None or 0 not in block_info:
+            return cp.full(flow_dir_block.shape, cp.nan, dtype=cp.float64)
+        iy, ix = block_info[0]['chunk-location']
+        seeds = _compute_seeds_dinf(
+            iy, ix, boundaries, flow_bdry,
+            chunks_y, chunks_x, n_tile_y, n_tile_x)
+        return _flow_accum_dinf_tile_cupy(
+            cp.asarray(flow_dir_block, dtype=cp.float64), *seeds)
+
+    return da.map_blocks(
+        _tile_fn,
+        flow_dir_da,
+        dtype=np.float64,
+        meta=cp.array((), dtype=cp.float64),
     )
-    result = _flow_accum_dinf_dask_iterative(flow_dir_np)
-    return result.map_blocks(
-        cp.asarray, dtype=result.dtype,
-        meta=cp.array((), dtype=result.dtype),
-    )
+
+
+def _flow_accum_dinf_dask_cupy(flow_dir_da):
+    """Dask+CuPy Dinf: native GPU processing per tile."""
+    chunks_y = flow_dir_da.chunks[0]
+    chunks_x = flow_dir_da.chunks[1]
+    n_tile_y = len(chunks_y)
+    n_tile_x = len(chunks_x)
+
+    flow_bdry = _preprocess_tiles(flow_dir_da, chunks_y, chunks_x)
+    flow_bdry = flow_bdry.snapshot()
+
+    boundaries = BoundaryStore(chunks_y, chunks_x, fill_value=0.0)
+
+    max_iterations = max(n_tile_y, n_tile_x) + 10
+
+    for _iteration in range(max_iterations):
+        max_change = 0.0
+
+        for iy in range(n_tile_y):
+            for ix in range(n_tile_x):
+                c = _process_tile_dinf_cupy(
+                    iy, ix, flow_dir_da, boundaries,
+                    flow_bdry, chunks_y, chunks_x,
+                    n_tile_y, n_tile_x)
+                if c > max_change:
+                    max_change = c
+
+        for iy in reversed(range(n_tile_y)):
+            for ix in reversed(range(n_tile_x)):
+                c = _process_tile_dinf_cupy(
+                    iy, ix, flow_dir_da, boundaries,
+                    flow_bdry, chunks_y, chunks_x,
+                    n_tile_y, n_tile_x)
+                if c > max_change:
+                    max_change = c
+
+        if max_change == 0.0:
+            break
+
+    boundaries = boundaries.snapshot()
+
+    return _assemble_result_dinf_cupy(flow_dir_da, boundaries, flow_bdry,
+                                       chunks_y, chunks_x, n_tile_y, n_tile_x)
 
 
 # =====================================================================

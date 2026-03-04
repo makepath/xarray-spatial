@@ -350,6 +350,27 @@ def test_numpy_equals_dask_cupy():
         np_result.data, dcp_result.data.compute().get(), equal_nan=True)
 
 
+@dask_array_available
+@cuda_and_cupy_available
+@pytest.mark.parametrize("chunks", [(3, 3), (5, 6), (2, 4)])
+def test_dask_cupy_chunk_configs(chunks):
+    """Dask+CuPy matches NumPy across chunk sizes."""
+    from xrspatial import flow_direction
+
+    rng = np.random.default_rng(952)
+    elev = rng.random((10, 12)).astype(np.float64)
+    elev_da = create_test_raster(elev, backend='numpy')
+    flow_dir = flow_direction(elev_da).data
+
+    numpy_agg = create_test_raster(flow_dir, backend='numpy')
+    dcp_agg = create_test_raster(flow_dir, backend='dask+cupy', chunks=chunks)
+    np_result = flow_accumulation(numpy_agg)
+    dcp_result = flow_accumulation(dcp_agg)
+    np.testing.assert_allclose(
+        np_result.data, dcp_result.data.compute().get(), equal_nan=True,
+    ), f"Mismatch with chunks={chunks}"
+
+
 # ===========================================================================
 # Dinf flow accumulation tests
 # ===========================================================================
