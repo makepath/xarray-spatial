@@ -36,6 +36,7 @@ from xrspatial.flood import flood_depth  # noqa
 from xrspatial.flood import inundation  # noqa
 from xrspatial.flood import travel_time  # noqa
 from xrspatial.flow_accumulation import flow_accumulation  # noqa
+from xrspatial.flow_accumulation_mfd import flow_accumulation_mfd  # noqa
 from xrspatial.flow_direction import flow_direction  # noqa
 from xrspatial.flow_direction_dinf import flow_direction_dinf  # noqa
 from xrspatial.flow_direction_mfd import flow_direction_mfd  # noqa

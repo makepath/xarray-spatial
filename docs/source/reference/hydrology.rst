@@ -32,6 +32,13 @@ Flow Accumulation
 
     xrspatial.flow_accumulation.flow_accumulation
 
+Flow Accumulation (MFD)
+=======================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.flow_accumulation_mfd.flow_accumulation_mfd
+
 Flow Length
 ===========
 .. autosummary::
