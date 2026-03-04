@@ -260,7 +260,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Min Observable Height](xrspatial/experimental/min_observable_height.py) | Finds the minimum observer height needed to see each cell *(experimental)* | ✅️ | | | |
 | [Perlin Noise](xrspatial/perlin.py) | Generates smooth continuous random noise for procedural textures | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Worley Noise](xrspatial/worley.py) | Generates cellular (Voronoi) noise returning distance to the nearest feature point | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Hydraulic Erosion](xrspatial/erosion.py) | Simulates particle-based water erosion to carve valleys and deposit sediment | ✅️ | 🔄 | 🔄 | 🔄 |
+| [Hydraulic Erosion](xrspatial/erosion.py) | Simulates particle-based water erosion to carve valleys and deposit sediment | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Bump Mapping](xrspatial/bump.py) | Adds randomized bump features to simulate natural terrain variation | ✅️ | ✅️ | ✅️ | ✅️ |
 
 -----------
