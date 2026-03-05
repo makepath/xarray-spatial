@@ -2,6 +2,15 @@
 -----------
 
 
+### Version 0.9.1 - 2026-03-04
+
+#### New Features
+- Add contour line extraction via marching squares (#964) (#974)
+- Add GLCM texture metrics (#963) (#973)
+- Add sky-view factor function (#962) (#972)
+- Add bilateral filter for feature-preserving smoothing (#969) (#970)
+
+
 ### Version 0.9.0 - 2026-03-04
 
 #### New Features
