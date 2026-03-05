@@ -181,6 +181,10 @@ class XrsSpatialDataArrayAccessor:
         from .focal import mean
         return mean(self._obj, **kwargs)
 
+    def glcm_texture(self, **kwargs):
+        from .glcm import glcm_texture
+        return glcm_texture(self._obj, **kwargs)
+
     # ---- Morphological ----
 
     def morph_erode(self, **kwargs):
@@ -544,6 +548,10 @@ class XrsSpatialDatasetAccessor:
     def focal_mean(self, **kwargs):
         from .focal import mean
         return mean(self._obj, **kwargs)
+
+    def glcm_texture(self, **kwargs):
+        from .glcm import glcm_texture
+        return glcm_texture(self._obj, **kwargs)
 
     # ---- Morphological ----
 
