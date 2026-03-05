@@ -1,5 +1,6 @@
 from xrspatial.aspect import aspect  # noqa
 from xrspatial.balanced_allocation import balanced_allocation  # noqa
+from xrspatial.bilateral import bilateral  # noqa
 from xrspatial.bump import bump  # noqa
 from xrspatial.corridor import least_cost_corridor  # noqa
 from xrspatial.cost_distance import cost_distance  # noqa
@@ -73,6 +74,7 @@ from xrspatial.sink import sink  # noqa
 from xrspatial.snap_pour_point import snap_pour_point  # noqa
 from xrspatial.stream_link import stream_link  # noqa
 from xrspatial.stream_order import stream_order  # noqa
+from xrspatial.sky_view_factor import sky_view_factor  # noqa
 from xrspatial.slope import slope  # noqa
 from xrspatial.surface_distance import surface_allocation  # noqa
 from xrspatial.surface_distance import surface_direction  # noqa

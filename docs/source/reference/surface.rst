@@ -39,6 +39,13 @@ Terrain Generation
 
     xrspatial.terrain.generate_terrain
 
+Sky-View Factor
+===============
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.sky_view_factor.sky_view_factor
+
 Viewshed
 ========
 .. autosummary::

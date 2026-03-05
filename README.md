@@ -168,6 +168,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Emerging Hotspots](xrspatial/emerging_hotspots.py) | Classifies time-series hot/cold spot trends using Gi* and Mann-Kendall | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Mean](xrspatial/focal.py) | Computes the mean value within a sliding neighborhood window | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Focal Statistics](xrspatial/focal.py) | Computes summary statistics over a sliding neighborhood window | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Bilateral](xrspatial/bilateral.py) | Feature-preserving smoothing via bilateral filtering | ✅️ | ✅️ | ✅️ | ✅️ |
 | [GLCM Texture](xrspatial/glcm.py) | Computes Haralick GLCM texture features over a sliding window | ✅️ | ✅️ | 🔄 | 🔄 |
 
 -------
@@ -267,6 +268,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Curvature](xrspatial/curvature.py) | Measures rate of slope change (concavity/convexity) at each cell | ✅️ |✅️ |✅️ | ✅️  |
 | [Hillshade](xrspatial/hillshade.py) | Simulates terrain illumination from a given sun angle and azimuth | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Roughness](xrspatial/terrain_metrics.py) | Computes local relief as max minus min elevation in a 3×3 window | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Sky-View Factor](xrspatial/sky_view_factor.py) | Measures the fraction of visible sky hemisphere at each cell | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Slope](xrspatial/slope.py) | Computes terrain gradient steepness at each cell in degrees | ✅️  | ✅️  | ✅️ | ✅️  |
 | [Terrain Generation](xrspatial/terrain.py) | Generates synthetic terrain from fBm or ridged fractal noise with optional domain warping, Worley blending, and hydraulic erosion | ✅️ | ✅️ | ✅️ | ✅️ |
 | [TPI](xrspatial/terrain_metrics.py) | Computes Topographic Position Index (center minus mean of neighbors) | ✅️ | ✅️ | ✅️ | ✅️ |
