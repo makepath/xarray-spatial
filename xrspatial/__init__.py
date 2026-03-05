@@ -73,6 +73,7 @@ from xrspatial.sink import sink  # noqa
 from xrspatial.snap_pour_point import snap_pour_point  # noqa
 from xrspatial.stream_link import stream_link  # noqa
 from xrspatial.stream_order import stream_order  # noqa
+from xrspatial.sky_view_factor import sky_view_factor  # noqa
 from xrspatial.slope import slope  # noqa
 from xrspatial.surface_distance import surface_allocation  # noqa
 from xrspatial.surface_distance import surface_direction  # noqa
