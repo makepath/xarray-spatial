@@ -37,20 +37,20 @@ except ImportError:
 # Empty tuple means no contour passes through the quad.
 _MS_TABLE = (
     (),              # 0000 - all below
-    ((3, 0),),       # 0001 - bottom-left above
-    ((0, 1),),       # 0010 - bottom-right above
-    ((3, 1),),       # 0011 - bottom row above
-    ((1, 2),),       # 0100 - top-right above
-    ((3, 0), (1, 2)),  # 0101 - saddle: BL and TR above
-    ((0, 2),),       # 0110 - right column above
-    ((3, 2),),       # 0111 - only top-left below
-    ((2, 3),),       # 1000 - top-left above
-    ((2, 0),),       # 1001 - left column above
-    ((2, 3), (0, 1)),  # 1010 - saddle: TL and BR above
-    ((2, 1),),       # 1011 - only top-right below
-    ((1, 3),),       # 1100 - top row above
-    ((1, 0),),       # 1101 - only bottom-right below
-    ((0, 3),),       # 1110 - only bottom-left below
+    ((3, 2),),       # 0001 - bl above: left-bottom
+    ((2, 1),),       # 0010 - br above: bottom-right
+    ((3, 1),),       # 0011 - bl+br above: left-right
+    ((0, 1),),       # 0100 - tr above: top-right
+    ((2, 3), (0, 1)),  # 0101 - saddle: bl+tr above (default: separated)
+    ((0, 2),),       # 0110 - tr+br above: top-bottom
+    ((0, 3),),       # 0111 - only tl below: top-left
+    ((0, 3),),       # 1000 - tl above: top-left
+    ((0, 2),),       # 1001 - tl+bl above: top-bottom
+    ((0, 3), (1, 2)),  # 1010 - saddle: tl+br above (default: separated)
+    ((0, 1),),       # 1011 - only tr below: top-right
+    ((1, 3),),       # 1100 - tl+tr above: right-left
+    ((1, 2),),       # 1101 - only br below: right-bottom
+    ((2, 3),),       # 1110 - only bl below: bottom-left
     (),              # 1111 - all above
 )
 
@@ -113,65 +113,76 @@ def _marching_squares_kernel(data, level, seg_rows, seg_cols, seg_count):
                 continue
 
             # Saddle disambiguation: use center value.
-            if idx == 5 or idx == 10:
+            # Default: above-level corners stay separated.
+            # Flipped (center >= level): above-level corners connect.
+            if idx == 5:
                 center = (tl + tr + bl + br) * 0.25
                 if center >= level:
-                    # Connect like-valued corners.
-                    if idx == 5:
-                        # BL+TR above, center above -> connect them
-                        idx = 5  # keep as-is: two separate segments
-                    else:
-                        # TL+BR above, center above -> connect them
-                        idx = 10
-                # If center < level, keep the default table entry.
+                    idx = 55  # flipped saddle
+            elif idx == 10:
+                center = (tl + tr + bl + br) * 0.25
+                if center >= level:
+                    idx = 100  # flipped saddle
 
             # Emit segments for this case.
-            # Inline the lookup and interpolation for Numba compatibility.
-            if idx == 1:
-                _emit_seg(r, c, tl, tr, bl, br, level, 3, 0,
-                          seg_rows, seg_cols, seg_count)
-            elif idx == 2:
-                _emit_seg(r, c, tl, tr, bl, br, level, 0, 1,
-                          seg_rows, seg_cols, seg_count)
-            elif idx == 3:
-                _emit_seg(r, c, tl, tr, bl, br, level, 3, 1,
-                          seg_rows, seg_cols, seg_count)
-            elif idx == 4:
-                _emit_seg(r, c, tl, tr, bl, br, level, 1, 2,
-                          seg_rows, seg_cols, seg_count)
-            elif idx == 5:
-                _emit_seg(r, c, tl, tr, bl, br, level, 3, 0,
-                          seg_rows, seg_cols, seg_count)
-                _emit_seg(r, c, tl, tr, bl, br, level, 1, 2,
-                          seg_rows, seg_cols, seg_count)
-            elif idx == 6:
-                _emit_seg(r, c, tl, tr, bl, br, level, 0, 2,
-                          seg_rows, seg_cols, seg_count)
-            elif idx == 7:
+            # Edge numbering: 0=top, 1=right, 2=bottom, 3=left.
+            # Each edge is crossed where one corner is above and the
+            # other is below the contour level.
+            if idx == 1:      # bl above: left-bottom
                 _emit_seg(r, c, tl, tr, bl, br, level, 3, 2,
                           seg_rows, seg_cols, seg_count)
-            elif idx == 8:
-                _emit_seg(r, c, tl, tr, bl, br, level, 2, 3,
+            elif idx == 2:    # br above: bottom-right
+                _emit_seg(r, c, tl, tr, bl, br, level, 2, 1,
                           seg_rows, seg_cols, seg_count)
-            elif idx == 9:
-                _emit_seg(r, c, tl, tr, bl, br, level, 2, 0,
+            elif idx == 3:    # bl+br above: left-right
+                _emit_seg(r, c, tl, tr, bl, br, level, 3, 1,
                           seg_rows, seg_cols, seg_count)
-            elif idx == 10:
+            elif idx == 4:    # tr above: top-right
+                _emit_seg(r, c, tl, tr, bl, br, level, 0, 1,
+                          seg_rows, seg_cols, seg_count)
+            elif idx == 5:    # saddle bl+tr (separated)
                 _emit_seg(r, c, tl, tr, bl, br, level, 2, 3,
                           seg_rows, seg_cols, seg_count)
                 _emit_seg(r, c, tl, tr, bl, br, level, 0, 1,
                           seg_rows, seg_cols, seg_count)
-            elif idx == 11:
+            elif idx == 55:   # saddle bl+tr (connected via center)
+                _emit_seg(r, c, tl, tr, bl, br, level, 3, 0,
+                          seg_rows, seg_cols, seg_count)
                 _emit_seg(r, c, tl, tr, bl, br, level, 2, 1,
                           seg_rows, seg_cols, seg_count)
-            elif idx == 12:
+            elif idx == 6:    # tr+br above: top-bottom
+                _emit_seg(r, c, tl, tr, bl, br, level, 0, 2,
+                          seg_rows, seg_cols, seg_count)
+            elif idx == 7:    # only tl below: top-left
+                _emit_seg(r, c, tl, tr, bl, br, level, 0, 3,
+                          seg_rows, seg_cols, seg_count)
+            elif idx == 8:    # tl above: top-left
+                _emit_seg(r, c, tl, tr, bl, br, level, 0, 3,
+                          seg_rows, seg_cols, seg_count)
+            elif idx == 9:    # tl+bl above: top-bottom
+                _emit_seg(r, c, tl, tr, bl, br, level, 0, 2,
+                          seg_rows, seg_cols, seg_count)
+            elif idx == 10:   # saddle tl+br (separated)
+                _emit_seg(r, c, tl, tr, bl, br, level, 0, 3,
+                          seg_rows, seg_cols, seg_count)
+                _emit_seg(r, c, tl, tr, bl, br, level, 1, 2,
+                          seg_rows, seg_cols, seg_count)
+            elif idx == 100:  # saddle tl+br (connected via center)
+                _emit_seg(r, c, tl, tr, bl, br, level, 0, 1,
+                          seg_rows, seg_cols, seg_count)
+                _emit_seg(r, c, tl, tr, bl, br, level, 3, 2,
+                          seg_rows, seg_cols, seg_count)
+            elif idx == 11:   # only tr below: top-right
+                _emit_seg(r, c, tl, tr, bl, br, level, 0, 1,
+                          seg_rows, seg_cols, seg_count)
+            elif idx == 12:   # tl+tr above: right-left
                 _emit_seg(r, c, tl, tr, bl, br, level, 1, 3,
                           seg_rows, seg_cols, seg_count)
-            elif idx == 13:
-                _emit_seg(r, c, tl, tr, bl, br, level, 1, 0,
+            elif idx == 13:   # only br below: right-bottom
+                _emit_seg(r, c, tl, tr, bl, br, level, 1, 2,
                           seg_rows, seg_cols, seg_count)
-            elif idx == 14:
-                _emit_seg(r, c, tl, tr, bl, br, level, 0, 3,
+            elif idx == 14:   # only bl below: bottom-left
+                _emit_seg(r, c, tl, tr, bl, br, level, 2, 3,
                           seg_rows, seg_cols, seg_count)
 
 
@@ -269,6 +280,28 @@ def _stitch_segments(seg_rows, seg_cols, n_segs):
         _extend_line(line_r, line_c, 0, rows, cols, used, endpoint_map,
                      DECIMALS)
 
+        # Check if the polyline forms a closed ring.
+        start_key = (round(line_r[0], DECIMALS), round(line_c[0], DECIMALS))
+        end_key = (round(line_r[-1], DECIMALS), round(line_c[-1], DECIMALS))
+        if start_key == end_key and len(line_r) > 2:
+            # Already closed, ensure exact closure.
+            line_r[-1] = line_r[0]
+            line_c[-1] = line_c[0]
+        elif len(line_r) > 2:
+            # Check if an unused segment connects end back to start.
+            end_candidates = endpoint_map.get(end_key, [])
+            for seg_idx, end_idx in end_candidates:
+                if used[seg_idx]:
+                    continue
+                other = 1 - end_idx
+                other_key = (round(rows[seg_idx, other], DECIMALS),
+                             round(cols[seg_idx, other], DECIMALS))
+                if other_key == start_key:
+                    used[seg_idx] = True
+                    line_r.append(line_r[0])
+                    line_c.append(line_c[0])
+                    break
+
         coords = np.column_stack([line_r, line_c])
         lines.append(coords)
 
@@ -349,30 +382,38 @@ def _contours_cupy(data, levels):
 
 
 def _contours_dask(data, levels):
-    """Dask backend: process each chunk independently, then merge.
+    """Dask backend: process each chunk with 1-cell overlap, then merge.
 
-    Each chunk is processed with a 1-cell overlap so that quads spanning
-    chunk boundaries are handled by both neighbors.  Duplicate segments
-    at boundaries are removed during stitching.
+    Uses ``dask.array.overlap.overlap`` to give each chunk a 1-cell halo
+    so that 2x2 quads at chunk boundaries are processed by both neighbors.
+    Duplicate segments are removed during the merge/stitch step.
     """
     if da is None:
         raise ImportError("Dask is required for chunked contour extraction")
 
-    # Compute chunks independently.
-    chunks = data.to_delayed().ravel()
-    chunk_slices = _get_chunk_slices(data.chunks)
+    padded = da.overlap.overlap(data, depth={0: 1, 1: 1}, boundary=np.nan)
+    orig_row_chunks = data.chunks[0]
+    orig_col_chunks = data.chunks[1]
+    padded_blocks = padded.to_delayed()
 
     all_results = []
-    for chunk_delayed, (r_off, c_off) in zip(chunks, chunk_slices):
-        result = dask.delayed(_process_chunk_numpy)(
-            chunk_delayed, levels, r_off, c_off
-        )
-        all_results.append(result)
+    r_off = 0
+    for ri, rsize in enumerate(orig_row_chunks):
+        c_off = 0
+        for ci, csize in enumerate(orig_col_chunks):
+            chunk = padded_blocks[ri, ci]
+            # Padded chunk has 1-cell halo on each side (NaN at edges).
+            # Global coordinate of the padded chunk's (0,0) is
+            # (r_off - 1, c_off - 1).
+            result = dask.delayed(_process_chunk_numpy)(
+                chunk, levels, r_off - 1, c_off - 1
+            )
+            all_results.append(result)
+            c_off += csize
+        r_off += rsize
 
-    # Compute all chunks and merge.
     chunk_results = dask.compute(*all_results)
 
-    # Flatten and deduplicate.
     merged = []
     for chunk_lines in chunk_results:
         merged.extend(chunk_lines)
@@ -381,19 +422,27 @@ def _contours_dask(data, levels):
 
 
 def _contours_dask_cupy(data, levels):
-    """Dask+CuPy backend: transfer each chunk to CPU independently."""
+    """Dask+CuPy backend: overlap chunks, transfer each to CPU."""
     if da is None:
         raise ImportError("Dask is required for chunked contour extraction")
 
-    chunks = data.to_delayed().ravel()
-    chunk_slices = _get_chunk_slices(data.chunks)
+    padded = da.overlap.overlap(data, depth={0: 1, 1: 1}, boundary=np.nan)
+    orig_row_chunks = data.chunks[0]
+    orig_col_chunks = data.chunks[1]
+    padded_blocks = padded.to_delayed()
 
     all_results = []
-    for chunk_delayed, (r_off, c_off) in zip(chunks, chunk_slices):
-        result = dask.delayed(_process_chunk_cupy)(
-            chunk_delayed, levels, r_off, c_off
-        )
-        all_results.append(result)
+    r_off = 0
+    for ri, rsize in enumerate(orig_row_chunks):
+        c_off = 0
+        for ci, csize in enumerate(orig_col_chunks):
+            chunk = padded_blocks[ri, ci]
+            result = dask.delayed(_process_chunk_cupy)(
+                chunk, levels, r_off - 1, c_off - 1
+            )
+            all_results.append(result)
+            c_off += csize
+        r_off += rsize
 
     chunk_results = dask.compute(*all_results)
 
@@ -402,20 +451,6 @@ def _contours_dask_cupy(data, levels):
         merged.extend(chunk_lines)
 
     return _deduplicate_by_level(merged)
-
-
-def _get_chunk_slices(chunks_tuple):
-    """Compute (row_offset, col_offset) for each chunk."""
-    row_chunks, col_chunks = chunks_tuple
-    slices = []
-    r_off = 0
-    for rsize in row_chunks:
-        c_off = 0
-        for csize in col_chunks:
-            slices.append((r_off, c_off))
-            c_off += csize
-        r_off += rsize
-    return slices
 
 
 def _process_chunk_numpy(chunk_data, levels, r_offset, c_offset):
