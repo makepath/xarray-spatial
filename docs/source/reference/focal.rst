@@ -33,6 +33,14 @@ Bilateral
    xrspatial.bilateral.bilateral
 
 
+GLCM Texture
+=============
+.. autosummary::
+   :toctree: _autosummary
+
+   xrspatial.glcm.glcm_texture
+
+
 Focal Statistics
 ================
 .. autosummary::

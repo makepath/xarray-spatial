@@ -45,6 +45,7 @@ from xrspatial.flow_direction_mfd import flow_direction_mfd  # noqa
 from xrspatial.flow_length import flow_length  # noqa
 from xrspatial.flow_path import flow_path  # noqa
 from xrspatial.focal import mean  # noqa
+from xrspatial.glcm import glcm_texture  # noqa
 from xrspatial.morphology import morph_closing  # noqa
 from xrspatial.morphology import morph_dilate  # noqa
 from xrspatial.morphology import morph_erode  # noqa

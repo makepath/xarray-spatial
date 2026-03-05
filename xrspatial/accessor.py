@@ -185,6 +185,10 @@ class XrsSpatialDataArrayAccessor:
         from .bilateral import bilateral
         return bilateral(self._obj, **kwargs)
 
+    def glcm_texture(self, **kwargs):
+        from .glcm import glcm_texture
+        return glcm_texture(self._obj, **kwargs)
+
     # ---- Morphological ----
 
     def morph_erode(self, **kwargs):
@@ -552,6 +556,10 @@ class XrsSpatialDatasetAccessor:
     def bilateral(self, **kwargs):
         from .bilateral import bilateral
         return bilateral(self._obj, **kwargs)
+
+    def glcm_texture(self, **kwargs):
+        from .glcm import glcm_texture
+        return glcm_texture(self._obj, **kwargs)
 
     # ---- Morphological ----
 

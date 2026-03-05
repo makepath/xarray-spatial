@@ -169,6 +169,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Mean](xrspatial/focal.py) | Computes the mean value within a sliding neighborhood window | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Focal Statistics](xrspatial/focal.py) | Computes summary statistics over a sliding neighborhood window | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Bilateral](xrspatial/bilateral.py) | Feature-preserving smoothing via bilateral filtering | ✅️ | ✅️ | ✅️ | ✅️ |
+| [GLCM Texture](xrspatial/glcm.py) | Computes Haralick GLCM texture features over a sliding window | ✅️ | ✅️ | 🔄 | 🔄 |
 
 -------
 
