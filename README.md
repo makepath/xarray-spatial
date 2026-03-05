@@ -168,6 +168,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Emerging Hotspots](xrspatial/emerging_hotspots.py) | Classifies time-series hot/cold spot trends using Gi* and Mann-Kendall | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Mean](xrspatial/focal.py) | Computes the mean value within a sliding neighborhood window | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Focal Statistics](xrspatial/focal.py) | Computes summary statistics over a sliding neighborhood window | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Bilateral](xrspatial/bilateral.py) | Feature-preserving smoothing via bilateral filtering | ✅️ | ✅️ | ✅️ | ✅️ |
 
 -------
 
