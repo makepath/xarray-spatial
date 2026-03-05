@@ -30,54 +30,6 @@ except ImportError:
     cuda = None
 
 
-# Marching squares lookup table.
-# For each of the 16 cases (4-bit index from corner classification),
-# stores pairs of edge indices that form line segments.
-# Edge numbering:  0=top, 1=right, 2=bottom, 3=left.
-# Empty tuple means no contour passes through the quad.
-_MS_TABLE = (
-    (),              # 0000 - all below
-    ((3, 2),),       # 0001 - bl above: left-bottom
-    ((2, 1),),       # 0010 - br above: bottom-right
-    ((3, 1),),       # 0011 - bl+br above: left-right
-    ((0, 1),),       # 0100 - tr above: top-right
-    ((2, 3), (0, 1)),  # 0101 - saddle: bl+tr above (default: separated)
-    ((0, 2),),       # 0110 - tr+br above: top-bottom
-    ((0, 3),),       # 0111 - only tl below: top-left
-    ((0, 3),),       # 1000 - tl above: top-left
-    ((0, 2),),       # 1001 - tl+bl above: top-bottom
-    ((0, 3), (1, 2)),  # 1010 - saddle: tl+br above (default: separated)
-    ((0, 1),),       # 1011 - only tr below: top-right
-    ((1, 3),),       # 1100 - tl+tr above: right-left
-    ((1, 2),),       # 1101 - only br below: right-bottom
-    ((2, 3),),       # 1110 - only bl below: bottom-left
-    (),              # 1111 - all above
-)
-
-
-def _interp_edge(edge, r, c, tl, tr, bl, br, level):
-    """Return interpolated (row, col) for a contour crossing on the given edge.
-
-    Corners of the quad:
-        tl = (r, c)      tr = (r, c+1)
-        bl = (r+1, c)    br = (r+1, c+1)
-
-    Edge numbering: 0=top (tl-tr), 1=right (tr-br), 2=bottom (bl-br), 3=left (tl-bl)
-    """
-    if edge == 0:  # top: tl -> tr
-        t = (level - tl) / (tr - tl) if tr != tl else 0.5
-        return r, c + t
-    elif edge == 1:  # right: tr -> br
-        t = (level - tr) / (br - tr) if br != tr else 0.5
-        return r + t, c + 1
-    elif edge == 2:  # bottom: bl -> br
-        t = (level - bl) / (br - bl) if br != bl else 0.5
-        return r + 1, c + t
-    else:  # edge == 3, left: tl -> bl
-        t = (level - tl) / (bl - tl) if bl != tl else 0.5
-        return r + t, c
-
-
 @ngjit
 def _marching_squares_kernel(data, level, seg_rows, seg_cols, seg_count):
     """Process all 2x2 quads for a single contour level.
