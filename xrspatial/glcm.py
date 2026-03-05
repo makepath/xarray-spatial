@@ -338,33 +338,30 @@ def _glcm_dask_numpy(agg, metrics, window_size, levels, distance, angle):
         raise ImportError("dask is required for the dask+numpy backend")
 
     data = agg.data.astype(np.float64)
-    half = window_size // 2
-    # The kernel reads pixels up to half + distance from the center
-    depth = half + distance
-    n_metrics = len(metrics)
+    depth = window_size // 2 + distance
 
     # Global min/max for consistent quantization across chunks
     dmin = float(da.nanmin(data))
     dmax = float(da.nanmax(data))
 
-    # Quantize globally (element-wise, so dask handles it lazily)
     quantized = _dask_quantize(data, levels, dmin, dmax)
 
-    # Overlap and compute GLCM per chunk
-    padded = da.overlap.overlap(quantized, depth={0: depth, 1: depth},
-                                boundary=-1)
+    # Compute each metric individually via map_overlap then stack
+    layers = []
+    for m in metrics:
+        single = [m]
 
-    def _chunk_func(block):
-        result = _run_glcm_on_quantized(block, metrics, window_size,
-                                        levels, distance, angle)
-        return result[:, depth:-depth, depth:-depth]
+        def _chunk_func(block, _single=single):
+            return _run_glcm_on_quantized(block, _single, window_size,
+                                          levels, distance, angle)[0]
 
-    result = padded.map_blocks(
-        _chunk_func,
-        dtype=np.float64,
-        new_axis=0,
-        chunks=((n_metrics,),) + quantized.chunks,
-    )
+        layer = da.map_overlap(
+            _chunk_func, quantized,
+            depth=depth, boundary=-1, dtype=np.float64,
+        )
+        layers.append(layer)
+
+    result = da.stack(layers, axis=0)
 
     coords = dict(agg.coords)
     dims = ('metric',) + agg.dims
@@ -413,32 +410,30 @@ def _glcm_dask_cupy(agg, metrics, window_size, levels, distance, angle):
         raise ImportError("dask is required for the dask+cupy backend")
 
     data = agg.data
-    half = window_size // 2
-    depth = half + distance
-    n_metrics = len(metrics)
+    depth = window_size // 2 + distance
 
-    # Global min/max
     dmin = float(da.nanmin(data))
     dmax = float(da.nanmax(data))
 
-    # Quantize globally on GPU, then overlap
     quantized = _dask_quantize(data, levels, dmin, dmax)
-    padded = da.overlap.overlap(quantized, depth={0: depth, 1: depth},
-                                boundary=-1)
 
-    def _chunk_func(block):
-        block_np = cupy.asnumpy(block)
-        result = _run_glcm_on_quantized(block_np, metrics, window_size,
-                                        levels, distance, angle)
-        result = result[:, depth:-depth, depth:-depth]
-        return cupy.asarray(result)
+    layers = []
+    for m in metrics:
+        single = [m]
 
-    result = padded.map_blocks(
-        _chunk_func,
-        dtype=np.float64,
-        new_axis=0,
-        chunks=((n_metrics,),) + quantized.chunks,
-    )
+        def _chunk_func(block, _single=single):
+            block_np = cupy.asnumpy(block)
+            result = _run_glcm_on_quantized(block_np, _single, window_size,
+                                            levels, distance, angle)[0]
+            return cupy.asarray(result)
+
+        layer = da.map_overlap(
+            _chunk_func, quantized,
+            depth=depth, boundary=-1, dtype=np.float64,
+        )
+        layers.append(layer)
+
+    result = da.stack(layers, axis=0)
 
     coords = dict(agg.coords)
     dims = ('metric',) + agg.dims
