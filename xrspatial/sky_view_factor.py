@@ -60,14 +60,13 @@ def _svf_cpu(data, max_radius, n_directions):
     out = np.empty((rows, cols), dtype=np.float64)
     out[:] = np.nan
 
-    for y in range(max_radius, rows - max_radius):
-        for x in range(max_radius, cols - max_radius):
+    for y in range(rows):
+        for x in range(cols):
             center = data[y, x]
             if center != center:  # NaN check
                 continue
 
             svf_sum = 0.0
-            valid_dirs = 0
             for d in range(n_directions):
                 angle = 2.0 * _pi * d / n_directions
                 dx = _cos(angle)
@@ -89,10 +88,8 @@ def _svf_cpu(data, max_radius, n_directions):
                         max_elev_angle = elev_angle
 
                 svf_sum += _sin(max_elev_angle)
-                valid_dirs += 1
 
-            if valid_dirs > 0:
-                out[y, x] = 1.0 - svf_sum / valid_dirs
+            out[y, x] = 1.0 - svf_sum / n_directions
     return out
 
 
@@ -106,9 +103,7 @@ def _svf_gpu(data, out, max_radius, n_directions):
     y, x = cuda.grid(2)
     rows, cols = data.shape
 
-    if y < max_radius or y >= rows - max_radius:
-        return
-    if x < max_radius or x >= cols - max_radius:
+    if y >= rows or x >= cols:
         return
 
     center = data[y, x]
@@ -223,8 +218,8 @@ def sky_view_factor(
     -------
     xarray.DataArray or xr.Dataset
         2D array of SVF values in [0, 1] with the same shape, coords,
-        dims, and attrs as the input.  Edge cells within *max_radius*
-        of the boundary are NaN.
+        dims, and attrs as the input.  Edge cells use truncated rays
+        that stop at the raster boundary.
 
     References
     ----------
