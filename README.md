@@ -257,6 +257,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | Name | Description | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:-----|:------------|:------------------:|:-----------------:|:---------------------:|:---------------------:|
 | [Polygonize](xrspatial/polygonize.py) | Converts contiguous regions of equal value into vector polygons | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Contours](xrspatial/contour.py) | Extracts elevation contour lines (isolines) from a raster surface | ✅️ | ✅️ | 🔄 | 🔄 |
 
 --------
 
