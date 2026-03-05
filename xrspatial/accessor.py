@@ -317,6 +317,10 @@ class XrsSpatialDataArrayAccessor:
         from .polygonize import polygonize
         return polygonize(self._obj, **kwargs)
 
+    def contours(self, **kwargs):
+        from .contour import contours
+        return contours(self._obj, **kwargs)
+
     # ---- Fire ----
 
     def dnbr(self, post_nbr_agg, **kwargs):
