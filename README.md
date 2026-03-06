@@ -296,7 +296,11 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Watershed](xrspatial/watershed.py) | Labels each cell with the pour point it drains to via D8 flow direction | Standard (D8 tracing) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Basins](xrspatial/watershed.py) | Delineates drainage basins by labeling each cell with its outlet ID | Standard (D8 tracing) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Stream Order](xrspatial/stream_order.py) | Assigns Strahler or Shreve stream order to cells in a drainage network | Strahler 1957, Shreve 1966 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Stream Order (Dinf)](xrspatial/stream_order_dinf.py) | Strahler/Shreve stream ordering on D-infinity flow direction grids | Tarboton 1997 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Stream Order (MFD)](xrspatial/stream_order_mfd.py) | Strahler/Shreve stream ordering on MFD fraction grids | Freeman 1991 | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Stream Link](xrspatial/stream_link.py) | Assigns unique IDs to each stream segment between junctions | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Stream Link (Dinf)](xrspatial/stream_link_dinf.py) | Stream link segmentation on D-infinity flow direction grids | Tarboton 1997 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Stream Link (MFD)](xrspatial/stream_link_mfd.py) | Stream link segmentation on MFD fraction grids | Freeman 1991 | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Snap Pour Point](xrspatial/snap_pour_point.py) | Snaps pour points to the highest-accumulation cell within a search radius | Custom | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Flow Path](xrspatial/flow_path.py) | Traces downstream flow paths from start points through a D8 direction grid | Standard (D8 tracing) | ✅️ | ✅️ | 🔄 | 🔄 |
 | [HAND](xrspatial/hand.py) | Computes Height Above Nearest Drainage by tracing D8 flow to the nearest stream cell | Nobre et al. 2011 | ✅️ | ✅️ | 🔄 | 🔄 |
