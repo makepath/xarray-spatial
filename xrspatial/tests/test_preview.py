@@ -88,6 +88,70 @@ def test_coarsen_mean_values():
     np.testing.assert_allclose(result.values, expected)
 
 
+# ---- nearest method ----
+
+def test_nearest_basic():
+    agg = _make_raster(200, 400)
+    result = preview(agg, width=40, method='nearest')
+    assert result.shape == (20, 40)
+    assert result.dims == ('y', 'x')
+
+
+def test_nearest_picks_strided_values():
+    """Nearest should pick every Nth pixel, not average."""
+    data = np.arange(100, dtype=np.float32).reshape(10, 10)
+    agg = create_test_raster(data)
+    result = preview(agg, width=5, method='nearest')
+    # factor = 2, so result[i, j] == data[2*i, 2*j]
+    expected = data[::2, ::2]
+    np.testing.assert_array_equal(result.values, expected)
+
+
+@cuda_and_cupy_available
+def test_nearest_cupy():
+    agg = _make_raster(200, 400, backend='cupy')
+    result = preview(agg, width=40, method='nearest')
+    import cupy
+    assert isinstance(result.data, cupy.ndarray)
+    assert result.shape == (20, 40)
+
+
+# ---- bilinear method ----
+
+def test_bilinear_basic():
+    agg = _make_raster(200, 400)
+    result = preview(agg, width=40, method='bilinear')
+    assert result.shape == (20, 40)
+    assert result.dims == ('y', 'x')
+
+
+def test_bilinear_smooth():
+    """Bilinear output should differ from nearest (interpolation, not stride)."""
+    data = np.arange(100, dtype=np.float32).reshape(10, 10)
+    agg = create_test_raster(data)
+    nearest_result = preview(agg, width=5, method='nearest')
+    bilinear_result = preview(agg, width=5, method='bilinear')
+    # They should not be identical since bilinear interpolates
+    assert not np.array_equal(nearest_result.values, bilinear_result.values)
+
+
+@dask_array_available
+def test_bilinear_dask():
+    agg = _make_raster(200, 400, backend='dask', chunks=(50, 100))
+    result = preview(agg, width=40, method='bilinear')
+    computed = result.compute()
+    assert computed.shape == (20, 40)
+
+
+@cuda_and_cupy_available
+def test_bilinear_cupy():
+    agg = _make_raster(200, 400, backend='cupy')
+    result = preview(agg, width=40, method='bilinear')
+    import cupy
+    assert isinstance(result.data, cupy.ndarray)
+    assert result.shape == (20, 40)
+
+
 # ---- dask backend ----
 
 @dask_array_available
@@ -146,6 +210,12 @@ def test_dataset():
 
 
 # ---- input validation ----
+
+def test_rejects_invalid_method():
+    agg = _make_raster(200, 400)
+    with pytest.raises(ValueError, match='method must be one of'):
+        preview(agg, width=40, method='cubic')
+
 
 def test_rejects_non_dataarray():
     with pytest.raises(TypeError, match='must be an xarray.DataArray'):
