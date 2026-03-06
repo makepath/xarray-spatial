@@ -32,6 +32,13 @@ Contours
 
     xrspatial.contour.contours
 
+Preview
+=======
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.preview.preview
+
 Diagnostics
 ===========
 .. autosummary::

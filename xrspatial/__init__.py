@@ -65,6 +65,7 @@ from xrspatial.multispectral import sipi  # noqa
 from xrspatial.pathfinding import a_star_search  # noqa
 from xrspatial.pathfinding import multi_stop_search  # noqa
 from xrspatial.perlin import perlin  # noqa
+from xrspatial.preview import preview  # noqa
 from xrspatial.proximity import allocation  # noqa
 from xrspatial.proximity import direction  # noqa
 from xrspatial.proximity import euclidean_distance  # noqa

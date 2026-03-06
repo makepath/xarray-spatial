@@ -315,6 +315,12 @@ class XrsSpatialDataArrayAccessor:
         from .interpolate import spline
         return spline(x, y, z, self._obj, **kwargs)
 
+    # ---- Preview ----
+
+    def preview(self, **kwargs):
+        from .preview import preview
+        return preview(self._obj, **kwargs)
+
     # ---- Raster to vector ----
 
     def polygonize(self, **kwargs):
@@ -618,6 +624,12 @@ class XrsSpatialDatasetAccessor:
     def surface_direction(self, elevation, **kwargs):
         from .surface_distance import surface_direction
         return surface_direction(self._obj, elevation, **kwargs)
+
+    # ---- Preview ----
+
+    def preview(self, **kwargs):
+        from .preview import preview
+        return preview(self._obj, **kwargs)
 
     # ---- Fire ----
 
