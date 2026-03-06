@@ -96,12 +96,40 @@ Stream Link
 
     xrspatial.stream_link.stream_link
 
+Stream Link (D-infinity)
+========================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.stream_link_dinf.stream_link_dinf
+
+Stream Link (MFD)
+=================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.stream_link_mfd.stream_link_mfd
+
 Stream Order
 ============
 .. autosummary::
     :toctree: _autosummary
 
     xrspatial.stream_order.stream_order
+
+Stream Order (D-infinity)
+=========================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.stream_order_dinf.stream_order_dinf
+
+Stream Order (MFD)
+==================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.stream_order_mfd.stream_order_mfd
 
 Height Above Nearest Drainage (HAND)
 =====================================
