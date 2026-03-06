@@ -28,6 +28,16 @@ from xrspatial.cost_distance import cost_distance
 from xrspatial.utils import _validate_raster
 
 
+def _scalar_to_float(da_scalar):
+    """Extract a Python float from a scalar DataArray (numpy/cupy/dask)."""
+    data = da_scalar.data
+    if hasattr(data, 'compute'):
+        data = data.compute()
+    if hasattr(data, 'get'):
+        data = data.get()
+    return float(data)
+
+
 def _compute_corridor(
     cd_a: xr.DataArray,
     cd_b: xr.DataArray,
@@ -36,7 +46,7 @@ def _compute_corridor(
 ) -> xr.DataArray:
     """Sum two cost-distance surfaces, normalize, and optionally threshold."""
     corridor = cd_a + cd_b
-    corridor_min = float(corridor.min())
+    corridor_min = _scalar_to_float(corridor.min())
 
     if not np.isfinite(corridor_min):
         # Sources are mutually unreachable -- return all-NaN.
@@ -49,7 +59,20 @@ def _compute_corridor(
             cutoff = threshold * corridor_min
         else:
             cutoff = threshold
-        normalized = normalized.where(normalized <= cutoff)
+        data = normalized.data
+        try:
+            import dask.array as _da
+            if isinstance(data, _da.Array):
+                data = _da.where(data <= cutoff, data, np.nan)
+            else:
+                raise ImportError
+        except ImportError:
+            if hasattr(data, 'get'):  # cupy
+                import cupy as cp
+                data = cp.where(data <= cutoff, data, cp.nan)
+            else:
+                data = np.where(data <= cutoff, data, np.nan)
+        normalized = normalized.copy(data=data)
 
     return normalized
 

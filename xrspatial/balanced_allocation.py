@@ -44,6 +44,13 @@ def _to_numpy(arr):
     return np.asarray(arr)
 
 
+def _as_numpy(arr):
+    """Convert a computed array (numpy or cupy) to numpy."""
+    if hasattr(arr, 'get'):
+        return arr.get()
+    return np.asarray(arr)
+
+
 def _extract_sources(raster, target_values):
     """Return sorted array of unique source IDs from the raster."""
     data = _to_numpy(raster.data)
@@ -116,7 +123,7 @@ def _allocate_from_costs(cost_stack, source_ids, fill_value=np.nan):
         # Replace NaN with inf for argmin
         stacked_clean = da.where(da.isnan(stacked), np.inf, stacked)
         best_idx = da.argmin(stacked_clean, axis=0).compute()
-        best_idx = np.asarray(best_idx)
+        best_idx = _as_numpy(best_idx)
     elif hasattr(first, 'get'):  # cupy
         import cupy as cp
         stacked = cp.stack(cost_stack, axis=0)
@@ -133,7 +140,7 @@ def _allocate_from_costs(cost_stack, source_ids, fill_value=np.nan):
     # Mark cells that are unreachable from all sources
     if da is not None and isinstance(first, da.Array):
         all_nan = da.all(da.isnan(da.stack(cost_stack, axis=0)), axis=0)
-        all_nan = np.asarray(all_nan.compute())
+        all_nan = _as_numpy(all_nan.compute())
     elif hasattr(first, 'get'):
         import cupy as cp
         all_nan = cp.asnumpy(
@@ -164,7 +171,7 @@ def _allocate_biased(cost_stack, biases, source_ids, fill_value=np.nan):
             layers.append(layer)
         stacked = da.stack(layers, axis=0)
         best_idx = da.argmin(stacked, axis=0).compute()
-        best_idx = np.asarray(best_idx)
+        best_idx = _as_numpy(best_idx)
     elif hasattr(first, 'get'):
         import cupy as cp
         layers = []
@@ -188,7 +195,7 @@ def _allocate_biased(cost_stack, biases, source_ids, fill_value=np.nan):
     # Mark unreachable cells
     if da is not None and isinstance(first, da.Array):
         all_nan = da.all(da.isnan(da.stack(cost_stack, axis=0)), axis=0)
-        all_nan = np.asarray(all_nan.compute())
+        all_nan = _as_numpy(all_nan.compute())
     elif hasattr(first, 'get'):
         import cupy as cp
         all_nan = cp.asnumpy(
