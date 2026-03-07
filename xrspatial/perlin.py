@@ -51,7 +51,7 @@ def _fade(t):
 
 @jit(nopython=True, nogil=True)
 def _gradient(h, x, y):
-    out = np.zeros(h.shape)
+    out = np.zeros(h.shape, dtype=np.float32)
     for j in nb.prange(h.shape[1]):
         for i in nb.prange(h.shape[0]):
             hv = h[i, j] & 3
@@ -65,8 +65,8 @@ def _perlin(p, x, y):
     # coordinates of the top-left (floor, not truncate, so negatives work)
     x_floor = np.floor(x)
     y_floor = np.floor(y)
-    xi = x_floor.astype(int)
-    yi = y_floor.astype(int)
+    xi = x_floor.astype(np.int32)
+    yi = y_floor.astype(np.int32)
 
     # mask to 0-255 range for 512-element table
     xi = xi & 255
