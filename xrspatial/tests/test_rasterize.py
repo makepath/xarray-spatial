@@ -2,12 +2,24 @@
 import numpy as np
 import pytest
 import xarray as xr
-from shapely.geometry import (
-    box, Polygon, MultiPolygon, Point, MultiPoint,
-    LineString, MultiLineString,
-)
 
-from xrspatial.rasterize import rasterize
+try:
+    from shapely.geometry import (
+        box, Polygon, MultiPolygon, Point, MultiPoint,
+        LineString, MultiLineString,
+    )
+    has_shapely = True
+except ImportError:
+    has_shapely = False
+
+# Guard the rasterize import too -- it imports numba.cuda at module level
+# which is fine, but the tests all need shapely anyway.
+if has_shapely:
+    from xrspatial.rasterize import rasterize
+
+pytestmark = pytest.mark.skipif(
+    not has_shapely, reason="shapely not installed"
+)
 
 # Try importing optional GPU dependencies
 try:
