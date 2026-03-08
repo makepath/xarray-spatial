@@ -258,7 +258,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 |:-----|:------------|:------:|:------------------:|:-----------------:|:---------------------:|:---------------------:|
 | [Polygonize](xrspatial/polygonize.py) | Converts contiguous regions of equal value into vector polygons | Standard (CCL) | ✅️ | ✅️ | ✅️ | 🔄 |
 | [Contours](xrspatial/contour.py) | Extracts elevation contour lines (isolines) from a raster surface | Standard (marching squares) | ✅️ | ✅️ | 🔄 | 🔄 |
-| [Rasterize](xrspatial/rasterize.py) | Rasterizes polygon geometries from a GeoDataFrame using scanline fill | Standard (scanline) | ✅️ | | ✅️ | |
+| [Rasterize](xrspatial/rasterize.py) | Rasterizes vector geometries (polygons, lines, points) from a GeoDataFrame | Standard (scanline, Bresenham) | ✅️ | | ✅️ | |
 
 --------
 
