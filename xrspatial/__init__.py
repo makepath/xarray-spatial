@@ -67,6 +67,7 @@ from xrspatial.pathfinding import multi_stop_search  # noqa
 from xrspatial.perlin import perlin  # noqa
 from xrspatial.preview import preview  # noqa
 from xrspatial.proximity import allocation  # noqa
+from xrspatial.rasterize import rasterize  # noqa
 from xrspatial.proximity import direction  # noqa
 from xrspatial.proximity import euclidean_distance  # noqa
 from xrspatial.proximity import great_circle_distance  # noqa
