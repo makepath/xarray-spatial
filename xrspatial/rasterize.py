@@ -1,10 +1,13 @@
-"""Polygon rasterization from GeoDataFrame using scanline fill.
+"""Vector geometry rasterization (polygons, lines, points).
 
-Converts vector polygons (GeoDataFrame or list of (geometry, value) pairs)
-to a 2D xr.DataArray using scanline fill -- no GDAL dependency.
+Converts vector geometries (GeoDataFrame or list of (geometry, value) pairs)
+to a 2D xr.DataArray.  No GDAL dependency.
 
-Supports numpy and cupy backends.  The cupy path runs one CUDA thread
-per raster row for coalesced writes and zero synchronization.
+- Polygons/MultiPolygons: scanline fill
+- Lines/MultiLineStrings: Bresenham line rasterization
+- Points/MultiPoints: direct pixel burn
+
+Supports numpy and cupy backends.
 """
 from __future__ import annotations
 
@@ -185,6 +188,177 @@ def _extract_edges_all_touched(geometries, values, bounds, height, width):
 
 
 # ---------------------------------------------------------------------------
+# Point extraction (always on host)
+# ---------------------------------------------------------------------------
+
+def _extract_points(geometries, values, bounds, height, width):
+    """Parse Point/MultiPoint geometries into pixel coordinate arrays.
+
+    Returns
+    -------
+    rows : ndarray, int32 -- row indices
+    cols : ndarray, int32 -- column indices
+    vals : ndarray, float64 -- burn values
+    """
+    xmin, ymin, xmax, ymax = bounds
+    px = (xmax - xmin) / width
+    py = (ymax - ymin) / height
+
+    all_rows = []
+    all_cols = []
+    all_vals = []
+
+    for geom, val in zip(geometries, values):
+        if geom is None or geom.is_empty:
+            continue
+
+        if geom.geom_type == 'Point':
+            pts = [geom]
+        elif geom.geom_type == 'MultiPoint':
+            pts = list(geom.geoms)
+        else:
+            continue
+
+        for pt in pts:
+            col = int(np.floor((pt.x - xmin) / px))
+            row = int(np.floor((ymax - pt.y) / py))
+            if 0 <= row < height and 0 <= col < width:
+                all_rows.append(np.int32(row))
+                all_cols.append(np.int32(col))
+                all_vals.append(np.float64(val))
+
+    if not all_rows:
+        return (np.empty(0, np.int32), np.empty(0, np.int32),
+                np.empty(0, np.float64))
+
+    return (np.array(all_rows, np.int32),
+            np.array(all_cols, np.int32),
+            np.array(all_vals, np.float64))
+
+
+# ---------------------------------------------------------------------------
+# Line segment extraction (always on host)
+# ---------------------------------------------------------------------------
+
+def _extract_line_segments(geometries, values, bounds, height, width):
+    """Parse LineString/MultiLineString geometries into pixel-space segments.
+
+    Returns
+    -------
+    r0, c0, r1, c1 : ndarray, int32 -- endpoint pixel coordinates
+    vals : ndarray, float64 -- burn values
+    """
+    xmin, ymin, xmax, ymax = bounds
+    px = (xmax - xmin) / width
+    py = (ymax - ymin) / height
+
+    all_r0 = []
+    all_c0 = []
+    all_r1 = []
+    all_c1 = []
+    all_vals = []
+
+    for geom, val in zip(geometries, values):
+        if geom is None or geom.is_empty:
+            continue
+
+        if geom.geom_type == 'LineString':
+            lines = [geom]
+        elif geom.geom_type == 'MultiLineString':
+            lines = list(geom.geoms)
+        else:
+            continue
+
+        for line in lines:
+            coords = np.asarray(line.coords)
+            rows = (ymax - coords[:, 1]) / py
+            cols = (coords[:, 0] - xmin) / px
+
+            for i in range(len(coords) - 1):
+                r_a = int(np.floor(rows[i]))
+                c_a = int(np.floor(cols[i]))
+                r_b = int(np.floor(rows[i + 1]))
+                c_b = int(np.floor(cols[i + 1]))
+                all_r0.append(np.int32(r_a))
+                all_c0.append(np.int32(c_a))
+                all_r1.append(np.int32(r_b))
+                all_c1.append(np.int32(c_b))
+                all_vals.append(np.float64(val))
+
+    if not all_r0:
+        return (np.empty(0, np.int32), np.empty(0, np.int32),
+                np.empty(0, np.int32), np.empty(0, np.int32),
+                np.empty(0, np.float64))
+
+    return (np.array(all_r0, np.int32), np.array(all_c0, np.int32),
+            np.array(all_r1, np.int32), np.array(all_c1, np.int32),
+            np.array(all_vals, np.float64))
+
+
+# ---------------------------------------------------------------------------
+# CPU point burn (numba)
+# ---------------------------------------------------------------------------
+
+@ngjit
+def _burn_points_cpu(out, rows, cols, vals):
+    """Burn point values into the output raster."""
+    for i in range(len(rows)):
+        r = rows[i]
+        c = cols[i]
+        if 0 <= r < out.shape[0] and 0 <= c < out.shape[1]:
+            out[r, c] = vals[i]
+
+
+# ---------------------------------------------------------------------------
+# CPU Bresenham line rasterization (numba)
+# ---------------------------------------------------------------------------
+
+@ngjit
+def _burn_lines_cpu(out, r0_arr, c0_arr, r1_arr, c1_arr, vals, height, width):
+    """Burn line segments using Bresenham's algorithm."""
+    for i in range(len(r0_arr)):
+        r0 = r0_arr[i]
+        c0 = c0_arr[i]
+        r1 = r1_arr[i]
+        c1 = c1_arr[i]
+        val = vals[i]
+
+        dr = r1 - r0
+        dc = c1 - c0
+        sr = 1 if dr >= 0 else -1
+        sc = 1 if dc >= 0 else -1
+        dr = dr * sr  # abs
+        dc = dc * sc  # abs
+
+        if dr >= dc:
+            # Row-major iteration
+            err = dc - dr
+            r = r0
+            c = c0
+            for _ in range(dr + 1):
+                if 0 <= r < height and 0 <= c < width:
+                    out[r, c] = val
+                if err >= 0:
+                    c += sc
+                    err -= dr
+                r += sr
+                err += dc
+        else:
+            # Column-major iteration
+            err = dr - dc
+            r = r0
+            c = c0
+            for _ in range(dc + 1):
+                if 0 <= r < height and 0 <= c < width:
+                    out[r, c] = val
+                if err >= 0:
+                    r += sr
+                    err -= dc
+                c += sc
+                err += dr
+
+
+# ---------------------------------------------------------------------------
 # CPU scanline fill (numba)
 # ---------------------------------------------------------------------------
 
@@ -252,6 +426,9 @@ def _scanline_fill_cpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
 def _run_numpy(geometries, values, bounds, height, width, fill, dtype,
                all_touched):
     """NumPy backend for rasterize."""
+    out = np.full((height, width), fill, dtype=np.float64)
+
+    # 1. Polygons (scanline fill)
     if all_touched:
         edge_arrays = _extract_edges_all_touched(
             geometries, values, bounds, height, width)
@@ -260,11 +437,22 @@ def _run_numpy(geometries, values, bounds, height, width, fill, dtype,
             geometries, values, bounds, height, width)
     edge_y_min, edge_y_max, edge_x_at_ymin, edge_inv_slope, edge_value = \
         edge_arrays
-
-    out = np.full((height, width), fill, dtype=np.float64)
     if len(edge_y_min) > 0:
         _scanline_fill_cpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
                            edge_inv_slope, edge_value, height, width)
+
+    # 2. Lines (Bresenham)
+    r0, c0, r1, c1, lvals = _extract_line_segments(
+        geometries, values, bounds, height, width)
+    if len(r0) > 0:
+        _burn_lines_cpu(out, r0, c0, r1, c1, lvals, height, width)
+
+    # 3. Points (direct burn)
+    prows, pcols, pvals = _extract_points(
+        geometries, values, bounds, height, width)
+    if len(prows) > 0:
+        _burn_points_cpu(out, prows, pcols, pvals)
+
     return out.astype(dtype)
 
 
@@ -351,9 +539,73 @@ def _scanline_fill_gpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
         i = j
 
 
+@cuda.jit
+def _burn_points_gpu(out, rows, cols, vals, n_points):
+    """CUDA kernel: one thread per point."""
+    i = cuda.grid(1)
+    if i >= n_points:
+        return
+    r = rows[i]
+    c = cols[i]
+    if 0 <= r < out.shape[0] and 0 <= c < out.shape[1]:
+        out[r, c] = vals[i]
+
+
+@cuda.jit
+def _burn_lines_gpu(out, r0_arr, c0_arr, r1_arr, c1_arr, vals,
+                    n_segs, height, width):
+    """CUDA kernel: one thread per line segment, Bresenham."""
+    i = cuda.grid(1)
+    if i >= n_segs:
+        return
+
+    r0 = r0_arr[i]
+    c0 = c0_arr[i]
+    r1 = r1_arr[i]
+    c1 = c1_arr[i]
+    val = vals[i]
+
+    dr = r1 - r0
+    dc = c1 - c0
+    sr = 1 if dr >= 0 else -1
+    sc = 1 if dc >= 0 else -1
+    if dr < 0:
+        dr = -dr
+    if dc < 0:
+        dc = -dc
+
+    if dr >= dc:
+        err = dc - dr
+        r = r0
+        c = c0
+        for _ in range(dr + 1):
+            if 0 <= r < height and 0 <= c < width:
+                out[r, c] = val
+            if err >= 0:
+                c += sc
+                err -= dr
+            r += sr
+            err += dc
+    else:
+        err = dr - dc
+        r = r0
+        c = c0
+        for _ in range(dc + 1):
+            if 0 <= r < height and 0 <= c < width:
+                out[r, c] = val
+            if err >= 0:
+                r += sr
+                err -= dc
+            c += sc
+            err += dr
+
+
 def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
               all_touched):
     """CuPy backend for rasterize."""
+    out = cupy.full((height, width), fill, dtype=cupy.float64)
+
+    # 1. Polygons (scanline fill)
     if all_touched:
         edge_arrays = _extract_edges_all_touched(
             geometries, values, bounds, height, width)
@@ -363,10 +615,7 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
     edge_y_min, edge_y_max, edge_x_at_ymin, edge_inv_slope, edge_value = \
         edge_arrays
 
-    out = cupy.full((height, width), fill, dtype=cupy.float64)
-
     if len(edge_y_min) > 0:
-        # Transfer edge table to device
         d_y_min = cupy.asarray(edge_y_min)
         d_y_max = cupy.asarray(edge_y_max)
         d_x_at_ymin = cupy.asarray(edge_x_at_ymin)
@@ -378,6 +627,29 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
         _scanline_fill_gpu[blocks, threads_per_block](
             out, d_y_min, d_y_max, d_x_at_ymin, d_inv_slope, d_value,
             len(edge_y_min), width)
+
+    # 2. Lines (Bresenham)
+    r0, c0, r1, c1, lvals = _extract_line_segments(
+        geometries, values, bounds, height, width)
+    if len(r0) > 0:
+        n_segs = len(r0)
+        tpb = 256
+        bpg = (n_segs + tpb - 1) // tpb
+        _burn_lines_gpu[bpg, tpb](
+            out, cupy.asarray(r0), cupy.asarray(c0),
+            cupy.asarray(r1), cupy.asarray(c1),
+            cupy.asarray(lvals), n_segs, height, width)
+
+    # 3. Points (direct burn)
+    prows, pcols, pvals = _extract_points(
+        geometries, values, bounds, height, width)
+    if len(prows) > 0:
+        n_pts = len(prows)
+        tpb = 256
+        bpg = (n_pts + tpb - 1) // tpb
+        _burn_points_gpu[bpg, tpb](
+            out, cupy.asarray(prows), cupy.asarray(pcols),
+            cupy.asarray(pvals), n_pts)
 
     return out.astype(dtype)
 
@@ -451,12 +723,17 @@ def rasterize(
     use_cuda: bool = False,
     name: str = 'rasterize',
 ) -> xr.DataArray:
-    """Rasterize polygon geometries into a 2D DataArray using scanline fill.
+    """Rasterize vector geometries into a 2D DataArray.
 
-    Converts vector polygons from a GeoDataFrame or a list of
+    Converts geometries from a GeoDataFrame or a list of
     ``(geometry, value)`` pairs into a regularly gridded raster.
-    Uses scanline fill (same algorithm as GDAL internally) with
-    numba on CPU or a CUDA kernel on GPU.  No GDAL dependency.
+    No GDAL dependency.
+
+    Supported geometry types:
+
+    - **Polygon / MultiPolygon** -- scanline fill
+    - **LineString / MultiLineString** -- Bresenham line rasterization
+    - **Point / MultiPoint** -- direct pixel burn
 
     Parameters
     ----------
@@ -496,16 +773,14 @@ def rasterize(
 
     Notes
     -----
-    Supported geometry types: Polygon, MultiPolygon.  Other types are
-    silently skipped.
+    Geometry types are burned in priority order: polygons first, then
+    lines, then points.  Within each type, last-writer-wins when
+    geometries overlap.  Unsupported geometry types (e.g.
+    GeometryCollection) are silently skipped.
 
-    When polygons overlap, last-writer-wins (the polygon that appears
-    later in the input overwrites earlier ones).
-
-    The GPU path launches one CUDA thread per raster row.  The edge
-    table (small relative to the output grid) is transferred to device
-    once.  Output stays on device so downstream xarray-spatial ops
-    skip the host round-trip.
+    The GPU path launches one CUDA thread per raster row (polygons),
+    per line segment, or per point.  All data is transferred to device
+    once and the output stays on device for downstream ops.
 
     Dependencies: ``shapely`` (vertex extraction), ``geopandas``
     (if passing a GeoDataFrame).  No GDAL or rasterio.

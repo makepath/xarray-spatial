@@ -1,8 +1,11 @@
-"""Tests for xrspatial.rasterize (polygon rasterization via scanline fill)."""
+"""Tests for xrspatial.rasterize (vector geometry rasterization)."""
 import numpy as np
 import pytest
 import xarray as xr
-from shapely.geometry import box, Polygon, MultiPolygon
+from shapely.geometry import (
+    box, Polygon, MultiPolygon, Point, MultiPoint,
+    LineString, MultiLineString,
+)
 
 from xrspatial.rasterize import rasterize
 
@@ -237,12 +240,12 @@ class TestEdgeCases:
                            width=5, height=5, bounds=(0, 0, 5, 5))
         assert result.values[2, 2] == 1.0
 
-    def test_non_polygon_skipped(self):
-        from shapely.geometry import Point
-        pt = Point(2.5, 2.5)
-        result = rasterize([(pt, 99.0)], width=5, height=5,
+    def test_unsupported_geom_type_skipped(self):
+        from shapely.geometry import GeometryCollection
+        gc = GeometryCollection()
+        result = rasterize([(gc, 99.0)], width=5, height=5,
                            bounds=(0, 0, 5, 5))
-        # Point geometries are skipped
+        # Empty GeometryCollections are skipped
         assert np.all(np.isnan(result.values))
 
 
@@ -315,6 +318,220 @@ class TestColumnSelection:
 
 
 # ---------------------------------------------------------------------------
+# Point rasterization
+# ---------------------------------------------------------------------------
+
+class TestPoints:
+    def test_single_point(self):
+        pt = Point(2.5, 2.5)
+        result = rasterize([(pt, 7.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        # y=2.5 -> row = floor((5 - 2.5) / 1.0) = 2, x=2.5 -> col = 2
+        assert result.values[2, 2] == 7.0
+        # Other pixels should be fill
+        assert result.values[0, 0] == 0
+
+    def test_multiple_points(self):
+        pairs = [
+            (Point(0.5, 0.5), 1.0),
+            (Point(4.5, 4.5), 2.0),
+        ]
+        result = rasterize(pairs, width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        # Point at (0.5, 0.5): row=4, col=0
+        assert result.values[4, 0] == 1.0
+        # Point at (4.5, 4.5): row=0, col=4
+        assert result.values[0, 4] == 2.0
+
+    def test_multipoint(self):
+        mp = MultiPoint([(1.5, 1.5), (3.5, 3.5)])
+        result = rasterize([(mp, 5.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        # (1.5, 1.5): row=3, col=1
+        assert result.values[3, 1] == 5.0
+        # (3.5, 3.5): row=1, col=3
+        assert result.values[1, 3] == 5.0
+
+    def test_point_outside_bounds(self):
+        pt = Point(20, 20)
+        result = rasterize([(pt, 1.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        assert np.all(result.values == 0)
+
+    def test_point_on_boundary(self):
+        # Point exactly on the right edge (x=5.0) should be outside
+        # for a bounds of (0, 0, 5, 5) with width=5 (pixels at 0.5..4.5)
+        pt = Point(5.0, 2.5)
+        result = rasterize([(pt, 1.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        assert np.all(result.values == 0)
+
+    def test_overlapping_points_last_wins(self):
+        pairs = [
+            (Point(2.5, 2.5), 1.0),
+            (Point(2.5, 2.5), 9.0),
+        ]
+        result = rasterize(pairs, width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        assert result.values[2, 2] == 9.0
+
+
+# ---------------------------------------------------------------------------
+# Line rasterization
+# ---------------------------------------------------------------------------
+
+class TestLines:
+    def test_horizontal_line(self):
+        line = LineString([(0.5, 2.5), (4.5, 2.5)])
+        result = rasterize([(line, 3.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        # Horizontal line at y=2.5 -> row=2
+        # Should burn across cols 0..4
+        for c in range(5):
+            assert result.values[2, c] == 3.0
+
+    def test_vertical_line(self):
+        line = LineString([(2.5, 0.5), (2.5, 4.5)])
+        result = rasterize([(line, 4.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        # Vertical line at x=2.5 -> col=2
+        # Should burn across rows 0..4
+        for r in range(5):
+            assert result.values[r, 2] == 4.0
+
+    def test_diagonal_line(self):
+        line = LineString([(0.5, 0.5), (4.5, 4.5)])
+        result = rasterize([(line, 1.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        # Diagonal: should hit approximately (row=4,col=0), (3,1), (2,2),
+        # (1,3), (0,4) via Bresenham
+        burned = np.sum(result.values == 1.0)
+        assert burned >= 5
+
+    def test_multilinestring(self):
+        ml = MultiLineString([
+            [(0.5, 2.5), (4.5, 2.5)],  # horizontal
+            [(2.5, 0.5), (2.5, 4.5)],  # vertical
+        ])
+        result = rasterize([(ml, 1.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        # Cross pattern: row 2 all filled, col 2 all filled
+        for c in range(5):
+            assert result.values[2, c] == 1.0
+        for r in range(5):
+            assert result.values[r, 2] == 1.0
+
+    def test_line_outside_bounds(self):
+        line = LineString([(20, 20), (30, 30)])
+        result = rasterize([(line, 1.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        assert np.all(result.values == 0)
+
+    def test_single_point_line(self):
+        # Degenerate line with two identical endpoints
+        line = LineString([(2.5, 2.5), (2.5, 2.5)])
+        result = rasterize([(line, 1.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        # Should burn at least one pixel at (row=2, col=2)
+        assert result.values[2, 2] == 1.0
+
+    def test_multi_segment_line(self):
+        # L-shaped line: right then up
+        line = LineString([(0.5, 0.5), (4.5, 0.5), (4.5, 4.5)])
+        result = rasterize([(line, 2.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        # Bottom row (y=0.5, row=4) should be burned across
+        for c in range(5):
+            assert result.values[4, c] == 2.0
+        # Right column (x=4.5, col=4) should be burned down
+        for r in range(5):
+            assert result.values[r, 4] == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Mixed geometry types
+# ---------------------------------------------------------------------------
+
+class TestMixedGeometries:
+    def test_polygon_and_point(self):
+        poly = box(0, 0, 3, 3)
+        pt = Point(4.5, 4.5)
+        result = rasterize([(poly, 1.0), (pt, 9.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        # Polygon should fill bottom-left area
+        assert result.values[4, 0] == 1.0  # y=0.5, x=0.5 -> inside poly
+        # Point should burn at top-right
+        assert result.values[0, 4] == 9.0
+
+    def test_polygon_and_line(self):
+        poly = box(0, 0, 5, 5)
+        line = LineString([(0.5, 2.5), (4.5, 2.5)])
+        result = rasterize([(poly, 1.0), (line, 5.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        # Polygon fills everything with 1.0
+        # Line overwrites row 2 with 5.0
+        assert result.values[0, 0] == 1.0  # polygon only
+        assert result.values[2, 2] == 5.0  # line overwrites
+
+    def test_point_overwrites_polygon(self):
+        poly = box(0, 0, 5, 5)
+        pt = Point(2.5, 2.5)
+        result = rasterize([(poly, 1.0), (pt, 99.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), fill=0)
+        # Point has highest priority
+        assert result.values[2, 2] == 99.0
+        # Rest is polygon
+        assert result.values[0, 0] == 1.0
+
+    def test_all_types_together(self):
+        poly = box(0, 0, 5, 5)
+        line = LineString([(0.5, 4.5), (4.5, 4.5)])
+        pt = Point(2.5, 2.5)
+        result = rasterize(
+            [(poly, 1.0), (line, 2.0), (pt, 3.0)],
+            width=5, height=5, bounds=(0, 0, 5, 5), fill=0)
+        # Polygon fills everything
+        assert result.values[4, 4] == 1.0
+        # Line overwrites top row
+        assert result.values[0, 2] == 2.0
+        # Point overwrites center
+        assert result.values[2, 2] == 3.0
+
+
+# ---------------------------------------------------------------------------
+# GeoDataFrame with mixed geometry types
+# ---------------------------------------------------------------------------
+
+@skip_no_geopandas
+class TestGeoDataFrameMixed:
+    def test_gdf_with_points(self):
+        gdf = gpd.GeoDataFrame(
+            {'value': [1.0, 2.0, 3.0]},
+            geometry=[Point(1.5, 1.5), Point(3.5, 3.5), Point(2.5, 2.5)],
+        )
+        result = rasterize(gdf, width=5, height=5,
+                           bounds=(0, 0, 5, 5), column='value', fill=0)
+        assert result.values[3, 1] == 1.0
+        assert result.values[1, 3] == 2.0
+        assert result.values[2, 2] == 3.0
+
+    def test_gdf_with_lines(self):
+        gdf = gpd.GeoDataFrame(
+            {'value': [1.0, 2.0]},
+            geometry=[
+                LineString([(0.5, 2.5), (4.5, 2.5)]),
+                LineString([(2.5, 0.5), (2.5, 4.5)]),
+            ],
+        )
+        result = rasterize(gdf, width=5, height=5,
+                           bounds=(0, 0, 5, 5), column='value', fill=0)
+        # Horizontal line at row 2
+        assert result.values[2, 0] == 1.0
+        # Vertical line at col 2 (overwrites at intersection)
+        assert result.values[0, 2] == 2.0
+
+
+# ---------------------------------------------------------------------------
 # GPU backend
 # ---------------------------------------------------------------------------
 
@@ -352,6 +569,47 @@ class TestCuPy:
                               bounds=(0, 0, 10, 10), use_cuda=False)
         cp_result = rasterize([(poly, 1.0)], width=10, height=10,
                               bounds=(0, 0, 10, 10), use_cuda=True)
+        np.testing.assert_array_equal(
+            np_result.values, cupy.asnumpy(cp_result.data))
+
+    def test_cupy_points_match_numpy(self):
+        pairs = [
+            (Point(1.5, 1.5), 1.0),
+            (Point(3.5, 3.5), 2.0),
+            (MultiPoint([(0.5, 0.5), (4.5, 4.5)]), 3.0),
+        ]
+        np_result = rasterize(pairs, width=5, height=5,
+                              bounds=(0, 0, 5, 5), fill=0, use_cuda=False)
+        cp_result = rasterize(pairs, width=5, height=5,
+                              bounds=(0, 0, 5, 5), fill=0, use_cuda=True)
+        np.testing.assert_array_equal(
+            np_result.values, cupy.asnumpy(cp_result.data))
+
+    def test_cupy_lines_match_numpy(self):
+        # Use non-intersecting lines to avoid GPU race conditions
+        # at shared pixels
+        pairs = [
+            (LineString([(0.5, 0.5), (4.5, 0.5)]), 1.0),
+            (LineString([(0.5, 4.5), (4.5, 4.5)]), 2.0),
+            (MultiLineString([[(0.5, 2.5), (4.5, 2.5)]]), 3.0),
+        ]
+        np_result = rasterize(pairs, width=10, height=10,
+                              bounds=(0, 0, 5, 5), fill=0, use_cuda=False)
+        cp_result = rasterize(pairs, width=10, height=10,
+                              bounds=(0, 0, 5, 5), fill=0, use_cuda=True)
+        np.testing.assert_array_equal(
+            np_result.values, cupy.asnumpy(cp_result.data))
+
+    def test_cupy_mixed_types_match_numpy(self):
+        pairs = [
+            (box(0, 0, 3, 3), 1.0),
+            (LineString([(0.5, 4.5), (4.5, 4.5)]), 2.0),
+            (Point(2.5, 2.5), 3.0),
+        ]
+        np_result = rasterize(pairs, width=5, height=5,
+                              bounds=(0, 0, 5, 5), fill=0, use_cuda=False)
+        cp_result = rasterize(pairs, width=5, height=5,
+                              bounds=(0, 0, 5, 5), fill=0, use_cuda=True)
         np.testing.assert_array_equal(
             np_result.values, cupy.asnumpy(cp_result.data))
 
