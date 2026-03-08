@@ -252,12 +252,13 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 --------
 
-### **Raster to vector**
+### **Raster / Vector Conversion**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:-----|:------------|:------:|:------------------:|:-----------------:|:---------------------:|:---------------------:|
 | [Polygonize](xrspatial/polygonize.py) | Converts contiguous regions of equal value into vector polygons | Standard (CCL) | ✅️ | ✅️ | ✅️ | 🔄 |
 | [Contours](xrspatial/contour.py) | Extracts elevation contour lines (isolines) from a raster surface | Standard (marching squares) | ✅️ | ✅️ | 🔄 | 🔄 |
+| [Rasterize](xrspatial/rasterize.py) | Rasterizes polygon geometries from a GeoDataFrame using scanline fill | Standard (scanline) | ✅️ | | ✅️ | |
 
 --------
 

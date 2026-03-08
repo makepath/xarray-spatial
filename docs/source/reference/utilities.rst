@@ -25,6 +25,13 @@ Polygonize
 
     xrspatial.polygonize.polygonize
 
+Rasterize
+=========
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.rasterize.rasterize
+
 Contours
 ========
 .. autosummary::
