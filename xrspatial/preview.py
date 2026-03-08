@@ -93,39 +93,26 @@ def _reduce_local(agg, factor_y, factor_x, method, y_dim, x_dim):
 # Dask block reduction via map_blocks
 # ---------------------------------------------------------------------------
 
-def _snap_factor(chunk_size, factor, max_ratio=2.0):
+def _snap_factor(chunk_size, factor):
     """Return the divisor of *chunk_size* closest to *factor*.
 
     When the reduction factor evenly divides every chunk, no rechunking
     is needed and the dask graph stays minimal.  The output dimensions
-    shift slightly but remain close to the originally requested size.
-
-    If no divisor is within *max_ratio* of the original factor, *factor*
-    is returned unchanged (the caller will fall back to rechunking).
+    may overshoot the target; a cheap in-memory second pass corrects
+    that afterwards.
     """
     if chunk_size % factor == 0:
         return factor
-    best = None
-    best_dist = float('inf')
-    for d in range(1, int(chunk_size ** 0.5) + 1):
+    best = 1          # 1 always divides; guarantees a result
+    best_dist = abs(1 - factor)
+    for d in range(2, int(chunk_size ** 0.5) + 1):
         if chunk_size % d == 0:
             for candidate in (d, chunk_size // d):
-                if candidate < 1:
-                    continue
-                ratio = max(candidate, factor) / max(min(candidate, factor), 1)
-                if ratio > max_ratio:
-                    continue
                 dist = abs(candidate - factor)
                 if dist < best_dist:
                     best_dist = dist
                     best = candidate
-    return best if best is not None else factor
-
-
-def _aligned_chunk_size(orig_chunk, factor):
-    """Round *orig_chunk* to the nearest multiple of *factor*."""
-    n = max(1, round(orig_chunk / factor))
-    return n * factor
+    return best
 
 
 def _reduce_dask(agg, factor_y, factor_x, method, y_dim, x_dim):
@@ -139,12 +126,6 @@ def _reduce_dask(agg, factor_y, factor_x, method, y_dim, x_dim):
     import dask.array as da
 
     data = agg.data
-
-    # Rechunk only when snapping couldn't find a good divisor.
-    if data.chunksize[0] % factor_y != 0 or data.chunksize[1] % factor_x != 0:
-        ay = _aligned_chunk_size(data.chunksize[0], factor_y)
-        ax = _aligned_chunk_size(data.chunksize[1], factor_x)
-        data = data.rechunk((ay, ax))
 
     out_chunks_y = tuple(c // factor_y for c in data.chunks[0])
     out_chunks_x = tuple(c // factor_x for c in data.chunks[1])
@@ -297,6 +278,37 @@ def _interpolate_coords(coords, n_out):
 
 
 # ---------------------------------------------------------------------------
+# Second-pass refinement
+# ---------------------------------------------------------------------------
+
+def _refine_to_target(result, target_h, target_w, y_dim, x_dim):
+    """Subsample a small in-memory result to exact target dimensions.
+
+    When snap-based dask reduction overshoots the requested size (e.g.
+    1680 instead of 1000), this picks evenly-spaced rows/columns to
+    hit the target exactly.  The intermediate is always small, so this
+    is negligible.
+    """
+    rh = result.sizes[y_dim]
+    rw = result.sizes[x_dim]
+    out_h = min(rh, target_h)
+    out_w = min(rw, target_w)
+    if out_h == rh and out_w == rw:
+        return result
+    idx_y = np.linspace(0, rh - 1, out_h, dtype=int)
+    idx_x = np.linspace(0, rw - 1, out_w, dtype=int)
+    out_data = result.data[np.ix_(idx_y, idx_x)]
+    coords = {}
+    if y_dim in result.coords:
+        coords[y_dim] = _interpolate_coords(result.coords[y_dim], out_h)
+    if x_dim in result.coords:
+        coords[x_dim] = _interpolate_coords(result.coords[x_dim], out_w)
+    return xr.DataArray(
+        out_data, dims=[y_dim, x_dim], coords=coords, attrs=result.attrs,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -357,9 +369,13 @@ def preview(agg, width=1000, height=None, method='mean', name='preview'):
     y_dim = agg.dims[0]
     x_dim = agg.dims[1]
 
+    # Save the original targets before snap may widen them.
+    target_h, target_w = height, width
+
     # For dask arrays, snap each factor to the nearest divisor of the
     # chunk size so that every chunk divides evenly and no rechunking
-    # is needed.  The output dimensions may shift slightly.
+    # is needed.  The output dimensions may overshoot the target; a
+    # cheap second pass corrects that below.
     try:
         import dask.array as da
         if isinstance(agg.data, da.Array):
@@ -410,4 +426,17 @@ def preview(agg, width=1000, height=None, method='mean', name='preview'):
 
     result.name = name
     result.attrs = agg.attrs
+
+    # Second pass: if snap overshot the target, compute the small
+    # intermediate and subsample to exact dimensions.
+    if (result.sizes[y_dim] > target_h or result.sizes[x_dim] > target_w):
+        try:
+            result = result.compute()
+        except (AttributeError, TypeError):
+            pass
+        result = _refine_to_target(
+            result, target_h, target_w, y_dim, x_dim,
+        )
+        result.name = name
+
     return result
