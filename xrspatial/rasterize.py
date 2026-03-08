@@ -24,31 +24,188 @@ try:
 except ImportError:
     cupy = None
 
+# Detect shapely 2.0+ for vectorized extraction
+try:
+    import shapely as _shapely_mod
+    _HAS_SHAPELY2 = hasattr(_shapely_mod, 'get_parts')
+except ImportError:
+    _HAS_SHAPELY2 = False
+
 
 # ---------------------------------------------------------------------------
-# Edge table construction (always on host)
+# Geometry classification (single pass)
 # ---------------------------------------------------------------------------
 
-def _extract_edges(geometries, values, bounds, height, width):
-    """Parse geometries into a flat edge table.
+def _classify_geometries(geometries, values):
+    """Classify geometries by type in a single pass.
+
+    Filters out None/empty geometries and groups them into polygon,
+    line, and point buckets so each extractor processes only its type.
 
     Returns
     -------
-    edge_y_min : ndarray, shape (n_edges,), int32
-        Row index of the edge's top (smallest y pixel row).
-    edge_y_max : ndarray, shape (n_edges,), int32
-        Row index of the edge's bottom (largest y pixel row).
-    edge_x_at_ymin : ndarray, shape (n_edges,), float64
-        x-coordinate (in pixel space) at ``edge_y_min``.
-    edge_inv_slope : ndarray, shape (n_edges,), float64
-        1 / slope in pixel space (dx per unit dy).
-    edge_value : ndarray, shape (n_edges,), float64
-        Burn value for the polygon that owns this edge.
+    (poly_geoms, poly_vals), (line_geoms, line_vals), (point_geoms, point_vals)
     """
+    poly_geoms, poly_vals = [], []
+    line_geoms, line_vals = [], []
+    point_geoms, point_vals = [], []
+
+    for geom, val in zip(geometries, values):
+        if geom is None or geom.is_empty:
+            continue
+        gt = geom.geom_type
+        if gt in ('Polygon', 'MultiPolygon'):
+            poly_geoms.append(geom)
+            poly_vals.append(val)
+        elif gt in ('LineString', 'MultiLineString'):
+            line_geoms.append(geom)
+            line_vals.append(val)
+        elif gt in ('Point', 'MultiPoint'):
+            point_geoms.append(geom)
+            point_vals.append(val)
+
+    return ((poly_geoms, poly_vals),
+            (line_geoms, line_vals),
+            (point_geoms, point_vals))
+
+
+# ---------------------------------------------------------------------------
+# Edge table construction
+# ---------------------------------------------------------------------------
+
+_EMPTY_EDGES = (np.empty(0, np.int32), np.empty(0, np.int32),
+                np.empty(0, np.float64), np.empty(0, np.float64),
+                np.empty(0, np.float64))
+
+
+def _extract_edges(geometries, values, bounds, height, width,
+                   all_touched=False):
+    """Build the edge table for polygon scanline fill.
+
+    Uses vectorized NumPy ops when shapely >= 2.0 is available,
+    otherwise falls back to a Python loop.
+
+    Parameters
+    ----------
+    geometries : list of shapely Polygon/MultiPolygon
+    values : list of float
+    bounds : (xmin, ymin, xmax, ymax)
+    height, width : int
+    all_touched : bool
+        Expand edges by half a pixel so boundary-adjacent pixels are filled.
+
+    Returns
+    -------
+    edge_y_min, edge_y_max : int32 arrays
+    edge_x_at_ymin, edge_inv_slope, edge_value : float64 arrays
+    """
+    if not geometries:
+        return _EMPTY_EDGES
+    if _HAS_SHAPELY2:
+        return _extract_edges_vectorized(
+            geometries, values, bounds, height, width, all_touched)
+    return _extract_edges_loop(
+        geometries, values, bounds, height, width, all_touched)
+
+
+def _extract_edges_vectorized(geometries, values, bounds, height, width,
+                              all_touched):
+    """Vectorized edge extraction using shapely 2.0 array ops."""
     import shapely
 
     xmin, ymin, xmax, ymax = bounds
-    # pixel size
+    px = (xmax - xmin) / width
+    py = (ymax - ymin) / height
+
+    geom_arr = np.array(geometries, dtype=object)
+    val_arr = np.array(values, dtype=np.float64)
+
+    # Explode MultiPolygons to individual Polygons
+    parts, part_idx = shapely.get_parts(geom_arr, return_index=True)
+    part_vals = val_arr[part_idx]
+
+    # Get all rings (exterior + interior)
+    rings, ring_idx = shapely.get_rings(parts, return_index=True)
+    ring_vals = part_vals[ring_idx]
+
+    if len(rings) == 0:
+        return _EMPTY_EDGES
+
+    # Get all vertex coordinates with ring membership
+    coords, coord_ring_idx = shapely.get_coordinates(
+        rings, return_index=True)
+    n_coords = len(coords)
+    if n_coords < 2:
+        return _EMPTY_EDGES
+
+    # Mark last coordinate of each ring (don't form cross-ring edges)
+    is_last = np.zeros(n_coords, dtype=bool)
+    changes = np.nonzero(np.diff(coord_ring_idx))[0]
+    is_last[changes] = True
+    is_last[-1] = True
+
+    # Edges: from each non-last coordinate to its successor
+    start_idx = np.nonzero(~is_last)[0]
+    end_idx = start_idx + 1
+
+    # Burn value for each edge (from ring → part → geometry)
+    edge_vals = ring_vals[coord_ring_idx[start_idx]]
+
+    # Convert to pixel space
+    start_row = (ymax - coords[start_idx, 1]) / py
+    start_col = (coords[start_idx, 0] - xmin) / px
+    end_row = (ymax - coords[end_idx, 1]) / py
+    end_col = (coords[end_idx, 0] - xmin) / px
+
+    # Drop horizontal edges
+    not_horiz = start_row != end_row
+    start_row = start_row[not_horiz]
+    start_col = start_col[not_horiz]
+    end_row = end_row[not_horiz]
+    end_col = end_col[not_horiz]
+    edge_vals = edge_vals[not_horiz]
+
+    if len(start_row) == 0:
+        return _EMPTY_EDGES
+
+    # Orient edges so top_r < bot_r
+    swap = start_row > end_row
+    top_r = np.where(swap, end_row, start_row)
+    top_c = np.where(swap, end_col, start_col)
+    bot_r = np.where(swap, start_row, end_row)
+    bot_c = np.where(swap, start_col, end_col)
+
+    # Clamp to raster rows
+    if all_touched:
+        ry_min = np.maximum(np.floor(top_r - 0.5).astype(np.int32), 0)
+        ry_max = np.minimum(
+            np.ceil(bot_r + 0.5).astype(np.int32) - 1, height - 1)
+    else:
+        # ceil/ceil-1 convention: edge covers ceil(top) to ceil(bot)-1
+        # so consecutive edges sharing a vertex leave no gap.
+        ry_min = np.maximum(np.ceil(top_r).astype(np.int32), 0)
+        ry_max = np.minimum(
+            np.ceil(bot_r).astype(np.int32) - 1, height - 1)
+
+    # Only keep edges that span at least one row
+    valid = ry_min <= ry_max
+
+    # Inverse slope and x at first active row
+    dr = bot_r - top_r  # guaranteed != 0
+    inv_slope = (bot_c - top_c) / dr
+    x_at_ymin = top_c + (ry_min.astype(np.float64) - top_r) * inv_slope
+
+    return (ry_min[valid],
+            ry_max[valid],
+            x_at_ymin[valid],
+            inv_slope[valid],
+            edge_vals[valid])
+
+
+def _extract_edges_loop(geometries, values, bounds, height, width,
+                        all_touched):
+    """Loop-based edge extraction (shapely < 2.0 fallback)."""
+    xmin, ymin, xmax, ymax = bounds
     px = (xmax - xmin) / width
     py = (ymax - ymin) / height
 
@@ -62,7 +219,6 @@ def _extract_edges(geometries, values, bounds, height, width):
         if geom is None or geom.is_empty:
             continue
 
-        # Normalise to MultiPolygon
         if geom.geom_type == 'Polygon':
             parts = [geom]
         elif geom.geom_type == 'MultiPolygon':
@@ -74,8 +230,6 @@ def _extract_edges(geometries, values, bounds, height, width):
             rings = [poly.exterior] + list(poly.interiors)
             for ring in rings:
                 coords = np.asarray(ring.coords)
-                # Convert to pixel space.
-                # Row 0 is at ymax (top), row (height-1) is at ymin (bottom).
                 row = (ymax - coords[:, 1]) / py
                 col = (coords[:, 0] - xmin) / px
 
@@ -87,9 +241,14 @@ def _extract_edges(geometries, values, bounds, height, width):
                         continue  # horizontal edge, skip
                     if r0 > r1:
                         r0, c0, r1, c1 = r1, c1, r0, c0
-                    # Clamp to raster
-                    ry_min = max(int(np.ceil(r0)), 0)
-                    ry_max = min(int(np.floor(r1)), height) - 1
+                    if all_touched:
+                        ry_min = max(int(np.floor(r0 - 0.5)), 0)
+                        ry_max = min(
+                            int(np.ceil(r1 + 0.5)) - 1, height - 1)
+                    else:
+                        ry_min = max(int(np.ceil(r0)), 0)
+                        ry_max = min(
+                            int(np.ceil(r1)) - 1, height - 1)
                     if ry_min > ry_max:
                         continue
                     inv_slope = (c1 - c0) / (r1 - r0)
@@ -101,9 +260,7 @@ def _extract_edges(geometries, values, bounds, height, width):
                     all_value.append(np.float64(val))
 
     if not all_y_min:
-        return (np.empty(0, np.int32), np.empty(0, np.int32),
-                np.empty(0, np.float64), np.empty(0, np.float64),
-                np.empty(0, np.float64))
+        return _EMPTY_EDGES
 
     return (np.array(all_y_min, np.int32),
             np.array(all_y_max, np.int32),
@@ -112,79 +269,18 @@ def _extract_edges(geometries, values, bounds, height, width):
             np.array(all_value, np.float64))
 
 
-def _extract_edges_all_touched(geometries, values, bounds, height, width):
-    """Parse geometries into a flat edge table for all_touched mode.
-
-    In all_touched mode we use sub-pixel edge positions and fill any
-    pixel whose center falls within half a pixel of an intersection,
-    which requires different clamping.  The scanline kernel handles
-    the half-pixel expansion.
-
-    Returns the same arrays as ``_extract_edges`` but edges are NOT
-    clamped to integer rows -- the scanline kernel iterates over all
-    integer rows in [floor(r0), ceil(r1)-1].
-    """
-    import shapely
-
-    xmin, ymin, xmax, ymax = bounds
-    px = (xmax - xmin) / width
-    py = (ymax - ymin) / height
-
-    all_y_min = []
-    all_y_max = []
-    all_x_at_ymin = []
-    all_inv_slope = []
-    all_value = []
-
-    for geom, val in zip(geometries, values):
-        if geom is None or geom.is_empty:
-            continue
-
-        if geom.geom_type == 'Polygon':
-            parts = [geom]
-        elif geom.geom_type == 'MultiPolygon':
-            parts = list(geom.geoms)
-        else:
-            continue
-
-        for poly in parts:
-            rings = [poly.exterior] + list(poly.interiors)
-            for ring in rings:
-                coords = np.asarray(ring.coords)
-                row = (ymax - coords[:, 1]) / py
-                col = (coords[:, 0] - xmin) / px
-
-                n = len(row) - 1
-                for i in range(n):
-                    r0, c0 = row[i], col[i]
-                    r1, c1 = row[i + 1], col[i + 1]
-                    if r0 == r1:
-                        continue
-                    if r0 > r1:
-                        r0, c0, r1, c1 = r1, c1, r0, c0
-                    # Expand by half a pixel so edge-adjacent pixels are touched
-                    ry_min = max(int(np.floor(r0 - 0.5)), 0)
-                    ry_max = min(int(np.ceil(r1 + 0.5)), height) - 1
-                    if ry_min > ry_max:
-                        continue
-                    inv_slope = (c1 - c0) / (r1 - r0)
-                    x_at_ymin = c0 + (ry_min - r0) * inv_slope
-                    all_y_min.append(np.int32(ry_min))
-                    all_y_max.append(np.int32(ry_max))
-                    all_x_at_ymin.append(x_at_ymin)
-                    all_inv_slope.append(inv_slope)
-                    all_value.append(np.float64(val))
-
-    if not all_y_min:
-        return (np.empty(0, np.int32), np.empty(0, np.int32),
-                np.empty(0, np.float64), np.empty(0, np.float64),
-                np.empty(0, np.float64))
-
-    return (np.array(all_y_min, np.int32),
-            np.array(all_y_max, np.int32),
-            np.array(all_x_at_ymin, np.float64),
-            np.array(all_inv_slope, np.float64),
-            np.array(all_value, np.float64))
+def _sort_edges(edge_arrays):
+    """Sort edge table by y_min for scanline early termination."""
+    edge_y_min, edge_y_max, edge_x_at_ymin, edge_inv_slope, edge_value = \
+        edge_arrays
+    if len(edge_y_min) == 0:
+        return edge_arrays
+    order = np.argsort(edge_y_min, kind='stable')
+    return (edge_y_min[order],
+            edge_y_max[order],
+            edge_x_at_ymin[order],
+            edge_inv_slope[order],
+            edge_value[order])
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +455,7 @@ def _burn_lines_cpu(out, r0_arr, c0_arr, r1_arr, c1_arr, vals, height, width):
 
 
 # ---------------------------------------------------------------------------
-# CPU scanline fill (numba)
+# CPU scanline fill (numba) -- edges must be sorted by y_min
 # ---------------------------------------------------------------------------
 
 @ngjit
@@ -367,9 +463,14 @@ def _scanline_fill_cpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
                        edge_inv_slope, edge_value, height, width):
     """Fill output raster row by row using scanline algorithm.
 
-    For each row, collect x-intersections from all edges that span
-    the row, group by polygon value, sort, and fill between pairs.
-    Last-writer-wins when polygons overlap.
+    Edges MUST be sorted by y_min.  For each row, a binary search
+    finds the last relevant edge (y_min <= row), then a linear scan
+    collects intersections.  This avoids examining edges that start
+    below the current row.
+
+    Within each row, intersections are grouped by polygon value,
+    sorted by x, and filled between pairs.  Last-writer-wins when
+    polygons overlap.
     """
     n_edges = len(edge_y_min)
     # Temporary arrays sized to max possible intersections per row
@@ -377,11 +478,24 @@ def _scanline_fill_cpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
     vs = np.empty(n_edges, dtype=np.float64)
 
     for row in range(height):
+        # Binary search: find first edge with y_min > row.
+        # Only edges in [0, hi) can possibly intersect this row.
+        lo = 0
+        hi = n_edges
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if edge_y_min[mid] <= row:
+                lo = mid + 1
+            else:
+                hi = mid
+        # hi = first index with y_min > row; only scan [0, hi)
+
         # Collect intersections for this row
         count = 0
-        for e in range(n_edges):
-            if edge_y_min[e] <= row <= edge_y_max[e]:
-                x = edge_x_at_ymin[e] + (row - edge_y_min[e]) * edge_inv_slope[e]
+        for e in range(hi):
+            if edge_y_max[e] >= row:
+                x = (edge_x_at_ymin[e]
+                     + (row - edge_y_min[e]) * edge_inv_slope[e])
                 xs[count] = x
                 vs[count] = edge_value[e]
                 count += 1
@@ -389,8 +503,7 @@ def _scanline_fill_cpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
         if count == 0:
             continue
 
-        # Group by value: get unique values
-        # Simple insertion sort of (value, x) pairs
+        # Insertion sort by (value, x)
         for i in range(1, count):
             kx = xs[i]
             kv = vs[i]
@@ -406,11 +519,9 @@ def _scanline_fill_cpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
         i = 0
         while i < count - 1:
             val = vs[i]
-            # Find extent of this value
             j = i
             while j < count and vs[j] == val:
                 j += 1
-            # Fill pairs within this value group
             k = i
             while k + 1 < j:
                 x_start = xs[k]
@@ -428,13 +539,14 @@ def _run_numpy(geometries, values, bounds, height, width, fill, dtype,
     """NumPy backend for rasterize."""
     out = np.full((height, width), fill, dtype=np.float64)
 
+    # Classify geometries once, then dispatch to type-specific extractors
+    (poly_geoms, poly_vals), (line_geoms, line_vals), \
+        (point_geoms, point_vals) = _classify_geometries(geometries, values)
+
     # 1. Polygons (scanline fill)
-    if all_touched:
-        edge_arrays = _extract_edges_all_touched(
-            geometries, values, bounds, height, width)
-    else:
-        edge_arrays = _extract_edges(
-            geometries, values, bounds, height, width)
+    edge_arrays = _extract_edges(
+        poly_geoms, poly_vals, bounds, height, width, all_touched)
+    edge_arrays = _sort_edges(edge_arrays)
     edge_y_min, edge_y_max, edge_x_at_ymin, edge_inv_slope, edge_value = \
         edge_arrays
     if len(edge_y_min) > 0:
@@ -443,13 +555,13 @@ def _run_numpy(geometries, values, bounds, height, width, fill, dtype,
 
     # 2. Lines (Bresenham)
     r0, c0, r1, c1, lvals = _extract_line_segments(
-        geometries, values, bounds, height, width)
+        line_geoms, line_vals, bounds, height, width)
     if len(r0) > 0:
         _burn_lines_cpu(out, r0, c0, r1, c1, lvals, height, width)
 
     # 3. Points (direct burn)
     prows, pcols, pvals = _extract_points(
-        geometries, values, bounds, height, width)
+        point_geoms, point_vals, bounds, height, width)
     if len(prows) > 0:
         _burn_points_cpu(out, prows, pcols, pvals)
 
@@ -457,7 +569,7 @@ def _run_numpy(geometries, values, bounds, height, width, fill, dtype,
 
 
 # ---------------------------------------------------------------------------
-# GPU scanline fill (cupy + numba.cuda)
+# GPU scanline fill (cupy + numba.cuda) -- edges must be sorted by y_min
 # ---------------------------------------------------------------------------
 
 @cuda.jit
@@ -465,26 +577,34 @@ def _scanline_fill_gpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
                        edge_inv_slope, edge_value, n_edges, width):
     """CUDA kernel: one thread per raster row.
 
-    Each thread walks the edge table, collects intersections for its row,
-    sorts them by (value, x), and fills between pairs.
+    Edges must be sorted by y_min.  Each thread binary-searches for
+    the last relevant edge, then collects intersections, sorts by
+    (value, x), and fills between pairs.
     """
     row = cuda.grid(1)
     if row >= out.shape[0]:
         return
 
-    # Count intersections for this row
+    # Binary search: find first index with y_min > row
+    lo = 0
+    hi = n_edges
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if edge_y_min[mid] <= row:
+            lo = mid + 1
+        else:
+            hi = mid
+    # Only edges in [0, hi) can possibly span this row
+
+    # Count intersections
     count = 0
-    for e in range(n_edges):
-        if edge_y_min[e] <= row <= edge_y_max[e]:
+    for e in range(hi):
+        if edge_y_max[e] >= row:
             count += 1
 
     if count == 0:
         return
 
-    # Allocate local arrays via dynamic shared memory is not practical,
-    # so we use a fixed-size local buffer.  For most real-world polygons
-    # the number of edges crossing any single row is small.
-    # We use device-side allocation via cuda.local.array.
     MAX_ISECT = 512
     if count > MAX_ISECT:
         count = MAX_ISECT  # truncate (safety)
@@ -493,10 +613,10 @@ def _scanline_fill_gpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
     vs = cuda.local.array(512, dtype=np.float64)
 
     idx = 0
-    for e in range(n_edges):
+    for e in range(hi):
         if idx >= MAX_ISECT:
             break
-        if edge_y_min[e] <= row <= edge_y_max[e]:
+        if edge_y_max[e] >= row:
             x = edge_x_at_ymin[e] + (row - edge_y_min[e]) * edge_inv_slope[e]
             xs[idx] = x
             vs[idx] = edge_value[e]
@@ -605,13 +725,14 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
     """CuPy backend for rasterize."""
     out = cupy.full((height, width), fill, dtype=cupy.float64)
 
+    # Classify geometries once
+    (poly_geoms, poly_vals), (line_geoms, line_vals), \
+        (point_geoms, point_vals) = _classify_geometries(geometries, values)
+
     # 1. Polygons (scanline fill)
-    if all_touched:
-        edge_arrays = _extract_edges_all_touched(
-            geometries, values, bounds, height, width)
-    else:
-        edge_arrays = _extract_edges(
-            geometries, values, bounds, height, width)
+    edge_arrays = _extract_edges(
+        poly_geoms, poly_vals, bounds, height, width, all_touched)
+    edge_arrays = _sort_edges(edge_arrays)
     edge_y_min, edge_y_max, edge_x_at_ymin, edge_inv_slope, edge_value = \
         edge_arrays
 
@@ -630,7 +751,7 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
 
     # 2. Lines (Bresenham)
     r0, c0, r1, c1, lvals = _extract_line_segments(
-        geometries, values, bounds, height, width)
+        line_geoms, line_vals, bounds, height, width)
     if len(r0) > 0:
         n_segs = len(r0)
         tpb = 256
@@ -642,7 +763,7 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
 
     # 3. Points (direct burn)
     prows, pcols, pvals = _extract_points(
-        geometries, values, bounds, height, width)
+        point_geoms, point_vals, bounds, height, width)
     if len(prows) > 0:
         n_pts = len(prows)
         tpb = 256
