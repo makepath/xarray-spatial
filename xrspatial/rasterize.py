@@ -15,7 +15,6 @@ from typing import Optional, Sequence, Tuple, Union
 
 import numpy as np
 import xarray as xr
-from numba import cuda
 
 from xrspatial.utils import ngjit
 
@@ -50,74 +49,43 @@ _MERGE_MODES = {
 
 
 # ---------------------------------------------------------------------------
-# Merge pixel helpers (CPU + GPU)
+# Merge pixel helper (CPU)
 # ---------------------------------------------------------------------------
 
 @ngjit
-def _merge_pixel(out, r, c, val, mode):
-    """Write val into out[r, c] using the given merge strategy.
+def _merge_pixel(out, written, r, c, val, mode):
+    """Write *val* into ``out[r, c]`` using the given merge strategy.
 
-    For non-'last' modes the output array is initialized with NaN as an
-    "unwritten" sentinel; NaN pixels are replaced with the user's fill
-    value after all rasterization is complete.
+    A separate ``written`` array (int8) tracks which pixels have been
+    touched, replacing the previous NaN-sentinel approach which failed
+    when the caller intentionally burned NaN values.
     """
-    if mode == 0:  # last
+    if mode == 0:  # last -- unconditional overwrite, written not read
         out[r, c] = val
     elif mode == 1:  # first
-        cur = out[r, c]
-        if cur != cur:  # NaN -> unwritten
+        if written[r, c] == 0:
             out[r, c] = val
+            written[r, c] = 1
     elif mode == 2:  # max
-        cur = out[r, c]
-        if cur != cur or val > cur:
+        if written[r, c] == 0 or val > out[r, c]:
             out[r, c] = val
+            written[r, c] = 1
     elif mode == 3:  # min
-        cur = out[r, c]
-        if cur != cur or val < cur:
+        if written[r, c] == 0 or val < out[r, c]:
             out[r, c] = val
+            written[r, c] = 1
     elif mode == 4:  # sum
-        cur = out[r, c]
-        if cur != cur:
+        if written[r, c] == 0:
             out[r, c] = val
+            written[r, c] = 1
         else:
-            out[r, c] = cur + val
+            out[r, c] = out[r, c] + val
     else:  # count
-        cur = out[r, c]
-        if cur != cur:
+        if written[r, c] == 0:
             out[r, c] = 1.0
+            written[r, c] = 1
         else:
-            out[r, c] = cur + 1.0
-
-
-@cuda.jit(device=True)
-def _merge_pixel_gpu(out, r, c, val, mode):
-    """Device function: merge val into out[r, c]."""
-    if mode == 0:  # last
-        out[r, c] = val
-    elif mode == 1:  # first
-        cur = out[r, c]
-        if cur != cur:
-            out[r, c] = val
-    elif mode == 2:  # max
-        cur = out[r, c]
-        if cur != cur or val > cur:
-            out[r, c] = val
-    elif mode == 3:  # min
-        cur = out[r, c]
-        if cur != cur or val < cur:
-            out[r, c] = val
-    elif mode == 4:  # sum
-        cur = out[r, c]
-        if cur != cur:
-            out[r, c] = val
-        else:
-            out[r, c] = cur + val
-    else:  # count
-        cur = out[r, c]
-        if cur != cur:
-            out[r, c] = 1.0
-        else:
-            out[r, c] = cur + 1.0
+            out[r, c] = out[r, c] + 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +98,9 @@ def _classify_geometries(geometries, values):
     Also tracks each polygon's input index so the scanline fill can
     process geometries in input order (needed for first/last merge).
 
+    GeometryCollections are recursively unpacked so their contents are
+    rasterized rather than silently dropped.
+
     Returns
     -------
     (poly_geoms, poly_vals, poly_ids),
@@ -140,9 +111,9 @@ def _classify_geometries(geometries, values):
     line_geoms, line_vals = [], []
     point_geoms, point_vals = [], []
 
-    for idx, (geom, val) in enumerate(zip(geometries, values)):
+    def _classify_one(geom, val, idx):
         if geom is None or geom.is_empty:
-            continue
+            return
         gt = geom.geom_type
         if gt in ('Polygon', 'MultiPolygon'):
             poly_geoms.append(geom)
@@ -154,6 +125,12 @@ def _classify_geometries(geometries, values):
         elif gt in ('Point', 'MultiPoint'):
             point_geoms.append(geom)
             point_vals.append(val)
+        elif gt == 'GeometryCollection':
+            for sub in geom.geoms:
+                _classify_one(sub, val, idx)
+
+    for idx, (geom, val) in enumerate(zip(geometries, values)):
+        _classify_one(geom, val, idx)
 
     return ((poly_geoms, poly_vals, poly_ids),
             (line_geoms, line_vals),
@@ -447,16 +424,16 @@ def _extract_line_segments(geometries, values, bounds, height, width):
 # ---------------------------------------------------------------------------
 
 @ngjit
-def _burn_points_cpu(out, rows, cols, vals, mode):
+def _burn_points_cpu(out, written, rows, cols, vals, mode):
     for i in range(len(rows)):
         r = rows[i]
         c = cols[i]
         if 0 <= r < out.shape[0] and 0 <= c < out.shape[1]:
-            _merge_pixel(out, r, c, vals[i], mode)
+            _merge_pixel(out, written, r, c, vals[i], mode)
 
 
 @ngjit
-def _burn_lines_cpu(out, r0_arr, c0_arr, r1_arr, c1_arr, vals,
+def _burn_lines_cpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, vals,
                     height, width, mode):
     for i in range(len(r0_arr)):
         r0 = r0_arr[i]
@@ -477,7 +454,7 @@ def _burn_lines_cpu(out, r0_arr, c0_arr, r1_arr, c1_arr, vals,
             r, c = r0, c0
             for _ in range(dr + 1):
                 if 0 <= r < height and 0 <= c < width:
-                    _merge_pixel(out, r, c, val, mode)
+                    _merge_pixel(out, written, r, c, val, mode)
                 if err >= 0:
                     c += sc
                     err -= dr
@@ -488,7 +465,7 @@ def _burn_lines_cpu(out, r0_arr, c0_arr, r1_arr, c1_arr, vals,
             r, c = r0, c0
             for _ in range(dc + 1):
                 if 0 <= r < height and 0 <= c < width:
-                    _merge_pixel(out, r, c, val, mode)
+                    _merge_pixel(out, written, r, c, val, mode)
                 if err >= 0:
                     r += sr
                     err -= dc
@@ -501,41 +478,58 @@ def _burn_lines_cpu(out, r0_arr, c0_arr, r1_arr, c1_arr, vals,
 # ---------------------------------------------------------------------------
 
 @ngjit
-def _scanline_fill_cpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
+def _scanline_fill_cpu(out, written, edge_y_min, edge_y_max, edge_x_at_ymin,
                        edge_inv_slope, edge_value, edge_geom_id,
                        height, width, mode):
-    """Scanline fill grouping edges by geometry id for correct overlap."""
+    """Scanline fill with active-edge-list for O(active) work per row.
+
+    Instead of scanning all edges up to the binary-search cutoff (which
+    wastes >99% of checks on dead edges for many-polygon inputs), this
+    maintains a compact list of currently-active edge indices.  For each
+    row we remove expired edges and add newly-active ones, keeping total
+    work proportional to the sum of active-edge counts across rows.
+    """
     n_edges = len(edge_y_min)
+
+    # Active edge list: indices into the edge arrays
+    active = np.empty(n_edges, dtype=np.int32)
+    n_active = 0
+    add_ptr = 0  # next edge to consider adding (y_min sorted)
+
+    # Scratch arrays for intersections
     xs = np.empty(n_edges, dtype=np.float64)
     vs = np.empty(n_edges, dtype=np.float64)
     gs = np.empty(n_edges, dtype=np.int32)
 
     for row in range(height):
-        # Binary search: find first edge with y_min > row
-        lo, hi = 0, n_edges
-        while lo < hi:
-            mid = (lo + hi) // 2
-            if edge_y_min[mid] <= row:
-                lo = mid + 1
-            else:
-                hi = mid
+        # 1. Remove expired edges (y_max < row)
+        write_pos = 0
+        for i in range(n_active):
+            if edge_y_max[active[i]] >= row:
+                active[write_pos] = active[i]
+                write_pos += 1
+        n_active = write_pos
 
-        count = 0
-        for e in range(hi):
-            if edge_y_max[e] >= row:
-                x = (edge_x_at_ymin[e]
-                     + (row - edge_y_min[e]) * edge_inv_slope[e])
-                xs[count] = x
-                vs[count] = edge_value[e]
-                gs[count] = edge_geom_id[e]
-                count += 1
+        # 2. Add newly-active edges whose y_min <= row
+        while add_ptr < n_edges and edge_y_min[add_ptr] <= row:
+            active[n_active] = add_ptr
+            n_active += 1
+            add_ptr += 1
 
-        if count == 0:
+        if n_active == 0:
             continue
 
-        # Insertion sort by (geom_id, x) so each geometry's edges pair
+        # 3. Compute x-intersections for active edges only
+        for i in range(n_active):
+            e = active[i]
+            xs[i] = (edge_x_at_ymin[e]
+                     + (row - edge_y_min[e]) * edge_inv_slope[e])
+            vs[i] = edge_value[e]
+            gs[i] = edge_geom_id[e]
+
+        # 4. Insertion sort by (geom_id, x) so each geometry's edges pair
         # correctly and geometries are processed in input order.
-        for i in range(1, count):
+        for i in range(1, n_active):
             kx = xs[i]
             kv = vs[i]
             kg = gs[i]
@@ -549,13 +543,13 @@ def _scanline_fill_cpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
             vs[j + 1] = kv
             gs[j + 1] = kg
 
-        # Fill between edge pairs per geometry
+        # 5. Fill between edge pairs per geometry
         i = 0
-        while i < count - 1:
+        while i < n_active - 1:
             gid = gs[i]
             val = vs[i]
             j = i
-            while j < count and gs[j] == gid:
+            while j < n_active and gs[j] == gid:
                 j += 1
             k = i
             while k + 1 < j:
@@ -564,7 +558,7 @@ def _scanline_fill_cpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
                 col_start = max(int(np.ceil(x_start)), 0)
                 col_end = min(int(np.floor(x_end)), width - 1)
                 for c in range(col_start, col_end + 1):
-                    _merge_pixel(out, row, c, val, mode)
+                    _merge_pixel(out, written, row, c, val, mode)
                 k += 2
             i = j
 
@@ -572,10 +566,15 @@ def _scanline_fill_cpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
 def _run_numpy(geometries, values, bounds, height, width, fill, dtype,
                all_touched, merge_mode):
     """NumPy backend for rasterize."""
-    if merge_mode == _MERGE_LAST:
-        out = np.full((height, width), fill, dtype=np.float64)
+    out = np.full((height, width), fill, dtype=np.float64)
+
+    # For non-'last' modes we need a written mask to track which pixels
+    # have been touched (replacing the old NaN-sentinel approach).
+    if merge_mode != _MERGE_LAST:
+        written = np.zeros((height, width), dtype=np.int8)
     else:
-        out = np.full((height, width), np.nan, dtype=np.float64)
+        # Dummy -- never indexed, but numba needs a typed array argument
+        written = np.empty((0, 0), dtype=np.int8)
 
     (poly_geoms, poly_vals, poly_ids), (line_geoms, line_vals), \
         (point_geoms, point_vals) = _classify_geometries(geometries, values)
@@ -585,180 +584,226 @@ def _run_numpy(geometries, values, bounds, height, width, fill, dtype,
         poly_geoms, poly_vals, poly_ids, bounds, height, width, all_touched)
     edge_arrays = _sort_edges(edge_arrays)
     if len(edge_arrays[0]) > 0:
-        _scanline_fill_cpu(out, *edge_arrays, height, width, merge_mode)
+        _scanline_fill_cpu(out, written, *edge_arrays, height, width,
+                           merge_mode)
 
     # 2. Lines
     r0, c0, r1, c1, lvals = _extract_line_segments(
         line_geoms, line_vals, bounds, height, width)
     if len(r0) > 0:
-        _burn_lines_cpu(out, r0, c0, r1, c1, lvals, height, width,
+        _burn_lines_cpu(out, written, r0, c0, r1, c1, lvals, height, width,
                         merge_mode)
 
     # 3. Points
     prows, pcols, pvals = _extract_points(
         point_geoms, point_vals, bounds, height, width)
     if len(prows) > 0:
-        _burn_points_cpu(out, prows, pcols, pvals, merge_mode)
-
-    # Replace NaN sentinel with user's fill for non-last modes
-    if merge_mode != _MERGE_LAST and not np.isnan(fill):
-        out[np.isnan(out)] = fill
+        _burn_points_cpu(out, written, prows, pcols, pvals, merge_mode)
 
     return out.astype(dtype)
 
 
 # ---------------------------------------------------------------------------
-# GPU kernels (cupy + numba.cuda) -- edges must be sorted by y_min
+# GPU kernels -- compiled lazily to avoid importing numba.cuda at module
+# level (~160ms + CUDA driver init even when not using GPU).
 # ---------------------------------------------------------------------------
 
-@cuda.jit
-def _scanline_fill_gpu(out, edge_y_min, edge_y_max, edge_x_at_ymin,
-                       edge_inv_slope, edge_value, edge_geom_id,
-                       n_edges, width, mode):
-    """CUDA kernel: one thread per raster row."""
-    row = cuda.grid(1)
-    if row >= out.shape[0]:
-        return
-
-    lo, hi = 0, n_edges
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if edge_y_min[mid] <= row:
-            lo = mid + 1
-        else:
-            hi = mid
-
-    count = 0
-    for e in range(hi):
-        if edge_y_max[e] >= row:
-            count += 1
-
-    if count == 0:
-        return
-
-    MAX_ISECT = 512
-    if count > MAX_ISECT:
-        count = MAX_ISECT
-
-    xs = cuda.local.array(512, dtype=np.float64)
-    vs = cuda.local.array(512, dtype=np.float64)
-    gs = cuda.local.array(512, dtype=np.int32)
-
-    idx = 0
-    for e in range(hi):
-        if idx >= MAX_ISECT:
-            break
-        if edge_y_max[e] >= row:
-            xs[idx] = (edge_x_at_ymin[e]
-                       + (row - edge_y_min[e]) * edge_inv_slope[e])
-            vs[idx] = edge_value[e]
-            gs[idx] = edge_geom_id[e]
-            idx += 1
-
-    actual = idx
-
-    # Insertion sort by (geom_id, x)
-    for i in range(1, actual):
-        kx = xs[i]
-        kv = vs[i]
-        kg = gs[i]
-        j = i - 1
-        while j >= 0 and (gs[j] > kg or (gs[j] == kg and xs[j] > kx)):
-            xs[j + 1] = xs[j]
-            vs[j + 1] = vs[j]
-            gs[j + 1] = gs[j]
-            j -= 1
-        xs[j + 1] = kx
-        vs[j + 1] = kv
-        gs[j + 1] = kg
-
-    # Fill between pairs per geometry
-    i = 0
-    while i < actual - 1:
-        gid = gs[i]
-        val = vs[i]
-        j = i
-        while j < actual and gs[j] == gid:
-            j += 1
-        k = i
-        while k + 1 < j:
-            x_start = xs[k]
-            x_end = xs[k + 1]
-            col_start = int(x_start + 0.999999)
-            if col_start < 0:
-                col_start = 0
-            col_end = int(x_end)
-            if col_end >= width:
-                col_end = width - 1
-            for c in range(col_start, col_end + 1):
-                _merge_pixel_gpu(out, row, c, val, mode)
-            k += 2
-        i = j
+_gpu_kernels = None
 
 
-@cuda.jit
-def _burn_points_gpu(out, rows, cols, vals, n_points, mode):
-    i = cuda.grid(1)
-    if i >= n_points:
-        return
-    r = rows[i]
-    c = cols[i]
-    if 0 <= r < out.shape[0] and 0 <= c < out.shape[1]:
-        _merge_pixel_gpu(out, r, c, vals[i], mode)
+def _ensure_gpu_kernels():
+    """Compile CUDA kernels on first use and cache them."""
+    global _gpu_kernels
+    if _gpu_kernels is not None:
+        return _gpu_kernels
 
+    from numba import cuda
 
-@cuda.jit
-def _burn_lines_gpu(out, r0_arr, c0_arr, r1_arr, c1_arr, vals,
-                    n_segs, height, width, mode):
-    i = cuda.grid(1)
-    if i >= n_segs:
-        return
-    r0 = r0_arr[i]
-    c0 = c0_arr[i]
-    r1 = r1_arr[i]
-    c1 = c1_arr[i]
-    val = vals[i]
+    @cuda.jit(device=True)
+    def _merge_pixel_gpu(out, written, r, c, val, mode):
+        if mode == 0:  # last
+            out[r, c] = val
+        elif mode == 1:  # first
+            if written[r, c] == 0:
+                out[r, c] = val
+                written[r, c] = 1
+        elif mode == 2:  # max
+            if written[r, c] == 0 or val > out[r, c]:
+                out[r, c] = val
+                written[r, c] = 1
+        elif mode == 3:  # min
+            if written[r, c] == 0 or val < out[r, c]:
+                out[r, c] = val
+                written[r, c] = 1
+        elif mode == 4:  # sum
+            if written[r, c] == 0:
+                out[r, c] = val
+                written[r, c] = 1
+            else:
+                out[r, c] = out[r, c] + val
+        else:  # count
+            if written[r, c] == 0:
+                out[r, c] = 1.0
+                written[r, c] = 1
+            else:
+                out[r, c] = out[r, c] + 1.0
 
-    dr = r1 - r0
-    dc = c1 - c0
-    sr = 1 if dr >= 0 else -1
-    sc = 1 if dc >= 0 else -1
-    if dr < 0:
-        dr = -dr
-    if dc < 0:
-        dc = -dc
+    @cuda.jit
+    def _scanline_fill_gpu(out, written, edge_y_min, edge_y_max,
+                           edge_x_at_ymin, edge_inv_slope, edge_value,
+                           edge_geom_id, n_edges, width, mode):
+        """CUDA kernel: one thread per raster row."""
+        row = cuda.grid(1)
+        if row >= out.shape[0]:
+            return
 
-    if dr >= dc:
-        err = dc - dr
-        r, c = r0, c0
-        for _ in range(dr + 1):
-            if 0 <= r < height and 0 <= c < width:
-                _merge_pixel_gpu(out, r, c, val, mode)
-            if err >= 0:
-                c += sc
-                err -= dr
-            r += sr
-            err += dc
-    else:
-        err = dr - dc
-        r, c = r0, c0
-        for _ in range(dc + 1):
-            if 0 <= r < height and 0 <= c < width:
-                _merge_pixel_gpu(out, r, c, val, mode)
-            if err >= 0:
+        lo, hi = 0, n_edges
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if edge_y_min[mid] <= row:
+                lo = mid + 1
+            else:
+                hi = mid
+
+        count = 0
+        for e in range(hi):
+            if edge_y_max[e] >= row:
+                count += 1
+
+        if count == 0:
+            return
+
+        MAX_ISECT = 512
+        if count > MAX_ISECT:
+            count = MAX_ISECT
+
+        xs = cuda.local.array(512, dtype=np.float64)
+        vs = cuda.local.array(512, dtype=np.float64)
+        gs = cuda.local.array(512, dtype=np.int32)
+
+        idx = 0
+        for e in range(hi):
+            if idx >= MAX_ISECT:
+                break
+            if edge_y_max[e] >= row:
+                xs[idx] = (edge_x_at_ymin[e]
+                           + (row - edge_y_min[e]) * edge_inv_slope[e])
+                vs[idx] = edge_value[e]
+                gs[idx] = edge_geom_id[e]
+                idx += 1
+
+        actual = idx
+
+        # Insertion sort by (geom_id, x)
+        for i in range(1, actual):
+            kx = xs[i]
+            kv = vs[i]
+            kg = gs[i]
+            j = i - 1
+            while j >= 0 and (gs[j] > kg or (gs[j] == kg and xs[j] > kx)):
+                xs[j + 1] = xs[j]
+                vs[j + 1] = vs[j]
+                gs[j + 1] = gs[j]
+                j -= 1
+            xs[j + 1] = kx
+            vs[j + 1] = kv
+            gs[j + 1] = kg
+
+        # Fill between pairs per geometry
+        i = 0
+        while i < actual - 1:
+            gid = gs[i]
+            val = vs[i]
+            j = i
+            while j < actual and gs[j] == gid:
+                j += 1
+            k = i
+            while k + 1 < j:
+                x_start = xs[k]
+                x_end = xs[k + 1]
+                col_start = int(x_start + 0.999999)
+                if col_start < 0:
+                    col_start = 0
+                col_end = int(x_end)
+                if col_end >= width:
+                    col_end = width - 1
+                for c in range(col_start, col_end + 1):
+                    _merge_pixel_gpu(out, written, row, c, val, mode)
+                k += 2
+            i = j
+
+    @cuda.jit
+    def _burn_points_gpu(out, written, rows, cols, vals, n_points, mode):
+        i = cuda.grid(1)
+        if i >= n_points:
+            return
+        r = rows[i]
+        c = cols[i]
+        if 0 <= r < out.shape[0] and 0 <= c < out.shape[1]:
+            _merge_pixel_gpu(out, written, r, c, vals[i], mode)
+
+    @cuda.jit
+    def _burn_lines_gpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, vals,
+                        n_segs, height, width, mode):
+        i = cuda.grid(1)
+        if i >= n_segs:
+            return
+        r0 = r0_arr[i]
+        c0 = c0_arr[i]
+        r1 = r1_arr[i]
+        c1 = c1_arr[i]
+        val = vals[i]
+
+        dr = r1 - r0
+        dc = c1 - c0
+        sr = 1 if dr >= 0 else -1
+        sc = 1 if dc >= 0 else -1
+        if dr < 0:
+            dr = -dr
+        if dc < 0:
+            dc = -dc
+
+        if dr >= dc:
+            err = dc - dr
+            r, c = r0, c0
+            for _ in range(dr + 1):
+                if 0 <= r < height and 0 <= c < width:
+                    _merge_pixel_gpu(out, written, r, c, val, mode)
+                if err >= 0:
+                    c += sc
+                    err -= dr
                 r += sr
-                err -= dc
-            c += sc
-            err += dr
+                err += dc
+        else:
+            err = dr - dc
+            r, c = r0, c0
+            for _ in range(dc + 1):
+                if 0 <= r < height and 0 <= c < width:
+                    _merge_pixel_gpu(out, written, r, c, val, mode)
+                if err >= 0:
+                    r += sr
+                    err -= dc
+                c += sc
+                err += dr
+
+    _gpu_kernels = {
+        'scanline_fill': _scanline_fill_gpu,
+        'burn_points': _burn_points_gpu,
+        'burn_lines': _burn_lines_gpu,
+    }
+    return _gpu_kernels
 
 
 def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
               all_touched, merge_mode):
     """CuPy backend for rasterize."""
-    if merge_mode == _MERGE_LAST:
-        out = cupy.full((height, width), fill, dtype=cupy.float64)
+    kernels = _ensure_gpu_kernels()
+
+    out = cupy.full((height, width), fill, dtype=cupy.float64)
+    if merge_mode != _MERGE_LAST:
+        written = cupy.zeros((height, width), dtype=cupy.int8)
     else:
-        out = cupy.full((height, width), np.nan, dtype=cupy.float64)
+        written = cupy.empty((0, 0), dtype=cupy.int8)
 
     (poly_geoms, poly_vals, poly_ids), (line_geoms, line_vals), \
         (point_geoms, point_vals) = _classify_geometries(geometries, values)
@@ -780,9 +825,9 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
 
         tpb = 256
         blocks = (height + tpb - 1) // tpb
-        _scanline_fill_gpu[blocks, tpb](
-            out, d_y_min, d_y_max, d_x_at_ymin, d_inv_slope, d_value,
-            d_geom_id, len(edge_y_min), width, merge_mode)
+        kernels['scanline_fill'][blocks, tpb](
+            out, written, d_y_min, d_y_max, d_x_at_ymin, d_inv_slope,
+            d_value, d_geom_id, len(edge_y_min), width, merge_mode)
 
     # 2. Lines
     r0, c0, r1, c1, lvals = _extract_line_segments(
@@ -791,8 +836,8 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
         n_segs = len(r0)
         tpb = 256
         bpg = (n_segs + tpb - 1) // tpb
-        _burn_lines_gpu[bpg, tpb](
-            out, cupy.asarray(r0), cupy.asarray(c0),
+        kernels['burn_lines'][bpg, tpb](
+            out, written, cupy.asarray(r0), cupy.asarray(c0),
             cupy.asarray(r1), cupy.asarray(c1),
             cupy.asarray(lvals), n_segs, height, width, merge_mode)
 
@@ -803,13 +848,9 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
         n_pts = len(prows)
         tpb = 256
         bpg = (n_pts + tpb - 1) // tpb
-        _burn_points_gpu[bpg, tpb](
-            out, cupy.asarray(prows), cupy.asarray(pcols),
+        kernels['burn_points'][bpg, tpb](
+            out, written, cupy.asarray(prows), cupy.asarray(pcols),
             cupy.asarray(pvals), n_pts, merge_mode)
-
-    if merge_mode != _MERGE_LAST and not np.isnan(fill):
-        nan_mask = cupy.isnan(out)
-        out[nan_mask] = fill
 
     return out.astype(dtype)
 
@@ -921,6 +962,7 @@ def rasterize(
     - **Polygon / MultiPolygon** -- scanline fill
     - **LineString / MultiLineString** -- Bresenham line rasterization
     - **Point / MultiPoint** -- direct pixel burn
+    - **GeometryCollection** -- recursively unpacked
 
     Parameters
     ----------
