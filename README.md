@@ -340,6 +340,14 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Zonal Statistics](xrspatial/zonal.py) | Computes summary statistics for a value raster within each zone | Standard | ✅️ | ✅️| ✅️ | 🔄 |
 | [Zonal Cross Tabulate](xrspatial/zonal.py) | Cross-tabulates agreement between two categorical rasters | Standard | ✅️ | ✅️| 🔄 | 🔄 |
 
+-----------
+
+### **Utilities**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Preview](xrspatial/preview.py) | Downsamples a raster to target pixel dimensions for visualization | Custom | ✅️ | ✅️ | ✅️ | 🔄 |
+
 #### Usage
 
 ##### Quick Start
