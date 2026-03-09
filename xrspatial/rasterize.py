@@ -11,7 +11,7 @@ Supports numpy and cupy backends.
 """
 from __future__ import annotations
 
-from typing import Optional, Sequence, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import numpy as np
 import xarray as xr
@@ -347,6 +347,49 @@ def _sort_edges(edge_arrays):
 
 def _extract_points(geometries, values, bounds, height, width):
     """Parse Point/MultiPoint geometries into pixel coordinate arrays."""
+    if not geometries:
+        return (np.empty(0, np.int32), np.empty(0, np.int32),
+                np.empty(0, np.float64))
+    if _HAS_SHAPELY2:
+        return _extract_points_vectorized(
+            geometries, values, bounds, height, width)
+    return _extract_points_loop(
+        geometries, values, bounds, height, width)
+
+
+def _extract_points_vectorized(geometries, values, bounds, height, width):
+    """Vectorized point extraction using shapely 2.0 array ops."""
+    import shapely
+
+    xmin, ymin, xmax, ymax = bounds
+    px = (xmax - xmin) / width
+    py = (ymax - ymin) / height
+
+    geom_arr = np.array(geometries, dtype=object)
+    val_arr = np.array(values, dtype=np.float64)
+
+    # Explode MultiPoints to individual Points
+    parts, part_idx = shapely.get_parts(geom_arr, return_index=True)
+    part_vals = val_arr[part_idx]
+
+    if len(parts) == 0:
+        return (np.empty(0, np.int32), np.empty(0, np.int32),
+                np.empty(0, np.float64))
+
+    # Extract coordinates with index back to each point
+    coords, coord_idx = shapely.get_coordinates(
+        parts, return_index=True)
+    pt_vals = part_vals[coord_idx]
+
+    cols = np.floor((coords[:, 0] - xmin) / px).astype(np.int32)
+    rows = np.floor((ymax - coords[:, 1]) / py).astype(np.int32)
+
+    valid = (rows >= 0) & (rows < height) & (cols >= 0) & (cols < width)
+    return (rows[valid], cols[valid], pt_vals[valid])
+
+
+def _extract_points_loop(geometries, values, bounds, height, width):
+    """Loop-based point extraction (shapely < 2.0 fallback)."""
     xmin, ymin, xmax, ymax = bounds
     px = (xmax - xmin) / width
     py = (ymax - ymin) / height
@@ -382,8 +425,154 @@ def _extract_points(geometries, values, bounds, height, width):
 # Line segment extraction (always on host)
 # ---------------------------------------------------------------------------
 
+_EMPTY_LINES = (np.empty(0, np.int32), np.empty(0, np.int32),
+                np.empty(0, np.int32), np.empty(0, np.int32),
+                np.empty(0, np.float64))
+
+
 def _extract_line_segments(geometries, values, bounds, height, width):
-    """Parse LineString/MultiLineString geometries into pixel-space segments."""
+    """Parse LineString/MultiLineString geometries into pixel-space segments.
+
+    Segments are clipped to the raster extent before conversion to pixel
+    coordinates, so Bresenham never iterates over out-of-bounds pixels.
+    """
+    if not geometries:
+        return _EMPTY_LINES
+    if _HAS_SHAPELY2:
+        return _extract_lines_vectorized(
+            geometries, values, bounds, height, width)
+    return _extract_lines_loop(
+        geometries, values, bounds, height, width)
+
+
+def _liang_barsky_clip(x0, y0, x1, y1, xmin, ymin, xmax, ymax):
+    """Liang-Barsky line clipping.  Returns clipped (x0,y0,x1,y1) or None."""
+    dx = x1 - x0
+    dy = y1 - y0
+    p = np.array([-dx, dx, -dy, dy])
+    q = np.array([x0 - xmin, xmax - x0, y0 - ymin, ymax - y0])
+
+    t0, t1 = 0.0, 1.0
+    for i in range(4):
+        if p[i] == 0.0:
+            if q[i] < 0.0:
+                return None
+        elif p[i] < 0.0:
+            t = q[i] / p[i]
+            if t > t1:
+                return None
+            if t > t0:
+                t0 = t
+        else:
+            t = q[i] / p[i]
+            if t < t0:
+                return None
+            if t < t1:
+                t1 = t
+
+    cx0 = x0 + t0 * dx
+    cy0 = y0 + t0 * dy
+    cx1 = x0 + t1 * dx
+    cy1 = y0 + t1 * dy
+    return cx0, cy0, cx1, cy1
+
+
+def _extract_lines_vectorized(geometries, values, bounds, height, width):
+    """Vectorized line extraction with Liang-Barsky clipping."""
+    import shapely
+
+    xmin, ymin, xmax, ymax = bounds
+    px = (xmax - xmin) / width
+    py = (ymax - ymin) / height
+
+    geom_arr = np.array(geometries, dtype=object)
+    val_arr = np.array(values, dtype=np.float64)
+
+    # Explode MultiLineStrings to individual LineStrings
+    parts, part_idx = shapely.get_parts(geom_arr, return_index=True)
+    part_vals = val_arr[part_idx]
+
+    if len(parts) == 0:
+        return _EMPTY_LINES
+
+    # Get all vertex coordinates with line membership
+    coords, coord_line_idx = shapely.get_coordinates(
+        parts, return_index=True)
+    n_coords = len(coords)
+    if n_coords < 2:
+        return _EMPTY_LINES
+
+    # Mark last coordinate of each line (don't form cross-line segments)
+    is_last = np.zeros(n_coords, dtype=bool)
+    changes = np.nonzero(np.diff(coord_line_idx))[0]
+    is_last[changes] = True
+    is_last[-1] = True
+
+    # Segments: from each non-last coordinate to its successor
+    start_idx = np.nonzero(~is_last)[0]
+    end_idx = start_idx + 1
+    seg_vals = part_vals[coord_line_idx[start_idx]]
+
+    # World-space segment endpoints
+    x0 = coords[start_idx, 0]
+    y0 = coords[start_idx, 1]
+    x1 = coords[end_idx, 0]
+    y1 = coords[end_idx, 1]
+
+    # Vectorized Liang-Barsky clip to raster bounds
+    dx = x1 - x0
+    dy = y1 - y0
+
+    # p and q arrays: shape (4, n_segments)
+    p = np.array([-dx, dx, -dy, dy])
+    q = np.array([x0 - xmin, xmax - x0, y0 - ymin, ymax - y0])
+
+    t0 = np.zeros(len(x0))
+    t1 = np.ones(len(x0))
+    valid = np.ones(len(x0), dtype=bool)
+
+    for i in range(4):
+        parallel = p[i] == 0.0
+        outside = parallel & (q[i] < 0.0)
+        valid &= ~outside
+
+        neg = (~parallel) & (p[i] < 0.0)
+        pos = (~parallel) & (p[i] > 0.0)
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            t_neg = np.where(neg, q[i] / p[i], 0.0)
+            t_pos = np.where(pos, q[i] / p[i], 1.0)
+
+        t0 = np.where(neg, np.maximum(t0, t_neg), t0)
+        t1 = np.where(pos, np.minimum(t1, t_pos), t1)
+
+    valid &= (t0 <= t1)
+
+    # Apply clipping
+    cx0 = x0 + t0 * dx
+    cy0 = y0 + t0 * dy
+    cx1 = x0 + t1 * dx
+    cy1 = y0 + t1 * dy
+
+    # Convert to pixel space and floor to int32
+    r0 = np.floor((ymax - cy0) / py).astype(np.int32)
+    c0 = np.floor((cx0 - xmin) / px).astype(np.int32)
+    r1 = np.floor((ymax - cy1) / py).astype(np.int32)
+    c1 = np.floor((cx1 - xmin) / px).astype(np.int32)
+
+    # Clamp edge cases (clipping guarantees in-bounds but float rounding
+    # at exact boundaries can produce height or width)
+    np.clip(r0, 0, height - 1, out=r0)
+    np.clip(c0, 0, width - 1, out=c0)
+    np.clip(r1, 0, height - 1, out=r1)
+    np.clip(c1, 0, width - 1, out=c1)
+
+    v = valid
+    return (r0[v], c0[v], r1[v], c1[v], seg_vals[v])
+
+
+def _extract_lines_loop(geometries, values, bounds, height, width):
+    """Loop-based line extraction with Liang-Barsky clipping (fallback)."""
     xmin, ymin, xmax, ymax = bounds
     px = (xmax - xmin) / width
     py = (ymax - ymin) / height
@@ -401,19 +590,26 @@ def _extract_line_segments(geometries, values, bounds, height, width):
             continue
         for line in lines:
             coords = np.asarray(line.coords)
-            rows = (ymax - coords[:, 1]) / py
-            cols = (coords[:, 0] - xmin) / px
             for i in range(len(coords) - 1):
-                all_r0.append(np.int32(int(np.floor(rows[i]))))
-                all_c0.append(np.int32(int(np.floor(cols[i]))))
-                all_r1.append(np.int32(int(np.floor(rows[i + 1]))))
-                all_c1.append(np.int32(int(np.floor(cols[i + 1]))))
+                clipped = _liang_barsky_clip(
+                    coords[i, 0], coords[i, 1],
+                    coords[i + 1, 0], coords[i + 1, 1],
+                    xmin, ymin, xmax, ymax)
+                if clipped is None:
+                    continue
+                cx0, cy0, cx1, cy1 = clipped
+                r0 = min(max(int(np.floor((ymax - cy0) / py)), 0), height - 1)
+                c0 = min(max(int(np.floor((cx0 - xmin) / px)), 0), width - 1)
+                r1 = min(max(int(np.floor((ymax - cy1) / py)), 0), height - 1)
+                c1 = min(max(int(np.floor((cx1 - xmin) / px)), 0), width - 1)
+                all_r0.append(np.int32(r0))
+                all_c0.append(np.int32(c0))
+                all_r1.append(np.int32(r1))
+                all_c1.append(np.int32(c1))
                 all_vals.append(np.float64(val))
 
     if not all_r0:
-        return (np.empty(0, np.int32), np.empty(0, np.int32),
-                np.empty(0, np.int32), np.empty(0, np.int32),
-                np.empty(0, np.float64))
+        return _EMPTY_LINES
     return (np.array(all_r0, np.int32), np.array(all_c0, np.int32),
             np.array(all_r1, np.int32), np.array(all_c1, np.int32),
             np.array(all_vals, np.float64))
@@ -649,26 +845,22 @@ def _ensure_gpu_kernels():
                 out[r, c] = out[r, c] + 1.0
 
     @cuda.jit
-    def _scanline_fill_gpu(out, written, edge_y_min, edge_y_max,
-                           edge_x_at_ymin, edge_inv_slope, edge_value,
-                           edge_geom_id, n_edges, width, mode):
-        """CUDA kernel: one thread per raster row."""
+    def _scanline_fill_gpu(out, written, edge_y_min, edge_x_at_ymin,
+                           edge_inv_slope, edge_value, edge_geom_id,
+                           row_ptr, col_idx, width, mode):
+        """CUDA kernel: one thread per raster row, CSR-indexed active edges.
+
+        Instead of binary-searching the sorted edge table and scanning
+        through dead edges, each thread reads its active edge list
+        directly from the precomputed CSR structure (row_ptr, col_idx).
+        """
         row = cuda.grid(1)
         if row >= out.shape[0]:
             return
 
-        lo, hi = 0, n_edges
-        while lo < hi:
-            mid = (lo + hi) // 2
-            if edge_y_min[mid] <= row:
-                lo = mid + 1
-            else:
-                hi = mid
-
-        count = 0
-        for e in range(hi):
-            if edge_y_max[e] >= row:
-                count += 1
+        start = row_ptr[row]
+        end = row_ptr[row + 1]
+        count = end - start
 
         if count == 0:
             return
@@ -681,18 +873,16 @@ def _ensure_gpu_kernels():
         vs = cuda.local.array(512, dtype=np.float64)
         gs = cuda.local.array(512, dtype=np.int32)
 
-        idx = 0
-        for e in range(hi):
-            if idx >= MAX_ISECT:
+        actual = 0
+        for k in range(start, end):
+            if actual >= MAX_ISECT:
                 break
-            if edge_y_max[e] >= row:
-                xs[idx] = (edge_x_at_ymin[e]
-                           + (row - edge_y_min[e]) * edge_inv_slope[e])
-                vs[idx] = edge_value[e]
-                gs[idx] = edge_geom_id[e]
-                idx += 1
-
-        actual = idx
+            e = col_idx[k]
+            xs[actual] = (edge_x_at_ymin[e]
+                          + (row - edge_y_min[e]) * edge_inv_slope[e])
+            vs[actual] = edge_value[e]
+            gs[actual] = edge_geom_id[e]
+            actual += 1
 
         # Insertion sort by (geom_id, x)
         for i in range(1, actual):
@@ -794,6 +984,46 @@ def _ensure_gpu_kernels():
     return _gpu_kernels
 
 
+@ngjit
+def _build_row_csr_numba(edge_y_min, edge_y_max, height):
+    """Numba-accelerated CSR builder for GPU scanline precomputation."""
+    n_edges = len(edge_y_min)
+
+    # Pass 1: count active edges per row
+    counts = np.zeros(height, dtype=np.int32)
+    for e in range(n_edges):
+        y_lo = edge_y_min[e]
+        y_hi = edge_y_max[e]
+        if y_hi >= height:
+            y_hi = height - 1
+        for r in range(y_lo, y_hi + 1):
+            counts[r] += 1
+
+    # Build row_ptr (prefix sum)
+    row_ptr = np.empty(height + 1, dtype=np.int32)
+    row_ptr[0] = 0
+    for r in range(height):
+        row_ptr[r + 1] = row_ptr[r] + counts[r]
+
+    # Pass 2: fill col_idx
+    total = row_ptr[height]
+    col_idx = np.empty(total, dtype=np.int32)
+    offsets = np.empty(height, dtype=np.int32)
+    for r in range(height):
+        offsets[r] = row_ptr[r]
+
+    for e in range(n_edges):
+        y_lo = edge_y_min[e]
+        y_hi = edge_y_max[e]
+        if y_hi >= height:
+            y_hi = height - 1
+        for r in range(y_lo, y_hi + 1):
+            col_idx[offsets[r]] = e
+            offsets[r] += 1
+
+    return row_ptr, col_idx
+
+
 def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
               all_touched, merge_mode):
     """CuPy backend for rasterize."""
@@ -816,18 +1046,23 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
         edge_value, edge_geom_id = edge_arrays
 
     if len(edge_y_min) > 0:
+        # Build CSR structure on CPU, then transfer to GPU
+        row_ptr, col_idx = _build_row_csr_numba(
+            edge_y_min, edge_y_max, height)
+
         d_y_min = cupy.asarray(edge_y_min)
-        d_y_max = cupy.asarray(edge_y_max)
         d_x_at_ymin = cupy.asarray(edge_x_at_ymin)
         d_inv_slope = cupy.asarray(edge_inv_slope)
         d_value = cupy.asarray(edge_value)
         d_geom_id = cupy.asarray(edge_geom_id)
+        d_row_ptr = cupy.asarray(row_ptr)
+        d_col_idx = cupy.asarray(col_idx)
 
         tpb = 256
         blocks = (height + tpb - 1) // tpb
         kernels['scanline_fill'][blocks, tpb](
-            out, written, d_y_min, d_y_max, d_x_at_ymin, d_inv_slope,
-            d_value, d_geom_id, len(edge_y_min), width, merge_mode)
+            out, written, d_y_min, d_x_at_ymin, d_inv_slope,
+            d_value, d_geom_id, d_row_ptr, d_col_idx, width, merge_mode)
 
     # 2. Lines
     r0, c0, r1, c1, lvals = _extract_line_segments(
