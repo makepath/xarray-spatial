@@ -616,6 +616,44 @@ def _extract_lines_loop(geometries, values, bounds, height, width):
 
 
 # ---------------------------------------------------------------------------
+# Polygon boundary segments (for all_touched mode)
+# ---------------------------------------------------------------------------
+
+def _extract_polygon_boundary_segments(geometries, values, bounds,
+                                       height, width):
+    """Extract polygon ring edges as line segments for Bresenham drawing.
+
+    Used by all_touched mode: drawing the boundary ensures every pixel
+    the polygon touches is burned, without expanding scanline edge
+    y-ranges (which breaks edge pairing).
+    """
+    from shapely.geometry import LineString as _LS
+
+    boundary_lines = []
+    boundary_vals = []
+    for geom, val in zip(geometries, values):
+        if geom is None or geom.is_empty:
+            continue
+        if geom.geom_type == 'Polygon':
+            parts = [geom]
+        elif geom.geom_type == 'MultiPolygon':
+            parts = list(geom.geoms)
+        else:
+            continue
+        for poly in parts:
+            boundary_lines.append(_LS(poly.exterior.coords))
+            boundary_vals.append(val)
+            for interior in poly.interiors:
+                boundary_lines.append(_LS(interior.coords))
+                boundary_vals.append(val)
+
+    if not boundary_lines:
+        return _EMPTY_LINES
+    return _extract_line_segments(boundary_lines, boundary_vals,
+                                 bounds, height, width)
+
+
+# ---------------------------------------------------------------------------
 # CPU burn kernels (numba)
 # ---------------------------------------------------------------------------
 
@@ -752,7 +790,7 @@ def _scanline_fill_cpu(out, written, edge_y_min, edge_y_max, edge_x_at_ymin,
                 x_start = xs[k]
                 x_end = xs[k + 1]
                 col_start = max(int(np.ceil(x_start)), 0)
-                col_end = min(int(np.floor(x_end)), width - 1)
+                col_end = min(int(np.ceil(x_end)) - 1, width - 1)
                 for c in range(col_start, col_end + 1):
                     _merge_pixel(out, written, row, c, val, mode)
                 k += 2
@@ -775,13 +813,26 @@ def _run_numpy(geometries, values, bounds, height, width, fill, dtype,
     (poly_geoms, poly_vals, poly_ids), (line_geoms, line_vals), \
         (point_geoms, point_vals) = _classify_geometries(geometries, values)
 
-    # 1. Polygons
+    # 1. Polygons -- always use normal edge ranges for scanline fill
+    #    (all_touched y-expansion breaks edge pairing, so we handle
+    #    all_touched by drawing polygon boundaries separately below).
     edge_arrays = _extract_edges(
-        poly_geoms, poly_vals, poly_ids, bounds, height, width, all_touched)
+        poly_geoms, poly_vals, poly_ids, bounds, height, width,
+        all_touched=False)
     edge_arrays = _sort_edges(edge_arrays)
     if len(edge_arrays[0]) > 0:
         _scanline_fill_cpu(out, written, *edge_arrays, height, width,
                            merge_mode)
+
+    # 1b. all_touched: draw polygon boundaries via Bresenham so every
+    #     pixel the boundary passes through is burned.  This guarantees
+    #     all_touched is a superset of the normal fill.
+    if all_touched and poly_geoms:
+        br0, bc0, br1, bc1, bvals = _extract_polygon_boundary_segments(
+            poly_geoms, poly_vals, bounds, height, width)
+        if len(br0) > 0:
+            _burn_lines_cpu(out, written, br0, bc0, br1, bc1, bvals,
+                            height, width, merge_mode)
 
     # 2. Lines
     r0, c0, r1, c1, lvals = _extract_line_segments(
@@ -911,10 +962,17 @@ def _ensure_gpu_kernels():
             while k + 1 < j:
                 x_start = xs[k]
                 x_end = xs[k + 1]
-                col_start = int(x_start + 0.999999)
+                # Proper ceil: int() truncates toward zero, so for
+                # positive fractions we add 1; for exact ints and
+                # negative fractions int() already rounds up.
+                ix = int(x_start)
+                col_start = ix + 1 if x_start > ix else ix
                 if col_start < 0:
                     col_start = 0
-                col_end = int(x_end)
+                # Half-open interval: ceil(x_end) - 1 excludes
+                # boundary pixels whose centers are outside.
+                ix_end = int(x_end)
+                col_end = ix_end if x_end > ix_end else ix_end - 1
                 if col_end >= width:
                     col_end = width - 1
                 for c in range(col_start, col_end + 1):
@@ -1038,9 +1096,10 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
     (poly_geoms, poly_vals, poly_ids), (line_geoms, line_vals), \
         (point_geoms, point_vals) = _classify_geometries(geometries, values)
 
-    # 1. Polygons
+    # 1. Polygons -- always use normal edge ranges (see _run_numpy comment)
     edge_arrays = _extract_edges(
-        poly_geoms, poly_vals, poly_ids, bounds, height, width, all_touched)
+        poly_geoms, poly_vals, poly_ids, bounds, height, width,
+        all_touched=False)
     edge_arrays = _sort_edges(edge_arrays)
     edge_y_min, edge_y_max, edge_x_at_ymin, edge_inv_slope, \
         edge_value, edge_geom_id = edge_arrays
@@ -1063,6 +1122,19 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
         kernels['scanline_fill'][blocks, tpb](
             out, written, d_y_min, d_x_at_ymin, d_inv_slope,
             d_value, d_geom_id, d_row_ptr, d_col_idx, width, merge_mode)
+
+    # 1b. all_touched: draw polygon boundaries via Bresenham (GPU)
+    if all_touched and poly_geoms:
+        br0, bc0, br1, bc1, bvals = _extract_polygon_boundary_segments(
+            poly_geoms, poly_vals, bounds, height, width)
+        if len(br0) > 0:
+            n_bsegs = len(br0)
+            tpb = 256
+            bpg = (n_bsegs + tpb - 1) // tpb
+            kernels['burn_lines'][bpg, tpb](
+                out, written, cupy.asarray(br0), cupy.asarray(bc0),
+                cupy.asarray(br1), cupy.asarray(bc1),
+                cupy.asarray(bvals), n_bsegs, height, width, merge_mode)
 
     # 2. Lines
     r0, c0, r1, c1, lvals = _extract_line_segments(
