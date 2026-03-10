@@ -7,7 +7,7 @@ to a 2D xr.DataArray.  No GDAL dependency.
 - Lines/MultiLineStrings: Bresenham line rasterization
 - Points/MultiPoints: direct pixel burn
 
-Supports numpy and cupy backends.
+Supports numpy, cupy, dask+numpy, and dask+cupy backends.
 """
 from __future__ import annotations
 
@@ -22,6 +22,11 @@ try:
     import cupy
 except ImportError:
     cupy = None
+
+try:
+    import cuspatial  # noqa: F401  -- reserved for future GPU geometry parsing
+except ImportError:
+    cuspatial = None
 
 # Detect shapely 2.0+ for vectorized extraction
 try:
@@ -1091,11 +1096,398 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
 
 
 # ---------------------------------------------------------------------------
+# Dask tile-based rasterization
+# ---------------------------------------------------------------------------
+
+def _geometry_bboxes(geometries):
+    """Return (N, 4) float64 array of [xmin, ymin, xmax, ymax] per geometry."""
+    if len(geometries) == 0:
+        return np.empty((0, 4), dtype=np.float64)
+    if _HAS_SHAPELY2:
+        import shapely
+        return shapely.bounds(np.asarray(geometries, dtype=object))
+    return np.array([g.bounds for g in geometries], dtype=np.float64)
+
+
+def _tile_grid(bounds, height, width, row_chunks, col_chunks):
+    """Compute tile specs from output grid and chunk sizes.
+
+    Returns list of (row_start, row_end, col_start, col_end, tile_bounds)
+    where tile_bounds is (xmin, ymin, xmax, ymax) in geographic coords.
+    """
+    xmin, ymin, xmax, ymax = bounds
+    px = (xmax - xmin) / width
+    py = (ymax - ymin) / height
+
+    tiles = []
+    r = 0
+    for rchunk in row_chunks:
+        c = 0
+        for cchunk in col_chunks:
+            r_end = r + rchunk
+            c_end = c + cchunk
+            tile_xmin = xmin + c * px
+            tile_xmax = xmin + c_end * px
+            # y axis is top-down in pixel space: row 0 = ymax
+            tile_ymax = ymax - r * py
+            tile_ymin = ymax - r_end * py
+            tiles.append((r, r_end, c, c_end,
+                          (tile_xmin, tile_ymin, tile_xmax, tile_ymax)))
+            c = c_end
+        r = r_end
+    return tiles
+
+
+def _filter_geoms_to_tile(geom_bboxes, tile_bounds):
+    """Return boolean mask of geometries whose bbox intersects tile_bounds.
+
+    Uses strict ``<`` (not ``<=``) so that geometries touching the tile
+    boundary are included.  The scanline fill uses ``floor()`` on
+    x-intersections, so a polygon edge exactly at the tile boundary can
+    still produce a pixel inside the tile.
+    """
+    if len(geom_bboxes) == 0:
+        return np.empty(0, dtype=bool)
+    txmin, tymin, txmax, tymax = tile_bounds
+    return ~(
+        (geom_bboxes[:, 2] < txmin) | (geom_bboxes[:, 0] > txmax) |
+        (geom_bboxes[:, 3] < tymin) | (geom_bboxes[:, 1] > tymax)
+    )
+
+
+def _normalize_chunks(chunks, height, width):
+    """Convert chunks parameter to (row_chunk_sizes, col_chunk_sizes) tuples."""
+    if isinstance(chunks, int):
+        rchunk = cchunk = chunks
+    else:
+        rchunk, cchunk = chunks
+
+    row_chunks = []
+    remaining = height
+    while remaining > 0:
+        row_chunks.append(min(rchunk, remaining))
+        remaining -= row_chunks[-1]
+
+    col_chunks = []
+    remaining = width
+    while remaining > 0:
+        col_chunks.append(min(cchunk, remaining))
+        remaining -= col_chunks[-1]
+
+    return tuple(row_chunks), tuple(col_chunks)
+
+
+def _rasterize_tile_numpy(poly_geoms, poly_vals, tile_bounds, tile_h, tile_w,
+                          fill, dtype, all_touched, merge_mode,
+                          tile_line_r, tile_line_c, tile_line_v,
+                          tile_point_r, tile_point_c, tile_point_v):
+    """Rasterize a single tile: polygons per-tile, lines/points pre-computed.
+
+    Polygons are rasterized per-tile (scanline fill depends on pixel centers,
+    which are unique to each tile).  Lines and points are pre-rasterized at
+    full-raster scale and passed in as pixel coordinate arrays, offset to
+    tile-local coordinates.  This avoids Bresenham boundary artifacts.
+    """
+    out = np.full((tile_h, tile_w), fill, dtype=np.float64)
+
+    if merge_mode != _MERGE_LAST:
+        written = np.zeros((tile_h, tile_w), dtype=np.int8)
+    else:
+        written = np.empty((0, 0), dtype=np.int8)
+
+    # 1. Polygons (per-tile rasterization is exact)
+    if poly_geoms:
+        poly_ids = list(range(len(poly_geoms)))
+        edge_arrays = _extract_edges(
+            poly_geoms, poly_vals, poly_ids, tile_bounds,
+            tile_h, tile_w, all_touched)
+        edge_arrays = _sort_edges(edge_arrays)
+        if len(edge_arrays[0]) > 0:
+            _scanline_fill_cpu(out, written, *edge_arrays,
+                               tile_h, tile_w, merge_mode)
+
+    # 2. Lines (pre-computed, offset to tile-local coords)
+    if len(tile_line_r) > 0:
+        _burn_points_cpu(out, written, tile_line_r, tile_line_c,
+                         tile_line_v, merge_mode)
+
+    # 3. Points (pre-computed, offset to tile-local coords)
+    if len(tile_point_r) > 0:
+        _burn_points_cpu(out, written, tile_point_r, tile_point_c,
+                         tile_point_v, merge_mode)
+
+    return out.astype(dtype)
+
+
+def _precompute_line_pixels(line_geoms, line_vals, bounds, height, width):
+    """Rasterize all lines at full-raster scale, return pixel arrays."""
+    r0, c0, r1, c1, lvals = _extract_line_segments(
+        line_geoms, line_vals, bounds, height, width)
+    if len(r0) == 0:
+        empty = np.empty(0, dtype=np.int32)
+        return empty, empty, np.empty(0, dtype=np.float64)
+
+    # Run Bresenham to collect all pixels
+    all_rows, all_cols, all_vals = [], [], []
+    for i in range(len(r0)):
+        _bresenham_collect(
+            int(r0[i]), int(c0[i]), int(r1[i]), int(c1[i]),
+            float(lvals[i]), height, width, all_rows, all_cols, all_vals)
+
+    if not all_rows:
+        empty = np.empty(0, dtype=np.int32)
+        return empty, empty, np.empty(0, dtype=np.float64)
+
+    return (np.array(all_rows, dtype=np.int32),
+            np.array(all_cols, dtype=np.int32),
+            np.array(all_vals, dtype=np.float64))
+
+
+def _bresenham_collect(r0, c0, r1, c1, val, height, width,
+                       out_rows, out_cols, out_vals):
+    """Pure-Python Bresenham that collects pixel coordinates into lists."""
+    dr = r1 - r0
+    dc = c1 - c0
+    sr = 1 if dr >= 0 else -1
+    sc = 1 if dc >= 0 else -1
+    dr = dr * sr
+    dc = dc * sc
+
+    if dr >= dc:
+        err = dc - dr
+        r, c = r0, c0
+        for _ in range(dr + 1):
+            if 0 <= r < height and 0 <= c < width:
+                out_rows.append(r)
+                out_cols.append(c)
+                out_vals.append(val)
+            if err >= 0:
+                c += sc
+                err -= dr
+            r += sr
+            err += dc
+    else:
+        err = dr - dc
+        r, c = r0, c0
+        for _ in range(dc + 1):
+            if 0 <= r < height and 0 <= c < width:
+                out_rows.append(r)
+                out_cols.append(c)
+                out_vals.append(val)
+            if err >= 0:
+                r += sr
+                err -= dc
+            c += sc
+            err += dr
+
+
+def _pixels_for_tile(rows, cols, vals, r_start, r_end, c_start, c_end):
+    """Filter and offset pixel arrays to tile-local coordinates."""
+    if len(rows) == 0:
+        empty = np.empty(0, dtype=np.int32)
+        return empty, empty, np.empty(0, dtype=np.float64)
+    mask = ((rows >= r_start) & (rows < r_end) &
+            (cols >= c_start) & (cols < c_end))
+    return (rows[mask] - r_start, cols[mask] - c_start, vals[mask])
+
+
+def _run_dask_numpy(geometries, values, bounds, height, width, fill, dtype,
+                    all_touched, merge_mode, row_chunks, col_chunks):
+    """Dask + NumPy backend: tile-based parallel rasterization."""
+    import dask
+    import dask.array as da
+
+    # Classify geometries once
+    (poly_geoms, poly_vals, _poly_ids), (line_geoms, line_vals), \
+        (point_geoms, point_vals) = _classify_geometries(geometries, values)
+
+    # Pre-compute line and point pixels at full raster scale
+    line_rows, line_cols, line_vvals = _precompute_line_pixels(
+        line_geoms, line_vals, bounds, height, width)
+    point_rows, point_cols, point_vvals = _extract_points(
+        point_geoms, point_vals, bounds, height, width)
+
+    # Compute polygon bboxes for spatial filtering
+    if poly_geoms:
+        poly_bboxes = _geometry_bboxes(poly_geoms)
+    else:
+        poly_bboxes = np.empty((0, 4), dtype=np.float64)
+    poly_geom_arr = np.asarray(poly_geoms, dtype=object) if poly_geoms \
+        else np.empty(0, dtype=object)
+    poly_val_arr = np.asarray(poly_vals, dtype=np.float64)
+
+    tiles = _tile_grid(bounds, height, width, row_chunks, col_chunks)
+    n_row_chunks = len(row_chunks)
+    n_col_chunks = len(col_chunks)
+    blocks = [[None] * n_col_chunks for _ in range(n_row_chunks)]
+
+    ri = 0
+    for i in range(n_row_chunks):
+        for j in range(n_col_chunks):
+            r_start, r_end, c_start, c_end, tile_bounds = tiles[ri]
+            tile_h = r_end - r_start
+            tile_w = c_end - c_start
+
+            # Filter polygons by tile bbox
+            pmask = _filter_geoms_to_tile(poly_bboxes, tile_bounds)
+            tile_poly_geoms = poly_geom_arr[pmask].tolist() \
+                if len(poly_geom_arr) > 0 else []
+            tile_poly_vals = poly_val_arr[pmask].tolist() \
+                if len(poly_val_arr) > 0 else []
+
+            # Filter pre-computed line/point pixels to tile
+            tl_r, tl_c, tl_v = _pixels_for_tile(
+                line_rows, line_cols, line_vvals,
+                r_start, r_end, c_start, c_end)
+            tp_r, tp_c, tp_v = _pixels_for_tile(
+                point_rows, point_cols, point_vvals,
+                r_start, r_end, c_start, c_end)
+
+            delayed_tile = dask.delayed(_rasterize_tile_numpy)(
+                tile_poly_geoms, tile_poly_vals, tile_bounds,
+                tile_h, tile_w, fill, dtype, all_touched, merge_mode,
+                tl_r, tl_c, tl_v, tp_r, tp_c, tp_v)
+            blocks[i][j] = da.from_delayed(
+                delayed_tile, shape=(tile_h, tile_w), dtype=dtype)
+            ri += 1
+
+    return da.block(blocks)
+
+
+def _rasterize_tile_cupy(poly_geoms, poly_vals, tile_bounds, tile_h, tile_w,
+                         fill, dtype, all_touched, merge_mode,
+                         tile_line_r, tile_line_c, tile_line_v,
+                         tile_point_r, tile_point_c, tile_point_v):
+    """GPU tile rasterization: polygons per-tile, lines/points pre-computed."""
+    kernels = _ensure_gpu_kernels()
+
+    out = cupy.full((tile_h, tile_w), fill, dtype=cupy.float64)
+    if merge_mode != _MERGE_LAST:
+        written = cupy.zeros((tile_h, tile_w), dtype=cupy.int8)
+    else:
+        written = cupy.empty((0, 0), dtype=cupy.int8)
+
+    # 1. Polygons (per-tile rasterization is exact)
+    if poly_geoms:
+        poly_ids = list(range(len(poly_geoms)))
+        edge_arrays = _extract_edges(
+            poly_geoms, poly_vals, poly_ids, tile_bounds,
+            tile_h, tile_w, all_touched)
+        edge_arrays = _sort_edges(edge_arrays)
+        edge_y_min = edge_arrays[0]
+        if len(edge_y_min) > 0:
+            edge_y_max, edge_x_at_ymin, edge_inv_slope, \
+                edge_value, edge_geom_id = edge_arrays[1:]
+            row_ptr, col_idx = _build_row_csr_numba(
+                edge_y_min, edge_y_max, tile_h)
+            tpb = 256
+            blocks = (tile_h + tpb - 1) // tpb
+            kernels['scanline_fill'][blocks, tpb](
+                out, written,
+                cupy.asarray(edge_y_min), cupy.asarray(edge_x_at_ymin),
+                cupy.asarray(edge_inv_slope), cupy.asarray(edge_value),
+                cupy.asarray(edge_geom_id), cupy.asarray(row_ptr),
+                cupy.asarray(col_idx), tile_w, merge_mode)
+
+    # 2. Lines (pre-computed, burn as points)
+    if len(tile_line_r) > 0:
+        n_pts = len(tile_line_r)
+        tpb = 256
+        bpg = (n_pts + tpb - 1) // tpb
+        kernels['burn_points'][bpg, tpb](
+            out, written,
+            cupy.asarray(tile_line_r), cupy.asarray(tile_line_c),
+            cupy.asarray(tile_line_v), n_pts, merge_mode)
+
+    # 3. Points (pre-computed)
+    if len(tile_point_r) > 0:
+        n_pts = len(tile_point_r)
+        tpb = 256
+        bpg = (n_pts + tpb - 1) // tpb
+        kernels['burn_points'][bpg, tpb](
+            out, written,
+            cupy.asarray(tile_point_r), cupy.asarray(tile_point_c),
+            cupy.asarray(tile_point_v), n_pts, merge_mode)
+
+    return out.astype(dtype)
+
+
+def _run_dask_cupy(geometries, values, bounds, height, width, fill, dtype,
+                   all_touched, merge_mode, row_chunks, col_chunks):
+    """Dask + CuPy backend: tile-based parallel GPU rasterization."""
+    import dask
+    import dask.array as da
+
+    # Classify geometries once
+    (poly_geoms, poly_vals, _poly_ids), (line_geoms, line_vals), \
+        (point_geoms, point_vals) = _classify_geometries(geometries, values)
+
+    # Pre-compute line and point pixels at full raster scale (CPU-side)
+    line_rows, line_cols, line_vvals = _precompute_line_pixels(
+        line_geoms, line_vals, bounds, height, width)
+    point_rows, point_cols, point_vvals = _extract_points(
+        point_geoms, point_vals, bounds, height, width)
+
+    if poly_geoms:
+        poly_bboxes = _geometry_bboxes(poly_geoms)
+    else:
+        poly_bboxes = np.empty((0, 4), dtype=np.float64)
+    poly_geom_arr = np.asarray(poly_geoms, dtype=object) if poly_geoms \
+        else np.empty(0, dtype=object)
+    poly_val_arr = np.asarray(poly_vals, dtype=np.float64)
+
+    tiles = _tile_grid(bounds, height, width, row_chunks, col_chunks)
+    n_row_chunks = len(row_chunks)
+    n_col_chunks = len(col_chunks)
+    blocks = [[None] * n_col_chunks for _ in range(n_row_chunks)]
+
+    ri = 0
+    for i in range(n_row_chunks):
+        for j in range(n_col_chunks):
+            r_start, r_end, c_start, c_end, tile_bounds = tiles[ri]
+            tile_h = r_end - r_start
+            tile_w = c_end - c_start
+
+            pmask = _filter_geoms_to_tile(poly_bboxes, tile_bounds)
+            tile_poly_geoms = poly_geom_arr[pmask].tolist() \
+                if len(poly_geom_arr) > 0 else []
+            tile_poly_vals = poly_val_arr[pmask].tolist() \
+                if len(poly_val_arr) > 0 else []
+
+            tl_r, tl_c, tl_v = _pixels_for_tile(
+                line_rows, line_cols, line_vvals,
+                r_start, r_end, c_start, c_end)
+            tp_r, tp_c, tp_v = _pixels_for_tile(
+                point_rows, point_cols, point_vvals,
+                r_start, r_end, c_start, c_end)
+
+            delayed_tile = dask.delayed(_rasterize_tile_cupy)(
+                tile_poly_geoms, tile_poly_vals, tile_bounds,
+                tile_h, tile_w, fill, dtype, all_touched, merge_mode,
+                tl_r, tl_c, tl_v, tp_r, tp_c, tp_v)
+            blocks[i][j] = da.from_delayed(
+                delayed_tile, shape=(tile_h, tile_w), dtype=dtype,
+                meta=cupy.empty(()))
+            ri += 1
+
+    return da.block(blocks)
+
+
+# ---------------------------------------------------------------------------
 # Input parsing
 # ---------------------------------------------------------------------------
 
 def _parse_input(geometries, column=None):
     """Normalise input to (geometry_list, value_list, bounds)."""
+    # Handle dask-geopandas by materializing eagerly.  Geometry data is
+    # typically much smaller than the output raster, so this is fine.
+    try:
+        import dask_geopandas
+        if isinstance(geometries, dask_geopandas.GeoDataFrame):
+            geometries = geometries.compute()
+    except ImportError:
+        pass
+
     try:
         import geopandas as gpd
         if isinstance(geometries, gpd.GeoDataFrame):
@@ -1185,6 +1577,7 @@ def rasterize(
     resolution: Optional[Union[float, Tuple[float, float]]] = None,
     like: Optional[xr.DataArray] = None,
     merge: str = 'last',
+    chunks: Optional[Union[int, Tuple[int, int]]] = None,
 ) -> xr.DataArray:
     """Rasterize vector geometries into a 2D DataArray.
 
@@ -1245,6 +1638,12 @@ def rasterize(
         - ``'max'`` / ``'min'`` -- keep the larger / smaller value
         - ``'sum'`` -- add values together
         - ``'count'`` -- count overlapping geometries
+
+    chunks : int or (int, int), optional
+        If given, use the dask backend and split the output raster into
+        tiles of this size ``(row_chunk, col_chunk)``.  A single int
+        uses the same chunk size for both axes.  Combined with
+        ``use_cuda`` to select dask+numpy vs dask+cupy.
 
     Returns
     -------
@@ -1331,7 +1730,23 @@ def rasterize(
     else:
         final_dtype = np.float64
 
-    if use_cuda:
+    if chunks is not None:
+        row_chunks, col_chunks = _normalize_chunks(
+            chunks, final_height, final_width)
+        if use_cuda:
+            if cupy is None:
+                raise ImportError(
+                    "CuPy is required for use_cuda=True but is not installed")
+            out = _run_dask_cupy(
+                geom_list, value_list, final_bounds,
+                final_height, final_width, fill, final_dtype,
+                all_touched, merge_mode, row_chunks, col_chunks)
+        else:
+            out = _run_dask_numpy(
+                geom_list, value_list, final_bounds,
+                final_height, final_width, fill, final_dtype,
+                all_touched, merge_mode, row_chunks, col_chunks)
+    elif use_cuda:
         if cupy is None:
             raise ImportError(
                 "CuPy is required for use_cuda=True but is not installed")
