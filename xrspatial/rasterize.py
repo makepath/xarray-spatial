@@ -248,31 +248,40 @@ def _extract_edges_vectorized(geometries, geom_ids, bounds,
     # Geometry id for each edge
     edge_ids = ring_ids[coord_ring_idx[start_idx]]
 
-    # Convert to pixel space
-    start_row = (ymax - coords[start_idx, 1]) / py
-    start_col = (coords[start_idx, 0] - xmin) / px
-    end_row = (ymax - coords[end_idx, 1]) / py
-    end_col = (coords[end_idx, 0] - xmin) / px
+    # Convert to pixel space (reuse arrays through the pipeline to
+    # cut peak memory from ~12 temporaries to ~6).
+    sr = (ymax - coords[start_idx, 1]) / py
+    sc = (coords[start_idx, 0] - xmin) / px
+    er = (ymax - coords[end_idx, 1]) / py
+    ec = (coords[end_idx, 0] - xmin) / px
 
-    # Drop horizontal edges
-    not_horiz = start_row != end_row
-    start_row = start_row[not_horiz]
-    start_col = start_col[not_horiz]
-    end_row = end_row[not_horiz]
-    end_col = end_col[not_horiz]
+    # Drop horizontal edges (filter in-place)
+    not_horiz = sr != er
+    sr = sr[not_horiz]
+    sc = sc[not_horiz]
+    er = er[not_horiz]
+    ec = ec[not_horiz]
     edge_ids = edge_ids[not_horiz]
 
-    if len(start_row) == 0:
+    if len(sr) == 0:
         return _EMPTY_EDGES
 
-    # Orient edges so top_r < bot_r
-    swap = start_row > end_row
-    top_r = np.where(swap, end_row, start_row)
-    top_c = np.where(swap, end_col, start_col)
-    bot_r = np.where(swap, start_row, end_row)
-    bot_c = np.where(swap, start_col, end_col)
+    # Orient edges so top_r < bot_r, compute derived values, then
+    # filter.  We reuse short names and delete intermediates early
+    # to keep peak memory down for large edge counts.
+    swap = sr > er
+    top_r = np.where(swap, er, sr)
+    top_c = np.where(swap, ec, sc)
+    bot_r = np.where(swap, sr, er)
+    bot_c = np.where(swap, sc, ec)
+    del sr, sc, er, ec, swap
 
-    # Clamp to raster rows
+    # Inverse slope and row clamping (compute before filtering so
+    # the valid mask can be applied once at the end).
+    dr = bot_r - top_r  # guaranteed != 0
+    inv_slope = (bot_c - top_c) / dr
+    del bot_c
+
     if all_touched:
         ry_min = np.maximum(np.floor(top_r - 0.5).astype(np.int32), 0)
         ry_max = np.minimum(
@@ -281,15 +290,13 @@ def _extract_edges_vectorized(geometries, geom_ids, bounds,
         ry_min = np.maximum(np.ceil(top_r).astype(np.int32), 0)
         ry_max = np.minimum(
             np.ceil(bot_r).astype(np.int32) - 1, height - 1)
+    del bot_r
 
-    # Only keep edges that span at least one row
-    valid = ry_min <= ry_max
-
-    # Inverse slope and x at first active row
-    dr = bot_r - top_r  # guaranteed != 0
-    inv_slope = (bot_c - top_c) / dr
     x_at_ymin = top_c + (ry_min.astype(np.float64) - top_r) * inv_slope
+    del top_c, top_r
 
+    # Single filter pass at the end
+    valid = ry_min <= ry_max
     return (ry_min[valid],
             ry_max[valid],
             x_at_ymin[valid],
@@ -299,69 +306,81 @@ def _extract_edges_vectorized(geometries, geom_ids, bounds,
 
 def _extract_edges_loop(geometries, geom_ids, bounds, height, width,
                         all_touched):
-    """Loop-based edge extraction (shapely < 2.0 fallback)."""
+    """Loop-based edge extraction (shapely < 2.0 fallback).
+
+    Pre-allocates output arrays sized to the total vertex count (an upper
+    bound on edge count) to avoid per-edge Python list appends and
+    np.int32() scalar wrapping overhead.
+    """
     xmin, ymin, xmax, ymax = bounds
     px = (xmax - xmin) / width
     py = (ymax - ymin) / height
 
-    all_y_min = []
-    all_y_max = []
-    all_x_at_ymin = []
-    all_inv_slope = []
-    all_geom_id = []
-
+    # Upper bound: each ring vertex pair can produce at most one edge.
+    # Sum of (len(ring.coords) - 1) across all rings.
+    est = 0
+    ring_data = []  # (coords_array, gid) pairs
     for geom, gid in zip(geometries, geom_ids):
         if geom is None or geom.is_empty:
             continue
-
         if geom.geom_type == 'Polygon':
             parts = [geom]
         elif geom.geom_type == 'MultiPolygon':
             parts = list(geom.geoms)
         else:
             continue
-
         for poly in parts:
             rings = [poly.exterior] + list(poly.interiors)
             for ring in rings:
                 coords = np.asarray(ring.coords)
-                row = (ymax - coords[:, 1]) / py
-                col = (coords[:, 0] - xmin) / px
+                n = len(coords) - 1
+                if n > 0:
+                    ring_data.append((coords, gid))
+                    est += n
 
-                n = len(row) - 1
-                for i in range(n):
-                    r0, c0 = row[i], col[i]
-                    r1, c1 = row[i + 1], col[i + 1]
-                    if r0 == r1:
-                        continue
-                    if r0 > r1:
-                        r0, c0, r1, c1 = r1, c1, r0, c0
-                    if all_touched:
-                        ry_min = max(int(np.floor(r0 - 0.5)), 0)
-                        ry_max = min(
-                            int(np.ceil(r1 + 0.5)) - 1, height - 1)
-                    else:
-                        ry_min = max(int(np.ceil(r0)), 0)
-                        ry_max = min(
-                            int(np.ceil(r1)) - 1, height - 1)
-                    if ry_min > ry_max:
-                        continue
-                    inv_slope = (c1 - c0) / (r1 - r0)
-                    x_at_ymin = c0 + (ry_min - r0) * inv_slope
-                    all_y_min.append(np.int32(ry_min))
-                    all_y_max.append(np.int32(ry_max))
-                    all_x_at_ymin.append(x_at_ymin)
-                    all_inv_slope.append(inv_slope)
-                    all_geom_id.append(np.int32(gid))
-
-    if not all_y_min:
+    if est == 0:
         return _EMPTY_EDGES
 
-    return (np.array(all_y_min, np.int32),
-            np.array(all_y_max, np.int32),
-            np.array(all_x_at_ymin, np.float64),
-            np.array(all_inv_slope, np.float64),
-            np.array(all_geom_id, np.int32))
+    # Pre-allocate arrays
+    buf_ymin = np.empty(est, dtype=np.int32)
+    buf_ymax = np.empty(est, dtype=np.int32)
+    buf_xmin = np.empty(est, dtype=np.float64)
+    buf_inv = np.empty(est, dtype=np.float64)
+    buf_gid = np.empty(est, dtype=np.int32)
+    pos = 0
+
+    for coords, gid in ring_data:
+        row = (ymax - coords[:, 1]) / py
+        col = (coords[:, 0] - xmin) / px
+        n = len(row) - 1
+        for i in range(n):
+            r0, c0 = row[i], col[i]
+            r1, c1 = row[i + 1], col[i + 1]
+            if r0 == r1:
+                continue
+            if r0 > r1:
+                r0, c0, r1, c1 = r1, c1, r0, c0
+            if all_touched:
+                ry_min = max(int(np.floor(r0 - 0.5)), 0)
+                ry_max = min(int(np.ceil(r1 + 0.5)) - 1, height - 1)
+            else:
+                ry_min = max(int(np.ceil(r0)), 0)
+                ry_max = min(int(np.ceil(r1)) - 1, height - 1)
+            if ry_min > ry_max:
+                continue
+            inv_slope = (c1 - c0) / (r1 - r0)
+            buf_ymin[pos] = ry_min
+            buf_ymax[pos] = ry_max
+            buf_xmin[pos] = c0 + (ry_min - r0) * inv_slope
+            buf_inv[pos] = inv_slope
+            buf_gid[pos] = gid
+            pos += 1
+
+    if pos == 0:
+        return _EMPTY_EDGES
+
+    return (buf_ymin[:pos], buf_ymax[:pos], buf_xmin[:pos],
+            buf_inv[:pos], buf_gid[:pos])
 
 
 def _sort_edges(edge_arrays):
@@ -665,13 +684,20 @@ def _extract_polygon_boundary_segments(geometries, geom_ids, bounds,
     the polygon touches is burned, without expanding scanline edge
     y-ranges (which breaks edge pairing).
 
+    Extracts ring coordinates directly (no intermediate LineString objects)
+    and runs vectorized Liang-Barsky clipping to produce pixel-space
+    segments.
+
     Returns (r0, c0, r1, c1, geom_idx) where geom_idx maps each segment
     back to the polygon's index in geom_ids (for props table lookup).
     """
-    from shapely.geometry import LineString as _LS
+    xmin, ymin, xmax, ymax = bounds
+    px = (xmax - xmin) / width
+    py = (ymax - ymin) / height
 
-    boundary_lines = []
-    boundary_ids = []
+    # Collect all ring vertex arrays and the polygon id for each ring
+    all_coords = []   # list of (N, 2) arrays
+    all_ids = []      # polygon id repeated per segment in each ring
     for geom, gid in zip(geometries, geom_ids):
         if geom is None or geom.is_empty:
             continue
@@ -682,23 +708,75 @@ def _extract_polygon_boundary_segments(geometries, geom_ids, bounds,
         else:
             continue
         for poly in parts:
-            boundary_lines.append(_LS(poly.exterior.coords))
-            boundary_ids.append(gid)
+            coords = np.asarray(poly.exterior.coords)
+            n = len(coords) - 1  # segments in this ring
+            if n > 0:
+                all_coords.append(coords)
+                all_ids.append(np.full(n, gid, dtype=np.int32))
             for interior in poly.interiors:
-                boundary_lines.append(_LS(interior.coords))
-                boundary_ids.append(gid)
+                coords = np.asarray(interior.coords)
+                n = len(coords) - 1
+                if n > 0:
+                    all_coords.append(coords)
+                    all_ids.append(np.full(n, gid, dtype=np.int32))
 
-    if not boundary_lines:
+    if not all_coords:
         return _EMPTY_LINES
-    # _extract_line_segments returns (r0, c0, r1, c1, seg_geom_idx) where
-    # seg_geom_idx indexes into boundary_lines.  We need to remap those
-    # indices to the original polygon geom_ids for the props table.
-    r0, c0, r1, c1, seg_idx = _extract_line_segments(
-        boundary_lines, bounds, height, width)
-    if len(r0) == 0:
-        return _EMPTY_LINES
-    id_arr = np.array(boundary_ids, dtype=np.int32)
-    return r0, c0, r1, c1, id_arr[seg_idx]
+
+    # Build segment arrays: consecutive vertex pairs within each ring
+    seg_x0, seg_y0, seg_x1, seg_y1 = [], [], [], []
+    for coords in all_coords:
+        seg_x0.append(coords[:-1, 0])
+        seg_y0.append(coords[:-1, 1])
+        seg_x1.append(coords[1:, 0])
+        seg_y1.append(coords[1:, 1])
+
+    x0 = np.concatenate(seg_x0)
+    y0 = np.concatenate(seg_y0)
+    x1 = np.concatenate(seg_x1)
+    y1 = np.concatenate(seg_y1)
+    seg_ids = np.concatenate(all_ids)
+
+    # Vectorized Liang-Barsky clip to raster bounds
+    dx = x1 - x0
+    dy = y1 - y0
+    p = np.array([-dx, dx, -dy, dy])
+    q = np.array([x0 - xmin, xmax - x0, y0 - ymin, ymax - y0])
+
+    t0 = np.zeros(len(x0))
+    t1 = np.ones(len(x0))
+    valid = np.ones(len(x0), dtype=bool)
+
+    for i in range(4):
+        parallel = p[i] == 0.0
+        valid &= ~(parallel & (q[i] < 0.0))
+        neg = (~parallel) & (p[i] < 0.0)
+        pos = (~parallel) & (p[i] > 0.0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            t_neg = np.where(neg, q[i] / p[i], 0.0)
+            t_pos = np.where(pos, q[i] / p[i], 1.0)
+        t0 = np.where(neg, np.maximum(t0, t_neg), t0)
+        t1 = np.where(pos, np.minimum(t1, t_pos), t1)
+
+    valid &= (t0 <= t1)
+
+    cx0 = x0 + t0 * dx
+    cy0 = y0 + t0 * dy
+    cx1 = x0 + t1 * dx
+    cy1 = y0 + t1 * dy
+
+    r0 = np.floor((ymax - cy0) / py).astype(np.int32)
+    c0 = np.floor((cx0 - xmin) / px).astype(np.int32)
+    r1 = np.floor((ymax - cy1) / py).astype(np.int32)
+    c1 = np.floor((cx1 - xmin) / px).astype(np.int32)
+
+    np.clip(r0, 0, height - 1, out=r0)
+    np.clip(c0, 0, width - 1, out=c0)
+    np.clip(r1, 0, height - 1, out=r1)
+    np.clip(c1, 0, width - 1, out=c1)
+
+    v = valid
+    return (r0[v], c0[v], r1[v], c1[v], seg_ids[v])
 
 
 # ---------------------------------------------------------------------------
@@ -809,18 +887,25 @@ def _scanline_fill_cpu(out, written, edge_y_min, edge_y_max, edge_x_at_ymin,
                      + (row - edge_y_min[e]) * edge_inv_slope[e])
             gs[i] = edge_geom_id[e]
 
-        # 4. Insertion sort by (geom_id, x) so each geometry's edges pair
+        # 4. Shell sort by (geom_id, x) so each geometry's edges pair
         # correctly and geometries are processed in input order.
-        for i in range(1, n_active):
-            kx = xs[i]
-            kg = gs[i]
-            j = i - 1
-            while j >= 0 and (gs[j] > kg or (gs[j] == kg and xs[j] > kx)):
-                xs[j + 1] = xs[j]
-                gs[j + 1] = gs[j]
-                j -= 1
-            xs[j + 1] = kx
-            gs[j + 1] = kg
+        # Shell sort is O(n^(4/3)) worst-case vs insertion sort's O(n²),
+        # while staying in-place with no allocation.  The final gap=1
+        # pass is a standard insertion sort, which is fast when the data
+        # is already nearly sorted (common between consecutive rows).
+        gap = n_active >> 1
+        while gap > 0:
+            for i in range(gap, n_active):
+                kx = xs[i]
+                kg = gs[i]
+                j = i - gap
+                while j >= 0 and (gs[j] > kg or (gs[j] == kg and xs[j] > kx)):
+                    xs[j + gap] = xs[j]
+                    gs[j + gap] = gs[j]
+                    j -= gap
+                xs[j + gap] = kx
+                gs[j + gap] = kg
+            gap >>= 1
 
         # 5. Fill between edge pairs per geometry
         i = 0
@@ -1012,17 +1097,20 @@ def _ensure_gpu_kernels(merge_fn):
             gs[actual] = edge_geom_id[e]
             actual += 1
 
-        # Insertion sort by (geom_id, x)
-        for i in range(1, actual):
-            kx = xs[i]
-            kg = gs[i]
-            j = i - 1
-            while j >= 0 and (gs[j] > kg or (gs[j] == kg and xs[j] > kx)):
-                xs[j + 1] = xs[j]
-                gs[j + 1] = gs[j]
-                j -= 1
-            xs[j + 1] = kx
-            gs[j + 1] = kg
+        # Shell sort by (geom_id, x)
+        gap = actual >> 1
+        while gap > 0:
+            for i in range(gap, actual):
+                kx = xs[i]
+                kg = gs[i]
+                j = i - gap
+                while j >= 0 and (gs[j] > kg or (gs[j] == kg and xs[j] > kx)):
+                    xs[j + gap] = xs[j]
+                    gs[j + gap] = gs[j]
+                    j -= gap
+                xs[j + gap] = kx
+                gs[j + gap] = kg
+            gap >>= 1
 
         # Fill between pairs per geometry
         i = 0
@@ -1121,26 +1209,36 @@ def _ensure_gpu_kernels(merge_fn):
 
 @ngjit
 def _build_row_csr_numba(edge_y_min, edge_y_max, height):
-    """Numba-accelerated CSR builder for GPU scanline precomputation."""
+    """Build a CSR structure mapping each raster row to its active edges.
+
+    Uses a difference-array approach so Pass 1 is O(n_edges + height)
+    instead of O(n_edges * avg_edge_height).  Pass 2 still needs to
+    place each edge into every row it spans, but the row_ptr / offsets
+    are already computed so no redundant counting occurs.
+    """
     n_edges = len(edge_y_min)
 
-    # Pass 1: count active edges per row
-    counts = np.zeros(height, dtype=np.int32)
+    # Pass 1: difference-array counting — O(n_edges + height)
+    # diff[r] += 1 when an edge starts, diff[r+1] -= 1 when it ends.
+    diff = np.zeros(height + 1, dtype=np.int32)
     for e in range(n_edges):
         y_lo = edge_y_min[e]
         y_hi = edge_y_max[e]
         if y_hi >= height:
             y_hi = height - 1
-        for r in range(y_lo, y_hi + 1):
-            counts[r] += 1
+        if y_lo <= y_hi:
+            diff[y_lo] += 1
+            diff[y_hi + 1] -= 1
 
-    # Build row_ptr (prefix sum)
+    # Prefix sum on diff -> counts, and build row_ptr simultaneously
     row_ptr = np.empty(height + 1, dtype=np.int32)
     row_ptr[0] = 0
+    running = np.int32(0)
     for r in range(height):
-        row_ptr[r + 1] = row_ptr[r] + counts[r]
+        running += diff[r]
+        row_ptr[r + 1] = row_ptr[r] + running
 
-    # Pass 2: fill col_idx
+    # Pass 2: fill col_idx — each edge placed into its row range
     total = row_ptr[height]
     col_idx = np.empty(total, dtype=np.int32)
     offsets = np.empty(height, dtype=np.int32)
@@ -1320,8 +1418,14 @@ def _normalize_chunks(chunks, height, width):
     return tuple(row_chunks), tuple(col_chunks)
 
 
-def _segments_for_tile(r0, c0, r1, c1, geom_idx, r_start, r_end,
-                       c_start, c_end):
+def _segment_bboxes(r0, c0, r1, c1):
+    """Pre-compute per-segment bounding boxes (once, before the tile loop)."""
+    return (np.minimum(r0, r1), np.maximum(r0, r1),
+            np.minimum(c0, c1), np.maximum(c0, c1))
+
+
+def _segments_for_tile(r0, c0, r1, c1, geom_idx, seg_bboxes,
+                       r_start, r_end, c_start, c_end):
     """Filter segments whose pixel bbox overlaps the tile, offset to local.
 
     Returns segments in tile-local coordinates (r_start/c_start subtracted).
@@ -1329,16 +1433,16 @@ def _segments_for_tile(r0, c0, r1, c1, geom_idx, r_start, r_end,
     bounds check in ``_burn_lines_cpu`` handles this, and the pixel path
     is translation-invariant so the result is exact.
 
+    seg_bboxes is a (rmin, rmax, cmin, cmax) tuple from _segment_bboxes(),
+    computed once before the tile loop to avoid redundant min/max per tile.
+
     geom_idx values are indices into the per-type props table and do not
     need adjustment when filtering.
     """
     if len(r0) == 0:
         empty = np.empty(0, dtype=np.int32)
         return empty, empty, empty, empty, np.empty(0, dtype=np.int32)
-    seg_rmin = np.minimum(r0, r1)
-    seg_rmax = np.maximum(r0, r1)
-    seg_cmin = np.minimum(c0, c1)
-    seg_cmax = np.maximum(c0, c1)
+    seg_rmin, seg_rmax, seg_cmin, seg_cmax = seg_bboxes
     mask = ((seg_rmax >= r_start) & (seg_rmin < r_end) &
             (seg_cmax >= c_start) & (seg_cmin < c_end))
     return (r0[mask] - r_start, c0[mask] - c_start,
@@ -1448,6 +1552,9 @@ def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
         poly_bboxes = np.empty((0, 4), dtype=np.float64)
         poly_wkb = []
 
+    # Pre-compute segment bboxes once (avoids redundant min/max per tile)
+    seg_bboxes = _segment_bboxes(seg_r0, seg_c0, seg_r1, seg_c1)
+
     tiles = _tile_grid(bounds, height, width, row_chunks, col_chunks)
     n_row_chunks = len(row_chunks)
     n_col_chunks = len(col_chunks)
@@ -1472,7 +1579,7 @@ def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
 
             # Filter segments and points by tile pixel range
             ts = _segments_for_tile(seg_r0, seg_c0, seg_r1, seg_c1,
-                                    seg_geom_idx,
+                                    seg_geom_idx, seg_bboxes,
                                     r_start, r_end, c_start, c_end)
             tp = _points_for_tile(pt_rows, pt_cols, pt_geom_idx,
                                   r_start, r_end, c_start, c_end)
@@ -1486,6 +1593,13 @@ def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
             ri += 1
 
     return da.block(blocks)
+
+
+def _ensure_cupy(arr):
+    """Transfer to GPU only if not already a CuPy array."""
+    if isinstance(arr, cupy.ndarray):
+        return arr
+    return cupy.asarray(arr)
 
 
 def _rasterize_tile_cupy(poly_wkb, poly_props_2d, tile_bounds, tile_h,
@@ -1546,7 +1660,7 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, tile_bounds, tile_h,
             out, written,
             cupy.asarray(seg_r0), cupy.asarray(seg_c0),
             cupy.asarray(seg_r1), cupy.asarray(seg_c1),
-            cupy.asarray(seg_geom_idx), cupy.asarray(line_props),
+            cupy.asarray(seg_geom_idx), _ensure_cupy(line_props),
             n_segs, tile_h, tile_w)
 
     # 3. Points (tile-local)
@@ -1557,7 +1671,7 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, tile_bounds, tile_h,
         kernels['burn_points'][bpg, tpb](
             out, written,
             cupy.asarray(pt_rows), cupy.asarray(pt_cols),
-            cupy.asarray(pt_geom_idx), cupy.asarray(point_props), n_pts)
+            cupy.asarray(pt_geom_idx), _ensure_cupy(point_props), n_pts)
 
     return out.astype(dtype)
 
@@ -1587,6 +1701,14 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
         poly_bboxes = np.empty((0, 4), dtype=np.float64)
         poly_wkb = []
 
+    # Pre-compute segment bboxes once (avoids redundant min/max per tile)
+    seg_bboxes = _segment_bboxes(seg_r0, seg_c0, seg_r1, seg_c1)
+
+    # Transfer shared props tables to GPU once (avoids repeated PCIe
+    # transfers in each tile worker).
+    d_line_props = cupy.asarray(line_props)
+    d_point_props = cupy.asarray(point_props)
+
     tiles = _tile_grid(bounds, height, width, row_chunks, col_chunks)
     n_row_chunks = len(row_chunks)
     n_col_chunks = len(col_chunks)
@@ -1610,7 +1732,7 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
                 tile_poly_props = poly_props[:0]  # empty (0, P)
 
             ts = _segments_for_tile(seg_r0, seg_c0, seg_r1, seg_c1,
-                                    seg_geom_idx,
+                                    seg_geom_idx, seg_bboxes,
                                     r_start, r_end, c_start, c_end)
             tp = _points_for_tile(pt_rows, pt_cols, pt_geom_idx,
                                   r_start, r_end, c_start, c_end)
@@ -1618,7 +1740,7 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
             delayed_tile = dask.delayed(_rasterize_tile_cupy)(
                 tile_wkb, tile_poly_props, tile_bounds,
                 tile_h, tile_w, fill, dtype, all_touched, merge_fn,
-                *ts, line_props, *tp, point_props)
+                *ts, d_line_props, *tp, d_point_props)
             blocks[i][j] = da.from_delayed(
                 delayed_tile, shape=(tile_h, tile_w), dtype=dtype,
                 meta=cupy.empty(()))
@@ -1690,11 +1812,12 @@ def _parse_input(geometries, column=None, columns=None):
 
     props_array = np.array(value_list, dtype=np.float64).reshape(-1, 1)
 
-    all_bounds = np.array([g.bounds for g in geom_list if g is not None])
-    if len(all_bounds) == 0:
+    # Compute per-geometry bboxes (reused by dask tile filtering later)
+    geom_bboxes = _geometry_bboxes(geom_list)
+    if len(geom_bboxes) == 0:
         return geom_list, props_array, None
-    total_bounds = (all_bounds[:, 0].min(), all_bounds[:, 1].min(),
-                    all_bounds[:, 2].max(), all_bounds[:, 3].max())
+    total_bounds = (geom_bboxes[:, 0].min(), geom_bboxes[:, 1].min(),
+                    geom_bboxes[:, 2].max(), geom_bboxes[:, 3].max())
     return geom_list, props_array, total_bounds
 
 
