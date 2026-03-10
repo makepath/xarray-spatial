@@ -88,6 +88,7 @@ def test_dataarray_accessor_has_expected_methods(elevation):
         'regions',
         'generate_terrain', 'perlin',
         'ndvi', 'evi', 'arvi', 'savi', 'nbr', 'sipi',
+        'rasterize',
     ]
     for name in expected:
         assert name in names, f"Missing method: {name}"
@@ -103,6 +104,7 @@ def test_dataset_accessor_has_expected_methods():
         'focal_mean',
         'proximity', 'allocation', 'direction', 'cost_distance',
         'ndvi', 'evi', 'arvi', 'savi', 'nbr', 'sipi',
+        'rasterize',
     ]
     for name in expected:
         assert name in names, f"Missing method: {name}"
@@ -249,3 +251,68 @@ def test_ds_evi(nir, red, blue):
     expected = evi(ds, nir='b8', red='b4', blue='b2')
     result = ds.xrs.evi(nir='b8', red='b4', blue='b2')
     xr.testing.assert_identical(result, expected)
+
+
+# ---------------------------------------------------------------------------
+# 7. Rasterize accessor
+# ---------------------------------------------------------------------------
+
+def _make_template(width=20, height=20, bounds=(0, 0, 100, 100)):
+    xmin, ymin, xmax, ymax = bounds
+    px = (xmax - xmin) / width
+    py = (ymax - ymin) / height
+    x = np.linspace(xmin + px / 2, xmax - px / 2, width)
+    y = np.linspace(ymax - py / 2, ymin + py / 2, height)
+    return xr.DataArray(
+        np.zeros((height, width), dtype=np.float64),
+        dims=['y', 'x'],
+        coords={'y': y, 'x': x},
+    )
+
+
+def test_da_rasterize():
+    from shapely.geometry import box
+    from xrspatial.rasterize import rasterize
+
+    template = _make_template()
+    gdf = pytest.importorskip('geopandas').GeoDataFrame(
+        {'val': [1.0]}, geometry=[box(10, 10, 50, 50)])
+
+    expected = rasterize(gdf, like=template, column='val')
+    result = template.xrs.rasterize(gdf, column='val')
+    xr.testing.assert_identical(result, expected)
+
+
+def test_da_rasterize_uses_coords():
+    """Accessor output matches the template grid dimensions and coords."""
+    from shapely.geometry import box
+
+    template = _make_template(width=30, height=15, bounds=(0, 0, 60, 30))
+    pairs = [(box(5, 5, 25, 25), 7.0)]
+
+    result = template.xrs.rasterize(pairs)
+    assert result.sizes['x'] == 30
+    assert result.sizes['y'] == 15
+    np.testing.assert_allclose(result.coords['x'].values,
+                               template.coords['x'].values)
+    np.testing.assert_allclose(result.coords['y'].values,
+                               template.coords['y'].values)
+
+
+def test_ds_rasterize():
+    from shapely.geometry import box
+    from xrspatial.rasterize import rasterize
+
+    template = _make_template()
+    ds = xr.Dataset({'elev': template})
+    pairs = [(box(10, 10, 50, 50), 1.0)]
+
+    expected = rasterize(pairs, like=template)
+    result = ds.xrs.rasterize(pairs)
+    xr.testing.assert_identical(result, expected)
+
+
+def test_ds_rasterize_no_valid_var():
+    ds = xr.Dataset({'a': xr.DataArray(np.zeros(5), dims=['z'])})
+    with pytest.raises(ValueError, match="no 2D variable"):
+        ds.xrs.rasterize([])
