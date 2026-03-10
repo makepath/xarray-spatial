@@ -39,50 +39,50 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Merge functions (CPU, numba-jitted)
 #
-# Signature: merge_fn(old_val, new_val, is_first) -> float64
-#   old_val  : current pixel value (fill value on first write)
-#   new_val  : value from the geometry being rasterized
+# Signature: merge_fn(pixel, props, is_first) -> float64
+#   pixel    : current pixel value (fill value on first write)
+#   props    : 1D float64 array of property values for the geometry
 #   is_first : 1 if first write to this pixel, 0 otherwise
 # ---------------------------------------------------------------------------
 
 @ngjit
-def _merge_last(old_val, new_val, is_first):
-    return new_val
+def _merge_last(pixel, props, is_first):
+    return props[0]
 
 
 @ngjit
-def _merge_first(old_val, new_val, is_first):
+def _merge_first(pixel, props, is_first):
     if is_first:
-        return new_val
-    return old_val
+        return props[0]
+    return pixel
 
 
 @ngjit
-def _merge_max(old_val, new_val, is_first):
-    if is_first or new_val > old_val:
-        return new_val
-    return old_val
+def _merge_max(pixel, props, is_first):
+    if is_first or props[0] > pixel:
+        return props[0]
+    return pixel
 
 
 @ngjit
-def _merge_min(old_val, new_val, is_first):
-    if is_first or new_val < old_val:
-        return new_val
-    return old_val
+def _merge_min(pixel, props, is_first):
+    if is_first or props[0] < pixel:
+        return props[0]
+    return pixel
 
 
 @ngjit
-def _merge_sum(old_val, new_val, is_first):
+def _merge_sum(pixel, props, is_first):
     if is_first:
-        return new_val
-    return old_val + new_val
+        return props[0]
+    return pixel + props[0]
 
 
 @ngjit
-def _merge_count(old_val, new_val, is_first):
+def _merge_count(pixel, props, is_first):
     if is_first:
         return 1.0
-    return old_val + 1.0
+    return pixel + 1.0
 
 
 _MERGE_FUNCTIONS = {
@@ -97,14 +97,15 @@ _MERGE_FUNCTIONS = {
 # ---------------------------------------------------------------------------
 
 @ngjit
-def _apply_merge(out, written, r, c, val, merge_fn):
-    """Write *val* into ``out[r, c]`` using the given merge function.
+def _apply_merge(out, written, r, c, props, merge_fn):
+    """Write a value into ``out[r, c]`` using the given merge function.
 
+    *props* is a 1D float64 array of property values for the geometry.
     A separate ``written`` array (int8) tracks which pixels have been
     touched.
     """
     is_first = np.int64(written[r, c] == 0)
-    out[r, c] = merge_fn(out[r, c], val, is_first)
+    out[r, c] = merge_fn(out[r, c], props, is_first)
     written[r, c] = 1
 
 
@@ -112,7 +113,7 @@ def _apply_merge(out, written, r, c, val, merge_fn):
 # Geometry classification (single pass)
 # ---------------------------------------------------------------------------
 
-def _classify_geometries(geometries, values):
+def _classify_geometries(geometries, props_array):
     """Classify geometries by type in a single pass.
 
     Also tracks each polygon's input index so the scanline fill can
@@ -121,40 +122,59 @@ def _classify_geometries(geometries, values):
     GeometryCollections are recursively unpacked so their contents are
     rasterized rather than silently dropped.
 
+    Parameters
+    ----------
+    geometries : list of shapely geometries
+    props_array : (N, P) float64 array of property values
+
     Returns
     -------
-    (poly_geoms, poly_vals, poly_ids),
-    (line_geoms, line_vals),
-    (point_geoms, point_vals)
-    """
-    poly_geoms, poly_vals, poly_ids = [], [], []
-    line_geoms, line_vals = [], []
-    point_geoms, point_vals = [], []
+    (poly_geoms, poly_props, poly_ids),
+    (line_geoms, line_props),
+    (point_geoms, point_props)
 
-    def _classify_one(geom, val, idx):
+    Where poly_props is (N_poly, P), line_props is (N_line, P),
+    point_props is (N_point, P) float64 arrays.
+    """
+    n_props = props_array.shape[1] if props_array.ndim == 2 else 1
+    poly_geoms, poly_prop_rows, poly_ids = [], [], []
+    line_geoms, line_prop_rows = [], []
+    point_geoms, point_prop_rows = [], []
+
+    # poly_counter tracks per-type indices that both preserve input order
+    # and serve as valid indices into the poly_props table.
+    poly_counter = [0]
+
+    def _classify_one(geom, prop_row, global_idx):
         if geom is None or geom.is_empty:
             return
         gt = geom.geom_type
         if gt in ('Polygon', 'MultiPolygon'):
             poly_geoms.append(geom)
-            poly_vals.append(val)
-            poly_ids.append(idx)
+            poly_prop_rows.append(prop_row)
+            poly_ids.append(poly_counter[0])
+            poly_counter[0] += 1
         elif gt in ('LineString', 'MultiLineString'):
             line_geoms.append(geom)
-            line_vals.append(val)
+            line_prop_rows.append(prop_row)
         elif gt in ('Point', 'MultiPoint'):
             point_geoms.append(geom)
-            point_vals.append(val)
+            point_prop_rows.append(prop_row)
         elif gt == 'GeometryCollection':
             for sub in geom.geoms:
-                _classify_one(sub, val, idx)
+                _classify_one(sub, prop_row, global_idx)
 
-    for idx, (geom, val) in enumerate(zip(geometries, values)):
-        _classify_one(geom, val, idx)
+    for idx, geom in enumerate(geometries):
+        _classify_one(geom, props_array[idx], idx)
 
-    return ((poly_geoms, poly_vals, poly_ids),
-            (line_geoms, line_vals),
-            (point_geoms, point_vals))
+    def _to_2d(rows):
+        if rows:
+            return np.array(rows, dtype=np.float64)
+        return np.empty((0, n_props), dtype=np.float64)
+
+    return ((poly_geoms, _to_2d(poly_prop_rows), poly_ids),
+            (line_geoms, _to_2d(line_prop_rows)),
+            (point_geoms, _to_2d(point_prop_rows)))
 
 
 # ---------------------------------------------------------------------------
@@ -163,29 +183,29 @@ def _classify_geometries(geometries, values):
 
 _EMPTY_EDGES = (np.empty(0, np.int32), np.empty(0, np.int32),
                 np.empty(0, np.float64), np.empty(0, np.float64),
-                np.empty(0, np.float64), np.empty(0, np.int32))
+                np.empty(0, np.int32))
 
 
-def _extract_edges(geometries, values, geom_ids, bounds, height, width,
+def _extract_edges(geometries, geom_ids, bounds, height, width,
                    all_touched=False):
     """Build the edge table for polygon scanline fill.
 
     Returns
     -------
     edge_y_min, edge_y_max : int32 arrays
-    edge_x_at_ymin, edge_inv_slope, edge_value : float64 arrays
+    edge_x_at_ymin, edge_inv_slope : float64 arrays
     edge_geom_id : int32 array -- input geometry index for ordering
     """
     if not geometries:
         return _EMPTY_EDGES
     if _HAS_SHAPELY2:
         return _extract_edges_vectorized(
-            geometries, values, geom_ids, bounds, height, width, all_touched)
+            geometries, geom_ids, bounds, height, width, all_touched)
     return _extract_edges_loop(
-        geometries, values, geom_ids, bounds, height, width, all_touched)
+        geometries, geom_ids, bounds, height, width, all_touched)
 
 
-def _extract_edges_vectorized(geometries, values, geom_ids, bounds,
+def _extract_edges_vectorized(geometries, geom_ids, bounds,
                               height, width, all_touched):
     """Vectorized edge extraction using shapely 2.0 array ops."""
     import shapely
@@ -195,17 +215,14 @@ def _extract_edges_vectorized(geometries, values, geom_ids, bounds,
     py = (ymax - ymin) / height
 
     geom_arr = np.array(geometries, dtype=object)
-    val_arr = np.array(values, dtype=np.float64)
     id_arr = np.array(geom_ids, dtype=np.int32)
 
     # Explode MultiPolygons to individual Polygons
     parts, part_idx = shapely.get_parts(geom_arr, return_index=True)
-    part_vals = val_arr[part_idx]
     part_ids = id_arr[part_idx]
 
     # Get all rings (exterior + interior)
     rings, ring_idx = shapely.get_rings(parts, return_index=True)
-    ring_vals = part_vals[ring_idx]
     ring_ids = part_ids[ring_idx]
 
     if len(rings) == 0:
@@ -228,8 +245,7 @@ def _extract_edges_vectorized(geometries, values, geom_ids, bounds,
     start_idx = np.nonzero(~is_last)[0]
     end_idx = start_idx + 1
 
-    # Burn value and geometry id for each edge
-    edge_vals = ring_vals[coord_ring_idx[start_idx]]
+    # Geometry id for each edge
     edge_ids = ring_ids[coord_ring_idx[start_idx]]
 
     # Convert to pixel space
@@ -244,7 +260,6 @@ def _extract_edges_vectorized(geometries, values, geom_ids, bounds,
     start_col = start_col[not_horiz]
     end_row = end_row[not_horiz]
     end_col = end_col[not_horiz]
-    edge_vals = edge_vals[not_horiz]
     edge_ids = edge_ids[not_horiz]
 
     if len(start_row) == 0:
@@ -279,11 +294,10 @@ def _extract_edges_vectorized(geometries, values, geom_ids, bounds,
             ry_max[valid],
             x_at_ymin[valid],
             inv_slope[valid],
-            edge_vals[valid],
             edge_ids[valid])
 
 
-def _extract_edges_loop(geometries, values, geom_ids, bounds, height, width,
+def _extract_edges_loop(geometries, geom_ids, bounds, height, width,
                         all_touched):
     """Loop-based edge extraction (shapely < 2.0 fallback)."""
     xmin, ymin, xmax, ymax = bounds
@@ -294,10 +308,9 @@ def _extract_edges_loop(geometries, values, geom_ids, bounds, height, width,
     all_y_max = []
     all_x_at_ymin = []
     all_inv_slope = []
-    all_value = []
     all_geom_id = []
 
-    for geom, val, gid in zip(geometries, values, geom_ids):
+    for geom, gid in zip(geometries, geom_ids):
         if geom is None or geom.is_empty:
             continue
 
@@ -339,7 +352,6 @@ def _extract_edges_loop(geometries, values, geom_ids, bounds, height, width,
                     all_y_max.append(np.int32(ry_max))
                     all_x_at_ymin.append(x_at_ymin)
                     all_inv_slope.append(inv_slope)
-                    all_value.append(np.float64(val))
                     all_geom_id.append(np.int32(gid))
 
     if not all_y_min:
@@ -349,7 +361,6 @@ def _extract_edges_loop(geometries, values, geom_ids, bounds, height, width,
             np.array(all_y_max, np.int32),
             np.array(all_x_at_ymin, np.float64),
             np.array(all_inv_slope, np.float64),
-            np.array(all_value, np.float64),
             np.array(all_geom_id, np.int32))
 
 
@@ -365,19 +376,23 @@ def _sort_edges(edge_arrays):
 # Point extraction (always on host)
 # ---------------------------------------------------------------------------
 
-def _extract_points(geometries, values, bounds, height, width):
-    """Parse Point/MultiPoint geometries into pixel coordinate arrays."""
+def _extract_points(geometries, bounds, height, width):
+    """Parse Point/MultiPoint geometries into pixel coordinate arrays.
+
+    Returns (rows, cols, geom_idx) where geom_idx is int32 indices into
+    the geometry list (and thus into the per-type props table).
+    """
     if not geometries:
         return (np.empty(0, np.int32), np.empty(0, np.int32),
-                np.empty(0, np.float64))
+                np.empty(0, np.int32))
     if _HAS_SHAPELY2:
         return _extract_points_vectorized(
-            geometries, values, bounds, height, width)
+            geometries, bounds, height, width)
     return _extract_points_loop(
-        geometries, values, bounds, height, width)
+        geometries, bounds, height, width)
 
 
-def _extract_points_vectorized(geometries, values, bounds, height, width):
+def _extract_points_vectorized(geometries, bounds, height, width):
     """Vectorized point extraction using shapely 2.0 array ops."""
     import shapely
 
@@ -386,37 +401,37 @@ def _extract_points_vectorized(geometries, values, bounds, height, width):
     py = (ymax - ymin) / height
 
     geom_arr = np.array(geometries, dtype=object)
-    val_arr = np.array(values, dtype=np.float64)
+    idx_arr = np.arange(len(geometries), dtype=np.int32)
 
     # Explode MultiPoints to individual Points
     parts, part_idx = shapely.get_parts(geom_arr, return_index=True)
-    part_vals = val_arr[part_idx]
+    part_geom_idx = idx_arr[part_idx]
 
     if len(parts) == 0:
         return (np.empty(0, np.int32), np.empty(0, np.int32),
-                np.empty(0, np.float64))
+                np.empty(0, np.int32))
 
     # Extract coordinates with index back to each point
     coords, coord_idx = shapely.get_coordinates(
         parts, return_index=True)
-    pt_vals = part_vals[coord_idx]
+    pt_geom_idx = part_geom_idx[coord_idx]
 
     cols = np.floor((coords[:, 0] - xmin) / px).astype(np.int32)
     rows = np.floor((ymax - coords[:, 1]) / py).astype(np.int32)
 
     valid = (rows >= 0) & (rows < height) & (cols >= 0) & (cols < width)
-    return (rows[valid], cols[valid], pt_vals[valid])
+    return (rows[valid], cols[valid], pt_geom_idx[valid])
 
 
-def _extract_points_loop(geometries, values, bounds, height, width):
+def _extract_points_loop(geometries, bounds, height, width):
     """Loop-based point extraction (shapely < 2.0 fallback)."""
     xmin, ymin, xmax, ymax = bounds
     px = (xmax - xmin) / width
     py = (ymax - ymin) / height
 
-    all_rows, all_cols, all_vals = [], [], []
+    all_rows, all_cols, all_idx = [], [], []
 
-    for geom, val in zip(geometries, values):
+    for gi, geom in enumerate(geometries):
         if geom is None or geom.is_empty:
             continue
         if geom.geom_type == 'Point':
@@ -431,14 +446,14 @@ def _extract_points_loop(geometries, values, bounds, height, width):
             if 0 <= row < height and 0 <= col < width:
                 all_rows.append(np.int32(row))
                 all_cols.append(np.int32(col))
-                all_vals.append(np.float64(val))
+                all_idx.append(np.int32(gi))
 
     if not all_rows:
         return (np.empty(0, np.int32), np.empty(0, np.int32),
-                np.empty(0, np.float64))
+                np.empty(0, np.int32))
     return (np.array(all_rows, np.int32),
             np.array(all_cols, np.int32),
-            np.array(all_vals, np.float64))
+            np.array(all_idx, np.int32))
 
 
 # ---------------------------------------------------------------------------
@@ -447,22 +462,25 @@ def _extract_points_loop(geometries, values, bounds, height, width):
 
 _EMPTY_LINES = (np.empty(0, np.int32), np.empty(0, np.int32),
                 np.empty(0, np.int32), np.empty(0, np.int32),
-                np.empty(0, np.float64))
+                np.empty(0, np.int32))
 
 
-def _extract_line_segments(geometries, values, bounds, height, width):
+def _extract_line_segments(geometries, bounds, height, width):
     """Parse LineString/MultiLineString geometries into pixel-space segments.
 
     Segments are clipped to the raster extent before conversion to pixel
     coordinates, so Bresenham never iterates over out-of-bounds pixels.
+
+    Returns (r0, c0, r1, c1, geom_idx) where geom_idx is int32 indices
+    into the geometry list (and thus into the per-type props table).
     """
     if not geometries:
         return _EMPTY_LINES
     if _HAS_SHAPELY2:
         return _extract_lines_vectorized(
-            geometries, values, bounds, height, width)
+            geometries, bounds, height, width)
     return _extract_lines_loop(
-        geometries, values, bounds, height, width)
+        geometries, bounds, height, width)
 
 
 def _liang_barsky_clip(x0, y0, x1, y1, xmin, ymin, xmax, ymax):
@@ -497,7 +515,7 @@ def _liang_barsky_clip(x0, y0, x1, y1, xmin, ymin, xmax, ymax):
     return cx0, cy0, cx1, cy1
 
 
-def _extract_lines_vectorized(geometries, values, bounds, height, width):
+def _extract_lines_vectorized(geometries, bounds, height, width):
     """Vectorized line extraction with Liang-Barsky clipping."""
     import shapely
 
@@ -506,11 +524,11 @@ def _extract_lines_vectorized(geometries, values, bounds, height, width):
     py = (ymax - ymin) / height
 
     geom_arr = np.array(geometries, dtype=object)
-    val_arr = np.array(values, dtype=np.float64)
+    idx_arr = np.arange(len(geometries), dtype=np.int32)
 
     # Explode MultiLineStrings to individual LineStrings
     parts, part_idx = shapely.get_parts(geom_arr, return_index=True)
-    part_vals = val_arr[part_idx]
+    part_geom_idx = idx_arr[part_idx]
 
     if len(parts) == 0:
         return _EMPTY_LINES
@@ -531,7 +549,7 @@ def _extract_lines_vectorized(geometries, values, bounds, height, width):
     # Segments: from each non-last coordinate to its successor
     start_idx = np.nonzero(~is_last)[0]
     end_idx = start_idx + 1
-    seg_vals = part_vals[coord_line_idx[start_idx]]
+    seg_geom_idx = part_geom_idx[coord_line_idx[start_idx]]
 
     # World-space segment endpoints
     x0 = coords[start_idx, 0]
@@ -588,18 +606,18 @@ def _extract_lines_vectorized(geometries, values, bounds, height, width):
     np.clip(c1, 0, width - 1, out=c1)
 
     v = valid
-    return (r0[v], c0[v], r1[v], c1[v], seg_vals[v])
+    return (r0[v], c0[v], r1[v], c1[v], seg_geom_idx[v])
 
 
-def _extract_lines_loop(geometries, values, bounds, height, width):
+def _extract_lines_loop(geometries, bounds, height, width):
     """Loop-based line extraction with Liang-Barsky clipping (fallback)."""
     xmin, ymin, xmax, ymax = bounds
     px = (xmax - xmin) / width
     py = (ymax - ymin) / height
 
-    all_r0, all_c0, all_r1, all_c1, all_vals = [], [], [], [], []
+    all_r0, all_c0, all_r1, all_c1, all_idx = [], [], [], [], []
 
-    for geom, val in zip(geometries, values):
+    for gi, geom in enumerate(geometries):
         if geom is None or geom.is_empty:
             continue
         if geom.geom_type == 'LineString':
@@ -626,13 +644,13 @@ def _extract_lines_loop(geometries, values, bounds, height, width):
                 all_c0.append(np.int32(c0))
                 all_r1.append(np.int32(r1))
                 all_c1.append(np.int32(c1))
-                all_vals.append(np.float64(val))
+                all_idx.append(np.int32(gi))
 
     if not all_r0:
         return _EMPTY_LINES
     return (np.array(all_r0, np.int32), np.array(all_c0, np.int32),
             np.array(all_r1, np.int32), np.array(all_c1, np.int32),
-            np.array(all_vals, np.float64))
+            np.array(all_idx, np.int32))
 
 
 # ---------------------------------------------------------------------------
@@ -640,23 +658,25 @@ def _extract_lines_loop(geometries, values, bounds, height, width):
 # ---------------------------------------------------------------------------
 
 @ngjit
-def _burn_points_cpu(out, written, rows, cols, vals, merge_fn):
+def _burn_points_cpu(out, written, rows, cols, geom_idx, geom_props,
+                     merge_fn):
     for i in range(len(rows)):
         r = rows[i]
         c = cols[i]
         if 0 <= r < out.shape[0] and 0 <= c < out.shape[1]:
-            _apply_merge(out, written, r, c, vals[i], merge_fn)
+            _apply_merge(out, written, r, c, geom_props[geom_idx[i]],
+                         merge_fn)
 
 
 @ngjit
-def _burn_lines_cpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, vals,
-                    height, width, merge_fn):
+def _burn_lines_cpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, geom_idx,
+                    geom_props, height, width, merge_fn):
     for i in range(len(r0_arr)):
         r0 = r0_arr[i]
         c0 = c0_arr[i]
         r1 = r1_arr[i]
         c1 = c1_arr[i]
-        val = vals[i]
+        props = geom_props[geom_idx[i]]
 
         dr = r1 - r0
         dc = c1 - c0
@@ -670,7 +690,7 @@ def _burn_lines_cpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, vals,
             r, c = r0, c0
             for _ in range(dr + 1):
                 if 0 <= r < height and 0 <= c < width:
-                    _apply_merge(out, written, r, c, val, merge_fn)
+                    _apply_merge(out, written, r, c, props, merge_fn)
                 if err >= 0:
                     c += sc
                     err -= dr
@@ -681,7 +701,7 @@ def _burn_lines_cpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, vals,
             r, c = r0, c0
             for _ in range(dc + 1):
                 if 0 <= r < height and 0 <= c < width:
-                    _apply_merge(out, written, r, c, val, merge_fn)
+                    _apply_merge(out, written, r, c, props, merge_fn)
                 if err >= 0:
                     r += sr
                     err -= dc
@@ -695,8 +715,8 @@ def _burn_lines_cpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, vals,
 
 @ngjit
 def _scanline_fill_cpu(out, written, edge_y_min, edge_y_max, edge_x_at_ymin,
-                       edge_inv_slope, edge_value, edge_geom_id,
-                       height, width, merge_fn):
+                       edge_inv_slope, edge_geom_id,
+                       geom_props, height, width, merge_fn):
     """Scanline fill with active-edge-list for O(active) work per row.
 
     Instead of scanning all edges up to the binary-search cutoff (which
@@ -714,7 +734,6 @@ def _scanline_fill_cpu(out, written, edge_y_min, edge_y_max, edge_x_at_ymin,
 
     # Scratch arrays for intersections
     xs = np.empty(n_edges, dtype=np.float64)
-    vs = np.empty(n_edges, dtype=np.float64)
     gs = np.empty(n_edges, dtype=np.int32)
 
     for row in range(height):
@@ -740,30 +759,25 @@ def _scanline_fill_cpu(out, written, edge_y_min, edge_y_max, edge_x_at_ymin,
             e = active[i]
             xs[i] = (edge_x_at_ymin[e]
                      + (row - edge_y_min[e]) * edge_inv_slope[e])
-            vs[i] = edge_value[e]
             gs[i] = edge_geom_id[e]
 
         # 4. Insertion sort by (geom_id, x) so each geometry's edges pair
         # correctly and geometries are processed in input order.
         for i in range(1, n_active):
             kx = xs[i]
-            kv = vs[i]
             kg = gs[i]
             j = i - 1
             while j >= 0 and (gs[j] > kg or (gs[j] == kg and xs[j] > kx)):
                 xs[j + 1] = xs[j]
-                vs[j + 1] = vs[j]
                 gs[j + 1] = gs[j]
                 j -= 1
             xs[j + 1] = kx
-            vs[j + 1] = kv
             gs[j + 1] = kg
 
         # 5. Fill between edge pairs per geometry
         i = 0
         while i < n_active - 1:
             gid = gs[i]
-            val = vs[i]
             j = i
             while j < n_active and gs[j] == gid:
                 j += 1
@@ -774,40 +788,43 @@ def _scanline_fill_cpu(out, written, edge_y_min, edge_y_max, edge_x_at_ymin,
                 col_start = max(int(np.ceil(x_start)), 0)
                 col_end = min(int(np.floor(x_end)), width - 1)
                 for c in range(col_start, col_end + 1):
-                    _apply_merge(out, written, row, c, val, merge_fn)
+                    _apply_merge(out, written, row, c,
+                                 geom_props[gid], merge_fn)
                 k += 2
             i = j
 
 
-def _run_numpy(geometries, values, bounds, height, width, fill, dtype,
+def _run_numpy(geometries, props_array, bounds, height, width, fill, dtype,
                all_touched, merge_fn):
     """NumPy backend for rasterize."""
     out = np.full((height, width), fill, dtype=np.float64)
     written = np.zeros((height, width), dtype=np.int8)
 
-    (poly_geoms, poly_vals, poly_ids), (line_geoms, line_vals), \
-        (point_geoms, point_vals) = _classify_geometries(geometries, values)
+    (poly_geoms, poly_props, poly_ids), (line_geoms, line_props), \
+        (point_geoms, point_props) = _classify_geometries(
+            geometries, props_array)
 
     # 1. Polygons
     edge_arrays = _extract_edges(
-        poly_geoms, poly_vals, poly_ids, bounds, height, width, all_touched)
+        poly_geoms, poly_ids, bounds, height, width, all_touched)
     edge_arrays = _sort_edges(edge_arrays)
     if len(edge_arrays[0]) > 0:
-        _scanline_fill_cpu(out, written, *edge_arrays, height, width,
-                           merge_fn)
+        _scanline_fill_cpu(out, written, *edge_arrays,
+                           poly_props, height, width, merge_fn)
 
     # 2. Lines
-    r0, c0, r1, c1, lvals = _extract_line_segments(
-        line_geoms, line_vals, bounds, height, width)
+    r0, c0, r1, c1, line_idx = _extract_line_segments(
+        line_geoms, bounds, height, width)
     if len(r0) > 0:
-        _burn_lines_cpu(out, written, r0, c0, r1, c1, lvals, height, width,
-                        merge_fn)
+        _burn_lines_cpu(out, written, r0, c0, r1, c1, line_idx,
+                        line_props, height, width, merge_fn)
 
     # 3. Points
-    prows, pcols, pvals = _extract_points(
-        point_geoms, point_vals, bounds, height, width)
+    prows, pcols, pt_idx = _extract_points(
+        point_geoms, bounds, height, width)
     if len(prows) > 0:
-        _burn_points_cpu(out, written, prows, pcols, pvals, merge_fn)
+        _burn_points_cpu(out, written, prows, pcols, pt_idx,
+                         point_props, merge_fn)
 
     return out.astype(dtype)
 
@@ -835,38 +852,38 @@ def _get_gpu_merge_fns():
     from numba import cuda
 
     @cuda.jit(device=True)
-    def _merge_last_gpu(old_val, new_val, is_first):
-        return new_val
+    def _merge_last_gpu(pixel, props, is_first):
+        return props[0]
 
     @cuda.jit(device=True)
-    def _merge_first_gpu(old_val, new_val, is_first):
+    def _merge_first_gpu(pixel, props, is_first):
         if is_first:
-            return new_val
-        return old_val
+            return props[0]
+        return pixel
 
     @cuda.jit(device=True)
-    def _merge_max_gpu(old_val, new_val, is_first):
-        if is_first or new_val > old_val:
-            return new_val
-        return old_val
+    def _merge_max_gpu(pixel, props, is_first):
+        if is_first or props[0] > pixel:
+            return props[0]
+        return pixel
 
     @cuda.jit(device=True)
-    def _merge_min_gpu(old_val, new_val, is_first):
-        if is_first or new_val < old_val:
-            return new_val
-        return old_val
+    def _merge_min_gpu(pixel, props, is_first):
+        if is_first or props[0] < pixel:
+            return props[0]
+        return pixel
 
     @cuda.jit(device=True)
-    def _merge_sum_gpu(old_val, new_val, is_first):
+    def _merge_sum_gpu(pixel, props, is_first):
         if is_first:
-            return new_val
-        return old_val + new_val
+            return props[0]
+        return pixel + props[0]
 
     @cuda.jit(device=True)
-    def _merge_count_gpu(old_val, new_val, is_first):
+    def _merge_count_gpu(pixel, props, is_first):
         if is_first:
             return 1.0
-        return old_val + 1.0
+        return pixel + 1.0
 
     _gpu_merge_fns = {
         'last': _merge_last_gpu, 'first': _merge_first_gpu,
@@ -897,15 +914,15 @@ def _ensure_gpu_kernels(merge_fn):
     from numba import cuda
 
     @cuda.jit(device=True)
-    def _apply_merge_gpu(out, written, r, c, val):
+    def _apply_merge_gpu(out, written, r, c, props):
         is_first = np.int64(written[r, c] == 0)
-        out[r, c] = merge_fn(out[r, c], val, is_first)
+        out[r, c] = merge_fn(out[r, c], props, is_first)
         written[r, c] = 1
 
     @cuda.jit
     def _scanline_fill_gpu(out, written, edge_y_min, edge_x_at_ymin,
-                           edge_inv_slope, edge_value, edge_geom_id,
-                           row_ptr, col_idx, width):
+                           edge_inv_slope, edge_geom_id,
+                           geom_props, row_ptr, col_idx, width):
         """CUDA kernel: one thread per raster row, CSR-indexed active edges."""
         row = cuda.grid(1)
         if row >= out.shape[0]:
@@ -923,7 +940,6 @@ def _ensure_gpu_kernels(merge_fn):
             count = MAX_ISECT
 
         xs = cuda.local.array(512, dtype=np.float64)
-        vs = cuda.local.array(512, dtype=np.float64)
         gs = cuda.local.array(512, dtype=np.int32)
 
         actual = 0
@@ -933,30 +949,25 @@ def _ensure_gpu_kernels(merge_fn):
             e = col_idx[k]
             xs[actual] = (edge_x_at_ymin[e]
                           + (row - edge_y_min[e]) * edge_inv_slope[e])
-            vs[actual] = edge_value[e]
             gs[actual] = edge_geom_id[e]
             actual += 1
 
         # Insertion sort by (geom_id, x)
         for i in range(1, actual):
             kx = xs[i]
-            kv = vs[i]
             kg = gs[i]
             j = i - 1
             while j >= 0 and (gs[j] > kg or (gs[j] == kg and xs[j] > kx)):
                 xs[j + 1] = xs[j]
-                vs[j + 1] = vs[j]
                 gs[j + 1] = gs[j]
                 j -= 1
             xs[j + 1] = kx
-            vs[j + 1] = kv
             gs[j + 1] = kg
 
         # Fill between pairs per geometry
         i = 0
         while i < actual - 1:
             gid = gs[i]
-            val = vs[i]
             j = i
             while j < actual and gs[j] == gid:
                 j += 1
@@ -971,23 +982,26 @@ def _ensure_gpu_kernels(merge_fn):
                 if col_end >= width:
                     col_end = width - 1
                 for c in range(col_start, col_end + 1):
-                    _apply_merge_gpu(out, written, row, c, val)
+                    _apply_merge_gpu(out, written, row, c,
+                                     geom_props[gid])
                 k += 2
             i = j
 
     @cuda.jit
-    def _burn_points_gpu(out, written, rows, cols, vals, n_points):
+    def _burn_points_gpu(out, written, rows, cols, geom_idx, geom_props,
+                         n_points):
         i = cuda.grid(1)
         if i >= n_points:
             return
         r = rows[i]
         c = cols[i]
         if 0 <= r < out.shape[0] and 0 <= c < out.shape[1]:
-            _apply_merge_gpu(out, written, r, c, vals[i])
+            _apply_merge_gpu(out, written, r, c,
+                             geom_props[geom_idx[i]])
 
     @cuda.jit
-    def _burn_lines_gpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, vals,
-                        n_segs, height, width):
+    def _burn_lines_gpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr,
+                        geom_idx, geom_props, n_segs, height, width):
         i = cuda.grid(1)
         if i >= n_segs:
             return
@@ -995,7 +1009,7 @@ def _ensure_gpu_kernels(merge_fn):
         c0 = c0_arr[i]
         r1 = r1_arr[i]
         c1 = c1_arr[i]
-        val = vals[i]
+        props = geom_props[geom_idx[i]]
 
         dr = r1 - r0
         dc = c1 - c0
@@ -1011,7 +1025,7 @@ def _ensure_gpu_kernels(merge_fn):
             r, c = r0, c0
             for _ in range(dr + 1):
                 if 0 <= r < height and 0 <= c < width:
-                    _apply_merge_gpu(out, written, r, c, val)
+                    _apply_merge_gpu(out, written, r, c, props)
                 if err >= 0:
                     c += sc
                     err -= dr
@@ -1022,7 +1036,7 @@ def _ensure_gpu_kernels(merge_fn):
             r, c = r0, c0
             for _ in range(dc + 1):
                 if 0 <= r < height and 0 <= c < width:
-                    _apply_merge_gpu(out, written, r, c, val)
+                    _apply_merge_gpu(out, written, r, c, props)
                 if err >= 0:
                     r += sr
                     err -= dc
@@ -1078,7 +1092,7 @@ def _build_row_csr_numba(edge_y_min, edge_y_max, height):
     return row_ptr, col_idx
 
 
-def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
+def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
               all_touched, merge_fn):
     """CuPy backend for rasterize."""
     kernels = _ensure_gpu_kernels(merge_fn)
@@ -1086,15 +1100,16 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
     out = cupy.full((height, width), fill, dtype=cupy.float64)
     written = cupy.zeros((height, width), dtype=cupy.int8)
 
-    (poly_geoms, poly_vals, poly_ids), (line_geoms, line_vals), \
-        (point_geoms, point_vals) = _classify_geometries(geometries, values)
+    (poly_geoms, poly_props, poly_ids), (line_geoms, line_props), \
+        (point_geoms, point_props) = _classify_geometries(
+            geometries, props_array)
 
     # 1. Polygons
     edge_arrays = _extract_edges(
-        poly_geoms, poly_vals, poly_ids, bounds, height, width, all_touched)
+        poly_geoms, poly_ids, bounds, height, width, all_touched)
     edge_arrays = _sort_edges(edge_arrays)
     edge_y_min, edge_y_max, edge_x_at_ymin, edge_inv_slope, \
-        edge_value, edge_geom_id = edge_arrays
+        edge_geom_id = edge_arrays
 
     if len(edge_y_min) > 0:
         # Build CSR structure on CPU, then transfer to GPU
@@ -1104,8 +1119,8 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
         d_y_min = cupy.asarray(edge_y_min)
         d_x_at_ymin = cupy.asarray(edge_x_at_ymin)
         d_inv_slope = cupy.asarray(edge_inv_slope)
-        d_value = cupy.asarray(edge_value)
         d_geom_id = cupy.asarray(edge_geom_id)
+        d_geom_props = cupy.asarray(poly_props)
         d_row_ptr = cupy.asarray(row_ptr)
         d_col_idx = cupy.asarray(col_idx)
 
@@ -1113,11 +1128,11 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
         blocks = (height + tpb - 1) // tpb
         kernels['scanline_fill'][blocks, tpb](
             out, written, d_y_min, d_x_at_ymin, d_inv_slope,
-            d_value, d_geom_id, d_row_ptr, d_col_idx, width)
+            d_geom_id, d_geom_props, d_row_ptr, d_col_idx, width)
 
     # 2. Lines
-    r0, c0, r1, c1, lvals = _extract_line_segments(
-        line_geoms, line_vals, bounds, height, width)
+    r0, c0, r1, c1, line_idx = _extract_line_segments(
+        line_geoms, bounds, height, width)
     if len(r0) > 0:
         n_segs = len(r0)
         tpb = 256
@@ -1125,18 +1140,19 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
         kernels['burn_lines'][bpg, tpb](
             out, written, cupy.asarray(r0), cupy.asarray(c0),
             cupy.asarray(r1), cupy.asarray(c1),
-            cupy.asarray(lvals), n_segs, height, width)
+            cupy.asarray(line_idx), cupy.asarray(line_props),
+            n_segs, height, width)
 
     # 3. Points
-    prows, pcols, pvals = _extract_points(
-        point_geoms, point_vals, bounds, height, width)
+    prows, pcols, pt_idx = _extract_points(
+        point_geoms, bounds, height, width)
     if len(prows) > 0:
         n_pts = len(prows)
         tpb = 256
         bpg = (n_pts + tpb - 1) // tpb
         kernels['burn_points'][bpg, tpb](
             out, written, cupy.asarray(prows), cupy.asarray(pcols),
-            cupy.asarray(pvals), n_pts)
+            cupy.asarray(pt_idx), cupy.asarray(point_props), n_pts)
 
     return out.astype(dtype)
 
@@ -1223,17 +1239,21 @@ def _normalize_chunks(chunks, height, width):
     return tuple(row_chunks), tuple(col_chunks)
 
 
-def _segments_for_tile(r0, c0, r1, c1, vals, r_start, r_end, c_start, c_end):
+def _segments_for_tile(r0, c0, r1, c1, geom_idx, r_start, r_end,
+                       c_start, c_end):
     """Filter segments whose pixel bbox overlaps the tile, offset to local.
 
     Returns segments in tile-local coordinates (r_start/c_start subtracted).
-    Endpoints can be negative or exceed tile dimensions — the Bresenham
+    Endpoints can be negative or exceed tile dimensions -- the Bresenham
     bounds check in ``_burn_lines_cpu`` handles this, and the pixel path
     is translation-invariant so the result is exact.
+
+    geom_idx values are indices into the per-type props table and do not
+    need adjustment when filtering.
     """
     if len(r0) == 0:
         empty = np.empty(0, dtype=np.int32)
-        return empty, empty, empty, empty, np.empty(0, dtype=np.float64)
+        return empty, empty, empty, empty, np.empty(0, dtype=np.int32)
     seg_rmin = np.minimum(r0, r1)
     seg_rmax = np.maximum(r0, r1)
     seg_cmin = np.minimum(c0, c1)
@@ -1242,88 +1262,94 @@ def _segments_for_tile(r0, c0, r1, c1, vals, r_start, r_end, c_start, c_end):
             (seg_cmax >= c_start) & (seg_cmin < c_end))
     return (r0[mask] - r_start, c0[mask] - c_start,
             r1[mask] - r_start, c1[mask] - c_start,
-            vals[mask])
+            geom_idx[mask])
 
 
-def _points_for_tile(rows, cols, vals, r_start, r_end, c_start, c_end):
-    """Filter points within the tile, offset to tile-local coordinates."""
+def _points_for_tile(rows, cols, geom_idx, r_start, r_end, c_start, c_end):
+    """Filter points within the tile, offset to tile-local coordinates.
+
+    geom_idx values are indices into the per-type props table and do not
+    need adjustment when filtering.
+    """
     if len(rows) == 0:
         empty = np.empty(0, dtype=np.int32)
-        return empty, empty, np.empty(0, dtype=np.float64)
+        return empty, empty, np.empty(0, dtype=np.int32)
     mask = ((rows >= r_start) & (rows < r_end) &
             (cols >= c_start) & (cols < c_end))
-    return (rows[mask] - r_start, cols[mask] - c_start, vals[mask])
+    return (rows[mask] - r_start, cols[mask] - c_start, geom_idx[mask])
 
 
-def _polys_to_wkb(geoms, vals):
+def _polys_to_wkb(geoms):
     """Pre-serialize polygon geometries to WKB for cheap pickling."""
-    wkb_list = [g.wkb for g in geoms]
-    return wkb_list, list(vals)
+    return [g.wkb for g in geoms]
 
 
-def _polys_from_wkb(wkb_list, vals):
+def _polys_from_wkb(wkb_list):
     """Deserialize WKB back to shapely geometries."""
     from shapely import from_wkb
     geoms = from_wkb(wkb_list)
     if not isinstance(geoms, (list, np.ndarray)):
         geoms = [geoms]
-    return list(geoms), vals
+    return list(geoms)
 
 
-def _rasterize_tile_numpy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
-                          fill, dtype, all_touched, merge_fn,
-                          seg_r0, seg_c0, seg_r1, seg_c1, seg_vals,
-                          pt_rows, pt_cols, pt_vals):
+def _rasterize_tile_numpy(poly_wkb, poly_props_2d, tile_bounds, tile_h,
+                          tile_w, fill, dtype, all_touched, merge_fn,
+                          seg_r0, seg_c0, seg_r1, seg_c1, seg_geom_idx,
+                          line_props,
+                          pt_rows, pt_cols, pt_geom_idx,
+                          point_props):
     """Rasterize a single tile.
 
     Polygons are passed as WKB bytes (cheap to pickle) and deserialized
     inside the worker.  Line segments and points are passed in tile-local
-    pixel coordinates.
+    pixel coordinates with geometry indices into their respective props
+    tables.
     """
     out = np.full((tile_h, tile_w), fill, dtype=np.float64)
     written = np.zeros((tile_h, tile_w), dtype=np.int8)
 
     # 1. Polygons (deserialize WKB, then scanline fill)
     if poly_wkb:
-        poly_geoms, poly_vals = _polys_from_wkb(poly_wkb, poly_vals)
+        poly_geoms = _polys_from_wkb(poly_wkb)
         poly_ids = list(range(len(poly_geoms)))
         edge_arrays = _extract_edges(
-            poly_geoms, poly_vals, poly_ids, tile_bounds,
+            poly_geoms, poly_ids, tile_bounds,
             tile_h, tile_w, all_touched)
         edge_arrays = _sort_edges(edge_arrays)
         if len(edge_arrays[0]) > 0:
             _scanline_fill_cpu(out, written, *edge_arrays,
-                               tile_h, tile_w, merge_fn)
+                               poly_props_2d, tile_h, tile_w, merge_fn)
 
     # 2. Lines (tile-local segments, Bresenham with bounds check)
     if len(seg_r0) > 0:
         _burn_lines_cpu(out, written, seg_r0, seg_c0, seg_r1, seg_c1,
-                        seg_vals, tile_h, tile_w, merge_fn)
+                        seg_geom_idx, line_props, tile_h, tile_w, merge_fn)
 
     # 3. Points (tile-local)
     if len(pt_rows) > 0:
-        _burn_points_cpu(out, written, pt_rows, pt_cols, pt_vals,
-                         merge_fn)
+        _burn_points_cpu(out, written, pt_rows, pt_cols, pt_geom_idx,
+                         point_props, merge_fn)
 
     return out.astype(dtype)
 
 
-def _run_dask_numpy(geometries, values, bounds, height, width, fill, dtype,
-                    all_touched, merge_fn, row_chunks, col_chunks):
+def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
+                    dtype, all_touched, merge_fn, row_chunks, col_chunks):
     """Dask + NumPy backend: tile-based parallel rasterization."""
     import dask
     import dask.array as da
 
     # Classify geometries once
-    (poly_geoms, poly_vals, _poly_ids), (line_geoms, line_vals), \
-        (point_geoms, point_vals) = _classify_geometries(geometries, values)
+    (poly_geoms, poly_props, _poly_ids), (line_geoms, line_props), \
+        (point_geoms, point_props) = _classify_geometries(
+            geometries, props_array)
 
-    # Compact representations: segments (5 arrays) and points (3 arrays)
-    # in full-raster pixel space.  No pixel expansion here.
-    seg_r0, seg_c0, seg_r1, seg_c1, seg_vals = _extract_line_segments(
-        line_geoms, line_vals, bounds, height, width)
-    pt_rows, pt_cols, pt_vals = _extract_points(
-        point_geoms, point_vals, bounds, height, width)
+    # Compact representations in full-raster pixel space
+    seg_r0, seg_c0, seg_r1, seg_c1, seg_geom_idx = _extract_line_segments(
+        line_geoms, bounds, height, width)
+    pt_rows, pt_cols, pt_geom_idx = _extract_points(
+        point_geoms, bounds, height, width)
 
     # Pre-serialize polygons to WKB (20x cheaper to pickle than shapely)
     if poly_geoms:
@@ -1332,7 +1358,6 @@ def _run_dask_numpy(geometries, values, bounds, height, width, fill, dtype,
     else:
         poly_bboxes = np.empty((0, 4), dtype=np.float64)
         poly_wkb = []
-    poly_val_arr = np.asarray(poly_vals, dtype=np.float64)
 
     tiles = _tile_grid(bounds, height, width, row_chunks, col_chunks)
     n_row_chunks = len(row_chunks)
@@ -1349,23 +1374,24 @@ def _run_dask_numpy(geometries, values, bounds, height, width, fill, dtype,
             # Filter polygons by tile geo bbox
             pmask = _filter_geoms_to_tile(poly_bboxes, tile_bounds)
             if len(poly_wkb) > 0:
-                tile_wkb = [poly_wkb[k] for k in np.nonzero(pmask)[0]]
-                tile_vals = poly_val_arr[pmask].tolist()
+                pidx = np.nonzero(pmask)[0]
+                tile_wkb = [poly_wkb[k] for k in pidx]
+                tile_poly_props = poly_props[pmask]
             else:
                 tile_wkb = []
-                tile_vals = []
+                tile_poly_props = poly_props[:0]  # empty (0, P)
 
             # Filter segments and points by tile pixel range
             ts = _segments_for_tile(seg_r0, seg_c0, seg_r1, seg_c1,
-                                    seg_vals,
+                                    seg_geom_idx,
                                     r_start, r_end, c_start, c_end)
-            tp = _points_for_tile(pt_rows, pt_cols, pt_vals,
+            tp = _points_for_tile(pt_rows, pt_cols, pt_geom_idx,
                                   r_start, r_end, c_start, c_end)
 
             delayed_tile = dask.delayed(_rasterize_tile_numpy)(
-                tile_wkb, tile_vals, tile_bounds,
+                tile_wkb, tile_poly_props, tile_bounds,
                 tile_h, tile_w, fill, dtype, all_touched, merge_fn,
-                *ts, *tp)
+                *ts, line_props, *tp, point_props)
             blocks[i][j] = da.from_delayed(
                 delayed_tile, shape=(tile_h, tile_w), dtype=dtype)
             ri += 1
@@ -1373,10 +1399,12 @@ def _run_dask_numpy(geometries, values, bounds, height, width, fill, dtype,
     return da.block(blocks)
 
 
-def _rasterize_tile_cupy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
-                         fill, dtype, all_touched, merge_fn,
-                         seg_r0, seg_c0, seg_r1, seg_c1, seg_vals,
-                         pt_rows, pt_cols, pt_vals):
+def _rasterize_tile_cupy(poly_wkb, poly_props_2d, tile_bounds, tile_h,
+                         tile_w, fill, dtype, all_touched, merge_fn,
+                         seg_r0, seg_c0, seg_r1, seg_c1, seg_geom_idx,
+                         line_props,
+                         pt_rows, pt_cols, pt_geom_idx,
+                         point_props):
     """GPU tile rasterization: polygons as WKB, lines/points as segments."""
     kernels = _ensure_gpu_kernels(merge_fn)
 
@@ -1385,16 +1413,16 @@ def _rasterize_tile_cupy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
 
     # 1. Polygons (deserialize WKB, then scanline fill on GPU)
     if poly_wkb:
-        poly_geoms, poly_vals = _polys_from_wkb(poly_wkb, poly_vals)
+        poly_geoms = _polys_from_wkb(poly_wkb)
         poly_ids = list(range(len(poly_geoms)))
         edge_arrays = _extract_edges(
-            poly_geoms, poly_vals, poly_ids, tile_bounds,
+            poly_geoms, poly_ids, tile_bounds,
             tile_h, tile_w, all_touched)
         edge_arrays = _sort_edges(edge_arrays)
         edge_y_min = edge_arrays[0]
         if len(edge_y_min) > 0:
             edge_y_max, edge_x_at_ymin, edge_inv_slope, \
-                edge_value, edge_geom_id = edge_arrays[1:]
+                edge_geom_id = edge_arrays[1:]
             row_ptr, col_idx = _build_row_csr_numba(
                 edge_y_min, edge_y_max, tile_h)
             tpb = 256
@@ -1402,8 +1430,8 @@ def _rasterize_tile_cupy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
             kernels['scanline_fill'][blocks, tpb](
                 out, written,
                 cupy.asarray(edge_y_min), cupy.asarray(edge_x_at_ymin),
-                cupy.asarray(edge_inv_slope), cupy.asarray(edge_value),
-                cupy.asarray(edge_geom_id), cupy.asarray(row_ptr),
+                cupy.asarray(edge_inv_slope), cupy.asarray(edge_geom_id),
+                cupy.asarray(poly_props_2d), cupy.asarray(row_ptr),
                 cupy.asarray(col_idx), tile_w)
 
     # 2. Lines (tile-local segments, GPU Bresenham)
@@ -1415,7 +1443,8 @@ def _rasterize_tile_cupy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
             out, written,
             cupy.asarray(seg_r0), cupy.asarray(seg_c0),
             cupy.asarray(seg_r1), cupy.asarray(seg_c1),
-            cupy.asarray(seg_vals), n_segs, tile_h, tile_w)
+            cupy.asarray(seg_geom_idx), cupy.asarray(line_props),
+            n_segs, tile_h, tile_w)
 
     # 3. Points (tile-local)
     if len(pt_rows) > 0:
@@ -1425,26 +1454,27 @@ def _rasterize_tile_cupy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
         kernels['burn_points'][bpg, tpb](
             out, written,
             cupy.asarray(pt_rows), cupy.asarray(pt_cols),
-            cupy.asarray(pt_vals), n_pts)
+            cupy.asarray(pt_geom_idx), cupy.asarray(point_props), n_pts)
 
     return out.astype(dtype)
 
 
-def _run_dask_cupy(geometries, values, bounds, height, width, fill, dtype,
-                   all_touched, merge_fn, row_chunks, col_chunks):
+def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
+                   dtype, all_touched, merge_fn, row_chunks, col_chunks):
     """Dask + CuPy backend: tile-based parallel GPU rasterization."""
     import dask
     import dask.array as da
 
     # Classify geometries once
-    (poly_geoms, poly_vals, _poly_ids), (line_geoms, line_vals), \
-        (point_geoms, point_vals) = _classify_geometries(geometries, values)
+    (poly_geoms, poly_props, _poly_ids), (line_geoms, line_props), \
+        (point_geoms, point_props) = _classify_geometries(
+            geometries, props_array)
 
     # Compact representations in full-raster pixel space
-    seg_r0, seg_c0, seg_r1, seg_c1, seg_vals = _extract_line_segments(
-        line_geoms, line_vals, bounds, height, width)
-    pt_rows, pt_cols, pt_vals = _extract_points(
-        point_geoms, point_vals, bounds, height, width)
+    seg_r0, seg_c0, seg_r1, seg_c1, seg_geom_idx = _extract_line_segments(
+        line_geoms, bounds, height, width)
+    pt_rows, pt_cols, pt_geom_idx = _extract_points(
+        point_geoms, bounds, height, width)
 
     # Pre-serialize polygons to WKB (20x cheaper to pickle than shapely)
     if poly_geoms:
@@ -1453,7 +1483,6 @@ def _run_dask_cupy(geometries, values, bounds, height, width, fill, dtype,
     else:
         poly_bboxes = np.empty((0, 4), dtype=np.float64)
         poly_wkb = []
-    poly_val_arr = np.asarray(poly_vals, dtype=np.float64)
 
     tiles = _tile_grid(bounds, height, width, row_chunks, col_chunks)
     n_row_chunks = len(row_chunks)
@@ -1470,22 +1499,23 @@ def _run_dask_cupy(geometries, values, bounds, height, width, fill, dtype,
             # Filter polygons by tile geo bbox
             pmask = _filter_geoms_to_tile(poly_bboxes, tile_bounds)
             if len(poly_wkb) > 0:
-                tile_wkb = [poly_wkb[k] for k in np.nonzero(pmask)[0]]
-                tile_vals = poly_val_arr[pmask].tolist()
+                pidx = np.nonzero(pmask)[0]
+                tile_wkb = [poly_wkb[k] for k in pidx]
+                tile_poly_props = poly_props[pmask]
             else:
                 tile_wkb = []
-                tile_vals = []
+                tile_poly_props = poly_props[:0]  # empty (0, P)
 
             ts = _segments_for_tile(seg_r0, seg_c0, seg_r1, seg_c1,
-                                    seg_vals,
+                                    seg_geom_idx,
                                     r_start, r_end, c_start, c_end)
-            tp = _points_for_tile(pt_rows, pt_cols, pt_vals,
+            tp = _points_for_tile(pt_rows, pt_cols, pt_geom_idx,
                                   r_start, r_end, c_start, c_end)
 
             delayed_tile = dask.delayed(_rasterize_tile_cupy)(
-                tile_wkb, tile_vals, tile_bounds,
+                tile_wkb, tile_poly_props, tile_bounds,
                 tile_h, tile_w, fill, dtype, all_touched, merge_fn,
-                *ts, *tp)
+                *ts, line_props, *tp, point_props)
             blocks[i][j] = da.from_delayed(
                 delayed_tile, shape=(tile_h, tile_w), dtype=dtype,
                 meta=cupy.empty(()))
@@ -1498,8 +1528,15 @@ def _run_dask_cupy(geometries, values, bounds, height, width, fill, dtype,
 # Input parsing
 # ---------------------------------------------------------------------------
 
-def _parse_input(geometries, column=None):
-    """Normalise input to (geometry_list, value_list, bounds)."""
+def _parse_input(geometries, column=None, columns=None):
+    """Normalise input to (geometry_list, props_array, bounds).
+
+    Returns
+    -------
+    geom_list : list of shapely geometries
+    props_array : (N, P) float64 array of property values
+    bounds : tuple or None
+    """
     # Handle dask-geopandas by materializing eagerly.  Geometry data is
     # typically much smaller than the output raster, so this is fine.
     try:
@@ -1512,6 +1549,12 @@ def _parse_input(geometries, column=None):
     try:
         import geopandas as gpd
         if isinstance(geometries, gpd.GeoDataFrame):
+            if columns is not None:
+                # Multi-column mode
+                geom_list = geometries.geometry.tolist()
+                props_array = geometries[columns].values.astype(np.float64)
+                total_bounds = geometries.total_bounds
+                return geom_list, props_array, tuple(total_bounds)
             if column is None:
                 numeric_cols = geometries.select_dtypes(
                     include='number').columns
@@ -1521,9 +1564,10 @@ def _parse_input(geometries, column=None):
                         "Pass a 'column' name explicitly.")
                 column = numeric_cols[0]
             geom_list = geometries.geometry.tolist()
-            value_list = geometries[column].values.astype(np.float64).tolist()
+            vals = geometries[column].values.astype(np.float64)
+            props_array = vals.reshape(-1, 1)  # (N, 1)
             total_bounds = geometries.total_bounds
-            return geom_list, value_list, tuple(total_bounds)
+            return geom_list, props_array, tuple(total_bounds)
     except ImportError:
         pass
 
@@ -1538,14 +1582,17 @@ def _parse_input(geometries, column=None):
         value_list.append(float(item[1]))
 
     if not geom_list:
-        return geom_list, value_list, None
+        props_array = np.empty((0, 1), dtype=np.float64)
+        return geom_list, props_array, None
+
+    props_array = np.array(value_list, dtype=np.float64).reshape(-1, 1)
 
     all_bounds = np.array([g.bounds for g in geom_list if g is not None])
     if len(all_bounds) == 0:
-        return geom_list, value_list, None
+        return geom_list, props_array, None
     total_bounds = (all_bounds[:, 0].min(), all_bounds[:, 1].min(),
                     all_bounds[:, 2].max(), all_bounds[:, 3].max())
-    return geom_list, value_list, total_bounds
+    return geom_list, props_array, total_bounds
 
 
 def _extract_grid_from_like(like):
@@ -1590,6 +1637,7 @@ def rasterize(
     height: Optional[int] = None,
     bounds: Optional[Tuple[float, float, float, float]] = None,
     column: Optional[str] = None,
+    columns=None,
     fill: float = np.nan,
     dtype: Optional[np.dtype] = None,
     all_touched: bool = False,
@@ -1632,6 +1680,12 @@ def rasterize(
     column : str, optional
         Name of the GeoDataFrame column whose values are burned into
         the raster.  Ignored when ``geometries`` is a list of pairs.
+        Mutually exclusive with ``columns``.
+    columns : list of str, optional
+        Names of multiple GeoDataFrame columns to pass as a properties
+        array to the merge function.  Mutually exclusive with ``column``.
+        When given, the merge function receives a 1D float64 array of
+        length ``len(columns)`` as its ``props`` argument.
     fill : float, default np.nan
         Value for pixels not covered by any geometry.
     dtype : numpy dtype, optional
@@ -1668,10 +1722,10 @@ def rasterize(
         backends (``use_cuda=True``), pass a
         ``@numba.cuda.jit(device=True)`` function.  Signature::
 
-            merge_fn(old_val, new_val, is_first) -> float64
+            merge_fn(pixel, props, is_first) -> float64
 
-        - *old_val*: current pixel value (fill value on first write)
-        - *new_val*: value from the geometry being rasterized
+        - *pixel*: current pixel value (fill value on first write)
+        - *props*: 1D float64 array of property values for the geometry
         - *is_first*: 1 on first write to this pixel, 0 otherwise
 
     chunks : int or (int, int), optional
@@ -1704,6 +1758,10 @@ def rasterize(
         >>> density = rasterize(gdf, width=100, height=100,
         ...                     column='pop', merge='sum', fill=0)
     """
+    if column is not None and columns is not None:
+        raise ValueError(
+            "'column' and 'columns' are mutually exclusive; use one or "
+            "the other")
     # Resolve merge: string -> built-in function, or pass callable through.
     if callable(merge):
         merge_fn = merge
@@ -1728,7 +1786,8 @@ def rasterize(
             _extract_grid_from_like(like)
 
     # Parse input geometries
-    geom_list, value_list, inferred_bounds = _parse_input(geometries, column)
+    geom_list, props_array, inferred_bounds = _parse_input(
+        geometries, column=column, columns=columns)
 
     # Resolve bounds: explicit > like > inferred from geometries
     final_bounds = bounds
@@ -1792,20 +1851,20 @@ def rasterize(
             chunks, final_height, final_width)
         if use_cuda:
             out = _run_dask_cupy(
-                geom_list, value_list, final_bounds,
+                geom_list, props_array, final_bounds,
                 final_height, final_width, fill, final_dtype,
                 all_touched, gpu_merge_fn, row_chunks, col_chunks)
         else:
             out = _run_dask_numpy(
-                geom_list, value_list, final_bounds,
+                geom_list, props_array, final_bounds,
                 final_height, final_width, fill, final_dtype,
                 all_touched, merge_fn, row_chunks, col_chunks)
     elif use_cuda:
-        out = _run_cupy(geom_list, value_list, final_bounds,
+        out = _run_cupy(geom_list, props_array, final_bounds,
                         final_height, final_width, fill, final_dtype,
                         all_touched, gpu_merge_fn)
     else:
-        out = _run_numpy(geom_list, value_list, final_bounds,
+        out = _run_numpy(geom_list, props_array, final_bounds,
                          final_height, final_width, fill, final_dtype,
                          all_touched, merge_fn)
 

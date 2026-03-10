@@ -710,10 +710,10 @@ class TestCustomMerge:
         from xrspatial.utils import ngjit
 
         @ngjit
-        def my_sum(old_val, new_val, is_first):
+        def my_sum(pixel, props, is_first):
             if is_first:
-                return new_val
-            return old_val + new_val
+                return props[0]
+            return pixel + props[0]
 
         pairs = [(box(0, 0, 6, 6), 1.0), (box(4, 4, 10, 10), 2.0)]
         builtin = rasterize(pairs, width=10, height=10,
@@ -727,10 +727,10 @@ class TestCustomMerge:
         from xrspatial.utils import ngjit
 
         @ngjit
-        def my_max(old_val, new_val, is_first):
-            if is_first or new_val > old_val:
-                return new_val
-            return old_val
+        def my_max(pixel, props, is_first):
+            if is_first or props[0] > pixel:
+                return props[0]
+            return pixel
 
         pairs = [(box(0, 0, 6, 6), 3.0), (box(4, 4, 10, 10), 7.0)]
         builtin = rasterize(pairs, width=10, height=10,
@@ -744,10 +744,10 @@ class TestCustomMerge:
         from xrspatial.utils import ngjit
 
         @ngjit
-        def avg(old_val, new_val, is_first):
+        def avg(pixel, props, is_first):
             if is_first:
-                return new_val
-            return (old_val + new_val) / 2.0
+                return props[0]
+            return (pixel + props[0]) / 2.0
 
         pairs = [(box(0, 0, 10, 10), 4.0), (box(0, 0, 10, 10), 8.0)]
         result = rasterize(pairs, width=2, height=2,
@@ -760,10 +760,10 @@ class TestCustomMerge:
         from xrspatial.utils import ngjit
 
         @ngjit
-        def my_sum(old_val, new_val, is_first):
+        def my_sum(pixel, props, is_first):
             if is_first:
-                return new_val
-            return old_val + new_val
+                return props[0]
+            return pixel + props[0]
 
         pairs = [
             (LineString([(0.5, 5), (9.5, 5)]), 1.0),
@@ -779,10 +779,10 @@ class TestCustomMerge:
         from xrspatial.utils import ngjit
 
         @ngjit
-        def my_sum(old_val, new_val, is_first):
+        def my_sum(pixel, props, is_first):
             if is_first:
-                return new_val
-            return old_val + new_val
+                return props[0]
+            return pixel + props[0]
 
         pairs = [(Point(5.5, 5.5), 3.0), (Point(5.5, 5.5), 7.0)]
         result = rasterize(pairs, width=10, height=10,
@@ -812,10 +812,10 @@ class TestCustomMergeDask:
         from xrspatial.utils import ngjit
 
         @ngjit
-        def my_sum(old_val, new_val, is_first):
+        def my_sum(pixel, props, is_first):
             if is_first:
-                return new_val
-            return old_val + new_val
+                return props[0]
+            return pixel + props[0]
 
         pairs = [(box(0, 0, 6, 6), 1.0), (box(4, 4, 10, 10), 2.0)]
         np_result = rasterize(pairs, width=10, height=10,
@@ -830,10 +830,10 @@ class TestCustomMergeDask:
         from xrspatial.utils import ngjit
 
         @ngjit
-        def avg(old_val, new_val, is_first):
+        def avg(pixel, props, is_first):
             if is_first:
-                return new_val
-            return (old_val + new_val) / 2.0
+                return props[0]
+            return (pixel + props[0]) / 2.0
 
         pairs = [(box(0, 0, 10, 10), 4.0), (box(0, 0, 10, 10), 8.0)]
         result = rasterize(pairs, width=10, height=10,
@@ -857,10 +857,10 @@ class TestCustomMergeGPU:
         from numba import cuda as _cuda
 
         @_cuda.jit(device=True)
-        def my_sum_gpu(old_val, new_val, is_first):
+        def my_sum_gpu(pixel, props, is_first):
             if is_first:
-                return new_val
-            return old_val + new_val
+                return props[0]
+            return pixel + props[0]
 
         pairs = [(box(0, 0, 6, 6), 1.0), (box(4, 4, 10, 10), 2.0)]
         builtin = rasterize(pairs, width=10, height=10,
@@ -877,10 +877,10 @@ class TestCustomMergeGPU:
         from numba import cuda as _cuda
 
         @_cuda.jit(device=True)
-        def my_sum_gpu(old_val, new_val, is_first):
+        def my_sum_gpu(pixel, props, is_first):
             if is_first:
-                return new_val
-            return old_val + new_val
+                return props[0]
+            return pixel + props[0]
 
         pairs = [(box(0, 0, 6, 6), 1.0), (box(4, 4, 10, 10), 2.0)]
         builtin = rasterize(pairs, width=10, height=10,
@@ -1360,3 +1360,101 @@ class TestDaskCupy:
                               use_cuda=True, chunks=(5, 5))
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
+
+
+# ---------------------------------------------------------------------------
+# Multi-column properties
+# ---------------------------------------------------------------------------
+
+@skip_no_geopandas
+class TestMultiColumn:
+    """Tests for multi-column property support via the 'columns' parameter."""
+
+    def test_column_and_columns_mutually_exclusive(self):
+        """Passing both column and columns raises ValueError."""
+        gdf = gpd.GeoDataFrame(
+            {'a': [1.0], 'b': [2.0]},
+            geometry=[box(0, 0, 5, 5)],
+        )
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            rasterize(gdf, width=5, height=5, bounds=(0, 0, 5, 5),
+                      column='a', columns=['a', 'b'])
+
+    def test_multi_column_custom_merge(self):
+        """Custom merge function using multiple property columns."""
+        from xrspatial.utils import ngjit
+
+        @ngjit
+        def weighted_density(pixel, props, is_first):
+            # props[0] = population, props[1] = area
+            density = props[0] / props[1]
+            if is_first:
+                return density
+            return pixel + density
+
+        gdf = gpd.GeoDataFrame({
+            'population': [100.0, 200.0],
+            'area': [10.0, 20.0],
+            'geometry': [box(0, 0, 5, 5), box(5, 5, 10, 10)],
+        })
+        result = rasterize(gdf, columns=['population', 'area'],
+                           merge=weighted_density, width=10, height=10,
+                           bounds=(0, 0, 10, 10), fill=0)
+        # density = 100/10 = 10 for first polygon, 200/20 = 10 for second
+        filled = result.values[result.values != 0]
+        assert len(filled) > 0
+        np.testing.assert_allclose(filled, 10.0)
+
+    def test_multi_column_sum_uses_first_prop(self):
+        """Built-in 'sum' with multiple columns uses props[0]."""
+        gdf = gpd.GeoDataFrame({
+            'val': [3.0, 7.0],
+            'extra': [99.0, 99.0],
+            'geometry': [box(0, 0, 10, 10), box(0, 0, 10, 10)],
+        })
+        single = rasterize(gdf, column='val', merge='sum',
+                           width=5, height=5, bounds=(0, 0, 10, 10), fill=0)
+        multi = rasterize(gdf, columns=['val', 'extra'], merge='sum',
+                          width=5, height=5, bounds=(0, 0, 10, 10), fill=0)
+        # Both should sum props[0] = val column: 3 + 7 = 10
+        np.testing.assert_array_equal(single.values, multi.values)
+
+    def test_multi_column_props_array_shape(self):
+        """Verify the props array has the right shape through the pipeline."""
+        from xrspatial.utils import ngjit
+
+        @ngjit
+        def use_second(pixel, props, is_first):
+            return props[1]
+
+        gdf = gpd.GeoDataFrame({
+            'a': [1.0],
+            'b': [42.0],
+            'geometry': [box(0, 0, 10, 10)],
+        })
+        result = rasterize(gdf, columns=['a', 'b'], merge=use_second,
+                           width=5, height=5, bounds=(0, 0, 10, 10), fill=0)
+        # Should burn props[1] = 42.0 everywhere
+        assert np.all(result.values == 42.0)
+
+    @skip_no_dask
+    def test_multi_column_dask_parity(self):
+        """Multi-column dask output matches numpy."""
+        from xrspatial.utils import ngjit
+
+        @ngjit
+        def ratio(pixel, props, is_first):
+            return props[0] / props[1]
+
+        gdf = gpd.GeoDataFrame({
+            'num': [6.0],
+            'den': [2.0],
+            'geometry': [box(0, 0, 10, 10)],
+        })
+        np_result = rasterize(gdf, columns=['num', 'den'], merge=ratio,
+                              width=10, height=10, bounds=(0, 0, 10, 10),
+                              fill=0)
+        dk_result = rasterize(gdf, columns=['num', 'den'], merge=ratio,
+                              width=10, height=10, bounds=(0, 0, 10, 10),
+                              fill=0, chunks=(5, 5))
+        np.testing.assert_array_equal(np_result.values, dk_result.values)
