@@ -1686,3 +1686,145 @@ def test_crosstab_does_not_materialise_dask_zones():
         result = result.compute()
     assert isinstance(result, pd.DataFrame)
     assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
+# Vector zones (GeoDataFrame / list-of-pairs) — implicit rasterization
+# ---------------------------------------------------------------------------
+
+try:
+    from shapely.geometry import box as shapely_box
+    import geopandas as gpd
+    _has_vector = True
+except ImportError:
+    _has_vector = False
+
+skip_no_vector = pytest.mark.skipif(
+    not _has_vector, reason="shapely/geopandas not installed"
+)
+
+
+def _make_grid(width=20, height=20, bounds=(0, 0, 100, 100)):
+    """Build a template DataArray with pixel-centre coords."""
+    xmin, ymin, xmax, ymax = bounds
+    px = (xmax - xmin) / width
+    py = (ymax - ymin) / height
+    x = np.linspace(xmin + px / 2, xmax - px / 2, width)
+    y = np.linspace(ymax - py / 2, ymin + py / 2, height)
+    return xr.DataArray(
+        np.ones((height, width), dtype=np.float64),
+        dims=['y', 'x'],
+        coords={'y': y, 'x': x},
+    )
+
+
+@skip_no_vector
+class TestVectorZones:
+    """Verify that zonal functions accept vector zones directly."""
+
+    def _zones_raster_and_gdf(self):
+        """Two non-overlapping boxes covering different quadrants."""
+        from xrspatial.rasterize import rasterize
+
+        values = _make_grid()
+        gdf = gpd.GeoDataFrame(
+            {'zone_id': [1.0, 2.0]},
+            geometry=[
+                shapely_box(0, 50, 50, 100),   # top-left
+                shapely_box(50, 0, 100, 50),    # bottom-right
+            ],
+        )
+        zones_raster = rasterize(gdf, like=values, column='zone_id')
+        return values, gdf, zones_raster
+
+    # -- stats --
+
+    def test_stats_gdf_matches_raster(self):
+        values, gdf, zones_raster = self._zones_raster_and_gdf()
+        expected = stats(zones_raster, values, stats_funcs=['mean', 'count'])
+        result = stats(gdf, values, stats_funcs=['mean', 'count'],
+                       column='zone_id')
+        pd.testing.assert_frame_equal(result, expected)
+
+    def test_stats_list_of_pairs(self):
+        values, gdf, zones_raster = self._zones_raster_and_gdf()
+        pairs = [
+            (shapely_box(0, 50, 50, 100), 1.0),
+            (shapely_box(50, 0, 100, 50), 2.0),
+        ]
+        expected = stats(zones_raster, values, stats_funcs=['mean', 'count'])
+        result = stats(pairs, values, stats_funcs=['mean', 'count'])
+        pd.testing.assert_frame_equal(result, expected)
+
+    def test_stats_gdf_missing_column_raises(self):
+        values = _make_grid()
+        gdf = gpd.GeoDataFrame(
+            {'zone_id': [1.0]},
+            geometry=[shapely_box(0, 0, 50, 50)],
+        )
+        with pytest.raises(ValueError, match="column is required"):
+            stats(gdf, values)
+
+    def test_stats_pairs_with_column_raises(self):
+        values = _make_grid()
+        pairs = [(shapely_box(0, 0, 50, 50), 1.0)]
+        with pytest.raises(ValueError, match="column should not be set"):
+            stats(pairs, values, column='zone_id')
+
+    def test_stats_accessor(self):
+        import xrspatial  # noqa: F401  — registers accessor
+        values, gdf, zones_raster = self._zones_raster_and_gdf()
+        expected = stats(zones_raster, values, stats_funcs=['mean', 'count'])
+        result = values.xrs.zonal_stats(gdf, stats_funcs=['mean', 'count'],
+                                        column='zone_id')
+        pd.testing.assert_frame_equal(result, expected)
+
+    # -- crosstab --
+
+    def test_crosstab_gdf(self):
+        values, gdf, zones_raster = self._zones_raster_and_gdf()
+        expected = crosstab(zones_raster, values)
+        result = crosstab(gdf, values, column='zone_id')
+        pd.testing.assert_frame_equal(result, expected)
+
+    # -- apply --
+
+    def test_apply_gdf(self):
+        values, gdf, zones_raster = self._zones_raster_and_gdf()
+        # rasterize produces float zones; apply needs int zones
+        zones_int = zones_raster.copy(data=zones_raster.values.astype(int))
+        fn = lambda x: x * 2
+        expected = apply(zones_int, values, fn)
+        result = apply(gdf, values, fn, column='zone_id',
+                       rasterize_kw={'dtype': int})
+        xr.testing.assert_identical(result, expected)
+
+    # -- crop --
+
+    def test_crop_gdf(self):
+        values, gdf, zones_raster = self._zones_raster_and_gdf()
+        expected = crop(zones_raster, values, zones_ids=[1.0])
+        result = crop(gdf, values, zones_ids=[1.0], column='zone_id')
+        xr.testing.assert_identical(result, expected)
+
+    # -- rasterize_kw forwarding --
+
+    def test_stats_rasterize_kw_all_touched(self):
+        values, gdf, _ = self._zones_raster_and_gdf()
+        from xrspatial.rasterize import rasterize
+        zones_at = rasterize(gdf, like=values, column='zone_id',
+                             all_touched=True)
+        expected = stats(zones_at, values, stats_funcs=['count'])
+        result = stats(gdf, values, stats_funcs=['count'],
+                       column='zone_id',
+                       rasterize_kw={'all_touched': True})
+        pd.testing.assert_frame_equal(result, expected)
+
+    # -- raster zones still work --
+
+    def test_raster_zones_unchanged(self):
+        """Passing a DataArray directly should still work as before."""
+        values, _, zones_raster = self._zones_raster_and_gdf()
+        result = stats(zones_raster, values, stats_funcs=['count'])
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) > 0

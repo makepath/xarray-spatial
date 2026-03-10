@@ -46,6 +46,84 @@ from xrspatial.utils import has_dask_array
 TOTAL_COUNT = '_total_count'
 
 
+def _maybe_rasterize_zones(zones, values, column=None, rasterize_kw=None):
+    """If *zones* is vector data, rasterize it using *values* as the template.
+
+    Accepts:
+    - ``GeoDataFrame`` (requires *column* to identify the zone-ID field)
+    - list of ``(geometry, value)`` pairs
+
+    Returns a 2-D ``xr.DataArray`` of zone IDs aligned to *values*.
+    If *zones* is already a DataArray it is returned unchanged.
+    """
+    if isinstance(zones, xr.DataArray):
+        return zones
+
+    # list-of-pairs: [(geom, value), ...]
+    is_pairs = (
+        isinstance(zones, (list, tuple))
+        and len(zones) > 0
+        and isinstance(zones[0], (list, tuple))
+        and len(zones[0]) == 2
+    )
+
+    # GeoDataFrame
+    is_gdf = False
+    try:
+        import geopandas as gpd
+        is_gdf = isinstance(zones, gpd.GeoDataFrame)
+    except ImportError:
+        pass
+
+    if not is_pairs and not is_gdf:
+        return zones
+
+    from .rasterize import rasterize
+
+    # Build the template from values (first 2D variable if Dataset)
+    if isinstance(values, xr.Dataset):
+        for var in values.data_vars:
+            da_var = values[var]
+            if da_var.ndim >= 2 and 'y' in da_var.dims and 'x' in da_var.dims:
+                like = da_var
+                break
+        else:
+            raise ValueError(
+                "values Dataset has no 2D variable with 'y' and 'x' "
+                "dimensions to use as rasterize template"
+            )
+    elif isinstance(values, xr.DataArray):
+        if values.ndim >= 2:
+            like = values
+        else:
+            raise ValueError(
+                "values must be at least 2D to use as rasterize template"
+            )
+    else:
+        raise TypeError(
+            f"values must be an xr.DataArray or xr.Dataset, got {type(values)}"
+        )
+
+    kw = dict(rasterize_kw or {})
+    kw['like'] = like
+
+    if is_gdf:
+        if column is None:
+            raise ValueError(
+                "column is required when zones is a GeoDataFrame. "
+                "Specify which column contains zone IDs."
+            )
+        kw['column'] = column
+    elif is_pairs:
+        if column is not None:
+            raise ValueError(
+                "column should not be set when zones is a list of "
+                "(geometry, value) pairs"
+            )
+
+    return rasterize(zones, **kw)
+
+
 def _unique_finite_zones(arr):
     """Sorted unique finite values from *arr* without full materialisation.
 
@@ -476,7 +554,7 @@ def _stats_dask_cupy(
 
 
 def stats(
-    zones: xr.DataArray,
+    zones,
     values: xr.DataArray,
     zone_ids: Optional[List[Union[int, float]]] = None,
     stats_funcs: Union[Dict, List] = [
@@ -491,6 +569,8 @@ def stats(
     ],
     nodata_values: Union[int, float] = None,
     return_type: str = 'pandas.DataFrame',
+    column: Optional[str] = None,
+    rasterize_kw: Optional[dict] = None,
 ) -> Union[pd.DataFrame, dd.DataFrame, xr.DataArray]:
     """
     Calculate summary statistics for each zone defined by a `zones`
@@ -644,6 +724,9 @@ def stats(
         >>> stats_df = stats(zones=zones, values=ds)
         >>> # Columns: zone, 2020_mean, 2020_max, ..., 2021_mean, 2021_max, ...
     """
+
+    zones = _maybe_rasterize_zones(zones, values, column=column,
+                                   rasterize_kw=rasterize_kw)
 
     # Dataset support: run stats per variable and merge into one DataFrame
     if isinstance(values, xr.Dataset):
@@ -1009,13 +1092,15 @@ def _crosstab_dask_cupy(
 
 
 def crosstab(
-    zones: xr.DataArray,
+    zones,
     values: xr.DataArray,
     zone_ids: List[Union[int, float]] = None,
     cat_ids: List[Union[int, float]] = None,
     layer: Optional[int] = None,
     agg: Optional[str] = "count",
     nodata_values: Optional[Union[int, float]] = None,
+    column: Optional[str] = None,
+    rasterize_kw: Optional[dict] = None,
 ) -> Union[pd.DataFrame, dd.DataFrame]:
     """
     Calculate cross-tabulated (categorical stats) areas
@@ -1143,6 +1228,9 @@ def crosstab(
             4      6    1     2     2     0     0     1
             5      7    0     1     0     0     1     1
     """
+
+    zones = _maybe_rasterize_zones(zones, values, column=column,
+                                   rasterize_kw=rasterize_kw)
 
     _validate_raster(zones, func_name='crosstab', name='zones', ndim=2)
     _validate_raster(values, func_name='crosstab', name='values', ndim=(2, 3))
@@ -1342,10 +1430,12 @@ def _apply_dask_cupy(zones_data, values_data, func, nodata):
 
 
 def apply(
-    zones: xr.DataArray,
+    zones,
     values: xr.DataArray,
     func: Callable,
-    nodata: Optional[int] = 0
+    nodata: Optional[int] = 0,
+    column: Optional[str] = None,
+    rasterize_kw: Optional[dict] = None,
 ):
     """
     Apply a function to the `values` agg within zones in `zones` agg.
@@ -1399,6 +1489,9 @@ def apply(
         array([[0, 0, 5, 0],
                [3, np.nan, 0, 0]])
     """
+    zones = _maybe_rasterize_zones(zones, values, column=column,
+                                   rasterize_kw=rasterize_kw)
+
     _validate_raster(zones, func_name='apply', name='zones', ndim=2, integer_only=True)
     _validate_raster(values, func_name='apply', name='values', ndim=(2, 3))
 
@@ -2128,10 +2221,12 @@ def _crop_bounds_dask(data, target_values):
 
 
 def crop(
-    zones: xr.DataArray,
+    zones,
     values: xr.DataArray,
     zones_ids: Union[list, tuple],
     name: str = "crop",
+    column: Optional[str] = None,
+    rasterize_kw: Optional[dict] = None,
 ):
     """
     Crop scans from edges and eliminates rows / cols until one of the
@@ -2243,6 +2338,9 @@ def crop(
             'Max Elevation': '4000',
         }
     """
+    zones = _maybe_rasterize_zones(zones, values, column=column,
+                                   rasterize_kw=rasterize_kw)
+
     _validate_raster(zones, func_name='crop', name='zones', ndim=2)
     _validate_raster(values, func_name='crop', name='values', ndim=2)
 
