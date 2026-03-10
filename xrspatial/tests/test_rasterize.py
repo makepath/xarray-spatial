@@ -1000,6 +1000,48 @@ class TestDaskCupy:
         np.testing.assert_array_equal(
             np_result.values, self._to_numpy(dk_result))
 
+    @pytest.mark.parametrize("chunks", [(5, 5), (3, 7)])
+    def test_line_parity(self, chunks):
+        line = LineString([(0.5, 0.5), (9.5, 9.5)])
+        np_result = rasterize([(line, 1.0)], width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0)
+        dk_result = rasterize([(line, 1.0)], width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0,
+                              use_cuda=True, chunks=chunks)
+        np.testing.assert_array_equal(
+            np_result.values, self._to_numpy(dk_result))
+
+    @pytest.mark.parametrize("chunks", [(5, 5), (3, 7)])
+    def test_point_parity(self, chunks):
+        pairs = [(Point(1.5, 1.5), 1.0), (Point(8.5, 8.5), 2.0)]
+        np_result = rasterize(pairs, width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0)
+        dk_result = rasterize(pairs, width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0,
+                              use_cuda=True, chunks=chunks)
+        np.testing.assert_array_equal(
+            np_result.values, self._to_numpy(dk_result))
+
+    def test_chunk_boundary_line(self):
+        line = LineString([(0.5, 5.0), (9.5, 5.0)])
+        np_result = rasterize([(line, 1.0)], width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0)
+        dk_result = rasterize([(line, 1.0)], width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0,
+                              use_cuda=True, chunks=(5, 5))
+        np.testing.assert_array_equal(
+            np_result.values, self._to_numpy(dk_result))
+
+    def test_chunk_boundary_point_on_edge(self):
+        pt = Point(5.0, 5.0)
+        np_result = rasterize([(pt, 9.0)], width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0)
+        dk_result = rasterize([(pt, 9.0)], width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0,
+                              use_cuda=True, chunks=(5, 5))
+        np.testing.assert_array_equal(
+            np_result.values, self._to_numpy(dk_result))
+
     def test_empty_tiles_are_fill(self):
         geom = box(0, 0, 2, 2)
         result = rasterize([(geom, 1.0)], width=10, height=10,
@@ -1007,3 +1049,119 @@ class TestDaskCupy:
                            use_cuda=True, chunks=(5, 5))
         vals = self._to_numpy(result)
         assert np.all(vals[0:5, 5:10] == -999)
+
+    def test_single_chunk_matches_numpy(self):
+        geom = box(1, 1, 4, 4)
+        np_result = rasterize([(geom, 2.0)], width=5, height=5,
+                              bounds=(0, 0, 5, 5), fill=0)
+        dk_result = rasterize([(geom, 2.0)], width=5, height=5,
+                              bounds=(0, 0, 5, 5), fill=0,
+                              use_cuda=True, chunks=(100, 100))
+        np.testing.assert_array_equal(
+            np_result.values, self._to_numpy(dk_result))
+
+    def test_output_is_dask_array(self):
+        geom = box(0, 0, 5, 5)
+        result = rasterize([(geom, 1.0)], width=10, height=10,
+                           bounds=(0, 0, 10, 10),
+                           use_cuda=True, chunks=(5, 5))
+        assert isinstance(result.data, da.Array)
+
+    def test_output_shape_and_coords(self):
+        geom = box(0, 0, 10, 10)
+        np_result = rasterize([(geom, 1.0)], width=10, height=10,
+                              bounds=(0, 0, 10, 10))
+        dk_result = rasterize([(geom, 1.0)], width=10, height=10,
+                              bounds=(0, 0, 10, 10),
+                              use_cuda=True, chunks=(5, 5))
+        assert dk_result.shape == np_result.shape
+        assert dk_result.dims == np_result.dims
+        np.testing.assert_allclose(
+            dk_result.x.values, np_result.x.values)
+        np.testing.assert_allclose(
+            dk_result.y.values, np_result.y.values)
+
+    def test_compute_returns_cupy(self):
+        geom = box(0, 0, 5, 5)
+        result = rasterize([(geom, 1.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5),
+                           use_cuda=True, chunks=(3, 3))
+        computed = result.compute()
+        assert type(computed.data).__module__.startswith('cupy')
+
+    @pytest.mark.parametrize("merge_mode", ['last', 'first', 'max', 'min',
+                                            'sum', 'count'])
+    def test_merge_mode_parity(self, merge_mode):
+        pairs = [(box(0, 0, 6, 6), 1.0), (box(4, 4, 10, 10), 2.0)]
+        np_result = rasterize(pairs, width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0,
+                              merge=merge_mode)
+        dk_result = rasterize(pairs, width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0,
+                              merge=merge_mode,
+                              use_cuda=True, chunks=(5, 5))
+        np.testing.assert_array_equal(
+            np_result.values, self._to_numpy(dk_result))
+
+    def test_polygon_with_hole(self):
+        exterior = [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]
+        hole = [(3, 3), (3, 7), (7, 7), (7, 3), (3, 3)]
+        poly = Polygon(exterior, [hole])
+        np_result = rasterize([(poly, 1.0)], width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0)
+        dk_result = rasterize([(poly, 1.0)], width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0,
+                              use_cuda=True, chunks=(5, 5))
+        np.testing.assert_array_equal(
+            np_result.values, self._to_numpy(dk_result))
+
+    def test_empty_geometry_list(self):
+        result = rasterize([], width=5, height=5, bounds=(0, 0, 5, 5),
+                           use_cuda=True, chunks=(3, 3))
+        assert isinstance(result.data, da.Array)
+        vals = self._to_numpy(result)
+        assert np.all(np.isnan(vals))
+
+    def test_all_touched_parity(self):
+        geom = box(2.1, 2.1, 7.9, 7.9)
+        np_result = rasterize([(geom, 1.0)], width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0,
+                              all_touched=True)
+        dk_result = rasterize([(geom, 1.0)], width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0,
+                              all_touched=True,
+                              use_cuda=True, chunks=(5, 5))
+        np.testing.assert_array_equal(
+            np_result.values, self._to_numpy(dk_result))
+
+    def test_dtype_preserved(self):
+        geom = box(0, 0, 5, 5)
+        result = rasterize([(geom, 1.0)], width=5, height=5,
+                           bounds=(0, 0, 5, 5), dtype=np.float32,
+                           use_cuda=True, chunks=(3, 3))
+        assert result.dtype == np.float32
+
+    def test_int_chunks_shorthand(self):
+        geom = box(1, 1, 4, 4)
+        np_result = rasterize([(geom, 1.0)], width=5, height=5,
+                              bounds=(0, 0, 5, 5), fill=0)
+        dk_result = rasterize([(geom, 1.0)], width=5, height=5,
+                              bounds=(0, 0, 5, 5), fill=0,
+                              use_cuda=True, chunks=3)
+        np.testing.assert_array_equal(
+            np_result.values, self._to_numpy(dk_result))
+
+    @pytest.mark.skipif(
+        not has_geopandas, reason="geopandas not installed")
+    def test_geodataframe_with_chunks(self):
+        gdf = gpd.GeoDataFrame(
+            {'value': [1.0, 2.0]},
+            geometry=[box(0, 0, 4, 4), box(6, 6, 10, 10)],
+        )
+        np_result = rasterize(gdf, width=10, height=10,
+                              bounds=(0, 0, 10, 10), column='value')
+        dk_result = rasterize(gdf, width=10, height=10,
+                              bounds=(0, 0, 10, 10), column='value',
+                              use_cuda=True, chunks=(5, 5))
+        np.testing.assert_array_equal(
+            np_result.values, self._to_numpy(dk_result))
