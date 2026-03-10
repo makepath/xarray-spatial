@@ -1209,16 +1209,30 @@ def _points_for_tile(rows, cols, vals, r_start, r_end, c_start, c_end):
     return (rows[mask] - r_start, cols[mask] - c_start, vals[mask])
 
 
-def _rasterize_tile_numpy(poly_geoms, poly_vals, tile_bounds, tile_h, tile_w,
+def _polys_to_wkb(geoms, vals):
+    """Pre-serialize polygon geometries to WKB for cheap pickling."""
+    wkb_list = [g.wkb for g in geoms]
+    return wkb_list, list(vals)
+
+
+def _polys_from_wkb(wkb_list, vals):
+    """Deserialize WKB back to shapely geometries."""
+    from shapely import from_wkb
+    geoms = from_wkb(wkb_list)
+    if not isinstance(geoms, (list, np.ndarray)):
+        geoms = [geoms]
+    return list(geoms), vals
+
+
+def _rasterize_tile_numpy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
                           fill, dtype, all_touched, merge_mode,
                           seg_r0, seg_c0, seg_r1, seg_c1, seg_vals,
                           pt_rows, pt_cols, pt_vals):
     """Rasterize a single tile.
 
-    Polygons are rasterized per-tile (scanline fill depends on pixel centers,
-    which are unique to each tile).  Line segments and points are passed in
-    tile-local pixel coordinates and rasterized via the existing numba-jitted
-    ``_burn_lines_cpu`` / ``_burn_points_cpu``.
+    Polygons are passed as WKB bytes (cheap to pickle) and deserialized
+    inside the worker.  Line segments and points are passed in tile-local
+    pixel coordinates.
     """
     out = np.full((tile_h, tile_w), fill, dtype=np.float64)
 
@@ -1227,8 +1241,9 @@ def _rasterize_tile_numpy(poly_geoms, poly_vals, tile_bounds, tile_h, tile_w,
     else:
         written = np.empty((0, 0), dtype=np.int8)
 
-    # 1. Polygons (per-tile rasterization is exact)
-    if poly_geoms:
+    # 1. Polygons (deserialize WKB, then scanline fill)
+    if poly_wkb:
+        poly_geoms, poly_vals = _polys_from_wkb(poly_wkb, poly_vals)
         poly_ids = list(range(len(poly_geoms)))
         edge_arrays = _extract_edges(
             poly_geoms, poly_vals, poly_ids, tile_bounds,
@@ -1268,13 +1283,13 @@ def _run_dask_numpy(geometries, values, bounds, height, width, fill, dtype,
     pt_rows, pt_cols, pt_vals = _extract_points(
         point_geoms, point_vals, bounds, height, width)
 
-    # Compute polygon bboxes for spatial filtering
+    # Pre-serialize polygons to WKB (20x cheaper to pickle than shapely)
     if poly_geoms:
         poly_bboxes = _geometry_bboxes(poly_geoms)
+        poly_wkb = [g.wkb for g in poly_geoms]
     else:
         poly_bboxes = np.empty((0, 4), dtype=np.float64)
-    poly_geom_arr = np.asarray(poly_geoms, dtype=object) if poly_geoms \
-        else np.empty(0, dtype=object)
+        poly_wkb = []
     poly_val_arr = np.asarray(poly_vals, dtype=np.float64)
 
     tiles = _tile_grid(bounds, height, width, row_chunks, col_chunks)
@@ -1291,10 +1306,12 @@ def _run_dask_numpy(geometries, values, bounds, height, width, fill, dtype,
 
             # Filter polygons by tile geo bbox
             pmask = _filter_geoms_to_tile(poly_bboxes, tile_bounds)
-            tile_poly_geoms = poly_geom_arr[pmask].tolist() \
-                if len(poly_geom_arr) > 0 else []
-            tile_poly_vals = poly_val_arr[pmask].tolist() \
-                if len(poly_val_arr) > 0 else []
+            if len(poly_wkb) > 0:
+                tile_wkb = [poly_wkb[k] for k in np.nonzero(pmask)[0]]
+                tile_vals = poly_val_arr[pmask].tolist()
+            else:
+                tile_wkb = []
+                tile_vals = []
 
             # Filter segments and points by tile pixel range
             ts = _segments_for_tile(seg_r0, seg_c0, seg_r1, seg_c1,
@@ -1304,7 +1321,7 @@ def _run_dask_numpy(geometries, values, bounds, height, width, fill, dtype,
                                   r_start, r_end, c_start, c_end)
 
             delayed_tile = dask.delayed(_rasterize_tile_numpy)(
-                tile_poly_geoms, tile_poly_vals, tile_bounds,
+                tile_wkb, tile_vals, tile_bounds,
                 tile_h, tile_w, fill, dtype, all_touched, merge_mode,
                 *ts, *tp)
             blocks[i][j] = da.from_delayed(
@@ -1314,11 +1331,11 @@ def _run_dask_numpy(geometries, values, bounds, height, width, fill, dtype,
     return da.block(blocks)
 
 
-def _rasterize_tile_cupy(poly_geoms, poly_vals, tile_bounds, tile_h, tile_w,
+def _rasterize_tile_cupy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
                          fill, dtype, all_touched, merge_mode,
                          seg_r0, seg_c0, seg_r1, seg_c1, seg_vals,
                          pt_rows, pt_cols, pt_vals):
-    """GPU tile rasterization: polygons per-tile, lines/points as segments."""
+    """GPU tile rasterization: polygons as WKB, lines/points as segments."""
     kernels = _ensure_gpu_kernels()
 
     out = cupy.full((tile_h, tile_w), fill, dtype=cupy.float64)
@@ -1327,8 +1344,9 @@ def _rasterize_tile_cupy(poly_geoms, poly_vals, tile_bounds, tile_h, tile_w,
     else:
         written = cupy.empty((0, 0), dtype=cupy.int8)
 
-    # 1. Polygons (per-tile rasterization is exact)
-    if poly_geoms:
+    # 1. Polygons (deserialize WKB, then scanline fill on GPU)
+    if poly_wkb:
+        poly_geoms, poly_vals = _polys_from_wkb(poly_wkb, poly_vals)
         poly_ids = list(range(len(poly_geoms)))
         edge_arrays = _extract_edges(
             poly_geoms, poly_vals, poly_ids, tile_bounds,
@@ -1389,12 +1407,13 @@ def _run_dask_cupy(geometries, values, bounds, height, width, fill, dtype,
     pt_rows, pt_cols, pt_vals = _extract_points(
         point_geoms, point_vals, bounds, height, width)
 
+    # Pre-serialize polygons to WKB (20x cheaper to pickle than shapely)
     if poly_geoms:
         poly_bboxes = _geometry_bboxes(poly_geoms)
+        poly_wkb = [g.wkb for g in poly_geoms]
     else:
         poly_bboxes = np.empty((0, 4), dtype=np.float64)
-    poly_geom_arr = np.asarray(poly_geoms, dtype=object) if poly_geoms \
-        else np.empty(0, dtype=object)
+        poly_wkb = []
     poly_val_arr = np.asarray(poly_vals, dtype=np.float64)
 
     tiles = _tile_grid(bounds, height, width, row_chunks, col_chunks)
@@ -1409,11 +1428,14 @@ def _run_dask_cupy(geometries, values, bounds, height, width, fill, dtype,
             tile_h = r_end - r_start
             tile_w = c_end - c_start
 
+            # Filter polygons by tile geo bbox
             pmask = _filter_geoms_to_tile(poly_bboxes, tile_bounds)
-            tile_poly_geoms = poly_geom_arr[pmask].tolist() \
-                if len(poly_geom_arr) > 0 else []
-            tile_poly_vals = poly_val_arr[pmask].tolist() \
-                if len(poly_val_arr) > 0 else []
+            if len(poly_wkb) > 0:
+                tile_wkb = [poly_wkb[k] for k in np.nonzero(pmask)[0]]
+                tile_vals = poly_val_arr[pmask].tolist()
+            else:
+                tile_wkb = []
+                tile_vals = []
 
             ts = _segments_for_tile(seg_r0, seg_c0, seg_r1, seg_c1,
                                     seg_vals,
@@ -1422,7 +1444,7 @@ def _run_dask_cupy(geometries, values, bounds, height, width, fill, dtype,
                                   r_start, r_end, c_start, c_end)
 
             delayed_tile = dask.delayed(_rasterize_tile_cupy)(
-                tile_poly_geoms, tile_poly_vals, tile_bounds,
+                tile_wkb, tile_vals, tile_bounds,
                 tile_h, tile_w, fill, dtype, all_touched, merge_mode,
                 *ts, *tp)
             blocks[i][j] = da.from_delayed(
