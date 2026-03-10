@@ -271,6 +271,7 @@ def _make_template(width=20, height=20, bounds=(0, 0, 100, 100)):
 
 
 def test_da_rasterize():
+    pytest.importorskip('shapely')
     from shapely.geometry import box
     from xrspatial.rasterize import rasterize
 
@@ -285,6 +286,7 @@ def test_da_rasterize():
 
 def test_da_rasterize_uses_coords():
     """Accessor output matches the template grid dimensions and coords."""
+    pytest.importorskip('shapely')
     from shapely.geometry import box
 
     template = _make_template(width=30, height=15, bounds=(0, 0, 60, 30))
@@ -300,6 +302,7 @@ def test_da_rasterize_uses_coords():
 
 
 def test_ds_rasterize():
+    pytest.importorskip('shapely')
     from shapely.geometry import box
     from xrspatial.rasterize import rasterize
 
