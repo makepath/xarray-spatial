@@ -37,19 +37,58 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# Merge mode constants
+# Merge functions (CPU, numba-jitted)
+#
+# Signature: merge_fn(old_val, new_val, is_first) -> float64
+#   old_val  : current pixel value (fill value on first write)
+#   new_val  : value from the geometry being rasterized
+#   is_first : 1 if first write to this pixel, 0 otherwise
 # ---------------------------------------------------------------------------
 
-_MERGE_LAST = 0
-_MERGE_FIRST = 1
-_MERGE_MAX = 2
-_MERGE_MIN = 3
-_MERGE_SUM = 4
-_MERGE_COUNT = 5
-_MERGE_MODES = {
-    'last': _MERGE_LAST, 'first': _MERGE_FIRST,
-    'max': _MERGE_MAX, 'min': _MERGE_MIN,
-    'sum': _MERGE_SUM, 'count': _MERGE_COUNT,
+@ngjit
+def _merge_last(old_val, new_val, is_first):
+    return new_val
+
+
+@ngjit
+def _merge_first(old_val, new_val, is_first):
+    if is_first:
+        return new_val
+    return old_val
+
+
+@ngjit
+def _merge_max(old_val, new_val, is_first):
+    if is_first or new_val > old_val:
+        return new_val
+    return old_val
+
+
+@ngjit
+def _merge_min(old_val, new_val, is_first):
+    if is_first or new_val < old_val:
+        return new_val
+    return old_val
+
+
+@ngjit
+def _merge_sum(old_val, new_val, is_first):
+    if is_first:
+        return new_val
+    return old_val + new_val
+
+
+@ngjit
+def _merge_count(old_val, new_val, is_first):
+    if is_first:
+        return 1.0
+    return old_val + 1.0
+
+
+_MERGE_FUNCTIONS = {
+    'last': _merge_last, 'first': _merge_first,
+    'max': _merge_max, 'min': _merge_min,
+    'sum': _merge_sum, 'count': _merge_count,
 }
 
 
@@ -58,39 +97,15 @@ _MERGE_MODES = {
 # ---------------------------------------------------------------------------
 
 @ngjit
-def _merge_pixel(out, written, r, c, val, mode):
-    """Write *val* into ``out[r, c]`` using the given merge strategy.
+def _apply_merge(out, written, r, c, val, merge_fn):
+    """Write *val* into ``out[r, c]`` using the given merge function.
 
     A separate ``written`` array (int8) tracks which pixels have been
-    touched, replacing the previous NaN-sentinel approach which failed
-    when the caller intentionally burned NaN values.
+    touched.
     """
-    if mode == 0:  # last -- unconditional overwrite, written not read
-        out[r, c] = val
-    elif mode == 1:  # first
-        if written[r, c] == 0:
-            out[r, c] = val
-            written[r, c] = 1
-    elif mode == 2:  # max
-        if written[r, c] == 0 or val > out[r, c]:
-            out[r, c] = val
-            written[r, c] = 1
-    elif mode == 3:  # min
-        if written[r, c] == 0 or val < out[r, c]:
-            out[r, c] = val
-            written[r, c] = 1
-    elif mode == 4:  # sum
-        if written[r, c] == 0:
-            out[r, c] = val
-            written[r, c] = 1
-        else:
-            out[r, c] = out[r, c] + val
-    else:  # count
-        if written[r, c] == 0:
-            out[r, c] = 1.0
-            written[r, c] = 1
-        else:
-            out[r, c] = out[r, c] + 1.0
+    is_first = np.int64(written[r, c] == 0)
+    out[r, c] = merge_fn(out[r, c], val, is_first)
+    written[r, c] = 1
 
 
 # ---------------------------------------------------------------------------
@@ -625,17 +640,17 @@ def _extract_lines_loop(geometries, values, bounds, height, width):
 # ---------------------------------------------------------------------------
 
 @ngjit
-def _burn_points_cpu(out, written, rows, cols, vals, mode):
+def _burn_points_cpu(out, written, rows, cols, vals, merge_fn):
     for i in range(len(rows)):
         r = rows[i]
         c = cols[i]
         if 0 <= r < out.shape[0] and 0 <= c < out.shape[1]:
-            _merge_pixel(out, written, r, c, vals[i], mode)
+            _apply_merge(out, written, r, c, vals[i], merge_fn)
 
 
 @ngjit
 def _burn_lines_cpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, vals,
-                    height, width, mode):
+                    height, width, merge_fn):
     for i in range(len(r0_arr)):
         r0 = r0_arr[i]
         c0 = c0_arr[i]
@@ -655,7 +670,7 @@ def _burn_lines_cpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, vals,
             r, c = r0, c0
             for _ in range(dr + 1):
                 if 0 <= r < height and 0 <= c < width:
-                    _merge_pixel(out, written, r, c, val, mode)
+                    _apply_merge(out, written, r, c, val, merge_fn)
                 if err >= 0:
                     c += sc
                     err -= dr
@@ -666,7 +681,7 @@ def _burn_lines_cpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, vals,
             r, c = r0, c0
             for _ in range(dc + 1):
                 if 0 <= r < height and 0 <= c < width:
-                    _merge_pixel(out, written, r, c, val, mode)
+                    _apply_merge(out, written, r, c, val, merge_fn)
                 if err >= 0:
                     r += sr
                     err -= dc
@@ -681,7 +696,7 @@ def _burn_lines_cpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, vals,
 @ngjit
 def _scanline_fill_cpu(out, written, edge_y_min, edge_y_max, edge_x_at_ymin,
                        edge_inv_slope, edge_value, edge_geom_id,
-                       height, width, mode):
+                       height, width, merge_fn):
     """Scanline fill with active-edge-list for O(active) work per row.
 
     Instead of scanning all edges up to the binary-search cutoff (which
@@ -759,23 +774,16 @@ def _scanline_fill_cpu(out, written, edge_y_min, edge_y_max, edge_x_at_ymin,
                 col_start = max(int(np.ceil(x_start)), 0)
                 col_end = min(int(np.floor(x_end)), width - 1)
                 for c in range(col_start, col_end + 1):
-                    _merge_pixel(out, written, row, c, val, mode)
+                    _apply_merge(out, written, row, c, val, merge_fn)
                 k += 2
             i = j
 
 
 def _run_numpy(geometries, values, bounds, height, width, fill, dtype,
-               all_touched, merge_mode):
+               all_touched, merge_fn):
     """NumPy backend for rasterize."""
     out = np.full((height, width), fill, dtype=np.float64)
-
-    # For non-'last' modes we need a written mask to track which pixels
-    # have been touched (replacing the old NaN-sentinel approach).
-    if merge_mode != _MERGE_LAST:
-        written = np.zeros((height, width), dtype=np.int8)
-    else:
-        # Dummy -- never indexed, but numba needs a typed array argument
-        written = np.empty((0, 0), dtype=np.int8)
+    written = np.zeros((height, width), dtype=np.int8)
 
     (poly_geoms, poly_vals, poly_ids), (line_geoms, line_vals), \
         (point_geoms, point_vals) = _classify_geometries(geometries, values)
@@ -786,20 +794,20 @@ def _run_numpy(geometries, values, bounds, height, width, fill, dtype,
     edge_arrays = _sort_edges(edge_arrays)
     if len(edge_arrays[0]) > 0:
         _scanline_fill_cpu(out, written, *edge_arrays, height, width,
-                           merge_mode)
+                           merge_fn)
 
     # 2. Lines
     r0, c0, r1, c1, lvals = _extract_line_segments(
         line_geoms, line_vals, bounds, height, width)
     if len(r0) > 0:
         _burn_lines_cpu(out, written, r0, c0, r1, c1, lvals, height, width,
-                        merge_mode)
+                        merge_fn)
 
     # 3. Points
     prows, pcols, pvals = _extract_points(
         point_geoms, point_vals, bounds, height, width)
     if len(prows) > 0:
-        _burn_points_cpu(out, written, prows, pcols, pvals, merge_mode)
+        _burn_points_cpu(out, written, prows, pcols, pvals, merge_fn)
 
     return out.astype(dtype)
 
@@ -809,56 +817,96 @@ def _run_numpy(geometries, values, bounds, height, width, fill, dtype,
 # level (~160ms + CUDA driver init even when not using GPU).
 # ---------------------------------------------------------------------------
 
-_gpu_kernels = None
+# ---------------------------------------------------------------------------
+# GPU merge functions -- @cuda.jit(device=True) equivalents of the CPU
+# merge functions above.  Defined lazily to avoid importing numba.cuda
+# at module level.
+# ---------------------------------------------------------------------------
+
+_gpu_merge_fns = None
 
 
-def _ensure_gpu_kernels():
-    """Compile CUDA kernels on first use and cache them."""
-    global _gpu_kernels
-    if _gpu_kernels is not None:
-        return _gpu_kernels
+def _get_gpu_merge_fns():
+    """Lazily define and cache built-in GPU merge device functions."""
+    global _gpu_merge_fns
+    if _gpu_merge_fns is not None:
+        return _gpu_merge_fns
 
     from numba import cuda
 
     @cuda.jit(device=True)
-    def _merge_pixel_gpu(out, written, r, c, val, mode):
-        if mode == 0:  # last
-            out[r, c] = val
-        elif mode == 1:  # first
-            if written[r, c] == 0:
-                out[r, c] = val
-                written[r, c] = 1
-        elif mode == 2:  # max
-            if written[r, c] == 0 or val > out[r, c]:
-                out[r, c] = val
-                written[r, c] = 1
-        elif mode == 3:  # min
-            if written[r, c] == 0 or val < out[r, c]:
-                out[r, c] = val
-                written[r, c] = 1
-        elif mode == 4:  # sum
-            if written[r, c] == 0:
-                out[r, c] = val
-                written[r, c] = 1
-            else:
-                out[r, c] = out[r, c] + val
-        else:  # count
-            if written[r, c] == 0:
-                out[r, c] = 1.0
-                written[r, c] = 1
-            else:
-                out[r, c] = out[r, c] + 1.0
+    def _merge_last_gpu(old_val, new_val, is_first):
+        return new_val
+
+    @cuda.jit(device=True)
+    def _merge_first_gpu(old_val, new_val, is_first):
+        if is_first:
+            return new_val
+        return old_val
+
+    @cuda.jit(device=True)
+    def _merge_max_gpu(old_val, new_val, is_first):
+        if is_first or new_val > old_val:
+            return new_val
+        return old_val
+
+    @cuda.jit(device=True)
+    def _merge_min_gpu(old_val, new_val, is_first):
+        if is_first or new_val < old_val:
+            return new_val
+        return old_val
+
+    @cuda.jit(device=True)
+    def _merge_sum_gpu(old_val, new_val, is_first):
+        if is_first:
+            return new_val
+        return old_val + new_val
+
+    @cuda.jit(device=True)
+    def _merge_count_gpu(old_val, new_val, is_first):
+        if is_first:
+            return 1.0
+        return old_val + 1.0
+
+    _gpu_merge_fns = {
+        'last': _merge_last_gpu, 'first': _merge_first_gpu,
+        'max': _merge_max_gpu, 'min': _merge_min_gpu,
+        'sum': _merge_sum_gpu, 'count': _merge_count_gpu,
+    }
+    return _gpu_merge_fns
+
+
+# ---------------------------------------------------------------------------
+# GPU kernels -- compiled per merge function and cached.
+# ---------------------------------------------------------------------------
+
+_gpu_kernel_cache = {}
+
+
+def _ensure_gpu_kernels(merge_fn):
+    """Compile CUDA kernels for the given merge device function and cache.
+
+    Each unique merge function produces a separate set of kernels because
+    CUDA kernels cannot accept function arguments -- the merge function
+    is captured by closure at compile time.
+    """
+    key = id(merge_fn)
+    if key in _gpu_kernel_cache:
+        return _gpu_kernel_cache[key]
+
+    from numba import cuda
+
+    @cuda.jit(device=True)
+    def _apply_merge_gpu(out, written, r, c, val):
+        is_first = np.int64(written[r, c] == 0)
+        out[r, c] = merge_fn(out[r, c], val, is_first)
+        written[r, c] = 1
 
     @cuda.jit
     def _scanline_fill_gpu(out, written, edge_y_min, edge_x_at_ymin,
                            edge_inv_slope, edge_value, edge_geom_id,
-                           row_ptr, col_idx, width, mode):
-        """CUDA kernel: one thread per raster row, CSR-indexed active edges.
-
-        Instead of binary-searching the sorted edge table and scanning
-        through dead edges, each thread reads its active edge list
-        directly from the precomputed CSR structure (row_ptr, col_idx).
-        """
+                           row_ptr, col_idx, width):
+        """CUDA kernel: one thread per raster row, CSR-indexed active edges."""
         row = cuda.grid(1)
         if row >= out.shape[0]:
             return
@@ -923,23 +971,23 @@ def _ensure_gpu_kernels():
                 if col_end >= width:
                     col_end = width - 1
                 for c in range(col_start, col_end + 1):
-                    _merge_pixel_gpu(out, written, row, c, val, mode)
+                    _apply_merge_gpu(out, written, row, c, val)
                 k += 2
             i = j
 
     @cuda.jit
-    def _burn_points_gpu(out, written, rows, cols, vals, n_points, mode):
+    def _burn_points_gpu(out, written, rows, cols, vals, n_points):
         i = cuda.grid(1)
         if i >= n_points:
             return
         r = rows[i]
         c = cols[i]
         if 0 <= r < out.shape[0] and 0 <= c < out.shape[1]:
-            _merge_pixel_gpu(out, written, r, c, vals[i], mode)
+            _apply_merge_gpu(out, written, r, c, vals[i])
 
     @cuda.jit
     def _burn_lines_gpu(out, written, r0_arr, c0_arr, r1_arr, c1_arr, vals,
-                        n_segs, height, width, mode):
+                        n_segs, height, width):
         i = cuda.grid(1)
         if i >= n_segs:
             return
@@ -963,7 +1011,7 @@ def _ensure_gpu_kernels():
             r, c = r0, c0
             for _ in range(dr + 1):
                 if 0 <= r < height and 0 <= c < width:
-                    _merge_pixel_gpu(out, written, r, c, val, mode)
+                    _apply_merge_gpu(out, written, r, c, val)
                 if err >= 0:
                     c += sc
                     err -= dr
@@ -974,19 +1022,20 @@ def _ensure_gpu_kernels():
             r, c = r0, c0
             for _ in range(dc + 1):
                 if 0 <= r < height and 0 <= c < width:
-                    _merge_pixel_gpu(out, written, r, c, val, mode)
+                    _apply_merge_gpu(out, written, r, c, val)
                 if err >= 0:
                     r += sr
                     err -= dc
                 c += sc
                 err += dr
 
-    _gpu_kernels = {
+    kernels = {
         'scanline_fill': _scanline_fill_gpu,
         'burn_points': _burn_points_gpu,
         'burn_lines': _burn_lines_gpu,
     }
-    return _gpu_kernels
+    _gpu_kernel_cache[key] = kernels
+    return kernels
 
 
 @ngjit
@@ -1030,15 +1079,12 @@ def _build_row_csr_numba(edge_y_min, edge_y_max, height):
 
 
 def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
-              all_touched, merge_mode):
+              all_touched, merge_fn):
     """CuPy backend for rasterize."""
-    kernels = _ensure_gpu_kernels()
+    kernels = _ensure_gpu_kernels(merge_fn)
 
     out = cupy.full((height, width), fill, dtype=cupy.float64)
-    if merge_mode != _MERGE_LAST:
-        written = cupy.zeros((height, width), dtype=cupy.int8)
-    else:
-        written = cupy.empty((0, 0), dtype=cupy.int8)
+    written = cupy.zeros((height, width), dtype=cupy.int8)
 
     (poly_geoms, poly_vals, poly_ids), (line_geoms, line_vals), \
         (point_geoms, point_vals) = _classify_geometries(geometries, values)
@@ -1067,7 +1113,7 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
         blocks = (height + tpb - 1) // tpb
         kernels['scanline_fill'][blocks, tpb](
             out, written, d_y_min, d_x_at_ymin, d_inv_slope,
-            d_value, d_geom_id, d_row_ptr, d_col_idx, width, merge_mode)
+            d_value, d_geom_id, d_row_ptr, d_col_idx, width)
 
     # 2. Lines
     r0, c0, r1, c1, lvals = _extract_line_segments(
@@ -1079,7 +1125,7 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
         kernels['burn_lines'][bpg, tpb](
             out, written, cupy.asarray(r0), cupy.asarray(c0),
             cupy.asarray(r1), cupy.asarray(c1),
-            cupy.asarray(lvals), n_segs, height, width, merge_mode)
+            cupy.asarray(lvals), n_segs, height, width)
 
     # 3. Points
     prows, pcols, pvals = _extract_points(
@@ -1090,7 +1136,7 @@ def _run_cupy(geometries, values, bounds, height, width, fill, dtype,
         bpg = (n_pts + tpb - 1) // tpb
         kernels['burn_points'][bpg, tpb](
             out, written, cupy.asarray(prows), cupy.asarray(pcols),
-            cupy.asarray(pvals), n_pts, merge_mode)
+            cupy.asarray(pvals), n_pts)
 
     return out.astype(dtype)
 
@@ -1225,7 +1271,7 @@ def _polys_from_wkb(wkb_list, vals):
 
 
 def _rasterize_tile_numpy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
-                          fill, dtype, all_touched, merge_mode,
+                          fill, dtype, all_touched, merge_fn,
                           seg_r0, seg_c0, seg_r1, seg_c1, seg_vals,
                           pt_rows, pt_cols, pt_vals):
     """Rasterize a single tile.
@@ -1235,11 +1281,7 @@ def _rasterize_tile_numpy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
     pixel coordinates.
     """
     out = np.full((tile_h, tile_w), fill, dtype=np.float64)
-
-    if merge_mode != _MERGE_LAST:
-        written = np.zeros((tile_h, tile_w), dtype=np.int8)
-    else:
-        written = np.empty((0, 0), dtype=np.int8)
+    written = np.zeros((tile_h, tile_w), dtype=np.int8)
 
     # 1. Polygons (deserialize WKB, then scanline fill)
     if poly_wkb:
@@ -1251,23 +1293,23 @@ def _rasterize_tile_numpy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
         edge_arrays = _sort_edges(edge_arrays)
         if len(edge_arrays[0]) > 0:
             _scanline_fill_cpu(out, written, *edge_arrays,
-                               tile_h, tile_w, merge_mode)
+                               tile_h, tile_w, merge_fn)
 
     # 2. Lines (tile-local segments, Bresenham with bounds check)
     if len(seg_r0) > 0:
         _burn_lines_cpu(out, written, seg_r0, seg_c0, seg_r1, seg_c1,
-                        seg_vals, tile_h, tile_w, merge_mode)
+                        seg_vals, tile_h, tile_w, merge_fn)
 
     # 3. Points (tile-local)
     if len(pt_rows) > 0:
         _burn_points_cpu(out, written, pt_rows, pt_cols, pt_vals,
-                         merge_mode)
+                         merge_fn)
 
     return out.astype(dtype)
 
 
 def _run_dask_numpy(geometries, values, bounds, height, width, fill, dtype,
-                    all_touched, merge_mode, row_chunks, col_chunks):
+                    all_touched, merge_fn, row_chunks, col_chunks):
     """Dask + NumPy backend: tile-based parallel rasterization."""
     import dask
     import dask.array as da
@@ -1322,7 +1364,7 @@ def _run_dask_numpy(geometries, values, bounds, height, width, fill, dtype,
 
             delayed_tile = dask.delayed(_rasterize_tile_numpy)(
                 tile_wkb, tile_vals, tile_bounds,
-                tile_h, tile_w, fill, dtype, all_touched, merge_mode,
+                tile_h, tile_w, fill, dtype, all_touched, merge_fn,
                 *ts, *tp)
             blocks[i][j] = da.from_delayed(
                 delayed_tile, shape=(tile_h, tile_w), dtype=dtype)
@@ -1332,17 +1374,14 @@ def _run_dask_numpy(geometries, values, bounds, height, width, fill, dtype,
 
 
 def _rasterize_tile_cupy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
-                         fill, dtype, all_touched, merge_mode,
+                         fill, dtype, all_touched, merge_fn,
                          seg_r0, seg_c0, seg_r1, seg_c1, seg_vals,
                          pt_rows, pt_cols, pt_vals):
     """GPU tile rasterization: polygons as WKB, lines/points as segments."""
-    kernels = _ensure_gpu_kernels()
+    kernels = _ensure_gpu_kernels(merge_fn)
 
     out = cupy.full((tile_h, tile_w), fill, dtype=cupy.float64)
-    if merge_mode != _MERGE_LAST:
-        written = cupy.zeros((tile_h, tile_w), dtype=cupy.int8)
-    else:
-        written = cupy.empty((0, 0), dtype=cupy.int8)
+    written = cupy.zeros((tile_h, tile_w), dtype=cupy.int8)
 
     # 1. Polygons (deserialize WKB, then scanline fill on GPU)
     if poly_wkb:
@@ -1365,7 +1404,7 @@ def _rasterize_tile_cupy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
                 cupy.asarray(edge_y_min), cupy.asarray(edge_x_at_ymin),
                 cupy.asarray(edge_inv_slope), cupy.asarray(edge_value),
                 cupy.asarray(edge_geom_id), cupy.asarray(row_ptr),
-                cupy.asarray(col_idx), tile_w, merge_mode)
+                cupy.asarray(col_idx), tile_w)
 
     # 2. Lines (tile-local segments, GPU Bresenham)
     if len(seg_r0) > 0:
@@ -1376,7 +1415,7 @@ def _rasterize_tile_cupy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
             out, written,
             cupy.asarray(seg_r0), cupy.asarray(seg_c0),
             cupy.asarray(seg_r1), cupy.asarray(seg_c1),
-            cupy.asarray(seg_vals), n_segs, tile_h, tile_w, merge_mode)
+            cupy.asarray(seg_vals), n_segs, tile_h, tile_w)
 
     # 3. Points (tile-local)
     if len(pt_rows) > 0:
@@ -1386,13 +1425,13 @@ def _rasterize_tile_cupy(poly_wkb, poly_vals, tile_bounds, tile_h, tile_w,
         kernels['burn_points'][bpg, tpb](
             out, written,
             cupy.asarray(pt_rows), cupy.asarray(pt_cols),
-            cupy.asarray(pt_vals), n_pts, merge_mode)
+            cupy.asarray(pt_vals), n_pts)
 
     return out.astype(dtype)
 
 
 def _run_dask_cupy(geometries, values, bounds, height, width, fill, dtype,
-                   all_touched, merge_mode, row_chunks, col_chunks):
+                   all_touched, merge_fn, row_chunks, col_chunks):
     """Dask + CuPy backend: tile-based parallel GPU rasterization."""
     import dask
     import dask.array as da
@@ -1445,7 +1484,7 @@ def _run_dask_cupy(geometries, values, bounds, height, width, fill, dtype,
 
             delayed_tile = dask.delayed(_rasterize_tile_cupy)(
                 tile_wkb, tile_vals, tile_bounds,
-                tile_h, tile_w, fill, dtype, all_touched, merge_mode,
+                tile_h, tile_w, fill, dtype, all_touched, merge_fn,
                 *ts, *tp)
             blocks[i][j] = da.from_delayed(
                 delayed_tile, shape=(tile_h, tile_w), dtype=dtype,
@@ -1558,7 +1597,7 @@ def rasterize(
     name: str = 'rasterize',
     resolution: Optional[Union[float, Tuple[float, float]]] = None,
     like: Optional[xr.DataArray] = None,
-    merge: str = 'last',
+    merge='last',
     chunks: Optional[Union[int, Tuple[int, int]]] = None,
 ) -> xr.DataArray:
     """Rasterize vector geometries into a 2D DataArray.
@@ -1612,14 +1651,28 @@ def rasterize(
     like : xr.DataArray, optional
         Template raster.  Width, height, bounds, and dtype are copied
         from this array (any can still be overridden explicitly).
-    merge : str, default 'last'
-        How to combine values when geometries overlap:
+    merge : str or callable, default 'last'
+        How to combine values when geometries overlap.
+
+        Built-in modes (pass as string):
 
         - ``'last'`` -- last geometry in input order wins
         - ``'first'`` -- first geometry wins
         - ``'max'`` / ``'min'`` -- keep the larger / smaller value
         - ``'sum'`` -- add values together
         - ``'count'`` -- count overlapping geometries
+
+        Custom merge function (pass a callable):
+
+        For CPU backends, pass a ``@ngjit``-decorated function.  For GPU
+        backends (``use_cuda=True``), pass a
+        ``@numba.cuda.jit(device=True)`` function.  Signature::
+
+            merge_fn(old_val, new_val, is_first) -> float64
+
+        - *old_val*: current pixel value (fill value on first write)
+        - *new_val*: value from the geometry being rasterized
+        - *is_first*: 1 on first write to this pixel, 0 otherwise
 
     chunks : int or (int, int), optional
         If given, use the dask backend and split the output raster into
@@ -1651,11 +1704,22 @@ def rasterize(
         >>> density = rasterize(gdf, width=100, height=100,
         ...                     column='pop', merge='sum', fill=0)
     """
-    # Validate merge mode
-    if merge not in _MERGE_MODES:
-        raise ValueError(
-            f"merge must be one of {set(_MERGE_MODES)}, got {merge!r}")
-    merge_mode = _MERGE_MODES[merge]
+    # Resolve merge: string -> built-in function, or pass callable through.
+    if callable(merge):
+        merge_fn = merge
+        # For GPU, the caller provides a @cuda.jit(device=True) function
+        # directly.  For CPU, a @ngjit function.
+        _merge_fn_gpu = merge  # same object for GPU path
+    elif isinstance(merge, str):
+        if merge not in _MERGE_FUNCTIONS:
+            raise ValueError(
+                f"merge must be one of {set(_MERGE_FUNCTIONS)} or a "
+                f"callable, got {merge!r}")
+        merge_fn = _MERGE_FUNCTIONS[merge]
+        _merge_fn_gpu = merge  # resolved lazily in GPU path by name
+    else:
+        raise TypeError(
+            f"merge must be a string or callable, got {type(merge).__name__}")
 
     # Extract defaults from template raster
     like_width = like_height = like_bounds = like_dtype = None
@@ -1712,33 +1776,38 @@ def rasterize(
     else:
         final_dtype = np.float64
 
+    # For GPU paths, resolve string merge names to GPU device functions.
+    if use_cuda:
+        if cupy is None:
+            raise ImportError(
+                "CuPy is required for use_cuda=True but is not installed")
+        if isinstance(_merge_fn_gpu, str):
+            gpu_fns = _get_gpu_merge_fns()
+            gpu_merge_fn = gpu_fns[_merge_fn_gpu]
+        else:
+            gpu_merge_fn = _merge_fn_gpu
+
     if chunks is not None:
         row_chunks, col_chunks = _normalize_chunks(
             chunks, final_height, final_width)
         if use_cuda:
-            if cupy is None:
-                raise ImportError(
-                    "CuPy is required for use_cuda=True but is not installed")
             out = _run_dask_cupy(
                 geom_list, value_list, final_bounds,
                 final_height, final_width, fill, final_dtype,
-                all_touched, merge_mode, row_chunks, col_chunks)
+                all_touched, gpu_merge_fn, row_chunks, col_chunks)
         else:
             out = _run_dask_numpy(
                 geom_list, value_list, final_bounds,
                 final_height, final_width, fill, final_dtype,
-                all_touched, merge_mode, row_chunks, col_chunks)
+                all_touched, merge_fn, row_chunks, col_chunks)
     elif use_cuda:
-        if cupy is None:
-            raise ImportError(
-                "CuPy is required for use_cuda=True but is not installed")
         out = _run_cupy(geom_list, value_list, final_bounds,
                         final_height, final_width, fill, final_dtype,
-                        all_touched, merge_mode)
+                        all_touched, gpu_merge_fn)
     else:
         out = _run_numpy(geom_list, value_list, final_bounds,
                          final_height, final_width, fill, final_dtype,
-                         all_touched, merge_mode)
+                         all_touched, merge_fn)
 
     # Build coordinates
     px = (xmax - xmin) / final_width

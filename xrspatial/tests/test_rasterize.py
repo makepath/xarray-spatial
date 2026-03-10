@@ -699,6 +699,201 @@ class TestKnownValues:
 
 
 # ---------------------------------------------------------------------------
+# Custom merge functions
+# ---------------------------------------------------------------------------
+
+class TestCustomMerge:
+    """Tests for user-supplied merge functions."""
+
+    def test_custom_merge_sum_matches_builtin(self):
+        """Custom sum function produces same result as built-in 'sum'."""
+        from xrspatial.utils import ngjit
+
+        @ngjit
+        def my_sum(old_val, new_val, is_first):
+            if is_first:
+                return new_val
+            return old_val + new_val
+
+        pairs = [(box(0, 0, 6, 6), 1.0), (box(4, 4, 10, 10), 2.0)]
+        builtin = rasterize(pairs, width=10, height=10,
+                            bounds=(0, 0, 10, 10), fill=0, merge='sum')
+        custom = rasterize(pairs, width=10, height=10,
+                           bounds=(0, 0, 10, 10), fill=0, merge=my_sum)
+        np.testing.assert_array_equal(builtin.values, custom.values)
+
+    def test_custom_merge_max_matches_builtin(self):
+        """Custom max function produces same result as built-in 'max'."""
+        from xrspatial.utils import ngjit
+
+        @ngjit
+        def my_max(old_val, new_val, is_first):
+            if is_first or new_val > old_val:
+                return new_val
+            return old_val
+
+        pairs = [(box(0, 0, 6, 6), 3.0), (box(4, 4, 10, 10), 7.0)]
+        builtin = rasterize(pairs, width=10, height=10,
+                            bounds=(0, 0, 10, 10), fill=0, merge='max')
+        custom = rasterize(pairs, width=10, height=10,
+                           bounds=(0, 0, 10, 10), fill=0, merge=my_max)
+        np.testing.assert_array_equal(builtin.values, custom.values)
+
+    def test_custom_merge_weighted_average(self):
+        """Custom function computing running average."""
+        from xrspatial.utils import ngjit
+
+        @ngjit
+        def avg(old_val, new_val, is_first):
+            if is_first:
+                return new_val
+            return (old_val + new_val) / 2.0
+
+        pairs = [(box(0, 0, 10, 10), 4.0), (box(0, 0, 10, 10), 8.0)]
+        result = rasterize(pairs, width=2, height=2,
+                           bounds=(0, 0, 10, 10), fill=0, merge=avg)
+        # (4.0 + 8.0) / 2 = 6.0
+        assert np.all(result.values == 6.0)
+
+    def test_custom_merge_with_lines(self):
+        """Custom merge works with line geometries."""
+        from xrspatial.utils import ngjit
+
+        @ngjit
+        def my_sum(old_val, new_val, is_first):
+            if is_first:
+                return new_val
+            return old_val + new_val
+
+        pairs = [
+            (LineString([(0.5, 5), (9.5, 5)]), 1.0),
+            (LineString([(5, 0.5), (5, 9.5)]), 1.0),
+        ]
+        result = rasterize(pairs, width=10, height=10,
+                           bounds=(0, 0, 10, 10), fill=0, merge=my_sum)
+        # Intersection pixel should be 2.0
+        assert result.values[5, 5] == 2.0
+
+    def test_custom_merge_with_points(self):
+        """Custom merge works with point geometries."""
+        from xrspatial.utils import ngjit
+
+        @ngjit
+        def my_sum(old_val, new_val, is_first):
+            if is_first:
+                return new_val
+            return old_val + new_val
+
+        pairs = [(Point(5.5, 5.5), 3.0), (Point(5.5, 5.5), 7.0)]
+        result = rasterize(pairs, width=10, height=10,
+                           bounds=(0, 0, 10, 10), fill=0, merge=my_sum)
+        # Same pixel written twice: 3 + 7 = 10
+        assert result.values[4, 5] == 10.0
+
+    def test_custom_merge_invalid_type_raises(self):
+        """Non-string, non-callable merge raises TypeError."""
+        with pytest.raises(TypeError):
+            rasterize([(box(0, 0, 5, 5), 1.0)], width=5, height=5,
+                       bounds=(0, 0, 5, 5), merge=42)
+
+    def test_custom_merge_invalid_string_raises(self):
+        """Unknown string merge mode raises ValueError."""
+        with pytest.raises(ValueError):
+            rasterize([(box(0, 0, 5, 5), 1.0)], width=5, height=5,
+                       bounds=(0, 0, 5, 5), merge='bogus')
+
+
+@skip_no_dask
+class TestCustomMergeDask:
+    """Custom merge functions with dask backends."""
+
+    def test_custom_merge_dask_matches_numpy(self):
+        """Custom function via dask produces same result as numpy."""
+        from xrspatial.utils import ngjit
+
+        @ngjit
+        def my_sum(old_val, new_val, is_first):
+            if is_first:
+                return new_val
+            return old_val + new_val
+
+        pairs = [(box(0, 0, 6, 6), 1.0), (box(4, 4, 10, 10), 2.0)]
+        np_result = rasterize(pairs, width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0, merge=my_sum)
+        dk_result = rasterize(pairs, width=10, height=10,
+                              bounds=(0, 0, 10, 10), fill=0,
+                              merge=my_sum, chunks=(5, 5))
+        np.testing.assert_array_equal(np_result.values, dk_result.values)
+
+    def test_custom_merge_dask_weighted_average(self):
+        """Custom averaging function works across tile boundaries."""
+        from xrspatial.utils import ngjit
+
+        @ngjit
+        def avg(old_val, new_val, is_first):
+            if is_first:
+                return new_val
+            return (old_val + new_val) / 2.0
+
+        pairs = [(box(0, 0, 10, 10), 4.0), (box(0, 0, 10, 10), 8.0)]
+        result = rasterize(pairs, width=10, height=10,
+                           bounds=(0, 0, 10, 10), fill=0,
+                           merge=avg, chunks=(5, 5))
+        assert np.all(result.values == 6.0)
+
+
+@skip_no_cuda
+class TestCustomMergeGPU:
+    """Custom merge functions with GPU backends."""
+
+    @staticmethod
+    def _to_numpy(da_result):
+        computed = da_result.compute() if hasattr(da_result, 'compute') \
+            else da_result
+        return cupy.asnumpy(computed.data)
+
+    def test_custom_gpu_merge_sum(self):
+        """Custom GPU merge function matches built-in sum."""
+        from numba import cuda as _cuda
+
+        @_cuda.jit(device=True)
+        def my_sum_gpu(old_val, new_val, is_first):
+            if is_first:
+                return new_val
+            return old_val + new_val
+
+        pairs = [(box(0, 0, 6, 6), 1.0), (box(4, 4, 10, 10), 2.0)]
+        builtin = rasterize(pairs, width=10, height=10,
+                            bounds=(0, 0, 10, 10), fill=0, merge='sum')
+        custom = rasterize(pairs, width=10, height=10,
+                           bounds=(0, 0, 10, 10), fill=0,
+                           merge=my_sum_gpu, use_cuda=True)
+        np.testing.assert_array_equal(
+            builtin.values, self._to_numpy(custom))
+
+    @skip_no_dask
+    def test_custom_gpu_merge_dask(self):
+        """Custom GPU merge function works with dask+cupy."""
+        from numba import cuda as _cuda
+
+        @_cuda.jit(device=True)
+        def my_sum_gpu(old_val, new_val, is_first):
+            if is_first:
+                return new_val
+            return old_val + new_val
+
+        pairs = [(box(0, 0, 6, 6), 1.0), (box(4, 4, 10, 10), 2.0)]
+        builtin = rasterize(pairs, width=10, height=10,
+                            bounds=(0, 0, 10, 10), fill=0, merge='sum')
+        custom = rasterize(pairs, width=10, height=10,
+                           bounds=(0, 0, 10, 10), fill=0,
+                           merge=my_sum_gpu, use_cuda=True,
+                           chunks=(5, 5))
+        np.testing.assert_array_equal(
+            builtin.values, self._to_numpy(custom))
+
+
+# ---------------------------------------------------------------------------
 # Dask + NumPy backend
 # ---------------------------------------------------------------------------
 
