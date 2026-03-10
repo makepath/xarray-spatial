@@ -654,6 +654,54 @@ def _extract_lines_loop(geometries, bounds, height, width):
 
 
 # ---------------------------------------------------------------------------
+# Polygon boundary segments (for all_touched mode)
+# ---------------------------------------------------------------------------
+
+def _extract_polygon_boundary_segments(geometries, geom_ids, bounds,
+                                       height, width):
+    """Extract polygon ring edges as line segments for Bresenham drawing.
+
+    Used by all_touched mode: drawing the boundary ensures every pixel
+    the polygon touches is burned, without expanding scanline edge
+    y-ranges (which breaks edge pairing).
+
+    Returns (r0, c0, r1, c1, geom_idx) where geom_idx maps each segment
+    back to the polygon's index in geom_ids (for props table lookup).
+    """
+    from shapely.geometry import LineString as _LS
+
+    boundary_lines = []
+    boundary_ids = []
+    for geom, gid in zip(geometries, geom_ids):
+        if geom is None or geom.is_empty:
+            continue
+        if geom.geom_type == 'Polygon':
+            parts = [geom]
+        elif geom.geom_type == 'MultiPolygon':
+            parts = list(geom.geoms)
+        else:
+            continue
+        for poly in parts:
+            boundary_lines.append(_LS(poly.exterior.coords))
+            boundary_ids.append(gid)
+            for interior in poly.interiors:
+                boundary_lines.append(_LS(interior.coords))
+                boundary_ids.append(gid)
+
+    if not boundary_lines:
+        return _EMPTY_LINES
+    # _extract_line_segments returns (r0, c0, r1, c1, seg_geom_idx) where
+    # seg_geom_idx indexes into boundary_lines.  We need to remap those
+    # indices to the original polygon geom_ids for the props table.
+    r0, c0, r1, c1, seg_idx = _extract_line_segments(
+        boundary_lines, bounds, height, width)
+    if len(r0) == 0:
+        return _EMPTY_LINES
+    id_arr = np.array(boundary_ids, dtype=np.int32)
+    return r0, c0, r1, c1, id_arr[seg_idx]
+
+
+# ---------------------------------------------------------------------------
 # CPU burn kernels (numba)
 # ---------------------------------------------------------------------------
 
@@ -786,7 +834,7 @@ def _scanline_fill_cpu(out, written, edge_y_min, edge_y_max, edge_x_at_ymin,
                 x_start = xs[k]
                 x_end = xs[k + 1]
                 col_start = max(int(np.ceil(x_start)), 0)
-                col_end = min(int(np.floor(x_end)), width - 1)
+                col_end = min(int(np.ceil(x_end)) - 1, width - 1)
                 for c in range(col_start, col_end + 1):
                     _apply_merge(out, written, row, c,
                                  geom_props[gid], merge_fn)
@@ -804,13 +852,25 @@ def _run_numpy(geometries, props_array, bounds, height, width, fill, dtype,
         (point_geoms, point_props) = _classify_geometries(
             geometries, props_array)
 
-    # 1. Polygons
+    # 1. Polygons -- always use normal edge ranges for scanline fill
+    #    (all_touched y-expansion breaks edge pairing, so we handle
+    #    all_touched by drawing polygon boundaries separately below).
     edge_arrays = _extract_edges(
-        poly_geoms, poly_ids, bounds, height, width, all_touched)
+        poly_geoms, poly_ids, bounds, height, width)
     edge_arrays = _sort_edges(edge_arrays)
     if len(edge_arrays[0]) > 0:
         _scanline_fill_cpu(out, written, *edge_arrays,
                            poly_props, height, width, merge_fn)
+
+    # 1b. all_touched: draw polygon boundaries via Bresenham so every
+    #     pixel the boundary passes through is burned.  This guarantees
+    #     all_touched is a superset of the normal fill.
+    if all_touched and poly_geoms:
+        br0, bc0, br1, bc1, bidx = _extract_polygon_boundary_segments(
+            poly_geoms, poly_ids, bounds, height, width)
+        if len(br0) > 0:
+            _burn_lines_cpu(out, written, br0, bc0, br1, bc1, bidx,
+                            poly_props, height, width, merge_fn)
 
     # 2. Lines
     r0, c0, r1, c1, line_idx = _extract_line_segments(
@@ -975,10 +1035,17 @@ def _ensure_gpu_kernels(merge_fn):
             while k + 1 < j:
                 x_start = xs[k]
                 x_end = xs[k + 1]
-                col_start = int(x_start + 0.999999)
+                # Proper ceil: int() truncates toward zero, so for
+                # positive fractions we add 1; for exact ints and
+                # negative fractions int() already rounds up.
+                ix = int(x_start)
+                col_start = ix + 1 if x_start > ix else ix
                 if col_start < 0:
                     col_start = 0
-                col_end = int(x_end)
+                # Half-open interval: ceil(x_end) - 1 excludes
+                # boundary pixels whose centers are outside.
+                ix_end = int(x_end)
+                col_end = ix_end if x_end > ix_end else ix_end - 1
                 if col_end >= width:
                     col_end = width - 1
                 for c in range(col_start, col_end + 1):
@@ -1104,9 +1171,9 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
         (point_geoms, point_props) = _classify_geometries(
             geometries, props_array)
 
-    # 1. Polygons
+    # 1. Polygons -- always use normal edge ranges (see _run_numpy comment)
     edge_arrays = _extract_edges(
-        poly_geoms, poly_ids, bounds, height, width, all_touched)
+        poly_geoms, poly_ids, bounds, height, width)
     edge_arrays = _sort_edges(edge_arrays)
     edge_y_min, edge_y_max, edge_x_at_ymin, edge_inv_slope, \
         edge_geom_id = edge_arrays
@@ -1129,6 +1196,20 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
         kernels['scanline_fill'][blocks, tpb](
             out, written, d_y_min, d_x_at_ymin, d_inv_slope,
             d_geom_id, d_geom_props, d_row_ptr, d_col_idx, width)
+
+    # 1b. all_touched: draw polygon boundaries via Bresenham (GPU)
+    if all_touched and poly_geoms:
+        br0, bc0, br1, bc1, bidx = _extract_polygon_boundary_segments(
+            poly_geoms, poly_ids, bounds, height, width)
+        if len(br0) > 0:
+            n_bsegs = len(br0)
+            tpb = 256
+            bpg = (n_bsegs + tpb - 1) // tpb
+            kernels['burn_lines'][bpg, tpb](
+                out, written, cupy.asarray(br0), cupy.asarray(bc0),
+                cupy.asarray(br1), cupy.asarray(bc1),
+                cupy.asarray(bidx), cupy.asarray(poly_props),
+                n_bsegs, height, width)
 
     # 2. Lines
     r0, c0, r1, c1, line_idx = _extract_line_segments(
@@ -1315,11 +1396,19 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, tile_bounds, tile_h,
         poly_ids = list(range(len(poly_geoms)))
         edge_arrays = _extract_edges(
             poly_geoms, poly_ids, tile_bounds,
-            tile_h, tile_w, all_touched)
+            tile_h, tile_w)
         edge_arrays = _sort_edges(edge_arrays)
         if len(edge_arrays[0]) > 0:
             _scanline_fill_cpu(out, written, *edge_arrays,
                                poly_props_2d, tile_h, tile_w, merge_fn)
+
+        # 1b. all_touched: draw polygon boundaries via Bresenham
+        if all_touched:
+            br0, bc0, br1, bc1, bidx = _extract_polygon_boundary_segments(
+                poly_geoms, poly_ids, tile_bounds, tile_h, tile_w)
+            if len(br0) > 0:
+                _burn_lines_cpu(out, written, br0, bc0, br1, bc1, bidx,
+                                poly_props_2d, tile_h, tile_w, merge_fn)
 
     # 2. Lines (tile-local segments, Bresenham with bounds check)
     if len(seg_r0) > 0:
@@ -1417,7 +1506,7 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, tile_bounds, tile_h,
         poly_ids = list(range(len(poly_geoms)))
         edge_arrays = _extract_edges(
             poly_geoms, poly_ids, tile_bounds,
-            tile_h, tile_w, all_touched)
+            tile_h, tile_w)
         edge_arrays = _sort_edges(edge_arrays)
         edge_y_min = edge_arrays[0]
         if len(edge_y_min) > 0:
@@ -1433,6 +1522,20 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, tile_bounds, tile_h,
                 cupy.asarray(edge_inv_slope), cupy.asarray(edge_geom_id),
                 cupy.asarray(poly_props_2d), cupy.asarray(row_ptr),
                 cupy.asarray(col_idx), tile_w)
+
+        # 1b. all_touched: draw polygon boundaries via Bresenham (GPU)
+        if all_touched:
+            br0, bc0, br1, bc1, bidx = _extract_polygon_boundary_segments(
+                poly_geoms, poly_ids, tile_bounds, tile_h, tile_w)
+            if len(br0) > 0:
+                n_bsegs = len(br0)
+                tpb_b = 256
+                bpg_b = (n_bsegs + tpb_b - 1) // tpb_b
+                kernels['burn_lines'][bpg_b, tpb_b](
+                    out, written, cupy.asarray(br0), cupy.asarray(bc0),
+                    cupy.asarray(br1), cupy.asarray(bc1),
+                    cupy.asarray(bidx), cupy.asarray(poly_props_2d),
+                    n_bsegs, tile_h, tile_w)
 
     # 2. Lines (tile-local segments, GPU Bresenham)
     if len(seg_r0) > 0:
