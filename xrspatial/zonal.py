@@ -584,12 +584,16 @@ def stats(
 
     Parameters
     ----------
-    zones : xr.DataArray
-        zones is a 2D xarray DataArray of numeric values.
-        A zone is all the cells in a raster that have the same value,
-        whether or not they are contiguous. The input `zones` raster defines
-        the shape, values, and locations of the zones. An integer field
-        in the input `zones` DataArray defines a zone.
+    zones : xr.DataArray, GeoDataFrame, or list of (geometry, value) pairs
+        Zone definitions. Can be:
+
+        - A 2D xarray DataArray of numeric zone IDs.
+        - A ``geopandas.GeoDataFrame`` (requires *column*).
+        - A list of ``(shapely geometry, zone_id)`` pairs.
+
+        When vector input is provided, ``rasterize()`` is called internally
+        using *values* as the template grid. Results depend on raster
+        resolution.
 
     values : xr.DataArray or xr.Dataset
         values is a 2D xarray DataArray of numeric values (integers or floats).
@@ -627,6 +631,15 @@ def stats(
         Format of returned data. If `zones` and `values` numpy backed xarray DataArray,
         allowed values are 'pandas.DataFrame', and 'xarray.DataArray'.
         Otherwise, only 'pandas.DataFrame' is supported.
+
+    column : str, optional
+        Column name in the GeoDataFrame that contains zone IDs.
+        Required when *zones* is a GeoDataFrame; must not be set
+        for list-of-pairs or DataArray input.
+
+    rasterize_kw : dict, optional
+        Extra keyword arguments forwarded to ``rasterize()`` when
+        *zones* is vector input (e.g. ``{'all_touched': True}``).
 
     Returns
     -------
@@ -1123,12 +1136,15 @@ def crosstab(
 
     Parameters
     ----------
-    zones : xr.DataArray
-        2D data array of integers or floats.
-        A zone is all the cells in a raster that have the same value,
-        whether or not they are contiguous. The input `zones` raster defines
-        the shape, values, and locations of the zones. An unique field
-        in the zone input is specified to define the zones.
+    zones : xr.DataArray, GeoDataFrame, or list of (geometry, value) pairs
+        Zone definitions. Can be:
+
+        - A 2D xarray DataArray of integers or floats.
+        - A ``geopandas.GeoDataFrame`` (requires *column*).
+        - A list of ``(shapely geometry, zone_id)`` pairs.
+
+        When vector input is provided, ``rasterize()`` is called internally
+        using *values* as the template grid.
 
     values : xr.DataArray
         2D or 3D data array of integers or floats.
@@ -1157,6 +1173,14 @@ def crosstab(
         Nodata value in `values` raster.
         Cells with `nodata` do not belong to any zone,
         and thus excluded from calculation.
+
+    column : str, optional
+        Column name in the GeoDataFrame that contains zone IDs.
+        Required when *zones* is a GeoDataFrame.
+
+    rasterize_kw : dict, optional
+        Extra keyword arguments forwarded to ``rasterize()`` when
+        *zones* is vector input (e.g. ``{'all_touched': True}``).
 
     Returns
     -------
@@ -1443,12 +1467,16 @@ def apply(
 
     Parameters
     ----------
-    zones : xr.DataArray
-        zones.values is a 2d array of integers. A zone is all the cells
-        in a raster that have the same value, whether or not they are
-        contiguous. The input zone layer defines the shape, values, and
-        locations of the zones. An integer field in the zone input is
-        specified to define the zones.
+    zones : xr.DataArray, GeoDataFrame, or list of (geometry, value) pairs
+        Zone definitions. Can be:
+
+        - A 2D xarray DataArray of integers.
+        - A ``geopandas.GeoDataFrame`` (requires *column*).
+        - A list of ``(shapely geometry, zone_id)`` pairs.
+
+        When vector input is provided, ``rasterize()`` is called internally
+        using *values* as the template grid. Use ``rasterize_kw={'dtype': int}``
+        to produce integer zones (required by ``apply``).
 
     values : xr.DataArray
         values.data is either a 2D or 3D array of integers or floats.
@@ -1461,6 +1489,14 @@ def apply(
         Cells with `nodata` does not belong to any zone,
         and thus excluded from calculation.
         Set to None to apply func to all cells.
+
+    column : str, optional
+        Column name in the GeoDataFrame that contains zone IDs.
+        Required when *zones* is a GeoDataFrame.
+
+    rasterize_kw : dict, optional
+        Extra keyword arguments forwarded to ``rasterize()`` when
+        *zones* is vector input.
 
     Returns
     -------
@@ -2234,8 +2270,9 @@ def crop(
 
     Parameters
     ----------
-    zones : xr.DataArray
-        Input zone raster.
+    zones : xr.DataArray, GeoDataFrame, or list of (geometry, value) pairs
+        Zone definitions. Can be a 2D DataArray, a GeoDataFrame
+        (requires *column*), or a list of ``(geometry, zone_id)`` pairs.
 
     values: xr.DataArray
         Input values raster.
@@ -2245,6 +2282,14 @@ def crop(
 
     name: str, default='crop'
         Output xr.DataArray.name property.
+
+    column : str, optional
+        Column name in the GeoDataFrame that contains zone IDs.
+        Required when *zones* is a GeoDataFrame.
+
+    rasterize_kw : dict, optional
+        Extra keyword arguments forwarded to ``rasterize()`` when
+        *zones* is vector input.
 
     Returns
     -------
