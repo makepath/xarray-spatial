@@ -463,9 +463,9 @@ def _extract_points_loop(geometries, bounds, height, width):
             col = int(np.floor((pt.x - xmin) / px))
             row = int(np.floor((ymax - pt.y) / py))
             if 0 <= row < height and 0 <= col < width:
-                all_rows.append(np.int32(row))
-                all_cols.append(np.int32(col))
-                all_idx.append(np.int32(gi))
+                all_rows.append(row)
+                all_cols.append(col)
+                all_idx.append(gi)
 
     if not all_rows:
         return (np.empty(0, np.int32), np.empty(0, np.int32),
@@ -659,11 +659,11 @@ def _extract_lines_loop(geometries, bounds, height, width):
                 c0 = min(max(int(np.floor((cx0 - xmin) / px)), 0), width - 1)
                 r1 = min(max(int(np.floor((ymax - cy1) / py)), 0), height - 1)
                 c1 = min(max(int(np.floor((cx1 - xmin) / px)), 0), width - 1)
-                all_r0.append(np.int32(r0))
-                all_c0.append(np.int32(c0))
-                all_r1.append(np.int32(r1))
-                all_c1.append(np.int32(c1))
-                all_idx.append(np.int32(gi))
+                all_r0.append(r0)
+                all_c0.append(c0)
+                all_r1.append(r1)
+                all_c1.append(c1)
+                all_idx.append(gi)
 
     if not all_r0:
         return _EMPTY_LINES
@@ -1217,6 +1217,9 @@ def _build_row_csr_numba(edge_y_min, edge_y_max, height):
     are already computed so no redundant counting occurs.
     """
     n_edges = len(edge_y_min)
+    if n_edges == 0:
+        return (np.zeros(height + 1, dtype=np.int32),
+                np.empty(0, dtype=np.int32))
 
     # Pass 1: difference-array counting — O(n_edges + height)
     # diff[r] += 1 when an edge starts, diff[r+1] -= 1 when it ends.
@@ -1497,7 +1500,7 @@ def _rasterize_tile_numpy(poly_wkb, poly_props_2d, tile_bounds, tile_h,
     # 1. Polygons (deserialize WKB, then scanline fill)
     if poly_wkb:
         poly_geoms = _polys_from_wkb(poly_wkb)
-        poly_ids = list(range(len(poly_geoms)))
+        poly_ids = np.arange(len(poly_geoms), dtype=np.int32)
         edge_arrays = _extract_edges(
             poly_geoms, poly_ids, tile_bounds,
             tile_h, tile_w)
@@ -1544,13 +1547,14 @@ def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
     pt_rows, pt_cols, pt_geom_idx = _extract_points(
         point_geoms, bounds, height, width)
 
-    # Pre-serialize polygons to WKB (20x cheaper to pickle than shapely)
+    # Pre-serialize polygons to WKB (20x cheaper to pickle than shapely).
+    # Store as object array for single-pass boolean indexing per tile.
     if poly_geoms:
         poly_bboxes = _geometry_bboxes(poly_geoms)
-        poly_wkb = [g.wkb for g in poly_geoms]
+        poly_wkb_arr = np.array([g.wkb for g in poly_geoms], dtype=object)
     else:
         poly_bboxes = np.empty((0, 4), dtype=np.float64)
-        poly_wkb = []
+        poly_wkb_arr = np.empty(0, dtype=object)
 
     # Pre-compute segment bboxes once (avoids redundant min/max per tile)
     seg_bboxes = _segment_bboxes(seg_r0, seg_c0, seg_r1, seg_c1)
@@ -1567,11 +1571,10 @@ def _run_dask_numpy(geometries, props_array, bounds, height, width, fill,
             tile_h = r_end - r_start
             tile_w = c_end - c_start
 
-            # Filter polygons by tile geo bbox
+            # Filter polygons by tile geo bbox (single boolean index)
             pmask = _filter_geoms_to_tile(poly_bboxes, tile_bounds)
-            if len(poly_wkb) > 0:
-                pidx = np.nonzero(pmask)[0]
-                tile_wkb = [poly_wkb[k] for k in pidx]
+            if len(poly_wkb_arr) > 0:
+                tile_wkb = poly_wkb_arr[pmask].tolist()
                 tile_poly_props = poly_props[pmask]
             else:
                 tile_wkb = []
@@ -1617,7 +1620,7 @@ def _rasterize_tile_cupy(poly_wkb, poly_props_2d, tile_bounds, tile_h,
     # 1. Polygons (deserialize WKB, then scanline fill on GPU)
     if poly_wkb:
         poly_geoms = _polys_from_wkb(poly_wkb)
-        poly_ids = list(range(len(poly_geoms)))
+        poly_ids = np.arange(len(poly_geoms), dtype=np.int32)
         edge_arrays = _extract_edges(
             poly_geoms, poly_ids, tile_bounds,
             tile_h, tile_w)
@@ -1693,13 +1696,13 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
     pt_rows, pt_cols, pt_geom_idx = _extract_points(
         point_geoms, bounds, height, width)
 
-    # Pre-serialize polygons to WKB (20x cheaper to pickle than shapely)
+    # Pre-serialize polygons to WKB (20x cheaper to pickle than shapely).
     if poly_geoms:
         poly_bboxes = _geometry_bboxes(poly_geoms)
-        poly_wkb = [g.wkb for g in poly_geoms]
+        poly_wkb_arr = np.array([g.wkb for g in poly_geoms], dtype=object)
     else:
         poly_bboxes = np.empty((0, 4), dtype=np.float64)
-        poly_wkb = []
+        poly_wkb_arr = np.empty(0, dtype=object)
 
     # Pre-compute segment bboxes once (avoids redundant min/max per tile)
     seg_bboxes = _segment_bboxes(seg_r0, seg_c0, seg_r1, seg_c1)
@@ -1721,11 +1724,10 @@ def _run_dask_cupy(geometries, props_array, bounds, height, width, fill,
             tile_h = r_end - r_start
             tile_w = c_end - c_start
 
-            # Filter polygons by tile geo bbox
+            # Filter polygons by tile geo bbox (single boolean index)
             pmask = _filter_geoms_to_tile(poly_bboxes, tile_bounds)
-            if len(poly_wkb) > 0:
-                pidx = np.nonzero(pmask)[0]
-                tile_wkb = [poly_wkb[k] for k in pidx]
+            if len(poly_wkb_arr) > 0:
+                tile_wkb = poly_wkb_arr[pmask].tolist()
                 tile_poly_props = poly_props[pmask]
             else:
                 tile_wkb = []
@@ -1774,25 +1776,22 @@ def _parse_input(geometries, column=None, columns=None):
     try:
         import geopandas as gpd
         if isinstance(geometries, gpd.GeoDataFrame):
-            if columns is not None:
-                # Multi-column mode
-                geom_list = geometries.geometry.tolist()
-                props_array = geometries[columns].values.astype(np.float64)
-                total_bounds = geometries.total_bounds
-                return geom_list, props_array, tuple(total_bounds)
-            if column is None:
-                numeric_cols = geometries.select_dtypes(
-                    include='number').columns
-                if len(numeric_cols) == 0:
-                    raise ValueError(
-                        "GeoDataFrame has no numeric columns to burn. "
-                        "Pass a 'column' name explicitly.")
-                column = numeric_cols[0]
             geom_list = geometries.geometry.tolist()
-            vals = geometries[column].values.astype(np.float64)
-            props_array = vals.reshape(-1, 1)  # (N, 1)
-            total_bounds = geometries.total_bounds
-            return geom_list, props_array, tuple(total_bounds)
+            total_bounds = tuple(geometries.total_bounds)
+            if columns is not None:
+                props_array = geometries[columns].values.astype(np.float64)
+            else:
+                if column is None:
+                    numeric_cols = geometries.select_dtypes(
+                        include='number').columns
+                    if len(numeric_cols) == 0:
+                        raise ValueError(
+                            "GeoDataFrame has no numeric columns to burn. "
+                            "Pass a 'column' name explicitly.")
+                    column = numeric_cols[0]
+                props_array = geometries[column].values.astype(
+                    np.float64).reshape(-1, 1)
+            return geom_list, props_array, total_bounds
     except ImportError:
         pass
 
