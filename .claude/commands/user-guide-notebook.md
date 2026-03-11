@@ -13,9 +13,10 @@ Every user guide notebook follows this cell sequence:
 
 ```
  0  [markdown]  # Title (short, opinionated, ties to a real use case)
- 1  [markdown]  ### What you'll build (summary + preview image + nav links)
- 2  [markdown]  One-liner about the imports
- 3  [code    ]  Imports
+ 1  [markdown]  Alert box(es) (1-3, mixed severity, see GIS alert boxes below)
+ 2  [markdown]  ### What you'll build (summary + eye-candy preview image + nav links)
+ 3  [markdown]  One-liner about the imports
+ 4  [code    ]  Imports
  4  [markdown]  ## Data section header
  5  [code    ]  Generate or load data (ONE call, reused everywhere)
  6  [markdown]  Brief description of the raw data
@@ -102,14 +103,59 @@ Add extras (e.g. `hsv_to_rgb`) only when needed.
 3. Short and direct. Technical but not sterile.
 4. Opening cell: tie the notebook to a real-world use case. Keep it grounded, not
    dramatic. Mention the topic and why it matters, skip intensity.
-5. "What you'll build" cell: one sentence of what they'll do, a preview image
-   (`images/filename.png`), and anchor links to each `##` section.
+5. "What you'll build" cell: one sentence of what they'll do, an eye-candy
+   preview image (`images/filename.png`), and anchor links to each `##` section.
+   The preview should be the most visually striking output from the notebook.
+   Generate it by running the relevant code with `matplotlib.use('Agg')` and
+   `fig.savefig('examples/user_guide/images/name.png', bbox_inches='tight', dpi=120)`.
 6. Use lists for readability when there are 3+ parallel items.
 7. Section intros: 2-4 sentences max. Link to a real external reference if one
    exists. End with a short note on what the upcoming plot shows.
 8. Bonus/fun sections: frame them as "just for fun" or "extra credit", separate
    from the main narrative.
 9. References section at the end with real URLs, no filler.
+
+---
+
+## GIS alert boxes
+
+Every notebook gets 1-3 HTML alert boxes covering GIS caveats relevant to the
+tools being explored. Use a mix of severity levels so the reader can quickly
+tell a gotcha from a tip. Place them in a single markdown cell right after the
+title and before "What you'll build".
+
+Use Jupyter's built-in alert styling:
+
+```html
+<div class="alert alert-block alert-warning">
+<b>Short label.</b> Concise explanation of the caveat. Keep it practical,
+not a legal disclaimer.
+</div>
+```
+
+Alert types:
+- `alert-warning` (yellow): caveats, gotchas, assumptions that can bite you
+- `alert-info` (blue): tips, suggestions, "you might also want to look at X"
+- `alert-danger` (red): things that will silently give wrong results
+
+Common GIS topics to flag (include whichever apply to the notebook's tools):
+
+- **Map projection**: tools that measure distance or area on a raster assume
+  the coordinate system is appropriate. If coords are in degrees (lat/lon),
+  Euclidean distances will be in degrees. Mention `GREAT_CIRCLE` metric or
+  recommend reprojecting to a local CRS in meters first.
+- **2D vs 3D distance**: raster proximity is flat. It ignores terrain relief.
+  Point to `xrspatial.surface_distance` for terrain-following distance.
+- **Resolution and units**: cell size affects results. Slope in degrees depends
+  on the ratio of elevation units to cell-spacing units. If elevation is in
+  meters but coords are in degrees, pass an appropriate `zfactor`.
+- **Edge effects**: convolution-based tools (slope, curvature, hillshade) lose
+  data at raster edges. Mention `boundary="nearest"` or similar padding.
+- **Coordinate order**: xrspatial expects `dims=['y', 'x']` with y as rows.
+  Transposed data will silently produce wrong results.
+
+Write the alert text in the same direct, non-AI style as the rest of the
+notebook. Run it through `/humanizer` like everything else.
 
 ---
 
@@ -130,9 +176,10 @@ When refactoring an existing notebook:
 3. Consolidate data generation to a single call.
 4. Add legends to all overlay plots.
 5. Fix any red/green color pairings.
-6. Restructure cells to match the section pattern above.
-7. Run all markdown through `/humanizer`.
-8. Verify the notebook executes: `jupyter nbconvert --execute`.
+6. Add GIS alert boxes for relevant caveats (projection, units, edge effects).
+7. Restructure cells to match the section pattern above.
+8. Run all markdown through `/humanizer`.
+9. Verify the notebook executes: `jupyter nbconvert --execute`.
 
 ---
 
@@ -143,5 +190,6 @@ When creating from scratch:
 1. Pick a topic and a real-world angle for the opening.
 2. Write the full cell sequence following the structure above.
 3. Generate a preview image and save to `images/`.
-4. Run all markdown through `/humanizer`.
-5. Verify the notebook executes: `jupyter nbconvert --execute`.
+4. Add GIS alert boxes for relevant caveats (projection, units, edge effects).
+5. Run all markdown through `/humanizer`.
+6. Verify the notebook executes: `jupyter nbconvert --execute`.
