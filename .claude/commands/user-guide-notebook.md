@@ -12,7 +12,7 @@ If a notebook path is given, refactor it. Otherwise create a new one.
 Every user guide notebook follows this cell sequence:
 
 ```
- 0  [markdown]  # Title (short, opinionated, ties to a real use case)
+ 0  [markdown]  # Title + subtitle (see title format below)
  1  [markdown]  ### What you'll build (summary + eye-candy preview image + nav links)
  2  [markdown]  One-liner about the imports
  3  [code    ]  Imports
@@ -102,8 +102,14 @@ Add extras (e.g. `hsv_to_rgb`) only when needed.
 1. **Run all markdown cells and code comments through `/humanizer`.**
 2. Never use em dashes (`--`, `---`, or the unicode character).
 3. Short and direct. Technical but not sterile.
-4. Opening cell: tie the notebook to a real-world use case. Keep it grounded, not
-   dramatic. Mention the topic and why it matters, skip intensity.
+4. Opening cell has a title and subtitle:
+   - **Title** (h1): `Xarray-Spatial {parent module}: {list a few tools covered}`.
+     Examples: `Xarray-Spatial Surface: Slope, aspect, and curvature`,
+     `Xarray-Spatial Proximity: Distance, allocation, and direction`,
+     `Xarray-Spatial Focal: Mean, TPI, focal stats, and hotspots`.
+   - **Subtitle** (plain text below the title): 2-3 sentences tying the tools to a
+     real-world use case. Keep it grounded, not dramatic. Mention the topic and why
+     it matters, skip intensity.
 5. "What you'll build" cell: an ordered list summarizing the steps/sections the
    reader will work through, an eye-candy preview image (`images/filename.png`),
    and anchor links to each `##` section. The preview should be the most visually
