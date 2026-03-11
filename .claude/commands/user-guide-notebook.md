@@ -13,10 +13,9 @@ Every user guide notebook follows this cell sequence:
 
 ```
  0  [markdown]  # Title (short, opinionated, ties to a real use case)
- 1  [markdown]  Alert box(es) (1-3, mixed severity, see GIS alert boxes below)
- 2  [markdown]  ### What you'll build (summary + eye-candy preview image + nav links)
- 3  [markdown]  One-liner about the imports
- 4  [code    ]  Imports
+ 1  [markdown]  ### What you'll build (summary + eye-candy preview image + nav links)
+ 2  [markdown]  One-liner about the imports
+ 3  [code    ]  Imports
  4  [markdown]  ## Data section header
  5  [code    ]  Generate or load data (ONE call, reused everywhere)
  6  [markdown]  Brief description of the raw data
@@ -121,8 +120,9 @@ Add extras (e.g. `hsv_to_rgb`) only when needed.
 
 Every notebook gets 1-3 HTML alert boxes covering GIS caveats relevant to the
 tools being explored. Use a mix of severity levels so the reader can quickly
-tell a gotcha from a tip. Place them in a single markdown cell right after the
-title and before "What you'll build".
+tell a gotcha from a tip. Place each alert in its own markdown cell right
+before the section it's most relevant to, so the reader encounters the caveat
+when it actually matters. Don't cluster them all at the top.
 
 Use Jupyter's built-in alert styling:
 
