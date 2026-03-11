@@ -104,10 +104,11 @@ Add extras (e.g. `hsv_to_rgb`) only when needed.
 3. Short and direct. Technical but not sterile.
 4. Opening cell: tie the notebook to a real-world use case. Keep it grounded, not
    dramatic. Mention the topic and why it matters, skip intensity.
-5. "What you'll build" cell: one sentence of what they'll do, an eye-candy
-   preview image (`images/filename.png`), and anchor links to each `##` section.
-   The preview should be the most visually striking output from the notebook.
-   Generate it by running the relevant code with `matplotlib.use('Agg')` and
+5. "What you'll build" cell: an ordered list summarizing the steps/sections the
+   reader will work through, an eye-candy preview image (`images/filename.png`),
+   and anchor links to each `##` section. The preview should be the most visually
+   striking output from the notebook. Generate it by running the relevant code
+   with `matplotlib.use('Agg')` and
    `fig.savefig('examples/user_guide/images/name.png', bbox_inches='tight', dpi=120)`.
 6. Use lists for readability when there are 3+ parallel items.
 7. Section intros: 2-4 sentences max. Link to a real external reference if one
