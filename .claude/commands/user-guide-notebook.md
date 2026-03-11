@@ -36,6 +36,8 @@ Each analysis gets exactly this:
    include a legend.
 3. **Markdown result description** (optional, 1-2 sentences): only if the output
    needs explanation.
+4. **Alert box** (optional): a GIS caveat relevant to the tool just shown, if
+   there is one worth flagging that the section didn't already cover.
 
 ---
 
@@ -118,11 +120,13 @@ Add extras (e.g. `hsv_to_rgb`) only when needed.
 
 ## GIS alert boxes
 
-Every notebook gets 1-3 HTML alert boxes covering GIS caveats relevant to the
-tools being explored. Use a mix of severity levels so the reader can quickly
-tell a gotcha from a tip. Place each alert in its own markdown cell right
-before the section it's most relevant to, so the reader encounters the caveat
-when it actually matters. Don't cluster them all at the top.
+After writing each section, evaluate whether it needs a GIS caveat the reader
+should know *now that they've seen the tool in action*. If so, add an alert box
+as the last cell of that section (after the code output and any result
+description). Not every section needs one. Skip the alert if the section's
+prose or code already covers the point. The goal is to catch gotchas the reader
+might hit when applying the tool to their own data, not to repeat what was just
+demonstrated.
 
 Use Jupyter's built-in alert styling:
 
@@ -138,21 +142,18 @@ Alert types:
 - `alert-info` (blue): tips, suggestions, "you might also want to look at X"
 - `alert-danger` (red): things that will silently give wrong results
 
-Common GIS topics to flag (include whichever apply to the notebook's tools):
+Common GIS topics worth flagging (only when relevant and not already covered):
 
-- **Map projection**: tools that measure distance or area on a raster assume
-  the coordinate system is appropriate. If coords are in degrees (lat/lon),
-  Euclidean distances will be in degrees. Mention `GREAT_CIRCLE` metric or
-  recommend reprojecting to a local CRS in meters first.
-- **2D vs 3D distance**: raster proximity is flat. It ignores terrain relief.
+- **Map projection**: Euclidean tools on lat/lon coords give results in degrees.
+  Mention `GREAT_CIRCLE` or recommend reprojecting to meters.
+- **2D vs 3D distance**: raster proximity ignores terrain relief.
   Point to `xrspatial.surface_distance` for terrain-following distance.
-- **Resolution and units**: cell size affects results. Slope in degrees depends
-  on the ratio of elevation units to cell-spacing units. If elevation is in
-  meters but coords are in degrees, pass an appropriate `zfactor`.
-- **Edge effects**: convolution-based tools (slope, curvature, hillshade) lose
-  data at raster edges. Mention `boundary="nearest"` or similar padding.
+- **Resolution and units**: cell size affects results. Slope depends on the
+  ratio of elevation units to cell-spacing units.
+- **Edge effects**: convolution-based tools lose data at raster edges.
+  Mention `boundary="nearest"` or similar padding.
 - **Coordinate order**: xrspatial expects `dims=['y', 'x']` with y as rows.
-  Transposed data will silently produce wrong results.
+  Transposed data silently produces wrong results.
 
 Write the alert text in the same direct, non-AI style as the rest of the
 notebook. Run it through `/humanizer` like everything else.
