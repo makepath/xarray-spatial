@@ -248,12 +248,15 @@ def _extract_edges_vectorized(geometries, geom_ids, bounds,
     # Geometry id for each edge
     edge_ids = ring_ids[coord_ring_idx[start_idx]]
 
-    # Convert to pixel space (reuse arrays through the pipeline to
-    # cut peak memory from ~12 temporaries to ~6).
-    sr = (ymax - coords[start_idx, 1]) / py
-    sc = (coords[start_idx, 0] - xmin) / px
-    er = (ymax - coords[end_idx, 1]) / py
-    ec = (coords[end_idx, 0] - xmin) / px
+    # Convert to pixel space with half-pixel offset so that integer
+    # positions correspond to pixel *centers* (not edges).  Without
+    # this shift the scanline fill samples at pixel boundaries, which
+    # causes an off-by-one asymmetry: the top/left edges of the
+    # raster lose a row/column compared to the bottom/right.
+    sr = (ymax - coords[start_idx, 1]) / py - 0.5
+    sc = (coords[start_idx, 0] - xmin) / px - 0.5
+    er = (ymax - coords[end_idx, 1]) / py - 0.5
+    ec = (coords[end_idx, 0] - xmin) / px - 0.5
 
     # Drop horizontal edges (filter in-place)
     not_horiz = sr != er
@@ -350,8 +353,8 @@ def _extract_edges_loop(geometries, geom_ids, bounds, height, width,
     pos = 0
 
     for coords, gid in ring_data:
-        row = (ymax - coords[:, 1]) / py
-        col = (coords[:, 0] - xmin) / px
+        row = (ymax - coords[:, 1]) / py - 0.5
+        col = (coords[:, 0] - xmin) / px - 0.5
         n = len(row) - 1
         for i in range(n):
             r0, c0 = row[i], col[i]
