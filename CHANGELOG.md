@@ -2,6 +2,28 @@
 -----------
 
 
+### Version 0.9.2 - 2026-03-13
+
+#### New features
+- Vector rasterize function for polygons, lines, and points (#989) (#990)
+- preview() for memory-safe raster downsampling (#987)
+- D-inf and MFD stream ordering and link segmentation (#983) (#984)
+- Zonal functions accept vector zones directly (#999)
+- Dask backends for rasterize() (#997)
+
+#### Bug fixes and improvements
+- Fix rasterize accuracy: GPU ceil, half-open fill, all_touched pairing (#995) (#996)
+- Fix scanline row gaps, speed up rasterize, add resolution/like/merge params (#991)
+- Rasterization fixes (#992)
+- Fix cupy failures in balanced_allocation and corridor (#985)
+- Refactor preview to avoid rechunking (#988)
+- Replace datashader with matplotlib in user guide notebooks (#1002)
+- Refactor user guide notebooks 10-31 to standard structure (#1003)
+- Water/land classification example in GLCM notebook (#994)
+- Source/reference column in README feature matrix (#977) (#978)
+- Small notebook fixes
+
+
 ### Version 0.9.1 - 2026-03-04
 
 #### New Features
