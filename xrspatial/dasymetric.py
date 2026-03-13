@@ -280,7 +280,9 @@ def _disaggregate_limiting_numpy(zones, weight, values_dict, nodata_zone,
         pixel_class[weight_arr > b] = i + 1
 
     if density_caps is None:
-        density_caps = [np.inf] * n_classes
+        # Class 0 captures zero-weight (uninhabitable) pixels, so its cap
+        # must be 0 to prevent population landing on water/parks/etc.
+        density_caps = [0.0] + [np.inf] * (n_classes - 1)
 
     result = np.full(zones_arr.shape, np.nan, dtype=np.float64)
 
@@ -301,11 +303,15 @@ def _disaggregate_limiting_numpy(zones, weight, values_dict, nodata_zone,
             if remaining <= 0:
                 break
 
-        # distribute any leftover evenly across all zone pixels
+        # distribute any leftover to habitable pixels only (cap > 0)
         if remaining > 0:
-            n_total = int(zmask.sum())
-            if n_total > 0:
-                result[zmask] += remaining / n_total
+            overflow_mask = zmask.copy()
+            for cls in range(n_classes):
+                if density_caps[cls] <= 0:
+                    overflow_mask &= ~(pixel_class == cls)
+            n_overflow = int(overflow_mask.sum())
+            if n_overflow > 0:
+                result[overflow_mask] += remaining / n_overflow
 
     return result
 
@@ -320,6 +326,8 @@ def disaggregate(
     weight: xr.DataArray,
     method: str = 'weighted',
     nodata_zone: Union[int, None] = None,
+    class_breaks: Union[tuple, None] = None,
+    density_caps: Union[list, None] = None,
     name: str = 'disaggregate',
 ) -> xr.DataArray:
     """Redistribute zone-level values onto a raster using ancillary weights.
@@ -348,6 +356,16 @@ def disaggregate(
           density caps (numpy-only).
     nodata_zone : int or None, default None
         Zone ID to treat as no-data (output NaN).
+    class_breaks : tuple of float or None, default None
+        Only used when ``method='limiting_variable'``.  Thresholds that
+        split weight values into classes.  For example ``(0.0,)`` creates
+        two classes: zero-weight and nonzero-weight.  Defaults to
+        ``(0.0,)`` if None.
+    density_caps : list of float or None, default None
+        Only used when ``method='limiting_variable'``.  Maximum density
+        (value per pixel) for each class.  Must have ``len(class_breaks)+1``
+        entries.  If None, the first class (zero-weight pixels) gets
+        cap 0 and all others get unlimited capacity.
     name : str, default ``'disaggregate'``
         Name for the output DataArray.
 
@@ -412,8 +430,10 @@ def disaggregate(
             raise NotImplementedError(
                 "method='limiting_variable' is not supported for cupy arrays"
             )
+        lv_breaks = class_breaks if class_breaks is not None else (0.0,)
         result_data = _disaggregate_limiting_numpy(
             zones.data, weight.data, values_dict, nodata_zone,
+            class_breaks=lv_breaks, density_caps=density_caps,
         )
         return xr.DataArray(
             result_data, dims=zones.dims, coords=zones.coords,

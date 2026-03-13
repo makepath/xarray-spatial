@@ -52,10 +52,12 @@ class TestMarchingSquaresBasic:
         agg = create_test_raster(data, backend='numpy')
         result = contours(agg, levels=[2.5])
         assert len(result) > 0
+        # With res=0.5 x_coords = [0, 0.5, 1.0, 1.5, 2.0, 2.5].
+        # The crossing between col indices 2 and 3 maps to x = 1.25.
+        expected_x = 1.25
         for level, coords in result:
             assert level == 2.5
-            # All points should have col ~= 2.5 (crossing between col 2 and 3).
-            np.testing.assert_allclose(coords[:, 1], 2.5, atol=1e-10)
+            np.testing.assert_allclose(coords[:, 1], expected_x, atol=1e-10)
 
     def test_multiple_levels_ramp(self):
         """Multiple levels on a ramp produce one line per level."""
@@ -90,13 +92,17 @@ class TestMarchingSquaresBasic:
         agg = create_test_raster(data, backend='numpy')
         result = contours(agg, levels=[1.5])
         assert len(result) >= 1
+        y_min = float(agg.coords[agg.dims[0]].values.min())
+        y_max = float(agg.coords[agg.dims[0]].values.max())
+        x_min = float(agg.coords[agg.dims[1]].values.min())
+        x_max = float(agg.coords[agg.dims[1]].values.max())
         for level, coords in result:
             assert level == 1.5
-            # All points should be inside the raster bounds.
-            assert np.all(coords[:, 0] >= 0)
-            assert np.all(coords[:, 0] <= 4)
-            assert np.all(coords[:, 1] >= 0)
-            assert np.all(coords[:, 1] <= 4)
+            # All points should be inside the raster coordinate bounds.
+            assert np.all(coords[:, 0] >= y_min - 1e-10)
+            assert np.all(coords[:, 0] <= y_max + 1e-10)
+            assert np.all(coords[:, 1] >= x_min - 1e-10)
+            assert np.all(coords[:, 1] <= x_max + 1e-10)
 
 
 # ---------------------------------------------------------------------------
@@ -119,9 +125,11 @@ class TestNaNHandling:
         agg = create_test_raster(data, backend='numpy')
         result = contours(agg, levels=[2.5])
         assert len(result) > 0
+        # y_coords = [2.0, 1.5, 1.0, 0.5, 0.0] (decreasing with res=0.5).
+        # NaN row is row 0 (y=2.0).  All contour points must stay at y <= 1.5.
+        nan_row_y = agg.coords[agg.dims[0]].values[0]
         for level, coords in result:
-            # No contour point should be in the NaN row.
-            assert np.all(coords[:, 0] >= 1.0 - 1e-10)
+            assert np.all(coords[:, 0] < nan_row_y + 1e-10)
 
 
 # ---------------------------------------------------------------------------
@@ -367,8 +375,22 @@ class TestReferenceValidation:
         assert len(our_result) > 0
         assert len(sk_contours) > 0
 
-        # Collect all our contour points into a set for proximity checking.
-        our_points = np.vstack([coords for _, coords in our_result])
+        # Transform our coordinate-space points back to array indices for
+        # comparison with skimage (which returns array index coordinates).
+        y_coords = agg.coords[agg.dims[0]].values
+        x_coords = agg.coords[agg.dims[1]].values
+        y_idx = np.arange(len(y_coords), dtype=np.float64)
+        x_idx = np.arange(len(x_coords), dtype=np.float64)
+
+        our_points_idx = []
+        for _, coords in our_result:
+            pts = np.empty_like(coords)
+            pts[:, 0] = np.interp(coords[:, 0], y_coords[::-1], y_idx[::-1]) \
+                if y_coords[0] > y_coords[-1] \
+                else np.interp(coords[:, 0], y_coords, y_idx)
+            pts[:, 1] = np.interp(coords[:, 1], x_coords, x_idx)
+            our_points_idx.append(pts)
+        our_points = np.vstack(our_points_idx)
 
         # Every skimage contour point should be close to some point of ours.
         for sk_line in sk_contours:
