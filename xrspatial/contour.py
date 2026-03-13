@@ -546,9 +546,10 @@ def contours(
 
     return_type : str, default "numpy"
         Output format.  ``"numpy"`` returns a list of ``(level, coords)``
-        tuples where *coords* is an Nx2 array of ``(row, col)``
-        coordinates.  ``"geopandas"`` returns a GeoDataFrame with
-        ``level`` and ``geometry`` columns (requires geopandas/shapely).
+        tuples where *coords* is an Nx2 array of ``(y, x)`` coordinates
+        in the DataArray's coordinate space.  ``"geopandas"`` returns a
+        GeoDataFrame with ``level`` and ``geometry`` columns (requires
+        geopandas/shapely).
 
     Returns
     -------
@@ -607,6 +608,20 @@ def contours(
         dask_cupy_func=_contours_dask_cupy,
     )
     results = mapper(agg)(agg.data, levels)
+
+    # Transform from array indices to the DataArray's coordinate values.
+    y_coords = agg.coords[agg.dims[0]].values
+    x_coords = agg.coords[agg.dims[1]].values
+    y_idx = np.arange(len(y_coords), dtype=np.float64)
+    x_idx = np.arange(len(x_coords), dtype=np.float64)
+
+    transformed = []
+    for level, coords in results:
+        out = np.empty_like(coords)
+        out[:, 0] = np.interp(coords[:, 0], y_idx, y_coords)
+        out[:, 1] = np.interp(coords[:, 1], x_idx, x_coords)
+        transformed.append((level, out))
+    results = transformed
 
     if return_type == "numpy":
         return results

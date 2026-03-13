@@ -156,8 +156,8 @@ def draw_contours():
             fill_cmap = "gist_earth"
         # Use matplotlib's contourf for fills (our contour lines overlay on top)
         cf = ax.contourf(
-            elev_vals, levels=levels_list, cmap=fill_cmap,
-            origin="lower", alpha=0.35, extend="both",
+            xs, ys, elev_vals, levels=levels_list, cmap=fill_cmap,
+            alpha=0.35, extend="both",
         )
         fill_artists.extend(cf.collections)
 
@@ -252,16 +252,24 @@ ax.tick_params(colors="white")
 for spine in ax.spines.values():
     spine.set_color("white")
 
+# Map the image extent to the DataArray's coordinate space so that
+# contour coordinates (which are in coordinate space) align correctly.
+xs = elevation.coords["x"].values
+ys = elevation.coords["y"].values
+img_extent = [xs[0], xs[-1], ys[0], ys[-1]]
+
 # Hillshade layer
 hillshade_img = ax.imshow(
     hillshade_vals, cmap="gray", origin="lower",
     aspect="equal", interpolation="bilinear", alpha=1.0,
+    extent=img_extent,
 )
 
 # Terrain colour layer
 terrain_img = ax.imshow(
     elev_vals, cmap="gist_earth", origin="lower",
     aspect="equal", interpolation="bilinear", alpha=0.4,
+    extent=img_extent,
 )
 
 # Elevation readout under cursor
@@ -287,12 +295,18 @@ marker_positions: list[tuple[float, float]] = []  # (col, row)
 
 # -- Event handlers ------------------------------------------------------------
 
+def _coord_to_pixel(xdata, ydata):
+    """Convert coordinate-space position to nearest pixel indices."""
+    col = int(round(np.interp(xdata, xs, np.arange(len(xs)))))
+    row = int(round(np.interp(ydata, ys, np.arange(len(ys)))))
+    return row, col
+
+
 def on_click(event):
     """Left-click: add contour at that elevation. Right-click: remove nearest."""
     if event.inaxes != ax:
         return
-    col = int(round(event.xdata))
-    row = int(round(event.ydata))
+    row, col = _coord_to_pixel(event.xdata, event.ydata)
     if not (0 <= row < GRID_H and 0 <= col < GRID_W):
         return
 
@@ -304,7 +318,7 @@ def on_click(event):
         snapped = round(elev / 10) * 10
         if snapped not in custom_levels:
             custom_levels.append(snapped)
-            marker_positions.append((col, row))
+            marker_positions.append((event.xdata, event.ydata))
             print(f"  Added contour at elevation {snapped:.0f} "
                   f"(clicked {elev:.1f} at pixel {row}, {col})")
             _update_markers()
@@ -353,8 +367,7 @@ def on_motion(event):
         elev_text.set_text("")
         fig.canvas.draw_idle()
         return
-    col = int(round(event.xdata))
-    row = int(round(event.ydata))
+    row, col = _coord_to_pixel(event.xdata, event.ydata)
     if 0 <= row < GRID_H and 0 <= col < GRID_W:
         e = elev_vals[row, col]
         elev_text.set_text(f"elev: {e:.1f} m  ({row}, {col})")
