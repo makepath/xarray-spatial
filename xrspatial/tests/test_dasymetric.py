@@ -196,6 +196,68 @@ class TestLimitingVariable:
             total = np.nansum(data[zones == zid])
             assert total == pytest.approx(zval, rel=1e-10)
 
+    def test_zero_weight_pixels_get_zero(self):
+        """Zero-weight pixels must receive zero population, not absorb it."""
+        zones_data = np.array([
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+            [3, 3, 3, 3],
+        ], dtype=np.float64)
+        weight_data = np.array([
+            [0.0, 1.0, 1.0, 1.0],
+            [1.0, 1.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0, 0.0],
+        ], dtype=np.float64)
+        zones = create_test_raster(zones_data, backend='numpy')
+        weight = create_test_raster(weight_data, backend='numpy')
+        values = {1: 100.0, 2: 200.0, 3: 30.0}
+
+        result = disaggregate(zones, values, weight,
+                              method='limiting_variable')
+        data = result.values
+
+        # zero-weight pixels must be zero
+        assert data[0, 0] == pytest.approx(0.0)  # zone 1 zero-weight
+        assert data[1, 2] == pytest.approx(0.0)  # zone 2 zero-weight
+        assert data[2, 3] == pytest.approx(0.0)  # zone 3 zero-weight
+
+        # nonzero-weight pixels must receive population
+        assert data[0, 1] > 0  # zone 1 habitable
+        assert data[0, 2] > 0  # zone 2 habitable
+        assert data[2, 0] > 0  # zone 3 habitable
+
+        # conservation
+        for zid, zval in values.items():
+            total = np.nansum(data[zones_data == zid])
+            assert total == pytest.approx(zval, rel=1e-10)
+
+    def test_custom_density_caps(self):
+        """Custom density caps should limit per-pixel allocation."""
+        zones_data = np.array([[1, 1, 1, 1]], dtype=np.float64)
+        # class 0: weight <= 0  (1 pixel)
+        # class 1: weight > 0   (3 pixels)
+        weight_data = np.array([[0.0, 1.0, 2.0, 3.0]], dtype=np.float64)
+        zones = create_test_raster(zones_data, backend='numpy')
+        weight = create_test_raster(weight_data, backend='numpy')
+
+        # cap class 1 at 10 per pixel -> 3 pixels * 10 = 30 max
+        # zone value = 100 -> 30 allocated, 70 leftover -> 70/3 added
+        result = disaggregate(zones, {1: 100.0}, weight,
+                              method='limiting_variable',
+                              class_breaks=(0.0,),
+                              density_caps=[0.0, 10.0])
+        data = result.values
+
+        # zero-weight pixel gets 0
+        assert data[0, 0] == pytest.approx(0.0)
+        # class 1 pixels: 10 + 70/3 each
+        expected = 10.0 + 70.0 / 3.0
+        assert data[0, 1] == pytest.approx(expected)
+        assert data[0, 2] == pytest.approx(expected)
+        assert data[0, 3] == pytest.approx(expected)
+        # conservation
+        assert np.nansum(data) == pytest.approx(100.0)
+
     @pytest.mark.skipif(not has_dask_array(), reason="dask not available")
     def test_raises_for_dask(self, simple_zones_data, simple_weight_data,
                              simple_values):
