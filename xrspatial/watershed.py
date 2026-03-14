@@ -93,40 +93,45 @@ def _code_to_offset_py(code):
 # =====================================================================
 
 @ngjit
-def _watershed_cpu(flow_dir, labels, h, w):
+def _watershed_cpu(flow_dir, labels, state, h, w):
     """Downstream tracing with path compression for watershed.
 
-    ``labels`` is pre-initialised: pour points >= 0, NaN for nodata,
-    -1 for unresolved.  On return every reachable cell has the label
-    of its pour point, unreachable cells are NaN.
+    Uses a separate ``state`` array to track cell status, so that
+    pour-point labels can be any float value (including negative).
+
+    State values: 0=nodata, 1=unresolved, 2=in-trace, 3=resolved.
+    On return every reachable cell has state 3 and the label of its
+    pour point; unreachable cells have state 0 and NaN.
     """
     path_r = np.empty(h * w, dtype=np.int64)
     path_c = np.empty(h * w, dtype=np.int64)
 
     for r in range(h):
         for c in range(w):
-            if labels[r, c] != -1.0:
-                continue  # already resolved or NaN
+            if state[r, c] != 1:
+                continue  # already resolved, nodata, or in-trace
 
             # Trace downstream, collecting path
             path_len = 0
             cr, cc = r, c
             found_label = np.nan
+            found = False
 
             while True:
-                lbl = labels[cr, cc]
-                if lbl >= 0.0:
-                    # Hit a labeled cell (pour point or previously resolved)
-                    found_label = lbl
+                s = state[cr, cc]
+                if s == 3:
+                    # Hit a resolved cell (pour point or previously resolved)
+                    found_label = labels[cr, cc]
+                    found = True
                     break
-                if lbl != -1.0:
-                    # NaN or in-trace marker (-2) → cycle or dead end
+                if s != 1:
+                    # nodata (0) or in-trace (2) → cycle or dead end
                     break
 
                 path_r[path_len] = cr
                 path_c[path_len] = cc
                 path_len += 1
-                labels[cr, cc] = -2.0  # in-trace marker
+                state[cr, cc] = 2  # in-trace marker
 
                 v = flow_dir[cr, cc]
                 if v != v:  # NaN
@@ -141,7 +146,12 @@ def _watershed_cpu(flow_dir, labels, h, w):
 
             # Assign label to entire traced path
             for i in range(path_len):
-                labels[path_r[i], path_c[i]] = found_label
+                if found:
+                    labels[path_r[i], path_c[i]] = found_label
+                    state[path_r[i], path_c[i]] = 3
+                else:
+                    labels[path_r[i], path_c[i]] = np.nan
+                    state[path_r[i], path_c[i]] = 0
 
     return labels
 
@@ -278,61 +288,72 @@ def _watershed_tile_kernel(flow_dir, h, w, pour_points,
                            exit_tl, exit_tr, exit_bl, exit_br):
     """Seeded downstream tracing for a single tile.
 
-    Labels are initialised from pour_points and exit labels (resolved
-    labels of the destination cell in adjacent tiles).  Downstream
-    tracing with path compression resolves as many cells as possible
-    within the tile.
+    Uses a separate state array so pour-point labels can be any float
+    value (including negative).  State: 0=nodata, 1=unresolved,
+    2=in-trace, 3=resolved.
     """
     labels = np.empty((h, w), dtype=np.float64)
+    state = np.empty((h, w), dtype=np.int8)
 
-    # Initialise labels
+    # Initialise labels and state
     for r in range(h):
         for c in range(w):
             v = flow_dir[r, c]
             if v != v:  # NaN
                 labels[r, c] = np.nan
+                state[r, c] = 0
                 continue
             pp = pour_points[r, c]
             if pp == pp:  # not NaN → pour point
                 labels[r, c] = pp
+                state[r, c] = 3
                 continue
-            labels[r, c] = -1.0  # unresolved
+            labels[r, c] = np.nan
+            state[r, c] = 1  # unresolved
 
     # Apply exit labels to boundary cells that flow OUT of tile
     # Top row: cells flowing north
     for c in range(w):
-        if labels[0, c] == -1.0:
+        if state[0, c] == 1:
             el = exit_top[c]
-            if el == el and el >= 0.0:  # not NaN and resolved
+            if el == el:  # not NaN → resolved
                 labels[0, c] = el
+                state[0, c] = 3
     # Bottom row
     for c in range(w):
-        if labels[h - 1, c] == -1.0:
+        if state[h - 1, c] == 1:
             el = exit_bottom[c]
-            if el == el and el >= 0.0:
+            if el == el:
                 labels[h - 1, c] = el
+                state[h - 1, c] = 3
     # Left column
     for r in range(h):
-        if labels[r, 0] == -1.0:
+        if state[r, 0] == 1:
             el = exit_left[r]
-            if el == el and el >= 0.0:
+            if el == el:
                 labels[r, 0] = el
+                state[r, 0] = 3
     # Right column
     for r in range(h):
-        if labels[r, w - 1] == -1.0:
+        if state[r, w - 1] == 1:
             el = exit_right[r]
-            if el == el and el >= 0.0:
+            if el == el:
                 labels[r, w - 1] = el
+                state[r, w - 1] = 3
 
     # Corners
-    if labels[0, 0] == -1.0 and exit_tl == exit_tl and exit_tl >= 0.0:
+    if state[0, 0] == 1 and exit_tl == exit_tl:
         labels[0, 0] = exit_tl
-    if labels[0, w - 1] == -1.0 and exit_tr == exit_tr and exit_tr >= 0.0:
+        state[0, 0] = 3
+    if state[0, w - 1] == 1 and exit_tr == exit_tr:
         labels[0, w - 1] = exit_tr
-    if labels[h - 1, 0] == -1.0 and exit_bl == exit_bl and exit_bl >= 0.0:
+        state[0, w - 1] = 3
+    if state[h - 1, 0] == 1 and exit_bl == exit_bl:
         labels[h - 1, 0] = exit_bl
-    if labels[h - 1, w - 1] == -1.0 and exit_br == exit_br and exit_br >= 0.0:
+        state[h - 1, 0] = 3
+    if state[h - 1, w - 1] == 1 and exit_br == exit_br:
         labels[h - 1, w - 1] = exit_br
+        state[h - 1, w - 1] = 3
 
     # Downstream tracing with path compression
     path_r = np.empty(h * w, dtype=np.int64)
@@ -340,25 +361,28 @@ def _watershed_tile_kernel(flow_dir, h, w, pour_points,
 
     for r in range(h):
         for c in range(w):
-            if labels[r, c] != -1.0:
+            if state[r, c] != 1:
                 continue
 
             path_len = 0
             cr, cc = r, c
             found_label = np.nan
+            found = False
+            exit_tile = False
 
             while True:
-                lbl = labels[cr, cc]
-                if lbl >= 0.0:
-                    found_label = lbl
+                s = state[cr, cc]
+                if s == 3:
+                    found_label = labels[cr, cc]
+                    found = True
                     break
-                if lbl != -1.0:
+                if s != 1:
                     break
 
                 path_r[path_len] = cr
                 path_c[path_len] = cc
                 path_len += 1
-                labels[cr, cc] = -2.0
+                state[cr, cc] = 2
 
                 v = flow_dir[cr, cc]
                 if v != v:
@@ -368,13 +392,20 @@ def _watershed_tile_kernel(flow_dir, h, w, pour_points,
                     break
                 nr, nc = cr + dy, cc + dx
                 if nr < 0 or nr >= h or nc < 0 or nc >= w:
-                    # Exits tile — leave as unresolved (-1)
-                    found_label = -1.0
+                    # Exits tile — leave as unresolved
+                    exit_tile = True
                     break
                 cr, cc = nr, nc
 
             for i in range(path_len):
-                labels[path_r[i], path_c[i]] = found_label
+                if found:
+                    labels[path_r[i], path_c[i]] = found_label
+                    state[path_r[i], path_c[i]] = 3
+                elif exit_tile:
+                    state[path_r[i], path_c[i]] = 1  # still unresolved
+                else:
+                    labels[path_r[i], path_c[i]] = np.nan
+                    state[path_r[i], path_c[i]] = 0  # dead end
 
     return labels
 
@@ -701,9 +732,6 @@ def _assemble_watershed(flow_dir_da, pour_points_da,
             h, w,
             np.asarray(pp_block, dtype=np.float64),
             *exits)
-        # After convergence, any remaining unresolved cells → NaN
-        result = np.where((result == -1.0) | (result == -2.0),
-                          np.nan, result)
         return result
 
     return da.map_blocks(
@@ -742,29 +770,29 @@ def _watershed_tile_cupy(flow_dir_data, pour_points_data,
     # Inject exit labels at boundary cells where active (state==1)
     # and exit label is resolved (not NaN, >= 0).
     exit_top_cp = cp.asarray(exit_top)
-    m = (state[0, :] == 1) & ~cp.isnan(exit_top_cp) & (exit_top_cp >= 0)
+    m = (state[0, :] == 1) & ~cp.isnan(exit_top_cp)
     labels[0, :] = cp.where(m, exit_top_cp, labels[0, :])
     state[0, :] = cp.where(m, 2, state[0, :])
 
     exit_bot_cp = cp.asarray(exit_bottom)
-    m = (state[H - 1, :] == 1) & ~cp.isnan(exit_bot_cp) & (exit_bot_cp >= 0)
+    m = (state[H - 1, :] == 1) & ~cp.isnan(exit_bot_cp)
     labels[H - 1, :] = cp.where(m, exit_bot_cp, labels[H - 1, :])
     state[H - 1, :] = cp.where(m, 2, state[H - 1, :])
 
     exit_left_cp = cp.asarray(exit_left)
-    m = (state[:, 0] == 1) & ~cp.isnan(exit_left_cp) & (exit_left_cp >= 0)
+    m = (state[:, 0] == 1) & ~cp.isnan(exit_left_cp)
     labels[:, 0] = cp.where(m, exit_left_cp, labels[:, 0])
     state[:, 0] = cp.where(m, 2, state[:, 0])
 
     exit_right_cp = cp.asarray(exit_right)
-    m = (state[:, W - 1] == 1) & ~cp.isnan(exit_right_cp) & (exit_right_cp >= 0)
+    m = (state[:, W - 1] == 1) & ~cp.isnan(exit_right_cp)
     labels[:, W - 1] = cp.where(m, exit_right_cp, labels[:, W - 1])
     state[:, W - 1] = cp.where(m, 2, state[:, W - 1])
 
     # Corner exit labels
     for r, c, val in [(0, 0, exit_tl), (0, W - 1, exit_tr),
                        (H - 1, 0, exit_bl), (H - 1, W - 1, exit_br)]:
-        if val == val and val >= 0 and int(state[r, c]) == 1:
+        if val == val and int(state[r, c]) == 1:
             labels[r, c] = val
             state[r, c] = 2
 
@@ -938,16 +966,20 @@ def watershed(flow_dir: xr.DataArray,
         fd = data.astype(np.float64)
         pp = np.asarray(pp_data, dtype=np.float64)
         h, w = fd.shape
-        # Init labels: pour points get their value, NaN flow_dir → NaN,
-        # others → -1
-        labels = np.full((h, w), -1.0, dtype=np.float64)
+        # Init labels and state: pour points → resolved (state 3),
+        # NaN flow_dir → nodata (state 0), others → unresolved (state 1)
+        labels = np.full((h, w), np.nan, dtype=np.float64)
+        state = np.zeros((h, w), dtype=np.int8)
         for r in range(h):
             for c in range(w):
                 if fd[r, c] != fd[r, c]:  # NaN
-                    labels[r, c] = np.nan
+                    pass  # state 0, label NaN
                 elif pp[r, c] == pp[r, c]:  # not NaN → pour point
                     labels[r, c] = pp[r, c]
-        out = _watershed_cpu(fd, labels, h, w)
+                    state[r, c] = 3
+                else:
+                    state[r, c] = 1  # unresolved
+        out = _watershed_cpu(fd, labels, state, h, w)
 
     elif has_cuda_and_cupy() and is_cupy_array(data):
         out = _watershed_cupy(data, pp_data)

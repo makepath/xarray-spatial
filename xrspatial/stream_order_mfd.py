@@ -590,7 +590,15 @@ def _strahler_mfd_tile_kernel(fractions, stream_mask, h, w,
                     queue_c[tail] = nc
                     tail += 1
 
-    return order
+    # Fix headwater cells: represent (order=1, no inputs) as (max=1, cnt=1)
+    # so that the boundary (max, cnt) reconstruction works correctly.
+    for r in range(h):
+        for c in range(w):
+            if stream_mask[r, c] == 1 and max_in[r, c] == 0.0:
+                max_in[r, c] = order[r, c]
+                cnt_max[r, c] = 1
+
+    return order, max_in, cnt_max
 
 
 @ngjit
@@ -1092,17 +1100,22 @@ def _process_strahler_tile_mfd(iy, ix, fractions_da, accum_da, threshold,
         iy, ix, bdry_max, bdry_cnt, frac_bdry, mask_bdry,
         chunks_y, chunks_x, n_tile_y, n_tile_x)
 
-    order = _strahler_mfd_tile_kernel(frac_chunk, sm, h, w, *seeds)
+    order, ki_max_in, ki_cnt_max = _strahler_mfd_tile_kernel(
+        frac_chunk, sm, h, w, *seeds)
 
-    # Extract boundary order values and recompute max/cnt for boundaries
+    # Extract boundary max_in/cnt_max values (not final order) so that
+    # the seed reconstruction (cnt>=2 -> order+1) works at tile borders.
     change = 0.0
-    for side, strip in [('top', order[0, :]),
-                        ('bottom', order[-1, :]),
-                        ('left', order[:, 0]),
-                        ('right', order[:, -1])]:
-        new_vals = strip.copy()
-        new_max = np.where(np.isnan(new_vals), 0.0, new_vals)
-        new_cnt = np.where(new_max > 0, 1.0, 0.0)
+    bdry_slices = [
+        ('top', order[0, :], ki_max_in[0, :], ki_cnt_max[0, :]),
+        ('bottom', order[-1, :], ki_max_in[-1, :], ki_cnt_max[-1, :]),
+        ('left', order[:, 0], ki_max_in[:, 0], ki_cnt_max[:, 0]),
+        ('right', order[:, -1], ki_max_in[:, -1], ki_cnt_max[:, -1]),
+    ]
+    for side, order_strip, mi_strip, cm_strip in bdry_slices:
+        is_nan = np.isnan(order_strip)
+        new_max = np.where(is_nan, 0.0, mi_strip.astype(np.float64))
+        new_cnt = np.where(is_nan, 0.0, cm_strip.astype(np.float64))
 
         old_max = bdry_max.get(side, iy, ix).copy()
         with np.errstate(invalid='ignore'):
@@ -1224,7 +1237,7 @@ def _stream_order_mfd_dask_strahler(fractions_da, accum_da, threshold):
                 iy, ix, _bdry_max, _bdry_cnt, _frac_bdry, _mask_bdry,
                 chunks_y, chunks_x, n_tile_y, n_tile_x)
 
-            tile_order = _strahler_mfd_tile_kernel(
+            tile_order, _, _ = _strahler_mfd_tile_kernel(
                 frac_chunk, sm, h, w, *seeds)
             row.append(da.from_array(tile_order, chunks=tile_order.shape))
         rows.append(row)
