@@ -426,8 +426,9 @@ def generate_markdown(all_results, slower_cases, has_cupy):
     w(f"Generated: {now}")
     w("")
     w("Compares xarray-spatial (numpy and cupy backends) against datashader, "
-      "geocube, and rasterio across 10 geometry types, 3 feature counts "
-      "(50/200/1000), and 5 output resolutions (100-4000 px wide).")
+      "geocube, and rasterio across 10 geometry types, 4 feature counts "
+      "(50/200/1000/10000), and 5 output resolutions (100-4000 px wide). "
+      "The **fastest** time in each row is shown in bold.")
     w("")
     w("- **Polygon types** (circles, irregular, rectangles, stars, donuts, "
       "multipolygons): all 5 rasterizers compared")
@@ -462,12 +463,29 @@ def generate_markdown(all_results, slower_cases, has_cupy):
 
         for e in entries:
             size = f"{e['w']}x{e['h']}"
-            xnp = _fmt_ms(e["xrs_mean"])
-            xcu = _fmt_ms(e["cupy_mean"]) if e["cupy_mean"] is not None else "--"
-            gc = _fmt_ms(e["gc_mean"])
-            rio = _fmt_ms(e["rio_mean"])
+            # Collect all times to find the fastest
+            times = {"xrs-numpy": e["xrs_mean"]}
+            if e["cupy_mean"] is not None:
+                times["xrs-cupy"] = e["cupy_mean"]
+            if is_poly and e["ds_mean"] is not None:
+                times["datashader"] = e["ds_mean"]
+            times["geocube"] = e["gc_mean"]
+            times["rasterio"] = e["rio_mean"]
+            fastest = min(times, key=times.get)
+
+            def _bold_if(key):
+                val = times.get(key)
+                if val is None:
+                    return "--"
+                s = _fmt_ms(val)
+                return f"**{s}**" if key == fastest else s
+
+            xnp = _bold_if("xrs-numpy")
+            xcu = _bold_if("xrs-cupy")
+            gc = _bold_if("geocube")
+            rio = _bold_if("rasterio")
             if is_poly:
-                dsh = _fmt_ms(e["ds_mean"]) if e["ds_mean"] is not None else "--"
+                dsh = _bold_if("datashader")
                 w(f"| {e['n']} | {size} | {xnp} | {xcu} | {dsh} | {gc} | {rio} |")
             else:
                 w(f"| {e['n']} | {size} | {xnp} | {xcu} | {gc} | {rio} |")
@@ -550,7 +568,7 @@ def main():
     rng = np.random.default_rng(42)
 
     resolutions = [100, 500, 1000, 2000, 4000]
-    feature_counts = [50, 200, 1000]
+    feature_counts = [50, 200, 1000, 10000]
 
     try:
         import cupy  # noqa: F401
