@@ -51,10 +51,14 @@ def _cpu(data, cellsize_x, cellsize_y):
     nb_dy = np.array([0, -1, -1, -1, 0, 1, 1, 1])
     nb_dx = np.array([1, 1, 0, -1, -1, -1, 0, 1])
 
-    # d1 for each facet (distance from center to e1)
-    d1 = np.array([cx, diag, cy, diag, cx, diag, cy, diag])
-    # d2 for each facet (distance from e1 to e2)
+    # Tarboton facet decomposition: e1=cardinal, e2=diagonal
+    e1_idx = np.array([0, 2, 2, 4, 4, 6, 6, 0])  # cardinal neighbor
+    e2_idx = np.array([1, 1, 3, 3, 5, 5, 7, 7])  # diagonal neighbor
+    # d1: center->cardinal, d2: cardinal->diagonal (perpendicular)
+    d1 = np.array([cx, cy, cy, cx, cx, cy, cy, cx])
     d2 = np.array([cy, cx, cx, cy, cy, cx, cx, cy])
+    ac = np.array([0, 2, 2, 4, 4, 6, 6, 8])   # angle base (pi/4 units)
+    af = np.array([1, -1, 1, -1, 1, -1, 1, -1])  # angle sign
 
     for y in range(1, rows - 1):
         for x in range(1, cols - 1):
@@ -76,9 +80,8 @@ def _cpu(data, cellsize_x, cellsize_y):
             best_angle = -1.0
 
             for k in range(8):
-                k2 = (k + 1) % 8
-                e1 = data[y + nb_dy[k], x + nb_dx[k]]
-                e2 = data[y + nb_dy[k2], x + nb_dx[k2]]
+                e1 = data[y + nb_dy[e1_idx[k]], x + nb_dx[e1_idx[k]]]
+                e2 = data[y + nb_dy[e2_idx[k]], x + nb_dx[e2_idx[k]]]
 
                 s1 = (center - e1) / d1[k]
                 s2 = (e1 - e2) / d2[k]
@@ -89,13 +92,13 @@ def _cpu(data, cellsize_x, cellsize_y):
                     s = s1
                 elif r > pi_over_4:
                     r = pi_over_4
-                    s = (center - e2) / math.sqrt(d1[k] * d1[k] + d2[k] * d2[k])
+                    s = (center - e2) / diag
                 else:
                     s = math.sqrt(s1 * s1 + s2 * s2)
 
                 if s > max_slope:
                     max_slope = s
-                    best_angle = k * pi_over_4 + r
+                    best_angle = ac[k] * pi_over_4 + af[k] * r
 
             if max_slope <= 0.0:
                 out[y, x] = -1.0
@@ -158,21 +161,21 @@ def _gpu(arr, cellsize_x, cellsize_y):
         max_slope = slope_val
         best_angle = r  # 0 + r
 
-    # Facet 1: e1=NE, e2=N, d1=diag, d2=cx, start=pi/4
-    s1 = (center - ne) / diag
-    s2 = (ne - n) / cx
+    # Facet 1: e1=N, e2=NE, d1=cy, d2=cx, angle=pi/2-r
+    s1 = (center - n) / cy
+    s2 = (n - ne) / cx
     r = math.atan2(s2, s1)
     if r < 0.0:
         r = 0.0
         slope_val = s1
     elif r > pi_over_4:
         r = pi_over_4
-        slope_val = (center - n) / (diag * diag + cx * cx) ** 0.5
+        slope_val = (center - ne) / diag
     else:
         slope_val = (s1 * s1 + s2 * s2) ** 0.5
     if slope_val > max_slope:
         max_slope = slope_val
-        best_angle = pi_over_4 + r
+        best_angle = 2.0 * pi_over_4 - r
 
     # Facet 2: e1=N, e2=NW, d1=cy, d2=cx, start=pi/2
     s1 = (center - n) / cy
@@ -190,21 +193,21 @@ def _gpu(arr, cellsize_x, cellsize_y):
         max_slope = slope_val
         best_angle = 2.0 * pi_over_4 + r
 
-    # Facet 3: e1=NW, e2=W, d1=diag, d2=cy, start=3*pi/4
-    s1 = (center - nw) / diag
-    s2 = (nw - w) / cy
+    # Facet 3: e1=W, e2=NW, d1=cx, d2=cy, angle=pi-r
+    s1 = (center - w) / cx
+    s2 = (w - nw) / cy
     r = math.atan2(s2, s1)
     if r < 0.0:
         r = 0.0
         slope_val = s1
     elif r > pi_over_4:
         r = pi_over_4
-        slope_val = (center - w) / (diag * diag + cy * cy) ** 0.5
+        slope_val = (center - nw) / diag
     else:
         slope_val = (s1 * s1 + s2 * s2) ** 0.5
     if slope_val > max_slope:
         max_slope = slope_val
-        best_angle = 3.0 * pi_over_4 + r
+        best_angle = 4.0 * pi_over_4 - r
 
     # Facet 4: e1=W, e2=SW, d1=cx, d2=cy, start=pi
     s1 = (center - w) / cx
@@ -222,21 +225,21 @@ def _gpu(arr, cellsize_x, cellsize_y):
         max_slope = slope_val
         best_angle = 4.0 * pi_over_4 + r
 
-    # Facet 5: e1=SW, e2=S, d1=diag, d2=cx, start=5*pi/4
-    s1 = (center - sw) / diag
-    s2 = (sw - s) / cx
+    # Facet 5: e1=S, e2=SW, d1=cy, d2=cx, angle=3*pi/2-r
+    s1 = (center - s) / cy
+    s2 = (s - sw) / cx
     r = math.atan2(s2, s1)
     if r < 0.0:
         r = 0.0
         slope_val = s1
     elif r > pi_over_4:
         r = pi_over_4
-        slope_val = (center - s) / (diag * diag + cx * cx) ** 0.5
+        slope_val = (center - sw) / diag
     else:
         slope_val = (s1 * s1 + s2 * s2) ** 0.5
     if slope_val > max_slope:
         max_slope = slope_val
-        best_angle = 5.0 * pi_over_4 + r
+        best_angle = 6.0 * pi_over_4 - r
 
     # Facet 6: e1=S, e2=SE, d1=cy, d2=cx, start=3*pi/2
     s1 = (center - s) / cy
@@ -254,21 +257,21 @@ def _gpu(arr, cellsize_x, cellsize_y):
         max_slope = slope_val
         best_angle = 6.0 * pi_over_4 + r
 
-    # Facet 7: e1=SE, e2=E, d1=diag, d2=cy, start=7*pi/4
-    s1 = (center - se) / diag
-    s2 = (se - e) / cy
+    # Facet 7: e1=E, e2=SE, d1=cx, d2=cy, angle=2*pi-r
+    s1 = (center - e) / cx
+    s2 = (e - se) / cy
     r = math.atan2(s2, s1)
     if r < 0.0:
         r = 0.0
         slope_val = s1
     elif r > pi_over_4:
         r = pi_over_4
-        slope_val = (center - e) / (diag * diag + cy * cy) ** 0.5
+        slope_val = (center - se) / diag
     else:
         slope_val = (s1 * s1 + s2 * s2) ** 0.5
     if slope_val > max_slope:
         max_slope = slope_val
-        best_angle = 7.0 * pi_over_4 + r
+        best_angle = 8.0 * pi_over_4 - r
 
     if max_slope <= 0.0:
         return -1.0
