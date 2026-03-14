@@ -364,7 +364,10 @@ def basin(flow_dir: xr.DataArray,
         fd = data.astype(np.float64)
         h, w = fd.shape
         labels = _basins_init_labels(fd, h, w, h, w, 0, 0)
-        out = _watershed_cpu(fd, labels, h, w)
+        # Build state array: 0=nodata(NaN), 1=unresolved(-1), 3=resolved
+        state = np.where(np.isnan(labels), 0,
+                         np.where(labels == -1.0, 1, 3)).astype(np.int8)
+        out = _watershed_cpu(fd, labels, state, h, w)
 
     elif has_cuda_and_cupy() and is_cupy_array(data):
         out = _basins_cupy(data)

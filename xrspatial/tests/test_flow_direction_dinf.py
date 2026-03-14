@@ -121,6 +121,128 @@ def test_interior_facet_angle():
 
 
 # ---------------------------------------------------------------------------
+# Tarboton odd-facet tests
+# ---------------------------------------------------------------------------
+
+def test_odd_facet_1_tarboton():
+    """Facet 1 (N, NE) wins with interior r; angle = pi/2 - r."""
+    # Center=10, N=7, NE=6; all others equal to center.
+    # Facet 1: s1=(10-7)/1=3, s2=(7-6)/1=1, r=atan2(1,3), s=sqrt(10)
+    # Facet 0: s1=(10-10)/1=0, s2=(10-6)/1=4, r clamped pi/4, s=(10-6)/sqrt(2)~2.83
+    # Facet 1 wins (sqrt(10)~3.16 > 2.83).
+    data = np.array([
+        [10, 7,  6],
+        [10, 10, 10],
+        [10, 10, 10],
+    ], dtype=np.float64)
+    agg = _make_raster(data)
+    result = flow_direction_dinf(agg)
+    r = math.atan2(1, 3)
+    expected = math.pi / 2.0 - r
+    assert abs(result.data[1, 1] - expected) < 1e-10, (
+        f"Center = {result.data[1,1]}, expected {expected}")
+
+
+def test_odd_facet_7_tarboton():
+    """Facet 7 (E, SE) wins with interior r; angle = 2*pi - r."""
+    # Center=10, E=7, SE=6; all others equal to center.
+    # Facet 7: s1=(10-7)/1=3, s2=(7-6)/1=1, r=atan2(1,3), s=sqrt(10)
+    data = np.array([
+        [10, 10, 10],
+        [10, 10,  7],
+        [10, 10,  6],
+    ], dtype=np.float64)
+    agg = _make_raster(data)
+    result = flow_direction_dinf(agg)
+    r = math.atan2(1, 3)
+    expected = 2.0 * math.pi - r
+    assert abs(result.data[1, 1] - expected) < 1e-10, (
+        f"Center = {result.data[1,1]}, expected {expected}")
+
+
+def _reference_tarboton(data, cx, cy):
+    """Pure-Python reference Tarboton (1997) D-inf implementation."""
+    rows, cols = data.shape
+    out = np.full(data.shape, np.nan)
+
+    nb_dy = [0, -1, -1, -1, 0, 1, 1, 1]
+    nb_dx = [1, 1, 0, -1, -1, -1, 0, 1]
+    e1_idx = [0, 2, 2, 4, 4, 6, 6, 0]
+    e2_idx = [1, 1, 3, 3, 5, 5, 7, 7]
+    d1_arr = [cx, cy, cy, cx, cx, cy, cy, cx]
+    d2_arr = [cy, cx, cx, cy, cy, cx, cx, cy]
+    ac = [0, 2, 2, 4, 4, 6, 6, 8]
+    af = [1, -1, 1, -1, 1, -1, 1, -1]
+
+    diag = math.sqrt(cx * cx + cy * cy)
+    pi4 = math.pi / 4.0
+
+    for y in range(1, rows - 1):
+        for x in range(1, cols - 1):
+            center = data[y, x]
+            if np.isnan(center):
+                continue
+            has_nan = False
+            nbs = []
+            for k in range(8):
+                v = data[y + nb_dy[k], x + nb_dx[k]]
+                if np.isnan(v):
+                    has_nan = True
+                    break
+                nbs.append(v)
+            if has_nan:
+                continue
+
+            max_slope = -1e308
+            best_angle = -1.0
+            for k in range(8):
+                e1 = nbs[e1_idx[k]]
+                e2 = nbs[e2_idx[k]]
+                s1 = (center - e1) / d1_arr[k]
+                s2 = (e1 - e2) / d2_arr[k]
+                r = math.atan2(s2, s1)
+                if r < 0.0:
+                    r = 0.0
+                    s = s1
+                elif r > pi4:
+                    r = pi4
+                    s = (center - e2) / diag
+                else:
+                    s = math.sqrt(s1 * s1 + s2 * s2)
+                if s > max_slope:
+                    max_slope = s
+                    best_angle = ac[k] * pi4 + af[k] * r
+
+            if max_slope <= 0.0:
+                out[y, x] = -1.0
+            else:
+                if best_angle >= 2.0 * math.pi:
+                    best_angle = 0.0
+                out[y, x] = best_angle
+    return out
+
+
+def test_reference_tarboton_agreement():
+    """Cone DEM: xrspatial matches reference Tarboton on all interior cells."""
+    n = 51
+    cx, cy = 1.0, 1.0
+    yy, xx = np.mgrid[0:n, 0:n]
+    center = (n - 1) / 2.0
+    data = np.sqrt((yy - center) ** 2 + (xx - center) ** 2).astype(np.float64)
+
+    agg = _make_raster(data, res=(cy, cx))
+    result = flow_direction_dinf(agg)
+    ref = _reference_tarboton(data, cx, cy)
+
+    # Compare interior cells (skip edges which are NaN)
+    interior = ~np.isnan(ref)
+    assert interior.sum() > 0
+    np.testing.assert_allclose(
+        result.data[interior], ref[interior], atol=1e-12,
+        err_msg="xrspatial dinf does not match reference Tarboton")
+
+
+# ---------------------------------------------------------------------------
 # Pit / flat / NaN tests
 # ---------------------------------------------------------------------------
 

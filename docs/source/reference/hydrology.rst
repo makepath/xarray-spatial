@@ -32,6 +32,13 @@ Flow Accumulation
 
     xrspatial.flow_accumulation.flow_accumulation
 
+Flow Accumulation (D-infinity)
+===============================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.flow_accumulation_dinf.flow_accumulation_dinf
+
 Flow Accumulation (MFD)
 =======================
 .. autosummary::

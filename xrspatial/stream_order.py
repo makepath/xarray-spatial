@@ -694,6 +694,7 @@ def _preprocess_stream_tiles(flow_dir_da, accum_da, threshold,
                 accum_da.blocks[iy, ix].compute())
             sm = np.where(ac_chunk >= threshold, 1.0, 0.0)
             sm = np.where(np.isnan(ac_chunk), 0.0, sm)
+            sm = np.where(np.isnan(fd_chunk), 0.0, sm)
 
             for side, row_data_fd, row_data_sm in [
                 ('top', fd_chunk[0, :], sm[0, :]),
@@ -986,6 +987,7 @@ def _process_strahler_tile(iy, ix, flow_dir_da, accum_da, threshold,
         accum_da.blocks[iy, ix].compute(), dtype=np.float64)
     sm = np.where(ac_chunk >= threshold, 1, 0).astype(np.int8)
     sm = np.where(np.isnan(ac_chunk), 0, sm).astype(np.int8)
+    sm = np.where(np.isnan(fd_chunk), 0, sm).astype(np.int8)
     h, w = fd_chunk.shape
 
     seeds = _compute_strahler_seeds(
@@ -1031,6 +1033,7 @@ def _process_shreve_tile(iy, ix, flow_dir_da, accum_da, threshold,
         accum_da.blocks[iy, ix].compute(), dtype=np.float64)
     sm = np.where(ac_chunk >= threshold, 1, 0).astype(np.int8)
     sm = np.where(np.isnan(ac_chunk), 0, sm).astype(np.int8)
+    sm = np.where(np.isnan(fd_chunk), 0, sm).astype(np.int8)
     h, w = fd_chunk.shape
 
     seeds = _compute_shreve_seeds(
@@ -1111,6 +1114,7 @@ def _stream_order_dask_strahler(flow_dir_da, accum_da, threshold):
         ac = np.asarray(accum_block, dtype=np.float64)
         sm = np.where(ac >= _threshold, 1, 0).astype(np.int8)
         sm = np.where(np.isnan(ac), 0, sm).astype(np.int8)
+        sm = np.where(np.isnan(fd), 0, sm).astype(np.int8)
         h, w = fd.shape
         seeds = _compute_strahler_seeds(
             iy, ix, _bdry_max, _bdry_cnt, _flow_bdry, _mask_bdry,
@@ -1173,6 +1177,7 @@ def _stream_order_dask_shreve(flow_dir_da, accum_da, threshold):
         ac = np.asarray(accum_block, dtype=np.float64)
         sm = np.where(ac >= _threshold, 1, 0).astype(np.int8)
         sm = np.where(np.isnan(ac), 0, sm).astype(np.int8)
+        sm = np.where(np.isnan(fd), 0, sm).astype(np.int8)
         h, w = fd.shape
         seeds = _compute_shreve_seeds(
             iy, ix, _boundaries, _flow_bdry, _mask_bdry,

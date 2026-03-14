@@ -11,6 +11,7 @@ Supports numpy, cupy, dask+numpy, and dask+cupy backends.
 """
 from __future__ import annotations
 
+import warnings
 from typing import Optional, Tuple, Union
 
 import numpy as np
@@ -136,13 +137,74 @@ def _classify_geometries(geometries, props_array):
     Where poly_props is (N_poly, P), line_props is (N_line, P),
     point_props is (N_point, P) float64 arrays.
     """
+    if _HAS_SHAPELY2:
+        return _classify_geometries_vectorized(geometries, props_array)
+    return _classify_geometries_loop(geometries, props_array)
+
+
+def _classify_geometries_vectorized(geometries, props_array):
+    """Vectorized classification using shapely 2.0 array ops."""
+    import shapely
+
+    n_props = props_array.shape[1] if props_array.ndim == 2 else 1
+    geom_arr = np.array(geometries, dtype=object)
+    n = len(geom_arr)
+
+    if n == 0:
+        empty_props = np.empty((0, n_props), dtype=np.float64)
+        return (([], empty_props, []),
+                ([], empty_props.copy()),
+                ([], empty_props.copy()))
+
+    type_ids = shapely.get_type_id(geom_arr)
+    empty = shapely.is_empty(geom_arr)
+    valid = ~empty
+
+    # Type ID mapping:
+    # 0=Point, 1=LineString, 2=LinearRing, 3=Polygon,
+    # 4=MultiPoint, 5=MultiLineString, 6=MultiPolygon,
+    # 7=GeometryCollection
+    poly_mask = valid & ((type_ids == 3) | (type_ids == 6))
+    line_mask = valid & ((type_ids == 1) | (type_ids == 5))
+    point_mask = valid & ((type_ids == 0) | (type_ids == 4))
+    gc_mask = valid & (type_ids == 7)
+
+    has_gc = np.any(gc_mask)
+
+    # Fast path: no GeometryCollections (common case)
+    if not has_gc:
+        poly_idx = np.where(poly_mask)[0]
+        line_idx = np.where(line_mask)[0]
+        point_idx = np.where(point_mask)[0]
+
+        poly_geoms = [geometries[i] for i in poly_idx]
+        poly_ids = list(range(len(poly_idx)))
+        poly_props = (props_array[poly_idx] if len(poly_idx) > 0
+                      else np.empty((0, n_props), dtype=np.float64))
+
+        line_geoms = [geometries[i] for i in line_idx]
+        line_props = (props_array[line_idx] if len(line_idx) > 0
+                      else np.empty((0, n_props), dtype=np.float64))
+
+        point_geoms = [geometries[i] for i in point_idx]
+        point_props = (props_array[point_idx] if len(point_idx) > 0
+                       else np.empty((0, n_props), dtype=np.float64))
+
+        return ((poly_geoms, poly_props, poly_ids),
+                (line_geoms, line_props),
+                (point_geoms, point_props))
+
+    # Slow path: unpack GeometryCollections, then classify
+    return _classify_geometries_loop(geometries, props_array)
+
+
+def _classify_geometries_loop(geometries, props_array):
+    """Per-object classification fallback (handles GeometryCollections)."""
     n_props = props_array.shape[1] if props_array.ndim == 2 else 1
     poly_geoms, poly_prop_rows, poly_ids = [], [], []
     line_geoms, line_prop_rows = [], []
     point_geoms, point_prop_rows = [], []
 
-    # poly_counter tracks per-type indices that both preserve input order
-    # and serve as valid indices into the poly_props table.
     poly_counter = [0]
 
     def _classify_one(geom, prop_row, global_idx):
@@ -1083,12 +1145,12 @@ def _ensure_gpu_kernels(merge_fn):
         if count == 0:
             return
 
-        MAX_ISECT = 512
+        MAX_ISECT = 2048
         if count > MAX_ISECT:
             count = MAX_ISECT
 
-        xs = cuda.local.array(512, dtype=np.float64)
-        gs = cuda.local.array(512, dtype=np.int32)
+        xs = cuda.local.array(2048, dtype=np.float64)
+        gs = cuda.local.array(2048, dtype=np.int32)
 
         actual = 0
         for k in range(start, end):
@@ -1286,6 +1348,18 @@ def _run_cupy(geometries, props_array, bounds, height, width, fill, dtype,
         # Build CSR structure on CPU, then transfer to GPU
         row_ptr, col_idx = _build_row_csr_numba(
             edge_y_min, edge_y_max, height)
+
+        # Check for rows exceeding the GPU kernel's local array limit
+        _GPU_MAX_ISECT = 2048
+        max_edges_per_row = int(np.diff(row_ptr).max())
+        if max_edges_per_row > _GPU_MAX_ISECT:
+            warnings.warn(
+                f"rasterize CUDA kernel: {max_edges_per_row} active edges "
+                f"in a single row exceeds the limit of {_GPU_MAX_ISECT}. "
+                f"Excess edges will be silently dropped, causing incorrect "
+                f"results. Reduce polygon density or use the numpy backend.",
+                stacklevel=3,
+            )
 
         d_y_min = cupy.asarray(edge_y_min)
         d_x_at_ymin = cupy.asarray(edge_x_at_ymin)
@@ -1814,13 +1888,9 @@ def _parse_input(geometries, column=None, columns=None):
 
     props_array = np.array(value_list, dtype=np.float64).reshape(-1, 1)
 
-    # Compute per-geometry bboxes (reused by dask tile filtering later)
-    geom_bboxes = _geometry_bboxes(geom_list)
-    if len(geom_bboxes) == 0:
-        return geom_list, props_array, None
-    total_bounds = (geom_bboxes[:, 0].min(), geom_bboxes[:, 1].min(),
-                    geom_bboxes[:, 2].max(), geom_bboxes[:, 3].max())
-    return geom_list, props_array, total_bounds
+    # Bounds computation is deferred: return None here and let the
+    # caller compute bboxes only when bounds are actually needed.
+    return geom_list, props_array, None
 
 
 def _extract_grid_from_like(like):
@@ -2023,6 +2093,14 @@ def rasterize(
         final_bounds = like_bounds
     if final_bounds is None:
         final_bounds = inferred_bounds
+    if final_bounds is None and geom_list:
+        # Compute bounds lazily only when not supplied by the caller
+        geom_bboxes = _geometry_bboxes(geom_list)
+        if len(geom_bboxes) > 0:
+            final_bounds = (geom_bboxes[:, 0].min(),
+                            geom_bboxes[:, 1].min(),
+                            geom_bboxes[:, 2].max(),
+                            geom_bboxes[:, 3].max())
     if final_bounds is None:
         raise ValueError(
             "bounds must be provided when geometries are empty or have "
