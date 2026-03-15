@@ -107,10 +107,10 @@ def _min_and_max(value0, value1):
 # facing W, and if hole is False the start is on the S edge of the pixel
 # facing E.
 #
-# There are two passes.  First pass determines the number of points and
-# allocates a numpy array big enough to take the points, the second pass saves
-# the points.  This is better than a single pass that repeatedly reallocates
-# space for the increasing number of points.
+# Single pass with a dynamically-grown buffer (doubling strategy).  Buffer
+# starts at 64 points and grows as needed.  Amortized cost is O(1) per point
+# from O(log n) reallocations, which is cheaper than retracing the boundary
+# a second time.
 #
 # Returns the region ID and the 2D array of boundary points.  The last
 # boundary point is the same as the first.
@@ -125,98 +125,104 @@ def _follow(
 ) -> Tuple[int, np.ndarray]:
     region = regions[ij]
     n = nx*ny
-    points = None  # Declare before loop for numba
 
-    for pass_ in range(2):
-        prev_forward = 0  # Start with an invalid direction.
-        if hole:
-            forward = -1  # Facing W along N edge.
-            left = -nx
-        else:
-            forward = 1  # Facing E along S edge.
-            left = nx
+    # Dynamic buffer for point coordinates (x, y pairs stored flat).
+    buf_cap = 64
+    points = np.empty(2 * buf_cap)
+    npoints = 0
 
-        start_forward = forward
-        start_ij = ij
-        npoints = 0
+    prev_forward = 0  # Start with an invalid direction.
+    if hole:
+        forward = -1  # Facing W along N edge.
+        left = -nx
+    else:
+        forward = 1  # Facing E along S edge.
+        left = nx
 
-        while True:
-            if pass_ == 1:
-                if forward == 1 and not hole:
-                    # Mark pixel so that it will not be considered a future
-                    # non-hole starting pixel.
-                    visited[ij] |= 1
-                elif forward == -1 and ij+nx < n:
-                    # Mark pixel so that is will not be considered a future
-                    # hole starting pixel.
-                    visited[ij+nx] |= 2
+    start_forward = forward
+    start_ij = ij
 
-            if prev_forward != forward:
-                if pass_ == 1:
-                    # Add point.
-                    i = ij % nx
-                    j = ij // nx
-                    if forward == -1:
-                        i += 1
-                        j += 1
-                    elif forward == nx:
-                        i += 1
-                    elif forward == -nx:
-                        j += 1
-                    points[2*npoints] = i
-                    points[2*npoints+1] = j
-                npoints += 1
+    while True:
+        if forward == 1 and not hole:
+            # Mark pixel so that it will not be considered a future
+            # non-hole starting pixel.
+            visited[ij] |= 1
+        elif forward == -1 and ij+nx < n:
+            # Mark pixel so that it will not be considered a future
+            # hole starting pixel.
+            visited[ij+nx] |= 2
 
+        if prev_forward != forward:
+            # Grow buffer if needed.
+            if npoints >= buf_cap:
+                old_points = points
+                buf_cap *= 2
+                points = np.empty(2 * buf_cap)
+                points[:2*npoints] = old_points[:2*npoints]
+
+            # Add point.
+            i = ij % nx
+            j = ij // nx
+            if forward == -1:
+                i += 1
+                j += 1
+            elif forward == nx:
+                i += 1
+            elif forward == -nx:
+                j += 1
+            points[2*npoints] = i
+            points[2*npoints+1] = j
+            npoints += 1
+
+        prev_forward = forward
+        ijnext = ij + forward
+        ijnext_right = ijnext - left
+
+        # Determine direction of turn.
+        if abs(forward) == 1:  # Facing E (forward == 1) or W (forward -1)
+            if _diff_row(ij, ijnext, nx):
+                turn = Turn.Left
+            elif (not _outside_domain(ijnext_right, n) and
+                    regions[ijnext_right] == region):
+                turn = Turn.Right
+            elif regions[ijnext] == region:
+                turn = Turn.Straight
+            else:
+                turn = Turn.Left
+        else:  # Facing N (forward == nx) or S (forward == -nx)
+            if _outside_domain(ijnext, n):
+                turn = Turn.Left
+            elif (not _diff_row(ijnext, ijnext_right, nx) and
+                    regions[ijnext_right] == region):
+                turn = Turn.Right
+            elif regions[ijnext] == region:
+                turn = Turn.Straight
+            else:
+                turn = Turn.Left
+
+        # Apply turn.
+        if turn == Turn.Straight:
+            ij = ijnext
+        elif turn == Turn.Left:
             prev_forward = forward
-            ijnext = ij + forward
-            ijnext_right = ijnext - left
+            forward = left
+            left = -prev_forward
+        else:  # Turn.Right
+            prev_forward = forward
+            forward = -left
+            left = prev_forward
+            ij = ijnext_right
 
-            # Determine direction of turn.
-            if abs(forward) == 1:  # Facing E (forward == 1) or W (forward -1)
-                if _diff_row(ij, ijnext, nx):
-                    turn = Turn.Left
-                elif (not _outside_domain(ijnext_right, n) and
-                        regions[ijnext_right] == region):
-                    turn = Turn.Right
-                elif regions[ijnext] == region:
-                    turn = Turn.Straight
-                else:
-                    turn = Turn.Left
-            else:  # Facing N (forward == nx) or S (forward == -nx)
-                if _outside_domain(ijnext, n):
-                    turn = Turn.Left
-                elif (not _diff_row(ijnext, ijnext_right, nx) and
-                        regions[ijnext_right] == region):
-                    turn = Turn.Right
-                elif regions[ijnext] == region:
-                    turn = Turn.Straight
-                else:
-                    turn = Turn.Left
+        # Finished boundary when returned to start.
+        if ij == start_ij and forward == start_forward:
+            break
 
-            # Apply turn.
-            if turn == Turn.Straight:
-                ij = ijnext
-            elif turn == Turn.Left:
-                prev_forward = forward
-                forward = left
-                left = -prev_forward
-            else:  # Turn.Right
-                prev_forward = forward
-                forward = -left
-                left = prev_forward
-                ij = ijnext_right
-
-            # Finished boundary when returned to start.
-            if ij == start_ij and forward == start_forward:
-                break
-
-        if pass_ == 0:
-            # End of first pass.
-            points = np.empty(2*(npoints+1))  # Note extra point at end.
-
-    points = points.reshape((-1, 2))
-    points[-1] = points[0]  # End point the same as start point.
-    return region, points
+    # Trim buffer to actual size and add closing point.
+    result = np.empty(2*(npoints+1))
+    result[:2*npoints] = points[:2*npoints]
+    result = result.reshape((-1, 2))
+    result[-1] = result[0]  # End point the same as start point.
+    return region, result
 
 
 # Generator of numba-compatible comparison functions for values.
@@ -474,11 +480,34 @@ def _to_geopandas(
     column_name: str,
 ):
     import geopandas as gpd
+    import shapely
     from shapely.geometry import Polygon
 
-    # Convert list of point arrays to shapely Polygons.
-    polygons = list(map(
-        lambda points: Polygon(points[0], points[1:]), polygon_points))
+    if hasattr(shapely, 'polygons'):
+        # Shapely 2.0+: batch-construct hole-free polygons via
+        # linearrings -> polygons pipeline (both are C-level batch ops).
+        no_holes = [i for i, pts in enumerate(polygon_points)
+                    if len(pts) == 1]
+
+        if len(no_holes) == len(polygon_points):
+            # All hole-free: batch create LinearRings then Polygons.
+            rings = [shapely.linearrings(pts[0])
+                     for pts in polygon_points]
+            polygons = list(shapely.polygons(rings))
+        else:
+            polygons = [None] * len(polygon_points)
+            if no_holes:
+                rings = [shapely.linearrings(polygon_points[i][0])
+                         for i in no_holes]
+                batch = shapely.polygons(rings)
+                for idx, poly in zip(no_holes, batch):
+                    polygons[idx] = poly
+            for i, pts in enumerate(polygon_points):
+                if polygons[i] is None:
+                    polygons[i] = Polygon(pts[0], pts[1:])
+    else:
+        # Shapely < 2.0 fallback.
+        polygons = [Polygon(pts[0], pts[1:]) for pts in polygon_points]
 
     df = gpd.GeoDataFrame({column_name: column, "geometry": polygons})
     return df
@@ -823,25 +852,32 @@ def _trace_rings(edge_set):
     return rings
 
 
+@ngjit
 def _simplify_ring(ring):
     """Remove collinear (redundant) vertices from a closed ring."""
     n = len(ring) - 1  # exclude closing point
     if n <= 3:
         return ring
-    keep = []
+    # Single pass into pre-allocated output.
+    out = np.empty((n + 1, 2), dtype=np.float64)
+    count = 0
     for i in range(n):
-        prev = ring[(i - 1) % n]
-        curr = ring[i]
-        nxt = ring[(i + 1) % n]
-        if not ((prev[0] == curr[0] == nxt[0]) or
-                (prev[1] == curr[1] == nxt[1])):
-            keep.append(curr)
-    if len(keep) < n:
-        keep.append(keep[0])
-        return np.array(keep, dtype=np.float64)
+        pi = (i - 1) % n
+        ni = (i + 1) % n
+        if not ((ring[pi, 0] == ring[i, 0] == ring[ni, 0]) or
+                (ring[pi, 1] == ring[i, 1] == ring[ni, 1])):
+            out[count, 0] = ring[i, 0]
+            out[count, 1] = ring[i, 1]
+            count += 1
+    if count < n:
+        out[count, 0] = out[0, 0]
+        out[count, 1] = out[0, 1]
+        count += 1
+        return out[:count].copy()
     return ring
 
 
+@ngjit
 def _signed_ring_area(ring):
     """Shoelace formula for signed area of a closed ring."""
     x = ring[:, 0]
@@ -849,6 +885,7 @@ def _signed_ring_area(ring):
     return 0.5 * (np.dot(x[:-1], y[1:]) - np.dot(x[1:], y[:-1]))
 
 
+@ngjit
 def _point_in_ring(px, py, ring):
     """Ray-casting point-in-polygon test."""
     n = len(ring) - 1
