@@ -457,3 +457,115 @@ def test_polygonize_dask_cupy_matches_numpy(chunks):
         assert val in areas_dcp, f"Value {val} missing from dask+cupy result"
         assert_allclose(areas_dcp[val], areas_np[val],
                         err_msg=f"Area mismatch for value {val}")
+
+
+# --- Performance-related regression tests (#1008) ---
+
+def test_polygonize_1008_large_boundary_buffer_growth():
+    """Single-pass _follow buffer growth: polygon with > 64 boundary points.
+
+    A thin snake-like region forces the boundary tracer to produce many
+    vertices, exercising the dynamic buffer doubling in _follow.
+    """
+    # Horizontal snake: 1-pixel-wide path zigzagging across a 60-column raster.
+    data = np.zeros((6, 60), dtype=np.int32)
+    data[0, :] = 1          # row 0: left to right
+    data[1, 59] = 1         # turn down
+    data[2, :] = 1          # row 2: right to left (fills whole row)
+    data[3, 0] = 1          # turn down
+    data[4, :] = 1          # row 4: left to right
+
+    raster = xr.DataArray(data)
+    values, polygons = polygonize(raster, connectivity=4)
+
+    # The value-1 polygon should have many boundary points (> 64).
+    val1_idx = [i for i, v in enumerate(values) if v == 1]
+    assert len(val1_idx) >= 1
+    for idx in val1_idx:
+        for ring in polygons[idx]:
+            assert ring.shape[1] == 2
+            assert np.array_equal(ring[0], ring[-1])
+
+    # Total area must equal raster size.
+    total_area = sum(
+        assert_polygon_valid_and_get_area(p) for p in polygons)
+    assert_allclose(total_area, data.size)
+
+
+def test_polygonize_1008_jit_merge_helpers():
+    """JIT-compiled _simplify_ring, _signed_ring_area, _point_in_ring."""
+    from ..polygonize import _point_in_ring, _signed_ring_area, _simplify_ring
+
+    # Unit square: CCW exterior.
+    square = np.array([
+        [0, 0], [1, 0], [1, 1], [0, 1], [0, 0]], dtype=np.float64)
+
+    assert_allclose(_signed_ring_area(square), 1.0)
+
+    # Point inside.
+    assert _point_in_ring(0.5, 0.5, square) is True
+    # Point outside.
+    assert _point_in_ring(2.0, 2.0, square) is False
+
+    # Square with collinear midpoints on each edge.
+    with_collinear = np.array([
+        [0, 0], [0.5, 0], [1, 0], [1, 0.5], [1, 1],
+        [0.5, 1], [0, 1], [0, 0.5], [0, 0]], dtype=np.float64)
+    simplified = _simplify_ring(with_collinear)
+    # Should remove the midpoints, leaving 4 corners + closing point.
+    assert simplified.shape == (5, 2)
+    assert_allclose(_signed_ring_area(simplified), 1.0)
+
+    # Ring with no collinear points should be returned unchanged.
+    triangle = np.array([
+        [0, 0], [2, 0], [1, 2], [0, 0]], dtype=np.float64)
+    assert _simplify_ring(triangle) is triangle
+
+
+@dask_array_available
+def test_polygonize_1008_dask_merge_many_boundary_polygons():
+    """Dask merge with many boundary-crossing polygons of the same value.
+
+    Checkerboard pattern in small chunks forces many boundary polygons
+    through the merge path, exercising the JIT-compiled helpers.
+    """
+    # 8x8 checkerboard, chunks of 4x4.
+    data = np.zeros((8, 8), dtype=np.int32)
+    data[::2, ::2] = 1
+    data[1::2, 1::2] = 1
+
+    raster_np = xr.DataArray(data)
+    vals_np, polys_np = polygonize(raster_np, connectivity=4)
+    areas_np = _area_by_value(vals_np, polys_np)
+
+    raster_da = xr.DataArray(da.from_array(data, chunks=(4, 4)))
+    vals_da, polys_da = polygonize(raster_da, connectivity=4)
+    areas_da = _area_by_value(vals_da, polys_da)
+
+    for val in areas_np:
+        assert val in areas_da
+        assert_allclose(areas_da[val], areas_np[val],
+                        err_msg=f"Area mismatch for value {val}")
+
+
+@pytest.mark.skipif(gpd is None, reason="geopandas not installed")
+def test_polygonize_1008_geopandas_batch_with_holes():
+    """Batch shapely construction: mix of hole-free and holed polygons."""
+    # Outer ring of 0s with inner block of 1s containing a 2 (hole in 1).
+    data = np.zeros((6, 6), dtype=np.int32)
+    data[1:5, 1:5] = 1
+    data[2:4, 2:4] = 2
+
+    raster = xr.DataArray(data)
+    df = polygonize(raster, return_type="geopandas", connectivity=4)
+
+    assert isinstance(df, gpd.GeoDataFrame)
+    assert len(df) == 3  # values 0, 1, 2
+
+    # Value 1 polygon should have a hole (the 2-region).
+    row_1 = df[df.DN == 1].iloc[0]
+    geom = row_1.geometry
+    assert len(list(geom.interiors)) == 1
+
+    # Total area should equal raster size.
+    assert_allclose(df.geometry.area.sum(), 36.0)
