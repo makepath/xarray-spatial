@@ -34,12 +34,12 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 
 from xrspatial import generate_terrain
-from xrspatial.flow_direction import flow_direction
-from xrspatial.flow_accumulation import flow_accumulation
-from xrspatial.stream_order import stream_order
-from xrspatial.snap_pour_point import snap_pour_point
-from xrspatial.watershed import watershed
-from xrspatial.basin import basin
+from xrspatial.hydrology.flow_direction import flow_direction
+from xrspatial.hydrology.flow_accumulation import flow_accumulation
+from xrspatial.hydrology.stream_order import stream_order
+from xrspatial.hydrology.snap_pour_point import snap_pour_point
+from xrspatial.hydrology.watershed import watershed
+from xrspatial.hydrology.basin import basin
 
 # -- Tunable parameters -----------------------------------------------------
 CELL_SIZE = 30.0                    # metres per pixel

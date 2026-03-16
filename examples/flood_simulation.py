@@ -40,10 +40,10 @@ import matplotlib.colors as mcolors
 from matplotlib.animation import FuncAnimation
 
 from xrspatial import generate_terrain, slope
-from xrspatial.flow_direction import flow_direction
-from xrspatial.flow_accumulation import flow_accumulation
-from xrspatial.flow_length import flow_length
-from xrspatial.hand import hand
+from xrspatial.hydrology.flow_direction import flow_direction
+from xrspatial.hydrology.flow_accumulation import flow_accumulation
+from xrspatial.hydrology.flow_length import flow_length
+from xrspatial.hydrology.hand import hand
 from xrspatial.flood import (
     curve_number_runoff,
     flood_depth,
