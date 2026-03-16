@@ -474,11 +474,34 @@ def _to_geopandas(
     column_name: str,
 ):
     import geopandas as gpd
+    import shapely
     from shapely.geometry import Polygon
 
-    # Convert list of point arrays to shapely Polygons.
-    polygons = list(map(
-        lambda points: Polygon(points[0], points[1:]), polygon_points))
+    if hasattr(shapely, 'polygons'):
+        # Shapely 2.0+: batch-construct hole-free polygons via
+        # linearrings -> polygons pipeline (both are C-level batch ops).
+        no_holes = [i for i, pts in enumerate(polygon_points)
+                    if len(pts) == 1]
+
+        if len(no_holes) == len(polygon_points):
+            # All hole-free: batch create LinearRings then Polygons.
+            rings = [shapely.linearrings(pts[0])
+                     for pts in polygon_points]
+            polygons = list(shapely.polygons(rings))
+        else:
+            polygons = [None] * len(polygon_points)
+            if no_holes:
+                rings = [shapely.linearrings(polygon_points[i][0])
+                         for i in no_holes]
+                batch = shapely.polygons(rings)
+                for idx, poly in zip(no_holes, batch):
+                    polygons[idx] = poly
+            for i, pts in enumerate(polygon_points):
+                if polygons[i] is None:
+                    polygons[i] = Polygon(pts[0], pts[1:])
+    else:
+        # Shapely < 2.0 fallback.
+        polygons = [Polygon(pts[0], pts[1:]) for pts in polygon_points]
 
     df = gpd.GeoDataFrame({column_name: column, "geometry": polygons})
     return df
@@ -823,25 +846,32 @@ def _trace_rings(edge_set):
     return rings
 
 
+@ngjit
 def _simplify_ring(ring):
     """Remove collinear (redundant) vertices from a closed ring."""
     n = len(ring) - 1  # exclude closing point
     if n <= 3:
         return ring
-    keep = []
+    # Single pass into pre-allocated output.
+    out = np.empty((n + 1, 2), dtype=np.float64)
+    count = 0
     for i in range(n):
-        prev = ring[(i - 1) % n]
-        curr = ring[i]
-        nxt = ring[(i + 1) % n]
-        if not ((prev[0] == curr[0] == nxt[0]) or
-                (prev[1] == curr[1] == nxt[1])):
-            keep.append(curr)
-    if len(keep) < n:
-        keep.append(keep[0])
-        return np.array(keep, dtype=np.float64)
+        pi = (i - 1) % n
+        ni = (i + 1) % n
+        if not ((ring[pi, 0] == ring[i, 0] == ring[ni, 0]) or
+                (ring[pi, 1] == ring[i, 1] == ring[ni, 1])):
+            out[count, 0] = ring[i, 0]
+            out[count, 1] = ring[i, 1]
+            count += 1
+    if count < n:
+        out[count, 0] = out[0, 0]
+        out[count, 1] = out[0, 1]
+        count += 1
+        return out[:count].copy()
     return ring
 
 
+@ngjit
 def _signed_ring_area(ring):
     """Shoelace formula for signed area of a closed ring."""
     x = ring[:, 0]
@@ -849,6 +879,7 @@ def _signed_ring_area(ring):
     return 0.5 * (np.dot(x[:-1], y[1:]) - np.dot(x[1:], y[:-1]))
 
 
+@ngjit
 def _point_in_ring(px, py, ring):
     """Ray-casting point-in-polygon test."""
     n = len(ring) - 1
