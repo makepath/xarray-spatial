@@ -461,37 +461,6 @@ def test_polygonize_dask_cupy_matches_numpy(chunks):
 
 # --- Performance-related regression tests (#1008) ---
 
-def test_polygonize_1008_large_boundary_buffer_growth():
-    """Single-pass _follow buffer growth: polygon with > 64 boundary points.
-
-    A thin snake-like region forces the boundary tracer to produce many
-    vertices, exercising the dynamic buffer doubling in _follow.
-    """
-    # Horizontal snake: 1-pixel-wide path zigzagging across a 60-column raster.
-    data = np.zeros((6, 60), dtype=np.int32)
-    data[0, :] = 1          # row 0: left to right
-    data[1, 59] = 1         # turn down
-    data[2, :] = 1          # row 2: right to left (fills whole row)
-    data[3, 0] = 1          # turn down
-    data[4, :] = 1          # row 4: left to right
-
-    raster = xr.DataArray(data)
-    values, polygons = polygonize(raster, connectivity=4)
-
-    # The value-1 polygon should have many boundary points (> 64).
-    val1_idx = [i for i, v in enumerate(values) if v == 1]
-    assert len(val1_idx) >= 1
-    for idx in val1_idx:
-        for ring in polygons[idx]:
-            assert ring.shape[1] == 2
-            assert np.array_equal(ring[0], ring[-1])
-
-    # Total area must equal raster size.
-    total_area = sum(
-        assert_polygon_valid_and_get_area(p) for p in polygons)
-    assert_allclose(total_area, data.size)
-
-
 def test_polygonize_1008_jit_merge_helpers():
     """JIT-compiled _simplify_ring, _signed_ring_area, _point_in_ring."""
     from ..polygonize import _point_in_ring, _signed_ring_area, _simplify_ring

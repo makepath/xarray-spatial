@@ -107,10 +107,10 @@ def _min_and_max(value0, value1):
 # facing W, and if hole is False the start is on the S edge of the pixel
 # facing E.
 #
-# Single pass with a dynamically-grown buffer (doubling strategy).  Buffer
-# starts at 64 points and grows as needed.  Amortized cost is O(1) per point
-# from O(log n) reallocations, which is cheaper than retracing the boundary
-# a second time.
+# There are two passes.  First pass determines the number of points and
+# allocates a numpy array big enough to take the points, the second pass saves
+# the points.  This is better than a single pass that repeatedly reallocates
+# space for the increasing number of points.
 #
 # Returns the region ID and the 2D array of boundary points.  The last
 # boundary point is the same as the first.
@@ -125,104 +125,98 @@ def _follow(
 ) -> Tuple[int, np.ndarray]:
     region = regions[ij]
     n = nx*ny
+    points = None  # Declare before loop for numba
 
-    # Dynamic buffer for point coordinates (x, y pairs stored flat).
-    buf_cap = 64
-    points = np.empty(2 * buf_cap)
-    npoints = 0
+    for pass_ in range(2):
+        prev_forward = 0  # Start with an invalid direction.
+        if hole:
+            forward = -1  # Facing W along N edge.
+            left = -nx
+        else:
+            forward = 1  # Facing E along S edge.
+            left = nx
 
-    prev_forward = 0  # Start with an invalid direction.
-    if hole:
-        forward = -1  # Facing W along N edge.
-        left = -nx
-    else:
-        forward = 1  # Facing E along S edge.
-        left = nx
+        start_forward = forward
+        start_ij = ij
+        npoints = 0
 
-    start_forward = forward
-    start_ij = ij
+        while True:
+            if pass_ == 1:
+                if forward == 1 and not hole:
+                    # Mark pixel so that it will not be considered a future
+                    # non-hole starting pixel.
+                    visited[ij] |= 1
+                elif forward == -1 and ij+nx < n:
+                    # Mark pixel so that is will not be considered a future
+                    # hole starting pixel.
+                    visited[ij+nx] |= 2
 
-    while True:
-        if forward == 1 and not hole:
-            # Mark pixel so that it will not be considered a future
-            # non-hole starting pixel.
-            visited[ij] |= 1
-        elif forward == -1 and ij+nx < n:
-            # Mark pixel so that it will not be considered a future
-            # hole starting pixel.
-            visited[ij+nx] |= 2
+            if prev_forward != forward:
+                if pass_ == 1:
+                    # Add point.
+                    i = ij % nx
+                    j = ij // nx
+                    if forward == -1:
+                        i += 1
+                        j += 1
+                    elif forward == nx:
+                        i += 1
+                    elif forward == -nx:
+                        j += 1
+                    points[2*npoints] = i
+                    points[2*npoints+1] = j
+                npoints += 1
 
-        if prev_forward != forward:
-            # Grow buffer if needed.
-            if npoints >= buf_cap:
-                old_points = points
-                buf_cap *= 2
-                points = np.empty(2 * buf_cap)
-                points[:2*npoints] = old_points[:2*npoints]
-
-            # Add point.
-            i = ij % nx
-            j = ij // nx
-            if forward == -1:
-                i += 1
-                j += 1
-            elif forward == nx:
-                i += 1
-            elif forward == -nx:
-                j += 1
-            points[2*npoints] = i
-            points[2*npoints+1] = j
-            npoints += 1
-
-        prev_forward = forward
-        ijnext = ij + forward
-        ijnext_right = ijnext - left
-
-        # Determine direction of turn.
-        if abs(forward) == 1:  # Facing E (forward == 1) or W (forward -1)
-            if _diff_row(ij, ijnext, nx):
-                turn = Turn.Left
-            elif (not _outside_domain(ijnext_right, n) and
-                    regions[ijnext_right] == region):
-                turn = Turn.Right
-            elif regions[ijnext] == region:
-                turn = Turn.Straight
-            else:
-                turn = Turn.Left
-        else:  # Facing N (forward == nx) or S (forward == -nx)
-            if _outside_domain(ijnext, n):
-                turn = Turn.Left
-            elif (not _diff_row(ijnext, ijnext_right, nx) and
-                    regions[ijnext_right] == region):
-                turn = Turn.Right
-            elif regions[ijnext] == region:
-                turn = Turn.Straight
-            else:
-                turn = Turn.Left
-
-        # Apply turn.
-        if turn == Turn.Straight:
-            ij = ijnext
-        elif turn == Turn.Left:
             prev_forward = forward
-            forward = left
-            left = -prev_forward
-        else:  # Turn.Right
-            prev_forward = forward
-            forward = -left
-            left = prev_forward
-            ij = ijnext_right
+            ijnext = ij + forward
+            ijnext_right = ijnext - left
 
-        # Finished boundary when returned to start.
-        if ij == start_ij and forward == start_forward:
-            break
+            # Determine direction of turn.
+            if abs(forward) == 1:  # Facing E (forward == 1) or W (forward -1)
+                if _diff_row(ij, ijnext, nx):
+                    turn = Turn.Left
+                elif (not _outside_domain(ijnext_right, n) and
+                        regions[ijnext_right] == region):
+                    turn = Turn.Right
+                elif regions[ijnext] == region:
+                    turn = Turn.Straight
+                else:
+                    turn = Turn.Left
+            else:  # Facing N (forward == nx) or S (forward == -nx)
+                if _outside_domain(ijnext, n):
+                    turn = Turn.Left
+                elif (not _diff_row(ijnext, ijnext_right, nx) and
+                        regions[ijnext_right] == region):
+                    turn = Turn.Right
+                elif regions[ijnext] == region:
+                    turn = Turn.Straight
+                else:
+                    turn = Turn.Left
 
-    # Trim buffer to actual size and add closing point.
-    result = np.empty(2*(npoints+1))
-    result[:2*npoints] = points[:2*npoints]
-    result = result.reshape((-1, 2))
-    result[-1] = result[0]  # End point the same as start point.
-    return region, result
+            # Apply turn.
+            if turn == Turn.Straight:
+                ij = ijnext
+            elif turn == Turn.Left:
+                prev_forward = forward
+                forward = left
+                left = -prev_forward
+            else:  # Turn.Right
+                prev_forward = forward
+                forward = -left
+                left = prev_forward
+                ij = ijnext_right
+
+            # Finished boundary when returned to start.
+            if ij == start_ij and forward == start_forward:
+                break
+
+        if pass_ == 0:
+            # End of first pass.
+            points = np.empty(2*(npoints+1))  # Note extra point at end.
+
+    points = points.reshape((-1, 2))
+    points[-1] = points[0]  # End point the same as start point.
+    return region, points
 
 
 # Generator of numba-compatible comparison functions for values.
