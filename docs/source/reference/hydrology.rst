@@ -53,6 +53,13 @@ Flow Length
 
     xrspatial.flow_length.flow_length
 
+Flow Length (D-infinity)
+========================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.flow_length_dinf.flow_length_dinf
+
 Flow Length (MFD)
 =================
 .. autosummary::
