@@ -48,6 +48,8 @@ from xrspatial.flow_length import flow_length  # noqa
 from xrspatial.flow_length_dinf import flow_length_dinf  # noqa
 from xrspatial.flow_length_mfd import flow_length_mfd  # noqa
 from xrspatial.flow_path import flow_path  # noqa
+from xrspatial.flow_path_dinf import flow_path_dinf  # noqa
+from xrspatial.flow_path_mfd import flow_path_mfd  # noqa
 from xrspatial.focal import mean  # noqa
 from xrspatial.glcm import glcm_texture  # noqa
 from xrspatial.morphology import morph_closing  # noqa
@@ -55,6 +57,8 @@ from xrspatial.morphology import morph_dilate  # noqa
 from xrspatial.morphology import morph_erode  # noqa
 from xrspatial.morphology import morph_opening  # noqa
 from xrspatial.hand import hand  # noqa
+from xrspatial.hand_dinf import hand_dinf  # noqa
+from xrspatial.hand_mfd import hand_mfd  # noqa
 from xrspatial.hillshade import hillshade  # noqa
 from xrspatial.mahalanobis import mahalanobis  # noqa
 from xrspatial.multispectral import arvi  # noqa
@@ -101,6 +105,8 @@ from xrspatial.viewshed import viewshed  # noqa
 from xrspatial.basin import basin  # noqa
 from xrspatial.watershed import basins  # noqa
 from xrspatial.watershed import watershed  # noqa
+from xrspatial.watershed_dinf import watershed_dinf  # noqa
+from xrspatial.watershed_mfd import watershed_mfd  # noqa
 from xrspatial.zonal import apply as zonal_apply  # noqa
 from xrspatial.zonal import crop  # noqa
 from xrspatial.zonal import trim  # noqa
