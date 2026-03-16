@@ -53,6 +53,13 @@ Flow Length
 
     xrspatial.flow_length.flow_length
 
+Flow Length (MFD)
+=================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.flow_length_mfd.flow_length_mfd
+
 Flow Path
 =========
 .. autosummary::
