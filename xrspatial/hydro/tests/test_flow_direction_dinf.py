@@ -361,7 +361,7 @@ def test_dataset_support():
 @pytest.mark.parametrize("size", [(4, 6), (10, 15)])
 @pytest.mark.parametrize(
     "dtype", [np.int32, np.int64, np.float32, np.float64])
-def test_numpy_equals_dask(random_data):
+def test_numpy_equals_dask(random_data, size, dtype):
     numpy_agg = create_test_raster(random_data, backend='numpy')
     dask_agg = create_test_raster(random_data, backend='dask')
     assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, flow_direction_dinf)
@@ -371,7 +371,7 @@ def test_numpy_equals_dask(random_data):
 @pytest.mark.parametrize("size", [(4, 6), (10, 15)])
 @pytest.mark.parametrize(
     "dtype", [np.int32, np.int64, np.float32, np.float64])
-def test_numpy_equals_cupy(random_data):
+def test_numpy_equals_cupy(random_data, size, dtype):
     numpy_agg = create_test_raster(random_data, backend='numpy')
     cupy_agg = create_test_raster(random_data, backend='cupy')
     assert_numpy_equals_cupy(numpy_agg, cupy_agg, flow_direction_dinf)
@@ -382,7 +382,7 @@ def test_numpy_equals_cupy(random_data):
 @pytest.mark.parametrize("size", [(4, 6), (10, 15)])
 @pytest.mark.parametrize(
     "dtype", [np.int32, np.int64, np.float32, np.float64])
-def test_numpy_equals_dask_cupy(random_data):
+def test_numpy_equals_dask_cupy(random_data, size, dtype):
     numpy_agg = create_test_raster(random_data, backend='numpy')
     dask_cupy_agg = create_test_raster(random_data, backend='dask+cupy')
     assert_numpy_equals_dask_cupy(numpy_agg, dask_cupy_agg,
