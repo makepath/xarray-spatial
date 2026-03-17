@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.hydro.twi import twi
+from xrspatial.hydro.twi_d8 import twi_d8 as twi
 from xrspatial.tests.general_checks import (
     create_test_raster,
     cuda_and_cupy_available,

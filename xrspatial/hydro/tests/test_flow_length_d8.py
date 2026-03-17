@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.hydro.flow_length import flow_length
+from xrspatial.hydro.flow_length_d8 import flow_length_d8 as flow_length
 from xrspatial.tests.general_checks import (
     create_test_raster,
     cuda_and_cupy_available,
@@ -214,7 +214,7 @@ class TestFlowLengthDask:
     ])
     @pytest.mark.parametrize("direction", ['downstream', 'upstream'])
     def test_numpy_equals_dask(self, chunks, direction):
-        from xrspatial.hydro.flow_direction import flow_direction
+        from xrspatial.hydro.flow_direction_d8 import flow_direction_d8 as flow_direction
 
         np.random.seed(123)
         elev = np.random.uniform(0, 100, (6, 6)).astype(np.float64)
@@ -255,7 +255,7 @@ class TestFlowLengthCuPy:
 
     @pytest.mark.parametrize("direction", ['downstream', 'upstream'])
     def test_numpy_equals_cupy(self, direction):
-        from xrspatial.hydro.flow_direction import flow_direction
+        from xrspatial.hydro.flow_direction_d8 import flow_direction_d8 as flow_direction
 
         np.random.seed(42)
         elev = np.random.uniform(0, 100, (6, 6)).astype(np.float64)
@@ -281,7 +281,7 @@ class TestFlowLengthDaskCuPy:
 
     @pytest.mark.parametrize("direction", ['downstream', 'upstream'])
     def test_numpy_equals_dask_cupy(self, direction):
-        from xrspatial.hydro.flow_direction import flow_direction
+        from xrspatial.hydro.flow_direction_d8 import flow_direction_d8 as flow_direction
 
         np.random.seed(42)
         elev = np.random.uniform(0, 100, (6, 6)).astype(np.float64)

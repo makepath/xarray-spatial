@@ -449,7 +449,7 @@ def _fill_dask_cupy(dem_data):
 # =====================================================================
 
 @supports_dataset
-def fill(dem: xr.DataArray,
+def fill_d8(dem: xr.DataArray,
          z_limit=None,
          name: str = 'fill') -> xr.DataArray:
     """Fill depressions in a DEM using Planchon-Darboux iterative flooding.

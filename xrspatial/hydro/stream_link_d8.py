@@ -44,8 +44,8 @@ from xrspatial.utils import (
 )
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.hydro.flow_accumulation import _code_to_offset, _code_to_offset_py
-from xrspatial.hydro.stream_order import _preprocess_stream_tiles, _to_numpy_f64
+from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset, _code_to_offset_py
+from xrspatial.hydro.stream_order_d8 import _preprocess_stream_tiles, _to_numpy_f64
 
 
 # =====================================================================
@@ -982,7 +982,7 @@ def _stream_link_dask_cupy(flow_dir_da, accum_da, threshold):
 # =====================================================================
 
 @supports_dataset
-def stream_link(flow_dir: xr.DataArray,
+def stream_link_d8(flow_dir: xr.DataArray,
                 flow_accum: xr.DataArray,
                 threshold: float = 100,
                 name: str = 'stream_link') -> xr.DataArray:

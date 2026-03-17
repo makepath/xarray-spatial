@@ -20,8 +20,8 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.hydro.flow_accumulation import _code_to_offset
-from xrspatial.hydro.watershed import _code_to_offset_py
+from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset
+from xrspatial.hydro.watershed_d8 import _code_to_offset_py
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.utils import (
     _validate_raster,
@@ -687,7 +687,7 @@ def _compute_seeds_upstream(iy, ix, boundaries, flow_bdry,
                              cellsize_x, cellsize_y, diag):
     """For upstream: check which adjacent cells flow INTO this tile,
     and seed with max(existing, neighbor_upstream + step_dist)."""
-    from xrspatial.hydro.flow_accumulation import _compute_seeds as _compute_accum_seeds
+    from xrspatial.hydro.flow_accumulation_d8 import _compute_seeds as _compute_accum_seeds
 
     tile_h = chunks_y[iy]
     tile_w = chunks_x[ix]
@@ -1021,7 +1021,7 @@ def _flow_length_dask_cupy(flow_dir_da, direction,
 # =====================================================================
 
 @supports_dataset
-def flow_length(flow_dir: xr.DataArray,
+def flow_length_d8(flow_dir: xr.DataArray,
                 direction: str = 'downstream',
                 name: str = 'flow_length') -> xr.DataArray:
     """Compute D8 flow length from a flow direction grid.

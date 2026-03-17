@@ -272,7 +272,7 @@ def _basins_dask_iterative(flow_dir_da):
     Constructs basin pour_points lazily, then delegates to the
     watershed dask infrastructure.
     """
-    from xrspatial.hydro.watershed import _watershed_dask_iterative
+    from xrspatial.hydro.watershed_d8 import _watershed_dask_iterative
 
     chunks_y = flow_dir_da.chunks[0]
     chunks_x = flow_dir_da.chunks[1]
@@ -300,7 +300,7 @@ def _basins_dask_iterative(flow_dir_da):
 def _basins_dask_cupy(flow_dir_da):
     """Dask+CuPy basins: native GPU via watershed infrastructure."""
     import cupy as cp
-    from xrspatial.hydro.watershed import _watershed_dask_cupy
+    from xrspatial.hydro.watershed_d8 import _watershed_dask_cupy
 
     chunks_y = flow_dir_da.chunks[0]
     chunks_x = flow_dir_da.chunks[1]
@@ -332,7 +332,7 @@ def _basins_dask_cupy(flow_dir_da):
 # =====================================================================
 
 @supports_dataset
-def basin(flow_dir: xr.DataArray,
+def basin_d8(flow_dir: xr.DataArray,
           name: str = 'basin') -> xr.DataArray:
     """Delineate drainage basins: every cell labeled with its outlet ID.
 
@@ -360,7 +360,7 @@ def basin(flow_dir: xr.DataArray,
     data = flow_dir.data
 
     if isinstance(data, np.ndarray):
-        from xrspatial.hydro.watershed import _watershed_cpu
+        from xrspatial.hydro.watershed_d8 import _watershed_cpu
         fd = data.astype(np.float64)
         h, w = fd.shape
         labels = _basins_init_labels(fd, h, w, h, w, 0, 0)

@@ -46,7 +46,7 @@ from xrspatial.utils import (
 )
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.hydro.flow_accumulation import _code_to_offset, _code_to_offset_py
+from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset, _code_to_offset_py
 
 
 def _to_numpy_f64(arr):
@@ -1460,11 +1460,11 @@ def _stream_order_dask_cupy(flow_dir_da, accum_da, threshold, method):
 # =====================================================================
 
 @supports_dataset
-def stream_order(flow_dir: xr.DataArray,
-                 flow_accum: xr.DataArray,
-                 threshold: float = 100,
-                 method: str = 'strahler',
-                 name: str = 'stream_order') -> xr.DataArray:
+def stream_order_d8(flow_dir: xr.DataArray,
+                    flow_accum: xr.DataArray,
+                    threshold: float = 100,
+                    ordering: str = 'strahler',
+                    name: str = 'stream_order') -> xr.DataArray:
     """Compute stream order from D8 flow direction and accumulation grids.
 
     Parameters
@@ -1478,7 +1478,7 @@ def stream_order(flow_dir: xr.DataArray,
     threshold : float, default 100
         Minimum accumulation to classify a cell as part of the
         stream network.
-    method : str, default 'strahler'
+    ordering : str, default 'strahler'
         ``'strahler'`` for Strahler branching hierarchy or
         ``'shreve'`` for Shreve cumulative magnitude.
     name : str, default 'stream_order'
@@ -1501,10 +1501,10 @@ def stream_order(flow_dir: xr.DataArray,
     """
     _validate_raster(flow_dir, func_name='stream_order', name='flow_dir')
 
-    method = method.lower()
+    method = ordering.lower()
     if method not in ('strahler', 'shreve'):
         raise ValueError(
-            f"method must be 'strahler' or 'shreve', got {method!r}")
+            f"ordering must be 'strahler' or 'shreve', got {ordering!r}")
 
     fd_data = flow_dir.data
     fa_data = flow_accum.data

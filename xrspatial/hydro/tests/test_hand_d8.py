@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.hydro.hand import hand
+from xrspatial.hydro.hand_d8 import hand_d8 as hand
 from xrspatial.tests.general_checks import (
     create_test_raster,
     cuda_and_cupy_available,
@@ -157,8 +157,8 @@ class TestHandDask:
         (2, 2), (3, 3), (2, 6), (6, 2), (6, 6),
     ])
     def test_numpy_equals_dask(self, chunks):
-        from xrspatial.hydro.flow_direction import flow_direction
-        from xrspatial.hydro.flow_accumulation import flow_accumulation
+        from xrspatial.hydro.flow_direction_d8 import flow_direction_d8 as flow_direction
+        from xrspatial.hydro.flow_accumulation_d8 import flow_accumulation_d8 as flow_accumulation
 
         np.random.seed(42)
         elev_data = np.random.uniform(0, 100, (6, 6)).astype(np.float64)
@@ -208,8 +208,8 @@ class TestHandCuPy:
     """Cross-backend: numpy vs cupy."""
 
     def test_numpy_equals_cupy(self):
-        from xrspatial.hydro.flow_direction import flow_direction
-        from xrspatial.hydro.flow_accumulation import flow_accumulation
+        from xrspatial.hydro.flow_direction_d8 import flow_direction_d8 as flow_direction
+        from xrspatial.hydro.flow_accumulation_d8 import flow_accumulation_d8 as flow_accumulation
 
         np.random.seed(42)
         elev_data = np.random.uniform(0, 100, (6, 6)).astype(np.float64)
@@ -238,8 +238,8 @@ class TestHandDaskCuPy:
     """Cross-backend: numpy vs dask+cupy."""
 
     def test_numpy_equals_dask_cupy(self):
-        from xrspatial.hydro.flow_direction import flow_direction
-        from xrspatial.hydro.flow_accumulation import flow_accumulation
+        from xrspatial.hydro.flow_direction_d8 import flow_direction_d8 as flow_direction
+        from xrspatial.hydro.flow_accumulation_d8 import flow_accumulation_d8 as flow_accumulation
 
         np.random.seed(42)
         elev_data = np.random.uniform(0, 100, (6, 6)).astype(np.float64)

@@ -454,7 +454,7 @@ def _snap_pour_point_dask_cupy(flow_accum_data, pour_points_data, search_radius)
 # =====================================================================
 
 @supports_dataset
-def snap_pour_point(flow_accum: xr.DataArray,
+def snap_pour_point_d8(flow_accum: xr.DataArray,
                     pour_points: xr.DataArray,
                     search_radius: int = 5,
                     name: str = 'snapped_pour_points') -> xr.DataArray:

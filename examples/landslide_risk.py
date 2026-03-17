@@ -43,9 +43,9 @@ import matplotlib.colors as mcolors
 
 from xrspatial import generate_terrain, slope
 from xrspatial.curvature import curvature
-from xrspatial.hydro.flow_direction import flow_direction
-from xrspatial.hydro.flow_accumulation import flow_accumulation
-from xrspatial.hydro.twi import twi
+from xrspatial.hydro.flow_direction_d8 import flow_direction_d8 as flow_direction
+from xrspatial.hydro.flow_accumulation_d8 import flow_accumulation_d8 as flow_accumulation
+from xrspatial.hydro.twi_d8 import twi_d8 as twi
 from xrspatial.terrain_metrics import tpi
 
 # -- Tunable parameters -----------------------------------------------------

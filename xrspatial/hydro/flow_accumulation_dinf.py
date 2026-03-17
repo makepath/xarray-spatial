@@ -39,7 +39,7 @@ from xrspatial.utils import (
 )
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.hydro.flow_accumulation import (
+from xrspatial.hydro.flow_accumulation_d8 import (
     _find_ready_and_finalize,
     _preprocess_tiles,
 )

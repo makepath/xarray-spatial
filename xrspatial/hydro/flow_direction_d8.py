@@ -266,7 +266,7 @@ def _run_dask_cupy(data: da.Array,
 # =====================================================================
 
 @supports_dataset
-def flow_direction(agg: xr.DataArray,
+def flow_direction_d8(agg: xr.DataArray,
                    name: str = 'flow_direction',
                    boundary: str = 'nan') -> xr.DataArray:
     """Compute D8 flow direction for each cell.

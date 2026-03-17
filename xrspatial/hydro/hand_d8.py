@@ -23,8 +23,8 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.hydro.flow_accumulation import _code_to_offset
-from xrspatial.hydro.watershed import _code_to_offset_py
+from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset
+from xrspatial.hydro.watershed_d8 import _code_to_offset_py
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.utils import (
     _validate_raster,
@@ -844,7 +844,7 @@ def _hand_dask_cupy(flow_dir_da, flow_accum_da, elev_da, threshold):
 # Public API
 # =====================================================================
 
-def hand(flow_dir: xr.DataArray,
+def hand_d8(flow_dir: xr.DataArray,
          flow_accum: xr.DataArray,
          elevation: xr.DataArray,
          threshold: float = 100,

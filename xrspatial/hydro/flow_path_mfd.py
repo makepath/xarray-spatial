@@ -129,7 +129,7 @@ def _flow_path_mfd_cupy(fractions_data, start_points_data):
 
 def _flow_path_mfd_dask(fractions_data, start_points_data, chunks_y, chunks_x):
     """Dask: sparse start-point extraction, LRU-cached tracing, lazy assembly."""
-    from xrspatial.hydro.flow_path import _group_cells_by_chunk
+    from xrspatial.hydro.flow_path_d8 import _group_cells_by_chunk
     from functools import lru_cache
 
     _, H, W = fractions_data.shape

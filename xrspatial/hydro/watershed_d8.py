@@ -929,7 +929,7 @@ def _watershed_dask_cupy(flow_dir_da, pour_points_da):
 # =====================================================================
 
 @supports_dataset
-def watershed(flow_dir: xr.DataArray,
+def watershed_d8(flow_dir: xr.DataArray,
               pour_points: xr.DataArray,
               name: str = 'watershed') -> xr.DataArray:
     """Label each cell with the pour point it drains to.
@@ -1000,7 +1000,7 @@ def watershed(flow_dir: xr.DataArray,
                         attrs=flow_dir.attrs)
 
 
-def basins(flow_dir, name='basins'):
+def basins_d8(flow_dir, name='basins'):
     """Backward-compatible wrapper; use :func:`basin` instead."""
-    from .basin import basin
-    return basin(flow_dir, name=name)
+    from .basin_d8 import basin_d8
+    return basin_d8(flow_dir, name=name)

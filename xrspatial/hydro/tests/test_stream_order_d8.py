@@ -49,7 +49,7 @@ def test_y_confluence():
         [1.0, 4.0, 1.0],
     ], dtype=np.float64)
     result = _make_stream_order(flow_dir, flow_accum, threshold=1,
-                                method='strahler')
+                                ordering='strahler')
     # (0,0) and (0,2) are headwaters: order 1
     assert result.data[0, 0] == 1.0
     assert result.data[0, 2] == 1.0
@@ -79,7 +79,7 @@ def test_unequal_confluence():
         [1.0, 5.0, 1.0],
     ], dtype=np.float64)
     result = _make_stream_order(flow_dir, flow_accum, threshold=1,
-                                method='strahler')
+                                ordering='strahler')
     assert result.data[0, 0] == 1.0  # headwater
     assert result.data[0, 2] == 1.0  # headwater
     assert result.data[1, 1] == 2.0  # two order-1 merge
@@ -108,7 +108,7 @@ def test_order_3():
         [1.0, 1.0, 1.0, 1.0, 1.0],
     ], dtype=np.float64)
     result = _make_stream_order(flow_dir, flow_accum, threshold=1,
-                                method='strahler')
+                                ordering='strahler')
     assert result.data[1, 1] == 2.0  # two order-1 merge
     assert result.data[1, 3] == 2.0  # two order-1 merge
     assert result.data[1, 2] == 3.0  # two order-2 merge
@@ -130,7 +130,7 @@ def test_order_3_equal_merge():
         [1.0, 2.0, 3.0],
     ], dtype=np.float64)
     result = _make_stream_order(flow_dir, flow_accum, threshold=2,
-                                method='strahler')
+                                ordering='strahler')
     # Only cells with accum >= 2 are stream cells
     assert np.isnan(result.data[0, 0])  # accum=1, not stream
     assert np.isnan(result.data[2, 0])  # accum=1, not stream
@@ -153,7 +153,7 @@ def test_linear_chain():
     flow_dir = np.array([[1.0, 1.0, 1.0, 1.0, 0.0]], dtype=np.float64)
     flow_accum = np.array([[1.0, 2.0, 3.0, 4.0, 5.0]], dtype=np.float64)
     result = _make_stream_order(flow_dir, flow_accum, threshold=1,
-                                method='strahler')
+                                ordering='strahler')
     expected = np.array([[1.0, 1.0, 1.0, 1.0, 1.0]], dtype=np.float64)
     np.testing.assert_array_equal(result.data, expected)
 
@@ -175,7 +175,7 @@ def test_shreve_y_confluence():
         [1.0, 4.0, 1.0],
     ], dtype=np.float64)
     result = _make_stream_order(flow_dir, flow_accum, threshold=1,
-                                method='shreve')
+                                ordering='shreve')
     assert result.data[0, 0] == 1.0
     assert result.data[0, 2] == 1.0
     assert result.data[1, 1] == 2.0  # sum of two 1s
@@ -195,7 +195,7 @@ def test_shreve_triple():
         [1.0, 4.0, 1.0],
     ], dtype=np.float64)
     result = _make_stream_order(flow_dir, flow_accum, threshold=1,
-                                method='shreve')
+                                ordering='shreve')
     assert result.data[0, 0] == 1.0
     assert result.data[0, 1] == 1.0
     assert result.data[0, 2] == 1.0
@@ -218,7 +218,7 @@ def test_shreve_cascade():
         [1.0, 1.0, 1.0],
     ], dtype=np.float64)
     result = _make_stream_order(flow_dir, flow_accum, threshold=1,
-                                method='shreve')
+                                ordering='shreve')
     assert result.data[0, 0] == 1.0  # headwater
     assert result.data[1, 0] == 1.0  # headwater
     assert result.data[0, 1] == 2.0  # A + C
@@ -235,7 +235,7 @@ def test_threshold_filters_cells():
     flow_dir = np.array([[1.0, 1.0, 1.0, 0.0]], dtype=np.float64)
     flow_accum = np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float64)
     result = _make_stream_order(flow_dir, flow_accum, threshold=3,
-                                method='strahler')
+                                ordering='strahler')
     assert np.isnan(result.data[0, 0])
     assert np.isnan(result.data[0, 1])
     assert result.data[0, 2] == 1.0
@@ -247,7 +247,7 @@ def test_threshold_zero():
     flow_dir = np.array([[1.0, 1.0, 0.0]], dtype=np.float64)
     flow_accum = np.array([[1.0, 2.0, 3.0]], dtype=np.float64)
     result = _make_stream_order(flow_dir, flow_accum, threshold=0,
-                                method='strahler')
+                                ordering='strahler')
     assert not np.any(np.isnan(result.data))
 
 
@@ -260,7 +260,7 @@ def test_no_streams():
     flow_dir = np.array([[1.0, 0.0]], dtype=np.float64)
     flow_accum = np.array([[1.0, 2.0]], dtype=np.float64)
     result = _make_stream_order(flow_dir, flow_accum, threshold=100,
-                                method='strahler')
+                                ordering='strahler')
     assert np.all(np.isnan(result.data))
 
 
@@ -273,7 +273,7 @@ def test_nan_handling():
         [1.0, 2.0, 3.0],
     ], dtype=np.float64)
     result = _make_stream_order(flow_dir, flow_accum, threshold=1,
-                                method='strahler')
+                                ordering='strahler')
     assert np.isnan(result.data[0, 1])
     # (0,0) still valid stream cell
     assert result.data[0, 0] == 1.0
@@ -284,7 +284,7 @@ def test_pit_in_stream():
     flow_dir = np.array([[1.0, 0.0]], dtype=np.float64)
     flow_accum = np.array([[1.0, 2.0]], dtype=np.float64)
     result = _make_stream_order(flow_dir, flow_accum, threshold=1,
-                                method='strahler')
+                                ordering='strahler')
     assert result.data[0, 0] == 1.0
     assert result.data[0, 1] == 1.0  # gets inflow from (0,0), single -> 1
 
@@ -312,8 +312,8 @@ def test_invalid_method():
     flow_accum = np.array([[1.0, 2.0]], dtype=np.float64)
     fd_da = create_test_raster(flow_dir)
     fa_da = create_test_raster(flow_accum)
-    with pytest.raises(ValueError, match="method must be"):
-        stream_order(fd_da, fa_da, method='horton')
+    with pytest.raises(ValueError, match="ordering must be"):
+        stream_order(fd_da, fa_da, ordering='horton')
 
 
 # ====================================================================
@@ -346,8 +346,8 @@ def test_dask_equivalence(chunks, method):
     da_fd = create_test_raster(flow_dir, backend='dask', chunks=chunks)
     da_fa = create_test_raster(flow_accum, backend='dask', chunks=chunks)
 
-    np_result = stream_order(np_fd, np_fa, threshold=1, method=method)
-    da_result = stream_order(da_fd, da_fa, threshold=1, method=method)
+    np_result = stream_order(np_fd, np_fa, threshold=1, ordering=method)
+    da_result = stream_order(da_fd, da_fa, threshold=1, ordering=method)
     np.testing.assert_allclose(
         np_result.data, da_result.data.compute(), equal_nan=True)
 
@@ -374,12 +374,12 @@ def test_dask_cross_tile_confluence(method):
 
     np_fd = create_test_raster(flow_dir, backend='numpy')
     np_fa = create_test_raster(flow_accum, backend='numpy')
-    np_result = stream_order(np_fd, np_fa, threshold=1, method=method)
+    np_result = stream_order(np_fd, np_fa, threshold=1, ordering=method)
 
     for chunks in [(2, 2), (3, 3), (2, 5)]:
         da_fd = create_test_raster(flow_dir, backend='dask', chunks=chunks)
         da_fa = create_test_raster(flow_accum, backend='dask', chunks=chunks)
-        da_result = stream_order(da_fd, da_fa, threshold=1, method=method)
+        da_result = stream_order(da_fd, da_fa, threshold=1, ordering=method)
         np.testing.assert_allclose(
             np_result.data, da_result.data.compute(), equal_nan=True,
         ), f"Mismatch with chunks={chunks}, method={method}"
@@ -397,14 +397,14 @@ def test_dask_random(method):
     fd = flow_direction(elev_da)
     fa = flow_accumulation(fd)
 
-    np_result = stream_order(fd, fa, threshold=3, method=method)
+    np_result = stream_order(fd, fa, threshold=3, ordering=method)
 
     fd_data = fd.data
     fa_data = fa.data
     for chunks in [(3, 3), (4, 5), (8, 10)]:
         da_fd = create_test_raster(fd_data, backend='dask', chunks=chunks)
         da_fa = create_test_raster(fa_data, backend='dask', chunks=chunks)
-        da_result = stream_order(da_fd, da_fa, threshold=3, method=method)
+        da_result = stream_order(da_fd, da_fa, threshold=3, ordering=method)
         np.testing.assert_allclose(
             np_result.data, da_result.data.compute(), equal_nan=True,
         ), f"Mismatch with chunks={chunks}, method={method}"
@@ -420,8 +420,8 @@ def test_gpu_equivalence(method):
     cp_fd = create_test_raster(flow_dir, backend='cupy')
     cp_fa = create_test_raster(flow_accum, backend='cupy')
 
-    np_result = stream_order(np_fd, np_fa, threshold=1, method=method)
-    cp_result = stream_order(cp_fd, cp_fa, threshold=1, method=method)
+    np_result = stream_order(np_fd, np_fa, threshold=1, ordering=method)
+    cp_result = stream_order(cp_fd, cp_fa, threshold=1, ordering=method)
     np.testing.assert_allclose(
         np_result.data, cp_result.data.get(), equal_nan=True)
 
@@ -437,8 +437,8 @@ def test_dask_cupy_equivalence(method):
     dcp_fd = create_test_raster(flow_dir, backend='dask+cupy', chunks=(3, 3))
     dcp_fa = create_test_raster(flow_accum, backend='dask+cupy', chunks=(3, 3))
 
-    np_result = stream_order(np_fd, np_fa, threshold=1, method=method)
-    dcp_result = stream_order(dcp_fd, dcp_fa, threshold=1, method=method)
+    np_result = stream_order(np_fd, np_fa, threshold=1, ordering=method)
+    dcp_result = stream_order(dcp_fd, dcp_fa, threshold=1, ordering=method)
     np.testing.assert_allclose(
         np_result.data, dcp_result.data.compute().get(), equal_nan=True)
 
@@ -456,14 +456,14 @@ def test_dask_cupy_random(method):
     fd = flow_direction(elev_da)
     fa = flow_accumulation(fd)
 
-    np_result = stream_order(fd, fa, threshold=3, method=method)
+    np_result = stream_order(fd, fa, threshold=3, ordering=method)
 
     fd_data = fd.data
     fa_data = fa.data
     for chunks in [(3, 3), (4, 5), (2, 2)]:
         dcp_fd = create_test_raster(fd_data, backend='dask+cupy', chunks=chunks)
         dcp_fa = create_test_raster(fa_data, backend='dask+cupy', chunks=chunks)
-        dcp_result = stream_order(dcp_fd, dcp_fa, threshold=3, method=method)
+        dcp_result = stream_order(dcp_fd, dcp_fa, threshold=3, ordering=method)
         np.testing.assert_allclose(
             np_result.data, dcp_result.data.compute().get(), equal_nan=True,
         ), f"Mismatch with chunks={chunks}, method={method}"

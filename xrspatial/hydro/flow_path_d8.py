@@ -32,7 +32,7 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.hydro.flow_accumulation import _code_to_offset, _code_to_offset_py
+from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset, _code_to_offset_py
 from xrspatial.utils import (
     _validate_raster,
     has_cuda_and_cupy,
@@ -348,7 +348,7 @@ def _flow_path_dask_cupy(flow_dir_data, start_points_data):
 # =====================================================================
 
 @supports_dataset
-def flow_path(flow_dir: xr.DataArray,
+def flow_path_d8(flow_dir: xr.DataArray,
               start_points: xr.DataArray,
               name: str = 'flow_path') -> xr.DataArray:
     """Trace downstream flow paths from start points through a D8 grid.

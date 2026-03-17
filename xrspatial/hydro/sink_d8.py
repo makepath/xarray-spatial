@@ -228,7 +228,7 @@ def _run_dask_cupy(data):
 # =====================================================================
 
 @supports_dataset
-def sink(flow_dir: xr.DataArray,
+def sink_d8(flow_dir: xr.DataArray,
          name: str = 'sink') -> xr.DataArray:
     """Identify and label depression cells in a D8 flow direction grid.
 

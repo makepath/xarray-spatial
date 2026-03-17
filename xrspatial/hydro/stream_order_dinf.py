@@ -54,7 +54,7 @@ from xrspatial.utils import (
 )
 from xrspatial.hydro._boundary_store import BoundaryStore
 from xrspatial.dataset_support import supports_dataset
-from xrspatial.hydro.stream_order import _to_numpy_f64
+from xrspatial.hydro.stream_order_d8 import _to_numpy_f64
 
 
 # Neighbor offsets: counterclockwise from East

@@ -24,7 +24,7 @@ except ImportError:
     da = None
 
 from xrspatial.hydro._boundary_store import BoundaryStore
-from xrspatial.hydro.flow_accumulation import _preprocess_tiles
+from xrspatial.hydro.flow_accumulation_d8 import _preprocess_tiles
 from xrspatial.hydro.flow_accumulation_dinf import _angle_to_neighbors
 from xrspatial.utils import (
     _validate_raster,

@@ -881,7 +881,7 @@ def _flow_accum_dask_cupy(flow_dir_da):
 # =====================================================================
 
 @supports_dataset
-def flow_accumulation(flow_dir: xr.DataArray,
+def flow_accumulation_d8(flow_dir: xr.DataArray,
                       name: str = 'flow_accumulation') -> xr.DataArray:
     """Compute flow accumulation from a D8 flow direction grid.
 

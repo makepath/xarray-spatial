@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from xrspatial.hydro.flow_accumulation_dinf import flow_accumulation_dinf
-from xrspatial.hydro.flow_accumulation import _detect_flow_type
+from xrspatial.hydro.flow_accumulation_d8 import _detect_flow_type
 from xrspatial.tests.general_checks import (
     create_test_raster,
     cuda_and_cupy_available,

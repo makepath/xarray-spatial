@@ -29,7 +29,7 @@ from xrspatial.utils import (
 _TAN_MIN = np.tan(np.radians(0.001))
 
 
-def twi(flow_accum: xr.DataArray,
+def twi_d8(flow_accum: xr.DataArray,
         slope_agg: xr.DataArray,
         name: str = 'twi') -> xr.DataArray:
     """Compute the Topographic Wetness Index.
