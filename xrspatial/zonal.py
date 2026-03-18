@@ -2336,12 +2336,18 @@ def crop(
         terrain_agg = terrain_agg.rename({'x': 'lon', 'y': 'lat'})
         terrain_agg = terrain_agg.rename('Elevation')
 
-        # Crop Image
+        # Create a simple zone raster (0 = below median, 1 = above)
+        zones_agg = (terrain_agg > terrain_agg.median()).astype(int)
+        zones_agg.attrs = terrain_agg.attrs
+        zones_agg = zones_agg.rename('Zone')
+
+        # Crop to keep only the above-median zone
         values_agg = terrain_agg[0:300, 0:250]
+        zones_sub = zones_agg[0:300, 0:250]
         cropped_agg = crop(
-            zones=terrain_agg,
+            zones=zones_sub,
             values=values_agg,
-            zones_ids=[0],
+            zones_ids=[1],
         )
 
         # Edit Attributes

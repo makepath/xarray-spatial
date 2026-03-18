@@ -704,16 +704,17 @@ def ndvi(nir_agg: xr.DataArray,
     --------
     .. plot::
        :include-source:
-        >>> from xrspatial.datasets import get_data
-        >>> data = get_data('sentinel-2')  # Open Example Data
-        >>> nir = data['NIR']
-        >>> red = data['Red']
-        >>> from xrspatial.multispectral import ndvi
-        >>> # Generate NDVI Aggregate Array
-        >>> ndvi_agg = ndvi(nir_agg=nir, red_agg=red)
-        >>> nir.plot(aspect=2, size=4)
-        >>> red.plot(aspect=2, size=4)
-        >>> ndvi_agg.plot(aspect=2, size=4)
+
+       >>> from xrspatial.datasets import get_data
+       >>> data = get_data('sentinel-2')  # Open Example Data
+       >>> nir = data['NIR']
+       >>> red = data['Red']
+       >>> from xrspatial.multispectral import ndvi
+       >>> # Generate NDVI Aggregate Array
+       >>> ndvi_agg = ndvi(nir_agg=nir, red_agg=red)
+       >>> nir.plot(aspect=2, size=4)
+       >>> red.plot(aspect=2, size=4)
+       >>> ndvi_agg.plot(aspect=2, size=4)
 
     .. sourcecode:: python
 
