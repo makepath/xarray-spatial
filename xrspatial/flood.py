@@ -579,7 +579,8 @@ def vegetation_roughness(
 def _veg_roughness_nlcd_numpy(data, lut):
     data = np.asarray(data)
     out = np.full(data.shape, np.nan, dtype=np.float64)
-    mask = (data >= 0) & (data < len(lut)) & ~np.isnan(data.astype(np.float64))
+    not_nan = ~np.isnan(data) if data.dtype.kind == 'f' else True
+    mask = (data >= 0) & (data < len(lut)) & not_nan
     idx = data[mask].astype(np.intp)
     out[mask] = lut[idx]
     return out
@@ -590,8 +591,8 @@ def _veg_roughness_nlcd_cupy(data, lut):
     lut_gpu = cp.asarray(lut)
     data = cp.asarray(data)
     out = cp.full(data.shape, cp.nan, dtype=cp.float64)
-    data_f = data.astype(cp.float64)
-    mask = (data >= 0) & (data < len(lut_gpu)) & ~cp.isnan(data_f)
+    not_nan = ~cp.isnan(data) if data.dtype.kind == 'f' else True
+    mask = (data >= 0) & (data < len(lut_gpu)) & not_nan
     idx = data[mask].astype(cp.intp)
     out[mask] = lut_gpu[idx]
     return out
@@ -732,12 +733,12 @@ def _veg_cn_numpy(lc, sg, lut):
     sg = np.asarray(sg)
     max_code, max_sg = lut.shape
     out = np.full(lc.shape, np.nan, dtype=np.float64)
-    lc_f = lc.astype(np.float64)
-    sg_f = sg.astype(np.float64)
+    lc_ok = ~np.isnan(lc) if lc.dtype.kind == 'f' else True
+    sg_ok = ~np.isnan(sg) if sg.dtype.kind == 'f' else True
     mask = (
         (lc >= 0) & (lc < max_code)
         & (sg >= 0) & (sg < max_sg)
-        & ~np.isnan(lc_f) & ~np.isnan(sg_f)
+        & lc_ok & sg_ok
     )
     lc_idx = lc[mask].astype(np.intp)
     sg_idx = sg[mask].astype(np.intp)
@@ -752,12 +753,12 @@ def _veg_cn_cupy(lc, sg, lut):
     sg = cp.asarray(sg)
     max_code, max_sg = lut_gpu.shape
     out = cp.full(lc.shape, cp.nan, dtype=cp.float64)
-    lc_f = lc.astype(cp.float64)
-    sg_f = sg.astype(cp.float64)
+    lc_ok = ~cp.isnan(lc) if lc.dtype.kind == 'f' else True
+    sg_ok = ~cp.isnan(sg) if sg.dtype.kind == 'f' else True
     mask = (
         (lc >= 0) & (lc < max_code)
         & (sg >= 0) & (sg < max_sg)
-        & ~cp.isnan(lc_f) & ~cp.isnan(sg_f)
+        & lc_ok & sg_ok
     )
     lc_idx = lc[mask].astype(cp.intp)
     sg_idx = sg[mask].astype(cp.intp)
