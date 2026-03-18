@@ -173,8 +173,8 @@ def rescale(agg, new_min=0.0, new_max=1.0, name='rescale'):
         Dimensions without coordinates: dim_0, dim_1
     """
     _validate_raster(agg, func_name='rescale', name='agg', ndim=None)
-    _validate_scalar(new_min, 'new_min', func_name='rescale')
-    _validate_scalar(new_max, 'new_max', func_name='rescale')
+    _validate_scalar(new_min, func_name='rescale', name='new_min')
+    _validate_scalar(new_max, func_name='rescale', name='new_max')
 
     if new_min > new_max:
         raise ValueError(
@@ -312,10 +312,7 @@ def standardize(agg, ddof=0, name='standardize'):
         Dimensions without coordinates: dim_0, dim_1
     """
     _validate_raster(agg, func_name='standardize', name='agg', ndim=None)
-    _validate_scalar(ddof, 'ddof', func_name='standardize')
-
-    if int(ddof) != ddof or ddof < 0:
-        raise ValueError(f"ddof must be a non-negative integer, got {ddof}")
+    _validate_scalar(ddof, func_name='standardize', name='ddof', dtype=int, min_val=0)
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_run_numpy_standardize,
