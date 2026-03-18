@@ -11,8 +11,8 @@ Atmospherically Resistant Vegetation Index (ARVI)
 
     xrspatial.multispectral.arvi
 
-Enhanced Built=Up and Bareness Index (EBBI)
-===========================================
+Enhanced Built-Up and Bareness Index (EBBI)
+============================================
 .. autosummary::
     :toctree: _autosummary
 

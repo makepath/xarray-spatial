@@ -661,21 +661,22 @@ def emerging_hotspots(raster, kernel, boundary='nan'):
 
     Category codes
     --------------
-    ====  ============  ==================================
-    Code  Name          Rule
-    ====  ============  ==================================
-     1    New           Hot only at the final time step
-     2    Consecutive   Hot for final N consecutive steps
-                        (N>=2), never before
-     3    Intensifying  Hot >=90% incl. final, MK up
-     4    Persistent    Hot >=90% incl. final, MK flat
-     5    Diminishing   Hot >=90% incl. final, MK down
-     6    Sporadic      Hot at final, <90%, never cold
-     7    Oscillating   Hot at final, was cold at least once
-     8    Historical    Hot >=90% of steps, NOT at final
-    -1..-8              Cold spot mirrors of 1-8
-     0    No Pattern    None of the above
-    ====  ============  ==================================
+
+    ======  ============  ======================================
+    Code    Name          Rule
+    ======  ============  ======================================
+    1       New           Hot only at the final time step
+    2       Consecutive   Hot for final N consecutive steps
+                          (N>=2), never before
+    3       Intensifying  Hot >=90% incl. final, MK up
+    4       Persistent    Hot >=90% incl. final, MK flat
+    5       Diminishing   Hot >=90% incl. final, MK down
+    6       Sporadic      Hot at final, <90%, never cold
+    7       Oscillating   Hot at final, was cold at least once
+    8       Historical    Hot >=90% of steps, NOT at final
+    -1..-8                Cold spot mirrors of 1-8
+    0       No Pattern    None of the above
+    ======  ============  ======================================
     """
     if not isinstance(raster, xr.DataArray):
         raise TypeError("`raster` must be an xarray.DataArray")
