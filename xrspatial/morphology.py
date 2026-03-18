@@ -1,10 +1,12 @@
-"""Morphological raster operators: erode, dilate, opening, closing.
+"""Morphological raster operators.
 
 Applies grayscale morphological operations using a structuring element
 (kernel) over a 2D raster.  Erosion computes the local minimum and
 dilation the local maximum within the kernel footprint.  Opening
 (erosion then dilation) removes small bright features; closing
-(dilation then erosion) fills small dark gaps.
+(dilation then erosion) fills small dark gaps.  Gradient, white
+top-hat, and black top-hat are derived by subtracting pairs of the
+above.
 
 Supports all four backends: numpy, cupy, dask+numpy, dask+cupy.
 """
@@ -560,3 +562,112 @@ def morph_closing(agg, kernel=None, boundary='nan', name='closing'):
         agg, kernel, boundary, name,
         _closing_numpy, _closing_cupy, _closing_dask_numpy, _closing_dask_cupy,
     )
+
+
+@supports_dataset
+def morph_gradient(agg, kernel=None, boundary='nan', name='gradient'):
+    """Morphological gradient: dilation minus erosion.
+
+    Highlights edges and transitions in a 2D raster.  The result is
+    always non-negative for non-NaN cells.
+
+    Parameters
+    ----------
+    agg : xarray.DataArray
+        2D raster of numeric values.
+    kernel : numpy.ndarray or None
+        2D structuring element with odd dimensions.  Defaults to a
+        3x3 square.
+    boundary : str, default ``'nan'``
+        Edge handling: ``'nan'``, ``'nearest'``, ``'reflect'``, or
+        ``'wrap'``.
+    name : str, default ``'gradient'``
+        Name for the output DataArray.
+
+    Returns
+    -------
+    xarray.DataArray
+        Gradient raster (dilate - erode).
+
+    Examples
+    --------
+    >>> from xrspatial.morphology import morph_gradient
+    >>> edges = morph_gradient(elevation)
+    """
+    dilated = morph_dilate(agg, kernel=kernel, boundary=boundary)
+    eroded = morph_erode(agg, kernel=kernel, boundary=boundary)
+    result = dilated - eroded
+    result.name = name
+    return result
+
+
+@supports_dataset
+def morph_white_tophat(agg, kernel=None, boundary='nan', name='white_tophat'):
+    """White top-hat: original minus opening.
+
+    Isolates bright features that are smaller than the structuring
+    element.
+
+    Parameters
+    ----------
+    agg : xarray.DataArray
+        2D raster of numeric values.
+    kernel : numpy.ndarray or None
+        2D structuring element with odd dimensions.  Defaults to a
+        3x3 square.
+    boundary : str, default ``'nan'``
+        Edge handling: ``'nan'``, ``'nearest'``, ``'reflect'``, or
+        ``'wrap'``.
+    name : str, default ``'white_tophat'``
+        Name for the output DataArray.
+
+    Returns
+    -------
+    xarray.DataArray
+        White top-hat raster (original - opening).
+
+    Examples
+    --------
+    >>> from xrspatial.morphology import morph_white_tophat
+    >>> bright = morph_white_tophat(elevation, kernel=circle_kernel)
+    """
+    opened = morph_opening(agg, kernel=kernel, boundary=boundary)
+    result = agg - opened
+    result.name = name
+    return result
+
+
+@supports_dataset
+def morph_black_tophat(agg, kernel=None, boundary='nan', name='black_tophat'):
+    """Black top-hat: closing minus original.
+
+    Isolates dark features that are smaller than the structuring
+    element.
+
+    Parameters
+    ----------
+    agg : xarray.DataArray
+        2D raster of numeric values.
+    kernel : numpy.ndarray or None
+        2D structuring element with odd dimensions.  Defaults to a
+        3x3 square.
+    boundary : str, default ``'nan'``
+        Edge handling: ``'nan'``, ``'nearest'``, ``'reflect'``, or
+        ``'wrap'``.
+    name : str, default ``'black_tophat'``
+        Name for the output DataArray.
+
+    Returns
+    -------
+    xarray.DataArray
+        Black top-hat raster (closing - original).
+
+    Examples
+    --------
+    >>> from xrspatial.morphology import morph_black_tophat
+    >>> dark = morph_black_tophat(elevation, kernel=circle_kernel)
+    """
+    closed = morph_closing(agg, kernel=kernel, boundary=boundary)
+    result = closed - agg
+    result.name = name
+    return result

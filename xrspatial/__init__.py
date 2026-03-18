@@ -49,10 +49,13 @@ from xrspatial.hydro import flow_path  # noqa: unified wrapper
 from xrspatial.hydro import flow_path_d8, flow_path_dinf, flow_path_mfd  # noqa
 from xrspatial.focal import mean  # noqa
 from xrspatial.glcm import glcm_texture  # noqa
+from xrspatial.morphology import morph_black_tophat  # noqa
 from xrspatial.morphology import morph_closing  # noqa
 from xrspatial.morphology import morph_dilate  # noqa
 from xrspatial.morphology import morph_erode  # noqa
+from xrspatial.morphology import morph_gradient  # noqa
 from xrspatial.morphology import morph_opening  # noqa
+from xrspatial.morphology import morph_white_tophat  # noqa
 from xrspatial.hydro import hand  # noqa: unified wrapper
 from xrspatial.hydro import hand_d8, hand_dinf, hand_mfd  # noqa
 from xrspatial.hillshade import hillshade  # noqa
