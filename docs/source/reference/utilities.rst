@@ -46,6 +46,14 @@ Preview
 
     xrspatial.preview.preview
 
+Normalization
+=============
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.normalize.rescale
+    xrspatial.normalize.standardize
+
 Diagnostics
 ===========
 .. autosummary::

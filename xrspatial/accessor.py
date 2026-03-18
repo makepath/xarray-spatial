@@ -321,6 +321,16 @@ class XrsSpatialDataArrayAccessor:
         from .preview import preview
         return preview(self._obj, **kwargs)
 
+    # ---- Normalization ----
+
+    def rescale(self, **kwargs):
+        from .normalize import rescale
+        return rescale(self._obj, **kwargs)
+
+    def standardize(self, **kwargs):
+        from .normalize import standardize
+        return standardize(self._obj, **kwargs)
+
     # ---- Raster to vector ----
 
     def polygonize(self, **kwargs):
@@ -636,6 +646,16 @@ class XrsSpatialDatasetAccessor:
     def preview(self, **kwargs):
         from .preview import preview
         return preview(self._obj, **kwargs)
+
+    # ---- Normalization ----
+
+    def rescale(self, **kwargs):
+        from .normalize import rescale
+        return rescale(self._obj, **kwargs)
+
+    def standardize(self, **kwargs):
+        from .normalize import standardize
+        return standardize(self._obj, **kwargs)
 
     # ---- Fire ----
 

@@ -70,6 +70,8 @@ from xrspatial.multispectral import savi  # noqa
 from xrspatial.multispectral import sipi  # noqa
 from xrspatial.pathfinding import a_star_search  # noqa
 from xrspatial.pathfinding import multi_stop_search  # noqa
+from xrspatial.normalize import rescale  # noqa
+from xrspatial.normalize import standardize  # noqa
 from xrspatial.perlin import perlin  # noqa
 from xrspatial.preview import preview  # noqa
 from xrspatial.proximity import allocation  # noqa
