@@ -37,8 +37,11 @@ from xrspatial.fire import rate_of_spread  # noqa
 from xrspatial.fire import rdnbr  # noqa
 from xrspatial.flood import curve_number_runoff  # noqa
 from xrspatial.flood import flood_depth  # noqa
+from xrspatial.flood import flood_depth_vegetation  # noqa
 from xrspatial.flood import inundation  # noqa
 from xrspatial.flood import travel_time  # noqa
+from xrspatial.flood import vegetation_curve_number  # noqa
+from xrspatial.flood import vegetation_roughness  # noqa
 from xrspatial.hydro import flow_accumulation  # noqa: unified wrapper
 from xrspatial.hydro import flow_accumulation_d8, flow_accumulation_dinf, flow_accumulation_mfd  # noqa
 from xrspatial.hydro import flow_direction  # noqa: unified wrapper

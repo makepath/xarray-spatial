@@ -5,10 +5,15 @@ import pytest
 import xarray as xr
 
 from xrspatial.flood import (
+    NLCD_CURVE_NUMBER,
+    NLCD_MANNINGS_N,
     curve_number_runoff,
     flood_depth,
+    flood_depth_vegetation,
     inundation,
     travel_time,
+    vegetation_curve_number,
+    vegetation_roughness,
 )
 from xrspatial.tests.general_checks import (
     create_test_raster,
@@ -507,4 +512,446 @@ class TestTravelTimeDaskCuPy:
         result_dc = travel_time(fl_dc, sl_dc, mannings_n=0.03)
 
         general_output_checks(fl_dc, result_dc,
+                              expected_results=result_np.data)
+
+
+# ===================================================================
+# vegetation_roughness
+# ===================================================================
+
+class TestVegRoughnessNLCDKnownValues:
+
+    def test_known_codes(self):
+        # Deciduous Forest=41 -> 0.100, Grassland=71 -> 0.035
+        data = np.array([[41, 71]], dtype=np.int32)
+        raster = create_test_raster(data, name='nlcd')
+        result = vegetation_roughness(raster, mode='nlcd')
+        np.testing.assert_allclose(result.data[0, 0], 0.100)
+        np.testing.assert_allclose(result.data[0, 1], 0.035)
+
+    def test_all_nlcd_codes(self):
+        codes = sorted(NLCD_MANNINGS_N.keys())
+        data = np.array([codes], dtype=np.int32)
+        raster = create_test_raster(data, name='nlcd')
+        result = vegetation_roughness(raster, mode='nlcd')
+        for i, code in enumerate(codes):
+            np.testing.assert_allclose(
+                result.data[0, i], NLCD_MANNINGS_N[code],
+                err_msg=f"NLCD code {code}")
+
+    def test_unrecognized_code_nan(self):
+        data = np.array([[41, 99]], dtype=np.int32)
+        raster = create_test_raster(data, name='nlcd')
+        result = vegetation_roughness(raster, mode='nlcd')
+        np.testing.assert_allclose(result.data[0, 0], 0.100)
+        assert np.isnan(result.data[0, 1])
+
+    def test_custom_lookup(self):
+        data = np.array([[41]], dtype=np.int32)
+        raster = create_test_raster(data, name='nlcd')
+        result = vegetation_roughness(raster, mode='nlcd',
+                                      lookup={41: 0.200})
+        np.testing.assert_allclose(result.data[0, 0], 0.200)
+
+
+class TestVegRoughnessNDVIKnownValues:
+
+    def test_breakpoints(self):
+        # Test at exact breakpoints
+        data = np.array([[0.0, 0.1, 0.3, 0.6, 1.0]], dtype=np.float64)
+        raster = create_test_raster(data, name='ndvi')
+        result = vegetation_roughness(raster, mode='ndvi')
+        np.testing.assert_allclose(
+            result.data[0], [0.02, 0.03, 0.05, 0.10, 0.16])
+
+    def test_interpolation(self):
+        # Midpoint between 0.1 (n=0.03) and 0.3 (n=0.05) -> n=0.04
+        data = np.array([[0.2]], dtype=np.float64)
+        raster = create_test_raster(data, name='ndvi')
+        result = vegetation_roughness(raster, mode='ndvi')
+        np.testing.assert_allclose(result.data[0, 0], 0.04)
+
+    def test_nan_propagation(self):
+        data = np.array([[np.nan, 0.5]], dtype=np.float64)
+        raster = create_test_raster(data, name='ndvi')
+        result = vegetation_roughness(raster, mode='ndvi')
+        assert np.isnan(result.data[0, 0])
+        assert not np.isnan(result.data[0, 1])
+
+
+class TestVegRoughnessValidation:
+
+    def test_invalid_mode(self):
+        raster = create_test_raster(np.ones((2, 2), dtype=np.float64))
+        with pytest.raises(ValueError, match="mode must be"):
+            vegetation_roughness(raster, mode='bad')
+
+
+class TestVegRoughnessOutput:
+
+    def test_coords_preserved(self):
+        data = np.array([[41, 42], [71, 82]], dtype=np.int32)
+        raster = create_test_raster(data, name='nlcd')
+        result = vegetation_roughness(raster, mode='nlcd')
+        general_output_checks(raster, result, verify_attrs=True)
+
+
+@dask_array_available
+class TestVegRoughnessDask:
+
+    def test_nlcd_numpy_equals_dask(self):
+        data = np.array([[41, 71, 82],
+                         [11, 42, 52],
+                         [24, 31, 95]], dtype=np.int32)
+        r_np = create_test_raster(data, backend='numpy', name='nlcd')
+        r_da = create_test_raster(data, backend='dask', name='nlcd',
+                                  chunks=(2, 2))
+        result_np = vegetation_roughness(r_np, mode='nlcd')
+        result_da = vegetation_roughness(r_da, mode='nlcd')
+        general_output_checks(r_da, result_da,
+                              expected_results=result_np.data)
+
+    def test_ndvi_numpy_equals_dask(self):
+        data = np.array([[0.0, 0.2, 0.5],
+                         [0.1, np.nan, 0.8],
+                         [0.3, 0.6, 1.0]], dtype=np.float64)
+        r_np = create_test_raster(data, backend='numpy', name='ndvi')
+        r_da = create_test_raster(data, backend='dask', name='ndvi',
+                                  chunks=(2, 2))
+        result_np = vegetation_roughness(r_np, mode='ndvi')
+        result_da = vegetation_roughness(r_da, mode='ndvi')
+        general_output_checks(r_da, result_da,
+                              expected_results=result_np.data)
+
+
+@cuda_and_cupy_available
+class TestVegRoughnessCuPy:
+
+    def test_nlcd_numpy_equals_cupy(self):
+        data = np.array([[41, 71], [11, 82]], dtype=np.int32)
+        r_np = create_test_raster(data, backend='numpy', name='nlcd')
+        r_cu = create_test_raster(data, backend='cupy', name='nlcd')
+        result_np = vegetation_roughness(r_np, mode='nlcd')
+        result_cu = vegetation_roughness(r_cu, mode='nlcd')
+        general_output_checks(r_cu, result_cu,
+                              expected_results=result_np.data)
+
+    def test_ndvi_numpy_equals_cupy(self):
+        data = np.array([[0.0, 0.5], [np.nan, 1.0]], dtype=np.float64)
+        r_np = create_test_raster(data, backend='numpy', name='ndvi')
+        r_cu = create_test_raster(data, backend='cupy', name='ndvi')
+        result_np = vegetation_roughness(r_np, mode='ndvi')
+        result_cu = vegetation_roughness(r_cu, mode='ndvi')
+        general_output_checks(r_cu, result_cu,
+                              expected_results=result_np.data)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+class TestVegRoughnessDaskCuPy:
+
+    def test_nlcd_numpy_equals_dask_cupy(self):
+        data = np.array([[41, 71], [11, 82]], dtype=np.int32)
+        r_np = create_test_raster(data, backend='numpy', name='nlcd')
+        r_dc = create_test_raster(data, backend='dask+cupy', name='nlcd',
+                                  chunks=(2, 2))
+        result_np = vegetation_roughness(r_np, mode='nlcd')
+        result_dc = vegetation_roughness(r_dc, mode='nlcd')
+        general_output_checks(r_dc, result_dc,
+                              expected_results=result_np.data)
+
+
+# ===================================================================
+# vegetation_curve_number
+# ===================================================================
+
+class TestVegCNKnownValues:
+
+    def test_basic(self):
+        # Deciduous Forest (41) on soil group A (1) -> CN=30
+        # Developed High (24) on soil group D (4) -> CN=95
+        lc = np.array([[41, 24]], dtype=np.int32)
+        sg = np.array([[1, 4]], dtype=np.int32)
+        lc_r = create_test_raster(lc, name='nlcd')
+        sg_r = create_test_raster(sg, name='soil')
+        result = vegetation_curve_number(lc_r, sg_r)
+        np.testing.assert_allclose(result.data[0, 0], 30.0)
+        np.testing.assert_allclose(result.data[0, 1], 95.0)
+
+    def test_all_entries(self):
+        # Verify every entry in the default lookup table
+        for (code, sg_val), expected_cn in NLCD_CURVE_NUMBER.items():
+            lc = np.array([[code]], dtype=np.int32)
+            sg = np.array([[sg_val]], dtype=np.int32)
+            lc_r = create_test_raster(lc, name='nlcd')
+            sg_r = create_test_raster(sg, name='soil')
+            result = vegetation_curve_number(lc_r, sg_r)
+            np.testing.assert_allclose(
+                result.data[0, 0], expected_cn,
+                err_msg=f"NLCD={code}, SG={sg_val}")
+
+    def test_unknown_pair_nan(self):
+        lc = np.array([[99]], dtype=np.int32)
+        sg = np.array([[1]], dtype=np.int32)
+        lc_r = create_test_raster(lc, name='nlcd')
+        sg_r = create_test_raster(sg, name='soil')
+        result = vegetation_curve_number(lc_r, sg_r)
+        assert np.isnan(result.data[0, 0])
+
+    def test_custom_lookup(self):
+        lc = np.array([[41]], dtype=np.int32)
+        sg = np.array([[1]], dtype=np.int32)
+        lc_r = create_test_raster(lc, name='nlcd')
+        sg_r = create_test_raster(sg, name='soil')
+        result = vegetation_curve_number(lc_r, sg_r,
+                                         lookup={(41, 1): 50})
+        np.testing.assert_allclose(result.data[0, 0], 50.0)
+
+
+class TestVegCNOutput:
+
+    def test_coords_preserved(self):
+        lc = np.array([[41, 42], [71, 82]], dtype=np.int32)
+        sg = np.array([[1, 2], [3, 4]], dtype=np.int32)
+        lc_r = create_test_raster(lc, name='nlcd')
+        sg_r = create_test_raster(sg, name='soil')
+        result = vegetation_curve_number(lc_r, sg_r)
+        general_output_checks(lc_r, result, verify_attrs=True)
+
+
+@dask_array_available
+class TestVegCNDask:
+
+    def test_numpy_equals_dask(self):
+        lc = np.array([[41, 71, 82],
+                        [11, 42, 52],
+                        [24, 31, 95]], dtype=np.int32)
+        sg = np.array([[1, 2, 3],
+                        [4, 1, 2],
+                        [3, 4, 1]], dtype=np.int32)
+        lc_np = create_test_raster(lc, backend='numpy', name='nlcd')
+        sg_np = create_test_raster(sg, backend='numpy', name='soil')
+        lc_da = create_test_raster(lc, backend='dask', name='nlcd',
+                                   chunks=(2, 2))
+        sg_da = create_test_raster(sg, backend='dask', name='soil',
+                                   chunks=(2, 2))
+        result_np = vegetation_curve_number(lc_np, sg_np)
+        result_da = vegetation_curve_number(lc_da, sg_da)
+        general_output_checks(lc_da, result_da,
+                              expected_results=result_np.data)
+
+
+@cuda_and_cupy_available
+class TestVegCNCuPy:
+
+    def test_numpy_equals_cupy(self):
+        lc = np.array([[41, 71], [24, 82]], dtype=np.int32)
+        sg = np.array([[1, 2], [4, 3]], dtype=np.int32)
+        lc_np = create_test_raster(lc, backend='numpy', name='nlcd')
+        sg_np = create_test_raster(sg, backend='numpy', name='soil')
+        lc_cu = create_test_raster(lc, backend='cupy', name='nlcd')
+        sg_cu = create_test_raster(sg, backend='cupy', name='soil')
+        result_np = vegetation_curve_number(lc_np, sg_np)
+        result_cu = vegetation_curve_number(lc_cu, sg_cu)
+        general_output_checks(lc_cu, result_cu,
+                              expected_results=result_np.data)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+class TestVegCNDaskCuPy:
+
+    def test_numpy_equals_dask_cupy(self):
+        lc = np.array([[41, 71], [24, 82]], dtype=np.int32)
+        sg = np.array([[1, 2], [4, 3]], dtype=np.int32)
+        lc_np = create_test_raster(lc, backend='numpy', name='nlcd')
+        sg_np = create_test_raster(sg, backend='numpy', name='soil')
+        lc_dc = create_test_raster(lc, backend='dask+cupy', name='nlcd',
+                                   chunks=(2, 2))
+        sg_dc = create_test_raster(sg, backend='dask+cupy', name='soil',
+                                   chunks=(2, 2))
+        result_np = vegetation_curve_number(lc_np, sg_np)
+        result_dc = vegetation_curve_number(lc_dc, sg_dc)
+        general_output_checks(lc_dc, result_dc,
+                              expected_results=result_np.data)
+
+
+# ===================================================================
+# flood_depth_vegetation
+# ===================================================================
+
+class TestFDVKnownValues:
+
+    def test_basic(self):
+        # hand=1, slope=45 deg, n=0.10, q=0.5
+        # tan(45)=1.0, h_normal = (0.5*0.10/1.0)^0.6 = 0.05^0.6
+        # depth = h_normal - 1.0 (if h_normal > 1.0, else NaN)
+        h_normal = (0.5 * 0.10 / np.sqrt(1.0)) ** 0.6
+        hand_data = np.array([[0.0, 1.0]], dtype=np.float64)
+        sl_data = np.array([[45.0, 45.0]], dtype=np.float64)
+        hand = create_test_raster(hand_data, name='hand')
+        sl = create_test_raster(sl_data, name='slope')
+        result = flood_depth_vegetation(hand, sl, mannings_n=0.10,
+                                        unit_discharge=0.5)
+        # HAND=0 cell: depth = h_normal - 0 = h_normal
+        np.testing.assert_allclose(result.data[0, 0], h_normal, rtol=1e-10)
+
+    def test_not_inundated(self):
+        # Large HAND means no inundation -> NaN
+        hand_data = np.array([[100.0]], dtype=np.float64)
+        sl_data = np.array([[10.0]], dtype=np.float64)
+        hand = create_test_raster(hand_data, name='hand')
+        sl = create_test_raster(sl_data, name='slope')
+        result = flood_depth_vegetation(hand, sl, mannings_n=0.05,
+                                        unit_discharge=0.5)
+        assert np.isnan(result.data[0, 0])
+
+    def test_higher_roughness_deeper(self):
+        # Physical invariant: higher n -> deeper water
+        hand_data = np.array([[0.0, 0.0]], dtype=np.float64)
+        sl_data = np.array([[10.0, 10.0]], dtype=np.float64)
+        n_data = np.array([[0.03, 0.15]], dtype=np.float64)
+        hand = create_test_raster(hand_data, name='hand')
+        sl = create_test_raster(sl_data, name='slope')
+        n_raster = create_test_raster(n_data, name='n')
+        result = flood_depth_vegetation(hand, sl, mannings_n=n_raster,
+                                        unit_discharge=1.0)
+        # n=0.15 cell should have deeper water than n=0.03 cell
+        assert result.data[0, 1] > result.data[0, 0]
+
+    def test_zero_slope_no_inf(self):
+        hand_data = np.array([[0.0]], dtype=np.float64)
+        sl_data = np.array([[0.0]], dtype=np.float64)
+        hand = create_test_raster(hand_data, name='hand')
+        sl = create_test_raster(sl_data, name='slope')
+        result = flood_depth_vegetation(hand, sl, mannings_n=0.05,
+                                        unit_discharge=0.5)
+        assert not np.any(np.isinf(result.data))
+
+
+class TestFDVNaN:
+
+    def test_nan_propagation(self):
+        hand_data = np.array([[np.nan, 0.0]], dtype=np.float64)
+        sl_data = np.array([[10.0, np.nan]], dtype=np.float64)
+        hand = create_test_raster(hand_data, name='hand')
+        sl = create_test_raster(sl_data, name='slope')
+        result = flood_depth_vegetation(hand, sl, mannings_n=0.05,
+                                        unit_discharge=0.5)
+        assert np.isnan(result.data[0, 0])
+        assert np.isnan(result.data[0, 1])
+
+
+class TestFDVValidation:
+
+    def test_negative_discharge(self):
+        hand = create_test_raster(np.ones((2, 2), dtype=np.float64))
+        sl = create_test_raster(np.ones((2, 2), dtype=np.float64))
+        with pytest.raises(ValueError, match="unit_discharge must be > 0"):
+            flood_depth_vegetation(hand, sl, mannings_n=0.05,
+                                   unit_discharge=-1.0)
+
+    def test_zero_discharge(self):
+        hand = create_test_raster(np.ones((2, 2), dtype=np.float64))
+        sl = create_test_raster(np.ones((2, 2), dtype=np.float64))
+        with pytest.raises(ValueError, match="unit_discharge must be > 0"):
+            flood_depth_vegetation(hand, sl, mannings_n=0.05,
+                                   unit_discharge=0.0)
+
+    def test_non_numeric_discharge(self):
+        hand = create_test_raster(np.ones((2, 2), dtype=np.float64))
+        sl = create_test_raster(np.ones((2, 2), dtype=np.float64))
+        with pytest.raises(TypeError, match="unit_discharge must be numeric"):
+            flood_depth_vegetation(hand, sl, mannings_n=0.05,
+                                   unit_discharge="high")
+
+    def test_negative_mannings_n(self):
+        hand = create_test_raster(np.ones((2, 2), dtype=np.float64))
+        sl = create_test_raster(np.ones((2, 2), dtype=np.float64))
+        with pytest.raises(ValueError, match="mannings_n must be > 0"):
+            flood_depth_vegetation(hand, sl, mannings_n=-0.01,
+                                   unit_discharge=0.5)
+
+
+class TestFDVOutput:
+
+    def test_coords_preserved(self):
+        hand_data = np.zeros((4, 4), dtype=np.float64)
+        sl_data = np.ones((4, 4), dtype=np.float64) * 10.0
+        hand = create_test_raster(hand_data, name='hand')
+        sl = create_test_raster(sl_data, name='slope')
+        result = flood_depth_vegetation(hand, sl, mannings_n=0.05,
+                                        unit_discharge=0.5)
+        general_output_checks(hand, result, verify_attrs=True)
+
+
+@dask_array_available
+class TestFDVDask:
+
+    @pytest.mark.parametrize("chunks", [(2, 2), (3, 3)])
+    def test_numpy_equals_dask(self, chunks):
+        np.random.seed(42)
+        hand_data = np.random.uniform(0, 5, (5, 5)).astype(np.float64)
+        sl_data = np.random.uniform(0.1, 60, (5, 5)).astype(np.float64)
+
+        h_np = create_test_raster(hand_data, backend='numpy', name='hand')
+        s_np = create_test_raster(sl_data, backend='numpy', name='slope')
+        h_da = create_test_raster(hand_data, backend='dask', name='hand',
+                                  chunks=chunks)
+        s_da = create_test_raster(sl_data, backend='dask', name='slope',
+                                  chunks=chunks)
+
+        result_np = flood_depth_vegetation(h_np, s_np, mannings_n=0.10,
+                                           unit_discharge=1.0)
+        result_da = flood_depth_vegetation(h_da, s_da, mannings_n=0.10,
+                                           unit_discharge=1.0)
+
+        general_output_checks(h_da, result_da,
+                              expected_results=result_np.data)
+
+
+@cuda_and_cupy_available
+class TestFDVCuPy:
+
+    def test_numpy_equals_cupy(self):
+        np.random.seed(42)
+        hand_data = np.random.uniform(0, 5, (5, 5)).astype(np.float64)
+        sl_data = np.random.uniform(0.1, 60, (5, 5)).astype(np.float64)
+
+        h_np = create_test_raster(hand_data, backend='numpy', name='hand')
+        s_np = create_test_raster(sl_data, backend='numpy', name='slope')
+        h_cu = create_test_raster(hand_data, backend='cupy', name='hand')
+        s_cu = create_test_raster(sl_data, backend='cupy', name='slope')
+
+        result_np = flood_depth_vegetation(h_np, s_np, mannings_n=0.10,
+                                           unit_discharge=1.0)
+        result_cu = flood_depth_vegetation(h_cu, s_cu, mannings_n=0.10,
+                                           unit_discharge=1.0)
+
+        general_output_checks(h_cu, result_cu,
+                              expected_results=result_np.data)
+
+
+@cuda_and_cupy_available
+@dask_array_available
+class TestFDVDaskCuPy:
+
+    def test_numpy_equals_dask_cupy(self):
+        np.random.seed(42)
+        hand_data = np.random.uniform(0, 5, (5, 5)).astype(np.float64)
+        sl_data = np.random.uniform(0.1, 60, (5, 5)).astype(np.float64)
+
+        h_np = create_test_raster(hand_data, backend='numpy', name='hand')
+        s_np = create_test_raster(sl_data, backend='numpy', name='slope')
+        h_dc = create_test_raster(hand_data, backend='dask+cupy',
+                                  name='hand', chunks=(3, 3))
+        s_dc = create_test_raster(sl_data, backend='dask+cupy',
+                                  name='slope', chunks=(3, 3))
+
+        result_np = flood_depth_vegetation(h_np, s_np, mannings_n=0.10,
+                                           unit_discharge=1.0)
+        result_dc = flood_depth_vegetation(h_dc, s_dc, mannings_n=0.10,
+                                           unit_discharge=1.0)
+
+        general_output_checks(h_dc, result_dc,
                               expected_results=result_np.data)
