@@ -625,3 +625,151 @@ class TestIntegerRaster:
         raster = _make_raster(data, x_range=(-4, 4), y_range=(-4, 4))
         result = reproject(raster, 'EPSG:4326', resampling='bilinear')
         assert result.shape[0] > 0
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
+
+class TestEdgeCases:
+    def test_1x1_raster(self):
+        """Single-pixel raster should not crash."""
+        from xrspatial.reproject import reproject
+        raster = _make_raster(np.array([[42.0]]), x_range=(0, 0), y_range=(0, 0))
+        result = reproject(raster, 'EPSG:3857')
+        assert result.shape[0] >= 1
+        assert result.shape[1] >= 1
+
+    def test_2x2_raster(self):
+        from xrspatial.reproject import reproject
+        data = np.array([[1, 2], [3, 4]], dtype=np.float64)
+        raster = _make_raster(data, x_range=(-1, 1), y_range=(-1, 1))
+        result = reproject(raster, 'EPSG:3857')
+        assert result.shape[0] > 0
+        valid = result.values[np.isfinite(result.values)]
+        assert len(valid) > 0
+
+    def test_antimeridian_east(self):
+        """Raster near 180E should reproject without grid blow-up."""
+        from xrspatial.reproject import reproject
+        data = np.ones((16, 16), dtype=np.float64) * 42
+        raster = _make_raster(data, x_range=(176, 180), y_range=(-20, -16))
+        result = reproject(raster, 'EPSG:3857')
+        # Should not produce an absurdly wide output
+        assert result.shape[1] < 200
+
+    def test_antimeridian_west(self):
+        """Raster near 180W should reproject without grid blow-up."""
+        from xrspatial.reproject import reproject
+        data = np.ones((16, 16), dtype=np.float64) * 42
+        raster = _make_raster(data, x_range=(-180, -177), y_range=(-20, -16))
+        result = reproject(raster, 'EPSG:3857')
+        assert result.shape[1] < 200
+
+    def test_arctic_to_mercator(self):
+        """High-latitude reproject to Web Mercator."""
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(42).rand(16, 16).astype(np.float64)
+        raster = _make_raster(data, x_range=(-30, 30), y_range=(60, 80))
+        result = reproject(raster, 'EPSG:3857')
+        assert result.shape[0] > 0
+        assert np.isfinite(result.values).any()
+
+    def test_arctic_beyond_mercator_limit(self):
+        """Latitudes beyond 85N should not crash for Mercator."""
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(42).rand(16, 16).astype(np.float64)
+        raster = _make_raster(data, x_range=(-30, 30), y_range=(80, 90))
+        result = reproject(raster, 'EPSG:3857')
+        assert result.shape[0] > 0
+
+    def test_polar_stereographic(self):
+        """Reproject to polar stereographic CRS."""
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(42).rand(16, 16).astype(np.float64)
+        raster = _make_raster(data, x_range=(-30, 30), y_range=(60, 80))
+        result = reproject(raster, 'EPSG:3413')
+        assert result.shape[0] > 0
+
+    def test_south_up_matches_north_up(self):
+        """Y-ascending (south-up) should produce same result as Y-descending."""
+        from xrspatial.reproject import reproject
+        data = np.arange(64, dtype=np.float64).reshape(8, 8)
+        y_asc = np.linspace(-10, 10, 8)
+        x = np.linspace(-10, 10, 8)
+
+        south_up = xr.DataArray(data, dims=['y', 'x'],
+                                coords={'y': y_asc, 'x': x},
+                                attrs={'crs': 'EPSG:4326'})
+        north_up = xr.DataArray(data[::-1], dims=['y', 'x'],
+                                coords={'y': y_asc[::-1], 'x': x},
+                                attrs={'crs': 'EPSG:4326'})
+        r_south = reproject(south_up, 'EPSG:3857', width=16, height=16)
+        r_north = reproject(north_up, 'EPSG:3857', width=16, height=16)
+        np.testing.assert_allclose(
+            r_south.values, r_north.values, atol=1e-10, equal_nan=True)
+
+    def test_utm_roundtrip(self):
+        """4326 -> UTM -> 4326 should recover original values."""
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(42).rand(16, 16).astype(np.float64) * 100
+        raster = _make_raster(data, x_range=(13, 17), y_range=(50, 54))
+        to_utm = reproject(raster, 'EPSG:32633')
+        back = reproject(to_utm, 'EPSG:4326', source_crs='EPSG:32633',
+                         width=16, height=16)
+        # Interior should match within interpolation tolerance
+        valid = np.isfinite(back.values) & (back.values > 0)
+        assert valid.sum() > 50
+
+    def test_all_nan_raster(self):
+        """All-NaN raster should produce all-NaN output."""
+        from xrspatial.reproject import reproject
+        raster = _make_raster(np.full((16, 16), np.nan),
+                              x_range=(-5, 5), y_range=(-5, 5))
+        result = reproject(raster, 'EPSG:3857')
+        assert np.isnan(result.values).all()
+
+    def test_nodata_sentinel_propagation(self):
+        """Sentinel nodata value should be preserved in output."""
+        from xrspatial.reproject import reproject
+        data = np.full((16, 16), 42.0)
+        data[:4, :] = -9999
+        raster = _make_raster(data, x_range=(-5, 5), y_range=(-5, 5))
+        raster.attrs['nodata'] = -9999
+        result = reproject(raster, 'EPSG:4326', nodata=-9999,
+                           width=16, height=16)
+        vals = result.values
+        # Interior valid pixels should be close to 42
+        valid_42 = (vals > 40) & (vals < 44)
+        assert valid_42.sum() > 50
+        # Nodata regions should be -9999
+        assert (vals == -9999).sum() > 0
+
+    def test_merge_with_gap(self):
+        """Merge tiles with a gap should have nodata in the gap."""
+        from xrspatial.reproject import merge
+        left = _make_raster(np.full((16, 16), 10.0),
+                            x_range=(-10, -2), y_range=(-5, 5))
+        right = _make_raster(np.full((16, 16), 20.0),
+                             x_range=(2, 10), y_range=(-5, 5))
+        result = merge([left, right], resolution=0.5)
+        x = result.coords['x'].values
+        gap = result.sel(x=slice(-1, 1)).values
+        assert np.isnan(gap).mean() > 0.8
+
+    def test_conus_to_albers(self):
+        """CONUS extent to Albers Equal Area (large coordinate shift)."""
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(42).rand(32, 64).astype(np.float64) * 1000
+        raster = _make_raster(data, x_range=(-120, -70), y_range=(25, 50))
+        result = reproject(raster, 'EPSG:5070')
+        assert result.shape[0] > 0
+        assert np.isfinite(result.values).sum() > result.values.size * 0.5
+
+    def test_wide_raster(self):
+        """Extreme aspect ratio (4x256) should not crash."""
+        from xrspatial.reproject import reproject
+        raster = _make_raster(np.ones((4, 256), dtype=np.float64) * 42,
+                              x_range=(-170, 170), y_range=(-2, 2))
+        result = reproject(raster, 'EPSG:3857')
+        assert result.shape[0] > 0

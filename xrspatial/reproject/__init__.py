@@ -136,7 +136,12 @@ def _reproject_chunk_numpy(
     window = source_data[r_min_clip:r_max_clip, c_min_clip:c_max_clip]
     if hasattr(window, 'compute'):
         window = window.compute()
-    window = np.asarray(window)
+    window = np.asarray(window, dtype=np.float64)
+
+    # Convert sentinel nodata to NaN so numba kernels can detect it
+    if not np.isnan(nodata):
+        window = window.copy()
+        window[window == nodata] = np.nan
 
     # Adjust coordinates relative to window
     local_row = src_row_px - r_min_clip
@@ -208,6 +213,12 @@ def _reproject_chunk_cupy(
         window = window.compute()
     if not isinstance(window, cp.ndarray):
         window = cp.asarray(window)
+    window = window.astype(cp.float64)
+
+    # Convert sentinel nodata to NaN
+    if not np.isnan(nodata):
+        window = window.copy()
+        window[window == nodata] = cp.nan
 
     local_row = src_row_px - r_min_clip
     local_col = src_col_px - c_min_clip

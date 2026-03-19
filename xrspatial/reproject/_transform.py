@@ -116,8 +116,11 @@ class ApproximateTransform:
 
         # Control grid in output pixel space
         n = precision + 1
-        ctrl_rows = np.linspace(0, height - 1, n)
-        ctrl_cols = np.linspace(0, width - 1, n)
+        # Guard against degenerate shapes (1-pixel dimensions)
+        row_end = max(height - 1, 1)
+        col_end = max(width - 1, 1)
+        ctrl_rows = np.linspace(0, row_end, n)
+        ctrl_cols = np.linspace(0, col_end, n)
         ctrl_cc, ctrl_rr = np.meshgrid(ctrl_cols, ctrl_rows)
 
         # Convert control pixels to target CRS coordinates

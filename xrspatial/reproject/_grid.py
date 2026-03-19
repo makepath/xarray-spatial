@@ -37,6 +37,21 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
     if bounds is None:
         # Transform source corners and edges to target CRS
         src_left, src_bottom, src_right, src_top = source_bounds
+
+        # Clamp geographic coordinates away from singularities.
+        # Exactly +/-180 longitude produces inf in many projections;
+        # latitudes beyond +/-90 are invalid.
+        if source_crs.is_geographic:
+            clamp = 0.01  # degrees
+            src_left = max(src_left, -180 + clamp)
+            src_right = min(src_right, 180 - clamp)
+            src_bottom = max(src_bottom, -90 + clamp)
+            src_top = min(src_top, 90 - clamp)
+            if src_left >= src_right:
+                src_left, src_right = source_bounds[0], source_bounds[2]
+            if src_bottom >= src_top:
+                src_bottom, src_top = source_bounds[1], source_bounds[3]
+
         n_edge = 21  # sample points along each edge
         xs = np.concatenate([
             np.linspace(src_left, src_right, n_edge),   # top edge
@@ -62,8 +77,47 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
             )
         tx = tx[valid]
         ty = ty[valid]
-        bounds = (float(tx.min()), float(ty.min()),
-                  float(tx.max()), float(ty.max()))
+
+        # Detect antimeridian / polar blow-up: if the transformed extent
+        # is absurdly large relative to the source, use a densified
+        # interior grid instead of just boundary points.
+        raw_bounds = (float(tx.min()), float(ty.min()),
+                      float(tx.max()), float(ty.max()))
+        src_w_crs = src_right - src_left
+        src_h_crs = src_top - src_bottom
+        out_w_crs = raw_bounds[2] - raw_bounds[0]
+        out_h_crs = raw_bounds[3] - raw_bounds[1]
+
+        # Heuristic: if output span is > 50x source span in either axis,
+        # boundary points likely wrapped around a singularity. Fall back
+        # to a dense interior grid to get a tighter bounding box.
+        ratio_x = out_w_crs / (abs(src_w_crs) + 1e-30)
+        ratio_y = out_h_crs / (abs(src_h_crs) + 1e-30)
+        if ratio_x > 50 or ratio_y > 50:
+            # Sample a dense interior grid instead
+            n_dense = 51
+            ix = np.linspace(src_left, src_right, n_dense)
+            iy = np.linspace(src_bottom, src_top, n_dense)
+            ixx, iyy = np.meshgrid(ix, iy)
+            itx, ity = transformer.transform(ixx.ravel(), iyy.ravel())
+            itx = np.asarray(itx)
+            ity = np.asarray(ity)
+            ivalid = np.isfinite(itx) & np.isfinite(ity)
+            if ivalid.any():
+                itx = itx[ivalid]
+                ity = ity[ivalid]
+                # Use IQR-based bounds to reject outlier transforms
+                q_lo, q_hi = 2, 98
+                bounds = (
+                    float(np.percentile(itx, q_lo)),
+                    float(np.percentile(ity, q_lo)),
+                    float(np.percentile(itx, q_hi)),
+                    float(np.percentile(ity, q_hi)),
+                )
+            else:
+                bounds = raw_bounds
+        else:
+            bounds = raw_bounds
 
     left, bottom, right, top = bounds
 
