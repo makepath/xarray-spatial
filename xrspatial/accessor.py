@@ -141,6 +141,20 @@ class XrsSpatialDataArrayAccessor:
         from .flood import travel_time
         return travel_time(self._obj, slope_agg, mannings_n, **kwargs)
 
+    def vegetation_roughness(self, **kwargs):
+        from .flood import vegetation_roughness
+        return vegetation_roughness(self._obj, **kwargs)
+
+    def vegetation_curve_number(self, soil_group_agg, **kwargs):
+        from .flood import vegetation_curve_number
+        return vegetation_curve_number(self._obj, soil_group_agg, **kwargs)
+
+    def flood_depth_vegetation(self, slope_agg, mannings_n,
+                               unit_discharge, **kwargs):
+        from .flood import flood_depth_vegetation
+        return flood_depth_vegetation(self._obj, slope_agg, mannings_n,
+                                      unit_discharge, **kwargs)
+
     def viewshed(self, x, y, **kwargs):
         from .viewshed import viewshed
         return viewshed(self._obj, x, y, **kwargs)
@@ -546,6 +560,20 @@ class XrsSpatialDatasetAccessor:
     def travel_time(self, slope_agg, mannings_n, **kwargs):
         from .flood import travel_time
         return travel_time(self._obj, slope_agg, mannings_n, **kwargs)
+
+    def vegetation_roughness(self, **kwargs):
+        from .flood import vegetation_roughness
+        return vegetation_roughness(self._obj, **kwargs)
+
+    def vegetation_curve_number(self, soil_group_agg, **kwargs):
+        from .flood import vegetation_curve_number
+        return vegetation_curve_number(self._obj, soil_group_agg, **kwargs)
+
+    def flood_depth_vegetation(self, slope_agg, mannings_n,
+                               unit_discharge, **kwargs):
+        from .flood import flood_depth_vegetation
+        return flood_depth_vegetation(self._obj, slope_agg, mannings_n,
+                                      unit_discharge, **kwargs)
 
     # ---- Classification ----
 
