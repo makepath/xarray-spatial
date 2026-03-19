@@ -255,6 +255,15 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 --------
 
+### **Reproject / Merge**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Reproject](xrspatial/reproject/__init__.py) | Reprojects a raster to a new CRS using an approximate transform and numba JIT resampling | Standard (inverse mapping) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Merge](xrspatial/reproject/__init__.py) | Merges multiple rasters into a single mosaic with configurable overlap strategy | Standard (mosaic) | ✅️ | ✅️ | 🔄 | 🔄 |
+
+-------
+
 ### **Raster / Vector Conversion**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
@@ -324,6 +333,9 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Inundation](xrspatial/flood.py) | Produces a binary flood/no-flood mask from a HAND raster and water level | Standard (HAND-based) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Curve Number Runoff](xrspatial/flood.py) | Estimates runoff depth from rainfall using the SCS/NRCS curve number method | SCS/NRCS | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Travel Time](xrspatial/flood.py) | Estimates overland flow travel time via simplified Manning's equation | Manning 1891 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Vegetation Roughness](xrspatial/flood.py) | Derives Manning's roughness coefficients from NLCD land cover or NDVI | SCS/NRCS | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Vegetation Curve Number](xrspatial/flood.py) | Derives SCS curve numbers from land cover and hydrologic soil group | SCS/NRCS | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Flood Depth (Vegetation)](xrspatial/flood.py) | Manning-based steady-state flow depth incorporating vegetation roughness | Manning 1891 | ✅️ | ✅️ | ✅️ | ✅️ |
 
 -----------
 
@@ -334,6 +346,15 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [IDW](xrspatial/interpolate/_idw.py) | Inverse Distance Weighting from scattered points to a raster grid | Standard (IDW) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Kriging](xrspatial/interpolate/_kriging.py) | Ordinary Kriging with automatic variogram fitting (spherical, exponential, gaussian) | Standard (ordinary kriging) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Spline](xrspatial/interpolate/_spline.py) | Thin Plate Spline interpolation with optional smoothing | Standard (TPS) | ✅️ | ✅️ | ✅️ | ✅️ |
+
+-----------
+
+### **Dasymetric**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Disaggregate](xrspatial/dasymetric.py) | Redistributes zonal totals to pixels using an ancillary weight surface | Mennis 2003 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Pycnophylactic](xrspatial/dasymetric.py) | Tobler's pycnophylactic interpolation preserving zone totals via Laplacian smoothing | Tobler 1979 | ✅️ | | | |
 
 -----------
 
