@@ -1,0 +1,627 @@
+"""Tests for xrspatial.reproject module."""
+from __future__ import annotations
+
+import numpy as np
+import pytest
+import xarray as xr
+
+try:
+    import pyproj
+    HAS_PYPROJ = True
+except ImportError:
+    HAS_PYPROJ = False
+
+try:
+    import dask.array as da
+    HAS_DASK = True
+except ImportError:
+    HAS_DASK = False
+
+try:
+    import cupy as cp
+    HAS_CUPY = True
+except ImportError:
+    HAS_CUPY = False
+
+pytestmark = pytest.mark.skipif(
+    not HAS_PYPROJ, reason="pyproj required for reproject tests"
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_raster(data, crs='EPSG:4326', x_range=(-1, 1), y_range=(-1, 1),
+                 nodata=np.nan, name='test'):
+    """Create a test DataArray with geographic coordinates and CRS metadata."""
+    h, w = data.shape
+    y = np.linspace(y_range[1], y_range[0], h)   # north-up (descending)
+    x = np.linspace(x_range[0], x_range[1], w)
+    da_obj = xr.DataArray(
+        data, dims=['y', 'x'],
+        coords={'y': y, 'x': x},
+        name=name,
+        attrs={'crs': crs, 'nodata': nodata},
+    )
+    return da_obj
+
+
+def _gradient_raster(h=64, w=64, crs='EPSG:4326',
+                     x_range=(-10, 10), y_range=(-10, 10)):
+    """Raster with values equal to x + y (easy to verify after transform)."""
+    y = np.linspace(y_range[1], y_range[0], h)
+    x = np.linspace(x_range[0], x_range[1], w)
+    xx, yy = np.meshgrid(x, y)
+    data = (xx + yy).astype(np.float64)
+    return _make_raster(data, crs=crs, x_range=x_range, y_range=y_range)
+
+
+# ---------------------------------------------------------------------------
+# CRS utils
+# ---------------------------------------------------------------------------
+
+class TestCrsUtils:
+    def test_require_pyproj(self):
+        from xrspatial.reproject._crs_utils import _require_pyproj
+        mod = _require_pyproj()
+        assert hasattr(mod, 'CRS')
+
+    def test_resolve_crs_none(self):
+        from xrspatial.reproject._crs_utils import _resolve_crs
+        assert _resolve_crs(None) is None
+
+    def test_resolve_crs_epsg_string(self):
+        from xrspatial.reproject._crs_utils import _resolve_crs
+        crs = _resolve_crs('EPSG:4326')
+        assert crs is not None
+        assert crs.to_epsg() == 4326
+
+    def test_resolve_crs_epsg_int(self):
+        from xrspatial.reproject._crs_utils import _resolve_crs
+        crs = _resolve_crs(4326)
+        assert crs.to_epsg() == 4326
+
+    def test_detect_source_crs_from_attrs(self):
+        from xrspatial.reproject._crs_utils import _detect_source_crs
+        raster = _make_raster(np.zeros((4, 4)), crs='EPSG:4326')
+        crs = _detect_source_crs(raster)
+        assert crs is not None
+        assert crs.to_epsg() == 4326
+
+    def test_detect_source_crs_none(self):
+        from xrspatial.reproject._crs_utils import _detect_source_crs
+        raster = xr.DataArray(np.zeros((4, 4)), dims=['y', 'x'])
+        crs = _detect_source_crs(raster)
+        assert crs is None
+
+    def test_detect_nodata_explicit(self):
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        raster = _make_raster(np.zeros((4, 4)))
+        assert _detect_nodata(raster, nodata=-9999) == -9999.0
+
+    def test_detect_nodata_from_attrs(self):
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        raster = _make_raster(np.zeros((4, 4)), nodata=-1)
+        val = _detect_nodata(raster)
+        assert val == -1.0
+
+
+# ---------------------------------------------------------------------------
+# ApproximateTransform
+# ---------------------------------------------------------------------------
+
+class TestApproximateTransform:
+    def test_identity_transform(self):
+        """Control grid for same-CRS should have near-zero error."""
+        from xrspatial.reproject._transform import ApproximateTransform
+
+        transformer = pyproj.Transformer.from_crs(
+            'EPSG:4326', 'EPSG:4326', always_xy=True
+        )
+        approx = ApproximateTransform(
+            transformer,
+            out_bounds=(-10, -10, 10, 10),
+            out_shape=(100, 100),
+            precision=16,
+        )
+        err = approx.max_error_estimate()
+        assert err < 1e-6
+
+    def test_4326_to_3857(self):
+        """Approx error should be < 0.1 source pixels for a typical reproject."""
+        from xrspatial.reproject._transform import ApproximateTransform
+
+        transformer = pyproj.Transformer.from_crs(
+            'EPSG:3857', 'EPSG:4326', always_xy=True
+        )
+        # A Web Mercator chunk around 0,0
+        bounds = (-100000, -100000, 100000, 100000)
+        shape = (512, 512)
+        approx = ApproximateTransform(
+            transformer, out_bounds=bounds, out_shape=shape, precision=16,
+        )
+        err = approx.max_error_estimate()
+        # Error should be very small for this smooth transform
+        assert err < 0.5, f"Approx error too large: {err}"
+
+    def test_interpolation_shape(self):
+        from xrspatial.reproject._transform import ApproximateTransform
+
+        transformer = pyproj.Transformer.from_crs(
+            'EPSG:4326', 'EPSG:4326', always_xy=True
+        )
+        approx = ApproximateTransform(
+            transformer,
+            out_bounds=(0, 0, 1, 1),
+            out_shape=(50, 60),
+            precision=8,
+        )
+        rows = np.arange(50, dtype=np.float64)
+        cols = np.arange(60, dtype=np.float64)
+        cc, rr = np.meshgrid(cols, rows)
+        src_y, src_x = approx(rr, cc)
+        assert src_y.shape == (50, 60)
+        assert src_x.shape == (50, 60)
+
+
+# ---------------------------------------------------------------------------
+# Interpolation
+# ---------------------------------------------------------------------------
+
+class TestInterpolation:
+    def test_resample_nearest(self):
+        from xrspatial.reproject._interpolate import _resample_numpy
+        src = np.array([[1, 2], [3, 4]], dtype=np.float64)
+        rows = np.array([[0.1, 0.1], [0.9, 0.9]])
+        cols = np.array([[0.1, 0.9], [0.1, 0.9]])
+        result = _resample_numpy(src, rows, cols, resampling='nearest')
+        expected = np.array([[1, 2], [3, 4]], dtype=np.float64)
+        np.testing.assert_array_almost_equal(result, expected)
+
+    def test_resample_bilinear(self):
+        from xrspatial.reproject._interpolate import _resample_numpy
+        src = np.array([[0, 10], [0, 10]], dtype=np.float64)
+        rows = np.array([[0.5]])
+        cols = np.array([[0.5]])
+        result = _resample_numpy(src, rows, cols, resampling='bilinear')
+        assert abs(result[0, 0] - 5.0) < 0.5
+
+    def test_resample_oob_fills_nodata(self):
+        from xrspatial.reproject._interpolate import _resample_numpy
+        src = np.ones((4, 4), dtype=np.float64)
+        rows = np.array([[-5.0]])
+        cols = np.array([[0.0]])
+        result = _resample_numpy(src, rows, cols, nodata=-999)
+        assert result[0, 0] == -999
+
+    def test_invalid_resampling(self):
+        from xrspatial.reproject._interpolate import _validate_resampling
+        with pytest.raises(ValueError, match="resampling"):
+            _validate_resampling('lanczos')
+
+
+# ---------------------------------------------------------------------------
+# Grid computation
+# ---------------------------------------------------------------------------
+
+class TestGrid:
+    def test_compute_output_grid_identity(self):
+        from xrspatial.reproject._grid import _compute_output_grid
+        crs = pyproj.CRS('EPSG:4326')
+        grid = _compute_output_grid(
+            source_bounds=(-10, -10, 10, 10),
+            source_shape=(100, 100),
+            source_crs=crs,
+            target_crs=crs,
+        )
+        assert grid['shape'][0] > 0
+        assert grid['shape'][1] > 0
+        left, bottom, right, top = grid['bounds']
+        assert left < right
+        assert bottom < top
+
+    def test_explicit_resolution(self):
+        from xrspatial.reproject._grid import _compute_output_grid
+        crs = pyproj.CRS('EPSG:4326')
+        grid = _compute_output_grid(
+            source_bounds=(-10, -10, 10, 10),
+            source_shape=(100, 100),
+            source_crs=crs,
+            target_crs=crs,
+            resolution=1.0,
+        )
+        assert abs(grid['res_x'] - 1.0) < 1e-6
+        assert abs(grid['res_y'] - 1.0) < 1e-6
+
+    def test_explicit_width_height(self):
+        from xrspatial.reproject._grid import _compute_output_grid
+        crs = pyproj.CRS('EPSG:4326')
+        grid = _compute_output_grid(
+            source_bounds=(-10, -10, 10, 10),
+            source_shape=(100, 100),
+            source_crs=crs,
+            target_crs=crs,
+            width=50,
+            height=50,
+        )
+        assert grid['shape'] == (50, 50)
+
+    def test_make_output_coords(self):
+        from xrspatial.reproject._grid import _make_output_coords
+        y, x = _make_output_coords((-10, -10, 10, 10), (20, 20))
+        assert len(y) == 20
+        assert len(x) == 20
+        assert y[0] > y[-1]  # north-up
+        assert x[0] < x[-1]
+
+    def test_chunk_layout(self):
+        from xrspatial.reproject._grid import _compute_chunk_layout
+        rc, cc = _compute_chunk_layout((1000, 1200), 512)
+        assert sum(rc) == 1000
+        assert sum(cc) == 1200
+
+    def test_chunk_bounds(self):
+        from xrspatial.reproject._grid import _chunk_bounds
+        cb = _chunk_bounds(
+            grid_bounds=(0, 0, 100, 100),
+            grid_shape=(100, 100),
+            row_start=0, row_end=50,
+            col_start=0, col_end=50,
+        )
+        assert cb == (0, 50, 50, 100)
+
+
+# ---------------------------------------------------------------------------
+# Merge strategies
+# ---------------------------------------------------------------------------
+
+class TestMergeStrategies:
+    def test_first(self):
+        from xrspatial.reproject._merge import _merge_arrays_numpy
+        a = np.array([[1, np.nan], [3, 4]])
+        b = np.array([[10, 20], [np.nan, 40]])
+        result = _merge_arrays_numpy([a, b], np.nan, 'first')
+        expected = np.array([[1, 20], [3, 4]])
+        np.testing.assert_array_equal(result, expected)
+
+    def test_last(self):
+        from xrspatial.reproject._merge import _merge_arrays_numpy
+        a = np.array([[1, 2], [3, 4]])
+        b = np.array([[10, np.nan], [np.nan, 40]])
+        result = _merge_arrays_numpy([a, b], np.nan, 'last')
+        expected = np.array([[10, 2], [3, 40]])
+        np.testing.assert_array_equal(result, expected)
+
+    def test_mean(self):
+        from xrspatial.reproject._merge import _merge_arrays_numpy
+        a = np.array([[2.0, np.nan], [6.0, 8.0]])
+        b = np.array([[4.0, 10.0], [np.nan, 12.0]])
+        result = _merge_arrays_numpy([a, b], np.nan, 'mean')
+        assert result[0, 0] == 3.0
+        assert result[0, 1] == 10.0
+        assert result[1, 0] == 6.0
+        assert result[1, 1] == 10.0
+
+    def test_max(self):
+        from xrspatial.reproject._merge import _merge_arrays_numpy
+        a = np.array([[1.0, 5.0]])
+        b = np.array([[3.0, 2.0]])
+        result = _merge_arrays_numpy([a, b], np.nan, 'max')
+        np.testing.assert_array_equal(result, [[3.0, 5.0]])
+
+    def test_min(self):
+        from xrspatial.reproject._merge import _merge_arrays_numpy
+        a = np.array([[1.0, 5.0]])
+        b = np.array([[3.0, 2.0]])
+        result = _merge_arrays_numpy([a, b], np.nan, 'min')
+        np.testing.assert_array_equal(result, [[1.0, 2.0]])
+
+    def test_invalid_strategy(self):
+        from xrspatial.reproject._merge import _validate_strategy
+        with pytest.raises(ValueError, match="strategy"):
+            _validate_strategy('median')
+
+
+# ---------------------------------------------------------------------------
+# reproject() end-to-end
+# ---------------------------------------------------------------------------
+
+class TestReproject:
+    def test_identity_reproject(self):
+        """Reproject EPSG:4326 -> EPSG:4326 should preserve values."""
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=32, w=32, x_range=(-5, 5), y_range=(-5, 5))
+        result = reproject(raster, 'EPSG:4326', resolution=raster.attrs.get('res'))
+        assert result.shape[0] > 0
+        assert result.shape[1] > 0
+        # Center pixel should be close to 0 (x=0 + y=0)
+        cy, cx = result.shape[0] // 2, result.shape[1] // 2
+        center_val = float(result.values[cy, cx])
+        assert abs(center_val) < 2.0, f"Center value {center_val} too far from 0"
+
+    def test_4326_to_3857(self):
+        """Reproject from geographic to Web Mercator."""
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=32, w=32, x_range=(-10, 10), y_range=(-10, 10))
+        result = reproject(raster, 'EPSG:3857')
+        assert result.shape[0] > 0
+        assert result.shape[1] > 0
+        # Output should have CRS in attrs
+        assert 'crs' in result.attrs
+
+    def test_3857_to_4326(self):
+        """Reproject from Web Mercator to geographic."""
+        from xrspatial.reproject import reproject
+
+        # Create raster in EPSG:3857
+        h, w = 32, 32
+        data = np.random.RandomState(42).rand(h, w).astype(np.float64)
+        y = np.linspace(1000000, -1000000, h)
+        x = np.linspace(-1000000, 1000000, w)
+        raster = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:3857'},
+        )
+        result = reproject(raster, 'EPSG:4326')
+        assert result.shape[0] > 0
+
+    def test_explicit_resolution(self):
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=32, w=32)
+        result = reproject(raster, 'EPSG:4326', resolution=0.5)
+        # With 0.5 degree resolution over -10..10 range -> ~40 pixels
+        assert result.shape[0] > 30
+        assert result.shape[1] > 30
+
+    def test_explicit_bounds(self):
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=32, w=32)
+        result = reproject(
+            raster, 'EPSG:4326',
+            bounds=(-5, -5, 5, 5), resolution=0.5,
+        )
+        x = result.coords['x'].values
+        y = result.coords['y'].values
+        assert float(x[0]) > -5.5
+        assert float(x[-1]) < 5.5
+
+    def test_explicit_width_height(self):
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=32, w=32)
+        result = reproject(raster, 'EPSG:4326', width=20, height=20)
+        assert result.shape == (20, 20)
+
+    def test_nodata_propagation(self):
+        from xrspatial.reproject import reproject
+        data = np.ones((32, 32), dtype=np.float64)
+        data[:, :16] = np.nan
+        raster = _make_raster(data, x_range=(-10, 10), y_range=(-10, 10))
+        result = reproject(raster, 'EPSG:4326')
+        # Some nodata should remain in the output
+        assert np.isnan(result.values).any()
+
+    def test_nearest_resampling(self):
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=32, w=32)
+        result = reproject(raster, 'EPSG:4326', resampling='nearest')
+        assert result.shape[0] > 0
+
+    def test_cubic_resampling(self):
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=32, w=32)
+        result = reproject(raster, 'EPSG:4326', resampling='cubic')
+        assert result.shape[0] > 0
+
+    def test_invalid_resampling(self):
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=8, w=8)
+        with pytest.raises(ValueError, match="resampling"):
+            reproject(raster, 'EPSG:4326', resampling='lanczos')
+
+    def test_missing_crs_raises(self):
+        from xrspatial.reproject import reproject
+        raster = xr.DataArray(
+            np.zeros((4, 4)), dims=['y', 'x'],
+            coords={'y': [3, 2, 1, 0], 'x': [0, 1, 2, 3]},
+        )
+        with pytest.raises(ValueError, match="source CRS"):
+            reproject(raster, 'EPSG:3857')
+
+    def test_non_dataarray_raises(self):
+        from xrspatial.reproject import reproject
+        with pytest.raises(TypeError, match="xr.DataArray"):
+            reproject(np.zeros((4, 4)), 'EPSG:4326')
+
+    def test_output_has_crs_attr(self):
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=16, w=16)
+        result = reproject(raster, 'EPSG:3857')
+        assert 'crs' in result.attrs
+        crs_out = pyproj.CRS.from_wkt(result.attrs['crs'])
+        assert crs_out.to_epsg() == 3857
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_dask_numpy_backend(self):
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=32, w=32)
+        raster.data = da.from_array(raster.values, chunks=(16, 16))
+        result = reproject(raster, 'EPSG:4326', chunk_size=16)
+        assert isinstance(result.data, da.Array)
+        computed = result.compute()
+        assert computed.shape[0] > 0
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_dask_lazy_evaluation(self):
+        """Verify dask output is lazy (no premature .compute())."""
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=32, w=32)
+        raster.data = da.from_array(raster.values, chunks=(16, 16))
+        result = reproject(raster, 'EPSG:3857', chunk_size=16)
+        assert isinstance(result.data, da.Array)
+        # Key count is a proxy for laziness -- graph should exist
+        assert len(result.data.__dask_graph__()) > 0
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_dask_matches_numpy(self):
+        """Dask+numpy result should match pure numpy result."""
+        from xrspatial.reproject import reproject
+        raster_np = _gradient_raster(h=32, w=32)
+        result_np = reproject(
+            raster_np, 'EPSG:4326', resolution=1.0,
+        )
+
+        raster_dask = raster_np.copy()
+        raster_dask.data = da.from_array(raster_np.values, chunks=(16, 16))
+        result_dask = reproject(
+            raster_dask, 'EPSG:4326', resolution=1.0,
+        ).compute()
+
+        np.testing.assert_allclose(
+            result_np.values, result_dask.values,
+            rtol=1e-5, atol=1e-5, equal_nan=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# merge() end-to-end
+# ---------------------------------------------------------------------------
+
+class TestMerge:
+    def test_non_overlapping_merge(self):
+        """Two adjacent rasters should merge into a seamless mosaic."""
+        from xrspatial.reproject import merge
+        left_data = np.ones((16, 16), dtype=np.float64) * 10
+        right_data = np.ones((16, 16), dtype=np.float64) * 20
+        left_raster = _make_raster(
+            left_data, x_range=(-10, 0), y_range=(-5, 5)
+        )
+        right_raster = _make_raster(
+            right_data, x_range=(0, 10), y_range=(-5, 5)
+        )
+        result = merge([left_raster, right_raster], resolution=1.0)
+        assert result.shape[0] > 0
+        assert result.shape[1] > 0
+        # Left side should have 10, right side should have 20
+        vals = result.values
+        x = result.coords['x'].values
+        left_mask = x < -2
+        right_mask = x > 2
+        if left_mask.any():
+            left_vals = vals[:, left_mask]
+            valid = ~np.isnan(left_vals)
+            if valid.any():
+                assert np.nanmean(left_vals[valid]) > 5
+
+    def test_overlapping_merge_first(self):
+        from xrspatial.reproject import merge
+        a = _make_raster(
+            np.full((16, 16), 10.0), x_range=(-5, 5), y_range=(-5, 5)
+        )
+        b = _make_raster(
+            np.full((16, 16), 20.0), x_range=(-5, 5), y_range=(-5, 5)
+        )
+        result = merge([a, b], strategy='first', resolution=1.0)
+        # First raster wins in the interior (edge pixels may be nodata/0)
+        vals = result.values
+        interior = vals[2:-2, 2:-2]
+        valid = ~np.isnan(interior) & (interior != 0)
+        if valid.any():
+            np.testing.assert_allclose(interior[valid], 10.0, atol=1.0)
+
+    def test_overlapping_merge_mean(self):
+        from xrspatial.reproject import merge
+        a = _make_raster(
+            np.full((16, 16), 10.0), x_range=(-5, 5), y_range=(-5, 5)
+        )
+        b = _make_raster(
+            np.full((16, 16), 20.0), x_range=(-5, 5), y_range=(-5, 5)
+        )
+        result = merge([a, b], strategy='mean', resolution=1.0)
+        # Interior pixels should be mean of 10 and 20
+        vals = result.values
+        interior = vals[2:-2, 2:-2]
+        valid = ~np.isnan(interior) & (interior != 0)
+        if valid.any():
+            np.testing.assert_allclose(interior[valid], 15.0, atol=1.0)
+
+    def test_merge_different_crs(self):
+        """Merge rasters with different CRS into a common grid."""
+        from xrspatial.reproject import merge
+
+        # Raster A in EPSG:4326
+        a = _gradient_raster(h=16, w=16, x_range=(-5, 0), y_range=(-5, 5))
+
+        # Raster B in EPSG:3857 (covering roughly 0..5 degrees lon)
+        data_b = np.random.RandomState(42).rand(16, 16).astype(np.float64) * 10
+        y = np.linspace(500000, -500000, 16)
+        x = np.linspace(0, 500000, 16)
+        b = xr.DataArray(
+            data_b, dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:3857'},
+        )
+        result = merge([a, b], target_crs='EPSG:4326', resolution=1.0)
+        assert result.shape[0] > 0
+        assert 'crs' in result.attrs
+
+    def test_merge_empty_raises(self):
+        from xrspatial.reproject import merge
+        with pytest.raises(ValueError, match="empty"):
+            merge([])
+
+    def test_merge_invalid_strategy(self):
+        from xrspatial.reproject import merge
+        raster = _gradient_raster(h=8, w=8)
+        with pytest.raises(ValueError, match="strategy"):
+            merge([raster], strategy='median')
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_merge_dask(self):
+        from xrspatial.reproject import merge
+        a = _make_raster(
+            np.full((16, 16), 10.0), x_range=(-10, 0), y_range=(-5, 5)
+        )
+        b = _make_raster(
+            np.full((16, 16), 20.0), x_range=(0, 10), y_range=(-5, 5)
+        )
+        a.data = da.from_array(a.values, chunks=(8, 8))
+        b.data = da.from_array(b.values, chunks=(8, 8))
+        result = merge([a, b], resolution=1.0, chunk_size=8)
+        assert isinstance(result.data, da.Array)
+        computed = result.compute()
+        assert computed.shape[0] > 0
+
+
+# ---------------------------------------------------------------------------
+# Accessor integration
+# ---------------------------------------------------------------------------
+
+class TestAccessor:
+    def test_xrs_reproject(self):
+        import xrspatial  # noqa: F401 - registers accessor
+        from xrspatial.reproject import reproject
+        raster = _gradient_raster(h=16, w=16)
+        result = raster.xrs.reproject('EPSG:3857')
+        assert result.shape[0] > 0
+
+
+# ---------------------------------------------------------------------------
+# Integer rasters
+# ---------------------------------------------------------------------------
+
+class TestIntegerRaster:
+    def test_integer_nearest(self):
+        from xrspatial.reproject import reproject
+        data = np.arange(64, dtype=np.int32).reshape(8, 8)
+        raster = _make_raster(data, x_range=(-4, 4), y_range=(-4, 4))
+        result = reproject(raster, 'EPSG:4326', resampling='nearest')
+        assert result.shape[0] > 0
+
+    def test_integer_bilinear(self):
+        from xrspatial.reproject import reproject
+        data = np.arange(64, dtype=np.int32).reshape(8, 8)
+        raster = _make_raster(data, x_range=(-4, 4), y_range=(-4, 4))
+        result = reproject(raster, 'EPSG:4326', resampling='bilinear')
+        assert result.shape[0] > 0

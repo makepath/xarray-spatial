@@ -345,6 +345,12 @@ class XrsSpatialDataArrayAccessor:
         from .normalize import standardize
         return standardize(self._obj, **kwargs)
 
+    # ---- Reproject ----
+
+    def reproject(self, target_crs, **kwargs):
+        from .reproject import reproject
+        return reproject(self._obj, target_crs, **kwargs)
+
     # ---- Raster to vector ----
 
     def polygonize(self, **kwargs):
