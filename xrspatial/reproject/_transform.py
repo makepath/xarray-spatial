@@ -8,10 +8,10 @@ control grid and interpolating between them.  For a 512x512 chunk with
 from __future__ import annotations
 
 import numpy as np
-from numba import njit, prange
+from numba import njit
 
 
-@njit(parallel=True, cache=True)
+@njit(nogil=True, cache=True)
 def _bilinear_interp_2ch(gx, gy, gr, gc, qr, qc):
     """Bilinear interpolation of two grids at the same query points.
 
@@ -48,7 +48,7 @@ def _bilinear_interp_2ch(gx, gy, gr, gc, qr, qc):
     out_x = np.empty((h, w), dtype=np.float64)
     out_y = np.empty((h, w), dtype=np.float64)
 
-    for i in prange(h):
+    for i in range(h):
         for j in range(w):
             fi_r = (qr[i, j] - r_start) * inv_r
             fi_c = (qc[i, j] - c_start) * inv_c

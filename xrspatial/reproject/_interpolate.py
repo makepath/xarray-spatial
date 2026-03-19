@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
-from numba import njit, prange
+from numba import njit
 
 
 _RESAMPLING_ORDERS = {
@@ -25,13 +25,13 @@ def _validate_resampling(resampling):
 # Numba kernels for nearest and bilinear resampling
 # ---------------------------------------------------------------------------
 
-@njit(parallel=True, cache=True)
+@njit(nogil=True, cache=True)
 def _resample_nearest_jit(src, row_coords, col_coords, nodata):
     """Nearest-neighbor resampling with NaN propagation."""
     h_out, w_out = row_coords.shape
     sh, sw = src.shape
     out = np.empty((h_out, w_out), dtype=np.float64)
-    for i in prange(h_out):
+    for i in range(h_out):
         for j in range(w_out):
             r = row_coords[i, j]
             c = col_coords[i, j]
@@ -57,7 +57,7 @@ def _resample_nearest_jit(src, row_coords, col_coords, nodata):
     return out
 
 
-@njit(parallel=True, cache=True)
+@njit(nogil=True, cache=True)
 def _resample_cubic_jit(src, row_coords, col_coords, nodata):
     """Catmull-Rom cubic resampling with NaN propagation.
 
@@ -67,7 +67,7 @@ def _resample_cubic_jit(src, row_coords, col_coords, nodata):
     h_out, w_out = row_coords.shape
     sh, sw = src.shape
     out = np.empty((h_out, w_out), dtype=np.float64)
-    for i in prange(h_out):
+    for i in range(h_out):
         for j in range(w_out):
             r = row_coords[i, j]
             c = col_coords[i, j]
@@ -141,13 +141,13 @@ def _resample_cubic_jit(src, row_coords, col_coords, nodata):
     return out
 
 
-@njit(parallel=True, cache=True)
+@njit(nogil=True, cache=True)
 def _resample_bilinear_jit(src, row_coords, col_coords, nodata):
     """Bilinear resampling with NaN propagation."""
     h_out, w_out = row_coords.shape
     sh, sw = src.shape
     out = np.empty((h_out, w_out), dtype=np.float64)
-    for i in prange(h_out):
+    for i in range(h_out):
         for j in range(w_out):
             r = row_coords[i, j]
             c = col_coords[i, j]
