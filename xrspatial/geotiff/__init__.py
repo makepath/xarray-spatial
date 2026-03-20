@@ -21,7 +21,7 @@ from ._reader import read_to_array
 from ._writer import write
 
 __all__ = ['read_geotiff', 'write_geotiff', 'open_cog', 'read_geotiff_dask',
-           'read_vrt', 'write_vrt']
+           'read_vrt', 'write_vrt', 'read_geotiff_gpu']
 
 
 def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
@@ -508,6 +508,138 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                     arr[mask] = np.nan
         return arr
     return _read()
+
+
+def read_geotiff_gpu(source: str, *,
+                     overview_level: int | None = None,
+                     name: str | None = None) -> xr.DataArray:
+    """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
+
+    Decompresses all tiles in parallel on the GPU and returns a
+    CuPy-backed DataArray that stays on device memory. No CPU->GPU
+    transfer needed for downstream xrspatial GPU operations.
+
+    Supports LZW and uncompressed tiled TIFFs with predictor 1, 2, or 3.
+    For unsupported compression types, falls back to CPU.
+
+    Requires: cupy, numba with CUDA support.
+
+    Parameters
+    ----------
+    source : str
+        File path.
+    overview_level : int or None
+        Overview level (0 = full resolution).
+    name : str or None
+        Name for the DataArray.
+
+    Returns
+    -------
+    xr.DataArray
+        CuPy-backed DataArray on GPU device.
+    """
+    try:
+        import cupy
+    except ImportError:
+        raise ImportError(
+            "cupy is required for GPU reads. "
+            "Install it with: pip install cupy-cuda12x")
+
+    from ._reader import _FileSource
+    from ._header import parse_header, parse_all_ifds
+    from ._dtypes import tiff_dtype_to_numpy
+    from ._geotags import extract_geo_info
+    from ._gpu_decode import gpu_decode_tiles
+
+    # Parse metadata on CPU (fast, <1ms)
+    src = _FileSource(source)
+    data = src.read_all()
+
+    try:
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+
+        if len(ifds) == 0:
+            raise ValueError("No IFDs found in TIFF file")
+
+        ifd_idx = 0
+        if overview_level is not None:
+            ifd_idx = min(overview_level, len(ifds) - 1)
+        ifd = ifds[ifd_idx]
+
+        bps = ifd.bits_per_sample
+        if isinstance(bps, tuple):
+            bps = bps[0]
+        dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
+        geo_info = extract_geo_info(ifd, data, header.byte_order)
+
+        if not ifd.is_tiled:
+            # Fall back to CPU for stripped files
+            src.close()
+            arr_cpu, _ = read_to_array(source, overview_level=overview_level)
+            arr_gpu = cupy.asarray(arr_cpu)
+            coords = _geo_to_coords(geo_info, arr_gpu.shape[0], arr_gpu.shape[1])
+            if name is None:
+                import os
+                name = os.path.splitext(os.path.basename(source))[0]
+            attrs = {}
+            if geo_info.crs_epsg is not None:
+                attrs['crs'] = geo_info.crs_epsg
+            return xr.DataArray(arr_gpu, dims=['y', 'x'],
+                                coords=coords, name=name, attrs=attrs)
+
+        # Extract compressed tile bytes
+        offsets = ifd.tile_offsets
+        byte_counts = ifd.tile_byte_counts
+        compressed_tiles = []
+        for i in range(len(offsets)):
+            compressed_tiles.append(
+                bytes(data[offsets[i]:offsets[i] + byte_counts[i]]))
+
+        compression = ifd.compression
+        predictor = ifd.predictor
+        samples = ifd.samples_per_pixel
+        tw = ifd.tile_width
+        th = ifd.tile_height
+        width = ifd.width
+        height = ifd.height
+
+    finally:
+        src.close()
+
+    # GPU decode
+    try:
+        arr_gpu = gpu_decode_tiles(
+            compressed_tiles,
+            tw, th, width, height,
+            compression, predictor, dtype, samples,
+        )
+    except ValueError:
+        # Unsupported compression -- fall back to CPU then transfer
+        arr_cpu, _ = read_to_array(source, overview_level=overview_level)
+        arr_gpu = cupy.asarray(arr_cpu)
+
+    # Build DataArray
+    if name is None:
+        import os
+        name = os.path.splitext(os.path.basename(source))[0]
+
+    coords = _geo_to_coords(geo_info, height, width)
+
+    attrs = {}
+    if geo_info.crs_epsg is not None:
+        attrs['crs'] = geo_info.crs_epsg
+    if geo_info.crs_wkt is not None:
+        attrs['crs_wkt'] = geo_info.crs_wkt
+
+    if arr_gpu.ndim == 3:
+        dims = ['y', 'x', 'band']
+        coords['band'] = np.arange(arr_gpu.shape[2])
+    else:
+        dims = ['y', 'x']
+
+    return xr.DataArray(arr_gpu, dims=dims, coords=coords,
+                        name=name, attrs=attrs)
 
 
 def read_vrt(source: str, *, window=None,
