@@ -1,0 +1,481 @@
+"""Virtual Raster Table (VRT) reader.
+
+Parses GDAL VRT XML files and assembles a virtual raster from one or
+more source GeoTIFF files using windowed reads.
+"""
+from __future__ import annotations
+
+import os
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
+
+import numpy as np
+
+# Lazy imports to avoid circular dependency
+_DTYPE_MAP = {
+    'Byte': np.uint8,
+    'UInt16': np.uint16,
+    'Int16': np.int16,
+    'UInt32': np.uint32,
+    'Int32': np.int32,
+    'Float32': np.float32,
+    'Float64': np.float64,
+    'Int8': np.int8,
+}
+
+
+@dataclass
+class _Rect:
+    """Pixel rectangle: (x_off, y_off, x_size, y_size)."""
+    x_off: int
+    y_off: int
+    x_size: int
+    y_size: int
+
+
+@dataclass
+class _Source:
+    """A single source region within a VRT band."""
+    filename: str
+    band: int  # 1-based
+    src_rect: _Rect
+    dst_rect: _Rect
+    nodata: float | None = None
+    # ComplexSource extras
+    scale: float | None = None
+    offset: float | None = None
+
+
+@dataclass
+class _VRTBand:
+    """A single band in a VRT dataset."""
+    band_num: int  # 1-based
+    dtype: np.dtype
+    nodata: float | None = None
+    sources: list[_Source] = field(default_factory=list)
+    color_interp: str | None = None
+
+
+@dataclass
+class VRTDataset:
+    """Parsed Virtual Raster Table."""
+    width: int
+    height: int
+    crs_wkt: str | None = None
+    geo_transform: tuple | None = None  # (origin_x, res_x, skew_x, origin_y, skew_y, res_y)
+    bands: list[_VRTBand] = field(default_factory=list)
+
+
+def _parse_rect(elem) -> _Rect:
+    """Parse a SrcRect or DstRect element."""
+    return _Rect(
+        x_off=int(float(elem.get('xOff', 0))),
+        y_off=int(float(elem.get('yOff', 0))),
+        x_size=int(float(elem.get('xSize', 0))),
+        y_size=int(float(elem.get('ySize', 0))),
+    )
+
+
+def _text(elem, tag, default=None):
+    """Get text content of a child element."""
+    child = elem.find(tag)
+    if child is not None and child.text:
+        return child.text.strip()
+    return default
+
+
+def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
+    """Parse a VRT XML string into a VRTDataset.
+
+    Parameters
+    ----------
+    xml_str : str
+        VRT XML content.
+    vrt_dir : str
+        Directory of the VRT file, for resolving relative source paths.
+
+    Returns
+    -------
+    VRTDataset
+    """
+    root = ET.fromstring(xml_str)
+
+    width = int(root.get('rasterXSize', 0))
+    height = int(root.get('rasterYSize', 0))
+
+    # CRS
+    crs_wkt = _text(root, 'SRS')
+
+    # GeoTransform: "origin_x, res_x, skew_x, origin_y, skew_y, res_y"
+    gt_str = _text(root, 'GeoTransform')
+    geo_transform = None
+    if gt_str:
+        parts = [float(x.strip()) for x in gt_str.split(',')]
+        if len(parts) == 6:
+            geo_transform = tuple(parts)
+
+    # Bands
+    bands = []
+    for band_elem in root.findall('VRTRasterBand'):
+        band_num = int(band_elem.get('band', 1))
+        dtype_name = band_elem.get('dataType', 'Float32')
+        dtype = np.dtype(_DTYPE_MAP.get(dtype_name, np.float32))
+        nodata_str = _text(band_elem, 'NoDataValue')
+        nodata = float(nodata_str) if nodata_str else None
+        color_interp = _text(band_elem, 'ColorInterp')
+
+        sources = []
+        for src_elem in band_elem:
+            tag = src_elem.tag
+            if tag not in ('SimpleSource', 'ComplexSource'):
+                continue
+
+            filename = _text(src_elem, 'SourceFilename') or ''
+            relative = src_elem.find('SourceFilename')
+            is_relative = (relative is not None and
+                           relative.get('relativeToVRT', '0') == '1')
+            if is_relative and not os.path.isabs(filename):
+                filename = os.path.join(vrt_dir, filename)
+
+            src_band = int(_text(src_elem, 'SourceBand') or '1')
+
+            src_rect_elem = src_elem.find('SrcRect')
+            dst_rect_elem = src_elem.find('DstRect')
+            if src_rect_elem is None or dst_rect_elem is None:
+                continue
+
+            src_rect = _parse_rect(src_rect_elem)
+            dst_rect = _parse_rect(dst_rect_elem)
+
+            src_nodata_str = _text(src_elem, 'NODATA')
+            src_nodata = float(src_nodata_str) if src_nodata_str else None
+
+            # ComplexSource extras
+            scale = None
+            offset = None
+            if tag == 'ComplexSource':
+                scale_str = _text(src_elem, 'ScaleOffset')
+                offset_str = _text(src_elem, 'ScaleRatio')
+                # Note: GDAL uses ScaleOffset=offset, ScaleRatio=scale
+                if offset_str:
+                    scale = float(offset_str)
+                if scale_str:
+                    offset = float(scale_str)
+
+            sources.append(_Source(
+                filename=filename,
+                band=src_band,
+                src_rect=src_rect,
+                dst_rect=dst_rect,
+                nodata=src_nodata,
+                scale=scale,
+                offset=offset,
+            ))
+
+        bands.append(_VRTBand(
+            band_num=band_num,
+            dtype=dtype,
+            nodata=nodata,
+            sources=sources,
+            color_interp=color_interp,
+        ))
+
+    return VRTDataset(
+        width=width,
+        height=height,
+        crs_wkt=crs_wkt,
+        geo_transform=geo_transform,
+        bands=bands,
+    )
+
+
+def read_vrt(vrt_path: str, *, window=None,
+             band: int | None = None) -> tuple[np.ndarray, VRTDataset]:
+    """Read a VRT file by assembling pixel data from its source files.
+
+    Parameters
+    ----------
+    vrt_path : str
+        Path to the .vrt file.
+    window : tuple or None
+        (row_start, col_start, row_stop, col_stop) for windowed read.
+    band : int or None
+        Band index (0-based). None returns all bands.
+
+    Returns
+    -------
+    (np.ndarray, VRTDataset) tuple
+    """
+    from ._reader import read_to_array
+
+    with open(vrt_path, 'r') as f:
+        xml_str = f.read()
+
+    vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
+    vrt = parse_vrt(xml_str, vrt_dir)
+
+    if window is not None:
+        r0, c0, r1, c1 = window
+        r0 = max(0, r0)
+        c0 = max(0, c0)
+        r1 = min(vrt.height, r1)
+        c1 = min(vrt.width, c1)
+    else:
+        r0, c0, r1, c1 = 0, 0, vrt.height, vrt.width
+
+    out_h = r1 - r0
+    out_w = c1 - c0
+
+    # Select bands
+    if band is not None:
+        selected_bands = [vrt.bands[band]]
+    else:
+        selected_bands = vrt.bands
+
+    # Allocate output
+    if len(selected_bands) == 1:
+        dtype = selected_bands[0].dtype
+        result = np.full((out_h, out_w), np.nan if dtype.kind == 'f' else 0,
+                         dtype=dtype)
+    else:
+        dtype = selected_bands[0].dtype
+        result = np.full((out_h, out_w, len(selected_bands)),
+                         np.nan if dtype.kind == 'f' else 0, dtype=dtype)
+
+    for band_idx, vrt_band in enumerate(selected_bands):
+        nodata = vrt_band.nodata
+
+        for src in vrt_band.sources:
+            # Compute overlap between source's destination rect and our window
+            dr = src.dst_rect
+            sr = src.src_rect
+
+            # Destination rect in virtual raster coordinates
+            dst_r0 = dr.y_off
+            dst_c0 = dr.x_off
+            dst_r1 = dr.y_off + dr.y_size
+            dst_c1 = dr.x_off + dr.x_size
+
+            # Clip to window
+            clip_r0 = max(dst_r0, r0)
+            clip_c0 = max(dst_c0, c0)
+            clip_r1 = min(dst_r1, r1)
+            clip_c1 = min(dst_c1, c1)
+
+            if clip_r0 >= clip_r1 or clip_c0 >= clip_c1:
+                continue  # no overlap
+
+            # Map back to source coordinates
+            # Scale factor: source pixels per destination pixel
+            scale_y = sr.y_size / dr.y_size if dr.y_size > 0 else 1.0
+            scale_x = sr.x_size / dr.x_size if dr.x_size > 0 else 1.0
+
+            src_r0 = sr.y_off + int((clip_r0 - dst_r0) * scale_y)
+            src_c0 = sr.x_off + int((clip_c0 - dst_c0) * scale_x)
+            src_r1 = sr.y_off + int((clip_r1 - dst_r0) * scale_y)
+            src_c1 = sr.x_off + int((clip_c1 - dst_c0) * scale_x)
+
+            # Read from source file using windowed read
+            try:
+                src_arr, _ = read_to_array(
+                    src.filename,
+                    window=(src_r0, src_c0, src_r1, src_c1),
+                    band=src.band - 1,  # convert 1-based to 0-based
+                )
+            except Exception:
+                continue  # skip missing/unreadable sources
+
+            # Handle source nodata
+            src_nodata = src.nodata or nodata
+            if src_nodata is not None and src_arr.dtype.kind == 'f':
+                src_arr = src_arr.copy()
+                src_arr[src_arr == np.float32(src_nodata)] = np.nan
+
+            # Apply ComplexSource scaling
+            if src.scale is not None and src.scale != 1.0:
+                src_arr = src_arr.astype(np.float64) * src.scale
+            if src.offset is not None and src.offset != 0.0:
+                src_arr = src_arr.astype(np.float64) + src.offset
+
+            # Place into output
+            out_r0 = clip_r0 - r0
+            out_c0 = clip_c0 - c0
+            out_r1 = out_r0 + src_arr.shape[0]
+            out_c1 = out_c0 + src_arr.shape[1]
+
+            # Handle size mismatch from rounding
+            actual_h = min(src_arr.shape[0], out_r1 - out_r0)
+            actual_w = min(src_arr.shape[1], out_c1 - out_c0)
+
+            if len(selected_bands) == 1:
+                result[out_r0:out_r0 + actual_h,
+                       out_c0:out_c0 + actual_w] = src_arr[:actual_h, :actual_w]
+            else:
+                result[out_r0:out_r0 + actual_h,
+                       out_c0:out_c0 + actual_w,
+                       band_idx] = src_arr[:actual_h, :actual_w]
+
+    return result, vrt
+
+
+# ---------------------------------------------------------------------------
+# VRT writer
+# ---------------------------------------------------------------------------
+
+_NP_TO_VRT_DTYPE = {v: k for k, v in _DTYPE_MAP.items()}
+
+
+def write_vrt(vrt_path: str, source_files: list[str], *,
+              relative: bool = True,
+              crs_wkt: str | None = None,
+              nodata: float | None = None) -> str:
+    """Generate a VRT file that mosaics multiple GeoTIFF tiles.
+
+    Each source file is placed in the virtual raster based on its
+    geo transform. Files must share the same CRS and pixel size.
+
+    Parameters
+    ----------
+    vrt_path : str
+        Output .vrt file path.
+    source_files : list of str
+        Paths to the source GeoTIFF files.
+    relative : bool
+        Store source paths relative to the VRT file.
+    crs_wkt : str or None
+        CRS as WKT string. If None, taken from the first source.
+    nodata : float or None
+        NoData value. If None, taken from the first source.
+
+    Returns
+    -------
+    str
+        Path to the written VRT file.
+    """
+    from ._reader import read_to_array
+    from ._header import parse_header, parse_all_ifds
+    from ._geotags import extract_geo_info
+    from ._reader import _FileSource
+
+    if not source_files:
+        raise ValueError("source_files must not be empty")
+
+    # Read metadata from all sources
+    sources_meta = []
+    for src_path in source_files:
+        src = _FileSource(src_path)
+        data = src.read_all()
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+        ifd = ifds[0]
+        geo = extract_geo_info(ifd, data, header.byte_order)
+        src.close()
+
+        bps = ifd.bits_per_sample
+        if isinstance(bps, tuple):
+            bps = bps[0]
+
+        sources_meta.append({
+            'path': src_path,
+            'width': ifd.width,
+            'height': ifd.height,
+            'bands': ifd.samples_per_pixel,
+            'dtype': np.dtype(_DTYPE_MAP.get(
+                {v: k for k, v in _DTYPE_MAP.items()}.get(
+                    np.dtype(f'{"f" if ifd.sample_format == 3 else ("i" if ifd.sample_format == 2 else "u")}{bps // 8}').type,
+                    'Float32'),
+                np.float32)),
+            'bps': bps,
+            'sample_format': ifd.sample_format,
+            'transform': geo.transform,
+            'crs_wkt': geo.crs_wkt,
+            'nodata': geo.nodata,
+        })
+
+    first = sources_meta[0]
+    res_x = first['transform'].pixel_width
+    res_y = first['transform'].pixel_height
+
+    # Compute the bounding box of all sources
+    all_x0, all_y0, all_x1, all_y1 = [], [], [], []
+    for m in sources_meta:
+        t = m['transform']
+        x0 = t.origin_x
+        y0 = t.origin_y
+        x1 = x0 + m['width'] * t.pixel_width
+        y1 = y0 + m['height'] * t.pixel_height
+        all_x0.append(min(x0, x1))
+        all_y0.append(min(y0, y1))
+        all_x1.append(max(x0, x1))
+        all_y1.append(max(y0, y1))
+
+    mosaic_x0 = min(all_x0)
+    mosaic_y_top = max(all_y1)  # top edge (y increases upward in geo)
+    mosaic_x1 = max(all_x1)
+    mosaic_y_bottom = min(all_y0)
+
+    total_w = int(round((mosaic_x1 - mosaic_x0) / abs(res_x)))
+    total_h = int(round((mosaic_y_top - mosaic_y_bottom) / abs(res_y)))
+
+    # Determine VRT dtype
+    sf = first['sample_format']
+    bps = first['bps']
+    if sf == 3:
+        vrt_dtype_name = 'Float64' if bps == 64 else 'Float32'
+    elif sf == 2:
+        vrt_dtype_name = {8: 'Int8', 16: 'Int16', 32: 'Int32'}.get(bps, 'Int32')
+    else:
+        vrt_dtype_name = {8: 'Byte', 16: 'UInt16', 32: 'UInt32'}.get(bps, 'Byte')
+
+    srs = crs_wkt or first.get('crs_wkt') or ''
+    nd = nodata if nodata is not None else first.get('nodata')
+
+    vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
+    n_bands = first['bands']
+
+    # Build XML
+    lines = [f'<VRTDataset rasterXSize="{total_w}" rasterYSize="{total_h}">']
+    if srs:
+        lines.append(f'  <SRS>{srs}</SRS>')
+    lines.append(f'  <GeoTransform>{mosaic_x0}, {res_x}, 0.0, '
+                 f'{mosaic_y_top}, 0.0, {res_y}</GeoTransform>')
+
+    for band_num in range(1, n_bands + 1):
+        lines.append(f'  <VRTRasterBand dataType="{vrt_dtype_name}" band="{band_num}">')
+        if nd is not None:
+            lines.append(f'    <NoDataValue>{nd}</NoDataValue>')
+
+        for m in sources_meta:
+            t = m['transform']
+            # Pixel offset in the virtual raster
+            dst_x_off = int(round((t.origin_x - mosaic_x0) / abs(res_x)))
+            dst_y_off = int(round((mosaic_y_top - t.origin_y) / abs(res_y)))
+
+            fname = m['path']
+            rel_attr = '0'
+            if relative:
+                try:
+                    fname = os.path.relpath(fname, vrt_dir)
+                    rel_attr = '1'
+                except ValueError:
+                    pass  # different drives on Windows
+
+            lines.append('    <SimpleSource>')
+            lines.append(f'      <SourceFilename relativeToVRT="{rel_attr}">'
+                         f'{fname}</SourceFilename>')
+            lines.append(f'      <SourceBand>{band_num}</SourceBand>')
+            lines.append(f'      <SrcRect xOff="0" yOff="0" '
+                         f'xSize="{m["width"]}" ySize="{m["height"]}"/>')
+            lines.append(f'      <DstRect xOff="{dst_x_off}" yOff="{dst_y_off}" '
+                         f'xSize="{m["width"]}" ySize="{m["height"]}"/>')
+            lines.append('    </SimpleSource>')
+
+        lines.append('  </VRTRasterBand>')
+
+    lines.append('</VRTDataset>')
+
+    xml = '\n'.join(lines) + '\n'
+    with open(vrt_path, 'w') as f:
+        f.write(xml)
+
+    return vrt_path
