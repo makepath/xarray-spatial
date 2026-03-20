@@ -64,11 +64,16 @@ from xrspatial.hydro import hand_d8, hand_dinf, hand_mfd  # noqa
 from xrspatial.hillshade import hillshade  # noqa
 from xrspatial.mahalanobis import mahalanobis  # noqa
 from xrspatial.multispectral import arvi  # noqa
+from xrspatial.multispectral import bai  # noqa
 from xrspatial.multispectral import evi  # noqa
 from xrspatial.multispectral import mndwi  # noqa
+from xrspatial.multispectral import msavi2  # noqa
 from xrspatial.multispectral import nbr  # noqa
+from xrspatial.multispectral import ndbi  # noqa
+from xrspatial.multispectral import ndsi  # noqa
 from xrspatial.multispectral import ndvi  # noqa
 from xrspatial.multispectral import ndwi  # noqa
+from xrspatial.multispectral import osavi  # noqa
 from xrspatial.multispectral import savi  # noqa
 from xrspatial.multispectral import sipi  # noqa
 from xrspatial.pathfinding import a_star_search  # noqa

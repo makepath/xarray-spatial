@@ -1733,3 +1733,527 @@ def true_color(r, g, b, nodata=1, c=10.0, th=0.125, name='true_color'):
         coords=_coords,
         attrs=_attrs,
     )
+
+
+# NDSI ----------
+@supports_dataset_bands(green='green_agg', swir1='swir1_agg')
+def ndsi(green_agg: xr.DataArray,
+         swir1_agg: xr.DataArray,
+         name='ndsi'):
+    """
+    Computes Normalized Difference Snow Index (NDSI).
+
+    NDSI separates snow and ice from clouds and other bright surfaces
+    by exploiting the high reflectance of snow in the green band and
+    low reflectance in the shortwave infrared.
+
+    Parameters
+    ----------
+    green_agg : xr.DataArray
+        2D array of green band data.
+        (Landsat 8: Band 3)
+        (Sentinel-2: Band 3)
+    swir1_agg : xr.DataArray
+        2D array of shortwave infrared band data.
+        (Landsat 8: Band 6)
+        (Sentinel-2: Band 11)
+    name : str, default='ndsi'
+        Name of output DataArray.
+
+    Alternatively, a single ``xr.Dataset`` may be passed as the first
+    argument with keyword arguments mapping band names to Dataset
+    variables. For example::
+
+        ndsi(ds, green='B3', swir1='B11')
+
+    Returns
+    -------
+    ndsi_agg : xr.DataArray of same type as inputs
+        2D array of ndsi values in the range [-1, 1].
+        All other input attributes are preserved.
+
+    References
+    ----------
+        - Hall, D.K., Riggs, G.A. and Salomonson, V.V., 1995.
+          Development of methods for mapping global snow cover using
+          moderate resolution imaging spectroradiometer data.
+          Remote Sensing of Environment, 54(2), pp.127-140.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.multispectral import ndsi
+        >>> green = xr.DataArray(np.array([[600., 500.], [400., 300.]]))
+        >>> swir1 = xr.DataArray(np.array([[100., 200.], [300., 400.]]))
+        >>> ndsi(green, swir1).values
+        array([[ 0.71428573,  0.42857143],
+               [ 0.14285715, -0.14285715]], dtype=float32)
+    """
+
+    _validate_raster(green_agg, func_name='ndsi', name='green_agg')
+    _validate_raster(swir1_agg, func_name='ndsi', name='swir1_agg')
+
+    validate_arrays(green_agg, swir1_agg)
+
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
+
+    out = mapper(green_agg)(green_agg.data.astype('f4'), swir1_agg.data.astype('f4'))
+
+    return DataArray(out,
+                     name=name,
+                     coords=green_agg.coords,
+                     dims=green_agg.dims,
+                     attrs=green_agg.attrs)
+
+
+# NDBI ----------
+@supports_dataset_bands(swir1='swir1_agg', nir='nir_agg')
+def ndbi(swir1_agg: xr.DataArray,
+         nir_agg: xr.DataArray,
+         name='ndbi'):
+    """
+    Computes Normalized Difference Built-up Index (NDBI).
+
+    NDBI picks out built-up and urban areas by exploiting the higher
+    reflectance of impervious surfaces in SWIR relative to NIR.
+
+    Parameters
+    ----------
+    swir1_agg : xr.DataArray
+        2D array of shortwave infrared band data.
+        (Landsat 8: Band 6)
+        (Sentinel-2: Band 11)
+    nir_agg : xr.DataArray
+        2D array of near-infrared band data.
+        (Landsat 8: Band 5)
+        (Sentinel-2: Band 8)
+    name : str, default='ndbi'
+        Name of output DataArray.
+
+    Alternatively, a single ``xr.Dataset`` may be passed as the first
+    argument with keyword arguments mapping band names to Dataset
+    variables. For example::
+
+        ndbi(ds, swir1='B11', nir='B8')
+
+    Returns
+    -------
+    ndbi_agg : xr.DataArray of same type as inputs
+        2D array of ndbi values in the range [-1, 1].
+        All other input attributes are preserved.
+
+    References
+    ----------
+        - Zha, Y., Gao, J. and Ni, S., 2003. Use of normalized
+          difference built-up index in automatically mapping urban
+          areas from TM imagery. International Journal of Remote
+          Sensing, 24(3), pp.583-594.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.multispectral import ndbi
+        >>> swir1 = xr.DataArray(np.array([[600., 500.], [400., 300.]]))
+        >>> nir = xr.DataArray(np.array([[300., 400.], [500., 600.]]))
+        >>> ndbi(swir1, nir).values
+        array([[ 0.33333334,  0.11111111],
+               [-0.11111111, -0.33333334]], dtype=float32)
+    """
+
+    _validate_raster(swir1_agg, func_name='ndbi', name='swir1_agg')
+    _validate_raster(nir_agg, func_name='ndbi', name='nir_agg')
+
+    validate_arrays(swir1_agg, nir_agg)
+
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=_normalized_ratio_cpu,
+        dask_func=_run_normalized_ratio_dask,
+        cupy_func=_run_normalized_ratio_cupy,
+        dask_cupy_func=_run_normalized_ratio_dask_cupy,
+    )
+
+    out = mapper(swir1_agg)(swir1_agg.data.astype('f4'), nir_agg.data.astype('f4'))
+
+    return DataArray(out,
+                     name=name,
+                     coords=swir1_agg.coords,
+                     dims=swir1_agg.dims,
+                     attrs=swir1_agg.attrs)
+
+
+# BAI ----------
+@ngjit
+def _bai_cpu(red_data, nir_data):
+    out = np.full(red_data.shape, np.nan, dtype=np.float32)
+    rows, cols = red_data.shape
+    for y in range(0, rows):
+        for x in range(0, cols):
+            red = red_data[y, x]
+            nir = nir_data[y, x]
+            dr = np.float32(0.1) - red
+            dn = np.float32(0.06) - nir
+            denominator = dr * dr + dn * dn
+            if denominator != 0.0:
+                out[y, x] = np.float32(1.0) / denominator
+    return out
+
+
+@cuda.jit
+def _bai_gpu(red_data, nir_data, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+        red = red_data[y, x]
+        nir = nir_data[y, x]
+        dr = nb.float32(0.1) - red
+        dn = nb.float32(0.06) - nir
+        denominator = dr * dr + dn * dn
+        if denominator != 0.0:
+            out[y, x] = nb.float32(1.0) / denominator
+
+
+def _bai_dask(red_data, nir_data):
+    out = da.map_blocks(_bai_cpu, red_data, nir_data,
+                        meta=np.array(()))
+    return out
+
+
+def _bai_cupy(red_data, nir_data):
+    griddim, blockdim = cuda_args(red_data.shape)
+    out = cupy.empty(red_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _bai_gpu[griddim, blockdim](red_data, nir_data, out)
+    return out
+
+
+def _bai_dask_cupy(red_data, nir_data):
+    out = da.map_blocks(_bai_cupy, red_data, nir_data,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
+
+
+@supports_dataset_bands(red='red_agg', nir='nir_agg')
+def bai(red_agg: xr.DataArray,
+        nir_agg: xr.DataArray,
+        name='bai'):
+    """
+    Computes Burn Area Index (BAI).
+
+    BAI measures the spectral distance of each pixel to a charcoal
+    reflectance point (red=0.1, NIR=0.06). Higher values indicate
+    recently burned areas. Unlike NBR, BAI works on the raw
+    reflectance values rather than a normalized difference.
+
+    Input bands should be in reflectance units (0-1 range). If your
+    data is in DN or scaled integers, divide by the appropriate scale
+    factor first.
+
+    Parameters
+    ----------
+    red_agg : xr.DataArray
+        2D array of red band reflectance data (0-1 range).
+    nir_agg : xr.DataArray
+        2D array of near-infrared band reflectance data (0-1 range).
+    name : str, default='bai'
+        Name of output DataArray.
+
+    Alternatively, a single ``xr.Dataset`` may be passed as the first
+    argument with keyword arguments mapping band names to Dataset
+    variables. For example::
+
+        bai(ds, red='B4', nir='B8')
+
+    Returns
+    -------
+    bai_agg : xr.DataArray of same type as inputs
+        2D array of bai values. Higher values indicate burned areas.
+        All other input attributes are preserved.
+
+    References
+    ----------
+        - Chuvieco, E., Martin, M.P. and Palacios, A., 2002.
+          Assessment of different spectral conditions for the
+          detection of burned areas with Landsat TM data.
+          International Journal of Remote Sensing, 23(1), pp.71-85.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.multispectral import bai
+        >>> red = xr.DataArray(np.array([[0.1, 0.2], [0.3, 0.05]]))
+        >>> nir = xr.DataArray(np.array([[0.06, 0.3], [0.4, 0.02]]))
+        >>> bai(red, nir).values  # pixel (0,0) is at charcoal point
+        array([[       inf, 0.01686341, 0.00858369, 1111.1111  ]],
+              dtype=float32)
+    """
+
+    _validate_raster(red_agg, func_name='bai', name='red_agg')
+    _validate_raster(nir_agg, func_name='bai', name='nir_agg')
+
+    validate_arrays(red_agg, nir_agg)
+
+    mapper = ArrayTypeFunctionMapping(numpy_func=_bai_cpu,
+                                      dask_func=_bai_dask,
+                                      cupy_func=_bai_cupy,
+                                      dask_cupy_func=_bai_dask_cupy)
+
+    out = mapper(red_agg)(red_agg.data.astype('f4'), nir_agg.data.astype('f4'))
+
+    return DataArray(out,
+                     name=name,
+                     coords=red_agg.coords,
+                     dims=red_agg.dims,
+                     attrs=red_agg.attrs)
+
+
+# MSAVI2 ----------
+@ngjit
+def _msavi2_cpu(nir_data, red_data):
+    out = np.full(nir_data.shape, np.nan, dtype=np.float32)
+    rows, cols = nir_data.shape
+    for y in range(0, rows):
+        for x in range(0, cols):
+            nir = nir_data[y, x]
+            red = red_data[y, x]
+            term = (np.float32(2.0) * nir + np.float32(1.0))
+            discriminant = term * term - np.float32(8.0) * (nir - red)
+            if discriminant >= 0.0:
+                out[y, x] = (term - np.sqrt(discriminant)) / np.float32(2.0)
+    return out
+
+
+@cuda.jit
+def _msavi2_gpu(nir_data, red_data, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+        nir = nir_data[y, x]
+        red = red_data[y, x]
+        term = nb.float32(2.0) * nir + nb.float32(1.0)
+        discriminant = term * term - nb.float32(8.0) * (nir - red)
+        if discriminant >= nb.float32(0.0):
+            out[y, x] = (term - sqrt(discriminant)) / nb.float32(2.0)
+
+
+def _msavi2_dask(nir_data, red_data):
+    out = da.map_blocks(_msavi2_cpu, nir_data, red_data,
+                        meta=np.array(()))
+    return out
+
+
+def _msavi2_cupy(nir_data, red_data):
+    griddim, blockdim = cuda_args(nir_data.shape)
+    out = cupy.empty(nir_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _msavi2_gpu[griddim, blockdim](nir_data, red_data, out)
+    return out
+
+
+def _msavi2_dask_cupy(nir_data, red_data):
+    out = da.map_blocks(_msavi2_cupy, nir_data, red_data,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
+
+
+@supports_dataset_bands(nir='nir_agg', red='red_agg')
+def msavi2(nir_agg: xr.DataArray,
+           red_agg: xr.DataArray,
+           name='msavi2'):
+    """
+    Computes Modified Soil Adjusted Vegetation Index (MSAVI2).
+
+    MSAVI2 is a self-adjusting vegetation index that does not require
+    an empirical soil-brightness correction factor (L). It produces
+    less noisy results than SAVI in areas with sparse vegetation and
+    exposed soil.
+
+    Parameters
+    ----------
+    nir_agg : xr.DataArray
+        2D array of near-infrared band data.
+    red_agg : xr.DataArray
+        2D array of red band data.
+    name : str, default='msavi2'
+        Name of output DataArray.
+
+    Alternatively, a single ``xr.Dataset`` may be passed as the first
+    argument with keyword arguments mapping band names to Dataset
+    variables. For example::
+
+        msavi2(ds, nir='B8', red='B4')
+
+    Returns
+    -------
+    msavi2_agg : xr.DataArray of same type as inputs
+        2D array of msavi2 values.
+        All other input attributes are preserved.
+
+    References
+    ----------
+        - Qi, J., Chehbouni, A., Huete, A.R., Kerr, Y.H. and
+          Sorooshian, S., 1994. A modified soil adjusted vegetation
+          index. Remote Sensing of Environment, 48(2), pp.119-126.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.multispectral import msavi2
+        >>> nir = xr.DataArray(np.array([[0.5, 0.3], [0.1, 0.4]]))
+        >>> red = xr.DataArray(np.array([[0.1, 0.2], [0.05, 0.3]]))
+        >>> msavi2(nir, red).values
+        array([[0.38729835, 0.08284271, 0.0248457 , 0.08284271]],
+              dtype=float32)
+    """
+
+    _validate_raster(nir_agg, func_name='msavi2', name='nir_agg')
+    _validate_raster(red_agg, func_name='msavi2', name='red_agg')
+
+    validate_arrays(nir_agg, red_agg)
+
+    mapper = ArrayTypeFunctionMapping(numpy_func=_msavi2_cpu,
+                                      dask_func=_msavi2_dask,
+                                      cupy_func=_msavi2_cupy,
+                                      dask_cupy_func=_msavi2_dask_cupy)
+
+    out = mapper(nir_agg)(nir_agg.data.astype('f4'), red_agg.data.astype('f4'))
+
+    return DataArray(out,
+                     name=name,
+                     coords=nir_agg.coords,
+                     dims=nir_agg.dims,
+                     attrs=nir_agg.attrs)
+
+
+# OSAVI ----------
+@ngjit
+def _osavi_cpu(nir_data, red_data):
+    out = np.full(nir_data.shape, np.nan, dtype=np.float32)
+    rows, cols = nir_data.shape
+    for y in range(0, rows):
+        for x in range(0, cols):
+            nir = nir_data[y, x]
+            red = red_data[y, x]
+            numerator = nir - red
+            denominator = nir + red + np.float32(0.16)
+            if denominator != 0.0:
+                out[y, x] = numerator / denominator
+    return out
+
+
+@cuda.jit
+def _osavi_gpu(nir_data, red_data, out):
+    y, x = cuda.grid(2)
+    if y < out.shape[0] and x < out.shape[1]:
+        nir = nir_data[y, x]
+        red = red_data[y, x]
+        numerator = nir - red
+        denominator = nir + red + nb.float32(0.16)
+        if denominator != 0.0:
+            out[y, x] = numerator / denominator
+
+
+def _osavi_dask(nir_data, red_data):
+    out = da.map_blocks(_osavi_cpu, nir_data, red_data,
+                        meta=np.array(()))
+    return out
+
+
+def _osavi_cupy(nir_data, red_data):
+    griddim, blockdim = cuda_args(nir_data.shape)
+    out = cupy.empty(nir_data.shape, dtype='f4')
+    out[:] = cupy.nan
+    _osavi_gpu[griddim, blockdim](nir_data, red_data, out)
+    return out
+
+
+def _osavi_dask_cupy(nir_data, red_data):
+    out = da.map_blocks(_osavi_cupy, nir_data, red_data,
+                        dtype=cupy.float32, meta=cupy.array(()))
+    return out
+
+
+@supports_dataset_bands(nir='nir_agg', red='red_agg')
+def osavi(nir_agg: xr.DataArray,
+          red_agg: xr.DataArray,
+          name='osavi'):
+    """
+    Computes Optimized Soil Adjusted Vegetation Index (OSAVI).
+
+    OSAVI uses a fixed soil-brightness correction factor of L=0.16,
+    chosen to work well across a range of soil conditions without
+    requiring per-scene tuning. It performs best in areas with sparse
+    to moderate vegetation cover.
+
+    Parameters
+    ----------
+    nir_agg : xr.DataArray
+        2D array of near-infrared band data.
+    red_agg : xr.DataArray
+        2D array of red band data.
+    name : str, default='osavi'
+        Name of output DataArray.
+
+    Alternatively, a single ``xr.Dataset`` may be passed as the first
+    argument with keyword arguments mapping band names to Dataset
+    variables. For example::
+
+        osavi(ds, nir='B8', red='B4')
+
+    Returns
+    -------
+    osavi_agg : xr.DataArray of same type as inputs
+        2D array of osavi values.
+        All other input attributes are preserved.
+
+    References
+    ----------
+        - Rondeaux, G., Steven, M. and Baret, F., 1996.
+          Optimization of soil-adjusted vegetation indices.
+          Remote Sensing of Environment, 55(2), pp.95-107.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial.multispectral import osavi
+        >>> nir = xr.DataArray(np.array([[0.5, 0.3], [0.1, 0.4]]))
+        >>> red = xr.DataArray(np.array([[0.1, 0.2], [0.05, 0.3]]))
+        >>> osavi(nir, red).values
+        array([[0.5263158 , 0.15151516, 0.16129032, 0.11627907]],
+              dtype=float32)
+    """
+
+    _validate_raster(nir_agg, func_name='osavi', name='nir_agg')
+    _validate_raster(red_agg, func_name='osavi', name='red_agg')
+
+    validate_arrays(nir_agg, red_agg)
+
+    mapper = ArrayTypeFunctionMapping(numpy_func=_osavi_cpu,
+                                      dask_func=_osavi_dask,
+                                      cupy_func=_osavi_cupy,
+                                      dask_cupy_func=_osavi_dask_cupy)
+
+    out = mapper(nir_agg)(nir_agg.data.astype('f4'), red_agg.data.astype('f4'))
+
+    return DataArray(out,
+                     name=name,
+                     coords=nir_agg.coords,
+                     dims=nir_agg.dims,
+                     attrs=nir_agg.attrs)
