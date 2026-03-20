@@ -812,9 +812,33 @@ def write(data: np.ndarray, path: str, *,
         force_bigtiff=bigtiff,
     )
 
-    # Write to a temp file then atomically rename, so concurrent writes to
-    # the same path don't interleave and readers never see partial output.
+    _write_bytes(file_bytes, path)
+
+
+def _is_fsspec_uri(path: str) -> bool:
+    """Check if a path is a fsspec-compatible URI."""
+    if path.startswith(('http://', 'https://')):
+        return False
+    return '://' in path
+
+
+def _write_bytes(file_bytes: bytes, path: str) -> None:
+    """Write bytes to a local file (atomic) or cloud storage (via fsspec)."""
     import os
+
+    if _is_fsspec_uri(path):
+        try:
+            import fsspec
+        except ImportError:
+            raise ImportError(
+                "fsspec is required to write to cloud storage. "
+                "Install it with: pip install fsspec")
+        fs, fspath = fsspec.core.url_to_fs(path)
+        with fs.open(fspath, 'wb') as f:
+            f.write(file_bytes)
+        return
+
+    # Local file: write to temp file then atomically rename
     import tempfile
     dir_name = os.path.dirname(os.path.abspath(path))
     fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tif.tmp')
@@ -823,7 +847,6 @@ def write(data: np.ndarray, path: str, *,
             f.write(file_bytes)
         os.replace(tmp_path, path)  # atomic on POSIX
     except BaseException:
-        # Clean up the temp file on any failure
         try:
             os.unlink(tmp_path)
         except OSError:

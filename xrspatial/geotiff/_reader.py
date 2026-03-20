@@ -171,10 +171,57 @@ class _HTTPSource:
         pass
 
 
+_CLOUD_SCHEMES = ('s3://', 'gs://', 'az://', 'abfs://')
+
+
+def _is_fsspec_uri(path: str) -> bool:
+    """Check if a path is a fsspec-compatible URI (not http/https/local)."""
+    if path.startswith(('http://', 'https://')):
+        return False
+    return '://' in path
+
+
+class _CloudSource:
+    """Cloud storage data source using fsspec.
+
+    Supports S3, GCS, Azure Blob Storage, and any other fsspec backend.
+    Requires the appropriate library (s3fs, gcsfs, adlfs) to be installed.
+    """
+
+    def __init__(self, url: str, **storage_options):
+        try:
+            import fsspec
+        except ImportError:
+            raise ImportError(
+                "fsspec is required to read from cloud storage. "
+                "Install it with: pip install fsspec")
+        self._url = url
+        self._fs, self._path = fsspec.core.url_to_fs(url, **storage_options)
+        self._size = self._fs.size(self._path)
+
+    def read_range(self, start: int, length: int) -> bytes:
+        with self._fs.open(self._path, 'rb') as f:
+            f.seek(start)
+            return f.read(length)
+
+    def read_all(self) -> bytes:
+        with self._fs.open(self._path, 'rb') as f:
+            return f.read()
+
+    @property
+    def size(self) -> int:
+        return self._size
+
+    def close(self):
+        pass
+
+
 def _open_source(source: str):
-    """Open a data source (local file or URL)."""
+    """Open a data source (local file, URL, or cloud path)."""
     if source.startswith(('http://', 'https://')):
         return _HTTPSource(source)
+    if _is_fsspec_uri(source):
+        return _CloudSource(source)
     return _FileSource(source)
 
 
@@ -615,13 +662,14 @@ def read_to_array(source: str, *, window=None, overview_level: int | None = None
     -------
     (np.ndarray, GeoInfo) tuple
     """
-    is_url = source.startswith(('http://', 'https://'))
-
-    if is_url:
+    if source.startswith(('http://', 'https://')):
         return _read_cog_http(source, overview_level=overview_level, band=band)
 
-    # Local file: mmap for zero-copy access
-    src = _FileSource(source)
+    # Local file or cloud storage: read all bytes then parse
+    if _is_fsspec_uri(source):
+        src = _CloudSource(source)
+    else:
+        src = _FileSource(source)
     data = src.read_all()
 
     try:

@@ -425,6 +425,112 @@ class TestGeoKeys:
 # Big-endian pixel data
 # -----------------------------------------------------------------------
 
+# -----------------------------------------------------------------------
+# Cloud storage (fsspec) support
+# -----------------------------------------------------------------------
+
+class TestCloudStorage:
+
+    def test_cloud_scheme_detection(self):
+        """Cloud URI schemes are detected correctly."""
+        from xrspatial.geotiff._reader import _is_fsspec_uri
+        assert _is_fsspec_uri('s3://bucket/key.tif')
+        assert _is_fsspec_uri('gs://bucket/key.tif')
+        assert _is_fsspec_uri('az://container/blob.tif')
+        assert _is_fsspec_uri('abfs://container/blob.tif')
+        assert _is_fsspec_uri('memory:///test.tif')
+        assert not _is_fsspec_uri('/local/path.tif')
+        assert not _is_fsspec_uri('http://example.com/file.tif')
+        assert not _is_fsspec_uri('relative/path.tif')
+
+    def test_memory_filesystem_read_write(self, tmp_path):
+        """Round-trip through fsspec's in-memory filesystem."""
+        import fsspec
+
+        arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+
+        # Write to memory filesystem via fsspec
+        from xrspatial.geotiff._writer import write, _write_bytes
+        from xrspatial.geotiff._writer import _assemble_tiff, _write_stripped
+        from xrspatial.geotiff._compression import COMPRESSION_NONE
+
+        # First write locally, then copy to memory fs
+        local_path = str(tmp_path / 'test.tif')
+        write(arr, local_path, compression='none', tiled=False)
+
+        with open(local_path, 'rb') as f:
+            tiff_bytes = f.read()
+
+        # Put into fsspec memory filesystem
+        fs = fsspec.filesystem('memory')
+        fs.pipe('/test.tif', tiff_bytes)
+
+        # Read via _CloudSource
+        from xrspatial.geotiff._reader import _CloudSource
+        src = _CloudSource('memory:///test.tif')
+        data = src.read_all()
+        assert len(data) == len(tiff_bytes)
+        assert data == tiff_bytes
+
+        # Range read
+        chunk = src.read_range(0, 8)
+        assert chunk == tiff_bytes[:8]
+
+        # Clean up
+        fs.rm('/test.tif')
+
+    def test_memory_filesystem_full_roundtrip(self, tmp_path):
+        """write_geotiff + read_geotiff through memory:// filesystem."""
+        import fsspec
+
+        arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+
+        # Write locally first, then copy to memory fs
+        local_path = str(tmp_path / 'local.tif')
+        write_geotiff(arr, local_path, compression='deflate')
+        with open(local_path, 'rb') as f:
+            tiff_bytes = f.read()
+
+        fs = fsspec.filesystem('memory')
+        fs.pipe('/roundtrip.tif', tiff_bytes)
+
+        # Read from memory filesystem
+        from xrspatial.geotiff._reader import read_to_array
+        result, geo = read_to_array('memory:///roundtrip.tif')
+        np.testing.assert_array_equal(result, arr)
+
+        fs.rm('/roundtrip.tif')
+
+    def test_writer_cloud_scheme_detection(self):
+        """Writer detects cloud schemes."""
+        from xrspatial.geotiff._writer import _is_fsspec_uri
+        assert _is_fsspec_uri('s3://bucket/key.tif')
+        assert _is_fsspec_uri('gs://bucket/key.tif')
+        assert _is_fsspec_uri('az://container/blob.tif')
+        assert not _is_fsspec_uri('/local/path.tif')
+
+    def test_write_to_memory_filesystem(self, tmp_path):
+        """_write_bytes can write to fsspec memory filesystem."""
+        import fsspec
+        from xrspatial.geotiff._writer import write
+
+        arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+        local_path = str(tmp_path / 'src.tif')
+        write(arr, local_path, compression='none', tiled=False)
+        with open(local_path, 'rb') as f:
+            tiff_bytes = f.read()
+
+        # Write via _write_bytes to memory filesystem
+        from xrspatial.geotiff._writer import _write_bytes
+        _write_bytes(tiff_bytes, 'memory:///written.tif')
+
+        fs = fsspec.filesystem('memory')
+        assert fs.exists('/written.tif')
+        assert fs.cat('/written.tif') == tiff_bytes
+
+        fs.rm('/written.tif')
+
+
 class TestBigEndian:
 
     def test_float32_big_endian(self, tmp_path):
