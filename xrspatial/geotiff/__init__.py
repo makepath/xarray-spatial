@@ -20,7 +20,8 @@ from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 from ._reader import read_to_array
 from ._writer import write
 
-__all__ = ['read_geotiff', 'write_geotiff', 'open_cog', 'read_geotiff_dask']
+__all__ = ['read_geotiff', 'write_geotiff', 'open_cog', 'read_geotiff_dask',
+           'plot_geotiff']
 
 
 def _geo_to_coords(geo_info, height: int, width: int) -> dict:
@@ -134,6 +135,17 @@ def read_geotiff(source: str, *, window=None,
         attrs['crs'] = geo_info.crs_epsg
     if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
         attrs['raster_type'] = 'point'
+
+    # Attach palette colormap for indexed-color TIFFs
+    if geo_info.colormap is not None:
+        try:
+            from matplotlib.colors import ListedColormap
+            cmap = ListedColormap(geo_info.colormap, name='tiff_palette')
+            attrs['cmap'] = cmap
+            attrs['colormap_rgba'] = geo_info.colormap
+        except ImportError:
+            # matplotlib not available -- store raw RGBA tuples only
+            attrs['colormap_rgba'] = geo_info.colormap
 
     # Apply nodata mask: replace nodata sentinel values with NaN
     nodata = geo_info.nodata
@@ -366,3 +378,33 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                     arr[mask] = np.nan
         return arr
     return _read()
+
+
+def plot_geotiff(da: xr.DataArray, **kwargs):
+    """Plot a DataArray read from a GeoTIFF, using its embedded colormap if present.
+
+    For palette/indexed-color TIFFs, the TIFF's color table is used
+    automatically. For other TIFFs, falls through to xarray's default plot.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        DataArray from read_geotiff.
+    **kwargs
+        Additional keyword arguments passed to da.plot().
+
+    Returns
+    -------
+    matplotlib artist (from da.plot())
+    """
+    cmap = da.attrs.get('cmap')
+    if cmap is not None and 'cmap' not in kwargs:
+        from matplotlib.colors import BoundaryNorm
+        n_colors = len(cmap.colors)
+        # Build a BoundaryNorm that maps integer index i to palette[i]
+        boundaries = np.arange(n_colors + 1) - 0.5
+        norm = BoundaryNorm(boundaries, n_colors)
+        kwargs.setdefault('cmap', cmap)
+        kwargs.setdefault('norm', norm)
+        kwargs.setdefault('add_colorbar', True)
+    return da.plot(**kwargs)

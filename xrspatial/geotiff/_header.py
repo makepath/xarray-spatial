@@ -30,6 +30,7 @@ TAG_TILE_WIDTH = 322
 TAG_TILE_LENGTH = 323
 TAG_TILE_OFFSETS = 324
 TAG_TILE_BYTE_COUNTS = 325
+TAG_COLORMAP = 320
 TAG_SAMPLE_FORMAT = 339
 TAG_GDAL_NODATA = 42113
 
@@ -157,6 +158,11 @@ class IFD:
     @property
     def planar_config(self) -> int:
         return self.get_value(TAG_PLANAR_CONFIG, 1)
+
+    @property
+    def colormap(self) -> tuple | None:
+        """ColorMap tag (320) values, or None if absent."""
+        return self.get_values(TAG_COLORMAP)
 
     @property
     def nodata_str(self) -> str | None:

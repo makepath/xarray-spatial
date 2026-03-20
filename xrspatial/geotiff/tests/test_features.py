@@ -726,6 +726,238 @@ def _make_planar_tiff(width, height, bands, dtype=np.uint8, tiled=False,
     return bytes(out), expected
 
 
+# -----------------------------------------------------------------------
+# Palette / indexed color (ColorMap tag 320)
+# -----------------------------------------------------------------------
+
+def _make_palette_tiff(width, height, bps, pixel_values, palette_rgb):
+    """Build a palette-color TIFF (Photometric=3 + ColorMap tag).
+
+    palette_rgb: list of (R, G, B) tuples, uint16 values (0-65535).
+    """
+    import struct
+    bo = '<'
+    n_colors = len(palette_rgb)
+    assert n_colors == (1 << bps), f"Palette must have {1 << bps} entries for {bps}-bit"
+
+    # Pack pixel data
+    flat = pixel_values.ravel().astype(np.uint8)
+    if bps == 8:
+        pixel_bytes = flat.tobytes()
+    elif bps == 4:
+        n = len(flat)
+        packed_len = (n + 1) // 2
+        packed = np.zeros(packed_len, dtype=np.uint8)
+        for i in range(n):
+            if i % 2 == 0:
+                packed[i // 2] |= (flat[i] & 0x0F) << 4
+            else:
+                packed[i // 2] |= flat[i] & 0x0F
+        pixel_bytes = packed.tobytes()
+    else:
+        pixel_bytes = flat.tobytes()
+
+    # Build ColorMap: [R0..R_{n-1}, G0..G_{n-1}, B0..B_{n-1}]
+    r_vals = [c[0] for c in palette_rgb]
+    g_vals = [c[1] for c in palette_rgb]
+    b_vals = [c[2] for c in palette_rgb]
+    cmap_values = r_vals + g_vals + b_vals
+
+    tag_list = []
+    def add_short(tag, val):
+        tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+    def add_long(tag, val):
+        tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
+    def add_shorts(tag, vals):
+        tag_list.append((tag, 3, len(vals), struct.pack(f'{bo}{len(vals)}H', *vals)))
+
+    add_short(256, width)
+    add_short(257, height)
+    add_short(258, bps)
+    add_short(259, 1)     # no compression
+    add_short(262, 3)     # Photometric = Palette
+    add_short(277, 1)     # SamplesPerPixel = 1
+    add_short(278, height)
+    add_long(273, 0)      # StripOffsets placeholder
+    add_long(279, len(pixel_bytes))
+    add_shorts(320, cmap_values)  # ColorMap
+    add_short(339, 1)     # SampleFormat = UINT
+
+    tag_list.sort(key=lambda t: t[0])
+    num_entries = len(tag_list)
+    ifd_start = 8
+    ifd_size = 2 + 12 * num_entries + 4
+    overflow_start = ifd_start + ifd_size
+
+    overflow_buf = bytearray()
+    tag_offsets = {}
+    for tag, typ, count, raw in tag_list:
+        if len(raw) > 4:
+            tag_offsets[tag] = len(overflow_buf)
+            overflow_buf.extend(raw)
+            if len(overflow_buf) % 2:
+                overflow_buf.append(0)
+        else:
+            tag_offsets[tag] = None
+
+    pixel_data_start = overflow_start + len(overflow_buf)
+
+    patched = []
+    for tag, typ, count, raw in tag_list:
+        if tag == 273:
+            patched.append((tag, typ, count, struct.pack(f'{bo}I', pixel_data_start)))
+        else:
+            patched.append((tag, typ, count, raw))
+    tag_list = patched
+
+    overflow_buf = bytearray()
+    tag_offsets = {}
+    for tag, typ, count, raw in tag_list:
+        if len(raw) > 4:
+            tag_offsets[tag] = len(overflow_buf)
+            overflow_buf.extend(raw)
+            if len(overflow_buf) % 2:
+                overflow_buf.append(0)
+        else:
+            tag_offsets[tag] = None
+
+    out = bytearray()
+    out.extend(b'II')
+    out.extend(struct.pack(f'{bo}H', 42))
+    out.extend(struct.pack(f'{bo}I', ifd_start))
+    out.extend(struct.pack(f'{bo}H', num_entries))
+
+    for tag, typ, count, raw in tag_list:
+        out.extend(struct.pack(f'{bo}HHI', tag, typ, count))
+        if len(raw) <= 4:
+            out.extend(raw.ljust(4, b'\x00'))
+        else:
+            ptr = overflow_start + tag_offsets[tag]
+            out.extend(struct.pack(f'{bo}I', ptr))
+
+    out.extend(struct.pack(f'{bo}I', 0))
+    out.extend(overflow_buf)
+    out.extend(pixel_bytes)
+
+    return bytes(out)
+
+
+class TestPalette:
+
+    def test_palette_8bit_read(self, tmp_path):
+        """Read an 8-bit palette TIFF and verify pixel indices."""
+        # 4-color palette: red, green, blue, white
+        palette = [
+            (65535, 0, 0),       # 0 = red
+            (0, 65535, 0),       # 1 = green
+            (0, 0, 65535),       # 2 = blue
+            (65535, 65535, 65535),# 3 = white
+        ] + [(0, 0, 0)] * 252   # pad to 256 entries for 8-bit
+
+        pixels = np.array([[0, 1, 2, 3],
+                           [3, 2, 1, 0]], dtype=np.uint8)
+
+        tiff_data = _make_palette_tiff(4, 2, 8, pixels, palette)
+        path = str(tmp_path / 'palette8.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        da = read_geotiff(path)
+        # Should return raw index values
+        assert da.dtype == np.uint8
+        np.testing.assert_array_equal(da.values, pixels)
+
+        # Should have a cmap in attrs
+        assert 'cmap' in da.attrs
+        assert 'colormap_rgba' in da.attrs
+
+        # Verify the palette colors
+        rgba = da.attrs['colormap_rgba']
+        assert len(rgba) == 256
+        assert rgba[0] == pytest.approx((1.0, 0.0, 0.0, 1.0))
+        assert rgba[1] == pytest.approx((0.0, 1.0, 0.0, 1.0))
+        assert rgba[2] == pytest.approx((0.0, 0.0, 1.0, 1.0))
+
+    def test_palette_4bit(self, tmp_path):
+        """Read a 4-bit palette TIFF."""
+        palette = [(i * 4369, i * 4369, i * 4369) for i in range(16)]
+        pixels = np.array([[0, 5, 10, 15],
+                           [1, 6, 11, 3]], dtype=np.uint8)
+
+        tiff_data = _make_palette_tiff(4, 2, 4, pixels, palette)
+        path = str(tmp_path / 'palette4.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        da = read_geotiff(path)
+        assert da.dtype == np.uint8
+        np.testing.assert_array_equal(da.values, pixels)
+        assert 'cmap' in da.attrs
+        assert len(da.attrs['colormap_rgba']) == 16
+
+    def test_palette_cmap_works_with_plot(self, tmp_path):
+        """Verify the colormap can be used with matplotlib."""
+        from matplotlib.colors import ListedColormap
+
+        palette = [
+            (65535, 0, 0),
+            (0, 65535, 0),
+            (0, 0, 65535),
+            (65535, 65535, 0),
+        ] + [(0, 0, 0)] * 252
+
+        pixels = np.array([[0, 1], [2, 3]], dtype=np.uint8)
+        tiff_data = _make_palette_tiff(2, 2, 8, pixels, palette)
+        path = str(tmp_path / 'palette_plot.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        da = read_geotiff(path)
+        cmap = da.attrs['cmap']
+        assert isinstance(cmap, ListedColormap)
+
+        # Verify color mapping at known indices
+        assert cmap(0)[:3] == pytest.approx((1.0, 0.0, 0.0), abs=0.01)
+        assert cmap(1 / 255)[:3] == pytest.approx((0.0, 1.0, 0.0), abs=0.01)
+
+    def test_plot_geotiff_with_palette(self, tmp_path):
+        """plot_geotiff() uses the embedded colormap."""
+        import matplotlib
+        matplotlib.use('Agg')  # non-interactive backend for tests
+        from xrspatial.geotiff import plot_geotiff
+
+        palette = [
+            (65535, 0, 0),
+            (0, 65535, 0),
+            (0, 0, 65535),
+            (65535, 65535, 65535),
+        ] + [(0, 0, 0)] * 252
+
+        pixels = np.array([[0, 1, 2, 3],
+                           [3, 2, 1, 0]], dtype=np.uint8)
+        tiff_data = _make_palette_tiff(4, 2, 8, pixels, palette)
+        path = str(tmp_path / 'plot_palette.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        da = read_geotiff(path)
+        # Should not raise
+        artist = plot_geotiff(da)
+        assert artist is not None
+        import matplotlib.pyplot as plt
+        plt.close('all')
+
+    def test_non_palette_no_cmap(self, tmp_path):
+        """Non-palette TIFFs should not have a cmap attr."""
+        arr = np.ones((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'no_palette.tif')
+        write(arr, path, compression='none', tiled=False)
+
+        da = read_geotiff(path)
+        assert 'cmap' not in da.attrs
+        assert 'colormap_rgba' not in da.attrs
+
+
 class TestPlanarConfig:
 
     def test_planar_strips_rgb(self, tmp_path):

@@ -62,6 +62,7 @@ class GeoInfo:
     model_type: int = 0
     raster_type: int = RASTER_PIXEL_IS_AREA
     nodata: float | None = None
+    colormap: list | None = None  # list of (R, G, B, A) float tuples, or None
     geokeys: dict[int, int | float | str] = field(default_factory=dict)
 
 
@@ -239,12 +240,33 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         except (ValueError, TypeError):
             pass
 
+    # Extract palette colormap (Photometric=3, tag 320)
+    colormap = None
+    if ifd.photometric == 3:
+        raw_cmap = ifd.colormap
+        if raw_cmap is not None:
+            bps_val = ifd.bits_per_sample
+            if isinstance(bps_val, tuple):
+                bps_val = bps_val[0]
+            n_colors = 1 << bps_val  # 2^BitsPerSample
+            # TIFF ColorMap: 3 * n_colors uint16 values
+            # Layout: [R0..R_{n-1}, G0..G_{n-1}, B0..B_{n-1}]
+            # Values are 0-65535, scale to 0.0-1.0 for matplotlib
+            if len(raw_cmap) >= 3 * n_colors:
+                colormap = []
+                for i in range(n_colors):
+                    r = raw_cmap[i] / 65535.0
+                    g = raw_cmap[n_colors + i] / 65535.0
+                    b = raw_cmap[2 * n_colors + i] / 65535.0
+                    colormap.append((r, g, b, 1.0))
+
     return GeoInfo(
         transform=transform,
         crs_epsg=epsg,
         model_type=int(model_type) if isinstance(model_type, (int, float)) else 0,
         raster_type=int(raster_type) if isinstance(raster_type, (int, float)) else RASTER_PIXEL_IS_AREA,
         nodata=nodata,
+        colormap=colormap,
         geokeys=geokeys,
     )
 
