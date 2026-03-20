@@ -676,54 +676,175 @@ def _assemble_tiles_kernel(
 # nvCOMP batch decompression (optional, fast path)
 # ---------------------------------------------------------------------------
 
-def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
-    """Try batch decompression via nvCOMP. Returns CuPy array or None.
+def _find_nvcomp_lib():
+    """Find and load libnvcomp.so. Returns ctypes.CDLL or None."""
+    import ctypes
+    import os
 
-    nvCOMP (NVIDIA's batched compression library) decompresses all tiles
-    in a single GPU API call using optimized CUDA kernels. Falls back
-    to None if nvCOMP is not available or doesn't support the codec.
-    """
-    try:
-        import kvikio.nvcomp as nvcomp
-    except ImportError:
-        return None
+    # Try common locations
+    search_paths = [
+        'libnvcomp.so',  # system LD_LIBRARY_PATH
+    ]
 
-    import cupy
+    # Check conda envs
+    conda_prefix = os.environ.get('CONDA_PREFIX', '')
+    if conda_prefix:
+        search_paths.append(os.path.join(conda_prefix, 'lib', 'libnvcomp.so'))
 
-    codec_map = {
-        8: 'deflate',      # Deflate
-        32946: 'deflate',   # Adobe Deflate
-        5: 'lzw',          # LZW (nvCOMP doesn't support TIFF LZW variant)
-    }
-    codec_name = codec_map.get(compression)
-    if codec_name is None:
-        return None
+    # Also check sibling conda envs that might have rapids
+    conda_base = os.path.dirname(conda_prefix) if conda_prefix else ''
+    if conda_base:
+        for env in ['rapids', 'test-again', 'rtxpy-fire']:
+            p = os.path.join(conda_base, env, 'lib', 'libnvcomp.so')
+            if os.path.exists(p):
+                search_paths.append(p)
 
-    # nvCOMP's DeflateManager handles batch deflate
-    if codec_name == 'deflate':
+    for path in search_paths:
         try:
-            # Strip 2-byte zlib headers + 4-byte checksums from each tile
+            return ctypes.CDLL(path)
+        except OSError:
+            continue
+    return None
+
+
+_nvcomp_lib = None
+_nvcomp_checked = False
+
+
+def _get_nvcomp():
+    """Get the nvCOMP library handle (cached). Returns CDLL or None."""
+    global _nvcomp_lib, _nvcomp_checked
+    if not _nvcomp_checked:
+        _nvcomp_checked = True
+        _nvcomp_lib = _find_nvcomp_lib()
+    return _nvcomp_lib
+
+
+def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
+    """Try batch decompression via nvCOMP C API. Returns CuPy array or None.
+
+    Uses nvcompBatchedDeflateDecompressAsync to decompress all tiles in
+    one GPU API call. Falls back to None if nvCOMP is not available.
+    """
+    if compression not in (8, 32946, 50000):  # Deflate and ZSTD
+        return None
+
+    lib = _get_nvcomp()
+    if lib is None:
+        # Try kvikio.nvcomp as alternative
+        try:
+            import kvikio.nvcomp as nvcomp
+        except ImportError:
+            return None
+
+        import cupy
+        try:
             raw_tiles = []
             for tile in compressed_tiles:
-                # zlib format: 2-byte header, deflate data, 4-byte adler32
                 raw_tiles.append(tile[2:-4] if len(tile) > 6 else tile)
-
             manager = nvcomp.DeflateManager(chunk_size=tile_bytes)
-
-            # Copy compressed data to device
             d_compressed = [cupy.asarray(np.frombuffer(t, dtype=np.uint8))
                             for t in raw_tiles]
-
-            # Batch decompress
             d_decompressed = manager.decompress(d_compressed)
-
-            # Concatenate results into a single buffer
-            result = cupy.concatenate([d.ravel() for d in d_decompressed])
-            return result
+            return cupy.concatenate([d.ravel() for d in d_decompressed])
         except Exception:
             return None
 
-    return None
+    # Direct ctypes nvCOMP C API
+    import ctypes
+    import cupy
+
+    class _NvcompDecompOpts(ctypes.Structure):
+        """nvCOMP batched decompression options (passed by value)."""
+        _fields_ = [
+            ('backend', ctypes.c_int),
+            ('reserved', ctypes.c_char * 60),
+        ]
+
+    # Deflate has a different struct with sort_before_hw_decompress field
+    class _NvcompDeflateDecompOpts(ctypes.Structure):
+        _fields_ = [
+            ('backend', ctypes.c_int),
+            ('sort_before_hw_decompress', ctypes.c_int),
+            ('reserved', ctypes.c_char * 56),
+        ]
+
+    try:
+        n_tiles = len(compressed_tiles)
+
+        # Prepare compressed tiles for nvCOMP
+        if compression in (8, 32946):  # Deflate
+            # Strip 2-byte zlib header + 4-byte adler32 checksum
+            raw_tiles = [t[2:-4] if len(t) > 6 else t for t in compressed_tiles]
+            get_temp_fn = 'nvcompBatchedDeflateDecompressGetTempSizeAsync'
+            decomp_fn = 'nvcompBatchedDeflateDecompressAsync'
+            opts = _NvcompDeflateDecompOpts(backend=0, sort_before_hw_decompress=0,
+                                            reserved=b'\x00' * 56)
+        elif compression == 50000:  # ZSTD
+            raw_tiles = list(compressed_tiles)  # no header stripping
+            get_temp_fn = 'nvcompBatchedZstdDecompressGetTempSizeAsync'
+            decomp_fn = 'nvcompBatchedZstdDecompressAsync'
+            opts = _NvcompDecompOpts(backend=0, reserved=b'\x00' * 60)
+        else:
+            return None
+
+        # Upload compressed tiles to device
+        d_comp_bufs = [cupy.asarray(np.frombuffer(t, dtype=np.uint8)) for t in raw_tiles]
+        d_decomp_bufs = [cupy.empty(tile_bytes, dtype=cupy.uint8) for _ in range(n_tiles)]
+
+        d_comp_ptrs = cupy.array([b.data.ptr for b in d_comp_bufs], dtype=cupy.uint64)
+        d_decomp_ptrs = cupy.array([b.data.ptr for b in d_decomp_bufs], dtype=cupy.uint64)
+        d_comp_sizes = cupy.array([len(t) for t in raw_tiles], dtype=cupy.uint64)
+        d_buf_sizes = cupy.full(n_tiles, tile_bytes, dtype=cupy.uint64)
+        d_actual = cupy.empty(n_tiles, dtype=cupy.uint64)
+
+        # Set argtypes for proper struct passing
+        temp_fn = getattr(lib, get_temp_fn)
+        temp_fn.restype = ctypes.c_int
+
+        temp_size = ctypes.c_size_t(0)
+        status = temp_fn(
+            ctypes.c_size_t(n_tiles),
+            ctypes.c_size_t(tile_bytes),
+            opts,
+            ctypes.byref(temp_size),
+            ctypes.c_size_t(n_tiles * tile_bytes),
+        )
+        if status != 0:
+            return None
+
+        ts = max(temp_size.value, 1)
+        d_temp = cupy.empty(ts, dtype=cupy.uint8)
+        d_statuses = cupy.zeros(n_tiles, dtype=cupy.int32)
+
+        dec_fn = getattr(lib, decomp_fn)
+        dec_fn.restype = ctypes.c_int
+
+        status = dec_fn(
+            ctypes.c_void_p(d_comp_ptrs.data.ptr),
+            ctypes.c_void_p(d_comp_sizes.data.ptr),
+            ctypes.c_void_p(d_buf_sizes.data.ptr),
+            ctypes.c_void_p(d_actual.data.ptr),
+            ctypes.c_size_t(n_tiles),
+            ctypes.c_void_p(d_temp.data.ptr),
+            ctypes.c_size_t(ts),
+            ctypes.c_void_p(d_decomp_ptrs.data.ptr),
+            opts,
+            ctypes.c_void_p(d_statuses.data.ptr),
+            ctypes.c_void_p(0),  # default stream
+        )
+        if status != 0:
+            return None
+
+        cupy.cuda.Device().synchronize()
+
+        if int(cupy.any(d_statuses != 0)):
+            return None
+
+        return cupy.concatenate(d_decomp_bufs)
+
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
