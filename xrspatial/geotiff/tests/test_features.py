@@ -257,6 +257,157 @@ class TestZstd:
 
 
 # -----------------------------------------------------------------------
+# Overview resampling methods
+# -----------------------------------------------------------------------
+
+class TestOverviewResampling:
+
+    def test_mean_default(self, tmp_path):
+        """Default mean resampling produces correct 2x2 block averages."""
+        from xrspatial.geotiff._writer import _make_overview
+        arr = np.array([[1, 3, 5, 7],
+                        [2, 4, 6, 8],
+                        [10, 20, 30, 40],
+                        [10, 20, 30, 40]], dtype=np.float32)
+        ov = _make_overview(arr, 'mean')
+        assert ov.shape == (2, 2)
+        # (1+3+2+4)/4 = 2.5
+        assert ov[0, 0] == pytest.approx(2.5)
+
+    def test_nearest(self, tmp_path):
+        """Nearest resampling picks top-left pixel of each 2x2 block."""
+        from xrspatial.geotiff._writer import _make_overview
+        arr = np.array([[10, 20, 30, 40],
+                        [50, 60, 70, 80],
+                        [90, 100, 110, 120],
+                        [130, 140, 150, 160]], dtype=np.uint8)
+        ov = _make_overview(arr, 'nearest')
+        assert ov.shape == (2, 2)
+        assert ov[0, 0] == 10
+        assert ov[0, 1] == 30
+        assert ov[1, 0] == 90
+        assert ov[1, 1] == 110
+
+    def test_min(self, tmp_path):
+        from xrspatial.geotiff._writer import _make_overview
+        arr = np.array([[10, 1, 5, 3],
+                        [20, 2, 6, 4],
+                        [30, 3, 7, 5],
+                        [40, 4, 8, 6]], dtype=np.float32)
+        ov = _make_overview(arr, 'min')
+        assert ov[0, 0] == pytest.approx(1.0)
+        assert ov[0, 1] == pytest.approx(3.0)
+
+    def test_max(self, tmp_path):
+        from xrspatial.geotiff._writer import _make_overview
+        arr = np.array([[10, 1, 5, 3],
+                        [20, 2, 6, 4],
+                        [30, 3, 7, 5],
+                        [40, 4, 8, 6]], dtype=np.float32)
+        ov = _make_overview(arr, 'max')
+        assert ov[0, 0] == pytest.approx(20.0)
+        assert ov[1, 1] == pytest.approx(8.0)
+
+    def test_median(self, tmp_path):
+        from xrspatial.geotiff._writer import _make_overview
+        arr = np.array([[1, 2, 10, 20],
+                        [3, 100, 30, 40],
+                        [0, 0, 0, 0],
+                        [0, 0, 0, 0]], dtype=np.float32)
+        ov = _make_overview(arr, 'median')
+        assert ov.shape == (2, 2)
+        # median of [1, 2, 3, 100] = 2.5
+        assert ov[0, 0] == pytest.approx(2.5)
+
+    def test_mode(self, tmp_path):
+        """Mode picks the most common value in each 2x2 block."""
+        from xrspatial.geotiff._writer import _make_overview
+        arr = np.array([[1, 1, 2, 3],
+                        [1, 2, 2, 2],
+                        [5, 5, 5, 6],
+                        [5, 7, 6, 6]], dtype=np.uint8)
+        ov = _make_overview(arr, 'mode')
+        assert ov[0, 0] == 1   # 1 appears 3 times
+        assert ov[0, 1] == 2   # 2 appears 3 times
+        assert ov[1, 0] == 5   # 5 appears 3 times
+        assert ov[1, 1] == 6   # 6 appears 3 times
+
+    def test_mean_with_nan(self, tmp_path):
+        """Mean resampling ignores NaN values."""
+        from xrspatial.geotiff._writer import _make_overview
+        arr = np.array([[np.nan, 2, 4, 6],
+                        [1, 3, np.nan, 8],
+                        [10, 20, 30, 40],
+                        [10, 20, 30, 40]], dtype=np.float32)
+        ov = _make_overview(arr, 'mean')
+        # nanmean([nan, 2, 1, 3]) = 2.0
+        assert ov[0, 0] == pytest.approx(2.0)
+
+    def test_multiband(self, tmp_path):
+        """Resampling works on 3D (multi-band) arrays."""
+        from xrspatial.geotiff._writer import _make_overview
+        arr = np.zeros((4, 4, 3), dtype=np.uint8)
+        arr[:, :, 0] = 100
+        arr[:, :, 1] = 200
+        arr[:, :, 2] = 50
+        ov = _make_overview(arr, 'mean')
+        assert ov.shape == (2, 2, 3)
+        assert ov[0, 0, 0] == 100
+        assert ov[0, 0, 1] == 200
+        assert ov[0, 0, 2] == 50
+
+    def test_cog_round_trip_nearest(self, tmp_path):
+        """COG with nearest resampling writes and reads back."""
+        arr = np.arange(256, dtype=np.float32).reshape(16, 16)
+        path = str(tmp_path / 'cog_nearest.tif')
+        write(arr, path, compression='deflate', tiled=True, tile_size=8,
+              cog=True, overview_levels=[1], overview_resampling='nearest')
+
+        result, _ = read_to_array(path)
+        np.testing.assert_array_equal(result, arr)
+
+    def test_cog_round_trip_mode(self, tmp_path):
+        """COG with mode resampling for classified data."""
+        arr = np.array([[0, 0, 1, 1, 2, 2, 3, 3],
+                        [0, 0, 1, 1, 2, 2, 3, 3],
+                        [4, 4, 5, 5, 6, 6, 7, 7],
+                        [4, 4, 5, 5, 6, 6, 7, 7],
+                        [0, 0, 1, 1, 2, 2, 3, 3],
+                        [0, 0, 1, 1, 2, 2, 3, 3],
+                        [4, 4, 5, 5, 6, 6, 7, 7],
+                        [4, 4, 5, 5, 6, 6, 7, 7]], dtype=np.uint8)
+        path = str(tmp_path / 'cog_mode.tif')
+        write(arr, path, compression='deflate', tiled=True, tile_size=4,
+              cog=True, overview_levels=[1], overview_resampling='mode')
+
+        # Full res should be exact
+        result, _ = read_to_array(path)
+        np.testing.assert_array_equal(result, arr)
+
+        # Overview should have mode-reduced values
+        ov, _ = read_to_array(path, overview_level=1)
+        assert ov.shape == (4, 4)
+        assert ov[0, 0] == 0
+        assert ov[0, 1] == 1
+
+    def test_write_geotiff_api(self, tmp_path):
+        """overview_resampling kwarg works through the public API."""
+        arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+        path = str(tmp_path / 'api_nearest.tif')
+        write_geotiff(arr, path, compression='deflate',
+                      cog=True, overview_resampling='nearest')
+
+        result = read_geotiff(path)
+        np.testing.assert_array_equal(result.values, arr)
+
+    def test_invalid_method(self):
+        from xrspatial.geotiff._writer import _make_overview
+        arr = np.ones((4, 4), dtype=np.float32)
+        with pytest.raises(ValueError, match="Unknown overview resampling"):
+            _make_overview(arr, 'bicubic_spline')
+
+
+# -----------------------------------------------------------------------
 # BigTIFF write
 # -----------------------------------------------------------------------
 

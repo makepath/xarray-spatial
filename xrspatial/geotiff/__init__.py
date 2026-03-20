@@ -186,7 +186,8 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                   tile_size: int = 256,
                   predictor: bool = False,
                   cog: bool = False,
-                  overview_levels: list[int] | None = None) -> None:
+                  overview_levels: list[int] | None = None,
+                  overview_resampling: str = 'mean') -> None:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Parameters
@@ -211,6 +212,9 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         Write as Cloud Optimized GeoTIFF.
     overview_levels : list[int] or None
         Overview decimation factors. Only used when cog=True.
+    overview_resampling : str
+        Resampling method for overviews: 'mean' (default), 'nearest',
+        'min', 'max', 'median', 'mode', or 'cubic'.
     """
     geo_transform = None
     epsg = crs
@@ -243,6 +247,7 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         predictor=predictor,
         cog=cog,
         overview_levels=overview_levels,
+        overview_resampling=overview_resampling,
         raster_type=raster_type,
     )
 

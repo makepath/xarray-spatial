@@ -69,40 +69,85 @@ def _compression_tag(compression_name: str) -> int:
     return _map[name]
 
 
-def _make_overview(arr: np.ndarray) -> np.ndarray:
-    """Generate a 2x decimated overview using 2x2 block averaging.
+OVERVIEW_METHODS = ('mean', 'nearest', 'min', 'max', 'median', 'mode', 'cubic')
+
+
+def _block_reduce_2d(arr2d, method):
+    """2x block-reduce a single 2D plane using *method*."""
+    h, w = arr2d.shape
+    h2 = (h // 2) * 2
+    w2 = (w // 2) * 2
+    cropped = arr2d[:h2, :w2]
+    oh, ow = h2 // 2, w2 // 2
+
+    if method == 'nearest':
+        # Top-left pixel of each 2x2 block
+        return cropped[::2, ::2].copy()
+
+    if method == 'cubic':
+        try:
+            from scipy.ndimage import zoom
+        except ImportError:
+            raise ImportError(
+                "scipy is required for cubic overview resampling. "
+                "Install it with: pip install scipy")
+        return zoom(arr2d, 0.5, order=3).astype(arr2d.dtype)
+
+    if method == 'mode':
+        # Most-common value per 2x2 block (useful for classified rasters)
+        blocks = cropped.reshape(oh, 2, ow, 2).transpose(0, 2, 1, 3).reshape(oh, ow, 4)
+        out = np.empty((oh, ow), dtype=arr2d.dtype)
+        for r in range(oh):
+            for c in range(ow):
+                vals, counts = np.unique(blocks[r, c], return_counts=True)
+                out[r, c] = vals[counts.argmax()]
+        return out
+
+    # Block reshape for mean/min/max/median
+    if arr2d.dtype.kind == 'f':
+        blocks = cropped.reshape(oh, 2, ow, 2)
+    else:
+        blocks = cropped.astype(np.float64).reshape(oh, 2, ow, 2)
+
+    if method == 'mean':
+        result = np.nanmean(blocks, axis=(1, 3))
+    elif method == 'min':
+        result = np.nanmin(blocks, axis=(1, 3))
+    elif method == 'max':
+        result = np.nanmax(blocks, axis=(1, 3))
+    elif method == 'median':
+        flat = blocks.transpose(0, 2, 1, 3).reshape(oh, ow, 4)
+        result = np.nanmedian(flat, axis=2)
+    else:
+        raise ValueError(
+            f"Unknown overview resampling method: {method!r}. "
+            f"Use one of: {OVERVIEW_METHODS}")
+
+    if arr2d.dtype.kind != 'f':
+        return np.round(result).astype(arr2d.dtype)
+    return result.astype(arr2d.dtype)
+
+
+def _make_overview(arr: np.ndarray, method: str = 'mean') -> np.ndarray:
+    """Generate a 2x decimated overview.
 
     Parameters
     ----------
     arr : np.ndarray
         2D or 3D (height, width, bands) array.
+    method : str
+        Resampling method: 'mean' (default), 'nearest', 'min', 'max',
+        'median', 'mode', or 'cubic'.
 
     Returns
     -------
     np.ndarray
         Half-resolution array.
     """
-    h, w = arr.shape[:2]
-    h2 = (h // 2) * 2
-    w2 = (w // 2) * 2
-    cropped = arr[:h2, :w2]
-
     if arr.ndim == 3:
-        # Multi-band: average each band independently
-        bands = arr.shape[2]
-        if arr.dtype.kind == 'f':
-            blocks = cropped.reshape(h2 // 2, 2, w2 // 2, 2, bands)
-            return np.nanmean(blocks, axis=(1, 3)).astype(arr.dtype)
-        else:
-            blocks = cropped.astype(np.float64).reshape(h2 // 2, 2, w2 // 2, 2, bands)
-            return np.round(blocks.mean(axis=(1, 3))).astype(arr.dtype)
-    else:
-        if arr.dtype.kind == 'f':
-            blocks = cropped.reshape(h2 // 2, 2, w2 // 2, 2)
-            return np.nanmean(blocks, axis=(1, 3)).astype(arr.dtype)
-        else:
-            blocks = cropped.astype(np.float64).reshape(h2 // 2, 2, w2 // 2, 2)
-            return np.round(blocks.mean(axis=(1, 3))).astype(arr.dtype)
+        bands = [_block_reduce_2d(arr[:, :, b], method) for b in range(arr.shape[2])]
+        return np.stack(bands, axis=2)
+    return _block_reduce_2d(arr, method)
 
 
 # ---------------------------------------------------------------------------
@@ -619,6 +664,7 @@ def write(data: np.ndarray, path: str, *,
           predictor: bool = False,
           cog: bool = False,
           overview_levels: list[int] | None = None,
+          overview_resampling: str = 'mean',
           raster_type: int = 1) -> None:
     """Write a numpy array as a GeoTIFF or COG.
 
@@ -676,7 +722,7 @@ def write(data: np.ndarray, path: str, *,
 
         current = data
         for _ in overview_levels:
-            current = _make_overview(current)
+            current = _make_overview(current, method=overview_resampling)
             oh, ow = current.shape[:2]
             if tiled:
                 o_off, o_bc, o_data = _write_tiled(current, comp_tag, predictor, tile_size)
