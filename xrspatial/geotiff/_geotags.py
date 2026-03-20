@@ -109,8 +109,53 @@ class GeoInfo:
     vertical_units_code: int | None = None
     # WKT CRS string (resolved from EPSG via pyproj, or provided by caller)
     crs_wkt: str | None = None
+    # GDAL metadata: dict of {name: value} for dataset-level items,
+    # and {(name, band): value} for per-band items.  Raw XML also kept.
+    gdal_metadata: dict | None = None
+    gdal_metadata_xml: str | None = None
     # Raw geokeys dict for anything else
     geokeys: dict[int, int | float | str] = field(default_factory=dict)
+
+
+def _parse_gdal_metadata(xml_str: str) -> dict:
+    """Parse GDALMetadata XML into a flat dict.
+
+    Dataset-level items are stored as ``{name: value}``.
+    Per-band items are stored as ``{(name, band_int): value}``.
+    """
+    import xml.etree.ElementTree as ET
+    result = {}
+    try:
+        root = ET.fromstring(xml_str)
+        for item in root.findall('Item'):
+            name = item.get('name', '')
+            sample = item.get('sample')
+            text = item.text or ''
+            if sample is not None:
+                result[(name, int(sample))] = text
+            else:
+                result[name] = text
+    except ET.ParseError:
+        pass
+    return result
+
+
+def _build_gdal_metadata_xml(meta: dict) -> str:
+    """Serialize a metadata dict back to GDALMetadata XML.
+
+    Accepts the same dict format that _parse_gdal_metadata produces:
+    string keys for dataset-level, (name, band) tuples for per-band.
+    """
+    lines = ['<GDALMetadata>']
+    for key, value in meta.items():
+        if isinstance(key, tuple):
+            name, sample = key
+            lines.append(
+                f'  <Item name="{name}" sample="{sample}">{value}</Item>')
+        else:
+            lines.append(f'  <Item name="{key}">{value}</Item>')
+    lines.append('</GDALMetadata>')
+    return '\n'.join(lines) + '\n'
 
 
 def _epsg_to_wkt(epsg: int) -> str | None:
@@ -379,6 +424,12 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         except (ValueError, TypeError):
             pass
 
+    # Parse GDALMetadata XML (tag 42112)
+    gdal_metadata = None
+    gdal_metadata_xml = ifd.gdal_metadata
+    if gdal_metadata_xml is not None:
+        gdal_metadata = _parse_gdal_metadata(gdal_metadata_xml)
+
     # Extract palette colormap (Photometric=3, tag 320)
     colormap = None
     if ifd.photometric == 3:
@@ -430,6 +481,8 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         vertical_units=vert_units_name,
         vertical_units_code=vert_units_code,
         crs_wkt=crs_wkt,
+        gdal_metadata=gdal_metadata,
+        gdal_metadata_xml=gdal_metadata_xml,
         geokeys=geokeys,
     )
 

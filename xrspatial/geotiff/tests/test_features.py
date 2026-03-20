@@ -413,6 +413,126 @@ class TestGeoKeys:
 # Resolution / DPI tags
 # -----------------------------------------------------------------------
 
+# -----------------------------------------------------------------------
+# GDAL metadata (tag 42112)
+# -----------------------------------------------------------------------
+
+class TestGDALMetadata:
+
+    def test_parse_gdal_metadata_xml(self):
+        """XML parsing extracts dataset and per-band items."""
+        from xrspatial.geotiff._geotags import _parse_gdal_metadata
+        xml = (
+            '<GDALMetadata>\n'
+            '  <Item name="DataType">Generic</Item>\n'
+            '  <Item name="STATISTICS_MAX" sample="0">100.5</Item>\n'
+            '  <Item name="STATISTICS_MIN" sample="0">-5.2</Item>\n'
+            '  <Item name="BAND_NAME" sample="1">green</Item>\n'
+            '</GDALMetadata>\n'
+        )
+        meta = _parse_gdal_metadata(xml)
+        assert meta['DataType'] == 'Generic'
+        assert meta[('STATISTICS_MAX', 0)] == '100.5'
+        assert meta[('STATISTICS_MIN', 0)] == '-5.2'
+        assert meta[('BAND_NAME', 1)] == 'green'
+
+    def test_build_gdal_metadata_xml(self):
+        """Dict serializes back to valid XML."""
+        from xrspatial.geotiff._geotags import (
+            _build_gdal_metadata_xml, _parse_gdal_metadata)
+        meta = {
+            'DataType': 'Generic',
+            ('STATS_MAX', 0): '42.0',
+            ('STATS_MIN', 0): '-1.0',
+        }
+        xml = _build_gdal_metadata_xml(meta)
+        assert '<GDALMetadata>' in xml
+        assert '<Item name="DataType">Generic</Item>' in xml
+        assert 'sample="0"' in xml
+        # Round-trip through parser
+        reparsed = _parse_gdal_metadata(xml)
+        assert reparsed == meta
+
+    def test_round_trip_via_file(self, tmp_path):
+        """GDAL metadata survives write -> read."""
+        meta = {
+            'DataType': 'Elevation',
+            ('STATISTICS_MAXIMUM', 0): '2500.0',
+            ('STATISTICS_MINIMUM', 0): '100.0',
+            ('STATISTICS_MEAN', 0): '1200.5',
+        }
+        from xrspatial.geotiff._geotags import _build_gdal_metadata_xml
+        xml = _build_gdal_metadata_xml(meta)
+
+        arr = np.ones((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'gdal_meta.tif')
+        write(arr, path, compression='none', tiled=False,
+              gdal_metadata_xml=xml)
+
+        da = read_geotiff(path)
+        assert 'gdal_metadata' in da.attrs
+        assert 'gdal_metadata_xml' in da.attrs
+        result_meta = da.attrs['gdal_metadata']
+        assert result_meta['DataType'] == 'Elevation'
+        assert result_meta[('STATISTICS_MAXIMUM', 0)] == '2500.0'
+        assert result_meta[('STATISTICS_MEAN', 0)] == '1200.5'
+
+    def test_dataarray_attrs_round_trip(self, tmp_path):
+        """GDAL metadata from DataArray attrs is preserved."""
+        meta = {'Source': 'test', ('BAND', 0): 'dem'}
+        da = xr.DataArray(
+            np.ones((4, 4), dtype=np.float32),
+            dims=['y', 'x'],
+            attrs={'gdal_metadata': meta},
+        )
+        path = str(tmp_path / 'da_meta.tif')
+        write_geotiff(da, path, compression='none')
+
+        result = read_geotiff(path)
+        assert result.attrs['gdal_metadata']['Source'] == 'test'
+        assert result.attrs['gdal_metadata'][('BAND', 0)] == 'dem'
+
+    def test_no_metadata_no_attrs(self, tmp_path):
+        """Files without GDAL metadata don't get the attrs."""
+        arr = np.ones((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'no_meta.tif')
+        write(arr, path, compression='none', tiled=False)
+
+        da = read_geotiff(path)
+        assert 'gdal_metadata' not in da.attrs
+        assert 'gdal_metadata_xml' not in da.attrs
+
+    def test_real_file_metadata(self):
+        """Real USGS file has GDAL metadata with statistics."""
+        import os
+        path = '../rtxpy/examples/USGS_one_meter_x65y454_NY_LongIsland_Z18_2014.tif'
+        if not os.path.exists(path):
+            pytest.skip("Real test files not available")
+
+        da = read_geotiff(path)
+        meta = da.attrs.get('gdal_metadata')
+        assert meta is not None
+        assert 'DataType' in meta
+        assert ('STATISTICS_MAXIMUM', 0) in meta
+
+    def test_real_file_round_trip(self):
+        """GDAL metadata survives real-file round-trip."""
+        import os, tempfile
+        path = '../rtxpy/examples/USGS_one_meter_x65y454_NY_LongIsland_Z18_2014.tif'
+        if not os.path.exists(path):
+            pytest.skip("Real test files not available")
+
+        da = read_geotiff(path)
+        orig_meta = da.attrs['gdal_metadata']
+
+        out = os.path.join(tempfile.mkdtemp(), 'rt.tif')
+        write_geotiff(da, out, compression='deflate', tiled=False)
+
+        da2 = read_geotiff(out)
+        for k, v in orig_meta.items():
+            assert da2.attrs['gdal_metadata'].get(k) == v, f"Mismatch on {k}"
+
+
 class TestResolution:
 
     def test_write_read_dpi(self, tmp_path):

@@ -35,6 +35,7 @@ TAG_TILE_OFFSETS = 324
 TAG_TILE_BYTE_COUNTS = 325
 TAG_COLORMAP = 320
 TAG_SAMPLE_FORMAT = 339
+TAG_GDAL_METADATA = 42112
 TAG_GDAL_NODATA = 42113
 
 # GeoTIFF tags
@@ -183,6 +184,16 @@ class IFD:
     def colormap(self) -> tuple | None:
         """ColorMap tag (320) values, or None if absent."""
         return self.get_values(TAG_COLORMAP)
+
+    @property
+    def gdal_metadata(self) -> str | None:
+        """GDALMetadata XML string (tag 42112), or None if absent."""
+        v = self.get_value(TAG_GDAL_METADATA)
+        if v is None:
+            return None
+        if isinstance(v, bytes):
+            return v.rstrip(b'\x00').decode('ascii', errors='replace')
+        return str(v).rstrip('\x00')
 
     @property
     def nodata_str(self) -> str | None:

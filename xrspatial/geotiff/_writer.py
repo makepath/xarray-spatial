@@ -51,6 +51,7 @@ from ._header import (
     TAG_TILE_OFFSETS,
     TAG_TILE_BYTE_COUNTS,
     TAG_PREDICTOR,
+    TAG_GDAL_METADATA,
 )
 
 # Byte order: always write little-endian
@@ -412,6 +413,7 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
                    nodata,
                    is_cog: bool = False,
                    raster_type: int = 1,
+                   gdal_metadata_xml: str | None = None,
                    x_resolution: float | None = None,
                    y_resolution: float | None = None,
                    resolution_unit: int | None = None) -> bytes:
@@ -515,6 +517,11 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
                     tags.append((gtag, SHORT, len(gval), list(gval)))
                 elif gtag == TAG_GDAL_NODATA:
                     tags.append((gtag, ASCII, len(str(gval)) + 1, str(gval)))
+
+            # GDALMetadata XML (tag 42112)
+            if gdal_metadata_xml is not None:
+                tags.append((TAG_GDAL_METADATA, ASCII,
+                             len(gdal_metadata_xml) + 1, gdal_metadata_xml))
 
         ifd_specs.append(tags)
 
@@ -703,7 +710,8 @@ def write(data: np.ndarray, path: str, *,
           raster_type: int = 1,
           x_resolution: float | None = None,
           y_resolution: float | None = None,
-          resolution_unit: int | None = None) -> None:
+          resolution_unit: int | None = None,
+          gdal_metadata_xml: str | None = None) -> None:
     """Write a numpy array as a GeoTIFF or COG.
 
     Parameters
@@ -772,6 +780,7 @@ def write(data: np.ndarray, path: str, *,
         w, h, data.dtype, comp_tag, predictor, tiled, tile_size,
         parts, geo_transform, crs_epsg, nodata, is_cog=cog,
         raster_type=raster_type,
+        gdal_metadata_xml=gdal_metadata_xml,
         x_resolution=x_resolution, y_resolution=y_resolution,
         resolution_unit=resolution_unit,
     )

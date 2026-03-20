@@ -176,6 +176,12 @@ def read_geotiff(source: str, *, window=None,
     if geo_info.vertical_units is not None:
         attrs['vertical_units'] = geo_info.vertical_units
 
+    # GDAL metadata (tag 42112)
+    if geo_info.gdal_metadata is not None:
+        attrs['gdal_metadata'] = geo_info.gdal_metadata
+    if geo_info.gdal_metadata_xml is not None:
+        attrs['gdal_metadata_xml'] = geo_info.gdal_metadata_xml
+
     # Resolution / DPI metadata
     if geo_info.x_resolution is not None:
         attrs['x_resolution'] = geo_info.x_resolution
@@ -275,6 +281,7 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     x_res = None
     y_res = None
     res_unit = None
+    gdal_meta_xml = None
 
     # Resolve crs argument: can be int (EPSG) or str (WKT/PROJ)
     if isinstance(crs, int):
@@ -297,6 +304,13 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
             nodata = data.attrs.get('nodata')
         if data.attrs.get('raster_type') == 'point':
             raster_type = RASTER_PIXEL_IS_POINT
+        # GDAL metadata from attrs (prefer raw XML, fall back to dict)
+        gdal_meta_xml = data.attrs.get('gdal_metadata_xml')
+        if gdal_meta_xml is None:
+            gdal_meta_dict = data.attrs.get('gdal_metadata')
+            if isinstance(gdal_meta_dict, dict):
+                from ._geotags import _build_gdal_metadata_xml
+                gdal_meta_xml = _build_gdal_metadata_xml(gdal_meta_dict)
         # Resolution / DPI from attrs
         x_res = data.attrs.get('x_resolution')
         y_res = data.attrs.get('y_resolution')
@@ -326,6 +340,7 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         x_resolution=x_res,
         y_resolution=y_res,
         resolution_unit=res_unit,
+        gdal_metadata_xml=gdal_meta_xml,
     )
 
 
