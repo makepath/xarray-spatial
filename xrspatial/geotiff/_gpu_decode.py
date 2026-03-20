@@ -696,12 +696,22 @@ def _try_kvikio_read_tiles(file_path, tile_offsets, tile_byte_counts, tile_bytes
         with kvikio.CuFile(file_path, 'r') as f:
             for off, bc in zip(tile_offsets, tile_byte_counts):
                 buf = cupy.empty(bc, dtype=cupy.uint8)
-                f.pread(buf, file_offset=off)
+                nbytes = f.pread(buf, file_offset=off)
+                # Verify the read completed correctly
+                actual = nbytes.get() if hasattr(nbytes, 'get') else int(nbytes)
+                if actual != bc:
+                    return None  # partial read, fall back
                 d_tiles.append(buf)
+        cupy.cuda.Device().synchronize()
         return d_tiles
     except Exception:
-        # GDS not available (no NVMe, no kernel module, etc.)
-        # Fall back to normal CPU read path
+        # GDS not available, version mismatch, or CUDA error
+        # Reset CUDA error state if possible
+        try:
+            import cupy
+            cupy.cuda.Device().synchronize()
+        except Exception:
+            pass
         return None
 
 
@@ -1182,9 +1192,18 @@ def gpu_decode_tiles(
         d_decomp_offsets = cupy.asarray(decomp_offsets)
 
     else:
-        raise ValueError(
-            f"GPU decode supports LZW (5), deflate (8), and uncompressed (1), "
-            f"got compression={compression}")
+        # Unsupported GPU codec: decompress on CPU, transfer to GPU
+        from ._compression import decompress as cpu_decompress
+        raw_host = np.empty(n_tiles * tile_bytes, dtype=np.uint8)
+        for i, tile in enumerate(compressed_tiles):
+            start = i * tile_bytes
+            chunk = cpu_decompress(tile, compression, tile_bytes)
+            raw_host[start:start + min(len(chunk), tile_bytes)] = \
+                chunk[:tile_bytes] if len(chunk) >= tile_bytes else \
+                np.pad(chunk, (0, tile_bytes - len(chunk)))
+        d_decomp = cupy.asarray(raw_host)
+        decomp_offsets = np.arange(n_tiles, dtype=np.int64) * tile_bytes
+        d_decomp_offsets = cupy.asarray(decomp_offsets)
 
     # Apply predictor on GPU
     if predictor == 2:
