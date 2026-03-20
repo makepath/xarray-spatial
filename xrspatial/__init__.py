@@ -1,4 +1,6 @@
 from xrspatial.aspect import aspect  # noqa
+from xrspatial.aspect import eastness  # noqa
+from xrspatial.aspect import northness  # noqa
 from xrspatial.balanced_allocation import balanced_allocation  # noqa
 from xrspatial.bilateral import bilateral  # noqa
 from xrspatial.contour import contours  # noqa
