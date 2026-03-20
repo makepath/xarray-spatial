@@ -133,6 +133,8 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 ✅ = native backend &nbsp;&nbsp; 🔄 = accepted (CPU fallback)
 
+[Classification](#classification) · [Diffusion](#diffusion) · [Focal](#focal) · [Morphological](#morphological) · [Fire](#fire) · [Multispectral](#multispectral) · [Multivariate](#multivariate) · [Pathfinding](#pathfinding) · [Proximity](#proximity) · [Reproject / Merge](#reproject--merge) · [Raster / Vector Conversion](#raster--vector-conversion) · [Surface](#surface) · [Hydrology](#hydrology) · [Flood](#flood) · [Interpolation](#interpolation) · [Dasymetric](#dasymetric) · [Zonal](#zonal) · [Utilities](#utilities)
+
 -------
 
 ### **Classification**
