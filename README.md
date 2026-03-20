@@ -142,7 +142,7 @@ Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 | [read_geotiff](xrspatial/geotiff/__init__.py) | Read GeoTIFF / COG / VRT | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
 | [write_geotiff](xrspatial/geotiff/__init__.py) | Write DataArray as GeoTIFF / COG | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
 | [read_vrt / write_vrt](xrspatial/geotiff/__init__.py) | Virtual Raster Table mosaic | ✅️ | ✅️ | ✅️ | ✅️ | |
-| [open_cog](xrspatial/geotiff/__init__.py) | HTTP range-request COG reader | ✅️ | | | | ✅️ |
+| [open_cog](xrspatial/geotiff/__init__.py) | HTTP range-request COG reader | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
 
 `read_geotiff` and `write_geotiff` auto-dispatch to the correct backend:
 
