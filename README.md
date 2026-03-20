@@ -144,7 +144,7 @@ Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 | [read_geotiff_gpu](xrspatial/geotiff/__init__.py) | GPU-native read (nvCOMP + GDS) | | ✅️ | ✅️ | |
 | [write_geotiff_gpu](xrspatial/geotiff/__init__.py) | GPU-native write (nvCOMP batch compress) | 🔄 | ✅️ | ✅️ | |
 | [read_geotiff_dask](xrspatial/geotiff/__init__.py) | Dask lazy read via windowed chunks | | ✅️ | | |
-| [read_vrt / write_vrt](xrspatial/geotiff/__init__.py) | Virtual Raster Table mosaic | ✅️ | ✅️ | | |
+| [read_vrt / write_vrt](xrspatial/geotiff/__init__.py) | Virtual Raster Table mosaic | ✅️ | ✅️ | ✅️ | |
 | [open_cog](xrspatial/geotiff/__init__.py) | HTTP range-request COG reader | ✅️ | | | ✅️ |
 
 **Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow), uncompressed

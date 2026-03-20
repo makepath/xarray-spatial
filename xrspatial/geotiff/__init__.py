@@ -102,11 +102,18 @@ def _coords_to_transform(da: xr.DataArray) -> GeoTransform | None:
 def read_geotiff(source: str, *, window=None,
                  overview_level: int | None = None,
                  band: int | None = None,
-                 name: str | None = None) -> xr.DataArray:
-    """Read a GeoTIFF or VRT file into an xarray.DataArray.
+                 name: str | None = None,
+                 chunks: int | tuple | None = None,
+                 gpu: bool = False) -> xr.DataArray:
+    """Read a GeoTIFF, COG, or VRT file into an xarray.DataArray.
 
-    VRT files (.vrt extension) are automatically detected and assembled
-    from their source GeoTIFFs.
+    Automatically dispatches to the best backend:
+    - ``gpu=True``: GPU-accelerated read via nvCOMP (returns CuPy)
+    - ``chunks=N``: Dask lazy read via windowed chunks
+    - ``gpu=True, chunks=N``: Dask+CuPy for out-of-core GPU pipelines
+    - Default: NumPy eager read
+
+    VRT files are auto-detected by extension.
 
     Parameters
     ----------
@@ -115,20 +122,35 @@ def read_geotiff(source: str, *, window=None,
     window : tuple or None
         (row_start, col_start, row_stop, col_stop) for windowed reading.
     overview_level : int or None
-        Overview level to read (0 = full resolution). None reads full res.
-    band : int
-        Band index (0-based) for multi-band files.
+        Overview level (0 = full resolution).
+    band : int or None
+        Band index (0-based). None returns all bands.
     name : str or None
-        Name for the DataArray. Defaults to filename stem.
+        Name for the DataArray.
+    chunks : int, tuple, or None
+        Chunk size for Dask lazy reading.
+    gpu : bool
+        Use GPU-accelerated decompression (requires cupy + nvCOMP).
 
     Returns
     -------
     xr.DataArray
-        2D DataArray with y/x coordinates and geo attributes.
+        NumPy, Dask, CuPy, or Dask+CuPy backed depending on options.
     """
-    # Auto-detect VRT files
+    # VRT files
     if source.lower().endswith('.vrt'):
-        return read_vrt(source, window=window, band=band, name=name)
+        return read_vrt(source, window=window, band=band, name=name,
+                        chunks=chunks, gpu=gpu)
+
+    # GPU path
+    if gpu:
+        return read_geotiff_gpu(source, overview_level=overview_level,
+                                name=name, chunks=chunks)
+
+    # Dask path (CPU)
+    if chunks is not None:
+        return read_geotiff_dask(source, chunks=chunks,
+                                 overview_level=overview_level, name=name)
 
     arr, geo_info = read_to_array(
         source, window=window,
@@ -247,6 +269,23 @@ def read_geotiff(source: str, *, window=None,
     return da
 
 
+def _is_gpu_data(data) -> bool:
+    """Check if data is CuPy-backed (raw array or DataArray)."""
+    try:
+        import cupy
+        _cupy_type = cupy.ndarray
+    except ImportError:
+        return False
+
+    if isinstance(data, xr.DataArray):
+        raw = data.data
+        if hasattr(raw, 'compute'):
+            meta = getattr(raw, '_meta', None)
+            return isinstance(meta, _cupy_type)
+        return isinstance(raw, _cupy_type)
+    return isinstance(data, _cupy_type)
+
+
 def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                   crs: int | str | None = None,
                   nodata=None,
@@ -257,8 +296,16 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                   cog: bool = False,
                   overview_levels: list[int] | None = None,
                   overview_resampling: str = 'mean',
-                  bigtiff: bool | None = None) -> None:
+                  bigtiff: bool | None = None,
+                  gpu: bool | None = None) -> None:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
+
+    Automatically dispatches to GPU compression when:
+    - ``gpu=True`` is passed, or
+    - The input data is CuPy-backed (auto-detected)
+
+    GPU write uses nvCOMP batch compression (deflate/ZSTD) and keeps
+    the array on device. Falls back to CPU if nvCOMP is not available.
 
     Parameters
     ----------
@@ -287,7 +334,20 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     overview_resampling : str
         Resampling method for overviews: 'mean' (default), 'nearest',
         'min', 'max', 'median', 'mode', or 'cubic'.
+    gpu : bool or None
+        Force GPU compression. None (default) auto-detects CuPy data.
     """
+    # Auto-detect GPU data and dispatch to write_geotiff_gpu
+    use_gpu = gpu if gpu is not None else _is_gpu_data(data)
+    if use_gpu:
+        try:
+            write_geotiff_gpu(data, path, crs=crs, nodata=nodata,
+                              compression=compression, tile_size=tile_size,
+                              predictor=predictor)
+            return
+        except (ImportError, Exception):
+            pass  # fall through to CPU path
+
     geo_transform = None
     epsg = None
     raster_type = RASTER_PIXEL_IS_AREA
@@ -428,12 +488,9 @@ def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
     """
     import dask.array as da
 
-    # VRT files: read eagerly (VRT mosaic isn't compatible with per-chunk
-    # windowed reads on the virtual dataset without a separate code path)
+    # VRT files: delegate to read_vrt which handles chunks
     if source.lower().endswith('.vrt'):
-        da_eager = read_vrt(source, name=name)
-        return da_eager.chunk({'y': chunks if isinstance(chunks, int) else chunks[0],
-                               'x': chunks if isinstance(chunks, int) else chunks[1]})
+        return read_vrt(source, name=name, chunks=chunks)
 
     # First, do a metadata-only read to get shape, dtype, coords, attrs
     arr, geo_info = read_to_array(source, overview_level=overview_level)
@@ -807,7 +864,9 @@ def write_geotiff_gpu(data, path: str, *,
 
 def read_vrt(source: str, *, window=None,
              band: int | None = None,
-             name: str | None = None) -> xr.DataArray:
+             name: str | None = None,
+             chunks: int | tuple | None = None,
+             gpu: bool = False) -> xr.DataArray:
     """Read a GDAL Virtual Raster Table (.vrt) into an xarray.DataArray.
 
     The VRT's source GeoTIFFs are read via windowed reads and assembled
@@ -823,10 +882,16 @@ def read_vrt(source: str, *, window=None,
         Band index (0-based). None returns all bands.
     name : str or None
         Name for the DataArray.
+    chunks : int, tuple, or None
+        If set, return a Dask-chunked DataArray. int for square chunks,
+        (row, col) tuple for rectangular.
+    gpu : bool
+        If True, return a CuPy-backed DataArray on GPU.
 
     Returns
     -------
     xr.DataArray
+        NumPy, Dask, CuPy, or Dask+CuPy backed depending on options.
     """
     from ._vrt import read_vrt as _read_vrt_internal
 
@@ -854,19 +919,20 @@ def read_vrt(source: str, *, window=None,
         coords = {}
 
     attrs = {}
-
-    # CRS from VRT
     if vrt.crs_wkt:
         epsg = _wkt_to_epsg(vrt.crs_wkt)
         if epsg is not None:
             attrs['crs'] = epsg
         attrs['crs_wkt'] = vrt.crs_wkt
-
-    # Nodata from first band
     if vrt.bands:
         nodata = vrt.bands[0].nodata
         if nodata is not None:
             attrs['nodata'] = nodata
+
+    # Transfer to GPU if requested
+    if gpu:
+        import cupy
+        arr = cupy.asarray(arr)
 
     if arr.ndim == 3:
         dims = ['y', 'x', 'band']
@@ -874,7 +940,17 @@ def read_vrt(source: str, *, window=None,
     else:
         dims = ['y', 'x']
 
-    return xr.DataArray(arr, dims=dims, coords=coords, name=name, attrs=attrs)
+    result = xr.DataArray(arr, dims=dims, coords=coords, name=name, attrs=attrs)
+
+    # Chunk for Dask (or Dask+CuPy if gpu=True)
+    if chunks is not None:
+        if isinstance(chunks, int):
+            chunk_dict = {'y': chunks, 'x': chunks}
+        else:
+            chunk_dict = {'y': chunks[0], 'x': chunks[1]}
+        result = result.chunk(chunk_dict)
+
+    return result
 
 
 def write_vrt(vrt_path: str, source_files: list[str], **kwargs) -> str:
