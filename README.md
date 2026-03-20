@@ -137,15 +137,24 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 
-| Name | Description | NumPy | Dask | CuPy GPU | Cloud |
-|:-----|:------------|:-----:|:----:|:--------:|:-----:|
-| [read_geotiff](xrspatial/geotiff/__init__.py) | Read GeoTIFF / COG / VRT to DataArray | ✅️ | ✅️ | ✅️ | ✅️ |
-| [write_geotiff](xrspatial/geotiff/__init__.py) | Write DataArray as GeoTIFF / COG | ✅️ | ✅️ | 🔄 | ✅️ |
-| [read_geotiff_gpu](xrspatial/geotiff/__init__.py) | GPU-native read (nvCOMP + GDS) | | ✅️ | ✅️ | |
-| [write_geotiff_gpu](xrspatial/geotiff/__init__.py) | GPU-native write (nvCOMP batch compress) | 🔄 | ✅️ | ✅️ | |
-| [read_geotiff_dask](xrspatial/geotiff/__init__.py) | Dask lazy read via windowed chunks | | ✅️ | | |
-| [read_vrt / write_vrt](xrspatial/geotiff/__init__.py) | Virtual Raster Table mosaic | ✅️ | ✅️ | ✅️ | |
-| [open_cog](xrspatial/geotiff/__init__.py) | HTTP range-request COG reader | ✅️ | | | ✅️ |
+| Name | Description | NumPy | Dask | CuPy GPU | Dask+CuPy GPU | Cloud |
+|:-----|:------------|:-----:|:----:|:--------:|:-------------:|:-----:|
+| [read_geotiff](xrspatial/geotiff/__init__.py) | Read GeoTIFF / COG / VRT | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
+| [write_geotiff](xrspatial/geotiff/__init__.py) | Write DataArray as GeoTIFF / COG | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
+| [read_vrt / write_vrt](xrspatial/geotiff/__init__.py) | Virtual Raster Table mosaic | ✅️ | ✅️ | ✅️ | ✅️ | |
+| [open_cog](xrspatial/geotiff/__init__.py) | HTTP range-request COG reader | ✅️ | | | | ✅️ |
+
+`read_geotiff` and `write_geotiff` auto-dispatch to the correct backend:
+
+```python
+read_geotiff('dem.tif')                         # NumPy
+read_geotiff('dem.tif', chunks=512)             # Dask
+read_geotiff('dem.tif', gpu=True)               # CuPy (nvCOMP + GDS)
+read_geotiff('dem.tif', gpu=True, chunks=512)   # Dask + CuPy
+
+write_geotiff(cupy_array, 'out.tif')            # auto-detects GPU
+write_geotiff(data, 'out.tif', gpu=True)        # force GPU compress
+```
 
 **Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow), uncompressed
 
