@@ -32,9 +32,9 @@ from xrspatial.geotiff._writer import write
 class TestWriteInvalidInputs:
     """Writer should reject or gracefully handle bad inputs."""
 
-    def test_3d_array(self, tmp_path):
-        arr = np.zeros((3, 4, 4), dtype=np.float32)
-        with pytest.raises(ValueError, match="Expected 2D"):
+    def test_4d_array(self, tmp_path):
+        arr = np.zeros((2, 3, 4, 4), dtype=np.float32)
+        with pytest.raises(ValueError, match="Expected 2D or 3D"):
             write_geotiff(arr, str(tmp_path / 'bad.tif'))
 
     def test_1d_array(self, tmp_path):

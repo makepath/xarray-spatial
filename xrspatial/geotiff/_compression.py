@@ -522,16 +522,126 @@ def fp_predictor_encode(data: np.ndarray, width: int, height: int,
     return buf
 
 
+# -- PackBits (simple RLE) ----------------------------------------------------
+
+def packbits_decompress(data: bytes) -> bytes:
+    """Decompress PackBits (TIFF compression tag 32773).
+
+    Simple RLE: read a header byte n.
+    - 0 <= n <= 127: copy the next n+1 bytes literally.
+    - -127 <= n <= -1: repeat the next byte 1-n times.
+    - n == -128: no-op.
+    """
+    src = data if isinstance(data, (bytes, bytearray)) else bytes(data)
+    out = bytearray()
+    i = 0
+    length = len(src)
+    while i < length:
+        n = src[i]
+        if n > 127:
+            n = n - 256  # interpret as signed
+        i += 1
+        if 0 <= n <= 127:
+            count = n + 1
+            out.extend(src[i:i + count])
+            i += count
+        elif -127 <= n <= -1:
+            if i < length:
+                out.extend(bytes([src[i]]) * (1 - n))
+                i += 1
+        # n == -128: skip
+    return bytes(out)
+
+
+def packbits_compress(data: bytes) -> bytes:
+    """Compress data using PackBits."""
+    src = data if isinstance(data, (bytes, bytearray)) else bytes(data)
+    out = bytearray()
+    i = 0
+    length = len(src)
+    while i < length:
+        # Check for a run of identical bytes
+        j = i + 1
+        while j < length and j - i < 128 and src[j] == src[i]:
+            j += 1
+        run_len = j - i
+
+        if run_len >= 3:
+            # Encode as run
+            out.append((256 - (run_len - 1)) & 0xFF)
+            out.append(src[i])
+            i = j
+        else:
+            # Literal run: accumulate non-repeating bytes
+            lit_start = i
+            i = j
+            while i < length and i - lit_start < 128:
+                # Check if a run starts here
+                if i + 2 < length and src[i] == src[i + 1] == src[i + 2]:
+                    break
+                i += 1
+            lit_len = i - lit_start
+            out.append(lit_len - 1)
+            out.extend(src[lit_start:lit_start + lit_len])
+    return bytes(out)
+
+
+# -- JPEG codec (via Pillow) --------------------------------------------------
+
+JPEG_AVAILABLE = False
+try:
+    from PIL import Image
+    JPEG_AVAILABLE = True
+except ImportError:
+    pass
+
+
+def jpeg_decompress(data: bytes, width: int = 0, height: int = 0,
+                    samples: int = 1) -> bytes:
+    """Decompress JPEG tile/strip data. Requires Pillow."""
+    if not JPEG_AVAILABLE:
+        raise ImportError(
+            "Pillow is required to read JPEG-compressed TIFFs. "
+            "Install it with: pip install Pillow")
+    import io
+    img = Image.open(io.BytesIO(data))
+    return np.asarray(img).tobytes()
+
+
+def jpeg_compress(data: bytes, width: int, height: int,
+                  samples: int = 1, quality: int = 75) -> bytes:
+    """Compress raw pixel data as JPEG. Requires Pillow."""
+    if not JPEG_AVAILABLE:
+        raise ImportError(
+            "Pillow is required to write JPEG-compressed TIFFs. "
+            "Install it with: pip install Pillow")
+    import io
+    if samples == 1:
+        arr = np.frombuffer(data, dtype=np.uint8).reshape(height, width)
+        img = Image.fromarray(arr, mode='L')
+    elif samples == 3:
+        arr = np.frombuffer(data, dtype=np.uint8).reshape(height, width, 3)
+        img = Image.fromarray(arr, mode='RGB')
+    else:
+        raise ValueError(f"JPEG compression requires 1 or 3 bands, got {samples}")
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=quality)
+    return buf.getvalue()
+
+
 # -- Dispatch helpers ---------------------------------------------------------
 
 # TIFF compression tag values
 COMPRESSION_NONE = 1
 COMPRESSION_LZW = 5
+COMPRESSION_JPEG = 7
 COMPRESSION_DEFLATE = 8
+COMPRESSION_PACKBITS = 32773
 COMPRESSION_ADOBE_DEFLATE = 32946
 
 
-def decompress(data, compression: int, expected_size: int = 0) -> np.ndarray:
+def decompress(data, compression: int, expected_size: int = 0,
+               width: int = 0, height: int = 0, samples: int = 1) -> np.ndarray:
     """Decompress tile/strip data based on TIFF compression tag.
 
     Parameters
@@ -552,11 +662,14 @@ def decompress(data, compression: int, expected_size: int = 0) -> np.ndarray:
     if compression == COMPRESSION_NONE:
         return np.frombuffer(data, dtype=np.uint8)
     elif compression in (COMPRESSION_DEFLATE, COMPRESSION_ADOBE_DEFLATE):
-        # zlib returns bytes; wrap as read-only view (no copy)
         return np.frombuffer(deflate_decompress(data), dtype=np.uint8)
     elif compression == COMPRESSION_LZW:
-        # lzw_decompress already returns a mutable np.ndarray
         return lzw_decompress(data, expected_size)
+    elif compression == COMPRESSION_PACKBITS:
+        return np.frombuffer(packbits_decompress(data), dtype=np.uint8)
+    elif compression == COMPRESSION_JPEG:
+        return np.frombuffer(jpeg_decompress(data, width, height, samples),
+                             dtype=np.uint8)
     else:
         raise ValueError(f"Unsupported compression type: {compression}")
 
@@ -583,5 +696,9 @@ def compress(data: bytes, compression: int, level: int = 6) -> bytes:
         return deflate_compress(data, level)
     elif compression == COMPRESSION_LZW:
         return lzw_compress(data)
+    elif compression == COMPRESSION_PACKBITS:
+        return packbits_compress(data)
+    elif compression == COMPRESSION_JPEG:
+        raise ValueError("Use jpeg_compress() directly with width/height/samples")
     else:
         raise ValueError(f"Unsupported compression type: {compression}")

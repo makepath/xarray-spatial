@@ -20,7 +20,7 @@ from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 from ._reader import read_to_array
 from ._writer import write
 
-__all__ = ['read_geotiff', 'write_geotiff', 'open_cog']
+__all__ = ['read_geotiff', 'write_geotiff', 'open_cog', 'read_geotiff_dask']
 
 
 def _geo_to_coords(geo_info, height: int, width: int) -> dict:
@@ -86,7 +86,7 @@ def _coords_to_transform(da: xr.DataArray) -> GeoTransform | None:
 
 def read_geotiff(source: str, *, window=None,
                  overview_level: int | None = None,
-                 band: int = 0,
+                 band: int | None = None,
                  name: str | None = None) -> xr.DataArray:
     """Read a GeoTIFF file into an xarray.DataArray.
 
@@ -139,13 +139,27 @@ def read_geotiff(source: str, *, window=None,
     nodata = geo_info.nodata
     if nodata is not None:
         attrs['nodata'] = nodata
-        if arr.dtype.kind == 'f' and not np.isnan(nodata):
-            arr = arr.copy()
-            arr[arr == np.float32(nodata)] = np.nan
+        if arr.dtype.kind == 'f':
+            if not np.isnan(nodata):
+                arr = arr.copy()
+                arr[arr == arr.dtype.type(nodata)] = np.nan
+        elif arr.dtype.kind in ('u', 'i'):
+            # Integer arrays: convert to float to represent NaN
+            nodata_int = int(nodata)
+            mask = arr == arr.dtype.type(nodata_int)
+            if mask.any():
+                arr = arr.astype(np.float64)
+                arr[mask] = np.nan
+
+    if arr.ndim == 3:
+        dims = ['y', 'x', 'band']
+        coords['band'] = np.arange(arr.shape[2])
+    else:
+        dims = ['y', 'x']
 
     da = xr.DataArray(
         arr,
-        dims=['y', 'x'],
+        dims=dims,
         coords=coords,
         name=name,
         attrs=attrs,
@@ -204,8 +218,8 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     else:
         arr = np.asarray(data)
 
-    if arr.ndim != 2:
-        raise ValueError(f"Expected 2D array, got {arr.ndim}D")
+    if arr.ndim not in (2, 3):
+        raise ValueError(f"Expected 2D or 3D array, got {arr.ndim}D")
 
     write(
         arr, path,
@@ -240,3 +254,115 @@ def open_cog(url: str, *,
     xr.DataArray
     """
     return read_geotiff(url, overview_level=overview_level)
+
+
+def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
+                      overview_level: int | None = None,
+                      name: str | None = None) -> xr.DataArray:
+    """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
+
+    Each chunk is loaded lazily via windowed reads.
+
+    Parameters
+    ----------
+    source : str
+        File path.
+    chunks : int or (row_chunk, col_chunk) tuple
+        Chunk size in pixels. Default 512.
+    overview_level : int or None
+        Overview level (0 = full resolution).
+    name : str or None
+        Name for the DataArray.
+
+    Returns
+    -------
+    xr.DataArray
+        Dask-backed DataArray with y/x coordinates.
+    """
+    import dask.array as da
+
+    # First, do a metadata-only read to get shape, dtype, coords, attrs
+    arr, geo_info = read_to_array(source, overview_level=overview_level)
+    full_h, full_w = arr.shape[:2]
+    n_bands = arr.shape[2] if arr.ndim == 3 else 0
+    dtype = arr.dtype
+
+    coords = _geo_to_coords(geo_info, full_h, full_w)
+
+    if name is None:
+        import os
+        name = os.path.splitext(os.path.basename(source))[0]
+
+    attrs = {}
+    if geo_info.crs_epsg is not None:
+        attrs['crs'] = geo_info.crs_epsg
+    if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
+        attrs['raster_type'] = 'point'
+    if geo_info.nodata is not None:
+        attrs['nodata'] = geo_info.nodata
+
+    if isinstance(chunks, int):
+        ch_h = ch_w = chunks
+    else:
+        ch_h, ch_w = chunks
+
+    # Build dask array from delayed windowed reads
+    rows = list(range(0, full_h, ch_h))
+    cols = list(range(0, full_w, ch_w))
+
+    # For multi-band, each window read returns (h, w, bands); for single-band (h, w)
+    # read_to_array with band=0 extracts a single band, band=None returns all
+    band_arg = None  # return all bands (or 2D if single-band)
+
+    dask_rows = []
+    for r0 in rows:
+        r1 = min(r0 + ch_h, full_h)
+        dask_cols = []
+        for c0 in cols:
+            c1 = min(c0 + ch_w, full_w)
+            if n_bands > 0:
+                block_shape = (r1 - r0, c1 - c0, n_bands)
+            else:
+                block_shape = (r1 - r0, c1 - c0)
+            block = da.from_delayed(
+                _delayed_read_window(source, r0, c0, r1, c1,
+                                     overview_level, geo_info.nodata,
+                                     dtype, band_arg),
+                shape=block_shape,
+                dtype=dtype,
+            )
+            dask_cols.append(block)
+        dask_rows.append(da.concatenate(dask_cols, axis=1))
+
+    dask_arr = da.concatenate(dask_rows, axis=0)
+
+    if n_bands > 0:
+        dims = ['y', 'x', 'band']
+        coords['band'] = np.arange(n_bands)
+    else:
+        dims = ['y', 'x']
+
+    return xr.DataArray(
+        dask_arr, dims=dims, coords=coords, name=name, attrs=attrs,
+    )
+
+
+def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
+                         dtype, band):
+    """Dask-delayed function to read a single window."""
+    import dask
+    @dask.delayed
+    def _read():
+        arr, _ = read_to_array(source, window=(r0, c0, r1, c1),
+                               overview_level=overview_level, band=band)
+        if nodata is not None:
+            if arr.dtype.kind == 'f' and not np.isnan(nodata):
+                arr = arr.copy()
+                arr[arr == arr.dtype.type(nodata)] = np.nan
+            elif arr.dtype.kind in ('u', 'i'):
+                mask = arr == arr.dtype.type(int(nodata))
+                if mask.any():
+                    arr = arr.astype(np.float64)
+                    arr[mask] = np.nan
+        return arr
+    return _read()

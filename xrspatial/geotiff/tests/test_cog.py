@@ -115,9 +115,19 @@ class TestPublicAPI:
         result = read_geotiff(path)
         np.testing.assert_array_equal(result.values, arr)
 
-    def test_write_rejects_3d(self, tmp_path):
-        arr = np.zeros((3, 4, 4), dtype=np.float32)
-        with pytest.raises(ValueError, match="Expected 2D"):
+    def test_write_3d_rgb(self, tmp_path):
+        """3D arrays (height, width, bands) should write multi-band."""
+        arr = np.zeros((4, 4, 3), dtype=np.uint8)
+        arr[:, :, 0] = 255  # red channel
+        path = str(tmp_path / 'rgb.tif')
+        write_geotiff(arr, path, compression='none')
+
+        result = read_geotiff(path)
+        np.testing.assert_array_equal(result.values, arr)
+
+    def test_write_rejects_4d(self, tmp_path):
+        arr = np.zeros((2, 3, 4, 4), dtype=np.float32)
+        with pytest.raises(ValueError, match="Expected 2D or 3D"):
             write_geotiff(arr, str(tmp_path / 'bad.tif'))
 
 

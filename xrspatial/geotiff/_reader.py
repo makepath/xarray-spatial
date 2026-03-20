@@ -155,10 +155,10 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
 
         strip_data = data[offsets[strip_idx]:offsets[strip_idx] + byte_counts[strip_idx]]
         expected = strip_rows * width * samples * bytes_per_sample
-        chunk = decompress(strip_data, compression, expected)
+        chunk = decompress(strip_data, compression, expected,
+                           width=width, height=strip_rows, samples=samples)
 
         if pred in (2, 3):
-            # Predictor mutates in-place; copy if the array is read-only
             if not chunk.flags.writeable:
                 chunk = chunk.copy()
             chunk = _apply_predictor(chunk, pred, width, strip_rows, bytes_per_sample * samples)
@@ -266,7 +266,8 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
 
             tile_data = data[offsets[tile_idx]:offsets[tile_idx] + byte_counts[tile_idx]]
             expected = tw * th * samples * bytes_per_sample
-            chunk = decompress(tile_data, compression, expected)
+            chunk = decompress(tile_data, compression, expected,
+                               width=tw, height=th, samples=samples)
 
             if pred in (2, 3):
                 if not chunk.flags.writeable:
@@ -316,7 +317,7 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
 # ---------------------------------------------------------------------------
 
 def _read_cog_http(url: str, overview_level: int | None = None,
-                   band: int = 0) -> tuple[np.ndarray, GeoInfo]:
+                   band: int | None = None) -> tuple[np.ndarray, GeoInfo]:
     """Read a COG via HTTP range requests.
 
     Parameters
@@ -401,7 +402,8 @@ def _read_cog_http(url: str, overview_level: int | None = None,
 
             tile_data = source.read_range(off, bc)
             expected = tw * th * samples * bytes_per_sample
-            chunk = decompress(tile_data, compression, expected)
+            chunk = decompress(tile_data, compression, expected,
+                               width=tw, height=th, samples=samples)
 
             if pred in (2, 3):
                 if not chunk.flags.writeable:
@@ -431,7 +433,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
 # ---------------------------------------------------------------------------
 
 def read_to_array(source: str, *, window=None, overview_level: int | None = None,
-                  band: int = 0) -> tuple[np.ndarray, GeoInfo]:
+                  band: int | None = None) -> tuple[np.ndarray, GeoInfo]:
     """Read a GeoTIFF/COG to a numpy array.
 
     Parameters
@@ -483,7 +485,7 @@ def read_to_array(source: str, *, window=None, overview_level: int | None = None
             arr = _read_strips(data, ifd, header, dtype, window)
 
         # For multi-band with band selection, extract single band
-        if arr.ndim == 3 and ifd.samples_per_pixel > 1:
+        if arr.ndim == 3 and ifd.samples_per_pixel > 1 and band is not None:
             arr = arr[:, :, band]
     finally:
         src.close()

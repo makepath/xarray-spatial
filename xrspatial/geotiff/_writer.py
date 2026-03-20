@@ -10,6 +10,7 @@ from ._compression import (
     COMPRESSION_DEFLATE,
     COMPRESSION_LZW,
     COMPRESSION_NONE,
+    COMPRESSION_PACKBITS,
     compress,
     predictor_encode,
 )
@@ -57,6 +58,7 @@ def _compression_tag(compression_name: str) -> int:
         'none': COMPRESSION_NONE,
         'deflate': COMPRESSION_DEFLATE,
         'lzw': COMPRESSION_LZW,
+        'packbits': COMPRESSION_PACKBITS,
     }
     name = compression_name.lower()
     if name not in _map:
@@ -71,7 +73,7 @@ def _make_overview(arr: np.ndarray) -> np.ndarray:
     Parameters
     ----------
     arr : np.ndarray
-        2D array.
+        2D or 3D (height, width, bands) array.
 
     Returns
     -------
@@ -79,90 +81,94 @@ def _make_overview(arr: np.ndarray) -> np.ndarray:
         Half-resolution array.
     """
     h, w = arr.shape[:2]
-    # Trim to even dimensions
     h2 = (h // 2) * 2
     w2 = (w // 2) * 2
     cropped = arr[:h2, :w2]
 
-    if arr.dtype.kind == 'f':
-        # Float: use nanmean
-        blocks = cropped.reshape(h2 // 2, 2, w2 // 2, 2)
-        return np.nanmean(blocks, axis=(1, 3)).astype(arr.dtype)
+    if arr.ndim == 3:
+        # Multi-band: average each band independently
+        bands = arr.shape[2]
+        if arr.dtype.kind == 'f':
+            blocks = cropped.reshape(h2 // 2, 2, w2 // 2, 2, bands)
+            return np.nanmean(blocks, axis=(1, 3)).astype(arr.dtype)
+        else:
+            blocks = cropped.astype(np.float64).reshape(h2 // 2, 2, w2 // 2, 2, bands)
+            return np.round(blocks.mean(axis=(1, 3))).astype(arr.dtype)
     else:
-        # Integer: use simple mean
-        blocks = cropped.astype(np.float64).reshape(h2 // 2, 2, w2 // 2, 2)
-        return np.round(blocks.mean(axis=(1, 3))).astype(arr.dtype)
+        if arr.dtype.kind == 'f':
+            blocks = cropped.reshape(h2 // 2, 2, w2 // 2, 2)
+            return np.nanmean(blocks, axis=(1, 3)).astype(arr.dtype)
+        else:
+            blocks = cropped.astype(np.float64).reshape(h2 // 2, 2, w2 // 2, 2)
+            return np.round(blocks.mean(axis=(1, 3))).astype(arr.dtype)
 
 
 # ---------------------------------------------------------------------------
 # Tag serialization
 # ---------------------------------------------------------------------------
 
-def _pack_tag_value(tag_id: int, type_id: int, count: int,
-                    values, overflow_buf: bytearray,
-                    overflow_base: int) -> bytes:
-    """Pack a single IFD entry (12 bytes for standard TIFF).
-
-    Returns the 12-byte entry. If value doesn't fit inline (>4 bytes),
-    appends data to overflow_buf and writes the offset.
-
-    Parameters
-    ----------
-    overflow_base : int
-        File offset where overflow_buf will start.
-    """
-    entry = struct.pack(f'{BO}HHI', tag_id, type_id, count)
-
-    type_size = TIFF_TYPE_SIZES.get(type_id, 1)
-    total_bytes = count * type_size
-
-    # Serialize value bytes
+def _serialize_tag_value(type_id, count, values):
+    """Serialize tag values to bytes."""
     if type_id == ASCII:
         if isinstance(values, str):
-            val_bytes = values.encode('ascii') + b'\x00'
-        else:
-            val_bytes = values + b'\x00'
-        # Adjust count to actual byte length
-        count = len(val_bytes)
-        total_bytes = count
-        entry = struct.pack(f'{BO}HHI', tag_id, type_id, count)
+            return values.encode('ascii') + b'\x00'
+        return values + b'\x00'
     elif type_id == SHORT:
         if isinstance(values, (list, tuple)):
-            val_bytes = struct.pack(f'{BO}{count}H', *values)
-        else:
-            val_bytes = struct.pack(f'{BO}H', values)
+            return struct.pack(f'{BO}{count}H', *values)
+        return struct.pack(f'{BO}H', values)
     elif type_id == LONG:
         if isinstance(values, (list, tuple)):
-            val_bytes = struct.pack(f'{BO}{count}I', *values)
-        else:
-            val_bytes = struct.pack(f'{BO}I', values)
+            return struct.pack(f'{BO}{count}I', *values)
+        return struct.pack(f'{BO}I', values)
     elif type_id == DOUBLE:
         if isinstance(values, (list, tuple)):
-            val_bytes = struct.pack(f'{BO}{count}d', *values)
-        else:
-            val_bytes = struct.pack(f'{BO}d', values)
+            return struct.pack(f'{BO}{count}d', *values)
+        return struct.pack(f'{BO}d', values)
     else:
         if isinstance(values, bytes):
-            val_bytes = values
-        else:
-            val_bytes = struct.pack(f'{BO}I', values)
+            return values
+        return struct.pack(f'{BO}I', values)
 
-    if len(val_bytes) <= 4:
-        # Inline: pad to 4 bytes
-        value_field = val_bytes.ljust(4, b'\x00')
+
+def _pack_tag_value(tag_id: int, type_id: int, count: int,
+                    values, overflow_buf: bytearray,
+                    overflow_base: int, bigtiff: bool = False) -> bytes:
+    """Pack a single IFD entry.
+
+    Standard TIFF: 12 bytes (tag:2, type:2, count:4, value:4).
+    BigTIFF: 20 bytes (tag:2, type:2, count:8, value:8).
+    """
+    val_bytes = _serialize_tag_value(type_id, count, values)
+
+    # For ASCII, count is the actual byte length
+    if type_id == ASCII:
+        count = len(val_bytes)
+
+    inline_max = 8 if bigtiff else 4
+
+    if bigtiff:
+        entry = struct.pack(f'{BO}HHQ', tag_id, type_id, count)
     else:
-        # Overflow: write offset, append data
+        entry = struct.pack(f'{BO}HHI', tag_id, type_id, count)
+
+    if len(val_bytes) <= inline_max:
+        value_field = val_bytes.ljust(inline_max, b'\x00')
+    else:
         offset = overflow_base + len(overflow_buf)
-        value_field = struct.pack(f'{BO}I', offset)
+        if bigtiff:
+            value_field = struct.pack(f'{BO}Q', offset)
+        else:
+            value_field = struct.pack(f'{BO}I', offset)
         overflow_buf.extend(val_bytes)
-        # Pad to word boundary
         if len(overflow_buf) % 2:
             overflow_buf.append(0)
 
     return entry + value_field
 
 
-def _build_ifd(tags: list[tuple], overflow_base: int) -> tuple[bytes, bytes]:
+def _build_ifd(tags: list[tuple], overflow_base: int,
+               bigtiff: bool = False) -> tuple[bytes, bytes]:
     """Build a complete IFD block.
 
     Parameters
@@ -182,15 +188,21 @@ def _build_ifd(tags: list[tuple], overflow_base: int) -> tuple[bytes, bytes]:
     num_entries = len(tags)
     overflow_buf = bytearray()
 
-    ifd_parts = [struct.pack(f'{BO}H', num_entries)]
+    if bigtiff:
+        ifd_parts = [struct.pack(f'{BO}Q', num_entries)]
+    else:
+        ifd_parts = [struct.pack(f'{BO}H', num_entries)]
 
     for tag_id, type_id, count, values in tags:
         entry = _pack_tag_value(tag_id, type_id, count, values,
-                                overflow_buf, overflow_base)
+                                overflow_buf, overflow_base, bigtiff=bigtiff)
         ifd_parts.append(entry)
 
     # Next IFD offset (0 = no more IFDs, will be patched for COG)
-    ifd_parts.append(struct.pack(f'{BO}I', 0))
+    if bigtiff:
+        ifd_parts.append(struct.pack(f'{BO}Q', 0))
+    else:
+        ifd_parts.append(struct.pack(f'{BO}I', 0))
 
     return b''.join(ifd_parts), bytes(overflow_buf)
 
@@ -346,7 +358,10 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
         Complete TIFF file.
     """
     bits_per_sample, sample_format = numpy_to_tiff_dtype(dtype)
-    samples_per_pixel = 1  # single-band for now
+
+    # Determine samples per pixel from the pixel data
+    first_arr = pixel_data_parts[0][0]
+    samples_per_pixel = first_arr.shape[2] if first_arr.ndim == 3 else 1
 
     # Build geo tags
     geo_tags_dict = {}
@@ -374,11 +389,21 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
 
         tags.append((TAG_IMAGE_WIDTH, LONG, 1, lw))
         tags.append((TAG_IMAGE_LENGTH, LONG, 1, lh))
-        tags.append((TAG_BITS_PER_SAMPLE, SHORT, 1, bits_per_sample))
+        if samples_per_pixel > 1:
+            tags.append((TAG_BITS_PER_SAMPLE, SHORT, samples_per_pixel,
+                         [bits_per_sample] * samples_per_pixel))
+        else:
+            tags.append((TAG_BITS_PER_SAMPLE, SHORT, 1, bits_per_sample))
         tags.append((TAG_COMPRESSION, SHORT, 1, compression))
-        tags.append((TAG_PHOTOMETRIC, SHORT, 1, 1))  # BlackIsZero
+        # Photometric: RGB for 3+ bands, BlackIsZero for single-band
+        photometric = 2 if samples_per_pixel >= 3 else 1
+        tags.append((TAG_PHOTOMETRIC, SHORT, 1, photometric))
         tags.append((TAG_SAMPLES_PER_PIXEL, SHORT, 1, samples_per_pixel))
-        tags.append((TAG_SAMPLE_FORMAT, SHORT, 1, sample_format))
+        if samples_per_pixel > 1:
+            tags.append((TAG_SAMPLE_FORMAT, SHORT, samples_per_pixel,
+                         [sample_format] * samples_per_pixel))
+        else:
+            tags.append((TAG_SAMPLE_FORMAT, SHORT, 1, sample_format))
 
         if pred_val != 1:
             tags.append((TAG_PREDICTOR, SHORT, 1, pred_val))
@@ -411,28 +436,39 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
 
         ifd_specs.append(tags)
 
-    # --- Layout ---
-    # TIFF header: 8 bytes
-    header_size = 8
+    # --- Determine if BigTIFF is needed ---
+    total_data = sum(sum(len(c) for c in chunks)
+                     for _, _, _, _, _, chunks in pixel_data_parts)
+    bigtiff = total_data > 3_900_000_000  # ~4GB threshold with margin
+
+    header_size = 16 if bigtiff else 8
 
     if is_cog and len(ifd_specs) > 1:
-        # COG layout: header, then all IFDs, then all pixel data
-        return _assemble_cog_layout(header_size, ifd_specs, pixel_data_parts)
+        return _assemble_cog_layout(header_size, ifd_specs, pixel_data_parts,
+                                    bigtiff=bigtiff)
     else:
-        # Standard layout: header, IFD, pixel data
-        return _assemble_standard_layout(header_size, ifd_specs, pixel_data_parts)
+        return _assemble_standard_layout(header_size, ifd_specs, pixel_data_parts,
+                                         bigtiff=bigtiff)
 
 
 def _assemble_standard_layout(header_size: int,
                               ifd_specs: list,
-                              pixel_data_parts: list) -> bytes:
+                              pixel_data_parts: list,
+                              bigtiff: bool = False) -> bytes:
     """Assemble standard TIFF layout (one IFD at a time)."""
     output = bytearray()
+    entry_size = 20 if bigtiff else 12
 
-    # TIFF header (will patch first IFD offset)
+    # TIFF header
     output.extend(b'II')  # little-endian
-    output.extend(struct.pack(f'{BO}H', 42))  # magic
-    output.extend(struct.pack(f'{BO}I', 0))   # first IFD offset placeholder
+    if bigtiff:
+        output.extend(struct.pack(f'{BO}H', 43))   # BigTIFF magic
+        output.extend(struct.pack(f'{BO}H', 8))    # offset size
+        output.extend(struct.pack(f'{BO}H', 0))    # padding
+        output.extend(struct.pack(f'{BO}Q', 0))    # first IFD offset placeholder
+    else:
+        output.extend(struct.pack(f'{BO}H', 42))   # magic
+        output.extend(struct.pack(f'{BO}I', 0))    # first IFD offset placeholder
 
     for level_idx, (tags, (_arr, _lw, _lh, rel_offsets, byte_counts, comp_chunks)) in enumerate(
             zip(ifd_specs, pixel_data_parts)):
@@ -440,21 +476,21 @@ def _assemble_standard_layout(header_size: int,
         ifd_offset = len(output)
 
         if level_idx == 0:
-            # Patch first IFD offset in header
-            struct.pack_into(f'{BO}I', output, 4, ifd_offset)
+            if bigtiff:
+                struct.pack_into(f'{BO}Q', output, 8, ifd_offset)
+            else:
+                struct.pack_into(f'{BO}I', output, 4, ifd_offset)
 
-        # Estimate where overflow + pixel data will go
-        # IFD: 2 (count) + 12*entries + 4 (next offset)
         num_entries = len(tags)
-        ifd_block_size = 2 + 12 * num_entries + 4
+        count_size = 8 if bigtiff else 2
+        next_size = 8 if bigtiff else 4
+        ifd_block_size = count_size + entry_size * num_entries + next_size
         overflow_base = ifd_offset + ifd_block_size
 
-        ifd_bytes, overflow_bytes = _build_ifd(tags, overflow_base)
+        ifd_bytes, overflow_bytes = _build_ifd(tags, overflow_base, bigtiff=bigtiff)
 
-        # Pixel data starts after overflow
         pixel_data_offset = overflow_base + len(overflow_bytes)
 
-        # Patch offsets in the IFD to point to actual pixel data locations
         patched_tags = []
         for tag_id, type_id, count, values in tags:
             if tag_id in (TAG_STRIP_OFFSETS, TAG_TILE_OFFSETS):
@@ -463,8 +499,8 @@ def _assemble_standard_layout(header_size: int,
             else:
                 patched_tags.append((tag_id, type_id, count, values))
 
-        # Rebuild IFD with patched offsets
-        ifd_bytes, overflow_bytes = _build_ifd(patched_tags, overflow_base)
+        ifd_bytes, overflow_bytes = _build_ifd(patched_tags, overflow_base,
+                                                bigtiff=bigtiff)
 
         output.extend(ifd_bytes)
         output.extend(overflow_bytes)
@@ -475,29 +511,36 @@ def _assemble_standard_layout(header_size: int,
         # Patch next IFD pointer if there are more levels
         if level_idx < len(ifd_specs) - 1:
             next_ifd_offset = len(output)
-            next_ptr_pos = ifd_offset + 2 + 12 * num_entries
-            struct.pack_into(f'{BO}I', output, next_ptr_pos, next_ifd_offset)
+            next_ptr_pos = ifd_offset + count_size + entry_size * num_entries
+            if bigtiff:
+                struct.pack_into(f'{BO}Q', output, next_ptr_pos, next_ifd_offset)
+            else:
+                struct.pack_into(f'{BO}I', output, next_ptr_pos, next_ifd_offset)
 
     return bytes(output)
 
 
 def _assemble_cog_layout(header_size: int,
                          ifd_specs: list,
-                         pixel_data_parts: list) -> bytes:
+                         pixel_data_parts: list,
+                         bigtiff: bool = False) -> bytes:
     """Assemble COG layout: all IFDs first, then all pixel data."""
-    # First pass: compute IFD sizes to know where pixel data starts
+    entry_size = 20 if bigtiff else 12
+    count_size = 8 if bigtiff else 2
+    next_size = 8 if bigtiff else 4
+
+    # First pass: compute IFD sizes
     ifd_blocks = []
     for tags in ifd_specs:
         num_entries = len(tags)
-        ifd_block_size = 2 + 12 * num_entries + 4
-        # Use dummy overflow base to measure overflow size
-        _, overflow = _build_ifd(tags, 0)
+        ifd_block_size = count_size + entry_size * num_entries + next_size
+        _, overflow = _build_ifd(tags, 0, bigtiff=bigtiff)
         ifd_blocks.append((ifd_block_size, len(overflow)))
 
     total_ifd_size = sum(bs + ov for bs, ov in ifd_blocks)
     pixel_data_start = header_size + total_ifd_size
 
-    # Second pass: compute actual pixel data offsets per level
+    # Second pass: pixel data offsets per level
     current_pixel_offset = pixel_data_start
     level_pixel_offsets = []
     for _arr, _lw, _lh, rel_offsets, byte_counts, comp_chunks in pixel_data_parts:
@@ -507,8 +550,14 @@ def _assemble_cog_layout(header_size: int,
     # Third pass: build IFDs with correct offsets
     output = bytearray()
     output.extend(b'II')
-    output.extend(struct.pack(f'{BO}H', 42))
-    output.extend(struct.pack(f'{BO}I', header_size))  # first IFD right after header
+    if bigtiff:
+        output.extend(struct.pack(f'{BO}H', 43))
+        output.extend(struct.pack(f'{BO}H', 8))
+        output.extend(struct.pack(f'{BO}H', 0))
+        output.extend(struct.pack(f'{BO}Q', header_size))
+    else:
+        output.extend(struct.pack(f'{BO}H', 42))
+        output.extend(struct.pack(f'{BO}I', header_size))
 
     current_ifd_pos = header_size
     for level_idx, (tags, (_arr, _lw, _lh, rel_offsets, byte_counts, comp_chunks)) in enumerate(
@@ -525,24 +574,28 @@ def _assemble_cog_layout(header_size: int,
                 patched_tags.append((tag_id, type_id, count, values))
 
         num_entries = len(patched_tags)
-        ifd_block_size = 2 + 12 * num_entries + 4
+        ifd_block_size = count_size + entry_size * num_entries + next_size
         overflow_base = current_ifd_pos + ifd_block_size
 
-        ifd_bytes, overflow_bytes = _build_ifd(patched_tags, overflow_base)
+        ifd_bytes, overflow_bytes = _build_ifd(patched_tags, overflow_base,
+                                                bigtiff=bigtiff)
 
         # Patch next IFD offset
         if level_idx < len(ifd_specs) - 1:
             next_ifd_pos = current_ifd_pos + ifd_block_size + len(overflow_bytes)
             ifd_ba = bytearray(ifd_bytes)
-            next_ptr_pos = 2 + 12 * num_entries
-            struct.pack_into(f'{BO}I', ifd_ba, next_ptr_pos, next_ifd_pos)
+            next_ptr_pos = count_size + entry_size * num_entries
+            if bigtiff:
+                struct.pack_into(f'{BO}Q', ifd_ba, next_ptr_pos, next_ifd_pos)
+            else:
+                struct.pack_into(f'{BO}I', ifd_ba, next_ptr_pos, next_ifd_pos)
             ifd_bytes = bytes(ifd_ba)
 
         output.extend(ifd_bytes)
         output.extend(overflow_bytes)
         current_ifd_pos = len(output)
 
-    # Append all pixel data (extend from each chunk directly)
+    # Append all pixel data
     for _arr, _lw, _lh, _rel_offsets, _byte_counts, comp_chunks in pixel_data_parts:
         for chunk in comp_chunks:
             output.extend(chunk)
