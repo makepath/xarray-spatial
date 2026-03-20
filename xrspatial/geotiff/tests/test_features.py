@@ -417,6 +417,144 @@ class TestGeoKeys:
 # GDAL metadata (tag 42112)
 # -----------------------------------------------------------------------
 
+# -----------------------------------------------------------------------
+# Arbitrary tag preservation
+# -----------------------------------------------------------------------
+
+class TestExtraTags:
+
+    def _make_tiff_with_extra_tags(self, tmp_path):
+        """Build a TIFF with Software (305) and DateTime (306) tags."""
+        import struct
+        bo = '<'
+        width, height = 4, 4
+        pixels = np.arange(16, dtype=np.float32).reshape(4, 4)
+        pixel_bytes = pixels.tobytes()
+
+        tag_list = []
+        def add_short(tag, val):
+            tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+        def add_long(tag, val):
+            tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
+        def add_ascii(tag, text):
+            raw = text.encode('ascii') + b'\x00'
+            tag_list.append((tag, 2, len(raw), raw))
+
+        add_short(256, width)
+        add_short(257, height)
+        add_short(258, 32)
+        add_short(259, 1)
+        add_short(262, 1)
+        add_short(277, 1)
+        add_short(278, height)
+        add_long(273, 0)  # placeholder
+        add_long(279, len(pixel_bytes))
+        add_short(339, 3)  # float
+        add_ascii(305, 'TestSoftware v1.0')
+        add_ascii(306, '2025:01:15 12:00:00')
+
+        tag_list.sort(key=lambda t: t[0])
+        num_entries = len(tag_list)
+        ifd_start = 8
+        ifd_size = 2 + 12 * num_entries + 4
+        overflow_start = ifd_start + ifd_size
+
+        overflow_buf = bytearray()
+        tag_offsets = {}
+        for tag, typ, count, raw in tag_list:
+            if len(raw) > 4:
+                tag_offsets[tag] = len(overflow_buf)
+                overflow_buf.extend(raw)
+                if len(overflow_buf) % 2:
+                    overflow_buf.append(0)
+            else:
+                tag_offsets[tag] = None
+
+        pixel_data_start = overflow_start + len(overflow_buf)
+
+        patched = []
+        for tag, typ, count, raw in tag_list:
+            if tag == 273:
+                patched.append((tag, typ, count, struct.pack(f'{bo}I', pixel_data_start)))
+            else:
+                patched.append((tag, typ, count, raw))
+        tag_list = patched
+
+        overflow_buf = bytearray()
+        tag_offsets = {}
+        for tag, typ, count, raw in tag_list:
+            if len(raw) > 4:
+                tag_offsets[tag] = len(overflow_buf)
+                overflow_buf.extend(raw)
+                if len(overflow_buf) % 2:
+                    overflow_buf.append(0)
+            else:
+                tag_offsets[tag] = None
+
+        out = bytearray()
+        out.extend(b'II')
+        out.extend(struct.pack(f'{bo}H', 42))
+        out.extend(struct.pack(f'{bo}I', ifd_start))
+        out.extend(struct.pack(f'{bo}H', num_entries))
+        for tag, typ, count, raw in tag_list:
+            out.extend(struct.pack(f'{bo}HHI', tag, typ, count))
+            if len(raw) <= 4:
+                out.extend(raw.ljust(4, b'\x00'))
+            else:
+                ptr = overflow_start + tag_offsets[tag]
+                out.extend(struct.pack(f'{bo}I', ptr))
+        out.extend(struct.pack(f'{bo}I', 0))
+        out.extend(overflow_buf)
+        out.extend(pixel_bytes)
+
+        path = str(tmp_path / 'extra_tags.tif')
+        with open(path, 'wb') as f:
+            f.write(bytes(out))
+        return path, pixels
+
+    def test_extra_tags_read(self, tmp_path):
+        """Extra tags are collected in attrs['extra_tags']."""
+        path, _ = self._make_tiff_with_extra_tags(tmp_path)
+        da = read_geotiff(path)
+
+        extra = da.attrs.get('extra_tags')
+        assert extra is not None
+        tag_ids = {t[0] for t in extra}
+        assert 305 in tag_ids  # Software
+        assert 306 in tag_ids  # DateTime
+
+    def test_extra_tags_round_trip(self, tmp_path):
+        """Extra tags survive read -> write -> read."""
+        path, pixels = self._make_tiff_with_extra_tags(tmp_path)
+        da = read_geotiff(path)
+
+        out_path = str(tmp_path / 'roundtrip.tif')
+        write_geotiff(da, out_path, compression='none')
+
+        da2 = read_geotiff(out_path)
+
+        # Pixels should match
+        np.testing.assert_array_equal(da2.values, pixels)
+
+        # Extra tags should survive
+        extra2 = da2.attrs.get('extra_tags')
+        assert extra2 is not None
+        tag_map = {t[0]: t[3] for t in extra2}
+        assert 305 in tag_map
+        assert 'TestSoftware v1.0' in str(tag_map[305])
+        assert 306 in tag_map
+        assert '2025:01:15' in str(tag_map[306])
+
+    def test_no_extra_tags(self, tmp_path):
+        """Files with only managed tags have no extra_tags attr."""
+        arr = np.ones((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'no_extra.tif')
+        write(arr, path, compression='none', tiled=False)
+
+        da = read_geotiff(path)
+        assert 'extra_tags' not in da.attrs
+
+
 class TestGDALMetadata:
 
     def test_parse_gdal_metadata_xml(self):

@@ -6,14 +6,37 @@ from dataclasses import dataclass, field
 
 from ._header import (
     IFD,
-    TAG_MODEL_PIXEL_SCALE,
-    TAG_MODEL_TIEPOINT,
+    TAG_IMAGE_WIDTH, TAG_IMAGE_LENGTH, TAG_BITS_PER_SAMPLE,
+    TAG_COMPRESSION, TAG_PHOTOMETRIC,
+    TAG_STRIP_OFFSETS, TAG_SAMPLES_PER_PIXEL,
+    TAG_ROWS_PER_STRIP, TAG_STRIP_BYTE_COUNTS,
+    TAG_X_RESOLUTION, TAG_Y_RESOLUTION,
+    TAG_PLANAR_CONFIG, TAG_RESOLUTION_UNIT,
+    TAG_PREDICTOR, TAG_COLORMAP,
+    TAG_TILE_WIDTH, TAG_TILE_LENGTH,
+    TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS,
+    TAG_SAMPLE_FORMAT, TAG_GDAL_METADATA, TAG_GDAL_NODATA,
+    TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT,
     TAG_MODEL_TRANSFORMATION,
-    TAG_GEO_KEY_DIRECTORY,
-    TAG_GEO_DOUBLE_PARAMS,
-    TAG_GEO_ASCII_PARAMS,
-    TAG_GDAL_NODATA,
+    TAG_GEO_KEY_DIRECTORY, TAG_GEO_DOUBLE_PARAMS, TAG_GEO_ASCII_PARAMS,
 )
+
+# Tags that the writer manages -- everything else can be passed through
+_MANAGED_TAGS = frozenset({
+    TAG_IMAGE_WIDTH, TAG_IMAGE_LENGTH, TAG_BITS_PER_SAMPLE,
+    TAG_COMPRESSION, TAG_PHOTOMETRIC,
+    TAG_STRIP_OFFSETS, TAG_SAMPLES_PER_PIXEL,
+    TAG_ROWS_PER_STRIP, TAG_STRIP_BYTE_COUNTS,
+    TAG_X_RESOLUTION, TAG_Y_RESOLUTION,
+    TAG_PLANAR_CONFIG, TAG_RESOLUTION_UNIT,
+    TAG_PREDICTOR, TAG_COLORMAP,
+    TAG_TILE_WIDTH, TAG_TILE_LENGTH,
+    TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS,
+    TAG_SAMPLE_FORMAT, TAG_GDAL_METADATA, TAG_GDAL_NODATA,
+    TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT,
+    TAG_MODEL_TRANSFORMATION,
+    TAG_GEO_KEY_DIRECTORY, TAG_GEO_DOUBLE_PARAMS, TAG_GEO_ASCII_PARAMS,
+})
 
 # GeoKey IDs
 GEOKEY_MODEL_TYPE = 1024
@@ -113,6 +136,9 @@ class GeoInfo:
     # and {(name, band): value} for per-band items.  Raw XML also kept.
     gdal_metadata: dict | None = None
     gdal_metadata_xml: str | None = None
+    # Extra TIFF tags not managed by the writer (pass-through on round-trip)
+    # List of (tag_id, type_id, count, raw_value) tuples.
+    extra_tags: list | None = None
     # Raw geokeys dict for anything else
     geokeys: dict[int, int | float | str] = field(default_factory=dict)
 
@@ -450,6 +476,14 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
                     b = raw_cmap[2 * n_colors + i] / 65535.0
                     colormap.append((r, g, b, 1.0))
 
+    # Collect extra (non-managed) tags for pass-through
+    extra_tags = []
+    for tag_id, entry in ifd.entries.items():
+        if tag_id not in _MANAGED_TAGS:
+            extra_tags.append((tag_id, entry.type_id, entry.count, entry.value))
+    if not extra_tags:
+        extra_tags = None
+
     # Resolve EPSG -> WKT via pyproj if available
     crs_wkt = None
     if epsg is not None:
@@ -483,6 +517,7 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         crs_wkt=crs_wkt,
         gdal_metadata=gdal_metadata,
         gdal_metadata_xml=gdal_metadata_xml,
+        extra_tags=extra_tags,
         geokeys=geokeys,
     )
 

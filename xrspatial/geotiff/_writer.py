@@ -414,6 +414,7 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
                    is_cog: bool = False,
                    raster_type: int = 1,
                    gdal_metadata_xml: str | None = None,
+                   extra_tags: list | None = None,
                    x_resolution: float | None = None,
                    y_resolution: float | None = None,
                    resolution_unit: int | None = None) -> bytes:
@@ -522,6 +523,14 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
             if gdal_metadata_xml is not None:
                 tags.append((TAG_GDAL_METADATA, ASCII,
                              len(gdal_metadata_xml) + 1, gdal_metadata_xml))
+
+            # Extra tags (pass-through from source file)
+            if extra_tags is not None:
+                for etag_id, etype_id, ecount, evalue in extra_tags:
+                    # Skip any tag we already wrote to avoid duplicates
+                    existing_ids = {t[0] for t in tags}
+                    if etag_id not in existing_ids:
+                        tags.append((etag_id, etype_id, ecount, evalue))
 
         ifd_specs.append(tags)
 
@@ -711,7 +720,8 @@ def write(data: np.ndarray, path: str, *,
           x_resolution: float | None = None,
           y_resolution: float | None = None,
           resolution_unit: int | None = None,
-          gdal_metadata_xml: str | None = None) -> None:
+          gdal_metadata_xml: str | None = None,
+          extra_tags: list | None = None) -> None:
     """Write a numpy array as a GeoTIFF or COG.
 
     Parameters
@@ -781,6 +791,7 @@ def write(data: np.ndarray, path: str, *,
         parts, geo_transform, crs_epsg, nodata, is_cog=cog,
         raster_type=raster_type,
         gdal_metadata_xml=gdal_metadata_xml,
+        extra_tags=extra_tags,
         x_resolution=x_resolution, y_resolution=y_resolution,
         resolution_unit=resolution_unit,
     )

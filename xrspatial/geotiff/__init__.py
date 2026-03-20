@@ -182,6 +182,10 @@ def read_geotiff(source: str, *, window=None,
     if geo_info.gdal_metadata_xml is not None:
         attrs['gdal_metadata_xml'] = geo_info.gdal_metadata_xml
 
+    # Extra (non-managed) TIFF tags for pass-through
+    if geo_info.extra_tags is not None:
+        attrs['extra_tags'] = geo_info.extra_tags
+
     # Resolution / DPI metadata
     if geo_info.x_resolution is not None:
         attrs['x_resolution'] = geo_info.x_resolution
@@ -282,6 +286,7 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     y_res = None
     res_unit = None
     gdal_meta_xml = None
+    extra_tags_list = None
 
     # Resolve crs argument: can be int (EPSG) or str (WKT/PROJ)
     if isinstance(crs, int):
@@ -311,6 +316,8 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
             if isinstance(gdal_meta_dict, dict):
                 from ._geotags import _build_gdal_metadata_xml
                 gdal_meta_xml = _build_gdal_metadata_xml(gdal_meta_dict)
+        # Extra tags for pass-through
+        extra_tags_list = data.attrs.get('extra_tags')
         # Resolution / DPI from attrs
         x_res = data.attrs.get('x_resolution')
         y_res = data.attrs.get('y_resolution')
@@ -341,6 +348,7 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         y_resolution=y_res,
         resolution_unit=res_unit,
         gdal_metadata_xml=gdal_meta_xml,
+        extra_tags=extra_tags_list,
     )
 
 
