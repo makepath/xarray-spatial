@@ -23,6 +23,20 @@ from ._writer import write
 __all__ = ['read_geotiff', 'write_geotiff', 'open_cog', 'read_geotiff_dask']
 
 
+def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
+    """Try to extract an EPSG code from a WKT or PROJ string.
+
+    Returns None if pyproj is not installed or the string can't be parsed.
+    """
+    try:
+        from pyproj import CRS
+        crs = CRS.from_user_input(wkt_or_proj)
+        epsg = crs.to_epsg()
+        return epsg
+    except Exception:
+        return None
+
+
 def _geo_to_coords(geo_info, height: int, width: int) -> dict:
     """Build y/x coordinate arrays from GeoInfo.
 
@@ -132,6 +146,8 @@ def read_geotiff(source: str, *, window=None,
     attrs = {}
     if geo_info.crs_epsg is not None:
         attrs['crs'] = geo_info.crs_epsg
+    if geo_info.crs_wkt is not None:
+        attrs['crs_wkt'] = geo_info.crs_wkt
     if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
         attrs['raster_type'] = 'point'
 
@@ -214,7 +230,7 @@ def read_geotiff(source: str, *, window=None,
 
 
 def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
-                  crs: int | None = None,
+                  crs: int | str | None = None,
                   nodata=None,
                   compression: str = 'deflate',
                   tiled: bool = True,
@@ -231,8 +247,10 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         2D raster data.
     path : str
         Output file path.
-    crs : int or None
-        EPSG code. If None and data is a DataArray, tries to read from attrs.
+    crs : int, str, or None
+        EPSG code (int), WKT string, or PROJ string. If None and data
+        is a DataArray, tries to read from attrs ('crs' for EPSG,
+        'crs_wkt' for WKT).
     nodata : float, int, or None
         NoData value.
     compression : str
@@ -252,18 +270,29 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         'min', 'max', 'median', 'mode', or 'cubic'.
     """
     geo_transform = None
-    epsg = crs
+    epsg = None
     raster_type = RASTER_PIXEL_IS_AREA
     x_res = None
     y_res = None
     res_unit = None
 
+    # Resolve crs argument: can be int (EPSG) or str (WKT/PROJ)
+    if isinstance(crs, int):
+        epsg = crs
+    elif isinstance(crs, str):
+        epsg = _wkt_to_epsg(crs)  # try to extract EPSG from WKT/PROJ
+
     if isinstance(data, xr.DataArray):
         arr = data.values
         if geo_transform is None:
             geo_transform = _coords_to_transform(data)
-        if epsg is None:
+        if epsg is None and crs is None:
             epsg = data.attrs.get('crs')
+            if epsg is None:
+                # Try resolving EPSG from a WKT string in attrs
+                wkt = data.attrs.get('crs_wkt')
+                if isinstance(wkt, str):
+                    epsg = _wkt_to_epsg(wkt)
         if nodata is None:
             nodata = data.attrs.get('nodata')
         if data.attrs.get('raster_type') == 'point':

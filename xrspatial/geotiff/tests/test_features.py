@@ -337,6 +337,77 @@ class TestGeoKeys:
         assert LINEAR_UNITS[9002] == 'foot'
         assert LINEAR_UNITS[9003] == 'us_survey_foot'
 
+    def test_crs_wkt_from_epsg(self, tmp_path):
+        """crs_wkt is resolved from EPSG via pyproj."""
+        from xrspatial.geotiff._geotags import GeoTransform
+        arr = np.ones((4, 4), dtype=np.float32)
+        gt = GeoTransform(-120.0, 45.0, 0.001, -0.001)
+        path = str(tmp_path / 'wkt.tif')
+        write(arr, path, compression='none', tiled=False,
+              geo_transform=gt, crs_epsg=4326)
+
+        da = read_geotiff(path)
+        assert 'crs_wkt' in da.attrs
+        wkt = da.attrs['crs_wkt']
+        assert 'WGS 84' in wkt or '4326' in wkt
+
+    def test_write_with_wkt_string(self, tmp_path):
+        """crs= accepts a WKT string and resolves to EPSG."""
+        arr = np.ones((4, 4), dtype=np.float32)
+        wkt = ('GEOGCRS["WGS 84",DATUM["World Geodetic System 1984",'
+               'ELLIPSOID["WGS 84",6378137,298.257223563]],'
+               'CS[ellipsoidal,2],'
+               'AXIS["geodetic latitude (Lat)",north],'
+               'AXIS["geodetic longitude (Lon)",east],'
+               'UNIT["degree",0.0174532925199433],'
+               'ID["EPSG",4326]]')
+        path = str(tmp_path / 'wkt_in.tif')
+        write_geotiff(arr, path, crs=wkt, compression='none')
+
+        da = read_geotiff(path)
+        assert da.attrs['crs'] == 4326
+
+    def test_write_with_proj_string(self, tmp_path):
+        """crs= accepts a PROJ string."""
+        arr = np.ones((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'proj_in.tif')
+        write_geotiff(arr, path, crs='+proj=utm +zone=18 +datum=NAD83',
+                      compression='none')
+
+        da = read_geotiff(path)
+        # pyproj should resolve this to EPSG:26918
+        assert da.attrs.get('crs') is not None
+
+    def test_crs_wkt_attr_round_trip(self, tmp_path):
+        """DataArray with crs_wkt attr (no int crs) round-trips."""
+        wkt = ('GEOGCRS["WGS 84",DATUM["World Geodetic System 1984",'
+               'ELLIPSOID["WGS 84",6378137,298.257223563]],'
+               'CS[ellipsoidal,2],'
+               'AXIS["geodetic latitude (Lat)",north],'
+               'AXIS["geodetic longitude (Lon)",east],'
+               'UNIT["degree",0.0174532925199433],'
+               'ID["EPSG",4326]]')
+        y = np.linspace(45.0, 44.0, 4)
+        x = np.linspace(-120.0, -119.0, 4)
+        da = xr.DataArray(np.ones((4, 4), dtype=np.float32),
+                          dims=['y', 'x'], coords={'y': y, 'x': x},
+                          attrs={'crs_wkt': wkt})
+        path = str(tmp_path / 'wkt_rt.tif')
+        write_geotiff(da, path, compression='none')
+
+        result = read_geotiff(path)
+        assert result.attrs['crs'] == 4326
+        assert 'crs_wkt' in result.attrs
+
+    def test_no_crs_no_wkt(self, tmp_path):
+        """File without CRS has no crs_wkt attr."""
+        arr = np.ones((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'no_wkt.tif')
+        write(arr, path, compression='none', tiled=False)
+
+        da = read_geotiff(path)
+        assert 'crs_wkt' not in da.attrs
+
 
 # -----------------------------------------------------------------------
 # Resolution / DPI tags

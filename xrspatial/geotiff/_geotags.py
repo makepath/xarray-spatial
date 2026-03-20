@@ -107,8 +107,22 @@ class GeoInfo:
     vertical_datum: int | None = None
     vertical_units: str | None = None
     vertical_units_code: int | None = None
+    # WKT CRS string (resolved from EPSG via pyproj, or provided by caller)
+    crs_wkt: str | None = None
     # Raw geokeys dict for anything else
     geokeys: dict[int, int | float | str] = field(default_factory=dict)
+
+
+def _epsg_to_wkt(epsg: int) -> str | None:
+    """Resolve an EPSG code to a WKT string using pyproj.
+
+    Returns None if pyproj is not installed or the code is unknown.
+    """
+    try:
+        from pyproj import CRS
+        return CRS.from_epsg(epsg).to_wkt()
+    except Exception:
+        return None
 
 
 def _parse_geokeys(ifd: IFD, data: bytes | memoryview,
@@ -385,6 +399,11 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
                     b = raw_cmap[2 * n_colors + i] / 65535.0
                     colormap.append((r, g, b, 1.0))
 
+    # Resolve EPSG -> WKT via pyproj if available
+    crs_wkt = None
+    if epsg is not None:
+        crs_wkt = _epsg_to_wkt(epsg)
+
     return GeoInfo(
         transform=transform,
         crs_epsg=epsg,
@@ -410,6 +429,7 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         vertical_datum=vert_datum,
         vertical_units=vert_units_name,
         vertical_units_code=vert_units_code,
+        crs_wkt=crs_wkt,
         geokeys=geokeys,
     )
 
