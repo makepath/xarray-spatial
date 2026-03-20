@@ -957,6 +957,39 @@ class TestBigTIFF:
         result, _ = read_to_array(path)
         np.testing.assert_array_equal(result, arr)
 
+    def test_force_bigtiff_via_public_api(self, tmp_path):
+        """bigtiff=True on write_geotiff forces BigTIFF even for small files."""
+        arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+        path = str(tmp_path / 'forced_bigtiff.tif')
+        write_geotiff(arr, path, compression='none', bigtiff=True)
+
+        with open(path, 'rb') as f:
+            header = parse_header(f.read(16))
+        assert header.is_bigtiff
+
+        result = read_geotiff(path)
+        np.testing.assert_array_equal(result.values, arr)
+
+    def test_small_file_stays_classic(self, tmp_path):
+        """Small files default to classic TIFF (bigtiff=None auto-detects)."""
+        arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+        path = str(tmp_path / 'classic.tif')
+        write_geotiff(arr, path, compression='none')
+
+        with open(path, 'rb') as f:
+            header = parse_header(f.read(16))
+        assert not header.is_bigtiff
+
+    def test_force_bigtiff_false_stays_classic(self, tmp_path):
+        """bigtiff=False forces classic TIFF."""
+        arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+        path = str(tmp_path / 'forced_classic.tif')
+        write_geotiff(arr, path, compression='none', bigtiff=False)
+
+        with open(path, 'rb') as f:
+            header = parse_header(f.read(16))
+        assert not header.is_bigtiff
+
 
 # -----------------------------------------------------------------------
 # Sub-byte bit depths (1-bit, 4-bit, 12-bit)

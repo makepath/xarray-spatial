@@ -417,7 +417,8 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
                    extra_tags: list | None = None,
                    x_resolution: float | None = None,
                    y_resolution: float | None = None,
-                   resolution_unit: int | None = None) -> bytes:
+                   resolution_unit: int | None = None,
+                   force_bigtiff: bool | None = None) -> bytes:
     """Assemble a complete TIFF file.
 
     Parameters
@@ -535,9 +536,22 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
         ifd_specs.append(tags)
 
     # --- Determine if BigTIFF is needed ---
-    total_data = sum(sum(len(c) for c in chunks)
-                     for _, _, _, _, _, chunks in pixel_data_parts)
-    bigtiff = total_data > 3_900_000_000  # ~4GB threshold with margin
+    # Classic TIFF uses 32-bit offsets (max ~4.29 GB). Estimate total file
+    # size including headers, IFDs, overflow data, and all pixel data.
+    # Switch to BigTIFF if any offset could exceed 2^32.
+    total_pixel_data = sum(sum(len(c) for c in chunks)
+                           for _, _, _, _, _, chunks in pixel_data_parts)
+    # Conservative overhead estimate: header + IFDs + overflow + geo tags
+    num_levels = len(ifd_specs)
+    max_tags_per_ifd = max(len(tags) for tags in ifd_specs) if ifd_specs else 20
+    ifd_overhead = num_levels * (2 + 12 * max_tags_per_ifd + 4 + 1024)  # ~1KB overflow per IFD
+    estimated_file_size = 8 + ifd_overhead + total_pixel_data
+
+    UINT32_MAX = 0xFFFFFFFF  # 4,294,967,295
+    if force_bigtiff is not None:
+        bigtiff = force_bigtiff
+    else:
+        bigtiff = estimated_file_size > UINT32_MAX
 
     header_size = 16 if bigtiff else 8
 
@@ -721,7 +735,8 @@ def write(data: np.ndarray, path: str, *,
           y_resolution: float | None = None,
           resolution_unit: int | None = None,
           gdal_metadata_xml: str | None = None,
-          extra_tags: list | None = None) -> None:
+          extra_tags: list | None = None,
+          bigtiff: bool | None = None) -> None:
     """Write a numpy array as a GeoTIFF or COG.
 
     Parameters
@@ -794,6 +809,7 @@ def write(data: np.ndarray, path: str, *,
         extra_tags=extra_tags,
         x_resolution=x_resolution, y_resolution=y_resolution,
         resolution_unit=resolution_unit,
+        force_bigtiff=bigtiff,
     )
 
     # Write to a temp file then atomically rename, so concurrent writes to

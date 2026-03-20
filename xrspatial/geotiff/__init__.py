@@ -248,7 +248,8 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                   predictor: bool = False,
                   cog: bool = False,
                   overview_levels: list[int] | None = None,
-                  overview_resampling: str = 'mean') -> None:
+                  overview_resampling: str = 'mean',
+                  bigtiff: bool | None = None) -> None:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Parameters
@@ -349,6 +350,7 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         resolution_unit=res_unit,
         gdal_metadata_xml=gdal_meta_xml,
         extra_tags=extra_tags_list,
+        bigtiff=bigtiff,
     )
 
 
