@@ -50,6 +50,7 @@ from ._header import (
     TAG_TILE_LENGTH,
     TAG_TILE_OFFSETS,
     TAG_TILE_BYTE_COUNTS,
+    TAG_EXTRA_SAMPLES,
     TAG_PREDICTOR,
     TAG_GDAL_METADATA,
 )
@@ -483,6 +484,18 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
         else:
             tags.append((TAG_SAMPLE_FORMAT, SHORT, 1, sample_format))
 
+        # ExtraSamples: for bands beyond what Photometric accounts for
+        # Photometric=2 (RGB) accounts for 3 bands; any extra are alpha/other
+        if photometric == 2 and samples_per_pixel > 3:
+            n_extra = samples_per_pixel - 3
+            # 2 = unassociated alpha for the first extra, 0 = unspecified for rest
+            extra_vals = [2] + [0] * (n_extra - 1)
+            tags.append((TAG_EXTRA_SAMPLES, SHORT, n_extra, extra_vals))
+        elif photometric == 1 and samples_per_pixel > 1:
+            n_extra = samples_per_pixel - 1
+            extra_vals = [0] * n_extra  # unspecified
+            tags.append((TAG_EXTRA_SAMPLES, SHORT, n_extra, extra_vals))
+
         if pred_val != 1:
             tags.append((TAG_PREDICTOR, SHORT, 1, pred_val))
 
@@ -813,6 +826,14 @@ def write(data: np.ndarray, path: str, *,
     )
 
     _write_bytes(file_bytes, path)
+
+    # Post-write validation: verify the header is parseable
+    from ._header import parse_header as _ph
+    try:
+        _ph(file_bytes[:16])
+    except Exception as e:
+        import warnings
+        warnings.warn(f"Written file may be corrupt: {e}", stacklevel=2)
 
 
 def _is_fsspec_uri(path: str) -> bool:

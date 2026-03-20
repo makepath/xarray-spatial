@@ -57,10 +57,14 @@ class TestWriteInvalidInputs:
         with pytest.raises(ValueError, match="Unsupported numpy dtype"):
             write_geotiff(arr, str(tmp_path / 'bad.tif'))
 
-    def test_bool_dtype(self, tmp_path):
-        arr = np.ones((4, 4), dtype=bool)
-        with pytest.raises(ValueError, match="Unsupported numpy dtype"):
-            write_geotiff(arr, str(tmp_path / 'bad.tif'))
+    def test_bool_dtype_auto_promoted(self, tmp_path):
+        """Bool arrays are auto-promoted to uint8."""
+        arr = np.array([[True, False], [False, True]])
+        path = str(tmp_path / 'bool.tif')
+        write_geotiff(arr, path, compression='none')
+
+        result = read_geotiff(path)
+        np.testing.assert_array_equal(result.values, arr.astype(np.uint8))
 
 
 # -----------------------------------------------------------------------

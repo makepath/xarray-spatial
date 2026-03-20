@@ -585,6 +585,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     compression = ifd.compression
     pred = ifd.predictor
     bytes_per_sample = bps // 8
+    is_sub_byte = bps in SUB_BYTE_BPS
 
     offsets = ifd.tile_offsets
     byte_counts = ifd.tile_byte_counts
@@ -609,22 +610,10 @@ def _read_cog_http(url: str, overview_level: int | None = None,
                 continue
 
             tile_data = source.read_range(off, bc)
-            expected = tw * th * samples * bytes_per_sample
-            chunk = decompress(tile_data, compression, expected,
-                               width=tw, height=th, samples=samples)
-
-            if pred in (2, 3):
-                if not chunk.flags.writeable:
-                    chunk = chunk.copy()
-                chunk = _apply_predictor(chunk, pred, tw, th, bytes_per_sample * samples)
-
-            file_dtype = dtype.newbyteorder(header.byte_order)
-            if samples > 1:
-                tile_pixels = chunk.view(file_dtype).reshape(th, tw, samples)
-            else:
-                tile_pixels = chunk.view(file_dtype).reshape(th, tw)
-            if file_dtype.byteorder not in ('=', '|', _NATIVE_ORDER):
-                tile_pixels = tile_pixels.astype(dtype)
+            tile_pixels = _decode_strip_or_tile(
+                tile_data, compression, tw, th, samples,
+                bps, bytes_per_sample, is_sub_byte, dtype, pred,
+                byte_order=header.byte_order)
 
             # Place tile
             y0 = tr * th
@@ -699,6 +688,13 @@ def read_to_array(source: str, *, window=None, overview_level: int | None = None
         # For multi-band with band selection, extract single band
         if arr.ndim == 3 and ifd.samples_per_pixel > 1 and band is not None:
             arr = arr[:, :, band]
+
+        # MinIsWhite (photometric=0): invert single-band grayscale values
+        if ifd.photometric == 0 and ifd.samples_per_pixel == 1:
+            if arr.dtype.kind == 'u':
+                arr = np.iinfo(arr.dtype).max - arr
+            elif arr.dtype.kind == 'f':
+                arr = -arr
     finally:
         src.close()
 

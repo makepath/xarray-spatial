@@ -433,6 +433,187 @@ class TestGeoKeys:
 # VRT (Virtual Raster Table) support
 # -----------------------------------------------------------------------
 
+# -----------------------------------------------------------------------
+# Fixes: band-first, MinIsWhite, ExtraSamples, float16, VRT write, etc.
+# -----------------------------------------------------------------------
+
+class TestFixesBatch:
+
+    def test_band_first_dataarray(self, tmp_path):
+        """DataArray with (band, y, x) dims is transposed before write."""
+        arr = np.zeros((3, 8, 8), dtype=np.uint8)
+        arr[0] = 200  # red
+        arr[1] = 100  # green
+        arr[2] = 50   # blue
+
+        da = xr.DataArray(arr, dims=['band', 'y', 'x'])
+        path = str(tmp_path / 'band_first.tif')
+        write_geotiff(da, path, compression='none')
+
+        result = read_geotiff(path)
+        assert result.shape == (8, 8, 3)
+        assert result.values[0, 0, 0] == 200  # red channel
+        assert result.values[0, 0, 1] == 100  # green channel
+
+    def test_band_last_dataarray_unchanged(self, tmp_path):
+        """DataArray with (y, x, band) dims is not transposed."""
+        arr = np.zeros((8, 8, 3), dtype=np.uint8)
+        arr[:, :, 0] = 200
+        da = xr.DataArray(arr, dims=['y', 'x', 'band'])
+        path = str(tmp_path / 'band_last.tif')
+        write_geotiff(da, path, compression='none')
+
+        result = read_geotiff(path)
+        assert result.shape == (8, 8, 3)
+        assert result.values[0, 0, 0] == 200
+
+    def test_min_is_white_inversion(self, tmp_path):
+        """MinIsWhite (photometric=0) inverts grayscale values on read."""
+        from .conftest import make_minimal_tiff
+        import struct
+
+        # Build a minimal TIFF with photometric=0
+        # The conftest doesn't support photometric param, so build manually
+        bo = '<'
+        width, height = 4, 4
+        pixels = np.array([[0, 50, 100, 200]], dtype=np.uint8).repeat(4, axis=0)
+
+        tag_list = []
+        def add_short(tag, val):
+            tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+        def add_long(tag, val):
+            tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
+
+        add_short(256, width)
+        add_short(257, height)
+        add_short(258, 8)
+        add_short(259, 1)
+        add_short(262, 0)   # MinIsWhite
+        add_short(277, 1)
+        add_short(278, height)
+        add_long(273, 0)
+        add_long(279, len(pixels.tobytes()))
+        add_short(339, 1)
+
+        tag_list.sort(key=lambda t: t[0])
+        num_entries = len(tag_list)
+        ifd_start = 8
+        ifd_size = 2 + 12 * num_entries + 4
+        overflow_start = ifd_start + ifd_size
+        pixel_start = overflow_start
+        # Patch strip offset
+        for i, (tag, typ, count, raw) in enumerate(tag_list):
+            if tag == 273:
+                tag_list[i] = (tag, typ, count, struct.pack(f'{bo}I', pixel_start))
+
+        out = bytearray()
+        out.extend(b'II')
+        out.extend(struct.pack(f'{bo}H', 42))
+        out.extend(struct.pack(f'{bo}I', ifd_start))
+        out.extend(struct.pack(f'{bo}H', num_entries))
+        for tag, typ, count, raw in tag_list:
+            out.extend(struct.pack(f'{bo}HHI', tag, typ, count))
+            out.extend(raw.ljust(4, b'\x00'))
+        out.extend(struct.pack(f'{bo}I', 0))
+        out.extend(pixels.tobytes())
+
+        path = str(tmp_path / 'miniswhite.tif')
+        with open(path, 'wb') as f:
+            f.write(bytes(out))
+
+        from xrspatial.geotiff._reader import read_to_array
+        result, _ = read_to_array(path)
+        # MinIsWhite: 0 -> 255, 50 -> 205, 100 -> 155, 200 -> 55
+        assert result[0, 0] == 255
+        assert result[0, 1] == 205
+        assert result[0, 2] == 155
+        assert result[0, 3] == 55
+
+    def test_extra_samples_rgba(self, tmp_path):
+        """RGBA write includes ExtraSamples tag."""
+        from xrspatial.geotiff._header import parse_header, parse_all_ifds, TAG_EXTRA_SAMPLES
+        arr = np.ones((4, 4, 4), dtype=np.uint8) * 128
+        path = str(tmp_path / 'rgba.tif')
+        write(arr, path, compression='none', tiled=False)
+
+        with open(path, 'rb') as f:
+            data = f.read()
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+        ifd = ifds[0]
+        extra = ifd.entries.get(TAG_EXTRA_SAMPLES)
+        assert extra is not None
+        # Value 2 = unassociated alpha
+        assert extra.value == 2 or (isinstance(extra.value, tuple) and extra.value[0] == 2)
+
+    def test_float16_auto_promotion(self, tmp_path):
+        """Float16 arrays are auto-promoted to float32."""
+        arr = np.ones((4, 4), dtype=np.float16) * 3.14
+        path = str(tmp_path / 'f16.tif')
+        write_geotiff(arr, path, compression='none')
+
+        result = read_geotiff(path)
+        assert result.dtype == np.float32
+        np.testing.assert_array_almost_equal(result.values, 3.14, decimal=2)
+
+    def test_vrt_write_and_read_back(self, tmp_path):
+        """write_vrt generates a valid VRT that reads back correctly."""
+        from xrspatial.geotiff import write_vrt
+        from xrspatial.geotiff._geotags import GeoTransform
+
+        # Write two tiles with known geo transforms
+        left = np.arange(16, dtype=np.float32).reshape(4, 4)
+        right = np.arange(16, 32, dtype=np.float32).reshape(4, 4)
+
+        gt_left = GeoTransform(origin_x=0.0, origin_y=4.0,
+                               pixel_width=1.0, pixel_height=-1.0)
+        gt_right = GeoTransform(origin_x=4.0, origin_y=4.0,
+                                pixel_width=1.0, pixel_height=-1.0)
+
+        lpath = str(tmp_path / 'left.tif')
+        rpath = str(tmp_path / 'right.tif')
+        write(left, lpath, geo_transform=gt_left, compression='none', tiled=False)
+        write(right, rpath, geo_transform=gt_right, compression='none', tiled=False)
+
+        vrt_path = str(tmp_path / 'mosaic.vrt')
+        write_vrt(vrt_path, [lpath, rpath])
+
+        da = read_geotiff(vrt_path)
+        assert da.shape == (4, 8)
+        np.testing.assert_array_equal(da.values[:, :4], left)
+        np.testing.assert_array_equal(da.values[:, 4:], right)
+
+    def test_dask_vrt(self, tmp_path):
+        """read_geotiff_dask handles VRT files."""
+        from xrspatial.geotiff import read_geotiff_dask
+
+        arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+        tile_path = str(tmp_path / 'tile.tif')
+        write(arr, tile_path, compression='none', tiled=False)
+
+        vrt_xml = (
+            '<VRTDataset rasterXSize="4" rasterYSize="4">\n'
+            '  <VRTRasterBand dataType="Float32" band="1">\n'
+            '    <SimpleSource>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            '      <SourceBand>1</SourceBand>\n'
+            '      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+            '      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+            '    </SimpleSource>\n'
+            '  </VRTRasterBand>\n'
+            '</VRTDataset>\n'
+        )
+        vrt_path = str(tmp_path / 'dask.vrt')
+        with open(vrt_path, 'w') as f:
+            f.write(vrt_xml)
+
+        import dask.array as da
+        result = read_geotiff_dask(vrt_path, chunks=2)
+        assert isinstance(result.data, da.Array)
+        computed = result.compute()
+        np.testing.assert_array_equal(computed.values, arr)
+
+
 class TestVRT:
 
     def _write_tile(self, tmp_path, name, data):
@@ -1483,7 +1664,7 @@ def _make_sub_byte_tiff(width, height, bps, pixel_values):
     add_short(257, height)
     add_short(258, bps)
     add_short(259, 1)   # no compression
-    add_short(262, 1 if bps > 1 else 0)  # MinIsWhite for 1-bit, BlackIsZero otherwise
+    add_short(262, 1)  # BlackIsZero (works for all bit depths)
     add_short(277, 1)
     add_short(278, height)
     add_long(273, 0)    # strip offset placeholder

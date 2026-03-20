@@ -21,7 +21,7 @@ from ._reader import read_to_array
 from ._writer import write
 
 __all__ = ['read_geotiff', 'write_geotiff', 'open_cog', 'read_geotiff_dask',
-           'read_vrt']
+           'read_vrt', 'write_vrt']
 
 
 def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
@@ -305,6 +305,9 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
 
     if isinstance(data, xr.DataArray):
         arr = data.values
+        # Handle band-first dimension order (band, y, x) -> (y, x, band)
+        if arr.ndim == 3 and data.dims[0] in ('band', 'bands', 'channel'):
+            arr = np.moveaxis(arr, 0, -1)
         if geo_transform is None:
             geo_transform = _coords_to_transform(data)
         if epsg is None and crs is None:
@@ -339,6 +342,12 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
 
     if arr.ndim not in (2, 3):
         raise ValueError(f"Expected 2D or 3D array, got {arr.ndim}D")
+
+    # Auto-promote unsupported dtypes
+    if arr.dtype == np.float16:
+        arr = arr.astype(np.float32)
+    elif arr.dtype == np.bool_:
+        arr = arr.astype(np.uint8)
 
     write(
         arr, path,
@@ -406,6 +415,13 @@ def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
         Dask-backed DataArray with y/x coordinates.
     """
     import dask.array as da
+
+    # VRT files: read eagerly (VRT mosaic isn't compatible with per-chunk
+    # windowed reads on the virtual dataset without a separate code path)
+    if source.lower().endswith('.vrt'):
+        da_eager = read_vrt(source, name=name)
+        return da_eager.chunk({'y': chunks if isinstance(chunks, int) else chunks[0],
+                               'x': chunks if isinstance(chunks, int) else chunks[1]})
 
     # First, do a metadata-only read to get shape, dtype, coords, attrs
     arr, geo_info = read_to_array(source, overview_level=overview_level)
@@ -564,6 +580,27 @@ def read_vrt(source: str, *, window=None,
         dims = ['y', 'x']
 
     return xr.DataArray(arr, dims=dims, coords=coords, name=name, attrs=attrs)
+
+
+def write_vrt(vrt_path: str, source_files: list[str], **kwargs) -> str:
+    """Generate a VRT file that mosaics multiple GeoTIFF tiles.
+
+    Parameters
+    ----------
+    vrt_path : str
+        Output .vrt file path.
+    source_files : list of str
+        Paths to the source GeoTIFF files.
+    **kwargs
+        relative, crs_wkt, nodata -- see _vrt.write_vrt.
+
+    Returns
+    -------
+    str
+        Path to the written VRT file.
+    """
+    from ._vrt import write_vrt as _write_vrt_internal
+    return _write_vrt_internal(vrt_path, source_files, **kwargs)
 
 
 def plot_geotiff(da: xr.DataArray, **kwargs):
