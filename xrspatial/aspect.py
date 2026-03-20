@@ -505,8 +505,10 @@ def northness(agg: xr.DataArray,
     """
     asp = aspect(agg, name='_aspect', method=method, z_unit=z_unit,
                  boundary=boundary)
-    result = np.cos(np.deg2rad(asp)).where(asp != -1)
-    return xr.DataArray(result.data,
+    asp_data = asp.data
+    trig = np.cos(np.deg2rad(asp_data))
+    out = np.where(asp_data == -1, np.nan, trig)
+    return xr.DataArray(out,
                         name=name,
                         coords=agg.coords,
                         dims=agg.dims,
@@ -579,8 +581,10 @@ def eastness(agg: xr.DataArray,
     """
     asp = aspect(agg, name='_aspect', method=method, z_unit=z_unit,
                  boundary=boundary)
-    result = np.sin(np.deg2rad(asp)).where(asp != -1)
-    return xr.DataArray(result.data,
+    asp_data = asp.data
+    trig = np.sin(np.deg2rad(asp_data))
+    out = np.where(asp_data == -1, np.nan, trig)
+    return xr.DataArray(out,
                         name=name,
                         coords=agg.coords,
                         dims=agg.dims,
