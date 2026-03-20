@@ -139,15 +139,17 @@ Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 
 | Name | Description | NumPy | Dask | CuPy GPU | Cloud |
 |:-----|:------------|:-----:|:----:|:--------:|:-----:|
-| [read_geotiff](xrspatial/geotiff/__init__.py) | Read GeoTIFF / COG to DataArray | ✅️ | ✅️ | ✅️ | ✅️ |
-| [write_geotiff](xrspatial/geotiff/__init__.py) | Write DataArray as GeoTIFF / COG | ✅️ | | | ✅️ |
-| [read_geotiff_gpu](xrspatial/geotiff/__init__.py) | GPU-accelerated read (nvCOMP + GDS) | | | ✅️ | |
-| [read_vrt / write_vrt](xrspatial/geotiff/__init__.py) | Virtual Raster Table mosaic | ✅️ | | | |
-| [open_cog](xrspatial/geotiff/__init__.py) | HTTP range-request COG reader | ✅️ | | | |
+| [read_geotiff](xrspatial/geotiff/__init__.py) | Read GeoTIFF / COG / VRT to DataArray | ✅️ | ✅️ | ✅️ | ✅️ |
+| [write_geotiff](xrspatial/geotiff/__init__.py) | Write DataArray as GeoTIFF / COG | ✅️ | ✅️ | 🔄 | ✅️ |
+| [read_geotiff_gpu](xrspatial/geotiff/__init__.py) | GPU-native read (nvCOMP + GDS) | | | ✅️ | |
+| [write_geotiff_gpu](xrspatial/geotiff/__init__.py) | GPU-native write (nvCOMP batch compress) | | | ✅️ | |
+| [read_geotiff_dask](xrspatial/geotiff/__init__.py) | Dask lazy read via windowed chunks | | ✅️ | | |
+| [read_vrt / write_vrt](xrspatial/geotiff/__init__.py) | Virtual Raster Table mosaic | ✅️ | ✅️ | | |
+| [open_cog](xrspatial/geotiff/__init__.py) | HTTP range-request COG reader | ✅️ | | | ✅️ |
 
 **Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow), uncompressed
 
-**GPU decompression:** Deflate and ZSTD via nvCOMP batch API; LZW via Numba CUDA kernels
+**GPU codecs:** Deflate and ZSTD via nvCOMP batch API; LZW via Numba CUDA kernels
 
 **Features:**
 - Tiled, stripped, BigTIFF, multi-band (RGB/RGBA), sub-byte (1/2/4/12-bit)
@@ -160,12 +162,36 @@ Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 - Overview generation: mean, nearest, min, max, median, mode, cubic
 - Planar config, big-endian byte swap, PixelIsArea/PixelIsPoint
 
-**GPU read performance** (read + slope, A6000, nvCOMP):
+**Read performance** (real-world files, A6000 GPU):
 
-| Size | Deflate GPU | Deflate CPU | Speedup |
-|:-----|:-----------:|:-----------:|:-------:|
-| 8192x8192 | 769ms | 1364ms | 1.8x |
-| 16384x16384 | 2417ms | 5788ms | 2.4x |
+| File | Format | xrspatial CPU | rioxarray | GPU (nvCOMP) |
+|:-----|:-------|:------------:|:---------:|:------------:|
+| render_demo 187x253 | uncompressed | **0.2ms** | 2.4ms | 0.7ms |
+| Landsat B4 1310x1093 | uncompressed | **1.0ms** | 6.0ms | 1.7ms |
+| Copernicus 3600x3600 | deflate+fp3 | 241ms | 195ms | 872ms |
+| USGS 1as 3612x3612 | LZW+fp3 | 275ms | 215ms | 747ms |
+| USGS 1m 10012x10012 | LZW | **1.25s** | 1.80s | **990ms** |
+
+**Read performance** (synthetic tiled, GPU shines at scale):
+
+| Size | Codec | xrspatial CPU | rioxarray | GPU (nvCOMP) |
+|:-----|:------|:------------:|:---------:|:------------:|
+| 4096x4096 | deflate | 265ms | 211ms | **158ms** |
+| 4096x4096 | zstd | **73ms** | 159ms | **58ms** |
+| 8192x8192 | deflate | 1.06s | 859ms | **565ms** |
+| 8192x8192 | zstd | **288ms** | 668ms | **171ms** |
+
+**Write performance** (synthetic tiled):
+
+| Size | Codec | xrspatial CPU | rioxarray | GPU (nvCOMP) |
+|:-----|:------|:------------:|:---------:|:------------:|
+| 2048x2048 | deflate | 424ms | 110ms | **135ms** |
+| 2048x2048 | zstd | 49ms | 83ms | 81ms |
+| 4096x4096 | deflate | 1.68s | 447ms | **302ms** |
+| 8192x8192 | deflate | 6.84s | 2.03s | **1.11s** |
+| 8192x8192 | zstd | 847ms | 822ms | 1.03s |
+
+**Consistency:** 100% pixel-exact match vs rioxarray on all tested files (Landsat 8, Copernicus DEM, USGS 1-arc-second, USGS 1-meter).
 
 -----------
 ### **Reproject / Merge**

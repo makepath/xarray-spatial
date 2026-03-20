@@ -304,7 +304,16 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         epsg = _wkt_to_epsg(crs)  # try to extract EPSG from WKT/PROJ
 
     if isinstance(data, xr.DataArray):
-        arr = data.values
+        # Handle CuPy-backed DataArrays: convert to numpy for CPU write
+        raw = data.data
+        if hasattr(raw, 'get'):
+            arr = raw.get()  # CuPy -> numpy
+        elif hasattr(raw, 'compute'):
+            arr = raw.compute()  # Dask -> numpy
+            if hasattr(arr, 'get'):
+                arr = arr.get()  # Dask+CuPy -> numpy
+        else:
+            arr = np.asarray(raw)
         # Handle band-first dimension order (band, y, x) -> (y, x, band)
         if arr.ndim == 3 and data.dims[0] in ('band', 'bands', 'channel'):
             arr = np.moveaxis(arr, 0, -1)
@@ -338,7 +347,10 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
             _unit_ids = {'none': 1, 'inch': 2, 'centimeter': 3}
             res_unit = _unit_ids.get(str(unit_str), None)
     else:
-        arr = np.asarray(data)
+        if hasattr(data, 'get'):
+            arr = data.get()  # CuPy -> numpy
+        else:
+            arr = np.asarray(data)
 
     if arr.ndim not in (2, 3):
         raise ValueError(f"Expected 2D or 3D array, got {arr.ndim}D")
