@@ -94,6 +94,16 @@ def tiff_dtype_to_numpy(bits_per_sample: int, sample_format: int = 1) -> np.dtyp
         (16, SAMPLE_FORMAT_UNDEFINED): np.dtype('uint16'),
         (32, SAMPLE_FORMAT_UNDEFINED): np.dtype('uint32'),
         (64, SAMPLE_FORMAT_UNDEFINED): np.dtype('uint64'),
+        # Sub-byte and non-standard bit depths: promoted to smallest
+        # numpy type that can hold the values.
+        (1, SAMPLE_FORMAT_UINT): np.dtype('uint8'),
+        (1, SAMPLE_FORMAT_UNDEFINED): np.dtype('uint8'),
+        (2, SAMPLE_FORMAT_UINT): np.dtype('uint8'),
+        (2, SAMPLE_FORMAT_UNDEFINED): np.dtype('uint8'),
+        (4, SAMPLE_FORMAT_UINT): np.dtype('uint8'),
+        (4, SAMPLE_FORMAT_UNDEFINED): np.dtype('uint8'),
+        (12, SAMPLE_FORMAT_UINT): np.dtype('uint16'),
+        (12, SAMPLE_FORMAT_UNDEFINED): np.dtype('uint16'),
     }
     key = (bits_per_sample, sample_format)
     if key not in _map:
@@ -102,6 +112,10 @@ def tiff_dtype_to_numpy(bits_per_sample: int, sample_format: int = 1) -> np.dtyp
             f"SampleFormat={sample_format}"
         )
     return _map[key]
+
+
+# Set of BitsPerSample values that require bit-level unpacking
+SUB_BYTE_BPS = {1, 2, 4, 12}
 
 
 def numpy_to_tiff_dtype(dt: np.dtype) -> tuple[int, int]:

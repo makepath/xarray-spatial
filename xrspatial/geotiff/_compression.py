@@ -522,6 +522,76 @@ def fp_predictor_encode(data: np.ndarray, width: int, height: int,
     return buf
 
 
+# -- Sub-byte bit unpacking ---------------------------------------------------
+
+def unpack_bits(data: np.ndarray, bps: int, pixel_count: int) -> np.ndarray:
+    """Unpack sub-byte pixel data into one value per array element.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Flat uint8 array of packed bytes.
+    bps : int
+        Bits per sample (1, 2, 4, or 12).
+    pixel_count : int
+        Number of pixels to unpack.
+
+    Returns
+    -------
+    np.ndarray
+        uint8 for bps <= 8, uint16 for bps=12.
+    """
+    if bps == 1:
+        # MSB-first: each byte holds 8 pixels
+        out = np.unpackbits(data)[:pixel_count]
+        return out.astype(np.uint8)
+    elif bps == 2:
+        # 4 pixels per byte, MSB-first
+        out = np.empty(pixel_count, dtype=np.uint8)
+        for i in range(min(len(data), (pixel_count + 3) // 4)):
+            b = data[i]
+            base = i * 4
+            if base < pixel_count:
+                out[base] = (b >> 6) & 0x03
+            if base + 1 < pixel_count:
+                out[base + 1] = (b >> 4) & 0x03
+            if base + 2 < pixel_count:
+                out[base + 2] = (b >> 2) & 0x03
+            if base + 3 < pixel_count:
+                out[base + 3] = b & 0x03
+        return out
+    elif bps == 4:
+        # 2 pixels per byte, high nibble first
+        out = np.empty(pixel_count, dtype=np.uint8)
+        for i in range(min(len(data), (pixel_count + 1) // 2)):
+            b = data[i]
+            base = i * 2
+            if base < pixel_count:
+                out[base] = (b >> 4) & 0x0F
+            if base + 1 < pixel_count:
+                out[base + 1] = b & 0x0F
+        return out
+    elif bps == 12:
+        # 2 pixels per 3 bytes, MSB-first
+        out = np.empty(pixel_count, dtype=np.uint16)
+        n_pairs = pixel_count // 2
+        remainder = pixel_count % 2
+        for i in range(n_pairs):
+            off = i * 3
+            if off + 2 < len(data):
+                b0 = int(data[off])
+                b1 = int(data[off + 1])
+                b2 = int(data[off + 2])
+                out[i * 2] = (b0 << 4) | (b1 >> 4)
+                out[i * 2 + 1] = ((b1 & 0x0F) << 8) | b2
+        if remainder and n_pairs * 3 + 1 < len(data):
+            off = n_pairs * 3
+            out[pixel_count - 1] = (int(data[off]) << 4) | (int(data[off + 1]) >> 4)
+        return out
+    else:
+        raise ValueError(f"Unsupported sub-byte bit depth: {bps}")
+
+
 # -- PackBits (simple RLE) ----------------------------------------------------
 
 def packbits_decompress(data: bytes) -> bytes:

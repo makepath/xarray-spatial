@@ -12,8 +12,9 @@ from ._compression import (
     decompress,
     fp_predictor_decode,
     predictor_decode,
+    unpack_bits,
 )
-from ._dtypes import tiff_dtype_to_numpy
+from ._dtypes import SUB_BYTE_BPS, tiff_dtype_to_numpy
 from ._geotags import GeoInfo, GeoTransform, extract_geo_info
 from ._header import IFD, TIFFHeader, parse_all_ifds, parse_header
 
@@ -101,6 +102,42 @@ def _apply_predictor(chunk: np.ndarray, pred: int, width: int,
     return chunk
 
 
+def _packed_byte_count(pixel_count: int, bps: int) -> int:
+    """Compute the number of packed bytes for sub-byte bit depths."""
+    return (pixel_count * bps + 7) // 8
+
+
+def _decode_strip_or_tile(data_slice, compression, width, height, samples,
+                          bps, bytes_per_sample, is_sub_byte, dtype, pred):
+    """Decompress, apply predictor, unpack sub-byte, and reshape a strip/tile.
+
+    Returns an array shaped (height, width) or (height, width, samples).
+    """
+    pixel_count = width * height * samples
+    if is_sub_byte:
+        expected = _packed_byte_count(pixel_count, bps)
+    else:
+        expected = pixel_count * bytes_per_sample
+
+    chunk = decompress(data_slice, compression, expected,
+                       width=width, height=height, samples=samples)
+
+    if pred in (2, 3) and not is_sub_byte:
+        if not chunk.flags.writeable:
+            chunk = chunk.copy()
+        chunk = _apply_predictor(chunk, pred, width, height,
+                                 bytes_per_sample * samples)
+
+    if is_sub_byte:
+        pixels = unpack_bits(chunk, bps, pixel_count)
+    else:
+        pixels = chunk.view(dtype)
+
+    if samples > 1:
+        return pixels.reshape(height, width, samples)
+    return pixels.reshape(height, width)
+
+
 # ---------------------------------------------------------------------------
 # Strip reader
 # ---------------------------------------------------------------------------
@@ -138,6 +175,7 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     if isinstance(bps, tuple):
         bps = bps[0]
     bytes_per_sample = bps // 8
+    is_sub_byte = bps in SUB_BYTE_BPS
 
     if offsets is None or byte_counts is None:
         raise ValueError("Missing strip offsets or byte counts")
@@ -163,47 +201,33 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
         result = np.empty((out_h, out_w), dtype=dtype)
 
     if planar == 2 and samples > 1:
-        # Planar configuration: each band stored as separate strips.
-        # Strip offsets are laid out as [band0_strip0, band0_strip1, ...,
-        #   band1_strip0, band1_strip1, ..., band2_strip0, ...].
         strips_per_band = math.ceil(height / rps)
         first_strip = r0 // rps
         last_strip = min((r1 - 1) // rps, strips_per_band - 1)
 
         for band_idx in range(samples):
             band_offset = band_idx * strips_per_band
-
             for strip_idx in range(first_strip, last_strip + 1):
                 global_idx = band_offset + strip_idx
                 if global_idx >= len(offsets):
                     continue
-
                 strip_row = strip_idx * rps
                 strip_rows = min(rps, height - strip_row)
                 if strip_rows <= 0:
                     continue
 
                 strip_data = data[offsets[global_idx]:offsets[global_idx] + byte_counts[global_idx]]
-                expected = strip_rows * width * bytes_per_sample
-                chunk = decompress(strip_data, compression, expected,
-                                   width=width, height=strip_rows, samples=1)
-
-                if pred in (2, 3):
-                    if not chunk.flags.writeable:
-                        chunk = chunk.copy()
-                    chunk = _apply_predictor(chunk, pred, width, strip_rows, bytes_per_sample)
-
-                strip_pixels = chunk.view(dtype).reshape(strip_rows, width)
+                strip_pixels = _decode_strip_or_tile(
+                    strip_data, compression, width, strip_rows, 1,
+                    bps, bytes_per_sample, is_sub_byte, dtype, pred)
 
                 src_r0 = max(r0 - strip_row, 0)
                 src_r1 = min(r1 - strip_row, strip_rows)
                 dst_r0 = max(strip_row - r0, 0)
                 dst_r1 = dst_r0 + (src_r1 - src_r0)
-
                 if dst_r1 > dst_r0:
                     result[dst_r0:dst_r1, :, band_idx] = strip_pixels[src_r0:src_r1, c0:c1]
     else:
-        # Chunky (interleaved) -- default path
         first_strip = r0 // rps
         last_strip = min((r1 - 1) // rps, len(offsets) - 1)
 
@@ -214,25 +238,14 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
                 continue
 
             strip_data = data[offsets[strip_idx]:offsets[strip_idx] + byte_counts[strip_idx]]
-            expected = strip_rows * width * samples * bytes_per_sample
-            chunk = decompress(strip_data, compression, expected,
-                               width=width, height=strip_rows, samples=samples)
-
-            if pred in (2, 3):
-                if not chunk.flags.writeable:
-                    chunk = chunk.copy()
-                chunk = _apply_predictor(chunk, pred, width, strip_rows, bytes_per_sample * samples)
-
-            if samples > 1:
-                strip_pixels = chunk.view(dtype).reshape(strip_rows, width, samples)
-            else:
-                strip_pixels = chunk.view(dtype).reshape(strip_rows, width)
+            strip_pixels = _decode_strip_or_tile(
+                strip_data, compression, width, strip_rows, samples,
+                bps, bytes_per_sample, is_sub_byte, dtype, pred)
 
             src_r0 = max(r0 - strip_row, 0)
             src_r1 = min(r1 - strip_row, strip_rows)
             dst_r0 = max(strip_row - r0, 0)
             dst_r1 = dst_r0 + (src_r1 - src_r0)
-
             if dst_r1 > dst_r0:
                 result[dst_r0:dst_r1] = strip_pixels[src_r0:src_r1, c0:c1]
 
@@ -275,6 +288,7 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     if isinstance(bps, tuple):
         bps = bps[0]
     bytes_per_sample = bps // 8
+    is_sub_byte = bps in SUB_BYTE_BPS
 
     offsets = ifd.tile_offsets
     byte_counts = ifd.tile_byte_counts
@@ -285,7 +299,6 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     tiles_across = math.ceil(width / tw)
     tiles_down = math.ceil(height / th)
 
-    # Determine window
     if window is not None:
         r0, c0, r1, c1 = window
         r0 = max(0, r0)
@@ -309,13 +322,11 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     tile_col_start = c0 // tw
     tile_col_end = min(math.ceil(c1 / tw), tiles_across)
 
-    # Number of bands to iterate (1 for chunky, samples for planar)
     band_count = samples if (planar == 2 and samples > 1) else 1
     tiles_per_band = tiles_across * tiles_down
 
     for band_idx in range(band_count):
         band_tile_offset = band_idx * tiles_per_band if band_count > 1 else 0
-        # For planar, each tile has 1 sample; for chunky, samples per tile
         tile_samples = 1 if band_count > 1 else samples
 
         for tr in range(tile_row_start, tile_row_end):
@@ -325,20 +336,9 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
                     continue
 
                 tile_data = data[offsets[tile_idx]:offsets[tile_idx] + byte_counts[tile_idx]]
-                expected = tw * th * tile_samples * bytes_per_sample
-                chunk = decompress(tile_data, compression, expected,
-                                   width=tw, height=th, samples=tile_samples)
-
-                if pred in (2, 3):
-                    if not chunk.flags.writeable:
-                        chunk = chunk.copy()
-                    chunk = _apply_predictor(chunk, pred, tw, th,
-                                            bytes_per_sample * tile_samples)
-
-                if tile_samples > 1:
-                    tile_pixels = chunk.view(dtype).reshape(th, tw, tile_samples)
-                else:
-                    tile_pixels = chunk.view(dtype).reshape(th, tw)
+                tile_pixels = _decode_strip_or_tile(
+                    tile_data, compression, tw, th, tile_samples,
+                    bps, bytes_per_sample, is_sub_byte, dtype, pred)
 
                 tile_r0 = tr * th
                 tile_c0 = tc * tw
@@ -361,7 +361,6 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
                 if dst_r1 > dst_r0 and dst_c1 > dst_c0:
                     src_slice = tile_pixels[src_r0:src_r1, src_c0:src_c1]
                     if band_count > 1:
-                        # Planar: place single-band tile into the band slice
                         result[dst_r0:dst_r1, dst_c0:dst_c1, band_idx] = src_slice
                     else:
                         result[dst_r0:dst_r1, dst_c0:dst_c1] = src_slice

@@ -330,6 +330,228 @@ class TestBigTIFF:
 
 
 # -----------------------------------------------------------------------
+# Sub-byte bit depths (1-bit, 4-bit, 12-bit)
+# -----------------------------------------------------------------------
+
+def _make_sub_byte_tiff(width, height, bps, pixel_values):
+    """Build a minimal TIFF with sub-byte BitsPerSample.
+
+    pixel_values: 2D array of unpacked integer values.
+    Data is packed MSB-first into bytes according to bps.
+    """
+    import struct
+    bo = '<'
+    dtype_np = np.dtype('uint8') if bps <= 8 else np.dtype('uint16')
+
+    # Pack pixel values into bytes
+    flat = pixel_values.ravel()
+    if bps == 1:
+        packed = np.packbits(flat.astype(np.uint8))
+    elif bps == 4:
+        n = len(flat)
+        packed_len = (n + 1) // 2
+        packed = np.zeros(packed_len, dtype=np.uint8)
+        for i in range(n):
+            if i % 2 == 0:
+                packed[i // 2] |= (flat[i] & 0x0F) << 4
+            else:
+                packed[i // 2] |= flat[i] & 0x0F
+        packed = packed
+    elif bps == 12:
+        n = len(flat)
+        n_pairs = n // 2
+        remainder = n % 2
+        packed_len = n_pairs * 3 + (2 if remainder else 0)
+        packed = np.zeros(packed_len, dtype=np.uint8)
+        for i in range(n_pairs):
+            v0 = int(flat[i * 2])
+            v1 = int(flat[i * 2 + 1])
+            off = i * 3
+            packed[off] = (v0 >> 4) & 0xFF
+            packed[off + 1] = ((v0 & 0x0F) << 4) | ((v1 >> 8) & 0x0F)
+            packed[off + 2] = v1 & 0xFF
+        if remainder:
+            v = int(flat[-1])
+            off = n_pairs * 3
+            packed[off] = (v >> 4) & 0xFF
+            packed[off + 1] = (v & 0x0F) << 4
+    else:
+        raise ValueError(f"Unsupported bps: {bps}")
+
+    pixel_bytes = packed.tobytes()
+
+    # Build tags
+    tag_list = []
+    def add_short(tag, val):
+        tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+    def add_long(tag, val):
+        tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
+
+    add_short(256, width)
+    add_short(257, height)
+    add_short(258, bps)
+    add_short(259, 1)   # no compression
+    add_short(262, 1 if bps > 1 else 0)  # MinIsWhite for 1-bit, BlackIsZero otherwise
+    add_short(277, 1)
+    add_short(278, height)
+    add_long(273, 0)    # strip offset placeholder
+    add_long(279, len(pixel_bytes))
+    if bps <= 8:
+        add_short(339, 1)  # UINT
+    else:
+        add_short(339, 1)
+
+    tag_list.sort(key=lambda t: t[0])
+    num_entries = len(tag_list)
+    ifd_start = 8
+    ifd_size = 2 + 12 * num_entries + 4
+    overflow_buf = bytearray()
+    tag_offsets = {}
+    overflow_start = ifd_start + ifd_size
+
+    for tag, typ, count, raw in tag_list:
+        if len(raw) > 4:
+            tag_offsets[tag] = len(overflow_buf)
+            overflow_buf.extend(raw)
+            if len(overflow_buf) % 2:
+                overflow_buf.append(0)
+        else:
+            tag_offsets[tag] = None
+
+    pixel_data_start = overflow_start + len(overflow_buf)
+
+    # Patch strip offset
+    patched = []
+    for tag, typ, count, raw in tag_list:
+        if tag == 273:
+            patched.append((tag, typ, count, struct.pack(f'{bo}I', pixel_data_start)))
+        else:
+            patched.append((tag, typ, count, raw))
+    tag_list = patched
+
+    # Rebuild overflow after patching
+    overflow_buf = bytearray()
+    tag_offsets = {}
+    for tag, typ, count, raw in tag_list:
+        if len(raw) > 4:
+            tag_offsets[tag] = len(overflow_buf)
+            overflow_buf.extend(raw)
+            if len(overflow_buf) % 2:
+                overflow_buf.append(0)
+        else:
+            tag_offsets[tag] = None
+
+    out = bytearray()
+    out.extend(b'II')
+    out.extend(struct.pack(f'{bo}H', 42))
+    out.extend(struct.pack(f'{bo}I', ifd_start))
+    out.extend(struct.pack(f'{bo}H', num_entries))
+
+    for tag, typ, count, raw in tag_list:
+        out.extend(struct.pack(f'{bo}HHI', tag, typ, count))
+        if len(raw) <= 4:
+            out.extend(raw.ljust(4, b'\x00'))
+        else:
+            ptr = overflow_start + tag_offsets[tag]
+            out.extend(struct.pack(f'{bo}I', ptr))
+
+    out.extend(struct.pack(f'{bo}I', 0))
+    out.extend(overflow_buf)
+    out.extend(pixel_bytes)
+
+    return bytes(out), pixel_values
+
+
+class TestSubByteBitDepths:
+
+    def test_1bit_bilevel(self, tmp_path):
+        """Read a 1-bit bilevel TIFF."""
+        pixels = np.array([[1, 0, 1, 0, 1, 0, 1, 0],
+                           [0, 1, 0, 1, 0, 1, 0, 1],
+                           [1, 1, 0, 0, 1, 1, 0, 0],
+                           [0, 0, 1, 1, 0, 0, 1, 1]], dtype=np.uint8)
+        tiff_data, expected = _make_sub_byte_tiff(8, 4, 1, pixels)
+        path = str(tmp_path / '1bit.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path)
+        assert result.dtype == np.uint8
+        assert result.shape == (4, 8)
+        np.testing.assert_array_equal(result, expected)
+
+    def test_1bit_non_byte_aligned_width(self, tmp_path):
+        """1-bit image whose width is not a multiple of 8."""
+        pixels = np.array([[1, 0, 1],
+                           [0, 1, 0]], dtype=np.uint8)
+        tiff_data, expected = _make_sub_byte_tiff(3, 2, 1, pixels)
+        path = str(tmp_path / '1bit_3wide.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path)
+        assert result.shape == (2, 3)
+        np.testing.assert_array_equal(result, expected)
+
+    def test_4bit_nibble(self, tmp_path):
+        """Read a 4-bit TIFF."""
+        pixels = np.array([[0, 1, 2, 3],
+                           [4, 5, 6, 7],
+                           [8, 9, 10, 11],
+                           [12, 13, 14, 15]], dtype=np.uint8)
+        tiff_data, expected = _make_sub_byte_tiff(4, 4, 4, pixels)
+        path = str(tmp_path / '4bit.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path)
+        assert result.dtype == np.uint8
+        assert result.shape == (4, 4)
+        np.testing.assert_array_equal(result, expected)
+
+    def test_4bit_odd_width(self, tmp_path):
+        """4-bit image with odd width (partial byte at row end)."""
+        pixels = np.array([[1, 2, 3],
+                           [4, 5, 6]], dtype=np.uint8)
+        tiff_data, expected = _make_sub_byte_tiff(3, 2, 4, pixels)
+        path = str(tmp_path / '4bit_odd.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path)
+        assert result.shape == (2, 3)
+        np.testing.assert_array_equal(result, expected)
+
+    def test_12bit(self, tmp_path):
+        """Read a 12-bit TIFF."""
+        pixels = np.array([[0, 100, 2048, 4095],
+                           [1000, 2000, 3000, 4000]], dtype=np.uint16)
+        tiff_data, expected = _make_sub_byte_tiff(4, 2, 12, pixels)
+        path = str(tmp_path / '12bit.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path)
+        assert result.dtype == np.uint16
+        assert result.shape == (2, 4)
+        np.testing.assert_array_equal(result, expected)
+
+    def test_unpack_bits_codec_directly(self):
+        """Test unpack_bits on known packed data."""
+        from xrspatial.geotiff._compression import unpack_bits
+
+        # 1-bit: byte 0xA5 = 10100101 -> [1,0,1,0,0,1,0,1]
+        data = np.array([0xA5], dtype=np.uint8)
+        result = unpack_bits(data, 1, 8)
+        np.testing.assert_array_equal(result, [1, 0, 1, 0, 0, 1, 0, 1])
+
+        # 4-bit: byte 0x3C = 0011_1100 -> [3, 12]
+        data = np.array([0x3C], dtype=np.uint8)
+        result = unpack_bits(data, 4, 2)
+        np.testing.assert_array_equal(result, [3, 12])
+
+
+# -----------------------------------------------------------------------
 # Planar configuration (separate planes)
 # -----------------------------------------------------------------------
 

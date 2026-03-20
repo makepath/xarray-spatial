@@ -375,7 +375,13 @@ class TestDtypeEdgeCases:
 
     def test_unsupported_bits_per_sample(self):
         with pytest.raises(ValueError, match="Unsupported BitsPerSample"):
-            tiff_dtype_to_numpy(12, 1)  # 12-bit not supported
+            tiff_dtype_to_numpy(3, 1)  # 3-bit not supported
+
+    def test_sub_byte_dtypes_supported(self):
+        """1, 2, 4, and 12-bit map to uint8/uint16."""
+        assert tiff_dtype_to_numpy(1, 1) == np.dtype('uint8')
+        assert tiff_dtype_to_numpy(4, 1) == np.dtype('uint8')
+        assert tiff_dtype_to_numpy(12, 1) == np.dtype('uint16')
 
     def test_unsupported_sample_format(self):
         with pytest.raises(ValueError, match="Unsupported BitsPerSample"):
