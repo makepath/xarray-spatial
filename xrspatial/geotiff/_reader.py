@@ -194,8 +194,16 @@ def _packed_byte_count(pixel_count: int, bps: int) -> int:
 
 
 def _decode_strip_or_tile(data_slice, compression, width, height, samples,
-                          bps, bytes_per_sample, is_sub_byte, dtype, pred):
+                          bps, bytes_per_sample, is_sub_byte, dtype, pred,
+                          byte_order='<'):
     """Decompress, apply predictor, unpack sub-byte, and reshape a strip/tile.
+
+    Parameters
+    ----------
+    byte_order : str
+        '<' for little-endian, '>' for big-endian.  When the file byte
+        order differs from the system's native order, pixel data is
+        byte-swapped after decompression.
 
     Returns an array shaped (height, width) or (height, width, samples).
     """
@@ -217,11 +225,19 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
     if is_sub_byte:
         pixels = unpack_bits(chunk, bps, pixel_count)
     else:
-        pixels = chunk.view(dtype)
+        # Use the file's byte order for the view, then convert to native
+        file_dtype = dtype.newbyteorder(byte_order)
+        pixels = chunk.view(file_dtype)
+        if file_dtype.byteorder not in ('=', '|', _NATIVE_ORDER):
+            pixels = pixels.astype(dtype)
 
     if samples > 1:
         return pixels.reshape(height, width, samples)
     return pixels.reshape(height, width)
+
+
+import sys as _sys
+_NATIVE_ORDER = '<' if _sys.byteorder == 'little' else '>'
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +321,8 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
                 strip_data = data[offsets[global_idx]:offsets[global_idx] + byte_counts[global_idx]]
                 strip_pixels = _decode_strip_or_tile(
                     strip_data, compression, width, strip_rows, 1,
-                    bps, bytes_per_sample, is_sub_byte, dtype, pred)
+                    bps, bytes_per_sample, is_sub_byte, dtype, pred,
+                    byte_order=header.byte_order)
 
                 src_r0 = max(r0 - strip_row, 0)
                 src_r1 = min(r1 - strip_row, strip_rows)
@@ -326,7 +343,8 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
             strip_data = data[offsets[strip_idx]:offsets[strip_idx] + byte_counts[strip_idx]]
             strip_pixels = _decode_strip_or_tile(
                 strip_data, compression, width, strip_rows, samples,
-                bps, bytes_per_sample, is_sub_byte, dtype, pred)
+                bps, bytes_per_sample, is_sub_byte, dtype, pred,
+                byte_order=header.byte_order)
 
             src_r0 = max(r0 - strip_row, 0)
             src_r1 = min(r1 - strip_row, strip_rows)
@@ -424,7 +442,8 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
                 tile_data = data[offsets[tile_idx]:offsets[tile_idx] + byte_counts[tile_idx]]
                 tile_pixels = _decode_strip_or_tile(
                     tile_data, compression, tw, th, tile_samples,
-                    bps, bytes_per_sample, is_sub_byte, dtype, pred)
+                    bps, bytes_per_sample, is_sub_byte, dtype, pred,
+                    byte_order=header.byte_order)
 
                 tile_r0 = tr * th
                 tile_c0 = tc * tw
@@ -552,10 +571,13 @@ def _read_cog_http(url: str, overview_level: int | None = None,
                     chunk = chunk.copy()
                 chunk = _apply_predictor(chunk, pred, tw, th, bytes_per_sample * samples)
 
+            file_dtype = dtype.newbyteorder(header.byte_order)
             if samples > 1:
-                tile_pixels = chunk.view(dtype).reshape(th, tw, samples)
+                tile_pixels = chunk.view(file_dtype).reshape(th, tw, samples)
             else:
-                tile_pixels = chunk.view(dtype).reshape(th, tw)
+                tile_pixels = chunk.view(file_dtype).reshape(th, tw)
+            if file_dtype.byteorder not in ('=', '|', _NATIVE_ORDER):
+                tile_pixels = tile_pixels.astype(dtype)
 
             # Place tile
             y0 = tr * th

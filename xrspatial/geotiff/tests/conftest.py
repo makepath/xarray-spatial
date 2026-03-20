@@ -63,7 +63,10 @@ def make_minimal_tiff(
         pixel_bytes = b''.join(tile_blobs)
         tile_byte_counts = [len(b) for b in tile_blobs]
     else:
-        pixel_bytes = pixel_data.tobytes()
+        if big_endian and pixel_data.dtype.itemsize > 1:
+            pixel_bytes = pixel_data.astype(pixel_data.dtype.newbyteorder('>')).tobytes()
+        else:
+            pixel_bytes = pixel_data.tobytes()
 
     # --- Collect tags as (tag_id, type_id, value_bytes) ---
     # value_bytes is the serialized value; if len <= 4 it's inline, else overflow.

@@ -421,6 +421,111 @@ class TestGeoKeys:
 # Arbitrary tag preservation
 # -----------------------------------------------------------------------
 
+# -----------------------------------------------------------------------
+# Big-endian pixel data
+# -----------------------------------------------------------------------
+
+class TestBigEndian:
+
+    def test_float32_big_endian(self, tmp_path):
+        """Read a big-endian float32 TIFF."""
+        from .conftest import make_minimal_tiff
+        expected = np.arange(16, dtype=np.float32).reshape(4, 4)
+        tiff_data = make_minimal_tiff(4, 4, np.dtype('float32'),
+                                       pixel_data=expected, big_endian=True)
+        path = str(tmp_path / 'be_f32.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path)
+        assert result.dtype == np.float32
+        np.testing.assert_array_equal(result, expected)
+
+    def test_uint16_big_endian(self, tmp_path):
+        """Read a big-endian uint16 TIFF."""
+        from .conftest import make_minimal_tiff
+        expected = np.arange(20, dtype=np.uint16).reshape(4, 5) * 1000
+        tiff_data = make_minimal_tiff(5, 4, np.dtype('uint16'),
+                                       pixel_data=expected, big_endian=True)
+        path = str(tmp_path / 'be_u16.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path)
+        assert result.dtype == np.uint16
+        np.testing.assert_array_equal(result, expected)
+
+    def test_int32_big_endian(self, tmp_path):
+        """Read a big-endian int32 TIFF."""
+        from .conftest import make_minimal_tiff
+        expected = np.arange(16, dtype=np.int32).reshape(4, 4) - 8
+        tiff_data = make_minimal_tiff(4, 4, np.dtype('int32'),
+                                       pixel_data=expected, big_endian=True)
+        path = str(tmp_path / 'be_i32.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path)
+        assert result.dtype == np.int32
+        np.testing.assert_array_equal(result, expected)
+
+    def test_float64_big_endian(self, tmp_path):
+        """Read a big-endian float64 TIFF."""
+        from .conftest import make_minimal_tiff
+        expected = np.linspace(-1.0, 1.0, 16, dtype=np.float64).reshape(4, 4)
+        tiff_data = make_minimal_tiff(4, 4, np.dtype('float64'),
+                                       pixel_data=expected, big_endian=True)
+        path = str(tmp_path / 'be_f64.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path)
+        assert result.dtype == np.float64
+        np.testing.assert_array_almost_equal(result, expected)
+
+    def test_uint8_big_endian_no_swap_needed(self, tmp_path):
+        """uint8 big-endian needs no byte swap (single byte per sample)."""
+        from .conftest import make_minimal_tiff
+        expected = np.arange(16, dtype=np.uint8).reshape(4, 4)
+        tiff_data = make_minimal_tiff(4, 4, np.dtype('uint8'),
+                                       pixel_data=expected, big_endian=True)
+        path = str(tmp_path / 'be_u8.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path)
+        np.testing.assert_array_equal(result, expected)
+
+    def test_big_endian_windowed(self, tmp_path):
+        """Windowed read of a big-endian TIFF."""
+        from .conftest import make_minimal_tiff
+        expected = np.arange(64, dtype=np.float32).reshape(8, 8)
+        tiff_data = make_minimal_tiff(8, 8, np.dtype('float32'),
+                                       pixel_data=expected, big_endian=True)
+        path = str(tmp_path / 'be_window.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path, window=(2, 3, 6, 7))
+        np.testing.assert_array_equal(result, expected[2:6, 3:7])
+
+    def test_big_endian_via_public_api(self, tmp_path):
+        """read_geotiff handles big-endian files."""
+        from .conftest import make_minimal_tiff
+        expected = np.arange(16, dtype=np.float32).reshape(4, 4)
+        tiff_data = make_minimal_tiff(
+            4, 4, np.dtype('float32'), pixel_data=expected,
+            big_endian=True,
+            geo_transform=(-120.0, 45.0, 0.001, -0.001), epsg=4326)
+        path = str(tmp_path / 'be_api.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        da = read_geotiff(path)
+        assert da.attrs['crs'] == 4326
+        np.testing.assert_array_equal(da.values, expected)
+
+
 class TestExtraTags:
 
     def _make_tiff_with_extra_tags(self, tmp_path):
