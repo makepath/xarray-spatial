@@ -168,6 +168,25 @@ Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 | 16384x16384 | 2417ms | 5788ms | 2.4x |
 
 -----------
+### **Reproject / Merge**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Reproject](xrspatial/reproject/__init__.py) | Reprojects a raster to a new CRS using an approximate transform and numba JIT resampling | Standard (inverse mapping) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Merge](xrspatial/reproject/__init__.py) | Merges multiple rasters into a single mosaic with configurable overlap strategy | Standard (mosaic) | ✅️ | ✅️ | 🔄 | 🔄 |
+
+-------
+
+### **Utilities**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Preview](xrspatial/preview.py) | Downsamples a raster to target pixel dimensions for visualization | Custom | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Rescale](xrspatial/normalize.py) | Min-max normalization to a target range (default [0, 1]) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Standardize](xrspatial/normalize.py) | Z-score normalization (subtract mean, divide by std) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+
+-----------
+
 ### **Surface**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
@@ -313,15 +332,6 @@ Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 
 -----------
 
-### **Reproject / Merge**
-
-| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Reproject](xrspatial/reproject/__init__.py) | Reprojects a raster to a new CRS using an approximate transform and numba JIT resampling | Standard (inverse mapping) | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Merge](xrspatial/reproject/__init__.py) | Merges multiple rasters into a single mosaic with configurable overlap strategy | Standard (mosaic) | ✅️ | ✅️ | 🔄 | 🔄 |
-
--------
-
 ### **Interpolation**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
@@ -369,16 +379,6 @@ Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 | [Rasterize](xrspatial/rasterize.py) | Rasterizes vector geometries (polygons, lines, points) from a GeoDataFrame | Standard (scanline, Bresenham) | ✅️ | | ✅️ | |
 
 --------
-
-### **Utilities**
-
-| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Preview](xrspatial/preview.py) | Downsamples a raster to target pixel dimensions for visualization | Custom | ✅️ | ✅️ | ✅️ | 🔄 |
-| [Rescale](xrspatial/normalize.py) | Min-max normalization to a target range (default [0, 1]) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Standardize](xrspatial/normalize.py) | Z-score normalization (subtract mean, divide by std) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
-
------------
 
 ### **Multivariate**
 
