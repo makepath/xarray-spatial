@@ -1248,3 +1248,324 @@ def gpu_decode_tiles(
             image_height, image_width, samples)
     return d_output.view(dtype=cupy.dtype(dtype)).reshape(
         image_height, image_width)
+
+
+# ---------------------------------------------------------------------------
+# GPU tile extraction kernel -- image → individual tiles
+# ---------------------------------------------------------------------------
+
+@cuda.jit
+def _extract_tiles_kernel(
+    image,            # uint8: flat row-major image
+    tile_bufs,        # uint8: output buffer (all tiles concatenated)
+    tile_offsets,     # int64: byte offset of each tile in tile_bufs
+    tile_width,
+    tile_height,
+    bytes_per_pixel,
+    image_width,
+    image_height,
+    tiles_across,
+):
+    """Extract tile pixels from image into per-tile buffers, one thread per pixel."""
+    pixel_idx = cuda.grid(1)
+    total_pixels = image_width * image_height
+    if pixel_idx >= total_pixels:
+        return
+
+    row = pixel_idx // image_width
+    col = pixel_idx % image_width
+
+    tile_row = row // tile_height
+    tile_col = col // tile_width
+    tile_idx = tile_row * tiles_across + tile_col
+
+    local_row = row - tile_row * tile_height
+    local_col = col - tile_col * tile_width
+
+    src_byte = (row * image_width + col) * bytes_per_pixel
+    tile_off = tile_offsets[tile_idx]
+    dst_byte = tile_off + (local_row * tile_width + local_col) * bytes_per_pixel
+
+    for b in range(bytes_per_pixel):
+        tile_bufs[dst_byte + b] = image[src_byte + b]
+
+
+# ---------------------------------------------------------------------------
+# GPU predictor encode kernels
+# ---------------------------------------------------------------------------
+
+@cuda.jit
+def _predictor_encode_kernel(data, width, height, bytes_per_sample):
+    """Apply horizontal differencing (predictor=2), one thread per row.
+    Process right-to-left to avoid overwriting values we still need.
+    """
+    row = cuda.grid(1)
+    if row >= height:
+        return
+
+    row_bytes = width * bytes_per_sample
+    row_start = row * row_bytes
+
+    for col in range(row_bytes - 1, bytes_per_sample - 1, -1):
+        idx = row_start + col
+        data[idx] = numba_uint8(
+            (numba_int32(data[idx]) - numba_int32(data[idx - bytes_per_sample])) & 0xFF)
+
+
+@cuda.jit
+def _fp_predictor_encode_kernel(data, tmp, width, height, bps):
+    """Apply floating-point predictor (predictor=3), one thread per row."""
+    row = cuda.grid(1)
+    if row >= height:
+        return
+
+    row_len = width * bps
+    start = row * row_len
+
+    # Step 1: transpose to byte-swizzled layout (MSB lane first)
+    for sample in range(width):
+        for b in range(bps):
+            tmp[start + (bps - 1 - b) * width + sample] = data[start + sample * bps + b]
+
+    # Copy back
+    for i in range(row_len):
+        data[start + i] = tmp[start + i]
+
+    # Step 2: horizontal differencing (right to left)
+    for i in range(row_len - 1, 0, -1):
+        idx = start + i
+        data[idx] = numba_uint8(
+            (numba_int32(data[idx]) - numba_int32(data[idx - 1])) & 0xFF)
+
+
+# ---------------------------------------------------------------------------
+# nvCOMP batch compress
+# ---------------------------------------------------------------------------
+
+def _nvcomp_batch_compress(d_tile_bufs, tile_byte_counts, tile_bytes,
+                           compression, n_tiles):
+    """Compress tiles on GPU via nvCOMP. Returns list of bytes on CPU.
+
+    Parameters
+    ----------
+    d_tile_bufs : list of cupy arrays
+        Uncompressed tile data on GPU.
+    tile_byte_counts : not used (all tiles same size)
+    tile_bytes : int
+        Size of each uncompressed tile in bytes.
+    compression : int
+        TIFF compression tag (8=deflate, 50000=ZSTD).
+    n_tiles : int
+        Number of tiles.
+
+    Returns
+    -------
+    list of bytes
+        Compressed tile data on CPU, ready for file assembly.
+    """
+    import ctypes
+    import cupy
+
+    lib = _get_nvcomp()
+    if lib is None:
+        return None
+
+    class _CompOpts(ctypes.Structure):
+        _fields_ = [('algorithm', ctypes.c_int), ('reserved', ctypes.c_char * 60)]
+
+    class _DeflateCompOpts(ctypes.Structure):
+        _fields_ = [('algorithm', ctypes.c_int), ('reserved', ctypes.c_char * 60)]
+
+    try:
+        # Select codec
+        if compression == 50000:  # ZSTD
+            get_max_fn = 'nvcompBatchedZstdCompressGetMaxOutputChunkSize'
+            get_temp_fn = 'nvcompBatchedZstdCompressGetTempSizeAsync'
+            compress_fn = 'nvcompBatchedZstdCompressAsync'
+            opts = _CompOpts(algorithm=0, reserved=b'\x00' * 60)
+        elif compression in (8, 32946):  # Deflate
+            get_max_fn = 'nvcompBatchedDeflateCompressGetMaxOutputChunkSize'
+            get_temp_fn = 'nvcompBatchedDeflateCompressGetTempSizeAsync'
+            compress_fn = 'nvcompBatchedDeflateCompressAsync'
+            opts = _DeflateCompOpts(algorithm=1, reserved=b'\x00' * 60)
+        else:
+            return None
+
+        # Get max compressed chunk size
+        max_comp_size = ctypes.c_size_t(0)
+        fn = getattr(lib, get_max_fn)
+        fn.restype = ctypes.c_int
+        s = fn(ctypes.c_size_t(tile_bytes), opts, ctypes.byref(max_comp_size))
+        if s != 0:
+            return None
+        max_cs = max_comp_size.value
+
+        # Allocate compressed output buffers on device
+        d_comp_bufs = [cupy.empty(max_cs, dtype=cupy.uint8) for _ in range(n_tiles)]
+
+        # Build pointer and size arrays
+        d_uncomp_ptrs = cupy.array([b.data.ptr for b in d_tile_bufs], dtype=cupy.uint64)
+        d_comp_ptrs = cupy.array([b.data.ptr for b in d_comp_bufs], dtype=cupy.uint64)
+        d_uncomp_sizes = cupy.full(n_tiles, tile_bytes, dtype=cupy.uint64)
+        d_comp_sizes = cupy.empty(n_tiles, dtype=cupy.uint64)
+
+        # Get temp size
+        temp_size = ctypes.c_size_t(0)
+        fn2 = getattr(lib, get_temp_fn)
+        fn2.restype = ctypes.c_int
+        s = fn2(ctypes.c_size_t(n_tiles), ctypes.c_size_t(tile_bytes),
+                opts, ctypes.byref(temp_size), ctypes.c_size_t(n_tiles * tile_bytes))
+        if s != 0:
+            return None
+
+        d_temp = cupy.empty(max(temp_size.value, 1), dtype=cupy.uint8)
+        d_statuses = cupy.zeros(n_tiles, dtype=cupy.int32)
+
+        # Compress
+        fn3 = getattr(lib, compress_fn)
+        fn3.restype = ctypes.c_int
+        s = fn3(
+            ctypes.c_void_p(d_uncomp_ptrs.data.ptr),
+            ctypes.c_void_p(d_uncomp_sizes.data.ptr),
+            ctypes.c_size_t(tile_bytes),
+            ctypes.c_size_t(n_tiles),
+            ctypes.c_void_p(d_temp.data.ptr),
+            ctypes.c_size_t(max(temp_size.value, 1)),
+            ctypes.c_void_p(d_comp_ptrs.data.ptr),
+            ctypes.c_void_p(d_comp_sizes.data.ptr),
+            opts,
+            ctypes.c_void_p(d_statuses.data.ptr),
+            ctypes.c_void_p(0),  # default stream
+        )
+        if s != 0:
+            return None
+
+        cupy.cuda.Device().synchronize()
+
+        if int(cupy.any(d_statuses != 0)):
+            return None
+
+        # For deflate, compute adler32 checksums from uncompressed tiles
+        # before reading compressed data (need the originals)
+        adler_checksums = None
+        if compression in (8, 32946):
+            import zlib
+            import struct
+            adler_checksums = []
+            for i in range(n_tiles):
+                uncomp = d_tile_bufs[i].get().tobytes()
+                adler_checksums.append(zlib.adler32(uncomp))
+
+        # Read compressed sizes and data back to CPU
+        comp_sizes = d_comp_sizes.get().astype(int)
+        result = []
+        for i in range(n_tiles):
+            cs = int(comp_sizes[i])
+            raw = d_comp_bufs[i][:cs].get().tobytes()
+
+            if adler_checksums is not None:
+                # Wrap raw deflate in zlib format: header + data + adler32
+                checksum = struct.pack('>I', adler_checksums[i] & 0xFFFFFFFF)
+                raw = b'\x78\x9c' + raw + checksum
+
+            result.append(raw)
+
+        return result
+
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# High-level GPU write pipeline
+# ---------------------------------------------------------------------------
+
+def gpu_compress_tiles(d_image, tile_width, tile_height,
+                       image_width, image_height,
+                       compression, predictor, dtype,
+                       samples=1):
+    """Extract and compress tiles from a CuPy image on GPU.
+
+    Parameters
+    ----------
+    d_image : cupy.ndarray
+        2D or 3D image on GPU device.
+    tile_width, tile_height : int
+        Tile dimensions.
+    image_width, image_height : int
+        Image dimensions.
+    compression : int
+        TIFF compression tag.
+    predictor : int
+        Predictor tag (1=none, 2=horizontal, 3=float).
+    dtype : np.dtype
+        Pixel dtype.
+    samples : int
+        Samples per pixel.
+
+    Returns
+    -------
+    list of bytes
+        Compressed tile data on CPU, ready for _assemble_tiff.
+    """
+    import cupy
+
+    bytes_per_pixel = dtype.itemsize * samples
+    tile_bytes = tile_width * tile_height * bytes_per_pixel
+    tiles_across = math.ceil(image_width / tile_width)
+    tiles_down = math.ceil(image_height / tile_height)
+    n_tiles = tiles_across * tiles_down
+
+    # Flatten image to uint8
+    d_flat = d_image.view(cupy.uint8).ravel()
+
+    # Allocate tile buffer
+    d_tile_buf = cupy.zeros(n_tiles * tile_bytes, dtype=cupy.uint8)
+    tile_offsets = np.arange(n_tiles, dtype=np.int64) * tile_bytes
+    d_tile_offsets = cupy.asarray(tile_offsets)
+
+    # Extract tiles on GPU
+    total_pixels = image_width * image_height
+    tpb = 256
+    bpg = math.ceil(total_pixels / tpb)
+    _extract_tiles_kernel[bpg, tpb](
+        d_flat, d_tile_buf, d_tile_offsets,
+        tile_width, tile_height, bytes_per_pixel,
+        image_width, image_height, tiles_across)
+    cuda.synchronize()
+
+    # Apply predictor encode on GPU
+    total_rows = n_tiles * tile_height
+    if predictor == 2:
+        tpb_r = min(256, total_rows)
+        bpg_r = math.ceil(total_rows / tpb_r)
+        _predictor_encode_kernel[bpg_r, tpb_r](
+            d_tile_buf, tile_width * samples, total_rows, dtype.itemsize * samples)
+        cuda.synchronize()
+    elif predictor == 3:
+        tpb_r = min(256, total_rows)
+        bpg_r = math.ceil(total_rows / tpb_r)
+        d_tmp = cupy.empty_like(d_tile_buf)
+        _fp_predictor_encode_kernel[bpg_r, tpb_r](
+            d_tile_buf, d_tmp, tile_width * samples, total_rows, dtype.itemsize)
+        cuda.synchronize()
+
+    # Split into per-tile buffers for nvCOMP
+    d_tiles = [d_tile_buf[i * tile_bytes:(i + 1) * tile_bytes] for i in range(n_tiles)]
+
+    # Try nvCOMP batch compress
+    result = _nvcomp_batch_compress(d_tiles, None, tile_bytes, compression, n_tiles)
+
+    if result is not None:
+        return result
+
+    # Fallback: copy to CPU, compress with CPU codecs
+    from ._compression import compress as cpu_compress
+    cpu_buf = d_tile_buf.get()
+    result = []
+    for i in range(n_tiles):
+        start = i * tile_bytes
+        tile_data = bytes(cpu_buf[start:start + tile_bytes])
+        result.append(cpu_compress(tile_data, compression))
+
+    return result

@@ -21,7 +21,7 @@ from ._reader import read_to_array
 from ._writer import write
 
 __all__ = ['read_geotiff', 'write_geotiff', 'open_cog', 'read_geotiff_dask',
-           'read_vrt', 'write_vrt', 'read_geotiff_gpu']
+           'read_vrt', 'write_vrt', 'read_geotiff_gpu', 'write_geotiff_gpu']
 
 
 def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
@@ -659,6 +659,116 @@ def read_geotiff_gpu(source: str, *,
 
     return xr.DataArray(arr_gpu, dims=dims, coords=coords,
                         name=name, attrs=attrs)
+
+
+def write_geotiff_gpu(data, path: str, *,
+                      crs: int | str | None = None,
+                      nodata=None,
+                      compression: str = 'zstd',
+                      tile_size: int = 256,
+                      predictor: bool = False) -> None:
+    """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
+
+    Tiles are extracted and compressed on the GPU via nvCOMP, then
+    assembled into a TIFF file on CPU. The CuPy array stays on device
+    throughout compression -- only the compressed bytes transfer to CPU
+    for file writing.
+
+    Falls back to CPU compression if nvCOMP is not available.
+
+    Parameters
+    ----------
+    data : xr.DataArray (CuPy-backed) or cupy.ndarray
+        2D raster on GPU.
+    path : str
+        Output file path.
+    crs : int, str, or None
+        EPSG code or WKT string.
+    nodata : float, int, or None
+        NoData value.
+    compression : str
+        'zstd' (default, fastest on GPU), 'deflate', or 'none'.
+    tile_size : int
+        Tile size in pixels (default 256).
+    predictor : bool
+        Apply horizontal differencing predictor.
+    """
+    try:
+        import cupy
+    except ImportError:
+        raise ImportError("cupy is required for GPU writes")
+
+    from ._gpu_decode import gpu_compress_tiles
+    from ._writer import (
+        _compression_tag, _assemble_tiff, _write_bytes,
+        GeoTransform as _GT,
+    )
+    from ._dtypes import numpy_to_tiff_dtype
+
+    # Extract array and metadata
+    geo_transform = None
+    epsg = None
+    raster_type = 1
+
+    if isinstance(crs, int):
+        epsg = crs
+    elif isinstance(crs, str):
+        epsg = _wkt_to_epsg(crs)
+
+    if isinstance(data, xr.DataArray):
+        arr = data.data  # keep as cupy
+        if hasattr(arr, 'get'):
+            # It's a CuPy array
+            pass
+        else:
+            # Numpy DataArray -- send to GPU
+            arr = cupy.asarray(data.values)
+
+        geo_transform = _coords_to_transform(data)
+        if epsg is None:
+            epsg = data.attrs.get('crs')
+        if nodata is None:
+            nodata = data.attrs.get('nodata')
+        if data.attrs.get('raster_type') == 'point':
+            raster_type = RASTER_PIXEL_IS_POINT
+    else:
+        arr = cupy.asarray(data) if not hasattr(data, 'device') else data
+
+    if arr.ndim not in (2, 3):
+        raise ValueError(f"Expected 2D or 3D array, got {arr.ndim}D")
+
+    height, width = arr.shape[:2]
+    samples = arr.shape[2] if arr.ndim == 3 else 1
+    np_dtype = np.dtype(str(arr.dtype))  # cupy dtype -> numpy dtype
+
+    comp_tag = _compression_tag(compression)
+    pred_val = 2 if predictor else 1
+
+    # GPU compress
+    compressed_tiles = gpu_compress_tiles(
+        arr, tile_size, tile_size, width, height,
+        comp_tag, pred_val, np_dtype, samples)
+
+    # Build offset/bytecount lists
+    rel_offsets = []
+    byte_counts = []
+    offset = 0
+    for tile in compressed_tiles:
+        rel_offsets.append(offset)
+        byte_counts.append(len(tile))
+        offset += len(tile)
+
+    # Assemble TIFF on CPU (only metadata + compressed bytes)
+    # _assemble_tiff needs an array in parts[0] to detect samples_per_pixel
+    shape_stub = np.empty((1, 1, samples) if samples > 1 else (1, 1), dtype=np_dtype)
+    parts = [(shape_stub, width, height, rel_offsets, byte_counts, compressed_tiles)]
+
+    file_bytes = _assemble_tiff(
+        width, height, np_dtype, comp_tag, predictor, True, tile_size,
+        parts, geo_transform, epsg, nodata, is_cog=False,
+        raster_type=raster_type)
+
+    _write_bytes(file_bytes, path)
 
 
 def read_vrt(source: str, *, window=None,
