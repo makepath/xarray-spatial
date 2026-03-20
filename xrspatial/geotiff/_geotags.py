@@ -18,15 +18,39 @@ from ._header import (
 # GeoKey IDs
 GEOKEY_MODEL_TYPE = 1024
 GEOKEY_RASTER_TYPE = 1025
+GEOKEY_CITATION = 1026
 GEOKEY_GEOGRAPHIC_TYPE = 2048
 GEOKEY_GEOG_CITATION = 2049
 GEOKEY_GEODETIC_DATUM = 2050
 GEOKEY_GEOG_LINEAR_UNITS = 2052
 GEOKEY_GEOG_ANGULAR_UNITS = 2054
+GEOKEY_GEOG_SEMI_MAJOR_AXIS = 2057
+GEOKEY_GEOG_INV_FLATTENING = 2059
 GEOKEY_PROJECTED_CS_TYPE = 3072
 GEOKEY_PROJ_CITATION = 3073
 GEOKEY_PROJECTION = 3074
 GEOKEY_PROJ_LINEAR_UNITS = 3076
+GEOKEY_VERTICAL_CS_TYPE = 4096
+GEOKEY_VERTICAL_CITATION = 4097
+GEOKEY_VERTICAL_DATUM = 4098
+GEOKEY_VERTICAL_UNITS = 4099
+
+# Well-known EPSG unit codes
+ANGULAR_UNITS = {
+    9101: 'radian',
+    9102: 'degree',
+    9103: 'arc-minute',
+    9104: 'arc-second',
+    9105: 'grad',
+}
+
+LINEAR_UNITS = {
+    9001: 'metre',
+    9002: 'foot',
+    9003: 'us_survey_foot',
+    9030: 'nautical_mile',
+    9036: 'kilometre',
+}
 
 # ModelType values
 MODEL_TYPE_PROJECTED = 1
@@ -66,6 +90,24 @@ class GeoInfo:
     x_resolution: float | None = None
     y_resolution: float | None = None
     resolution_unit: int | None = None  # 1=none, 2=inch, 3=cm
+    # CRS description fields
+    crs_name: str | None = None        # GTCitationGeoKey or ProjCitationGeoKey
+    geog_citation: str | None = None   # e.g. "WGS 84", "NAD83"
+    datum_code: int | None = None      # GeogGeodeticDatumGeoKey
+    angular_units: str | None = None   # e.g. "degree"
+    angular_units_code: int | None = None
+    linear_units: str | None = None    # e.g. "metre"
+    linear_units_code: int | None = None
+    semi_major_axis: float | None = None
+    inv_flattening: float | None = None
+    projection_code: int | None = None
+    # Vertical CRS
+    vertical_epsg: int | None = None
+    vertical_citation: str | None = None
+    vertical_datum: int | None = None
+    vertical_units: str | None = None
+    vertical_units_code: int | None = None
+    # Raw geokeys dict for anything else
     geokeys: dict[int, int | float | str] = field(default_factory=dict)
 
 
@@ -234,6 +276,86 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
     model_type = geokeys.get(GEOKEY_MODEL_TYPE, 0)
     raster_type = geokeys.get(GEOKEY_RASTER_TYPE, RASTER_PIXEL_IS_AREA)
 
+    # CRS name: prefer GTCitationGeoKey, fall back to ProjCitationGeoKey
+    crs_name = geokeys.get(GEOKEY_CITATION)
+    if crs_name is None:
+        crs_name = geokeys.get(GEOKEY_PROJ_CITATION)
+    if isinstance(crs_name, str):
+        crs_name = crs_name.strip().rstrip('|')
+    else:
+        crs_name = None
+
+    geog_citation = geokeys.get(GEOKEY_GEOG_CITATION)
+    if isinstance(geog_citation, str):
+        geog_citation = geog_citation.strip().rstrip('|')
+    else:
+        geog_citation = None
+
+    datum_code = geokeys.get(GEOKEY_GEODETIC_DATUM)
+    if isinstance(datum_code, (int, float)):
+        datum_code = int(datum_code)
+    else:
+        datum_code = None
+
+    # Angular units (geographic CRS)
+    ang_code = geokeys.get(GEOKEY_GEOG_ANGULAR_UNITS)
+    ang_name = None
+    if isinstance(ang_code, (int, float)):
+        ang_code = int(ang_code)
+        ang_name = ANGULAR_UNITS.get(ang_code)
+    else:
+        ang_code = None
+
+    # Linear units (projected CRS)
+    lin_code = geokeys.get(GEOKEY_PROJ_LINEAR_UNITS)
+    lin_name = None
+    if isinstance(lin_code, (int, float)):
+        lin_code = int(lin_code)
+        lin_name = LINEAR_UNITS.get(lin_code)
+    else:
+        lin_code = None
+
+    # Ellipsoid parameters
+    semi_major = geokeys.get(GEOKEY_GEOG_SEMI_MAJOR_AXIS)
+    if not isinstance(semi_major, (int, float)):
+        semi_major = None
+    inv_flat = geokeys.get(GEOKEY_GEOG_INV_FLATTENING)
+    if not isinstance(inv_flat, (int, float)):
+        inv_flat = None
+
+    proj_code = geokeys.get(GEOKEY_PROJECTION)
+    if isinstance(proj_code, (int, float)):
+        proj_code = int(proj_code)
+    else:
+        proj_code = None
+
+    # Vertical CRS
+    vert_epsg = geokeys.get(GEOKEY_VERTICAL_CS_TYPE)
+    if isinstance(vert_epsg, (int, float)) and vert_epsg != 32767:
+        vert_epsg = int(vert_epsg)
+    else:
+        vert_epsg = None
+
+    vert_citation = geokeys.get(GEOKEY_VERTICAL_CITATION)
+    if isinstance(vert_citation, str):
+        vert_citation = vert_citation.strip().rstrip('|')
+    else:
+        vert_citation = None
+
+    vert_datum = geokeys.get(GEOKEY_VERTICAL_DATUM)
+    if isinstance(vert_datum, (int, float)):
+        vert_datum = int(vert_datum)
+    else:
+        vert_datum = None
+
+    vert_units_code = geokeys.get(GEOKEY_VERTICAL_UNITS)
+    vert_units_name = None
+    if isinstance(vert_units_code, (int, float)):
+        vert_units_code = int(vert_units_code)
+        vert_units_name = LINEAR_UNITS.get(vert_units_code)
+    else:
+        vert_units_code = None
+
     # Extract nodata from GDAL_NODATA tag
     nodata = None
     nodata_str = ifd.nodata_str
@@ -273,6 +395,21 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         x_resolution=ifd.x_resolution,
         y_resolution=ifd.y_resolution,
         resolution_unit=ifd.resolution_unit,
+        crs_name=crs_name,
+        geog_citation=geog_citation,
+        datum_code=datum_code,
+        angular_units=ang_name,
+        angular_units_code=ang_code,
+        linear_units=lin_name,
+        linear_units_code=lin_code,
+        semi_major_axis=float(semi_major) if semi_major is not None else None,
+        inv_flattening=float(inv_flat) if inv_flat is not None else None,
+        projection_code=proj_code,
+        vertical_epsg=vert_epsg,
+        vertical_citation=vert_citation,
+        vertical_datum=vert_datum,
+        vertical_units=vert_units_name,
+        vertical_units_code=vert_units_code,
         geokeys=geokeys,
     )
 

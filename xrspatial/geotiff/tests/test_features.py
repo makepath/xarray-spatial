@@ -257,6 +257,88 @@ class TestZstd:
 
 
 # -----------------------------------------------------------------------
+# GeoKey metadata extraction
+# -----------------------------------------------------------------------
+
+class TestGeoKeys:
+
+    def test_geographic_crs_attrs(self, tmp_path):
+        """Geographic CRS files expose citation and angular units."""
+        from xrspatial.geotiff._geotags import GeoTransform
+
+        arr = np.ones((4, 4), dtype=np.float32)
+        gt = GeoTransform(-120.0, 45.0, 0.001, -0.001)
+        path = str(tmp_path / 'geog.tif')
+        write(arr, path, compression='none', tiled=False,
+              geo_transform=gt, crs_epsg=4326)
+
+        da = read_geotiff(path)
+        assert da.attrs['crs'] == 4326
+        assert da.attrs.get('geog_citation') is not None or da.attrs['crs'] == 4326
+
+    def test_projected_crs_attrs(self, tmp_path):
+        """Projected CRS files expose linear units."""
+        from xrspatial.geotiff._geotags import GeoTransform
+
+        arr = np.ones((4, 4), dtype=np.float32)
+        gt = GeoTransform(500000.0, 4500000.0, 30.0, -30.0)
+        path = str(tmp_path / 'proj.tif')
+        write(arr, path, compression='none', tiled=False,
+              geo_transform=gt, crs_epsg=32610)
+
+        da = read_geotiff(path)
+        assert da.attrs['crs'] == 32610
+
+    def test_geoinfo_fields_from_real_file(self):
+        """Verify GeoInfo fields populated from a real geographic file."""
+        import os
+        path = '../rtxpy/examples/render_demo_terrain.tif'
+        if not os.path.exists(path):
+            pytest.skip("Real test files not available")
+
+        da = read_geotiff(path)
+        assert da.attrs['crs'] == 4269
+        assert da.attrs['geog_citation'] == 'NAD83'
+        assert da.attrs['angular_units'] == 'degree'
+        assert da.attrs['semi_major_axis'] == pytest.approx(6378137.0)
+        assert da.attrs['inv_flattening'] == pytest.approx(298.257, rel=1e-3)
+
+    def test_geoinfo_fields_from_projected_file(self):
+        """Verify projected CRS fields from a real UTM file."""
+        import os
+        path = '../rtxpy/examples/USGS_one_meter_x65y454_NY_LongIsland_Z18_2014.tif'
+        if not os.path.exists(path):
+            pytest.skip("Real test files not available")
+
+        da = read_geotiff(path)
+        assert da.attrs['crs'] == 26918
+        assert da.attrs['crs_name'] == 'NAD83 / UTM zone 18N'
+        assert da.attrs['geog_citation'] == 'NAD83'
+        assert da.attrs['linear_units'] == 'metre'
+
+    def test_no_crs_no_geokey_attrs(self, tmp_path):
+        """Files without CRS don't get geokey attrs."""
+        arr = np.ones((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'bare.tif')
+        write(arr, path, compression='none', tiled=False)
+
+        da = read_geotiff(path)
+        assert 'crs_name' not in da.attrs
+        assert 'geog_citation' not in da.attrs
+        assert 'angular_units' not in da.attrs
+        assert 'linear_units' not in da.attrs
+
+    def test_angular_unit_lookup(self):
+        """Unit code -> name lookup works for known codes."""
+        from xrspatial.geotiff._geotags import ANGULAR_UNITS, LINEAR_UNITS
+        assert ANGULAR_UNITS[9102] == 'degree'
+        assert ANGULAR_UNITS[9101] == 'radian'
+        assert LINEAR_UNITS[9001] == 'metre'
+        assert LINEAR_UNITS[9002] == 'foot'
+        assert LINEAR_UNITS[9003] == 'us_survey_foot'
+
+
+# -----------------------------------------------------------------------
 # Resolution / DPI tags
 # -----------------------------------------------------------------------
 

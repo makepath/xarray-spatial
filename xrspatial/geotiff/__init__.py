@@ -135,6 +135,31 @@ def read_geotiff(source: str, *, window=None,
     if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
         attrs['raster_type'] = 'point'
 
+    # CRS description fields
+    if geo_info.crs_name is not None:
+        attrs['crs_name'] = geo_info.crs_name
+    if geo_info.geog_citation is not None:
+        attrs['geog_citation'] = geo_info.geog_citation
+    if geo_info.datum_code is not None:
+        attrs['datum_code'] = geo_info.datum_code
+    if geo_info.angular_units is not None:
+        attrs['angular_units'] = geo_info.angular_units
+    if geo_info.linear_units is not None:
+        attrs['linear_units'] = geo_info.linear_units
+    if geo_info.semi_major_axis is not None:
+        attrs['semi_major_axis'] = geo_info.semi_major_axis
+    if geo_info.inv_flattening is not None:
+        attrs['inv_flattening'] = geo_info.inv_flattening
+    if geo_info.projection_code is not None:
+        attrs['projection_code'] = geo_info.projection_code
+    # Vertical CRS
+    if geo_info.vertical_epsg is not None:
+        attrs['vertical_crs'] = geo_info.vertical_epsg
+    if geo_info.vertical_citation is not None:
+        attrs['vertical_citation'] = geo_info.vertical_citation
+    if geo_info.vertical_units is not None:
+        attrs['vertical_units'] = geo_info.vertical_units
+
     # Resolution / DPI metadata
     if geo_info.x_resolution is not None:
         attrs['x_resolution'] = geo_info.x_resolution
