@@ -690,5 +690,20 @@ def write(data: np.ndarray, path: str, *,
         raster_type=raster_type,
     )
 
-    with open(path, 'wb') as f:
-        f.write(file_bytes)
+    # Write to a temp file then atomically rename, so concurrent writes to
+    # the same path don't interleave and readers never see partial output.
+    import os
+    import tempfile
+    dir_name = os.path.dirname(os.path.abspath(path))
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tif.tmp')
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(file_bytes)
+        os.replace(tmp_path, path)  # atomic on POSIX
+    except BaseException:
+        # Clean up the temp file on any failure
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
