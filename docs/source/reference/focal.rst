@@ -41,6 +41,18 @@ GLCM Texture
    xrspatial.glcm.glcm_texture
 
 
+Edge Detection
+==============
+.. autosummary::
+   :toctree: _autosummary
+
+   xrspatial.edge_detection.sobel_x
+   xrspatial.edge_detection.sobel_y
+   xrspatial.edge_detection.laplacian
+   xrspatial.edge_detection.prewitt_x
+   xrspatial.edge_detection.prewitt_y
+
+
 Focal Statistics
 ================
 .. autosummary::
