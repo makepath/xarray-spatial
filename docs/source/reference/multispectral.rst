@@ -11,6 +11,13 @@ Atmospherically Resistant Vegetation Index (ARVI)
 
     xrspatial.multispectral.arvi
 
+Burn Area Index (BAI)
+=====================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.bai
+
 Enhanced Built-Up and Bareness Index (EBBI)
 ============================================
 .. autosummary::
@@ -32,6 +39,13 @@ Green Chlorophyll Index (GCI)
 
     xrspatial.multispectral.gci
 
+Modified Soil Adjusted Vegetation Index (MSAVI2)
+=================================================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.msavi2
+
 Normalized Burn Ratio (NBR)
 ===========================
 .. autosummary::
@@ -46,12 +60,26 @@ Normalized Burn Ratio 2 (NBR2)
 
     xrspatial.multispectral.nbr2
 
+Normalized Difference Built-up Index (NDBI)
+===========================================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.ndbi
+
 Normalized Difference Moisture Index (NDMI)
 ===========================================
 .. autosummary::
     :toctree: _autosummary
 
     xrspatial.multispectral.ndmi
+
+Normalized Difference Snow Index (NDSI)
+=======================================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.ndsi
 
 Normalized Difference Water Index (NDWI)
 ========================================
@@ -73,6 +101,13 @@ Normalized Difference Vegetation Index (NDVI)
     :toctree: _autosummary
 
     xrspatial.multispectral.ndvi
+
+Optimized Soil Adjusted Vegetation Index (OSAVI)
+=================================================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.multispectral.osavi
 
 Soil Adjusted Vegetation Index (SAVI)
 =====================================
