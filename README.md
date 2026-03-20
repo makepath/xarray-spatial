@@ -342,6 +342,11 @@ write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
 | [Focal Statistics](xrspatial/focal.py) | Computes summary statistics over a sliding neighborhood window | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Bilateral](xrspatial/bilateral.py) | Feature-preserving smoothing via bilateral filtering | Tomasi & Manduchi 1998 | ✅️ | ✅️ | ✅️ | ✅️ |
 | [GLCM Texture](xrspatial/glcm.py) | Computes Haralick GLCM texture features over a sliding window | Haralick et al. 1973 | ✅️ | ✅️ | 🔄 | 🔄 |
+| [Sobel X](xrspatial/edge_detection.py) | Horizontal gradient via Sobel operator (detects vertical edges) | Sobel & Feldman 1968 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Sobel Y](xrspatial/edge_detection.py) | Vertical gradient via Sobel operator (detects horizontal edges) | Sobel & Feldman 1968 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Laplacian](xrspatial/edge_detection.py) | Omnidirectional second-derivative edge detector | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Prewitt X](xrspatial/edge_detection.py) | Horizontal gradient via Prewitt operator (detects vertical edges) | Prewitt 1970 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Prewitt Y](xrspatial/edge_detection.py) | Vertical gradient via Prewitt operator (detects horizontal edges) | Prewitt 1970 | ✅️ | ✅️ | ✅️ | ✅️ |
 
 -------
 
