@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import mmap
+import threading
 import urllib.request
 
 import numpy as np
@@ -23,18 +24,69 @@ from ._header import IFD, TIFFHeader, parse_all_ifds, parse_header
 # Data source abstraction
 # ---------------------------------------------------------------------------
 
+class _MmapCache:
+    """Thread-safe, reference-counted mmap cache.
+
+    Multiple threads reading the same file share a single read-only mmap.
+    The mmap is closed when the last reference is released.
+    mmap slicing on a read-only mapping is thread-safe (no seek involved).
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        # path -> (fh, mm, refcount)
+        self._entries: dict[str, tuple] = {}
+
+    def acquire(self, path: str):
+        """Get or create a read-only mmap for *path*. Returns (mm, size)."""
+        import os
+        real = os.path.realpath(path)
+        with self._lock:
+            if real in self._entries:
+                fh, mm, size, rc = self._entries[real]
+                self._entries[real] = (fh, mm, size, rc + 1)
+                return mm, size
+
+            fh = open(real, 'rb')
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(0)
+            if size > 0:
+                mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+            else:
+                mm = None
+            self._entries[real] = (fh, mm, size, 1)
+            return mm, size
+
+    def release(self, path: str):
+        """Decrement the reference count; close the mmap when it hits zero."""
+        import os
+        real = os.path.realpath(path)
+        with self._lock:
+            entry = self._entries.get(real)
+            if entry is None:
+                return
+            fh, mm, size, rc = entry
+            rc -= 1
+            if rc <= 0:
+                del self._entries[real]
+                if mm is not None:
+                    mm.close()
+                fh.close()
+            else:
+                self._entries[real] = (fh, mm, size, rc)
+
+
+# Module-level cache shared across all reads
+_mmap_cache = _MmapCache()
+
+
 class _FileSource:
-    """Local file data source using mmap for zero-copy access."""
+    """Local file data source using a shared, thread-safe mmap cache."""
 
     def __init__(self, path: str):
-        self._fh = open(path, 'rb')
-        self._fh.seek(0, 2)
-        self._size = self._fh.tell()
-        self._fh.seek(0)
-        if self._size > 0:
-            self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
-        else:
-            self._mm = None
+        self._path = path
+        self._mm, self._size = _mmap_cache.acquire(path)
 
     def read_range(self, start: int, length: int) -> bytes:
         if self._mm is not None:
@@ -52,9 +104,7 @@ class _FileSource:
         return self._size
 
     def close(self):
-        if self._mm is not None:
-            self._mm.close()
-        self._fh.close()
+        _mmap_cache.release(self._path)
 
 
 class _HTTPSource:
