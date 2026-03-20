@@ -142,12 +142,30 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     if offsets is None or byte_counts is None:
         raise ValueError("Missing strip offsets or byte counts")
 
-    # Full image buffer -- every byte is written by strip assembly
-    pixel_bytes = width * height * samples * bytes_per_sample
-    buf = np.empty(pixel_bytes, dtype=np.uint8)
+    # Determine output region
+    if window is not None:
+        r0, c0, r1, c1 = window
+        r0 = max(0, r0)
+        c0 = max(0, c0)
+        r1 = min(height, r1)
+        c1 = min(width, c1)
+    else:
+        r0, c0, r1, c1 = 0, 0, height, width
 
-    num_strips = len(offsets)
-    for strip_idx in range(num_strips):
+    out_h = r1 - r0
+    out_w = c1 - c0
+    row_bytes = width * samples * bytes_per_sample
+
+    if samples > 1:
+        result = np.empty((out_h, out_w, samples), dtype=dtype)
+    else:
+        result = np.empty((out_h, out_w), dtype=dtype)
+
+    # Only decompress strips that overlap the requested row range
+    first_strip = r0 // rps
+    last_strip = min((r1 - 1) // rps, len(offsets) - 1)
+
+    for strip_idx in range(first_strip, last_strip + 1):
         strip_row = strip_idx * rps
         strip_rows = min(rps, height - strip_row)
         if strip_rows <= 0:
@@ -163,25 +181,20 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
                 chunk = chunk.copy()
             chunk = _apply_predictor(chunk, pred, width, strip_rows, bytes_per_sample * samples)
 
-        # Copy into buffer
-        dst_start = strip_row * width * samples * bytes_per_sample
-        copy_len = min(len(chunk), len(buf) - dst_start)
-        if copy_len > 0:
-            buf[dst_start:dst_start + copy_len] = chunk[:copy_len]
+        # Reshape the decompressed strip to (strip_rows, width[, samples])
+        if samples > 1:
+            strip_pixels = chunk.view(dtype).reshape(strip_rows, width, samples)
+        else:
+            strip_pixels = chunk.view(dtype).reshape(strip_rows, width)
 
-    # Reshape to image
-    if samples > 1:
-        result = buf.view(dtype).reshape(height, width, samples)
-    else:
-        result = buf.view(dtype).reshape(height, width)
+        # Compute the overlap between this strip and the output window
+        src_r0 = max(r0 - strip_row, 0)
+        src_r1 = min(r1 - strip_row, strip_rows)
+        dst_r0 = max(strip_row - r0, 0)
+        dst_r1 = dst_r0 + (src_r1 - src_r0)
 
-    if window is not None:
-        r0, c0, r1, c1 = window
-        r0 = max(0, r0)
-        c0 = max(0, c0)
-        r1 = min(height, r1)
-        c1 = min(width, c1)
-        result = result[r0:r1, c0:c1].copy()
+        if dst_r1 > dst_r0:
+            result[dst_r0:dst_r1] = strip_pixels[src_r0:src_r1, c0:c1]
 
     return result
 
