@@ -107,15 +107,48 @@ class _FileSource:
         _mmap_cache.release(self._path)
 
 
+def _get_http_pool():
+    """Return a module-level urllib3 PoolManager, or None if unavailable."""
+    global _http_pool
+    if _http_pool is not None:
+        return _http_pool
+    try:
+        import urllib3
+        _http_pool = urllib3.PoolManager(
+            num_pools=10,
+            maxsize=10,
+            retries=urllib3.Retry(total=2, backoff_factor=0.1),
+        )
+        return _http_pool
+    except ImportError:
+        return None
+
+
+_http_pool = None
+
+
 class _HTTPSource:
-    """HTTP data source using range requests."""
+    """HTTP data source using range requests with connection reuse.
+
+    Uses urllib3.PoolManager when available (reuses TCP connections and
+    TLS sessions across range requests to the same host). Falls back to
+    stdlib urllib.request if urllib3 is not installed.
+    """
 
     def __init__(self, url: str):
         self._url = url
         self._size = None
+        self._pool = _get_http_pool()
 
     def read_range(self, start: int, length: int) -> bytes:
         end = start + length - 1
+        if self._pool is not None:
+            resp = self._pool.request(
+                'GET', self._url,
+                headers={'Range': f'bytes={start}-{end}'},
+            )
+            return resp.data
+        # Fallback: stdlib
         req = urllib.request.Request(
             self._url,
             headers={'Range': f'bytes={start}-{end}'},
@@ -124,6 +157,9 @@ class _HTTPSource:
             return resp.read()
 
     def read_all(self) -> bytes:
+        if self._pool is not None:
+            resp = self._pool.request('GET', self._url)
+            return resp.data
         with urllib.request.urlopen(self._url) as resp:
             return resp.read()
 
