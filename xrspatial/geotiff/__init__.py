@@ -524,15 +524,16 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
 
 def read_geotiff_gpu(source: str, *,
                      overview_level: int | None = None,
-                     name: str | None = None) -> xr.DataArray:
+                     name: str | None = None,
+                     chunks: int | tuple | None = None) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
 
     Decompresses all tiles in parallel on the GPU and returns a
     CuPy-backed DataArray that stays on device memory. No CPU->GPU
     transfer needed for downstream xrspatial GPU operations.
 
-    Supports LZW and uncompressed tiled TIFFs with predictor 1, 2, or 3.
-    For unsupported compression types, falls back to CPU.
+    With ``chunks=``, returns a Dask+CuPy DataArray for out-of-core
+    GPU pipelines.
 
     Requires: cupy, numba with CUDA support.
 
@@ -542,6 +543,9 @@ def read_geotiff_gpu(source: str, *,
         File path.
     overview_level : int or None
         Overview level (0 = full resolution).
+    chunks : int, tuple, or None
+        If set, return a Dask-chunked CuPy DataArray. int for square
+        chunks, (row, col) tuple for rectangular.
     name : str or None
         Name for the DataArray.
 
@@ -669,8 +673,17 @@ def read_geotiff_gpu(source: str, *,
     else:
         dims = ['y', 'x']
 
-    return xr.DataArray(arr_gpu, dims=dims, coords=coords,
-                        name=name, attrs=attrs)
+    result = xr.DataArray(arr_gpu, dims=dims, coords=coords,
+                          name=name, attrs=attrs)
+
+    if chunks is not None:
+        if isinstance(chunks, int):
+            chunk_dict = {'y': chunks, 'x': chunks}
+        else:
+            chunk_dict = {'y': chunks[0], 'x': chunks[1]}
+        result = result.chunk(chunk_dict)
+
+    return result
 
 
 def write_geotiff_gpu(data, path: str, *,
@@ -728,13 +741,15 @@ def write_geotiff_gpu(data, path: str, *,
         epsg = _wkt_to_epsg(crs)
 
     if isinstance(data, xr.DataArray):
-        arr = data.data  # keep as cupy
+        arr = data.data
+        # Handle Dask arrays: compute to materialize
+        if hasattr(arr, 'compute'):
+            arr = arr.compute()
+        # Now arr should be CuPy or numpy
         if hasattr(arr, 'get'):
-            # It's a CuPy array
-            pass
+            pass  # CuPy array, already on GPU
         else:
-            # Numpy DataArray -- send to GPU
-            arr = cupy.asarray(data.values)
+            arr = cupy.asarray(np.asarray(arr))  # numpy -> GPU
 
         geo_transform = _coords_to_transform(data)
         if epsg is None:
@@ -744,7 +759,14 @@ def write_geotiff_gpu(data, path: str, *,
         if data.attrs.get('raster_type') == 'point':
             raster_type = RASTER_PIXEL_IS_POINT
     else:
-        arr = cupy.asarray(data) if not hasattr(data, 'device') else data
+        if hasattr(data, 'compute'):
+            data = data.compute()  # Dask -> CuPy or numpy
+        if hasattr(data, 'device'):
+            arr = data  # already CuPy
+        elif hasattr(data, 'get'):
+            arr = data  # CuPy
+        else:
+            arr = cupy.asarray(np.asarray(data))  # numpy/list -> GPU
 
     if arr.ndim not in (2, 3):
         raise ValueError(f"Expected 2D or 3D array, got {arr.ndim}D")
