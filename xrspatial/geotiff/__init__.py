@@ -443,32 +443,12 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     )
 
 
-def open_cog(url: str, *,
-             overview_level: int | None = None,
-             chunks: int | tuple | None = None,
-             gpu: bool = False) -> xr.DataArray:
-    """Read a Cloud Optimized GeoTIFF from an HTTP URL.
+def open_cog(url: str, **kwargs) -> xr.DataArray:
+    """Deprecated: use ``read_geotiff(url, ...)`` instead.
 
-    Uses range requests so only the needed tiles are fetched.
-
-    Parameters
-    ----------
-    url : str
-        HTTP(S) URL to the COG.
-    overview_level : int or None
-        Overview level (0 = full resolution).
-    chunks : int, tuple, or None
-        Chunk size for Dask lazy reading.
-    gpu : bool
-        Use GPU-accelerated decompression.
-
-    Returns
-    -------
-    xr.DataArray
-        NumPy, Dask, CuPy, or Dask+CuPy backed depending on options.
+    read_geotiff handles HTTP URLs, cloud URIs, and local files.
     """
-    return read_geotiff(url, overview_level=overview_level,
-                        chunks=chunks, gpu=gpu)
+    return read_geotiff(url, **kwargs)
 
 
 def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
