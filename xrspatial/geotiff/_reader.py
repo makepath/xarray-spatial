@@ -142,6 +142,8 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     if offsets is None or byte_counts is None:
         raise ValueError("Missing strip offsets or byte counts")
 
+    planar = ifd.planar_config  # 1=chunky (interleaved), 2=planar (separate)
+
     # Determine output region
     if window is not None:
         r0, c0, r1, c1 = window
@@ -154,47 +156,85 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
 
     out_h = r1 - r0
     out_w = c1 - c0
-    row_bytes = width * samples * bytes_per_sample
 
     if samples > 1:
         result = np.empty((out_h, out_w, samples), dtype=dtype)
     else:
         result = np.empty((out_h, out_w), dtype=dtype)
 
-    # Only decompress strips that overlap the requested row range
-    first_strip = r0 // rps
-    last_strip = min((r1 - 1) // rps, len(offsets) - 1)
+    if planar == 2 and samples > 1:
+        # Planar configuration: each band stored as separate strips.
+        # Strip offsets are laid out as [band0_strip0, band0_strip1, ...,
+        #   band1_strip0, band1_strip1, ..., band2_strip0, ...].
+        strips_per_band = math.ceil(height / rps)
+        first_strip = r0 // rps
+        last_strip = min((r1 - 1) // rps, strips_per_band - 1)
 
-    for strip_idx in range(first_strip, last_strip + 1):
-        strip_row = strip_idx * rps
-        strip_rows = min(rps, height - strip_row)
-        if strip_rows <= 0:
-            continue
+        for band_idx in range(samples):
+            band_offset = band_idx * strips_per_band
 
-        strip_data = data[offsets[strip_idx]:offsets[strip_idx] + byte_counts[strip_idx]]
-        expected = strip_rows * width * samples * bytes_per_sample
-        chunk = decompress(strip_data, compression, expected,
-                           width=width, height=strip_rows, samples=samples)
+            for strip_idx in range(first_strip, last_strip + 1):
+                global_idx = band_offset + strip_idx
+                if global_idx >= len(offsets):
+                    continue
 
-        if pred in (2, 3):
-            if not chunk.flags.writeable:
-                chunk = chunk.copy()
-            chunk = _apply_predictor(chunk, pred, width, strip_rows, bytes_per_sample * samples)
+                strip_row = strip_idx * rps
+                strip_rows = min(rps, height - strip_row)
+                if strip_rows <= 0:
+                    continue
 
-        # Reshape the decompressed strip to (strip_rows, width[, samples])
-        if samples > 1:
-            strip_pixels = chunk.view(dtype).reshape(strip_rows, width, samples)
-        else:
-            strip_pixels = chunk.view(dtype).reshape(strip_rows, width)
+                strip_data = data[offsets[global_idx]:offsets[global_idx] + byte_counts[global_idx]]
+                expected = strip_rows * width * bytes_per_sample
+                chunk = decompress(strip_data, compression, expected,
+                                   width=width, height=strip_rows, samples=1)
 
-        # Compute the overlap between this strip and the output window
-        src_r0 = max(r0 - strip_row, 0)
-        src_r1 = min(r1 - strip_row, strip_rows)
-        dst_r0 = max(strip_row - r0, 0)
-        dst_r1 = dst_r0 + (src_r1 - src_r0)
+                if pred in (2, 3):
+                    if not chunk.flags.writeable:
+                        chunk = chunk.copy()
+                    chunk = _apply_predictor(chunk, pred, width, strip_rows, bytes_per_sample)
 
-        if dst_r1 > dst_r0:
-            result[dst_r0:dst_r1] = strip_pixels[src_r0:src_r1, c0:c1]
+                strip_pixels = chunk.view(dtype).reshape(strip_rows, width)
+
+                src_r0 = max(r0 - strip_row, 0)
+                src_r1 = min(r1 - strip_row, strip_rows)
+                dst_r0 = max(strip_row - r0, 0)
+                dst_r1 = dst_r0 + (src_r1 - src_r0)
+
+                if dst_r1 > dst_r0:
+                    result[dst_r0:dst_r1, :, band_idx] = strip_pixels[src_r0:src_r1, c0:c1]
+    else:
+        # Chunky (interleaved) -- default path
+        first_strip = r0 // rps
+        last_strip = min((r1 - 1) // rps, len(offsets) - 1)
+
+        for strip_idx in range(first_strip, last_strip + 1):
+            strip_row = strip_idx * rps
+            strip_rows = min(rps, height - strip_row)
+            if strip_rows <= 0:
+                continue
+
+            strip_data = data[offsets[strip_idx]:offsets[strip_idx] + byte_counts[strip_idx]]
+            expected = strip_rows * width * samples * bytes_per_sample
+            chunk = decompress(strip_data, compression, expected,
+                               width=width, height=strip_rows, samples=samples)
+
+            if pred in (2, 3):
+                if not chunk.flags.writeable:
+                    chunk = chunk.copy()
+                chunk = _apply_predictor(chunk, pred, width, strip_rows, bytes_per_sample * samples)
+
+            if samples > 1:
+                strip_pixels = chunk.view(dtype).reshape(strip_rows, width, samples)
+            else:
+                strip_pixels = chunk.view(dtype).reshape(strip_rows, width)
+
+            src_r0 = max(r0 - strip_row, 0)
+            src_r1 = min(r1 - strip_row, strip_rows)
+            dst_r0 = max(strip_row - r0, 0)
+            dst_r1 = dst_r0 + (src_r1 - src_r0)
+
+            if dst_r1 > dst_r0:
+                result[dst_r0:dst_r1] = strip_pixels[src_r0:src_r1, c0:c1]
 
     return result
 
@@ -241,6 +281,7 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     if offsets is None or byte_counts is None:
         raise ValueError("Missing tile offsets or byte counts")
 
+    planar = ifd.planar_config
     tiles_across = math.ceil(width / tw)
     tiles_down = math.ceil(height / th)
 
@@ -257,70 +298,73 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     out_h = r1 - r0
     out_w = c1 - c0
 
-    # Use np.empty for full-image reads (every pixel written by tile placement),
-    # np.zeros for windowed reads (edge regions may not be covered).
     _alloc = np.zeros if window is not None else np.empty
     if samples > 1:
         result = _alloc((out_h, out_w, samples), dtype=dtype)
     else:
         result = _alloc((out_h, out_w), dtype=dtype)
 
-    # Which tiles overlap the window
     tile_row_start = r0 // th
     tile_row_end = min(math.ceil(r1 / th), tiles_down)
     tile_col_start = c0 // tw
     tile_col_end = min(math.ceil(c1 / tw), tiles_across)
 
-    for tr in range(tile_row_start, tile_row_end):
-        for tc in range(tile_col_start, tile_col_end):
-            tile_idx = tr * tiles_across + tc
-            if tile_idx >= len(offsets):
-                continue
+    # Number of bands to iterate (1 for chunky, samples for planar)
+    band_count = samples if (planar == 2 and samples > 1) else 1
+    tiles_per_band = tiles_across * tiles_down
 
-            tile_data = data[offsets[tile_idx]:offsets[tile_idx] + byte_counts[tile_idx]]
-            expected = tw * th * samples * bytes_per_sample
-            chunk = decompress(tile_data, compression, expected,
-                               width=tw, height=th, samples=samples)
+    for band_idx in range(band_count):
+        band_tile_offset = band_idx * tiles_per_band if band_count > 1 else 0
+        # For planar, each tile has 1 sample; for chunky, samples per tile
+        tile_samples = 1 if band_count > 1 else samples
 
-            if pred in (2, 3):
-                if not chunk.flags.writeable:
-                    chunk = chunk.copy()
-                chunk = _apply_predictor(chunk, pred, tw, th, bytes_per_sample * samples)
+        for tr in range(tile_row_start, tile_row_end):
+            for tc in range(tile_col_start, tile_col_end):
+                tile_idx = band_tile_offset + tr * tiles_across + tc
+                if tile_idx >= len(offsets):
+                    continue
 
-            # Reshape tile
-            if samples > 1:
-                tile_pixels = chunk.view(dtype).reshape(th, tw, samples)
-            else:
-                tile_pixels = chunk.view(dtype).reshape(th, tw)
+                tile_data = data[offsets[tile_idx]:offsets[tile_idx] + byte_counts[tile_idx]]
+                expected = tw * th * tile_samples * bytes_per_sample
+                chunk = decompress(tile_data, compression, expected,
+                                   width=tw, height=th, samples=tile_samples)
 
-            # Compute overlap between tile and window
-            tile_r0 = tr * th
-            tile_c0 = tc * tw
-            tile_r1 = tile_r0 + th
-            tile_c1 = tile_c0 + tw
+                if pred in (2, 3):
+                    if not chunk.flags.writeable:
+                        chunk = chunk.copy()
+                    chunk = _apply_predictor(chunk, pred, tw, th,
+                                            bytes_per_sample * tile_samples)
 
-            # Source region within the tile
-            src_r0 = max(r0 - tile_r0, 0)
-            src_c0 = max(c0 - tile_c0, 0)
-            src_r1 = min(r1 - tile_r0, th)
-            src_c1 = min(c1 - tile_c0, tw)
+                if tile_samples > 1:
+                    tile_pixels = chunk.view(dtype).reshape(th, tw, tile_samples)
+                else:
+                    tile_pixels = chunk.view(dtype).reshape(th, tw)
 
-            # Dest region within the output
-            dst_r0 = max(tile_r0 - r0, 0)
-            dst_c0 = max(tile_c0 - c0, 0)
-            dst_r1 = dst_r0 + (src_r1 - src_r0)
-            dst_c1 = dst_c0 + (src_c1 - src_c0)
+                tile_r0 = tr * th
+                tile_c0 = tc * tw
 
-            # Clip to actual image bounds within tile
-            actual_tile_h = min(th, height - tile_r0)
-            actual_tile_w = min(tw, width - tile_c0)
-            src_r1 = min(src_r1, actual_tile_h)
-            src_c1 = min(src_c1, actual_tile_w)
-            dst_r1 = dst_r0 + (src_r1 - src_r0)
-            dst_c1 = dst_c0 + (src_c1 - src_c0)
+                src_r0 = max(r0 - tile_r0, 0)
+                src_c0 = max(c0 - tile_c0, 0)
+                src_r1 = min(r1 - tile_r0, th)
+                src_c1 = min(c1 - tile_c0, tw)
 
-            if dst_r1 > dst_r0 and dst_c1 > dst_c0:
-                result[dst_r0:dst_r1, dst_c0:dst_c1] = tile_pixels[src_r0:src_r1, src_c0:src_c1]
+                dst_r0 = max(tile_r0 - r0, 0)
+                dst_c0 = max(tile_c0 - c0, 0)
+
+                actual_tile_h = min(th, height - tile_r0)
+                actual_tile_w = min(tw, width - tile_c0)
+                src_r1 = min(src_r1, actual_tile_h)
+                src_c1 = min(src_c1, actual_tile_w)
+                dst_r1 = dst_r0 + (src_r1 - src_r0)
+                dst_c1 = dst_c0 + (src_c1 - src_c0)
+
+                if dst_r1 > dst_r0 and dst_c1 > dst_c0:
+                    src_slice = tile_pixels[src_r0:src_r1, src_c0:src_c1]
+                    if band_count > 1:
+                        # Planar: place single-band tile into the band slice
+                        result[dst_r0:dst_r1, dst_c0:dst_c1, band_idx] = src_slice
+                    else:
+                        result[dst_r0:dst_r1, dst_c0:dst_c1] = src_slice
 
     return result
 

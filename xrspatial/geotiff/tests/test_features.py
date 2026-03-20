@@ -330,6 +330,252 @@ class TestBigTIFF:
 
 
 # -----------------------------------------------------------------------
+# Planar configuration (separate planes)
+# -----------------------------------------------------------------------
+
+def _make_planar_tiff(width, height, bands, dtype=np.uint8, tiled=False,
+                      tile_size=4):
+    """Build a minimal planar-config TIFF (PlanarConfiguration=2) by hand.
+
+    Each band's pixel data is stored as a separate set of strips (or tiles).
+    Band values: band 0 gets pixel values 10+pixel_idx, band 1 gets 20+,
+    band 2 gets 30+, etc.
+    """
+    import struct
+    bo = '<'
+
+    dtype = np.dtype(dtype)
+    bps = dtype.itemsize * 8
+    if dtype.kind == 'f':
+        sf = 3
+    elif dtype.kind == 'i':
+        sf = 2
+    else:
+        sf = 1
+
+    # Build per-band pixel arrays
+    band_arrays = []
+    for b in range(bands):
+        base = (b + 1) * 10
+        arr = np.arange(width * height, dtype=dtype).reshape(height, width) + dtype.type(base)
+        band_arrays.append(arr)
+
+    if tiled:
+        import math
+        tw = th = tile_size
+        tiles_across = math.ceil(width / tw)
+        tiles_down = math.ceil(height / th)
+        tiles_per_band = tiles_across * tiles_down
+
+        # Build tile data: all tiles for band 0, then band 1, etc.
+        tile_blobs = []
+        for b in range(bands):
+            for tr in range(tiles_down):
+                for tc in range(tiles_across):
+                    tile = np.zeros((th, tw), dtype=dtype)
+                    r0, c0 = tr * th, tc * tw
+                    r1 = min(r0 + th, height)
+                    c1 = min(c0 + tw, width)
+                    tile[:r1 - r0, :c1 - c0] = band_arrays[b][r0:r1, c0:c1]
+                    tile_blobs.append(tile.tobytes())
+
+        pixel_bytes = b''.join(tile_blobs)
+        tile_byte_counts = [len(t) for t in tile_blobs]
+        num_offsets = len(tile_blobs)
+    else:
+        # Strips: 1 strip per band (whole image), one set per band
+        strip_blobs = []
+        for b in range(bands):
+            strip_blobs.append(band_arrays[b].tobytes())
+        pixel_bytes = b''.join(strip_blobs)
+        strip_byte_counts = [len(s) for s in strip_blobs]
+        num_offsets = bands
+
+    # Build tags
+    tag_list = []
+    def add_short(tag, val):
+        tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+    def add_shorts(tag, vals):
+        tag_list.append((tag, 3, len(vals), struct.pack(f'{bo}{len(vals)}H', *vals)))
+    def add_long(tag, val):
+        tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
+    def add_longs(tag, vals):
+        tag_list.append((tag, 4, len(vals), struct.pack(f'{bo}{len(vals)}I', *vals)))
+
+    add_short(256, width)
+    add_short(257, height)
+    add_shorts(258, [bps] * bands)
+    add_short(259, 1)   # no compression
+    add_short(262, 2 if bands >= 3 else 1)  # RGB or BlackIsZero
+    add_short(277, bands)
+    add_short(284, 2)   # PlanarConfiguration = Separate
+    add_shorts(339, [sf] * bands)
+
+    if tiled:
+        add_short(322, tile_size)
+        add_short(323, tile_size)
+        add_longs(324, [0] * num_offsets)  # placeholder
+        add_longs(325, tile_byte_counts)
+    else:
+        add_short(278, height)  # RowsPerStrip = full image
+        add_longs(273, [0] * num_offsets)  # placeholder
+        add_longs(279, strip_byte_counts)
+
+    tag_list.sort(key=lambda t: t[0])
+
+    # Layout
+    num_entries = len(tag_list)
+    ifd_start = 8
+    ifd_size = 2 + 12 * num_entries + 4
+
+    # Collect overflow
+    overflow_buf = bytearray()
+    tag_offsets = {}
+    overflow_start = ifd_start + ifd_size
+
+    for tag, typ, count, raw in tag_list:
+        if len(raw) > 4:
+            tag_offsets[tag] = len(overflow_buf)
+            overflow_buf.extend(raw)
+            if len(overflow_buf) % 2:
+                overflow_buf.append(0)
+        else:
+            tag_offsets[tag] = None
+
+    pixel_data_start = overflow_start + len(overflow_buf)
+
+    # Patch offsets
+    offset_tag = 324 if tiled else 273
+    patched = []
+    for tag, typ, count, raw in tag_list:
+        if tag == offset_tag:
+            if tiled:
+                offs = []
+                pos = 0
+                for blob in tile_blobs:
+                    offs.append(pixel_data_start + pos)
+                    pos += len(blob)
+                new_raw = struct.pack(f'{bo}{num_offsets}I', *offs)
+            else:
+                offs = []
+                pos = 0
+                for blob in strip_blobs:
+                    offs.append(pixel_data_start + pos)
+                    pos += len(blob)
+                new_raw = struct.pack(f'{bo}{num_offsets}I', *offs)
+            patched.append((tag, typ, count, new_raw))
+        else:
+            patched.append((tag, typ, count, raw))
+    tag_list = patched
+
+    # Rebuild overflow
+    overflow_buf = bytearray()
+    tag_offsets = {}
+    for tag, typ, count, raw in tag_list:
+        if len(raw) > 4:
+            tag_offsets[tag] = len(overflow_buf)
+            overflow_buf.extend(raw)
+            if len(overflow_buf) % 2:
+                overflow_buf.append(0)
+        else:
+            tag_offsets[tag] = None
+
+    # Serialize
+    out = bytearray()
+    out.extend(b'II')
+    out.extend(struct.pack(f'{bo}H', 42))
+    out.extend(struct.pack(f'{bo}I', ifd_start))
+    out.extend(struct.pack(f'{bo}H', num_entries))
+
+    for tag, typ, count, raw in tag_list:
+        out.extend(struct.pack(f'{bo}HHI', tag, typ, count))
+        if len(raw) <= 4:
+            out.extend(raw.ljust(4, b'\x00'))
+        else:
+            ptr = overflow_start + tag_offsets[tag]
+            out.extend(struct.pack(f'{bo}I', ptr))
+
+    out.extend(struct.pack(f'{bo}I', 0))  # next IFD
+    out.extend(overflow_buf)
+    out.extend(pixel_bytes)
+
+    # Build expected output for verification
+    expected = np.stack(band_arrays, axis=2)
+    return bytes(out), expected
+
+
+class TestPlanarConfig:
+
+    def test_planar_strips_rgb(self, tmp_path):
+        """Read a 3-band planar-stripped TIFF."""
+        tiff_data, expected = _make_planar_tiff(4, 6, 3, np.uint8)
+        path = str(tmp_path / 'planar_strip.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path)
+        assert result.shape == (6, 4, 3)
+        np.testing.assert_array_equal(result, expected)
+
+    def test_planar_strips_2band(self, tmp_path):
+        """Read a 2-band planar-stripped TIFF."""
+        tiff_data, expected = _make_planar_tiff(5, 4, 2, np.uint16)
+        path = str(tmp_path / 'planar_2band.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path)
+        assert result.shape == (4, 5, 2)
+        np.testing.assert_array_equal(result, expected)
+
+    def test_planar_tiles_rgb(self, tmp_path):
+        """Read a 3-band planar-tiled TIFF."""
+        tiff_data, expected = _make_planar_tiff(
+            8, 8, 3, np.uint8, tiled=True, tile_size=4)
+        path = str(tmp_path / 'planar_tiled.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path)
+        assert result.shape == (8, 8, 3)
+        np.testing.assert_array_equal(result, expected)
+
+    def test_planar_windowed(self, tmp_path):
+        """Windowed read of a planar-stripped TIFF."""
+        tiff_data, expected = _make_planar_tiff(8, 8, 3, np.uint8)
+        path = str(tmp_path / 'planar_window.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path, window=(2, 1, 6, 5))
+        np.testing.assert_array_equal(result, expected[2:6, 1:5, :])
+
+    def test_planar_band_selection(self, tmp_path):
+        """Selecting a single band from a planar TIFF."""
+        tiff_data, expected = _make_planar_tiff(4, 4, 3, np.uint8)
+        path = str(tmp_path / 'planar_band.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        result, _ = read_to_array(path, band=1)
+        assert result.shape == (4, 4)
+        np.testing.assert_array_equal(result, expected[:, :, 1])
+
+    def test_planar_via_public_api(self, tmp_path):
+        """read_geotiff on a planar file returns correct DataArray."""
+        from xrspatial.geotiff import read_geotiff
+        tiff_data, expected = _make_planar_tiff(4, 4, 3, np.uint8)
+        path = str(tmp_path / 'planar_api.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        da = read_geotiff(path)
+        assert 'band' in da.dims
+        assert da.shape == (4, 4, 3)
+        np.testing.assert_array_equal(da.values, expected)
+
+
+# -----------------------------------------------------------------------
 # Dask lazy reads
 # -----------------------------------------------------------------------
 
