@@ -673,6 +673,60 @@ def _assemble_tiles_kernel(
 
 
 # ---------------------------------------------------------------------------
+# nvCOMP batch decompression (optional, fast path)
+# ---------------------------------------------------------------------------
+
+def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
+    """Try batch decompression via nvCOMP. Returns CuPy array or None.
+
+    nvCOMP (NVIDIA's batched compression library) decompresses all tiles
+    in a single GPU API call using optimized CUDA kernels. Falls back
+    to None if nvCOMP is not available or doesn't support the codec.
+    """
+    try:
+        import kvikio.nvcomp as nvcomp
+    except ImportError:
+        return None
+
+    import cupy
+
+    codec_map = {
+        8: 'deflate',      # Deflate
+        32946: 'deflate',   # Adobe Deflate
+        5: 'lzw',          # LZW (nvCOMP doesn't support TIFF LZW variant)
+    }
+    codec_name = codec_map.get(compression)
+    if codec_name is None:
+        return None
+
+    # nvCOMP's DeflateManager handles batch deflate
+    if codec_name == 'deflate':
+        try:
+            # Strip 2-byte zlib headers + 4-byte checksums from each tile
+            raw_tiles = []
+            for tile in compressed_tiles:
+                # zlib format: 2-byte header, deflate data, 4-byte adler32
+                raw_tiles.append(tile[2:-4] if len(tile) > 6 else tile)
+
+            manager = nvcomp.DeflateManager(chunk_size=tile_bytes)
+
+            # Copy compressed data to device
+            d_compressed = [cupy.asarray(np.frombuffer(t, dtype=np.uint8))
+                            for t in raw_tiles]
+
+            # Batch decompress
+            d_decompressed = manager.decompress(d_compressed)
+
+            # Concatenate results into a single buffer
+            result = cupy.concatenate([d.ravel() for d in d_decompressed])
+            return result
+        except Exception:
+            return None
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # High-level GPU decode pipeline
 # ---------------------------------------------------------------------------
 
@@ -717,7 +771,14 @@ def gpu_decode_tiles(
     bytes_per_pixel = dtype.itemsize * samples
     tile_bytes = tile_width * tile_height * bytes_per_pixel
 
-    if compression == 5:  # LZW
+    # Try nvCOMP batch decompression first (much faster if available)
+    nvcomp_result = _try_nvcomp_batch_decompress(
+        compressed_tiles, tile_bytes, compression)
+    if nvcomp_result is not None:
+        d_decomp = nvcomp_result
+        decomp_offsets = np.arange(n_tiles, dtype=np.int64) * tile_bytes
+        d_decomp_offsets = cupy.asarray(decomp_offsets)
+    elif compression == 5:  # LZW
         # Concatenate all compressed tiles into one device buffer
         comp_sizes = [len(t) for t in compressed_tiles]
         comp_offsets = np.zeros(n_tiles, dtype=np.int64)
