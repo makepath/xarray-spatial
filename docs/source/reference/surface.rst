@@ -11,6 +11,20 @@ Aspect
 
     xrspatial.aspect.aspect
 
+Northness
+=========
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.aspect.northness
+
+Eastness
+========
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.aspect.eastness
+
 Curvature
 =========
 .. autosummary::
