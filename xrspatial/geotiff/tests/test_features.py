@@ -1,4 +1,4 @@
-"""Tests for new features: multi-band, integer nodata, packbits, dask, BigTIFF."""
+"""Tests for new features: multi-band, integer nodata, packbits, zstd, dask, BigTIFF."""
 from __future__ import annotations
 
 import numpy as np
@@ -10,6 +10,8 @@ from xrspatial.geotiff._compression import (
     COMPRESSION_PACKBITS,
     packbits_compress,
     packbits_decompress,
+    zstd_compress,
+    zstd_decompress,
 )
 from xrspatial.geotiff._header import parse_header, parse_all_ifds
 from xrspatial.geotiff._reader import read_to_array
@@ -182,6 +184,76 @@ class TestPackBits:
 
         result, _ = read_to_array(path)
         np.testing.assert_array_equal(result, arr)
+
+
+# -----------------------------------------------------------------------
+# ZSTD compression
+# -----------------------------------------------------------------------
+
+class TestZstd:
+
+    def test_zstd_round_trip_bytes(self):
+        data = b'hello zstd! ' * 1000
+        compressed = zstd_compress(data)
+        assert len(compressed) < len(data)
+        assert zstd_decompress(compressed) == data
+
+    def test_zstd_empty(self):
+        compressed = zstd_compress(b'')
+        assert zstd_decompress(compressed) == b''
+
+    def test_zstd_random(self):
+        rng = np.random.RandomState(42)
+        data = bytes(rng.randint(0, 256, size=5000, dtype=np.uint8))
+        assert zstd_decompress(zstd_compress(data)) == data
+
+    def test_write_read_zstd_stripped(self, tmp_path):
+        arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+        path = str(tmp_path / 'zstd_strip.tif')
+        write(arr, path, compression='zstd', tiled=False)
+
+        result, _ = read_to_array(path)
+        np.testing.assert_array_equal(result, arr)
+
+    def test_write_read_zstd_tiled(self, tmp_path):
+        arr = np.random.RandomState(99).rand(16, 16).astype(np.float32)
+        path = str(tmp_path / 'zstd_tiled.tif')
+        write(arr, path, compression='zstd', tiled=True, tile_size=8)
+
+        result, _ = read_to_array(path)
+        np.testing.assert_array_equal(result, arr)
+
+    def test_zstd_uint16(self, tmp_path):
+        arr = np.arange(100, dtype=np.uint16).reshape(10, 10)
+        path = str(tmp_path / 'zstd_u16.tif')
+        write(arr, path, compression='zstd', tiled=False)
+
+        result, _ = read_to_array(path)
+        np.testing.assert_array_equal(result, arr)
+
+    def test_zstd_with_predictor(self, tmp_path):
+        arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+        path = str(tmp_path / 'zstd_pred.tif')
+        write(arr, path, compression='zstd', tiled=False, predictor=True)
+
+        result, _ = read_to_array(path)
+        np.testing.assert_array_equal(result, arr)
+
+    def test_zstd_multiband(self, tmp_path):
+        arr = np.random.RandomState(7).randint(0, 256, (8, 8, 3), dtype=np.uint8)
+        path = str(tmp_path / 'zstd_rgb.tif')
+        write(arr, path, compression='zstd', tiled=False)
+
+        result, _ = read_to_array(path)
+        np.testing.assert_array_equal(result, arr)
+
+    def test_zstd_public_api(self, tmp_path):
+        arr = np.ones((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'zstd_api.tif')
+        write_geotiff(arr, path, compression='zstd')
+
+        result = read_geotiff(path)
+        np.testing.assert_array_equal(result.values, arr)
 
 
 # -----------------------------------------------------------------------

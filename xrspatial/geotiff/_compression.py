@@ -629,6 +629,34 @@ def jpeg_compress(data: bytes, width: int, height: int,
     return buf.getvalue()
 
 
+# -- ZSTD codec (via zstandard) -----------------------------------------------
+
+ZSTD_AVAILABLE = False
+try:
+    import zstandard as _zstd
+    ZSTD_AVAILABLE = True
+except ImportError:
+    _zstd = None
+
+
+def zstd_decompress(data: bytes) -> bytes:
+    """Decompress Zstandard data. Requires the ``zstandard`` package."""
+    if not ZSTD_AVAILABLE:
+        raise ImportError(
+            "zstandard is required to read ZSTD-compressed TIFFs. "
+            "Install it with: pip install zstandard")
+    return _zstd.ZstdDecompressor().decompress(data)
+
+
+def zstd_compress(data: bytes, level: int = 3) -> bytes:
+    """Compress data with Zstandard. Requires the ``zstandard`` package."""
+    if not ZSTD_AVAILABLE:
+        raise ImportError(
+            "zstandard is required to write ZSTD-compressed TIFFs. "
+            "Install it with: pip install zstandard")
+    return _zstd.ZstdCompressor(level=level).compress(data)
+
+
 # -- Dispatch helpers ---------------------------------------------------------
 
 # TIFF compression tag values
@@ -636,6 +664,7 @@ COMPRESSION_NONE = 1
 COMPRESSION_LZW = 5
 COMPRESSION_JPEG = 7
 COMPRESSION_DEFLATE = 8
+COMPRESSION_ZSTD = 50000
 COMPRESSION_PACKBITS = 32773
 COMPRESSION_ADOBE_DEFLATE = 32946
 
@@ -670,6 +699,8 @@ def decompress(data, compression: int, expected_size: int = 0,
     elif compression == COMPRESSION_JPEG:
         return np.frombuffer(jpeg_decompress(data, width, height, samples),
                              dtype=np.uint8)
+    elif compression == COMPRESSION_ZSTD:
+        return np.frombuffer(zstd_decompress(data), dtype=np.uint8)
     else:
         raise ValueError(f"Unsupported compression type: {compression}")
 
@@ -698,6 +729,8 @@ def compress(data: bytes, compression: int, level: int = 6) -> bytes:
         return lzw_compress(data)
     elif compression == COMPRESSION_PACKBITS:
         return packbits_compress(data)
+    elif compression == COMPRESSION_ZSTD:
+        return zstd_compress(data, level)
     elif compression == COMPRESSION_JPEG:
         raise ValueError("Use jpeg_compress() directly with width/height/samples")
     else:

@@ -11,6 +11,7 @@ from ._compression import (
     COMPRESSION_LZW,
     COMPRESSION_NONE,
     COMPRESSION_PACKBITS,
+    COMPRESSION_ZSTD,
     compress,
     predictor_encode,
 )
@@ -59,6 +60,7 @@ def _compression_tag(compression_name: str) -> int:
         'deflate': COMPRESSION_DEFLATE,
         'lzw': COMPRESSION_LZW,
         'packbits': COMPRESSION_PACKBITS,
+        'zstd': COMPRESSION_ZSTD,
     }
     name = compression_name.lower()
     if name not in _map:
