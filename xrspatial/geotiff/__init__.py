@@ -588,14 +588,8 @@ def read_geotiff_gpu(source: str, *,
             return xr.DataArray(arr_gpu, dims=['y', 'x'],
                                 coords=coords, name=name, attrs=attrs)
 
-        # Extract compressed tile bytes
         offsets = ifd.tile_offsets
         byte_counts = ifd.tile_byte_counts
-        compressed_tiles = []
-        for i in range(len(offsets)):
-            compressed_tiles.append(
-                bytes(data[offsets[i]:offsets[i] + byte_counts[i]]))
-
         compression = ifd.compression
         predictor = ifd.predictor
         samples = ifd.samples_per_pixel
@@ -607,17 +601,42 @@ def read_geotiff_gpu(source: str, *,
     finally:
         src.close()
 
-    # GPU decode
+    # GPU decode: try GDS (SSD→GPU direct) first, then CPU mmap path
+    from ._gpu_decode import gpu_decode_tiles_from_file
+    arr_gpu = None
+
     try:
-        arr_gpu = gpu_decode_tiles(
-            compressed_tiles,
+        arr_gpu = gpu_decode_tiles_from_file(
+            source, offsets, byte_counts,
             tw, th, width, height,
             compression, predictor, dtype, samples,
         )
-    except ValueError:
-        # Unsupported compression -- fall back to CPU then transfer
-        arr_cpu, _ = read_to_array(source, overview_level=overview_level)
-        arr_gpu = cupy.asarray(arr_cpu)
+    except Exception:
+        pass
+
+    if arr_gpu is None:
+        # Fallback: extract tiles via CPU mmap, then GPU decode
+        src2 = _FileSource(source)
+        data2 = src2.read_all()
+        try:
+            compressed_tiles = [
+                bytes(data2[offsets[i]:offsets[i] + byte_counts[i]])
+                for i in range(len(offsets))
+            ]
+        finally:
+            src2.close()
+
+    if arr_gpu is None:
+        try:
+            arr_gpu = gpu_decode_tiles(
+                compressed_tiles,
+                tw, th, width, height,
+                compression, predictor, dtype, samples,
+            )
+        except (ValueError, Exception):
+            # Unsupported compression -- fall back to CPU then transfer
+            arr_cpu, _ = read_to_array(source, overview_level=overview_level)
+            arr_gpu = cupy.asarray(arr_cpu)
 
     # Build DataArray
     if name is None:

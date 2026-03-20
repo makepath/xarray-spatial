@@ -673,6 +673,39 @@ def _assemble_tiles_kernel(
 
 
 # ---------------------------------------------------------------------------
+# KvikIO GDS (GPUDirect Storage) -- read file directly to GPU
+# ---------------------------------------------------------------------------
+
+def _try_kvikio_read_tiles(file_path, tile_offsets, tile_byte_counts, tile_bytes):
+    """Read compressed tile bytes directly from SSD to GPU via GDS.
+
+    When kvikio is available and GDS is supported, file data is DMA'd
+    directly from the NVMe drive to GPU VRAM, bypassing CPU entirely.
+    Falls back to None if kvikio is not installed or GDS is not available.
+
+    Returns list of cupy arrays (one per tile) on GPU, or None.
+    """
+    try:
+        import kvikio
+        import cupy
+    except ImportError:
+        return None
+
+    try:
+        d_tiles = []
+        with kvikio.CuFile(file_path, 'r') as f:
+            for off, bc in zip(tile_offsets, tile_byte_counts):
+                buf = cupy.empty(bc, dtype=cupy.uint8)
+                f.pread(buf, file_offset=off)
+                d_tiles.append(buf)
+        return d_tiles
+    except Exception:
+        # GDS not available (no NVMe, no kernel module, etc.)
+        # Fall back to normal CPU read path
+        return None
+
+
+# ---------------------------------------------------------------------------
 # nvCOMP batch decompression (optional, fast path)
 # ---------------------------------------------------------------------------
 
@@ -850,6 +883,175 @@ def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
 # ---------------------------------------------------------------------------
 # High-level GPU decode pipeline
 # ---------------------------------------------------------------------------
+
+def gpu_decode_tiles_from_file(
+    file_path: str,
+    tile_offsets: list | tuple,
+    tile_byte_counts: list | tuple,
+    tile_width: int,
+    tile_height: int,
+    image_width: int,
+    image_height: int,
+    compression: int,
+    predictor: int,
+    dtype: np.dtype,
+    samples: int = 1,
+):
+    """Decode tiles from a file, using GDS if available.
+
+    Tries KvikIO GDS (SSD → GPU direct) first, then falls back to
+    CPU mmap + gpu_decode_tiles.
+    """
+    import cupy
+
+    # Try GDS: read compressed tiles directly from SSD to GPU
+    d_tiles = _try_kvikio_read_tiles(
+        file_path, tile_offsets, tile_byte_counts,
+        tile_width * tile_height * dtype.itemsize * samples)
+
+    if d_tiles is not None:
+        # Tiles are already on GPU as cupy arrays.
+        # Try nvCOMP batch decompress on them directly.
+        tile_bytes = tile_width * tile_height * dtype.itemsize * samples
+
+        if compression in (50000,) and _get_nvcomp() is not None:
+            # ZSTD: nvCOMP can decompress directly from GPU buffers
+            result = _try_nvcomp_from_device_bufs(
+                d_tiles, tile_bytes, compression)
+            if result is not None:
+                decomp_offsets = np.arange(len(d_tiles), dtype=np.int64) * tile_bytes
+                d_decomp = result
+                d_decomp_offsets = cupy.asarray(decomp_offsets)
+                # Apply predictor + assemble (shared code below)
+                return _apply_predictor_and_assemble(
+                    d_decomp, d_decomp_offsets, len(d_tiles),
+                    tile_width, tile_height, image_width, image_height,
+                    predictor, dtype, samples, tile_bytes)
+
+        # GDS read succeeded but nvCOMP can't decompress on GPU,
+        # or it's LZW/deflate. Copy tiles to host and use normal path.
+        compressed_tiles = [t.get().tobytes() for t in d_tiles]
+    else:
+        # No GDS -- read tiles via CPU mmap (caller provides bytes)
+        # This path is used when called from gpu_decode_tiles()
+        return None  # signal caller to use the bytes-based path
+
+    return gpu_decode_tiles(
+        compressed_tiles, tile_width, tile_height,
+        image_width, image_height, compression, predictor, dtype, samples)
+
+
+def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
+    """Run nvCOMP batch decompress on tiles already in GPU memory."""
+    import ctypes
+    import cupy
+
+    lib = _get_nvcomp()
+    if lib is None:
+        return None
+
+    class _NvcompDecompOpts(ctypes.Structure):
+        _fields_ = [('backend', ctypes.c_int), ('reserved', ctypes.c_char * 60)]
+
+    try:
+        n = len(d_tiles)
+        d_decomp_bufs = [cupy.empty(tile_bytes, dtype=cupy.uint8) for _ in range(n)]
+
+        d_comp_ptrs = cupy.array([t.data.ptr for t in d_tiles], dtype=cupy.uint64)
+        d_decomp_ptrs = cupy.array([b.data.ptr for b in d_decomp_bufs], dtype=cupy.uint64)
+        d_comp_sizes = cupy.array([t.size for t in d_tiles], dtype=cupy.uint64)
+        d_buf_sizes = cupy.full(n, tile_bytes, dtype=cupy.uint64)
+        d_actual = cupy.empty(n, dtype=cupy.uint64)
+
+        opts = _NvcompDecompOpts(backend=0, reserved=b'\x00' * 60)
+
+        fn_name = {50000: 'nvcompBatchedZstdDecompressGetTempSizeAsync'}.get(compression)
+        dec_name = {50000: 'nvcompBatchedZstdDecompressAsync'}.get(compression)
+        if fn_name is None:
+            return None
+
+        temp_fn = getattr(lib, fn_name)
+        temp_fn.restype = ctypes.c_int
+        temp_size = ctypes.c_size_t(0)
+        s = temp_fn(n, tile_bytes, opts, ctypes.byref(temp_size), n * tile_bytes)
+        if s != 0:
+            return None
+
+        ts = max(temp_size.value, 1)
+        d_temp = cupy.empty(ts, dtype=cupy.uint8)
+        d_statuses = cupy.zeros(n, dtype=cupy.int32)
+
+        dec_fn = getattr(lib, dec_name)
+        dec_fn.restype = ctypes.c_int
+        s = dec_fn(
+            ctypes.c_void_p(d_comp_ptrs.data.ptr),
+            ctypes.c_void_p(d_comp_sizes.data.ptr),
+            ctypes.c_void_p(d_buf_sizes.data.ptr),
+            ctypes.c_void_p(d_actual.data.ptr),
+            ctypes.c_size_t(n),
+            ctypes.c_void_p(d_temp.data.ptr), ctypes.c_size_t(ts),
+            ctypes.c_void_p(d_decomp_ptrs.data.ptr),
+            opts,
+            ctypes.c_void_p(d_statuses.data.ptr),
+            ctypes.c_void_p(0),
+        )
+        if s != 0:
+            return None
+
+        cupy.cuda.Device().synchronize()
+        if int(cupy.any(d_statuses != 0)):
+            return None
+
+        return cupy.concatenate(d_decomp_bufs)
+    except Exception:
+        return None
+
+
+def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
+                                    tile_width, tile_height,
+                                    image_width, image_height,
+                                    predictor, dtype, samples, tile_bytes):
+    """Apply predictor decode and tile assembly on GPU."""
+    import cupy
+
+    bytes_per_pixel = dtype.itemsize * samples
+
+    if predictor == 2:
+        total_rows = n_tiles * tile_height
+        tpb = min(256, total_rows)
+        bpg = math.ceil(total_rows / tpb)
+        _predictor_decode_kernel[bpg, tpb](
+            d_decomp, tile_width * samples, total_rows, dtype.itemsize * samples)
+        cuda.synchronize()
+    elif predictor == 3:
+        total_rows = n_tiles * tile_height
+        tpb = min(256, total_rows)
+        bpg = math.ceil(total_rows / tpb)
+        d_tmp = cupy.empty_like(d_decomp)
+        _fp_predictor_decode_kernel[bpg, tpb](
+            d_decomp, d_tmp, tile_width * samples, total_rows, dtype.itemsize)
+        cuda.synchronize()
+
+    tiles_across = math.ceil(image_width / tile_width)
+    total_pixels = image_width * image_height
+    d_output = cupy.empty(total_pixels * bytes_per_pixel, dtype=cupy.uint8)
+
+    tpb = 256
+    bpg = math.ceil(total_pixels / tpb)
+    _assemble_tiles_kernel[bpg, tpb](
+        d_decomp, d_decomp_offsets,
+        tile_width, tile_height, bytes_per_pixel,
+        image_width, image_height, tiles_across,
+        d_output,
+    )
+    cuda.synchronize()
+
+    if samples > 1:
+        return d_output.view(dtype=cupy.dtype(dtype)).reshape(
+            image_height, image_width, samples)
+    return d_output.view(dtype=cupy.dtype(dtype)).reshape(
+        image_height, image_width)
+
 
 def gpu_decode_tiles(
     compressed_tiles: list[bytes],
