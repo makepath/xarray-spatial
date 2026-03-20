@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.multispectral import (arvi, ebbi, evi, gci, mndwi, nbr, nbr2, ndmi, ndvi, ndwi,
-                                     savi, sipi, true_color)
+from xrspatial.multispectral import (arvi, bai, ebbi, evi, gci, mndwi, msavi2, nbr, nbr2, ndbi,
+                                     ndmi, ndsi, ndvi, ndwi, osavi, savi, sipi, true_color)
 from xrspatial.tests.general_checks import (create_test_raster, cuda_and_cupy_available,
                                             dask_array_available,
                                             general_output_checks)
@@ -716,3 +716,286 @@ def test_true_color_gpu(random_data, backend):
     np.testing.assert_allclose(
         numpy_result.data, gpu_data, equal_nan=True
     )
+
+
+# NDSI ----------
+@pytest.fixture
+def expected_ndsi():
+    # ndsi = (green - swir1) / (green + swir1)
+    result = np.array(
+        [[np.nan, np.nan, -0.26194495, -0.26206443],
+         [-0.26261762, -0.26020542, -0.25978518, -0.26561797],
+         [-0.25730222, -0.2494394, -0.23911245, -0.2536854],
+         [-0.26400298, -0.24535443, -0.22509761, -0.23552124],
+         [-0.26765746, -0.25924546, -0.24043757, -0.23135419],
+         [-0.26640218, -0.26112, -0.25202343, -0.24712521],
+         [np.nan, -0.26235265, -0.26109785, -0.26053476],
+         [-0.2712647, -0.26619077, -0.2616606, -0.2564316]],
+        dtype=np.float32)
+    return result
+
+
+@pytest.mark.parametrize("backend", ["numpy"])
+def test_ndsi_cpu(green_data, swir1_data, expected_ndsi):
+    result = ndsi(green_data, swir1_data)
+    general_output_checks(green_data, result, expected_ndsi, verify_dtype=True)
+
+
+@dask_array_available
+@pytest.mark.parametrize("backend", ["dask+numpy"])
+def test_ndsi_dask_cpu(green_data, swir1_data, expected_ndsi):
+    result = ndsi(green_data, swir1_data)
+    general_output_checks(green_data, result, expected_ndsi, verify_dtype=True)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_ndsi_uint_dtype(data_uint_dtype_normalized_ratio):
+    band1, band2, expected = data_uint_dtype_normalized_ratio
+    result = ndsi(band1, band2)
+    general_output_checks(band1, result, expected, verify_dtype=True)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+def test_ndsi_gpu(green_data, swir1_data, expected_ndsi):
+    result = ndsi(green_data, swir1_data)
+    general_output_checks(green_data, result, expected_ndsi, verify_dtype=True)
+
+
+# NDBI ----------
+@pytest.fixture
+def expected_ndbi():
+    # ndbi = (swir1 - nir) / (swir1 + nir)
+    # This is the negation of NDMI
+    result = np.array(
+        [[np.nan, np.nan, 0.03177413, 0.05067392],
+         [0.04256495, 0.03022716, 0.02606663, 0.04728937],
+         [0.01537057, -0.00148832, -0.01682979, 0.01257116],
+         [0.04079571, -0.00432691, -0.04505849, -0.02112163],
+         [0.05214949, 0.02953535, -0.01677381, -0.02061706],
+         [0.05897893, 0.03624317, 0.01395517, 0.00948141],
+         [0.06901949, 0.04753435, 0.03501688, 0.031477],
+         [0.07796776, 0.0522614, 0.03560007, 0.02615326]],
+        dtype=np.float32)
+    return result
+
+
+@pytest.mark.parametrize("backend", ["numpy"])
+def test_ndbi_cpu(swir1_data, nir_data, expected_ndbi):
+    result = ndbi(swir1_data, nir_data)
+    general_output_checks(swir1_data, result, expected_ndbi, verify_dtype=True)
+
+
+@dask_array_available
+@pytest.mark.parametrize("backend", ["dask+numpy"])
+def test_ndbi_dask_cpu(swir1_data, nir_data, expected_ndbi):
+    result = ndbi(swir1_data, nir_data)
+    general_output_checks(swir1_data, result, expected_ndbi, verify_dtype=True)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_ndbi_uint_dtype(data_uint_dtype_normalized_ratio):
+    band1, band2, expected = data_uint_dtype_normalized_ratio
+    result = ndbi(band1, band2)
+    general_output_checks(band1, result, expected, verify_dtype=True)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+def test_ndbi_gpu(swir1_data, nir_data, expected_ndbi):
+    result = ndbi(swir1_data, nir_data)
+    general_output_checks(swir1_data, result, expected_ndbi, verify_dtype=True)
+
+
+# BAI ----------
+@pytest.fixture
+def expected_bai():
+    # bai = 1 / ((0.1 - red)^2 + (0.06 - nir)^2)
+    # Test data is in DN (~10000s), so values are very small
+    result = np.array(
+        [[7.3529404e+01, 2.7792613e-09, 2.7054787e-09, 2.5152656e-09],
+         [2.8557849e-09, 2.7959937e-09, 2.6707474e-09, np.nan],
+         [2.7371723e-09, 2.6744016e-09, 2.5038351e-09, 2.4271707e-09],
+         [2.8354468e-09, 2.6310520e-09, 2.4230655e-09, 2.3545275e-09],
+         [2.8594838e-09, 2.7730043e-09, 2.5268809e-09, 2.3337139e-09],
+         [2.9034652e-09, 2.8091214e-09, 2.6725904e-09, 2.4026150e-09],
+         [2.9388227e-09, 2.8624791e-09, 2.7285640e-09, 2.5389413e-09],
+         [2.9447718e-09, 2.8741514e-09, 2.7449920e-09, 2.5835027e-09]],
+        dtype=np.float32)
+    return result
+
+
+@pytest.fixture
+def data_uint_dtype_bai(dtype):
+    red = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
+    nir = xr.DataArray(np.array([[0, 1], [1, 2]], dtype=dtype))
+    # bai = 1 / ((0.1 - red)^2 + (0.06 - nir)^2)
+    result = np.array(
+        [[1.2291054, 0.5904582], [0.5904582, 0.21864615]],
+        dtype=np.float32)
+    return red, nir, result
+
+
+@pytest.mark.parametrize("backend", ["numpy"])
+def test_bai_cpu(red_data, nir_data, expected_bai):
+    result = bai(red_data, nir_data)
+    general_output_checks(red_data, result, expected_bai, verify_dtype=True)
+
+
+@dask_array_available
+@pytest.mark.parametrize("backend", ["dask+numpy"])
+def test_bai_dask_cpu(red_data, nir_data, expected_bai):
+    result = bai(red_data, nir_data)
+    general_output_checks(red_data, result, expected_bai, verify_dtype=True)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_bai_uint_dtype(data_uint_dtype_bai):
+    red_data, nir_data, expected = data_uint_dtype_bai
+    result = bai(red_data, nir_data)
+    general_output_checks(red_data, result, expected, verify_dtype=True)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+def test_bai_gpu(red_data, nir_data, expected_bai):
+    result = bai(red_data, nir_data)
+    general_output_checks(red_data, result, expected_bai, verify_dtype=True)
+
+
+# MSAVI2 ----------
+@pytest.fixture
+def expected_msavi2():
+    # msavi2 = (2*nir + 1 - sqrt((2*nir + 1)^2 - 8*(nir - red))) / 2
+    result = np.array(
+        [[0., 0.35253906, 0.3515625, 0.31054688],
+         [0.3359375, 0.35351562, 0.3544922, np.nan],
+         [0.3701172, 0.38671875, 0.38671875, 0.359375],
+         [0.3388672, 0.38476562, 0.41210938, 0.3828125],
+         [0.328125, 0.3515625, 0.39257812, 0.375],
+         [0.31640625, 0.34472656, 0.3642578, 0.35351562],
+         [0.3076172, 0.33007812, 0.34472656, 0.34570312],
+         [0.296875, 0.33007812, 0.34765625, 0.34765625]],
+        dtype=np.float32)
+    return result
+
+
+@pytest.fixture
+def data_uint_dtype_msavi2(dtype):
+    nir = xr.DataArray(np.array([[2, 3], [1, 4]], dtype=dtype))
+    red = xr.DataArray(np.array([[1, 2], [0, 3]], dtype=dtype))
+    # msavi2 = (2*nir + 1 - sqrt((2*nir + 1)^2 - 8*(nir - red))) / 2
+    result = np.array(
+        [[0.43844724, 0.29843783], [1., 0.22799826]],
+        dtype=np.float32)
+    return nir, red, result
+
+
+@pytest.mark.parametrize("backend", ["numpy"])
+def test_msavi2_cpu(nir_data, red_data, expected_msavi2):
+    result = msavi2(nir_data, red_data)
+    general_output_checks(nir_data, result, expected_msavi2, verify_dtype=True)
+
+
+@dask_array_available
+@pytest.mark.parametrize("backend", ["dask+numpy"])
+def test_msavi2_dask_cpu(nir_data, red_data, expected_msavi2):
+    result = msavi2(nir_data, red_data)
+    general_output_checks(nir_data, result, expected_msavi2, verify_dtype=True)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_msavi2_uint_dtype(data_uint_dtype_msavi2):
+    nir_data, red_data, expected = data_uint_dtype_msavi2
+    result = msavi2(nir_data, red_data)
+    general_output_checks(nir_data, result, expected, verify_dtype=True)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+def test_msavi2_gpu(nir_data, red_data, expected_msavi2):
+    # GPU sqrt has slightly different precision than CPU (~0.002 for
+    # large DN values), so use a looser tolerance.
+    result = msavi2(nir_data, red_data)
+    general_output_checks(nir_data, result, expected_msavi2,
+                          verify_dtype=True, rtol=6e-3)
+
+
+# OSAVI ----------
+@pytest.fixture
+def expected_osavi():
+    # osavi = (nir - red) / (nir + red + 0.16)
+    # With test DN data (~10000s), the 0.16 constant is negligible,
+    # so results are very close to NDVI.
+    result = np.array(
+        [[0., 0.21453223, 0.2136585, 0.18337074],
+         [0.20180285, 0.21460672, 0.2149946, np.nan],
+         [0.22728342, 0.23992033, 0.23989235, 0.21832643],
+         [0.20453371, 0.23730567, 0.25932968, 0.23550221],
+         [0.19620718, 0.21352291, 0.24427226, 0.23029876],
+         [0.1875473, 0.20832887, 0.22248302, 0.21471749],
+         [0.18195164, 0.1977158, 0.20810257, 0.20828208],
+         [0.17405929, 0.1975721, 0.21009867, 0.21029699]],
+        dtype=np.float32)
+    return result
+
+
+@pytest.fixture
+def data_uint_dtype_osavi(dtype):
+    nir = xr.DataArray(np.array([[2, 3], [1, 4]], dtype=dtype))
+    red = xr.DataArray(np.array([[1, 2], [0, 3]], dtype=dtype))
+    # osavi = (nir - red) / (nir + red + 0.16)
+    result = np.array(
+        [[0.3164557, 0.19379845], [0.862069, 0.13966481]],
+        dtype=np.float32)
+    return nir, red, result
+
+
+@pytest.mark.parametrize("backend", ["numpy"])
+def test_osavi_cpu(nir_data, red_data, expected_osavi):
+    result = osavi(nir_data, red_data)
+    general_output_checks(nir_data, result, expected_osavi, verify_dtype=True)
+
+
+@dask_array_available
+@pytest.mark.parametrize("backend", ["dask+numpy"])
+def test_osavi_dask_cpu(nir_data, red_data, expected_osavi):
+    result = osavi(nir_data, red_data)
+    general_output_checks(nir_data, result, expected_osavi, verify_dtype=True)
+
+
+@pytest.mark.parametrize("dtype", ["uint8", "uint16"])
+def test_osavi_uint_dtype(data_uint_dtype_osavi):
+    nir_data, red_data, expected = data_uint_dtype_osavi
+    result = osavi(nir_data, red_data)
+    general_output_checks(nir_data, result, expected, verify_dtype=True)
+
+
+@cuda_and_cupy_available
+@pytest.mark.parametrize("backend", ["cupy", "dask+cupy"])
+def test_osavi_gpu(nir_data, red_data, expected_osavi):
+    result = osavi(nir_data, red_data)
+    general_output_checks(nir_data, result, expected_osavi, verify_dtype=True)
+
+
+# Cross-index consistency checks ----------
+@pytest.mark.parametrize("backend", ["numpy"])
+def test_ndbi_is_negation_of_ndmi(swir1_data, nir_data, qgis_ndmi):
+    # NDBI(swir1, nir) = -NDMI(nir, swir1)
+    result_ndbi = ndbi(swir1_data, nir_data)
+    result_data = result_ndbi.values
+    np.testing.assert_allclose(result_data, -qgis_ndmi, equal_nan=True, rtol=1e-5)
+
+
+@pytest.mark.parametrize("backend", ["numpy"])
+def test_osavi_approaches_ndvi_for_large_dn(nir_data, red_data, qgis_ndvi):
+    # With DN values >> 0.16, OSAVI and NDVI should be nearly identical.
+    # Skip (0,0) where both bands are 0: NDVI=NaN (0/0), OSAVI=0 (0/0.16).
+    result_osavi = osavi(nir_data, red_data)
+    osavi_vals = result_osavi.values
+    ndvi_vals = qgis_ndvi.copy()
+    # Mask out cells where both inputs are zero
+    mask = np.isnan(ndvi_vals) & ~np.isnan(osavi_vals)
+    osavi_vals[mask] = np.nan
+    np.testing.assert_allclose(
+        osavi_vals, ndvi_vals, equal_nan=True, rtol=1e-3)
