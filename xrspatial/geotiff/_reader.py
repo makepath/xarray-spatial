@@ -1,0 +1,491 @@
+"""TIFF/COG reader: tile/strip assembly, windowed reads, HTTP range requests."""
+from __future__ import annotations
+
+import math
+import mmap
+import urllib.request
+
+import numpy as np
+
+from ._compression import (
+    COMPRESSION_NONE,
+    decompress,
+    fp_predictor_decode,
+    predictor_decode,
+)
+from ._dtypes import tiff_dtype_to_numpy
+from ._geotags import GeoInfo, GeoTransform, extract_geo_info
+from ._header import IFD, TIFFHeader, parse_all_ifds, parse_header
+
+
+# ---------------------------------------------------------------------------
+# Data source abstraction
+# ---------------------------------------------------------------------------
+
+class _FileSource:
+    """Local file data source using mmap for zero-copy access."""
+
+    def __init__(self, path: str):
+        self._fh = open(path, 'rb')
+        self._fh.seek(0, 2)
+        self._size = self._fh.tell()
+        self._fh.seek(0)
+        if self._size > 0:
+            self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
+        else:
+            self._mm = None
+
+    def read_range(self, start: int, length: int) -> bytes:
+        if self._mm is not None:
+            return self._mm[start:start + length]
+        return b''
+
+    def read_all(self):
+        """Return mmap object (supports slicing, struct.unpack_from, len)."""
+        if self._mm is not None:
+            return self._mm
+        return b''
+
+    @property
+    def size(self) -> int:
+        return self._size
+
+    def close(self):
+        if self._mm is not None:
+            self._mm.close()
+        self._fh.close()
+
+
+class _HTTPSource:
+    """HTTP data source using range requests."""
+
+    def __init__(self, url: str):
+        self._url = url
+        self._size = None
+
+    def read_range(self, start: int, length: int) -> bytes:
+        end = start + length - 1
+        req = urllib.request.Request(
+            self._url,
+            headers={'Range': f'bytes={start}-{end}'},
+        )
+        with urllib.request.urlopen(req) as resp:
+            return resp.read()
+
+    def read_all(self) -> bytes:
+        with urllib.request.urlopen(self._url) as resp:
+            return resp.read()
+
+    @property
+    def size(self) -> int | None:
+        return self._size
+
+    def close(self):
+        pass
+
+
+def _open_source(source: str):
+    """Open a data source (local file or URL)."""
+    if source.startswith(('http://', 'https://')):
+        return _HTTPSource(source)
+    return _FileSource(source)
+
+
+def _apply_predictor(chunk: np.ndarray, pred: int, width: int,
+                     height: int, bytes_per_sample: int) -> np.ndarray:
+    """Apply the appropriate predictor decode to decompressed data."""
+    if pred == 2:
+        return predictor_decode(chunk, width, height, bytes_per_sample)
+    elif pred == 3:
+        return fp_predictor_decode(chunk, width, height, bytes_per_sample)
+    return chunk
+
+
+# ---------------------------------------------------------------------------
+# Strip reader
+# ---------------------------------------------------------------------------
+
+def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
+                 dtype: np.dtype, window=None) -> np.ndarray:
+    """Read a strip-organized TIFF image.
+
+    Parameters
+    ----------
+    data : bytes
+        Full file data.
+    ifd : IFD
+        Parsed IFD for this image.
+    header : TIFFHeader
+        File header.
+    dtype : np.dtype
+        Output pixel dtype.
+    window : tuple or None
+        (row_start, col_start, row_stop, col_stop) or None for full image.
+
+    Returns
+    -------
+    np.ndarray with shape (height, width) or windowed subset.
+    """
+    width = ifd.width
+    height = ifd.height
+    samples = ifd.samples_per_pixel
+    compression = ifd.compression
+    rps = ifd.rows_per_strip
+    offsets = ifd.strip_offsets
+    byte_counts = ifd.strip_byte_counts
+    pred = ifd.predictor
+    bps = ifd.bits_per_sample
+    if isinstance(bps, tuple):
+        bps = bps[0]
+    bytes_per_sample = bps // 8
+
+    if offsets is None or byte_counts is None:
+        raise ValueError("Missing strip offsets or byte counts")
+
+    # Full image buffer -- every byte is written by strip assembly
+    pixel_bytes = width * height * samples * bytes_per_sample
+    buf = np.empty(pixel_bytes, dtype=np.uint8)
+
+    num_strips = len(offsets)
+    for strip_idx in range(num_strips):
+        strip_row = strip_idx * rps
+        strip_rows = min(rps, height - strip_row)
+        if strip_rows <= 0:
+            continue
+
+        strip_data = data[offsets[strip_idx]:offsets[strip_idx] + byte_counts[strip_idx]]
+        expected = strip_rows * width * samples * bytes_per_sample
+        chunk = decompress(strip_data, compression, expected)
+
+        if pred in (2, 3):
+            # Predictor mutates in-place; copy if the array is read-only
+            if not chunk.flags.writeable:
+                chunk = chunk.copy()
+            chunk = _apply_predictor(chunk, pred, width, strip_rows, bytes_per_sample * samples)
+
+        # Copy into buffer
+        dst_start = strip_row * width * samples * bytes_per_sample
+        copy_len = min(len(chunk), len(buf) - dst_start)
+        if copy_len > 0:
+            buf[dst_start:dst_start + copy_len] = chunk[:copy_len]
+
+    # Reshape to image
+    if samples > 1:
+        result = buf.view(dtype).reshape(height, width, samples)
+    else:
+        result = buf.view(dtype).reshape(height, width)
+
+    if window is not None:
+        r0, c0, r1, c1 = window
+        r0 = max(0, r0)
+        c0 = max(0, c0)
+        r1 = min(height, r1)
+        c1 = min(width, c1)
+        result = result[r0:r1, c0:c1].copy()
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Tile reader
+# ---------------------------------------------------------------------------
+
+def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
+                dtype: np.dtype, window=None) -> np.ndarray:
+    """Read a tile-organized TIFF image.
+
+    Parameters
+    ----------
+    data : bytes
+        Full file data.
+    ifd : IFD
+        Parsed IFD for this image.
+    header : TIFFHeader
+        File header.
+    dtype : np.dtype
+        Output pixel dtype.
+    window : tuple or None
+        (row_start, col_start, row_stop, col_stop) or None for full image.
+
+    Returns
+    -------
+    np.ndarray with shape (height, width) or windowed subset.
+    """
+    width = ifd.width
+    height = ifd.height
+    tw = ifd.tile_width
+    th = ifd.tile_height
+    samples = ifd.samples_per_pixel
+    compression = ifd.compression
+    pred = ifd.predictor
+    bps = ifd.bits_per_sample
+    if isinstance(bps, tuple):
+        bps = bps[0]
+    bytes_per_sample = bps // 8
+
+    offsets = ifd.tile_offsets
+    byte_counts = ifd.tile_byte_counts
+    if offsets is None or byte_counts is None:
+        raise ValueError("Missing tile offsets or byte counts")
+
+    tiles_across = math.ceil(width / tw)
+    tiles_down = math.ceil(height / th)
+
+    # Determine window
+    if window is not None:
+        r0, c0, r1, c1 = window
+        r0 = max(0, r0)
+        c0 = max(0, c0)
+        r1 = min(height, r1)
+        c1 = min(width, c1)
+    else:
+        r0, c0, r1, c1 = 0, 0, height, width
+
+    out_h = r1 - r0
+    out_w = c1 - c0
+
+    # Use np.empty for full-image reads (every pixel written by tile placement),
+    # np.zeros for windowed reads (edge regions may not be covered).
+    _alloc = np.zeros if window is not None else np.empty
+    if samples > 1:
+        result = _alloc((out_h, out_w, samples), dtype=dtype)
+    else:
+        result = _alloc((out_h, out_w), dtype=dtype)
+
+    # Which tiles overlap the window
+    tile_row_start = r0 // th
+    tile_row_end = min(math.ceil(r1 / th), tiles_down)
+    tile_col_start = c0 // tw
+    tile_col_end = min(math.ceil(c1 / tw), tiles_across)
+
+    for tr in range(tile_row_start, tile_row_end):
+        for tc in range(tile_col_start, tile_col_end):
+            tile_idx = tr * tiles_across + tc
+            if tile_idx >= len(offsets):
+                continue
+
+            tile_data = data[offsets[tile_idx]:offsets[tile_idx] + byte_counts[tile_idx]]
+            expected = tw * th * samples * bytes_per_sample
+            chunk = decompress(tile_data, compression, expected)
+
+            if pred in (2, 3):
+                if not chunk.flags.writeable:
+                    chunk = chunk.copy()
+                chunk = _apply_predictor(chunk, pred, tw, th, bytes_per_sample * samples)
+
+            # Reshape tile
+            if samples > 1:
+                tile_pixels = chunk.view(dtype).reshape(th, tw, samples)
+            else:
+                tile_pixels = chunk.view(dtype).reshape(th, tw)
+
+            # Compute overlap between tile and window
+            tile_r0 = tr * th
+            tile_c0 = tc * tw
+            tile_r1 = tile_r0 + th
+            tile_c1 = tile_c0 + tw
+
+            # Source region within the tile
+            src_r0 = max(r0 - tile_r0, 0)
+            src_c0 = max(c0 - tile_c0, 0)
+            src_r1 = min(r1 - tile_r0, th)
+            src_c1 = min(c1 - tile_c0, tw)
+
+            # Dest region within the output
+            dst_r0 = max(tile_r0 - r0, 0)
+            dst_c0 = max(tile_c0 - c0, 0)
+            dst_r1 = dst_r0 + (src_r1 - src_r0)
+            dst_c1 = dst_c0 + (src_c1 - src_c0)
+
+            # Clip to actual image bounds within tile
+            actual_tile_h = min(th, height - tile_r0)
+            actual_tile_w = min(tw, width - tile_c0)
+            src_r1 = min(src_r1, actual_tile_h)
+            src_c1 = min(src_c1, actual_tile_w)
+            dst_r1 = dst_r0 + (src_r1 - src_r0)
+            dst_c1 = dst_c0 + (src_c1 - src_c0)
+
+            if dst_r1 > dst_r0 and dst_c1 > dst_c0:
+                result[dst_r0:dst_r1, dst_c0:dst_c1] = tile_pixels[src_r0:src_r1, src_c0:src_c1]
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# COG HTTP reader
+# ---------------------------------------------------------------------------
+
+def _read_cog_http(url: str, overview_level: int | None = None,
+                   band: int = 0) -> tuple[np.ndarray, GeoInfo]:
+    """Read a COG via HTTP range requests.
+
+    Parameters
+    ----------
+    url : str
+        HTTP(S) URL to the COG file.
+    overview_level : int or None
+        Which overview to read (0 = full res, 1 = first overview, etc.).
+    band : int
+        Band index (0-based, for multi-band files).
+
+    Returns
+    -------
+    (array, geo_info) tuple
+    """
+    source = _HTTPSource(url)
+
+    # Initial fetch: get header + IFDs (COGs put metadata first)
+    header_bytes = source.read_range(0, 16384)
+
+    header = parse_header(header_bytes)
+    ifds = parse_all_ifds(header_bytes, header)
+
+    # If we didn't get all IFDs, try a larger fetch
+    if len(ifds) == 0:
+        header_bytes = source.read_range(0, 65536)
+        ifds = parse_all_ifds(header_bytes, header)
+
+    if len(ifds) == 0:
+        raise ValueError("No IFDs found in COG")
+
+    # Select IFD based on overview level
+    ifd_idx = 0
+    if overview_level is not None:
+        ifd_idx = min(overview_level, len(ifds) - 1)
+    ifd = ifds[ifd_idx]
+
+    bps = ifd.bits_per_sample
+    if isinstance(bps, tuple):
+        bps = bps[0]
+    dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
+    geo_info = extract_geo_info(ifd, header_bytes, header.byte_order)
+
+    # COGs are tiled -- fetch individual tiles
+    if not ifd.is_tiled:
+        # Fallback: fetch entire file
+        all_data = source.read_all()
+        arr = _read_strips(all_data, ifd, header, dtype)
+        source.close()
+        return arr, geo_info
+
+    width = ifd.width
+    height = ifd.height
+    tw = ifd.tile_width
+    th = ifd.tile_height
+    samples = ifd.samples_per_pixel
+    compression = ifd.compression
+    pred = ifd.predictor
+    bytes_per_sample = bps // 8
+
+    offsets = ifd.tile_offsets
+    byte_counts = ifd.tile_byte_counts
+
+    tiles_across = math.ceil(width / tw)
+    tiles_down = math.ceil(height / th)
+
+    if samples > 1:
+        result = np.empty((height, width, samples), dtype=dtype)
+    else:
+        result = np.empty((height, width), dtype=dtype)
+
+    for tr in range(tiles_down):
+        for tc in range(tiles_across):
+            tile_idx = tr * tiles_across + tc
+            if tile_idx >= len(offsets):
+                continue
+
+            off = offsets[tile_idx]
+            bc = byte_counts[tile_idx]
+            if bc == 0:
+                continue
+
+            tile_data = source.read_range(off, bc)
+            expected = tw * th * samples * bytes_per_sample
+            chunk = decompress(tile_data, compression, expected)
+
+            if pred in (2, 3):
+                if not chunk.flags.writeable:
+                    chunk = chunk.copy()
+                chunk = _apply_predictor(chunk, pred, tw, th, bytes_per_sample * samples)
+
+            if samples > 1:
+                tile_pixels = chunk.view(dtype).reshape(th, tw, samples)
+            else:
+                tile_pixels = chunk.view(dtype).reshape(th, tw)
+
+            # Place tile
+            y0 = tr * th
+            x0 = tc * tw
+            y1 = min(y0 + th, height)
+            x1 = min(x0 + tw, width)
+            actual_h = y1 - y0
+            actual_w = x1 - x0
+            result[y0:y1, x0:x1] = tile_pixels[:actual_h, :actual_w]
+
+    source.close()
+    return result, geo_info
+
+
+# ---------------------------------------------------------------------------
+# Main read function
+# ---------------------------------------------------------------------------
+
+def read_to_array(source: str, *, window=None, overview_level: int | None = None,
+                  band: int = 0) -> tuple[np.ndarray, GeoInfo]:
+    """Read a GeoTIFF/COG to a numpy array.
+
+    Parameters
+    ----------
+    source : str
+        File path or URL.
+    window : tuple or None
+        (row_start, col_start, row_stop, col_stop).
+    overview_level : int or None
+        Overview level (0 = full res).
+    band : int
+        Band index for multi-band files.
+
+    Returns
+    -------
+    (np.ndarray, GeoInfo) tuple
+    """
+    is_url = source.startswith(('http://', 'https://'))
+
+    if is_url:
+        return _read_cog_http(source, overview_level=overview_level, band=band)
+
+    # Local file: mmap for zero-copy access
+    src = _FileSource(source)
+    data = src.read_all()
+
+    try:
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+
+        if len(ifds) == 0:
+            raise ValueError("No IFDs found in TIFF file")
+
+        # Select IFD
+        ifd_idx = 0
+        if overview_level is not None:
+            ifd_idx = min(overview_level, len(ifds) - 1)
+        ifd = ifds[ifd_idx]
+
+        bps = ifd.bits_per_sample
+        if isinstance(bps, tuple):
+            bps = bps[0]
+        dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
+        geo_info = extract_geo_info(ifd, data, header.byte_order)
+
+        if ifd.is_tiled:
+            arr = _read_tiles(data, ifd, header, dtype, window)
+        else:
+            arr = _read_strips(data, ifd, header, dtype, window)
+
+        # For multi-band with band selection, extract single band
+        if arr.ndim == 3 and ifd.samples_per_pixel > 1:
+            arr = arr[:, :, band]
+    finally:
+        src.close()
+
+    return arr, geo_info
