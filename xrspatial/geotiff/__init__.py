@@ -20,8 +20,7 @@ from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 from ._reader import read_to_array
 from ._writer import write
 
-__all__ = ['read_geotiff', 'write_geotiff', 'open_cog', 'read_geotiff_dask',
-           'read_vrt', 'write_vrt', 'read_geotiff_gpu', 'write_geotiff_gpu']
+__all__ = ['read_geotiff', 'write_geotiff', 'write_vrt']
 
 
 def _wkt_to_epsg(wkt_or_proj: str) -> int | None:

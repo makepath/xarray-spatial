@@ -141,18 +141,22 @@ Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 |:-----|:------------|:-----:|:----:|:--------:|:-------------:|:-----:|
 | [read_geotiff](xrspatial/geotiff/__init__.py) | Read GeoTIFF / COG / VRT | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
 | [write_geotiff](xrspatial/geotiff/__init__.py) | Write DataArray as GeoTIFF / COG | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
-| [read_vrt / write_vrt](xrspatial/geotiff/__init__.py) | Virtual Raster Table mosaic | ✅️ | ✅️ | ✅️ | ✅️ | |
+| [write_vrt](xrspatial/geotiff/__init__.py) | Generate VRT mosaic from GeoTIFFs | ✅️ | | | | |
 
 `read_geotiff` and `write_geotiff` auto-dispatch to the correct backend:
 
 ```python
-read_geotiff('dem.tif')                         # NumPy
-read_geotiff('dem.tif', chunks=512)             # Dask
-read_geotiff('dem.tif', gpu=True)               # CuPy (nvCOMP + GDS)
-read_geotiff('dem.tif', gpu=True, chunks=512)   # Dask + CuPy
+read_geotiff('dem.tif')                              # NumPy
+read_geotiff('dem.tif', chunks=512)                  # Dask
+read_geotiff('dem.tif', gpu=True)                    # CuPy (nvCOMP + GDS)
+read_geotiff('dem.tif', gpu=True, chunks=512)        # Dask + CuPy
+read_geotiff('https://example.com/cog.tif')          # HTTP COG
+read_geotiff('s3://bucket/dem.tif')                  # Cloud (S3/GCS/Azure)
+read_geotiff('mosaic.vrt')                           # VRT mosaic (auto-detected)
 
-write_geotiff(cupy_array, 'out.tif')            # auto-detects GPU
-write_geotiff(data, 'out.tif', gpu=True)        # force GPU compress
+write_geotiff(cupy_array, 'out.tif')                 # auto-detects GPU
+write_geotiff(data, 'out.tif', gpu=True)             # force GPU compress
+write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
 ```
 
 **Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow), uncompressed
