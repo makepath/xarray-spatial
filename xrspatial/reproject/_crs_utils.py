@@ -35,22 +35,27 @@ def _detect_source_crs(raster):
     """Auto-detect the CRS of a DataArray.
 
     Fallback chain:
-    1. ``raster.rio.crs`` (rioxarray)
-    2. ``raster.attrs['crs']``
-    3. None
+    1. ``raster.attrs['crs']`` (EPSG int from xrspatial.geotiff)
+    2. ``raster.attrs['crs_wkt']`` (WKT string from xrspatial.geotiff)
+    3. ``raster.rio.crs`` (rioxarray, if installed)
+    4. None
     """
-    # rioxarray
+    # attrs (xrspatial.geotiff convention)
+    crs_attr = raster.attrs.get('crs')
+    if crs_attr is not None:
+        return _resolve_crs(crs_attr)
+
+    crs_wkt = raster.attrs.get('crs_wkt')
+    if crs_wkt is not None:
+        return _resolve_crs(crs_wkt)
+
+    # rioxarray fallback
     try:
         rio_crs = raster.rio.crs
         if rio_crs is not None:
             return _resolve_crs(rio_crs)
     except Exception:
         pass
-
-    # attrs
-    crs_attr = raster.attrs.get('crs')
-    if crs_attr is not None:
-        return _resolve_crs(crs_attr)
 
     return None
 
