@@ -163,7 +163,419 @@ def _lzw_decode_tiles_kernel(
 
 
 # Type aliases for Numba CUDA local arrays
-from numba import int32 as numba_int32, uint8 as numba_uint8
+from numba import int32 as numba_int32, uint8 as numba_uint8, int64 as numba_int64
+
+
+# ---------------------------------------------------------------------------
+# Deflate/inflate decode kernel -- one thread block per tile
+# ---------------------------------------------------------------------------
+
+# Static tables for deflate
+# Length base values and extra bits for codes 257-285
+_LEN_BASE = np.array([
+    3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31,
+    35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258,
+], dtype=np.int32)
+_LEN_EXTRA = np.array([
+    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2,
+    3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
+], dtype=np.int32)
+# Distance base values and extra bits for codes 0-29
+_DIST_BASE = np.array([
+    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193,
+    257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193,
+    12289, 16385, 24577,
+], dtype=np.int32)
+_DIST_EXTRA = np.array([
+    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
+    7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13,
+], dtype=np.int32)
+# Code length code order (for dynamic Huffman)
+_CL_ORDER = np.array([
+    16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
+], dtype=np.int32)
+
+
+@cuda.jit(device=True)
+def _inflate_read_bits(src, src_start, src_len, bit_pos, n):
+    """Read n bits (LSB-first) from the source stream."""
+    val = numba_int32(0)
+    for i in range(n):
+        byte_idx = (bit_pos[0] >> 3)
+        bit_idx = bit_pos[0] & 7
+        if byte_idx < src_len:
+            val |= numba_int32((src[src_start + byte_idx] >> bit_idx) & 1) << i
+        bit_pos[0] += 1
+    return val
+
+
+@cuda.jit(device=True)
+def _inflate_build_table(lengths, n_codes, table, max_bits,
+                          overflow_codes, overflow_lens, n_overflow):
+    """Build a Huffman decode table from code lengths.
+
+    Codes <= max_bits go into the fast table: table[reversed_code] = (sym << 5) | length.
+    Codes > max_bits go into overflow arrays for slow-path decode.
+    """
+    bl_count = cuda.local.array(16, dtype=numba_int32)
+    for i in range(16):
+        bl_count[i] = 0
+    for i in range(n_codes):
+        bl_count[lengths[i]] += 1
+    bl_count[0] = 0
+
+    next_code = cuda.local.array(16, dtype=numba_int32)
+    code = 0
+    for bits in range(1, 16):
+        code = (code + bl_count[bits - 1]) << 1
+        next_code[bits] = code
+
+    for i in range(1 << max_bits):
+        table[i] = 0
+
+    n_overflow[0] = 0
+
+    for sym in range(n_codes):
+        ln = lengths[sym]
+        if ln == 0:
+            continue
+        code = next_code[ln]
+        next_code[ln] += 1
+
+        # Reverse the code bits for LSB-first lookup
+        rev = numba_int32(0)
+        c = code
+        for b in range(ln):
+            rev = (rev << 1) | (c & 1)
+            c >>= 1
+
+        if ln <= max_bits:
+            # Fast table: fill all entries that share this prefix
+            # (entries where the extra high bits vary)
+            step = 1 << ln
+            idx = rev
+            while idx < (1 << max_bits):
+                table[idx] = numba_int32((sym << 5) | ln)
+                idx += step
+        else:
+            # Overflow: store reversed code + length for slow-path scan
+            oi = n_overflow[0]
+            if oi < overflow_codes.shape[0]:
+                overflow_codes[oi] = rev
+                overflow_lens[oi] = (sym << 5) | ln
+                n_overflow[0] = oi + 1
+
+
+@cuda.jit(device=True)
+def _inflate_decode_symbol(src, src_start, src_len, bit_pos, table, max_bits,
+                            overflow_codes, overflow_lens, n_overflow):
+    """Decode one Huffman symbol. Fast table for short codes, overflow scan for long."""
+    # Peek 15 bits (max deflate code length)
+    peek = numba_int64(0)
+    for i in range(15):
+        byte_idx = (bit_pos[0] + i) >> 3
+        bit_idx = (bit_pos[0] + i) & 7
+        if byte_idx < src_len:
+            peek |= numba_int64((src[src_start + byte_idx] >> bit_idx) & 1) << i
+
+    # Try fast table first
+    entry = table[numba_int32(peek) & ((1 << max_bits) - 1)]
+    length = entry & 0x1F
+    symbol = entry >> 5
+
+    if length > 0:
+        bit_pos[0] += length
+        return symbol
+
+    # Slow path: scan overflow entries
+    for i in range(n_overflow[0]):
+        ov_rev = overflow_codes[i]
+        ov_entry = overflow_lens[i]
+        ov_len = ov_entry & 0x1F
+        ov_sym = ov_entry >> 5
+        mask = (1 << ov_len) - 1
+        if (numba_int32(peek) & mask) == ov_rev:
+            bit_pos[0] += ov_len
+            return ov_sym
+
+    # Should not happen with valid data -- advance 1 bit to avoid freeze
+    bit_pos[0] += 1
+    return 0
+
+
+@cuda.jit
+def _inflate_tiles_kernel(
+    compressed_buf,
+    tile_offsets,
+    tile_sizes,
+    decompressed_buf,
+    tile_out_offsets,
+    tile_out_sizes,
+    tile_actual_sizes,
+    d_len_base, d_len_extra, d_dist_base, d_dist_extra, d_cl_order,
+):
+    """Inflate (decompress) one zlib-wrapped deflate tile per thread block.
+
+    Thread 0 in each block does the sequential inflate.
+    Huffman table in shared memory.
+    """
+    tile_idx = cuda.blockIdx.x
+    if tile_idx >= tile_offsets.shape[0]:
+        return
+    if cuda.threadIdx.x != 0:
+        return
+
+    src_start = tile_offsets[tile_idx]
+    src_len = tile_sizes[tile_idx]
+    dst_start = tile_out_offsets[tile_idx]
+    dst_len = tile_out_sizes[tile_idx]
+
+    if src_len <= 2:
+        tile_actual_sizes[tile_idx] = 0
+        return
+
+    # Skip 2-byte zlib header (0x78 0x9C or similar)
+    bit_pos = cuda.local.array(1, dtype=numba_int64)
+    bit_pos[0] = numba_int64(16)  # skip 2 bytes = 16 bits
+
+    out_pos = 0
+
+    # Two-level Huffman tables:
+    # Level 1 (shared memory, fast): 10-bit lookup (1024 entries)
+    # Level 2 (local memory, slow): overflow for codes > 10 bits
+    MAX_LIT_BITS = 10
+    MAX_DIST_BITS = 10
+    lit_table = cuda.shared.array(1024, dtype=numba_int32)
+    dist_table = cuda.shared.array(1024, dtype=numba_int32)
+
+    # Overflow arrays for long codes (rarely > 50 entries)
+    lit_ov_codes = cuda.local.array(64, dtype=numba_int32)
+    lit_ov_lens = cuda.local.array(64, dtype=numba_int32)
+    n_lit_ov = cuda.local.array(1, dtype=numba_int32)
+    dist_ov_codes = cuda.local.array(32, dtype=numba_int32)
+    dist_ov_lens = cuda.local.array(32, dtype=numba_int32)
+    n_dist_ov = cuda.local.array(1, dtype=numba_int32)
+    n_lit_ov[0] = 0
+    n_dist_ov[0] = 0
+
+    code_lengths = cuda.local.array(320, dtype=numba_int32)
+
+    while True:
+        # Read block header
+        bfinal = _inflate_read_bits(compressed_buf, src_start, src_len, bit_pos, 1)
+        btype = _inflate_read_bits(compressed_buf, src_start, src_len, bit_pos, 2)
+
+        if btype == 0:
+            # Stored block: align to byte boundary, read len
+            bit_pos[0] = ((bit_pos[0] + 7) >> 3) << 3
+            ln = _inflate_read_bits(compressed_buf, src_start, src_len, bit_pos, 16)
+            _inflate_read_bits(compressed_buf, src_start, src_len, bit_pos, 16)  # nlen (complement)
+            for i in range(ln):
+                byte_idx = bit_pos[0] >> 3
+                if byte_idx < src_len and out_pos < dst_len:
+                    decompressed_buf[dst_start + out_pos] = compressed_buf[src_start + byte_idx]
+                    out_pos += 1
+                bit_pos[0] += 8
+
+        elif btype == 1:
+            # Fixed Huffman: build fixed tables
+            for i in range(144):
+                code_lengths[i] = 8
+            for i in range(144, 256):
+                code_lengths[i] = 9
+            for i in range(256, 280):
+                code_lengths[i] = 7
+            for i in range(280, 288):
+                code_lengths[i] = 8
+            _inflate_build_table(code_lengths, 288, lit_table, MAX_LIT_BITS,
+                                 lit_ov_codes, lit_ov_lens, n_lit_ov)
+
+            for i in range(30):
+                code_lengths[i] = 5
+            _inflate_build_table(code_lengths, 30, dist_table, MAX_DIST_BITS,
+                                 dist_ov_codes, dist_ov_lens, n_dist_ov)
+
+            # Decode symbols
+            while True:
+                sym = _inflate_decode_symbol(
+                    compressed_buf, src_start, src_len, bit_pos,
+                    lit_table, MAX_LIT_BITS,
+                    lit_ov_codes, lit_ov_lens, n_lit_ov)
+
+                if sym < 256:
+                    if out_pos < dst_len:
+                        decompressed_buf[dst_start + out_pos] = numba_uint8(sym)
+                        out_pos += 1
+                elif sym == 256:
+                    break
+                else:
+                    # Length-distance pair
+                    li = sym - 257
+                    if li < 29:
+                        length = d_len_base[li]
+                        if d_len_extra[li] > 0:
+                            length += _inflate_read_bits(
+                                compressed_buf, src_start, src_len,
+                                bit_pos, d_len_extra[li])
+                    else:
+                        length = 3
+
+                    dsym = _inflate_decode_symbol(
+                        compressed_buf, src_start, src_len, bit_pos,
+                        dist_table, MAX_DIST_BITS,
+                        dist_ov_codes, dist_ov_lens, n_dist_ov)
+                    if dsym < 30:
+                        dist = d_dist_base[dsym]
+                        if d_dist_extra[dsym] > 0:
+                            dist += _inflate_read_bits(
+                                compressed_buf, src_start, src_len,
+                                bit_pos, d_dist_extra[dsym])
+                    else:
+                        dist = 1
+
+                    # Copy from output window
+                    for i in range(length):
+                        if out_pos < dst_len and dist <= out_pos:
+                            decompressed_buf[dst_start + out_pos] = \
+                                decompressed_buf[dst_start + out_pos - dist]
+                            out_pos += 1
+
+        elif btype == 2:
+            # Dynamic Huffman: read code length codes, then build tables
+            hlit = _inflate_read_bits(compressed_buf, src_start, src_len, bit_pos, 5) + 257
+            hdist = _inflate_read_bits(compressed_buf, src_start, src_len, bit_pos, 5) + 1
+            hclen = _inflate_read_bits(compressed_buf, src_start, src_len, bit_pos, 4) + 4
+
+            # Read code length code lengths
+            cl_lengths = cuda.local.array(19, dtype=numba_int32)
+            for i in range(19):
+                cl_lengths[i] = 0
+            for i in range(hclen):
+                cl_lengths[d_cl_order[i]] = _inflate_read_bits(
+                    compressed_buf, src_start, src_len, bit_pos, 3)
+
+            # Build code length Huffman table (small: 7 bits max, no overflow)
+            cl_table = cuda.local.array(128, dtype=numba_int32)
+            cl_ov_c = cuda.local.array(4, dtype=numba_int32)
+            cl_ov_l = cuda.local.array(4, dtype=numba_int32)
+            n_cl_ov = cuda.local.array(1, dtype=numba_int32)
+            n_cl_ov[0] = 0
+            _inflate_build_table(cl_lengths, 19, cl_table, 7,
+                                 cl_ov_c, cl_ov_l, n_cl_ov)
+
+            # Decode literal/length + distance code lengths
+            total_codes = hlit + hdist
+            idx = 0
+            for i in range(320):
+                code_lengths[i] = 0
+
+            while idx < total_codes:
+                sym = numba_int32(0)
+                # Decode from cl_table (7-bit)
+                peek = numba_int32(0)
+                for b in range(7):
+                    byte_idx = (bit_pos[0] + b) >> 3
+                    bit_idx = (bit_pos[0] + b) & 7
+                    if byte_idx < src_len:
+                        peek |= numba_int32(
+                            (compressed_buf[src_start + byte_idx] >> bit_idx) & 1) << b
+                entry = cl_table[peek & 127]
+                ln = entry & 0x1F
+                sym = entry >> 5
+                if ln > 0:
+                    bit_pos[0] += ln
+                else:
+                    bit_pos[0] += 1
+
+                if sym < 16:
+                    code_lengths[idx] = sym
+                    idx += 1
+                elif sym == 16:
+                    rep = _inflate_read_bits(
+                        compressed_buf, src_start, src_len, bit_pos, 2) + 3
+                    val = code_lengths[idx - 1] if idx > 0 else 0
+                    for _ in range(rep):
+                        if idx < 320:
+                            code_lengths[idx] = val
+                            idx += 1
+                elif sym == 17:
+                    rep = _inflate_read_bits(
+                        compressed_buf, src_start, src_len, bit_pos, 3) + 3
+                    for _ in range(rep):
+                        if idx < 320:
+                            code_lengths[idx] = 0
+                            idx += 1
+                elif sym == 18:
+                    rep = _inflate_read_bits(
+                        compressed_buf, src_start, src_len, bit_pos, 7) + 11
+                    for _ in range(rep):
+                        if idx < 320:
+                            code_lengths[idx] = 0
+                            idx += 1
+
+            # Build lit/len and dist tables
+            n_lit_ov[0] = 0
+            _inflate_build_table(code_lengths, hlit, lit_table, MAX_LIT_BITS,
+                                 lit_ov_codes, lit_ov_lens, n_lit_ov)
+            # Distance codes start at code_lengths[hlit]
+            dist_lengths = cuda.local.array(32, dtype=numba_int32)
+            for i in range(32):
+                dist_lengths[i] = 0
+            for i in range(hdist):
+                dist_lengths[i] = code_lengths[hlit + i]
+            n_dist_ov[0] = 0
+            _inflate_build_table(dist_lengths, hdist, dist_table, MAX_DIST_BITS,
+                                 dist_ov_codes, dist_ov_lens, n_dist_ov)
+
+            # Decode symbols (same loop as fixed Huffman)
+            while True:
+                sym = _inflate_decode_symbol(
+                    compressed_buf, src_start, src_len, bit_pos,
+                    lit_table, MAX_LIT_BITS,
+                    lit_ov_codes, lit_ov_lens, n_lit_ov)
+
+                if sym < 256:
+                    if out_pos < dst_len:
+                        decompressed_buf[dst_start + out_pos] = numba_uint8(sym)
+                        out_pos += 1
+                elif sym == 256:
+                    break
+                else:
+                    li = sym - 257
+                    if li < 29:
+                        length = d_len_base[li]
+                        if d_len_extra[li] > 0:
+                            length += _inflate_read_bits(
+                                compressed_buf, src_start, src_len,
+                                bit_pos, d_len_extra[li])
+                    else:
+                        length = 3
+
+                    dsym = _inflate_decode_symbol(
+                        compressed_buf, src_start, src_len, bit_pos,
+                        dist_table, MAX_DIST_BITS,
+                        dist_ov_codes, dist_ov_lens, n_dist_ov)
+                    if dsym < 30:
+                        dist = d_dist_base[dsym]
+                        if d_dist_extra[dsym] > 0:
+                            dist += _inflate_read_bits(
+                                compressed_buf, src_start, src_len,
+                                bit_pos, d_dist_extra[dsym])
+                    else:
+                        dist = 1
+
+                    for i in range(length):
+                        if out_pos < dst_len and dist <= out_pos:
+                            decompressed_buf[dst_start + out_pos] = \
+                                decompressed_buf[dst_start + out_pos - dist]
+                            out_pos += 1
+        else:
+            break  # invalid block type
+
+        if bfinal:
+            break
+
+    tile_actual_sizes[tile_idx] = out_pos
 
 
 # ---------------------------------------------------------------------------
@@ -338,8 +750,44 @@ def gpu_decode_tiles(
         )
         cuda.synchronize()
 
+    elif compression in (8, 32946):  # Deflate / Adobe Deflate
+        comp_sizes = [len(t) for t in compressed_tiles]
+        comp_offsets = np.zeros(n_tiles, dtype=np.int64)
+        for i in range(1, n_tiles):
+            comp_offsets[i] = comp_offsets[i - 1] + comp_sizes[i - 1]
+        total_comp = sum(comp_sizes)
+
+        comp_buf_host = np.empty(total_comp, dtype=np.uint8)
+        for i, tile in enumerate(compressed_tiles):
+            comp_buf_host[comp_offsets[i]:comp_offsets[i] + comp_sizes[i]] = \
+                np.frombuffer(tile, dtype=np.uint8)
+
+        d_comp = cupy.asarray(comp_buf_host)
+        d_comp_offsets = cupy.asarray(comp_offsets)
+        d_comp_sizes = cupy.asarray(np.array(comp_sizes, dtype=np.int64))
+
+        decomp_offsets = np.arange(n_tiles, dtype=np.int64) * tile_bytes
+        d_decomp = cupy.zeros(n_tiles * tile_bytes, dtype=cupy.uint8)
+        d_decomp_offsets = cupy.asarray(decomp_offsets)
+        d_tile_sizes = cupy.full(n_tiles, tile_bytes, dtype=cupy.int64)
+        d_actual_sizes = cupy.zeros(n_tiles, dtype=cupy.int64)
+
+        # Static deflate tables on device
+        d_len_base = cupy.asarray(_LEN_BASE)
+        d_len_extra = cupy.asarray(_LEN_EXTRA)
+        d_dist_base = cupy.asarray(_DIST_BASE)
+        d_dist_extra = cupy.asarray(_DIST_EXTRA)
+        d_cl_order = cupy.asarray(_CL_ORDER)
+
+        # One thread block per tile, thread 0 does the inflate
+        _inflate_tiles_kernel[n_tiles, 32](
+            d_comp, d_comp_offsets, d_comp_sizes,
+            d_decomp, d_decomp_offsets, d_tile_sizes, d_actual_sizes,
+            d_len_base, d_len_extra, d_dist_base, d_dist_extra, d_cl_order,
+        )
+        cuda.synchronize()
+
     elif compression == 1:  # Uncompressed
-        # Just copy raw tile bytes to device
         raw_host = np.empty(n_tiles * tile_bytes, dtype=np.uint8)
         for i, tile in enumerate(compressed_tiles):
             start = i * tile_bytes
@@ -351,7 +799,7 @@ def gpu_decode_tiles(
 
     else:
         raise ValueError(
-            f"GPU decode only supports LZW (5) and uncompressed (1), "
+            f"GPU decode supports LZW (5), deflate (8), and uncompressed (1), "
             f"got compression={compression}")
 
     # Apply predictor on GPU
