@@ -429,6 +429,225 @@ class TestGeoKeys:
 # Cloud storage (fsspec) support
 # -----------------------------------------------------------------------
 
+# -----------------------------------------------------------------------
+# VRT (Virtual Raster Table) support
+# -----------------------------------------------------------------------
+
+class TestVRT:
+
+    def _write_tile(self, tmp_path, name, data):
+        """Write a GeoTIFF tile and return its path."""
+        from xrspatial.geotiff._writer import write
+        path = str(tmp_path / name)
+        write(data, path, compression='none', tiled=False)
+        return path
+
+    def _make_mosaic_vrt(self, tmp_path, tile_paths, tile_shapes,
+                         tile_offsets, width, height, dtype='Float32'):
+        """Build a VRT XML that mosaics multiple tiles."""
+        lines = [
+            f'<VRTDataset rasterXSize="{width}" rasterYSize="{height}">',
+            '  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>',
+            f'  <VRTRasterBand dataType="{dtype}" band="1">',
+        ]
+        for path, (th, tw), (yo, xo) in zip(tile_paths, tile_shapes, tile_offsets):
+            lines.append('    <SimpleSource>')
+            lines.append(f'      <SourceFilename relativeToVRT="1">{os.path.basename(path)}</SourceFilename>')
+            lines.append('      <SourceBand>1</SourceBand>')
+            lines.append(f'      <SrcRect xOff="0" yOff="0" xSize="{tw}" ySize="{th}"/>')
+            lines.append(f'      <DstRect xOff="{xo}" yOff="{yo}" xSize="{tw}" ySize="{th}"/>')
+            lines.append('    </SimpleSource>')
+        lines.append('  </VRTRasterBand>')
+        lines.append('</VRTDataset>')
+
+        vrt_path = str(tmp_path / 'mosaic.vrt')
+        with open(vrt_path, 'w') as f:
+            f.write('\n'.join(lines))
+        return vrt_path
+
+    def test_single_tile_vrt(self, tmp_path):
+        """VRT with one source tile reads correctly."""
+        arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+        tile_path = self._write_tile(tmp_path, 'tile.tif', arr)
+
+        vrt_path = self._make_mosaic_vrt(
+            tmp_path,
+            [tile_path], [(4, 4)], [(0, 0)],
+            width=4, height=4,
+        )
+
+        da = read_geotiff(vrt_path)
+        np.testing.assert_array_equal(da.values, arr)
+
+    def test_2x1_mosaic(self, tmp_path):
+        """VRT that tiles two images side-by-side."""
+        left = np.arange(16, dtype=np.float32).reshape(4, 4)
+        right = np.arange(16, 32, dtype=np.float32).reshape(4, 4)
+        lpath = self._write_tile(tmp_path, 'left.tif', left)
+        rpath = self._write_tile(tmp_path, 'right.tif', right)
+
+        vrt_path = self._make_mosaic_vrt(
+            tmp_path,
+            [lpath, rpath], [(4, 4), (4, 4)], [(0, 0), (0, 4)],
+            width=8, height=4,
+        )
+
+        da = read_geotiff(vrt_path)
+        assert da.shape == (4, 8)
+        np.testing.assert_array_equal(da.values[:, :4], left)
+        np.testing.assert_array_equal(da.values[:, 4:], right)
+
+    def test_2x2_mosaic(self, tmp_path):
+        """VRT that tiles four images in a 2x2 grid."""
+        tiles = []
+        paths = []
+        offsets = []
+        for r in range(2):
+            for c in range(2):
+                base = (r * 2 + c) * 16
+                arr = np.arange(base, base + 16, dtype=np.float32).reshape(4, 4)
+                name = f'tile_{r}_{c}.tif'
+                paths.append(self._write_tile(tmp_path, name, arr))
+                tiles.append(arr)
+                offsets.append((r * 4, c * 4))
+
+        vrt_path = self._make_mosaic_vrt(
+            tmp_path,
+            paths, [(4, 4)] * 4, offsets,
+            width=8, height=8,
+        )
+
+        da = read_geotiff(vrt_path)
+        assert da.shape == (8, 8)
+        # Check each quadrant
+        np.testing.assert_array_equal(da.values[0:4, 0:4], tiles[0])
+        np.testing.assert_array_equal(da.values[0:4, 4:8], tiles[1])
+        np.testing.assert_array_equal(da.values[4:8, 0:4], tiles[2])
+        np.testing.assert_array_equal(da.values[4:8, 4:8], tiles[3])
+
+    def test_windowed_vrt_read(self, tmp_path):
+        """Windowed read of a VRT mosaic."""
+        left = np.arange(16, dtype=np.float32).reshape(4, 4)
+        right = np.arange(16, 32, dtype=np.float32).reshape(4, 4)
+        lpath = self._write_tile(tmp_path, 'left.tif', left)
+        rpath = self._write_tile(tmp_path, 'right.tif', right)
+
+        vrt_path = self._make_mosaic_vrt(
+            tmp_path,
+            [lpath, rpath], [(4, 4), (4, 4)], [(0, 0), (0, 4)],
+            width=8, height=4,
+        )
+
+        # Window spanning both tiles
+        da = read_geotiff(vrt_path, window=(1, 2, 3, 6))
+        assert da.shape == (2, 4)
+        expected = np.hstack([left, right])[1:3, 2:6]
+        np.testing.assert_array_equal(da.values, expected)
+
+    def test_vrt_with_crs(self, tmp_path):
+        """VRT with SRS tag populates CRS in attrs."""
+        arr = np.ones((4, 4), dtype=np.float32)
+        tile_path = self._write_tile(tmp_path, 'tile.tif', arr)
+
+        vrt_xml = (
+            '<VRTDataset rasterXSize="4" rasterYSize="4">\n'
+            '  <SRS>EPSG:4326</SRS>\n'
+            '  <GeoTransform>-120.0, 0.001, 0.0, 45.0, 0.0, -0.001</GeoTransform>\n'
+            '  <VRTRasterBand dataType="Float32" band="1">\n'
+            '    <SimpleSource>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            '      <SourceBand>1</SourceBand>\n'
+            '      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+            '      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
+            '    </SimpleSource>\n'
+            '  </VRTRasterBand>\n'
+            '</VRTDataset>\n'
+        )
+        vrt_path = str(tmp_path / 'crs.vrt')
+        with open(vrt_path, 'w') as f:
+            f.write(vrt_xml)
+
+        da = read_geotiff(vrt_path)
+        assert da.attrs.get('crs_wkt') == 'EPSG:4326'
+        assert len(da.coords['x']) == 4
+        assert len(da.coords['y']) == 4
+
+    def test_vrt_nodata(self, tmp_path):
+        """VRT NoDataValue is stored in attrs."""
+        arr = np.array([[1, 2], [3, -9999]], dtype=np.float32)
+        tile_path = self._write_tile(tmp_path, 'tile.tif', arr)
+
+        vrt_xml = (
+            '<VRTDataset rasterXSize="2" rasterYSize="2">\n'
+            '  <VRTRasterBand dataType="Float32" band="1">\n'
+            '    <NoDataValue>-9999</NoDataValue>\n'
+            '    <SimpleSource>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            '      <SourceBand>1</SourceBand>\n'
+            '      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            '      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            '    </SimpleSource>\n'
+            '  </VRTRasterBand>\n'
+            '</VRTDataset>\n'
+        )
+        vrt_path = str(tmp_path / 'nodata.vrt')
+        with open(vrt_path, 'w') as f:
+            f.write(vrt_xml)
+
+        da = read_geotiff(vrt_path)
+        assert da.attrs.get('nodata') == -9999.0
+
+    def test_read_vrt_function(self, tmp_path):
+        """read_vrt() works directly."""
+        from xrspatial.geotiff import read_vrt
+        arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+        tile_path = self._write_tile(tmp_path, 'tile.tif', arr)
+
+        vrt_path = self._make_mosaic_vrt(
+            tmp_path,
+            [tile_path], [(4, 4)], [(0, 0)],
+            width=4, height=4,
+        )
+
+        da = read_vrt(vrt_path)
+        assert da.name == 'mosaic'
+        np.testing.assert_array_equal(da.values, arr)
+
+    def test_vrt_parser(self):
+        """VRT XML parser extracts all fields correctly."""
+        from xrspatial.geotiff._vrt import parse_vrt
+
+        xml = (
+            '<VRTDataset rasterXSize="100" rasterYSize="200">\n'
+            '  <SRS>EPSG:32610</SRS>\n'
+            '  <GeoTransform>500000, 30, 0, 4500000, 0, -30</GeoTransform>\n'
+            '  <VRTRasterBand dataType="UInt16" band="1">\n'
+            '    <NoDataValue>0</NoDataValue>\n'
+            '    <SimpleSource>\n'
+            '      <SourceFilename relativeToVRT="0">/data/tile.tif</SourceFilename>\n'
+            '      <SourceBand>1</SourceBand>\n'
+            '      <SrcRect xOff="10" yOff="20" xSize="80" ySize="160"/>\n'
+            '      <DstRect xOff="0" yOff="0" xSize="80" ySize="160"/>\n'
+            '    </SimpleSource>\n'
+            '  </VRTRasterBand>\n'
+            '</VRTDataset>\n'
+        )
+        vrt = parse_vrt(xml)
+        assert vrt.width == 100
+        assert vrt.height == 200
+        assert vrt.crs_wkt == 'EPSG:32610'
+        assert vrt.geo_transform == (500000.0, 30.0, 0.0, 4500000.0, 0.0, -30.0)
+        assert len(vrt.bands) == 1
+        assert vrt.bands[0].dtype == np.uint16
+        assert vrt.bands[0].nodata == 0.0
+        assert len(vrt.bands[0].sources) == 1
+        src = vrt.bands[0].sources[0]
+        assert src.filename == '/data/tile.tif'
+        assert src.src_rect.x_off == 10
+
+
+import os
+
 class TestCloudStorage:
 
     def test_cloud_scheme_detection(self):

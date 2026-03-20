@@ -20,7 +20,8 @@ from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 from ._reader import read_to_array
 from ._writer import write
 
-__all__ = ['read_geotiff', 'write_geotiff', 'open_cog', 'read_geotiff_dask']
+__all__ = ['read_geotiff', 'write_geotiff', 'open_cog', 'read_geotiff_dask',
+           'read_vrt']
 
 
 def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
@@ -102,12 +103,15 @@ def read_geotiff(source: str, *, window=None,
                  overview_level: int | None = None,
                  band: int | None = None,
                  name: str | None = None) -> xr.DataArray:
-    """Read a GeoTIFF file into an xarray.DataArray.
+    """Read a GeoTIFF or VRT file into an xarray.DataArray.
+
+    VRT files (.vrt extension) are automatically detected and assembled
+    from their source GeoTIFFs.
 
     Parameters
     ----------
     source : str
-        File path or HTTP URL.
+        File path, HTTP URL, or cloud URI (s3://, gs://, az://).
     window : tuple or None
         (row_start, col_start, row_stop, col_stop) for windowed reading.
     overview_level : int or None
@@ -122,6 +126,10 @@ def read_geotiff(source: str, *, window=None,
     xr.DataArray
         2D DataArray with y/x coordinates and geo attributes.
     """
+    # Auto-detect VRT files
+    if source.lower().endswith('.vrt'):
+        return read_vrt(source, window=window, band=band, name=name)
+
     arr, geo_info = read_to_array(
         source, window=window,
         overview_level=overview_level, band=band,
@@ -484,6 +492,78 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                     arr[mask] = np.nan
         return arr
     return _read()
+
+
+def read_vrt(source: str, *, window=None,
+             band: int | None = None,
+             name: str | None = None) -> xr.DataArray:
+    """Read a GDAL Virtual Raster Table (.vrt) into an xarray.DataArray.
+
+    The VRT's source GeoTIFFs are read via windowed reads and assembled
+    into a single array.
+
+    Parameters
+    ----------
+    source : str
+        Path to the .vrt file.
+    window : tuple or None
+        (row_start, col_start, row_stop, col_stop) for windowed reading.
+    band : int or None
+        Band index (0-based). None returns all bands.
+    name : str or None
+        Name for the DataArray.
+
+    Returns
+    -------
+    xr.DataArray
+    """
+    from ._vrt import read_vrt as _read_vrt_internal
+
+    arr, vrt = _read_vrt_internal(source, window=window, band=band)
+
+    if name is None:
+        import os
+        name = os.path.splitext(os.path.basename(source))[0]
+
+    # Build coordinates from GeoTransform
+    gt = vrt.geo_transform
+    if gt is not None:
+        origin_x, res_x, _, origin_y, _, res_y = gt
+        if window is not None:
+            r0, c0, r1, c1 = window
+            r0 = max(0, r0)
+            c0 = max(0, c0)
+        else:
+            r0, c0 = 0, 0
+        height, width = arr.shape[:2]
+        x = np.arange(width, dtype=np.float64) * res_x + origin_x + (c0 + 0.5) * res_x
+        y = np.arange(height, dtype=np.float64) * res_y + origin_y + (r0 + 0.5) * res_y
+        coords = {'y': y, 'x': x}
+    else:
+        coords = {}
+
+    attrs = {}
+
+    # CRS from VRT
+    if vrt.crs_wkt:
+        epsg = _wkt_to_epsg(vrt.crs_wkt)
+        if epsg is not None:
+            attrs['crs'] = epsg
+        attrs['crs_wkt'] = vrt.crs_wkt
+
+    # Nodata from first band
+    if vrt.bands:
+        nodata = vrt.bands[0].nodata
+        if nodata is not None:
+            attrs['nodata'] = nodata
+
+    if arr.ndim == 3:
+        dims = ['y', 'x', 'band']
+        coords['band'] = np.arange(arr.shape[2])
+    else:
+        dims = ['y', 'x']
+
+    return xr.DataArray(arr, dims=dims, coords=coords, name=name, attrs=attrs)
 
 
 def plot_geotiff(da: xr.DataArray, **kwargs):
