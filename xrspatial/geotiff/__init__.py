@@ -135,6 +135,16 @@ def read_geotiff(source: str, *, window=None,
     if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
         attrs['raster_type'] = 'point'
 
+    # Resolution / DPI metadata
+    if geo_info.x_resolution is not None:
+        attrs['x_resolution'] = geo_info.x_resolution
+    if geo_info.y_resolution is not None:
+        attrs['y_resolution'] = geo_info.y_resolution
+    if geo_info.resolution_unit is not None:
+        _unit_names = {1: 'none', 2: 'inch', 3: 'centimeter'}
+        attrs['resolution_unit'] = _unit_names.get(
+            geo_info.resolution_unit, str(geo_info.resolution_unit))
+
     # Attach palette colormap for indexed-color TIFFs
     if geo_info.colormap is not None:
         try:
@@ -219,6 +229,9 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     geo_transform = None
     epsg = crs
     raster_type = RASTER_PIXEL_IS_AREA
+    x_res = None
+    y_res = None
+    res_unit = None
 
     if isinstance(data, xr.DataArray):
         arr = data.values
@@ -230,6 +243,13 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
             nodata = data.attrs.get('nodata')
         if data.attrs.get('raster_type') == 'point':
             raster_type = RASTER_PIXEL_IS_POINT
+        # Resolution / DPI from attrs
+        x_res = data.attrs.get('x_resolution')
+        y_res = data.attrs.get('y_resolution')
+        unit_str = data.attrs.get('resolution_unit')
+        if unit_str is not None:
+            _unit_ids = {'none': 1, 'inch': 2, 'centimeter': 3}
+            res_unit = _unit_ids.get(str(unit_str), None)
     else:
         arr = np.asarray(data)
 
@@ -249,6 +269,9 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         overview_levels=overview_levels,
         overview_resampling=overview_resampling,
         raster_type=raster_type,
+        x_resolution=x_res,
+        y_resolution=y_res,
+        resolution_unit=res_unit,
     )
 
 

@@ -63,6 +63,9 @@ class GeoInfo:
     raster_type: int = RASTER_PIXEL_IS_AREA
     nodata: float | None = None
     colormap: list | None = None  # list of (R, G, B, A) float tuples, or None
+    x_resolution: float | None = None
+    y_resolution: float | None = None
+    resolution_unit: int | None = None  # 1=none, 2=inch, 3=cm
     geokeys: dict[int, int | float | str] = field(default_factory=dict)
 
 
@@ -267,6 +270,9 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         raster_type=int(raster_type) if isinstance(raster_type, (int, float)) else RASTER_PIXEL_IS_AREA,
         nodata=nodata,
         colormap=colormap,
+        x_resolution=ifd.x_resolution,
+        y_resolution=ifd.y_resolution,
+        resolution_unit=ifd.resolution_unit,
         geokeys=geokeys,
     )
 

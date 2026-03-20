@@ -17,6 +17,7 @@ from ._compression import (
 )
 from ._dtypes import (
     DOUBLE,
+    RATIONAL,
     SHORT,
     LONG,
     ASCII,
@@ -42,6 +43,9 @@ from ._header import (
     TAG_STRIP_OFFSETS,
     TAG_ROWS_PER_STRIP,
     TAG_STRIP_BYTE_COUNTS,
+    TAG_X_RESOLUTION,
+    TAG_Y_RESOLUTION,
+    TAG_RESOLUTION_UNIT,
     TAG_TILE_WIDTH,
     TAG_TILE_LENGTH,
     TAG_TILE_OFFSETS,
@@ -154,6 +158,16 @@ def _make_overview(arr: np.ndarray, method: str = 'mean') -> np.ndarray:
 # Tag serialization
 # ---------------------------------------------------------------------------
 
+def _float_to_rational(val):
+    """Convert a float to a TIFF RATIONAL (numerator, denominator) pair."""
+    if val == int(val):
+        return (int(val), 1)
+    # Use a denominator of 10000 for reasonable precision
+    den = 10000
+    num = int(round(val * den))
+    return (num, den)
+
+
 def _serialize_tag_value(type_id, count, values):
     """Serialize tag values to bytes."""
     if type_id == ASCII:
@@ -168,6 +182,16 @@ def _serialize_tag_value(type_id, count, values):
         if isinstance(values, (list, tuple)):
             return struct.pack(f'{BO}{count}I', *values)
         return struct.pack(f'{BO}I', values)
+    elif type_id == RATIONAL:
+        # RATIONAL = two LONGs (numerator, denominator) per value
+        if isinstance(values, (list, tuple)) and isinstance(values[0], (list, tuple)):
+            parts = []
+            for num, den in values:
+                parts.extend([int(num), int(den)])
+            return struct.pack(f'{BO}{count * 2}I', *parts)
+        else:
+            num, den = _float_to_rational(float(values))
+            return struct.pack(f'{BO}II', num, den)
     elif type_id == DOUBLE:
         if isinstance(values, (list, tuple)):
             return struct.pack(f'{BO}{count}d', *values)
@@ -387,7 +411,10 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
                    crs_epsg: int | None,
                    nodata,
                    is_cog: bool = False,
-                   raster_type: int = 1) -> bytes:
+                   raster_type: int = 1,
+                   x_resolution: float | None = None,
+                   y_resolution: float | None = None,
+                   resolution_unit: int | None = None) -> bytes:
     """Assemble a complete TIFF file.
 
     Parameters
@@ -454,6 +481,14 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
 
         if pred_val != 1:
             tags.append((TAG_PREDICTOR, SHORT, 1, pred_val))
+
+        # Resolution / DPI tags
+        if x_resolution is not None:
+            tags.append((TAG_X_RESOLUTION, RATIONAL, 1, x_resolution))
+        if y_resolution is not None:
+            tags.append((TAG_Y_RESOLUTION, RATIONAL, 1, y_resolution))
+        if resolution_unit is not None:
+            tags.append((TAG_RESOLUTION_UNIT, SHORT, 1, resolution_unit))
 
         if tiled:
             tags.append((TAG_TILE_WIDTH, SHORT, 1, tile_size))
@@ -665,7 +700,10 @@ def write(data: np.ndarray, path: str, *,
           cog: bool = False,
           overview_levels: list[int] | None = None,
           overview_resampling: str = 'mean',
-          raster_type: int = 1) -> None:
+          raster_type: int = 1,
+          x_resolution: float | None = None,
+          y_resolution: float | None = None,
+          resolution_unit: int | None = None) -> None:
     """Write a numpy array as a GeoTIFF or COG.
 
     Parameters
@@ -734,6 +772,8 @@ def write(data: np.ndarray, path: str, *,
         w, h, data.dtype, comp_tag, predictor, tiled, tile_size,
         parts, geo_transform, crs_epsg, nodata, is_cog=cog,
         raster_type=raster_type,
+        x_resolution=x_resolution, y_resolution=y_resolution,
+        resolution_unit=resolution_unit,
     )
 
     # Write to a temp file then atomically rename, so concurrent writes to

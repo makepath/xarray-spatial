@@ -24,7 +24,10 @@ TAG_STRIP_OFFSETS = 273
 TAG_SAMPLES_PER_PIXEL = 277
 TAG_ROWS_PER_STRIP = 278
 TAG_STRIP_BYTE_COUNTS = 279
+TAG_X_RESOLUTION = 282
+TAG_Y_RESOLUTION = 283
 TAG_PLANAR_CONFIG = 284
+TAG_RESOLUTION_UNIT = 296
 TAG_PREDICTOR = 317
 TAG_TILE_WIDTH = 322
 TAG_TILE_LENGTH = 323
@@ -158,6 +161,23 @@ class IFD:
     @property
     def planar_config(self) -> int:
         return self.get_value(TAG_PLANAR_CONFIG, 1)
+
+    @property
+    def x_resolution(self) -> float | None:
+        """XResolution tag (282), or None if absent."""
+        v = self.get_value(TAG_X_RESOLUTION)
+        return float(v) if v is not None else None
+
+    @property
+    def y_resolution(self) -> float | None:
+        """YResolution tag (283), or None if absent."""
+        v = self.get_value(TAG_Y_RESOLUTION)
+        return float(v) if v is not None else None
+
+    @property
+    def resolution_unit(self) -> int | None:
+        """ResolutionUnit tag (296): 1=none, 2=inch, 3=cm. None if absent."""
+        return self.get_value(TAG_RESOLUTION_UNIT)
 
     @property
     def colormap(self) -> tuple | None:

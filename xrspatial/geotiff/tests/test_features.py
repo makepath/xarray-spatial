@@ -257,6 +257,73 @@ class TestZstd:
 
 
 # -----------------------------------------------------------------------
+# Resolution / DPI tags
+# -----------------------------------------------------------------------
+
+class TestResolution:
+
+    def test_write_read_dpi(self, tmp_path):
+        """Resolution tags round-trip through write and read."""
+        arr = np.ones((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'dpi.tif')
+        write(arr, path, compression='none', tiled=False,
+              x_resolution=300.0, y_resolution=300.0, resolution_unit=2)
+
+        da = read_geotiff(path)
+        assert da.attrs['x_resolution'] == pytest.approx(300.0, rel=0.01)
+        assert da.attrs['y_resolution'] == pytest.approx(300.0, rel=0.01)
+        assert da.attrs['resolution_unit'] == 'inch'
+
+    def test_write_read_cm(self, tmp_path):
+        """Centimeter resolution unit."""
+        arr = np.ones((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'dpi_cm.tif')
+        write(arr, path, compression='none', tiled=False,
+              x_resolution=118.0, y_resolution=118.0, resolution_unit=3)
+
+        da = read_geotiff(path)
+        assert da.attrs['x_resolution'] == pytest.approx(118.0, rel=0.01)
+        assert da.attrs['resolution_unit'] == 'centimeter'
+
+    def test_no_resolution_no_attrs(self, tmp_path):
+        """Files without resolution tags don't get resolution attrs."""
+        arr = np.ones((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'no_dpi.tif')
+        write(arr, path, compression='none', tiled=False)
+
+        da = read_geotiff(path)
+        assert 'x_resolution' not in da.attrs
+        assert 'y_resolution' not in da.attrs
+        assert 'resolution_unit' not in da.attrs
+
+    def test_dataarray_attrs_round_trip(self, tmp_path):
+        """Resolution attrs on DataArray are preserved through write/read."""
+        da = xr.DataArray(
+            np.ones((4, 4), dtype=np.float32),
+            dims=['y', 'x'],
+            attrs={'x_resolution': 72.0, 'y_resolution': 72.0,
+                   'resolution_unit': 'inch'},
+        )
+        path = str(tmp_path / 'da_dpi.tif')
+        write_geotiff(da, path, compression='none')
+
+        result = read_geotiff(path)
+        assert result.attrs['x_resolution'] == pytest.approx(72.0, rel=0.01)
+        assert result.attrs['y_resolution'] == pytest.approx(72.0, rel=0.01)
+        assert result.attrs['resolution_unit'] == 'inch'
+
+    def test_unit_none(self, tmp_path):
+        """ResolutionUnit=1 (no unit) round-trips as 'none'."""
+        arr = np.ones((4, 4), dtype=np.float32)
+        path = str(tmp_path / 'no_unit.tif')
+        write(arr, path, compression='none', tiled=False,
+              x_resolution=1.0, y_resolution=1.0, resolution_unit=1)
+
+        da = read_geotiff(path)
+        assert da.attrs['resolution_unit'] == 'none'
+
+
+# -----------------------------------------------------------------------
 # Overview resampling methods
 # -----------------------------------------------------------------------
 
