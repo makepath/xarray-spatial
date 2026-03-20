@@ -379,6 +379,44 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 | [Rescale](xrspatial/normalize.py) | Min-max normalization to a target range (default [0, 1]) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Standardize](xrspatial/normalize.py) | Z-score normalization (subtract mean, divide by std) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
 
+-----------
+
+### **GeoTIFF / COG I/O**
+
+Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
+
+| Name | Description | NumPy | Dask | CuPy GPU | Cloud |
+|:-----|:------------|:-----:|:----:|:--------:|:-----:|
+| [read_geotiff](xrspatial/geotiff/__init__.py) | Read GeoTIFF / COG to DataArray | ✅️ | ✅️ | ✅️ | ✅️ |
+| [write_geotiff](xrspatial/geotiff/__init__.py) | Write DataArray as GeoTIFF / COG | ✅️ | | | ✅️ |
+| [read_geotiff_gpu](xrspatial/geotiff/__init__.py) | GPU-accelerated read (nvCOMP + GDS) | | | ✅️ | |
+| [read_vrt / write_vrt](xrspatial/geotiff/__init__.py) | Virtual Raster Table mosaic | ✅️ | | | |
+| [open_cog](xrspatial/geotiff/__init__.py) | HTTP range-request COG reader | ✅️ | | | |
+
+**Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow), uncompressed
+
+**GPU decompression:** Deflate and ZSTD via nvCOMP batch API; LZW via Numba CUDA kernels
+
+**Features:**
+- Tiled, stripped, BigTIFF, multi-band (RGB/RGBA), sub-byte (1/2/4/12-bit)
+- Predictors: horizontal differencing (pred=2), floating-point (pred=3)
+- GeoKeys: EPSG, WKT/PROJ (via pyproj), citations, units, ellipsoid, vertical CRS
+- Metadata: nodata masking, palette colormaps, DPI/resolution, GDALMetadata XML, arbitrary tag preservation
+- Cloud storage: S3 (`s3://`), GCS (`gs://`), Azure (`az://`) via fsspec
+- GPUDirect Storage: SSD→GPU direct DMA via KvikIO (optional)
+- Thread-safe mmap reads, atomic writes, HTTP connection reuse (urllib3)
+- Overview generation: mean, nearest, min, max, median, mode, cubic
+- Planar config, big-endian byte swap, PixelIsArea/PixelIsPoint
+
+**GPU read performance** (read + slope, A6000, nvCOMP):
+
+| Size | Deflate GPU | Deflate CPU | Speedup |
+|:-----|:-----------:|:-----------:|:-------:|
+| 8192x8192 | 769ms | 1364ms | 1.8x |
+| 16384x16384 | 2417ms | 5788ms | 2.4x |
+
+-----------
+
 #### Usage
 
 ##### Quick Start
@@ -386,12 +424,11 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 Importing `xrspatial` registers an `.xrs` accessor on DataArrays and Datasets, giving you tab-completable access to every spatial operation:
 
 ```python
-import numpy as np
-import xarray as xr
 import xrspatial
+from xrspatial.geotiff import read_geotiff
 
-# Create or load a raster
-elevation = xr.DataArray(np.random.rand(100, 100) * 1000, dims=['y', 'x'])
+# Read a GeoTIFF (no GDAL required)
+elevation = read_geotiff('dem.tif')
 
 # Surface analysis — call operations directly on the DataArray
 slope = elevation.xrs.slope()
@@ -449,20 +486,27 @@ Check out the user guide [here](/examples/user_guide/).
 
 #### Dependencies
 
-`xarray-spatial` currently depends on Datashader, but will soon be updated to depend only on `xarray` and `numba`, while still being able to make use of Datashader output when available.
+**Core:** numpy, numba, scipy, xarray, matplotlib, zstandard
+
+**Optional:**
+- `pyproj` — WKT/PROJ CRS resolution
+- `cupy` — GPU acceleration
+- `dask` — out-of-core processing
+- `libnvcomp` — GPU batch decompression (deflate, ZSTD)
+- `kvikio` — GPUDirect Storage (SSD → GPU)
+- `fsspec` + `s3fs`/`gcsfs`/`adlfs` — cloud storage
 
 ![title](img/dependencies.svg)
 
 #### Notes on GDAL
 
-Within the Python ecosystem, many geospatial libraries interface with the GDAL C++ library for raster and vector input, output, and analysis (e.g. rasterio, rasterstats, geopandas). GDAL is robust, performant, and has decades of great work behind it. For years, off-loading expensive computations to the C/C++ level in this way has been a key performance strategy for Python libraries (obviously...Python itself is implemented in C!).
+`xarray-spatial` does not depend on GDAL. The built-in GeoTIFF/COG reader and writer (`xrspatial.geotiff`) handles raster I/O natively using only numpy, numba, and the standard library. This means:
 
-However, wrapping GDAL has a few drawbacks for Python developers and data scientists:
-- GDAL can be a pain to build / install.
-- GDAL is hard for Python developers/analysts to extend, because it requires understanding multiple languages.
-- GDAL's data structures are defined at the C/C++ level, which constrains how they can be accessed from Python.
+- **Zero GDAL installation hassle.** `pip install xarray-spatial` gets you everything needed to read and write GeoTIFFs, COGs, and VRT files.
+- **Pure Python, fully extensible.** All codec, header parsing, and metadata code is readable Python/Numba, not wrapped C/C++.
+- **GPU-accelerated reads.** With optional nvCOMP, compressed tiles decompress directly on the GPU via CUDA -- something GDAL cannot do.
 
-With the introduction of projects like Numba, Python gained new ways to provide high-performance code directly in Python, without depending on or being constrained by separate C/C++ extensions. `xarray-spatial` implements algorithms using Numba and Dask, making all of its source code available as pure Python without any "black box" barriers that obscure what is going on and prevent full optimization. Projects can make use of the functionality provided by `xarray-spatial` where available, while still using GDAL where required for other tasks.
+The native reader is pixel-exact against rasterio/GDAL across Landsat 8, Copernicus DEM, USGS 1-arc-second, and USGS 1-meter DEMs. For uncompressed files it reads 5-7x faster than rioxarray; for compressed COGs it is comparable or faster with GPU acceleration.
 
 #### Citation
 Cite this code:
