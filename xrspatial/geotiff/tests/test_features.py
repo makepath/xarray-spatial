@@ -2140,7 +2140,7 @@ class TestPalette:
         assert da.dtype == np.uint8
         np.testing.assert_array_equal(da.values, pixels)
 
-        # Should have a cmap in attrs
+        # Should have cmap and colormap_rgba in attrs
         assert 'cmap' in da.attrs
         assert 'colormap_rgba' in da.attrs
 
