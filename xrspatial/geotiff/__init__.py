@@ -20,8 +20,7 @@ from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 from ._reader import read_to_array
 from ._writer import write
 
-__all__ = ['read_geotiff', 'write_geotiff', 'open_cog', 'read_geotiff_dask',
-           'plot_geotiff']
+__all__ = ['read_geotiff', 'write_geotiff', 'open_cog', 'read_geotiff_dask']
 
 
 def _geo_to_coords(geo_info, height: int, width: int) -> dict:
@@ -381,30 +380,8 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
 
 
 def plot_geotiff(da: xr.DataArray, **kwargs):
-    """Plot a DataArray read from a GeoTIFF, using its embedded colormap if present.
+    """Plot a DataArray using its embedded colormap if present.
 
-    For palette/indexed-color TIFFs, the TIFF's color table is used
-    automatically. For other TIFFs, falls through to xarray's default plot.
-
-    Parameters
-    ----------
-    da : xr.DataArray
-        DataArray from read_geotiff.
-    **kwargs
-        Additional keyword arguments passed to da.plot().
-
-    Returns
-    -------
-    matplotlib artist (from da.plot())
+    Deprecated: use ``da.xrs.plot()`` instead.
     """
-    cmap = da.attrs.get('cmap')
-    if cmap is not None and 'cmap' not in kwargs:
-        from matplotlib.colors import BoundaryNorm
-        n_colors = len(cmap.colors)
-        # Build a BoundaryNorm that maps integer index i to palette[i]
-        boundaries = np.arange(n_colors + 1) - 0.5
-        norm = BoundaryNorm(boundaries, n_colors)
-        kwargs.setdefault('cmap', cmap)
-        kwargs.setdefault('norm', norm)
-        kwargs.setdefault('add_colorbar', True)
-    return da.plot(**kwargs)
+    return da.xrs.plot(**kwargs)

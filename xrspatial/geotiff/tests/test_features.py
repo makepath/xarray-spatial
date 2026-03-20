@@ -920,11 +920,11 @@ class TestPalette:
         assert cmap(0)[:3] == pytest.approx((1.0, 0.0, 0.0), abs=0.01)
         assert cmap(1 / 255)[:3] == pytest.approx((0.0, 1.0, 0.0), abs=0.01)
 
-    def test_plot_geotiff_with_palette(self, tmp_path):
-        """plot_geotiff() uses the embedded colormap."""
+    def test_xrs_plot_with_palette(self, tmp_path):
+        """da.xrs.plot() uses the embedded colormap."""
         import matplotlib
-        matplotlib.use('Agg')  # non-interactive backend for tests
-        from xrspatial.geotiff import plot_geotiff
+        matplotlib.use('Agg')
+        import xrspatial.accessor  # register .xrs accessor
 
         palette = [
             (65535, 0, 0),
@@ -941,7 +941,42 @@ class TestPalette:
             f.write(tiff_data)
 
         da = read_geotiff(path)
-        # Should not raise
+        artist = da.xrs.plot()
+        assert artist is not None
+        import matplotlib.pyplot as plt
+        plt.close('all')
+
+    def test_xrs_plot_no_palette(self, tmp_path):
+        """da.xrs.plot() falls through to normal plot for non-palette data."""
+        import matplotlib
+        matplotlib.use('Agg')
+        import xrspatial.accessor
+
+        arr = np.random.RandomState(42).rand(4, 4).astype(np.float32)
+        path = str(tmp_path / 'no_palette.tif')
+        write(arr, path, compression='none', tiled=False)
+
+        da = read_geotiff(path)
+        artist = da.xrs.plot()
+        assert artist is not None
+        import matplotlib.pyplot as plt
+        plt.close('all')
+
+    def test_plot_geotiff_deprecated(self, tmp_path):
+        """plot_geotiff still works as deprecated wrapper."""
+        import matplotlib
+        matplotlib.use('Agg')
+        import xrspatial.accessor
+        from xrspatial.geotiff import plot_geotiff
+
+        palette = [(65535, 0, 0), (0, 65535, 0)] + [(0, 0, 0)] * 254
+        pixels = np.array([[0, 1], [1, 0]], dtype=np.uint8)
+        tiff_data = _make_palette_tiff(2, 2, 8, pixels, palette)
+        path = str(tmp_path / 'deprecated.tif')
+        with open(path, 'wb') as f:
+            f.write(tiff_data)
+
+        da = read_geotiff(path)
         artist = plot_geotiff(da)
         assert artist is not None
         import matplotlib.pyplot as plt

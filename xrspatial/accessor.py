@@ -21,6 +21,33 @@ class XrsSpatialDataArrayAccessor:
     def __init__(self, obj):
         self._obj = obj
 
+    # ---- Plot ----
+
+    def plot(self, **kwargs):
+        """Plot the DataArray, using an embedded TIFF colormap if present.
+
+        For palette/indexed-color GeoTIFFs (read via ``read_geotiff``),
+        the TIFF's color table is applied automatically with correct
+        normalization.  For all other DataArrays, falls through to the
+        standard ``da.plot()``.
+
+        Usage::
+
+            da = read_geotiff('landcover.tif')
+            da.xrs.plot()  # palette colors used automatically
+        """
+        import numpy as np
+        cmap = self._obj.attrs.get('cmap')
+        if cmap is not None and 'cmap' not in kwargs:
+            from matplotlib.colors import BoundaryNorm
+            n_colors = len(cmap.colors)
+            boundaries = np.arange(n_colors + 1) - 0.5
+            norm = BoundaryNorm(boundaries, n_colors)
+            kwargs.setdefault('cmap', cmap)
+            kwargs.setdefault('norm', norm)
+            kwargs.setdefault('add_colorbar', True)
+        return self._obj.plot(**kwargs)
+
     # ---- Surface ----
 
     def slope(self, **kwargs):
