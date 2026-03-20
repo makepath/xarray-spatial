@@ -821,7 +821,8 @@ def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
             raw_tiles = [t[2:-4] if len(t) > 6 else t for t in compressed_tiles]
             get_temp_fn = 'nvcompBatchedDeflateDecompressGetTempSizeAsync'
             decomp_fn = 'nvcompBatchedDeflateDecompressAsync'
-            opts = _NvcompDeflateDecompOpts(backend=0, sort_before_hw_decompress=0,
+            # backend=2 (CUDA) works on all GPUs; backend=1 (HW) needs Ada/Hopper
+            opts = _NvcompDeflateDecompOpts(backend=2, sort_before_hw_decompress=0,
                                             reserved=b'\x00' * 56)
         elif compression == 50000:  # ZSTD
             raw_tiles = list(compressed_tiles)  # no header stripping
