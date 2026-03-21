@@ -130,136 +130,84 @@ Rasters are regularly gridded datasets like GeoTIFFs, JPGs, and PNGs.
 In the GIS world, rasters are used for representing continuous phenomena (e.g. elevation, rainfall, distance), either directly as numerical values, or as RGB images created for humans to view. Rasters typically have two spatial dimensions, but may have any number of other dimensions (time, type of measurement, etc.)
 
 #### Supported Spatial Functions with Supported Inputs
-
 ✅ = native backend &nbsp;&nbsp; 🔄 = accepted (CPU fallback)
 
--------
-
-### **Classification**
-
-| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Box Plot](xrspatial/classify.py) | Classifies values into bins based on box plot quartile boundaries | PySAL mapclassify | ✅️ |✅ | ✅ | 🔄 |
-| [Equal Interval](xrspatial/classify.py) | Divides the value range into equal-width bins | PySAL mapclassify | ✅️ |✅ | ✅ |✅ |
-| [Head/Tail Breaks](xrspatial/classify.py) | Classifies heavy-tailed distributions using recursive mean splitting | PySAL mapclassify | ✅️ |✅ | 🔄 | 🔄 |
-| [Maximum Breaks](xrspatial/classify.py) | Finds natural groupings by maximizing differences between sorted values | PySAL mapclassify | ✅️ |✅ | 🔄 | 🔄 |
-| [Natural Breaks](xrspatial/classify.py) | Optimizes class boundaries to minimize within-class variance (Jenks) | Jenks 1967, PySAL | ✅️ |✅ | 🔄 | 🔄 |
-| [Percentiles](xrspatial/classify.py) | Assigns classes based on user-defined percentile breakpoints | PySAL mapclassify | ✅️ |✅ | ✅ | 🔄 |
-| [Quantile](xrspatial/classify.py) | Distributes values into classes with equal observation counts | PySAL mapclassify | ✅️ |✅ | ✅ | 🔄 |
-| [Reclassify](xrspatial/classify.py) | Remaps pixel values to new classes using a user-defined lookup | PySAL mapclassify | ✅️ |✅ | ✅ |✅ |
-| [Std Mean](xrspatial/classify.py) | Classifies values by standard deviation intervals from the mean | PySAL mapclassify | ✅️ |✅ | ✅ |✅ |
+[Classification](#classification) · [Diffusion](#diffusion) · [Focal](#focal) · [Morphological](#morphological) · [Fire](#fire) · [Multispectral](#multispectral) · [Multivariate](#multivariate) · [Pathfinding](#pathfinding) · [Proximity](#proximity) · [Reproject / Merge](#reproject--merge) · [Raster / Vector Conversion](#raster--vector-conversion) · [Surface](#surface) · [Hydrology](#hydrology) · [Flood](#flood) · [Interpolation](#interpolation) · [Dasymetric](#dasymetric) · [Zonal](#zonal) · [Utilities](#utilities)
 
 -------
+### **GeoTIFF / COG I/O**
 
-### **Diffusion**
+Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 
-| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Diffuse](xrspatial/diffusion.py) | Runs explicit forward-Euler diffusion on a 2D scalar field | Standard (heat equation) | ✅️ | ✅️ | ✅️ | ✅️ |
+| Name | Description | NumPy | Dask | CuPy GPU | Dask+CuPy GPU | Cloud |
+|:-----|:------------|:-----:|:----:|:--------:|:-------------:|:-----:|
+| [read_geotiff](xrspatial/geotiff/__init__.py) | Read GeoTIFF / COG / VRT | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
+| [write_geotiff](xrspatial/geotiff/__init__.py) | Write DataArray as GeoTIFF / COG | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
+| [write_vrt](xrspatial/geotiff/__init__.py) | Generate VRT mosaic from GeoTIFFs | ✅️ | | | | |
 
--------
+`read_geotiff` and `write_geotiff` auto-dispatch to the correct backend:
 
-### **Focal**
+```python
+read_geotiff('dem.tif')                              # NumPy
+read_geotiff('dem.tif', chunks=512)                  # Dask
+read_geotiff('dem.tif', gpu=True)                    # CuPy (nvCOMP + GDS)
+read_geotiff('dem.tif', gpu=True, chunks=512)        # Dask + CuPy
+read_geotiff('https://example.com/cog.tif')          # HTTP COG
+read_geotiff('s3://bucket/dem.tif')                  # Cloud (S3/GCS/Azure)
+read_geotiff('mosaic.vrt')                           # VRT mosaic (auto-detected)
 
-| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Apply](xrspatial/focal.py) | Applies a custom function over a sliding neighborhood window | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Hotspots](xrspatial/focal.py) | Identifies statistically significant spatial clusters using Getis-Ord Gi* | Getis & Ord 1992 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Emerging Hotspots](xrspatial/emerging_hotspots.py) | Classifies time-series hot/cold spot trends using Gi* and Mann-Kendall | Getis & Ord 1992, Mann 1945 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Mean](xrspatial/focal.py) | Computes the mean value within a sliding neighborhood window | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Focal Statistics](xrspatial/focal.py) | Computes summary statistics over a sliding neighborhood window | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Bilateral](xrspatial/bilateral.py) | Feature-preserving smoothing via bilateral filtering | Tomasi & Manduchi 1998 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [GLCM Texture](xrspatial/glcm.py) | Computes Haralick GLCM texture features over a sliding window | Haralick et al. 1973 | ✅️ | ✅️ | 🔄 | 🔄 |
+write_geotiff(cupy_array, 'out.tif')                 # auto-detects GPU
+write_geotiff(data, 'out.tif', gpu=True)             # force GPU compress
+write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
+```
 
--------
+**Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow), uncompressed
 
-### **Morphological**
+**GPU codecs:** Deflate and ZSTD via nvCOMP batch API; LZW via Numba CUDA kernels
 
-| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Erode](xrspatial/morphology.py) | Morphological erosion (local minimum over structuring element) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Dilate](xrspatial/morphology.py) | Morphological dilation (local maximum over structuring element) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Opening](xrspatial/morphology.py) | Erosion then dilation (removes small bright features) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Closing](xrspatial/morphology.py) | Dilation then erosion (fills small dark gaps) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Gradient](xrspatial/morphology.py) | Dilation minus erosion (edge detection) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
-| [White Top-hat](xrspatial/morphology.py) | Original minus opening (isolate bright features) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Black Top-hat](xrspatial/morphology.py) | Closing minus original (isolate dark features) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
+**Features:**
+- Tiled, stripped, BigTIFF, multi-band (RGB/RGBA), sub-byte (1/2/4/12-bit)
+- Predictors: horizontal differencing (pred=2), floating-point (pred=3)
+- GeoKeys: EPSG, WKT/PROJ (via pyproj), citations, units, ellipsoid, vertical CRS
+- Metadata: nodata masking, palette colormaps, DPI/resolution, GDALMetadata XML, arbitrary tag preservation
+- Cloud storage: S3 (`s3://`), GCS (`gs://`), Azure (`az://`) via fsspec
+- GPUDirect Storage: SSD→GPU direct DMA via KvikIO (optional)
+- Thread-safe mmap reads, atomic writes, HTTP connection reuse (urllib3)
+- Overview generation: mean, nearest, min, max, median, mode, cubic
+- Planar config, big-endian byte swap, PixelIsArea/PixelIsPoint
 
--------
+**Read performance** (real-world files, A6000 GPU):
 
-### **Fire**
+| File | Format | xrspatial CPU | rioxarray | GPU (nvCOMP) |
+|:-----|:-------|:------------:|:---------:|:------------:|
+| render_demo 187x253 | uncompressed | **0.2ms** | 2.4ms | 0.7ms |
+| Landsat B4 1310x1093 | uncompressed | **1.0ms** | 6.0ms | 1.7ms |
+| Copernicus 3600x3600 | deflate+fp3 | 241ms | 195ms | 872ms |
+| USGS 1as 3612x3612 | LZW+fp3 | 275ms | 215ms | 747ms |
+| USGS 1m 10012x10012 | LZW | **1.25s** | 1.80s | **990ms** |
 
-| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [dNBR](xrspatial/fire.py) | Differenced Normalized Burn Ratio (pre minus post NBR) | USGS | ✅️ | ✅️ | ✅️ | ✅️ |
-| [RdNBR](xrspatial/fire.py) | Relative dNBR normalized by pre-fire vegetation density | USGS | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Burn Severity Class](xrspatial/fire.py) | USGS 7-class burn severity from dNBR thresholds | USGS | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Fireline Intensity](xrspatial/fire.py) | Byram's fireline intensity from fuel load and spread rate (kW/m) | Byram 1959 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Flame Length](xrspatial/fire.py) | Flame length derived from fireline intensity (m) | Byram 1959 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Rate of Spread](xrspatial/fire.py) | Simplified Rothermel spread rate with Anderson 13 fuel models (m/min) | Rothermel 1972, Anderson 1982 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [KBDI](xrspatial/fire.py) | Keetch-Byram Drought Index single time-step update (0-800 mm) | Keetch & Byram 1968 | ✅️ | ✅️ | ✅️ | ✅️ |
+**Read performance** (synthetic tiled, GPU shines at scale):
 
--------
+| Size | Codec | xrspatial CPU | rioxarray | GPU (nvCOMP) |
+|:-----|:------|:------------:|:---------:|:------------:|
+| 4096x4096 | deflate | 265ms | 211ms | **158ms** |
+| 4096x4096 | zstd | **73ms** | 159ms | **58ms** |
+| 8192x8192 | deflate | 1.06s | 859ms | **565ms** |
+| 8192x8192 | zstd | **288ms** | 668ms | **171ms** |
 
-### **Multispectral**
+**Write performance** (synthetic tiled):
 
-| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | Vegetation index resistant to atmospheric effects using blue band correction | Kaufman & Tanre 1992 | ✅️ |✅️ | ✅️ |✅️ |
-| [Burn Area Index (BAI)](xrspatial/multispectral.py) | Spectral distance to charcoal reflectance point for burn scar detection | Chuvieco et al. 2002 | ✅️ |✅️ | ✅️ |✅️ |
-| [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | Highlights built-up areas and barren land from thermal and SWIR bands | As-syakur et al. 2012 | ✅️ |✅️  | ✅️ |✅️ |
-| [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | Enhanced vegetation index reducing soil and atmospheric noise | Huete et al. 2002 | ✅️ |✅️ | ✅️ |✅️ |
-| [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | Estimates leaf chlorophyll content from green and NIR reflectance | Gitelson et al. 2003 | ✅️ |✅️ | ✅️ |✅️ |
-| [Modified Soil Adjusted Vegetation Index (MSAVI2)](xrspatial/multispectral.py) | Self-adjusting soil line vegetation index, no L parameter needed | Qi et al. 1994 | ✅️ |✅️ | ✅️ |✅️ |
-| [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | Measures burn severity using NIR and SWIR band difference | USGS Landsat | ✅️ |✅️ | ✅️ |✅️ |
-| [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | Refines burn severity mapping using two SWIR bands | USGS Landsat | ✅️ |✅️ | ✅️ |✅️ |
-| [Normalized Difference Built-up Index (NDBI)](xrspatial/multispectral.py) | Picks out built-up and urban areas from SWIR and NIR bands | Zha et al. 2003 | ✅️ |✅️ | ✅️ |✅️ |
-| [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | Detects vegetation moisture stress from NIR and SWIR reflectance | USGS Landsat | ✅️ |✅️ | ✅️ |✅️ |
-| [Normalized Difference Snow Index (NDSI)](xrspatial/multispectral.py) | Separates snow and ice from clouds using green and SWIR bands | Hall et al. 1995 | ✅️ |✅️ | ✅️ |✅️ |
-| [Normalized Difference Water Index (NDWI)](xrspatial/multispectral.py) | Maps open water bodies using green and NIR band difference | McFeeters 1996 | ✅️ |✅️ | ✅️ |✅️ |
-| [Modified Normalized Difference Water Index (MNDWI)](xrspatial/multispectral.py) | Detects water in urban areas using green and SWIR bands | Xu 2006 | ✅️ |✅️ | ✅️ |✅️ |
-| [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | Quantifies vegetation density from red and NIR band difference | Rouse et al. 1973 | ✅️ |✅️ | ✅️ |✅️ |
-| [Optimized Soil Adjusted Vegetation Index (OSAVI)](xrspatial/multispectral.py) | SAVI with fixed L=0.16, tuned for sparse vegetation | Rondeaux et al. 1996 | ✅️ |✅️ | ✅️ |✅️ |
-| [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | Vegetation index with soil brightness correction factor | Huete 1988 | ✅️ |✅️ | ✅️ |✅️ |
-| [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | Estimates carotenoid-to-chlorophyll ratio for plant stress detection | Penuelas et al. 1995 | ✅️ |✅️ | ✅️ |✅️ |
-| [True Color](xrspatial/multispectral.py) | Composites red, green, and blue bands into a natural color image | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| Size | Codec | xrspatial CPU | rioxarray | GPU (nvCOMP) |
+|:-----|:------|:------------:|:---------:|:------------:|
+| 2048x2048 | deflate | 424ms | 110ms | **135ms** |
+| 2048x2048 | zstd | 49ms | 83ms | 81ms |
+| 4096x4096 | deflate | 1.68s | 447ms | **302ms** |
+| 8192x8192 | deflate | 6.84s | 2.03s | **1.11s** |
+| 8192x8192 | zstd | 847ms | 822ms | 1.03s |
 
--------
+**Consistency:** 100% pixel-exact match vs rioxarray on all tested files (Landsat 8, Copernicus DEM, USGS 1-arc-second, USGS 1-meter).
 
-
-### **Multivariate**
-
-| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Mahalanobis Distance](xrspatial/mahalanobis.py) | Measures statistical distance from a multi-band reference distribution, accounting for band correlations | Mahalanobis 1936 | ✅️ |✅️ | ✅️ |✅️ |
-
--------
-
-### **Pathfinding**
-
-| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [A* Pathfinding](xrspatial/pathfinding.py) | Finds the least-cost path between two cells on a cost surface | Hart et al. 1968 | ✅️ | ✅ | 🔄 | 🔄 |
-| [Multi-Stop Search](xrspatial/pathfinding.py) | Routes through N waypoints in sequence, with optional TSP reordering | Custom | ✅️ | ✅ | 🔄 | 🔄 |
-
-----------
-
-### **Proximity**
-
-| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Allocation](xrspatial/proximity.py) | Assigns each cell to the identity of the nearest source feature | Standard (Dijkstra) | ✅️ | ✅ | ✅️ | ✅️ |
-| [Balanced Allocation](xrspatial/balanced_allocation.py) | Partitions a cost surface into territories of roughly equal cost-weighted area | Custom | ✅️ | ✅ | ✅️ | ✅️ |
-| [Cost Distance](xrspatial/cost_distance.py) | Computes minimum accumulated cost to the nearest source through a friction surface | Standard (Dijkstra) | ✅️ | ✅ | ✅️ | ✅️ |
-| [Least-Cost Corridor](xrspatial/corridor.py) | Identifies zones of low cumulative cost between two source locations | Standard (Dijkstra) | ✅️ | ✅ | ✅️ | ✅️ |
-| [Direction](xrspatial/proximity.py) | Computes the direction from each cell to the nearest source feature | Standard | ✅️ | ✅ | ✅️ | ✅️ |
-| [Proximity](xrspatial/proximity.py) | Computes the distance from each cell to the nearest source feature | Standard | ✅️ | ✅ | ✅️ | ✅️ |
-| [Surface Distance](xrspatial/surface_distance.py) | Computes distance along the 3D terrain surface to the nearest source | Standard (Dijkstra) | ✅️ | ✅ | ✅️ | ✅️ |
-| [Surface Allocation](xrspatial/surface_distance.py) | Assigns each cell to the nearest source by terrain surface distance | Standard (Dijkstra) | ✅️ | ✅ | ✅️ | ✅️ |
-| [Surface Direction](xrspatial/surface_distance.py) | Computes compass direction to the nearest source by terrain surface distance | Standard (Dijkstra) | ✅️ | ✅ | ✅️ | ✅️ |
-
---------
-
+-----------
 ### **Reproject / Merge**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
@@ -269,21 +217,23 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 -------
 
-### **Raster / Vector Conversion**
+### **Utilities**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
-|:-----|:------------|:------:|:------------------:|:-----------------:|:---------------------:|:---------------------:|
-| [Polygonize](xrspatial/polygonize.py) | Converts contiguous regions of equal value into vector polygons | Standard (CCL) | ✅️ | ✅️ | ✅️ | 🔄 |
-| [Contours](xrspatial/contour.py) | Extracts elevation contour lines (isolines) from a raster surface | Standard (marching squares) | ✅️ | ✅️ | 🔄 | 🔄 |
-| [Rasterize](xrspatial/rasterize.py) | Rasterizes vector geometries (polygons, lines, points) from a GeoDataFrame | Standard (scanline, Bresenham) | ✅️ | | ✅️ | |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Preview](xrspatial/preview.py) | Downsamples a raster to target pixel dimensions for visualization | Custom | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Rescale](xrspatial/normalize.py) | Min-max normalization to a target range (default [0, 1]) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Standardize](xrspatial/normalize.py) | Z-score normalization (subtract mean, divide by std) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
 
---------
+-----------
 
 ### **Surface**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Aspect](xrspatial/aspect.py) | Computes downslope direction of each cell in degrees | Horn 1981 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Northness](xrspatial/aspect.py) | North-south component of aspect: cos(aspect) for linear models | Stage 1976 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Eastness](xrspatial/aspect.py) | East-west component of aspect: sin(aspect) for linear models | Stage 1976 | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Curvature](xrspatial/curvature.py) | Measures rate of slope change (concavity/convexity) at each cell | Zevenbergen & Thorne 1987 | ✅️ |✅️ |✅️ | ✅️  |
 | [Hillshade](xrspatial/hillshade.py) | Simulates terrain illumination from a given sun angle and azimuth | GDAL gdaldem | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Roughness](xrspatial/terrain_metrics.py) | Computes local relief as max minus min elevation in a 3×3 window | GDAL gdaldem | ✅️ | ✅️ | ✅️ | ✅️ |
@@ -344,24 +294,77 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 -----------
 
-### **Interpolation**
+### **Multispectral**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [IDW](xrspatial/interpolate/_idw.py) | Inverse Distance Weighting from scattered points to a raster grid | Standard (IDW) | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Kriging](xrspatial/interpolate/_kriging.py) | Ordinary Kriging with automatic variogram fitting (spherical, exponential, gaussian) | Standard (ordinary kriging) | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Spline](xrspatial/interpolate/_spline.py) | Thin Plate Spline interpolation with optional smoothing | Standard (TPS) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | Vegetation index resistant to atmospheric effects using blue band correction | Kaufman & Tanre 1992 | ✅️ |✅️ | ✅️ |✅️ |
+| [Burn Area Index (BAI)](xrspatial/multispectral.py) | Spectral distance to charcoal reflectance point for burn scar detection | Chuvieco et al. 2002 | ✅️ |✅️ | ✅️ |✅️ |
+| [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | Highlights built-up areas and barren land from thermal and SWIR bands | As-syakur et al. 2012 | ✅️ |✅️  | ✅️ |✅️ |
+| [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | Enhanced vegetation index reducing soil and atmospheric noise | Huete et al. 2002 | ✅️ |✅️ | ✅️ |✅️ |
+| [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | Estimates leaf chlorophyll content from green and NIR reflectance | Gitelson et al. 2003 | ✅️ |✅️ | ✅️ |✅️ |
+| [Modified Soil Adjusted Vegetation Index (MSAVI2)](xrspatial/multispectral.py) | Self-adjusting soil line vegetation index, no L parameter needed | Qi et al. 1994 | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | Measures burn severity using NIR and SWIR band difference | USGS Landsat | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | Refines burn severity mapping using two SWIR bands | USGS Landsat | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Difference Built-up Index (NDBI)](xrspatial/multispectral.py) | Picks out built-up and urban areas from SWIR and NIR bands | Zha et al. 2003 | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | Detects vegetation moisture stress from NIR and SWIR reflectance | USGS Landsat | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Difference Snow Index (NDSI)](xrspatial/multispectral.py) | Separates snow and ice from clouds using green and SWIR bands | Hall et al. 1995 | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Difference Water Index (NDWI)](xrspatial/multispectral.py) | Maps open water bodies using green and NIR band difference | McFeeters 1996 | ✅️ |✅️ | ✅️ |✅️ |
+| [Modified Normalized Difference Water Index (MNDWI)](xrspatial/multispectral.py) | Detects water in urban areas using green and SWIR bands | Xu 2006 | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | Quantifies vegetation density from red and NIR band difference | Rouse et al. 1973 | ✅️ |✅️ | ✅️ |✅️ |
+| [Optimized Soil Adjusted Vegetation Index (OSAVI)](xrspatial/multispectral.py) | SAVI with fixed L=0.16, tuned for sparse vegetation | Rondeaux et al. 1996 | ✅️ |✅️ | ✅️ |✅️ |
+| [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | Vegetation index with soil brightness correction factor | Huete 1988 | ✅️ |✅️ | ✅️ |✅️ |
+| [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | Estimates carotenoid-to-chlorophyll ratio for plant stress detection | Penuelas et al. 1995 | ✅️ |✅️ | ✅️ |✅️ |
+| [True Color](xrspatial/multispectral.py) | Composites red, green, and blue bands into a natural color image | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
 
------------
+-------
 
-### **Dasymetric**
+
+### **Classification**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Disaggregate](xrspatial/dasymetric.py) | Redistributes zonal totals to pixels using an ancillary weight surface | Mennis 2003 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Pycnophylactic](xrspatial/dasymetric.py) | Tobler's pycnophylactic interpolation preserving zone totals via Laplacian smoothing | Tobler 1979 | ✅️ | | | |
+| [Box Plot](xrspatial/classify.py) | Classifies values into bins based on box plot quartile boundaries | PySAL mapclassify | ✅️ |✅ | ✅ | 🔄 |
+| [Equal Interval](xrspatial/classify.py) | Divides the value range into equal-width bins | PySAL mapclassify | ✅️ |✅ | ✅ |✅ |
+| [Head/Tail Breaks](xrspatial/classify.py) | Classifies heavy-tailed distributions using recursive mean splitting | PySAL mapclassify | ✅️ |✅ | 🔄 | 🔄 |
+| [Maximum Breaks](xrspatial/classify.py) | Finds natural groupings by maximizing differences between sorted values | PySAL mapclassify | ✅️ |✅ | 🔄 | 🔄 |
+| [Natural Breaks](xrspatial/classify.py) | Optimizes class boundaries to minimize within-class variance (Jenks) | Jenks 1967, PySAL | ✅️ |✅ | 🔄 | 🔄 |
+| [Percentiles](xrspatial/classify.py) | Assigns classes based on user-defined percentile breakpoints | PySAL mapclassify | ✅️ |✅ | ✅ | 🔄 |
+| [Quantile](xrspatial/classify.py) | Distributes values into classes with equal observation counts | PySAL mapclassify | ✅️ |✅ | ✅ | 🔄 |
+| [Reclassify](xrspatial/classify.py) | Remaps pixel values to new classes using a user-defined lookup | PySAL mapclassify | ✅️ |✅ | ✅ |✅ |
+| [Std Mean](xrspatial/classify.py) | Classifies values by standard deviation intervals from the mean | PySAL mapclassify | ✅️ |✅ | ✅ |✅ |
 
------------
+-------
+
+### **Focal**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Apply](xrspatial/focal.py) | Applies a custom function over a sliding neighborhood window | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Hotspots](xrspatial/focal.py) | Identifies statistically significant spatial clusters using Getis-Ord Gi* | Getis & Ord 1992 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Emerging Hotspots](xrspatial/emerging_hotspots.py) | Classifies time-series hot/cold spot trends using Gi* and Mann-Kendall | Getis & Ord 1992, Mann 1945 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Mean](xrspatial/focal.py) | Computes the mean value within a sliding neighborhood window | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Focal Statistics](xrspatial/focal.py) | Computes summary statistics over a sliding neighborhood window | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Bilateral](xrspatial/bilateral.py) | Feature-preserving smoothing via bilateral filtering | Tomasi & Manduchi 1998 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [GLCM Texture](xrspatial/glcm.py) | Computes Haralick GLCM texture features over a sliding window | Haralick et al. 1973 | ✅️ | ✅️ | 🔄 | 🔄 |
+
+-------
+
+### **Proximity**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Allocation](xrspatial/proximity.py) | Assigns each cell to the identity of the nearest source feature | Standard (Dijkstra) | ✅️ | ✅ | ✅️ | ✅️ |
+| [Balanced Allocation](xrspatial/balanced_allocation.py) | Partitions a cost surface into territories of roughly equal cost-weighted area | Custom | ✅️ | ✅ | ✅️ | ✅️ |
+| [Cost Distance](xrspatial/cost_distance.py) | Computes minimum accumulated cost to the nearest source through a friction surface | Standard (Dijkstra) | ✅️ | ✅ | ✅️ | ✅️ |
+| [Least-Cost Corridor](xrspatial/corridor.py) | Identifies zones of low cumulative cost between two source locations | Standard (Dijkstra) | ✅️ | ✅ | ✅️ | ✅️ |
+| [Direction](xrspatial/proximity.py) | Computes the direction from each cell to the nearest source feature | Standard | ✅️ | ✅ | ✅️ | ✅️ |
+| [Proximity](xrspatial/proximity.py) | Computes the distance from each cell to the nearest source feature | Standard | ✅️ | ✅ | ✅️ | ✅️ |
+| [Surface Distance](xrspatial/surface_distance.py) | Computes distance along the 3D terrain surface to the nearest source | Standard (Dijkstra) | ✅️ | ✅ | ✅️ | ✅️ |
+| [Surface Allocation](xrspatial/surface_distance.py) | Assigns each cell to the nearest source by terrain surface distance | Standard (Dijkstra) | ✅️ | ✅ | ✅️ | ✅️ |
+| [Surface Direction](xrspatial/surface_distance.py) | Computes compass direction to the nearest source by terrain surface distance | Standard (Dijkstra) | ✅️ | ✅ | ✅️ | ✅️ |
+
+--------
 
 ### **Zonal**
 
@@ -376,13 +379,88 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 
 -----------
 
-### **Utilities**
+### **Interpolation**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Preview](xrspatial/preview.py) | Downsamples a raster to target pixel dimensions for visualization | Custom | ✅️ | ✅️ | ✅️ | 🔄 |
-| [Rescale](xrspatial/normalize.py) | Min-max normalization to a target range (default [0, 1]) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Standardize](xrspatial/normalize.py) | Z-score normalization (subtract mean, divide by std) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [IDW](xrspatial/interpolate/_idw.py) | Inverse Distance Weighting from scattered points to a raster grid | Standard (IDW) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Kriging](xrspatial/interpolate/_kriging.py) | Ordinary Kriging with automatic variogram fitting (spherical, exponential, gaussian) | Standard (ordinary kriging) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Spline](xrspatial/interpolate/_spline.py) | Thin Plate Spline interpolation with optional smoothing | Standard (TPS) | ✅️ | ✅️ | ✅️ | ✅️ |
+
+-----------
+
+### **Morphological**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Erode](xrspatial/morphology.py) | Morphological erosion (local minimum over structuring element) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Dilate](xrspatial/morphology.py) | Morphological dilation (local maximum over structuring element) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Opening](xrspatial/morphology.py) | Erosion then dilation (removes small bright features) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Closing](xrspatial/morphology.py) | Dilation then erosion (fills small dark gaps) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Gradient](xrspatial/morphology.py) | Dilation minus erosion (edge detection) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [White Top-hat](xrspatial/morphology.py) | Original minus opening (isolate bright features) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Black Top-hat](xrspatial/morphology.py) | Closing minus original (isolate dark features) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
+
+-------
+
+### **Fire**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [dNBR](xrspatial/fire.py) | Differenced Normalized Burn Ratio (pre minus post NBR) | USGS | ✅️ | ✅️ | ✅️ | ✅️ |
+| [RdNBR](xrspatial/fire.py) | Relative dNBR normalized by pre-fire vegetation density | USGS | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Burn Severity Class](xrspatial/fire.py) | USGS 7-class burn severity from dNBR thresholds | USGS | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Fireline Intensity](xrspatial/fire.py) | Byram's fireline intensity from fuel load and spread rate (kW/m) | Byram 1959 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Flame Length](xrspatial/fire.py) | Flame length derived from fireline intensity (m) | Byram 1959 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Rate of Spread](xrspatial/fire.py) | Simplified Rothermel spread rate with Anderson 13 fuel models (m/min) | Rothermel 1972, Anderson 1982 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [KBDI](xrspatial/fire.py) | Keetch-Byram Drought Index single time-step update (0-800 mm) | Keetch & Byram 1968 | ✅️ | ✅️ | ✅️ | ✅️ |
+
+-------
+
+### **Raster / Vector Conversion**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:-----|:------------|:------:|:------------------:|:-----------------:|:---------------------:|:---------------------:|
+| [Polygonize](xrspatial/polygonize.py) | Converts contiguous regions of equal value into vector polygons | Standard (CCL) | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Contours](xrspatial/contour.py) | Extracts elevation contour lines (isolines) from a raster surface | Standard (marching squares) | ✅️ | ✅️ | 🔄 | 🔄 |
+| [Rasterize](xrspatial/rasterize.py) | Rasterizes vector geometries (polygons, lines, points) from a GeoDataFrame | Standard (scanline, Bresenham) | ✅️ | | ✅️ | |
+
+--------
+
+### **Multivariate**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Mahalanobis Distance](xrspatial/mahalanobis.py) | Measures statistical distance from a multi-band reference distribution, accounting for band correlations | Mahalanobis 1936 | ✅️ |✅️ | ✅️ |✅️ |
+
+-------
+
+### **Pathfinding**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [A* Pathfinding](xrspatial/pathfinding.py) | Finds the least-cost path between two cells on a cost surface | Hart et al. 1968 | ✅️ | ✅ | 🔄 | 🔄 |
+| [Multi-Stop Search](xrspatial/pathfinding.py) | Routes through N waypoints in sequence, with optional TSP reordering | Custom | ✅️ | ✅ | 🔄 | 🔄 |
+
+----------
+
+### **Diffusion**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Diffuse](xrspatial/diffusion.py) | Runs explicit forward-Euler diffusion on a 2D scalar field | Standard (heat equation) | ✅️ | ✅️ | ✅️ | ✅️ |
+
+-------
+
+### **Dasymetric**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Disaggregate](xrspatial/dasymetric.py) | Redistributes zonal totals to pixels using an ancillary weight surface | Mennis 2003 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Pycnophylactic](xrspatial/dasymetric.py) | Tobler's pycnophylactic interpolation preserving zone totals via Laplacian smoothing | Tobler 1979 | ✅️ | | | |
+
+-----------
+
 
 #### Usage
 
@@ -391,12 +469,11 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 Importing `xrspatial` registers an `.xrs` accessor on DataArrays and Datasets, giving you tab-completable access to every spatial operation:
 
 ```python
-import numpy as np
-import xarray as xr
 import xrspatial
+from xrspatial.geotiff import read_geotiff
 
-# Create or load a raster
-elevation = xr.DataArray(np.random.rand(100, 100) * 1000, dims=['y', 'x'])
+# Read a GeoTIFF (no GDAL required)
+elevation = read_geotiff('dem.tif')
 
 # Surface analysis — call operations directly on the DataArray
 slope = elevation.xrs.slope()
@@ -454,20 +531,27 @@ Check out the user guide [here](/examples/user_guide/).
 
 #### Dependencies
 
-`xarray-spatial` currently depends on Datashader, but will soon be updated to depend only on `xarray` and `numba`, while still being able to make use of Datashader output when available.
+**Core:** numpy, numba, scipy, xarray, matplotlib, zstandard
+
+**Optional:**
+- `pyproj` — WKT/PROJ CRS resolution
+- `cupy` — GPU acceleration
+- `dask` — out-of-core processing
+- `libnvcomp` — GPU batch decompression (deflate, ZSTD)
+- `kvikio` — GPUDirect Storage (SSD → GPU)
+- `fsspec` + `s3fs`/`gcsfs`/`adlfs` — cloud storage
 
 ![title](img/dependencies.svg)
 
 #### Notes on GDAL
 
-Within the Python ecosystem, many geospatial libraries interface with the GDAL C++ library for raster and vector input, output, and analysis (e.g. rasterio, rasterstats, geopandas). GDAL is robust, performant, and has decades of great work behind it. For years, off-loading expensive computations to the C/C++ level in this way has been a key performance strategy for Python libraries (obviously...Python itself is implemented in C!).
+`xarray-spatial` does not depend on GDAL. The built-in GeoTIFF/COG reader and writer (`xrspatial.geotiff`) handles raster I/O natively using only numpy, numba, and the standard library. This means:
 
-However, wrapping GDAL has a few drawbacks for Python developers and data scientists:
-- GDAL can be a pain to build / install.
-- GDAL is hard for Python developers/analysts to extend, because it requires understanding multiple languages.
-- GDAL's data structures are defined at the C/C++ level, which constrains how they can be accessed from Python.
+- **Zero GDAL installation hassle.** `pip install xarray-spatial` gets you everything needed to read and write GeoTIFFs, COGs, and VRT files.
+- **Pure Python, fully extensible.** All codec, header parsing, and metadata code is readable Python/Numba, not wrapped C/C++.
+- **GPU-accelerated reads.** With optional nvCOMP, compressed tiles decompress directly on the GPU via CUDA -- something GDAL cannot do.
 
-With the introduction of projects like Numba, Python gained new ways to provide high-performance code directly in Python, without depending on or being constrained by separate C/C++ extensions. `xarray-spatial` implements algorithms using Numba and Dask, making all of its source code available as pure Python without any "black box" barriers that obscure what is going on and prevent full optimization. Projects can make use of the functionality provided by `xarray-spatial` where available, while still using GDAL where required for other tasks.
+The native reader is pixel-exact against rasterio/GDAL across Landsat 8, Copernicus DEM, USGS 1-arc-second, and USGS 1-meter DEMs. For uncompressed files it reads 5-7x faster than rioxarray; for compressed COGs it is comparable or faster with GPU acceleration.
 
 #### Citation
 Cite this code:

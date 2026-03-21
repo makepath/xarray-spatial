@@ -437,3 +437,155 @@ def aspect(agg: xr.DataArray,
                         coords=agg.coords,
                         dims=agg.dims,
                         attrs=agg.attrs)
+
+
+@supports_dataset
+def northness(agg: xr.DataArray,
+              name: Optional[str] = 'northness',
+              method: str = 'planar',
+              z_unit: str = 'meter',
+              boundary: str = 'nan') -> xr.DataArray:
+    """
+    Computes the north-south component of aspect.
+
+    Returns ``cos(aspect)`` for each cell, ranging from +1 (due north)
+    to -1 (due south).  Flat cells (where ``aspect()`` returns -1) are
+    set to NaN.
+
+    This is the standard way to encode aspect for use in regression,
+    clustering, and other models that assume linear inputs.  Raw aspect
+    in degrees is circular (0 and 360 are the same direction), so
+    feeding it directly into a linear model gives wrong results.
+
+    Parameters
+    ----------
+    agg : xarray.DataArray or xr.Dataset
+        2D elevation raster (NumPy, CuPy, Dask, or Dask+CuPy backed).
+        If a Dataset is passed, the operation is applied to each
+        data variable independently.
+    name : str, default='northness'
+        Name of output DataArray.
+    method : str, default='planar'
+        Passed to :func:`aspect`.  ``'planar'`` or ``'geodesic'``.
+    z_unit : str, default='meter'
+        Passed to :func:`aspect`.  Only used when ``method='geodesic'``.
+    boundary : str, default='nan'
+        Passed to :func:`aspect`.  ``'nan'``, ``'nearest'``,
+        ``'reflect'``, or ``'wrap'``.
+
+    Returns
+    -------
+    northness_agg : xarray.DataArray or xr.Dataset
+        Values in [-1, +1].  NaN where the input has NaN or where
+        the surface is flat.
+
+    References
+    ----------
+    Stage, A.R. (1976). "An Expression for the Effect of Aspect, Slope,
+    and Habitat Type on Tree Growth." *Forest Science* 22(4): 457-460.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import northness
+
+        >>> data = np.array([
+            [1, 1, 1, 1, 1],
+            [1, 1, 1, 2, 0],
+            [1, 1, 1, 0, 0],
+            [4, 4, 9, 2, 4],
+            [1, 5, 0, 1, 4],
+            [1, 5, 0, 5, 5]
+        ], dtype=np.float32)
+        >>> raster = xr.DataArray(data, dims=['y', 'x'])
+        >>> north = northness(raster)
+    """
+    asp = aspect(agg, name='_aspect', method=method, z_unit=z_unit,
+                 boundary=boundary)
+    asp_data = asp.data
+    trig = np.cos(np.deg2rad(asp_data))
+    out = np.where(asp_data == -1, np.nan, trig)
+    return xr.DataArray(out,
+                        name=name,
+                        coords=agg.coords,
+                        dims=agg.dims,
+                        attrs=agg.attrs)
+
+
+@supports_dataset
+def eastness(agg: xr.DataArray,
+             name: Optional[str] = 'eastness',
+             method: str = 'planar',
+             z_unit: str = 'meter',
+             boundary: str = 'nan') -> xr.DataArray:
+    """
+    Computes the east-west component of aspect.
+
+    Returns ``sin(aspect)`` for each cell, ranging from +1 (due east)
+    to -1 (due west).  Flat cells (where ``aspect()`` returns -1) are
+    set to NaN.
+
+    This is the standard way to encode aspect for use in regression,
+    clustering, and other models that assume linear inputs.  Raw aspect
+    in degrees is circular (0 and 360 are the same direction), so
+    feeding it directly into a linear model gives wrong results.
+
+    Parameters
+    ----------
+    agg : xarray.DataArray or xr.Dataset
+        2D elevation raster (NumPy, CuPy, Dask, or Dask+CuPy backed).
+        If a Dataset is passed, the operation is applied to each
+        data variable independently.
+    name : str, default='eastness'
+        Name of output DataArray.
+    method : str, default='planar'
+        Passed to :func:`aspect`.  ``'planar'`` or ``'geodesic'``.
+    z_unit : str, default='meter'
+        Passed to :func:`aspect`.  Only used when ``method='geodesic'``.
+    boundary : str, default='nan'
+        Passed to :func:`aspect`.  ``'nan'``, ``'nearest'``,
+        ``'reflect'``, or ``'wrap'``.
+
+    Returns
+    -------
+    eastness_agg : xarray.DataArray or xr.Dataset
+        Values in [-1, +1].  NaN where the input has NaN or where
+        the surface is flat.
+
+    References
+    ----------
+    Stage, A.R. (1976). "An Expression for the Effect of Aspect, Slope,
+    and Habitat Type on Tree Growth." *Forest Science* 22(4): 457-460.
+
+    Examples
+    --------
+    .. sourcecode:: python
+
+        >>> import numpy as np
+        >>> import xarray as xr
+        >>> from xrspatial import eastness
+
+        >>> data = np.array([
+            [1, 1, 1, 1, 1],
+            [1, 1, 1, 2, 0],
+            [1, 1, 1, 0, 0],
+            [4, 4, 9, 2, 4],
+            [1, 5, 0, 1, 4],
+            [1, 5, 0, 5, 5]
+        ], dtype=np.float32)
+        >>> raster = xr.DataArray(data, dims=['y', 'x'])
+        >>> east = eastness(raster)
+    """
+    asp = aspect(agg, name='_aspect', method=method, z_unit=z_unit,
+                 boundary=boundary)
+    asp_data = asp.data
+    trig = np.sin(np.deg2rad(asp_data))
+    out = np.where(asp_data == -1, np.nan, trig)
+    return xr.DataArray(out,
+                        name=name,
+                        coords=agg.coords,
+                        dims=agg.dims,
+                        attrs=agg.attrs)
