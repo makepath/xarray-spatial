@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import read_geotiff, write_geotiff
+from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._compression import (
     COMPRESSION_DEFLATE,
     COMPRESSION_LZW,
@@ -35,35 +35,35 @@ class TestWriteInvalidInputs:
     def test_4d_array(self, tmp_path):
         arr = np.zeros((2, 3, 4, 4), dtype=np.float32)
         with pytest.raises(ValueError, match="Expected 2D or 3D"):
-            write_geotiff(arr, str(tmp_path / 'bad.tif'))
+            to_geotiff(arr, str(tmp_path / 'bad.tif'))
 
     def test_1d_array(self, tmp_path):
         arr = np.zeros(10, dtype=np.float32)
         with pytest.raises(ValueError, match="Expected 2D"):
-            write_geotiff(arr, str(tmp_path / 'bad.tif'))
+            to_geotiff(arr, str(tmp_path / 'bad.tif'))
 
     def test_0d_scalar(self, tmp_path):
         arr = np.float32(42.0)
         with pytest.raises(ValueError, match="Expected 2D"):
-            write_geotiff(arr, str(tmp_path / 'bad.tif'))
+            to_geotiff(arr, str(tmp_path / 'bad.tif'))
 
     def test_unsupported_compression(self, tmp_path):
         arr = np.zeros((4, 4), dtype=np.float32)
         with pytest.raises(ValueError, match="Unsupported compression"):
-            write_geotiff(arr, str(tmp_path / 'bad.tif'), compression='webp')
+            to_geotiff(arr, str(tmp_path / 'bad.tif'), compression='webp')
 
     def test_complex_dtype(self, tmp_path):
         arr = np.zeros((4, 4), dtype=np.complex64)
         with pytest.raises(ValueError, match="Unsupported numpy dtype"):
-            write_geotiff(arr, str(tmp_path / 'bad.tif'))
+            to_geotiff(arr, str(tmp_path / 'bad.tif'))
 
     def test_bool_dtype_auto_promoted(self, tmp_path):
         """Bool arrays are auto-promoted to uint8."""
         arr = np.array([[True, False], [False, True]])
         path = str(tmp_path / 'bool.tif')
-        write_geotiff(arr, path, compression='none')
+        to_geotiff(arr, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, arr.astype(np.uint8))
 
 
@@ -411,9 +411,9 @@ class TestPublicAPIEdgeCases:
         """Python list should be converted via np.asarray."""
         data = [[1.0, 2.0], [3.0, 4.0]]
         path = str(tmp_path / 'from_list.tif')
-        write_geotiff(data, path, compression='none')
+        to_geotiff(data, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         np.testing.assert_array_almost_equal(
             result.values, np.array(data, dtype=np.float64))
 
@@ -421,22 +421,22 @@ class TestPublicAPIEdgeCases:
         """Integer Python list."""
         data = [[1, 2], [3, 4]]
         path = str(tmp_path / 'int_list.tif')
-        write_geotiff(data, path, compression='none')
+        to_geotiff(data, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, np.array(data))
 
     def test_read_nonexistent(self):
         with pytest.raises((FileNotFoundError, OSError)):
-            read_geotiff('/tmp/nonexistent_file_abc123.tif')
+            open_geotiff('/tmp/nonexistent_file_abc123.tif')
 
     def test_write_dataarray_no_coords(self, tmp_path):
         """DataArray with dimension coords but no explicit y/x."""
         da = xr.DataArray(np.ones((3, 3), dtype=np.float32), dims=['y', 'x'])
         path = str(tmp_path / 'no_coords.tif')
-        write_geotiff(da, path, compression='none')
+        to_geotiff(da, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, da.values)
 
     def test_write_f_contiguous_array(self, tmp_path):
@@ -444,9 +444,9 @@ class TestPublicAPIEdgeCases:
         arr = np.asfortranarray(np.arange(12, dtype=np.float32).reshape(3, 4))
         assert arr.flags['F_CONTIGUOUS']
         path = str(tmp_path / 'f_order.tif')
-        write_geotiff(arr, path, compression='deflate')
+        to_geotiff(arr, path, compression='deflate')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, arr)
 
     def test_write_non_contiguous_slice(self, tmp_path):
@@ -455,9 +455,9 @@ class TestPublicAPIEdgeCases:
         sliced = base[::2, ::2]  # 4x4, non-contiguous
         assert not sliced.flags['C_CONTIGUOUS']
         path = str(tmp_path / 'strided.tif')
-        write_geotiff(sliced, path, compression='none')
+        to_geotiff(sliced, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, sliced)
 
     def test_crs_in_attrs_with_coords(self, tmp_path):
@@ -468,27 +468,27 @@ class TestPublicAPIEdgeCases:
                           dims=['y', 'x'], coords={'y': y, 'x': x},
                           attrs={'crs': 4326})
         path = str(tmp_path / 'crs_coords.tif')
-        write_geotiff(da, path, compression='none')
+        to_geotiff(da, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert result.attrs['crs'] == 4326
 
     def test_crs_kwarg_no_coords(self, tmp_path):
         """Explicit crs= kwarg preserved even without coordinates."""
         arr = np.ones((4, 4), dtype=np.float32)
         path = str(tmp_path / 'crs_kwarg.tif')
-        write_geotiff(arr, path, crs=32610, compression='none')
+        to_geotiff(arr, path, crs=32610, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert result.attrs['crs'] == 32610
 
     def test_crs_and_nodata_no_coords(self, tmp_path):
         """Both CRS and nodata preserved without coordinates."""
         arr = np.array([[1.0, -9999.0], [-9999.0, 2.0]], dtype=np.float32)
         path = str(tmp_path / 'both.tif')
-        write_geotiff(arr, path, crs=4326, nodata=-9999.0, compression='none')
+        to_geotiff(arr, path, crs=4326, nodata=-9999.0, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert result.attrs['crs'] == 4326
         assert np.isnan(result.values[0, 1])
         assert result.values[1, 1] == 2.0
@@ -501,9 +501,9 @@ class TestPublicAPIEdgeCases:
                           dims=['y', 'x'], coords={'y': y, 'x': x},
                           attrs={'crs': 32610})
         path = str(tmp_path / 'utm.tif')
-        write_geotiff(da, path, compression='none')
+        to_geotiff(da, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert result.attrs['crs'] == 32610
 
     def test_pixel_is_point_round_trip(self, tmp_path):
@@ -516,9 +516,9 @@ class TestPublicAPIEdgeCases:
             attrs={'crs': 4326, 'raster_type': 'point'},
         )
         path = str(tmp_path / 'point.tif')
-        write_geotiff(da, path, compression='none')
+        to_geotiff(da, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert result.attrs.get('raster_type') == 'point'
         assert result.attrs['crs'] == 4326
         # Coordinates should match exactly -- origin IS the pixel center
@@ -533,9 +533,9 @@ class TestPublicAPIEdgeCases:
                           dims=['y', 'x'], coords={'y': y, 'x': x},
                           attrs={'crs': 4326})
         path = str(tmp_path / 'area.tif')
-        write_geotiff(da, path, compression='none')
+        to_geotiff(da, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert 'raster_type' not in result.attrs  # default, not stored
         np.testing.assert_array_almost_equal(result.coords['x'].values, x, decimal=6)
         np.testing.assert_array_almost_equal(result.coords['y'].values, y, decimal=6)
@@ -544,9 +544,9 @@ class TestPublicAPIEdgeCases:
         """No CRS or nodata -- attrs should be empty."""
         arr = np.ones((4, 4), dtype=np.float32)
         path = str(tmp_path / 'bare.tif')
-        write_geotiff(arr, path, compression='none')
+        to_geotiff(arr, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert 'crs' not in result.attrs
         assert 'nodata' not in result.attrs
 
@@ -555,9 +555,9 @@ class TestPublicAPIEdgeCases:
         arr = np.array([[1.0, np.nan], [np.nan, 2.0]], dtype=np.float32)
         da = xr.DataArray(arr, dims=['y', 'x'], attrs={'nodata': np.nan})
         path = str(tmp_path / 'nodata_nan.tif')
-        write_geotiff(da, path, compression='none')
+        to_geotiff(da, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert np.isnan(result.values[0, 1])
         assert result.values[0, 0] == 1.0
 
@@ -567,9 +567,9 @@ class TestPublicAPIEdgeCases:
         da = xr.DataArray(arr, dims=['y', 'x'],
                           attrs={'nodata': -9999.0})
         path = str(tmp_path / 'nodata_str.tif')
-        write_geotiff(da, path, compression='none')
+        to_geotiff(da, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         # The nodata sentinel should be masked to NaN on read
         assert np.isnan(result.values[0, 1])
         assert np.isnan(result.values[1, 0])
