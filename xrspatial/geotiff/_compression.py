@@ -766,6 +766,7 @@ def jpeg2000_compress(data: bytes, width: int, height: int,
         raise ImportError(
             "glymur is required to write JPEG 2000-compressed TIFFs. "
             "Install it with: pip install glymur")
+    import math
     import tempfile
     import os
     if samples == 1:
@@ -774,13 +775,19 @@ def jpeg2000_compress(data: bytes, width: int, height: int,
         arr = np.frombuffer(data, dtype=dtype).reshape(height, width, samples)
     fd, tmp = tempfile.mkstemp(suffix='.j2k')
     os.close(fd)
+    os.unlink(tmp)  # glymur needs the file to not exist
     try:
         cratios = [1] if lossless else [20]
-        _glymur.Jp2k(tmp, data=arr, cratios=cratios)
+        # numres must be <= log2(min_dim) + 1 to avoid OpenJPEG errors
+        min_dim = max(min(width, height), 1)
+        numres = min(6, int(math.log2(min_dim)) + 1)
+        numres = max(numres, 1)
+        _glymur.Jp2k(tmp, data=arr, cratios=cratios, numres=numres)
         with open(tmp, 'rb') as f:
             return f.read()
     finally:
-        os.unlink(tmp)
+        if os.path.exists(tmp):
+            os.unlink(tmp)
 
 
 # -- Dispatch helpers ---------------------------------------------------------
