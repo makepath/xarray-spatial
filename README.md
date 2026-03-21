@@ -226,6 +226,7 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for common CRS pair
 | Albers Equal Area | 5070 | ✅️ | ✅️ |
 | Cylindrical Equal Area | 6933 | ✅️ | ✅️ |
 | Sinusoidal | MODIS grids | ✅️ | |
+| Lambert Azimuthal Equal Area | 3035, 6931, 6932 | ✅️ | |
 | Polar Stereographic | 3031, 3413, 3996 | ✅️ | |
 
 Other CRS pairs fall back to pyproj automatically.

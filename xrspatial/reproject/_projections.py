@@ -621,16 +621,16 @@ def _laea_params(crs):
         cosb1 = math.sqrt(1.0 - sinb1 * sinb1)
         m1 = math.cos(lat_0) / math.sqrt(1.0 - e2 * sinphi0 * sinphi0)
         dd = m1 / (rq * cosb1)
-        # PROJ applies 'a' outside the projection function
-        xmf = rq / dd
-        ymf = rq * dd
+        # PROJ: xmf = rq * dd, ymf = rq / dd
+        xmf = rq * dd
+        ymf = rq / dd
     elif mode == 1:  # EQUIT
         sinb1 = 0.0
         cosb1 = 1.0
         m1 = math.cos(lat_0) / math.sqrt(1.0 - e2 * math.sin(lat_0)**2)
         dd = m1 / rq
-        xmf = rq / dd
-        ymf = rq * dd
+        xmf = rq * dd
+        ymf = rq / dd
     else:  # POLAR
         sinb1 = 1.0 if mode == 2 else -1.0
         cosb1 = 0.0
@@ -705,8 +705,9 @@ def _laea_inv_point(x, y, lon0, sinb1, cosb1,
         else:
             lam = math.atan2(x_a, -y_a)
     else:  # OBLIQ or EQUIT
-        xn = x / (a * xmf)
-        yn = y / (a * ymf)
+        # PROJ: x /= dd, y *= dd (undo the xmf/ymf scaling)
+        xn = x / (a * xmf)   # = x / (a * rq * dd)
+        yn = y / (a * ymf)   # = y / (a * rq / dd) = y * dd / (a * rq)
         rho = math.hypot(xn, yn)
         if rho < 1e-30:
             return math.degrees(lon0), math.degrees(math.asin(sinb1))
@@ -1367,11 +1368,26 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
 
-    # LAEA -- disabled pending investigation of ~940m oblique-mode error
-    # if _is_geographic_wgs84_or_nad83(src_epsg):
-    #     params = _laea_params(tgt_crs)
-    #     ...
-    # Falls through to pyproj for now.
+    # LAEA
+    if _is_geographic_wgs84_or_nad83(src_epsg):
+        params = _laea_params(tgt_crs)
+        if params is not None:
+            lon0, lat0, sinb1, cosb1, dd, xmf, ymf, rq, qp, fe, fn, mode = params
+            laea_inverse(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
+                         lon0, sinb1, cosb1, xmf, ymf, rq, qp,
+                         fe, fn, _WGS84_E, _WGS84_A, _WGS84_E2, mode, _APA)
+            return (src_y_flat.reshape(height, width),
+                    src_x_flat.reshape(height, width))
+
+    if _is_geographic_wgs84_or_nad83(tgt_epsg):
+        params = _laea_params(src_crs)
+        if params is not None:
+            lon0, lat0, sinb1, cosb1, dd, xmf, ymf, rq, qp, fe, fn, mode = params
+            laea_forward(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
+                         lon0, sinb1, cosb1, xmf, ymf, rq, qp,
+                         fe, fn, _WGS84_E, _WGS84_A, _WGS84_E2, mode)
+            return (src_y_flat.reshape(height, width),
+                    src_x_flat.reshape(height, width))
 
     # Polar Stereographic
     if _is_geographic_wgs84_or_nad83(src_epsg):
