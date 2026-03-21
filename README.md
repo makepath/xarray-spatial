@@ -79,13 +79,15 @@
 
 :fast_forward: Scalable with [Dask](http://dask.pydata.org)
 
+:gpu: GPU-accelerated with [CuPy](https://cupy.dev/) and [Numba CUDA](https://numba.readthedocs.io/en/stable/cuda/index.html)
+
 :confetti_ball: Free of GDAL / GEOS Dependencies
 
 :earth_africa: General-Purpose Spatial Processing, Geared Towards GIS Professionals
 
 -------
 
-Xarray-Spatial implements common raster analysis functions using Numba and provides an easy-to-install, easy-to-extend codebase for raster analysis.
+Xarray-Spatial is a Python library for raster analysis built on xarray. It has 100+ functions for surface analysis, hydrology (D8, D-infinity, MFD), fire behavior, flood modeling, multispectral indices, proximity, classification, pathfinding, and interpolation. Functions dispatch automatically across four backends (NumPy, Dask, CuPy, Dask+CuPy). A built-in GeoTIFF/COG reader and writer handles raster I/O without GDAL.
 
 ### Installation
 ```bash
@@ -119,9 +121,9 @@ In all the above, the command will download and store the files into your curren
 
 `xarray-spatial` grew out of the [Datashader project](https://datashader.org/), which provides fast rasterization of vector data (points, lines, polygons, meshes, and rasters) for use with xarray-spatial.
 
-`xarray-spatial` does not depend on GDAL / GEOS, which makes it fully extensible in Python but does limit the breadth of operations that can be covered.  xarray-spatial is meant to include the core raster-analysis functions needed for GIS developers / analysts, implemented independently of the non-Python geo stack.
+`xarray-spatial` does not depend on GDAL or GEOS. Raster I/O, reprojection, compression codecs, and coordinate handling are all pure Python and Numba -- no C/C++ bindings anywhere in the stack.
 
-Our documentation is still under construction, but [docs can be found here](https://xarray-spatial.readthedocs.io/en/latest/).
+[API reference docs](https://xarray-spatial.readthedocs.io/en/latest/) and [33+ user guide notebooks](examples/user_guide/) cover every module.
 
 #### Raster-huh?
 
