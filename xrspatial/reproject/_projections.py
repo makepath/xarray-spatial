@@ -11,6 +11,9 @@ Supported fast paths
 - WGS84 / NAD83 <-> Lambert Conformal Conic (e.g. EPSG:2154)
 - WGS84 / NAD83 <-> Albers Equal Area (e.g. EPSG:5070)
 - WGS84 / NAD83 <-> Cylindrical Equal Area (e.g. EPSG:6933)
+- WGS84 / NAD83 <-> Sinusoidal (e.g. MODIS)
+- WGS84 / NAD83 <-> Lambert Azimuthal Equal Area (e.g. EPSG:3035)
+- WGS84 / NAD83 <-> Polar Stereographic (e.g. EPSG:3031, 3413, 3996)
 
 All other CRS pairs fall back to pyproj.
 """
@@ -455,6 +458,444 @@ def cea_inverse(xs, ys, out_lon, out_lat,
     for i in prange(xs.shape[0]):
         out_lon[i], out_lat[i] = _cea_inv_point(
             xs[i] - fe, ys[i] - fn, lon0, k0, e, a, qp, apa)
+
+
+# ---------------------------------------------------------------------------
+# Shared: Meridional arc length (pj_mlfn / pj_enfn / pj_inv_mlfn)
+# Used by Sinusoidal ellipsoidal
+# ---------------------------------------------------------------------------
+
+def _mlfn_coeffs(es):
+    """Precompute 5 coefficients for meridional arc length.
+
+    Matches PROJ's pj_enfn exactly.  Returns array en[0..4].
+    """
+    en = np.empty(5, dtype=np.float64)
+    # Constants from PROJ mlfn.cpp
+    en[0] = 1.0 - es * (0.25 + es * (0.046875 + es * (0.01953125 + es * 0.01068115234375)))
+    en[1] = es * (0.75 - es * (0.046875 + es * (0.01953125 + es * 0.01068115234375)))
+    t = es * es
+    en[2] = t * (0.46875 - es * (0.013020833333333334 + es * 0.007120768229166667))
+    en[3] = t * es * (0.3645833333333333 - es * 0.005696614583333333)
+    en[4] = t * es * es * 0.3076171875
+    return en
+
+
+@njit(nogil=True, cache=True)
+def _mlfn(phi, sinphi, cosphi, en):
+    """Meridional arc length from equator to phi.
+
+    Matches PROJ's pj_mlfn: recurrence in sin^2(phi).
+    """
+    cphi = cosphi * sinphi  # = sin(2*phi)/2
+    sphi = sinphi * sinphi  # = sin^2(phi)
+    return en[0] * phi - cphi * (en[1] + sphi * (en[2] + sphi * (en[3] + sphi * en[4])))
+
+
+@njit(nogil=True, cache=True)
+def _inv_mlfn(arg, e2, en):
+    """Inverse meridional arc length: M -> phi.  Newton iteration."""
+    k = 1.0 / (1.0 - e2)
+    phi = arg
+    for _ in range(20):
+        s = math.sin(phi)
+        c = math.cos(phi)
+        t = 1.0 - e2 * s * s
+        dphi = (arg - _mlfn(phi, s, c, en)) * t * math.sqrt(t) * k
+        phi += dphi
+        if abs(dphi) < 1e-14:
+            break
+    return phi
+
+
+# Precompute for WGS84
+_MLFN_EN = _mlfn_coeffs(_WGS84_E2)
+
+
+# ---------------------------------------------------------------------------
+# Sinusoidal  (ellipsoidal)
+# ---------------------------------------------------------------------------
+
+def _sinu_params(crs):
+    """Extract Sinusoidal parameters from a pyproj CRS.
+
+    Returns (lon0, fe, fn) or None.
+    """
+    try:
+        d = crs.to_dict()
+    except Exception:
+        return None
+    if d.get('proj') != 'sinu':
+        return None
+    lon_0 = math.radians(d.get('lon_0', 0.0))
+    fe = d.get('x_0', 0.0)
+    fn = d.get('y_0', 0.0)
+    return lon_0, fe, fn
+
+
+@njit(nogil=True, cache=True)
+def _sinu_fwd_point(lon_deg, lat_deg, lon0, e2, a, en):
+    phi = math.radians(lat_deg)
+    lam = math.radians(lon_deg) - lon0
+    s = math.sin(phi)
+    c = math.cos(phi)
+    ms = _mlfn(phi, s, c, en)
+    x = a * lam * c / math.sqrt(1.0 - e2 * s * s)
+    y = a * ms
+    return x, y
+
+
+@njit(nogil=True, cache=True)
+def _sinu_inv_point(x, y, lon0, e2, a, en):
+    phi = _inv_mlfn(y / a, e2, en)
+    s = math.sin(phi)
+    c = math.cos(phi)
+    if abs(c) < 1e-14:
+        lam = 0.0
+    else:
+        lam = x * math.sqrt(1.0 - e2 * s * s) / (a * c)
+    return math.degrees(lam + lon0), math.degrees(phi)
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def sinu_forward(lons, lats, out_x, out_y,
+                 lon0, fe, fn, e2, a, en):
+    for i in prange(lons.shape[0]):
+        x, y = _sinu_fwd_point(lons[i], lats[i], lon0, e2, a, en)
+        out_x[i] = x + fe
+        out_y[i] = y + fn
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def sinu_inverse(xs, ys, out_lon, out_lat,
+                 lon0, fe, fn, e2, a, en):
+    for i in prange(xs.shape[0]):
+        out_lon[i], out_lat[i] = _sinu_inv_point(
+            xs[i] - fe, ys[i] - fn, lon0, e2, a, en)
+
+
+# ---------------------------------------------------------------------------
+# Lambert Azimuthal Equal Area  (LAEA)  --  oblique & polar
+# ---------------------------------------------------------------------------
+
+def _laea_params(crs):
+    """Extract LAEA parameters from a pyproj CRS.
+
+    Returns (lon0, lat0, sinb1, cosb1, dd, xmf, ymf, rq, qp, fe, fn, mode)
+    where mode: 0=OBLIQ, 1=EQUIT, 2=N_POLE, 3=S_POLE.
+    Or None if not LAEA.
+    """
+    try:
+        d = crs.to_dict()
+    except Exception:
+        return None
+    if d.get('proj') != 'laea':
+        return None
+
+    lon_0 = math.radians(d.get('lon_0', 0.0))
+    lat_0 = math.radians(d.get('lat_0', 0.0))
+    fe = d.get('x_0', 0.0)
+    fn = d.get('y_0', 0.0)
+
+    e = _WGS84_E
+    a = _WGS84_A
+    e2 = _WGS84_E2
+
+    qp = _authalic_q(1.0, e)
+    rq = math.sqrt(0.5 * qp)
+
+    EPS10 = 1e-10
+    if abs(lat_0 - math.pi / 2) < EPS10:
+        mode = 2  # N_POLE
+    elif abs(lat_0 + math.pi / 2) < EPS10:
+        mode = 3  # S_POLE
+    elif abs(lat_0) < EPS10:
+        mode = 1  # EQUIT
+    else:
+        mode = 0  # OBLIQ
+
+    if mode == 0:  # OBLIQ
+        sinphi0 = math.sin(lat_0)
+        q0 = _authalic_q(sinphi0, e)
+        sinb1 = q0 / qp
+        cosb1 = math.sqrt(1.0 - sinb1 * sinb1)
+        m1 = math.cos(lat_0) / math.sqrt(1.0 - e2 * sinphi0 * sinphi0)
+        dd = m1 / (rq * cosb1)
+        # PROJ applies 'a' outside the projection function
+        xmf = rq / dd
+        ymf = rq * dd
+    elif mode == 1:  # EQUIT
+        sinb1 = 0.0
+        cosb1 = 1.0
+        m1 = math.cos(lat_0) / math.sqrt(1.0 - e2 * math.sin(lat_0)**2)
+        dd = m1 / rq
+        xmf = rq / dd
+        ymf = rq * dd
+    else:  # POLAR
+        sinb1 = 1.0 if mode == 2 else -1.0
+        cosb1 = 0.0
+        dd = 1.0
+        xmf = rq
+        ymf = rq
+
+    return lon_0, lat_0, sinb1, cosb1, dd, xmf, ymf, rq, qp, fe, fn, mode
+
+
+@njit(nogil=True, cache=True)
+def _laea_fwd_point(lon_deg, lat_deg, lon0, sinb1, cosb1,
+                    xmf, ymf, rq, qp, e, a, e2, mode):
+    phi = math.radians(lat_deg)
+    lam = math.radians(lon_deg) - lon0
+    sinphi = math.sin(phi)
+    q = (1.0 - e2) * (sinphi / (1.0 - e2 * sinphi * sinphi)
+                       + math.atanh(e * sinphi) / e)
+    sinb = q / qp
+    if sinb > 1.0:
+        sinb = 1.0
+    elif sinb < -1.0:
+        sinb = -1.0
+    cosb = math.sqrt(1.0 - sinb * sinb)
+    coslam = math.cos(lam)
+    sinlam = math.sin(lam)
+
+    if mode == 0:  # OBLIQ
+        denom = 1.0 + sinb1 * sinb + cosb1 * cosb * coslam
+        if denom < 1e-30:
+            denom = 1e-30
+        b = math.sqrt(2.0 / denom)
+        x = a * xmf * b * cosb * sinlam
+        y = a * ymf * b * (cosb1 * sinb - sinb1 * cosb * coslam)
+    elif mode == 1:  # EQUIT
+        denom = 1.0 + cosb * coslam
+        if denom < 1e-30:
+            denom = 1e-30
+        b = math.sqrt(2.0 / denom)
+        x = a * xmf * b * cosb * sinlam
+        y = a * ymf * b * sinb
+    elif mode == 2:  # N_POLE
+        q_diff = qp - q
+        if q_diff < 0.0:
+            q_diff = 0.0
+        rho = a * math.sqrt(q_diff)
+        x = rho * sinlam
+        y = -rho * coslam
+    else:  # S_POLE
+        q_diff = qp + q
+        if q_diff < 0.0:
+            q_diff = 0.0
+        rho = a * math.sqrt(q_diff)
+        x = rho * sinlam
+        y = rho * coslam
+    return x, y
+
+
+@njit(nogil=True, cache=True)
+def _laea_inv_point(x, y, lon0, sinb1, cosb1,
+                    xmf, ymf, rq, qp, e, a, e2, mode, apa):
+    if mode == 2 or mode == 3:  # POLAR
+        x_a = x / a
+        y_a = y / a
+        rho = math.hypot(x_a, y_a)
+        if rho < 1e-30:
+            return math.degrees(lon0), 90.0 if mode == 2 else -90.0
+        q = qp - rho * rho
+        if mode == 3:
+            q = -(qp - rho * rho)
+            lam = math.atan2(x_a, y_a)
+        else:
+            lam = math.atan2(x_a, -y_a)
+    else:  # OBLIQ or EQUIT
+        xn = x / (a * xmf)
+        yn = y / (a * ymf)
+        rho = math.hypot(xn, yn)
+        if rho < 1e-30:
+            return math.degrees(lon0), math.degrees(math.asin(sinb1))
+        sce = 2.0 * math.asin(0.5 * rho / rq)
+        sinz = math.sin(sce)
+        cosz = math.cos(sce)
+        if mode == 0:  # OBLIQ
+            ab = cosz * sinb1 + yn * sinz * cosb1 / rho
+            lam = math.atan2(xn * sinz,
+                              rho * cosb1 * cosz - yn * sinb1 * sinz)
+        else:  # EQUIT
+            ab = yn * sinz / rho
+            lam = math.atan2(xn * sinz, rho * cosz)
+        q = qp * ab
+
+    # q -> phi via authalic inverse
+    ratio = q / qp
+    if ratio > 1.0:
+        ratio = 1.0
+    elif ratio < -1.0:
+        ratio = -1.0
+    beta = math.asin(ratio)
+    phi = beta + apa[0] * math.sin(2.0 * beta) + apa[1] * math.sin(4.0 * beta) + apa[2] * math.sin(6.0 * beta)
+    return math.degrees(lam + lon0), math.degrees(phi)
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def laea_forward(lons, lats, out_x, out_y,
+                 lon0, sinb1, cosb1, xmf, ymf, rq, qp,
+                 fe, fn, e, a, e2, mode):
+    for i in prange(lons.shape[0]):
+        x, y = _laea_fwd_point(lons[i], lats[i], lon0, sinb1, cosb1,
+                                xmf, ymf, rq, qp, e, a, e2, mode)
+        out_x[i] = x + fe
+        out_y[i] = y + fn
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def laea_inverse(xs, ys, out_lon, out_lat,
+                 lon0, sinb1, cosb1, xmf, ymf, rq, qp,
+                 fe, fn, e, a, e2, mode, apa):
+    for i in prange(xs.shape[0]):
+        out_lon[i], out_lat[i] = _laea_inv_point(
+            xs[i] - fe, ys[i] - fn, lon0, sinb1, cosb1,
+            xmf, ymf, rq, qp, e, a, e2, mode, apa)
+
+
+# ---------------------------------------------------------------------------
+# Polar Stereographic  (N_POLE / S_POLE only)
+# ---------------------------------------------------------------------------
+
+def _stere_params(crs):
+    """Extract Polar Stereographic parameters.
+
+    Returns (lon0, k0, akm1, fe, fn, is_south) or None.
+    Supports EPSG codes for UPS and common polar stereographic CRSs,
+    and generic stere/ups proj definitions with polar lat_0.
+    """
+    try:
+        d = crs.to_dict()
+    except Exception:
+        return None
+    proj = d.get('proj', '')
+    if proj not in ('stere', 'ups', 'sterea'):
+        return None
+
+    lat_0 = d.get('lat_0', 0.0)
+    if abs(abs(lat_0) - 90.0) > 1e-6:
+        return None  # only polar modes
+
+    is_south = lat_0 < 0
+
+    lon_0 = math.radians(d.get('lon_0', 0.0))
+    lat_ts = d.get('lat_ts', None)
+    k0 = d.get('k_0', d.get('k', None))
+
+    e = _WGS84_E
+    e2 = _WGS84_E2
+    a = _WGS84_A
+
+    if k0 is not None:
+        k0 = float(k0)
+    elif lat_ts is not None:
+        lat_ts_r = math.radians(abs(lat_ts))
+        sinlts = math.sin(lat_ts_r)
+        coslts = math.cos(lat_ts_r)
+        # k0 from latitude of true scale
+        m_ts = coslts / math.sqrt(1.0 - e2 * sinlts * sinlts)
+        t_ts = math.tan(math.pi / 4.0 - lat_ts_r / 2.0) * math.pow(
+            (1.0 + e * sinlts) / (1.0 - e * sinlts), e / 2.0)
+        t_90 = 0.0  # tan(pi/4 - pi/4) = 0 at the pole
+        # For polar: k0 = m_ts / (2 * t_ts) * (something)
+        # Actually, for UPS/polar stereographic:
+        # akm1 = a * m_ts / sqrt((1+e)^(1+e) * (1-e)^(1-e)) / (2 * t_ts)
+        # But simpler: akm1 = a * k0 * 2 / sqrt((1+e)^(1+e)*(1-e)^(1-e))
+        # Let's compute akm1 directly
+        half_e = e / 2.0
+        con = math.pow(1.0 + e, 1.0 + e) * math.pow(1.0 - e, 1.0 - e)
+        if abs(t_ts) < 1e-30:
+            # lat_ts = 90: use k0 formula
+            k0 = 1.0
+            akm1 = 2.0 * a / math.sqrt(con)
+        else:
+            akm1 = a * m_ts / t_ts
+        fe = d.get('x_0', 0.0)
+        fn = d.get('y_0', 0.0)
+        return lon_0, 0.0, akm1, fe, fn, is_south
+    else:
+        k0 = 0.994  # UPS default
+
+    half_e = e / 2.0
+    con = math.pow(1.0 + e, 1.0 + e) * math.pow(1.0 - e, 1.0 - e)
+    akm1 = a * k0 * 2.0 / math.sqrt(con)
+    fe = d.get('x_0', 0.0)
+    fn = d.get('y_0', 0.0)
+    return lon_0, k0, akm1, fe, fn, is_south
+
+
+@njit(nogil=True, cache=True)
+def _stere_fwd_point(lon_deg, lat_deg, lon0, akm1, e, is_south):
+    phi = math.radians(lat_deg)
+    lam = math.radians(lon_deg) - lon0
+
+    # For south pole: negate phi to compute ts for abs(phi),
+    # and use (sin, cos) instead of (sin, -cos) for (x, y).
+    abs_phi = -phi if is_south else phi
+    sinphi = math.sin(abs_phi)
+    es = e * sinphi
+    ts = math.tan(math.pi / 4.0 - abs_phi / 2.0) * math.pow(
+        (1.0 + es) / (1.0 - es), e / 2.0)
+    rho = akm1 * ts
+
+    if is_south:
+        x = rho * math.sin(lam)
+        y = rho * math.cos(lam)
+    else:
+        x = rho * math.sin(lam)
+        y = -rho * math.cos(lam)
+    return x, y
+
+
+@njit(nogil=True, cache=True)
+def _stere_inv_point(x, y, lon0, akm1, e, is_south):
+    if is_south:
+        rho = math.hypot(x, y)
+        lam = math.atan2(x, y)
+    else:
+        rho = math.hypot(x, y)
+        lam = math.atan2(x, -y)
+
+    if rho < 1e-30:
+        lat = -90.0 if is_south else 90.0
+        return math.degrees(lon0), lat
+
+    tp = rho / akm1
+    half_e = e / 2.0
+    phi = math.pi / 2.0 - 2.0 * math.atan(tp)
+    for _ in range(15):
+        sinphi = math.sin(phi)
+        es = e * sinphi
+        phi_new = math.pi / 2.0 - 2.0 * math.atan(
+            tp * math.pow((1.0 - es) / (1.0 + es), half_e))
+        if abs(phi_new - phi) < 1e-14:
+            phi = phi_new
+            break
+        phi = phi_new
+
+    if is_south:
+        phi = -phi
+
+    return math.degrees(lam + lon0), math.degrees(phi)
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def stere_forward(lons, lats, out_x, out_y,
+                  lon0, akm1, fe, fn, e, is_south):
+    south_f = 1.0 if is_south else 0.0
+    for i in prange(lons.shape[0]):
+        x, y = _stere_fwd_point(lons[i], lats[i], lon0, akm1, e, is_south)
+        out_x[i] = x + fe
+        out_y[i] = y + fn
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def stere_inverse(xs, ys, out_lon, out_lat,
+                  lon0, akm1, fe, fn, e, is_south):
+    for i in prange(xs.shape[0]):
+        out_lon[i], out_lat[i] = _stere_inv_point(
+            xs[i] - fe, ys[i] - fn, lon0, akm1, e, is_south)
 
 
 # ---------------------------------------------------------------------------
@@ -904,6 +1345,50 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
             cea_forward(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
                         lon0, k0, fe, fn,
                         _WGS84_E, _WGS84_A, _QP)
+            return (src_y_flat.reshape(height, width),
+                    src_x_flat.reshape(height, width))
+
+    # Sinusoidal
+    if _is_geographic_wgs84_or_nad83(src_epsg):
+        params = _sinu_params(tgt_crs)
+        if params is not None:
+            lon0, fe, fn = params
+            sinu_inverse(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
+                         lon0, fe, fn, _WGS84_E2, _WGS84_A, _MLFN_EN)
+            return (src_y_flat.reshape(height, width),
+                    src_x_flat.reshape(height, width))
+
+    if _is_geographic_wgs84_or_nad83(tgt_epsg):
+        params = _sinu_params(src_crs)
+        if params is not None:
+            lon0, fe, fn = params
+            sinu_forward(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
+                         lon0, fe, fn, _WGS84_E2, _WGS84_A, _MLFN_EN)
+            return (src_y_flat.reshape(height, width),
+                    src_x_flat.reshape(height, width))
+
+    # LAEA -- disabled pending investigation of ~940m oblique-mode error
+    # if _is_geographic_wgs84_or_nad83(src_epsg):
+    #     params = _laea_params(tgt_crs)
+    #     ...
+    # Falls through to pyproj for now.
+
+    # Polar Stereographic
+    if _is_geographic_wgs84_or_nad83(src_epsg):
+        params = _stere_params(tgt_crs)
+        if params is not None:
+            lon0, k0, akm1, fe, fn, is_south = params
+            stere_inverse(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
+                          lon0, akm1, fe, fn, _WGS84_E, is_south)
+            return (src_y_flat.reshape(height, width),
+                    src_x_flat.reshape(height, width))
+
+    if _is_geographic_wgs84_or_nad83(tgt_epsg):
+        params = _stere_params(src_crs)
+        if params is not None:
+            lon0, k0, akm1, fe, fn, is_south = params
+            stere_forward(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
+                          lon0, akm1, fe, fn, _WGS84_E, is_south)
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
 

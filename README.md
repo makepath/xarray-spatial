@@ -225,6 +225,8 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for common CRS pair
 | Lambert Conformal Conic | 2154, State Plane | ✅️ | ✅️ |
 | Albers Equal Area | 5070 | ✅️ | ✅️ |
 | Cylindrical Equal Area | 6933 | ✅️ | ✅️ |
+| Sinusoidal | MODIS grids | ✅️ | |
+| Polar Stereographic | 3031, 3413, 3996 | ✅️ | |
 
 Other CRS pairs fall back to pyproj automatically.
 
