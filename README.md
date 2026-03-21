@@ -212,8 +212,21 @@ write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Reproject](xrspatial/reproject/__init__.py) | Reprojects a raster to a new CRS using an approximate transform and numba JIT resampling | Standard (inverse mapping) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Reproject](xrspatial/reproject/__init__.py) | Reprojects a raster to a new CRS with Numba JIT / CUDA coordinate transforms and resampling | Standard (inverse mapping) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Merge](xrspatial/reproject/__init__.py) | Merges multiple rasters into a single mosaic with configurable overlap strategy | Standard (mosaic) | ✅️ | ✅️ | 🔄 | 🔄 |
+
+Built-in Numba JIT and CUDA projection kernels bypass pyproj for common CRS pairs:
+
+| Projection | EPSG examples | CPU Numba | CUDA GPU |
+|:-----------|:-------------|:---------:|:--------:|
+| Web Mercator | 3857 | ✅️ | ✅️ |
+| UTM (Transverse Mercator, Krueger 6th-order) | 326xx, 327xx, 269xx | ✅️ | ✅️ |
+| Ellipsoidal Mercator | 3395 | ✅️ | ✅️ |
+| Lambert Conformal Conic | 2154, State Plane | ✅️ | ✅️ |
+| Albers Equal Area | 5070 | ✅️ | ✅️ |
+| Cylindrical Equal Area | 6933 | ✅️ | ✅️ |
+
+Other CRS pairs fall back to pyproj automatically.
 
 -------
 
