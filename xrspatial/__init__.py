@@ -18,6 +18,11 @@ from xrspatial.classify import percentiles  # noqa
 from xrspatial.classify import std_mean  # noqa
 from xrspatial.diagnostics import diagnose  # noqa
 from xrspatial.diffusion import diffuse  # noqa
+from xrspatial.edge_detection import laplacian  # noqa
+from xrspatial.edge_detection import prewitt_x  # noqa
+from xrspatial.edge_detection import prewitt_y  # noqa
+from xrspatial.edge_detection import sobel_x  # noqa
+from xrspatial.edge_detection import sobel_y  # noqa
 from xrspatial.classify import equal_interval  # noqa
 from xrspatial.classify import natural_breaks  # noqa
 from xrspatial.classify import quantile  # noqa
