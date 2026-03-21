@@ -353,6 +353,28 @@ def _calc_var(array):
 
 
 @ngjit
+def _calc_variety(array):
+    """Count distinct non-NaN values in the flat kernel neighbourhood."""
+    count = 0
+    uvals = np.empty(array.size, dtype=array.dtype)
+    for i in range(array.size):
+        v = array.flat[i]
+        if np.isnan(v):
+            continue
+        found = False
+        for j in range(count):
+            if uvals[j] == v:
+                found = True
+                break
+        if not found:
+            uvals[count] = v
+            count += 1
+    if count == 0:
+        return np.nan
+    return np.float64(count)
+
+
+@ngjit
 def _apply_numpy(data, kernel, func):
     data = data.astype(np.float32)
 
@@ -762,6 +784,52 @@ def _focal_var_cuda(data, kernel, out):
         out[i, j] = 0.0
 
 
+@cuda.jit
+def _focal_variety_cuda(data, kernel, out):
+    i, j = cuda.grid(2)
+
+    rows, cols = data.shape
+    if i >= rows or j >= cols:
+        return
+
+    dr = kernel.shape[0] // 2
+    dc = kernel.shape[1] // 2
+
+    # Local buffer for up to 25 unique values (covers kernels up to 5x5).
+    # For larger kernels the buffer simply fills and stops counting,
+    # which is an acceptable trade-off for GPU register pressure.
+    MAX_UNIQ = 25
+    buf = cuda.local.array(MAX_UNIQ, nb.float32)
+    count = 0
+
+    for k in range(kernel.shape[0]):
+        for h in range(kernel.shape[1]):
+            if kernel[k, h] == 0:
+                continue
+
+            ii = i + k - dr
+            jj = j + h - dc
+
+            if 0 <= ii < rows and 0 <= jj < cols:
+                v = data[ii, jj]
+                if v != v:  # NaN check (NaN != NaN)
+                    continue
+                # check if already in buffer
+                found = False
+                for u in range(count):
+                    if buf[u] == v:
+                        found = True
+                        break
+                if not found and count < MAX_UNIQ:
+                    buf[count] = v
+                    count += 1
+
+    if count == 0:
+        out[i, j] = math.nan
+    else:
+        out[i, j] = float(count)
+
+
 def _focal_mean_cupy(data, kernel):
     out = convolve_2d(data, kernel / kernel.sum())
     return out
@@ -852,6 +920,7 @@ def _focal_stats_cupy(agg, kernel, stats_funcs):
         min=lambda *args: _focal_stats_func_cupy(*args, func=_focal_min_cuda),
         std=lambda *args: _focal_stats_func_cupy(*args, func=_focal_std_cuda),
         var=lambda *args: _focal_stats_func_cupy(*args, func=_focal_var_cuda),
+        variety=lambda *args: _focal_stats_func_cupy(*args, func=_focal_variety_cuda),
     )
     stats_aggs = []
     for stats in stats_funcs:
@@ -873,6 +942,7 @@ def _focal_stats_dask_cupy(agg, kernel, stats_funcs, boundary='nan'):
         mean=_focal_mean_cuda, sum=_focal_sum_cuda,
         range=_focal_range_cuda, max=_focal_max_cuda,
         min=_focal_min_cuda, std=_focal_std_cuda, var=_focal_var_cuda,
+        variety=_focal_variety_cuda,
     )
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
@@ -902,7 +972,8 @@ def _focal_stats_cpu(agg, kernel, stats_funcs, boundary='nan'):
         'range': _calc_range,
         'std': _calc_std,
         'var': _calc_var,
-        'sum': _calc_sum
+        'sum': _calc_sum,
+        'variety': _calc_variety,
     }
     stats_aggs = []
     for stats in stats_funcs:
@@ -916,13 +987,14 @@ def _focal_stats_cpu(agg, kernel, stats_funcs, boundary='nan'):
 def focal_stats(agg,
                 kernel,
                 stats_funcs=[
-                    'mean', 'max', 'min', 'range', 'std', 'var', 'sum'
+                    'mean', 'max', 'min', 'range', 'std', 'var',
+                    'sum', 'variety'
                 ],
                 boundary='nan'):
     """
     Calculates statistics of the values within a specified focal neighborhood
     for each pixel in an input raster. The statistics types are Mean, Maximum,
-    Minimum, Range, Standard deviation, Variation and Sum.
+    Minimum, Range, Standard deviation, Variation, Sum, and Variety.
 
     Parameters
     ----------
@@ -934,7 +1006,9 @@ def focal_stats(agg,
         2D array where values of 1 indicate the kernel.
     stats_funcs: list of string
         List of statistics types to be calculated.
-        Default set to ['mean', 'max', 'min', 'range', 'std', 'var', 'sum'].
+        Default set to ['mean', 'max', 'min', 'range', 'std', 'var',
+        'sum', 'variety'].  ``'variety'`` counts the number of distinct
+        non-NaN values in the neighbourhood (useful for categorical rasters).
     boundary : str, default='nan'
         How to handle edges where the kernel extends beyond the raster.
         ``'nan'``     -- fill missing neighbours with NaN (default).
