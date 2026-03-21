@@ -1005,6 +1005,36 @@ def _tmerc_coefficients(n):
 _ALPHA, _BETA, _CBG, _CGB, _A_RECT = _tmerc_coefficients(_WGS84_N)
 
 
+def _clenshaw_sin_py(coeffs, angle):
+    """Pure-Python version of _clenshaw_sin for use in setup code."""
+    N = len(coeffs)
+    X = 2.0 * math.cos(2.0 * angle)
+    u0 = 0.0
+    u1 = 0.0
+    for k in range(N - 1, -1, -1):
+        t = X * u0 - u1 + coeffs[k]
+        u1 = u0
+        u0 = t
+    return math.sin(2.0 * angle) * u0
+
+
+def _clenshaw_complex_py(coeffs, sin2Cn, cos2Cn, sinh2Ce, cosh2Ce):
+    """Pure-Python version of _clenshaw_complex for use in setup code.
+
+    Returns just dCn (real part).
+    """
+    N = len(coeffs)
+    r = 2.0 * cos2Cn * cosh2Ce
+    im = -2.0 * sin2Cn * sinh2Ce
+    hr = 0.0; hi = 0.0; hr1 = 0.0; hi1 = 0.0
+    for k in range(N - 1, -1, -1):
+        hr2 = hr1; hi2 = hi1; hr1 = hr; hi1 = hi
+        hr = -hr2 + r * hr1 - im * hi1 + coeffs[k]
+        hi = -hi2 + im * hr1 + r * hi1
+    dCn = sin2Cn * cosh2Ce * hr - cos2Cn * sinh2Ce * hi
+    return dCn
+
+
 @njit(nogil=True, cache=True)
 def _clenshaw_sin(coeffs, angle):
     """Evaluate SUM_{k=1}^{N} coeffs[k-1] * sin(2*k*angle) via Clenshaw."""
@@ -1185,6 +1215,54 @@ def _utm_params(epsg_code):
     return lon0, k0, false_e, false_n
 
 
+def _tmerc_params(crs):
+    """Extract generic Transverse Mercator parameters from a pyproj CRS.
+
+    Handles State Plane, national grids, and any other tmerc definition.
+    Returns (lon0_rad, k0, false_easting, false_northing, Zb) or None.
+    Zb is the Krueger northing offset for non-zero lat_0.
+    """
+    try:
+        d = crs.to_dict()
+    except Exception:
+        return None
+    if d.get('proj') != 'tmerc':
+        return None
+    # Only handle meter-based CRS; non-meter units (us-ft, ft) need
+    # conversion that we don't implement yet.
+    units = d.get('units', 'm')
+    if units not in ('m', None):
+        return None
+
+    lon_0 = math.radians(d.get('lon_0', 0.0))
+    lat_0 = math.radians(d.get('lat_0', 0.0))
+    k0 = float(d.get('k_0', d.get('k', 1.0)))
+    fe = d.get('x_0', 0.0)
+    fn = d.get('y_0', 0.0)
+
+    # Compute Zb: northing offset for the origin latitude.
+    # For lat_0=0 (UTM), Zb=0.
+    Qn = k0 * _A_RECT
+    if abs(lat_0) < 1e-14:
+        Zb = 0.0
+    else:
+        # Conformal latitude of origin
+        Z = lat_0 + _clenshaw_sin_py(_CBG, lat_0)
+        # Forward Krueger correction at Ce=0 (central meridian)
+        sin2Z = math.sin(2.0 * Z)
+        cos2Z = math.cos(2.0 * Z)
+        dCn = 0.0
+        for k in range(5, -1, -1):
+            dCn = cos2Z * dCn + _ALPHA[k] * sin2Z
+            # This is a simplified Clenshaw for Ce=0 (sinh=0, cosh=1)
+        # Actually, use the proper complex Clenshaw with Ce=0:
+        # sin2=sin(2Z), cos2=cos(2Z), sinh2=0, cosh2=1
+        dCn_val = _clenshaw_complex_py(_ALPHA, sin2Z, cos2Z, 0.0, 1.0)
+        Zb = -Qn * (Z + dCn_val)
+
+    return lon_0, k0, fe, fn, Zb
+
+
 # ---------------------------------------------------------------------------
 # Dispatch: detect fast-path CRS pairs
 # ---------------------------------------------------------------------------
@@ -1271,6 +1349,28 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
                       lon0, k0, fe, fn, Qn, _ALPHA, _CBG)
         return (src_y_flat.reshape(height, width),
                 src_x_flat.reshape(height, width))
+
+    # --- Generic Transverse Mercator (State Plane, national grids, etc.) ---
+    if _is_geographic_wgs84_or_nad83(src_epsg):
+        tmerc_p = _tmerc_params(tgt_crs)
+        if tmerc_p is not None:
+            lon0, k0, fe, fn, Zb = tmerc_p
+            Qn = k0 * _A_RECT
+            # fn already includes false northing; Zb is the origin offset
+            tmerc_inverse(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
+                          lon0, k0, fe, fn + Zb, Qn, _BETA, _CGB)
+            return (src_y_flat.reshape(height, width),
+                    src_x_flat.reshape(height, width))
+
+    if _is_geographic_wgs84_or_nad83(tgt_epsg):
+        tmerc_p = _tmerc_params(src_crs)
+        if tmerc_p is not None:
+            lon0, k0, fe, fn, Zb = tmerc_p
+            Qn = k0 * _A_RECT
+            tmerc_forward(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
+                          lon0, k0, fe, fn + Zb, Qn, _ALPHA, _CBG)
+            return (src_y_flat.reshape(height, width),
+                    src_x_flat.reshape(height, width))
 
     # --- Ellipsoidal Mercator (EPSG:3395) ---
     if _is_geographic_wgs84_or_nad83(src_epsg) and tgt_epsg == 3395:
