@@ -462,16 +462,20 @@ write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
 Importing `xrspatial` registers an `.xrs` accessor on DataArrays and Datasets, giving you tab-completable access to every spatial operation:
 
 ```python
-import xrspatial
-from xrspatial.geotiff import read_geotiff
+import xrspatial as xrs
+from xrspatial.geotiff import read_geotiff, write_geotiff
 
 # Read a GeoTIFF (no GDAL required)
 elevation = read_geotiff('dem.tif')
 
-# Surface analysis — call operations directly on the DataArray
+# Surface analysis
 slope = elevation.xrs.slope()
 hillshaded = elevation.xrs.hillshade(azimuth=315, angle_altitude=45)
 aspect = elevation.xrs.aspect()
+
+# Reproject and write as a Cloud Optimized GeoTIFF
+dem_wgs84 = elevation.xrs.reproject(target_crs='EPSG:4326')
+write_geotiff(dem_wgs84, 'output.tif', cog=True)
 
 # Classification
 classes = elevation.xrs.equal_interval(k=5)
@@ -480,11 +484,7 @@ breaks = elevation.xrs.natural_breaks(k=10)
 # Proximity
 distance = elevation.xrs.proximity(target_values=[1])
 
-# Multispectral — call on the NIR band, pass other bands as arguments
-nir = xr.DataArray(np.random.rand(100, 100), dims=['y', 'x'])
-red = xr.DataArray(np.random.rand(100, 100), dims=['y', 'x'])
-blue = xr.DataArray(np.random.rand(100, 100), dims=['y', 'x'])
-
+# Multispectral
 vegetation = nir.xrs.ndvi(red)
 enhanced_vi = nir.xrs.evi(red, blue)
 ```
@@ -505,30 +505,14 @@ ndvi_result = ds.xrs.ndvi(nir='band_5', red='band_4')
 
 ##### Function Import Style
 
-All operations are also available as standalone functions if you prefer explicit imports:
+All operations are also available as standalone functions:
 
 ```python
-from xrspatial import hillshade, slope, ndvi
+import xrspatial as xrs
 
-hillshaded = hillshade(elevation)
-slope_result = slope(elevation)
-vegetation = ndvi(nir, red)
-```
-
-##### Read, Reproject, Write
-
-```python
-from xrspatial.geotiff import read_geotiff, write_geotiff
-from xrspatial import reproject
-
-# Read a GeoTIFF (no GDAL required)
-dem = read_geotiff('input.tif')
-
-# Reproject from UTM to WGS84
-dem_wgs84 = reproject(dem, target_crs='EPSG:4326')
-
-# Write as a Cloud Optimized GeoTIFF
-write_geotiff(dem_wgs84, 'output.tif', cog=True)
+hillshaded = xrs.hillshade(elevation)
+slope_result = xrs.slope(elevation)
+vegetation = xrs.ndvi(nir, red)
 ```
 
 Check out the user guide [here](/examples/user_guide/).
