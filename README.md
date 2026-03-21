@@ -79,7 +79,7 @@
 
 :fast_forward: Scalable with [Dask](http://dask.pydata.org)
 
-:gpu: GPU-accelerated with [CuPy](https://cupy.dev/) and [Numba CUDA](https://numba.readthedocs.io/en/stable/cuda/index.html)
+:desktop_computer: GPU-accelerated with [CuPy](https://cupy.dev/) and [Numba CUDA](https://numba.readthedocs.io/en/stable/cuda/index.html)
 
 :confetti_ball: Free of GDAL / GEOS Dependencies
 
@@ -513,6 +513,22 @@ from xrspatial import hillshade, slope, ndvi
 hillshaded = hillshade(elevation)
 slope_result = slope(elevation)
 vegetation = ndvi(nir, red)
+```
+
+##### Read, Reproject, Write
+
+```python
+from xrspatial.geotiff import read_geotiff, write_geotiff
+from xrspatial import reproject
+
+# Read a GeoTIFF (no GDAL required)
+dem = read_geotiff('input.tif')
+
+# Reproject from UTM to WGS84
+dem_wgs84 = reproject(dem, target_crs='EPSG:4326')
+
+# Write as a Cloud Optimized GeoTIFF
+write_geotiff(dem_wgs84, 'output.tif', cog=True)
 ```
 
 Check out the user guide [here](/examples/user_guide/).
