@@ -225,9 +225,9 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for common CRS pair
 | Lambert Conformal Conic | 2154, State Plane | ✅️ | ✅️ |
 | Albers Equal Area | 5070 | ✅️ | ✅️ |
 | Cylindrical Equal Area | 6933 | ✅️ | ✅️ |
-| Sinusoidal | MODIS grids | ✅️ | |
-| Lambert Azimuthal Equal Area | 3035, 6931, 6932 | ✅️ | |
-| Polar Stereographic | 3031, 3413, 3996 | ✅️ | |
+| Sinusoidal | MODIS grids | ✅️ | ✅️ |
+| Lambert Azimuthal Equal Area | 3035, 6931, 6932 | ✅️ | ✅️ |
+| Polar Stereographic | 3031, 3413, 3996 | ✅️ | ✅️ |
 
 Other CRS pairs fall back to pyproj automatically.
 
@@ -238,15 +238,15 @@ Other CRS pairs fall back to pyproj automatically.
 | Web Mercator | 148ms (6x) | 6ms (146x) | 858ms |
 | UTM zone 33N | 221ms (8x) | 21ms (84x) | 1.78s |
 | Ell. Mercator | 273ms (10x) | 26ms (102x) | 2.64s |
-| LCC France | 329ms (9x) | | 3.02s |
+| LCC France | 329ms (9x) | 39ms (78x) | 3.02s |
 | Albers CONUS | 172ms (7x) | 14ms (92x) | 1.25s |
 | CEA EASE-Grid | 146ms (6x) | 43ms (19x) | 839ms |
-| Sinusoidal (MODIS) | 191ms (5x) | | 1.01s |
-| LAEA Europe | 196ms (8x) | | 1.65s |
-| Polar Stere Antarctic | 376ms (10x) | | 3.63s |
-| Polar Stere Arctic | 354ms (11x) | | 3.84s |
-| State Plane ME (tmerc) | 223ms (9x) | | 2.03s |
-| State Plane CA (lcc, ftUS) | 426ms (11x) | | 4.47s |
+| Sinusoidal (MODIS) | 191ms (5x) | 18ms (56x) | 1.01s |
+| LAEA Europe | 196ms (8x) | 18ms (92x) | 1.65s |
+| Polar Stere Antarctic | 376ms (10x) | 57ms (64x) | 3.63s |
+| Polar Stere Arctic | 354ms (11x) | 57ms (67x) | 3.84s |
+| State Plane ME (tmerc) | 223ms (9x) | 23ms (88x) | 2.03s |
+| State Plane CA (lcc, ftUS) | 426ms (11x) | 36ms (124x) | 4.47s |
 
 Speedups in parentheses are relative to pyproj. The Numba kernels port the PROJ C math (Krueger 6th-order series for Transverse Mercator, Newton iteration for LCC/Mercator inverse, authalic latitude Fourier series for equal-area projections) to `@njit(parallel=True)`. CUDA kernels use `@cuda.jit(device=True)` for the same per-pixel math.
 
