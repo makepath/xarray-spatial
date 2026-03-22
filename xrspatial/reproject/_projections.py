@@ -1715,15 +1715,46 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
     # datum shifts where needed.
     src_datum = _get_datum_params(src_crs)
     if src_datum is not None:
-        # Source is e.g. NAD27: kernel returned WGS84 coords,
-        # shift them to the source datum so pixel lookup is correct.
-        dx, dy, dz, a_src, f_src = src_datum
         src_y, src_x = result
         flat_lon = src_x.ravel()
         flat_lat = src_y.ravel()
-        _apply_datum_shift_inv(
-            flat_lon, flat_lat, dx, dy, dz, a_src, f_src, _WGS84_A, _WGS84_F,
-        )
+
+        # Try grid-based shift first (sub-meter accuracy)
+        try:
+            d = src_crs.to_dict()
+        except Exception:
+            d = {}
+        datum_key = d.get('datum', d.get('ellps', ''))
+
+        grid_applied = False
+        try:
+            from ._datum_grids import find_grid_for_point, get_grid
+            from ._datum_grids import apply_grid_shift_inverse
+
+            # Use center of the output chunk to select the grid
+            center_lon = float(np.mean(flat_lon[:min(100, len(flat_lon))]))
+            center_lat = float(np.mean(flat_lat[:min(100, len(flat_lat))]))
+            grid_key = find_grid_for_point(center_lon, center_lat, datum_key)
+            if grid_key is not None:
+                grid = get_grid(grid_key)
+                if grid is not None:
+                    dlat, dlon, g_left, g_top, g_rx, g_ry, g_h, g_w = grid
+                    apply_grid_shift_inverse(
+                        flat_lon, flat_lat, dlat, dlon,
+                        g_left, g_top, g_rx, g_ry, g_h, g_w,
+                    )
+                    grid_applied = True
+        except Exception:
+            pass
+
+        if not grid_applied:
+            # Fall back to Helmert
+            dx, dy, dz, a_src, f_src = src_datum
+            _apply_datum_shift_inv(
+                flat_lon, flat_lat, dx, dy, dz,
+                a_src, f_src, _WGS84_A, _WGS84_F,
+            )
+
         return flat_lat.reshape(src_y.shape), flat_lon.reshape(src_x.shape)
 
     return result
