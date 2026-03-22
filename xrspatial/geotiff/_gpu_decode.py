@@ -892,6 +892,311 @@ def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
 
 
 # ---------------------------------------------------------------------------
+# nvJPEG batch decode/encode (optional, GPU-accelerated JPEG)
+# ---------------------------------------------------------------------------
+
+def _find_nvjpeg_lib():
+    """Find and load libnvjpeg.so from the CUDA toolkit. Returns CDLL or None."""
+    import ctypes
+    import os
+
+    search_paths = [
+        'libnvjpeg.so',  # system LD_LIBRARY_PATH
+    ]
+
+    # CUDA toolkit path
+    cuda_home = os.environ.get('CUDA_HOME', os.environ.get('CUDA_PATH', ''))
+    if cuda_home:
+        for subdir in ('lib64', 'lib'):
+            search_paths.append(os.path.join(cuda_home, subdir, 'libnvjpeg.so'))
+
+    # Conda env
+    conda_prefix = os.environ.get('CONDA_PREFIX', '')
+    if conda_prefix:
+        search_paths.append(os.path.join(conda_prefix, 'lib', 'libnvjpeg.so'))
+
+    # Common CUDA toolkit install locations
+    for ver_dir in ('/usr/local/cuda/lib64', '/usr/local/cuda/lib'):
+        search_paths.append(os.path.join(ver_dir, 'libnvjpeg.so'))
+
+    for path in search_paths:
+        try:
+            return ctypes.CDLL(path)
+        except OSError:
+            continue
+    return None
+
+
+_nvjpeg_lib = None
+_nvjpeg_checked = False
+
+
+def _get_nvjpeg():
+    """Get the nvJPEG library handle (cached). Returns CDLL or None."""
+    global _nvjpeg_lib, _nvjpeg_checked
+    if not _nvjpeg_checked:
+        _nvjpeg_checked = True
+        _nvjpeg_lib = _find_nvjpeg_lib()
+    return _nvjpeg_lib
+
+
+# nvJPEG status codes
+_NVJPEG_STATUS_SUCCESS = 0
+
+# nvJPEG output formats
+_NVJPEG_OUTPUT_RGB = 2       # planar RGB
+_NVJPEG_OUTPUT_RGBI = 3      # interleaved RGB (R0G0B0 R1G1B1 ...)
+_NVJPEG_OUTPUT_UNCHANGED = 5  # native colorspace
+
+# nvJPEG backend
+_NVJPEG_BACKEND_DEFAULT = 0
+_NVJPEG_BACKEND_GPU_HYBRID = 2
+
+
+def _try_nvjpeg_batch_decode(compressed_tiles, tile_width, tile_height,
+                              samples):
+    """Try batch JPEG decode via nvJPEG. Returns CuPy buffer or None.
+
+    Decodes all JPEG tiles on GPU in one batched call. Falls back to None
+    if nvJPEG is unavailable or any decode fails.
+    """
+    lib = _get_nvjpeg()
+    if lib is None:
+        return None
+
+    import ctypes
+    import cupy
+
+    try:
+        n_tiles = len(compressed_tiles)
+        tile_pixels = tile_width * tile_height
+        tile_bytes = tile_pixels * samples  # JPEG is always uint8
+
+        # nvJPEG handle type (opaque pointer)
+        nvjpeg_handle = ctypes.c_void_p()
+
+        # nvjpegCreateSimple(&handle)
+        create_fn = getattr(lib, 'nvjpegCreateSimple', None)
+        if create_fn is None:
+            return None
+        create_fn.restype = ctypes.c_int
+        status = create_fn(ctypes.byref(nvjpeg_handle))
+        if status != _NVJPEG_STATUS_SUCCESS:
+            return None
+
+        try:
+            # Create JPEG state: nvjpegJpegStateCreate(handle, &state)
+            jpeg_state = ctypes.c_void_p()
+            state_create = getattr(lib, 'nvjpegJpegStateCreate')
+            state_create.restype = ctypes.c_int
+            status = state_create(nvjpeg_handle, ctypes.byref(jpeg_state))
+            if status != _NVJPEG_STATUS_SUCCESS:
+                return None
+
+            try:
+                # Decode tiles one at a time using the simple API.
+                # nvJPEG batch API requires more setup; the simple decode
+                # is still GPU-accelerated and avoids complex state management.
+                output_format = _NVJPEG_OUTPUT_RGBI if samples == 3 else _NVJPEG_OUTPUT_UNCHANGED
+
+                # nvjpegImage_t: array of 4 channel pointers + 4 pitches
+                class _NvjpegImage(ctypes.Structure):
+                    _fields_ = [
+                        ('channel', ctypes.c_void_p * 4),
+                        ('pitch', ctypes.c_size_t * 4),
+                    ]
+
+                d_all = cupy.empty(n_tiles * tile_bytes, dtype=cupy.uint8)
+
+                decode_fn = getattr(lib, 'nvjpegDecode')
+                decode_fn.restype = ctypes.c_int
+
+                for i, tile_data in enumerate(compressed_tiles):
+                    d_out = d_all[i * tile_bytes:(i + 1) * tile_bytes]
+
+                    nv_img = _NvjpegImage()
+                    nv_img.channel[0] = ctypes.c_void_p(d_out.data.ptr)
+                    for ch in range(1, 4):
+                        nv_img.channel[ch] = ctypes.c_void_p(0)
+                    nv_img.pitch[0] = ctypes.c_size_t(tile_width * samples)
+                    for ch in range(1, 4):
+                        nv_img.pitch[ch] = ctypes.c_size_t(0)
+
+                    src = tile_data if isinstance(tile_data, bytes) else bytes(tile_data)
+
+                    status = decode_fn(
+                        nvjpeg_handle,
+                        jpeg_state,
+                        ctypes.c_char_p(src),
+                        ctypes.c_size_t(len(src)),
+                        ctypes.c_int(output_format),
+                        ctypes.byref(nv_img),
+                        ctypes.c_void_p(0),  # default CUDA stream
+                    )
+                    if status != _NVJPEG_STATUS_SUCCESS:
+                        return None
+
+                cupy.cuda.Device().synchronize()
+                return d_all
+
+            finally:
+                destroy_state = getattr(lib, 'nvjpegJpegStateDestroy', None)
+                if destroy_state is not None:
+                    destroy_state(jpeg_state)
+        finally:
+            destroy_fn = getattr(lib, 'nvjpegDestroy', None)
+            if destroy_fn is not None:
+                destroy_fn(nvjpeg_handle)
+
+    except Exception:
+        return None
+
+
+def _nvjpeg_batch_encode(d_tile_bufs, tile_width, tile_height, samples,
+                          quality=75):
+    """Encode tiles as JPEG on GPU via nvJPEG. Returns list of bytes or None.
+
+    Each tile must be a CuPy uint8 array of interleaved pixel data.
+    """
+    lib = _get_nvjpeg()
+    if lib is None:
+        return None
+
+    import ctypes
+    import cupy
+
+    try:
+        n_tiles = len(d_tile_bufs)
+
+        nvjpeg_handle = ctypes.c_void_p()
+        create_fn = getattr(lib, 'nvjpegCreateSimple', None)
+        if create_fn is None:
+            return None
+        create_fn.restype = ctypes.c_int
+        status = create_fn(ctypes.byref(nvjpeg_handle))
+        if status != _NVJPEG_STATUS_SUCCESS:
+            return None
+
+        try:
+            # Create encoder state and params
+            enc_state = ctypes.c_void_p()
+            enc_state_create = getattr(lib, 'nvjpegEncoderStateCreate', None)
+            if enc_state_create is None:
+                return None
+            enc_state_create.restype = ctypes.c_int
+            status = enc_state_create(
+                nvjpeg_handle, ctypes.byref(enc_state),
+                ctypes.c_void_p(0))  # default stream
+            if status != _NVJPEG_STATUS_SUCCESS:
+                return None
+
+            try:
+                enc_params = ctypes.c_void_p()
+                params_create = getattr(lib, 'nvjpegEncoderParamsCreate')
+                params_create.restype = ctypes.c_int
+                status = params_create(
+                    nvjpeg_handle, ctypes.byref(enc_params),
+                    ctypes.c_void_p(0))
+                if status != _NVJPEG_STATUS_SUCCESS:
+                    return None
+
+                try:
+                    # Set quality
+                    set_quality = getattr(lib, 'nvjpegEncoderParamsSetQuality')
+                    set_quality.restype = ctypes.c_int
+                    set_quality(enc_params, ctypes.c_int(quality),
+                                ctypes.c_void_p(0))
+
+                    # Set interleaved sampling
+                    set_sampling = getattr(lib, 'nvjpegEncoderParamsSetSamplingFactors', None)
+                    # 0 = NVJPEG_CSS_444
+                    if set_sampling is not None:
+                        set_sampling.restype = ctypes.c_int
+                        set_sampling(enc_params, ctypes.c_int(0),
+                                     ctypes.c_void_p(0))
+
+                    class _NvjpegImage(ctypes.Structure):
+                        _fields_ = [
+                            ('channel', ctypes.c_void_p * 4),
+                            ('pitch', ctypes.c_size_t * 4),
+                        ]
+
+                    # Choose input format
+                    input_format = _NVJPEG_OUTPUT_RGBI if samples == 3 else _NVJPEG_OUTPUT_UNCHANGED
+
+                    encode_fn = getattr(lib, 'nvjpegEncodeImage')
+                    encode_fn.restype = ctypes.c_int
+
+                    retrieve_fn = getattr(lib, 'nvjpegEncodeRetrieveBitstream')
+                    retrieve_fn.restype = ctypes.c_int
+
+                    result = []
+                    for d_tile in d_tile_bufs:
+                        nv_img = _NvjpegImage()
+                        nv_img.channel[0] = ctypes.c_void_p(d_tile.data.ptr)
+                        for ch in range(1, 4):
+                            nv_img.channel[ch] = ctypes.c_void_p(0)
+                        nv_img.pitch[0] = ctypes.c_size_t(tile_width * samples)
+                        for ch in range(1, 4):
+                            nv_img.pitch[ch] = ctypes.c_size_t(0)
+
+                        status = encode_fn(
+                            nvjpeg_handle, enc_state, enc_params,
+                            ctypes.byref(nv_img),
+                            ctypes.c_int(input_format),
+                            ctypes.c_int(tile_width),
+                            ctypes.c_int(tile_height),
+                            ctypes.c_void_p(0),  # default stream
+                        )
+                        if status != _NVJPEG_STATUS_SUCCESS:
+                            return None
+
+                        cupy.cuda.Device().synchronize()
+
+                        # Get compressed size
+                        length = ctypes.c_size_t(0)
+                        status = retrieve_fn(
+                            nvjpeg_handle, enc_state,
+                            ctypes.c_void_p(0),  # NULL = query size
+                            ctypes.byref(length),
+                            ctypes.c_void_p(0),
+                        )
+                        if status != _NVJPEG_STATUS_SUCCESS:
+                            return None
+
+                        # Retrieve compressed data
+                        buf = ctypes.create_string_buffer(length.value)
+                        status = retrieve_fn(
+                            nvjpeg_handle, enc_state,
+                            buf,
+                            ctypes.byref(length),
+                            ctypes.c_void_p(0),
+                        )
+                        if status != _NVJPEG_STATUS_SUCCESS:
+                            return None
+
+                        result.append(buf.raw[:length.value])
+
+                    return result
+
+                finally:
+                    params_destroy = getattr(lib, 'nvjpegEncoderParamsDestroy', None)
+                    if params_destroy is not None:
+                        params_destroy(enc_params)
+            finally:
+                state_destroy = getattr(lib, 'nvjpegEncoderStateDestroy', None)
+                if state_destroy is not None:
+                    state_destroy(enc_state)
+        finally:
+            destroy_fn = getattr(lib, 'nvjpegDestroy', None)
+            if destroy_fn is not None:
+                destroy_fn(nvjpeg_handle)
+
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # High-level GPU decode pipeline
 # ---------------------------------------------------------------------------
 
@@ -1181,6 +1486,30 @@ def gpu_decode_tiles(
             d_len_base, d_len_extra, d_dist_base, d_dist_extra, d_cl_order,
         )
         cuda.synchronize()
+
+    elif compression == 7:  # JPEG
+        # Try nvJPEG GPU decode first, fall back to CPU Pillow
+        nvjpeg_result = _try_nvjpeg_batch_decode(
+            compressed_tiles, tile_width, tile_height, samples)
+        if nvjpeg_result is not None:
+            d_decomp = nvjpeg_result
+            decomp_offsets = np.arange(n_tiles, dtype=np.int64) * tile_bytes
+            d_decomp_offsets = cupy.asarray(decomp_offsets)
+        else:
+            from ._compression import jpeg_decompress
+            raw_host = np.empty(n_tiles * tile_bytes, dtype=np.uint8)
+            for i, tile in enumerate(compressed_tiles):
+                start = i * tile_bytes
+                decoded = np.frombuffer(
+                    jpeg_decompress(tile, tile_width, tile_height, samples),
+                    dtype=np.uint8)
+                n = min(len(decoded), tile_bytes)
+                raw_host[start:start + n] = decoded[:n]
+                if n < tile_bytes:
+                    raw_host[start + n:start + tile_bytes] = 0
+            d_decomp = cupy.asarray(raw_host)
+            decomp_offsets = np.arange(n_tiles, dtype=np.int64) * tile_bytes
+            d_decomp_offsets = cupy.asarray(decomp_offsets)
 
     elif compression == 1:  # Uncompressed
         raw_host = np.empty(n_tiles * tile_bytes, dtype=np.uint8)
@@ -1550,8 +1879,24 @@ def gpu_compress_tiles(d_image, tile_width, tile_height,
             d_tile_buf, d_tmp, tile_width * samples, total_rows, dtype.itemsize)
         cuda.synchronize()
 
-    # Split into per-tile buffers for nvCOMP
+    # Split into per-tile buffers
     d_tiles = [d_tile_buf[i * tile_bytes:(i + 1) * tile_bytes] for i in range(n_tiles)]
+
+    # JPEG: try nvJPEG encode, fall back to Pillow
+    if compression == 7:
+        result = _nvjpeg_batch_encode(d_tiles, tile_width, tile_height, samples)
+        if result is not None:
+            return result
+        # Fallback: CPU Pillow encode
+        from ._compression import jpeg_compress
+        cpu_buf = d_tile_buf.get()
+        result = []
+        for i in range(n_tiles):
+            start = i * tile_bytes
+            tile_data = bytes(cpu_buf[start:start + tile_bytes])
+            result.append(jpeg_compress(tile_data, tile_width, tile_height,
+                                        samples))
+        return result
 
     # Try nvCOMP batch compress
     result = _nvcomp_batch_compress(d_tiles, None, tile_bytes, compression, n_tiles)
