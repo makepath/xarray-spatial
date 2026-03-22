@@ -443,13 +443,33 @@ def reproject(
     src_wkt = src_crs.to_wkt()
     tgt_wkt = tgt_crs.to_wkt()
 
-    if is_dask:
+    if is_dask and is_cupy:
+        # Dask+CuPy: eagerly compute source to GPU, then single-pass
+        # CuPy reproject.  This avoids per-chunk overhead (pyproj init,
+        # small CUDA kernel launches, dask scheduler) that makes chunked
+        # GPU reproject ~28x slower than a single pass.  The output is
+        # returned as a plain CuPy array; caller can .rechunk() if needed.
+        import cupy as _cp
+        eager_data = raster.data.compute()
+        if not isinstance(eager_data, _cp.ndarray):
+            eager_data = _cp.asarray(eager_data)
+        eager_da = xr.DataArray(
+            eager_data, dims=raster.dims,
+            coords=raster.coords, attrs=raster.attrs,
+        )
+        result_data = _reproject_inmemory_cupy(
+            eager_da, src_bounds, src_shape, y_desc,
+            src_wkt, tgt_wkt,
+            out_bounds, out_shape,
+            resampling, nd, transform_precision,
+        )
+    elif is_dask:
         result_data = _reproject_dask(
             raster, src_bounds, src_shape, y_desc,
             src_wkt, tgt_wkt,
             out_bounds, out_shape,
             resampling, nd, transform_precision,
-            chunk_size, is_cupy,
+            chunk_size, False,
         )
     elif is_cupy:
         result_data = _reproject_inmemory_cupy(
