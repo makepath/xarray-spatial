@@ -75,13 +75,42 @@ def merc_inverse(xs, ys, out_lon, out_lat):
 
 # Ellipsoid definitions: (a, f)
 _ELLIPSOID_CLARKE1866 = (6378206.4, 1.0 / 294.9786982)
+_ELLIPSOID_AIRY = (6377563.396, 1.0 / 299.3249646)
+_ELLIPSOID_BESSEL = (6377397.155, 1.0 / 299.1528128)
+_ELLIPSOID_INTL1924 = (6378388.0, 1.0 / 297.0)
+_ELLIPSOID_ANS = (6378160.0, 1.0 / 298.25)  # Australian National Spheroid
 _ELLIPSOID_WGS84 = (_WGS84_A, _WGS84_F)
 
 # Helmert 3-parameter sets: (dx, dy, dz) in metres, source -> WGS84
-# From NIMA TR 8350.2 / EPSG dataset
+# From NIMA TR 8350.2 / EPSG dataset.  Used as fallback when shift
+# grids are not available for the specific point.
 _DATUM_PARAMS = {
-    'NAD27':         (-8.0, 160.0, 176.0, _ELLIPSOID_CLARKE1866),
-    'clarke66':      (-8.0, 160.0, 176.0, _ELLIPSOID_CLARKE1866),  # alias
+    # North America
+    'NAD27':    (-8.0, 160.0, 176.0, _ELLIPSOID_CLARKE1866),
+    'clarke66': (-8.0, 160.0, 176.0, _ELLIPSOID_CLARKE1866),
+    # UK
+    'OSGB36':   (446.448, -125.157, 542.060, _ELLIPSOID_AIRY),
+    'airy':     (446.448, -125.157, 542.060, _ELLIPSOID_AIRY),
+    # Germany (DHDN / Potsdam)
+    'DHDN':     (598.1, 73.7, 418.2, _ELLIPSOID_BESSEL),
+    'potsdam':  (598.1, 73.7, 418.2, _ELLIPSOID_BESSEL),
+    # Austria (MGI)
+    'MGI':      (577.326, 90.129, 463.919, _ELLIPSOID_BESSEL),
+    'hermannskogel': (577.326, 90.129, 463.919, _ELLIPSOID_BESSEL),
+    # Europe (ED50, approximate)
+    'ED50':     (-87.0, -98.0, -121.0, _ELLIPSOID_INTL1924),
+    'intl':     (-87.0, -98.0, -121.0, _ELLIPSOID_INTL1924),
+    # Belgium (BD72)
+    'BD72':     (-106.869, 52.2978, -103.724, _ELLIPSOID_INTL1924),
+    # Switzerland (CH1903)
+    'CH1903':   (674.374, 15.056, 405.346, _ELLIPSOID_BESSEL),
+    # Portugal (D73)
+    'D73':      (-239.749, 88.181, 30.488, _ELLIPSOID_INTL1924),
+    # Australia (AGD66)
+    'AGD66':    (-133.0, -48.0, 148.0, _ELLIPSOID_ANS),
+    'aust_SA':  (-133.0, -48.0, 148.0, _ELLIPSOID_ANS),
+    # Japan (Tokyo) -- grid not openly licensed, Helmert only
+    'tokyo':    (-146.414, 507.337, 680.507, _ELLIPSOID_BESSEL),
 }
 
 

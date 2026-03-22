@@ -24,6 +24,7 @@ _VENDORED_DIR = os.path.join(os.path.dirname(__file__), 'grids')
 # Grid registry: key -> (filename, coverage bounds, description, cdn_url)
 # Bounds are (lon_min, lat_min, lon_max, lat_max).
 GRID_REGISTRY = {
+    # --- NAD27 -> NAD83 (US + territories) ---
     'NAD27_CONUS': (
         'us_noaa_conus.tif',
         (-131, 20, -63, 50),
@@ -35,6 +36,81 @@ GRID_REGISTRY = {
         (-125, 24, -66, 50),
         'NAD27->NAD83 CONUS (NADCON5)',
         f'{_PROJ_CDN}/us_noaa_nadcon5_nad27_nad83_1986_conus.tif',
+    ),
+    'NAD27_ALASKA': (
+        'us_noaa_alaska.tif',
+        (-194, 50, -128, 72),
+        'NAD27->NAD83 Alaska (NADCON)',
+        f'{_PROJ_CDN}/us_noaa_alaska.tif',
+    ),
+    'NAD27_HAWAII': (
+        'us_noaa_hawaii.tif',
+        (-164, 17, -154, 23),
+        'Old Hawaiian->NAD83 (NADCON)',
+        f'{_PROJ_CDN}/us_noaa_hawaii.tif',
+    ),
+    'NAD27_PRVI': (
+        'us_noaa_prvi.tif',
+        (-68, 17, -64, 19),
+        'NAD27->NAD83 Puerto Rico/Virgin Islands',
+        f'{_PROJ_CDN}/us_noaa_prvi.tif',
+    ),
+    # --- OSGB36 -> ETRS89 (UK) ---
+    'OSGB36_UK': (
+        'uk_os_OSTN15_NTv2_OSGBtoETRS.tif',
+        (-9, 49, 3, 61),
+        'OSGB36->ETRS89 (Ordnance Survey OSTN15)',
+        f'{_PROJ_CDN}/uk_os_OSTN15_NTv2_OSGBtoETRS.tif',
+    ),
+    # --- Australia (parent grid covers NT region only) ---
+    'AGD66_GDA94': (
+        'au_icsm_A66_National_13_09_01.tif',
+        (104, -14, 129, -10),
+        'AGD66->GDA94 (Australia, NT region)',
+        f'{_PROJ_CDN}/au_icsm_A66_National_13_09_01.tif',
+    ),
+    # --- Europe ---
+    'DHDN_ETRS89_DE': (
+        'de_adv_BETA2007.tif',
+        (5, 47, 16, 56),
+        'DHDN->ETRS89 (Germany)',
+        f'{_PROJ_CDN}/de_adv_BETA2007.tif',
+    ),
+    'MGI_ETRS89_AT': (
+        'at_bev_AT_GIS_GRID.tif',
+        (9, 46, 18, 50),
+        'MGI->ETRS89 (Austria)',
+        f'{_PROJ_CDN}/at_bev_AT_GIS_GRID.tif',
+    ),
+    'ED50_ETRS89_ES': (
+        'es_ign_SPED2ETV2.tif',
+        (1, 38, 5, 41),
+        'ED50->ETRS89 (Spain, eastern coast/Balearics)',
+        f'{_PROJ_CDN}/es_ign_SPED2ETV2.tif',
+    ),
+    'RD_ETRS89_NL': (
+        'nl_nsgi_rdcorr2018.tif',
+        (2, 50, 8, 56),
+        'RD->ETRS89 (Netherlands)',
+        f'{_PROJ_CDN}/nl_nsgi_rdcorr2018.tif',
+    ),
+    'BD72_ETRS89_BE': (
+        'be_ign_bd72lb72_etrs89lb08.tif',
+        (2, 49, 7, 52),
+        'BD72->ETRS89 (Belgium)',
+        f'{_PROJ_CDN}/be_ign_bd72lb72_etrs89lb08.tif',
+    ),
+    'CH1903_ETRS89_CH': (
+        'ch_swisstopo_CHENyx06_ETRS.tif',
+        (5, 45, 11, 48),
+        'CH1903->ETRS89 (Switzerland)',
+        f'{_PROJ_CDN}/ch_swisstopo_CHENyx06_ETRS.tif',
+    ),
+    'D73_ETRS89_PT': (
+        'pt_dgt_D73_ETRS89_geo.tif',
+        (-10, 36, -6, 43),
+        'D73->ETRS89 (Portugal)',
+        f'{_PROJ_CDN}/pt_dgt_D73_ETRS89_geo.tif',
     ),
 }
 
@@ -91,8 +167,11 @@ def load_grid(grid_key):
             dlon = ds.read(2).astype(np.float64)  # arc-seconds
             b = ds.bounds
             bounds = (b.left, b.bottom, b.right, b.top)
-            res = ds.res  # (res_y, res_x) in degrees
-            return dlat, dlon, bounds, (res[1], res[0])
+            h, w = ds.height, ds.width
+            # Compute resolution from bounds and shape (avoids ds.res ordering ambiguity)
+            res_x = (b.right - b.left) / w if w > 1 else 0.25
+            res_y = (b.top - b.bottom) / h if h > 1 else 0.25
+            return dlat, dlon, bounds, (res_x, res_y)
     except ImportError:
         pass
 
@@ -210,7 +289,7 @@ def apply_grid_shift_inverse(lon_arr, lat_arr, dlat_grid, dlon_grid,
 # Grid cache (loaded grids, keyed by grid_key)
 # ---------------------------------------------------------------------------
 
-_loaded_grids = {}
+_loaded_grids = {}  # cleared on module reload
 
 
 def get_grid(grid_key):
@@ -241,10 +320,25 @@ def find_grid_for_point(lon, lat, datum_key):
 
     Returns the grid_key or None.
     """
-    # Map datum names to grid keys, ordered by preference
+    # Map datum/ellipsoid names to grid keys, ordered by preference.
+    # Keys are matched against the 'datum' or 'ellps' field from CRS.to_dict().
     datum_grids = {
-        'NAD27': ['NAD27_NADCON5_CONUS', 'NAD27_CONUS'],
-        'clarke66': ['NAD27_NADCON5_CONUS', 'NAD27_CONUS'],
+        'NAD27': ['NAD27_NADCON5_CONUS', 'NAD27_CONUS', 'NAD27_ALASKA',
+                  'NAD27_HAWAII', 'NAD27_PRVI'],
+        'clarke66': ['NAD27_NADCON5_CONUS', 'NAD27_CONUS', 'NAD27_ALASKA',
+                     'NAD27_HAWAII', 'NAD27_PRVI'],
+        'OSGB36': ['OSGB36_UK'],
+        'airy': ['OSGB36_UK'],
+        'AGD66': ['AGD66_GDA94'],
+        'aust_SA': ['AGD66_GDA94'],
+        'DHDN': ['DHDN_ETRS89_DE'],
+        'bessel': ['DHDN_ETRS89_DE'],  # Bessel used by DHDN, MGI, etc.
+        'MGI': ['MGI_ETRS89_AT'],
+        'ED50': ['ED50_ETRS89_ES'],
+        'intl': ['ED50_ETRS89_ES'],  # International 1924 ellipsoid
+        'BD72': ['BD72_ETRS89_BE'],
+        'CH1903': ['CH1903_ETRS89_CH'],
+        'D73': ['D73_ETRS89_PT'],
     }
 
     candidates = datum_grids.get(datum_key, [])
