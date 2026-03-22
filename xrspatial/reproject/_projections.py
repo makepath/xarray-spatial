@@ -70,6 +70,83 @@ def merc_inverse(xs, ys, out_lon, out_lat):
 
 
 # ---------------------------------------------------------------------------
+# Datum shift: geocentric 3-parameter Helmert
+# ---------------------------------------------------------------------------
+
+# Ellipsoid definitions: (a, f)
+_ELLIPSOID_CLARKE1866 = (6378206.4, 1.0 / 294.9786982)
+_ELLIPSOID_WGS84 = (_WGS84_A, _WGS84_F)
+
+# Helmert 3-parameter sets: (dx, dy, dz) in metres, source -> WGS84
+# From NIMA TR 8350.2 / EPSG dataset
+_DATUM_PARAMS = {
+    'NAD27':         (-8.0, 160.0, 176.0, _ELLIPSOID_CLARKE1866),
+    'clarke66':      (-8.0, 160.0, 176.0, _ELLIPSOID_CLARKE1866),  # alias
+}
+
+
+@njit(nogil=True, cache=True)
+def _geodetic_to_ecef(lon_deg, lat_deg, a, f):
+    """Geographic (deg) -> geocentric ECEF (metres)."""
+    lon = math.radians(lon_deg)
+    lat = math.radians(lat_deg)
+    e2 = 2.0 * f - f * f
+    slat = math.sin(lat)
+    clat = math.cos(lat)
+    N = a / math.sqrt(1.0 - e2 * slat * slat)
+    X = N * clat * math.cos(lon)
+    Y = N * clat * math.sin(lon)
+    Z = N * (1.0 - e2) * slat
+    return X, Y, Z
+
+
+@njit(nogil=True, cache=True)
+def _ecef_to_geodetic(X, Y, Z, a, f):
+    """Geocentric ECEF (metres) -> geographic (deg).  Iterative."""
+    e2 = 2.0 * f - f * f
+    lon = math.atan2(Y, X)
+    p = math.sqrt(X * X + Y * Y)
+    lat = math.atan2(Z, p * (1.0 - e2))
+    for _ in range(10):
+        slat = math.sin(lat)
+        N = a / math.sqrt(1.0 - e2 * slat * slat)
+        lat = math.atan2(Z + e2 * N * slat, p)
+    return math.degrees(lon), math.degrees(lat)
+
+
+@njit(nogil=True, cache=True)
+def _helmert_fwd(lon_deg, lat_deg, dx, dy, dz, a_src, f_src, a_tgt, f_tgt):
+    """Datum shift: source geographic -> target geographic via 3-param Helmert."""
+    X, Y, Z = _geodetic_to_ecef(lon_deg, lat_deg, a_src, f_src)
+    return _ecef_to_geodetic(X + dx, Y + dy, Z + dz, a_tgt, f_tgt)
+
+
+@njit(nogil=True, cache=True)
+def _helmert_inv(lon_deg, lat_deg, dx, dy, dz, a_src, f_src, a_tgt, f_tgt):
+    """Inverse datum shift: target geographic -> source geographic."""
+    X, Y, Z = _geodetic_to_ecef(lon_deg, lat_deg, a_tgt, f_tgt)
+    return _ecef_to_geodetic(X - dx, Y - dy, Z - dz, a_src, f_src)
+
+
+def _get_datum_params(crs):
+    """Return (dx, dy, dz, a_src, f_src) if the CRS uses a known non-WGS84 datum.
+
+    Returns None for WGS84/NAD83/GRS80 (no shift needed).
+    """
+    try:
+        d = crs.to_dict()
+    except Exception:
+        return None
+    datum = d.get('datum', '')
+    ellps = d.get('ellps', '')
+    key = datum if datum in _DATUM_PARAMS else ellps
+    if key not in _DATUM_PARAMS:
+        return None
+    dx, dy, dz, (a_src, f_src) = _DATUM_PARAMS[key]
+    return dx, dy, dz, a_src, f_src
+
+
+# ---------------------------------------------------------------------------
 # Shared helpers  (PROJ pj_tsfn, pj_sinhpsi2tanphi, authalic latitude)
 # ---------------------------------------------------------------------------
 
@@ -1310,23 +1387,47 @@ def _is_geographic_wgs84_or_nad83(epsg):
     return epsg in (4326, 4269)
 
 
-def _is_wgs84_compatible_ellipsoid(crs):
-    """True if *crs* uses WGS84 or GRS80 (effectively identical).
+def _is_supported_geographic(epsg):
+    """True for any geographic CRS we can handle (WGS84, NAD83, NAD27)."""
+    return epsg in (4326, 4269, 4267)
 
-    We only dispatch to Numba kernels (which hardcode WGS84 constants)
-    when the CRS ellipsoid matches.  CRS on other ellipsoids (Airy,
-    Clarke 1866, Bessel, etc.) need pyproj for the datum shift.
+
+def _is_wgs84_compatible_ellipsoid(crs):
+    """True if *crs* uses WGS84/GRS80 OR a datum we can Helmert-shift.
+
+    Returns True for WGS84/NAD83 (no shift needed) and for datums
+    with known Helmert parameters (NAD27, etc.) since the dispatch
+    will wrap the projection with a datum shift.
     """
     try:
         d = crs.to_dict()
     except Exception:
         return False
-    # Check explicit ellipsoid or datum markers
     ellps = d.get('ellps', '')
     datum = d.get('datum', '')
-    # WGS84 and GRS80 differ by ~0.1mm in semi-minor axis
-    return (ellps in ('WGS84', 'GRS80', '')
-            and datum in ('WGS84', 'NAD83', ''))
+    # WGS84 and GRS80: no shift needed
+    if (ellps in ('WGS84', 'GRS80', '')
+            and datum in ('WGS84', 'NAD83', '')):
+        return True
+    # Check if we have Helmert parameters for this datum
+    key = datum if datum in _DATUM_PARAMS else ellps
+    return key in _DATUM_PARAMS
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def _apply_datum_shift_inv(lon_arr, lat_arr, dx, dy, dz, a_src, f_src, a_tgt, f_tgt):
+    """Batch inverse Helmert: shift WGS84 geographic -> source datum geographic."""
+    for i in prange(lon_arr.shape[0]):
+        lon_arr[i], lat_arr[i] = _helmert_inv(
+            lon_arr[i], lat_arr[i], dx, dy, dz, a_src, f_src, a_tgt, f_tgt)
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def _apply_datum_shift_fwd(lon_arr, lat_arr, dx, dy, dz, a_src, f_src, a_tgt, f_tgt):
+    """Batch forward Helmert: shift source datum geographic -> WGS84 geographic."""
+    for i in prange(lon_arr.shape[0]):
+        lon_arr[i], lat_arr[i] = _helmert_fwd(
+            lon_arr[i], lat_arr[i], dx, dy, dz, a_src, f_src, a_tgt, f_tgt)
 
 
 def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
@@ -1334,11 +1435,19 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
 
     Returns (src_y, src_x) arrays if a fast path exists, or None to
     fall back to pyproj.
+
+    For non-WGS84 datums with known Helmert parameters, the projection
+    kernel runs in WGS84 and a geocentric 3-parameter datum shift is
+    applied as a post-processing step.
     """
     src_epsg = _get_epsg(src_crs)
     tgt_epsg = _get_epsg(tgt_crs)
     if src_epsg is None and tgt_epsg is None:
         return None
+
+    # Check if source or target needs a datum shift
+    src_datum = _get_datum_params(src_crs)
+    tgt_datum = _get_datum_params(tgt_crs)
 
     height, width = chunk_shape
     left, bottom, right, top = chunk_bounds
@@ -1359,13 +1468,13 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
     src_y_flat = np.empty(n, dtype=np.float64)
 
     # --- Geographic -> Web Mercator (inverse: Merc -> Geo) ---
-    if _is_geographic_wgs84_or_nad83(src_epsg) and tgt_epsg == 3857:
+    if _is_supported_geographic(src_epsg) and tgt_epsg == 3857:
         # Target is Mercator, need inverse: merc -> geo
         merc_inverse(out_x_flat, out_y_flat, src_x_flat, src_y_flat)
         return (src_y_flat.reshape(height, width),
                 src_x_flat.reshape(height, width))
 
-    if src_epsg == 3857 and _is_geographic_wgs84_or_nad83(tgt_epsg):
+    if src_epsg == 3857 and _is_supported_geographic(tgt_epsg):
         # Target is geographic, need forward: geo -> merc... wait, no.
         # We need the INVERSE transformer: target -> source.
         # target=geo, source=merc. So: geo -> merc (forward).
@@ -1374,7 +1483,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
                 src_x_flat.reshape(height, width))
 
     # --- Geographic -> UTM (inverse: UTM -> Geo) ---
-    if _is_geographic_wgs84_or_nad83(src_epsg):
+    if _is_supported_geographic(src_epsg):
         utm = _utm_params(tgt_epsg)
         if utm is not None:
             lon0, k0, fe, fn = utm
@@ -1387,7 +1496,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
 
     # --- UTM -> Geographic (forward: Geo -> UTM) ---
     utm_src = _utm_params(src_epsg)
-    if utm_src is not None and _is_geographic_wgs84_or_nad83(tgt_epsg):
+    if utm_src is not None and _is_supported_geographic(tgt_epsg):
         lon0, k0, fe, fn = utm_src
         Qn = k0 * _A_RECT
         # Target is geographic, need forward: Geo -> UTM
@@ -1397,7 +1506,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
                 src_x_flat.reshape(height, width))
 
     # --- Generic Transverse Mercator (State Plane, national grids, etc.) ---
-    if _is_geographic_wgs84_or_nad83(src_epsg):
+    if _is_supported_geographic(src_epsg):
         tmerc_p = _tmerc_params(tgt_crs)
         if tmerc_p is not None:
             lon0, k0, fe, fn, Zb, to_m = tmerc_p
@@ -1414,7 +1523,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
 
-    if _is_geographic_wgs84_or_nad83(tgt_epsg):
+    if _is_supported_geographic(tgt_epsg):
         tmerc_p = _tmerc_params(src_crs)
         if tmerc_p is not None:
             lon0, k0, fe, fn, Zb, to_m = tmerc_p
@@ -1429,12 +1538,12 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
                     src_x_flat.reshape(height, width))
 
     # --- Ellipsoidal Mercator (EPSG:3395) ---
-    if _is_geographic_wgs84_or_nad83(src_epsg) and tgt_epsg == 3395:
+    if _is_supported_geographic(src_epsg) and tgt_epsg == 3395:
         emerc_inverse(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
                       1.0, _WGS84_E)
         return (src_y_flat.reshape(height, width),
                 src_x_flat.reshape(height, width))
-    if src_epsg == 3395 and _is_geographic_wgs84_or_nad83(tgt_epsg):
+    if src_epsg == 3395 and _is_supported_geographic(tgt_epsg):
         emerc_forward(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
                       1.0, _WGS84_E)
         return (src_y_flat.reshape(height, width),
@@ -1445,7 +1554,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
     # the pyproj CRS objects directly rather than just EPSG codes.
 
     # LCC
-    if _is_geographic_wgs84_or_nad83(src_epsg):
+    if _is_supported_geographic(src_epsg):
         params = _lcc_params(tgt_crs)
         if params is not None:
             lon0, nn, c, rho0, k0, fe, fn, to_m = params
@@ -1460,7 +1569,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
 
-    if _is_geographic_wgs84_or_nad83(tgt_epsg):
+    if _is_supported_geographic(tgt_epsg):
         params = _lcc_params(src_crs)
         if params is not None:
             lon0, nn, c, rho0, k0, fe, fn, to_m = params
@@ -1473,7 +1582,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
                     src_x_flat.reshape(height, width))
 
     # AEA
-    if _is_geographic_wgs84_or_nad83(src_epsg):
+    if _is_supported_geographic(src_epsg):
         params = _aea_params(tgt_crs)
         if params is not None:
             lon0, nn, C, rho0, fe, fn = params
@@ -1483,7 +1592,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
 
-    if _is_geographic_wgs84_or_nad83(tgt_epsg):
+    if _is_supported_geographic(tgt_epsg):
         params = _aea_params(src_crs)
         if params is not None:
             lon0, nn, C, rho0, fe, fn = params
@@ -1494,7 +1603,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
                     src_x_flat.reshape(height, width))
 
     # CEA
-    if _is_geographic_wgs84_or_nad83(src_epsg):
+    if _is_supported_geographic(src_epsg):
         params = _cea_params(tgt_crs)
         if params is not None:
             lon0, k0, fe, fn = params
@@ -1504,7 +1613,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
 
-    if _is_geographic_wgs84_or_nad83(tgt_epsg):
+    if _is_supported_geographic(tgt_epsg):
         params = _cea_params(src_crs)
         if params is not None:
             lon0, k0, fe, fn = params
@@ -1515,7 +1624,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
                     src_x_flat.reshape(height, width))
 
     # Sinusoidal
-    if _is_geographic_wgs84_or_nad83(src_epsg):
+    if _is_supported_geographic(src_epsg):
         params = _sinu_params(tgt_crs)
         if params is not None:
             lon0, fe, fn = params
@@ -1524,7 +1633,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
 
-    if _is_geographic_wgs84_or_nad83(tgt_epsg):
+    if _is_supported_geographic(tgt_epsg):
         params = _sinu_params(src_crs)
         if params is not None:
             lon0, fe, fn = params
@@ -1534,7 +1643,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
                     src_x_flat.reshape(height, width))
 
     # LAEA
-    if _is_geographic_wgs84_or_nad83(src_epsg):
+    if _is_supported_geographic(src_epsg):
         params = _laea_params(tgt_crs)
         if params is not None:
             lon0, lat0, sinb1, cosb1, dd, xmf, ymf, rq, qp, fe, fn, mode = params
@@ -1544,7 +1653,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
 
-    if _is_geographic_wgs84_or_nad83(tgt_epsg):
+    if _is_supported_geographic(tgt_epsg):
         params = _laea_params(src_crs)
         if params is not None:
             lon0, lat0, sinb1, cosb1, dd, xmf, ymf, rq, qp, fe, fn, mode = params
@@ -1555,7 +1664,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
                     src_x_flat.reshape(height, width))
 
     # Polar Stereographic
-    if _is_geographic_wgs84_or_nad83(src_epsg):
+    if _is_supported_geographic(src_epsg):
         params = _stere_params(tgt_crs)
         if params is not None:
             lon0, k0, akm1, fe, fn, is_south = params
@@ -1564,7 +1673,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
 
-    if _is_geographic_wgs84_or_nad83(tgt_epsg):
+    if _is_supported_geographic(tgt_epsg):
         params = _stere_params(src_crs)
         if params is not None:
             lon0, k0, akm1, fe, fn, is_south = params
@@ -1574,3 +1683,37 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
                     src_x_flat.reshape(height, width))
 
     return None
+
+
+# Wrap try_numba_transform with datum shift support
+_try_numba_transform_inner = try_numba_transform
+
+
+def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
+    """Numba JIT coordinate transform with optional datum shift.
+
+    Wraps the projection-only transform.  If the source CRS uses a
+    non-WGS84 datum with known Helmert parameters (e.g. NAD27), the
+    returned geographic coordinates are shifted from WGS84 to the
+    source datum via a geocentric 3-parameter Helmert transform.
+    """
+    result = _try_numba_transform_inner(src_crs, tgt_crs, chunk_bounds, chunk_shape)
+    if result is None:
+        return None
+
+    # The projection kernels assume WGS84 on both sides.  Apply
+    # datum shifts where needed.
+    src_datum = _get_datum_params(src_crs)
+    if src_datum is not None:
+        # Source is e.g. NAD27: kernel returned WGS84 coords,
+        # shift them to the source datum so pixel lookup is correct.
+        dx, dy, dz, a_src, f_src = src_datum
+        src_y, src_x = result
+        flat_lon = src_x.ravel()
+        flat_lat = src_y.ravel()
+        _apply_datum_shift_inv(
+            flat_lon, flat_lat, dx, dy, dz, a_src, f_src, _WGS84_A, _WGS84_F,
+        )
+        return flat_lat.reshape(src_y.shape), flat_lon.reshape(src_x.shape)
+
+    return result
