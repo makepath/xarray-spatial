@@ -429,6 +429,7 @@ def reproject(
     Returns
     -------
     xr.DataArray
+        The output's ``attrs['crs']`` is always stored in WKT format.
     """
     from ._crs_utils import _require_pyproj
 
@@ -805,7 +806,8 @@ def merge(
     rasters : list of xr.DataArray
         Input rasters to merge.
     target_crs : optional
-        Target CRS. Defaults to the CRS of the first raster.
+        Target CRS. When None, the CRS of the first raster in the list
+        is used.
     resolution : float or (float, float) or None
         Output resolution in target CRS units.
     bounds : (left, bottom, right, top) or None
@@ -824,6 +826,7 @@ def merge(
     Returns
     -------
     xr.DataArray
+        The output's ``attrs['crs']`` is always stored in WKT format.
     """
     from ._crs_utils import _require_pyproj
 

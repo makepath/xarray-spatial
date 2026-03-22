@@ -169,6 +169,13 @@ def load_grid(grid_key):
             b = ds.bounds
             bounds = (b.left, b.bottom, b.right, b.top)
             h, w = ds.height, ds.width
+            # Validate grid shape and bounds
+            if dlat.shape != dlon.shape:
+                return None
+            if h < 2 or w < 2:
+                return None
+            if b.left >= b.right or b.bottom >= b.top:
+                return None
             # Compute resolution from bounds and shape (avoids ds.res ordering ambiguity)
             res_x = (b.right - b.left) / w if w > 1 else 0.25
             res_y = (b.top - b.bottom) / h if h > 1 else 0.25
@@ -191,10 +198,19 @@ def load_grid(grid_key):
     else:
         return None
 
+    # Validate grid shape and bounds
+    if dlat.shape != dlon.shape:
+        return None
+    if dlat.shape[0] < 2 or dlat.shape[1] < 2:
+        return None
+
     y_coords = da.coords['y'].values
     x_coords = da.coords['x'].values
     bounds = (float(x_coords[0]), float(y_coords[-1]),
               float(x_coords[-1]), float(y_coords[0]))
+    left, bottom, right, top = bounds
+    if left >= right or bottom >= top:
+        return None
     res_x = abs(float(x_coords[1] - x_coords[0])) if len(x_coords) > 1 else 0.25
     res_y = abs(float(y_coords[1] - y_coords[0])) if len(y_coords) > 1 else 0.25
     return dlat, dlon, bounds, (res_x, res_y)

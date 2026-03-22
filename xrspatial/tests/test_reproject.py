@@ -577,6 +577,54 @@ class TestMerge:
         with pytest.raises(ValueError, match="strategy"):
             merge([raster], strategy='median')
 
+    def test_merge_strategy_last(self):
+        """merge() with strategy='last' uses the last valid value."""
+        from xrspatial.reproject import merge
+        a = _make_raster(
+            np.full((16, 16), 10.0), x_range=(-5, 5), y_range=(-5, 5)
+        )
+        b = _make_raster(
+            np.full((16, 16), 20.0), x_range=(-5, 5), y_range=(-5, 5)
+        )
+        result = merge([a, b], strategy='last', resolution=1.0)
+        vals = result.values
+        interior = vals[2:-2, 2:-2]
+        valid = ~np.isnan(interior) & (interior != 0)
+        if valid.any():
+            np.testing.assert_allclose(interior[valid], 20.0, atol=1.0)
+
+    def test_merge_strategy_max(self):
+        """merge() with strategy='max' takes the maximum."""
+        from xrspatial.reproject import merge
+        a = _make_raster(
+            np.full((16, 16), 10.0), x_range=(-5, 5), y_range=(-5, 5)
+        )
+        b = _make_raster(
+            np.full((16, 16), 20.0), x_range=(-5, 5), y_range=(-5, 5)
+        )
+        result = merge([a, b], strategy='max', resolution=1.0)
+        vals = result.values
+        interior = vals[2:-2, 2:-2]
+        valid = ~np.isnan(interior) & (interior != 0)
+        if valid.any():
+            np.testing.assert_allclose(interior[valid], 20.0, atol=1.0)
+
+    def test_merge_strategy_min(self):
+        """merge() with strategy='min' takes the minimum."""
+        from xrspatial.reproject import merge
+        a = _make_raster(
+            np.full((16, 16), 10.0), x_range=(-5, 5), y_range=(-5, 5)
+        )
+        b = _make_raster(
+            np.full((16, 16), 20.0), x_range=(-5, 5), y_range=(-5, 5)
+        )
+        result = merge([a, b], strategy='min', resolution=1.0)
+        vals = result.values
+        interior = vals[2:-2, 2:-2]
+        valid = ~np.isnan(interior) & (interior != 0)
+        if valid.any():
+            np.testing.assert_allclose(interior[valid], 10.0, atol=1.0)
+
     @pytest.mark.skipif(not HAS_DASK, reason="dask required")
     def test_merge_dask(self):
         from xrspatial.reproject import merge

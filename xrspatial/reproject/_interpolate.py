@@ -67,10 +67,11 @@ def _resample_nearest_jit(src, row_coords, col_coords, nodata):
 
 @njit(nogil=True, cache=True)
 def _resample_cubic_jit(src, row_coords, col_coords, nodata):
-    """Catmull-Rom cubic resampling with NaN propagation.
+    """Catmull-Rom cubic resampling with NaN-aware fallback to bilinear.
 
     Separable: interpolate 4 row-slices along columns, then combine
-    along rows.  Handles NaN inline (no second pass needed).
+    along rows.  When any of the 16 neighbors is NaN, falls back to
+    bilinear with weight renormalization (matching GDAL behavior).
     """
     h_out, w_out = row_coords.shape
     sh, sw = src.shape
@@ -145,7 +146,51 @@ def _resample_cubic_jit(src, row_coords, col_coords, nodata):
                 else:
                     val += rv * wr3
 
-            out[i, j] = nodata if has_nan else val
+            if not has_nan:
+                out[i, j] = val
+            else:
+                # Fall back to bilinear with weight renormalization
+                r1 = r0 + 1
+                c1 = c0 + 1
+                dr = r - r0
+                dc = c - c0
+
+                w00 = (1.0 - dr) * (1.0 - dc)
+                w01 = (1.0 - dr) * dc
+                w10 = dr * (1.0 - dc)
+                w11 = dr * dc
+
+                accum = 0.0
+                wsum = 0.0
+
+                if 0 <= r0 < sh and 0 <= c0 < sw:
+                    v = src[r0, c0]
+                    if v == v:
+                        accum += w00 * v
+                        wsum += w00
+
+                if 0 <= r0 < sh and 0 <= c1 < sw:
+                    v = src[r0, c1]
+                    if v == v:
+                        accum += w01 * v
+                        wsum += w01
+
+                if 0 <= r1 < sh and 0 <= c0 < sw:
+                    v = src[r1, c0]
+                    if v == v:
+                        accum += w10 * v
+                        wsum += w10
+
+                if 0 <= r1 < sh and 0 <= c1 < sw:
+                    v = src[r1, c1]
+                    if v == v:
+                        accum += w11 * v
+                        wsum += w11
+
+                if wsum > 1e-10:
+                    out[i, j] = accum / wsum
+                else:
+                    out[i, j] = nodata
     return out
 
 
