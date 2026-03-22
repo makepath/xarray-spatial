@@ -215,12 +215,12 @@ write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
 | [Reproject](xrspatial/reproject/__init__.py) | Reprojects a raster to a new CRS with Numba JIT / CUDA coordinate transforms and resampling | Standard (inverse mapping) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Merge](xrspatial/reproject/__init__.py) | Merges multiple rasters into a single mosaic with configurable overlap strategy | Standard (mosaic) | ✅️ | ✅️ | 🔄 | 🔄 |
 
-Built-in Numba JIT and CUDA projection kernels bypass pyproj for common CRS pairs:
+Built-in Numba JIT and CUDA projection kernels bypass pyproj for common CRS pairs. Other CRS pairs fall back to pyproj automatically.
 
 | Projection | EPSG examples | CPU Numba | CUDA GPU |
 |:-----------|:-------------|:---------:|:--------:|
 | Web Mercator | 3857 | ✅️ | ✅️ |
-| UTM (Transverse Mercator, Krueger 6th-order) | 326xx, 327xx, 269xx | ✅️ | ✅️ |
+| UTM / Transverse Mercator | 326xx, 327xx, State Plane | ✅️ | ✅️ |
 | Ellipsoidal Mercator | 3395 | ✅️ | ✅️ |
 | Lambert Conformal Conic | 2154, State Plane | ✅️ | ✅️ |
 | Albers Equal Area | 5070 | ✅️ | ✅️ |
@@ -229,28 +229,28 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for common CRS pair
 | Lambert Azimuthal Equal Area | 3035, 6931, 6932 | ✅️ | ✅️ |
 | Polar Stereographic | 3031, 3413, 3996 | ✅️ | ✅️ |
 
-Other CRS pairs fall back to pyproj automatically.
+**Reproject performance** (end-to-end, bilinear, vs rioxarray):
 
-**Coordinate transform performance** (4096x4096 = 16.8M pixels, A6000 GPU):
+| Transform | 1024x1024 | | 4096x4096 | |
+|:---|---:|---:|---:|---:|
+| | xrspatial | rioxarray | xrspatial | rioxarray |
+| WGS84 -> UTM 33N | 33ms | 72ms (2.2x) | 627ms | 1.09s (1.7x) |
+| WGS84 -> Web Mercator | 16ms | 44ms (2.9x) | 526ms | 741ms (1.4x) |
+| WGS84 -> Albers CONUS | 72ms | 196ms (2.7x) | 649ms | 1.78s (2.7x) |
+| WGS84 -> LAEA Europe | 47ms | 74ms (1.6x) | 677ms | 1.03s (1.5x) |
+| WGS84 -> Polar Stere S | 34ms | 580ms (17x) | 839ms | 9.13s (11x) |
 
-| Projection | Numba CPU | CUDA GPU | pyproj |
+Times include coordinate transform + bilinear resampling. Speedup in parentheses is rioxarray/xrspatial. The Polar Stereographic advantage comes from rioxarray computing a much larger output grid for the same input extent.
+
+**Merge performance** (4 overlapping same-CRS tiles, vs rioxarray):
+
+| Tile size | xrspatial | rioxarray | Speedup |
 |:---|---:|---:|---:|
-| Web Mercator | 148ms (6x) | 6ms (146x) | 858ms |
-| UTM zone 33N | 221ms (8x) | 21ms (84x) | 1.78s |
-| Ell. Mercator | 273ms (10x) | 26ms (102x) | 2.64s |
-| LCC France | 329ms (9x) | 39ms (78x) | 3.02s |
-| Albers CONUS | 172ms (7x) | 14ms (92x) | 1.25s |
-| CEA EASE-Grid | 146ms (6x) | 43ms (19x) | 839ms |
-| Sinusoidal (MODIS) | 191ms (5x) | 18ms (56x) | 1.01s |
-| LAEA Europe | 196ms (8x) | 18ms (92x) | 1.65s |
-| Polar Stere Antarctic | 376ms (10x) | 57ms (64x) | 3.63s |
-| Polar Stere Arctic | 354ms (11x) | 57ms (67x) | 3.84s |
-| State Plane ME (tmerc) | 223ms (9x) | 23ms (88x) | 2.03s |
-| State Plane CA (lcc, ftUS) | 426ms (11x) | 36ms (124x) | 4.47s |
+| 512x512 | 11ms | 50ms | **4.5x** |
+| 1024x1024 | 82ms | 125ms | **1.5x** |
+| 2048x2048 | 347ms | 604ms | **1.7x** |
 
-Speedups in parentheses are relative to pyproj. The Numba kernels port the PROJ C math (Krueger 6th-order series for Transverse Mercator, Newton iteration for LCC/Mercator inverse, authalic latitude Fourier series for equal-area projections) to `@njit(parallel=True)`. CUDA kernels use `@cuda.jit(device=True)` for the same per-pixel math.
-
-These times measure the coordinate transform alone. Total `reproject()` time also includes resampling (bilinear/cubic interpolation), which adds roughly the same amount again. CRS pairs not in the table go through pyproj automatically with no accuracy or functionality loss.
+Same-CRS tiles skip reprojection entirely and are placed by direct coordinate alignment.
 
 -------
 
