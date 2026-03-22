@@ -1201,6 +1201,8 @@ def _utm_params(epsg_code):
     """
     # EPSG:326xx = UTM North, EPSG:327xx = UTM South (WGS84)
     # EPSG:269xx = UTM North (NAD83, effectively same ellipsoid)
+    if epsg_code is None:
+        return None
     if 32601 <= epsg_code <= 32660:
         zone = epsg_code - 32600
         south = False
@@ -1306,7 +1308,7 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
     """
     src_epsg = _get_epsg(src_crs)
     tgt_epsg = _get_epsg(tgt_crs)
-    if src_epsg is None or tgt_epsg is None:
+    if src_epsg is None and tgt_epsg is None:
         return None
 
     height, width = chunk_shape

@@ -231,6 +231,27 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for common CRS pair
 
 Other CRS pairs fall back to pyproj automatically.
 
+**Coordinate transform performance** (4096x4096 = 16.8M pixels, coordinate transform only):
+
+| Projection | Numba | pyproj | Speedup |
+|:---|---:|---:|---:|
+| Web Mercator | 144ms | 853ms | **5.9x** |
+| UTM zone 33N | 222ms | 1.77s | **8.0x** |
+| Ell. Mercator | 278ms | 2.63s | **9.5x** |
+| LCC France | 331ms | 3.02s | **9.1x** |
+| Albers CONUS | 172ms | 1.27s | **7.4x** |
+| CEA EASE-Grid | 150ms | 852ms | **5.7x** |
+| Sinusoidal (MODIS) | 194ms | 1.01s | **5.2x** |
+| LAEA Europe | 194ms | 1.64s | **8.5x** |
+| Polar Stere Antarctic | 384ms | 3.64s | **9.5x** |
+| Polar Stere Arctic | 362ms | 3.86s | **10.7x** |
+| State Plane ME (tmerc) | 222ms | 2.02s | **9.1x** |
+| State Plane CA (lcc, ftUS) | 443ms | 4.51s | **10.2x** |
+
+The Numba kernels port the actual PROJ math (Krueger 6th-order series for Transverse Mercator, Newton iteration for LCC/Mercator inverse, authalic latitude Fourier series for equal-area projections) to `@njit(parallel=True)`. GPU CUDA variants of the first six projections run 40-165x faster than pyproj (5-35ms for 16.8M pixels on an A6000).
+
+These times measure the coordinate transform alone. Total `reproject()` time also includes resampling (bilinear/cubic interpolation), which adds roughly the same amount again. CRS pairs not in the table go through pyproj automatically -- the resampling kernel is the same either way.
+
 -------
 
 ### **Utilities**
