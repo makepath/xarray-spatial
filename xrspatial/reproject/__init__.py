@@ -174,16 +174,27 @@ def _reproject_chunk_numpy(
     src_crs = pyproj.CRS.from_wkt(src_wkt)
     tgt_crs = pyproj.CRS.from_wkt(tgt_wkt)
 
-    # Build inverse transformer: target -> source
-    transformer = pyproj.Transformer.from_crs(
-        tgt_crs, src_crs, always_xy=True
-    )
+    # Try Numba fast path first (avoids creating pyproj Transformer)
+    numba_result = None
+    try:
+        from ._projections import try_numba_transform
+        numba_result = try_numba_transform(
+            src_crs, tgt_crs, chunk_bounds_tuple, chunk_shape,
+        )
+    except (ImportError, ModuleNotFoundError):
+        pass
 
-    # Source CRS coordinates for each output pixel
-    src_y, src_x = _transform_coords(
-        transformer, chunk_bounds_tuple, chunk_shape, transform_precision,
-        src_crs=src_crs, tgt_crs=tgt_crs,
-    )
+    if numba_result is not None:
+        src_y, src_x = numba_result
+    else:
+        # Fallback: create pyproj Transformer (expensive)
+        transformer = pyproj.Transformer.from_crs(
+            tgt_crs, src_crs, always_xy=True
+        )
+        src_y, src_x = _transform_coords(
+            transformer, chunk_bounds_tuple, chunk_shape, transform_precision,
+            src_crs=src_crs, tgt_crs=tgt_crs,
+        )
 
     # Convert source CRS coordinates to source pixel coordinates
     src_left, src_bottom, src_right, src_top = source_bounds_tuple
