@@ -452,6 +452,102 @@ def run_real_world(files=None, resamplings=None):
                   f'| {stats["exact"][1]:>12.6f} |')
 
 
+def run_merge(sizes=None):
+    """Benchmark xrspatial.merge vs rioxarray.merge_arrays.
+
+    Creates 4 overlapping rasters in a 2x2 grid arrangement and merges
+    them into a single mosaic with each library.
+    """
+    from rioxarray.merge import merge_arrays as rio_merge_arrays
+
+    from xrspatial.reproject import merge as xrs_merge
+
+    sizes = sizes or [(512, 512), (1024, 1024), (2048, 2048)]
+
+    print()
+    print('=' * 100)
+    print('MERGE BENCHMARK: xrspatial.merge vs rioxarray.merge_arrays (4 overlapping tiles)')
+    print('=' * 100)
+    print()
+    print(f'| {"Tile size":>12} '
+          f'| {"xrs merge":>11} | {"rio merge":>11} '
+          f'| {"xrs/rio":>7} '
+          f'| {"RMSE":>10} | {"MaxErr":>10} '
+          f'| {"Valid px":>10} | {"NaN agree":>9} |')
+    print(f'|{"-" * 14}'
+          f'|{"-" * 13}|{"-" * 13}'
+          f'|{"-" * 9}'
+          f'|{"-" * 12}|{"-" * 12}'
+          f'|{"-" * 12}|{"-" * 11}|')
+
+    for h, w in sizes:
+        # Build 4 overlapping tiles in a 2x2 grid.
+        # Each tile spans 10 degrees; overlap is 2 degrees on each shared edge.
+        # Total coverage: 18 x 18 degrees (from -9 to 9 lon, 41 to 59 lat).
+        tile_specs = [
+            # (x_range, y_range) -- 2-degree overlap between neighbours
+            ((-9, 1),  (49, 59)),   # top-left
+            ((-1, 9),  (49, 59)),   # top-right
+            ((-9, 1),  (41, 51)),   # bottom-left
+            ((-1, 9),  (41, 51)),   # bottom-right
+        ]
+
+        tiles_xrs = []
+        tiles_rio = []
+        for x_range, y_range in tile_specs:
+            da = _make_raster(h, w, crs='EPSG:4326',
+                              x_range=x_range, y_range=y_range)
+            tiles_xrs.append(da)
+            tiles_rio.append(_make_rio_raster(da, 'EPSG:4326'))
+
+        # Benchmark xrspatial merge
+        xrs_time, xrs_result = _timer(
+            lambda: xrs_merge(tiles_xrs),
+            warmup=1, runs=3,
+        )
+
+        # Benchmark rioxarray merge
+        rio_time, rio_result = _timer(
+            lambda: rio_merge_arrays(tiles_rio),
+            warmup=1, runs=3,
+        )
+
+        xrs_vals = xrs_result.values
+        rio_vals = rio_result.values
+
+        # Crop to common shape if they differ
+        common_h = min(xrs_vals.shape[0], rio_vals.shape[0])
+        common_w = min(xrs_vals.shape[1], rio_vals.shape[1])
+        xrs_vals = xrs_vals[:common_h, :common_w]
+        rio_vals = rio_vals[:common_h, :common_w]
+
+        # Compare where both have valid data
+        xrs_nan = np.isnan(xrs_vals)
+        rio_nan = np.isnan(rio_vals)
+        both_valid = ~xrs_nan & ~rio_nan
+        n_valid = int(both_valid.sum())
+        nan_agree = np.mean(xrs_nan == rio_nan) * 100
+
+        if n_valid > 0:
+            diff = xrs_vals[both_valid] - rio_vals[both_valid]
+            rmse = np.sqrt(np.mean(diff ** 2))
+            max_err = np.max(np.abs(diff))
+            rmse_str = f'{rmse:.6f}'
+            max_str = f'{max_err:.6f}'
+        else:
+            rmse_str = 'N/A'
+            max_str = 'N/A'
+
+        ratio = xrs_time / rio_time if rio_time > 0 else float('inf')
+
+        print(f'| {_fmt_shape((h, w)):>12} '
+              f'| {_fmt_time(xrs_time):>11} '
+              f'| {_fmt_time(rio_time):>11} '
+              f'| {ratio:>6.2f}x '
+              f'| {rmse_str:>10} | {max_str:>10} '
+              f'| {n_valid:>10} | {nan_agree:>8.1f}% |')
+
+
 def main():
     if not HAS_PYPROJ:
         print('ERROR: pyproj is required for reprojection benchmarks')
@@ -476,6 +572,7 @@ def main():
     run_consistency()
     run_performance()
     run_real_world()
+    run_merge()
 
 
 if __name__ == '__main__':
