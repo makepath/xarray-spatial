@@ -56,9 +56,14 @@ else:
         return (1.0 - e2) * (sinphi / (1.0 - es * es) + math.atanh(es) / e)
 
     @cuda.jit(device=True)
-    def _d_authalic_inv(beta, apa0, apa1, apa2):
-        t = beta + beta
-        return beta + apa0 * math.sin(t) + apa1 * math.sin(2.0 * t) + apa2 * math.sin(3.0 * t)
+    def _d_authalic_inv(beta, apa0, apa1, apa2, apa3, apa4):
+        t = 2.0 * beta
+        return (beta
+                + apa0 * math.sin(t)
+                + apa1 * math.sin(2.0 * t)
+                + apa2 * math.sin(3.0 * t)
+                + apa3 * math.sin(4.0 * t)
+                + apa4 * math.sin(5.0 * t))
 
     @cuda.jit(device=True)
     def _d_clenshaw_sin(c0, c1, c2, c3, c4, c5, angle):
@@ -334,7 +339,7 @@ else:
 
     @cuda.jit(device=True)
     def _d_aea_inv(x, y, lon0, n, C, rho0, e, a, qp,
-                   apa0, apa1, apa2):
+                   apa0, apa1, apa2, apa3, apa4):
         rho0_y = rho0 - y
         if n < 0.0:
             rho = -math.hypot(x, rho0_y)
@@ -349,20 +354,20 @@ else:
         elif ratio < -1.0:
             ratio = -1.0
         beta = math.asin(ratio)
-        phi = _d_authalic_inv(beta, apa0, apa1, apa2)
+        phi = _d_authalic_inv(beta, apa0, apa1, apa2, apa3, apa4)
         return math.degrees(theta / n + lon0), math.degrees(phi)
 
     @cuda.jit
     def _k_aea_inverse(out_src_x, out_src_y,
                        left, top, res_x, res_y,
                        lon0, n, C, rho0, fe, fn, e, a, qp,
-                       apa0, apa1, apa2):
+                       apa0, apa1, apa2, apa3, apa4):
         i, j = cuda.grid(2)
         if i < out_src_x.shape[0] and j < out_src_x.shape[1]:
             tx = left + (j + 0.5) * res_x - fe
             ty = top - (i + 0.5) * res_y - fn
             lon, lat = _d_aea_inv(tx, ty, lon0, n, C, rho0, e, a, qp,
-                                   apa0, apa1, apa2)
+                                   apa0, apa1, apa2, apa3, apa4)
             out_src_x[i, j] = lon
             out_src_y[i, j] = lat
 
@@ -390,7 +395,7 @@ else:
         return a * k0 * lam, a * q / (2.0 * k0)
 
     @cuda.jit(device=True)
-    def _d_cea_inv(x, y, lon0, k0, e, a, qp, apa0, apa1, apa2):
+    def _d_cea_inv(x, y, lon0, k0, e, a, qp, apa0, apa1, apa2, apa3, apa4):
         lam = x / (a * k0)
         ratio = 2.0 * y * k0 / (a * qp)
         if ratio > 1.0:
@@ -398,20 +403,20 @@ else:
         elif ratio < -1.0:
             ratio = -1.0
         beta = math.asin(ratio)
-        phi = _d_authalic_inv(beta, apa0, apa1, apa2)
+        phi = _d_authalic_inv(beta, apa0, apa1, apa2, apa3, apa4)
         return math.degrees(lam + lon0), math.degrees(phi)
 
     @cuda.jit
     def _k_cea_inverse(out_src_x, out_src_y,
                        left, top, res_x, res_y,
                        lon0, k0, fe, fn, e, a, qp,
-                       apa0, apa1, apa2):
+                       apa0, apa1, apa2, apa3, apa4):
         i, j = cuda.grid(2)
         if i < out_src_x.shape[0] and j < out_src_x.shape[1]:
             tx = left + (j + 0.5) * res_x - fe
             ty = top - (i + 0.5) * res_y - fn
             lon, lat = _d_cea_inv(tx, ty, lon0, k0, e, a, qp,
-                                   apa0, apa1, apa2)
+                                   apa0, apa1, apa2, apa3, apa4)
             out_src_x[i, j] = lon
             out_src_y[i, j] = lat
 
@@ -551,7 +556,7 @@ else:
     @cuda.jit(device=True)
     def _d_laea_inv(x, y, lon0, sinb1, cosb1,
                     xmf, ymf, rq, qp, e, a, e2, mode,
-                    apa0, apa1, apa2):
+                    apa0, apa1, apa2, apa3, apa4):
         if mode == 2 or mode == 3:
             x_a = x / a
             y_a = y / a
@@ -588,7 +593,7 @@ else:
         elif ratio < -1.0:
             ratio = -1.0
         beta = math.asin(ratio)
-        phi = _d_authalic_inv(beta, apa0, apa1, apa2)
+        phi = _d_authalic_inv(beta, apa0, apa1, apa2, apa3, apa4)
         return math.degrees(lam + lon0), math.degrees(phi)
 
     @cuda.jit
@@ -596,14 +601,14 @@ else:
                         left, top, res_x, res_y,
                         lon0, sinb1, cosb1, xmf, ymf, rq, qp,
                         fe, fn, e, a, e2, mode,
-                        apa0, apa1, apa2):
+                        apa0, apa1, apa2, apa3, apa4):
         i, j = cuda.grid(2)
         if i < out_src_x.shape[0] and j < out_src_x.shape[1]:
             tx = left + (j + 0.5) * res_x - fe
             ty = top - (i + 0.5) * res_y - fn
             lon, lat = _d_laea_inv(tx, ty, lon0, sinb1, cosb1,
                                     xmf, ymf, rq, qp, e, a, e2, mode,
-                                    apa0, apa1, apa2)
+                                    apa0, apa1, apa2, apa3, apa4)
             out_src_x[i, j] = lon
             out_src_y[i, j] = lat
 
@@ -856,7 +861,7 @@ else:
                 _k_aea_inverse[bpg, tpb](
                     out_src_x, out_src_y, left, top, res_x, res_y,
                     lon0, nn, C, rho0, fe, fn, _E, _A, _QP,
-                    _APA[0], _APA[1], _APA[2])
+                    _APA[0], _APA[1], _APA[2], _APA[3], _APA[4])
                 return out_src_y, out_src_x
 
         if _is_geographic_wgs84_or_nad83(tgt_epsg):
@@ -876,7 +881,7 @@ else:
                 _k_cea_inverse[bpg, tpb](
                     out_src_x, out_src_y, left, top, res_x, res_y,
                     lon0, k0, fe, fn, _E, _A, _QP,
-                    _APA[0], _APA[1], _APA[2])
+                    _APA[0], _APA[1], _APA[2], _APA[3], _APA[4])
                 return out_src_y, out_src_x
 
         if _is_geographic_wgs84_or_nad83(tgt_epsg):
@@ -920,7 +925,7 @@ else:
                     out_src_x, out_src_y, left, top, res_x, res_y,
                     lon0, sinb1, cosb1, xmf, ymf, rq, qp,
                     fe, fn, _E, _A, _WGS84_E2, mode,
-                    _APA[0], _APA[1], _APA[2])
+                    _APA[0], _APA[1], _APA[2], _APA[3], _APA[4])
                 return out_src_y, out_src_x
 
         if _is_geographic_wgs84_or_nad83(tgt_epsg):
