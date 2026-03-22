@@ -36,12 +36,14 @@ from ._vertical import (
     depth_to_ellipsoidal,
     ellipsoidal_to_depth,
 )
+from ._itrf import itrf_transform, list_frames as itrf_frames
 
 __all__ = [
     'reproject', 'merge',
     'geoid_height', 'geoid_height_raster',
     'ellipsoidal_to_orthometric', 'orthometric_to_ellipsoidal',
     'depth_to_ellipsoidal', 'ellipsoidal_to_depth',
+    'itrf_transform', 'itrf_frames',
 ]
 
 
