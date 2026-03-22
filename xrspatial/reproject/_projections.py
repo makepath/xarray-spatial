@@ -1057,9 +1057,9 @@ def stere_inverse(xs, ys, out_lon, out_lat,
 # ---------------------------------------------------------------------------
 
 def _sterea_params(crs):
-    """Extract oblique stereographic parameters.
+    """Extract oblique stereographic parameters (Gauss conformal double projection).
 
-    Returns (lon0, lat0, k0, fe, fn, sinc0, cosc0, R2, c, ratexp) or None.
+    Returns (lon0, sinc0, cosc0, R2, C_gauss, K_gauss, ratexp, fe, fn, e) or None.
     """
     try:
         d = crs.to_dict()
@@ -1080,98 +1080,110 @@ def _sterea_params(crs):
     e2 = _WGS84_E2
     a = _WGS84_A
 
-    # Gauss conformal sphere constants
+    # Gauss conformal sphere constants (from PROJ gauss.cpp)
     sinphi0 = math.sin(lat_0)
     cosphi0 = math.cos(lat_0)
-    chi0 = 2.0 * math.atan(
-        math.tan(math.pi / 4.0 + lat_0 / 2.0)
-        * math.pow((1.0 - e * sinphi0) / (1.0 + e * sinphi0), e / 2.0)
-    ) - math.pi / 2.0
+    C_gauss = math.sqrt(1.0 + e2 * cosphi0 ** 4 / (1.0 - e2))
+    R = math.sqrt(1.0 - e2) / (1.0 - e2 * sinphi0 * sinphi0)
+    ratexp = 0.5 * C_gauss * e
+
+    # Conformal latitude at origin
+    chi0 = math.asin(sinphi0 / C_gauss)
+
+    # Normalization constant K
+    srat0 = math.pow((1.0 - e * sinphi0) / (1.0 + e * sinphi0), ratexp)
+    K_gauss = (math.tan(math.pi / 4.0 + chi0 / 2.0)
+               / (math.pow(math.tan(math.pi / 4.0 + lat_0 / 2.0), C_gauss) * srat0))
 
     sinc0 = math.sin(chi0)
     cosc0 = math.cos(chi0)
+    # R is dimensionless; scale by a * k0 for metric output
+    R_metric = a * k0 * R
 
-    # R2: radius of the conformal sphere
-    R2 = a * k0 * cosphi0 / math.sqrt(1.0 - e2 * sinphi0 * sinphi0)
-
-    units = d.get('units', 'm')
-    _UNIT_TO_METER = {'m': 1.0, 'us-ft': 0.3048006096012192, 'ft': 0.3048}
-    to_m = _UNIT_TO_METER.get(units, 1.0)
-
-    return lon_0, lat_0, k0, fe, fn, sinc0, cosc0, R2, e, to_m
+    return lon_0, sinc0, cosc0, R_metric, C_gauss, K_gauss, ratexp, fe, fn, e
 
 
 @njit(nogil=True, cache=True)
-def _gauss_phi_to_chi(phi, e):
-    """Geodetic latitude -> conformal latitude on the Gauss sphere."""
+def _gauss_fwd(phi, lam, C, K, e, ratexp):
+    """Geodetic -> Gauss conformal sphere: (phi, lam) -> (chi, lam_conf)."""
     sinphi = math.sin(phi)
-    return 2.0 * math.atan(
-        math.tan(math.pi / 4.0 + phi / 2.0)
-        * math.pow((1.0 - e * sinphi) / (1.0 + e * sinphi), e / 2.0)
-    ) - math.pi / 2.0
+    srat = math.pow((1.0 - e * sinphi) / (1.0 + e * sinphi), ratexp)
+    chi = 2.0 * math.atan(K * math.pow(math.tan(math.pi / 4.0 + phi / 2.0), C) * srat) - math.pi / 2.0
+    lam_conf = C * lam
+    return chi, lam_conf
 
 
 @njit(nogil=True, cache=True)
-def _gauss_chi_to_phi(chi, e):
-    """Conformal latitude -> geodetic latitude (iterative)."""
+def _gauss_inv(chi, lam_conf, C, K, e, ratexp):
+    """Gauss conformal sphere -> geodetic: (chi, lam_conf) -> (phi, lam)."""
+    lam = lam_conf / C
+    num = math.pow(math.tan(math.pi / 4.0 + chi / 2.0) / K, 1.0 / C)
     phi = chi
-    for _ in range(15):
+    for _ in range(20):
         sinphi = math.sin(phi)
         phi_new = 2.0 * math.atan(
-            math.tan(math.pi / 4.0 + chi / 2.0)
-            * math.pow((1.0 + e * sinphi) / (1.0 - e * sinphi), e / 2.0)
+            num * math.pow((1.0 + e * sinphi) / (1.0 - e * sinphi), e / 2.0)
         ) - math.pi / 2.0
         if abs(phi_new - phi) < 1e-14:
-            return phi_new
+            return phi_new, lam
         phi = phi_new
-    return phi
+    return phi, lam
 
 
 @njit(nogil=True, cache=True)
-def _sterea_fwd_point(lon_deg, lat_deg, lon0, sinc0, cosc0, R2, e):
+def _sterea_fwd_point(lon_deg, lat_deg, lon0, sinc0, cosc0, Rm,
+                      C, K, ratexp, e):
+    """Oblique stereographic forward.  Rm = a * k0 * R_conformal."""
     lam = math.radians(lon_deg) - lon0
     phi = math.radians(lat_deg)
-    chi = _gauss_phi_to_chi(phi, e)
+    chi, lam_c = _gauss_fwd(phi, lam, C, K, e, ratexp)
     sinc = math.sin(chi)
     cosc = math.cos(chi)
-    coslam = math.cos(lam)
-    sinlam = math.sin(lam)
-    k = 2.0 / (1.0 + sinc0 * sinc + cosc0 * cosc * coslam)
-    x = R2 * k * cosc * sinlam
-    y = R2 * k * (cosc0 * sinc - sinc0 * cosc * coslam)
+    cosl = math.cos(lam_c)
+    sinl = math.sin(lam_c)
+    denom = 1.0 + sinc0 * sinc + cosc0 * cosc * cosl
+    if denom < 1e-30:
+        denom = 1e-30
+    k = 2.0 * Rm / denom
+    x = k * cosc * sinl
+    y = k * (cosc0 * sinc - sinc0 * cosc * cosl)
     return x, y
 
 
 @njit(nogil=True, cache=True)
-def _sterea_inv_point(x, y, lon0, sinc0, cosc0, R2, e):
+def _sterea_inv_point(x, y, lon0, sinc0, cosc0, Rm,
+                      C, K, ratexp, e):
+    """Oblique stereographic inverse.  Rm = a * k0 * R_conformal."""
     rho = math.hypot(x, y)
     if rho < 1e-30:
-        return math.degrees(lon0), math.degrees(_gauss_chi_to_phi(
-            math.asin(sinc0), e))
-    ce = 2.0 * math.atan(rho / (2.0 * R2))
+        phi, lam = _gauss_inv(math.asin(sinc0), 0.0, C, K, e, ratexp)
+        return math.degrees(lam + lon0), math.degrees(phi)
+    ce = 2.0 * math.atan2(rho, 2.0 * Rm)
     sinCe = math.sin(ce)
     cosCe = math.cos(ce)
     chi = math.asin(cosCe * sinc0 + y * sinCe * cosc0 / rho)
-    lam = math.atan2(x * sinCe, rho * cosc0 * cosCe - y * sinc0 * sinCe)
-    phi = _gauss_chi_to_phi(chi, e)
+    lam_c = math.atan2(x * sinCe, rho * cosc0 * cosCe - y * sinc0 * sinCe)
+    phi, lam = _gauss_inv(chi, lam_c, C, K, e, ratexp)
     return math.degrees(lam + lon0), math.degrees(phi)
 
 
 @njit(nogil=True, cache=True, parallel=True)
 def sterea_forward(lons, lats, out_x, out_y,
-                   lon0, sinc0, cosc0, R2, fe, fn, e):
+                   lon0, sinc0, cosc0, R2, C, K, ratexp, fe, fn, e):
     for i in prange(lons.shape[0]):
-        x, y = _sterea_fwd_point(lons[i], lats[i], lon0, sinc0, cosc0, R2, e)
+        x, y = _sterea_fwd_point(lons[i], lats[i], lon0, sinc0, cosc0, R2,
+                                  C, K, ratexp, e)
         out_x[i] = x + fe
         out_y[i] = y + fn
 
 
 @njit(nogil=True, cache=True, parallel=True)
 def sterea_inverse(xs, ys, out_lon, out_lat,
-                   lon0, sinc0, cosc0, R2, fe, fn, e):
+                   lon0, sinc0, cosc0, R2, C, K, ratexp, fe, fn, e):
     for i in prange(xs.shape[0]):
         out_lon[i], out_lat[i] = _sterea_inv_point(
-            xs[i] - fe, ys[i] - fn, lon0, sinc0, cosc0, R2, e)
+            xs[i] - fe, ys[i] - fn, lon0, sinc0, cosc0, R2,
+            C, K, ratexp, e)
 
 
 # ---------------------------------------------------------------------------
@@ -2029,10 +2041,27 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
 
-    # Oblique Stereographic and Oblique Mercator -- kernels implemented
-    # (sterea_forward/inverse, omerc_forward/inverse) but disabled in
-    # dispatch pending alignment with PROJ's Gauss conformal mapping
-    # (sterea) and Hotine variant details (omerc).  Both fall to pyproj.
+    # Oblique Stereographic
+    if _is_supported_geographic(src_epsg):
+        params = _sterea_params(tgt_crs)
+        if params is not None:
+            lon0, sinc0, cosc0, R2, C, K, ratexp, fe, fn, e = params
+            sterea_inverse(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
+                           lon0, sinc0, cosc0, R2, C, K, ratexp, fe, fn, e)
+            return (src_y_flat.reshape(height, width),
+                    src_x_flat.reshape(height, width))
+
+    if _is_supported_geographic(tgt_epsg):
+        params = _sterea_params(src_crs)
+        if params is not None:
+            lon0, sinc0, cosc0, R2, C, K, ratexp, fe, fn, e = params
+            sterea_forward(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
+                           lon0, sinc0, cosc0, R2, C, K, ratexp, fe, fn, e)
+            return (src_y_flat.reshape(height, width),
+                    src_x_flat.reshape(height, width))
+
+    # Oblique Mercator (Hotine) -- kernel implemented but disabled
+    # pending alignment with PROJ's omerc.cpp variant handling.
 
     return None
 
