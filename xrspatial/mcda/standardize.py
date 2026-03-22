@@ -156,9 +156,17 @@ def _linear(data, *, direction, bounds):
     if bounds is not None:
         lo, hi = float(bounds[0]), float(bounds[1])
     else:
-        # Compute from data -- works for numpy, cupy, and dask
-        lo = float(data.min()) if not hasattr(data, 'compute') else float(data.min())
-        hi = float(data.max()) if not hasattr(data, 'compute') else float(data.max())
+        # Compute from data, ignoring NaN
+        try:
+            import dask.array as da
+            if isinstance(data, da.Array):
+                lo = float(da.nanmin(data))
+                hi = float(da.nanmax(data))
+            else:
+                raise ImportError
+        except (ImportError, TypeError):
+            lo = float(np.nanmin(data))
+            hi = float(np.nanmax(data))
 
     rng = hi - lo
     if rng == 0:
