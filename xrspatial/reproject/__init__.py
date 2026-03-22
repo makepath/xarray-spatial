@@ -392,6 +392,8 @@ def reproject(
     transform_precision=16,
     chunk_size=None,
     name=None,
+    src_vertical_crs=None,
+    tgt_vertical_crs=None,
 ):
     """Reproject a raster DataArray to a new coordinate reference system.
 
@@ -425,11 +427,23 @@ def reproject(
         Output chunk size for dask. Defaults to 512.
     name : str or None
         Name for the output DataArray.
+    src_vertical_crs : str or None
+        Source vertical datum for height values. One of:
+
+        - ``'EGM96'`` -- orthometric heights relative to EGM96 geoid (MSL)
+        - ``'EGM2008'`` -- orthometric heights relative to EGM2008 geoid
+        - ``'ellipsoidal'`` -- heights relative to the WGS84 ellipsoid
+        - ``None`` -- no vertical transformation (default)
+    tgt_vertical_crs : str or None
+        Target vertical datum. Same options as *src_vertical_crs*.
+        Both must be set to trigger a vertical transformation.
 
     Returns
     -------
     xr.DataArray
-        The output's ``attrs['crs']`` is always stored in WKT format.
+        The output ``attrs['crs']`` is in WKT format.
+        If vertical transformation was applied, ``attrs['vertical_crs']``
+        records the target vertical datum.
     """
     from ._crs_utils import _require_pyproj
 
@@ -526,18 +540,122 @@ def reproject(
             resampling, nd, transform_precision,
         )
 
+    # Vertical datum transformation (if requested)
+    if src_vertical_crs is not None and tgt_vertical_crs is not None:
+        if src_vertical_crs != tgt_vertical_crs:
+            result_data = _apply_vertical_shift(
+                result_data, y_coords, x_coords,
+                src_vertical_crs, tgt_vertical_crs, nd,
+                tgt_crs_wkt=tgt_wkt,
+            )
+
     ydim = raster.dims[-2]
     xdim = raster.dims[-1]
+    out_attrs = {
+        'crs': tgt_wkt,
+        'nodata': nd,
+    }
+    if tgt_vertical_crs is not None:
+        out_attrs['vertical_crs'] = tgt_vertical_crs
     result = xr.DataArray(
         result_data,
         dims=[ydim, xdim],
         coords={ydim: y_coords, xdim: x_coords},
         name=name or raster.name,
-        attrs={
-            'crs': tgt_wkt,
-            'nodata': nd,
-        },
+        attrs=out_attrs,
     )
+    return result
+
+
+def _apply_vertical_shift(data, y_coords, x_coords,
+                          src_vcrs, tgt_vcrs, nodata,
+                          tgt_crs_wkt=None):
+    """Apply vertical datum shift to reprojected height values.
+
+    The geoid undulation grid is in geographic (lon/lat) coordinates.
+    If the output CRS is projected, coordinates are inverse-projected
+    to geographic before the geoid lookup.
+
+    Supported vertical CRS:
+    - 'EGM96', 'EGM2008': orthometric heights (above geoid/MSL)
+    - 'ellipsoidal': heights above WGS84 ellipsoid
+    """
+    from ._vertical import _load_geoid, _interp_geoid_2d
+
+    # Determine direction
+    geoid_models = []
+    signs = []
+
+    if src_vcrs in ('EGM96', 'EGM2008') and tgt_vcrs == 'ellipsoidal':
+        geoid_models.append(src_vcrs)
+        signs.append(1.0)  # H + N = h
+    elif src_vcrs == 'ellipsoidal' and tgt_vcrs in ('EGM96', 'EGM2008'):
+        geoid_models.append(tgt_vcrs)
+        signs.append(-1.0)  # h - N = H
+    elif src_vcrs in ('EGM96', 'EGM2008') and tgt_vcrs in ('EGM96', 'EGM2008'):
+        geoid_models.extend([src_vcrs, tgt_vcrs])
+        signs.extend([1.0, -1.0])  # H1 + N1 - N2
+    else:
+        return data
+
+    # Determine if we need inverse projection (output CRS is projected)
+    need_inverse = False
+    transformer = None
+    if tgt_crs_wkt is not None:
+        try:
+            from ._crs_utils import _require_pyproj
+            pyproj = _require_pyproj()
+            tgt_crs = pyproj.CRS.from_wkt(tgt_crs_wkt)
+            if not tgt_crs.is_geographic:
+                need_inverse = True
+                geo_crs = pyproj.CRS.from_epsg(4326)
+                transformer = pyproj.Transformer.from_crs(
+                    tgt_crs, geo_crs, always_xy=True
+                )
+        except Exception:
+            pass
+
+    x_arr = np.asarray(x_coords, dtype=np.float64)
+    y_arr = np.asarray(y_coords, dtype=np.float64)
+    out_h, out_w = data.shape[:2] if hasattr(data, 'shape') else (len(y_arr), len(x_arr))
+
+    # Load geoid grids once
+    geoids = []
+    for gm in geoid_models:
+        geoids.append(_load_geoid(gm))
+
+    # Process in row strips to bound memory (128 rows at a time)
+    result = data.copy() if hasattr(data, 'copy') else np.array(data)
+    is_nan_nodata = np.isnan(nodata) if isinstance(nodata, float) else False
+    strip = 128
+
+    for r0 in range(0, out_h, strip):
+        r1 = min(r0 + strip, out_h)
+        n_rows = r1 - r0
+
+        # Build strip coordinate grid
+        xx_strip = np.tile(x_arr, n_rows).reshape(n_rows, out_w)
+        yy_strip = np.repeat(y_arr[r0:r1], out_w).reshape(n_rows, out_w)
+
+        # Inverse project if needed
+        if need_inverse and transformer is not None:
+            lon_s, lat_s = transformer.transform(xx_strip.ravel(), yy_strip.ravel())
+            xx_strip = np.asarray(lon_s, dtype=np.float64).reshape(n_rows, out_w)
+            yy_strip = np.asarray(lat_s, dtype=np.float64).reshape(n_rows, out_w)
+
+        # Apply each geoid shift
+        strip_data = result[r0:r1]
+        if is_nan_nodata:
+            is_valid = np.isfinite(strip_data)
+        else:
+            is_valid = strip_data != nodata
+
+        for (grid_data, g_left, g_top, g_rx, g_ry, g_h, g_w), sign in zip(geoids, signs):
+            N_strip = np.empty((n_rows, out_w), dtype=np.float64)
+            _interp_geoid_2d(xx_strip, yy_strip, N_strip,
+                             grid_data, g_left, g_top, g_rx, g_ry, g_h, g_w)
+            strip_data[is_valid] += sign * N_strip[is_valid]
+
     return result
 
 
@@ -806,8 +924,7 @@ def merge(
     rasters : list of xr.DataArray
         Input rasters to merge.
     target_crs : optional
-        Target CRS. When None, the CRS of the first raster in the list
-        is used.
+        Target CRS. Defaults to the CRS of the first raster.
     resolution : float or (float, float) or None
         Output resolution in target CRS units.
     bounds : (left, bottom, right, top) or None
@@ -826,7 +943,6 @@ def merge(
     Returns
     -------
     xr.DataArray
-        The output's ``attrs['crs']`` is always stored in WKT format.
     """
     from ._crs_utils import _require_pyproj
 
