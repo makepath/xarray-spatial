@@ -198,6 +198,8 @@ def _lcc_params(crs):
         return None
     if d.get('proj') != 'lcc':
         return None
+    if not _is_wgs84_compatible_ellipsoid(crs):
+        return None
 
     units = d.get('units', 'm')
     _UNIT_TO_METER = {'m': 1.0, 'us-ft': 0.3048006096012192, 'ft': 0.3048}
@@ -533,6 +535,8 @@ def _sinu_params(crs):
         return None
     if d.get('proj') != 'sinu':
         return None
+    if not _is_wgs84_compatible_ellipsoid(crs):
+        return None
     lon_0 = math.radians(d.get('lon_0', 0.0))
     fe = d.get('x_0', 0.0)
     fn = d.get('y_0', 0.0)
@@ -596,6 +600,8 @@ def _laea_params(crs):
     except Exception:
         return None
     if d.get('proj') != 'laea':
+        return None
+    if not _is_wgs84_compatible_ellipsoid(crs):
         return None
 
     lon_0 = math.radians(d.get('lon_0', 0.0))
@@ -778,6 +784,8 @@ def _stere_params(crs):
         return None
     proj = d.get('proj', '')
     if proj not in ('stere', 'ups', 'sterea'):
+        return None
+    if not _is_wgs84_compatible_ellipsoid(crs):
         return None
 
     lat_0 = d.get('lat_0', 0.0)
@@ -1236,6 +1244,8 @@ def _tmerc_params(crs):
         return None
     if d.get('proj') != 'tmerc':
         return None
+    if not _is_wgs84_compatible_ellipsoid(crs):
+        return None  # e.g. BNG (Airy), NAD27 (Clarke 1866)
 
     # Unit conversion: false easting/northing from to_dict() are in
     # the CRS's native units.  The Krueger series works in metres,
@@ -1298,6 +1308,25 @@ def _get_epsg(crs):
 def _is_geographic_wgs84_or_nad83(epsg):
     """True for EPSG:4326 (WGS84) or EPSG:4269 (NAD83)."""
     return epsg in (4326, 4269)
+
+
+def _is_wgs84_compatible_ellipsoid(crs):
+    """True if *crs* uses WGS84 or GRS80 (effectively identical).
+
+    We only dispatch to Numba kernels (which hardcode WGS84 constants)
+    when the CRS ellipsoid matches.  CRS on other ellipsoids (Airy,
+    Clarke 1866, Bessel, etc.) need pyproj for the datum shift.
+    """
+    try:
+        d = crs.to_dict()
+    except Exception:
+        return False
+    # Check explicit ellipsoid or datum markers
+    ellps = d.get('ellps', '')
+    datum = d.get('datum', '')
+    # WGS84 and GRS80 differ by ~0.1mm in semi-minor axis
+    return (ellps in ('WGS84', 'GRS80', '')
+            and datum in ('WGS84', 'NAD83', ''))
 
 
 def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
