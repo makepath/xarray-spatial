@@ -231,26 +231,26 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for common CRS pair
 
 Other CRS pairs fall back to pyproj automatically.
 
-**Coordinate transform performance** (4096x4096 = 16.8M pixels, coordinate transform only):
+**Coordinate transform performance** (4096x4096 = 16.8M pixels, A6000 GPU):
 
-| Projection | Numba | pyproj | Speedup |
+| Projection | Numba CPU | CUDA GPU | pyproj |
 |:---|---:|---:|---:|
-| Web Mercator | 144ms | 853ms | **5.9x** |
-| UTM zone 33N | 222ms | 1.77s | **8.0x** |
-| Ell. Mercator | 278ms | 2.63s | **9.5x** |
-| LCC France | 331ms | 3.02s | **9.1x** |
-| Albers CONUS | 172ms | 1.27s | **7.4x** |
-| CEA EASE-Grid | 150ms | 852ms | **5.7x** |
-| Sinusoidal (MODIS) | 194ms | 1.01s | **5.2x** |
-| LAEA Europe | 194ms | 1.64s | **8.5x** |
-| Polar Stere Antarctic | 384ms | 3.64s | **9.5x** |
-| Polar Stere Arctic | 362ms | 3.86s | **10.7x** |
-| State Plane ME (tmerc) | 222ms | 2.02s | **9.1x** |
-| State Plane CA (lcc, ftUS) | 443ms | 4.51s | **10.2x** |
+| Web Mercator | 148ms (6x) | 6ms (146x) | 858ms |
+| UTM zone 33N | 221ms (8x) | 21ms (84x) | 1.78s |
+| Ell. Mercator | 273ms (10x) | 26ms (102x) | 2.64s |
+| LCC France | 329ms (9x) | | 3.02s |
+| Albers CONUS | 172ms (7x) | 14ms (92x) | 1.25s |
+| CEA EASE-Grid | 146ms (6x) | 43ms (19x) | 839ms |
+| Sinusoidal (MODIS) | 191ms (5x) | | 1.01s |
+| LAEA Europe | 196ms (8x) | | 1.65s |
+| Polar Stere Antarctic | 376ms (10x) | | 3.63s |
+| Polar Stere Arctic | 354ms (11x) | | 3.84s |
+| State Plane ME (tmerc) | 223ms (9x) | | 2.03s |
+| State Plane CA (lcc, ftUS) | 426ms (11x) | | 4.47s |
 
-The Numba kernels port the actual PROJ math (Krueger 6th-order series for Transverse Mercator, Newton iteration for LCC/Mercator inverse, authalic latitude Fourier series for equal-area projections) to `@njit(parallel=True)`. GPU CUDA variants of the first six projections run 40-165x faster than pyproj (5-35ms for 16.8M pixels on an A6000).
+Speedups in parentheses are relative to pyproj. The Numba kernels port the PROJ C math (Krueger 6th-order series for Transverse Mercator, Newton iteration for LCC/Mercator inverse, authalic latitude Fourier series for equal-area projections) to `@njit(parallel=True)`. CUDA kernels use `@cuda.jit(device=True)` for the same per-pixel math.
 
-These times measure the coordinate transform alone. Total `reproject()` time also includes resampling (bilinear/cubic interpolation), which adds roughly the same amount again. CRS pairs not in the table go through pyproj automatically -- the resampling kernel is the same either way.
+These times measure the coordinate transform alone. Total `reproject()` time also includes resampling (bilinear/cubic interpolation), which adds roughly the same amount again. CRS pairs not in the table go through pyproj automatically with no accuracy or functionality loss.
 
 -------
 
