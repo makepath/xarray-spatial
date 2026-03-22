@@ -159,9 +159,9 @@ write_geotiff(data, 'out.tif', gpu=True)             # force GPU compress
 write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
 ```
 
-**Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow), uncompressed
+**Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow), JPEG 2000 (glymur), uncompressed
 
-**GPU codecs:** Deflate and ZSTD via nvCOMP batch API; LZW via Numba CUDA kernels
+**GPU codecs:** Deflate and ZSTD via nvCOMP batch API; JPEG 2000 via nvJPEG2000; LZW via Numba CUDA kernels
 
 **Features:**
 - Tiled, stripped, BigTIFF, multi-band (RGB/RGBA), sub-byte (1/2/4/12-bit)
@@ -540,7 +540,7 @@ Check out the user guide [here](/examples/user_guide/).
 
 - **Zero GDAL installation hassle.** `pip install xarray-spatial` gets you everything needed to read and write GeoTIFFs, COGs, and VRT files.
 - **Pure Python, fully extensible.** All codec, header parsing, and metadata code is readable Python/Numba, not wrapped C/C++.
-- **GPU-accelerated reads.** With optional nvCOMP, compressed tiles decompress directly on the GPU via CUDA -- something GDAL cannot do.
+- **GPU-accelerated reads.** With optional nvCOMP and nvJPEG2000, compressed tiles decompress directly on the GPU via CUDA -- something GDAL cannot do.
 
 The native reader is pixel-exact against rasterio/GDAL across Landsat 8, Copernicus DEM, USGS 1-arc-second, and USGS 1-meter DEMs. For uncompressed files it reads 5-7x faster than rioxarray; for compressed COGs it is comparable or faster with GPU acceleration.
 

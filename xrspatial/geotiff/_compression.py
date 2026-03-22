@@ -727,6 +727,69 @@ def zstd_compress(data: bytes, level: int = 3) -> bytes:
     return _zstd.ZstdCompressor(level=level).compress(data)
 
 
+# -- JPEG 2000 codec (via glymur) --------------------------------------------
+
+JPEG2000_AVAILABLE = False
+try:
+    import glymur as _glymur
+    JPEG2000_AVAILABLE = True
+except ImportError:
+    _glymur = None
+
+
+def jpeg2000_decompress(data: bytes, width: int = 0, height: int = 0,
+                        samples: int = 1) -> bytes:
+    """Decompress a JPEG 2000 codestream. Requires ``glymur``."""
+    if not JPEG2000_AVAILABLE:
+        raise ImportError(
+            "glymur is required to read JPEG 2000-compressed TIFFs. "
+            "Install it with: pip install glymur")
+    import tempfile
+    import os
+    # glymur reads from files, so write the codestream to a temp file
+    fd, tmp = tempfile.mkstemp(suffix='.j2k')
+    try:
+        os.write(fd, data)
+        os.close(fd)
+        jp2 = _glymur.Jp2k(tmp)
+        arr = jp2[:]
+        return arr.tobytes()
+    finally:
+        os.unlink(tmp)
+
+
+def jpeg2000_compress(data: bytes, width: int, height: int,
+                      samples: int = 1, dtype: np.dtype = np.dtype('uint8'),
+                      lossless: bool = True) -> bytes:
+    """Compress raw pixel data as JPEG 2000 codestream. Requires ``glymur``."""
+    if not JPEG2000_AVAILABLE:
+        raise ImportError(
+            "glymur is required to write JPEG 2000-compressed TIFFs. "
+            "Install it with: pip install glymur")
+    import math
+    import tempfile
+    import os
+    if samples == 1:
+        arr = np.frombuffer(data, dtype=dtype).reshape(height, width)
+    else:
+        arr = np.frombuffer(data, dtype=dtype).reshape(height, width, samples)
+    fd, tmp = tempfile.mkstemp(suffix='.j2k')
+    os.close(fd)
+    os.unlink(tmp)  # glymur needs the file to not exist
+    try:
+        cratios = [1] if lossless else [20]
+        # numres must be <= log2(min_dim) + 1 to avoid OpenJPEG errors
+        min_dim = max(min(width, height), 1)
+        numres = min(6, int(math.log2(min_dim)) + 1)
+        numres = max(numres, 1)
+        _glymur.Jp2k(tmp, data=arr, cratios=cratios, numres=numres)
+        with open(tmp, 'rb') as f:
+            return f.read()
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
 # -- Dispatch helpers ---------------------------------------------------------
 
 # TIFF compression tag values
@@ -734,6 +797,7 @@ COMPRESSION_NONE = 1
 COMPRESSION_LZW = 5
 COMPRESSION_JPEG = 7
 COMPRESSION_DEFLATE = 8
+COMPRESSION_JPEG2000 = 34712
 COMPRESSION_ZSTD = 50000
 COMPRESSION_PACKBITS = 32773
 COMPRESSION_ADOBE_DEFLATE = 32946
@@ -771,6 +835,9 @@ def decompress(data, compression: int, expected_size: int = 0,
                              dtype=np.uint8)
     elif compression == COMPRESSION_ZSTD:
         return np.frombuffer(zstd_decompress(data), dtype=np.uint8)
+    elif compression == COMPRESSION_JPEG2000:
+        return np.frombuffer(
+            jpeg2000_decompress(data, width, height, samples), dtype=np.uint8)
     else:
         raise ValueError(f"Unsupported compression type: {compression}")
 
@@ -803,5 +870,7 @@ def compress(data: bytes, compression: int, level: int = 6) -> bytes:
         return zstd_compress(data, level)
     elif compression == COMPRESSION_JPEG:
         raise ValueError("Use jpeg_compress() directly with width/height/samples")
+    elif compression == COMPRESSION_JPEG2000:
+        raise ValueError("Use jpeg2000_compress() directly with width/height/samples/dtype")
     else:
         raise ValueError(f"Unsupported compression type: {compression}")

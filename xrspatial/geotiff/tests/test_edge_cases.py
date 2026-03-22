@@ -50,7 +50,7 @@ class TestWriteInvalidInputs:
     def test_unsupported_compression(self, tmp_path):
         arr = np.zeros((4, 4), dtype=np.float32)
         with pytest.raises(ValueError, match="Unsupported compression"):
-            write_geotiff(arr, str(tmp_path / 'bad.tif'), compression='jpeg2000')
+            write_geotiff(arr, str(tmp_path / 'bad.tif'), compression='webp')
 
     def test_complex_dtype(self, tmp_path):
         arr = np.zeros((4, 4), dtype=np.complex64)

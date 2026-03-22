@@ -1182,6 +1182,29 @@ def gpu_decode_tiles(
         )
         cuda.synchronize()
 
+    elif compression == 34712:  # JPEG 2000
+        nvj2k_result = _try_nvjpeg2k_batch_decode(
+            compressed_tiles, tile_width, tile_height, dtype, samples)
+        if nvj2k_result is not None:
+            d_decomp = nvj2k_result
+            decomp_offsets = np.arange(n_tiles, dtype=np.int64) * tile_bytes
+            d_decomp_offsets = cupy.asarray(decomp_offsets)
+        else:
+            # CPU fallback for JPEG 2000
+            from ._compression import jpeg2000_decompress
+            raw_host = np.empty(n_tiles * tile_bytes, dtype=np.uint8)
+            for i, tile in enumerate(compressed_tiles):
+                start = i * tile_bytes
+                chunk = np.frombuffer(
+                    jpeg2000_decompress(tile, tile_width, tile_height, samples),
+                    dtype=np.uint8)
+                raw_host[start:start + min(len(chunk), tile_bytes)] = \
+                    chunk[:tile_bytes] if len(chunk) >= tile_bytes else \
+                    np.pad(chunk, (0, tile_bytes - len(chunk)))
+            d_decomp = cupy.asarray(raw_host)
+            decomp_offsets = np.arange(n_tiles, dtype=np.int64) * tile_bytes
+            d_decomp_offsets = cupy.asarray(decomp_offsets)
+
     elif compression == 1:  # Uncompressed
         raw_host = np.empty(n_tiles * tile_bytes, dtype=np.uint8)
         for i, tile in enumerate(compressed_tiles):
@@ -1477,6 +1500,340 @@ def _nvcomp_batch_compress(d_tile_bufs, tile_byte_counts, tile_bytes,
 
 
 # ---------------------------------------------------------------------------
+# nvJPEG2000 batch decode/encode (optional, GPU-accelerated JPEG 2000)
+# ---------------------------------------------------------------------------
+
+_nvjpeg2k_lib = None
+_nvjpeg2k_checked = False
+
+
+def _find_nvjpeg2k_lib():
+    """Find and load libnvjpeg2k.so. Returns ctypes.CDLL or None."""
+    import ctypes
+    import os
+
+    search_paths = [
+        'libnvjpeg2k.so',  # system LD_LIBRARY_PATH
+    ]
+
+    conda_prefix = os.environ.get('CONDA_PREFIX', '')
+    if conda_prefix:
+        search_paths.append(os.path.join(conda_prefix, 'lib', 'libnvjpeg2k.so'))
+
+    conda_base = os.path.dirname(conda_prefix) if conda_prefix else ''
+    if conda_base:
+        for env in ['rapids', 'test-again', 'rtxpy-fire']:
+            p = os.path.join(conda_base, env, 'lib', 'libnvjpeg2k.so')
+            if os.path.exists(p):
+                search_paths.append(p)
+
+    for path in search_paths:
+        try:
+            return ctypes.CDLL(path)
+        except OSError:
+            continue
+    return None
+
+
+def _get_nvjpeg2k():
+    """Get the nvJPEG2000 library handle (cached). Returns CDLL or None."""
+    global _nvjpeg2k_lib, _nvjpeg2k_checked
+    if not _nvjpeg2k_checked:
+        _nvjpeg2k_checked = True
+        _nvjpeg2k_lib = _find_nvjpeg2k_lib()
+    return _nvjpeg2k_lib
+
+
+def _try_nvjpeg2k_batch_decode(compressed_tiles, tile_width, tile_height,
+                                dtype, samples):
+    """Try decoding JPEG 2000 tiles via nvJPEG2000. Returns list of CuPy arrays or None.
+
+    Each tile is decoded independently. The decoded pixels are returned as a
+    flat CuPy uint8 buffer (all tiles concatenated), matching the layout
+    expected by _apply_predictor_and_assemble / the assembly kernel.
+    """
+    lib = _get_nvjpeg2k()
+    if lib is None:
+        return None
+
+    import ctypes
+    import cupy
+
+    n_tiles = len(compressed_tiles)
+    bytes_per_pixel = dtype.itemsize * samples
+    tile_bytes = tile_width * tile_height * bytes_per_pixel
+
+    try:
+        # Create nvjpeg2k handle
+        handle = ctypes.c_void_p()
+        s = lib.nvjpeg2kCreateSimple(ctypes.byref(handle))
+        if s != 0:
+            return None
+
+        # Create decode state and params
+        state = ctypes.c_void_p()
+        s = lib.nvjpeg2kDecodeStateCreate(handle, ctypes.byref(state))
+        if s != 0:
+            lib.nvjpeg2kDestroy(handle)
+            return None
+
+        stream = ctypes.c_void_p()
+        s = lib.nvjpeg2kStreamCreate(ctypes.byref(stream))
+        if s != 0:
+            lib.nvjpeg2kDecodeStateDestroy(state)
+            lib.nvjpeg2kDestroy(handle)
+            return None
+
+        params = ctypes.c_void_p()
+        s = lib.nvjpeg2kDecodeParamsCreate(ctypes.byref(params))
+        if s != 0:
+            lib.nvjpeg2kStreamDestroy(stream)
+            lib.nvjpeg2kDecodeStateDestroy(state)
+            lib.nvjpeg2kDestroy(handle)
+            return None
+
+        # nvjpeg2kImage_t: array of pointers (pixel_data) + array of pitches
+        MAX_COMPONENTS = 4
+
+        class _NvJpeg2kImage(ctypes.Structure):
+            _fields_ = [
+                ('pixel_data', ctypes.c_void_p * MAX_COMPONENTS),
+                ('pitch_in_bytes', ctypes.c_size_t * MAX_COMPONENTS),
+                ('num_components', ctypes.c_uint32),
+                ('pixel_type', ctypes.c_int),  # NVJPEG2K_UINT8=0, UINT16=1, INT16=2
+            ]
+
+        # Map numpy dtype to nvjpeg2k pixel type
+        if dtype == np.uint8:
+            pixel_type = 0  # NVJPEG2K_UINT8
+        elif dtype == np.uint16:
+            pixel_type = 1  # NVJPEG2K_UINT16
+        elif dtype == np.int16:
+            pixel_type = 2  # NVJPEG2K_INT16
+        else:
+            # Unsupported dtype for nvJPEG2000 -- fall back
+            lib.nvjpeg2kDecodeParamsDestroy(params)
+            lib.nvjpeg2kStreamDestroy(stream)
+            lib.nvjpeg2kDecodeStateDestroy(state)
+            lib.nvjpeg2kDestroy(handle)
+            return None
+
+        # Decode each tile
+        d_all_tiles = cupy.empty(n_tiles * tile_bytes, dtype=cupy.uint8)
+
+        for i, tile_data in enumerate(compressed_tiles):
+            # Parse the J2K codestream
+            src = np.frombuffer(tile_data, dtype=np.uint8)
+            s = lib.nvjpeg2kStreamParse(
+                handle,
+                ctypes.c_void_p(src.ctypes.data),
+                ctypes.c_size_t(len(src)),
+                ctypes.c_int(0),  # save_metadata
+                ctypes.c_int(0),  # save_stream
+                stream,
+            )
+            if s != 0:
+                continue
+
+            # Allocate per-component output buffers on GPU
+            comp_bufs = []
+            pitch = tile_width * dtype.itemsize
+            for c in range(samples):
+                buf = cupy.empty(tile_height * pitch, dtype=cupy.uint8)
+                comp_bufs.append(buf)
+
+            # Build nvjpeg2kImage_t
+            img = _NvJpeg2kImage()
+            img.num_components = samples
+            img.pixel_type = pixel_type
+            for c in range(samples):
+                img.pixel_data[c] = comp_bufs[c].data.ptr
+                img.pitch_in_bytes[c] = pitch
+
+            # Decode
+            s = lib.nvjpeg2kDecode(
+                handle, state, stream, params,
+                ctypes.byref(img),
+                ctypes.c_void_p(0),  # default CUDA stream
+            )
+            cupy.cuda.Device().synchronize()
+
+            if s != 0:
+                continue
+
+            # Interleave components into pixel order (comp0,comp1,...) per pixel
+            tile_offset = i * tile_bytes
+            if samples == 1:
+                d_all_tiles[tile_offset:tile_offset + tile_bytes] = comp_bufs[0][:tile_bytes]
+            else:
+                # Interleave: separate planes -> pixel-interleaved
+                comp_arrays = [
+                    comp_bufs[c][:tile_height * pitch].view(
+                        dtype=cupy.dtype(dtype)).reshape(tile_height, tile_width)
+                    for c in range(samples)
+                ]
+                interleaved = cupy.stack(comp_arrays, axis=-1)
+                d_all_tiles[tile_offset:tile_offset + tile_bytes] = \
+                    interleaved.view(cupy.uint8).ravel()
+
+        # Cleanup
+        lib.nvjpeg2kDecodeParamsDestroy(params)
+        lib.nvjpeg2kStreamDestroy(stream)
+        lib.nvjpeg2kDecodeStateDestroy(state)
+        lib.nvjpeg2kDestroy(handle)
+
+        return d_all_tiles
+
+    except Exception:
+        return None
+
+
+def _nvjpeg2k_batch_encode(d_tile_bufs, tile_width, tile_height,
+                            dtype, samples, n_tiles, lossless=True):
+    """Encode tiles as JPEG 2000 via nvJPEG2000. Returns list of bytes or None."""
+    lib = _get_nvjpeg2k()
+    if lib is None:
+        return None
+
+    import ctypes
+    import cupy
+
+    try:
+        bytes_per_pixel = dtype.itemsize * samples
+        tile_bytes = tile_width * tile_height * bytes_per_pixel
+
+        # Create encoder
+        encoder = ctypes.c_void_p()
+        s = lib.nvjpeg2kEncoderCreateSimple(ctypes.byref(encoder))
+        if s != 0:
+            return None
+
+        enc_state = ctypes.c_void_p()
+        s = lib.nvjpeg2kEncodeStateCreate(encoder, ctypes.byref(enc_state))
+        if s != 0:
+            lib.nvjpeg2kEncoderDestroy(encoder)
+            return None
+
+        enc_params = ctypes.c_void_p()
+        s = lib.nvjpeg2kEncodeParamsCreate(ctypes.byref(enc_params))
+        if s != 0:
+            lib.nvjpeg2kEncodeStateDestroy(enc_state)
+            lib.nvjpeg2kEncoderDestroy(encoder)
+            return None
+
+        # Set encoding parameters
+        if lossless:
+            lib.nvjpeg2kEncodeParamsSetQuality(enc_params, ctypes.c_int(1))
+
+        MAX_COMPONENTS = 4
+
+        class _NvJpeg2kImage(ctypes.Structure):
+            _fields_ = [
+                ('pixel_data', ctypes.c_void_p * MAX_COMPONENTS),
+                ('pitch_in_bytes', ctypes.c_size_t * MAX_COMPONENTS),
+                ('num_components', ctypes.c_uint32),
+                ('pixel_type', ctypes.c_int),
+            ]
+
+        if dtype == np.uint8:
+            pixel_type = 0
+        elif dtype == np.uint16:
+            pixel_type = 1
+        elif dtype == np.int16:
+            pixel_type = 2
+        else:
+            lib.nvjpeg2kEncodeParamsDestroy(enc_params)
+            lib.nvjpeg2kEncodeStateDestroy(enc_state)
+            lib.nvjpeg2kEncoderDestroy(encoder)
+            return None
+
+        pitch = tile_width * dtype.itemsize
+        result = []
+
+        for i in range(n_tiles):
+            tile_data = d_tile_bufs[i * tile_bytes:(i + 1) * tile_bytes]
+
+            # De-interleave into per-component planes for the encoder
+            if samples == 1:
+                comp_bufs = [tile_data]
+            else:
+                tile_arr = tile_data.view(dtype=cupy.dtype(dtype)).reshape(
+                    tile_height, tile_width, samples)
+                comp_bufs = [
+                    cupy.ascontiguousarray(tile_arr[:, :, c]).view(cupy.uint8).ravel()
+                    for c in range(samples)
+                ]
+
+            img = _NvJpeg2kImage()
+            img.num_components = samples
+            img.pixel_type = pixel_type
+            for c in range(samples):
+                img.pixel_data[c] = comp_bufs[c].data.ptr
+                img.pitch_in_bytes[c] = pitch
+
+            # Set image info on params
+            class _CompInfo(ctypes.Structure):
+                _fields_ = [
+                    ('component_width', ctypes.c_uint32),
+                    ('component_height', ctypes.c_uint32),
+                    ('precision', ctypes.c_uint8),
+                    ('sgn', ctypes.c_uint8),
+                ]
+
+            precision = dtype.itemsize * 8
+            sgn = 1 if dtype.kind == 'i' else 0
+
+            comp_info = (_CompInfo * samples)()
+            for c in range(samples):
+                comp_info[c].component_width = tile_width
+                comp_info[c].component_height = tile_height
+                comp_info[c].precision = precision
+                comp_info[c].sgn = sgn
+
+            # Encode
+            s = lib.nvjpeg2kEncode(
+                encoder, enc_state, enc_params,
+                ctypes.byref(img),
+                ctypes.c_void_p(0),  # default CUDA stream
+            )
+            cupy.cuda.Device().synchronize()
+            if s != 0:
+                lib.nvjpeg2kEncodeParamsDestroy(enc_params)
+                lib.nvjpeg2kEncodeStateDestroy(enc_state)
+                lib.nvjpeg2kEncoderDestroy(encoder)
+                return None
+
+            # Retrieve bitstream size
+            bs_size = ctypes.c_size_t(0)
+            lib.nvjpeg2kEncoderRetrieveBitstream(
+                encoder, enc_state,
+                ctypes.c_void_p(0),
+                ctypes.byref(bs_size),
+                ctypes.c_void_p(0),
+            )
+
+            # Retrieve bitstream data
+            bs_buf = np.empty(bs_size.value, dtype=np.uint8)
+            lib.nvjpeg2kEncoderRetrieveBitstream(
+                encoder, enc_state,
+                ctypes.c_void_p(bs_buf.ctypes.data),
+                ctypes.byref(bs_size),
+                ctypes.c_void_p(0),
+            )
+
+            result.append(bs_buf[:bs_size.value].tobytes())
+
+        lib.nvjpeg2kEncodeParamsDestroy(enc_params)
+        lib.nvjpeg2kEncodeStateDestroy(enc_state)
+        lib.nvjpeg2kEncoderDestroy(encoder)
+
+        return result
+
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # High-level GPU write pipeline
 # ---------------------------------------------------------------------------
 
@@ -1549,6 +1906,24 @@ def gpu_compress_tiles(d_image, tile_width, tile_height,
         _fp_predictor_encode_kernel[bpg_r, tpb_r](
             d_tile_buf, d_tmp, tile_width * samples, total_rows, dtype.itemsize)
         cuda.synchronize()
+
+    # JPEG 2000: use nvJPEG2000 (image codec, not byte-stream codec)
+    if compression == 34712:
+        result = _nvjpeg2k_batch_encode(
+            d_tile_buf, tile_width, tile_height, dtype, samples, n_tiles)
+        if result is not None:
+            return result
+        # CPU fallback for JPEG 2000
+        from ._compression import jpeg2000_compress
+        cpu_buf = d_tile_buf.get()
+        result = []
+        for i in range(n_tiles):
+            start = i * tile_bytes
+            tile_data = bytes(cpu_buf[start:start + tile_bytes])
+            result.append(jpeg2000_compress(
+                tile_data, tile_width, tile_height,
+                samples=samples, dtype=dtype))
+        return result
 
     # Split into per-tile buffers for nvCOMP
     d_tiles = [d_tile_buf[i * tile_bytes:(i + 1) * tile_bytes] for i in range(n_tiles)]
