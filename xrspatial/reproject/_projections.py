@@ -1454,6 +1454,16 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
     res_x = (right - left) / width
     res_y = (top - bottom) / height
 
+    # Quick bail: if neither side is a geographic CRS we support, no fast path.
+    # This avoids the expensive array allocation below for unsupported pairs
+    # (e.g. same-CRS identity transforms in merge).
+    src_is_geo = _is_supported_geographic(src_epsg)
+    tgt_is_geo = _is_supported_geographic(tgt_epsg)
+    if not src_is_geo and not tgt_is_geo:
+        # Neither side is geographic -- can't be a supported pair
+        # (all our fast paths have geographic on one side)
+        return None
+
     # Build output coordinate arrays (target CRS)
     col_1d = np.arange(width, dtype=np.float64)
     row_1d = np.arange(height, dtype=np.float64)

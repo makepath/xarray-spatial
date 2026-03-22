@@ -715,21 +715,103 @@ def merge(
     return result
 
 
+def _place_same_crs(src_data, src_bounds, src_shape, y_desc,
+                    out_bounds, out_shape, nodata):
+    """Place a same-CRS tile into the output grid by coordinate alignment.
+
+    No reprojection needed -- just index the output rows/columns that
+    overlap with the source tile and copy the data.
+    """
+    out_h, out_w = out_shape
+    src_h, src_w = src_shape
+    o_left, o_bottom, o_right, o_top = out_bounds
+    s_left, s_bottom, s_right, s_top = src_bounds
+
+    o_res_x = (o_right - o_left) / out_w
+    o_res_y = (o_top - o_bottom) / out_h
+    s_res_x = (s_right - s_left) / src_w
+    s_res_y = (s_top - s_bottom) / src_h
+
+    # Output pixel range that this tile covers
+    col_start = int(round((s_left - o_left) / o_res_x))
+    col_end = int(round((s_right - o_left) / o_res_x))
+    row_start = int(round((o_top - s_top) / o_res_y))
+    row_end = int(round((o_top - s_bottom) / o_res_y))
+
+    # Clip to output bounds
+    col_start_clip = max(0, col_start)
+    col_end_clip = min(out_w, col_end)
+    row_start_clip = max(0, row_start)
+    row_end_clip = min(out_h, row_end)
+
+    if col_start_clip >= col_end_clip or row_start_clip >= row_end_clip:
+        return np.full(out_shape, nodata, dtype=np.float64)
+
+    # Source pixel range (handle offset if tile extends beyond output)
+    src_col_start = col_start_clip - col_start
+    src_row_start = row_start_clip - row_start
+
+    # Resolutions may differ slightly; if close enough, do direct copy
+    res_ratio_x = s_res_x / o_res_x
+    res_ratio_y = s_res_y / o_res_y
+    if abs(res_ratio_x - 1.0) > 0.01 or abs(res_ratio_y - 1.0) > 0.01:
+        return None  # resolutions too different, fall back to reproject
+
+    out_data = np.full(out_shape, nodata, dtype=np.float64)
+    n_rows = row_end_clip - row_start_clip
+    n_cols = col_end_clip - col_start_clip
+
+    # Clamp source window
+    src_r_end = min(src_row_start + n_rows, src_h)
+    src_c_end = min(src_col_start + n_cols, src_w)
+    actual_rows = src_r_end - src_row_start
+    actual_cols = src_c_end - src_col_start
+
+    if actual_rows <= 0 or actual_cols <= 0:
+        return out_data
+
+    src_window = np.asarray(src_data[src_row_start:src_r_end,
+                                     src_col_start:src_c_end],
+                            dtype=np.float64)
+    out_data[row_start_clip:row_start_clip + actual_rows,
+             col_start_clip:col_start_clip + actual_cols] = src_window
+    return out_data
+
+
 def _merge_inmemory(
     raster_infos, tgt_wkt, out_bounds, out_shape,
     resampling, nodata, strategy,
 ):
-    """In-memory merge using numpy."""
+    """In-memory merge using numpy.
+
+    Detects same-CRS tiles and uses fast direct placement instead
+    of reprojection.
+    """
+    from ._crs_utils import _require_pyproj
+    pyproj = _require_pyproj()
+    tgt_crs = pyproj.CRS.from_wkt(tgt_wkt)
+
     arrays = []
     for info in raster_infos:
-        reprojected = _reproject_chunk_numpy(
-            info['raster'].values,
-            info['src_bounds'], info['src_shape'], info['y_desc'],
-            info['src_wkt'], tgt_wkt,
-            out_bounds, out_shape,
-            resampling, nodata, 16,
-        )
-        arrays.append(reprojected)
+        # Check if source CRS matches target (no reprojection needed)
+        placed = None
+        if info['src_crs'] == tgt_crs:
+            placed = _place_same_crs(
+                info['raster'].values,
+                info['src_bounds'], info['src_shape'], info['y_desc'],
+                out_bounds, out_shape, nodata,
+            )
+        if placed is not None:
+            arrays.append(placed)
+        else:
+            reprojected = _reproject_chunk_numpy(
+                info['raster'].values,
+                info['src_bounds'], info['src_shape'], info['y_desc'],
+                info['src_wkt'], tgt_wkt,
+                out_bounds, out_shape,
+                resampling, nodata, 16,
+            )
+            arrays.append(reprojected)
     return _merge_arrays_numpy(arrays, nodata, strategy)
 
 
