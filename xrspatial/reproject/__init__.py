@@ -19,7 +19,12 @@ from ._grid import (
     _compute_output_grid,
     _make_output_coords,
 )
-from ._interpolate import _resample_cupy, _resample_numpy, _validate_resampling
+from ._interpolate import (
+    _resample_cupy,
+    _resample_cupy_native,
+    _resample_numpy,
+    _validate_resampling,
+)
 from ._merge import _merge_arrays_cupy, _merge_arrays_numpy, _validate_strategy
 from ._transform import ApproximateTransform
 
@@ -258,9 +263,8 @@ def _reproject_chunk_cupy(
         r_max = int(cp.ceil(cp.nanmax(src_row_px)).get()) + 3
         c_min = int(cp.floor(cp.nanmin(src_col_px)).get()) - 2
         c_max = int(cp.ceil(cp.nanmax(src_col_px)).get()) + 3
-        # Convert to numpy for downstream resampling
-        src_row_px = cp.asnumpy(src_row_px)
-        src_col_px = cp.asnumpy(src_col_px)
+        # Keep coordinates as CuPy arrays for native CUDA resampling
+        _use_native_cuda = True
     else:
         # CPU fallback (Numba JIT or pyproj)
         src_y, src_x = _transform_coords(
@@ -283,6 +287,7 @@ def _reproject_chunk_cupy(
         r_max = int(np.ceil(np.nanmax(src_row_px))) + 3
         c_min = int(np.floor(np.nanmin(src_col_px))) - 2
         c_max = int(np.ceil(np.nanmax(src_col_px))) + 3
+        _use_native_cuda = False
 
     if r_min >= src_h or r_max <= 0 or c_min >= src_w or c_max <= 0:
         return cp.full(chunk_shape, nodata, dtype=cp.float64)
@@ -299,13 +304,20 @@ def _reproject_chunk_cupy(
         window = cp.asarray(window)
     window = window.astype(cp.float64)
 
-    # Convert sentinel nodata to NaN
+    # Adjust coordinates relative to window (stays on GPU if CuPy)
+    local_row = src_row_px - r_min_clip
+    local_col = src_col_px - c_min_clip
+
+    if _use_native_cuda:
+        # Coordinates are already CuPy arrays -- use native CUDA kernels
+        # (nodata->NaN conversion is handled inside _resample_cupy_native)
+        return _resample_cupy_native(window, local_row, local_col,
+                                     resampling=resampling, nodata=nodata)
+
+    # CPU coordinates -- convert sentinel nodata to NaN before map_coordinates
     if not np.isnan(nodata):
         window = window.copy()
         window[window == nodata] = cp.nan
-
-    local_row = src_row_px - r_min_clip
-    local_col = src_col_px - c_min_clip
 
     return _resample_cupy(window, local_row, local_col,
                           resampling=resampling, nodata=nodata)
