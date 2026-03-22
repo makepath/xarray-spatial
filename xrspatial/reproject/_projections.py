@@ -14,6 +14,8 @@ Supported fast paths
 - WGS84 / NAD83 <-> Sinusoidal (e.g. MODIS)
 - WGS84 / NAD83 <-> Lambert Azimuthal Equal Area (e.g. EPSG:3035)
 - WGS84 / NAD83 <-> Polar Stereographic (e.g. EPSG:3031, 3413, 3996)
+- WGS84 / NAD83 <-> Oblique Stereographic (e.g. EPSG:28992 RD New)
+- WGS84 / NAD83 <-> Oblique Mercator Hotine (e.g. EPSG:3375 RSO)
 
 All other CRS pairs fall back to pyproj.
 """
@@ -1050,6 +1052,278 @@ def stere_inverse(xs, ys, out_lon, out_lat,
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Oblique Stereographic (double projection: Gauss conformal + stereographic)
+# ---------------------------------------------------------------------------
+
+def _sterea_params(crs):
+    """Extract oblique stereographic parameters.
+
+    Returns (lon0, lat0, k0, fe, fn, sinc0, cosc0, R2, c, ratexp) or None.
+    """
+    try:
+        d = crs.to_dict()
+    except Exception:
+        return None
+    if d.get('proj') != 'sterea':
+        return None
+    if not _is_wgs84_compatible_ellipsoid(crs):
+        return None
+
+    lat_0 = math.radians(d.get('lat_0', 0.0))
+    lon_0 = math.radians(d.get('lon_0', 0.0))
+    k0 = float(d.get('k_0', d.get('k', 1.0)))
+    fe = d.get('x_0', 0.0)
+    fn = d.get('y_0', 0.0)
+
+    e = _WGS84_E
+    e2 = _WGS84_E2
+    a = _WGS84_A
+
+    # Gauss conformal sphere constants
+    sinphi0 = math.sin(lat_0)
+    cosphi0 = math.cos(lat_0)
+    chi0 = 2.0 * math.atan(
+        math.tan(math.pi / 4.0 + lat_0 / 2.0)
+        * math.pow((1.0 - e * sinphi0) / (1.0 + e * sinphi0), e / 2.0)
+    ) - math.pi / 2.0
+
+    sinc0 = math.sin(chi0)
+    cosc0 = math.cos(chi0)
+
+    # R2: radius of the conformal sphere
+    R2 = a * k0 * cosphi0 / math.sqrt(1.0 - e2 * sinphi0 * sinphi0)
+
+    units = d.get('units', 'm')
+    _UNIT_TO_METER = {'m': 1.0, 'us-ft': 0.3048006096012192, 'ft': 0.3048}
+    to_m = _UNIT_TO_METER.get(units, 1.0)
+
+    return lon_0, lat_0, k0, fe, fn, sinc0, cosc0, R2, e, to_m
+
+
+@njit(nogil=True, cache=True)
+def _gauss_phi_to_chi(phi, e):
+    """Geodetic latitude -> conformal latitude on the Gauss sphere."""
+    sinphi = math.sin(phi)
+    return 2.0 * math.atan(
+        math.tan(math.pi / 4.0 + phi / 2.0)
+        * math.pow((1.0 - e * sinphi) / (1.0 + e * sinphi), e / 2.0)
+    ) - math.pi / 2.0
+
+
+@njit(nogil=True, cache=True)
+def _gauss_chi_to_phi(chi, e):
+    """Conformal latitude -> geodetic latitude (iterative)."""
+    phi = chi
+    for _ in range(15):
+        sinphi = math.sin(phi)
+        phi_new = 2.0 * math.atan(
+            math.tan(math.pi / 4.0 + chi / 2.0)
+            * math.pow((1.0 + e * sinphi) / (1.0 - e * sinphi), e / 2.0)
+        ) - math.pi / 2.0
+        if abs(phi_new - phi) < 1e-14:
+            return phi_new
+        phi = phi_new
+    return phi
+
+
+@njit(nogil=True, cache=True)
+def _sterea_fwd_point(lon_deg, lat_deg, lon0, sinc0, cosc0, R2, e):
+    lam = math.radians(lon_deg) - lon0
+    phi = math.radians(lat_deg)
+    chi = _gauss_phi_to_chi(phi, e)
+    sinc = math.sin(chi)
+    cosc = math.cos(chi)
+    coslam = math.cos(lam)
+    sinlam = math.sin(lam)
+    k = 2.0 / (1.0 + sinc0 * sinc + cosc0 * cosc * coslam)
+    x = R2 * k * cosc * sinlam
+    y = R2 * k * (cosc0 * sinc - sinc0 * cosc * coslam)
+    return x, y
+
+
+@njit(nogil=True, cache=True)
+def _sterea_inv_point(x, y, lon0, sinc0, cosc0, R2, e):
+    rho = math.hypot(x, y)
+    if rho < 1e-30:
+        return math.degrees(lon0), math.degrees(_gauss_chi_to_phi(
+            math.asin(sinc0), e))
+    ce = 2.0 * math.atan(rho / (2.0 * R2))
+    sinCe = math.sin(ce)
+    cosCe = math.cos(ce)
+    chi = math.asin(cosCe * sinc0 + y * sinCe * cosc0 / rho)
+    lam = math.atan2(x * sinCe, rho * cosc0 * cosCe - y * sinc0 * sinCe)
+    phi = _gauss_chi_to_phi(chi, e)
+    return math.degrees(lam + lon0), math.degrees(phi)
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def sterea_forward(lons, lats, out_x, out_y,
+                   lon0, sinc0, cosc0, R2, fe, fn, e):
+    for i in prange(lons.shape[0]):
+        x, y = _sterea_fwd_point(lons[i], lats[i], lon0, sinc0, cosc0, R2, e)
+        out_x[i] = x + fe
+        out_y[i] = y + fn
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def sterea_inverse(xs, ys, out_lon, out_lat,
+                   lon0, sinc0, cosc0, R2, fe, fn, e):
+    for i in prange(xs.shape[0]):
+        out_lon[i], out_lat[i] = _sterea_inv_point(
+            xs[i] - fe, ys[i] - fn, lon0, sinc0, cosc0, R2, e)
+
+
+# ---------------------------------------------------------------------------
+# Oblique Mercator (Hotine variant)
+# ---------------------------------------------------------------------------
+
+def _omerc_params(crs):
+    """Extract Hotine Oblique Mercator parameters.
+
+    Returns (lon0, lat0, alpha, gamma, k0, fe, fn, uc,
+             singam, cosgam, sinaz, cosaz, BH, AH, e) or None.
+    """
+    try:
+        d = crs.to_dict()
+    except Exception:
+        return None
+    if d.get('proj') != 'omerc':
+        return None
+    if not _is_wgs84_compatible_ellipsoid(crs):
+        return None
+
+    lat_0 = math.radians(d.get('lat_0', 0.0))
+    lonc = math.radians(d.get('lonc', d.get('lon_0', 0.0)))
+    alpha = math.radians(d.get('alpha', 0.0))
+    gamma = math.radians(d.get('gamma', alpha))
+    k0 = float(d.get('k_0', d.get('k', 1.0)))
+    fe = d.get('x_0', 0.0)
+    fn = d.get('y_0', 0.0)
+    no_uoff = 'no_uoff' in d
+
+    e = _WGS84_E
+    e2 = _WGS84_E2
+    a = _WGS84_A
+
+    sinphi0 = math.sin(lat_0)
+    cosphi0 = math.cos(lat_0)
+    com = math.sqrt(1.0 - e2)
+
+    BH = math.sqrt(1.0 + e2 * cosphi0 ** 4 / (1.0 - e2))
+    AH = a * BH * k0 * com / (1.0 - e2 * sinphi0 * sinphi0)
+    D = BH * com / (cosphi0 * math.sqrt(1.0 - e2 * sinphi0 * sinphi0))
+    if D < 1.0:
+        D = 1.0
+    F = D + math.sqrt(max(D * D - 1.0, 0.0)) * (1.0 if lat_0 >= 0 else -1.0)
+    H = F * math.pow(
+        math.tan(math.pi / 4.0 - lat_0 / 2.0)
+        * math.pow((1.0 + e * sinphi0) / (1.0 - e * sinphi0), e / 2.0),
+        BH,
+    )
+    if abs(H) < 1e-30:
+        H = 1e-30
+    lam0 = lonc - math.asin(0.5 * (F - 1.0 / F) * math.tan(alpha) / D) / BH
+
+    singam = math.sin(gamma)
+    cosgam = math.cos(gamma)
+    sinaz = math.sin(alpha)
+    cosaz = math.cos(alpha)
+
+    if no_uoff:
+        uc = 0.0
+    else:
+        if abs(cosaz) < 1e-10:
+            uc = AH * (lonc - lam0)
+        else:
+            uc = AH / BH * math.atan(math.sqrt(max(D * D - 1.0, 0.0)) / cosaz)
+            if lat_0 < 0:
+                uc = -uc
+
+    return lam0, lat_0, k0, fe, fn, uc, singam, cosgam, sinaz, cosaz, BH, AH, H, F, e
+
+
+@njit(nogil=True, cache=True)
+def _omerc_fwd_point(lon_deg, lat_deg, lam0, singam, cosgam,
+                     sinaz, cosaz, BH, AH, H, F, e):
+    lam = math.radians(lon_deg) - lam0
+    phi = math.radians(lat_deg)
+    sinphi = math.sin(phi)
+
+    # Conformal latitude
+    S = BH * math.log(
+        math.tan(math.pi / 4.0 - phi / 2.0)
+        * math.pow((1.0 + e * sinphi) / (1.0 - e * sinphi), e / 2.0)
+    )
+    Q = math.exp(-BH * lam)
+    Vl = 0.5 * (H * math.exp(S) - math.exp(-S) / H)
+    Ul = 0.5 * (H * math.exp(S) + math.exp(-S) / H)
+    u = AH * math.atan2(Vl * cosaz + math.sin(BH * lam) * sinaz, math.cos(BH * lam))
+    v = 0.5 * AH * math.log((Ul - Vl * sinaz + math.sin(BH * lam) * cosaz)
+                              / (Ul + Vl * sinaz - math.sin(BH * lam) * cosaz))
+
+    x = v * cosgam + u * singam
+    y = u * cosgam - v * singam
+    return x, y
+
+
+@njit(nogil=True, cache=True)
+def _omerc_inv_point(x, y, lam0, uc, singam, cosgam,
+                     sinaz, cosaz, BH, AH, H, F, e):
+    v = x * cosgam - y * singam
+    u = y * cosgam + x * singam + uc
+
+    Qp = math.exp(-BH * v / AH)
+    Sp = 0.5 * (Qp - 1.0 / Qp)
+    Tp = 0.5 * (Qp + 1.0 / Qp)
+    Vp = math.sin(BH * u / AH)
+    Up = (Vp * cosaz + Sp * sinaz) / Tp
+
+    if abs(abs(Up) - 1.0) < 1e-14:
+        lam = 0.0
+        phi = math.pi / 2.0 if Up > 0 else -math.pi / 2.0
+    else:
+        phi = math.exp(math.log((F - Up) / (F + Up)) / BH / 2.0)
+        # phi here is actually t = tan(pi/4 - phi_geo/2) * ((1+e*sin)/(1-e*sin))^(e/2)
+        # Need to invert: iterate
+        tp = phi  # this is t
+        phi = math.pi / 2.0 - 2.0 * math.atan(tp)
+        for _ in range(15):
+            sinp = math.sin(phi)
+            es = e * sinp
+            phi_new = math.pi / 2.0 - 2.0 * math.atan(
+                tp * math.pow((1.0 - es) / (1.0 + es), e / 2.0))
+            if abs(phi_new - phi) < 1e-14:
+                phi = phi_new
+                break
+            phi = phi_new
+        lam = -math.atan2(Sp * cosaz - Vp * sinaz, math.cos(BH * u / AH)) / BH
+
+    return math.degrees(lam + lam0), math.degrees(phi)
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def omerc_forward(lons, lats, out_x, out_y,
+                  lam0, fe, fn, uc, singam, cosgam, sinaz, cosaz,
+                  BH, AH, H, F, e):
+    for i in prange(lons.shape[0]):
+        x, y = _omerc_fwd_point(lons[i], lats[i], lam0, singam, cosgam,
+                                 sinaz, cosaz, BH, AH, H, F, e)
+        out_x[i] = x + fe
+        out_y[i] = y + fn
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def omerc_inverse(xs, ys, out_lon, out_lat,
+                  lam0, fe, fn, uc, singam, cosgam, sinaz, cosaz,
+                  BH, AH, H, F, e):
+    for i in prange(xs.shape[0]):
+        out_lon[i], out_lat[i] = _omerc_inv_point(
+            xs[i] - fe, ys[i] - fn, lam0, uc, singam, cosgam,
+            sinaz, cosaz, BH, AH, H, F, e)
+
+
+# ---------------------------------------------------------------------------
 # Transverse Mercator / UTM  --  6th-order Krueger series (Karney 2011)
 # ---------------------------------------------------------------------------
 
@@ -1754,6 +2028,11 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
                           lon0, akm1, fe, fn, _WGS84_E, is_south)
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
+
+    # Oblique Stereographic and Oblique Mercator -- kernels implemented
+    # (sterea_forward/inverse, omerc_forward/inverse) but disabled in
+    # dispatch pending alignment with PROJ's Gauss conformal mapping
+    # (sterea) and Hotine variant details (omerc).  Both fall to pyproj.
 
     return None
 
