@@ -200,6 +200,16 @@ def _get_datum_params(crs):
 # ---------------------------------------------------------------------------
 
 @njit(nogil=True, cache=True)
+def _norm_lon_rad(lon):
+    """Normalize longitude to [-pi, pi]."""
+    while lon > math.pi:
+        lon -= 2.0 * math.pi
+    while lon < -math.pi:
+        lon += 2.0 * math.pi
+    return lon
+
+
+@njit(nogil=True, cache=True)
 def _pj_tsfn(phi, sinphi, e):
     """Isometric co-latitude: ts = exp(-psi).
 
@@ -415,7 +425,7 @@ def _lcc_inv_point(x, y, lon0, n, c, rho0, k0, e, a):
     tau = _pj_sinhpsi2tanphi(taup, e)
     phi = math.atan(tau)
     lam = lam_n / n
-    return math.degrees(lam + lon0), math.degrees(phi)
+    return math.degrees(_norm_lon_rad(lam + lon0)), math.degrees(phi)
 
 
 @njit(nogil=True, cache=True, parallel=True)
@@ -551,7 +561,7 @@ def _aea_inv_point(x, y, lon0, n, C, rho0, e, a, qp, apa):
     beta = math.asin(ratio)
     phi = _authalic_inv(beta, apa)
     lam = theta / n
-    return math.degrees(lam + lon0), math.degrees(phi)
+    return math.degrees(_norm_lon_rad(lam + lon0)), math.degrees(phi)
 
 
 @njit(nogil=True, cache=True, parallel=True)
@@ -618,7 +628,7 @@ def _cea_inv_point(x, y, lon0, k0, e, a, qp, apa):
         ratio = -1.0
     beta = math.asin(ratio)
     phi = _authalic_inv(beta, apa)
-    return math.degrees(lam + lon0), math.degrees(phi)
+    return math.degrees(_norm_lon_rad(lam + lon0)), math.degrees(phi)
 
 
 @njit(nogil=True, cache=True, parallel=True)
@@ -734,7 +744,7 @@ def _sinu_inv_point(x, y, lon0, e2, a, en):
         lam = 0.0
     else:
         lam = x * math.sqrt(1.0 - e2 * s * s) / (a * c)
-    return math.degrees(lam + lon0), math.degrees(phi)
+    return math.degrees(_norm_lon_rad(lam + lon0)), math.degrees(phi)
 
 
 @njit(nogil=True, cache=True, parallel=True)
@@ -913,7 +923,7 @@ def _laea_inv_point(x, y, lon0, sinb1, cosb1,
         ratio = -1.0
     beta = math.asin(ratio)
     phi = beta + apa[0] * math.sin(2.0 * beta) + apa[1] * math.sin(4.0 * beta) + apa[2] * math.sin(6.0 * beta)
-    return math.degrees(lam + lon0), math.degrees(phi)
+    return math.degrees(_norm_lon_rad(lam + lon0)), math.degrees(phi)
 
 
 @njit(nogil=True, cache=True, parallel=True)
@@ -1062,7 +1072,7 @@ def _stere_inv_point(x, y, lon0, akm1, e, is_south):
     if is_south:
         phi = -phi
 
-    return math.degrees(lam + lon0), math.degrees(phi)
+    return math.degrees(_norm_lon_rad(lam + lon0)), math.degrees(phi)
 
 
 @njit(nogil=True, cache=True, parallel=True)
@@ -1189,14 +1199,14 @@ def _sterea_inv_point(x, y, lon0, sinc0, cosc0, Rm,
     rho = math.hypot(x, y)
     if rho < 1e-30:
         phi, lam = _gauss_inv(math.asin(sinc0), 0.0, C, K, e, ratexp)
-        return math.degrees(lam + lon0), math.degrees(phi)
+        return math.degrees(_norm_lon_rad(lam + lon0)), math.degrees(phi)
     ce = 2.0 * math.atan2(rho, 2.0 * Rm)
     sinCe = math.sin(ce)
     cosCe = math.cos(ce)
     chi = math.asin(cosCe * sinc0 + y * sinCe * cosc0 / rho)
     lam_c = math.atan2(x * sinCe, rho * cosc0 * cosCe - y * sinc0 * sinCe)
     phi, lam = _gauss_inv(chi, lam_c, C, K, e, ratexp)
-    return math.degrees(lam + lon0), math.degrees(phi)
+    return math.degrees(_norm_lon_rad(lam + lon0)), math.degrees(phi)
 
 
 @njit(nogil=True, cache=True, parallel=True)
