@@ -199,6 +199,12 @@ def _lcc_params(crs):
     if d.get('proj') != 'lcc':
         return None
 
+    units = d.get('units', 'm')
+    _UNIT_TO_METER = {'m': 1.0, 'us-ft': 0.3048006096012192, 'ft': 0.3048}
+    to_meter = _UNIT_TO_METER.get(units)
+    if to_meter is None:
+        return None
+
     lat_1 = math.radians(d.get('lat_1', d.get('lat_0', 0.0)))
     lat_2 = math.radians(d.get('lat_2', lat_1))
     lat_0 = math.radians(d.get('lat_0', 0.0))
@@ -231,10 +237,10 @@ def _lcc_params(crs):
         (1.0 + e * sinphi0) / (1.0 - e * sinphi0), e / 2.0)
     rho0 = a * k0_param * c * math.pow(ts0, n)
 
-    fe = d.get('x_0', 0.0)
+    fe = d.get('x_0', 0.0)   # always in metres in PROJ4 dict
     fn = d.get('y_0', 0.0)
 
-    return lon_0, n, c, rho0, k0_param, fe, fn
+    return lon_0, n, c, rho0, k0_param, fe, fn, to_meter
 
 
 @njit(nogil=True, cache=True)
@@ -1228,16 +1234,25 @@ def _tmerc_params(crs):
         return None
     if d.get('proj') != 'tmerc':
         return None
-    # Only handle meter-based CRS; non-meter units (us-ft, ft) need
-    # conversion that we don't implement yet.
+
+    # Unit conversion: false easting/northing from to_dict() are in
+    # the CRS's native units.  The Krueger series works in metres,
+    # so we convert fe/fn to metres and return to_meter so the caller
+    # can scale the final projected coordinates.
     units = d.get('units', 'm')
-    if units not in ('m', None):
-        return None
+    _UNIT_TO_METER = {
+        'm': 1.0,
+        'us-ft': 0.3048006096012192,   # US survey foot
+        'ft': 0.3048,                   # international foot
+    }
+    to_meter = _UNIT_TO_METER.get(units)
+    if to_meter is None:
+        return None  # unsupported unit
 
     lon_0 = math.radians(d.get('lon_0', 0.0))
     lat_0 = math.radians(d.get('lat_0', 0.0))
     k0 = float(d.get('k_0', d.get('k', 1.0)))
-    fe = d.get('x_0', 0.0)
+    fe = d.get('x_0', 0.0)   # always in metres in PROJ4 dict
     fn = d.get('y_0', 0.0)
 
     # Compute Zb: northing offset for the origin latitude.
@@ -1260,7 +1275,7 @@ def _tmerc_params(crs):
         dCn_val = _clenshaw_complex_py(_ALPHA, sin2Z, cos2Z, 0.0, 1.0)
         Zb = -Qn * (Z + dCn_val)
 
-    return lon_0, k0, fe, fn, Zb
+    return lon_0, k0, fe, fn, Zb, to_meter
 
 
 # ---------------------------------------------------------------------------
@@ -1354,10 +1369,16 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
     if _is_geographic_wgs84_or_nad83(src_epsg):
         tmerc_p = _tmerc_params(tgt_crs)
         if tmerc_p is not None:
-            lon0, k0, fe, fn, Zb = tmerc_p
+            lon0, k0, fe, fn, Zb, to_m = tmerc_p
             Qn = k0 * _A_RECT
-            # fn already includes false northing; Zb is the origin offset
-            tmerc_inverse(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
+            # Input coords are in native CRS units; convert to metres
+            if to_m != 1.0:
+                out_x_m = out_x_flat * to_m
+                out_y_m = out_y_flat * to_m
+            else:
+                out_x_m = out_x_flat
+                out_y_m = out_y_flat
+            tmerc_inverse(out_x_m, out_y_m, src_x_flat, src_y_flat,
                           lon0, k0, fe, fn + Zb, Qn, _BETA, _CGB)
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
@@ -1365,10 +1386,14 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
     if _is_geographic_wgs84_or_nad83(tgt_epsg):
         tmerc_p = _tmerc_params(src_crs)
         if tmerc_p is not None:
-            lon0, k0, fe, fn, Zb = tmerc_p
+            lon0, k0, fe, fn, Zb, to_m = tmerc_p
             Qn = k0 * _A_RECT
+            # tmerc_forward outputs metres; convert back to native units
             tmerc_forward(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
                           lon0, k0, fe, fn + Zb, Qn, _ALPHA, _CBG)
+            if to_m != 1.0:
+                src_x_flat /= to_m
+                src_y_flat /= to_m
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
 
@@ -1392,8 +1417,14 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
     if _is_geographic_wgs84_or_nad83(src_epsg):
         params = _lcc_params(tgt_crs)
         if params is not None:
-            lon0, nn, c, rho0, k0, fe, fn = params
-            lcc_inverse(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
+            lon0, nn, c, rho0, k0, fe, fn, to_m = params
+            if to_m != 1.0:
+                out_x_m = out_x_flat * to_m
+                out_y_m = out_y_flat * to_m
+            else:
+                out_x_m = out_x_flat
+                out_y_m = out_y_flat
+            lcc_inverse(out_x_m, out_y_m, src_x_flat, src_y_flat,
                         lon0, nn, c, rho0, k0, fe, fn, _WGS84_E, _WGS84_A)
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
@@ -1401,9 +1432,12 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
     if _is_geographic_wgs84_or_nad83(tgt_epsg):
         params = _lcc_params(src_crs)
         if params is not None:
-            lon0, nn, c, rho0, k0, fe, fn = params
+            lon0, nn, c, rho0, k0, fe, fn, to_m = params
             lcc_forward(out_x_flat, out_y_flat, src_x_flat, src_y_flat,
                         lon0, nn, c, rho0, k0, fe, fn, _WGS84_E, _WGS84_A)
+            if to_m != 1.0:
+                src_x_flat /= to_m
+                src_y_flat /= to_m
             return (src_y_flat.reshape(height, width),
                     src_x_flat.reshape(height, width))
 
