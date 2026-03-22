@@ -151,7 +151,12 @@ def _resample_cubic_jit(src, row_coords, col_coords, nodata):
 
 @njit(nogil=True, cache=True)
 def _resample_bilinear_jit(src, row_coords, col_coords, nodata):
-    """Bilinear resampling with NaN propagation."""
+    """Bilinear resampling matching GDAL's weight-renormalization approach.
+
+    When a neighbor is out-of-bounds or NaN, its weight is excluded and
+    the result is renormalized from the remaining valid neighbors.  This
+    matches GDAL's GWKBilinearResample4Sample behavior.
+    """
     h_out, w_out = row_coords.shape
     sh, sw = src.shape
     out = np.empty((h_out, w_out), dtype=np.float64)
@@ -170,25 +175,43 @@ def _resample_bilinear_jit(src, row_coords, col_coords, nodata):
             dr = r - r0
             dc = c - c0
 
-            # Clamp to source bounds
-            r0c = r0 if r0 >= 0 else 0
-            r1c = r1 if r1 < sh else sh - 1
-            c0c = c0 if c0 >= 0 else 0
-            c1c = c1 if c1 < sw else sw - 1
+            w00 = (1.0 - dr) * (1.0 - dc)
+            w01 = (1.0 - dr) * dc
+            w10 = dr * (1.0 - dc)
+            w11 = dr * dc
 
-            v00 = src[r0c, c0c]
-            v01 = src[r0c, c1c]
-            v10 = src[r1c, c0c]
-            v11 = src[r1c, c1c]
+            accum = 0.0
+            wsum = 0.0
 
-            # If any neighbor is NaN, output nodata
-            if v00 != v00 or v01 != v01 or v10 != v10 or v11 != v11:
-                out[i, j] = nodata
+            # Accumulate only valid, in-bounds neighbors
+            if 0 <= r0 < sh and 0 <= c0 < sw:
+                v = src[r0, c0]
+                if v == v:  # not NaN
+                    accum += w00 * v
+                    wsum += w00
+
+            if 0 <= r0 < sh and 0 <= c1 < sw:
+                v = src[r0, c1]
+                if v == v:
+                    accum += w01 * v
+                    wsum += w01
+
+            if 0 <= r1 < sh and 0 <= c0 < sw:
+                v = src[r1, c0]
+                if v == v:
+                    accum += w10 * v
+                    wsum += w10
+
+            if 0 <= r1 < sh and 0 <= c1 < sw:
+                v = src[r1, c1]
+                if v == v:
+                    accum += w11 * v
+                    wsum += w11
+
+            if wsum > 1e-10:
+                out[i, j] = accum / wsum
             else:
-                out[i, j] = (v00 * (1.0 - dr) * (1.0 - dc) +
-                             v01 * (1.0 - dr) * dc +
-                             v10 * dr * (1.0 - dc) +
-                             v11 * dr * dc)
+                out[i, j] = nodata
     return out
 
 
@@ -281,7 +304,7 @@ if _HAS_CUDA:
 
     @_cuda.jit
     def _resample_bilinear_cuda(src, row_coords, col_coords, out, nodata):
-        """Bilinear resampling kernel (CUDA)."""
+        """Bilinear resampling kernel (CUDA), GDAL-matching renormalization."""
         i, j = _cuda.grid(2)
         h_out = out.shape[0]
         w_out = out.shape[1]
@@ -302,25 +325,39 @@ if _HAS_CUDA:
         dr = r - r0
         dc = c - c0
 
-        # Clamp to source bounds
-        r0c = r0 if r0 >= 0 else 0
-        r1c = r1 if r1 < sh else sh - 1
-        c0c = c0 if c0 >= 0 else 0
-        c1c = c1 if c1 < sw else sw - 1
+        w00 = (1.0 - dr) * (1.0 - dc)
+        w01 = (1.0 - dr) * dc
+        w10 = dr * (1.0 - dc)
+        w11 = dr * dc
 
-        v00 = src[r0c, c0c]
-        v01 = src[r0c, c1c]
-        v10 = src[r1c, c0c]
-        v11 = src[r1c, c1c]
+        accum = 0.0
+        wsum = 0.0
 
-        # If any neighbor is NaN, output nodata
-        if v00 != v00 or v01 != v01 or v10 != v10 or v11 != v11:
-            out[i, j] = nodata
+        if 0 <= r0 < sh and 0 <= c0 < sw:
+            v = src[r0, c0]
+            if v == v:
+                accum += w00 * v
+                wsum += w00
+        if 0 <= r0 < sh and 0 <= c1 < sw:
+            v = src[r0, c1]
+            if v == v:
+                accum += w01 * v
+                wsum += w01
+        if 0 <= r1 < sh and 0 <= c0 < sw:
+            v = src[r1, c0]
+            if v == v:
+                accum += w10 * v
+                wsum += w10
+        if 0 <= r1 < sh and 0 <= c1 < sw:
+            v = src[r1, c1]
+            if v == v:
+                accum += w11 * v
+                wsum += w11
+
+        if wsum > 1e-10:
+            out[i, j] = accum / wsum
         else:
-            out[i, j] = (v00 * (1.0 - dr) * (1.0 - dc) +
-                         v01 * (1.0 - dr) * dc +
-                         v10 * dr * (1.0 - dc) +
-                         v11 * dr * dc)
+            out[i, j] = nodata
 
     @_cuda.jit
     def _resample_cubic_cuda(src, row_coords, col_coords, out, nodata):
