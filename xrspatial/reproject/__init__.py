@@ -28,7 +28,21 @@ from ._interpolate import (
 from ._merge import _merge_arrays_cupy, _merge_arrays_numpy, _validate_strategy
 from ._transform import ApproximateTransform
 
-__all__ = ['reproject', 'merge']
+from ._vertical import (
+    geoid_height,
+    geoid_height_raster,
+    ellipsoidal_to_orthometric,
+    orthometric_to_ellipsoidal,
+    depth_to_ellipsoidal,
+    ellipsoidal_to_depth,
+)
+
+__all__ = [
+    'reproject', 'merge',
+    'geoid_height', 'geoid_height_raster',
+    'ellipsoidal_to_orthometric', 'orthometric_to_ellipsoidal',
+    'depth_to_ellipsoidal', 'ellipsoidal_to_depth',
+]
 
 
 # ---------------------------------------------------------------------------
