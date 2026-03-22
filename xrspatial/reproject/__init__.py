@@ -112,7 +112,7 @@ def _transform_coords(transformer, chunk_bounds, chunk_shape,
             )
             if result is not None:
                 return result
-        except Exception:
+        except (ImportError, ModuleNotFoundError):
             pass  # fall through to pyproj
 
     height, width = chunk_shape
@@ -198,10 +198,20 @@ def _reproject_chunk_numpy(
         src_row_px = (src_y - src_bottom) / src_res_y - 0.5
 
     # Determine source window needed
-    r_min = int(np.floor(np.nanmin(src_row_px))) - 2
-    r_max = int(np.ceil(np.nanmax(src_row_px))) + 3
-    c_min = int(np.floor(np.nanmin(src_col_px))) - 2
-    c_max = int(np.ceil(np.nanmax(src_col_px))) + 3
+    r_min = np.nanmin(src_row_px)
+    r_max = np.nanmax(src_row_px)
+    c_min = np.nanmin(src_col_px)
+    c_max = np.nanmax(src_col_px)
+
+    if not np.isfinite(r_min) or not np.isfinite(r_max):
+        return np.full(chunk_shape, nodata, dtype=np.float64)
+    if not np.isfinite(c_min) or not np.isfinite(c_max):
+        return np.full(chunk_shape, nodata, dtype=np.float64)
+
+    r_min = int(np.floor(r_min)) - 2
+    r_max = int(np.ceil(r_max)) + 3
+    c_min = int(np.floor(c_min)) - 2
+    c_max = int(np.ceil(c_max)) + 3
 
     # Check overlap
     if r_min >= src_h or r_max <= 0 or c_min >= src_w or c_max <= 0:
@@ -217,7 +227,9 @@ def _reproject_chunk_numpy(
     window = source_data[r_min_clip:r_max_clip, c_min_clip:c_max_clip]
     if hasattr(window, 'compute'):
         window = window.compute()
-    window = np.asarray(window, dtype=np.float64)
+    window = np.asarray(window)
+    orig_dtype = window.dtype
+    window = window.astype(np.float64)
 
     # Convert sentinel nodata to NaN so numba kernels can detect it
     if not np.isnan(nodata):
@@ -228,8 +240,15 @@ def _reproject_chunk_numpy(
     local_row = src_row_px - r_min_clip
     local_col = src_col_px - c_min_clip
 
-    return _resample_numpy(window, local_row, local_col,
-                           resampling=resampling, nodata=nodata)
+    result = _resample_numpy(window, local_row, local_col,
+                             resampling=resampling, nodata=nodata)
+
+    # Clamp and cast back for integer source dtypes
+    if np.issubdtype(orig_dtype, np.integer):
+        info = np.iinfo(orig_dtype)
+        result = np.clip(np.round(result), info.min, info.max).astype(orig_dtype)
+
+    return result
 
 
 def _reproject_chunk_cupy(
@@ -259,7 +278,7 @@ def _reproject_chunk_cupy(
             cuda_result = try_cuda_transform(
                 src_crs, tgt_crs, chunk_bounds_tuple, chunk_shape,
             )
-        except Exception:
+        except (ImportError, ModuleNotFoundError):
             pass
 
     if cuda_result is not None:
@@ -275,10 +294,18 @@ def _reproject_chunk_cupy(
         else:
             src_row_px = (src_y - src_bottom) / src_res_y - 0.5
         # Need min/max on CPU for window selection
-        r_min = int(cp.floor(cp.nanmin(src_row_px)).get()) - 2
-        r_max = int(cp.ceil(cp.nanmax(src_row_px)).get()) + 3
-        c_min = int(cp.floor(cp.nanmin(src_col_px)).get()) - 2
-        c_max = int(cp.ceil(cp.nanmax(src_col_px)).get()) + 3
+        r_min_val = float(cp.nanmin(src_row_px).get())
+        if not np.isfinite(r_min_val):
+            return cp.full(chunk_shape, nodata, dtype=cp.float64)
+        r_max_val = float(cp.nanmax(src_row_px).get())
+        c_min_val = float(cp.nanmin(src_col_px).get())
+        c_max_val = float(cp.nanmax(src_col_px).get())
+        if not np.isfinite(r_max_val) or not np.isfinite(c_min_val) or not np.isfinite(c_max_val):
+            return cp.full(chunk_shape, nodata, dtype=cp.float64)
+        r_min = int(np.floor(r_min_val)) - 2
+        r_max = int(np.ceil(r_max_val)) + 3
+        c_min = int(np.floor(c_min_val)) - 2
+        c_max = int(np.ceil(c_max_val)) + 3
         # Keep coordinates as CuPy arrays for native CUDA resampling
         _use_native_cuda = True
     else:
@@ -299,10 +326,18 @@ def _reproject_chunk_cupy(
         else:
             src_row_px = (src_y - src_bottom) / src_res_y - 0.5
 
-        r_min = int(np.floor(np.nanmin(src_row_px))) - 2
-        r_max = int(np.ceil(np.nanmax(src_row_px))) + 3
-        c_min = int(np.floor(np.nanmin(src_col_px))) - 2
-        c_max = int(np.ceil(np.nanmax(src_col_px))) + 3
+        r_min = np.nanmin(src_row_px)
+        r_max = np.nanmax(src_row_px)
+        c_min = np.nanmin(src_col_px)
+        c_max = np.nanmax(src_col_px)
+        if not np.isfinite(r_min) or not np.isfinite(r_max):
+            return cp.full(chunk_shape, nodata, dtype=cp.float64)
+        if not np.isfinite(c_min) or not np.isfinite(c_max):
+            return cp.full(chunk_shape, nodata, dtype=cp.float64)
+        r_min = int(np.floor(r_min)) - 2
+        r_max = int(np.ceil(r_max)) + 3
+        c_min = int(np.floor(c_min)) - 2
+        c_max = int(np.ceil(c_max)) + 3
         _use_native_cuda = False
 
     if r_min >= src_h or r_max <= 0 or c_min >= src_w or c_max <= 0:
@@ -450,7 +485,7 @@ def reproject(
         try:
             from ..utils import is_cupy_backed
             is_cupy = is_cupy_backed(raster)
-        except (ImportError, Exception):
+        except (ImportError, ModuleNotFoundError):
             pass
     else:
         is_cupy = is_cupy_array(data)
@@ -598,7 +633,7 @@ def _reproject_dask_cupy(
                 cuda_coords = try_cuda_transform(
                     src_crs, tgt_crs, cb, chunk_shape,
                 )
-            except Exception:
+            except (ImportError, ModuleNotFoundError):
                 cuda_coords = None
 
             if cuda_coords is not None:
@@ -609,10 +644,20 @@ def _reproject_dask_cupy(
                 else:
                     src_row_px = (src_y - src_bottom) / src_res_y - 0.5
 
-                r_min = int(cp.floor(cp.nanmin(src_row_px)).get()) - 2
-                r_max = int(cp.ceil(cp.nanmax(src_row_px)).get()) + 3
-                c_min = int(cp.floor(cp.nanmin(src_col_px)).get()) - 2
-                c_max = int(cp.ceil(cp.nanmax(src_col_px)).get()) + 3
+                r_min_val = float(cp.nanmin(src_row_px).get())
+                if not np.isfinite(r_min_val):
+                    col_offset += cchunk
+                    continue
+                r_max_val = float(cp.nanmax(src_row_px).get())
+                c_min_val = float(cp.nanmin(src_col_px).get())
+                c_max_val = float(cp.nanmax(src_col_px).get())
+                if not np.isfinite(r_max_val) or not np.isfinite(c_min_val) or not np.isfinite(c_max_val):
+                    col_offset += cchunk
+                    continue
+                r_min = int(np.floor(r_min_val)) - 2
+                r_max = int(np.ceil(r_max_val)) + 3
+                c_min = int(np.floor(c_min_val)) - 2
+                c_max = int(np.ceil(c_max_val)) + 3
             else:
                 # CPU fallback for this chunk
                 transformer = pyproj.Transformer.from_crs(
@@ -627,10 +672,20 @@ def _reproject_dask_cupy(
                     src_row_px = (src_top - src_y) / src_res_y - 0.5
                 else:
                     src_row_px = (src_y - src_bottom) / src_res_y - 0.5
-                r_min = int(np.floor(np.nanmin(src_row_px))) - 2
-                r_max = int(np.ceil(np.nanmax(src_row_px))) + 3
-                c_min = int(np.floor(np.nanmin(src_col_px))) - 2
-                c_max = int(np.ceil(np.nanmax(src_col_px))) + 3
+                r_min = np.nanmin(src_row_px)
+                r_max = np.nanmax(src_row_px)
+                c_min = np.nanmin(src_col_px)
+                c_max = np.nanmax(src_col_px)
+                if not np.isfinite(r_min) or not np.isfinite(r_max):
+                    col_offset += cchunk
+                    continue
+                if not np.isfinite(c_min) or not np.isfinite(c_max):
+                    col_offset += cchunk
+                    continue
+                r_min = int(np.floor(r_min)) - 2
+                r_max = int(np.ceil(r_max)) + 3
+                c_min = int(np.floor(c_min)) - 2
+                c_max = int(np.ceil(c_max)) + 3
 
             # Check overlap
             if r_min >= src_h or r_max <= 0 or c_min >= src_w or c_max <= 0:

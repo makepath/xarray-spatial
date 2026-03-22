@@ -20,6 +20,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import threading
 
 import numpy as np
 from numba import njit, prange
@@ -93,13 +94,15 @@ def _load_all_itrf_params():
 
 # Lazy-loaded parameter cache
 _itrf_params = None
+_itrf_params_lock = threading.Lock()
 
 
 def _get_itrf_params():
     global _itrf_params
-    if _itrf_params is None:
-        _itrf_params = _load_all_itrf_params()
-    return _itrf_params
+    with _itrf_params_lock:
+        if _itrf_params is None:
+            _itrf_params = _load_all_itrf_params()
+        return _itrf_params
 
 
 def _find_transform(src, tgt):

@@ -254,14 +254,23 @@ def _resample_numpy(source_window, src_row_coords, src_col_coords,
     if order == 0:
         result = _resample_nearest_jit(work, rc, cc, nd)
         if is_integer:
-            result = np.round(result).astype(source_window.dtype)
+            info = np.iinfo(source_window.dtype)
+            result = np.clip(np.round(result), info.min, info.max).astype(source_window.dtype)
         return result
 
     if order == 1:
-        return _resample_bilinear_jit(work, rc, cc, nd)
+        result = _resample_bilinear_jit(work, rc, cc, nd)
+        if is_integer:
+            info = np.iinfo(source_window.dtype)
+            result = np.clip(np.round(result), info.min, info.max).astype(source_window.dtype)
+        return result
 
     # Cubic: numba Catmull-Rom (handles NaN inline, no extra passes)
-    return _resample_cubic_jit(work, rc, cc, nd)
+    result = _resample_cubic_jit(work, rc, cc, nd)
+    if is_integer:
+        info = np.iinfo(source_window.dtype)
+        result = np.clip(np.round(result), info.min, info.max).astype(source_window.dtype)
+    return result
 
 
 # ---------------------------------------------------------------------------

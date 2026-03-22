@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import os
+import threading
 import urllib.request
 
 import numpy as np
@@ -290,6 +291,7 @@ def apply_grid_shift_inverse(lon_arr, lat_arr, dlat_grid, dlon_grid,
 # ---------------------------------------------------------------------------
 
 _loaded_grids = {}  # cleared on module reload
+_loaded_grids_lock = threading.Lock()
 
 
 def get_grid(grid_key):
@@ -297,22 +299,25 @@ def get_grid(grid_key):
 
     Returns (dlat, dlon, left, top, res_x, res_y, h, w) or None.
     """
-    if grid_key in _loaded_grids:
-        return _loaded_grids[grid_key]
+    with _loaded_grids_lock:
+        if grid_key in _loaded_grids:
+            return _loaded_grids[grid_key]
 
     result = load_grid(grid_key)
-    if result is None:
-        _loaded_grids[grid_key] = None
-        return None
 
-    dlat, dlon, bounds, (res_x, res_y) = result
-    h, w = dlat.shape
-    # Ensure contiguous float64 for Numba
-    dlat = np.ascontiguousarray(dlat, dtype=np.float64)
-    dlon = np.ascontiguousarray(dlon, dtype=np.float64)
-    entry = (dlat, dlon, bounds[0], bounds[3], res_x, res_y, h, w)
-    _loaded_grids[grid_key] = entry
-    return entry
+    with _loaded_grids_lock:
+        if result is None:
+            _loaded_grids[grid_key] = None
+            return None
+
+        dlat, dlon, bounds, (res_x, res_y) = result
+        h, w = dlat.shape
+        # Ensure contiguous float64 for Numba
+        dlat = np.ascontiguousarray(dlat, dtype=np.float64)
+        dlon = np.ascontiguousarray(dlon, dtype=np.float64)
+        entry = (dlat, dlon, bounds[0], bounds[3], res_x, res_y, h, w)
+        _loaded_grids[grid_key] = entry
+        return entry
 
 
 def find_grid_for_point(lon, lat, datum_key):

@@ -773,3 +773,46 @@ class TestEdgeCases:
                               x_range=(-170, 170), y_range=(-2, 2))
         result = reproject(raster, 'EPSG:3857')
         assert result.shape[0] > 0
+
+
+def test_reproject_1x1_raster():
+    """Reprojecting a single-pixel raster should not crash."""
+    from xrspatial.reproject import reproject
+    da = xr.DataArray(
+        np.array([[42.0]]), dims=['y', 'x'],
+        coords={'y': [50.0], 'x': [10.0]},
+        attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+    )
+    result = reproject(da, 'EPSG:32633')
+    assert result.shape[0] >= 1 and result.shape[1] >= 1
+
+
+def test_reproject_all_nan():
+    """Reprojecting an all-NaN raster should produce all-NaN output."""
+    from xrspatial.reproject import reproject
+    da = xr.DataArray(
+        np.full((64, 64), np.nan), dims=['y', 'x'],
+        coords={'y': np.linspace(55, 45, 64), 'x': np.linspace(-5, 5, 64)},
+        attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+    )
+    result = reproject(da, 'EPSG:32633')
+    assert np.all(np.isnan(result.values))
+
+
+def test_reproject_uint8_cubic_no_overflow():
+    """Cubic resampling on uint8 should clamp, not wrap."""
+    from xrspatial.reproject import reproject
+    # Create a raster with sharp edge (0 to 255)
+    data = np.zeros((64, 64), dtype=np.uint8)
+    data[:, 32:] = 255
+    da = xr.DataArray(
+        data, dims=['y', 'x'],
+        coords={'y': np.linspace(55, 45, 64), 'x': np.linspace(-5, 5, 64)},
+        attrs={'crs': 'EPSG:4326', 'nodata': 0},
+    )
+    result = reproject(da, 'EPSG:32633', resampling='cubic')
+    vals = result.values
+    # Should be within uint8 range (clamped, not wrapped)
+    valid = vals[vals != 0]  # exclude nodata
+    if len(valid) > 0:
+        assert np.all(valid >= 0) and np.all(valid <= 255)

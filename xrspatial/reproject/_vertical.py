@@ -22,7 +22,9 @@ Usage
 """
 from __future__ import annotations
 
+import math
 import os
+import threading
 
 import numpy as np
 from numba import njit, prange
@@ -46,6 +48,7 @@ _GEOID_MODELS = {
 }
 
 _loaded_geoids = {}
+_loaded_geoids_lock = threading.Lock()
 
 
 def _find_file(filename, cdn_url=None):
@@ -69,8 +72,9 @@ def _find_file(filename, cdn_url=None):
 
 def _load_geoid(model='EGM96'):
     """Load a geoid model, returning (data, left, top, res_x, res_y, h, w)."""
-    if model in _loaded_geoids:
-        return _loaded_geoids[model]
+    with _loaded_geoids_lock:
+        if model in _loaded_geoids:
+            return _loaded_geoids[model]
 
     if model not in _GEOID_MODELS:
         raise ValueError(f"Unknown geoid model: {model!r}. "
@@ -106,7 +110,8 @@ def _load_geoid(model='EGM96'):
         top = float(y[0]) + res_y / 2
         result = (np.ascontiguousarray(vals), left, top, res_x, res_y, h, w)
 
-    _loaded_geoids[model] = result
+    with _loaded_geoids_lock:
+        _loaded_geoids[model] = result
     return result
 
 
@@ -128,7 +133,7 @@ def _interp_geoid_point(lon, lat, data, left, top, res_x, res_y, h, w):
     row_f = (top - lat) / res_y
 
     if row_f < 0 or row_f > h - 1:
-        return 0.0  # outside latitude range
+        return math.nan  # outside latitude range
 
     # Wrap column for global grids
     c0 = int(col_f) % w
