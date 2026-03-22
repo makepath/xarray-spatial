@@ -435,6 +435,38 @@ def lcc_inverse(xs, ys, out_lon, out_lat,
             xs[i] - fe, ys[i] - fn, lon0, n, c, rho0, k0, e, a)
 
 
+@njit(nogil=True, cache=True, parallel=True)
+def lcc_inverse_2d(x_1d, y_1d, out_lon_2d, out_lat_2d,
+                   lon0, n, c, rho0, k0, fe, fn, e, a, to_m):
+    """2D LCC inverse from 1D coordinate arrays, with built-in unit conversion.
+
+    Avoids np.tile/np.repeat (saves ~550ms for 4096x4096) and fuses
+    the unit conversion into the inner loop.
+    """
+    h = y_1d.shape[0]
+    w = x_1d.shape[0]
+    for i in prange(h):
+        y_m = y_1d[i] * to_m - fn
+        for j in range(w):
+            x_m = x_1d[j] * to_m - fe
+            out_lon_2d[i, j], out_lat_2d[i, j] = _lcc_inv_point(
+                x_m, y_m, lon0, n, c, rho0, k0, e, a)
+
+
+@njit(nogil=True, cache=True, parallel=True)
+def tmerc_inverse_2d(x_1d, y_1d, out_lon_2d, out_lat_2d,
+                     lon0, k0, fe, fn, Qn, beta, cgb, to_m):
+    """2D tmerc inverse from 1D coordinate arrays, with unit conversion."""
+    h = y_1d.shape[0]
+    w = x_1d.shape[0]
+    for i in prange(h):
+        y_m = y_1d[i] * to_m - fn
+        for j in range(w):
+            x_m = x_1d[j] * to_m - fe
+            out_lon_2d[i, j], out_lat_2d[i, j] = _tmerc_inv_point(
+                x_m, y_m, lon0, k0, Qn, beta, cgb)
+
+
 # ---------------------------------------------------------------------------
 # Albers Equal Area Conic  (AEA)
 # ---------------------------------------------------------------------------
@@ -1870,17 +1902,12 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
         if tmerc_p is not None:
             lon0, k0, fe, fn, Zb, to_m = tmerc_p
             Qn = k0 * _A_RECT
-            # Input coords are in native CRS units; convert to metres
-            if to_m != 1.0:
-                out_x_m = out_x_flat * to_m
-                out_y_m = out_y_flat * to_m
-            else:
-                out_x_m = out_x_flat
-                out_y_m = out_y_flat
-            tmerc_inverse(out_x_m, out_y_m, src_x_flat, src_y_flat,
-                          lon0, k0, fe, fn + Zb, Qn, _BETA, _CGB)
-            return (src_y_flat.reshape(height, width),
-                    src_x_flat.reshape(height, width))
+            # Use 2D kernel: takes 1D coords, avoids tile/repeat + fuses unit conv
+            out_lon_2d = np.empty((height, width), dtype=np.float64)
+            out_lat_2d = np.empty((height, width), dtype=np.float64)
+            tmerc_inverse_2d(out_x_1d, out_y_1d, out_lon_2d, out_lat_2d,
+                             lon0, k0, fe, fn + Zb, Qn, _BETA, _CGB, to_m)
+            return (out_lat_2d, out_lon_2d)
 
     if _is_supported_geographic(tgt_epsg):
         tmerc_p = _tmerc_params(src_crs)
@@ -1917,16 +1944,12 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
         params = _lcc_params(tgt_crs)
         if params is not None:
             lon0, nn, c, rho0, k0, fe, fn, to_m = params
-            if to_m != 1.0:
-                out_x_m = out_x_flat * to_m
-                out_y_m = out_y_flat * to_m
-            else:
-                out_x_m = out_x_flat
-                out_y_m = out_y_flat
-            lcc_inverse(out_x_m, out_y_m, src_x_flat, src_y_flat,
-                        lon0, nn, c, rho0, k0, fe, fn, _WGS84_E, _WGS84_A)
-            return (src_y_flat.reshape(height, width),
-                    src_x_flat.reshape(height, width))
+            # Use 2D kernel: avoids tile/repeat + fuses unit conversion
+            out_lon_2d = np.empty((height, width), dtype=np.float64)
+            out_lat_2d = np.empty((height, width), dtype=np.float64)
+            lcc_inverse_2d(out_x_1d, out_y_1d, out_lon_2d, out_lat_2d,
+                           lon0, nn, c, rho0, k0, fe, fn, _WGS84_E, _WGS84_A, to_m)
+            return (out_lat_2d, out_lon_2d)
 
     if _is_supported_geographic(tgt_epsg):
         params = _lcc_params(src_crs)
