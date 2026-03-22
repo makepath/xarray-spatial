@@ -43,7 +43,7 @@ def _resample_nearest_jit(src, row_coords, col_coords, nodata):
         for j in range(w_out):
             r = row_coords[i, j]
             c = col_coords[i, j]
-            if r < -0.5 or r > sh - 0.5 or c < -0.5 or c > sw - 0.5:
+            if r < -1.0 or r > sh or c < -1.0 or c > sw:
                 out[i, j] = nodata
                 continue
             ri = int(r + 0.5)
@@ -79,7 +79,7 @@ def _resample_cubic_jit(src, row_coords, col_coords, nodata):
         for j in range(w_out):
             r = row_coords[i, j]
             c = col_coords[i, j]
-            if r < -0.5 or r > sh - 0.5 or c < -0.5 or c > sw - 0.5:
+            if r < -1.0 or r > sh or c < -1.0 or c > sw:
                 out[i, j] = nodata
                 continue
 
@@ -159,7 +159,7 @@ def _resample_bilinear_jit(src, row_coords, col_coords, nodata):
         for j in range(w_out):
             r = row_coords[i, j]
             c = col_coords[i, j]
-            if r < -0.5 or r > sh - 0.5 or c < -0.5 or c > sw - 0.5:
+            if r < -1.0 or r > sh or c < -1.0 or c > sw:
                 out[i, j] = nodata
                 continue
 
@@ -259,7 +259,7 @@ if _HAS_CUDA:
         sw = src.shape[1]
         r = row_coords[i, j]
         c = col_coords[i, j]
-        if r < -0.5 or r > sh - 0.5 or c < -0.5 or c > sw - 0.5:
+        if r < -1.0 or r > sh or c < -1.0 or c > sw:
             out[i, j] = nodata
             return
         ri = int(r + 0.5)
@@ -291,7 +291,7 @@ if _HAS_CUDA:
         sw = src.shape[1]
         r = row_coords[i, j]
         c = col_coords[i, j]
-        if r < -0.5 or r > sh - 0.5 or c < -0.5 or c > sw - 0.5:
+        if r < -1.0 or r > sh or c < -1.0 or c > sw:
             out[i, j] = nodata
             return
 
@@ -334,7 +334,7 @@ if _HAS_CUDA:
         sw = src.shape[1]
         r = row_coords[i, j]
         c = col_coords[i, j]
-        if r < -0.5 or r > sh - 0.5 or c < -0.5 or c > sw - 0.5:
+        if r < -1.0 or r > sh or c < -1.0 or c > sw:
             out[i, j] = nodata
             return
 
@@ -693,8 +693,8 @@ def _resample_cupy(source_window, src_row_coords, src_col_coords,
 
     h, w = source_window.shape
     oob = (
-        (src_row_coords < -0.5) | (src_row_coords > h - 0.5) |
-        (src_col_coords < -0.5) | (src_col_coords > w - 0.5)
+        (src_row_coords < -1.0) | (src_row_coords > h) |
+        (src_col_coords < -1.0) | (src_col_coords > w)
     )
 
     if has_nan:
