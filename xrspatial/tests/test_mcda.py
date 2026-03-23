@@ -1152,6 +1152,299 @@ class TestConstrainEdgeCases:
 
 
 # ===========================================================================
+# Input validation edge cases
+# ===========================================================================
+
+class TestInvertedBounds:
+    def test_raises(self):
+        agg = xr.DataArray(np.array([[50.0]]), dims=["y", "x"])
+        with pytest.raises(ValueError, match="bounds\\[0\\] must be <= bounds\\[1\\]"):
+            standardize(agg, method="linear", bounds=(100, 0))
+
+
+class TestPiecewiseDuplicateBreakpoints:
+    def test_raises(self):
+        agg = xr.DataArray(np.array([[5.0]]), dims=["y", "x"])
+        with pytest.raises(ValueError, match="unique"):
+            standardize(
+                agg, method="piecewise",
+                breakpoints=[0, 5, 5, 10], values=[0, 0.3, 0.7, 1],
+            )
+
+
+class TestAHPValidation:
+    def test_self_comparison_raises(self):
+        with pytest.raises(ValueError, match="Self-comparison"):
+            ahp_weights(
+                criteria=["a", "b"],
+                comparisons={("a", "a"): 5, ("a", "b"): 3},
+            )
+
+    def test_zero_comparison_raises(self):
+        with pytest.raises(ValueError, match="must be positive"):
+            ahp_weights(
+                criteria=["a", "b"],
+                comparisons={("a", "b"): 0},
+            )
+
+    def test_negative_comparison_raises(self):
+        with pytest.raises(ValueError, match="must be positive"):
+            ahp_weights(
+                criteria=["a", "b"],
+                comparisons={("a", "b"): -3},
+            )
+
+
+class TestExtraWeights:
+    def test_extra_keys_raises(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(np.array([[0.5]]), dims=["y", "x"]),
+        })
+        with pytest.raises(ValueError, match="not in criteria"):
+            wlc(ds, {"a": 0.5, "b": 0.3, "c": 0.2})
+
+    def test_extra_keys_wpm_raises(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(np.array([[0.5]]), dims=["y", "x"]),
+        })
+        with pytest.raises(ValueError, match="not in criteria"):
+            wpm(ds, {"a": 0.5, "b": 0.5})
+
+
+class TestBooleanOverlayFloat:
+    """Float data should be cast to bool (nonzero = True)."""
+
+    def test_float_and(self):
+        a = xr.DataArray(
+            np.array([[0.5, 0.0, 1.0]]), dims=["y", "x"],
+        )
+        b = xr.DataArray(
+            np.array([[0.3, 0.0, 1.0]]), dims=["y", "x"],
+        )
+        result = boolean_overlay({"a": a, "b": b}, operator="and")
+        np.testing.assert_array_equal(
+            result.values, [[True, False, True]],
+        )
+
+    def test_float_or(self):
+        a = xr.DataArray(
+            np.array([[0.5, 0.0, 0.0]]), dims=["y", "x"],
+        )
+        b = xr.DataArray(
+            np.array([[0.0, 0.0, 1.0]]), dims=["y", "x"],
+        )
+        result = boolean_overlay({"a": a, "b": b}, operator="or")
+        np.testing.assert_array_equal(
+            result.values, [[True, False, True]],
+        )
+
+
+# ===========================================================================
+# Inf handling
+# ===========================================================================
+
+class TestInfValues:
+    """Inf values should be treated as non-finite (mapped to NaN)."""
+
+    def test_linear_inf(self):
+        data = np.array([[np.inf, -np.inf, 50.0]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        r = standardize(agg, method="linear", bounds=(0, 100))
+        assert np.isnan(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+        assert float(r.values[0, 2]) == pytest.approx(0.5)
+
+    def test_sigmoidal_inf(self):
+        data = np.array([[np.inf, -np.inf, 50.0]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        r = standardize(agg, method="sigmoidal", midpoint=50, spread=0.1)
+        assert np.isnan(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+        assert np.isfinite(r.values[0, 2])
+
+    def test_gaussian_inf(self):
+        data = np.array([[np.inf, -np.inf, 50.0]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        r = standardize(agg, method="gaussian", mean=50, std=10)
+        assert np.isnan(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+        assert float(r.values[0, 2]) == pytest.approx(1.0)
+
+    def test_triangular_inf(self):
+        data = np.array([[np.inf, -np.inf, 50.0]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        r = standardize(agg, method="triangular", low=0, peak=50, high=100)
+        assert np.isnan(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+        assert float(r.values[0, 2]) == pytest.approx(1.0)
+
+
+# ===========================================================================
+# Sensitivity edge cases
+# ===========================================================================
+
+class TestSensitivityWeightClamping:
+    """Perturbed weights should be clamped to [0, 1]."""
+
+    def test_clamp_to_zero(self):
+        """Weight near 0 perturbed negative should clamp to 0."""
+        from xrspatial.mcda.sensitivity import _perturb_weights
+
+        w = {"a": 0.02, "b": 0.58, "c": 0.40}
+        _, w_minus = _perturb_weights(w, "a", 0.05)
+        assert w_minus["a"] == pytest.approx(0.0)
+        assert sum(w_minus.values()) == pytest.approx(1.0)
+
+    def test_clamp_to_one(self):
+        """Weight near 1 perturbed up should clamp to 1."""
+        from xrspatial.mcda.sensitivity import _perturb_weights
+
+        w = {"a": 0.98, "b": 0.02}
+        w_plus, _ = _perturb_weights(w, "a", 0.05)
+        assert w_plus["a"] == pytest.approx(1.0)
+        assert w_plus["b"] == pytest.approx(0.0)
+        assert sum(w_plus.values()) == pytest.approx(1.0)
+
+    def test_perturbed_weights_sum_to_one(self):
+        """All perturbed weight sets must sum to 1.0."""
+        from xrspatial.mcda.sensitivity import _perturb_weights
+
+        w = {"a": 0.4, "b": 0.35, "c": 0.25}
+        for target in w:
+            for delta in [0.01, 0.05, 0.10, 0.20]:
+                wp, wm = _perturb_weights(w, target, delta)
+                assert sum(wp.values()) == pytest.approx(1.0, abs=1e-10)
+                assert sum(wm.values()) == pytest.approx(1.0, abs=1e-10)
+
+
+class TestMonteCarloReproducibility:
+    """Same seed must produce identical results."""
+
+    def test_same_seed_same_result(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.random.rand(10, 10), dims=["y", "x"],
+            ),
+            "b": xr.DataArray(
+                np.random.rand(10, 10), dims=["y", "x"],
+            ),
+        })
+        w = {"a": 0.6, "b": 0.4}
+        r1 = sensitivity(ds, w, method="monte_carlo", n_samples=30, seed=42)
+        r2 = sensitivity(ds, w, method="monte_carlo", n_samples=30, seed=42)
+        np.testing.assert_array_equal(r1.values, r2.values)
+
+    def test_different_seed_different_result(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.random.rand(10, 10), dims=["y", "x"],
+            ),
+            "b": xr.DataArray(
+                np.random.rand(10, 10), dims=["y", "x"],
+            ),
+        })
+        w = {"a": 0.6, "b": 0.4}
+        r1 = sensitivity(ds, w, method="monte_carlo", n_samples=30, seed=42)
+        r2 = sensitivity(ds, w, method="monte_carlo", n_samples=30, seed=99)
+        assert not np.array_equal(r1.values, r2.values)
+
+
+# ===========================================================================
+# Behavioral edge cases
+# ===========================================================================
+
+class TestGaussianSmallStd:
+    """Very small std approaches a delta function."""
+
+    def test_tiny_std(self):
+        data = np.array([[49.9, 50.0, 50.1]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        r = standardize(agg, method="gaussian", mean=50, std=1e-10)
+        assert float(r.values[0, 0]) == pytest.approx(0.0, abs=1e-100)
+        assert float(r.values[0, 1]) == pytest.approx(1.0)
+        assert float(r.values[0, 2]) == pytest.approx(0.0, abs=1e-100)
+
+
+class TestOWARiskAttitude:
+    """Conservative OWA <= optimistic OWA for mixed-quality pixels."""
+
+    def test_conservative_le_optimistic(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.9]]), dims=["y", "x"],
+            ),
+            "b": xr.DataArray(
+                np.array([[0.1]]), dims=["y", "x"],
+            ),
+            "c": xr.DataArray(
+                np.array([[0.5]]), dims=["y", "x"],
+            ),
+        })
+        w = {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3}
+        conservative = owa(ds, w, [0.1, 0.2, 0.7])
+        optimistic = owa(ds, w, [0.7, 0.2, 0.1])
+        assert float(conservative.values[0, 0]) <= float(
+            optimistic.values[0, 0]
+        )
+
+
+class TestRankWeightsManyCriteria:
+    """Rank weights with many criteria should still sum to 1.0
+    and decrease monotonically."""
+
+    def test_20_criteria_roc(self):
+        names = [f"c{i}" for i in range(20)]
+        w = rank_weights(names, method="roc")
+        vals = list(w.values())
+        assert sum(vals) == pytest.approx(1.0)
+        assert all(vals[i] >= vals[i + 1] for i in range(19))
+
+    def test_20_criteria_rs(self):
+        names = [f"c{i}" for i in range(20)]
+        w = rank_weights(names, method="rs")
+        vals = list(w.values())
+        assert sum(vals) == pytest.approx(1.0)
+        assert all(vals[i] >= vals[i + 1] for i in range(19))
+
+    def test_20_criteria_rr(self):
+        names = [f"c{i}" for i in range(20)]
+        w = rank_weights(names, method="rr")
+        vals = list(w.values())
+        assert sum(vals) == pytest.approx(1.0)
+        assert all(vals[i] >= vals[i + 1] for i in range(19))
+
+
+class TestConstantSurface:
+    """All-identical finite values with no explicit bounds."""
+
+    def test_linear_constant_no_bounds(self):
+        data = np.full((3, 3), 42.0)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        r = standardize(agg, method="linear")
+        np.testing.assert_allclose(r.values, 0.5)
+
+
+class TestConstrainOverlappingMasks:
+    """Multiple masks excluding the same pixel should still work."""
+
+    def test_overlapping(self):
+        suit = xr.DataArray(
+            np.array([[0.8, 0.6, 0.9]], dtype=np.float64),
+            dims=["y", "x"],
+        )
+        mask1 = xr.DataArray(
+            np.array([[True, True, False]]), dims=["y", "x"],
+        )
+        mask2 = xr.DataArray(
+            np.array([[True, False, False]]), dims=["y", "x"],
+        )
+        result = constrain(suit, exclude=[mask1, mask2])
+        assert np.isnan(result.values[0, 0])  # excluded by both
+        assert np.isnan(result.values[0, 1])  # excluded by mask1
+        assert float(result.values[0, 2]) == pytest.approx(0.9)
+
+
+# ===========================================================================
 # Integration: end-to-end workflow
 # ===========================================================================
 

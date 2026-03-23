@@ -22,10 +22,17 @@ def _validate_criteria(criteria: xr.Dataset) -> None:
 def _validate_weights(
     weights: dict[str, float], criteria: xr.Dataset
 ) -> None:
-    missing = set(criteria.data_vars) - set(weights)
+    criteria_names = set(criteria.data_vars)
+    weight_names = set(weights)
+    missing = criteria_names - weight_names
     if missing:
         raise ValueError(f"Missing weights for criteria: {missing}")
-    total = sum(weights[k] for k in criteria.data_vars)
+    extra = weight_names - criteria_names
+    if extra:
+        raise ValueError(
+            f"Weights contain keys not in criteria Dataset: {extra}"
+        )
+    total = sum(weights.values())
     if abs(total - 1.0) > 0.01:
         raise ValueError(
             f"Weights must sum to ~1.0, got {total:.4f}"
@@ -306,7 +313,8 @@ def boolean_overlay(
     if not criteria:
         raise ValueError("criteria dict is empty")
 
-    layers = list(criteria.values())
+    # Cast to bool to handle numeric input (0/1, float thresholds)
+    layers = [v.astype(bool) for v in criteria.values()]
     if operator == "and":
         result = layers[0]
         for layer in layers[1:]:

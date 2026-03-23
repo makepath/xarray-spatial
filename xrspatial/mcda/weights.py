@@ -84,6 +84,16 @@ def ahp_weights(
             raise ValueError(f"Unknown criterion {a!r}")
         if b not in idx:
             raise ValueError(f"Unknown criterion {b!r}")
+        if a == b:
+            raise ValueError(
+                f"Self-comparison ({a!r}, {b!r}) is not allowed; "
+                f"diagonal entries are always 1"
+            )
+        if val <= 0:
+            raise ValueError(
+                f"Comparison value must be positive, got {val} "
+                f"for ({a!r}, {b!r})"
+            )
         i, j = idx[a], idx[b]
         matrix[i, j] = val
         matrix[j, i] = 1.0 / val

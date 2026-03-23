@@ -112,6 +112,10 @@ def standardize(
             )
         if len(breakpoints) < 2:
             raise ValueError("piecewise requires at least 2 breakpoints")
+        if len(set(breakpoints)) != len(breakpoints):
+            raise ValueError(
+                "piecewise breakpoints must be unique (duplicates found)"
+            )
         data = func(agg.data, breakpoints=breakpoints, values=values)
     elif method == "categorical":
         if mapping is None:
@@ -158,6 +162,10 @@ def _linear(data, *, direction, bounds):
 
     if bounds is not None:
         lo, hi = float(bounds[0]), float(bounds[1])
+        if lo > hi:
+            raise ValueError(
+                f"bounds[0] must be <= bounds[1], got ({lo}, {hi})"
+            )
     else:
         # Compute from data, ignoring NaN
         import warnings
