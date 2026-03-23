@@ -131,10 +131,10 @@ class TestJpegValidation:
 
 
 class TestWriteGeotiffJpeg:
-    """Test the public write_geotiff API with compression='jpeg'."""
+    """Test the public to_geotiff API with compression='jpeg'."""
 
-    def test_write_geotiff_jpeg(self, tmp_path):
-        from xrspatial.geotiff import write_geotiff, read_geotiff
+    def test_to_geotiff_jpeg(self, tmp_path):
+        from xrspatial.geotiff import open_geotiff, to_geotiff
 
         rng = np.random.RandomState(1050)
         data = rng.randint(50, 200, (32, 32), dtype=np.uint8)
@@ -144,8 +144,8 @@ class TestWriteGeotiffJpeg:
                     'x': np.arange(32, dtype=float)},
         )
         path = str(tmp_path / 'api_1050.tif')
-        write_geotiff(da, path, compression='jpeg', tile_size=16)
+        to_geotiff(da, path, compression='jpeg', tile_size=16)
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert result.shape == (32, 32)
         assert np.abs(result.values.astype(int) - data.astype(int)).mean() < 10

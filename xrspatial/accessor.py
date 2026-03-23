@@ -26,14 +26,14 @@ class XrsSpatialDataArrayAccessor:
     def plot(self, **kwargs):
         """Plot the DataArray, using an embedded TIFF colormap if present.
 
-        For palette/indexed-color GeoTIFFs (read via ``read_geotiff``),
+        For palette/indexed-color GeoTIFFs (read via ``open_geotiff``),
         the TIFF's color table is applied automatically with correct
         normalization.  For all other DataArrays, falls through to the
         standard ``da.plot()``.
 
         Usage::
 
-            da = read_geotiff('landcover.tif')
+            da = open_geotiff('landcover.tif')
             da.xrs.plot()  # palette colors used automatically
         """
         import numpy as np
@@ -482,6 +482,18 @@ class XrsSpatialDataArrayAccessor:
         from .rasterize import rasterize
         return rasterize(geometries, like=self._obj, **kwargs)
 
+    # ---- GeoTIFF I/O ----
+
+    def to_geotiff(self, path, **kwargs):
+        """Write this DataArray as a GeoTIFF.
+
+        Equivalent to ``to_geotiff(da, path, **kwargs)``.
+
+        See :func:`xrspatial.geotiff.to_geotiff` for full parameter docs.
+        """
+        from .geotiff import to_geotiff
+        return to_geotiff(self._obj, path, **kwargs)
+
 
 @xr.register_dataset_accessor("xrs")
 class XrsSpatialDatasetAccessor:
@@ -820,3 +832,75 @@ class XrsSpatialDatasetAccessor:
             "Dataset has no 2D variable with 'y' and 'x' dimensions "
             "to use as rasterize template"
         )
+
+    # ---- GeoTIFF I/O ----
+
+    def to_geotiff(self, path, var=None, **kwargs):
+        """Write a Dataset variable as a GeoTIFF.
+
+        Parameters
+        ----------
+        path : str
+            Output file path.
+        var : str or None
+            Variable name to write.  If None, uses the first 2D variable
+            with y/x dimensions.
+        **kwargs
+            Passed to :func:`xrspatial.geotiff.to_geotiff`.
+        """
+        from .geotiff import to_geotiff
+        ds = self._obj
+        if var is not None:
+            return to_geotiff(ds[var], path, **kwargs)
+        for v in ds.data_vars:
+            da = ds[v]
+            if da.ndim >= 2 and 'y' in da.dims and 'x' in da.dims:
+                return to_geotiff(da, path, **kwargs)
+        raise ValueError(
+            "Dataset has no variable with 'y' and 'x' dimensions to write"
+        )
+
+    def open_geotiff(self, source, **kwargs):
+        """Read a GeoTIFF windowed to this Dataset's spatial extent.
+
+        Uses the Dataset's y/x coordinates to compute a pixel window,
+        then reads only that region from the file.
+
+        Parameters
+        ----------
+        source : str
+            File path to the GeoTIFF.
+        **kwargs
+            Passed to :func:`xrspatial.geotiff.open_geotiff` (except
+            ``window``, which is computed automatically).
+
+        Returns
+        -------
+        xr.DataArray
+            The windowed portion of the GeoTIFF.
+        """
+        from .geotiff import open_geotiff, _read_geo_info, _extent_to_window
+        ds = self._obj
+        if 'y' not in ds.coords or 'x' not in ds.coords:
+            raise ValueError(
+                "Dataset must have 'y' and 'x' coordinates to compute "
+                "a spatial window"
+            )
+        y = ds.coords['y'].values
+        x = ds.coords['x'].values
+        y_min, y_max = float(y.min()), float(y.max())
+        x_min, x_max = float(x.min()), float(x.max())
+
+        geo_info, file_h, file_w = _read_geo_info(source)
+        t = geo_info.transform
+
+        # Expand extent by half a pixel so we capture edge pixels
+        y_min -= abs(t.pixel_height) * 0.5
+        y_max += abs(t.pixel_height) * 0.5
+        x_min -= abs(t.pixel_width) * 0.5
+        x_max += abs(t.pixel_width) * 0.5
+
+        window = _extent_to_window(t, file_h, file_w,
+                                   y_min, y_max, x_min, x_max)
+        kwargs.pop('window', None)
+        return open_geotiff(source, window=window, **kwargs)
