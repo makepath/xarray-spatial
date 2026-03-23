@@ -476,6 +476,8 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     band_count = samples if (planar == 2 and samples > 1) else 1
     tiles_per_band = tiles_across * tiles_down
 
+    # Build list of tiles to decode
+    tile_jobs = []
     for band_idx in range(band_count):
         band_tile_offset = band_idx * tiles_per_band if band_count > 1 else 0
         tile_samples = 1 if band_count > 1 else samples
@@ -485,37 +487,55 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
                 tile_idx = band_tile_offset + tr * tiles_across + tc
                 if tile_idx >= len(offsets):
                     continue
+                tile_jobs.append((band_idx, tr, tc, tile_idx, tile_samples))
 
-                tile_data = data[offsets[tile_idx]:offsets[tile_idx] + byte_counts[tile_idx]]
-                tile_pixels = _decode_strip_or_tile(
-                    tile_data, compression, tw, th, tile_samples,
-                    bps, bytes_per_sample, is_sub_byte, dtype, pred,
-                    byte_order=header.byte_order)
+    # Decode tiles -- parallel for compressed, sequential for uncompressed
+    n_tiles = len(tile_jobs)
+    use_parallel = (compression != 1 and n_tiles > 4)  # 1 = COMPRESSION_NONE
 
-                tile_r0 = tr * th
-                tile_c0 = tc * tw
+    def _decode_one(job):
+        band_idx, tr, tc, tile_idx, tile_samples = job
+        tile_data = data[offsets[tile_idx]:offsets[tile_idx] + byte_counts[tile_idx]]
+        return _decode_strip_or_tile(
+            tile_data, compression, tw, th, tile_samples,
+            bps, bytes_per_sample, is_sub_byte, dtype, pred,
+            byte_order=header.byte_order)
 
-                src_r0 = max(r0 - tile_r0, 0)
-                src_c0 = max(c0 - tile_c0, 0)
-                src_r1 = min(r1 - tile_r0, th)
-                src_c1 = min(c1 - tile_c0, tw)
+    if use_parallel:
+        from concurrent.futures import ThreadPoolExecutor
+        import os as _os
+        n_workers = min(n_tiles, _os.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            decoded = list(pool.map(_decode_one, tile_jobs))
+    else:
+        decoded = [_decode_one(job) for job in tile_jobs]
 
-                dst_r0 = max(tile_r0 - r0, 0)
-                dst_c0 = max(tile_c0 - c0, 0)
+    # Place decoded tiles into the output array
+    for (band_idx, tr, tc, tile_idx, tile_samples), tile_pixels in zip(tile_jobs, decoded):
+        tile_r0 = tr * th
+        tile_c0 = tc * tw
 
-                actual_tile_h = min(th, height - tile_r0)
-                actual_tile_w = min(tw, width - tile_c0)
-                src_r1 = min(src_r1, actual_tile_h)
-                src_c1 = min(src_c1, actual_tile_w)
-                dst_r1 = dst_r0 + (src_r1 - src_r0)
-                dst_c1 = dst_c0 + (src_c1 - src_c0)
+        src_r0 = max(r0 - tile_r0, 0)
+        src_c0 = max(c0 - tile_c0, 0)
+        src_r1 = min(r1 - tile_r0, th)
+        src_c1 = min(c1 - tile_c0, tw)
 
-                if dst_r1 > dst_r0 and dst_c1 > dst_c0:
-                    src_slice = tile_pixels[src_r0:src_r1, src_c0:src_c1]
-                    if band_count > 1:
-                        result[dst_r0:dst_r1, dst_c0:dst_c1, band_idx] = src_slice
-                    else:
-                        result[dst_r0:dst_r1, dst_c0:dst_c1] = src_slice
+        dst_r0 = max(tile_r0 - r0, 0)
+        dst_c0 = max(tile_c0 - c0, 0)
+
+        actual_tile_h = min(th, height - tile_r0)
+        actual_tile_w = min(tw, width - tile_c0)
+        src_r1 = min(src_r1, actual_tile_h)
+        src_c1 = min(src_c1, actual_tile_w)
+        dst_r1 = dst_r0 + (src_r1 - src_r0)
+        dst_c1 = dst_c0 + (src_c1 - src_c0)
+
+        if dst_r1 > dst_r0 and dst_c1 > dst_c0:
+            src_slice = tile_pixels[src_r0:src_r1, src_c0:src_c1]
+            if band_count > 1:
+                result[dst_r0:dst_r1, dst_c0:dst_c1, band_idx] = src_slice
+            else:
+                result[dst_r0:dst_r1, dst_c0:dst_c1] = src_slice
 
     return result
 
