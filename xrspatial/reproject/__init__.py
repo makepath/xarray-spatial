@@ -827,6 +827,51 @@ def _parse_max_memory(max_memory):
     return int(s)
 
 
+def _process_tile_batch(batch, source_data, src_bounds, src_shape, y_desc,
+                        src_wkt, tgt_wkt, resampling, nodata, precision,
+                        max_memory_bytes, tile_mem):
+    """Process a batch of tiles within a single worker.
+
+    Uses ThreadPoolExecutor for intra-worker parallelism (Numba
+    releases the GIL).  Memory bounded by max_memory_bytes.
+
+    Returns list of (row_offset, col_offset, tile_data) tuples.
+    """
+    max_concurrent = max(1, max_memory_bytes // max(tile_mem, 1))
+
+    def _do_one(job):
+        _, _, rchunk, cchunk, cb = job
+        return _reproject_chunk_numpy(
+            source_data,
+            src_bounds, src_shape, y_desc,
+            src_wkt, tgt_wkt,
+            cb, (rchunk, cchunk),
+            resampling, nodata, precision,
+        )
+
+    results = []
+    if max_concurrent >= 2 and len(batch) > 1:
+        import os
+        from concurrent.futures import ThreadPoolExecutor
+        n_threads = min(max_concurrent, len(batch), os.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=n_threads) as pool:
+            for sub_start in range(0, len(batch), n_threads):
+                sub = batch[sub_start:sub_start + n_threads]
+                tiles = list(pool.map(_do_one, sub))
+                for job, tile in zip(sub, tiles):
+                    ro, co, rchunk, cchunk, _ = job
+                    results.append((ro, co, tile))
+                del tiles
+    else:
+        for job in batch:
+            ro, co, rchunk, cchunk, _ = job
+            tile = _do_one(job)
+            results.append((ro, co, tile))
+            del tile
+
+    return results
+
+
 def _reproject_streaming(
     raster, src_bounds, src_shape, y_desc,
     src_wkt, tgt_wkt,
@@ -836,24 +881,22 @@ def _reproject_streaming(
 ):
     """Streaming reproject for datasets too large for dask's graph.
 
-    Uses a ThreadPoolExecutor with bounded concurrency based on
-    max_memory.  Numba kernels release the GIL, so threads give
-    real parallelism.  Each worker processes one output tile:
-    compute coordinates, read source window, resample.
+    Two modes:
+    1. **Local** (no dask.distributed): ThreadPoolExecutor within one
+       process, bounded by max_memory.
+    2. **Distributed** (dask.distributed active): creates a dask.bag
+       with one partition per worker, each partition processes its
+       tile batch using threads.  Graph size: O(n_workers), not
+       O(n_tiles).
 
-    Memory usage: max_memory_bytes total across all concurrent tiles.
+    Memory usage per worker: bounded by max_memory.
     """
     if isinstance(tile_size, int):
         tile_size = (tile_size, tile_size)
 
     row_chunks, col_chunks = _compute_chunk_layout(out_shape, tile_size)
-    result = np.full(out_shape, nodata, dtype=np.float64)
 
-    # Compute how many tiles can run concurrently within memory budget.
-    # Each tile needs: output (tile_size^2 * 8) + source window (~same)
-    # + coordinates (tile_size^2 * 8 * 2)
     tile_mem = tile_size[0] * tile_size[1] * 8 * 4  # ~4 arrays per tile
-    max_concurrent = max(1, max_memory_bytes // tile_mem)
 
     # Build tile job list
     jobs = []
@@ -870,36 +913,55 @@ def _reproject_streaming(
             col_offset += cchunk
         row_offset += rchunk
 
-    def _process_tile(job):
-        _, _, rchunk, cchunk, cb = job
-        return _reproject_chunk_numpy(
-            raster.data,
-            src_bounds, src_shape, y_desc,
-            src_wkt, tgt_wkt,
-            cb, (rchunk, cchunk),
-            resampling, nodata, precision,
+    # Check if dask.distributed is active
+    _use_distributed = False
+    try:
+        from dask.distributed import get_client
+        client = get_client()
+        n_distributed_workers = len(client.scheduler_info()['workers'])
+        if n_distributed_workers > 0:
+            _use_distributed = True
+    except (ImportError, ValueError):
+        pass
+
+    if _use_distributed and len(jobs) > n_distributed_workers:
+        # Distributed: partition tiles across workers via dask.bag
+        import dask.bag as db
+
+        # Split jobs into N partitions (one per worker)
+        n_parts = min(n_distributed_workers, len(jobs))
+        batch_size = math.ceil(len(jobs) / n_parts)
+        batches = [jobs[i:i + batch_size] for i in range(0, len(jobs), batch_size)]
+
+        # Create bag and map the batch processor
+        bag = db.from_sequence(batches, npartitions=len(batches))
+        results_bag = bag.map(
+            _process_tile_batch,
+            source_data=raster.data,
+            src_bounds=src_bounds, src_shape=src_shape, y_desc=y_desc,
+            src_wkt=src_wkt, tgt_wkt=tgt_wkt,
+            resampling=resampling, nodata=nodata, precision=precision,
+            max_memory_bytes=max_memory_bytes, tile_mem=tile_mem,
         )
 
-    if max_concurrent >= 2 and len(jobs) > 1:
-        import os
-        from concurrent.futures import ThreadPoolExecutor
-        n_workers = min(max_concurrent, len(jobs), os.cpu_count() or 4)
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            # Process in batches to bound memory
-            for batch_start in range(0, len(jobs), n_workers):
-                batch = jobs[batch_start:batch_start + n_workers]
-                tiles = list(pool.map(_process_tile, batch))
-                for job, tile in zip(batch, tiles):
-                    ro, co, rchunk, cchunk, _ = job
-                    result[ro:ro + rchunk, co:co + cchunk] = tile
-                del tiles
-    else:
-        # Sequential fallback
-        for job in jobs:
-            ro, co, rchunk, cchunk, _ = job
-            tile = _process_tile(job)
-            result[ro:ro + rchunk, co:co + cchunk] = tile
-            del tile
+        # Compute all partitions and assemble result
+        result = np.full(out_shape, nodata, dtype=np.float64)
+        for batch_results in results_bag.compute():
+            for ro, co, tile in batch_results:
+                result[ro:ro + tile.shape[0], co:co + tile.shape[1]] = tile
+        return result
+
+    # Local: ThreadPoolExecutor within one process
+    result = np.full(out_shape, nodata, dtype=np.float64)
+    batch_results = _process_tile_batch(
+        jobs, raster.data,
+        src_bounds, src_shape, y_desc,
+        src_wkt, tgt_wkt,
+        resampling, nodata, precision,
+        max_memory_bytes, tile_mem,
+    )
+    for ro, co, tile in batch_results:
+        result[ro:ro + tile.shape[0], co:co + tile.shape[1]] = tile
 
     return result
 
