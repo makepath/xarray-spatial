@@ -52,19 +52,30 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
             if src_bottom >= src_top:
                 src_bottom, src_top = source_bounds[1], source_bounds[3]
 
-        n_edge = 21  # sample points along each edge
-        xs = np.concatenate([
+        # Sample edges densely plus an interior grid so that
+        # projections with curvature (e.g. UTM near zone edges)
+        # don't underestimate the output bounding box.
+        n_edge = 101
+        n_interior = 21
+        edge_xs = np.concatenate([
             np.linspace(src_left, src_right, n_edge),   # top edge
             np.linspace(src_left, src_right, n_edge),   # bottom edge
             np.full(n_edge, src_left),                   # left edge
             np.full(n_edge, src_right),                  # right edge
         ])
-        ys = np.concatenate([
+        edge_ys = np.concatenate([
             np.full(n_edge, src_top),
             np.full(n_edge, src_bottom),
             np.linspace(src_bottom, src_top, n_edge),
             np.linspace(src_bottom, src_top, n_edge),
         ])
+        # Interior grid catches cases where the projected extent
+        # bulges beyond the edges (e.g. Mercator near the poles).
+        ix = np.linspace(src_left, src_right, n_interior)
+        iy = np.linspace(src_bottom, src_top, n_interior)
+        ixx, iyy = np.meshgrid(ix, iy)
+        xs = np.concatenate([edge_xs, ixx.ravel()])
+        ys = np.concatenate([edge_ys, iyy.ravel()])
         tx, ty = transformer.transform(xs, ys)
         tx = np.asarray(tx)
         ty = np.asarray(ty)
@@ -131,29 +142,35 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
         res_x = (right - left) / width
         res_y = (top - bottom) / height
     else:
-        # Estimate from source resolution
+        # Estimate from source resolution by transforming each axis
+        # independently, then taking the geometric mean for a square pixel.
         src_h, src_w = source_shape
         src_left, src_bottom, src_right, src_top = source_bounds
         src_res_x = (src_right - src_left) / src_w
         src_res_y = (src_top - src_bottom) / src_h
-        # Use the geometric mean of transformed pixel sizes
         center_x = (src_left + src_right) / 2
         center_y = (src_bottom + src_top) / 2
-        tx1, ty1 = transformer.transform(center_x, center_y)
-        tx2, ty2 = transformer.transform(
-            center_x + src_res_x, center_y + src_res_y
-        )
-        res_x = abs(float(tx2) - float(tx1))
-        res_y = abs(float(ty2) - float(ty1))
-        if res_x == 0 or res_y == 0:
+        tc_x, tc_y = transformer.transform(center_x, center_y)
+        # Step along x only
+        tx_x, tx_y = transformer.transform(center_x + src_res_x, center_y)
+        dx = np.hypot(float(tx_x) - float(tc_x), float(tx_y) - float(tc_y))
+        # Step along y only
+        ty_x, ty_y = transformer.transform(center_x, center_y + src_res_y)
+        dy = np.hypot(float(ty_x) - float(tc_x), float(ty_y) - float(tc_y))
+        if dx == 0 or dy == 0:
             res_x = (right - left) / src_w
             res_y = (top - bottom) / src_h
+        else:
+            # Geometric mean for square pixels
+            res_x = res_y = np.sqrt(dx * dy)
 
-    # Compute dimensions
+    # Compute dimensions.  Use round() instead of ceil() so that
+    # floating-point noise (e.g. 677.0000000000001) does not add a
+    # spurious extra row/column.
     if width is None:
-        width = max(1, int(np.ceil((right - left) / res_x)))
+        width = max(1, int(round((right - left) / res_x)))
     if height is None:
-        height = max(1, int(np.ceil((top - bottom) / res_y)))
+        height = max(1, int(round((top - bottom) / res_y)))
 
     # Adjust bounds to be exact multiples of resolution
     right = left + width * res_x

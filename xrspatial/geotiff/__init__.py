@@ -8,6 +8,8 @@ open_geotiff(source, ...)
     Read a GeoTIFF file to an xarray.DataArray.
 to_geotiff(data, path, ...)
     Write an xarray.DataArray as a GeoTIFF or COG.
+write_vrt(vrt_path, source_files, ...)
+    Generate a VRT mosaic XML from a list of GeoTIFF files.
 """
 from __future__ import annotations
 
@@ -123,12 +125,14 @@ def _extent_to_window(transform, file_height, file_width,
 
     Clamps to file bounds.
     """
+    # Pixel coords from geographic coords
     col_start = (x_min - transform.origin_x) / transform.pixel_width
     col_stop = (x_max - transform.origin_x) / transform.pixel_width
 
     row_start = (y_max - transform.origin_y) / transform.pixel_height
     row_stop = (y_min - transform.origin_y) / transform.pixel_height
 
+    # pixel_height is typically negative, so row_start/row_stop may be swapped
     if row_start > row_stop:
         row_start, row_stop = row_stop, row_start
     if col_start > col_stop:
@@ -140,6 +144,8 @@ def _extent_to_window(transform, file_height, file_width,
     col_stop = min(file_width, int(np.ceil(col_stop)))
 
     return (row_start, col_start, row_stop, col_stop)
+
+
 
 
 def open_geotiff(source: str, *, window=None,
@@ -330,17 +336,17 @@ def _is_gpu_data(data) -> bool:
 
 
 def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
-                  crs: int | str | None = None,
-                  nodata=None,
-                  compression: str = 'deflate',
-                  tiled: bool = True,
-                  tile_size: int = 256,
-                  predictor: bool = False,
-                  cog: bool = False,
-                  overview_levels: list[int] | None = None,
-                  overview_resampling: str = 'mean',
-                  bigtiff: bool | None = None,
-                  gpu: bool | None = None) -> None:
+               crs: int | str | None = None,
+               nodata=None,
+               compression: str = 'zstd',
+               tiled: bool = True,
+               tile_size: int = 256,
+               predictor: bool = False,
+               cog: bool = False,
+               overview_levels: list[int] | None = None,
+               overview_resampling: str = 'mean',
+               bigtiff: bool | None = None,
+               gpu: bool | None = None) -> None:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Automatically dispatches to GPU compression when:
@@ -426,9 +432,13 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         if geo_transform is None:
             geo_transform = _coords_to_transform(data)
         if epsg is None and crs is None:
-            epsg = data.attrs.get('crs')
+            crs_attr = data.attrs.get('crs')
+            if isinstance(crs_attr, str):
+                # WKT string from reproject() or other source
+                epsg = _wkt_to_epsg(crs_attr)
+            elif crs_attr is not None:
+                epsg = int(crs_attr)
             if epsg is None:
-                # Try resolving EPSG from a WKT string in attrs
                 wkt = data.attrs.get('crs_wkt')
                 if isinstance(wkt, str):
                     epsg = _wkt_to_epsg(wkt)

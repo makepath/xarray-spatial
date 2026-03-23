@@ -75,7 +75,7 @@ class TestMultiBand:
         assert result.shape == (4, 4)
         np.testing.assert_array_equal(result, 42)
 
-    def test_rgb_write_geotiff_api(self, tmp_path):
+    def test_rgb_to_geotiff_api(self, tmp_path):
         """to_geotiff accepts 3D arrays."""
         arr = np.arange(48, dtype=np.uint8).reshape(4, 4, 3)
         path = str(tmp_path / 'rgb_api.tif')

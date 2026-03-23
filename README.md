@@ -79,13 +79,15 @@
 
 :fast_forward: Scalable with [Dask](http://dask.pydata.org)
 
+:desktop_computer: GPU-accelerated with [CuPy](https://cupy.dev/) and [Numba CUDA](https://numba.readthedocs.io/en/stable/cuda/index.html)
+
 :confetti_ball: Free of GDAL / GEOS Dependencies
 
 :earth_africa: General-Purpose Spatial Processing, Geared Towards GIS Professionals
 
 -------
 
-Xarray-Spatial implements common raster analysis functions using Numba and provides an easy-to-install, easy-to-extend codebase for raster analysis.
+Xarray-Spatial is a Python library for raster analysis built on xarray. It has 100+ functions for surface analysis, hydrology (D8, D-infinity, MFD), fire behavior, flood modeling, multispectral indices, proximity, classification, pathfinding, and interpolation. Functions dispatch automatically across four backends (NumPy, Dask, CuPy, Dask+CuPy). A built-in GeoTIFF/COG reader and writer handles raster I/O without GDAL.
 
 ### Installation
 ```bash
@@ -119,9 +121,9 @@ In all the above, the command will download and store the files into your curren
 
 `xarray-spatial` grew out of the [Datashader project](https://datashader.org/), which provides fast rasterization of vector data (points, lines, polygons, meshes, and rasters) for use with xarray-spatial.
 
-`xarray-spatial` does not depend on GDAL / GEOS, which makes it fully extensible in Python but does limit the breadth of operations that can be covered.  xarray-spatial is meant to include the core raster-analysis functions needed for GIS developers / analysts, implemented independently of the non-Python geo stack.
+`xarray-spatial` does not depend on GDAL or GEOS. Raster I/O, reprojection, compression codecs, and coordinate handling are all pure Python and Numba -- no C/C++ bindings anywhere in the stack.
 
-Our documentation is still under construction, but [docs can be found here](https://xarray-spatial.readthedocs.io/en/latest/).
+[API reference docs](https://xarray-spatial.readthedocs.io/en/latest/) and [33+ user guide notebooks](examples/user_guide/) cover every module.
 
 #### Raster-huh?
 
@@ -132,7 +134,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 #### Supported Spatial Functions with Supported Inputs
 ✅ = native backend &nbsp;&nbsp; 🔄 = accepted (CPU fallback)
 
-[Classification](#classification) · [Diffusion](#diffusion) · [Focal](#focal) · [Morphological](#morphological) · [Fire](#fire) · [Multispectral](#multispectral) · [Multivariate](#multivariate) · [Pathfinding](#pathfinding) · [Proximity](#proximity) · [Reproject / Merge](#reproject--merge) · [Raster / Vector Conversion](#raster--vector-conversion) · [Surface](#surface) · [Hydrology](#hydrology) · [Flood](#flood) · [Interpolation](#interpolation) · [Dasymetric](#dasymetric) · [Zonal](#zonal) · [Utilities](#utilities)
+[Classification](#classification) · [Diffusion](#diffusion) · [Focal](#focal) · [Morphological](#morphological) · [Fire](#fire) · [Multispectral](#multispectral) · [Multivariate](#multivariate) · [MCDA](#multi-criteria-decision-analysis-mcda) · [Pathfinding](#pathfinding) · [Proximity](#proximity) · [Reproject / Merge](#reproject--merge) · [Raster / Vector Conversion](#raster--vector-conversion) · [Surface](#surface) · [Hydrology](#hydrology) · [Flood](#flood) · [Interpolation](#interpolation) · [Dasymetric](#dasymetric) · [Zonal](#zonal) · [Utilities](#utilities)
 
 -------
 ### **GeoTIFF / COG I/O**
@@ -148,6 +150,8 @@ Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 `open_geotiff` and `to_geotiff` auto-dispatch to the correct backend:
 
 ```python
+from xrspatial.geotiff import open_geotiff, to_geotiff
+
 open_geotiff('dem.tif')                              # NumPy
 open_geotiff('dem.tif', chunks=512)                  # Dask
 open_geotiff('dem.tif', gpu=True)                    # CuPy (nvCOMP + GDS)
@@ -166,9 +170,9 @@ da.xrs.to_geotiff('out.tif', compression='lzw')     # write from DataArray
 ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset extent
 ```
 
-**Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow), uncompressed
+**Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow), JPEG 2000 (glymur), uncompressed
 
-**GPU codecs:** Deflate and ZSTD via nvCOMP; LZW via Numba CUDA; JPEG via nvJPEG
+**GPU codecs:** Deflate and ZSTD via nvCOMP batch API; JPEG 2000 via nvJPEG2000; LZW via Numba CUDA kernels
 
 **Features:**
 - Tiled, stripped, BigTIFF, multi-band (RGB/RGBA), sub-byte (1/2/4/12-bit)
@@ -209,7 +213,6 @@ ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset 
 | 4096x4096 | deflate | 1.68s | 447ms | **302ms** |
 | 8192x8192 | deflate | 6.84s | 2.03s | **1.11s** |
 | 8192x8192 | zstd | 847ms | 822ms | 1.03s |
-
 **Consistency:** 100% pixel-exact match vs rioxarray on all tested files (Landsat 8, Copernicus DEM, USGS 1-arc-second, USGS 1-meter).
 
 -----------
@@ -217,8 +220,62 @@ ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset 
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Reproject](xrspatial/reproject/__init__.py) | Reprojects a raster to a new CRS using an approximate transform and numba JIT resampling | Standard (inverse mapping) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Reproject](xrspatial/reproject/__init__.py) | Reprojects a raster to a new CRS with Numba JIT / CUDA coordinate transforms and resampling. Supports vertical datums (EGM96, EGM2008) and horizontal datum shifts (NAD27, OSGB36, etc.) | Standard (inverse mapping) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Merge](xrspatial/reproject/__init__.py) | Merges multiple rasters into a single mosaic with configurable overlap strategy | Standard (mosaic) | ✅️ | ✅️ | 🔄 | 🔄 |
+
+Built-in Numba JIT and CUDA projection kernels bypass pyproj for per-pixel coordinate transforms. pyproj is used only for CRS metadata parsing (~1ms, once per call) and output grid boundary estimation (~500 control points, once per call). Any CRS pair without a built-in kernel falls back to pyproj automatically.
+
+| Projection | EPSG examples | CPU Numba | CUDA GPU |
+|:-----------|:-------------|:---------:|:--------:|
+| Web Mercator | 3857 | ✅️ | ✅️ |
+| UTM / Transverse Mercator | 326xx, 327xx, State Plane | ✅️ | ✅️ |
+| Ellipsoidal Mercator | 3395 | ✅️ | ✅️ |
+| Lambert Conformal Conic | 2154, 2229, State Plane | ✅️ | ✅️ |
+| Albers Equal Area | 5070 | ✅️ | ✅️ |
+| Cylindrical Equal Area | 6933 | ✅️ | ✅️ |
+| Sinusoidal | MODIS grids | ✅️ | ✅️ |
+| Lambert Azimuthal Equal Area | 3035, 6931, 6932 | ✅️ | ✅️ |
+| Polar Stereographic | 3031, 3413, 3996 | ✅️ | ✅️ |
+| Oblique Stereographic | custom WGS84 | ✅️ | pyproj fallback |
+| Oblique Mercator (Hotine) | 3375 (RSO) | implemented, disabled | pyproj fallback |
+
+**Vertical datum support:** `geoid_height`, `ellipsoidal_to_orthometric`, `orthometric_to_ellipsoidal` convert between ellipsoidal (GPS) and orthometric (map/MSL) heights using EGM96 (vendored, 2.6MB) or EGM2008 (77MB, downloaded on first use). Reproject can apply vertical shifts during reprojection via the `vertical_crs` parameter.
+
+**Datum shift support:** Reprojection from non-WGS84 datums (NAD27, OSGB36, DHDN, MGI, ED50, BD72, CH1903, D73, AGD66, Tokyo) applies grid-based shifts from PROJ CDN (sub-metre accuracy) with 7-parameter Helmert fallback (1-5m accuracy). 14 grids are registered covering North America, UK, Germany, Austria, Spain, Netherlands, Belgium, Switzerland, Portugal, and Australia.
+
+**ITRF frame support:** `itrf_transform` converts between ITRF2000, ITRF2008, ITRF2014, and ITRF2020 using 14-parameter time-dependent Helmert transforms from PROJ data files. Shifts are mm-level.
+
+**Reproject performance** (reproject-only, 1024x1024, bilinear, vs rioxarray):
+
+| Transform | xrspatial | rioxarray |
+|:---|---:|---:|
+| WGS84 -> Web Mercator | 23ms | 14ms |
+| WGS84 -> UTM 33N | 24ms | 18ms |
+| WGS84 -> Albers CONUS | 41ms | 33ms |
+| WGS84 -> LAEA Europe | 57ms | 17ms |
+| WGS84 -> Polar Stere S | 44ms | 38ms |
+| WGS84 -> LCC France | 44ms | 25ms |
+| WGS84 -> Ellipsoidal Merc | 27ms | 14ms |
+| WGS84 -> CEA EASE-Grid | 24ms | 15ms |
+
+**Full pipeline** (read 3600x3600 Copernicus DEM + reproject to EPSG:3857 + write GeoTIFF):
+
+| Backend | Time |
+|:---|---:|
+| NumPy | 2.7s |
+| CuPy GPU | 348ms |
+| Dask+CuPy GPU | 343ms |
+| rioxarray (GDAL) | 418ms |
+
+**Merge performance** (4 overlapping same-CRS tiles, vs rioxarray):
+
+| Tile size | xrspatial | rioxarray | Speedup |
+|:---|---:|---:|---:|
+| 512x512 | 16ms | 29ms | **1.8x** |
+| 1024x1024 | 52ms | 76ms | **1.5x** |
+| 2048x2048 | 361ms | 280ms | 0.8x |
+
+Same-CRS tiles skip reprojection entirely and are placed by direct coordinate alignment.
 
 -------
 
@@ -462,6 +519,7 @@ ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset 
 
 -------
 
+
 ### **Pathfinding**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
@@ -496,16 +554,20 @@ ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset 
 Importing `xrspatial` registers an `.xrs` accessor on DataArrays and Datasets, giving you tab-completable access to every spatial operation:
 
 ```python
-import xrspatial
-from xrspatial.geotiff import open_geotiff
+import xrspatial as xrs
+from xrspatial.geotiff import open_geotiff, to_geotiff
 
 # Read a GeoTIFF (no GDAL required)
 elevation = open_geotiff('dem.tif')
 
-# Surface analysis — call operations directly on the DataArray
+# Surface analysis
 slope = elevation.xrs.slope()
 hillshaded = elevation.xrs.hillshade(azimuth=315, angle_altitude=45)
 aspect = elevation.xrs.aspect()
+
+# Reproject and write as a Cloud Optimized GeoTIFF
+dem_wgs84 = elevation.xrs.reproject(target_crs='EPSG:4326')
+to_geotiff(dem_wgs84, 'output.tif', cog=True)
 
 # Classification
 classes = elevation.xrs.equal_interval(k=5)
@@ -514,11 +576,7 @@ breaks = elevation.xrs.natural_breaks(k=10)
 # Proximity
 distance = elevation.xrs.proximity(target_values=[1])
 
-# Multispectral — call on the NIR band, pass other bands as arguments
-nir = xr.DataArray(np.random.rand(100, 100), dims=['y', 'x'])
-red = xr.DataArray(np.random.rand(100, 100), dims=['y', 'x'])
-blue = xr.DataArray(np.random.rand(100, 100), dims=['y', 'x'])
-
+# Multispectral
 vegetation = nir.xrs.ndvi(red)
 enhanced_vi = nir.xrs.evi(red, blue)
 ```
@@ -539,14 +597,14 @@ ndvi_result = ds.xrs.ndvi(nir='band_5', red='band_4')
 
 ##### Function Import Style
 
-All operations are also available as standalone functions if you prefer explicit imports:
+All operations are also available as standalone functions:
 
 ```python
-from xrspatial import hillshade, slope, ndvi
+import xrspatial as xrs
 
-hillshaded = hillshade(elevation)
-slope_result = slope(elevation)
-vegetation = ndvi(nir, red)
+hillshaded = xrs.hillshade(elevation)
+slope_result = xrs.slope(elevation)
+vegetation = xrs.ndvi(nir, red)
 ```
 
 Check out the user guide [here](/examples/user_guide/).
@@ -576,7 +634,7 @@ Check out the user guide [here](/examples/user_guide/).
 
 - **Zero GDAL installation hassle.** `pip install xarray-spatial` gets you everything needed to read and write GeoTIFFs, COGs, and VRT files.
 - **Pure Python, fully extensible.** All codec, header parsing, and metadata code is readable Python/Numba, not wrapped C/C++.
-- **GPU-accelerated reads.** With optional nvCOMP, compressed tiles decompress directly on the GPU via CUDA -- something GDAL cannot do.
+- **GPU-accelerated reads.** With optional nvCOMP and nvJPEG2000, compressed tiles decompress directly on the GPU via CUDA -- something GDAL cannot do.
 
 The native reader is pixel-exact against rasterio/GDAL across Landsat 8, Copernicus DEM, USGS 1-arc-second, and USGS 1-meter DEMs. For uncompressed files it reads 5-7x faster than rioxarray; for compressed COGs it is comparable or faster with GPU acceleration.
 
