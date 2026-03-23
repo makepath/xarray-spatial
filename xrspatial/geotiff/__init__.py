@@ -4,12 +4,12 @@ No GDAL dependency -- uses only numpy, numba, xarray, and the standard library.
 
 Public API
 ----------
-read_geotiff(source, ...)
+open_geotiff(source, ...)
     Read a GeoTIFF file to an xarray.DataArray.
-write_geotiff(data, path, ...)
+to_geotiff(data, path, ...)
     Write an xarray.DataArray as a GeoTIFF or COG.
-open_cog(url, ...)
-    Read a Cloud Optimized GeoTIFF from an HTTP URL.
+write_vrt(vrt_path, source_files, ...)
+    Generate a VRT mosaic XML from a list of GeoTIFF files.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 from ._reader import read_to_array
 from ._writer import write
 
-__all__ = ['read_geotiff', 'write_geotiff', 'write_vrt']
+__all__ = ['open_geotiff', 'to_geotiff', 'write_vrt']
 
 
 def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
@@ -98,7 +98,55 @@ def _coords_to_transform(da: xr.DataArray) -> GeoTransform | None:
     )
 
 
-def read_geotiff(source: str, *, window=None,
+def _read_geo_info(source: str):
+    """Read only the geographic metadata and image dimensions from a GeoTIFF.
+
+    Returns (geo_info, height, width) without reading pixel data.
+    """
+    from ._geotags import extract_geo_info
+    from ._header import parse_all_ifds, parse_header
+
+    with open(source, 'rb') as f:
+        import mmap
+        data = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+    try:
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+        ifd = ifds[0]
+        geo_info = extract_geo_info(ifd, data, header.byte_order)
+        return geo_info, ifd.height, ifd.width
+    finally:
+        data.close()
+
+
+def _extent_to_window(transform, file_height, file_width,
+                      y_min, y_max, x_min, x_max):
+    """Convert geographic extent to pixel window (row_start, col_start, row_stop, col_stop).
+
+    Clamps to file bounds.
+    """
+    # Pixel coords from geographic coords
+    col_start = (x_min - transform.origin_x) / transform.pixel_width
+    col_stop = (x_max - transform.origin_x) / transform.pixel_width
+
+    row_start = (y_max - transform.origin_y) / transform.pixel_height
+    row_stop = (y_min - transform.origin_y) / transform.pixel_height
+
+    # pixel_height is typically negative, so row_start/row_stop may be swapped
+    if row_start > row_stop:
+        row_start, row_stop = row_stop, row_start
+    if col_start > col_stop:
+        col_start, col_stop = col_stop, col_start
+
+    row_start = max(0, int(np.floor(row_start)))
+    col_start = max(0, int(np.floor(col_start)))
+    row_stop = min(file_height, int(np.ceil(row_stop)))
+    col_stop = min(file_width, int(np.ceil(col_stop)))
+
+    return (row_start, col_start, row_stop, col_stop)
+
+
+def open_geotiff(source: str, *, window=None,
                  overview_level: int | None = None,
                  band: int | None = None,
                  name: str | None = None,
@@ -285,18 +333,18 @@ def _is_gpu_data(data) -> bool:
     return isinstance(data, _cupy_type)
 
 
-def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
-                  crs: int | str | None = None,
-                  nodata=None,
-                  compression: str = 'deflate',
-                  tiled: bool = True,
-                  tile_size: int = 256,
-                  predictor: bool = False,
-                  cog: bool = False,
-                  overview_levels: list[int] | None = None,
-                  overview_resampling: str = 'mean',
-                  bigtiff: bool | None = None,
-                  gpu: bool | None = None) -> None:
+def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
+               crs: int | str | None = None,
+               nodata=None,
+               compression: str = 'deflate',
+               tiled: bool = True,
+               tile_size: int = 256,
+               predictor: bool = False,
+               cog: bool = False,
+               overview_levels: list[int] | None = None,
+               overview_resampling: str = 'mean',
+               bigtiff: bool | None = None,
+               gpu: bool | None = None) -> None:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Automatically dispatches to GPU compression when:
@@ -440,14 +488,6 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         extra_tags=extra_tags_list,
         bigtiff=bigtiff,
     )
-
-
-def open_cog(url: str, **kwargs) -> xr.DataArray:
-    """Deprecated: use ``read_geotiff(url, ...)`` instead.
-
-    read_geotiff handles HTTP URLs, cloud URIs, and local files.
-    """
-    return read_geotiff(url, **kwargs)
 
 
 def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
