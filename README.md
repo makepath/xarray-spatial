@@ -158,12 +158,13 @@ read_geotiff('mosaic.vrt')                           # VRT mosaic (auto-detected
 
 write_geotiff(cupy_array, 'out.tif')                 # auto-detects GPU
 write_geotiff(data, 'out.tif', gpu=True)             # force GPU compress
+write_geotiff(data, 'ortho.tif', compression='jpeg') # JPEG for orthophotos
 write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
 ```
 
 **Compression codecs:** Deflate, LZW (Numba JIT), ZSTD, PackBits, JPEG (Pillow), uncompressed
 
-**GPU codecs:** Deflate and ZSTD via nvCOMP batch API; LZW via Numba CUDA kernels
+**GPU codecs:** Deflate and ZSTD via nvCOMP; LZW via Numba CUDA; JPEG via nvJPEG
 
 **Features:**
 - Tiled, stripped, BigTIFF, multi-band (RGB/RGBA), sub-byte (1/2/4/12-bit)

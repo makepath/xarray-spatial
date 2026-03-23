@@ -319,7 +319,10 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     nodata : float, int, or None
         NoData value.
     compression : str
-        'none', 'deflate', or 'lzw'.
+        'none', 'deflate', 'lzw', 'jpeg', 'packbits', or 'zstd'.
+        JPEG is lossy and only supports uint8 data (1 or 3 bands).
+        With ``gpu=True``, JPEG uses nvJPEG for GPU-accelerated
+        encode/decode when available, falling back to Pillow on CPU.
     tiled : bool
         Use tiled layout (default True).
     tile_size : int
@@ -756,7 +759,8 @@ def write_geotiff_gpu(data, path: str, *,
     nodata : float, int, or None
         NoData value.
     compression : str
-        'zstd' (default, fastest on GPU), 'deflate', or 'none'.
+        'zstd' (default, fastest on GPU), 'deflate', 'jpeg', or 'none'.
+        JPEG uses nvJPEG when available, falling back to Pillow.
     tile_size : int
         Tile size in pixels (default 256).
     predictor : bool
