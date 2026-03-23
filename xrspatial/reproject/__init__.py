@@ -256,6 +256,13 @@ def _reproject_chunk_numpy(
     c_min_clip = max(0, c_min)
     c_max_clip = min(src_w, c_max)
 
+    # Guard: cap source window to prevent OOM if projection maps a small
+    # output chunk to a huge source area (e.g. polar stereographic edges).
+    _MAX_WINDOW_PIXELS = 64 * 1024 * 1024  # 64 Mpix (~512 MB for float64)
+    win_pixels = (r_max_clip - r_min_clip) * (c_max_clip - c_min_clip)
+    if win_pixels > _MAX_WINDOW_PIXELS:
+        return np.full(chunk_shape, nodata, dtype=np.float64)
+
     # Extract source window
     window = source_data[r_min_clip:r_max_clip, c_min_clip:c_max_clip]
     if hasattr(window, 'compute'):
@@ -557,6 +564,26 @@ def reproject(
             pass
     else:
         is_cupy = is_cupy_array(data)
+
+    # Auto-chunk large non-dask arrays to prevent OOM.
+    # A 30TB float32 raster would instantly OOM if we called .values.
+    # Threshold: 512MB (configurable via chunk_size).
+    if not is_dask and not is_cupy:
+        nbytes = src_shape[0] * src_shape[1] * data.dtype.itemsize
+        if data.ndim == 3:
+            nbytes *= data.shape[2]
+        _OOM_THRESHOLD = 512 * 1024 * 1024  # 512 MB
+        if nbytes > _OOM_THRESHOLD:
+            import dask.array as _da
+            cs = chunk_size or 512
+            if isinstance(cs, int):
+                cs = (cs, cs)
+            data = _da.from_array(data, chunks=cs)
+            raster = xr.DataArray(
+                data, dims=raster.dims, coords=raster.coords,
+                name=raster.name, attrs=raster.attrs,
+            )
+            is_dask = True
 
     # Serialize CRS for pickle safety
     src_wkt = src_crs.to_wkt()
@@ -1082,13 +1109,20 @@ def merge(
     out_shape = grid['shape']
     tgt_wkt = tgt_crs.to_wkt()
 
-    # Detect if any input is dask
+    # Detect if any input is dask, or if total size exceeds memory threshold
     from ..utils import has_dask_array
 
     any_dask = False
     if has_dask_array():
         import dask.array as _da
         any_dask = any(isinstance(r.data, _da.Array) for r in rasters)
+
+    # Auto-promote to dask path if output would be too large for in-memory merge
+    if not any_dask:
+        out_nbytes = out_shape[0] * out_shape[1] * 8 * len(rasters)  # float64 per tile
+        _OOM_THRESHOLD = 512 * 1024 * 1024
+        if out_nbytes > _OOM_THRESHOLD:
+            any_dask = True
 
     if any_dask:
         result_data = _merge_dask(
