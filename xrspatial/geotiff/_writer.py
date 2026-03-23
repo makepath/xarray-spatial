@@ -10,6 +10,8 @@ from ._compression import (
     COMPRESSION_DEFLATE,
     COMPRESSION_JPEG,
     COMPRESSION_JPEG2000,
+    COMPRESSION_LERC,
+    COMPRESSION_LZ4,
     COMPRESSION_LZW,
     COMPRESSION_NONE,
     COMPRESSION_PACKBITS,
@@ -71,8 +73,10 @@ def _compression_tag(compression_name: str) -> int:
         'jpeg': COMPRESSION_JPEG,
         'packbits': COMPRESSION_PACKBITS,
         'zstd': COMPRESSION_ZSTD,
+        'lz4': COMPRESSION_LZ4,
         'jpeg2000': COMPRESSION_JPEG2000,
         'j2k': COMPRESSION_JPEG2000,
+        'lerc': COMPRESSION_LERC,
     }
     name = compression_name.lower()
     if name not in _map:
@@ -332,6 +336,10 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: bool,
                 from ._compression import jpeg2000_compress
                 compressed = jpeg2000_compress(
                     strip_data, width, strip_rows, samples=samples, dtype=dtype)
+            elif compression == COMPRESSION_LERC:
+                from ._compression import lerc_compress
+                compressed = lerc_compress(
+                    strip_data, width, strip_rows, samples=samples, dtype=dtype)
             else:
                 compressed = compress(strip_data, compression)
 
@@ -386,6 +394,10 @@ def _prepare_tile(data, tr, tc, th, tw, height, width, samples, dtype,
     if compression == COMPRESSION_JPEG2000:
         from ._compression import jpeg2000_compress
         return jpeg2000_compress(
+            tile_data, tw, th, samples=samples, dtype=dtype)
+    if compression == COMPRESSION_LERC:
+        from ._compression import lerc_compress
+        return lerc_compress(
             tile_data, tw, th, samples=samples, dtype=dtype)
     return compress(tile_data, compression)
 

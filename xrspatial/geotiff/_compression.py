@@ -790,6 +790,143 @@ def jpeg2000_compress(data: bytes, width: int, height: int,
             os.unlink(tmp)
 
 
+# -- LERC codec (via lerc) ----------------------------------------------------
+
+LERC_AVAILABLE = False
+try:
+    import lerc as _lerc
+    LERC_AVAILABLE = True
+except ImportError:
+    _lerc = None
+
+
+def lerc_decompress(data: bytes, width: int = 0, height: int = 0,
+                    samples: int = 1) -> bytes:
+    """Decompress LERC data. Requires the ``lerc`` package."""
+    if not LERC_AVAILABLE:
+        raise ImportError(
+            "lerc is required to read LERC-compressed TIFFs. "
+            "Install it with: pip install lerc")
+    result = _lerc.decode(data)
+    # lerc.decode returns (result_code, data_array, valid_mask, ...)
+    if result[0] != 0:
+        raise RuntimeError(f"LERC decode failed with error code {result[0]}")
+    arr = result[1]
+    return arr.tobytes()
+
+
+def lerc_compress(data: bytes, width: int, height: int,
+                  samples: int = 1, dtype: np.dtype = np.dtype('float32'),
+                  max_z_error: float = 0.0) -> bytes:
+    """Compress raw pixel data with LERC. Requires the ``lerc`` package.
+
+    Parameters
+    ----------
+    max_z_error : float
+        Maximum encoding error per pixel. 0 = lossless.
+    """
+    if not LERC_AVAILABLE:
+        raise ImportError(
+            "lerc is required to write LERC-compressed TIFFs. "
+            "Install it with: pip install lerc")
+    if samples == 1:
+        arr = np.frombuffer(data, dtype=dtype).reshape(height, width)
+    else:
+        arr = np.frombuffer(data, dtype=dtype).reshape(height, width, samples)
+    n_values_per_pixel = samples
+    # lerc.encode(npArr, nValuesPerPixel, bHasMask, npValidMask,
+    #             maxZErr, nBytesHint)
+    # nBytesHint=1 triggers actual encoding (0 = compute size only)
+    result = _lerc.encode(arr, n_values_per_pixel, False, None,
+                          max_z_error, 1)
+    if result[0] != 0:
+        raise RuntimeError(f"LERC encode failed with error code {result[0]}")
+    # result is (error_code, nBytesWritten, ctypes_buffer)
+    return bytes(result[2])
+
+
+# -- LZ4 codec (via python-lz4) -----------------------------------------------
+
+LZ4_AVAILABLE = False
+try:
+    import lz4.frame as _lz4
+    LZ4_AVAILABLE = True
+except ImportError:
+    _lz4 = None
+
+
+def lz4_decompress(data: bytes) -> bytes:
+    """Decompress LZ4 frame data. Requires the ``lz4`` package."""
+    if not LZ4_AVAILABLE:
+        raise ImportError(
+            "lz4 is required to read LZ4-compressed TIFFs. "
+            "Install it with: pip install lz4")
+    return _lz4.decompress(data)
+
+
+def lz4_compress(data: bytes, level: int = 0) -> bytes:
+    """Compress data with LZ4 frame format. Requires the ``lz4`` package."""
+    if not LZ4_AVAILABLE:
+        raise ImportError(
+            "lz4 is required to write LZ4-compressed TIFFs. "
+            "Install it with: pip install lz4")
+    return _lz4.compress(data, compression_level=level)
+
+
+# -- LERC codec (via lerc) ----------------------------------------------------
+
+LERC_AVAILABLE = False
+try:
+    import lerc as _lerc
+    LERC_AVAILABLE = True
+except ImportError:
+    _lerc = None
+
+
+def lerc_decompress(data: bytes, width: int = 0, height: int = 0,
+                    samples: int = 1) -> bytes:
+    """Decompress LERC data. Requires the ``lerc`` package."""
+    if not LERC_AVAILABLE:
+        raise ImportError(
+            "lerc is required to read LERC-compressed TIFFs. "
+            "Install it with: pip install lerc")
+    result = _lerc.decode(data)
+    # lerc.decode returns (result_code, data_array, valid_mask, ...)
+    if result[0] != 0:
+        raise RuntimeError(f"LERC decode failed with error code {result[0]}")
+    arr = result[1]
+    return arr.tobytes()
+
+
+def lerc_compress(data: bytes, width: int, height: int,
+                  samples: int = 1, dtype: np.dtype = np.dtype('float32'),
+                  max_z_error: float = 0.0) -> bytes:
+    """Compress raw pixel data with LERC. Requires the ``lerc`` package.
+
+    Parameters
+    ----------
+    max_z_error : float
+        Maximum encoding error per pixel. 0 = lossless.
+    """
+    if not LERC_AVAILABLE:
+        raise ImportError(
+            "lerc is required to write LERC-compressed TIFFs. "
+            "Install it with: pip install lerc")
+    if samples == 1:
+        arr = np.frombuffer(data, dtype=dtype).reshape(height, width)
+    else:
+        arr = np.frombuffer(data, dtype=dtype).reshape(height, width, samples)
+    n_values_per_pixel = samples
+    # lerc.encode(npArr, nValuesPerPixel, bHasMask, npValidMask,
+    #             maxZErr, nBytesHint)
+    # nBytesHint=1 triggers actual encoding (0 = compute size only)
+    result = _lerc.encode(arr, n_values_per_pixel, False, None,
+                          max_z_error, 1)
+    if result[0] != 0:
+        raise RuntimeError(f"LERC encode failed with error code {result[0]}")
+    # result is (error_code, nBytesWritten, ctypes_buffer)
+    return bytes(result[2])
+
 
 # -- Dispatch helpers ---------------------------------------------------------
 
@@ -800,7 +937,9 @@ COMPRESSION_JPEG = 7
 COMPRESSION_DEFLATE = 8
 COMPRESSION_JPEG2000 = 34712
 COMPRESSION_ZSTD = 50000
+COMPRESSION_LZ4 = 50004
 COMPRESSION_PACKBITS = 32773
+COMPRESSION_LERC = 34887
 COMPRESSION_ADOBE_DEFLATE = 32946
 
 
@@ -839,6 +978,11 @@ def decompress(data, compression: int, expected_size: int = 0,
     elif compression == COMPRESSION_JPEG2000:
         return np.frombuffer(
             jpeg2000_decompress(data, width, height, samples), dtype=np.uint8)
+    elif compression == COMPRESSION_LZ4:
+        return np.frombuffer(lz4_decompress(data), dtype=np.uint8)
+    elif compression == COMPRESSION_LERC:
+        return np.frombuffer(
+            lerc_decompress(data, width, height, samples), dtype=np.uint8)
     else:
         raise ValueError(f"Unsupported compression type: {compression}")
 
@@ -869,9 +1013,13 @@ def compress(data: bytes, compression: int, level: int = 6) -> bytes:
         return packbits_compress(data)
     elif compression == COMPRESSION_ZSTD:
         return zstd_compress(data, level)
+    elif compression == COMPRESSION_LZ4:
+        return lz4_compress(data, level)
     elif compression == COMPRESSION_JPEG:
         raise ValueError("Use jpeg_compress() directly with width/height/samples")
     elif compression == COMPRESSION_JPEG2000:
         raise ValueError("Use jpeg2000_compress() directly with width/height/samples/dtype")
+    elif compression == COMPRESSION_LERC:
+        raise ValueError("Use lerc_compress() directly with width/height/samples/dtype")
     else:
         raise ValueError(f"Unsupported compression type: {compression}")

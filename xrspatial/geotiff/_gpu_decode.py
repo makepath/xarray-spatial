@@ -1534,6 +1534,21 @@ def gpu_decode_tiles(
             decomp_offsets = np.arange(n_tiles, dtype=np.int64) * tile_bytes
             d_decomp_offsets = cupy.asarray(decomp_offsets)
 
+    elif compression == 34887:  # LERC
+        from ._compression import lerc_decompress
+        raw_host = np.empty(n_tiles * tile_bytes, dtype=np.uint8)
+        for i, tile in enumerate(compressed_tiles):
+            start = i * tile_bytes
+            chunk = np.frombuffer(
+                lerc_decompress(tile, tile_width, tile_height, samples),
+                dtype=np.uint8)
+            raw_host[start:start + min(len(chunk), tile_bytes)] = \
+                chunk[:tile_bytes] if len(chunk) >= tile_bytes else \
+                np.pad(chunk, (0, tile_bytes - len(chunk)))
+        d_decomp = cupy.asarray(raw_host)
+        decomp_offsets = np.arange(n_tiles, dtype=np.int64) * tile_bytes
+        d_decomp_offsets = cupy.asarray(decomp_offsets)
+
     elif compression == 1:  # Uncompressed
         raw_host = np.empty(n_tiles * tile_bytes, dtype=np.uint8)
         for i, tile in enumerate(compressed_tiles):
@@ -2269,6 +2284,19 @@ def gpu_compress_tiles(d_image, tile_width, tile_height,
             start = i * tile_bytes
             tile_data = bytes(cpu_buf[start:start + tile_bytes])
             result.append(jpeg2000_compress(
+                tile_data, tile_width, tile_height,
+                samples=samples, dtype=dtype))
+        return result
+
+    # LERC: CPU only, no GPU library
+    if compression == 34887:
+        from ._compression import lerc_compress
+        cpu_buf = d_tile_buf.get()
+        result = []
+        for i in range(n_tiles):
+            start = i * tile_bytes
+            tile_data = bytes(cpu_buf[start:start + tile_bytes])
+            result.append(lerc_compress(
                 tile_data, tile_width, tile_height,
                 samples=samples, dtype=dtype))
         return result
