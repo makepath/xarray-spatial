@@ -288,7 +288,7 @@ def _is_gpu_data(data) -> bool:
 def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                   crs: int | str | None = None,
                   nodata=None,
-                  compression: str = 'deflate',
+                  compression: str = 'zstd',
                   tiled: bool = True,
                   tile_size: int = 256,
                   predictor: bool = False,
@@ -379,12 +379,13 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         if geo_transform is None:
             geo_transform = _coords_to_transform(data)
         if epsg is None and crs is None:
-            epsg = data.attrs.get('crs')
-            if isinstance(epsg, str):
-                # attrs['crs'] may be a WKT/PROJ string (e.g. from reproject)
-                epsg = _wkt_to_epsg(epsg)
+            crs_attr = data.attrs.get('crs')
+            if isinstance(crs_attr, str):
+                # WKT string from reproject() or other source
+                epsg = _wkt_to_epsg(crs_attr)
+            elif crs_attr is not None:
+                epsg = int(crs_attr)
             if epsg is None:
-                # Try resolving EPSG from a WKT string in attrs
                 wkt = data.attrs.get('crs_wkt')
                 if isinstance(wkt, str):
                     epsg = _wkt_to_epsg(wkt)
@@ -801,8 +802,6 @@ def write_geotiff_gpu(data, path: str, *,
         geo_transform = _coords_to_transform(data)
         if epsg is None:
             epsg = data.attrs.get('crs')
-            if isinstance(epsg, str):
-                epsg = _wkt_to_epsg(epsg)
         if nodata is None:
             nodata = data.attrs.get('nodata')
         if data.attrs.get('raster_type') == 'point':
