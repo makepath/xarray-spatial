@@ -137,18 +137,18 @@ class TestJPEG2000WriteRoundTrip:
         assert geo.crs_epsg == 4326
 
     def test_public_api_roundtrip(self, tmp_path):
-        """Test via read_geotiff / write_geotiff public API."""
+        """Test via open_geotiff / to_geotiff public API."""
         import xarray as xr
-        from xrspatial.geotiff import read_geotiff, write_geotiff
+        from xrspatial.geotiff import open_geotiff, to_geotiff
 
         data = np.arange(64, dtype=np.uint8).reshape(8, 8)
         da = xr.DataArray(data, dims=['y', 'x'],
                           coords={'y': np.arange(8), 'x': np.arange(8)},
                           attrs={'crs': 4326})
         path = str(tmp_path / 'j2k_1048_api.tif')
-        write_geotiff(da, path, compression='jpeg2000')
+        to_geotiff(da, path, compression='jpeg2000')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, data)
 
 
