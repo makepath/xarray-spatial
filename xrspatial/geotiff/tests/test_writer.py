@@ -101,4 +101,4 @@ class TestWriteInvalidInput:
     def test_unsupported_compression(self, tmp_path):
         arr = np.zeros((4, 4), dtype=np.float32)
         with pytest.raises(ValueError, match="Unsupported compression"):
-            write(arr, str(tmp_path / 'bad.tif'), compression='jpeg')
+            write(arr, str(tmp_path / 'bad.tif'), compression='bzip2')
