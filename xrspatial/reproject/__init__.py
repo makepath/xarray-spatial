@@ -9,6 +9,8 @@ merge(rasters, ...)
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import xarray as xr
 
@@ -565,31 +567,51 @@ def reproject(
     else:
         is_cupy = is_cupy_array(data)
 
-    # Auto-chunk large non-dask arrays to prevent OOM.
-    # A 30TB float32 raster would instantly OOM if we called .values.
-    # Threshold: 512MB (configurable via chunk_size).
+    # For very large datasets, estimate whether a dask graph would fit
+    # in memory.  Each dask task uses ~1KB of graph metadata.  If the
+    # graph itself would exceed available memory, use a streaming
+    # approach instead of dask (process tiles sequentially, no graph).
+    _use_streaming = False
     if not is_dask and not is_cupy:
         nbytes = src_shape[0] * src_shape[1] * data.dtype.itemsize
         if data.ndim == 3:
             nbytes *= data.shape[2]
         _OOM_THRESHOLD = 512 * 1024 * 1024  # 512 MB
         if nbytes > _OOM_THRESHOLD:
-            import dask.array as _da
-            cs = chunk_size or 512
+            # Estimate graph size for the output
+            cs = chunk_size or 2048
             if isinstance(cs, int):
                 cs = (cs, cs)
-            data = _da.from_array(data, chunks=cs)
-            raster = xr.DataArray(
-                data, dims=raster.dims, coords=raster.coords,
-                name=raster.name, attrs=raster.attrs,
-            )
-            is_dask = True
+            n_out_chunks = (math.ceil(out_shape[0] / cs[0])
+                           * math.ceil(out_shape[1] / cs[1]))
+            graph_bytes = n_out_chunks * 1024  # ~1KB per task
+
+            if graph_bytes > 1024 * 1024 * 1024:  # > 1GB graph
+                # Graph too large for dask -- use streaming
+                _use_streaming = True
+            else:
+                # Graph fits -- use dask with large chunks
+                import dask.array as _da
+                data = _da.from_array(data, chunks=cs)
+                raster = xr.DataArray(
+                    data, dims=raster.dims, coords=raster.coords,
+                    name=raster.name, attrs=raster.attrs,
+                )
+                is_dask = True
 
     # Serialize CRS for pickle safety
     src_wkt = src_crs.to_wkt()
     tgt_wkt = tgt_crs.to_wkt()
 
-    if is_dask and is_cupy:
+    if _use_streaming:
+        result_data = _reproject_streaming(
+            raster, src_bounds, src_shape, y_desc,
+            src_wkt, tgt_wkt,
+            out_bounds, out_shape,
+            resampling, nd, transform_precision,
+            chunk_size or 2048,
+        )
+    elif is_dask and is_cupy:
         result_data = _reproject_dask_cupy(
             raster, src_bounds, src_shape, y_desc,
             src_wkt, tgt_wkt,
@@ -782,6 +804,56 @@ def _reproject_inmemory_cupy(
         out_bounds, out_shape,
         resampling, nodata, precision,
     )
+
+
+def _reproject_streaming(
+    raster, src_bounds, src_shape, y_desc,
+    src_wkt, tgt_wkt,
+    out_bounds, out_shape,
+    resampling, nodata, precision,
+    tile_size,
+):
+    """Streaming reproject for datasets too large for dask's graph.
+
+    Processes output tiles sequentially in a simple loop:
+    1. For each output tile, compute source coordinates (Numba)
+    2. Read only the needed source window from the (possibly mmap'd) source
+    3. Resample and write the tile into the output array
+    4. Free the tile before processing the next one
+
+    Memory usage is O(tile_size^2), not O(total_pixels).  No dask graph
+    is created, so there's no graph-size overhead.  The output is a numpy
+    array assembled tile by tile.
+    """
+    if isinstance(tile_size, int):
+        tile_size = (tile_size, tile_size)
+
+    row_chunks, col_chunks = _compute_chunk_layout(out_shape, tile_size)
+    result = np.full(out_shape, nodata, dtype=np.float64)
+
+    row_offset = 0
+    for rchunk in row_chunks:
+        col_offset = 0
+        for cchunk in col_chunks:
+            cb = _chunk_bounds(
+                out_bounds, out_shape,
+                row_offset, row_offset + rchunk,
+                col_offset, col_offset + cchunk,
+            )
+            tile = _reproject_chunk_numpy(
+                raster.data,
+                src_bounds, src_shape, y_desc,
+                src_wkt, tgt_wkt,
+                cb, (rchunk, cchunk),
+                resampling, nodata, precision,
+            )
+            result[row_offset:row_offset + rchunk,
+                   col_offset:col_offset + cchunk] = tile
+            del tile  # free immediately
+            col_offset += cchunk
+        row_offset += rchunk
+
+    return result
 
 
 def _reproject_dask_cupy(
