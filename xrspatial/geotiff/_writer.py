@@ -8,6 +8,7 @@ import numpy as np
 
 from ._compression import (
     COMPRESSION_DEFLATE,
+    COMPRESSION_JPEG2000,
     COMPRESSION_LZW,
     COMPRESSION_NONE,
     COMPRESSION_PACKBITS,
@@ -67,6 +68,8 @@ def _compression_tag(compression_name: str) -> int:
         'lzw': COMPRESSION_LZW,
         'packbits': COMPRESSION_PACKBITS,
         'zstd': COMPRESSION_ZSTD,
+        'jpeg2000': COMPRESSION_JPEG2000,
+        'j2k': COMPRESSION_JPEG2000,
     }
     name = compression_name.lower()
     if name not in _map:
@@ -318,7 +321,12 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: bool,
         else:
             strip_data = np.ascontiguousarray(data[r0:r1]).tobytes()
 
-        compressed = compress(strip_data, compression)
+        if compression == COMPRESSION_JPEG2000:
+            from ._compression import jpeg2000_compress
+            compressed = jpeg2000_compress(
+                strip_data, width, strip_rows, samples=samples, dtype=dtype)
+        else:
+            compressed = compress(strip_data, compression)
 
         rel_offsets.append(current_offset)
         byte_counts.append(len(compressed))
@@ -365,6 +373,10 @@ def _prepare_tile(data, tr, tc, th, tw, height, width, samples, dtype,
     else:
         tile_data = tile_arr.tobytes()
 
+    if compression == COMPRESSION_JPEG2000:
+        from ._compression import jpeg2000_compress
+        return jpeg2000_compress(
+            tile_data, tw, th, samples=samples, dtype=dtype)
     return compress(tile_data, compression)
 
 

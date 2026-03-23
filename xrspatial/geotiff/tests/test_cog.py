@@ -89,7 +89,7 @@ class TestPublicAPI:
         np.testing.assert_array_almost_equal(result.values, data, decimal=5)
         assert result.attrs.get('crs') == 4326
 
-    def test_read_geotiff_name(self, tmp_path):
+    def test_open_geotiff_name(self, tmp_path):
         """DataArray name defaults to filename stem."""
         arr = np.zeros((4, 4), dtype=np.float32)
         path = str(tmp_path / 'myfile.tif')
@@ -98,7 +98,7 @@ class TestPublicAPI:
         da = open_geotiff(path)
         assert da.name == 'myfile'
 
-    def test_read_geotiff_custom_name(self, tmp_path):
+    def test_open_geotiff_custom_name(self, tmp_path):
         arr = np.zeros((4, 4), dtype=np.float32)
         path = str(tmp_path / 'test.tif')
         write(arr, path, compression='none', tiled=False)
@@ -107,7 +107,7 @@ class TestPublicAPI:
         assert da.name == 'custom'
 
     def test_write_numpy_array(self, tmp_path):
-        """write_geotiff should accept raw numpy arrays too."""
+        """to_geotiff should accept raw numpy arrays too."""
         arr = np.arange(16, dtype=np.float32).reshape(4, 4)
         path = str(tmp_path / 'numpy.tif')
         to_geotiff(arr, path, compression='none')

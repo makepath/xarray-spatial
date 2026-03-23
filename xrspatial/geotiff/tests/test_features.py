@@ -75,8 +75,8 @@ class TestMultiBand:
         assert result.shape == (4, 4)
         np.testing.assert_array_equal(result, 42)
 
-    def test_rgb_write_geotiff_api(self, tmp_path):
-        """write_geotiff accepts 3D arrays."""
+    def test_rgb_to_geotiff_api(self, tmp_path):
+        """to_geotiff accepts 3D arrays."""
         arr = np.arange(48, dtype=np.uint8).reshape(4, 4, 3)
         path = str(tmp_path / 'rgb_api.tif')
         to_geotiff(arr, path, compression='none')
@@ -880,7 +880,7 @@ class TestCloudStorage:
         fs.rm('/test.tif')
 
     def test_memory_filesystem_full_roundtrip(self, tmp_path):
-        """write_geotiff + read_geotiff through memory:// filesystem."""
+        """to_geotiff + open_geotiff through memory:// filesystem."""
         import fsspec
 
         arr = np.arange(16, dtype=np.float32).reshape(4, 4)
@@ -1016,7 +1016,7 @@ class TestBigEndian:
         np.testing.assert_array_equal(result, expected[2:6, 3:7])
 
     def test_big_endian_via_public_api(self, tmp_path):
-        """read_geotiff handles big-endian files."""
+        """open_geotiff handles big-endian files."""
         from .conftest import make_minimal_tiff
         expected = np.arange(16, dtype=np.float32).reshape(4, 4)
         tiff_data = make_minimal_tiff(
@@ -1479,7 +1479,7 @@ class TestOverviewResampling:
         assert ov[0, 0] == 0
         assert ov[0, 1] == 1
 
-    def test_write_geotiff_api(self, tmp_path):
+    def test_to_geotiff_api(self, tmp_path):
         """overview_resampling kwarg works through the public API."""
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         path = str(tmp_path / 'api_nearest.tif')
@@ -1569,7 +1569,7 @@ class TestBigTIFF:
         np.testing.assert_array_equal(result, arr)
 
     def test_force_bigtiff_via_public_api(self, tmp_path):
-        """bigtiff=True on write_geotiff forces BigTIFF even for small files."""
+        """bigtiff=True on to_geotiff forces BigTIFF even for small files."""
         arr = np.arange(16, dtype=np.float32).reshape(4, 4)
         path = str(tmp_path / 'forced_bigtiff.tif')
         to_geotiff(arr, path, compression='none', bigtiff=True)
@@ -2324,7 +2324,7 @@ class TestPlanarConfig:
         np.testing.assert_array_equal(result, expected[:, :, 1])
 
     def test_planar_via_public_api(self, tmp_path):
-        """read_geotiff on a planar file returns correct DataArray."""
+        """open_geotiff on a planar file returns correct DataArray."""
         from xrspatial.geotiff import open_geotiff
         tiff_data, expected = _make_planar_tiff(4, 4, 3, np.uint8)
         path = str(tmp_path / 'planar_api.tif')
