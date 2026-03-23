@@ -380,6 +380,9 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
             geo_transform = _coords_to_transform(data)
         if epsg is None and crs is None:
             epsg = data.attrs.get('crs')
+            if isinstance(epsg, str):
+                # attrs['crs'] may be a WKT/PROJ string (e.g. from reproject)
+                epsg = _wkt_to_epsg(epsg)
             if epsg is None:
                 # Try resolving EPSG from a WKT string in attrs
                 wkt = data.attrs.get('crs_wkt')
@@ -798,6 +801,8 @@ def write_geotiff_gpu(data, path: str, *,
         geo_transform = _coords_to_transform(data)
         if epsg is None:
             epsg = data.attrs.get('crs')
+            if isinstance(epsg, str):
+                epsg = _wkt_to_epsg(epsg)
         if nodata is None:
             nodata = data.attrs.get('nodata')
         if data.attrs.get('raster_type') == 'point':

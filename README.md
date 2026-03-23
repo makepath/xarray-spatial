@@ -212,43 +212,60 @@ write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Reproject](xrspatial/reproject/__init__.py) | Reprojects a raster to a new CRS with Numba JIT / CUDA coordinate transforms and resampling | Standard (inverse mapping) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Reproject](xrspatial/reproject/__init__.py) | Reprojects a raster to a new CRS with Numba JIT / CUDA coordinate transforms and resampling. Supports vertical datums (EGM96, EGM2008) and horizontal datum shifts (NAD27, OSGB36, etc.) | Standard (inverse mapping) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Merge](xrspatial/reproject/__init__.py) | Merges multiple rasters into a single mosaic with configurable overlap strategy | Standard (mosaic) | ✅️ | ✅️ | 🔄 | 🔄 |
 
-Built-in Numba JIT and CUDA projection kernels bypass pyproj for common CRS pairs. Other CRS pairs fall back to pyproj automatically.
+Built-in Numba JIT and CUDA projection kernels bypass pyproj for per-pixel coordinate transforms. pyproj is used only for CRS metadata parsing (~1ms, once per call) and output grid boundary estimation (~500 control points, once per call). Any CRS pair without a built-in kernel falls back to pyproj automatically.
 
 | Projection | EPSG examples | CPU Numba | CUDA GPU |
 |:-----------|:-------------|:---------:|:--------:|
 | Web Mercator | 3857 | ✅️ | ✅️ |
 | UTM / Transverse Mercator | 326xx, 327xx, State Plane | ✅️ | ✅️ |
 | Ellipsoidal Mercator | 3395 | ✅️ | ✅️ |
-| Lambert Conformal Conic | 2154, State Plane | ✅️ | ✅️ |
+| Lambert Conformal Conic | 2154, 2229, State Plane | ✅️ | ✅️ |
 | Albers Equal Area | 5070 | ✅️ | ✅️ |
 | Cylindrical Equal Area | 6933 | ✅️ | ✅️ |
 | Sinusoidal | MODIS grids | ✅️ | ✅️ |
 | Lambert Azimuthal Equal Area | 3035, 6931, 6932 | ✅️ | ✅️ |
 | Polar Stereographic | 3031, 3413, 3996 | ✅️ | ✅️ |
+| Oblique Stereographic | custom WGS84 | ✅️ | pyproj fallback |
+| Oblique Mercator (Hotine) | 3375 (RSO) | implemented, disabled | pyproj fallback |
 
-**Reproject performance** (end-to-end, bilinear, vs rioxarray):
+**Vertical datum support:** `geoid_height`, `ellipsoidal_to_orthometric`, `orthometric_to_ellipsoidal` convert between ellipsoidal (GPS) and orthometric (map/MSL) heights using EGM96 (vendored, 2.6MB) or EGM2008 (77MB, downloaded on first use). Reproject can apply vertical shifts during reprojection via the `vertical_crs` parameter.
 
-| Transform | 1024x1024 | | 4096x4096 | |
-|:---|---:|---:|---:|---:|
-| | xrspatial | rioxarray | xrspatial | rioxarray |
-| WGS84 -> UTM 33N | 33ms | 72ms (2.2x) | 627ms | 1.09s (1.7x) |
-| WGS84 -> Web Mercator | 16ms | 44ms (2.9x) | 526ms | 741ms (1.4x) |
-| WGS84 -> Albers CONUS | 72ms | 196ms (2.7x) | 649ms | 1.78s (2.7x) |
-| WGS84 -> LAEA Europe | 47ms | 74ms (1.6x) | 677ms | 1.03s (1.5x) |
-| WGS84 -> Polar Stere S | 34ms | 580ms (17x) | 839ms | 9.13s (11x) |
+**Datum shift support:** Reprojection from non-WGS84 datums (NAD27, OSGB36, DHDN, MGI, ED50, BD72, CH1903, D73, AGD66, Tokyo) applies grid-based shifts from PROJ CDN (sub-metre accuracy) with 7-parameter Helmert fallback (1-5m accuracy). 14 grids are registered covering North America, UK, Germany, Austria, Spain, Netherlands, Belgium, Switzerland, Portugal, and Australia.
 
-Times include coordinate transform + bilinear resampling. Speedup in parentheses is rioxarray/xrspatial. The Polar Stereographic advantage comes from rioxarray computing a much larger output grid for the same input extent.
+**ITRF frame support:** `itrf_transform` converts between ITRF2000, ITRF2008, ITRF2014, and ITRF2020 using 14-parameter time-dependent Helmert transforms from PROJ data files. Shifts are mm-level.
+
+**Reproject performance** (reproject-only, 1024x1024, bilinear, vs rioxarray):
+
+| Transform | xrspatial | rioxarray |
+|:---|---:|---:|
+| WGS84 -> Web Mercator | 23ms | 14ms |
+| WGS84 -> UTM 33N | 24ms | 18ms |
+| WGS84 -> Albers CONUS | 41ms | 33ms |
+| WGS84 -> LAEA Europe | 57ms | 17ms |
+| WGS84 -> Polar Stere S | 44ms | 38ms |
+| WGS84 -> LCC France | 44ms | 25ms |
+| WGS84 -> Ellipsoidal Merc | 27ms | 14ms |
+| WGS84 -> CEA EASE-Grid | 24ms | 15ms |
+
+**Full pipeline** (read 3600x3600 Copernicus DEM + reproject to EPSG:3857 + write GeoTIFF):
+
+| Backend | Time |
+|:---|---:|
+| NumPy | 2.7s |
+| CuPy GPU | 348ms |
+| Dask+CuPy GPU | 343ms |
+| rioxarray (GDAL) | 418ms |
 
 **Merge performance** (4 overlapping same-CRS tiles, vs rioxarray):
 
 | Tile size | xrspatial | rioxarray | Speedup |
 |:---|---:|---:|---:|
-| 512x512 | 11ms | 50ms | **4.5x** |
-| 1024x1024 | 82ms | 125ms | **1.5x** |
-| 2048x2048 | 347ms | 604ms | **1.7x** |
+| 512x512 | 16ms | 29ms | **1.8x** |
+| 1024x1024 | 52ms | 76ms | **1.5x** |
+| 2048x2048 | 361ms | 280ms | 0.8x |
 
 Same-CRS tiles skip reprojection entirely and are placed by direct coordinate alignment.
 
