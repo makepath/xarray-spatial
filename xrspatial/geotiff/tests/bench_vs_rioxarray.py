@@ -36,12 +36,12 @@ def _fmt_ms(seconds):
 def check_consistency(path):
     """Compare pixel values and geo metadata between the two readers."""
     import rioxarray  # noqa: F401
-    from xrspatial.geotiff import read_geotiff
+    from xrspatial.geotiff import open_geotiff
 
     rio_da = xr.open_dataarray(path, engine='rasterio')
     rio_arr = rio_da.squeeze('band').values.astype(np.float64)
 
-    our_da = read_geotiff(path)
+    our_da = open_geotiff(path)
     our_arr = our_da.values.astype(np.float64)
 
     # Shape
@@ -96,7 +96,7 @@ def check_consistency(path):
 def bench_read(path, runs=10):
     """Benchmark read performance."""
     import rioxarray  # noqa: F401
-    from xrspatial.geotiff import read_geotiff
+    from xrspatial.geotiff import open_geotiff
 
     def rio_read():
         da = xr.open_dataarray(path, engine='rasterio')
@@ -105,7 +105,7 @@ def bench_read(path, runs=10):
         return da
 
     def our_read():
-        return read_geotiff(path)
+        return open_geotiff(path)
 
     rio_time, _ = _timer(rio_read, warmup=2, runs=runs)
     our_time, _ = _timer(our_read, warmup=2, runs=runs)
@@ -120,7 +120,7 @@ def bench_read(path, runs=10):
 def bench_write(shape=(512, 512), compression='deflate', runs=5):
     """Benchmark write performance."""
     import rioxarray  # noqa: F401
-    from xrspatial.geotiff import write_geotiff
+    from xrspatial.geotiff import to_geotiff
     from xrspatial.geotiff._geotags import GeoTransform
 
     rng = np.random.RandomState(42)
@@ -150,7 +150,7 @@ def bench_write(shape=(512, 512), compression='deflate', runs=5):
 
     def our_write():
         p = os.path.join(tmpdir, 'our_out.tif')
-        write_geotiff(da_ours, p, compression=compression, tiled=False)
+        to_geotiff(da_ours, p, compression=compression, tiled=False)
         return os.path.getsize(p)
 
     rio_time, rio_size = _timer(rio_write, warmup=1, runs=runs)
@@ -166,7 +166,7 @@ def bench_write(shape=(512, 512), compression='deflate', runs=5):
 def bench_round_trip(shape=(256, 256), compression='deflate'):
     """Write with our module, read back with rioxarray, and vice versa."""
     import rioxarray  # noqa: F401
-    from xrspatial.geotiff import read_geotiff, write_geotiff
+    from xrspatial.geotiff import open_geotiff, to_geotiff
 
     rng = np.random.RandomState(99)
     arr = rng.rand(*shape).astype(np.float32)
@@ -179,7 +179,7 @@ def bench_round_trip(shape=(256, 256), compression='deflate'):
     our_path = os.path.join(tmpdir, 'ours.tif')
     da_ours = xr.DataArray(arr, dims=['y', 'x'], coords={'y': y, 'x': x},
                            attrs={'crs': 4326})
-    write_geotiff(da_ours, our_path, compression=compression, tiled=False)
+    to_geotiff(da_ours, our_path, compression=compression, tiled=False)
 
     rio_da = xr.open_dataarray(our_path, engine='rasterio')
     rio_arr = rio_da.squeeze('band').values if 'band' in rio_da.dims else rio_da.values
@@ -198,7 +198,7 @@ def bench_round_trip(shape=(256, 256), compression='deflate'):
     else:
         da_rio.rio.to_raster(rio_path)
 
-    our_da = read_geotiff(rio_path)
+    our_da = open_geotiff(rio_path)
     our_arr = our_da.values
 
     diff2 = float(np.nanmax(np.abs(arr - our_arr)))
