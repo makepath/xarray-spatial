@@ -7,6 +7,7 @@ on raster data, so they always use numpy regardless of backend.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -64,6 +65,16 @@ def ahp_weights(
     n = len(criteria)
     if n < 2:
         raise ValueError("Need at least 2 criteria")
+
+    expected = n * (n - 1) // 2
+    if len(comparisons) < expected:
+        warnings.warn(
+            f"Only {len(comparisons)} of {expected} pairwise comparisons "
+            f"provided for {n} criteria. Missing pairs default to 1 "
+            f"(equal importance).",
+            UserWarning,
+            stacklevel=2,
+        )
 
     idx = {name: i for i, name in enumerate(criteria)}
     matrix = np.ones((n, n), dtype=np.float64)

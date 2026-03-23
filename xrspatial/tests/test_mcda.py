@@ -782,6 +782,376 @@ class TestSensitivityDask:
 
 
 # ===========================================================================
+# Edge cases
+# ===========================================================================
+
+class TestSinglePixelRaster:
+    """All functions should work on a 1x1 raster."""
+
+    def test_standardize_methods(self):
+        single = xr.DataArray(np.array([[50.0]]), dims=["y", "x"])
+        assert float(standardize(
+            single, method="linear", bounds=(0, 100),
+        ).values[0, 0]) == pytest.approx(0.5)
+        assert float(standardize(
+            single, method="sigmoidal", midpoint=50, spread=0.1,
+        ).values[0, 0]) == pytest.approx(0.5)
+        assert float(standardize(
+            single, method="gaussian", mean=50, std=10,
+        ).values[0, 0]) == pytest.approx(1.0)
+        assert float(standardize(
+            single, method="triangular", low=0, peak=50, high=100,
+        ).values[0, 0]) == pytest.approx(1.0)
+        assert float(standardize(
+            single, method="piecewise",
+            breakpoints=[0, 50, 100], values=[0.0, 1.0, 0.5],
+        ).values[0, 0]) == pytest.approx(1.0)
+        assert float(standardize(
+            single, method="categorical", mapping={50: 0.8},
+        ).values[0, 0]) == pytest.approx(0.8)
+
+    def test_combine_single_pixel(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(np.array([[0.5]]), dims=["y", "x"]),
+            "b": xr.DataArray(np.array([[0.7]]), dims=["y", "x"]),
+        })
+        w = {"a": 0.6, "b": 0.4}
+        assert float(wlc(ds, w).values[0, 0]) == pytest.approx(0.58)
+        expected_wpm = 0.5 ** 0.6 * 0.7 ** 0.4
+        assert float(wpm(ds, w).values[0, 0]) == pytest.approx(expected_wpm)
+
+    def test_full_pipeline_single_pixel(self):
+        raw = xr.DataArray(np.array([[50.0]]), dims=["y", "x"])
+        std = standardize(raw, method="linear", bounds=(0, 100))
+        ds = xr.Dataset({"a": std, "b": std})
+        result = wlc(ds, {"a": 0.6, "b": 0.4})
+        result = constrain(
+            result,
+            exclude=[xr.DataArray(np.array([[False]]), dims=["y", "x"])],
+        )
+        assert result.shape == (1, 1)
+        assert float(result.values[0, 0]) == pytest.approx(0.5)
+
+
+class TestNaNPropagation:
+    """NaN in any criterion should propagate through all combine methods."""
+
+    @pytest.fixture
+    def ds_with_nan(self):
+        return xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.5, np.nan, 0.3]], dtype=np.float64),
+                dims=["y", "x"],
+            ),
+            "b": xr.DataArray(
+                np.array([[0.7, 0.4, np.nan]], dtype=np.float64),
+                dims=["y", "x"],
+            ),
+        })
+
+    def test_wlc_nan(self, ds_with_nan):
+        r = wlc(ds_with_nan, {"a": 0.6, "b": 0.4})
+        assert np.isfinite(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+        assert np.isnan(r.values[0, 2])
+
+    def test_wpm_nan(self, ds_with_nan):
+        r = wpm(ds_with_nan, {"a": 0.6, "b": 0.4})
+        assert np.isfinite(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+        assert np.isnan(r.values[0, 2])
+
+    def test_fuzzy_and_nan(self, ds_with_nan):
+        r = fuzzy_overlay(ds_with_nan, operator="and")
+        assert np.isfinite(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+        assert np.isnan(r.values[0, 2])
+
+    def test_fuzzy_or_nan(self, ds_with_nan):
+        r = fuzzy_overlay(ds_with_nan, operator="or")
+        assert np.isfinite(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+        assert np.isnan(r.values[0, 2])
+
+    def test_fuzzy_product_nan(self, ds_with_nan):
+        r = fuzzy_overlay(ds_with_nan, operator="product")
+        assert np.isfinite(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+        assert np.isnan(r.values[0, 2])
+
+    def test_fuzzy_sum_nan(self, ds_with_nan):
+        r = fuzzy_overlay(ds_with_nan, operator="sum")
+        assert np.isfinite(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+        assert np.isnan(r.values[0, 2])
+
+    def test_fuzzy_gamma_nan(self, ds_with_nan):
+        r = fuzzy_overlay(ds_with_nan, operator="gamma", gamma=0.9)
+        assert np.isfinite(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+        assert np.isnan(r.values[0, 2])
+
+    def test_owa_nan(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.5, np.nan]], dtype=np.float64),
+                dims=["y", "x"],
+            ),
+            "b": xr.DataArray(
+                np.array([[0.7, 0.4]], dtype=np.float64),
+                dims=["y", "x"],
+            ),
+            "c": xr.DataArray(
+                np.array([[0.3, 0.6]], dtype=np.float64),
+                dims=["y", "x"],
+            ),
+        })
+        w = {"a": 0.4, "b": 0.35, "c": 0.25}
+        r = owa(ds, w, [0.5, 0.3, 0.2])
+        assert np.isfinite(r.values[0, 0])
+        assert np.isnan(r.values[0, 1])
+
+
+class TestPiecewiseExtrapolation:
+    """np.interp clamps values outside the breakpoint range."""
+
+    def test_below_range_clamps_to_first_value(self):
+        data = np.array([[-100.0]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        r = standardize(
+            agg, method="piecewise",
+            breakpoints=[0, 100], values=[0.2, 0.9],
+        )
+        assert float(r.values[0, 0]) == pytest.approx(0.2)
+
+    def test_above_range_clamps_to_last_value(self):
+        data = np.array([[500.0]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        r = standardize(
+            agg, method="piecewise",
+            breakpoints=[0, 100], values=[0.2, 0.9],
+        )
+        assert float(r.values[0, 0]) == pytest.approx(0.9)
+
+
+class TestCategoricalPrecision:
+    """Categorical uses exact equality; near-miss float values are NaN."""
+
+    def test_exact_float_match(self):
+        data = np.array([[1.0, 2.0]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        r = standardize(
+            agg, method="categorical", mapping={1: 0.9, 2: 0.5},
+        )
+        assert float(r.values[0, 0]) == pytest.approx(0.9)
+        assert float(r.values[0, 1]) == pytest.approx(0.5)
+
+    def test_float_near_miss_is_nan(self):
+        """Floating point near-miss should not match."""
+        data = np.array([[1.0000000001]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        r = standardize(
+            agg, method="categorical", mapping={1: 0.9},
+        )
+        assert np.isnan(r.values[0, 0])
+
+    def test_integer_data(self):
+        """Integer data should match float keys via implicit cast."""
+        data = np.array([[1, 2, 3]], dtype=np.int32)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        r = standardize(
+            agg, method="categorical",
+            mapping={1: 0.9, 2: 0.7, 3: 0.4},
+        )
+        assert float(r.values[0, 0]) == pytest.approx(0.9)
+        assert float(r.values[0, 1]) == pytest.approx(0.7)
+        assert float(r.values[0, 2]) == pytest.approx(0.4)
+
+
+class TestAHPIncomplete:
+    """AHP with fewer than n(n-1)/2 comparisons should warn."""
+
+    def test_warns_on_incomplete(self):
+        with pytest.warns(UserWarning, match="Only 1 of 3"):
+            ahp_weights(
+                criteria=["a", "b", "c"],
+                comparisons={("a", "b"): 3},
+            )
+
+    def test_no_warning_when_complete(self):
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            ahp_weights(
+                criteria=["a", "b", "c"],
+                comparisons={
+                    ("a", "b"): 3,
+                    ("a", "c"): 5,
+                    ("b", "c"): 2,
+                },
+            )
+
+    def test_missing_defaults_to_equal(self):
+        """Missing comparisons default to 1 (equal importance)."""
+        w_full, _ = ahp_weights(
+            criteria=["a", "b"],
+            comparisons={("a", "b"): 1},
+        )
+        with pytest.warns(UserWarning):
+            w_missing, _ = ahp_weights(
+                criteria=["a", "b", "c"],
+                comparisons={("a", "b"): 1},
+            )
+        # b and c should be approximately equal since their pairwise
+        # comparison defaults to 1
+        assert abs(w_missing["b"] - w_missing["c"]) < 0.05
+
+
+class TestMismatchedCoords:
+    """Criteria with partially overlapping coords produce NaN outside overlap."""
+
+    def test_partial_overlap(self):
+        a = xr.DataArray(
+            np.array([[0.5, 0.3], [0.8, 0.2]], dtype=np.float64),
+            dims=["y", "x"],
+            coords={"y": [0, 1], "x": [0, 1]},
+        )
+        b = xr.DataArray(
+            np.array([[0.7, 0.4], [0.1, 0.9]], dtype=np.float64),
+            dims=["y", "x"],
+            coords={"y": [1, 2], "x": [0, 1]},
+        )
+        ds = xr.Dataset({"a": a, "b": b})
+        result = wlc(ds, {"a": 0.6, "b": 0.4})
+        # y=0: only a has data, b is NaN -> result NaN
+        assert np.isnan(result.sel(y=0, x=0).values)
+        # y=1: both have data -> valid
+        expected = 0.8 * 0.6 + 0.7 * 0.4
+        assert float(result.sel(y=1, x=0).values) == pytest.approx(expected)
+        # y=2: only b has data, a is NaN -> result NaN
+        assert np.isnan(result.sel(y=2, x=0).values)
+
+
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestDaskChunkAlignment:
+    """Dask operations should preserve chunks and produce correct results."""
+
+    def test_standardize_preserves_chunks(self):
+        data = np.random.rand(20, 20)
+        agg = xr.DataArray(data, dims=["y", "x"]).chunk({"y": 10, "x": 10})
+        for method in ["linear", "sigmoidal", "gaussian"]:
+            kw = {"bounds": (0, 1)} if method == "linear" else {}
+            if method == "sigmoidal":
+                kw = {"midpoint": 0.5, "spread": 1.0}
+            elif method == "gaussian":
+                kw = {"mean": 0.5, "std": 0.2}
+            result = standardize(agg, method=method, **kw)
+            assert hasattr(result.data, "compute"), f"{method} lost dask"
+            np_result = standardize(
+                xr.DataArray(data, dims=["y", "x"]),
+                method=method, **kw,
+            )
+            np.testing.assert_allclose(
+                result.compute().values, np_result.values,
+                equal_nan=True, atol=1e-14,
+            )
+
+    def test_wlc_dask(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.random.rand(20, 20), dims=["y", "x"],
+            ).chunk({"y": 10}),
+            "b": xr.DataArray(
+                np.random.rand(20, 20), dims=["y", "x"],
+            ).chunk({"y": 10}),
+        })
+        w = {"a": 0.6, "b": 0.4}
+        result = wlc(ds, w)
+        assert hasattr(result.data, "compute")
+        ds_np = ds.compute()
+        np_result = wlc(ds_np, w)
+        np.testing.assert_allclose(
+            result.compute().values, np_result.values, atol=1e-14,
+        )
+
+    def test_fuzzy_overlay_dask(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.random.rand(20, 20), dims=["y", "x"],
+            ).chunk({"y": 10}),
+            "b": xr.DataArray(
+                np.random.rand(20, 20), dims=["y", "x"],
+            ).chunk({"y": 10}),
+        })
+        for op in ["and", "or", "product", "sum"]:
+            result = fuzzy_overlay(ds, operator=op)
+            ds_np = ds.compute()
+            np_result = fuzzy_overlay(ds_np, operator=op)
+            np.testing.assert_allclose(
+                result.compute().values, np_result.values, atol=1e-14,
+                err_msg=f"fuzzy {op} mismatch",
+            )
+
+    def test_oat_sensitivity_dask(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.random.rand(20, 20), dims=["y", "x"],
+            ).chunk({"y": 10}),
+            "b": xr.DataArray(
+                np.random.rand(20, 20), dims=["y", "x"],
+            ).chunk({"y": 10}),
+        })
+        w = {"a": 0.6, "b": 0.4}
+        result = sensitivity(ds, w, method="one_at_a_time", delta=0.05)
+        assert isinstance(result, xr.Dataset)
+        for var in result.data_vars:
+            assert np.all(np.isfinite(result[var].compute().values))
+
+
+class TestWPMEdgeCases:
+    def test_all_ones(self):
+        """All criteria at 1.0 should produce 1.0 regardless of weights."""
+        ds = xr.Dataset({
+            "a": xr.DataArray(np.array([[1.0]]), dims=["y", "x"]),
+            "b": xr.DataArray(np.array([[1.0]]), dims=["y", "x"]),
+        })
+        r = wpm(ds, {"a": 0.3, "b": 0.7})
+        assert float(r.values[0, 0]) == pytest.approx(1.0)
+
+    def test_all_zeros(self):
+        """All criteria at 0.0 should produce 0.0."""
+        ds = xr.Dataset({
+            "a": xr.DataArray(np.array([[0.0]]), dims=["y", "x"]),
+            "b": xr.DataArray(np.array([[0.0]]), dims=["y", "x"]),
+        })
+        r = wpm(ds, {"a": 0.5, "b": 0.5})
+        assert float(r.values[0, 0]) == pytest.approx(0.0)
+
+
+class TestConstrainEdgeCases:
+    def test_empty_exclude_list(self):
+        """Empty exclude list should return input unchanged."""
+        suit = xr.DataArray(
+            np.array([[0.8, 0.6]], dtype=np.float64),
+            dims=["y", "x"],
+        )
+        result = constrain(suit, exclude=[])
+        np.testing.assert_array_equal(result.values, suit.values)
+
+    def test_all_excluded(self):
+        """All pixels excluded should be fill value."""
+        suit = xr.DataArray(
+            np.array([[0.8, 0.6]], dtype=np.float64),
+            dims=["y", "x"],
+        )
+        mask = xr.DataArray(
+            np.array([[True, True]]), dims=["y", "x"],
+        )
+        result = constrain(suit, exclude=[mask])
+        assert np.all(np.isnan(result.values))
+
+
+# ===========================================================================
 # Integration: end-to-end workflow
 # ===========================================================================
 
