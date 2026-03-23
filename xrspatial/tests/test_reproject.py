@@ -864,3 +864,148 @@ def test_reproject_uint8_cubic_no_overflow():
     valid = vals[vals != 0]  # exclude nodata
     if len(valid) > 0:
         assert np.all(valid >= 0) and np.all(valid <= 255)
+
+
+# ---------------------------------------------------------------------------
+# Edge case tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(not HAS_PYPROJ, reason="pyproj not installed")
+class TestEdgeCases:
+    """Edge cases that previously caused crashes or wrong results."""
+
+    def _do_reproject(self, *args, **kwargs):
+        from xrspatial.reproject import reproject
+        return reproject(*args, **kwargs)
+
+    def test_multiband_rgb(self):
+        da = xr.DataArray(
+            np.random.rand(32, 32, 3).astype(np.float32),
+            dims=['y', 'x', 'band'],
+            coords={'y': np.linspace(55, 45, 32), 'x': np.linspace(-5, 5, 32)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        r = self._do_reproject(da, 'EPSG:32633')
+        assert r.ndim == 3 and r.shape[2] == 3 and 'band' in r.dims
+
+    def test_multiband_uint8(self):
+        da = xr.DataArray(
+            np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8),
+            dims=['y', 'x', 'band'],
+            coords={'y': np.linspace(55, 45, 32), 'x': np.linspace(-5, 5, 32)},
+            attrs={'crs': 'EPSG:4326', 'nodata': 0},
+        )
+        r = self._do_reproject(da, 'EPSG:32633')
+        assert r.dtype == np.uint8
+
+    def test_antimeridian_crossing(self):
+        da = xr.DataArray(
+            np.ones((32, 32)), dims=['y', 'x'],
+            coords={'y': np.linspace(50, 40, 32), 'x': np.linspace(170, -170, 32)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        r = self._do_reproject(da, 'EPSG:32660')
+        assert r.shape[0] > 0
+
+    def test_y_ascending(self):
+        da = xr.DataArray(
+            np.ones((64, 64)), dims=['y', 'x'],
+            coords={'y': np.linspace(45, 55, 64), 'x': np.linspace(-5, 5, 64)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        r = self._do_reproject(da, 'EPSG:32633')
+        assert np.any(np.isfinite(r.values))
+
+    def test_checkerboard_nan(self):
+        data = np.ones((64, 64))
+        data[::2, ::2] = np.nan
+        data[1::2, 1::2] = np.nan
+        da = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(55, 45, 64), 'x': np.linspace(-5, 5, 64)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        r = self._do_reproject(da, 'EPSG:32633')
+        assert np.any(np.isfinite(r.values))
+
+    def test_utm_to_geographic(self):
+        da = xr.DataArray(
+            np.ones((64, 64)), dims=['y', 'x'],
+            coords={'y': np.linspace(5600000, 5500000, 64),
+                    'x': np.linspace(300000, 400000, 64)},
+            attrs={'crs': 'EPSG:32633', 'nodata': np.nan},
+        )
+        r = self._do_reproject(da, 'EPSG:4326')
+        assert np.any(np.isfinite(r.values))
+
+    def test_proj_to_proj(self):
+        da = xr.DataArray(
+            np.ones((64, 64)), dims=['y', 'x'],
+            coords={'y': np.linspace(6500000, 6000000, 64),
+                    'x': np.linspace(200000, 800000, 64)},
+            attrs={'crs': 'EPSG:2154', 'nodata': np.nan},
+        )
+        r = self._do_reproject(da, 'EPSG:32632')
+        assert np.any(np.isfinite(r.values))
+
+    def test_sentinel_nodata(self):
+        data = np.where(np.random.rand(64, 64) > 0.8, -9999, 500).astype(np.float64)
+        da = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': np.linspace(55, 45, 64), 'x': np.linspace(-5, 5, 64)},
+            attrs={'crs': 'EPSG:4326', 'nodata': -9999},
+        )
+        r = self._do_reproject(da, 'EPSG:32633')
+        assert r is not None
+
+    def test_target_crs_as_integer(self):
+        da = xr.DataArray(
+            np.ones((32, 32)), dims=['y', 'x'],
+            coords={'y': np.linspace(55, 45, 32), 'x': np.linspace(-5, 5, 32)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        r = self._do_reproject(da, 32633)
+        assert r.shape[0] > 0
+
+    def test_explicit_resolution(self):
+        da = xr.DataArray(
+            np.ones((64, 64)), dims=['y', 'x'],
+            coords={'y': np.linspace(55, 45, 64), 'x': np.linspace(-5, 5, 64)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        r = self._do_reproject(da, 'EPSG:32633', resolution=1000)
+        assert r.shape[0] > 0
+
+    def test_explicit_width_height(self):
+        da = xr.DataArray(
+            np.ones((64, 64)), dims=['y', 'x'],
+            coords={'y': np.linspace(55, 45, 64), 'x': np.linspace(-5, 5, 64)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        r = self._do_reproject(da, 'EPSG:32633', width=100, height=100)
+        assert r.shape == (100, 100)
+
+    def test_merge_non_overlapping(self):
+        from xrspatial.reproject import merge
+        t1 = xr.DataArray(
+            np.full((32, 32), 1.0), dims=['y', 'x'],
+            coords={'y': np.linspace(55, 50, 32), 'x': np.linspace(-5, 0, 32)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        t2 = xr.DataArray(
+            np.full((32, 32), 2.0), dims=['y', 'x'],
+            coords={'y': np.linspace(45, 40, 32), 'x': np.linspace(5, 10, 32)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        r = merge([t1, t2])
+        assert r.shape[0] > 32 and r.shape[1] > 32
+
+    def test_merge_single_tile(self):
+        from xrspatial.reproject import merge
+        t = xr.DataArray(
+            np.ones((32, 32)), dims=['y', 'x'],
+            coords={'y': np.linspace(55, 45, 32), 'x': np.linspace(-5, 5, 32)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        r = merge([t])
+        assert np.any(np.isfinite(r.values))
