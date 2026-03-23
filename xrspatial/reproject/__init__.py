@@ -51,10 +51,32 @@ __all__ = [
 # Source geometry helpers
 # ---------------------------------------------------------------------------
 
+_Y_NAMES = {'y', 'lat', 'latitude', 'Y', 'Lat', 'Latitude'}
+_X_NAMES = {'x', 'lon', 'longitude', 'X', 'Lon', 'Longitude'}
+
+
+def _find_spatial_dims(raster):
+    """Find the y and x dimension names, handling multi-band rasters.
+
+    Returns (ydim, xdim).  Checks dim names first, falls back to
+    assuming the last two non-band dims are spatial.
+    """
+    dims = raster.dims
+    ydim = xdim = None
+    for d in dims:
+        if d in _Y_NAMES:
+            ydim = d
+        elif d in _X_NAMES:
+            xdim = d
+    if ydim is not None and xdim is not None:
+        return ydim, xdim
+    # Fallback: last two dims
+    return dims[-2], dims[-1]
+
+
 def _source_bounds(raster):
     """Extract (left, bottom, right, top) from a DataArray's coordinates."""
-    ydim = raster.dims[-2]
-    xdim = raster.dims[-1]
+    ydim, xdim = _find_spatial_dims(raster)
     y = raster.coords[ydim].values
     x = raster.coords[xdim].values
     # Compute pixel-edge bounds from pixel-center coords
@@ -77,7 +99,7 @@ def _source_bounds(raster):
 
 def _is_y_descending(raster):
     """Check if Y axis goes from top (large) to bottom (small)."""
-    ydim = raster.dims[-2]
+    ydim, _ = _find_spatial_dims(raster)
     y = raster.coords[ydim].values
     if len(y) < 2:
         return True
@@ -240,16 +262,35 @@ def _reproject_chunk_numpy(
         window = window.compute()
     window = np.asarray(window)
     orig_dtype = window.dtype
+
+    # Adjust coordinates relative to window
+    local_row = src_row_px - r_min_clip
+    local_col = src_col_px - c_min_clip
+
+    # Multi-band: reproject each band separately, share coordinates
+    if window.ndim == 3:
+        n_bands = window.shape[2]
+        bands = []
+        for b in range(n_bands):
+            band_data = window[:, :, b].astype(np.float64)
+            if not np.isnan(nodata):
+                band_data = band_data.copy()
+                band_data[band_data == nodata] = np.nan
+            band_result = _resample_numpy(band_data, local_row, local_col,
+                                          resampling=resampling, nodata=nodata)
+            if np.issubdtype(orig_dtype, np.integer):
+                info = np.iinfo(orig_dtype)
+                band_result = np.clip(np.round(band_result), info.min, info.max).astype(orig_dtype)
+            bands.append(band_result)
+        return np.stack(bands, axis=-1)
+
+    # Single-band path
     window = window.astype(np.float64)
 
     # Convert sentinel nodata to NaN so numba kernels can detect it
     if not np.isnan(nodata):
         window = window.copy()
         window[window == nodata] = np.nan
-
-    # Adjust coordinates relative to window
-    local_row = src_row_px - r_min_clip
-    local_col = src_col_px - c_min_clip
 
     result = _resample_numpy(window, local_row, local_col,
                              resampling=resampling, nodata=nodata)
@@ -482,7 +523,8 @@ def reproject(
 
     # Source geometry
     src_bounds = _source_bounds(raster)
-    src_shape = (raster.sizes[raster.dims[-2]], raster.sizes[raster.dims[-1]])
+    _ydim, _xdim = _find_spatial_dims(raster)
+    src_shape = (raster.sizes[_ydim], raster.sizes[_xdim])
     y_desc = _is_y_descending(raster)
 
     # Compute output grid
@@ -560,18 +602,31 @@ def reproject(
                 tgt_crs_wkt=tgt_wkt,
             )
 
-    ydim = raster.dims[-2]
-    xdim = raster.dims[-1]
+    ydim, xdim = _find_spatial_dims(raster)
     out_attrs = {
         'crs': tgt_wkt,
         'nodata': nd,
     }
     if tgt_vertical_crs is not None:
         out_attrs['vertical_crs'] = tgt_vertical_crs
+
+    # Handle multi-band output (3D result from multi-band source)
+    if result_data.ndim == 3:
+        # Find the band dimension name from the source
+        band_dims = [d for d in raster.dims if d not in (ydim, xdim)]
+        band_dim = band_dims[0] if band_dims else 'band'
+        out_dims = [ydim, xdim, band_dim]
+        out_coords = {ydim: y_coords, xdim: x_coords}
+        if band_dim in raster.coords:
+            out_coords[band_dim] = raster.coords[band_dim]
+    else:
+        out_dims = [ydim, xdim]
+        out_coords = {ydim: y_coords, xdim: x_coords}
+
     result = xr.DataArray(
         result_data,
-        dims=[ydim, xdim],
-        coords={ydim: y_coords, xdim: x_coords},
+        dims=out_dims,
+        coords=out_coords,
         name=name or raster.name,
         attrs=out_attrs,
     )
