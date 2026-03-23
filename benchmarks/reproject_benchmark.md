@@ -13,12 +13,12 @@ Python 3.14, NumPy, Numba, CuPy, Dask, pyproj, rioxarray (GDAL)
 Source file: Copernicus DEM COG (`Copernicus_DSM_COG_10_N40_00_W075_00_DEM.tif`), 3600x3600, WGS84, deflate+floating-point predictor. Reprojected to Web Mercator (EPSG:3857). Median of 3 runs after warmup.
 
 ```python
-from xrspatial.geotiff import read_geotiff, write_geotiff
+from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.reproject import reproject
 
-dem = read_geotiff('Copernicus_DSM_COG_10_N40_00_W075_00_DEM.tif')
+dem = open_geotiff('Copernicus_DSM_COG_10_N40_00_W075_00_DEM.tif')
 dem_merc = reproject(dem, 'EPSG:3857')
-write_geotiff(dem_merc, 'output.tif')
+to_geotiff(dem_merc, 'output.tif')
 ```
 
 All times measured with warm Numba/CUDA kernels (first call incurs ~4.5s JIT compilation).

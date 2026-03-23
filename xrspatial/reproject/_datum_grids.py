@@ -184,8 +184,8 @@ def load_grid(grid_key):
         pass
 
     # Fallback: read with our own reader (may need band axis handling)
-    from xrspatial.geotiff import read_geotiff
-    da = read_geotiff(path)
+    from xrspatial.geotiff import open_geotiff
+    da = open_geotiff(path)
     data = da.values
     if data.ndim == 3:
         # (H, W, bands) or (bands, H, W)

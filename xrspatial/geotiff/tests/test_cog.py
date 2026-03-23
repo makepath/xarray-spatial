@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import read_geotiff, write_geotiff
+from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._header import parse_header, parse_all_ifds
 from xrspatial.geotiff._writer import write
 from xrspatial.geotiff._geotags import GeoTransform, extract_geo_info
@@ -83,9 +83,9 @@ class TestPublicAPI:
         )
 
         path = str(tmp_path / 'round_trip.tif')
-        write_geotiff(da, path, compression='deflate', tiled=False)
+        to_geotiff(da, path, compression='deflate', tiled=False)
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         np.testing.assert_array_almost_equal(result.values, data, decimal=5)
         assert result.attrs.get('crs') == 4326
 
@@ -95,7 +95,7 @@ class TestPublicAPI:
         path = str(tmp_path / 'myfile.tif')
         write(arr, path, compression='none', tiled=False)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert da.name == 'myfile'
 
     def test_read_geotiff_custom_name(self, tmp_path):
@@ -103,16 +103,16 @@ class TestPublicAPI:
         path = str(tmp_path / 'test.tif')
         write(arr, path, compression='none', tiled=False)
 
-        da = read_geotiff(path, name='custom')
+        da = open_geotiff(path, name='custom')
         assert da.name == 'custom'
 
     def test_write_numpy_array(self, tmp_path):
         """write_geotiff should accept raw numpy arrays too."""
         arr = np.arange(16, dtype=np.float32).reshape(4, 4)
         path = str(tmp_path / 'numpy.tif')
-        write_geotiff(arr, path, compression='none')
+        to_geotiff(arr, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, arr)
 
     def test_write_3d_rgb(self, tmp_path):
@@ -120,15 +120,15 @@ class TestPublicAPI:
         arr = np.zeros((4, 4, 3), dtype=np.uint8)
         arr[:, :, 0] = 255  # red channel
         path = str(tmp_path / 'rgb.tif')
-        write_geotiff(arr, path, compression='none')
+        to_geotiff(arr, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, arr)
 
     def test_write_rejects_4d(self, tmp_path):
         arr = np.zeros((2, 3, 4, 4), dtype=np.float32)
         with pytest.raises(ValueError, match="Expected 2D or 3D"):
-            write_geotiff(arr, str(tmp_path / 'bad.tif'))
+            to_geotiff(arr, str(tmp_path / 'bad.tif'))
 
 
 def read_to_array_local(path):

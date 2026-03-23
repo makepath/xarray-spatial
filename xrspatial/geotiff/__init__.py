@@ -4,9 +4,9 @@ No GDAL dependency -- uses only numpy, numba, xarray, and the standard library.
 
 Public API
 ----------
-read_geotiff(source, ...)
+open_geotiff(source, ...)
     Read a GeoTIFF file to an xarray.DataArray.
-write_geotiff(data, path, ...)
+to_geotiff(data, path, ...)
     Write an xarray.DataArray as a GeoTIFF or COG.
 open_cog(url, ...)
     Read a Cloud Optimized GeoTIFF from an HTTP URL.
@@ -20,7 +20,7 @@ from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 from ._reader import read_to_array
 from ._writer import write
 
-__all__ = ['read_geotiff', 'write_geotiff', 'write_vrt']
+__all__ = ['open_geotiff', 'to_geotiff', 'write_vrt']
 
 
 def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
@@ -98,7 +98,7 @@ def _coords_to_transform(da: xr.DataArray) -> GeoTransform | None:
     )
 
 
-def read_geotiff(source: str, *, window=None,
+def open_geotiff(source: str, *, window=None,
                  overview_level: int | None = None,
                  band: int | None = None,
                  name: str | None = None,
@@ -285,7 +285,7 @@ def _is_gpu_data(data) -> bool:
     return isinstance(data, _cupy_type)
 
 
-def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
+def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                   crs: int | str | None = None,
                   nodata=None,
                   compression: str = 'zstd',
@@ -449,7 +449,7 @@ def write_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
 def open_cog(url: str, **kwargs) -> xr.DataArray:
     """Deprecated: use ``read_geotiff(url, ...)`` instead.
 
-    read_geotiff handles HTTP URLs, cloud URIs, and local files.
+    open_geotiff handles HTTP URLs, cloud URIs, and local files.
     """
     return read_geotiff(url, **kwargs)
 

@@ -96,8 +96,8 @@ def _load_geoid(model='EGM96'):
             res_y = (b.top - b.bottom) / h
             result = (np.ascontiguousarray(data), b.left, b.top, res_x, res_y, h, w)
     except ImportError:
-        from xrspatial.geotiff import read_geotiff
-        da = read_geotiff(path)
+        from xrspatial.geotiff import open_geotiff
+        da = open_geotiff(path)
         vals = da.values.astype(np.float64)
         if vals.ndim == 3:
             vals = vals[0] if vals.shape[0] == 1 else vals[:, :, 0]

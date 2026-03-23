@@ -141,23 +141,23 @@ Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 
 | Name | Description | NumPy | Dask | CuPy GPU | Dask+CuPy GPU | Cloud |
 |:-----|:------------|:-----:|:----:|:--------:|:-------------:|:-----:|
-| [read_geotiff](xrspatial/geotiff/__init__.py) | Read GeoTIFF / COG / VRT | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
-| [write_geotiff](xrspatial/geotiff/__init__.py) | Write DataArray as GeoTIFF / COG | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
+| [open_geotiff](xrspatial/geotiff/__init__.py) | Read GeoTIFF / COG / VRT | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
+| [to_geotiff](xrspatial/geotiff/__init__.py) | Write DataArray as GeoTIFF / COG | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
 | [write_vrt](xrspatial/geotiff/__init__.py) | Generate VRT mosaic from GeoTIFFs | ✅️ | | | | |
 
-`read_geotiff` and `write_geotiff` auto-dispatch to the correct backend:
+`open_geotiff` and `to_geotiff` auto-dispatch to the correct backend:
 
 ```python
-read_geotiff('dem.tif')                              # NumPy
-read_geotiff('dem.tif', chunks=512)                  # Dask
-read_geotiff('dem.tif', gpu=True)                    # CuPy (nvCOMP + GDS)
-read_geotiff('dem.tif', gpu=True, chunks=512)        # Dask + CuPy
-read_geotiff('https://example.com/cog.tif')          # HTTP COG
-read_geotiff('s3://bucket/dem.tif')                  # Cloud (S3/GCS/Azure)
-read_geotiff('mosaic.vrt')                           # VRT mosaic (auto-detected)
+open_geotiff('dem.tif')                              # NumPy
+open_geotiff('dem.tif', chunks=512)                  # Dask
+open_geotiff('dem.tif', gpu=True)                    # CuPy (nvCOMP + GDS)
+open_geotiff('dem.tif', gpu=True, chunks=512)        # Dask + CuPy
+open_geotiff('https://example.com/cog.tif')          # HTTP COG
+open_geotiff('s3://bucket/dem.tif')                  # Cloud (S3/GCS/Azure)
+open_geotiff('mosaic.vrt')                           # VRT mosaic (auto-detected)
 
-write_geotiff(cupy_array, 'out.tif')                 # auto-detects GPU
-write_geotiff(data, 'out.tif', gpu=True)             # force GPU compress
+to_geotiff(cupy_array, 'out.tif')                 # auto-detects GPU
+to_geotiff(data, 'out.tif', gpu=True)             # force GPU compress
 write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
 ```
 
@@ -517,10 +517,10 @@ Importing `xrspatial` registers an `.xrs` accessor on DataArrays and Datasets, g
 
 ```python
 import xrspatial as xrs
-from xrspatial.geotiff import read_geotiff, write_geotiff
+from xrspatial.geotiff import open_geotiff, to_geotiff
 
 # Read a GeoTIFF (no GDAL required)
-elevation = read_geotiff('dem.tif')
+elevation = open_geotiff('dem.tif')
 
 # Surface analysis
 slope = elevation.xrs.slope()
@@ -529,7 +529,7 @@ aspect = elevation.xrs.aspect()
 
 # Reproject and write as a Cloud Optimized GeoTIFF
 dem_wgs84 = elevation.xrs.reproject(target_crs='EPSG:4326')
-write_geotiff(dem_wgs84, 'output.tif', cog=True)
+to_geotiff(dem_wgs84, 'output.tif', cog=True)
 
 # Classification
 classes = elevation.xrs.equal_interval(k=5)

@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import read_geotiff, write_geotiff
+from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._compression import (
     COMPRESSION_PACKBITS,
     packbits_compress,
@@ -79,9 +79,9 @@ class TestMultiBand:
         """write_geotiff accepts 3D arrays."""
         arr = np.arange(48, dtype=np.uint8).reshape(4, 4, 3)
         path = str(tmp_path / 'rgb_api.tif')
-        write_geotiff(arr, path, compression='none')
+        to_geotiff(arr, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert 'band' in result.dims
         assert result.shape == (4, 4, 3)
         np.testing.assert_array_equal(result.values, arr)
@@ -109,7 +109,7 @@ class TestIntegerNodata:
         path = str(tmp_path / 'uint8_nodata.tif')
         write(arr, path, compression='none', tiled=False, nodata=255)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert np.isnan(da.values[1, 1])
         assert da.values[0, 1] == 1.0
         assert da.dtype == np.float64  # promoted from uint8
@@ -119,7 +119,7 @@ class TestIntegerNodata:
         path = str(tmp_path / 'uint16_nodata.tif')
         write(arr, path, compression='none', tiled=False, nodata=0)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert np.isnan(da.values[0, 1])
         assert np.isnan(da.values[1, 1])
         assert da.values[0, 0] == 100.0
@@ -129,7 +129,7 @@ class TestIntegerNodata:
         path = str(tmp_path / 'int16_nodata.tif')
         write(arr, path, compression='none', tiled=False, nodata=-9999)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert np.isnan(da.values[0, 0])
         assert np.isnan(da.values[1, 1])
         assert da.values[0, 1] == 10.0
@@ -140,7 +140,7 @@ class TestIntegerNodata:
         path = str(tmp_path / 'no_nodata.tif')
         write(arr, path, compression='none', tiled=False)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert da.dtype == np.uint16
 
 
@@ -250,9 +250,9 @@ class TestZstd:
     def test_zstd_public_api(self, tmp_path):
         arr = np.ones((4, 4), dtype=np.float32)
         path = str(tmp_path / 'zstd_api.tif')
-        write_geotiff(arr, path, compression='zstd')
+        to_geotiff(arr, path, compression='zstd')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, arr)
 
 
@@ -272,7 +272,7 @@ class TestGeoKeys:
         write(arr, path, compression='none', tiled=False,
               geo_transform=gt, crs_epsg=4326)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert da.attrs['crs'] == 4326
         assert da.attrs.get('geog_citation') is not None or da.attrs['crs'] == 4326
 
@@ -286,7 +286,7 @@ class TestGeoKeys:
         write(arr, path, compression='none', tiled=False,
               geo_transform=gt, crs_epsg=32610)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert da.attrs['crs'] == 32610
 
     def test_geoinfo_fields_from_real_file(self):
@@ -296,7 +296,7 @@ class TestGeoKeys:
         if not os.path.exists(path):
             pytest.skip("Real test files not available")
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert da.attrs['crs'] == 4269
         assert da.attrs['geog_citation'] == 'NAD83'
         assert da.attrs['angular_units'] == 'degree'
@@ -310,7 +310,7 @@ class TestGeoKeys:
         if not os.path.exists(path):
             pytest.skip("Real test files not available")
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert da.attrs['crs'] == 26918
         assert da.attrs['crs_name'] == 'NAD83 / UTM zone 18N'
         assert da.attrs['geog_citation'] == 'NAD83'
@@ -322,7 +322,7 @@ class TestGeoKeys:
         path = str(tmp_path / 'bare.tif')
         write(arr, path, compression='none', tiled=False)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert 'crs_name' not in da.attrs
         assert 'geog_citation' not in da.attrs
         assert 'angular_units' not in da.attrs
@@ -346,7 +346,7 @@ class TestGeoKeys:
         write(arr, path, compression='none', tiled=False,
               geo_transform=gt, crs_epsg=4326)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert 'crs_wkt' in da.attrs
         wkt = da.attrs['crs_wkt']
         assert 'WGS 84' in wkt or '4326' in wkt
@@ -362,19 +362,19 @@ class TestGeoKeys:
                'UNIT["degree",0.0174532925199433],'
                'ID["EPSG",4326]]')
         path = str(tmp_path / 'wkt_in.tif')
-        write_geotiff(arr, path, crs=wkt, compression='none')
+        to_geotiff(arr, path, crs=wkt, compression='none')
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert da.attrs['crs'] == 4326
 
     def test_write_with_proj_string(self, tmp_path):
         """crs= accepts a PROJ string."""
         arr = np.ones((4, 4), dtype=np.float32)
         path = str(tmp_path / 'proj_in.tif')
-        write_geotiff(arr, path, crs='+proj=utm +zone=18 +datum=NAD83',
+        to_geotiff(arr, path, crs='+proj=utm +zone=18 +datum=NAD83',
                       compression='none')
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         # pyproj should resolve this to EPSG:26918
         assert da.attrs.get('crs') is not None
 
@@ -393,9 +393,9 @@ class TestGeoKeys:
                           dims=['y', 'x'], coords={'y': y, 'x': x},
                           attrs={'crs_wkt': wkt})
         path = str(tmp_path / 'wkt_rt.tif')
-        write_geotiff(da, path, compression='none')
+        to_geotiff(da, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert result.attrs['crs'] == 4326
         assert 'crs_wkt' in result.attrs
 
@@ -405,7 +405,7 @@ class TestGeoKeys:
         path = str(tmp_path / 'no_wkt.tif')
         write(arr, path, compression='none', tiled=False)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert 'crs_wkt' not in da.attrs
 
 
@@ -448,9 +448,9 @@ class TestFixesBatch:
 
         da = xr.DataArray(arr, dims=['band', 'y', 'x'])
         path = str(tmp_path / 'band_first.tif')
-        write_geotiff(da, path, compression='none')
+        to_geotiff(da, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert result.shape == (8, 8, 3)
         assert result.values[0, 0, 0] == 200  # red channel
         assert result.values[0, 0, 1] == 100  # green channel
@@ -461,9 +461,9 @@ class TestFixesBatch:
         arr[:, :, 0] = 200
         da = xr.DataArray(arr, dims=['y', 'x', 'band'])
         path = str(tmp_path / 'band_last.tif')
-        write_geotiff(da, path, compression='none')
+        to_geotiff(da, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert result.shape == (8, 8, 3)
         assert result.values[0, 0, 0] == 200
 
@@ -550,9 +550,9 @@ class TestFixesBatch:
         """Float16 arrays are auto-promoted to float32."""
         arr = np.ones((4, 4), dtype=np.float16) * 3.14
         path = str(tmp_path / 'f16.tif')
-        write_geotiff(arr, path, compression='none')
+        to_geotiff(arr, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert result.dtype == np.float32
         np.testing.assert_array_almost_equal(result.values, 3.14, decimal=2)
 
@@ -578,7 +578,7 @@ class TestFixesBatch:
         vrt_path = str(tmp_path / 'mosaic.vrt')
         write_vrt(vrt_path, [lpath, rpath])
 
-        da = read_geotiff(vrt_path)
+        da = open_geotiff(vrt_path)
         assert da.shape == (4, 8)
         np.testing.assert_array_equal(da.values[:, :4], left)
         np.testing.assert_array_equal(da.values[:, 4:], right)
@@ -657,7 +657,7 @@ class TestVRT:
             width=4, height=4,
         )
 
-        da = read_geotiff(vrt_path)
+        da = open_geotiff(vrt_path)
         np.testing.assert_array_equal(da.values, arr)
 
     def test_2x1_mosaic(self, tmp_path):
@@ -673,7 +673,7 @@ class TestVRT:
             width=8, height=4,
         )
 
-        da = read_geotiff(vrt_path)
+        da = open_geotiff(vrt_path)
         assert da.shape == (4, 8)
         np.testing.assert_array_equal(da.values[:, :4], left)
         np.testing.assert_array_equal(da.values[:, 4:], right)
@@ -698,7 +698,7 @@ class TestVRT:
             width=8, height=8,
         )
 
-        da = read_geotiff(vrt_path)
+        da = open_geotiff(vrt_path)
         assert da.shape == (8, 8)
         # Check each quadrant
         np.testing.assert_array_equal(da.values[0:4, 0:4], tiles[0])
@@ -720,7 +720,7 @@ class TestVRT:
         )
 
         # Window spanning both tiles
-        da = read_geotiff(vrt_path, window=(1, 2, 3, 6))
+        da = open_geotiff(vrt_path, window=(1, 2, 3, 6))
         assert da.shape == (2, 4)
         expected = np.hstack([left, right])[1:3, 2:6]
         np.testing.assert_array_equal(da.values, expected)
@@ -748,7 +748,7 @@ class TestVRT:
         with open(vrt_path, 'w') as f:
             f.write(vrt_xml)
 
-        da = read_geotiff(vrt_path)
+        da = open_geotiff(vrt_path)
         assert da.attrs.get('crs_wkt') == 'EPSG:4326'
         assert len(da.coords['x']) == 4
         assert len(da.coords['y']) == 4
@@ -775,7 +775,7 @@ class TestVRT:
         with open(vrt_path, 'w') as f:
             f.write(vrt_xml)
 
-        da = read_geotiff(vrt_path)
+        da = open_geotiff(vrt_path)
         assert da.attrs.get('nodata') == -9999.0
 
     def test_read_vrt_function(self, tmp_path):
@@ -887,7 +887,7 @@ class TestCloudStorage:
 
         # Write locally first, then copy to memory fs
         local_path = str(tmp_path / 'local.tif')
-        write_geotiff(arr, local_path, compression='deflate')
+        to_geotiff(arr, local_path, compression='deflate')
         with open(local_path, 'rb') as f:
             tiff_bytes = f.read()
 
@@ -1027,7 +1027,7 @@ class TestBigEndian:
         with open(path, 'wb') as f:
             f.write(tiff_data)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert da.attrs['crs'] == 4326
         np.testing.assert_array_equal(da.values, expected)
 
@@ -1126,7 +1126,7 @@ class TestExtraTags:
     def test_extra_tags_read(self, tmp_path):
         """Extra tags are collected in attrs['extra_tags']."""
         path, _ = self._make_tiff_with_extra_tags(tmp_path)
-        da = read_geotiff(path)
+        da = open_geotiff(path)
 
         extra = da.attrs.get('extra_tags')
         assert extra is not None
@@ -1137,12 +1137,12 @@ class TestExtraTags:
     def test_extra_tags_round_trip(self, tmp_path):
         """Extra tags survive read -> write -> read."""
         path, pixels = self._make_tiff_with_extra_tags(tmp_path)
-        da = read_geotiff(path)
+        da = open_geotiff(path)
 
         out_path = str(tmp_path / 'roundtrip.tif')
-        write_geotiff(da, out_path, compression='none')
+        to_geotiff(da, out_path, compression='none')
 
-        da2 = read_geotiff(out_path)
+        da2 = open_geotiff(out_path)
 
         # Pixels should match
         np.testing.assert_array_equal(da2.values, pixels)
@@ -1162,7 +1162,7 @@ class TestExtraTags:
         path = str(tmp_path / 'no_extra.tif')
         write(arr, path, compression='none', tiled=False)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert 'extra_tags' not in da.attrs
 
 
@@ -1218,7 +1218,7 @@ class TestGDALMetadata:
         write(arr, path, compression='none', tiled=False,
               gdal_metadata_xml=xml)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert 'gdal_metadata' in da.attrs
         assert 'gdal_metadata_xml' in da.attrs
         result_meta = da.attrs['gdal_metadata']
@@ -1235,9 +1235,9 @@ class TestGDALMetadata:
             attrs={'gdal_metadata': meta},
         )
         path = str(tmp_path / 'da_meta.tif')
-        write_geotiff(da, path, compression='none')
+        to_geotiff(da, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert result.attrs['gdal_metadata']['Source'] == 'test'
         assert result.attrs['gdal_metadata'][('BAND', 0)] == 'dem'
 
@@ -1247,7 +1247,7 @@ class TestGDALMetadata:
         path = str(tmp_path / 'no_meta.tif')
         write(arr, path, compression='none', tiled=False)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert 'gdal_metadata' not in da.attrs
         assert 'gdal_metadata_xml' not in da.attrs
 
@@ -1258,7 +1258,7 @@ class TestGDALMetadata:
         if not os.path.exists(path):
             pytest.skip("Real test files not available")
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         meta = da.attrs.get('gdal_metadata')
         assert meta is not None
         assert 'DataType' in meta
@@ -1271,13 +1271,13 @@ class TestGDALMetadata:
         if not os.path.exists(path):
             pytest.skip("Real test files not available")
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         orig_meta = da.attrs['gdal_metadata']
 
         out = os.path.join(tempfile.mkdtemp(), 'rt.tif')
-        write_geotiff(da, out, compression='deflate', tiled=False)
+        to_geotiff(da, out, compression='deflate', tiled=False)
 
-        da2 = read_geotiff(out)
+        da2 = open_geotiff(out)
         for k, v in orig_meta.items():
             assert da2.attrs['gdal_metadata'].get(k) == v, f"Mismatch on {k}"
 
@@ -1291,7 +1291,7 @@ class TestResolution:
         write(arr, path, compression='none', tiled=False,
               x_resolution=300.0, y_resolution=300.0, resolution_unit=2)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert da.attrs['x_resolution'] == pytest.approx(300.0, rel=0.01)
         assert da.attrs['y_resolution'] == pytest.approx(300.0, rel=0.01)
         assert da.attrs['resolution_unit'] == 'inch'
@@ -1303,7 +1303,7 @@ class TestResolution:
         write(arr, path, compression='none', tiled=False,
               x_resolution=118.0, y_resolution=118.0, resolution_unit=3)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert da.attrs['x_resolution'] == pytest.approx(118.0, rel=0.01)
         assert da.attrs['resolution_unit'] == 'centimeter'
 
@@ -1313,7 +1313,7 @@ class TestResolution:
         path = str(tmp_path / 'no_dpi.tif')
         write(arr, path, compression='none', tiled=False)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert 'x_resolution' not in da.attrs
         assert 'y_resolution' not in da.attrs
         assert 'resolution_unit' not in da.attrs
@@ -1327,9 +1327,9 @@ class TestResolution:
                    'resolution_unit': 'inch'},
         )
         path = str(tmp_path / 'da_dpi.tif')
-        write_geotiff(da, path, compression='none')
+        to_geotiff(da, path, compression='none')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         assert result.attrs['x_resolution'] == pytest.approx(72.0, rel=0.01)
         assert result.attrs['y_resolution'] == pytest.approx(72.0, rel=0.01)
         assert result.attrs['resolution_unit'] == 'inch'
@@ -1341,7 +1341,7 @@ class TestResolution:
         write(arr, path, compression='none', tiled=False,
               x_resolution=1.0, y_resolution=1.0, resolution_unit=1)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert da.attrs['resolution_unit'] == 'none'
 
 
@@ -1483,10 +1483,10 @@ class TestOverviewResampling:
         """overview_resampling kwarg works through the public API."""
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         path = str(tmp_path / 'api_nearest.tif')
-        write_geotiff(arr, path, compression='deflate',
+        to_geotiff(arr, path, compression='deflate',
                       cog=True, overview_resampling='nearest')
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, arr)
 
     def test_invalid_method(self):
@@ -1572,20 +1572,20 @@ class TestBigTIFF:
         """bigtiff=True on write_geotiff forces BigTIFF even for small files."""
         arr = np.arange(16, dtype=np.float32).reshape(4, 4)
         path = str(tmp_path / 'forced_bigtiff.tif')
-        write_geotiff(arr, path, compression='none', bigtiff=True)
+        to_geotiff(arr, path, compression='none', bigtiff=True)
 
         with open(path, 'rb') as f:
             header = parse_header(f.read(16))
         assert header.is_bigtiff
 
-        result = read_geotiff(path)
+        result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, arr)
 
     def test_small_file_stays_classic(self, tmp_path):
         """Small files default to classic TIFF (bigtiff=None auto-detects)."""
         arr = np.arange(16, dtype=np.float32).reshape(4, 4)
         path = str(tmp_path / 'classic.tif')
-        write_geotiff(arr, path, compression='none')
+        to_geotiff(arr, path, compression='none')
 
         with open(path, 'rb') as f:
             header = parse_header(f.read(16))
@@ -1595,7 +1595,7 @@ class TestBigTIFF:
         """bigtiff=False forces classic TIFF."""
         arr = np.arange(16, dtype=np.float32).reshape(4, 4)
         path = str(tmp_path / 'forced_classic.tif')
-        write_geotiff(arr, path, compression='none', bigtiff=False)
+        to_geotiff(arr, path, compression='none', bigtiff=False)
 
         with open(path, 'rb') as f:
             header = parse_header(f.read(16))
@@ -2135,7 +2135,7 @@ class TestPalette:
         with open(path, 'wb') as f:
             f.write(tiff_data)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         # Should return raw index values
         assert da.dtype == np.uint8
         np.testing.assert_array_equal(da.values, pixels)
@@ -2162,7 +2162,7 @@ class TestPalette:
         with open(path, 'wb') as f:
             f.write(tiff_data)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert da.dtype == np.uint8
         np.testing.assert_array_equal(da.values, pixels)
         assert 'cmap' in da.attrs
@@ -2185,7 +2185,7 @@ class TestPalette:
         with open(path, 'wb') as f:
             f.write(tiff_data)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         cmap = da.attrs['cmap']
         assert isinstance(cmap, ListedColormap)
 
@@ -2213,7 +2213,7 @@ class TestPalette:
         with open(path, 'wb') as f:
             f.write(tiff_data)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         artist = da.xrs.plot()
         assert artist is not None
         import matplotlib.pyplot as plt
@@ -2229,7 +2229,7 @@ class TestPalette:
         path = str(tmp_path / 'no_palette.tif')
         write(arr, path, compression='none', tiled=False)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         artist = da.xrs.plot()
         assert artist is not None
         import matplotlib.pyplot as plt
@@ -2249,7 +2249,7 @@ class TestPalette:
         with open(path, 'wb') as f:
             f.write(tiff_data)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         artist = plot_geotiff(da)
         assert artist is not None
         import matplotlib.pyplot as plt
@@ -2261,7 +2261,7 @@ class TestPalette:
         path = str(tmp_path / 'no_palette.tif')
         write(arr, path, compression='none', tiled=False)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert 'cmap' not in da.attrs
         assert 'colormap_rgba' not in da.attrs
 
@@ -2325,13 +2325,13 @@ class TestPlanarConfig:
 
     def test_planar_via_public_api(self, tmp_path):
         """read_geotiff on a planar file returns correct DataArray."""
-        from xrspatial.geotiff import read_geotiff
+        from xrspatial.geotiff import open_geotiff
         tiff_data, expected = _make_planar_tiff(4, 4, 3, np.uint8)
         path = str(tmp_path / 'planar_api.tif')
         with open(path, 'wb') as f:
             f.write(tiff_data)
 
-        da = read_geotiff(path)
+        da = open_geotiff(path)
         assert 'band' in da.dims
         assert da.shape == (4, 4, 3)
         np.testing.assert_array_equal(da.values, expected)
