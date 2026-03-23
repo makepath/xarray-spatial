@@ -790,6 +790,7 @@ def jpeg2000_compress(data: bytes, width: int, height: int,
             os.unlink(tmp)
 
 
+
 # -- Dispatch helpers ---------------------------------------------------------
 
 # TIFF compression tag values

@@ -134,6 +134,8 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 #### Supported Spatial Functions with Supported Inputs
 ✅ = native backend &nbsp;&nbsp; 🔄 = accepted (CPU fallback)
 
+[Classification](#classification) · [Diffusion](#diffusion) · [Focal](#focal) · [Morphological](#morphological) · [Fire](#fire) · [Multispectral](#multispectral) · [Multivariate](#multivariate) · [MCDA](#multi-criteria-decision-analysis-mcda) · [Pathfinding](#pathfinding) · [Proximity](#proximity) · [Reproject / Merge](#reproject--merge) · [Raster / Vector Conversion](#raster--vector-conversion) · [Surface](#surface) · [Hydrology](#hydrology) · [Flood](#flood) · [Interpolation](#interpolation) · [Dasymetric](#dasymetric) · [Zonal](#zonal) · [Utilities](#utilities)
+
 -------
 ### **GeoTIFF / COG I/O**
 
@@ -160,6 +162,7 @@ open_geotiff('mosaic.vrt')                           # VRT mosaic (auto-detected
 
 to_geotiff(cupy_array, 'out.tif')                    # auto-detects GPU
 to_geotiff(data, 'out.tif', gpu=True)                # force GPU compress
+to_geotiff(data, 'ortho.tif', compression='jpeg')    # JPEG for orthophotos
 write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
 
 # Accessor methods
@@ -210,7 +213,6 @@ ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset 
 | 4096x4096 | deflate | 1.68s | 447ms | **302ms** |
 | 8192x8192 | deflate | 6.84s | 2.03s | **1.11s** |
 | 8192x8192 | zstd | 847ms | 822ms | 1.03s |
-
 **Consistency:** 100% pixel-exact match vs rioxarray on all tested files (Landsat 8, Copernicus DEM, USGS 1-arc-second, USGS 1-meter).
 
 -----------
@@ -292,6 +294,8 @@ Same-CRS tiles skip reprojection entirely and are placed by direct coordinate al
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Aspect](xrspatial/aspect.py) | Computes downslope direction of each cell in degrees | Horn 1981 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Northness](xrspatial/aspect.py) | North-south component of aspect: cos(aspect) for linear models | Stage 1976 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Eastness](xrspatial/aspect.py) | East-west component of aspect: sin(aspect) for linear models | Stage 1976 | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Curvature](xrspatial/curvature.py) | Measures rate of slope change (concavity/convexity) at each cell | Zevenbergen & Thorne 1987 | ✅️ |✅️ |✅️ | ✅️  |
 | [Hillshade](xrspatial/hillshade.py) | Simulates terrain illumination from a given sun angle and azimuth | GDAL gdaldem | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Roughness](xrspatial/terrain_metrics.py) | Computes local relief as max minus min elevation in a 3×3 window | GDAL gdaldem | ✅️ | ✅️ | ✅️ | ✅️ |
@@ -357,15 +361,20 @@ Same-CRS tiles skip reprojection entirely and are placed by direct coordinate al
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Atmospherically Resistant Vegetation Index (ARVI)](xrspatial/multispectral.py) | Vegetation index resistant to atmospheric effects using blue band correction | Kaufman & Tanre 1992 | ✅️ |✅️ | ✅️ |✅️ |
+| [Burn Area Index (BAI)](xrspatial/multispectral.py) | Spectral distance to charcoal reflectance point for burn scar detection | Chuvieco et al. 2002 | ✅️ |✅️ | ✅️ |✅️ |
 | [Enhanced Built-Up and Bareness Index (EBBI)](xrspatial/multispectral.py) | Highlights built-up areas and barren land from thermal and SWIR bands | As-syakur et al. 2012 | ✅️ |✅️  | ✅️ |✅️ |
 | [Enhanced Vegetation Index (EVI)](xrspatial/multispectral.py) | Enhanced vegetation index reducing soil and atmospheric noise | Huete et al. 2002 | ✅️ |✅️ | ✅️ |✅️ |
 | [Green Chlorophyll Index (GCI)](xrspatial/multispectral.py) | Estimates leaf chlorophyll content from green and NIR reflectance | Gitelson et al. 2003 | ✅️ |✅️ | ✅️ |✅️ |
+| [Modified Soil Adjusted Vegetation Index (MSAVI2)](xrspatial/multispectral.py) | Self-adjusting soil line vegetation index, no L parameter needed | Qi et al. 1994 | ✅️ |✅️ | ✅️ |✅️ |
 | [Normalized Burn Ratio (NBR)](xrspatial/multispectral.py) | Measures burn severity using NIR and SWIR band difference | USGS Landsat | ✅️ |✅️ | ✅️ |✅️ |
 | [Normalized Burn Ratio 2 (NBR2)](xrspatial/multispectral.py) | Refines burn severity mapping using two SWIR bands | USGS Landsat | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Difference Built-up Index (NDBI)](xrspatial/multispectral.py) | Picks out built-up and urban areas from SWIR and NIR bands | Zha et al. 2003 | ✅️ |✅️ | ✅️ |✅️ |
 | [Normalized Difference Moisture Index (NDMI)](xrspatial/multispectral.py) | Detects vegetation moisture stress from NIR and SWIR reflectance | USGS Landsat | ✅️ |✅️ | ✅️ |✅️ |
+| [Normalized Difference Snow Index (NDSI)](xrspatial/multispectral.py) | Separates snow and ice from clouds using green and SWIR bands | Hall et al. 1995 | ✅️ |✅️ | ✅️ |✅️ |
 | [Normalized Difference Water Index (NDWI)](xrspatial/multispectral.py) | Maps open water bodies using green and NIR band difference | McFeeters 1996 | ✅️ |✅️ | ✅️ |✅️ |
 | [Modified Normalized Difference Water Index (MNDWI)](xrspatial/multispectral.py) | Detects water in urban areas using green and SWIR bands | Xu 2006 | ✅️ |✅️ | ✅️ |✅️ |
 | [Normalized Difference Vegetation Index (NDVI)](xrspatial/multispectral.py) | Quantifies vegetation density from red and NIR band difference | Rouse et al. 1973 | ✅️ |✅️ | ✅️ |✅️ |
+| [Optimized Soil Adjusted Vegetation Index (OSAVI)](xrspatial/multispectral.py) | SAVI with fixed L=0.16, tuned for sparse vegetation | Rondeaux et al. 1996 | ✅️ |✅️ | ✅️ |✅️ |
 | [Soil Adjusted Vegetation Index (SAVI)](xrspatial/multispectral.py) | Vegetation index with soil brightness correction factor | Huete 1988 | ✅️ |✅️ | ✅️ |✅️ |
 | [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | Estimates carotenoid-to-chlorophyll ratio for plant stress detection | Penuelas et al. 1995 | ✅️ |✅️ | ✅️ |✅️ |
 | [True Color](xrspatial/multispectral.py) | Composites red, green, and blue bands into a natural color image | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
@@ -400,6 +409,11 @@ Same-CRS tiles skip reprojection entirely and are placed by direct coordinate al
 | [Focal Statistics](xrspatial/focal.py) | Computes summary statistics over a sliding neighborhood window | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Bilateral](xrspatial/bilateral.py) | Feature-preserving smoothing via bilateral filtering | Tomasi & Manduchi 1998 | ✅️ | ✅️ | ✅️ | ✅️ |
 | [GLCM Texture](xrspatial/glcm.py) | Computes Haralick GLCM texture features over a sliding window | Haralick et al. 1973 | ✅️ | ✅️ | 🔄 | 🔄 |
+| [Sobel X](xrspatial/edge_detection.py) | Horizontal gradient via Sobel operator (detects vertical edges) | Sobel & Feldman 1968 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Sobel Y](xrspatial/edge_detection.py) | Vertical gradient via Sobel operator (detects horizontal edges) | Sobel & Feldman 1968 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Laplacian](xrspatial/edge_detection.py) | Omnidirectional second-derivative edge detector | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Prewitt X](xrspatial/edge_detection.py) | Horizontal gradient via Prewitt operator (detects vertical edges) | Prewitt 1970 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Prewitt Y](xrspatial/edge_detection.py) | Vertical gradient via Prewitt operator (detects horizontal edges) | Prewitt 1970 | ✅️ | ✅️ | ✅️ | ✅️ |
 
 -------
 
@@ -487,6 +501,24 @@ Same-CRS tiles skip reprojection entirely and are placed by direct coordinate al
 | [Mahalanobis Distance](xrspatial/mahalanobis.py) | Measures statistical distance from a multi-band reference distribution, accounting for band correlations | Mahalanobis 1936 | ✅️ |✅️ | ✅️ |✅️ |
 
 -------
+
+### **Multi-Criteria Decision Analysis (MCDA)**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Standardize](xrspatial/mcda/standardize.py) | Converts criterion rasters to 0-1 suitability scale (linear, sigmoidal, gaussian, triangular, piecewise, categorical) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [AHP Weights](xrspatial/mcda/weights.py) | Derives criterion weights from pairwise comparisons using the Saaty eigenvector method with consistency ratio | Saaty 1980 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Rank Weights](xrspatial/mcda/weights.py) | Derives weights from a rank ordering (ROC, rank sum, reciprocal) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [WLC](xrspatial/mcda/combine.py) | Weighted Linear Combination (fully compensatory weighted sum) | Malczewski 2006 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [WPM](xrspatial/mcda/combine.py) | Weighted Product Model (multiplicative, penalizes low scores) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [OWA](xrspatial/mcda/combine.py) | Ordered Weighted Averaging with tunable risk attitude | Yager 1988 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Fuzzy Overlay](xrspatial/mcda/combine.py) | Combines criteria using fuzzy set operators (AND, OR, sum, product, gamma) | Eastman 1999 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Boolean Overlay](xrspatial/mcda/combine.py) | Combines binary criterion masks using AND/OR logic | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Constrain](xrspatial/mcda/constrain.py) | Masks exclusion zones from a suitability surface | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Sensitivity](xrspatial/mcda/sensitivity.py) | Assesses weight stability via one-at-a-time or Monte Carlo perturbation | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+
+-------
+
 
 ### **Pathfinding**
 

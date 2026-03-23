@@ -15,6 +15,7 @@ Reference
    focal
    hydrology
    interpolation
+   mcda
    morphology
    multispectral
    pathfinding

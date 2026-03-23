@@ -1,4 +1,6 @@
 from xrspatial.aspect import aspect  # noqa
+from xrspatial.aspect import eastness  # noqa
+from xrspatial.aspect import northness  # noqa
 from xrspatial.balanced_allocation import balanced_allocation  # noqa
 from xrspatial.bilateral import bilateral  # noqa
 from xrspatial.contour import contours  # noqa
@@ -16,6 +18,11 @@ from xrspatial.classify import percentiles  # noqa
 from xrspatial.classify import std_mean  # noqa
 from xrspatial.diagnostics import diagnose  # noqa
 from xrspatial.diffusion import diffuse  # noqa
+from xrspatial.edge_detection import laplacian  # noqa
+from xrspatial.edge_detection import prewitt_x  # noqa
+from xrspatial.edge_detection import prewitt_y  # noqa
+from xrspatial.edge_detection import sobel_x  # noqa
+from xrspatial.edge_detection import sobel_y  # noqa
 from xrspatial.classify import equal_interval  # noqa
 from xrspatial.classify import natural_breaks  # noqa
 from xrspatial.classify import quantile  # noqa
@@ -64,11 +71,16 @@ from xrspatial.hydro import hand_d8, hand_dinf, hand_mfd  # noqa
 from xrspatial.hillshade import hillshade  # noqa
 from xrspatial.mahalanobis import mahalanobis  # noqa
 from xrspatial.multispectral import arvi  # noqa
+from xrspatial.multispectral import bai  # noqa
 from xrspatial.multispectral import evi  # noqa
 from xrspatial.multispectral import mndwi  # noqa
+from xrspatial.multispectral import msavi2  # noqa
 from xrspatial.multispectral import nbr  # noqa
+from xrspatial.multispectral import ndbi  # noqa
+from xrspatial.multispectral import ndsi  # noqa
 from xrspatial.multispectral import ndvi  # noqa
 from xrspatial.multispectral import ndwi  # noqa
+from xrspatial.multispectral import osavi  # noqa
 from xrspatial.multispectral import savi  # noqa
 from xrspatial.multispectral import sipi  # noqa
 from xrspatial.pathfinding import a_star_search  # noqa
@@ -123,6 +135,7 @@ from xrspatial.zonal import suggest_zonal_canvas as suggest_zonal_canvas  # noqa
 from xrspatial.reproject import merge  # noqa
 from xrspatial.reproject import reproject  # noqa
 
+import xrspatial.mcda  # noqa: F401  — exposes xrspatial.mcda subpackage
 import xrspatial.accessor  # noqa: F401  — registers .xrs accessors
 
 

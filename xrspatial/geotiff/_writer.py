@@ -8,12 +8,14 @@ import numpy as np
 
 from ._compression import (
     COMPRESSION_DEFLATE,
+    COMPRESSION_JPEG,
     COMPRESSION_JPEG2000,
     COMPRESSION_LZW,
     COMPRESSION_NONE,
     COMPRESSION_PACKBITS,
     COMPRESSION_ZSTD,
     compress,
+    jpeg_compress,
     predictor_encode,
 )
 from ._dtypes import (
@@ -66,6 +68,7 @@ def _compression_tag(compression_name: str) -> int:
         'none': COMPRESSION_NONE,
         'deflate': COMPRESSION_DEFLATE,
         'lzw': COMPRESSION_LZW,
+        'jpeg': COMPRESSION_JPEG,
         'packbits': COMPRESSION_PACKBITS,
         'zstd': COMPRESSION_ZSTD,
         'jpeg2000': COMPRESSION_JPEG2000,
@@ -313,20 +316,24 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: bool,
         r1 = min(r0 + rows_per_strip, height)
         strip_rows = r1 - r0
 
-        if predictor and compression != COMPRESSION_NONE:
+        if compression == COMPRESSION_JPEG:
+            strip_data = np.ascontiguousarray(data[r0:r1]).tobytes()
+            compressed = jpeg_compress(strip_data, width, strip_rows, samples)
+        elif predictor and compression != COMPRESSION_NONE:
             strip_arr = np.ascontiguousarray(data[r0:r1])
             buf = strip_arr.view(np.uint8).ravel().copy()
             buf = predictor_encode(buf, width, strip_rows, bytes_per_sample * samples)
             strip_data = buf.tobytes()
+            compressed = compress(strip_data, compression)
         else:
             strip_data = np.ascontiguousarray(data[r0:r1]).tobytes()
 
-        if compression == COMPRESSION_JPEG2000:
-            from ._compression import jpeg2000_compress
-            compressed = jpeg2000_compress(
-                strip_data, width, strip_rows, samples=samples, dtype=dtype)
-        else:
-            compressed = compress(strip_data, compression)
+            if compression == COMPRESSION_JPEG2000:
+                from ._compression import jpeg2000_compress
+                compressed = jpeg2000_compress(
+                    strip_data, width, strip_rows, samples=samples, dtype=dtype)
+            else:
+                compressed = compress(strip_data, compression)
 
         rel_offsets.append(current_offset)
         byte_counts.append(len(compressed))
@@ -366,7 +373,10 @@ def _prepare_tile(data, tr, tc, th, tw, height, width, samples, dtype,
     else:
         tile_arr = np.ascontiguousarray(tile_slice)
 
-    if predictor and compression != COMPRESSION_NONE:
+    if compression == COMPRESSION_JPEG:
+        tile_data = tile_arr.tobytes()
+        return jpeg_compress(tile_data, tw, th, samples)
+    elif predictor and compression != COMPRESSION_NONE:
         buf = tile_arr.view(np.uint8).ravel().copy()
         buf = predictor_encode(buf, tw, th, bytes_per_sample * samples)
         tile_data = buf.tobytes()
@@ -868,6 +878,17 @@ def write(data: np.ndarray, path: str, *,
         Only used if cog=True. If None and cog=True, auto-generate.
     """
     comp_tag = _compression_tag(compression)
+
+    # JPEG validation: only uint8, 1 or 3 bands
+    if comp_tag == COMPRESSION_JPEG:
+        samples = data.shape[2] if data.ndim == 3 else 1
+        if data.dtype != np.uint8:
+            raise ValueError(
+                f"JPEG compression requires uint8 data, got {data.dtype}. "
+                f"JPEG is lossy and only supports 8-bit unsigned data.")
+        if samples not in (1, 3):
+            raise ValueError(
+                f"JPEG compression requires 1 or 3 bands, got {samples}")
 
     # Build pixel data parts
     parts = []

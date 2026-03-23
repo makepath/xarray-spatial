@@ -230,6 +230,28 @@ class XrsSpatialDataArrayAccessor:
         from .glcm import glcm_texture
         return glcm_texture(self._obj, **kwargs)
 
+    # ---- Edge Detection ----
+
+    def sobel_x(self, **kwargs):
+        from .edge_detection import sobel_x
+        return sobel_x(self._obj, **kwargs)
+
+    def sobel_y(self, **kwargs):
+        from .edge_detection import sobel_y
+        return sobel_y(self._obj, **kwargs)
+
+    def laplacian(self, **kwargs):
+        from .edge_detection import laplacian
+        return laplacian(self._obj, **kwargs)
+
+    def prewitt_x(self, **kwargs):
+        from .edge_detection import prewitt_x
+        return prewitt_x(self._obj, **kwargs)
+
+    def prewitt_y(self, **kwargs):
+        from .edge_detection import prewitt_y
+        return prewitt_y(self._obj, **kwargs)
+
     # ---- Morphological ----
 
     def morph_erode(self, **kwargs):
@@ -659,6 +681,28 @@ class XrsSpatialDatasetAccessor:
     def glcm_texture(self, **kwargs):
         from .glcm import glcm_texture
         return glcm_texture(self._obj, **kwargs)
+
+    # ---- Edge Detection ----
+
+    def sobel_x(self, **kwargs):
+        from .edge_detection import sobel_x
+        return sobel_x(self._obj, **kwargs)
+
+    def sobel_y(self, **kwargs):
+        from .edge_detection import sobel_y
+        return sobel_y(self._obj, **kwargs)
+
+    def laplacian(self, **kwargs):
+        from .edge_detection import laplacian
+        return laplacian(self._obj, **kwargs)
+
+    def prewitt_x(self, **kwargs):
+        from .edge_detection import prewitt_x
+        return prewitt_x(self._obj, **kwargs)
+
+    def prewitt_y(self, **kwargs):
+        from .edge_detection import prewitt_y
+        return prewitt_y(self._obj, **kwargs)
 
     # ---- Morphological ----
 

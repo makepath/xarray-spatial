@@ -439,7 +439,13 @@ def data_focal_stats():
         [[0, 1, 2, 3.],
          [4, 5, 7, 9.],
          [8, 13, 15, 17.],
-         [12, 21, 23, 25.]]
+         [12, 21, 23, 25.]],
+        # variety -- arange(16) so every value is unique;
+        # kernel hits center + upper-left diagonal only
+        [[1, 1, 1, 1.],
+         [1, 2, 2, 2.],
+         [1, 2, 2, 2.],
+         [1, 2, 2, 2.]]
     ])
     return data, kernel, expected_result
 
@@ -497,6 +503,82 @@ def test_focal_stats_dask_cupy():
         cupy_focalstats.data[:, pad:-pad, pad:-pad].get(),
         dask_cupy_focalstats.data[:, pad:-pad, pad:-pad].compute().get(),
         equal_nan=True, rtol=1e-4)
+
+
+# --- focal variety (issue-1040) ------------------------------------------
+
+def _variety_reference_data():
+    """Categorical 6x6 grid with known variety counts for a 3x3 box kernel."""
+    data = np.array([
+        [1, 1, 2, 2, 3, 3],
+        [1, 1, 2, 2, 3, 3],
+        [4, 4, 5, 5, 6, 6],
+        [4, 4, 5, 5, 6, 6],
+        [7, 7, 8, 8, 9, 9],
+        [7, 7, 8, 8, 9, 9],
+    ], dtype=np.float64)
+    kernel = np.ones((3, 3))
+    return data, kernel
+
+
+def test_variety_numpy():
+    data, kernel = _variety_reference_data()
+    agg = create_test_raster(data)
+    result = focal_stats(agg, kernel, stats_funcs=['variety'])
+    vals = result.sel(stats='variety').values
+    # Interior pixel (2,2) sees values {1,2,4,5} -> 4
+    assert vals[2, 2] == 4.0
+    # Corner pixel (0,0) window is 2x2 -> {1,1,1,1} -> 1
+    assert vals[0, 0] == 1.0
+    # Edge pixel (0,2) window is 2x3 -> {1,1,2,2,2,2} -> 2
+    assert vals[0, 2] == 2.0
+    # All interior values should be positive integers
+    assert np.all(vals[1:-1, 1:-1] >= 1)
+
+
+@dask_array_available
+def test_variety_dask_numpy():
+    data, kernel = _variety_reference_data()
+    np_agg = create_test_raster(data)
+    dk_agg = create_test_raster(data, backend='dask')
+    np_result = focal_stats(np_agg, kernel, stats_funcs=['variety'])
+    dk_result = focal_stats(dk_agg, kernel, stats_funcs=['variety'])
+    np.testing.assert_allclose(
+        np_result.values, dk_result.values, equal_nan=True)
+
+
+def test_variety_nan_handling():
+    """NaN cells should not count as a distinct value."""
+    data = np.array([
+        [1, np.nan, 2],
+        [1,     1, 2],
+        [3,     3, 3],
+    ], dtype=np.float64)
+    kernel = np.ones((3, 3))
+    agg = create_test_raster(data)
+    result = focal_stats(agg, kernel, stats_funcs=['variety'])
+    vals = result.sel(stats='variety').values
+    # Center pixel (1,1) sees {1,2,1,1,2,3,3,3} (NaN skipped) -> {1,2,3} -> 3
+    assert vals[1, 1] == 3.0
+
+
+def test_variety_all_nan():
+    """A window of all NaN should produce NaN variety."""
+    data = np.full((3, 3), np.nan)
+    kernel = np.ones((3, 3))
+    agg = create_test_raster(data)
+    result = focal_stats(agg, kernel, stats_funcs=['variety'])
+    vals = result.sel(stats='variety').values
+    assert np.all(np.isnan(vals))
+
+
+def test_variety_single_cell():
+    """1x1 raster, 1x1 kernel -> variety 1."""
+    data = np.array([[42.0]])
+    kernel = np.ones((1, 1))
+    agg = create_test_raster(data)
+    result = focal_stats(agg, kernel, stats_funcs=['variety'])
+    assert result.sel(stats='variety').values.item() == 1.0
 
 
 @pytest.fixture
