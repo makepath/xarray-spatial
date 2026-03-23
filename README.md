@@ -441,6 +441,23 @@ write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
 
 -------
 
+### **Multi-Criteria Decision Analysis (MCDA)**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Standardize](xrspatial/mcda/standardize.py) | Converts criterion rasters to 0-1 suitability scale (linear, sigmoidal, gaussian, triangular, piecewise, categorical) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [AHP Weights](xrspatial/mcda/weights.py) | Derives criterion weights from pairwise comparisons using the Saaty eigenvector method with consistency ratio | Saaty 1980 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Rank Weights](xrspatial/mcda/weights.py) | Derives weights from a rank ordering (ROC, rank sum, reciprocal) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [WLC](xrspatial/mcda/combine.py) | Weighted Linear Combination (fully compensatory weighted sum) | Malczewski 2006 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [WPM](xrspatial/mcda/combine.py) | Weighted Product Model (multiplicative, penalizes low scores) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [OWA](xrspatial/mcda/combine.py) | Ordered Weighted Averaging with tunable risk attitude | Yager 1988 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Fuzzy Overlay](xrspatial/mcda/combine.py) | Combines criteria using fuzzy set operators (AND, OR, sum, product, gamma) | Eastman 1999 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Boolean Overlay](xrspatial/mcda/combine.py) | Combines binary criterion masks using AND/OR logic | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Constrain](xrspatial/mcda/constrain.py) | Masks exclusion zones from a suitability surface | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Sensitivity](xrspatial/mcda/sensitivity.py) | Assesses weight stability via one-at-a-time or Monte Carlo perturbation | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+
+-------
+
 ### **Pathfinding**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
