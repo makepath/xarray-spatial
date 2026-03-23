@@ -649,10 +649,48 @@ if _HAS_CUDA:
             rv3 += sv * wc3
             val += rv3 * wr3
 
-        if has_nan:
-            out[i, j] = nodata
-        else:
+        if not has_nan:
             out[i, j] = val
+        else:
+            # Fall back to bilinear with weight renormalization
+            r1b = r0 + 1
+            c1b = c0 + 1
+            dr = r - r0
+            dc = c - c0
+
+            w00 = (1.0 - dr) * (1.0 - dc)
+            w01 = (1.0 - dr) * dc
+            w10 = dr * (1.0 - dc)
+            w11 = dr * dc
+
+            accum = 0.0
+            wsum = 0.0
+
+            if 0 <= r0 < sh and 0 <= c0 < sw:
+                v = src[r0, c0]
+                if v == v:
+                    accum += w00 * v
+                    wsum += w00
+            if 0 <= r0 < sh and 0 <= c1b < sw:
+                v = src[r0, c1b]
+                if v == v:
+                    accum += w01 * v
+                    wsum += w01
+            if 0 <= r1b < sh and 0 <= c0 < sw:
+                v = src[r1b, c0]
+                if v == v:
+                    accum += w10 * v
+                    wsum += w10
+            if 0 <= r1b < sh and 0 <= c1b < sw:
+                v = src[r1b, c1b]
+                if v == v:
+                    accum += w11 * v
+                    wsum += w11
+
+            if wsum > 1e-10:
+                out[i, j] = accum / wsum
+            else:
+                out[i, j] = nodata
 
 
 # ---------------------------------------------------------------------------
@@ -722,19 +760,32 @@ def _resample_cupy_native(source_window, src_row_coords, src_col_coords,
             work, rc, cc, out, nd
         )
         if is_integer:
-            out = cp.round(out).astype(source_window.dtype)
+            info = cp.iinfo(source_window.dtype)
+            out = cp.clip(cp.round(out), info.min, info.max).astype(
+                source_window.dtype
+            )
         return out
 
     if order == 1:
         _resample_bilinear_cuda[blocks_per_grid, threads_per_block](
             work, rc, cc, out, nd
         )
+        if is_integer:
+            info = cp.iinfo(source_window.dtype)
+            out = cp.clip(cp.round(out), info.min, info.max).astype(
+                source_window.dtype
+            )
         return out
 
     # Cubic
     _resample_cubic_cuda[blocks_per_grid, threads_per_block](
         work, rc, cc, out, nd
     )
+    if is_integer:
+        info = cp.iinfo(source_window.dtype)
+        out = cp.clip(cp.round(out), info.min, info.max).astype(
+            source_window.dtype
+        )
     return out
 
 
@@ -797,7 +848,10 @@ def _resample_cupy(source_window, src_row_coords, src_col_coords,
 
     result[oob] = nodata
 
-    if is_integer and resampling == 'nearest':
-        result = cp.round(result).astype(source_window.dtype)
+    if is_integer:
+        info = cp.iinfo(source_window.dtype)
+        result = cp.clip(cp.round(result), info.min, info.max).astype(
+            source_window.dtype
+        )
 
     return result
