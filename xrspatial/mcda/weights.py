@@ -65,6 +65,8 @@ def ahp_weights(
     n = len(criteria)
     if n < 2:
         raise ValueError("Need at least 2 criteria")
+    if len(set(criteria)) != n:
+        raise ValueError("Duplicate criterion names are not allowed")
 
     expected = n * (n - 1) // 2
     if len(comparisons) < expected:
@@ -147,6 +149,8 @@ def rank_weights(
     n = len(ranking)
     if n < 1:
         raise ValueError("Need at least 1 criterion in ranking")
+    if len(set(ranking)) != n:
+        raise ValueError("Duplicate criterion names are not allowed")
 
     if method == "roc":
         # ROC: w_i = (1/n) * sum(1/k for k in range(i+1, n+1))

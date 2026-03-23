@@ -1445,6 +1445,218 @@ class TestConstrainOverlappingMasks:
 
 
 # ===========================================================================
+# Degenerate input shapes
+# ===========================================================================
+
+class TestSingleCriterionDataset:
+    """Dataset with a single variable should work for all combine methods."""
+
+    @pytest.fixture
+    def single_ds(self):
+        return xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.3, 0.7, 0.5]], dtype=np.float64),
+                dims=["y", "x"],
+            ),
+        })
+
+    def test_wlc_single(self, single_ds):
+        r = wlc(single_ds, {"a": 1.0})
+        np.testing.assert_allclose(r.values, [[0.3, 0.7, 0.5]])
+
+    def test_wpm_single(self, single_ds):
+        r = wpm(single_ds, {"a": 1.0})
+        np.testing.assert_allclose(r.values, [[0.3, 0.7, 0.5]])
+
+    def test_owa_single(self, single_ds):
+        r = owa(single_ds, {"a": 1.0}, [1.0])
+        np.testing.assert_allclose(r.values, [[0.3, 0.7, 0.5]])
+
+    def test_fuzzy_all_operators_single(self, single_ds):
+        for op in ["and", "or", "product", "sum", "gamma"]:
+            kw = {"gamma": 0.9} if op == "gamma" else {}
+            r = fuzzy_overlay(single_ds, operator=op, **kw)
+            np.testing.assert_allclose(
+                r.values, [[0.3, 0.7, 0.5]], err_msg=f"fuzzy {op}",
+            )
+
+
+class TestBooleanOverlayNaN:
+    """NaN cast to bool is True -- document this gotcha."""
+
+    def test_nan_treated_as_true(self):
+        a = xr.DataArray(
+            np.array([[True, False]]), dims=["y", "x"],
+        )
+        b = xr.DataArray(
+            np.array([[np.nan, np.nan]]), dims=["y", "x"],
+        )
+        # bool(NaN) = True, so NaN pixels are treated as True
+        r_and = boolean_overlay({"a": a, "b": b}, operator="and")
+        np.testing.assert_array_equal(r_and.values, [[True, False]])
+        r_or = boolean_overlay({"a": a, "b": b}, operator="or")
+        np.testing.assert_array_equal(r_or.values, [[True, True]])
+
+
+class TestSensitivitySingleCriterion:
+    """Single criterion: perturbation is a no-op, sensitivity is zero."""
+
+    def test_oat_single_criterion(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.5, 0.8]], dtype=np.float64),
+                dims=["y", "x"],
+            ),
+        })
+        r = sensitivity(ds, {"a": 1.0}, method="one_at_a_time", delta=0.05)
+        assert isinstance(r, xr.Dataset)
+        np.testing.assert_allclose(r["a"].values, 0.0, atol=1e-15)
+
+    def test_mc_single_criterion(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.5, 0.8]], dtype=np.float64),
+                dims=["y", "x"],
+            ),
+        })
+        r = sensitivity(
+            ds, {"a": 1.0}, method="monte_carlo", n_samples=20,
+        )
+        # Single criterion -> all weight vectors are [1.0] -> zero variance
+        np.testing.assert_allclose(r.values, 0.0, atol=1e-10)
+
+
+class TestSensitivityWithWPM:
+    """OAT and MC should work with WPM combine method."""
+
+    def test_oat_wpm(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.5, 0.8]], dtype=np.float64),
+                dims=["y", "x"],
+            ),
+            "b": xr.DataArray(
+                np.array([[0.3, 0.9]], dtype=np.float64),
+                dims=["y", "x"],
+            ),
+        })
+        r = sensitivity(
+            ds, {"a": 0.6, "b": 0.4},
+            method="one_at_a_time", combine_method="wpm", delta=0.05,
+        )
+        assert isinstance(r, xr.Dataset)
+        for var in r.data_vars:
+            assert np.all(np.isfinite(r[var].values))
+            assert np.all(r[var].values >= 0)
+
+    def test_mc_wpm(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.5, 0.8]], dtype=np.float64),
+                dims=["y", "x"],
+            ),
+            "b": xr.DataArray(
+                np.array([[0.3, 0.9]], dtype=np.float64),
+                dims=["y", "x"],
+            ),
+        })
+        r = sensitivity(
+            ds, {"a": 0.6, "b": 0.4},
+            method="monte_carlo", combine_method="wpm", n_samples=20,
+        )
+        assert np.all(np.isfinite(r.values))
+        assert np.all(r.values >= 0)
+
+
+class TestAHPManyCriteria:
+    """AHP with >15 criteria uses last _RI value as fallback."""
+
+    def test_16_criteria_all_equal(self):
+        names = [f"c{i}" for i in range(16)]
+        comps = {}
+        for i in range(16):
+            for j in range(i + 1, 16):
+                comps[(names[i], names[j])] = 1
+        w, c = ahp_weights(names, comps)
+        assert sum(w.values()) == pytest.approx(1.0)
+        # All equal comparisons -> all equal weights
+        for v in w.values():
+            assert v == pytest.approx(1 / 16, abs=0.001)
+        assert c.is_consistent
+
+
+class TestDuplicateCriteriaNames:
+    """Duplicate names in criteria lists should raise."""
+
+    def test_ahp_duplicates_raise(self):
+        with pytest.raises(ValueError, match="Duplicate"):
+            ahp_weights(
+                criteria=["a", "a", "b"],
+                comparisons={("a", "b"): 3},
+            )
+
+    def test_rank_weights_duplicates_raise(self):
+        with pytest.raises(ValueError, match="Duplicate"):
+            rank_weights(["a", "a", "b"])
+
+
+class TestConstrainIntMask:
+    """Integer masks should work (nonzero = excluded)."""
+
+    def test_int_mask(self):
+        suit = xr.DataArray(
+            np.array([[0.8, 0.6, 0.9]], dtype=np.float64),
+            dims=["y", "x"],
+        )
+        mask = xr.DataArray(
+            np.array([[1, 0, 0]], dtype=np.int32), dims=["y", "x"],
+        )
+        r = constrain(suit, exclude=[mask])
+        assert np.isnan(r.values[0, 0])
+        assert float(r.values[0, 1]) == pytest.approx(0.6)
+        assert float(r.values[0, 2]) == pytest.approx(0.9)
+
+
+class TestMonteCarloSingleSample:
+    """n_samples=1 produces zero variance (CV=0 everywhere)."""
+
+    def test_single_sample_zero_cv(self):
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.random.rand(5, 5), dims=["y", "x"],
+            ),
+            "b": xr.DataArray(
+                np.random.rand(5, 5), dims=["y", "x"],
+            ),
+        })
+        r = sensitivity(
+            ds, {"a": 0.6, "b": 0.4},
+            method="monte_carlo", n_samples=1,
+        )
+        np.testing.assert_allclose(r.values, 0.0)
+
+
+class TestThreeDimensionalInput:
+    """3D DataArrays should work with explicit bounds."""
+
+    def test_3d_linear(self):
+        data = np.random.rand(3, 10, 10)
+        agg = xr.DataArray(data, dims=["band", "y", "x"])
+        r = standardize(agg, method="linear", bounds=(0, 1))
+        assert r.shape == (3, 10, 10)
+        # All values should be in [0, 1] since data is in [0, 1)
+        assert np.nanmin(r.values) >= 0.0
+        assert np.nanmax(r.values) <= 1.0
+
+    def test_3d_gaussian(self):
+        data = np.random.rand(2, 5, 5)
+        agg = xr.DataArray(data, dims=["band", "y", "x"])
+        r = standardize(agg, method="gaussian", mean=0.5, std=0.2)
+        assert r.shape == (2, 5, 5)
+        assert np.all(np.isfinite(r.values))
+
+
+# ===========================================================================
 # Integration: end-to-end workflow
 # ===========================================================================
 

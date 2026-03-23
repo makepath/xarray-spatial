@@ -80,6 +80,11 @@ def _perturb_weights(
     others = [k for k in names if k != target]
     other_sum = sum(weights[k] for k in others)
 
+    # Single criterion: weight must stay at 1.0, perturbation is a no-op
+    if not others:
+        copy = dict(weights)
+        return copy, dict(copy)
+
     results = []
     for sign in (+1, -1):
         new_target = max(0.0, min(1.0, base_w + sign * delta))
