@@ -10,6 +10,8 @@ from ._compression import (
     COMPRESSION_DEFLATE,
     COMPRESSION_JPEG,
     COMPRESSION_JPEG2000,
+    COMPRESSION_LERC,
+    COMPRESSION_LZ4,
     COMPRESSION_LZW,
     COMPRESSION_NONE,
     COMPRESSION_PACKBITS,
@@ -71,8 +73,10 @@ def _compression_tag(compression_name: str) -> int:
         'jpeg': COMPRESSION_JPEG,
         'packbits': COMPRESSION_PACKBITS,
         'zstd': COMPRESSION_ZSTD,
+        'lz4': COMPRESSION_LZ4,
         'jpeg2000': COMPRESSION_JPEG2000,
         'j2k': COMPRESSION_JPEG2000,
+        'lerc': COMPRESSION_LERC,
     }
     name = compression_name.lower()
     if name not in _map:
