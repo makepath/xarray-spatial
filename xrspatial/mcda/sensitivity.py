@@ -100,7 +100,6 @@ def _perturb_weights(
 
 def _oat(criteria, weights, combine_fn, delta, name):
     """One-at-a-time sensitivity: perturb each weight +/- delta."""
-    baseline = combine_fn(criteria, weights)
     result_vars = {}
 
     for criterion in weights:
@@ -112,6 +111,18 @@ def _oat(criteria, weights, combine_fn, delta, name):
         result_vars[criterion] = diff
 
     return xr.Dataset(result_vars)
+
+
+def _is_dask_dataset(criteria):
+    """Check if any variable in the Dataset is backed by dask."""
+    try:
+        import dask.array as da
+        return any(
+            isinstance(criteria[v].data, da.Array)
+            for v in criteria.data_vars
+        )
+    except ImportError:
+        return False
 
 
 def _monte_carlo(criteria, weights, combine_fn, n_samples, seed, name):
@@ -128,25 +139,44 @@ def _monte_carlo(criteria, weights, combine_fn, n_samples, seed, name):
     first_var = list(criteria.data_vars)[0]
     template = criteria[first_var]
 
+    use_dask = _is_dask_dataset(criteria)
+
     # Accumulate running mean and M2 for Welford's online algorithm
     # to avoid storing all n_samples surfaces in memory
-    running_mean = template * 0.0
-    running_m2 = template * 0.0
+    running_mean = template.values * 0.0 if not use_dask else np.zeros(template.shape)
+    running_m2 = running_mean.copy()
+
+    # For dask inputs: compute each score eagerly to avoid graph
+    # explosion (each lazy iteration would chain ~35 graph nodes;
+    # 1000 iterations = 35000 chained tasks with no parallelism).
+    # The criterion layers are small enough per-pixel that the
+    # bottleneck is the combination, not I/O.
+    if use_dask:
+        criteria_np = criteria.compute()
+    else:
+        criteria_np = criteria
 
     for i in range(n_samples):
         raw = rng.dirichlet(alpha)
         sample_weights = {
             k: float(raw[j]) for j, k in enumerate(criteria_names)
         }
-        score = combine_fn(criteria, sample_weights)
-        delta_val = score - running_mean
+        score = combine_fn(criteria_np, sample_weights)
+        score_vals = score.values
+
+        delta_val = score_vals - running_mean
         running_mean = running_mean + delta_val / (i + 1)
-        delta2 = score - running_mean
+        delta2 = score_vals - running_mean
         running_m2 = running_m2 + delta_val * delta2
 
     variance = running_m2 / n_samples
-    std_dev = variance ** 0.5
+    std_dev = np.sqrt(variance)
     # Coefficient of variation
-    cv = xr.where(running_mean != 0, std_dev / abs(running_mean), 0.0)
-    cv.name = name
-    return cv
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cv_vals = np.where(running_mean != 0, std_dev / np.abs(running_mean), 0.0)
+
+    result = xr.DataArray(
+        cv_vals, name=name, dims=template.dims,
+        coords=template.coords, attrs=template.attrs,
+    )
+    return result

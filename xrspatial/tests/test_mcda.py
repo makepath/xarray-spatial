@@ -253,6 +253,89 @@ class TestStandardizeCategorical:
             standardize(agg, method="categorical")
 
 
+class TestStandardizeTriangularDegenerate:
+    """Degenerate triangles where peak coincides with low or high."""
+
+    def test_peak_equals_low(self):
+        """Right triangle: 1.0 at peak=low, falling to 0 at high."""
+        data = np.array([[10.0, 15.0, 20.0]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        result = standardize(agg, method="triangular", low=10, peak=10, high=20)
+        assert float(result.values[0, 0]) == pytest.approx(1.0)
+        assert float(result.values[0, 1]) == pytest.approx(0.5)
+        assert float(result.values[0, 2]) == pytest.approx(0.0)
+
+    def test_peak_equals_high(self):
+        """Left triangle: 0 at low, rising to 1.0 at peak=high."""
+        data = np.array([[10.0, 15.0, 20.0]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        result = standardize(agg, method="triangular", low=10, peak=20, high=20)
+        assert float(result.values[0, 0]) == pytest.approx(0.0)
+        assert float(result.values[0, 1]) == pytest.approx(0.5)
+        assert float(result.values[0, 2]) == pytest.approx(1.0)
+
+    def test_all_equal(self):
+        """Fully degenerate: low=peak=high -> 1.0 at that point, 0 elsewhere."""
+        data = np.array([[5.0, 10.0, 15.0]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        result = standardize(agg, method="triangular", low=10, peak=10, high=10)
+        assert float(result.values[0, 0]) == pytest.approx(0.0)
+        assert float(result.values[0, 1]) == pytest.approx(1.0)
+        assert float(result.values[0, 2]) == pytest.approx(0.0)
+
+
+class TestStandardizeSigmoidalOverflow:
+    """Sigmoid must not produce warnings or inf for extreme values."""
+
+    def test_extreme_values_no_warning(self):
+        import warnings
+        data = np.array([[0.0, 1e6, -1e6]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = standardize(
+                agg, method="sigmoidal", midpoint=0, spread=1.0,
+            )
+        assert float(result.values[0, 0]) == pytest.approx(0.5)
+        assert float(result.values[0, 1]) == pytest.approx(1.0)
+        assert float(result.values[0, 2]) == pytest.approx(0.0, abs=1e-100)
+
+    def test_large_spread_no_warning(self):
+        import warnings
+        data = np.array([[0.0, 100.0]], dtype=np.float64)
+        agg = xr.DataArray(data, dims=["y", "x"])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = standardize(
+                agg, method="sigmoidal", midpoint=50, spread=100.0,
+            )
+        assert np.all(np.isfinite(result.values))
+
+
+class TestStandardizeAllNaN:
+    """All-NaN input should return all NaN without raising."""
+
+    def test_linear_all_nan_with_bounds(self):
+        agg = xr.DataArray(np.full((3, 3), np.nan), dims=["y", "x"])
+        result = standardize(agg, method="linear", bounds=(0, 100))
+        assert np.all(np.isnan(result.values))
+
+    def test_linear_all_nan_no_bounds(self):
+        """nanmin/nanmax on all-NaN should not raise."""
+        import warnings
+        agg = xr.DataArray(np.full((2, 2), np.nan), dims=["y", "x"])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            # Should NOT raise RuntimeWarning
+            result = standardize(agg, method="linear")
+        assert np.all(np.isnan(result.values))
+
+    def test_gaussian_all_nan(self):
+        agg = xr.DataArray(np.full((2, 2), np.nan), dims=["y", "x"])
+        result = standardize(agg, method="gaussian", mean=0, std=1)
+        assert np.all(np.isnan(result.values))
+
+
 class TestStandardizeUnknownMethod:
     def test_unknown_method(self):
         agg = xr.DataArray(np.array([[1.0]]), dims=["y", "x"])
@@ -444,17 +527,33 @@ class TestWPM:
         assert float(result.values[0, 0]) == pytest.approx(0.0)
 
 
+class TestWLCNaN:
+    def test_nan_propagates(self):
+        """NaN in any criterion should propagate to the output."""
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.array([[0.5, np.nan]], dtype=np.float64), dims=["y", "x"],
+            ),
+            "b": xr.DataArray(
+                np.array([[0.7, 0.4]], dtype=np.float64), dims=["y", "x"],
+            ),
+        })
+        result = wlc(ds, {"a": 0.6, "b": 0.4})
+        assert float(result.values[0, 0]) == pytest.approx(0.58)
+        assert np.isnan(result.values[0, 1])
+
+
 class TestOWA:
-    def test_uniform_order_weights_equals_wlc(
+    def test_uniform_order_weights_equals_wlc_exact(
         self, criteria_dataset, weights_3
     ):
-        """Uniform order weights should produce results close to WLC."""
+        """Uniform order weights should EXACTLY equal WLC."""
         n = 3
         ow = [1.0 / n] * n
         owa_result = owa(criteria_dataset, weights_3, ow)
         wlc_result = wlc(criteria_dataset, weights_3)
         np.testing.assert_allclose(
-            owa_result.values, wlc_result.values, atol=0.05,
+            owa_result.values, wlc_result.values, atol=1e-14,
         )
 
     def test_wrong_order_weights_length_raises(
@@ -658,6 +757,28 @@ class TestSensitivityMonteCarlo:
             sensitivity(
                 criteria_dataset, weights_3, combine_method="bad",
             )
+
+
+@pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
+class TestSensitivityDask:
+    def test_monte_carlo_dask_returns_numpy(self):
+        """MC with dask input should compute eagerly, not build huge graph."""
+        ds = xr.Dataset({
+            "a": xr.DataArray(
+                np.random.rand(20, 20), dims=["y", "x"],
+            ).chunk({"y": 10, "x": 10}),
+            "b": xr.DataArray(
+                np.random.rand(20, 20), dims=["y", "x"],
+            ).chunk({"y": 10, "x": 10}),
+        })
+        result = sensitivity(
+            ds, {"a": 0.6, "b": 0.4},
+            method="monte_carlo", n_samples=30,
+        )
+        # Result should be eagerly computed numpy, not dask
+        assert isinstance(result.data, np.ndarray)
+        assert result.shape == (20, 20)
+        assert np.all(result.values >= 0)
 
 
 # ===========================================================================

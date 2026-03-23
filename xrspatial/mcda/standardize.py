@@ -123,27 +123,30 @@ def standardize(
     )
 
 
+def _is_dask(data):
+    """Return True if data is a dask array."""
+    try:
+        import dask.array as da
+        return isinstance(data, da.Array)
+    except ImportError:
+        return False
+
+
 def _get_xp(data):
-    """Return the array module (numpy or cupy) for the underlying data."""
+    """Return the array module for the underlying data.
+
+    For dask arrays (numpy- or cupy-backed), returns numpy because
+    numpy ufuncs dispatch correctly to dask through __array_function__.
+    Only returns cupy for plain cupy arrays.
+    """
+    # Dask arrays (regardless of backend) use numpy dispatch
+    if _is_dask(data):
+        return np
+
     try:
         import cupy
         if isinstance(data, cupy.ndarray):
             return cupy
-    except ImportError:
-        pass
-
-    try:
-        import dask.array as da
-        if isinstance(data, da.Array):
-            # Check if chunks are cupy
-            meta = getattr(data, '_meta', None)
-            if meta is not None:
-                try:
-                    import cupy
-                    if isinstance(meta, cupy.ndarray):
-                        return cupy
-                except ImportError:
-                    pass
     except ImportError:
         pass
 
@@ -157,16 +160,17 @@ def _linear(data, *, direction, bounds):
         lo, hi = float(bounds[0]), float(bounds[1])
     else:
         # Compute from data, ignoring NaN
-        try:
+        import warnings
+        if _is_dask(data):
+            import dask
             import dask.array as da
-            if isinstance(data, da.Array):
-                lo = float(da.nanmin(data))
-                hi = float(da.nanmax(data))
-            else:
-                raise ImportError
-        except (ImportError, TypeError):
-            lo = float(np.nanmin(data))
-            hi = float(np.nanmax(data))
+            lo, hi = dask.compute(da.nanmin(data), da.nanmax(data))
+            lo, hi = float(lo), float(hi)
+        else:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                lo = float(np.nanmin(data))
+                hi = float(np.nanmax(data))
 
     rng = hi - lo
     if rng == 0:
@@ -193,7 +197,11 @@ def _linear(data, *, direction, bounds):
 
 def _sigmoidal(data, *, midpoint, spread):
     xp = _get_xp(data)
+    import warnings
     exponent = -spread * (data - midpoint)
+    # Clamp exponent to avoid overflow in exp(); the sigmoid is
+    # effectively 0 or 1 beyond ~±700 anyway.
+    exponent = xp.clip(exponent, -500.0, 500.0)
     result = 1.0 / (1.0 + xp.exp(exponent))
     result = xp.where(xp.isfinite(data), result, xp.nan)
     return result
@@ -208,43 +216,59 @@ def _gaussian(data, *, mean, std):
 
 def _triangular(data, *, low, peak, high):
     xp = _get_xp(data)
-    # Rising edge: low to peak
-    # Falling edge: peak to high
-    # Outside: 0
-    rising = (data - low) / (peak - low) if peak != low else 0.0
-    falling = (high - data) / (high - peak) if high != peak else 0.0
 
-    result = xp.minimum(rising, falling)
-    result = xp.clip(result, 0.0, 1.0)
+    if low == peak == high:
+        # Fully degenerate: 1.0 at the exact point, 0 elsewhere
+        result = xp.where(data == peak, 1.0, 0.0)
+        result = xp.where(xp.isfinite(data), result, xp.nan)
+        return result
+
+    if peak == low:
+        # No rising edge: 1.0 at peak, linear fall to 0 at high,
+        # 0 below low.
+        result = (high - data) / (high - low)
+        result = xp.clip(result, 0.0, 1.0)
+        result = xp.where(data < low, 0.0, result)
+    elif peak == high:
+        # No falling edge: 0 at low, linear rise to 1.0 at peak,
+        # 0 above high.
+        result = (data - low) / (high - low)
+        result = xp.clip(result, 0.0, 1.0)
+        result = xp.where(data > high, 0.0, result)
+    else:
+        # Standard triangle: min of rising and falling edges
+        rising = (data - low) / (peak - low)
+        falling = (high - data) / (high - peak)
+        result = xp.minimum(rising, falling)
+        result = xp.clip(result, 0.0, 1.0)
+
     result = xp.where(xp.isfinite(data), result, xp.nan)
     return result
 
 
 def _piecewise(data, *, breakpoints, values):
     xp = _get_xp(data)
-    breakpoints = np.asarray(breakpoints, dtype=np.float64)
-    values = np.asarray(values, dtype=np.float64)
+    bp = np.asarray(breakpoints, dtype=np.float64)
+    vl = np.asarray(values, dtype=np.float64)
 
     # Sort by breakpoint
-    order = np.argsort(breakpoints)
-    breakpoints = breakpoints[order]
-    values = values[order]
+    order = np.argsort(bp)
+    bp = bp[order]
+    vl = vl[order]
 
-    # xp.interp works for numpy and cupy; for dask we use map_blocks
-    try:
+    if _is_dask(data):
         import dask.array as da
-        if isinstance(data, da.Array):
-            result = da.map_blocks(
-                lambda block: np.interp(block, breakpoints, values),
-                data,
-                dtype=np.float64,
-            )
-            result = da.where(da.isfinite(data), result, np.nan)
-            return result
-    except ImportError:
-        pass
 
-    result = xp.interp(data, breakpoints, values)
+        def _interp_block(block):
+            # Ensure block is numpy for np.interp (handles cupy chunks)
+            arr = np.asarray(block)
+            return np.interp(arr, bp, vl)
+
+        result = da.map_blocks(_interp_block, data, dtype=np.float64)
+        result = da.where(da.isfinite(data), result, np.nan)
+        return result
+
+    result = xp.interp(data, bp, vl)
     result = xp.where(xp.isfinite(data), result, xp.nan)
     return result
 
@@ -256,20 +280,21 @@ def _categorical(data, *, mapping):
     keys = np.array(list(mapping.keys()), dtype=np.float64)
     vals = np.array(list(mapping.values()), dtype=np.float64)
 
-    try:
+    if _is_dask(data):
         import dask.array as da
-        if isinstance(data, da.Array):
-            def _apply_mapping(block):
-                out = np.full(block.shape, np.nan, dtype=np.float64)
-                for k, v in zip(keys, vals):
-                    out[block == k] = v
-                return out
-            result = da.map_blocks(_apply_mapping, data, dtype=np.float64)
-            return result
-    except ImportError:
-        pass
 
-    out = xp.full(data.shape, xp.nan, dtype=np.float64)
+        def _apply_mapping(block):
+            # Ensure block is numpy (handles cupy chunks)
+            arr = np.asarray(block)
+            out = np.full(arr.shape, np.nan, dtype=np.float64)
+            for k, v in zip(keys, vals):
+                out[arr == k] = v
+            return out
+
+        result = da.map_blocks(_apply_mapping, data, dtype=np.float64)
+        return result
+
+    out = xp.full(data.shape, np.nan, dtype=np.float64)
     for k, v in zip(keys, vals):
         out[data == k] = v
     return out

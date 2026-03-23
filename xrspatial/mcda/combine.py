@@ -160,8 +160,6 @@ def owa(
 
     # Stack, sort descending along criterion axis, apply order weights
     stacked = xr.concat(weighted_layers, dim="__mcda_criterion")
-    # Sort descending at each pixel
-    sorted_vals = stacked.copy()
     sorted_data = _sort_descending(stacked.data, axis=0)
 
     # Apply order weights along the criterion axis
@@ -246,11 +244,11 @@ def fuzzy_overlay(
     if operator == "and":
         result = layers[0]
         for layer in layers[1:]:
-            result = xr.where(result < layer, result, layer)
+            result = np.minimum(result, layer)
     elif operator == "or":
         result = layers[0]
         for layer in layers[1:]:
-            result = xr.where(result > layer, result, layer)
+            result = np.maximum(result, layer)
     elif operator == "product":
         result = layers[0]
         for layer in layers[1:]:
