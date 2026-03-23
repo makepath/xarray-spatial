@@ -453,6 +453,7 @@ def reproject(
     transform_precision=16,
     chunk_size=None,
     name=None,
+    max_memory=None,
     src_vertical_crs=None,
     tgt_vertical_crs=None,
 ):
@@ -488,6 +489,12 @@ def reproject(
         Output chunk size for dask. Defaults to 512.
     name : str or None
         Name for the output DataArray.
+    max_memory : int or str or None
+        Maximum memory budget for the reprojection working set.
+        Accepts bytes (int) or human-readable strings like ``'4GB'``,
+        ``'512MB'``.  Controls how many output tiles are processed
+        in parallel for large-dataset streaming mode.  Default None
+        uses 1GB.  Has no effect for small datasets that fit in memory.
     src_vertical_crs : str or None
         Source vertical datum for height values. One of:
 
@@ -610,6 +617,7 @@ def reproject(
             out_bounds, out_shape,
             resampling, nd, transform_precision,
             chunk_size or 2048,
+            _parse_max_memory(max_memory),
         )
     elif is_dask and is_cupy:
         result_data = _reproject_dask_cupy(
@@ -806,24 +814,34 @@ def _reproject_inmemory_cupy(
     )
 
 
+def _parse_max_memory(max_memory):
+    """Parse max_memory parameter to bytes.  Accepts int, '4GB', '512MB'."""
+    if max_memory is None:
+        return 1024 * 1024 * 1024  # 1GB default
+    if isinstance(max_memory, (int, float)):
+        return int(max_memory)
+    s = str(max_memory).strip().upper()
+    for suffix, factor in [('TB', 1024**4), ('GB', 1024**3), ('MB', 1024**2), ('KB', 1024)]:
+        if s.endswith(suffix):
+            return int(float(s[:-len(suffix)]) * factor)
+    return int(s)
+
+
 def _reproject_streaming(
     raster, src_bounds, src_shape, y_desc,
     src_wkt, tgt_wkt,
     out_bounds, out_shape,
     resampling, nodata, precision,
-    tile_size,
+    tile_size, max_memory_bytes,
 ):
     """Streaming reproject for datasets too large for dask's graph.
 
-    Processes output tiles sequentially in a simple loop:
-    1. For each output tile, compute source coordinates (Numba)
-    2. Read only the needed source window from the (possibly mmap'd) source
-    3. Resample and write the tile into the output array
-    4. Free the tile before processing the next one
+    Uses a ThreadPoolExecutor with bounded concurrency based on
+    max_memory.  Numba kernels release the GIL, so threads give
+    real parallelism.  Each worker processes one output tile:
+    compute coordinates, read source window, resample.
 
-    Memory usage is O(tile_size^2), not O(total_pixels).  No dask graph
-    is created, so there's no graph-size overhead.  The output is a numpy
-    array assembled tile by tile.
+    Memory usage: max_memory_bytes total across all concurrent tiles.
     """
     if isinstance(tile_size, int):
         tile_size = (tile_size, tile_size)
@@ -831,6 +849,14 @@ def _reproject_streaming(
     row_chunks, col_chunks = _compute_chunk_layout(out_shape, tile_size)
     result = np.full(out_shape, nodata, dtype=np.float64)
 
+    # Compute how many tiles can run concurrently within memory budget.
+    # Each tile needs: output (tile_size^2 * 8) + source window (~same)
+    # + coordinates (tile_size^2 * 8 * 2)
+    tile_mem = tile_size[0] * tile_size[1] * 8 * 4  # ~4 arrays per tile
+    max_concurrent = max(1, max_memory_bytes // tile_mem)
+
+    # Build tile job list
+    jobs = []
     row_offset = 0
     for rchunk in row_chunks:
         col_offset = 0
@@ -840,18 +866,40 @@ def _reproject_streaming(
                 row_offset, row_offset + rchunk,
                 col_offset, col_offset + cchunk,
             )
-            tile = _reproject_chunk_numpy(
-                raster.data,
-                src_bounds, src_shape, y_desc,
-                src_wkt, tgt_wkt,
-                cb, (rchunk, cchunk),
-                resampling, nodata, precision,
-            )
-            result[row_offset:row_offset + rchunk,
-                   col_offset:col_offset + cchunk] = tile
-            del tile  # free immediately
+            jobs.append((row_offset, col_offset, rchunk, cchunk, cb))
             col_offset += cchunk
         row_offset += rchunk
+
+    def _process_tile(job):
+        _, _, rchunk, cchunk, cb = job
+        return _reproject_chunk_numpy(
+            raster.data,
+            src_bounds, src_shape, y_desc,
+            src_wkt, tgt_wkt,
+            cb, (rchunk, cchunk),
+            resampling, nodata, precision,
+        )
+
+    if max_concurrent >= 2 and len(jobs) > 1:
+        import os
+        from concurrent.futures import ThreadPoolExecutor
+        n_workers = min(max_concurrent, len(jobs), os.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            # Process in batches to bound memory
+            for batch_start in range(0, len(jobs), n_workers):
+                batch = jobs[batch_start:batch_start + n_workers]
+                tiles = list(pool.map(_process_tile, batch))
+                for job, tile in zip(batch, tiles):
+                    ro, co, rchunk, cchunk, _ = job
+                    result[ro:ro + rchunk, co:co + cchunk] = tile
+                del tiles
+    else:
+        # Sequential fallback
+        for job in jobs:
+            ro, co, rchunk, cchunk, _ = job
+            tile = _process_tile(job)
+            result[ro:ro + rchunk, co:co + cchunk] = tile
+            del tile
 
     return result
 
