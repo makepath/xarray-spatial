@@ -340,9 +340,53 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: bool,
 # Tile writer
 # ---------------------------------------------------------------------------
 
+def _prepare_tile(data, tr, tc, th, tw, height, width, samples, dtype,
+                  bytes_per_sample, predictor, compression):
+    """Extract, pad, and compress a single tile.  Thread-safe."""
+    r0 = tr * th
+    c0 = tc * tw
+    r1 = min(r0 + th, height)
+    c1 = min(c0 + tw, width)
+    actual_h = r1 - r0
+    actual_w = c1 - c0
+
+    tile_slice = data[r0:r1, c0:c1]
+
+    if actual_h < th or actual_w < tw:
+        if data.ndim == 3:
+            padded = np.empty((th, tw, samples), dtype=dtype)
+        else:
+            padded = np.empty((th, tw), dtype=dtype)
+        padded[:actual_h, :actual_w] = tile_slice
+        if actual_h < th:
+            padded[actual_h:, :] = 0
+        if actual_w < tw:
+            padded[:actual_h, actual_w:] = 0
+        tile_arr = padded
+    else:
+        tile_arr = np.ascontiguousarray(tile_slice)
+
+    if predictor and compression != COMPRESSION_NONE:
+        buf = tile_arr.view(np.uint8).ravel().copy()
+        buf = predictor_encode(buf, tw, th, bytes_per_sample * samples)
+        tile_data = buf.tobytes()
+    else:
+        tile_data = tile_arr.tobytes()
+
+    if compression == COMPRESSION_JPEG2000:
+        from ._compression import jpeg2000_compress
+        return jpeg2000_compress(
+            tile_data, tw, th, samples=samples, dtype=dtype)
+    return compress(tile_data, compression)
+
+
 def _write_tiled(data: np.ndarray, compression: int, predictor: bool,
                  tile_size: int = 256) -> tuple[list, list, list]:
-    """Compress data as tiles.
+    """Compress data as tiles, using parallel compression.
+
+    For compressed formats (deflate, lzw, zstd), tiles are compressed
+    in parallel using a thread pool.  zlib, zstandard, and our Numba
+    LZW all release the GIL.
 
     Returns
     -------
@@ -358,60 +402,92 @@ def _write_tiled(data: np.ndarray, compression: int, predictor: bool,
     th = tile_size
     tiles_across = math.ceil(width / tw)
     tiles_down = math.ceil(height / th)
+    n_tiles = tiles_across * tiles_down
 
-    tiles = []
+    if compression == COMPRESSION_NONE:
+        # Uncompressed: pre-allocate a contiguous buffer for all tiles
+        # and copy tile data directly, avoiding per-tile Python overhead.
+        tile_bytes = tw * th * bytes_per_sample * samples
+        total_buf = bytearray(n_tiles * tile_bytes)
+        mv = memoryview(total_buf)
+        tiles = []
+        rel_offsets = []
+        byte_counts = []
+        current_offset = 0
+
+        for tr in range(tiles_down):
+            for tc in range(tiles_across):
+                r0 = tr * th
+                c0 = tc * tw
+                r1 = min(r0 + th, height)
+                c1 = min(c0 + tw, width)
+                actual_h = r1 - r0
+                actual_w = c1 - c0
+
+                tile_slice = data[r0:r1, c0:c1]
+                if actual_h < th or actual_w < tw:
+                    if data.ndim == 3:
+                        padded = np.zeros((th, tw, samples), dtype=dtype)
+                    else:
+                        padded = np.zeros((th, tw), dtype=dtype)
+                    padded[:actual_h, :actual_w] = tile_slice
+                    tile_arr = padded
+                else:
+                    tile_arr = np.ascontiguousarray(tile_slice)
+
+                chunk = tile_arr.tobytes()
+                rel_offsets.append(current_offset)
+                byte_counts.append(len(chunk))
+                tiles.append(chunk)
+                current_offset += len(chunk)
+
+        return rel_offsets, byte_counts, tiles
+
+    if n_tiles <= 4:
+        # Very few tiles: sequential (thread pool overhead not worth it)
+        tiles = []
+        rel_offsets = []
+        byte_counts = []
+        current_offset = 0
+        for tr in range(tiles_down):
+            for tc in range(tiles_across):
+                compressed = _prepare_tile(
+                    data, tr, tc, th, tw, height, width,
+                    samples, dtype, bytes_per_sample, predictor, compression,
+                )
+                rel_offsets.append(current_offset)
+                byte_counts.append(len(compressed))
+                tiles.append(compressed)
+                current_offset += len(compressed)
+        return rel_offsets, byte_counts, tiles
+
+    # Parallel tile compression -- zlib/zstd/LZW all release the GIL
+    from concurrent.futures import ThreadPoolExecutor
+    import os
+
+    n_workers = min(n_tiles, os.cpu_count() or 4)
+    tile_indices = [(tr, tc) for tr in range(tiles_down)
+                    for tc in range(tiles_across)]
+
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = [
+            pool.submit(
+                _prepare_tile, data, tr, tc, th, tw, height, width,
+                samples, dtype, bytes_per_sample, predictor, compression,
+            )
+            for tr, tc in tile_indices
+        ]
+        compressed_tiles = [f.result() for f in futures]
+
     rel_offsets = []
     byte_counts = []
     current_offset = 0
+    for ct in compressed_tiles:
+        rel_offsets.append(current_offset)
+        byte_counts.append(len(ct))
+        current_offset += len(ct)
 
-    for tr in range(tiles_down):
-        for tc in range(tiles_across):
-            r0 = tr * th
-            c0 = tc * tw
-            r1 = min(r0 + th, height)
-            c1 = min(c0 + tw, width)
-
-            actual_h = r1 - r0
-            actual_w = c1 - c0
-
-            # Extract tile, pad to full tile size if needed
-            tile_slice = data[r0:r1, c0:c1]
-
-            if actual_h < th or actual_w < tw:
-                if data.ndim == 3:
-                    padded = np.empty((th, tw, samples), dtype=dtype)
-                else:
-                    padded = np.empty((th, tw), dtype=dtype)
-                padded[:actual_h, :actual_w] = tile_slice
-                # Zero only the padding regions
-                if actual_h < th:
-                    padded[actual_h:, :] = 0
-                if actual_w < tw:
-                    padded[:actual_h, actual_w:] = 0
-                tile_arr = padded
-            else:
-                tile_arr = np.ascontiguousarray(tile_slice)
-
-            if predictor and compression != COMPRESSION_NONE:
-                buf = tile_arr.view(np.uint8).ravel().copy()
-                buf = predictor_encode(buf, tw, th, bytes_per_sample * samples)
-                tile_data = buf.tobytes()
-            else:
-                tile_data = tile_arr.tobytes()
-
-            if compression == COMPRESSION_JPEG2000:
-                from ._compression import jpeg2000_compress
-                compressed = jpeg2000_compress(
-                    tile_data, tw, th, samples=samples, dtype=dtype)
-            else:
-                compressed = compress(tile_data, compression)
-
-            rel_offsets.append(current_offset)
-            byte_counts.append(len(compressed))
-            tiles.append(compressed)
-            current_offset += len(compressed)
-
-    return rel_offsets, byte_counts, tiles
+    return rel_offsets, byte_counts, compressed_tiles
 
 
 # ---------------------------------------------------------------------------
@@ -749,7 +825,7 @@ def write(data: np.ndarray, path: str, *,
           geo_transform: GeoTransform | None = None,
           crs_epsg: int | None = None,
           nodata=None,
-          compression: str = 'deflate',
+          compression: str = 'zstd',
           tiled: bool = True,
           tile_size: int = 256,
           predictor: bool = False,

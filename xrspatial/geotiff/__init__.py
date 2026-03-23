@@ -146,6 +146,7 @@ def _extent_to_window(transform, file_height, file_width,
     return (row_start, col_start, row_stop, col_stop)
 
 
+
 def open_geotiff(source: str, *, window=None,
                  overview_level: int | None = None,
                  band: int | None = None,
@@ -336,7 +337,7 @@ def _is_gpu_data(data) -> bool:
 def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                crs: int | str | None = None,
                nodata=None,
-               compression: str = 'deflate',
+               compression: str = 'zstd',
                tiled: bool = True,
                tile_size: int = 256,
                predictor: bool = False,
@@ -427,9 +428,13 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         if geo_transform is None:
             geo_transform = _coords_to_transform(data)
         if epsg is None and crs is None:
-            epsg = data.attrs.get('crs')
+            crs_attr = data.attrs.get('crs')
+            if isinstance(crs_attr, str):
+                # WKT string from reproject() or other source
+                epsg = _wkt_to_epsg(crs_attr)
+            elif crs_attr is not None:
+                epsg = int(crs_attr)
             if epsg is None:
-                # Try resolving EPSG from a WKT string in attrs
                 wkt = data.attrs.get('crs_wkt')
                 if isinstance(wkt, str):
                     epsg = _wkt_to_epsg(wkt)
