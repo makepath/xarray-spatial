@@ -232,6 +232,66 @@ _VALIDATE_CODES = [
 ]
 
 
+# -----------------------------------------------------------------------
+# transform_points
+# -----------------------------------------------------------------------
+import numpy as np
+from xrspatial.reproject._projections import transform_points
+
+
+class TestTransformPoints:
+    def test_wgs84_to_web_mercator(self):
+        xs = np.array([0.0, 10.0, -75.5])
+        ys = np.array([0.0, 45.0, 40.0])
+        src = pyproj.CRS.from_epsg(4326)
+        tgt = pyproj.CRS.from_epsg(3857)
+        result = transform_points(src, tgt, xs, ys)
+        assert result is not None
+        tx, ty = result
+        # lon=0 lat=0 -> (0, 0) in Web Mercator
+        assert abs(tx[0]) < 1.0
+        assert abs(ty[0]) < 1.0
+        # lon=10 -> positive easting
+        assert tx[1] > 1e6
+
+    def test_wgs84_to_utm_zone32(self):
+        # Central meridian of UTM zone 32 is 9 deg E
+        xs = np.array([9.0])
+        ys = np.array([0.0])
+        src = pyproj.CRS.from_epsg(4326)
+        tgt = pyproj.CRS.from_epsg(32632)
+        result = transform_points(src, tgt, xs, ys)
+        assert result is not None
+        tx, ty = result
+        # On the central meridian, easting should be 500000
+        assert abs(tx[0] - 500000.0) < 1.0
+
+    def test_unsupported_pair_returns_none(self):
+        # Two projected CRS -> no fast path
+        src = pyproj.CRS.from_epsg(32632)
+        tgt = pyproj.CRS.from_epsg(32633)
+        result = transform_points(src, tgt, [500000], [0])
+        assert result is None
+
+    def test_matches_pyproj_transformer(self):
+        # WGS84 -> Albers Equal Area (EPSG:5070), 20 random points
+        rng = np.random.RandomState(42)
+        xs = rng.uniform(-120, -70, 20)
+        ys = rng.uniform(25, 50, 20)
+        src = pyproj.CRS.from_epsg(4326)
+        tgt = pyproj.CRS.from_epsg(5070)
+        result = transform_points(src, tgt, xs, ys)
+        assert result is not None
+        tx, ty = result
+        # Compare against pyproj
+        transformer = pyproj.Transformer.from_crs(src, tgt, always_xy=True)
+        ref_x, ref_y = transformer.transform(xs, ys)
+        # Tolerance is ~1 m because transform_points skips datum shifts
+        # (metre-level error is sub-pixel for boundary estimation).
+        np.testing.assert_allclose(tx, ref_x, atol=1.0)
+        np.testing.assert_allclose(ty, ref_y, atol=1.0)
+
+
 class TestCRSMatchesPyproj:
     @pytest.mark.parametrize("epsg", _VALIDATE_CODES)
     def test_to_dict_proj_key_matches(self, epsg):
