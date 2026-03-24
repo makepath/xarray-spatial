@@ -1159,3 +1159,157 @@ class TestCudaCubicNanFallback:
         finite = np.isfinite(cpu_result)
         np.testing.assert_allclose(cpu_result[finite], gpu_np[finite],
                                    rtol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Dask graph optimization tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(not HAS_DASK, reason="dask not installed")
+class TestDaskGraphOptimization:
+    """Verify map_blocks conversion and empty-chunk skipping."""
+
+    def test_dask_reproject_uses_map_blocks(self):
+        """The dask path should produce a blockwise layer, not N delayed nodes."""
+        from xrspatial.reproject import reproject
+        data = np.ones((64, 64), dtype=np.float64)
+        da_data = da.from_array(data, chunks=(32, 32))
+        raster = xr.DataArray(
+            da_data, dims=['y', 'x'],
+            coords={'y': np.linspace(55, 45, 64), 'x': np.linspace(-5, 5, 64)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        result = reproject(raster, 'EPSG:32633', chunk_size=32)
+        # Result should be a dask array
+        assert hasattr(result.data, 'dask')
+        # Should have few graph layers (map_blocks creates 1-2, not N)
+        graph = result.data.__dask_graph__()
+        assert len(graph.layers) <= 3
+
+    def test_source_not_whole_array_dependency(self):
+        """Source dask array should not be a dependency of every output block.
+
+        When source_data is passed as a map_blocks kwarg, dask adds the
+        full source as a dependency of every output block -- this causes
+        MemoryError on distributed schedulers when the source exceeds
+        worker memory.  Using functools.partial avoids this.
+        """
+        from xrspatial.reproject import reproject
+        data = np.ones((64, 64), dtype=np.float64)
+        da_data = da.from_array(data, chunks=(32, 32))
+        src_name = da_data.name  # e.g. 'array-abc123'
+        raster = xr.DataArray(
+            da_data, dims=['y', 'x'],
+            coords={'y': np.linspace(55, 45, 64), 'x': np.linspace(-5, 5, 64)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        result = reproject(raster, 'EPSG:32633', chunk_size=32)
+        graph = result.data.__dask_graph__()
+        # The source array's layer should NOT be in the output graph's
+        # dependencies (it's captured in the function closure instead).
+        assert src_name not in graph.layers, (
+            f"source array '{src_name}' should not be a graph layer "
+            f"dependency -- use functools.partial to bind it"
+        )
+
+    def test_dask_reproject_matches_numpy(self):
+        """Dask map_blocks path should produce same values as numpy."""
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(42).rand(64, 64).astype(np.float64)
+        coords = {
+            'y': np.linspace(55, 45, 64),
+            'x': np.linspace(-5, 5, 64),
+        }
+        attrs = {'crs': 'EPSG:4326', 'nodata': np.nan}
+
+        np_raster = xr.DataArray(data, dims=['y', 'x'],
+                                 coords=coords, attrs=attrs)
+        da_raster = xr.DataArray(
+            da.from_array(data, chunks=(32, 32)),
+            dims=['y', 'x'], coords=coords, attrs=attrs,
+        )
+        np_result = reproject(np_raster, 'EPSG:32633')
+        da_result = reproject(da_raster, 'EPSG:32633')
+
+        np_vals = np_result.values
+        da_vals = da_result.values
+        # Same shape
+        assert np_vals.shape == da_vals.shape
+        # Same NaN pattern
+        np.testing.assert_array_equal(np.isnan(np_vals), np.isnan(da_vals))
+        # Same finite values
+        finite = np.isfinite(np_vals)
+        if finite.any():
+            np.testing.assert_allclose(np_vals[finite], da_vals[finite],
+                                       rtol=1e-10)
+
+    def test_empty_chunk_skipping(self):
+        """Chunks outside the source footprint should be nodata-filled
+        without touching pyproj."""
+        import dask
+
+        from xrspatial.reproject import reproject
+        # Small raster in a corner of the output grid
+        data = np.ones((16, 16), dtype=np.float64) * 42.0
+        raster = xr.DataArray(
+            da.from_array(data, chunks=(16, 16)),
+            dims=['y', 'x'],
+            coords={'y': np.linspace(50.1, 50.0, 16),
+                    'x': np.linspace(10.0, 10.1, 16)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        # Force a large output grid with small chunks so many are empty.
+        # Use synchronous scheduler to avoid PROJ C library thread-safety
+        # crashes on macOS when many chunks call pyproj.CRS concurrently.
+        with dask.config.set(scheduler='synchronous'):
+            result = reproject(raster, 'EPSG:32633', chunk_size=64,
+                               width=256, height=256)
+            vals = result.values
+        # Should have some valid pixels and some NaN (empty chunks)
+        assert np.any(np.isfinite(vals))
+        assert np.any(np.isnan(vals))
+
+    def test_merge_dask_uses_map_blocks(self):
+        """The merge dask path should also use map_blocks."""
+        from xrspatial.reproject import merge
+        t1 = xr.DataArray(
+            da.from_array(np.full((32, 32), 1.0), chunks=(16, 16)),
+            dims=['y', 'x'],
+            coords={'y': np.linspace(55, 50, 32),
+                    'x': np.linspace(-5, 0, 32)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        t2 = xr.DataArray(
+            da.from_array(np.full((32, 32), 2.0), chunks=(16, 16)),
+            dims=['y', 'x'],
+            coords={'y': np.linspace(50, 45, 32),
+                    'x': np.linspace(0, 5, 32)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        result = merge([t1, t2])
+        vals = result.values
+        assert np.any(np.isfinite(vals))
+
+    def test_source_footprint_helper(self):
+        """_source_footprint_in_target should return a valid bbox."""
+        from xrspatial.reproject import _source_footprint_in_target
+        src_bounds = (-5.0, 45.0, 5.0, 55.0)
+        fp = _source_footprint_in_target(
+            src_bounds, 'EPSG:4326', 'EPSG:32633'
+        )
+        # Should return a tuple of 4 finite values
+        assert fp is not None
+        assert len(fp) == 4
+        assert all(np.isfinite(v) for v in fp)
+        # left < right, bottom < top
+        assert fp[0] < fp[2]
+        assert fp[1] < fp[3]
+
+    def test_bounds_overlap(self):
+        """_bounds_overlap should correctly detect overlap."""
+        from xrspatial.reproject import _bounds_overlap
+        a = (0, 0, 10, 10)
+        assert _bounds_overlap(a, (5, 5, 15, 15))   # partial overlap
+        assert _bounds_overlap(a, (0, 0, 10, 10))   # identical
+        assert not _bounds_overlap(a, (11, 0, 20, 10))  # no overlap x
+        assert not _bounds_overlap(a, (0, 11, 10, 20))  # no overlap y
