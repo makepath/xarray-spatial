@@ -54,6 +54,14 @@ Normalization
     xrspatial.normalize.rescale
     xrspatial.normalize.standardize
 
+Overlap Fusion
+==============
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.utils.fused_overlap
+    xrspatial.utils.multi_overlap
+
 Rechunking
 ==========
 .. autosummary::
