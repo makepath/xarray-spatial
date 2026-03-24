@@ -144,3 +144,12 @@ class TestMultiOverlapValidation:
     def test_rejects_non_dataarray(self):
         with pytest.raises(TypeError):
             multi_overlap(np.zeros((10, 10)), _triple_kernel, 3, 1)
+
+
+class TestMultiOverlapAccessor:
+    def test_accessor_delegates(self):
+        import xrspatial  # noqa: F401
+        raster = _make_dask_raster()
+        direct = multi_overlap(raster, _triple_kernel, n_outputs=3, depth=1)
+        via_acc = raster.xrs.multi_overlap(_triple_kernel, n_outputs=3, depth=1)
+        np.testing.assert_array_equal(direct.values, via_acc.values)

@@ -500,6 +500,14 @@ class XrsSpatialDataArrayAccessor:
         from .utils import rechunk_no_shuffle
         return rechunk_no_shuffle(self._obj, **kwargs)
 
+    def fused_overlap(self, *stages, **kwargs):
+        from .utils import fused_overlap
+        return fused_overlap(self._obj, *stages, **kwargs)
+
+    def multi_overlap(self, func, n_outputs, **kwargs):
+        from .utils import multi_overlap
+        return multi_overlap(self._obj, func, n_outputs, **kwargs)
+
 
 @xr.register_dataset_accessor("xrs")
 class XrsSpatialDatasetAccessor:

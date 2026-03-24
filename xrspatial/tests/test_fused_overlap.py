@@ -167,3 +167,13 @@ class TestFusedOverlapValidation:
         raster = _make_dask_raster(shape=(24, 24), chunks=6)
         result = fused_overlap(raster, (_increment_interior, 1), (_double_interior, 1))
         assert result.shape == (24, 24)
+
+
+class TestFusedOverlapAccessor:
+    def test_accessor_delegates(self):
+        import xrspatial  # noqa: F401
+        from xrspatial.utils import fused_overlap
+        raster = _make_dask_raster()
+        direct = fused_overlap(raster, (_increment_interior, 1))
+        via_acc = raster.xrs.fused_overlap((_increment_interior, 1))
+        np.testing.assert_array_equal(direct.values, via_acc.values)

@@ -135,6 +135,8 @@ from xrspatial.zonal import suggest_zonal_canvas as suggest_zonal_canvas  # noqa
 from xrspatial.reproject import merge  # noqa
 from xrspatial.reproject import reproject  # noqa
 from xrspatial.utils import rechunk_no_shuffle  # noqa
+from xrspatial.utils import fused_overlap  # noqa
+from xrspatial.utils import multi_overlap  # noqa
 
 import xrspatial.mcda  # noqa: F401  — exposes xrspatial.mcda subpackage
 import xrspatial.accessor  # noqa: F401  — registers .xrs accessors
