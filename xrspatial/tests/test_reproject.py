@@ -1186,6 +1186,32 @@ class TestDaskGraphOptimization:
         graph = result.data.__dask_graph__()
         assert len(graph.layers) <= 3
 
+    def test_source_not_whole_array_dependency(self):
+        """Source dask array should not be a dependency of every output block.
+
+        When source_data is passed as a map_blocks kwarg, dask adds the
+        full source as a dependency of every output block -- this causes
+        MemoryError on distributed schedulers when the source exceeds
+        worker memory.  Using functools.partial avoids this.
+        """
+        from xrspatial.reproject import reproject
+        data = np.ones((64, 64), dtype=np.float64)
+        da_data = da.from_array(data, chunks=(32, 32))
+        src_name = da_data.name  # e.g. 'array-abc123'
+        raster = xr.DataArray(
+            da_data, dims=['y', 'x'],
+            coords={'y': np.linspace(55, 45, 64), 'x': np.linspace(-5, 5, 64)},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        result = reproject(raster, 'EPSG:32633', chunk_size=32)
+        graph = result.data.__dask_graph__()
+        # The source array's layer should NOT be in the output graph's
+        # dependencies (it's captured in the function closure instead).
+        assert src_name not in graph.layers, (
+            f"source array '{src_name}' should not be a graph layer "
+            f"dependency -- use functools.partial to bind it"
+        )
+
     def test_dask_reproject_matches_numpy(self):
         """Dask map_blocks path should produce same values as numpy."""
         from xrspatial.reproject import reproject

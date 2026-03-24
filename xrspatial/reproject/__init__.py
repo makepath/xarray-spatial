@@ -1201,7 +1201,15 @@ def _reproject_dask(
 
     Uses a single ``blockwise`` layer in the HighLevelGraph instead of
     O(N) ``dask.delayed`` nodes, keeping graph metadata O(1).
+
+    The source dask array is bound to the adapter via ``functools.partial``
+    rather than passed as a ``map_blocks`` kwarg.  This prevents dask from
+    adding the full source as a dependency of every output block (which
+    would cause a MemoryError on distributed schedulers when the source
+    exceeds the worker memory limit).
     """
+    import functools
+
     import dask.array as da
 
     row_chunks, col_chunks = _compute_chunk_layout(out_shape, chunk_size)
@@ -1211,13 +1219,11 @@ def _reproject_dask(
         src_bounds, src_wkt, tgt_wkt
     )
 
-    template = da.empty(
-        out_shape, dtype=np.float64, chunks=(row_chunks, col_chunks)
-    )
-
-    return da.map_blocks(
+    # Bind the source dask array and all scalar params via partial so
+    # map_blocks doesn't detect them as dask Array kwargs (which would
+    # add the full source as a dependency of every output block).
+    bound_adapter = functools.partial(
         _reproject_block_adapter,
-        template,
         source_data=raster.data,
         src_bounds=src_bounds,
         src_shape=src_shape,
@@ -1231,6 +1237,15 @@ def _reproject_dask(
         precision=precision,
         is_cupy=is_cupy,
         src_footprint_tgt=src_footprint_tgt,
+    )
+
+    template = da.empty(
+        out_shape, dtype=np.float64, chunks=(row_chunks, col_chunks)
+    )
+
+    return da.map_blocks(
+        bound_adapter,
+        template,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
     )
@@ -1538,6 +1553,8 @@ def _merge_dask(
     resampling, nodata, strategy, chunk_size,
 ):
     """Dask merge backend using ``map_blocks``."""
+    import functools
+
     import dask.array as da
 
     row_chunks, col_chunks = _compute_chunk_layout(out_shape, chunk_size)
@@ -1555,13 +1572,10 @@ def _merge_dask(
         for i in range(len(raster_infos))
     ]
 
-    template = da.empty(
-        out_shape, dtype=np.float64, chunks=(row_chunks, col_chunks)
-    )
-
-    return da.map_blocks(
+    # Bind via partial to prevent map_blocks from adding dask arrays
+    # in data_list as whole-array dependencies.
+    bound_adapter = functools.partial(
         _merge_block_adapter,
-        template,
         raster_data_list=data_list,
         src_bounds_list=bounds_list,
         src_shape_list=shape_list,
@@ -1575,6 +1589,15 @@ def _merge_dask(
         strategy=strategy,
         precision=16,
         src_footprints_tgt=footprints,
+    )
+
+    template = da.empty(
+        out_shape, dtype=np.float64, chunks=(row_chunks, col_chunks)
+    )
+
+    return da.map_blocks(
+        bound_adapter,
+        template,
         dtype=np.float64,
         meta=np.array((), dtype=np.float64),
     )
