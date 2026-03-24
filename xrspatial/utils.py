@@ -1028,54 +1028,8 @@ def _sample_windows_min_max(
     return float(np.nanmin(np.array(mins, dtype=float))), float(np.nanmax(np.array(maxs, dtype=float)))
 
 
-def rechunk_no_shuffle(agg, target_mb=128):
-    """Rechunk a dask-backed DataArray without triggering a shuffle.
-
-    Computes an integer multiplier per dimension so that each new chunk
-    is an exact multiple of the original chunk size.  This lets dask
-    merge whole source chunks in-place instead of splitting and
-    recombining partial blocks (which is effectively a shuffle).
-
-    Parameters
-    ----------
-    agg : xr.DataArray
-        Input raster.  If not backed by a dask array the input is
-        returned unchanged.
-    target_mb : int or float
-        Target chunk size in megabytes.  The actual chunk size will be
-        the closest multiple of the source chunk that does not exceed
-        this target.  Default 128.
-
-    Returns
-    -------
-    xr.DataArray
-        Rechunked DataArray.  Coordinates and attributes are preserved.
-
-    Raises
-    ------
-    TypeError
-        If *agg* is not an ``xr.DataArray``.
-    ValueError
-        If *target_mb* is not positive.
-
-    Examples
-    --------
-    >>> import dask.array as da
-    >>> import xarray as xr
-    >>> arr = xr.DataArray(da.zeros((4096, 4096), chunks=256))
-    >>> big = rechunk_no_shuffle(arr, target_mb=64)
-    >>> big.chunks  # multiples of 256
-    """
-    if not isinstance(agg, xr.DataArray):
-        raise TypeError(
-            f"rechunk_no_shuffle(): expected xr.DataArray, "
-            f"got {type(agg).__name__}"
-        )
-    if target_mb <= 0:
-        raise ValueError(
-            f"rechunk_no_shuffle(): target_mb must be > 0, got {target_mb}"
-        )
-
+def _rechunk_dataarray(agg, target_bytes):
+    """Rechunk a single dask-backed DataArray.  Returns unchanged if not dask."""
     if not has_dask_array() or not isinstance(agg.data, da.Array):
         return agg
 
@@ -1085,8 +1039,6 @@ def rechunk_no_shuffle(agg, target_mb=128):
     current_bytes = agg.dtype.itemsize
     for b in base:
         current_bytes *= b
-
-    target_bytes = target_mb * 1024 * 1024
 
     if current_bytes >= target_bytes:
         return agg
@@ -1100,3 +1052,63 @@ def rechunk_no_shuffle(agg, target_mb=128):
 
     new_chunks = {dim: b * multiplier for dim, b in zip(agg.dims, base)}
     return agg.chunk(new_chunks)
+
+
+def rechunk_no_shuffle(agg, target_mb=128):
+    """Rechunk dask-backed data without triggering a shuffle.
+
+    Computes an integer multiplier per dimension so that each new chunk
+    is an exact multiple of the original chunk size.  This lets dask
+    merge whole source chunks in-place instead of splitting and
+    recombining partial blocks (which is effectively a shuffle).
+
+    Parameters
+    ----------
+    agg : xr.DataArray or xr.Dataset
+        Input raster or collection of rasters.  Non-dask variables
+        pass through unchanged.
+    target_mb : int or float
+        Target chunk size in megabytes.  The actual chunk size will be
+        the closest multiple of the source chunk that does not exceed
+        this target.  Default 128.
+
+    Returns
+    -------
+    xr.DataArray or xr.Dataset
+        Rechunked object.  Coordinates and attributes are preserved.
+
+    Raises
+    ------
+    TypeError
+        If *agg* is not an ``xr.DataArray`` or ``xr.Dataset``.
+    ValueError
+        If *target_mb* is not positive.
+
+    Examples
+    --------
+    >>> import dask.array as da
+    >>> import xarray as xr
+    >>> arr = xr.DataArray(da.zeros((4096, 4096), chunks=256))
+    >>> big = rechunk_no_shuffle(arr, target_mb=64)
+    >>> big.chunks  # multiples of 256
+    """
+    if not isinstance(agg, (xr.DataArray, xr.Dataset)):
+        raise TypeError(
+            f"rechunk_no_shuffle(): expected xr.DataArray or xr.Dataset, "
+            f"got {type(agg).__name__}"
+        )
+    if target_mb <= 0:
+        raise ValueError(
+            f"rechunk_no_shuffle(): target_mb must be > 0, got {target_mb}"
+        )
+
+    target_bytes = target_mb * 1024 * 1024
+
+    if isinstance(agg, xr.DataArray):
+        return _rechunk_dataarray(agg, target_bytes)
+
+    # Dataset: rechunk each variable independently
+    new_vars = {}
+    for name, var in agg.data_vars.items():
+        new_vars[name] = _rechunk_dataarray(var, target_bytes)
+    return agg.assign(new_vars)

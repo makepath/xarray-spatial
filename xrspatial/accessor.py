@@ -910,3 +910,9 @@ class XrsSpatialDatasetAccessor:
                                    y_min, y_max, x_min, x_max)
         kwargs.pop('window', None)
         return open_geotiff(source, window=window, **kwargs)
+
+    # ---- Chunking ----
+
+    def rechunk_no_shuffle(self, **kwargs):
+        from .utils import rechunk_no_shuffle
+        return rechunk_no_shuffle(self._obj, **kwargs)
