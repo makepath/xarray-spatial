@@ -1255,3 +1255,107 @@ def fused_overlap(agg, *stages, boundary='nan'):
     )
 
     return agg.copy(data=out)
+
+
+def multi_overlap(agg, func, n_outputs, depth, boundary='nan', dtype=None):
+    """Run a multi-output kernel via a single overlap + map_blocks call.
+
+    ``func`` receives a padded 2-D chunk and returns
+    ``(n_outputs, H, W)`` -- the unpadded interior for each output band.
+    The result is a 3-D DataArray with a leading ``band`` dimension.
+
+    Parameters
+    ----------
+    agg : xr.DataArray
+        2-D input raster.
+    func : callable
+        ``(H+2*dy, W+2*dx) -> (n_outputs, H, W)``
+    n_outputs : int
+        Number of output bands (>= 1).
+    depth : int or tuple of int
+        Per-axis overlap (>= 1 on each axis).
+    boundary : str
+        Boundary mode: 'nan', 'nearest', 'reflect', or 'wrap'.
+    dtype : numpy dtype, optional
+        Output dtype.  Defaults to input dtype.
+
+    Returns
+    -------
+    xr.DataArray
+        Shape ``(n_outputs, H, W)`` with ``band`` leading dimension.
+    """
+    if not isinstance(agg, xr.DataArray):
+        raise TypeError(
+            f"multi_overlap(): expected xr.DataArray, "
+            f"got {type(agg).__name__}"
+        )
+    if agg.ndim != 2:
+        raise ValueError(
+            f"multi_overlap(): input must be 2-D, got {agg.ndim}-D"
+        )
+    if n_outputs < 1:
+        raise ValueError(
+            f"multi_overlap(): n_outputs must be >= 1, got {n_outputs}"
+        )
+
+    _validate_boundary(boundary)
+
+    depth_dict = _normalize_depth(depth, agg.ndim)
+    for ax, d in depth_dict.items():
+        if d < 1:
+            raise ValueError(
+                f"multi_overlap(): depth must be >= 1, got {d} on axis {ax}"
+            )
+
+    dtype = dtype or agg.dtype
+
+    # --- non-dask path ---
+    if not has_dask_array() or not isinstance(agg.data, da.Array):
+        if boundary == 'nan':
+            depth_tuple = tuple(depth_dict[ax] for ax in range(agg.ndim))
+            padded = _pad_nan(agg.data, depth_tuple)
+        else:
+            depth_tuple = tuple(depth_dict[ax] for ax in range(agg.ndim))
+            padded = _pad_array(agg.data, depth_tuple, boundary)
+        result_data = func(padded).astype(dtype)
+        return xr.DataArray(
+            result_data,
+            dims=['band'] + list(agg.dims),
+            coords=agg.coords,
+            attrs=agg.attrs,
+        )
+
+    # --- dask path ---
+    import dask.array.overlap as _dask_overlap
+
+    boundary_val = _boundary_to_dask(boundary, is_cupy=is_cupy_backed(agg))
+
+    # Validate chunk sizes
+    for ax, d in depth_dict.items():
+        for cs in agg.chunks[ax]:
+            if cs < d:
+                raise ValueError(
+                    f"Chunk size {cs} on axis {ax} is smaller than "
+                    f"depth {d}. Rechunk first."
+                )
+
+    # Step 1: pad with overlap
+    padded = _dask_overlap.overlap(
+        agg.data, depth=depth_dict, boundary=boundary_val
+    )
+
+    # Step 2: map_blocks -- func returns (n_outputs, H, W) per block
+    out = da.map_blocks(
+        func,
+        padded,
+        dtype=dtype,
+        new_axis=0,
+        chunks=((n_outputs,),) + agg.data.chunks,
+    )
+
+    return xr.DataArray(
+        out,
+        dims=['band'] + list(agg.dims),
+        coords=agg.coords,
+        attrs=agg.attrs,
+    )
