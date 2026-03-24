@@ -23,7 +23,7 @@ class TestCRSConstruction:
         assert crs.to_epsg() == 4326
 
     def test_unknown_epsg_raises(self):
-        with pytest.raises(ValueError, match="Unknown EPSG"):
+        with pytest.raises(ValueError, match="not in the built-in table"):
             CRS(99999)
 
     def test_to_authority(self):

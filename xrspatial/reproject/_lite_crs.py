@@ -241,8 +241,9 @@ class CRS:
         epsg = self._parse_input(value)
         if epsg not in _EPSG_TABLE:
             raise ValueError(
-                f"Unknown EPSG code: {epsg}. "
-                f"The lite CRS only supports a predefined set of codes."
+                f"EPSG:{epsg} is not in the built-in table. "
+                f"Install pyproj for full CRS support:  "
+                f"pip install pyproj  or:  pip install xarray-spatial[reproject]"
             )
         self._epsg = epsg
         self._entry = _EPSG_TABLE[epsg]
