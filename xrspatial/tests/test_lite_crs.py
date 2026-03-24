@@ -239,6 +239,45 @@ class TestGridWithoutPyproj:
 
 
 # -----------------------------------------------------------------------
+# Integration: CRS resolution works when pyproj is blocked
+# -----------------------------------------------------------------------
+class TestNoPyproj:
+    """Verify CRS resolution works for supported codes when pyproj is absent."""
+
+    def test_resolve_without_pyproj(self, monkeypatch):
+        """_resolve_crs and _crs_from_wkt work without pyproj for known EPSG codes."""
+        import sys
+        from xrspatial.reproject._lite_crs import CRS
+
+        # Block pyproj import
+        monkeypatch.setitem(sys.modules, 'pyproj', None)
+
+        from xrspatial.reproject._crs_utils import _resolve_crs, _crs_from_wkt
+
+        src_crs = _resolve_crs(4326)
+        assert isinstance(src_crs, CRS)
+        assert src_crs.to_epsg() == 4326
+
+        tgt_crs = _resolve_crs("EPSG:32632")
+        assert isinstance(tgt_crs, CRS)
+        assert tgt_crs.is_geographic is False
+
+        # _crs_from_wkt round-trips without pyproj
+        wkt = src_crs.to_wkt()
+        restored = _crs_from_wkt(wkt)
+        assert isinstance(restored, CRS)
+        assert restored.to_epsg() == 4326
+
+    def test_unknown_epsg_without_pyproj_raises(self, monkeypatch):
+        """Unknown EPSG codes raise clear error when pyproj is absent."""
+        import sys
+        monkeypatch.setitem(sys.modules, 'pyproj', None)
+        from xrspatial.reproject._crs_utils import _resolve_crs
+        with pytest.raises((ImportError, ValueError)):
+            _resolve_crs(2193)
+
+
+# -----------------------------------------------------------------------
 # Validate against pyproj (skipped when pyproj not installed)
 # -----------------------------------------------------------------------
 pyproj = pytest.importorskip("pyproj", reason="pyproj not installed")
