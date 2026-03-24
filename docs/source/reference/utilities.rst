@@ -54,6 +54,13 @@ Normalization
     xrspatial.normalize.rescale
     xrspatial.normalize.standardize
 
+Rechunking
+==========
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.utils.rechunk_no_shuffle
+
 Diagnostics
 ===========
 .. autosummary::
