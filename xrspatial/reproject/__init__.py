@@ -192,11 +192,10 @@ def _reproject_chunk_numpy(
     Called inside ``dask.delayed`` for the dask path, or directly for numpy.
     CRS objects are passed as WKT strings for pickle safety.
     """
-    from ._crs_utils import _require_pyproj
+    from ._crs_utils import _crs_from_wkt
 
-    pyproj = _require_pyproj()
-    src_crs = pyproj.CRS.from_wkt(src_wkt)
-    tgt_crs = pyproj.CRS.from_wkt(tgt_wkt)
+    src_crs = _crs_from_wkt(src_wkt)
+    tgt_crs = _crs_from_wkt(tgt_wkt)
 
     # Try Numba fast path first (avoids creating pyproj Transformer)
     numba_result = None
@@ -212,6 +211,8 @@ def _reproject_chunk_numpy(
         src_y, src_x = numba_result
     else:
         # Fallback: create pyproj Transformer (expensive)
+        from ._crs_utils import _require_pyproj
+        pyproj = _require_pyproj()
         transformer = pyproj.Transformer.from_crs(
             tgt_crs, src_crs, always_xy=True
         )
@@ -321,15 +322,10 @@ def _reproject_chunk_cupy(
     """CuPy variant of ``_reproject_chunk_numpy``."""
     import cupy as cp
 
-    from ._crs_utils import _require_pyproj
+    from ._crs_utils import _crs_from_wkt
 
-    pyproj = _require_pyproj()
-    src_crs = pyproj.CRS.from_wkt(src_wkt)
-    tgt_crs = pyproj.CRS.from_wkt(tgt_wkt)
-
-    transformer = pyproj.Transformer.from_crs(
-        tgt_crs, src_crs, always_xy=True
-    )
+    src_crs = _crs_from_wkt(src_wkt)
+    tgt_crs = _crs_from_wkt(tgt_wkt)
 
     # Try CUDA transform first (keeps coordinates on-device)
     cuda_result = None
@@ -371,6 +367,11 @@ def _reproject_chunk_cupy(
         _use_native_cuda = True
     else:
         # CPU fallback (Numba JIT or pyproj)
+        from ._crs_utils import _require_pyproj
+        pyproj = _require_pyproj()
+        transformer = pyproj.Transformer.from_crs(
+            tgt_crs, src_crs, always_xy=True
+        )
         src_y, src_x = _transform_coords(
             transformer, chunk_bounds_tuple, chunk_shape, transform_precision,
             src_crs=src_crs, tgt_crs=tgt_crs,
@@ -513,8 +514,6 @@ def reproject(
         If vertical transformation was applied, ``attrs['vertical_crs']``
         records the target vertical datum.
     """
-    from ._crs_utils import _require_pyproj
-
     if not isinstance(raster, xr.DataArray):
         raise TypeError(
             f"reproject(): raster must be an xr.DataArray, "
@@ -522,7 +521,6 @@ def reproject(
         )
 
     _validate_resampling(resampling)
-    _require_pyproj()
 
     # Resolve CRS
     src_crs = _resolve_crs(source_crs)
@@ -984,11 +982,10 @@ def _reproject_dask_cupy(
     """
     import cupy as cp
 
-    from ._crs_utils import _require_pyproj
+    from ._crs_utils import _crs_from_wkt
 
-    pyproj = _require_pyproj()
-    src_crs = pyproj.CRS.from_wkt(src_wkt)
-    tgt_crs = pyproj.CRS.from_wkt(tgt_wkt)
+    src_crs = _crs_from_wkt(src_wkt)
+    tgt_crs = _crs_from_wkt(tgt_wkt)
 
     # Use larger chunks for GPU to amortize kernel launch overhead
     gpu_chunk = chunk_size or 2048
@@ -1048,6 +1045,8 @@ def _reproject_dask_cupy(
                 c_max = int(np.ceil(c_max_val)) + 3
             else:
                 # CPU fallback for this chunk
+                from ._crs_utils import _require_pyproj
+                pyproj = _require_pyproj()
                 transformer = pyproj.Transformer.from_crs(
                     tgt_crs, src_crs, always_xy=True
                 )
@@ -1120,30 +1119,44 @@ def _reproject_dask_cupy(
 
 
 def _source_footprint_in_target(src_bounds, src_wkt, tgt_wkt):
-    """Compute an approximate bounding box of the source raster in target CRS.
-
-    Transforms corners and edge midpoints (12 points) to handle non-linear
-    projections.  Returns ``(left, bottom, right, top)`` in target CRS, or
-    *None* if the transform fails (e.g. out-of-domain).
-    """
+    """Compute approximate bounding box of source raster in target CRS."""
     try:
-        from ._crs_utils import _require_pyproj
-        pyproj = _require_pyproj()
-        src_crs = pyproj.CRS(src_wkt)
-        tgt_crs = pyproj.CRS(tgt_wkt)
-        transformer = pyproj.Transformer.from_crs(
-            src_crs, tgt_crs, always_xy=True
-        )
+        from ._crs_utils import _crs_from_wkt, _resolve_crs
+        try:
+            src_crs = _crs_from_wkt(src_wkt)
+        except Exception:
+            src_crs = _resolve_crs(src_wkt)
+        try:
+            tgt_crs = _crs_from_wkt(tgt_wkt)
+        except Exception:
+            tgt_crs = _resolve_crs(tgt_wkt)
     except Exception:
         return None
 
     sl, sb, sr, st = src_bounds
     mx = (sl + sr) / 2
     my = (sb + st) / 2
-    xs = [sl, mx, sr, sl, mx, sr, sl, mx, sr, sl, sr, mx]
-    ys = [sb, sb, sb, my, my, my, st, st, st, mx, mx, sb]
+    xs = np.array([sl, mx, sr, sl, mx, sr, sl, mx, sr, sl, sr, mx])
+    ys = np.array([sb, sb, sb, my, my, my, st, st, st, mx, mx, sb])
+
     try:
-        tx, ty = transformer.transform(xs, ys)
+        from ._projections import transform_points
+        result = transform_points(src_crs, tgt_crs, xs, ys)
+        if result is not None:
+            tx, ty = result
+            tx = [v for v in tx if np.isfinite(v)]
+            ty = [v for v in ty if np.isfinite(v)]
+            if not tx or not ty:
+                return None
+            return (min(tx), min(ty), max(tx), max(ty))
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+    try:
+        from ._crs_utils import _require_pyproj
+        pyproj = _require_pyproj()
+        transformer = pyproj.Transformer.from_crs(src_crs, tgt_crs, always_xy=True)
+        tx, ty = transformer.transform(xs.tolist(), ys.tolist())
         tx = [v for v in tx if np.isfinite(v)]
         ty = [v for v in ty if np.isfinite(v)]
         if not tx or not ty:
@@ -1298,14 +1311,11 @@ def merge(
     -------
     xr.DataArray
     """
-    from ._crs_utils import _require_pyproj
-
     if not rasters:
         raise ValueError("merge(): rasters list must not be empty")
 
     _validate_resampling(resampling)
     _validate_strategy(strategy)
-    pyproj = _require_pyproj()
 
     # Resolve target CRS
     tgt_crs = _resolve_crs(target_crs)
@@ -1485,9 +1495,8 @@ def _merge_inmemory(
     Detects same-CRS tiles and uses fast direct placement instead
     of reprojection.
     """
-    from ._crs_utils import _require_pyproj
-    pyproj = _require_pyproj()
-    tgt_crs = pyproj.CRS.from_wkt(tgt_wkt)
+    from ._crs_utils import _crs_from_wkt
+    tgt_crs = _crs_from_wkt(tgt_wkt)
 
     arrays = []
     for info in raster_infos:

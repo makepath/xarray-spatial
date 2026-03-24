@@ -1313,3 +1313,22 @@ class TestDaskGraphOptimization:
         assert _bounds_overlap(a, (0, 0, 10, 10))   # identical
         assert not _bounds_overlap(a, (11, 0, 20, 10))  # no overlap x
         assert not _bounds_overlap(a, (0, 11, 10, 20))  # no overlap y
+
+
+class TestReprojWithLiteCRS:
+    def test_reproject_wgs84_to_utm_with_lite_crs(self):
+        import xarray as xr
+        from xrspatial.reproject import reproject
+        import numpy as np
+        h, w = 32, 32
+        y = np.linspace(49, 47, h)
+        x = np.linspace(8, 10, w)
+        data = np.random.default_rng(42).random((h, w))
+        raster = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'crs': 4326},
+        )
+        result = reproject(raster, target_crs=32632)
+        assert result.attrs['crs'] is not None
+        assert result.shape[0] > 0 and result.shape[1] > 0
