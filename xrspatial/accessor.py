@@ -494,6 +494,12 @@ class XrsSpatialDataArrayAccessor:
         from .geotiff import to_geotiff
         return to_geotiff(self._obj, path, **kwargs)
 
+    # ---- Chunking ----
+
+    def rechunk_no_shuffle(self, **kwargs):
+        from .utils import rechunk_no_shuffle
+        return rechunk_no_shuffle(self._obj, **kwargs)
+
 
 @xr.register_dataset_accessor("xrs")
 class XrsSpatialDatasetAccessor:

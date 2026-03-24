@@ -1026,3 +1026,77 @@ def _sample_windows_min_max(
 
     # numpy scalars
     return float(np.nanmin(np.array(mins, dtype=float))), float(np.nanmax(np.array(maxs, dtype=float)))
+
+
+def rechunk_no_shuffle(agg, target_mb=128):
+    """Rechunk a dask-backed DataArray without triggering a shuffle.
+
+    Computes an integer multiplier per dimension so that each new chunk
+    is an exact multiple of the original chunk size.  This lets dask
+    merge whole source chunks in-place instead of splitting and
+    recombining partial blocks (which is effectively a shuffle).
+
+    Parameters
+    ----------
+    agg : xr.DataArray
+        Input raster.  If not backed by a dask array the input is
+        returned unchanged.
+    target_mb : int or float
+        Target chunk size in megabytes.  The actual chunk size will be
+        the closest multiple of the source chunk that does not exceed
+        this target.  Default 128.
+
+    Returns
+    -------
+    xr.DataArray
+        Rechunked DataArray.  Coordinates and attributes are preserved.
+
+    Raises
+    ------
+    TypeError
+        If *agg* is not an ``xr.DataArray``.
+    ValueError
+        If *target_mb* is not positive.
+
+    Examples
+    --------
+    >>> import dask.array as da
+    >>> import xarray as xr
+    >>> arr = xr.DataArray(da.zeros((4096, 4096), chunks=256))
+    >>> big = rechunk_no_shuffle(arr, target_mb=64)
+    >>> big.chunks  # multiples of 256
+    """
+    if not isinstance(agg, xr.DataArray):
+        raise TypeError(
+            f"rechunk_no_shuffle(): expected xr.DataArray, "
+            f"got {type(agg).__name__}"
+        )
+    if target_mb <= 0:
+        raise ValueError(
+            f"rechunk_no_shuffle(): target_mb must be > 0, got {target_mb}"
+        )
+
+    if not has_dask_array() or not isinstance(agg.data, da.Array):
+        return agg
+
+    chunks = agg.chunks  # tuple of tuples
+    base = tuple(c[0] for c in chunks)
+
+    current_bytes = agg.dtype.itemsize
+    for b in base:
+        current_bytes *= b
+
+    target_bytes = target_mb * 1024 * 1024
+
+    if current_bytes >= target_bytes:
+        return agg
+
+    ndim = len(base)
+    ratio = target_bytes / current_bytes
+    multiplier = max(1, int(ratio ** (1.0 / ndim)))
+
+    if multiplier <= 1:
+        return agg
+
+    new_chunks = {dim: b * multiplier for dim, b in zip(agg.dims, base)}
+    return agg.chunk(new_chunks)
