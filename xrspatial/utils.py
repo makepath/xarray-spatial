@@ -1100,3 +1100,79 @@ def rechunk_no_shuffle(agg, target_mb=128):
 
     new_chunks = {dim: b * multiplier for dim, b in zip(agg.dims, base)}
     return agg.chunk(new_chunks)
+
+
+def _normalize_depth(depth, ndim):
+    """Normalize depth to a dict {axis: int}.
+
+    Accepts int, tuple, or dict.  Validates completeness and
+    non-negativity.
+    """
+    if isinstance(depth, dict):
+        expected = set(range(ndim))
+        got = set(depth.keys())
+        missing = expected - got
+        extra = got - expected
+        if missing:
+            raise ValueError(
+                f"_normalize_depth: missing axes {sorted(missing)} "
+                f"for ndim={ndim}"
+            )
+        if extra:
+            raise ValueError(
+                f"_normalize_depth: extra axes {sorted(extra)} "
+                f"for ndim={ndim}"
+            )
+        for v in depth.values():
+            if v < 0:
+                raise ValueError(
+                    f"_normalize_depth: depth must be non-negative, got {v}"
+                )
+        return dict(depth)
+
+    if isinstance(depth, int):
+        if depth < 0:
+            raise ValueError(
+                f"_normalize_depth: depth must be non-negative, got {depth}"
+            )
+        return {ax: depth for ax in range(ndim)}
+
+    if isinstance(depth, tuple):
+        if len(depth) != ndim:
+            raise ValueError(
+                f"_normalize_depth: tuple length {len(depth)} != ndim {ndim}"
+            )
+        for v in depth:
+            if v < 0:
+                raise ValueError(
+                    f"_normalize_depth: depth must be non-negative, got {v}"
+                )
+        return {ax: d for ax, d in enumerate(depth)}
+
+    raise TypeError(
+        f"_normalize_depth: expected int, tuple, or dict, got {type(depth).__name__}"
+    )
+
+
+def _pad_nan(data, depth):
+    """Pad a 2-D numpy or cupy array with NaN on each side.
+
+    Parameters
+    ----------
+    data : numpy or cupy array
+    depth : tuple of int
+        ``(d0, d1)`` cells to pad per axis.
+    """
+    pad_width = tuple((d, d) for d in depth)
+    if is_cupy_array(data):
+        if np.issubdtype(data.dtype, np.integer):
+            data = data.astype(cupy.float64)
+        out = cupy.pad(data, pad_width, mode='constant',
+                       constant_values=np.nan)
+    else:
+        # Promote integer dtypes so NaN fill works
+        if np.issubdtype(data.dtype, np.integer):
+            data = data.astype(np.float64)
+        out = np.pad(data, pad_width, mode='constant',
+                     constant_values=np.nan)
+    return out
