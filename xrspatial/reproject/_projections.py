@@ -2099,6 +2099,209 @@ def try_numba_transform(src_crs, tgt_crs, chunk_bounds, chunk_shape):
     return None
 
 
+def transform_points(src_crs, tgt_crs, xs, ys):
+    """Transform scatter points from *src_crs* to *tgt_crs* using Numba kernels.
+
+    Parameters
+    ----------
+    src_crs, tgt_crs : CRS-like
+        Source and target coordinate reference systems (pyproj CRS or lite CRS).
+    xs, ys : array-like
+        1-D arrays of x and y coordinates in *src_crs*.
+
+    Returns
+    -------
+    (tx, ty) : tuple of numpy arrays, or None
+        Transformed coordinates in *tgt_crs*, or ``None`` if no fast path
+        exists for this CRS pair.
+
+    Notes
+    -----
+    Intentional omissions (fall back to pyproj for these):
+
+    * No datum-shift wrapping -- metre-level error is sub-pixel for the
+      boundary-estimation use case this function targets.
+    * Sinusoidal and Generic Transverse Mercator are not covered here;
+      those projections are dispatched via ``to_dict()['proj']`` which
+      requires a full pyproj CRS.
+    """
+    src_epsg = _get_epsg(src_crs)
+    tgt_epsg = _get_epsg(tgt_crs)
+    if src_epsg is None and tgt_epsg is None:
+        return None
+
+    src_is_geo = _is_supported_geographic(src_epsg)
+    tgt_is_geo = _is_supported_geographic(tgt_epsg)
+    if not src_is_geo and not tgt_is_geo:
+        return None
+
+    xs = np.asarray(xs, dtype=np.float64).ravel()
+    ys = np.asarray(ys, dtype=np.float64).ravel()
+    n = xs.shape[0]
+    tx = np.empty(n, dtype=np.float64)
+    ty = np.empty(n, dtype=np.float64)
+
+    # --- Geographic -> Web Mercator (3857) ---
+    if src_is_geo and tgt_epsg == 3857:
+        merc_forward(xs, ys, tx, ty)
+        return tx, ty
+
+    if src_epsg == 3857 and tgt_is_geo:
+        merc_inverse(xs, ys, tx, ty)
+        return tx, ty
+
+    # --- Geographic -> UTM ---
+    if src_is_geo:
+        utm = _utm_params(tgt_epsg)
+        if utm is not None:
+            lon0, k0, fe, fn = utm
+            Qn = k0 * _A_RECT
+            tmerc_forward(xs, ys, tx, ty,
+                          lon0, k0, fe, fn, Qn, _ALPHA, _CBG)
+            return tx, ty
+
+    # --- UTM -> Geographic ---
+    utm_src = _utm_params(src_epsg)
+    if utm_src is not None and tgt_is_geo:
+        lon0, k0, fe, fn = utm_src
+        Qn = k0 * _A_RECT
+        tmerc_inverse(xs, ys, tx, ty,
+                      lon0, k0, fe, fn, Qn, _BETA, _CGB)
+        return tx, ty
+
+    # --- Geographic -> Ellipsoidal Mercator (3395) ---
+    if src_is_geo and tgt_epsg == 3395:
+        emerc_forward(xs, ys, tx, ty, 1.0, _WGS84_E)
+        return tx, ty
+
+    if src_epsg == 3395 and tgt_is_geo:
+        emerc_inverse(xs, ys, tx, ty, 1.0, _WGS84_E)
+        return tx, ty
+
+    # --- Geographic -> LCC ---
+    if src_is_geo:
+        params = _lcc_params(tgt_crs)
+        if params is not None:
+            lon0, nn, c, rho0, k0, fe, fn, to_m = params
+            lcc_forward(xs, ys, tx, ty,
+                        lon0, nn, c, rho0, k0, fe, fn, _WGS84_E, _WGS84_A)
+            if to_m != 1.0:
+                tx /= to_m
+                ty /= to_m
+            return tx, ty
+
+    # --- LCC -> Geographic ---
+    if tgt_is_geo:
+        params = _lcc_params(src_crs)
+        if params is not None:
+            lon0, nn, c, rho0, k0, fe, fn, to_m = params
+            # lcc_inverse does NOT take a to_m param; pre-multiply if needed
+            if to_m != 1.0:
+                xs = xs * to_m
+                ys = ys * to_m
+            lcc_inverse(xs, ys, tx, ty,
+                        lon0, nn, c, rho0, k0, fe, fn, _WGS84_E, _WGS84_A)
+            return tx, ty
+
+    # --- Geographic -> AEA ---
+    if src_is_geo:
+        params = _aea_params(tgt_crs)
+        if params is not None:
+            lon0, nn, C, rho0, fe, fn = params
+            aea_forward(xs, ys, tx, ty,
+                        lon0, nn, C, rho0, fe, fn,
+                        _WGS84_E, _WGS84_A)
+            return tx, ty
+
+    # --- AEA -> Geographic ---
+    if tgt_is_geo:
+        params = _aea_params(src_crs)
+        if params is not None:
+            lon0, nn, C, rho0, fe, fn = params
+            aea_inverse(xs, ys, tx, ty,
+                        lon0, nn, C, rho0, fe, fn,
+                        _WGS84_E, _WGS84_A, _QP, _APA)
+            return tx, ty
+
+    # --- Geographic -> CEA ---
+    if src_is_geo:
+        params = _cea_params(tgt_crs)
+        if params is not None:
+            lon0, k0, fe, fn = params
+            cea_forward(xs, ys, tx, ty,
+                        lon0, k0, fe, fn,
+                        _WGS84_E, _WGS84_A, _QP)
+            return tx, ty
+
+    # --- CEA -> Geographic ---
+    if tgt_is_geo:
+        params = _cea_params(src_crs)
+        if params is not None:
+            lon0, k0, fe, fn = params
+            cea_inverse(xs, ys, tx, ty,
+                        lon0, k0, fe, fn,
+                        _WGS84_E, _WGS84_A, _QP, _APA)
+            return tx, ty
+
+    # --- Geographic -> LAEA ---
+    if src_is_geo:
+        params = _laea_params(tgt_crs)
+        if params is not None:
+            lon0, lat0, sinb1, cosb1, dd, xmf, ymf, rq, qp, fe, fn, mode = params
+            laea_forward(xs, ys, tx, ty,
+                         lon0, sinb1, cosb1, xmf, ymf, rq, qp,
+                         fe, fn, _WGS84_E, _WGS84_A, _WGS84_E2, mode)
+            return tx, ty
+
+    # --- LAEA -> Geographic ---
+    if tgt_is_geo:
+        params = _laea_params(src_crs)
+        if params is not None:
+            lon0, lat0, sinb1, cosb1, dd, xmf, ymf, rq, qp, fe, fn, mode = params
+            laea_inverse(xs, ys, tx, ty,
+                         lon0, sinb1, cosb1, xmf, ymf, rq, qp,
+                         fe, fn, _WGS84_E, _WGS84_A, _WGS84_E2, mode, _APA)
+            return tx, ty
+
+    # --- Geographic -> Polar Stereographic ---
+    if src_is_geo:
+        params = _stere_params(tgt_crs)
+        if params is not None:
+            lon0, k0, akm1, fe, fn, is_south = params
+            stere_forward(xs, ys, tx, ty,
+                          lon0, akm1, fe, fn, _WGS84_E, is_south)
+            return tx, ty
+
+    # --- Polar Stereographic -> Geographic ---
+    if tgt_is_geo:
+        params = _stere_params(src_crs)
+        if params is not None:
+            lon0, k0, akm1, fe, fn, is_south = params
+            stere_inverse(xs, ys, tx, ty,
+                          lon0, akm1, fe, fn, _WGS84_E, is_south)
+            return tx, ty
+
+    # --- Geographic -> Oblique Stereographic ---
+    if src_is_geo:
+        params = _sterea_params(tgt_crs)
+        if params is not None:
+            lon0, sinc0, cosc0, R2, C, K, ratexp, fe, fn, e = params
+            sterea_forward(xs, ys, tx, ty,
+                           lon0, sinc0, cosc0, R2, C, K, ratexp, fe, fn, e)
+            return tx, ty
+
+    # --- Oblique Stereographic -> Geographic ---
+    if tgt_is_geo:
+        params = _sterea_params(src_crs)
+        if params is not None:
+            lon0, sinc0, cosc0, R2, C, K, ratexp, fe, fn, e = params
+            sterea_inverse(xs, ys, tx, ty,
+                           lon0, sinc0, cosc0, R2, C, K, ratexp, fe, fn, e)
+            return tx, ty
+
+    return None
+
+
 # Wrap try_numba_transform with datum shift support
 _try_numba_transform_inner = try_numba_transform
 
