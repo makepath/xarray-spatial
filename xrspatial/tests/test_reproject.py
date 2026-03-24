@@ -1246,6 +1246,8 @@ class TestDaskGraphOptimization:
     def test_empty_chunk_skipping(self):
         """Chunks outside the source footprint should be nodata-filled
         without touching pyproj."""
+        import dask
+
         from xrspatial.reproject import reproject
         # Small raster in a corner of the output grid
         data = np.ones((16, 16), dtype=np.float64) * 42.0
@@ -1256,10 +1258,13 @@ class TestDaskGraphOptimization:
                     'x': np.linspace(10.0, 10.1, 16)},
             attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
         )
-        # Force a large output grid with small chunks so many are empty
-        result = reproject(raster, 'EPSG:32633', chunk_size=64,
-                           width=256, height=256)
-        vals = result.values
+        # Force a large output grid with small chunks so many are empty.
+        # Use synchronous scheduler to avoid PROJ C library thread-safety
+        # crashes on macOS when many chunks call pyproj.CRS concurrently.
+        with dask.config.set(scheduler='synchronous'):
+            result = reproject(raster, 'EPSG:32633', chunk_size=64,
+                               width=256, height=256)
+            vals = result.values
         # Should have some valid pixels and some NaN (empty chunks)
         assert np.any(np.isfinite(vals))
         assert np.any(np.isnan(vals))
