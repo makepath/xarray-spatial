@@ -357,6 +357,24 @@ class CRS:
     @staticmethod
     def _wkt_parameters(entry: dict) -> list[str]:
         """Build WKT PARAMETER[] entries from a proj dict."""
+        # For UTM entries, expand zone into explicit TM parameters so that
+        # parsers (including pyproj) get the correct central meridian and
+        # scale factor rather than defaulting to 0 / 1.
+        if entry.get("proj") == "utm" and "zone" in entry:
+            zone = entry["zone"]
+            lon_0 = zone * 6 - 183
+            k_0 = 0.9996
+            lat_0 = 0
+            x_0 = entry.get("x_0", 500000)
+            y_0 = entry.get("y_0", 0)
+            return [
+                f'PARAMETER["latitude_of_origin",{lat_0}]',
+                f'PARAMETER["central_meridian",{lon_0}]',
+                f'PARAMETER["scale_factor",{k_0}]',
+                f'PARAMETER["false_easting",{x_0}]',
+                f'PARAMETER["false_northing",{y_0}]',
+            ]
+
         # Map from proj keys to WKT parameter names
         key_map = {
             "lat_0": "latitude_of_origin",

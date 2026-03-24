@@ -215,6 +215,30 @@ class TestTwoTierResolution:
 
 
 # -----------------------------------------------------------------------
+# Grid computation with lite CRS (no pyproj needed)
+# -----------------------------------------------------------------------
+class TestGridWithoutPyproj:
+    def test_compute_output_grid_with_lite_crs(self):
+        from xrspatial.reproject._grid import _compute_output_grid
+        from xrspatial.reproject._lite_crs import CRS
+
+        src_crs = CRS(4326)
+        tgt_crs = CRS(32632)
+        source_bounds = (6.0, 47.0, 12.0, 55.0)
+        source_shape = (64, 64)
+        grid = _compute_output_grid(
+            source_bounds, source_shape, src_crs, tgt_crs
+        )
+        assert 'bounds' in grid
+        assert 'shape' in grid
+        h, w = grid['shape']
+        assert h > 0 and w > 0
+        left, bottom, right, top = grid['bounds']
+        assert right > left
+        assert top > bottom
+
+
+# -----------------------------------------------------------------------
 # Validate against pyproj (skipped when pyproj not installed)
 # -----------------------------------------------------------------------
 pyproj = pytest.importorskip("pyproj", reason="pyproj not installed")
