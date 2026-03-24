@@ -1176,3 +1176,82 @@ def _pad_nan(data, depth):
         out = np.pad(data, pad_width, mode='constant',
                      constant_values=np.nan)
     return out
+
+
+def fused_overlap(agg, *stages, boundary='nan'):
+    """Run multiple overlap operations in a single map_overlap call.
+
+    Each stage is a ``(func, depth)`` pair. ``func`` receives a padded
+    chunk and returns the unpadded interior result.  Stages are fused
+    into one ``map_overlap`` call with the sum of all depths, producing
+    one blockwise graph layer instead of N.
+
+    Parameters
+    ----------
+    agg : xr.DataArray
+        Input raster.
+    *stages : tuple of (callable, depth)
+        Each ``func`` takes array ``(H+2*d, W+2*d)`` -> ``(H, W)``.
+        ``depth`` is int, tuple, or dict.
+    boundary : str
+        Must be ``'nan'``.
+
+    Returns
+    -------
+    xr.DataArray
+    """
+    if not isinstance(agg, xr.DataArray):
+        raise TypeError(
+            f"fused_overlap(): expected xr.DataArray, "
+            f"got {type(agg).__name__}"
+        )
+    if not stages:
+        raise ValueError("fused_overlap(): need at least one stage")
+    if boundary != 'nan':
+        raise ValueError(
+            f"fused_overlap(): boundary must be 'nan', got {boundary!r}"
+        )
+
+    ndim = agg.ndim
+
+    # Normalize and sum depths
+    stage_depths = [_normalize_depth(d, ndim) for _, d in stages]
+    total_depth = {ax: sum(sd[ax] for sd in stage_depths)
+                   for ax in range(ndim)}
+
+    # --- non-dask path ---
+    if not has_dask_array() or not isinstance(agg.data, da.Array):
+        result = agg.data
+        for i, (func, _) in enumerate(stages):
+            depth_tuple = tuple(stage_depths[i][ax] for ax in range(ndim))
+            padded = _pad_nan(result, depth_tuple)
+            result = func(padded)
+        return agg.copy(data=result)
+
+    # --- dask path ---
+    # Validate chunk sizes
+    for ax, d in total_depth.items():
+        for cs in agg.chunks[ax]:
+            if cs < d:
+                raise ValueError(
+                    f"Chunk size {cs} on axis {ax} is smaller than "
+                    f"total depth {d}. Rechunk first."
+                )
+
+    funcs = [f for f, _ in stages]
+
+    def _fused_wrapper(block):
+        result = block
+        for func in funcs:
+            result = func(result)
+        return result
+
+    out = agg.data.map_overlap(
+        _fused_wrapper,
+        depth=total_depth,
+        boundary=np.nan,
+        trim=False,
+        meta=np.array(()),
+    )
+
+    return agg.copy(data=out)
