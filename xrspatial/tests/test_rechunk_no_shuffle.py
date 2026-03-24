@@ -97,8 +97,8 @@ def test_numpy_passthrough():
 # Input validation
 # ---------------------------------------------------------------------------
 
-def test_rejects_non_dataarray():
-    with pytest.raises(TypeError, match="expected xr.DataArray"):
+def test_rejects_non_dataarray_or_dataset():
+    with pytest.raises(TypeError, match="expected xr.DataArray or xr.Dataset"):
         rechunk_no_shuffle(np.zeros((10, 10)))
 
 
@@ -121,3 +121,75 @@ def test_accessor():
     direct = rechunk_no_shuffle(raster, target_mb=16)
     via_accessor = raster.xrs.rechunk_no_shuffle(target_mb=16)
     assert direct.chunks == via_accessor.chunks
+
+
+# ---------------------------------------------------------------------------
+# Dataset support
+# ---------------------------------------------------------------------------
+
+def _make_dask_dataset(chunks=128):
+    """Dataset with two dask variables and one numpy variable."""
+    dask_a = xr.DataArray(
+        da.zeros((512, 512), chunks=chunks, dtype=np.float32),
+        dims=['y', 'x'], name='a',
+    )
+    dask_b = xr.DataArray(
+        da.ones((512, 512), chunks=chunks, dtype=np.float64),
+        dims=['y', 'x'], name='b',
+    )
+    numpy_c = xr.DataArray(
+        np.zeros((512, 512), dtype=np.float32),
+        dims=['y', 'x'], name='c',
+    )
+    return xr.Dataset({'a': dask_a, 'b': dask_b, 'c': numpy_c},
+                       attrs={'crs': 'EPSG:32610'})
+
+
+def test_dataset_rechunks_all_dask_vars():
+    """Both dask variables should get bigger chunks."""
+    ds = _make_dask_dataset(chunks=64)
+    result = rechunk_no_shuffle(ds, target_mb=16)
+    assert isinstance(result, xr.Dataset)
+    for name in ['a', 'b']:
+        orig_chunk = ds[name].chunks[0][0]
+        new_chunk = result[name].chunks[0][0]
+        assert new_chunk > orig_chunk
+        assert new_chunk % orig_chunk == 0
+
+
+def test_dataset_numpy_var_unchanged():
+    """Numpy-backed variable passes through without modification."""
+    ds = _make_dask_dataset()
+    result = rechunk_no_shuffle(ds, target_mb=16)
+    # 'c' is numpy-backed, should still be numpy
+    assert not hasattr(result['c'].data, 'dask')
+    np.testing.assert_array_equal(result['c'].values, ds['c'].values)
+
+
+def test_dataset_preserves_attrs_and_coords():
+    """Dataset attributes and coordinates survive rechunking."""
+    ds = _make_dask_dataset()
+    ds = ds.assign_coords(y=np.arange(512), x=np.arange(512))
+    result = rechunk_no_shuffle(ds, target_mb=16)
+    assert result.attrs == ds.attrs
+    xr.testing.assert_equal(result.coords.to_dataset(), ds.coords.to_dataset())
+
+
+def test_dataset_preserves_values():
+    """Data values are identical after rechunking."""
+    np.random.seed(1069)
+    arr = da.from_array(np.random.rand(256, 256).astype(np.float32), chunks=64)
+    ds = xr.Dataset({'v': xr.DataArray(arr, dims=['y', 'x'])})
+    result = rechunk_no_shuffle(ds, target_mb=1)
+    np.testing.assert_array_equal(ds['v'].values, result['v'].values)
+
+
+def test_dataset_accessor():
+    """The Dataset .xrs.rechunk_no_shuffle() accessor works."""
+    import xrspatial  # noqa: F401
+    ds = _make_dask_dataset(chunks=64)
+    direct = rechunk_no_shuffle(ds, target_mb=16)
+    via_accessor = ds.xrs.rechunk_no_shuffle(target_mb=16)
+    for name in ds.data_vars:
+        if hasattr(ds[name].data, 'dask'):
+            assert direct[name].chunks == via_accessor[name].chunks

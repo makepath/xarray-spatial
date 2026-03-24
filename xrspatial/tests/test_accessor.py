@@ -106,6 +106,7 @@ def test_dataset_accessor_has_expected_methods():
         'proximity', 'allocation', 'direction', 'cost_distance',
         'ndvi', 'evi', 'arvi', 'savi', 'nbr', 'sipi',
         'rasterize',
+        'rechunk_no_shuffle',
     ]
     for name in expected:
         assert name in names, f"Missing method: {name}"
