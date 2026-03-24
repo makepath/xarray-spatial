@@ -164,6 +164,57 @@ class TestCRSWktRoundTrip:
 
 
 # -----------------------------------------------------------------------
+# Two-tier CRS resolution (_crs_utils integration)
+# -----------------------------------------------------------------------
+try:
+    import pyproj as _pyproj_mod
+    _HAS_PYPROJ = True
+except ImportError:
+    _HAS_PYPROJ = False
+
+from xrspatial.reproject._crs_utils import _resolve_crs, _crs_from_wkt
+
+
+class TestTwoTierResolution:
+    def test_resolve_crs_int_uses_lite(self):
+        result = _resolve_crs(4326)
+        assert isinstance(result, CRS)
+        assert result.to_epsg() == 4326
+
+    def test_resolve_crs_string_uses_lite(self):
+        result = _resolve_crs("EPSG:32632")
+        assert isinstance(result, CRS)
+        assert result.to_epsg() == 32632
+
+    @pytest.mark.skipif(not _HAS_PYPROJ, reason="pyproj not installed")
+    def test_resolve_crs_unknown_falls_back(self):
+        result = _resolve_crs(2193)
+        assert not isinstance(result, CRS)
+        assert hasattr(result, "to_epsg")
+        assert result.to_epsg() == 2193
+
+    def test_resolve_crs_none_returns_none(self):
+        assert _resolve_crs(None) is None
+
+    def test_resolve_crs_passes_through_lite_crs(self):
+        lite = CRS(4326)
+        result = _resolve_crs(lite)
+        assert result is lite
+
+    @pytest.mark.skipif(not _HAS_PYPROJ, reason="pyproj not installed")
+    def test_resolve_crs_passes_through_pyproj(self):
+        pp = _pyproj_mod.CRS.from_epsg(4326)
+        result = _resolve_crs(pp)
+        assert result is pp
+
+    def test_crs_from_wkt_lite(self):
+        wkt = CRS(4326).to_wkt()
+        result = _crs_from_wkt(wkt)
+        assert isinstance(result, CRS)
+        assert result.to_epsg() == 4326
+
+
+# -----------------------------------------------------------------------
 # Validate against pyproj (skipped when pyproj not installed)
 # -----------------------------------------------------------------------
 pyproj = pytest.importorskip("pyproj", reason="pyproj not installed")
