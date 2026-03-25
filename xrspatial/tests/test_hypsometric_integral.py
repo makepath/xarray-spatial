@@ -10,6 +10,20 @@ import xarray as xr
 
 from .general_checks import create_test_raster
 
+try:
+    import cupy as cp
+except ImportError:
+    cp = None
+
+
+def _to_numpy(result):
+    """Extract numpy array from any backend result."""
+    if da and isinstance(result.data, da.Array):
+        result = result.compute()
+    if cp is not None and isinstance(result.data, cp.ndarray):
+        return result.data.get()
+    return result.values
+
 
 # --- fixtures ---------------------------------------------------------------
 
@@ -64,7 +78,7 @@ def test_hypsometric_integral_basic(backend, hi_zones, hi_values):
     assert result.dims == hi_values.dims
     assert result.name == 'hypsometric_integral'
 
-    out = result.values if not (da and isinstance(result.data, da.Array)) else result.compute().values
+    out = _to_numpy(result)
 
     # zone 0 (nodata) cells should be NaN
     nodata_mask = np.array([
@@ -109,7 +123,7 @@ def test_hypsometric_integral_flat_zone(backend):
         chunks=(2, 2))
 
     result = hypsometric_integral(zones, values, nodata=0)
-    out = result.values if not (da and isinstance(result.data, da.Array)) else result.compute().values
+    out = _to_numpy(result)
     assert np.all(np.isnan(out))
 
 
@@ -126,7 +140,7 @@ def test_hypsometric_integral_nan_in_values(backend):
         chunks=(2, 2))
 
     result = hypsometric_integral(zones, values, nodata=0)
-    out = result.values if not (da and isinstance(result.data, da.Array)) else result.compute().values
+    out = _to_numpy(result)
 
     # zone 1 finite values: 10, 20, 30 -> HI = (20-10)/(30-10) = 0.5
     # the NaN cell should remain NaN in output
@@ -149,7 +163,7 @@ def test_hypsometric_integral_single_cell_zone(backend):
         chunks=(1, 2))
 
     result = hypsometric_integral(zones, values, nodata=0)
-    out = result.values if not (da and isinstance(result.data, da.Array)) else result.compute().values
+    out = _to_numpy(result)
     # single cell -> range=0 -> NaN
     assert np.all(np.isnan(out))
 
@@ -167,7 +181,7 @@ def test_hypsometric_integral_all_nan_zone(backend):
         chunks=(2, 2))
 
     result = hypsometric_integral(zones, values, nodata=0)
-    out = result.values if not (da and isinstance(result.data, da.Array)) else result.compute().values
+    out = _to_numpy(result)
 
     # zone 1: all NaN -> NaN
     assert np.all(np.isnan(out[0, :]))
@@ -188,7 +202,7 @@ def test_hypsometric_integral_nodata_none(backend):
         chunks=(2, 2))
 
     result = hypsometric_integral(zones, values, nodata=None)
-    out = result.values if not (da and isinstance(result.data, da.Array)) else result.compute().values
+    out = _to_numpy(result)
 
     # zone 0: HI = (15-10)/(20-10) = 0.5
     np.testing.assert_allclose(out[0, :], 0.5, rtol=1e-10)
@@ -203,7 +217,7 @@ def test_hypsometric_integral_accessor(backend, hi_zones, hi_values):
     assert isinstance(result, xr.DataArray)
     assert result.shape == hi_values.shape
 
-    out = result.values if not (da and isinstance(result.data, da.Array)) else result.compute().values
+    out = _to_numpy(result)
     z1_mask = np.array([
         [False, True, True, True],
         [False, True, True, False],
