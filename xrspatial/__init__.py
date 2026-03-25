@@ -131,6 +131,7 @@ from xrspatial.zonal import trim  # noqa
 from xrspatial.zonal import crosstab as zonal_crosstab  # noqa
 from xrspatial.zonal import regions as regions  # noqa
 from xrspatial.zonal import stats as zonal_stats  # noqa
+from xrspatial.zonal import hypsometric_integral  # noqa
 from xrspatial.zonal import suggest_zonal_canvas as suggest_zonal_canvas  # noqa
 from xrspatial.reproject import merge  # noqa
 from xrspatial.reproject import reproject  # noqa

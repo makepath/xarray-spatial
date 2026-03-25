@@ -320,6 +320,10 @@ class XrsSpatialDataArrayAccessor:
         from .zonal import crosstab
         return crosstab(zones, self._obj, **kwargs)
 
+    def zonal_hypsometric_integral(self, zones, **kwargs):
+        from .zonal import hypsometric_integral
+        return hypsometric_integral(zones, self._obj, **kwargs)
+
     def crop(self, zones, zones_ids, **kwargs):
         from .zonal import crop
         return crop(zones, self._obj, zones_ids, **kwargs)

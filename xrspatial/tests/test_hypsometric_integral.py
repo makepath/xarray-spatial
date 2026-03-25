@@ -194,3 +194,49 @@ def test_hypsometric_integral_nodata_none(backend):
     np.testing.assert_allclose(out[0, :], 0.5, rtol=1e-10)
     # zone 1: HI = (35-30)/(40-30) = 0.5
     np.testing.assert_allclose(out[1, :], 0.5, rtol=1e-10)
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_hypsometric_integral_accessor(backend, hi_zones, hi_values):
+    """Verify the .xrs accessor method works."""
+    result = hi_values.xrs.zonal_hypsometric_integral(hi_zones)
+    assert isinstance(result, xr.DataArray)
+    assert result.shape == hi_values.shape
+
+    out = result.values if not (da and isinstance(result.data, da.Array)) else result.compute().values
+    z1_mask = np.array([
+        [False, True, True, True],
+        [False, True, True, False],
+        [False, False, False, False],
+        [False, False, False, False],
+    ])
+    np.testing.assert_allclose(out[z1_mask], 0.5, rtol=1e-10)
+
+
+def test_hypsometric_integral_list_of_pairs_zones():
+    """Vector zones via list of (geometry, value) pairs."""
+    from shapely.geometry import box
+    from xrspatial.zonal import hypsometric_integral
+
+    pytest.importorskip("shapely")
+    pytest.importorskip("rasterio")
+
+    values_data = np.array([
+        [10., 20., 30.],
+        [40., 50., 60.],
+        [70., 80., 90.],
+    ], dtype=np.float64)
+    values = xr.DataArray(values_data, dims=['y', 'x'])
+    values['y'] = [2.0, 1.0, 0.0]
+    values['x'] = [0.0, 1.0, 2.0]
+    values.attrs['res'] = (1.0, 1.0)
+
+    # Zone 1 covers left half, zone 2 covers right half
+    zones_pairs = [
+        (box(-0.5, -0.5, 1.5, 2.5), 1),
+        (box(1.5, -0.5, 2.5, 2.5), 2),
+    ]
+
+    result = hypsometric_integral(zones_pairs, values, nodata=0)
+    assert isinstance(result, xr.DataArray)
+    assert result.shape == values.shape
