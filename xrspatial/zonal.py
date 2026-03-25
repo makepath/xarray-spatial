@@ -1363,6 +1363,90 @@ def _hi_cupy(zones_data, values_data, nodata):
     return cp.asarray(result_np)
 
 
+@delayed
+def _hi_block_stats(z_block, v_block, uzones):
+    """Per-chunk: return (n_zones, 4) array of [min, max, sum, count]."""
+    result = np.full((len(uzones), 4), np.nan, dtype=np.float64)
+    result[:, 3] = 0  # count starts at 0
+    for i, z in enumerate(uzones):
+        mask = (z_block == z) & np.isfinite(v_block)
+        if not np.any(mask):
+            continue
+        vals = v_block[mask]
+        result[i, 0] = vals.min()
+        result[i, 1] = vals.max()
+        result[i, 2] = vals.sum()
+        result[i, 3] = len(vals)
+    return result
+
+
+@delayed
+def _hi_reduce(partials_list, uzones):
+    """Reduce per-block stats to global per-zone HI lookup dict."""
+    stacked = np.stack(partials_list)  # (n_blocks, n_zones, 4)
+    g_min = np.nanmin(stacked[:, :, 0], axis=0)
+    g_max = np.nanmax(stacked[:, :, 1], axis=0)
+    g_sum = np.nansum(stacked[:, :, 2], axis=0)
+    g_count = np.nansum(stacked[:, :, 3], axis=0)
+
+    hi_lookup = {}
+    for i, z in enumerate(uzones):
+        if g_count[i] == 0 or g_max[i] == g_min[i]:
+            hi_lookup[z] = np.nan
+        else:
+            mean = g_sum[i] / g_count[i]
+            hi_lookup[z] = (mean - g_min[i]) / (g_max[i] - g_min[i])
+    return hi_lookup
+
+
+def _hi_dask_numpy(zones_data, values_data, nodata):
+    """Dask+numpy backend for hypsometric integral."""
+    # Step 1: find all unique zones across all chunks
+    unique_zones = _unique_finite_zones(zones_data)
+    if nodata is not None:
+        unique_zones = unique_zones[unique_zones != nodata]
+
+    if len(unique_zones) == 0:
+        return da.full(values_data.shape, np.nan, dtype=np.float64,
+                       chunks=values_data.chunks)
+
+    # Step 2: per-block aggregation -> global reduce
+    zones_blocks = zones_data.to_delayed().ravel()
+    values_blocks = values_data.to_delayed().ravel()
+
+    partials = [
+        _hi_block_stats(zb, vb, unique_zones)
+        for zb, vb in zip(zones_blocks, values_blocks)
+    ]
+
+    # Compute the HI lookup eagerly so map_blocks can use it as a parameter.
+    hi_lookup = dask.compute(_hi_reduce(partials, unique_zones))[0]
+
+    # Step 3: paint back using map_blocks (preserves chunk structure)
+    def _paint(zones_chunk, values_chunk, hi_map):
+        out = np.full(zones_chunk.shape, np.nan, dtype=np.float64)
+        for z, hi_val in hi_map.items():
+            mask = (zones_chunk == z) & np.isfinite(values_chunk)
+            out[mask] = hi_val
+        return out
+
+    return da.map_blocks(
+        _paint, zones_data, values_data, hi_map=hi_lookup,
+        dtype=np.float64, meta=np.array(()),
+    )
+
+
+def _hi_dask_cupy(zones_data, values_data, nodata):
+    """Dask+cupy backend: convert chunks to numpy, delegate."""
+    zones_cpu = zones_data.map_blocks(
+        lambda x: x.get(), dtype=zones_data.dtype, meta=np.array(()),
+    )
+    values_cpu = values_data.map_blocks(
+        lambda x: x.get(), dtype=values_data.dtype, meta=np.array(()),
+    )
+    return _hi_dask_numpy(zones_cpu, values_cpu, nodata)
+
+
 def hypsometric_integral(
     zones,
     values,
@@ -1409,8 +1493,8 @@ def hypsometric_integral(
     mapper = ArrayTypeFunctionMapping(
         numpy_func=lambda z, v: _hi_numpy(z, v, _nodata),
         cupy_func=lambda z, v: _hi_cupy(z, v, _nodata),
-        dask_func=not_implemented_func,
-        dask_cupy_func=not_implemented_func,
+        dask_func=lambda z, v: _hi_dask_numpy(z, v, _nodata),
+        dask_cupy_func=lambda z, v: _hi_dask_cupy(z, v, _nodata),
     )
 
     out = mapper(zones)(zones.data, values.data)
