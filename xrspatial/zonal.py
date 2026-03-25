@@ -1331,6 +1331,99 @@ def crosstab(
     return crosstab_df
 
 
+# ---------------------------------------------------------------------------
+# Hypsometric integral
+# ---------------------------------------------------------------------------
+
+def _hi_numpy(zones_data, values_data, nodata):
+    """Numpy backend for hypsometric integral."""
+    unique_zones = np.unique(zones_data[np.isfinite(zones_data)])
+    if nodata is not None:
+        unique_zones = unique_zones[unique_zones != nodata]
+
+    out = np.full(values_data.shape, np.nan, dtype=np.float64)
+
+    for z in unique_zones:
+        mask = (zones_data == z) & np.isfinite(values_data)
+        if not np.any(mask):
+            continue
+        vals = values_data[mask]
+        mn, mx = vals.min(), vals.max()
+        if mx == mn:
+            continue  # flat zone -> NaN
+        hi = (vals.mean() - mn) / (mx - mn)
+        out[mask] = hi
+    return out
+
+
+def _hi_cupy(zones_data, values_data, nodata):
+    """CuPy backend for hypsometric integral — transfer to host, compute, return."""
+    import cupy as cp
+    result_np = _hi_numpy(cp.asnumpy(zones_data), cp.asnumpy(values_data), nodata)
+    return cp.asarray(result_np)
+
+
+def hypsometric_integral(
+    zones,
+    values,
+    nodata=0,
+    column=None,
+    rasterize_kw=None,
+    name='hypsometric_integral',
+):
+    """Hypsometric integral (HI) per zone, painted back to a raster.
+
+    HI measures geomorphic maturity: ``(mean - min) / (max - min)``
+    computed over elevations within each zone.  Values range from 0 to 1.
+
+    Parameters
+    ----------
+    zones : xr.DataArray, GeoDataFrame, or list of (geometry, value) pairs
+        Zone definitions.  Integer zone IDs.  GeoDataFrame and list-of-pairs
+        inputs are rasterized using *values* as the template grid.
+    values : xr.DataArray
+        2D elevation raster (float), same shape as *zones*.
+    nodata : int or None, default 0
+        Zone ID that means "no zone".  Excluded from computation; those
+        cells get NaN in the output.  Set to ``None`` to include all IDs.
+    column : str, optional
+        Column in a GeoDataFrame containing zone IDs.
+    rasterize_kw : dict, optional
+        Extra keyword arguments for ``rasterize()`` when *zones* is vector.
+    name : str, default ``'hypsometric_integral'``
+        Name for the output DataArray.
+
+    Returns
+    -------
+    xr.DataArray
+        Float64 raster, same shape/dims/coords as *values*.  Each cell
+        holds the HI of its zone.  NaN for nodata zones, non-finite
+        elevation cells, and flat zones (elevation range = 0).
+    """
+    zones = _maybe_rasterize_zones(zones, values, column=column,
+                                   rasterize_kw=rasterize_kw)
+    validate_arrays(zones, values)
+
+    _nodata = nodata  # capture for closures
+
+    mapper = ArrayTypeFunctionMapping(
+        numpy_func=lambda z, v: _hi_numpy(z, v, _nodata),
+        cupy_func=lambda z, v: _hi_cupy(z, v, _nodata),
+        dask_func=not_implemented_func,
+        dask_cupy_func=not_implemented_func,
+    )
+
+    out = mapper(zones)(zones.data, values.data)
+
+    return xr.DataArray(
+        out,
+        name=name,
+        dims=values.dims,
+        coords=values.coords,
+        attrs=values.attrs,
+    )
+
+
 def _apply_numpy(zones_data, values_data, func, nodata):
     out = values_data.copy()
     if nodata is not None:
