@@ -24,29 +24,55 @@ class XrsSpatialDataArrayAccessor:
     # ---- Plot ----
 
     def plot(self, **kwargs):
-        """Plot the DataArray, using an embedded TIFF colormap if present.
+        """Plot the DataArray with helpful defaults.
 
-        For palette/indexed-color GeoTIFFs (read via ``open_geotiff``),
-        the TIFF's color table is applied automatically with correct
-        normalization.  For all other DataArrays, falls through to the
-        standard ``da.plot()``.
+        Computes dask arrays, applies embedded GeoTIFF colormaps,
+        and sets equal aspect ratio.
 
-        Usage::
+        Parameters
+        ----------
+        **kwargs
+            Passed to ``da.plot()``.  Common extras: ``cmap``,
+            ``figsize``, ``ax``, ``add_colorbar``.
 
-            da = open_geotiff('landcover.tif')
-            da.xrs.plot()  # palette colors used automatically
+        Returns
+        -------
+        matplotlib artist (from ``da.plot()``)
         """
+        import matplotlib.pyplot as plt
         import numpy as np
-        cmap = self._obj.attrs.get('cmap')
+
+        da = self._obj
+
+        # Materialise dask arrays so matplotlib can render them.
+        try:
+            da = da.compute()
+        except (AttributeError, TypeError):
+            pass
+
+        # Use embedded GeoTIFF colormap when present.
+        cmap = da.attrs.get('cmap')
         if cmap is not None and 'cmap' not in kwargs:
             from matplotlib.colors import BoundaryNorm
             n_colors = len(cmap.colors)
             boundaries = np.arange(n_colors + 1) - 0.5
-            norm = BoundaryNorm(boundaries, n_colors)
             kwargs.setdefault('cmap', cmap)
-            kwargs.setdefault('norm', norm)
+            kwargs.setdefault('norm', BoundaryNorm(boundaries, n_colors))
             kwargs.setdefault('add_colorbar', True)
-        return self._obj.plot(**kwargs)
+
+        # Create a figure with sensible size if none provided.
+        if 'ax' not in kwargs:
+            fig, ax = plt.subplots(
+                figsize=kwargs.get('figsize', (8, 6)),
+            )
+            kwargs.pop('figsize', None)
+            kwargs['ax'] = ax
+
+        result = da.plot(**kwargs)
+
+        kwargs['ax'].set_aspect('equal')
+        plt.tight_layout()
+        return result
 
     # ---- Surface ----
 
@@ -522,6 +548,86 @@ class XrsSpatialDatasetAccessor:
     def __init__(self, obj):
         self._obj = obj
 
+    # ---- Plot ----
+
+    def plot(self, vars=None, cols=3, **kwargs):
+        """Plot 2D data variables as a grid of subplots.
+
+        Parameters
+        ----------
+        vars : list of str, optional
+            Variable names to plot.  If None, plots all 2D variables.
+        cols : int, default 3
+            Maximum number of columns in the subplot grid.
+        **kwargs
+            Passed to each subplot's ``da.plot()``.  Common extras:
+            ``cmap``, ``figsize``, ``add_colorbar``.
+
+        Returns
+        -------
+        numpy.ndarray of matplotlib.axes.Axes
+        """
+        import math
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from matplotlib.colors import BoundaryNorm
+
+        ds = self._obj
+
+        # Collect 2D variables to plot.
+        if vars is not None:
+            names = [v for v in vars if v in ds.data_vars]
+        else:
+            names = [
+                v for v in ds.data_vars
+                if ds[v].ndim == 2
+            ]
+
+        if not names:
+            raise ValueError("No 2D variables found to plot")
+
+        n = len(names)
+        ncols = min(n, cols)
+        nrows = math.ceil(n / ncols)
+
+        fig, axes = plt.subplots(
+            nrows, ncols,
+            figsize=kwargs.pop('figsize', (5 * ncols, 4 * nrows)),
+            squeeze=False,
+        )
+
+        for idx, name in enumerate(names):
+            ax = axes[idx // ncols][idx % ncols]
+            da = ds[name]
+
+            # Materialise dask arrays so matplotlib can render them.
+            try:
+                da = da.compute()
+            except (AttributeError, TypeError):
+                pass
+
+            # Use embedded GeoTIFF colormap when present.
+            cmap = da.attrs.get('cmap')
+            kw = dict(kwargs)
+            if cmap is not None and 'cmap' not in kw:
+                n_colors = len(cmap.colors)
+                boundaries = np.arange(n_colors + 1) - 0.5
+                kw.setdefault('cmap', cmap)
+                kw.setdefault('norm', BoundaryNorm(boundaries, n_colors))
+                kw.setdefault('add_colorbar', True)
+
+            kw.setdefault('ax', ax)
+            da.plot(**kw)
+            ax.set_title(name)
+            ax.set_aspect('equal')
+
+        # Hide unused axes.
+        for idx in range(n, nrows * ncols):
+            axes[idx // ncols][idx % ncols].set_visible(False)
+
+        plt.tight_layout()
+        return axes
+
     # ---- Surface ----
 
     def slope(self, **kwargs):
@@ -918,3 +1024,9 @@ class XrsSpatialDatasetAccessor:
                                    y_min, y_max, x_min, x_max)
         kwargs.pop('window', None)
         return open_geotiff(source, window=window, **kwargs)
+
+    # ---- Chunking ----
+
+    def rechunk_no_shuffle(self, **kwargs):
+        from .utils import rechunk_no_shuffle
+        return rechunk_no_shuffle(self._obj, **kwargs)

@@ -1028,19 +1028,66 @@ def _sample_windows_min_max(
     return float(np.nanmin(np.array(mins, dtype=float))), float(np.nanmax(np.array(maxs, dtype=float)))
 
 
+def _no_shuffle_chunks(chunks, dtype, dims, target_mb):
+    """Compute target chunk dict that is an exact multiple of *chunks*.
+
+    Returns a ``{dim: size}`` dict, or ``None`` when the current
+    chunks already meet or exceed the target.
+    """
+    base = tuple(c[0] for c in chunks)
+
+    current_bytes = dtype.itemsize
+    for b in base:
+        current_bytes *= b
+
+    target_bytes = target_mb * 1024 * 1024
+
+    if current_bytes >= target_bytes:
+        return None
+
+    ndim = len(base)
+    ratio = target_bytes / current_bytes
+    multiplier = max(1, int(ratio ** (1.0 / ndim)))
+
+    if multiplier <= 1:
+        return None
+
+    return {dim: b * multiplier for dim, b in zip(dims, base)}
+
+
+def _is_unmodified_zarr(ds):
+    """True when every dask variable is a direct zarr read (2 layers)."""
+    found_dask = False
+    for var in ds.data_vars.values():
+        data = var.data
+        if has_dask_array() and isinstance(data, da.Array):
+            found_dask = True
+            graph = data.__dask_graph__()
+            if hasattr(graph, 'layers') and len(graph.layers) != 2:
+                return False
+    return found_dask
+
+
 def rechunk_no_shuffle(agg, target_mb=128):
-    """Rechunk a dask-backed DataArray without triggering a shuffle.
+    """Rechunk a dask-backed DataArray or Dataset without triggering a shuffle.
 
     Computes an integer multiplier per dimension so that each new chunk
     is an exact multiple of the original chunk size.  This lets dask
     merge whole source chunks in-place instead of splitting and
     recombining partial blocks (which is effectively a shuffle).
 
+    For file-backed data (e.g. Zarr stores), the function re-opens
+    the source with the target chunk sizes so that each dask task
+    reads multiple storage chunks in one call.  This produces a
+    dramatically smaller task graph compared to ``.chunk()``, which
+    adds a rechunk merge layer on top of the existing read tasks.
+
     Parameters
     ----------
-    agg : xr.DataArray
-        Input raster.  If not backed by a dask array the input is
-        returned unchanged.
+    agg : xr.DataArray or xr.Dataset
+        Input raster(s).  If not backed by a dask array the input is
+        returned unchanged.  For Datasets, each variable is rechunked
+        independently.
     target_mb : int or float
         Target chunk size in megabytes.  The actual chunk size will be
         the closest multiple of the source chunk that does not exceed
@@ -1048,13 +1095,13 @@ def rechunk_no_shuffle(agg, target_mb=128):
 
     Returns
     -------
-    xr.DataArray
-        Rechunked DataArray.  Coordinates and attributes are preserved.
+    xr.DataArray or xr.Dataset
+        Rechunked object.  Coordinates and attributes are preserved.
 
     Raises
     ------
     TypeError
-        If *agg* is not an ``xr.DataArray``.
+        If *agg* is not an ``xr.DataArray`` or ``xr.Dataset``.
     ValueError
         If *target_mb* is not positive.
 
@@ -1066,9 +1113,11 @@ def rechunk_no_shuffle(agg, target_mb=128):
     >>> big = rechunk_no_shuffle(arr, target_mb=64)
     >>> big.chunks  # multiples of 256
     """
+    if isinstance(agg, xr.Dataset):
+        return _rechunk_dataset_no_shuffle(agg, target_mb)
     if not isinstance(agg, xr.DataArray):
         raise TypeError(
-            f"rechunk_no_shuffle(): expected xr.DataArray, "
+            f"rechunk_no_shuffle(): expected xr.DataArray or xr.Dataset, "
             f"got {type(agg).__name__}"
         )
     if target_mb <= 0:
@@ -1079,27 +1128,59 @@ def rechunk_no_shuffle(agg, target_mb=128):
     if not has_dask_array() or not isinstance(agg.data, da.Array):
         return agg
 
-    chunks = agg.chunks  # tuple of tuples
-    base = tuple(c[0] for c in chunks)
-
-    current_bytes = agg.dtype.itemsize
-    for b in base:
-        current_bytes *= b
-
-    target_bytes = target_mb * 1024 * 1024
-
-    if current_bytes >= target_bytes:
+    new_chunks = _no_shuffle_chunks(
+        agg.chunks, agg.dtype, agg.dims, target_mb,
+    )
+    if new_chunks is None:
         return agg
-
-    ndim = len(base)
-    ratio = target_bytes / current_bytes
-    multiplier = max(1, int(ratio ** (1.0 / ndim)))
-
-    if multiplier <= 1:
-        return agg
-
-    new_chunks = {dim: b * multiplier for dim, b in zip(agg.dims, base)}
     return agg.chunk(new_chunks)
+
+
+def _rechunk_dataset_no_shuffle(ds, target_mb):
+    """Rechunk a Dataset, re-opening from zarr when possible."""
+    if target_mb <= 0:
+        raise ValueError(
+            f"rechunk_no_shuffle(): target_mb must be > 0, got {target_mb}"
+        )
+
+    if not has_dask_array():
+        return ds
+
+    # Compute target chunks from the first dask-backed variable.
+    # This assumes all variables share the same chunk layout and dtype;
+    # for mixed-dtype Datasets the budget may overshoot on smaller types.
+    new_chunks = None
+    for var in ds.data_vars.values():
+        if isinstance(var.data, da.Array):
+            new_chunks = _no_shuffle_chunks(
+                var.chunks, var.dtype, var.dims, target_mb,
+            )
+            break
+
+    if new_chunks is None:
+        return ds
+
+    # For unmodified zarr reads, re-open with target chunks so
+    # each dask task reads multiple storage chunks in one call.
+    # This avoids the extra rechunk-merge graph layer that
+    # .chunk() would add on top of the existing read tasks.
+    source = ds.encoding.get('source')
+    if source is not None and _is_unmodified_zarr(ds):
+        try:
+            reopened = xr.open_zarr(source, chunks=new_chunks)
+            if set(ds.data_vars) <= set(reopened.data_vars):
+                result = reopened[list(ds.data_vars)]
+                # Propagate zarr source into each variable's encoding
+                # so downstream operations (e.g. preview) can re-open
+                # with different chunks when needed.
+                for name in result.data_vars:
+                    result[name].encoding['_xrs_zarr_source'] = source
+                return result
+        except Exception:
+            pass
+
+    # Fallback: rechunk each variable individually.
+    return ds.map(rechunk_no_shuffle, target_mb=target_mb)
 
 
 def _normalize_depth(depth, ndim):
