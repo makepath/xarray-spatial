@@ -1,34 +1,84 @@
-"""CRS detection utilities and optional pyproj import guard."""
+"""CRS detection utilities and optional pyproj import guard.
+
+Uses a two-tier strategy: try the lightweight built-in CRS first,
+then fall back to pyproj for codes/formats not in the built-in table.
+"""
 from __future__ import annotations
 
+from xrspatial.reproject._lite_crs import CRS as LiteCRS
 
-def _require_pyproj():
-    """Import and return the pyproj module, raising a clear error if missing."""
+
+def _try_import_pyproj():
+    """Try to import pyproj, returning the module or None."""
     try:
         import pyproj
         return pyproj
     except ImportError:
+        return None
+
+
+def _require_pyproj():
+    """Import and return the pyproj module, raising a clear error if missing."""
+    pyproj = _try_import_pyproj()
+    if pyproj is None:
         raise ImportError(
             "pyproj is required for CRS reprojection. "
             "Install it with:  pip install pyproj  "
             "or:  pip install xarray-spatial[reproject]"
         )
+    return pyproj
 
 
 def _resolve_crs(crs_input):
-    """Convert *crs_input* to a ``pyproj.CRS`` object.
+    """Convert *crs_input* to a CRS object.
 
-    Accepts anything ``pyproj.CRS()`` accepts: EPSG int, authority string,
-    WKT, proj4 dict, or an existing ``pyproj.CRS`` instance.
+    Resolution order:
 
-    Returns None if *crs_input* is None.
+    1. ``None`` passes through as ``None``.
+    2. An existing ``LiteCRS`` instance passes through unchanged.
+    3. An existing ``pyproj.CRS`` instance passes through unchanged
+       (only checked when pyproj is importable).
+    4. Try ``LiteCRS(crs_input)`` -- covers EPSG ints and ``"EPSG:XXXX"``
+       strings for codes in the built-in table.
+    5. Fall back to ``pyproj.CRS(crs_input)`` -- raises ``ImportError``
+       if pyproj is not installed.
     """
     if crs_input is None:
         return None
-    pyproj = _require_pyproj()
-    if isinstance(crs_input, pyproj.CRS):
+
+    # Pass through existing LiteCRS
+    if isinstance(crs_input, LiteCRS):
         return crs_input
+
+    # Pass through existing pyproj.CRS (if pyproj available)
+    pyproj = _try_import_pyproj()
+    if pyproj is not None and isinstance(crs_input, pyproj.CRS):
+        return crs_input
+
+    # Try lite CRS first
+    try:
+        return LiteCRS(crs_input)
+    except (ValueError, TypeError):
+        pass
+
+    # Fall back to pyproj
+    pyproj = _require_pyproj()
     return pyproj.CRS(crs_input)
+
+
+def _crs_from_wkt(wkt):
+    """Build a CRS from an OGC WKT string.
+
+    Tries ``LiteCRS.from_wkt`` first (extracts the AUTHORITY tag),
+    then falls back to ``pyproj.CRS.from_wkt``.
+    """
+    try:
+        return LiteCRS.from_wkt(wkt)
+    except (ValueError, TypeError):
+        pass
+
+    pyproj = _require_pyproj()
+    return pyproj.CRS.from_wkt(wkt)
 
 
 def _detect_source_crs(raster):
@@ -47,7 +97,7 @@ def _detect_source_crs(raster):
 
     crs_wkt = raster.attrs.get('crs_wkt')
     if crs_wkt is not None:
-        return _resolve_crs(crs_wkt)
+        return _crs_from_wkt(crs_wkt)
 
     # rioxarray fallback
     try:

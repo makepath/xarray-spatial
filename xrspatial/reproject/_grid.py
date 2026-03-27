@@ -4,6 +4,38 @@ from __future__ import annotations
 import numpy as np
 
 
+def _transform_boundary(source_crs, target_crs, xs, ys):
+    """Transform coordinate arrays, preferring Numba fast path over pyproj.
+
+    Parameters
+    ----------
+    source_crs, target_crs : CRS-like
+        Source and target coordinate reference systems.
+    xs, ys : ndarray
+        1-D arrays of x and y coordinates in *source_crs*.
+
+    Returns
+    -------
+    tx, ty : ndarray
+        Transformed coordinates as numpy arrays.
+    """
+    from ._projections import transform_points
+
+    result = transform_points(source_crs, target_crs, xs, ys)
+    if result is not None:
+        return result
+
+    # Fall back to pyproj
+    from ._crs_utils import _require_pyproj
+
+    pyproj = _require_pyproj()
+    transformer = pyproj.Transformer.from_crs(
+        source_crs, target_crs, always_xy=True
+    )
+    tx, ty = transformer.transform(xs, ys)
+    return np.asarray(tx), np.asarray(ty)
+
+
 def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
                          resolution=None, bounds=None, width=None, height=None):
     """Compute the output raster grid parameters.
@@ -14,7 +46,7 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
         (left, bottom, right, top) in source CRS.
     source_shape : tuple
         (height, width) of source raster.
-    source_crs, target_crs : pyproj.CRS
+    source_crs, target_crs : CRS-like
         Source and target coordinate reference systems.
     resolution : float or tuple or None
         Target resolution. If tuple, (x_res, y_res).
@@ -27,13 +59,6 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
     -------
     dict with keys: bounds, shape, res_x, res_y
     """
-    from ._crs_utils import _require_pyproj
-
-    pyproj = _require_pyproj()
-    transformer = pyproj.Transformer.from_crs(
-        source_crs, target_crs, always_xy=True
-    )
-
     if bounds is None:
         # Transform source corners and edges to target CRS
         src_left, src_bottom, src_right, src_top = source_bounds
@@ -76,7 +101,7 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
         ixx, iyy = np.meshgrid(ix, iy)
         xs = np.concatenate([edge_xs, ixx.ravel()])
         ys = np.concatenate([edge_ys, iyy.ravel()])
-        tx, ty = transformer.transform(xs, ys)
+        tx, ty = _transform_boundary(source_crs, target_crs, xs, ys)
         tx = np.asarray(tx)
         ty = np.asarray(ty)
         # Filter out inf/nan from failed transforms
@@ -110,7 +135,9 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
             ix = np.linspace(src_left, src_right, n_dense)
             iy = np.linspace(src_bottom, src_top, n_dense)
             ixx, iyy = np.meshgrid(ix, iy)
-            itx, ity = transformer.transform(ixx.ravel(), iyy.ravel())
+            itx, ity = _transform_boundary(
+                source_crs, target_crs, ixx.ravel(), iyy.ravel()
+            )
             itx = np.asarray(itx)
             ity = np.asarray(ity)
             ivalid = np.isfinite(itx) & np.isfinite(ity)
@@ -150,13 +177,15 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
         src_res_y = (src_top - src_bottom) / src_h
         center_x = (src_left + src_right) / 2
         center_y = (src_bottom + src_top) / 2
-        tc_x, tc_y = transformer.transform(center_x, center_y)
-        # Step along x only
-        tx_x, tx_y = transformer.transform(center_x + src_res_x, center_y)
-        dx = np.hypot(float(tx_x) - float(tc_x), float(tx_y) - float(tc_y))
-        # Step along y only
-        ty_x, ty_y = transformer.transform(center_x, center_y + src_res_y)
-        dy = np.hypot(float(ty_x) - float(tc_x), float(ty_y) - float(tc_y))
+        # Batch the three resolution-estimation points into one call
+        pts_x = np.array([center_x, center_x + src_res_x, center_x])
+        pts_y = np.array([center_y, center_y, center_y + src_res_y])
+        tp_x, tp_y = _transform_boundary(source_crs, target_crs, pts_x, pts_y)
+        tc_x, tc_y = float(tp_x[0]), float(tp_y[0])
+        tx_x, tx_y = float(tp_x[1]), float(tp_y[1])
+        ty_x, ty_y = float(tp_x[2]), float(tp_y[2])
+        dx = np.hypot(tx_x - tc_x, tx_y - tc_y)
+        dy = np.hypot(ty_x - tc_x, ty_y - tc_y)
         if dx == 0 or dy == 0:
             res_x = (right - left) / src_w
             res_y = (top - bottom) / src_h
