@@ -8,6 +8,14 @@ from xrspatial.utils import rechunk_no_shuffle
 
 da = pytest.importorskip("dask.array")
 
+_has_zarr = True
+try:
+    import zarr  # noqa: F401
+except ImportError:
+    _has_zarr = False
+
+requires_zarr = pytest.mark.skipif(not _has_zarr, reason="zarr not installed")
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -106,6 +114,7 @@ def test_rejects_non_dataarray():
 # Zarr re-open optimisation
 # ---------------------------------------------------------------------------
 
+@requires_zarr
 def test_zarr_reopen_reduces_graph(tmp_path):
     """For a fresh zarr Dataset, rechunk should re-open with fewer tasks."""
     path = str(tmp_path / "rns_zarr_reopen.zarr")
@@ -129,6 +138,7 @@ def test_zarr_reopen_reduces_graph(tmp_path):
     np.testing.assert_array_equal(ds_in["elev"].values, ds_out["elev"].values)
 
 
+@requires_zarr
 def test_zarr_reopen_skipped_after_sel(tmp_path):
     """After .sel(), the graph has >2 layers so re-open is skipped."""
     path = str(tmp_path / "rns_zarr_sel.zarr")
