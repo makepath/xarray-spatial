@@ -63,8 +63,9 @@ class XrsSpatialDataArrayAccessor:
         # Create a figure with sensible size if none provided.
         if 'ax' not in kwargs:
             fig, ax = plt.subplots(
-                figsize=kwargs.pop('figsize', (8, 6)),
+                figsize=kwargs.get('figsize', (8, 6)),
             )
+            kwargs.pop('figsize', None)
             kwargs['ax'] = ax
 
         result = da.plot(**kwargs)
@@ -1029,11 +1030,3 @@ class XrsSpatialDatasetAccessor:
     def rechunk_no_shuffle(self, **kwargs):
         from .utils import rechunk_no_shuffle
         return rechunk_no_shuffle(self._obj, **kwargs)
-
-    def fused_overlap(self, *stages, **kwargs):
-        from .utils import fused_overlap
-        return fused_overlap(self._obj, *stages, **kwargs)
-
-    def multi_overlap(self, func, n_outputs, **kwargs):
-        from .utils import multi_overlap
-        return multi_overlap(self._obj, func, n_outputs, **kwargs)

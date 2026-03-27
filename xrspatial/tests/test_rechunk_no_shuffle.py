@@ -102,6 +102,29 @@ def test_rejects_non_dataarray():
         rechunk_no_shuffle(np.zeros((10, 10)))
 
 
+def test_dataset_rechunk():
+    """Dataset without zarr backing rechunks via the map() fallback."""
+    ds = xr.Dataset({
+        "elev": xr.DataArray(
+            da.from_array(np.random.rand(100, 100).astype(np.float32),
+                          chunks=(10, 10)),
+            dims=["y", "x"],
+        ),
+        "slope": xr.DataArray(
+            da.from_array(np.random.rand(100, 100).astype(np.float32),
+                          chunks=(10, 10)),
+            dims=["y", "x"],
+        ),
+    })
+    result = rechunk_no_shuffle(ds, target_mb=1)
+    assert isinstance(result, xr.Dataset)
+    for name in ds.data_vars:
+        xr.testing.assert_equal(ds[name], result[name])
+        # Chunks should be at least as large as the originals.
+        for orig, new in zip(ds[name].chunks, result[name].chunks):
+            assert new[0] >= orig[0]
+
+
 def test_rejects_nonpositive_target():
     raster = _make_dask_raster()
     with pytest.raises(ValueError, match="target_mb must be > 0"):

@@ -97,3 +97,4 @@ dmypy.json
 .asv/
 xrspatial-examples/
 *.zarr/
+.claude/worktrees/
