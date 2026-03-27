@@ -13,33 +13,6 @@ from xrspatial.utils import (
 _COARSEN_METHODS = ('mean', 'median', 'max', 'min')
 _METHODS = (*_COARSEN_METHODS, 'nearest', 'bilinear')
 
-# Fallback chunk budget when no distributed client is available.
-_DEFAULT_PREVIEW_CHUNK_BYTES = 512 * 1024 * 1024
-
-
-def _preview_chunk_budget():
-    """Max bytes per preview chunk, based on the active dask cluster.
-
-    If a ``dask.distributed`` client is connected, returns
-    ``worker_memory * 0.7 / nthreads`` so that concurrent tasks on
-    the same worker stay under the memory-pause threshold.  Otherwise
-    falls back to ``_DEFAULT_PREVIEW_CHUNK_BYTES`` (512 MB).
-    """
-    try:
-        from dask.distributed import get_client
-        client = get_client()
-        info = client.scheduler_info()
-        workers = info.get('workers', {})
-        if workers:
-            w = next(iter(workers.values()))
-            mem = w.get('memory_limit', 0)
-            nthreads = w.get('nthreads', 1) or 1
-            if mem > 0:
-                return int(mem * 0.7 / nthreads)
-    except Exception:
-        pass
-    return _DEFAULT_PREVIEW_CHUNK_BYTES
-
 
 def _nan_full(oh, ow, block):
     """NaN-filled ``(oh, ow)`` array matching *block*'s type and dtype."""
@@ -339,58 +312,6 @@ def _refine_to_target(result, target_h, target_w, y_dim, x_dim):
 # Public API
 # ---------------------------------------------------------------------------
 
-def _reopen_preview_chunks(agg):
-    """Re-open a zarr-backed DataArray with memory-safe chunks.
-
-    Computes the largest chunk size that is an exact multiple of the
-    zarr storage chunks and fits under the per-task memory budget
-    (derived from the active dask cluster configuration).  This keeps
-    the task graph small (far fewer chunks than storage granularity)
-    while keeping peak memory per task well within worker limits even
-    when ``threads_per_worker > 1``.
-
-    Returns a new DataArray or *None* if the source isn't available.
-    When the input is a spatial subset (``.sel()``), the returned
-    array covers the same coordinate range.
-    """
-    source = agg.encoding.get('_xrs_zarr_source')
-    pref = agg.encoding.get('preferred_chunks')
-    if source is None or pref is None or agg.name is None:
-        return None
-    try:
-        budget = _preview_chunk_budget()
-        # Compute the largest multiple of storage chunks that fits
-        # under the per-task budget.
-        base = tuple(pref[d] for d in agg.dims if d in pref)
-        if not base or len(base) != 2:
-            return None
-        base_bytes = agg.dtype.itemsize * base[0] * base[1]
-        if base_bytes >= budget:
-            # Storage chunks already exceed the budget; use them as-is.
-            chunks = pref
-        else:
-            ratio = budget / base_bytes
-            multiplier = max(1, int(ratio ** (1.0 / len(base))))
-            chunks = {d: pref[d] * multiplier for d in agg.dims if d in pref}
-
-        ds = xr.open_zarr(source, chunks=chunks)
-        if agg.name not in ds:
-            return None
-        da_full = ds[agg.name]
-        # Select to match the current DataArray's coordinate extent.
-        sel = {}
-        for dim in agg.dims:
-            if dim in agg.coords and dim in da_full.coords:
-                c = agg.coords[dim].values
-                if len(c) > 0:
-                    sel[dim] = slice(c[0], c[-1])
-        if sel:
-            da_full = da_full.sel(sel)
-        return da_full
-    except Exception:
-        return None
-
-
 @supports_dataset
 def preview(agg, width=1000, height=None, method='mean', name='preview'):
     """Downsample a raster to target pixel dimensions.
@@ -432,22 +353,6 @@ def preview(agg, width=1000, height=None, method='mean', name='preview'):
         raise ValueError(
             f"method must be one of {_METHODS!r}, got {method!r}"
         )
-
-    # If chunks are too large for a single worker task, re-open from
-    # the zarr source with memory-safe chunks.  The budget accounts
-    # for threads_per_worker so concurrent tasks don't collectively
-    # exceed the worker's memory-pause threshold.
-    try:
-        import dask.array as _da
-        if isinstance(agg.data, _da.Array):
-            chunk_bytes = (agg.dtype.itemsize
-                          * agg.data.chunksize[0] * agg.data.chunksize[1])
-            if chunk_bytes > _preview_chunk_budget():
-                safe = _reopen_preview_chunks(agg)
-                if safe is not None:
-                    agg = safe
-    except ImportError:
-        pass
 
     h = agg.sizes[agg.dims[0]]
     w = agg.sizes[agg.dims[1]]

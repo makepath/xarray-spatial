@@ -1055,19 +1055,6 @@ def _no_shuffle_chunks(chunks, dtype, dims, target_mb):
     return {dim: b * multiplier for dim, b in zip(dims, base)}
 
 
-def _is_unmodified_zarr(ds):
-    """True when every dask variable is a direct zarr read (2 layers)."""
-    found_dask = False
-    for var in ds.data_vars.values():
-        data = var.data
-        if has_dask_array() and isinstance(data, da.Array):
-            found_dask = True
-            graph = data.__dask_graph__()
-            if hasattr(graph, 'layers') and len(graph.layers) != 2:
-                return False
-    return found_dask
-
-
 def rechunk_no_shuffle(agg, target_mb=128):
     """Rechunk a dask-backed DataArray or Dataset without triggering a shuffle.
 
@@ -1075,12 +1062,6 @@ def rechunk_no_shuffle(agg, target_mb=128):
     is an exact multiple of the original chunk size.  This lets dask
     merge whole source chunks in-place instead of splitting and
     recombining partial blocks (which is effectively a shuffle).
-
-    For file-backed data (e.g. Zarr stores), the function re-opens
-    the source with the target chunk sizes so that each dask task
-    reads multiple storage chunks in one call.  This produces a
-    dramatically smaller task graph compared to ``.chunk()``, which
-    adds a rechunk merge layer on top of the existing read tasks.
 
     Parameters
     ----------
@@ -1137,7 +1118,7 @@ def rechunk_no_shuffle(agg, target_mb=128):
 
 
 def _rechunk_dataset_no_shuffle(ds, target_mb):
-    """Rechunk a Dataset, re-opening from zarr when possible."""
+    """Rechunk every variable in a Dataset without triggering a shuffle."""
     if target_mb <= 0:
         raise ValueError(
             f"rechunk_no_shuffle(): target_mb must be > 0, got {target_mb}"
@@ -1160,27 +1141,7 @@ def _rechunk_dataset_no_shuffle(ds, target_mb):
     if new_chunks is None:
         return ds
 
-    # For unmodified zarr reads, re-open with target chunks so
-    # each dask task reads multiple storage chunks in one call.
-    # This avoids the extra rechunk-merge graph layer that
-    # .chunk() would add on top of the existing read tasks.
-    source = ds.encoding.get('source')
-    if source is not None and _is_unmodified_zarr(ds):
-        try:
-            reopened = xr.open_zarr(source, chunks=new_chunks)
-            if set(ds.data_vars) <= set(reopened.data_vars):
-                result = reopened[list(ds.data_vars)]
-                # Propagate zarr source into each variable's encoding
-                # so downstream operations (e.g. preview) can re-open
-                # with different chunks when needed.
-                for name in result.data_vars:
-                    result[name].encoding['_xrs_zarr_source'] = source
-                return result
-        except Exception:
-            pass
-
-    # Fallback: rechunk each variable individually.
-    return ds.map(rechunk_no_shuffle, target_mb=target_mb)
+    return ds.chunk(new_chunks)
 
 
 def _normalize_depth(depth, ndim):
