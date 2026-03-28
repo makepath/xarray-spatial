@@ -2,6 +2,45 @@
 -----------
 
 
+### Version 0.9.3 - 2026-03-27
+
+#### New features
+- GeoTIFF/COG reader and writer with GPU acceleration and datum transforms (#1035) (#1062)
+- nvJPEG GPU acceleration for JPEG-compressed GeoTIFFs (#1050) (#1055)
+- LZ4 and LERC compression codecs for GeoTIFF (#1063)
+- Dask-native out-of-core reproject and merge module (#1031)
+- MCDA module for spatial multi-criteria decision analysis (#1030) (#1058)
+- Edge detection filters: Sobel, Laplacian, Prewitt (#1042)
+- Focal variety statistic (#1040) (#1043)
+- NDSI, NDBI, BAI, MSAVI2, and OSAVI spectral indices (#1044)
+- Northness and eastness aspect functions (#1039) (#1041)
+- Rescale and standardize normalization utilities (#1028)
+- Morphological gradient, white top-hat, and black top-hat operators (#1026)
+- D-inf and MFD variants of flow_path, watershed, and HAND (#1020)
+- D-infinity flow length computation (#1012) (#1013)
+- MFD flow length computation (#1011)
+- Vegetation-aware flood modeling: roughness, curve number, and depth from land cover (#1029)
+- Lightweight CRS parser, removes hard pyproj dependency (#1072)
+- plot() accessors for DataArray and Dataset (#1074)
+- fused_overlap and multi_overlap dask graph utilities (#1071)
+- rechunk_no_shuffle utility (#1068)
+
+#### Bug fixes and improvements
+- Fix D-inf flow direction odd facet decomposition per Tarboton 1997 (#1005)
+- Fix CuPy uint8 overflow and CUDA cubic NaN fallback (#1054) (#1064)
+- Fix stale full pipeline benchmark numbers in README (#1077) (#1079)
+- Fix duplicate prefix numbers in user guide notebooks (#1076) (#1078)
+- Memory-safe rechunk, preview chunk budget, plot improvements (#1075)
+- Reduce dask graph size for large raster reprojection (#1065)
+- Speed up cost_distance iterative tile Dijkstra 2-4x (#1023)
+- Faster polygonize: single-pass tracing, JIT merge helpers, batch shapely (#1010)
+- Rename GeoTIFF API to xarray conventions (#1047) (#1061)
+- Section index in README feature matrix (#1033) (#1034)
+- Dask example for reproject (#1066)
+- Porto taxi trajectory rasterization example (#1022)
+- Polygonize benchmark comparing xrspatial vs rasterio (#1006) (#1007)
+
+
 ### Version 0.9.2 - 2026-03-13
 
 #### New features
