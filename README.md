@@ -262,10 +262,10 @@ Built-in Numba JIT and CUDA projection kernels bypass pyproj for per-pixel coord
 
 | Backend | Time |
 |:---|---:|
-| NumPy | 2.7s |
+| NumPy | 784ms |
 | CuPy GPU | 348ms |
 | Dask+CuPy GPU | 343ms |
-| rioxarray (GDAL) | 418ms |
+| rioxarray (GDAL) | 749ms |
 
 **Merge performance** (4 overlapping same-CRS tiles, vs rioxarray):
 
