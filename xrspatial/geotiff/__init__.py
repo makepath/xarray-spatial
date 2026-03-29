@@ -213,8 +213,12 @@ def open_geotiff(source: str, *, window=None,
         # Adjust coordinates for windowed read
         r0, c0, r1, c1 = window
         t = geo_info.transform
-        full_x = np.arange(c0, c1, dtype=np.float64) * t.pixel_width + t.origin_x + t.pixel_width * 0.5
-        full_y = np.arange(r0, r1, dtype=np.float64) * t.pixel_height + t.origin_y + t.pixel_height * 0.5
+        if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
+            full_x = np.arange(c0, c1, dtype=np.float64) * t.pixel_width + t.origin_x
+            full_y = np.arange(r0, r1, dtype=np.float64) * t.pixel_height + t.origin_y
+        else:
+            full_x = np.arange(c0, c1, dtype=np.float64) * t.pixel_width + t.origin_x + t.pixel_width * 0.5
+            full_y = np.arange(r0, r1, dtype=np.float64) * t.pixel_height + t.origin_y + t.pixel_height * 0.5
         coords = {'y': full_y, 'x': full_x}
 
     if name is None:
@@ -402,6 +406,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
 
     geo_transform = None
     epsg = None
+    wkt_fallback = None  # WKT string when EPSG is not available
     raster_type = RASTER_PIXEL_IS_AREA
     x_res = None
     y_res = None
@@ -414,6 +419,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         epsg = crs
     elif isinstance(crs, str):
         epsg = _wkt_to_epsg(crs)  # try to extract EPSG from WKT/PROJ
+        if epsg is None:
+            wkt_fallback = crs
 
     if isinstance(data, xr.DataArray):
         # Handle CuPy-backed DataArrays: convert to numpy for CPU write
@@ -436,12 +443,16 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
             if isinstance(crs_attr, str):
                 # WKT string from reproject() or other source
                 epsg = _wkt_to_epsg(crs_attr)
+                if epsg is None and wkt_fallback is None:
+                    wkt_fallback = crs_attr
             elif crs_attr is not None:
                 epsg = int(crs_attr)
             if epsg is None:
                 wkt = data.attrs.get('crs_wkt')
                 if isinstance(wkt, str):
                     epsg = _wkt_to_epsg(wkt)
+                    if epsg is None and wkt_fallback is None:
+                        wkt_fallback = wkt
         if nodata is None:
             nodata = data.attrs.get('nodata')
         if data.attrs.get('raster_type') == 'point':
@@ -477,10 +488,19 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     elif arr.dtype == np.bool_:
         arr = arr.astype(np.uint8)
 
+    # Restore NaN pixels to the nodata sentinel value so the written file
+    # has sentinel values matching the GDAL_NODATA tag.
+    if nodata is not None and arr.dtype.kind == 'f' and not np.isnan(nodata):
+        nan_mask = np.isnan(arr)
+        if nan_mask.any():
+            arr = arr.copy()
+            arr[nan_mask] = arr.dtype.type(nodata)
+
     write(
         arr, path,
         geo_transform=geo_transform,
         crs_epsg=epsg,
+        crs_wkt=wkt_fallback if epsg is None else None,
         nodata=nodata,
         compression=compression,
         tiled=tiled,

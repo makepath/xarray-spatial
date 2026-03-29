@@ -522,9 +522,18 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
     )
 
 
+def _model_type_from_wkt(wkt: str) -> int:
+    """Guess ModelType from a WKT string prefix."""
+    upper = wkt.strip().upper()
+    if upper.startswith(('GEOGCS', 'GEOGCRS')):
+        return MODEL_TYPE_GEOGRAPHIC
+    return MODEL_TYPE_PROJECTED
+
+
 def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
                    nodata=None,
-                   raster_type: int = RASTER_PIXEL_IS_AREA) -> dict[int, tuple]:
+                   raster_type: int = RASTER_PIXEL_IS_AREA,
+                   crs_wkt: str | None = None) -> dict[int, tuple]:
     """Build GeoTIFF IFD tag entries for writing.
 
     Parameters
@@ -537,6 +546,11 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
         NoData value.
     raster_type : int
         RASTER_PIXEL_IS_AREA (1) or RASTER_PIXEL_IS_POINT (2).
+    crs_wkt : str or None
+        WKT or PROJ string for the CRS.  Used only when *crs_epsg* is
+        None so that custom (non-EPSG) coordinate systems survive
+        round-trips.  Stored in the GeoAsciiParamsTag and referenced
+        from GTCitationGeoKey.
 
     Returns
     -------
@@ -562,6 +576,10 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
     num_keys = 1  # at least RasterType
     key_entries = []
 
+    # Collect ASCII params strings (pipe-delimited in GeoAsciiParamsTag)
+    ascii_parts = []
+    ascii_offset = 0
+
     # ModelType
     if crs_epsg is not None:
         # Guess model type from EPSG (simple heuristic)
@@ -569,6 +587,10 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
             model_type = MODEL_TYPE_GEOGRAPHIC
         else:
             model_type = MODEL_TYPE_PROJECTED
+        key_entries.append((GEOKEY_MODEL_TYPE, 0, 1, model_type))
+        num_keys += 1
+    elif crs_wkt is not None:
+        model_type = _model_type_from_wkt(crs_wkt)
         key_entries.append((GEOKEY_MODEL_TYPE, 0, 1, model_type))
         num_keys += 1
 
@@ -582,6 +604,22 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
         else:
             key_entries.append((GEOKEY_PROJECTED_CS_TYPE, 0, 1, crs_epsg))
         num_keys += 1
+    elif crs_wkt is not None:
+        # User-defined CRS: store 32767 and write WKT to GeoAsciiParams
+        if model_type == MODEL_TYPE_GEOGRAPHIC:
+            key_entries.append((GEOKEY_GEOGRAPHIC_TYPE, 0, 1, 32767))
+        else:
+            key_entries.append((GEOKEY_PROJECTED_CS_TYPE, 0, 1, 32767))
+        num_keys += 1
+        # GTCitationGeoKey -> GeoAsciiParams
+        wkt_with_pipe = crs_wkt + '|'
+        key_entries.append((
+            GEOKEY_CITATION, TAG_GEO_ASCII_PARAMS,
+            len(wkt_with_pipe), ascii_offset,
+        ))
+        ascii_parts.append(wkt_with_pipe)
+        ascii_offset += len(wkt_with_pipe)
+        num_keys += 1
 
     num_keys = len(key_entries)
     header = [1, 1, 0, num_keys]
@@ -590,6 +628,10 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
         flat.extend(entry)
 
     tags[TAG_GEO_KEY_DIRECTORY] = tuple(flat)
+
+    # GeoAsciiParamsTag (34737)
+    if ascii_parts:
+        tags[TAG_GEO_ASCII_PARAMS] = ''.join(ascii_parts)
 
     # GDAL_NODATA
     if nodata is not None:
