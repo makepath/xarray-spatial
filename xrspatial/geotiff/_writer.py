@@ -32,6 +32,7 @@ from ._dtypes import (
 from ._geotags import (
     GeoTransform,
     build_geo_tags,
+    TAG_GEO_ASCII_PARAMS,
     TAG_GEO_KEY_DIRECTORY,
     TAG_GDAL_NODATA,
     TAG_MODEL_PIXEL_SCALE,
@@ -525,6 +526,7 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
                    nodata,
                    is_cog: bool = False,
                    raster_type: int = 1,
+                   crs_wkt: str | None = None,
                    gdal_metadata_xml: str | None = None,
                    extra_tags: list | None = None,
                    x_resolution: float | None = None,
@@ -557,12 +559,14 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
     geo_tags_dict = {}
     if geo_transform is not None:
         geo_tags_dict = build_geo_tags(
-            geo_transform, crs_epsg, nodata, raster_type=raster_type)
+            geo_transform, crs_epsg, nodata, raster_type=raster_type,
+            crs_wkt=crs_wkt)
     else:
         # No spatial reference -- still write CRS and nodata if provided
-        if crs_epsg is not None or nodata is not None:
+        if crs_epsg is not None or crs_wkt is not None or nodata is not None:
             geo_tags_dict = build_geo_tags(
                 GeoTransform(), crs_epsg, nodata, raster_type=raster_type,
+                crs_wkt=crs_wkt,
             )
             # Remove the default pixel scale / tiepoint tags since we
             # have no real transform -- keep only GeoKeys and NODATA.
@@ -641,6 +645,8 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
                     tags.append((gtag, DOUBLE, 6, list(gval)))
                 elif gtag == TAG_GEO_KEY_DIRECTORY:
                     tags.append((gtag, SHORT, len(gval), list(gval)))
+                elif gtag == TAG_GEO_ASCII_PARAMS:
+                    tags.append((gtag, ASCII, len(str(gval)) + 1, str(gval)))
                 elif gtag == TAG_GDAL_NODATA:
                     tags.append((gtag, ASCII, len(str(gval)) + 1, str(gval)))
 
@@ -846,6 +852,7 @@ def _assemble_cog_layout(header_size: int,
 def write(data: np.ndarray, path: str, *,
           geo_transform: GeoTransform | None = None,
           crs_epsg: int | None = None,
+          crs_wkt: str | None = None,
           nodata=None,
           compression: str = 'zstd',
           tiled: bool = True,
@@ -939,7 +946,7 @@ def write(data: np.ndarray, path: str, *,
     file_bytes = _assemble_tiff(
         w, h, data.dtype, comp_tag, predictor, tiled, tile_size,
         parts, geo_transform, crs_epsg, nodata, is_cog=cog,
-        raster_type=raster_type,
+        raster_type=raster_type, crs_wkt=crs_wkt,
         gdal_metadata_xml=gdal_metadata_xml,
         extra_tags=extra_tags,
         x_resolution=x_resolution, y_resolution=y_resolution,
