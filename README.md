@@ -165,6 +165,12 @@ to_geotiff(data, 'out.tif', gpu=True)                # force GPU compress
 to_geotiff(data, 'ortho.tif', compression='jpeg')    # JPEG for orthophotos
 write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
 
+open_geotiff('dem.tif', dtype='float32')             # half memory
+open_geotiff('dem.tif', dtype='float32', chunks=512) # Dask + half memory
+to_geotiff(data, 'out.tif', compression_level=1)     # fast scratch write
+to_geotiff(data, 'out.tif', compression_level=22)    # max compression
+to_geotiff(dask_da, 'mosaic.vrt')                    # stream Dask to VRT
+
 # Accessor methods
 da.xrs.to_geotiff('out.tif', compression='lzw')     # write from DataArray
 ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset extent
