@@ -339,10 +339,18 @@ def _is_gpu_data(data) -> bool:
     return isinstance(data, _cupy_type)
 
 
+_LEVEL_RANGES = {
+    'deflate': (1, 9),
+    'zstd': (1, 22),
+    'lz4': (0, 16),
+}
+
+
 def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                crs: int | str | None = None,
                nodata=None,
                compression: str = 'zstd',
+               compression_level: int | None = None,
                tiled: bool = True,
                tile_size: int = 256,
                predictor: bool = False,
@@ -377,6 +385,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         JPEG is lossy and only supports uint8 data (1 or 3 bands).
         With ``gpu=True``, JPEG uses nvJPEG for GPU-accelerated
         encode/decode when available, falling back to Pillow on CPU.
+    compression_level : int or None
+        Compression effort level. None uses each codec's default (6 for
+        deflate/zstd). Valid ranges: deflate 1-9, zstd 1-22, lz4 0-16.
+        Codecs without a level concept (lzw, packbits, jpeg) accept any
+        value and ignore it.
     tiled : bool
         Use tiled layout (default True).
     tile_size : int
@@ -496,6 +509,16 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
             arr = arr.copy()
             arr[nan_mask] = arr.dtype.type(nodata)
 
+    # Validate compression_level against codec-specific range
+    if compression_level is not None:
+        level_range = _LEVEL_RANGES.get(compression.lower())
+        if level_range is not None:
+            lo, hi = level_range
+            if not (lo <= compression_level <= hi):
+                raise ValueError(
+                    f"compression_level={compression_level} out of range "
+                    f"for {compression} (valid: {lo}-{hi})")
+
     write(
         arr, path,
         geo_transform=geo_transform,
@@ -503,6 +526,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         crs_wkt=wkt_fallback if epsg is None else None,
         nodata=nodata,
         compression=compression,
+        compression_level=compression_level,
         tiled=tiled,
         tile_size=tile_size,
         predictor=predictor,

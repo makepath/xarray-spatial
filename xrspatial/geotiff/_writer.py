@@ -296,7 +296,8 @@ def _build_ifd(tags: list[tuple], overflow_base: int,
 # ---------------------------------------------------------------------------
 
 def _write_stripped(data: np.ndarray, compression: int, predictor: bool,
-                    rows_per_strip: int = 256) -> tuple[list, list, list]:
+                    rows_per_strip: int = 256,
+                    compression_level: int | None = None) -> tuple[list, list, list]:
     """Compress data as strips.
 
     Returns
@@ -329,7 +330,10 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: bool,
             buf = strip_arr.view(np.uint8).ravel().copy()
             buf = predictor_encode(buf, width, strip_rows, bytes_per_sample * samples)
             strip_data = buf.tobytes()
-            compressed = compress(strip_data, compression)
+            if compression_level is None:
+                compressed = compress(strip_data, compression)
+            else:
+                compressed = compress(strip_data, compression, level=compression_level)
         else:
             strip_data = np.ascontiguousarray(data[r0:r1]).tobytes()
 
@@ -341,8 +345,10 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: bool,
                 from ._compression import lerc_compress
                 compressed = lerc_compress(
                     strip_data, width, strip_rows, samples=samples, dtype=dtype)
-            else:
+            elif compression_level is None:
                 compressed = compress(strip_data, compression)
+            else:
+                compressed = compress(strip_data, compression, level=compression_level)
 
         rel_offsets.append(current_offset)
         byte_counts.append(len(compressed))
@@ -357,7 +363,8 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: bool,
 # ---------------------------------------------------------------------------
 
 def _prepare_tile(data, tr, tc, th, tw, height, width, samples, dtype,
-                  bytes_per_sample, predictor, compression):
+                  bytes_per_sample, predictor, compression,
+                  compression_level=None):
     """Extract, pad, and compress a single tile.  Thread-safe."""
     r0 = tr * th
     c0 = tc * tw
@@ -400,11 +407,14 @@ def _prepare_tile(data, tr, tc, th, tw, height, width, samples, dtype,
         from ._compression import lerc_compress
         return lerc_compress(
             tile_data, tw, th, samples=samples, dtype=dtype)
-    return compress(tile_data, compression)
+    if compression_level is None:
+        return compress(tile_data, compression)
+    return compress(tile_data, compression, level=compression_level)
 
 
 def _write_tiled(data: np.ndarray, compression: int, predictor: bool,
-                 tile_size: int = 256) -> tuple[list, list, list]:
+                 tile_size: int = 256,
+                 compression_level: int | None = None) -> tuple[list, list, list]:
     """Compress data as tiles, using parallel compression.
 
     For compressed formats (deflate, lzw, zstd), tiles are compressed
@@ -477,6 +487,7 @@ def _write_tiled(data: np.ndarray, compression: int, predictor: bool,
                 compressed = _prepare_tile(
                     data, tr, tc, th, tw, height, width,
                     samples, dtype, bytes_per_sample, predictor, compression,
+                    compression_level,
                 )
                 rel_offsets.append(current_offset)
                 byte_counts.append(len(compressed))
@@ -497,6 +508,7 @@ def _write_tiled(data: np.ndarray, compression: int, predictor: bool,
             pool.submit(
                 _prepare_tile, data, tr, tc, th, tw, height, width,
                 samples, dtype, bytes_per_sample, predictor, compression,
+                compression_level,
             )
             for tr, tc in tile_indices
         ]
@@ -855,6 +867,7 @@ def write(data: np.ndarray, path: str, *,
           crs_wkt: str | None = None,
           nodata=None,
           compression: str = 'zstd',
+          compression_level: int | None = None,
           tiled: bool = True,
           tile_size: int = 256,
           predictor: bool = False,
@@ -914,9 +927,11 @@ def write(data: np.ndarray, path: str, *,
 
     # Full resolution
     if tiled:
-        rel_off, bc, comp_data = _write_tiled(data, comp_tag, predictor, tile_size)
+        rel_off, bc, comp_data = _write_tiled(data, comp_tag, predictor, tile_size,
+                                               compression_level)
     else:
-        rel_off, bc, comp_data = _write_stripped(data, comp_tag, predictor)
+        rel_off, bc, comp_data = _write_stripped(data, comp_tag, predictor,
+                                                  compression_level=compression_level)
 
     h, w = data.shape[:2]
     parts.append((data, w, h, rel_off, bc, comp_data))
@@ -938,9 +953,11 @@ def write(data: np.ndarray, path: str, *,
             current = _make_overview(current, method=overview_resampling)
             oh, ow = current.shape[:2]
             if tiled:
-                o_off, o_bc, o_data = _write_tiled(current, comp_tag, predictor, tile_size)
+                o_off, o_bc, o_data = _write_tiled(current, comp_tag, predictor,
+                                                    tile_size, compression_level)
             else:
-                o_off, o_bc, o_data = _write_stripped(current, comp_tag, predictor)
+                o_off, o_bc, o_data = _write_stripped(current, comp_tag, predictor,
+                                                       compression_level=compression_level)
             parts.append((current, ow, oh, o_off, o_bc, o_data))
 
     file_bytes = _assemble_tiff(
