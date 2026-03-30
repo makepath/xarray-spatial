@@ -70,6 +70,20 @@ class TestDtypeEager:
         assert result.dtype == np.float64
 
 
+    def test_int_with_nodata_float_to_int_raises(self, tmp_path):
+        """uint16 file with nodata: nodata masking promotes to float64, so float->int validation fires."""
+        arr = np.array([[1, 2], [3, 9999]], dtype=np.uint16)
+        y = np.linspace(40.0, 41.0, 2)
+        x = np.linspace(-105.0, -104.0, 2)
+        da = xr.DataArray(arr, dims=['y', 'x'],
+                          coords={'y': y, 'x': x},
+                          attrs={'crs': 4326, 'nodata': 9999.0})
+        path = str(tmp_path / 'test_1083_nodata_int_eager.tif')
+        to_geotiff(da, path, compression='none')
+        with pytest.raises(ValueError, match='float.*int'):
+            open_geotiff(path, dtype='int32')
+
+
 class TestDtypeDask:
     def test_float64_to_float32_dask(self, float64_tif):
         path, orig = float64_tif
@@ -88,3 +102,16 @@ class TestDtypeDask:
         path, _ = float64_tif
         with pytest.raises(ValueError, match='float.*int'):
             open_geotiff(path, dtype='int32', chunks=40)
+
+    def test_int_with_nodata_float_to_int_raises_dask(self, tmp_path):
+        """uint16 file with nodata: nodata masking promotes to float64, so float->int validation fires."""
+        arr = np.array([[1, 2], [3, 9999]], dtype=np.uint16)
+        y = np.linspace(40.0, 41.0, 2)
+        x = np.linspace(-105.0, -104.0, 2)
+        da = xr.DataArray(arr, dims=['y', 'x'],
+                          coords={'y': y, 'x': x},
+                          attrs={'crs': 4326, 'nodata': 9999.0})
+        path = str(tmp_path / 'test_1083_nodata_int_dask.tif')
+        to_geotiff(da, path, compression='none')
+        with pytest.raises(ValueError, match='float.*int'):
+            open_geotiff(path, dtype='int32', chunks=2)

@@ -608,13 +608,20 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
     full_h, full_w = arr.shape[:2]
     n_bands = arr.shape[2] if arr.ndim == 3 else 0
     file_dtype = arr.dtype
+    nodata = geo_info.nodata
 
-    # Resolve target dtype (validates float-to-int cast up front)
+    # Nodata masking promotes integer arrays to float64 (for NaN).
+    # Validate against the effective dtype, not the raw file dtype.
+    if nodata is not None and file_dtype.kind in ('u', 'i'):
+        effective_dtype = np.dtype('float64')
+    else:
+        effective_dtype = file_dtype
+
     if dtype is not None:
         target_dtype = np.dtype(dtype)
-        _validate_dtype_cast(file_dtype, target_dtype)
+        _validate_dtype_cast(effective_dtype, target_dtype)
     else:
-        target_dtype = file_dtype
+        target_dtype = effective_dtype
 
     coords = _geo_to_coords(geo_info, full_h, full_w)
 
@@ -627,8 +634,8 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
         attrs['crs'] = geo_info.crs_epsg
     if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
         attrs['raster_type'] = 'point'
-    if geo_info.nodata is not None:
-        attrs['nodata'] = geo_info.nodata
+    if nodata is not None:
+        attrs['nodata'] = nodata
 
     if isinstance(chunks, int):
         ch_h = ch_w = chunks
@@ -643,8 +650,6 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
     # read_to_array with band=0 extracts a single band, band=None returns all
     band_arg = None  # return all bands (or 2D if single-band)
 
-    cast_dtype = target_dtype if dtype is not None else None
-
     dask_rows = []
     for r0 in rows:
         r1 = min(r0 + ch_h, full_h)
@@ -657,9 +662,9 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
                 block_shape = (r1 - r0, c1 - c0)
             block = da.from_delayed(
                 _delayed_read_window(source, r0, c0, r1, c1,
-                                     overview_level, geo_info.nodata,
-                                     file_dtype, band_arg,
-                                     target_dtype=cast_dtype),
+                                     overview_level, nodata,
+                                     band_arg,
+                                     target_dtype=target_dtype if dtype is not None else None),
                 shape=block_shape,
                 dtype=target_dtype,
             )
@@ -680,7 +685,7 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
 
 
 def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
-                         dtype, band, *, target_dtype=None):
+                         band, *, target_dtype=None):
     """Dask-delayed function to read a single window."""
     import dask
     @dask.delayed
