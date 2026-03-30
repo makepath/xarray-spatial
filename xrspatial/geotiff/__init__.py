@@ -782,6 +782,10 @@ def read_geotiff_gpu(source: str, *,
             attrs = {}
             if geo_info.crs_epsg is not None:
                 attrs['crs'] = geo_info.crs_epsg
+            if dtype is not None:
+                target = np.dtype(dtype)
+                _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
+                arr_gpu = arr_gpu.astype(target)
             return xr.DataArray(arr_gpu, dims=['y', 'x'],
                                 coords=coords, name=name, attrs=attrs)
 
