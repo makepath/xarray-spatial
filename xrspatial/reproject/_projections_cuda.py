@@ -90,6 +90,15 @@ else:
         dCe = sin2Cn * cosh2Ce * hi + cos2Cn * sinh2Ce * hr
         return dCn, dCe
 
+    @cuda.jit(device=True)
+    def _d_norm_lon_rad(lon):
+        """Normalize longitude to [-pi, pi]."""
+        while lon > math.pi:
+            lon -= 2.0 * math.pi
+        while lon < -math.pi:
+            lon += 2.0 * math.pi
+        return lon
+
     # -----------------------------------------------------------------
     # Web Mercator (EPSG:3857)  --  spherical
     # -----------------------------------------------------------------
@@ -291,11 +300,11 @@ else:
             lam_n = math.atan2(x, rho0_y)
         if abs(rho) < 1e-30:
             lat = 90.0 if n > 0 else -90.0
-            return math.degrees(lon0 + lam_n / n), lat
+            return math.degrees(_d_norm_lon_rad(lon0 + lam_n / n)), lat
         ts = math.pow(rho / (a * k0 * c), 1.0 / n)
         taup = math.sinh(math.log(1.0 / ts))
         tau = _d_pj_sinhpsi2tanphi(taup, e)
-        return math.degrees(lam_n / n + lon0), math.degrees(math.atan(tau))
+        return math.degrees(_d_norm_lon_rad(lam_n / n + lon0)), math.degrees(math.atan(tau))
 
     @cuda.jit
     def _k_lcc_inverse(out_src_x, out_src_y,
@@ -355,7 +364,7 @@ else:
             ratio = -1.0
         beta = math.asin(ratio)
         phi = _d_authalic_inv(beta, apa0, apa1, apa2, apa3, apa4)
-        return math.degrees(theta / n + lon0), math.degrees(phi)
+        return math.degrees(_d_norm_lon_rad(theta / n + lon0)), math.degrees(phi)
 
     @cuda.jit
     def _k_aea_inverse(out_src_x, out_src_y,
@@ -404,7 +413,7 @@ else:
             ratio = -1.0
         beta = math.asin(ratio)
         phi = _d_authalic_inv(beta, apa0, apa1, apa2, apa3, apa4)
-        return math.degrees(lam + lon0), math.degrees(phi)
+        return math.degrees(_d_norm_lon_rad(lam + lon0)), math.degrees(phi)
 
     @cuda.jit
     def _k_cea_inverse(out_src_x, out_src_y,
@@ -476,7 +485,7 @@ else:
             lam = 0.0
         else:
             lam = x * math.sqrt(1.0 - e2 * s * s) / (a * c)
-        return math.degrees(lam + lon0), math.degrees(phi)
+        return math.degrees(_d_norm_lon_rad(lam + lon0)), math.degrees(phi)
 
     @cuda.jit
     def _k_sinu_inverse(out_src_x, out_src_y,
@@ -594,7 +603,7 @@ else:
             ratio = -1.0
         beta = math.asin(ratio)
         phi = _d_authalic_inv(beta, apa0, apa1, apa2, apa3, apa4)
-        return math.degrees(lam + lon0), math.degrees(phi)
+        return math.degrees(_d_norm_lon_rad(lam + lon0)), math.degrees(phi)
 
     @cuda.jit
     def _k_laea_inverse(out_src_x, out_src_y,
@@ -670,7 +679,7 @@ else:
             phi = phi_new
         if is_south:
             phi = -phi
-        return math.degrees(lam + lon0), math.degrees(phi)
+        return math.degrees(_d_norm_lon_rad(lam + lon0)), math.degrees(phi)
 
     @cuda.jit
     def _k_stere_inverse(out_src_x, out_src_y,

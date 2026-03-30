@@ -1315,6 +1315,60 @@ class TestDaskGraphOptimization:
         assert not _bounds_overlap(a, (0, 11, 10, 20))  # no overlap y
 
 
+class TestLongitudeNormalization:
+    """CPU projection round-trips should keep longitude in [-180, 180] (#1088)."""
+
+    def test_sinusoidal_round_trip_stays_in_range(self):
+        """Sinusoidal inverse must normalize longitude near antimeridian."""
+        from xrspatial.reproject._projections import (
+            _sinu_fwd_point, _sinu_inv_point, _MLFN_EN,
+        )
+        # Forward: WGS84 point near antimeridian
+        lon_in, lat_in = 179.5, 30.0
+        lon0 = 0.0  # central meridian at 0
+        x, y = _sinu_fwd_point(lon_in, lat_in, lon0, _WGS84_E2, _WGS84_A, _MLFN_EN)
+        # Inverse: should return longitude in [-180, 180]
+        lon_out, lat_out = _sinu_inv_point(x, y, lon0, _WGS84_E2, _WGS84_A, _MLFN_EN)
+        assert -180 <= lon_out <= 180, f"lon {lon_out} outside [-180, 180]"
+        assert abs(lon_out - lon_in) < 1e-6
+        assert abs(lat_out - lat_in) < 1e-6
+
+    def test_lcc_round_trip_stays_in_range(self):
+        """LCC inverse must normalize longitude."""
+        from xrspatial.reproject._projections import (
+            _lcc_fwd_point, _lcc_inv_point, _WGS84_E, _WGS84_A,
+        )
+        import math
+        # EPSG:2154 (France): lon0=3, lat1=44, lat2=49
+        lon0 = math.radians(3.0)
+        lat1, lat2, lat0 = math.radians(44.0), math.radians(49.0), math.radians(46.5)
+        e = _WGS84_E
+        a = _WGS84_A
+        k0 = 1.0
+        # Compute n, c, rho0 for LCC
+        from xrspatial.reproject._projections import _pj_tsfn
+        s1, s2 = math.sin(lat1), math.sin(lat2)
+        ts1 = _pj_tsfn(lat1, s1, e)
+        ts2 = _pj_tsfn(lat2, s2, e)
+        m1 = math.cos(lat1) / math.sqrt(1.0 - e * e * s1 * s1)
+        m2 = math.cos(lat2) / math.sqrt(1.0 - e * e * s2 * s2)
+        n = (math.log(m1) - math.log(m2)) / (math.log(ts1) - math.log(ts2))
+        c = m1 / (n * math.pow(ts1, n))
+        ts0 = _pj_tsfn(lat0, math.sin(lat0), e)
+        rho0 = a * k0 * c * math.pow(ts0, n)
+        # Forward + inverse round trip
+        lon_in, lat_in = 2.5, 47.0
+        x, y = _lcc_fwd_point(lon_in, lat_in, lon0, n, c, rho0, k0, e, a)
+        lon_out, lat_out = _lcc_inv_point(x, y, lon0, n, c, rho0, k0, e, a)
+        assert -180 <= lon_out <= 180
+        assert abs(lon_out - lon_in) < 1e-6
+        assert abs(lat_out - lat_in) < 1e-6
+
+
+_WGS84_E2 = 2.0 * (1.0 / 298.257223563) - (1.0 / 298.257223563) ** 2
+_WGS84_A = 6378137.0
+
+
 class TestReprojWithLiteCRS:
     def test_reproject_wgs84_to_utm_with_lite_crs(self):
         import xarray as xr
