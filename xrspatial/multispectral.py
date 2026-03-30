@@ -1062,9 +1062,8 @@ def _savi_cpu(nir_data, red_data, soil_factor):
             red = red_data[y, x]
             numerator = nir - red
             soma = nir + red + soil_factor
-            denominator = soma * (1.0 + soil_factor)
-            if denominator != 0.0:
-                out[y, x] = numerator / denominator
+            if soma != 0.0:
+                out[y, x] = (numerator / soma) * (1.0 + soil_factor)
 
     return out
 
@@ -1077,9 +1076,8 @@ def _savi_gpu(nir_data, red_data, soil_factor, out):
         red = red_data[y, x]
         numerator = nir - red
         soma = nir + red + soil_factor
-        denominator = soma * (nb.float32(1.0) + soil_factor)
-        if denominator != 0.0:
-            out[y, x] = numerator / denominator
+        if soma != 0.0:
+            out[y, x] = (numerator / soma) * (1.0 + soil_factor)
 
 
 def _savi_dask(nir_data, red_data, soil_factor):
@@ -1367,7 +1365,7 @@ def _ebbi_gpu(red_data, swir_data, tir_data, out):
         swir = swir_data[y, x]
         tir = tir_data[y, x]
         numerator = swir - red
-        denominator = nb.int64(10) * sqrt(swir + tir)
+        denominator = 10.0 * sqrt(swir + tir)
         if denominator != 0.0:
             out[y, x] = numerator / denominator
 
