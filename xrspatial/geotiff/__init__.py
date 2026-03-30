@@ -57,6 +57,22 @@ def _geo_to_coords(geo_info, height: int, width: int) -> dict:
     return {'y': y, 'x': x}
 
 
+def _validate_dtype_cast(source_dtype, target_dtype):
+    """Validate that casting source_dtype to target_dtype is allowed.
+
+    Raises ValueError for float-to-int casts (lossy in a way users
+    often don't intend).  All other casts are permitted -- the user
+    asked for them explicitly.
+    """
+    src = np.dtype(source_dtype)
+    tgt = np.dtype(target_dtype)
+    if src.kind == 'f' and tgt.kind in ('u', 'i'):
+        raise ValueError(
+            f"Cannot cast float ({src}) to int ({tgt}). "
+            f"This loses fractional data and is usually unintentional. "
+            f"Cast explicitly after reading if you really want this.")
+
+
 def _coords_to_transform(da: xr.DataArray) -> GeoTransform | None:
     """Infer GeoTransform from DataArray coordinates.
 
@@ -148,7 +164,7 @@ def _extent_to_window(transform, file_height, file_width,
 
 
 
-def open_geotiff(source: str, *, window=None,
+def open_geotiff(source: str, *, dtype=None, window=None,
                  overview_level: int | None = None,
                  band: int | None = None,
                  name: str | None = None,
@@ -168,6 +184,10 @@ def open_geotiff(source: str, *, window=None,
     ----------
     source : str
         File path, HTTP URL, or cloud URI (s3://, gs://, az://).
+    dtype : str, numpy.dtype, or None
+        Cast the result to this dtype after reading. None keeps the
+        file's native dtype. Float-to-int casts raise ValueError to
+        prevent accidental data loss.
     window : tuple or None
         (row_start, col_start, row_stop, col_stop) for windowed reading.
     overview_level : int or None
@@ -188,17 +208,18 @@ def open_geotiff(source: str, *, window=None,
     """
     # VRT files
     if source.lower().endswith('.vrt'):
-        return read_vrt(source, window=window, band=band, name=name,
-                        chunks=chunks, gpu=gpu)
+        return read_vrt(source, dtype=dtype, window=window, band=band,
+                        name=name, chunks=chunks, gpu=gpu)
 
     # GPU path
     if gpu:
-        return read_geotiff_gpu(source, overview_level=overview_level,
+        return read_geotiff_gpu(source, dtype=dtype,
+                                overview_level=overview_level,
                                 name=name, chunks=chunks)
 
     # Dask path (CPU)
     if chunks is not None:
-        return read_geotiff_dask(source, chunks=chunks,
+        return read_geotiff_dask(source, dtype=dtype, chunks=chunks,
                                  overview_level=overview_level, name=name)
 
     arr, geo_info = read_to_array(
@@ -305,6 +326,11 @@ def open_geotiff(source: str, *, window=None,
             if mask.any():
                 arr = arr.astype(np.float64)
                 arr[mask] = np.nan
+
+    if dtype is not None:
+        target = np.dtype(dtype)
+        _validate_dtype_cast(arr.dtype, target)
+        arr = arr.astype(target)
 
     if arr.ndim == 3:
         dims = ['y', 'x', 'band']
@@ -545,7 +571,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     )
 
 
-def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
+def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
                       overview_level: int | None = None,
                       name: str | None = None) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
@@ -556,6 +582,9 @@ def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
     ----------
     source : str
         File path.
+    dtype : str, numpy.dtype, or None
+        Cast each chunk to this dtype after reading. None keeps the
+        file's native dtype. Float-to-int casts raise ValueError.
     chunks : int or (row_chunk, col_chunk) tuple
         Chunk size in pixels. Default 512.
     overview_level : int or None
@@ -572,13 +601,20 @@ def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
 
     # VRT files: delegate to read_vrt which handles chunks
     if source.lower().endswith('.vrt'):
-        return read_vrt(source, name=name, chunks=chunks)
+        return read_vrt(source, dtype=dtype, name=name, chunks=chunks)
 
     # First, do a metadata-only read to get shape, dtype, coords, attrs
     arr, geo_info = read_to_array(source, overview_level=overview_level)
     full_h, full_w = arr.shape[:2]
     n_bands = arr.shape[2] if arr.ndim == 3 else 0
-    dtype = arr.dtype
+    file_dtype = arr.dtype
+
+    # Resolve target dtype (validates float-to-int cast up front)
+    if dtype is not None:
+        target_dtype = np.dtype(dtype)
+        _validate_dtype_cast(file_dtype, target_dtype)
+    else:
+        target_dtype = file_dtype
 
     coords = _geo_to_coords(geo_info, full_h, full_w)
 
@@ -607,6 +643,8 @@ def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
     # read_to_array with band=0 extracts a single band, band=None returns all
     band_arg = None  # return all bands (or 2D if single-band)
 
+    cast_dtype = target_dtype if dtype is not None else None
+
     dask_rows = []
     for r0 in rows:
         r1 = min(r0 + ch_h, full_h)
@@ -620,9 +658,10 @@ def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
             block = da.from_delayed(
                 _delayed_read_window(source, r0, c0, r1, c1,
                                      overview_level, geo_info.nodata,
-                                     dtype, band_arg),
+                                     file_dtype, band_arg,
+                                     target_dtype=cast_dtype),
                 shape=block_shape,
-                dtype=dtype,
+                dtype=target_dtype,
             )
             dask_cols.append(block)
         dask_rows.append(da.concatenate(dask_cols, axis=1))
@@ -641,7 +680,7 @@ def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
 
 
 def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
-                         dtype, band):
+                         dtype, band, *, target_dtype=None):
     """Dask-delayed function to read a single window."""
     import dask
     @dask.delayed
@@ -657,11 +696,14 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                 if mask.any():
                     arr = arr.astype(np.float64)
                     arr[mask] = np.nan
+        if target_dtype is not None:
+            arr = arr.astype(target_dtype)
         return arr
     return _read()
 
 
 def read_geotiff_gpu(source: str, *,
+                     dtype=None,
                      overview_level: int | None = None,
                      name: str | None = None,
                      chunks: int | tuple | None = None) -> xr.DataArray:
@@ -725,7 +767,7 @@ def read_geotiff_gpu(source: str, *,
         bps = ifd.bits_per_sample
         if isinstance(bps, tuple):
             bps = bps[0]
-        dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
+        file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         geo_info = extract_geo_info(ifd, data, header.byte_order)
 
         if not ifd.is_tiled:
@@ -764,7 +806,7 @@ def read_geotiff_gpu(source: str, *,
         arr_gpu = gpu_decode_tiles_from_file(
             source, offsets, byte_counts,
             tw, th, width, height,
-            compression, predictor, dtype, samples,
+            compression, predictor, file_dtype, samples,
         )
     except Exception:
         pass
@@ -786,12 +828,17 @@ def read_geotiff_gpu(source: str, *,
             arr_gpu = gpu_decode_tiles(
                 compressed_tiles,
                 tw, th, width, height,
-                compression, predictor, dtype, samples,
+                compression, predictor, file_dtype, samples,
             )
         except (ValueError, Exception):
             # Unsupported compression -- fall back to CPU then transfer
             arr_cpu, _ = read_to_array(source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
+
+    if dtype is not None:
+        target = np.dtype(dtype)
+        _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
+        arr_gpu = arr_gpu.astype(target)
 
     # Build DataArray
     if name is None:
@@ -949,7 +996,7 @@ def write_geotiff_gpu(data, path: str, *,
     _write_bytes(file_bytes, path)
 
 
-def read_vrt(source: str, *, window=None,
+def read_vrt(source: str, *, dtype=None, window=None,
              band: int | None = None,
              name: str | None = None,
              chunks: int | tuple | None = None,
@@ -963,6 +1010,9 @@ def read_vrt(source: str, *, window=None,
     ----------
     source : str
         Path to the .vrt file.
+    dtype : str, numpy.dtype, or None
+        Cast the result to this dtype after reading. None keeps the
+        file's native dtype. Float-to-int casts raise ValueError.
     window : tuple or None
         (row_start, col_start, row_stop, col_stop) for windowed reading.
     band : int or None
@@ -1020,6 +1070,11 @@ def read_vrt(source: str, *, window=None,
     if gpu:
         import cupy
         arr = cupy.asarray(arr)
+
+    if dtype is not None:
+        target = np.dtype(dtype)
+        _validate_dtype_cast(np.dtype(str(arr.dtype)), target)
+        arr = arr.astype(target)
 
     if arr.ndim == 3:
         dims = ['y', 'x', 'band']
