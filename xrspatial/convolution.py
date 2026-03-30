@@ -17,6 +17,13 @@ except ImportError:
         ndarray = False
 
 
+def _promote_float(dtype):
+    """Return at least float32; preserve float64."""
+    if np.issubdtype(dtype, np.floating):
+        return dtype
+    return np.float32
+
+
 DEFAULT_UNIT = 'meter'
 METER = 1
 FOOT = 0.3048
@@ -286,8 +293,7 @@ def custom_kernel(kernel):
 @jit(nopython=True, nogil=True)
 def _convolve_2d_numpy(data, kernel):
     # apply kernel to data image.
-    # TODO: handle nan
-    data = data.astype(np.float32)
+    # Caller must ensure data is a float type (float32 or float64).
     nx = data.shape[0]
     ny = data.shape[1]
     nkx = kernel.shape[0]
@@ -295,7 +301,7 @@ def _convolve_2d_numpy(data, kernel):
     wkx = nkx // 2
     wky = nky // 2
 
-    out = np.zeros(data.shape, dtype=np.float32)
+    out = np.empty_like(data)
     out[:] = np.nan
     for i in prange(wkx, nx-wkx):
         iimin = max(i - wkx, 0)
@@ -315,6 +321,7 @@ def _convolve_2d_numpy(data, kernel):
 
 
 def _convolve_2d_numpy_boundary(data, kernel, boundary='nan'):
+    data = data.astype(_promote_float(data.dtype))
     if boundary == 'nan':
         return _convolve_2d_numpy(data, kernel)
     pad_h = kernel.shape[0] // 2
@@ -329,7 +336,7 @@ def _convolve_2d_numpy_boundary(data, kernel, boundary='nan'):
 
 
 def _convolve_2d_dask_numpy(data, kernel, boundary='nan'):
-    data = data.astype(np.float32)
+    data = data.astype(_promote_float(data.dtype))
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
     _func = partial(_convolve_2d_numpy, kernel=kernel)
@@ -393,8 +400,9 @@ def _convolve_2d_cupy(data, kernel, boundary='nan'):
         c1 = -pad_w if pad_w else None
         return result[r0:r1, c0:c1]
 
-    data = data.astype(cupy.float32)
-    out = cupy.empty(data.shape, dtype='f4')
+    fdtype = _promote_float(data.dtype)
+    data = data.astype(fdtype)
+    out = cupy.empty(data.shape, dtype=fdtype)
     out[:, :] = cupy.nan
     griddim, blockdim = cuda_args(data.shape)
     _convolve_2d_cuda[griddim, blockdim](data, kernel, cupy.asarray(out))
@@ -402,7 +410,7 @@ def _convolve_2d_cupy(data, kernel, boundary='nan'):
 
 
 def _convolve_2d_dask_cupy(data, kernel, boundary='nan'):
-    data = data.astype(cupy.float32)
+    data = data.astype(_promote_float(data.dtype))
     pad_h = kernel.shape[0] // 2
     pad_w = kernel.shape[1] // 2
     _func = partial(_convolve_2d_cupy, kernel=kernel)

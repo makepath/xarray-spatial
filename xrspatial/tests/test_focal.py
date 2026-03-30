@@ -942,6 +942,62 @@ def test_convolution_2d_boundary_no_nan(boundary):
         np_result.data, da_result.data.compute(), equal_nan=True, rtol=1e-5)
 
 
+# --- convolve_2d float64 preservation (issue-1096) ---
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_convolve_2d_preserves_float64_1096(backend):
+    """Float64 input should produce float64 output, not float32.
+
+    Regression test for #1096: convolve_2d hardcoded .astype(float32)
+    across all backends.
+    """
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    # Values near 1e7 where float32 loses the 0.0x differences
+    data = np.array([[1e7 + 0.01, 1e7 + 0.02, 1e7 + 0.03],
+                     [1e7 + 0.04, 1e7 + 0.05, 1e7 + 0.06],
+                     [1e7 + 0.07, 1e7 + 0.08, 1e7 + 0.09],
+                     [1e7 + 0.10, 1e7 + 0.11, 1e7 + 0.12]], dtype=np.float64)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+
+    agg = create_test_raster(data, backend=backend, chunks=(4, 3))
+    result = convolve_2d(agg.data, kernel)
+
+    if hasattr(result, 'compute'):
+        result = result.compute()
+    if hasattr(result, 'get'):
+        result = result.get()
+    result = np.asarray(result)
+
+    # Output must be float64
+    assert result.dtype == np.float64, f"got {result.dtype}"
+
+    # Interior pixel (1,1): kernel cross hits [0.02, 0.04, 0.05, 0.06, 0.08]
+    # Expected: sum = 5e7 + 0.25
+    expected_center = 5e7 + 0.25
+    assert abs(float(result[1, 1]) - expected_center) < 1e-8, (
+        f"center={result[1, 1]}, expected={expected_center}"
+    )
+
+
+def test_convolve_2d_int_promotes_to_float32_1096():
+    """Integer input should be promoted to float32 (not stay int)."""
+    data = np.array([[1, 2, 3],
+                     [4, 5, 6],
+                     [7, 8, 9]], dtype=np.int32)
+    kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.float64)
+
+    result = convolve_2d(data, kernel)
+    assert np.issubdtype(result.dtype, np.floating), f"got {result.dtype}"
+    # Interior pixel (1,1): cross sum = 2+4+5+6+8 = 25
+    assert float(result[1, 1]) == 25.0
+
+
 # --- 3D (multi-band) focal tests ---
 
 
