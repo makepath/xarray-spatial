@@ -448,8 +448,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                          compression_level=compression_level,
                          tile_size=tile_size,
                          predictor=predictor,
-                         bigtiff=bigtiff,
-                         gpu=gpu)
+                         bigtiff=bigtiff)
         return
 
     # Auto-detect GPU data and dispatch to write_geotiff_gpu
@@ -630,8 +629,7 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
 
 def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                      compression='zstd', compression_level=None,
-                     tile_size=256, predictor=False, bigtiff=None,
-                     gpu=None):
+                     tile_size=256, predictor=False, bigtiff=None):
     """Write a DataArray as a directory of tiled GeoTIFFs with a VRT index.
 
     This enables streaming dask arrays to disk without materializing the
@@ -699,6 +697,10 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     is_dask = hasattr(raw, 'dask')
 
     if is_dask:
+        if raw.ndim != 2:
+            raise ValueError(
+                "VRT tiled output currently supports 2D arrays only, "
+                f"got {raw.ndim}D. Squeeze or select a band first.")
         # Use dask chunk grid
         import dask
         row_chunks = raw.chunks[0]  # tuple of chunk sizes along y
@@ -713,6 +715,10 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
             np_arr = raw.compute()
         else:
             np_arr = np.asarray(raw)
+        if np_arr.ndim != 2:
+            raise ValueError(
+                "VRT tiled output currently supports 2D arrays only, "
+                f"got {np_arr.ndim}D. Squeeze or select a band first.")
         height, width = np_arr.shape[:2]
         n_row_tiles = (height + tile_size - 1) // tile_size
         n_col_tiles = (width + tile_size - 1) // tile_size
@@ -777,7 +783,7 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     # Execute all dask tasks
     if delayed_tasks:
         import dask
-        dask.compute(*delayed_tasks)
+        dask.compute(*delayed_tasks, scheduler='synchronous')
 
     # Write VRT index with relative paths
     from ._vrt import write_vrt as _write_vrt_fn
