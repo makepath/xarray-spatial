@@ -928,7 +928,7 @@ def write(data: np.ndarray, path: str, *,
     # Full resolution
     if tiled:
         rel_off, bc, comp_data = _write_tiled(data, comp_tag, predictor, tile_size,
-                                               compression_level)
+                                               compression_level=compression_level)
     else:
         rel_off, bc, comp_data = _write_stripped(data, comp_tag, predictor,
                                                   compression_level=compression_level)
@@ -954,7 +954,8 @@ def write(data: np.ndarray, path: str, *,
             oh, ow = current.shape[:2]
             if tiled:
                 o_off, o_bc, o_data = _write_tiled(current, comp_tag, predictor,
-                                                    tile_size, compression_level)
+                                                    tile_size,
+                                                    compression_level=compression_level)
             else:
                 o_off, o_bc, o_data = _write_stripped(current, comp_tag, predictor,
                                                        compression_level=compression_level)
