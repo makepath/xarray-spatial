@@ -547,12 +547,12 @@ def quantile(agg: xr.DataArray,
 def _run_numpy_jenks_matrices(data, n_classes):
     n_data = data.shape[0]
     lower_class_limits = np.zeros(
-        (n_data + 1, n_classes + 1), dtype=np.float32
+        (n_data + 1, n_classes + 1), dtype=np.float64
     )
     lower_class_limits[1, 1:n_classes + 1] = 1.0
 
     var_combinations = np.zeros(
-        (n_data + 1, n_classes + 1), dtype=np.float32
+        (n_data + 1, n_classes + 1), dtype=np.float64
     )
     var_combinations[2:n_data + 1, 1:n_classes + 1] = np.inf
 
@@ -568,7 +568,7 @@ def _run_numpy_jenks_matrices(data, n_classes):
             lower_class_limit = l - m
             i4 = lower_class_limit - 1
 
-            val = np.float32(data[i4])
+            val = data[i4]
 
             # here we're estimating variance for each potential classing
             # of the data, for each potential number of classes. `w`
@@ -610,7 +610,7 @@ def _run_jenks(data, n_classes):
     lower_class_limits, _ = _run_numpy_jenks_matrices(data, n_classes)
 
     k = data.shape[0]
-    kclass = np.zeros(n_classes + 1, dtype=np.float32)
+    kclass = np.zeros(n_classes + 1, dtype=np.float64)
     kclass[0] = data[0]
     kclass[-1] = data[-1]
     count_num = n_classes
