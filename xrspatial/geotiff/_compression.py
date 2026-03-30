@@ -997,7 +997,8 @@ def compress(data: bytes, compression: int, level: int = 6) -> bytes:
     compression : int
         TIFF compression tag value.
     level : int
-        Compression level (for deflate).
+        Compression level (deflate: 1-9, zstd: 1-22, lz4: 0-16).
+        Ignored for codecs without level support.
 
     Returns
     -------

@@ -57,6 +57,22 @@ def _geo_to_coords(geo_info, height: int, width: int) -> dict:
     return {'y': y, 'x': x}
 
 
+def _validate_dtype_cast(source_dtype, target_dtype):
+    """Validate that casting source_dtype to target_dtype is allowed.
+
+    Raises ValueError for float-to-int casts (lossy in a way users
+    often don't intend).  All other casts are permitted -- the user
+    asked for them explicitly.
+    """
+    src = np.dtype(source_dtype)
+    tgt = np.dtype(target_dtype)
+    if src.kind == 'f' and tgt.kind in ('u', 'i'):
+        raise ValueError(
+            f"Cannot cast float ({src}) to int ({tgt}). "
+            f"This loses fractional data and is usually unintentional. "
+            f"Cast explicitly after reading if you really want this.")
+
+
 def _coords_to_transform(da: xr.DataArray) -> GeoTransform | None:
     """Infer GeoTransform from DataArray coordinates.
 
@@ -148,7 +164,7 @@ def _extent_to_window(transform, file_height, file_width,
 
 
 
-def open_geotiff(source: str, *, window=None,
+def open_geotiff(source: str, *, dtype=None, window=None,
                  overview_level: int | None = None,
                  band: int | None = None,
                  name: str | None = None,
@@ -168,6 +184,10 @@ def open_geotiff(source: str, *, window=None,
     ----------
     source : str
         File path, HTTP URL, or cloud URI (s3://, gs://, az://).
+    dtype : str, numpy.dtype, or None
+        Cast the result to this dtype after reading. None keeps the
+        file's native dtype. Float-to-int casts raise ValueError to
+        prevent accidental data loss.
     window : tuple or None
         (row_start, col_start, row_stop, col_stop) for windowed reading.
     overview_level : int or None
@@ -188,17 +208,18 @@ def open_geotiff(source: str, *, window=None,
     """
     # VRT files
     if source.lower().endswith('.vrt'):
-        return read_vrt(source, window=window, band=band, name=name,
-                        chunks=chunks, gpu=gpu)
+        return read_vrt(source, dtype=dtype, window=window, band=band,
+                        name=name, chunks=chunks, gpu=gpu)
 
     # GPU path
     if gpu:
-        return read_geotiff_gpu(source, overview_level=overview_level,
+        return read_geotiff_gpu(source, dtype=dtype,
+                                overview_level=overview_level,
                                 name=name, chunks=chunks)
 
     # Dask path (CPU)
     if chunks is not None:
-        return read_geotiff_dask(source, chunks=chunks,
+        return read_geotiff_dask(source, dtype=dtype, chunks=chunks,
                                  overview_level=overview_level, name=name)
 
     arr, geo_info = read_to_array(
@@ -306,6 +327,11 @@ def open_geotiff(source: str, *, window=None,
                 arr = arr.astype(np.float64)
                 arr[mask] = np.nan
 
+    if dtype is not None:
+        target = np.dtype(dtype)
+        _validate_dtype_cast(arr.dtype, target)
+        arr = arr.astype(target)
+
     if arr.ndim == 3:
         dims = ['y', 'x', 'band']
         coords['band'] = np.arange(arr.shape[2])
@@ -339,10 +365,18 @@ def _is_gpu_data(data) -> bool:
     return isinstance(data, _cupy_type)
 
 
+_LEVEL_RANGES = {
+    'deflate': (1, 9),
+    'zstd': (1, 22),
+    'lz4': (0, 16),
+}
+
+
 def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                crs: int | str | None = None,
                nodata=None,
                compression: str = 'zstd',
+               compression_level: int | None = None,
                tiled: bool = True,
                tile_size: int = 256,
                predictor: bool = False,
@@ -377,6 +411,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         JPEG is lossy and only supports uint8 data (1 or 3 bands).
         With ``gpu=True``, JPEG uses nvJPEG for GPU-accelerated
         encode/decode when available, falling back to Pillow on CPU.
+    compression_level : int or None
+        Compression effort level. None uses each codec's default (6 for
+        deflate/zstd). Valid ranges: deflate 1-9, zstd 1-22, lz4 0-16.
+        Codecs without a level concept (lzw, packbits, jpeg) accept any
+        value and ignore it.
     tiled : bool
         Use tiled layout (default True).
     tile_size : int
@@ -393,12 +432,33 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     gpu : bool or None
         Force GPU compression. None (default) auto-detects CuPy data.
     """
+    # VRT tiled output
+    if path.lower().endswith('.vrt'):
+        if cog:
+            raise ValueError(
+                "cog=True is not compatible with VRT output. "
+                "VRT writes tiled GeoTIFFs, not a single COG.")
+        if overview_levels is not None:
+            raise ValueError(
+                "overview_levels is not compatible with VRT output. "
+                "VRT tiles do not include overviews.")
+        _write_vrt_tiled(data, path,
+                         crs=crs, nodata=nodata,
+                         compression=compression,
+                         compression_level=compression_level,
+                         tile_size=tile_size,
+                         predictor=predictor,
+                         bigtiff=bigtiff)
+        return
+
     # Auto-detect GPU data and dispatch to write_geotiff_gpu
     use_gpu = gpu if gpu is not None else _is_gpu_data(data)
     if use_gpu:
         try:
             write_geotiff_gpu(data, path, crs=crs, nodata=nodata,
-                              compression=compression, tile_size=tile_size,
+                              compression=compression,
+                              compression_level=compression_level,
+                              tile_size=tile_size,
                               predictor=predictor)
             return
         except (ImportError, Exception):
@@ -496,6 +556,16 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
             arr = arr.copy()
             arr[nan_mask] = arr.dtype.type(nodata)
 
+    # Validate compression_level against codec-specific range
+    if compression_level is not None:
+        level_range = _LEVEL_RANGES.get(compression.lower())
+        if level_range is not None:
+            lo, hi = level_range
+            if not (lo <= compression_level <= hi):
+                raise ValueError(
+                    f"compression_level={compression_level} out of range "
+                    f"for {compression} (valid: {lo}-{hi})")
+
     write(
         arr, path,
         geo_transform=geo_transform,
@@ -503,6 +573,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         crs_wkt=wkt_fallback if epsg is None else None,
         nodata=nodata,
         compression=compression,
+        compression_level=compression_level,
         tiled=tiled,
         tile_size=tile_size,
         predictor=predictor,
@@ -519,7 +590,207 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     )
 
 
-def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
+def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
+                       nodata, compression, compression_level,
+                       tile_size, predictor, bigtiff):
+    """Write a single tile GeoTIFF. Used by _write_vrt_tiled."""
+    if hasattr(chunk_data, 'compute'):
+        chunk_data = chunk_data.compute()
+    if hasattr(chunk_data, 'get'):
+        chunk_data = chunk_data.get()  # CuPy -> numpy
+
+    arr = np.asarray(chunk_data)
+
+    # Auto-promote unsupported dtypes
+    if arr.dtype == np.float16:
+        arr = arr.astype(np.float32)
+    elif arr.dtype == np.bool_:
+        arr = arr.astype(np.uint8)
+
+    # Restore NaN to nodata sentinel
+    if nodata is not None and arr.dtype.kind == 'f' and not np.isnan(nodata):
+        nan_mask = np.isnan(arr)
+        if nan_mask.any():
+            arr = arr.copy()
+            arr[nan_mask] = arr.dtype.type(nodata)
+
+    write(arr, path,
+          geo_transform=geo_transform,
+          crs_epsg=epsg,
+          crs_wkt=wkt if epsg is None else None,
+          nodata=nodata,
+          compression=compression,
+          tiled=True,
+          tile_size=tile_size,
+          predictor=predictor,
+          compression_level=compression_level,
+          bigtiff=bigtiff)
+
+
+def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
+                     compression='zstd', compression_level=None,
+                     tile_size=256, predictor=False, bigtiff=None):
+    """Write a DataArray as a directory of tiled GeoTIFFs with a VRT index.
+
+    This enables streaming dask arrays to disk without materializing the
+    full array in RAM.
+    """
+    import os
+
+    # Validate compression_level against codec-specific range
+    if compression_level is not None:
+        level_range = _LEVEL_RANGES.get(compression.lower())
+        if level_range is not None:
+            lo, hi = level_range
+            if not (lo <= compression_level <= hi):
+                raise ValueError(
+                    f"compression_level={compression_level} out of range "
+                    f"for {compression} (valid: {lo}-{hi})")
+
+    # Derive tiles directory from VRT path stem
+    vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
+    stem = os.path.splitext(os.path.basename(vrt_path))[0]
+    tiles_dir_name = stem + '_tiles'
+    tiles_dir = os.path.join(vrt_dir, tiles_dir_name)
+
+    # Validate tiles directory
+    if os.path.isdir(tiles_dir) and os.listdir(tiles_dir):
+        raise FileExistsError(
+            f"Tiles directory already contains files: {tiles_dir}")
+    os.makedirs(tiles_dir, exist_ok=True)
+
+    # Resolve CRS
+    epsg = None
+    wkt_fallback = None
+    if isinstance(crs, int):
+        epsg = crs
+    elif isinstance(crs, str):
+        epsg = _wkt_to_epsg(crs)
+        if epsg is None:
+            wkt_fallback = crs
+
+    geo_transform = None
+
+    if isinstance(data, xr.DataArray):
+        raw = data.data
+        if epsg is None and crs is None:
+            crs_attr = data.attrs.get('crs')
+            if isinstance(crs_attr, str):
+                epsg = _wkt_to_epsg(crs_attr)
+                if epsg is None and wkt_fallback is None:
+                    wkt_fallback = crs_attr
+            elif crs_attr is not None:
+                epsg = int(crs_attr)
+            if epsg is None:
+                wkt = data.attrs.get('crs_wkt')
+                if isinstance(wkt, str):
+                    epsg = _wkt_to_epsg(wkt)
+                    if epsg is None and wkt_fallback is None:
+                        wkt_fallback = wkt
+        if nodata is None:
+            nodata = data.attrs.get('nodata')
+        geo_transform = _coords_to_transform(data)
+    else:
+        raw = data
+
+    # Check for dask backing
+    is_dask = hasattr(raw, 'dask')
+
+    if is_dask:
+        if raw.ndim != 2:
+            raise ValueError(
+                "VRT tiled output currently supports 2D arrays only, "
+                f"got {raw.ndim}D. Squeeze or select a band first.")
+        # Use dask chunk grid
+        import dask
+        row_chunks = raw.chunks[0]  # tuple of chunk sizes along y
+        col_chunks = raw.chunks[1]  # tuple of chunk sizes along x
+        n_row_tiles = len(row_chunks)
+        n_col_tiles = len(col_chunks)
+    else:
+        # Numpy: tile using tile_size
+        if hasattr(raw, 'get'):
+            np_arr = raw.get()  # CuPy
+        elif hasattr(raw, 'compute'):
+            np_arr = raw.compute()
+        else:
+            np_arr = np.asarray(raw)
+        if np_arr.ndim != 2:
+            raise ValueError(
+                "VRT tiled output currently supports 2D arrays only, "
+                f"got {np_arr.ndim}D. Squeeze or select a band first.")
+        height, width = np_arr.shape[:2]
+        n_row_tiles = (height + tile_size - 1) // tile_size
+        n_col_tiles = (width + tile_size - 1) // tile_size
+
+    # Zero-padding width for tile names
+    pad_width = max(2, len(str(max(n_row_tiles, n_col_tiles) - 1)))
+
+    tile_paths = []
+    delayed_tasks = []
+
+    row_offset = 0
+    for ri in range(n_row_tiles):
+        if is_dask:
+            chunk_h = row_chunks[ri]
+        else:
+            chunk_h = min(tile_size, height - row_offset)
+
+        col_offset = 0
+        for ci in range(n_col_tiles):
+            if is_dask:
+                chunk_w = col_chunks[ci]
+            else:
+                chunk_w = min(tile_size, width - col_offset)
+
+            tile_name = f'tile_{ri:0{pad_width}d}_{ci:0{pad_width}d}.tif'
+            tile_path = os.path.join(tiles_dir, tile_name)
+            tile_paths.append(tile_path)
+
+            # Compute per-tile geo_transform
+            tile_gt = None
+            if geo_transform is not None:
+                tile_gt = GeoTransform(
+                    origin_x=geo_transform.origin_x + col_offset * geo_transform.pixel_width,
+                    origin_y=geo_transform.origin_y + row_offset * geo_transform.pixel_height,
+                    pixel_width=geo_transform.pixel_width,
+                    pixel_height=geo_transform.pixel_height,
+                )
+
+            if is_dask:
+                # Slice the dask array for this chunk
+                r_end = row_offset + chunk_h
+                c_end = col_offset + chunk_w
+                chunk_data = raw[row_offset:r_end, col_offset:c_end]
+
+                task = dask.delayed(_write_single_tile)(
+                    chunk_data, tile_path, tile_gt, epsg, wkt_fallback,
+                    nodata, compression, compression_level,
+                    tile_size, predictor, bigtiff)
+                delayed_tasks.append(task)
+            else:
+                # Numpy: slice and write directly
+                chunk_data = np_arr[row_offset:row_offset + chunk_h,
+                                    col_offset:col_offset + chunk_w]
+                _write_single_tile(
+                    chunk_data, tile_path, tile_gt, epsg, wkt_fallback,
+                    nodata, compression, compression_level,
+                    tile_size, predictor, bigtiff)
+
+            col_offset += chunk_w
+        row_offset += chunk_h
+
+    # Execute all dask tasks
+    if delayed_tasks:
+        import dask
+        dask.compute(*delayed_tasks, scheduler='synchronous')
+
+    # Write VRT index with relative paths
+    from ._vrt import write_vrt as _write_vrt_fn
+    _write_vrt_fn(vrt_path, tile_paths, relative=True, nodata=nodata)
+
+
+def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
                       overview_level: int | None = None,
                       name: str | None = None) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
@@ -530,6 +801,9 @@ def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
     ----------
     source : str
         File path.
+    dtype : str, numpy.dtype, or None
+        Cast each chunk to this dtype after reading. None keeps the
+        file's native dtype. Float-to-int casts raise ValueError.
     chunks : int or (row_chunk, col_chunk) tuple
         Chunk size in pixels. Default 512.
     overview_level : int or None
@@ -546,13 +820,27 @@ def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
 
     # VRT files: delegate to read_vrt which handles chunks
     if source.lower().endswith('.vrt'):
-        return read_vrt(source, name=name, chunks=chunks)
+        return read_vrt(source, dtype=dtype, name=name, chunks=chunks)
 
     # First, do a metadata-only read to get shape, dtype, coords, attrs
     arr, geo_info = read_to_array(source, overview_level=overview_level)
     full_h, full_w = arr.shape[:2]
     n_bands = arr.shape[2] if arr.ndim == 3 else 0
-    dtype = arr.dtype
+    file_dtype = arr.dtype
+    nodata = geo_info.nodata
+
+    # Nodata masking promotes integer arrays to float64 (for NaN).
+    # Validate against the effective dtype, not the raw file dtype.
+    if nodata is not None and file_dtype.kind in ('u', 'i'):
+        effective_dtype = np.dtype('float64')
+    else:
+        effective_dtype = file_dtype
+
+    if dtype is not None:
+        target_dtype = np.dtype(dtype)
+        _validate_dtype_cast(effective_dtype, target_dtype)
+    else:
+        target_dtype = effective_dtype
 
     coords = _geo_to_coords(geo_info, full_h, full_w)
 
@@ -565,8 +853,8 @@ def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
         attrs['crs'] = geo_info.crs_epsg
     if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
         attrs['raster_type'] = 'point'
-    if geo_info.nodata is not None:
-        attrs['nodata'] = geo_info.nodata
+    if nodata is not None:
+        attrs['nodata'] = nodata
 
     if isinstance(chunks, int):
         ch_h = ch_w = chunks
@@ -593,10 +881,11 @@ def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
                 block_shape = (r1 - r0, c1 - c0)
             block = da.from_delayed(
                 _delayed_read_window(source, r0, c0, r1, c1,
-                                     overview_level, geo_info.nodata,
-                                     dtype, band_arg),
+                                     overview_level, nodata,
+                                     band_arg,
+                                     target_dtype=target_dtype if dtype is not None else None),
                 shape=block_shape,
-                dtype=dtype,
+                dtype=target_dtype,
             )
             dask_cols.append(block)
         dask_rows.append(da.concatenate(dask_cols, axis=1))
@@ -615,7 +904,7 @@ def read_geotiff_dask(source: str, *, chunks: int | tuple = 512,
 
 
 def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
-                         dtype, band):
+                         band, *, target_dtype=None):
     """Dask-delayed function to read a single window."""
     import dask
     @dask.delayed
@@ -631,11 +920,14 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                 if mask.any():
                     arr = arr.astype(np.float64)
                     arr[mask] = np.nan
+        if target_dtype is not None:
+            arr = arr.astype(target_dtype)
         return arr
     return _read()
 
 
 def read_geotiff_gpu(source: str, *,
+                     dtype=None,
                      overview_level: int | None = None,
                      name: str | None = None,
                      chunks: int | tuple | None = None) -> xr.DataArray:
@@ -699,7 +991,7 @@ def read_geotiff_gpu(source: str, *,
         bps = ifd.bits_per_sample
         if isinstance(bps, tuple):
             bps = bps[0]
-        dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
+        file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         geo_info = extract_geo_info(ifd, data, header.byte_order)
 
         if not ifd.is_tiled:
@@ -714,6 +1006,10 @@ def read_geotiff_gpu(source: str, *,
             attrs = {}
             if geo_info.crs_epsg is not None:
                 attrs['crs'] = geo_info.crs_epsg
+            if dtype is not None:
+                target = np.dtype(dtype)
+                _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
+                arr_gpu = arr_gpu.astype(target)
             return xr.DataArray(arr_gpu, dims=['y', 'x'],
                                 coords=coords, name=name, attrs=attrs)
 
@@ -738,7 +1034,7 @@ def read_geotiff_gpu(source: str, *,
         arr_gpu = gpu_decode_tiles_from_file(
             source, offsets, byte_counts,
             tw, th, width, height,
-            compression, predictor, dtype, samples,
+            compression, predictor, file_dtype, samples,
         )
     except Exception:
         pass
@@ -760,12 +1056,17 @@ def read_geotiff_gpu(source: str, *,
             arr_gpu = gpu_decode_tiles(
                 compressed_tiles,
                 tw, th, width, height,
-                compression, predictor, dtype, samples,
+                compression, predictor, file_dtype, samples,
             )
         except (ValueError, Exception):
             # Unsupported compression -- fall back to CPU then transfer
             arr_cpu, _ = read_to_array(source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
+
+    if dtype is not None:
+        target = np.dtype(dtype)
+        _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
+        arr_gpu = arr_gpu.astype(target)
 
     # Build DataArray
     if name is None:
@@ -803,6 +1104,7 @@ def write_geotiff_gpu(data, path: str, *,
                       crs: int | str | None = None,
                       nodata=None,
                       compression: str = 'zstd',
+                      compression_level: int | None = None,
                       tile_size: int = 256,
                       predictor: bool = False) -> None:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
@@ -827,6 +1129,9 @@ def write_geotiff_gpu(data, path: str, *,
     compression : str
         'zstd' (default, fastest on GPU), 'deflate', 'jpeg', or 'none'.
         JPEG uses nvJPEG when available, falling back to Pillow.
+    compression_level : int or None
+        Compression effort level. Accepted for API compatibility but
+        currently ignored -- nvCOMP does not expose level control.
     tile_size : int
         Tile size in pixels (default 256).
     predictor : bool
@@ -919,7 +1224,7 @@ def write_geotiff_gpu(data, path: str, *,
     _write_bytes(file_bytes, path)
 
 
-def read_vrt(source: str, *, window=None,
+def read_vrt(source: str, *, dtype=None, window=None,
              band: int | None = None,
              name: str | None = None,
              chunks: int | tuple | None = None,
@@ -933,6 +1238,9 @@ def read_vrt(source: str, *, window=None,
     ----------
     source : str
         Path to the .vrt file.
+    dtype : str, numpy.dtype, or None
+        Cast the result to this dtype after reading. None keeps the
+        file's native dtype. Float-to-int casts raise ValueError.
     window : tuple or None
         (row_start, col_start, row_stop, col_stop) for windowed reading.
     band : int or None
@@ -990,6 +1298,11 @@ def read_vrt(source: str, *, window=None,
     if gpu:
         import cupy
         arr = cupy.asarray(arr)
+
+    if dtype is not None:
+        target = np.dtype(dtype)
+        _validate_dtype_cast(np.dtype(str(arr.dtype)), target)
+        arr = arr.astype(target)
 
     if arr.ndim == 3:
         dims = ['y', 'x', 'band']

@@ -456,6 +456,8 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
             if relative:
                 try:
                     fname = os.path.relpath(fname, vrt_dir)
+                    # VRT XML uses forward slashes regardless of platform
+                    fname = fname.replace('\\', '/')
                     rel_attr = '1'
                 except ValueError:
                     pass  # different drives on Windows
