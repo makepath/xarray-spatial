@@ -680,18 +680,8 @@ def test_stats_all_nan_zone(backend):
             'sum':   [12.0],
             'count': [2],
         }
-    elif 'dask' in backend:
-        # dask uses nansum reduction, so count/sum of all-NaN become 0
-        expected = {
-            'zone':  [1, 2],
-            'mean':  [np.nan, 6.0],
-            'max':   [np.nan, 7.0],
-            'min':   [np.nan, 5.0],
-            'sum':   [0.0, 12.0],
-            'count': [0, 2],
-        }
     else:
-        # numpy keeps empty zone with NaN for every stat
+        # numpy and dask both return NaN for all-NaN zones
         expected = {
             'zone':  [1, 2],
             'mean':  [np.nan, 6.0],
@@ -798,16 +788,8 @@ def test_stats_nodata_wipes_zone(backend):
             'sum':   [10.0],
             'count': [2],
         }
-    elif 'dask' in backend:
-        expected = {
-            'zone':  [1, 2],
-            'mean':  [np.nan, 5.0],
-            'max':   [np.nan, 7.0],
-            'min':   [np.nan, 3.0],
-            'sum':   [0.0, 10.0],
-            'count': [0, 2],
-        }
     else:
+        # numpy and dask both return NaN for zones with no valid values
         expected = {
             'zone':  [1, 2],
             'mean':  [np.nan, 5.0],
@@ -866,6 +848,71 @@ def test_zonal_stats_inputs_unmodified(backend, data_zones, data_values_2d, resu
 
     assert_input_data_unmodified(data_zones, copied_data_zones)
     assert_input_data_unmodified(data_values_2d, copied_data_values_2d)
+
+
+@pytest.mark.filterwarnings("ignore:All-NaN slice encountered:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:invalid value encountered in divide:RuntimeWarning")
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy'])
+def test_stats_variance_numerical_stability_1090(backend):
+    """Dask std/var should match numpy for data with large mean, small spread.
+
+    Regression test for #1090: the naive one-pass formula
+    ``(Σx² − (Σx)²/n) / n`` loses precision through catastrophic
+    cancellation.  The fix uses Chan-Golub-LeVeque parallel merge.
+    """
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
+    # Values near 1e8 with a spread of 1: the naive formula would lose
+    # most of the significant digits in float64.
+    zones_data = np.array([[1, 1, 1, 1, 1, 1]])
+    values_data = np.array([[1e8, 1e8 + 1, 1e8 + 2,
+                             1e8 + 3, 1e8 + 4, 1e8 + 5]], dtype=np.float64)
+
+    zones = create_test_raster(zones_data, backend, chunks=(1, 3))
+    values = create_test_raster(values_data, backend, chunks=(1, 3))
+
+    df_result = stats(zones=zones, values=values,
+                      stats_funcs=['mean', 'std', 'var'])
+
+    if hasattr(df_result, 'compute'):
+        df_result = df_result.compute()
+
+    # Reference: population variance of [0,1,2,3,4,5] = 35/12 ≈ 2.9167
+    expected_var = np.var(np.arange(6, dtype=np.float64))
+    expected_std = np.std(np.arange(6, dtype=np.float64))
+
+    actual_var = float(df_result['var'].iloc[0])
+    actual_std = float(df_result['std'].iloc[0])
+
+    assert abs(actual_var - expected_var) < 1e-6, (
+        f"var={actual_var}, expected={expected_var}"
+    )
+    assert abs(actual_std - expected_std) < 1e-6, (
+        f"std={actual_std}, expected={expected_std}"
+    )
+
+
+def test_stats_nodata_none_no_warning_1090():
+    """Passing nodata_values=None (the default) should not trigger warnings.
+
+    Regression test for #1090: ``zone_values != None`` triggered a numpy
+    FutureWarning.
+    """
+    import warnings
+
+    zones_data = np.array([[1, 1], [2, 2]], dtype=float)
+    values_data = np.array([[1.0, 2.0], [3.0, 4.0]])
+    zones = xr.DataArray(zones_data)
+    values = xr.DataArray(values_data)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        df = stats(zones=zones, values=values, nodata_values=None)
+
+    assert len(df) == 2
+    assert float(df['mean'].iloc[0]) == 1.5
+    assert float(df['mean'].iloc[1]) == 3.5
 
 
 @pytest.mark.filterwarnings("ignore:All-NaN slice encountered:RuntimeWarning")

@@ -198,21 +198,77 @@ _DASK_BLOCK_STATS = dict(
     min=lambda z: z.min(),
     sum=lambda z: z.sum(),
     count=lambda z: _stats_count(z),
-    sum_squares=lambda z: (z**2).sum()
+    sum_squares=lambda z: ((z - z.mean()) ** 2).sum()  # block-level M2
 )
+
+
+def _nanreduce_preserve_allnan(blocks, func):
+    """Reduce across blocks, returning NaN when ALL blocks are NaN for a zone.
+
+    ``np.nansum`` returns 0 for all-NaN input; we want NaN so that zones
+    with no valid values propagate NaN, consistent with the numpy backend.
+    """
+    result = func(blocks, axis=0)
+    all_nan = np.all(np.isnan(blocks), axis=0)
+    result[all_nan] = np.nan
+    return result
 
 
 _DASK_STATS = dict(
-    max=lambda block_maxes: np.nanmax(block_maxes, axis=0),
-    min=lambda block_mins: np.nanmin(block_mins, axis=0),
-    sum=lambda block_sums: np.nansum(block_sums, axis=0),
-    count=lambda block_counts: np.nansum(block_counts, axis=0),
-    sum_squares=lambda block_sum_squares: np.nansum(block_sum_squares, axis=0),
-    squared_sum=lambda block_sums: np.nansum(block_sums, axis=0)**2,
+    max=lambda blocks: _nanreduce_preserve_allnan(blocks, np.nanmax),
+    min=lambda blocks: _nanreduce_preserve_allnan(blocks, np.nanmin),
+    sum=lambda blocks: _nanreduce_preserve_allnan(blocks, np.nansum),
+    count=lambda blocks: _nanreduce_preserve_allnan(blocks, np.nansum),
+    sum_squares=lambda blocks: _nanreduce_preserve_allnan(blocks, np.nansum),
 )
-def _dask_mean(sums, counts): return sums / counts  # noqa
-def _dask_std(sum_squares, squared_sum, n): return np.sqrt((sum_squares - squared_sum/n) / n)  # noqa
-def _dask_var(sum_squares, squared_sum, n): return (sum_squares - squared_sum/n) / n  # noqa
+
+
+def _dask_mean(sums, counts):  # noqa
+    return sums / counts
+
+
+def _parallel_variance(block_counts, block_sums, block_m2s):
+    """Population variance via Chan-Golub-LeVeque parallel merge.
+
+    Each input is (n_blocks, n_zones).  ``block_m2s`` contains
+    per-block M2 values (sum of squared deviations from the block mean),
+    NOT raw sum-of-squares.  Returns (n_zones,) population variance,
+    with NaN for zones that have no valid values in any block.
+    """
+    n_blocks = block_counts.shape[0]
+    n_zones = block_counts.shape[1]
+
+    n_acc = np.zeros(n_zones, dtype=np.float64)
+    mean_acc = np.zeros(n_zones, dtype=np.float64)
+    m2_acc = np.zeros(n_zones, dtype=np.float64)
+
+    for i in range(n_blocks):
+        nc = np.asarray(block_counts[i], dtype=np.float64)
+        sc = np.asarray(block_sums[i], dtype=np.float64)
+        m2_b = np.asarray(block_m2s[i], dtype=np.float64)
+
+        has_data = np.isfinite(nc) & (nc > 0)
+        nc_safe = np.where(has_data, nc, 1.0)  # avoid /0
+
+        with np.errstate(invalid='ignore', divide='ignore'):
+            mean_b = sc / nc_safe
+
+        nc = np.where(has_data, nc, 0.0)
+        n_ab = n_acc + nc
+
+        delta = mean_b - mean_acc
+        with np.errstate(invalid='ignore', divide='ignore'):
+            n_ab_safe = np.where(n_ab > 0, n_ab, 1.0)
+            correction = delta ** 2 * n_acc * nc / n_ab_safe
+            new_mean = mean_acc + delta * nc / n_ab_safe
+
+        m2_acc = np.where(has_data, m2_acc + m2_b + correction, m2_acc)
+        mean_acc = np.where(has_data, new_mean, mean_acc)
+        n_acc = np.where(has_data, n_ab, n_acc)
+
+    with np.errstate(invalid='ignore', divide='ignore'):
+        var = np.where(n_acc > 0, m2_acc / n_acc, np.nan)
+    return var
 
 
 @ngjit
@@ -269,7 +325,10 @@ def _calc_stats(
         if unique_zones[i] in zone_ids:
             zone_values = values_by_zones[start:end]
             # filter out non-finite and nodata_values
-            zone_values = zone_values[np.isfinite(zone_values) & (zone_values != nodata_values)]
+            mask = np.isfinite(zone_values)
+            if nodata_values is not None:
+                mask = mask & (zone_values != nodata_values)
+            zone_values = zone_values[mask]
             if len(zone_values) > 0:
                 results[i] = func(zone_values)
         start = end
@@ -342,8 +401,10 @@ def _stats_dask_numpy(
         sum=values.dtype,
         count=np.int64,
         sum_squares=values.dtype,
-        squared_sum=values.dtype,
     )
+
+    # Keep per-block stacked arrays for the parallel variance merge
+    stacked_blocks = {}
 
     for s in basis_stats:
         if s == 'sum_squares' and not compute_sum_squares:
@@ -358,6 +419,10 @@ def _stats_dask_numpy(
             for z, v in zip(zones_blocks, values_blocks)
         ]
         zonal_stats = da.stack(stats_by_block, allow_unknown_chunksizes=True)
+
+        if compute_sum_squares and s in ('count', 'sum', 'sum_squares'):
+            stacked_blocks[s] = zonal_stats
+
         stats_func_by_block = delayed(_DASK_STATS[s])
         stats_dict[s] = da.from_delayed(
             stats_func_by_block(zonal_stats), shape=(np.nan,), dtype=np.float64
@@ -365,14 +430,23 @@ def _stats_dask_numpy(
 
     if 'mean' in stats_funcs:
         stats_dict['mean'] = _dask_mean(stats_dict['sum'], stats_dict['count'])
-    if 'std' in stats_funcs:
-        stats_dict['std'] = _dask_std(
-            stats_dict['sum_squares'], stats_dict['sum'] ** 2, stats_dict['count']
+
+    if 'std' in stats_funcs or 'var' in stats_funcs:
+        var_result = da.from_delayed(
+            delayed(_parallel_variance)(
+                stacked_blocks['count'],
+                stacked_blocks['sum'],
+                stacked_blocks['sum_squares'],
+            ),
+            shape=(np.nan,), dtype=np.float64,
         )
-    if 'var' in stats_funcs:
-        stats_dict['var'] = _dask_var(
-            stats_dict['sum_squares'], stats_dict['sum'] ** 2, stats_dict['count']
-        )
+        if 'var' in stats_funcs:
+            stats_dict['var'] = var_result
+        if 'std' in stats_funcs:
+            stats_dict['std'] = da.from_delayed(
+                delayed(np.sqrt)(var_result),
+                shape=(np.nan,), dtype=np.float64,
+            )
 
     # generate dask dataframe
     stats_df = dd.concat([dd.from_dask_array(s) for s in stats_dict.values()], axis=1, ignore_unknown_divisions=True)
@@ -846,9 +920,10 @@ def _single_zone_crosstab_2d(
 ):
     # 1D flatten zone_values, i.e, original data is 2D
     # filter out non-finite and nodata_values
-    zone_values = zone_values[
-        np.isfinite(zone_values) & (zone_values != nodata_values)
-    ]
+    mask = np.isfinite(zone_values)
+    if nodata_values is not None:
+        mask = mask & (zone_values != nodata_values)
+    zone_values = zone_values[mask]
     total_count = zone_values.shape[0]
     crosstab_dict[TOTAL_COUNT].append(total_count)
 
@@ -877,10 +952,10 @@ def _single_zone_crosstab_3d(
         if cat in cat_ids:
             zone_cat_data = zone_values[j]
             # filter out non-finite and nodata_values
-            zone_cat_data = zone_cat_data[
-                np.isfinite(zone_cat_data)
-                & (zone_cat_data != nodata_values)
-            ]
+            cat_mask = np.isfinite(zone_cat_data)
+            if nodata_values is not None:
+                cat_mask = cat_mask & (zone_cat_data != nodata_values)
+            zone_cat_data = zone_cat_data[cat_mask]
             crosstab_dict[cat].append(stats_func(zone_cat_data))
 
 
