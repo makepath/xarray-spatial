@@ -855,7 +855,6 @@ def _focal_sum_cuda(data, kernel, out):
     dc = kernel.shape[1] // 2
 
     s = 0.0
-    found = False
     for k in range(kernel.shape[0]):
         for h in range(kernel.shape[1]):
             w = kernel[k, h]
@@ -870,9 +869,8 @@ def _focal_sum_cuda(data, kernel, out):
                 if v != v:  # NaN check
                     continue
                 s += w * v
-                found = True
 
-    out[i, j] = s if found else math.nan
+    out[i, j] = s  # nansum: 0 when all NaN (matches numpy)
 
 
 def _focal_stats_func_cupy(data, kernel, func=_focal_max_cuda):

@@ -505,6 +505,108 @@ def test_focal_stats_dask_cupy():
         equal_nan=True, rtol=1e-4)
 
 
+# --- focal_stats NaN handling (issue-1092) --------------------------------
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+def test_focal_stats_nan_handling_1092(backend):
+    """All backends should skip NaN neighbors, not propagate them.
+
+    Regression test for #1092: CUDA kernels propagated NaN through
+    arithmetic instead of skipping.
+    """
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and da is None:
+        pytest.skip("Requires Dask")
+
+    data = np.array([
+        [1.0, np.nan, 3.0],
+        [4.0,   5.0, 6.0],
+        [7.0,   8.0, 9.0],
+    ])
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+
+    agg = create_test_raster(data, backend=backend, chunks=(3, 3))
+    result = focal_stats(agg, kernel,
+                         stats_funcs=['mean', 'sum', 'min', 'max', 'std', 'var', 'range'])
+
+    if hasattr(result.data, 'compute'):
+        result = result.compute()
+
+    def _val(stat, r, c):
+        d = result.sel(stats=stat).data
+        if hasattr(d, 'get'):
+            d = d.get()
+        return float(np.asarray(d)[r, c])
+
+    # Center pixel (1,1): kernel hits [NaN, 4, 5, 6, 8] -> skip NaN -> [4,5,6,8]
+    center_vals = np.array([4.0, 5.0, 6.0, 8.0])
+    atol = 1e-3  # float32 tolerance
+
+    mean_val = _val('mean', 1, 1)
+    sum_val = _val('sum', 1, 1)
+    min_val = _val('min', 1, 1)
+    max_val = _val('max', 1, 1)
+    std_val = _val('std', 1, 1)
+    var_val = _val('var', 1, 1)
+    range_val = _val('range', 1, 1)
+
+    assert abs(mean_val - np.nanmean(center_vals)) < atol, f"mean={mean_val}"
+    assert abs(sum_val - np.nansum(center_vals)) < atol, f"sum={sum_val}"
+    assert abs(min_val - np.nanmin(center_vals)) < atol, f"min={min_val}"
+    assert abs(max_val - np.nanmax(center_vals)) < atol, f"max={max_val}"
+    assert abs(std_val - np.nanstd(center_vals)) < atol, f"std={std_val}"
+    assert abs(var_val - np.nanvar(center_vals)) < atol, f"var={var_val}"
+    assert abs(range_val - (np.nanmax(center_vals) - np.nanmin(center_vals))) < atol, (
+        f"range={range_val}"
+    )
+
+    # Top-left corner (0,0): kernel hits [NaN, 4, 1] (cross pattern)
+    # NaN is from data[0,1] (up direction is OOB, left is OOB)
+    # Wait: the cross kernel at (0,0) covers:
+    #   up=(-1,0)=OOB, down=(1,0)=4, left=(0,-1)=OOB, right=(0,1)=NaN, center=(0,0)=1
+    # So valid values = [1, 4], NaN is skipped
+    corner_vals = np.array([1.0, 4.0])
+    mean_corner = _val('mean', 0, 0)
+    assert abs(mean_corner - np.nanmean(corner_vals)) < atol, (
+        f"corner mean={mean_corner}"
+    )
+
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy'])
+def test_focal_stats_all_nan_window_1092(backend):
+    """A pixel whose entire kernel window is NaN should produce NaN."""
+    from xrspatial.tests.general_checks import has_cuda_and_cupy
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+
+    data = np.array([
+        [np.nan, np.nan, np.nan],
+        [np.nan, np.nan, np.nan],
+        [np.nan, np.nan, 1.0],
+    ])
+    kernel = custom_kernel(np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+
+    agg = create_test_raster(data, backend=backend)
+    result = focal_stats(agg, kernel, stats_funcs=['mean', 'sum', 'min', 'max'])
+
+    if hasattr(result.data, 'compute'):
+        result = result.compute()
+
+    def _val(stat, r, c):
+        d = result.sel(stats=stat).data
+        if hasattr(d, 'get'):
+            d = d.get()
+        return float(np.asarray(d)[r, c])
+
+    # Center pixel (1,1): kernel hits [NaN, NaN, NaN, NaN, NaN] -> all NaN
+    assert np.isnan(_val('mean', 1, 1))
+    assert _val('sum', 1, 1) == 0.0  # nansum of all-NaN = 0 (numpy behavior)
+    assert np.isnan(_val('min', 1, 1))
+    assert np.isnan(_val('max', 1, 1))
+
+
 # --- focal variety (issue-1040) ------------------------------------------
 
 def _variety_reference_data():
