@@ -212,6 +212,12 @@ class TestInterpolation:
         assert result2[0, 0] == src[0, 1], (
             f"r=-0.4 should map to pixel 0, got {result2[0, 0]}"
         )
+        # r = -0.5 is exactly on the half-pixel boundary: floor(-0.5+0.5)=0 -> pixel 0
+        rows3 = np.array([[-0.5]])
+        result3 = _resample_numpy(src, rows3, cols, resampling='nearest', nodata=-999)
+        assert result3[0, 0] == src[0, 1], (
+            f"r=-0.5 should map to pixel 0, got {result3[0, 0]}"
+        )
 
     def test_cubic_oob_fallback(self):
         """Cubic must fall back to bilinear when stencil extends outside source (#1086)."""
@@ -237,6 +243,17 @@ class TestInterpolation:
         # For a linear gradient, cubic and bilinear should agree closely
         # but the point is the code path exercises the non-fallback branch
         assert cubic_int[0, 0] != -999
+
+    def test_cubic_oob_fallback_far_edge(self):
+        """Cubic at bottom-right boundary: stencil needs row sh, same fallback (#1086)."""
+        from xrspatial.reproject._interpolate import _resample_numpy
+        src = np.arange(36, dtype=np.float64).reshape(6, 6)
+        # r=4.5: cubic stencil needs row 6 (= sh), which is OOB
+        rows = np.array([[4.5]])
+        cols = np.array([[4.5]])
+        cubic = _resample_numpy(src, rows, cols, resampling='cubic', nodata=-999)
+        bilinear = _resample_numpy(src, rows, cols, resampling='bilinear', nodata=-999)
+        np.testing.assert_allclose(cubic, bilinear, atol=1e-10)
 
     def test_cubic_oob_bilinear_fallback_renormalizes(self):
         """Cubic at (-0.8,-0.8): stencil OOB triggers bilinear, which

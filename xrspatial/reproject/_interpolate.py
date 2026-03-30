@@ -835,6 +835,9 @@ def _resample_cupy(source_window, src_row_coords, src_col_coords,
             nan_mask.astype(cp.float64), coords,
             order=order, mode='constant', cval=1.0
         ).reshape(src_row_coords.shape)
+        # Any nonzero weight means NaN pixels contributed to the output.
+        # Use 1e-6 instead of 0.0 to absorb floating-point interpolation
+        # noise from map_coordinates on the binary mask.
         oob = oob | (nan_weight > 1e-6)
 
     result[oob] = nodata
