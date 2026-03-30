@@ -198,7 +198,7 @@ _DASK_BLOCK_STATS = dict(
     min=lambda z: z.min(),
     sum=lambda z: z.sum(),
     count=lambda z: _stats_count(z),
-    sum_squares=lambda z: (z**2).sum()
+    sum_squares=lambda z: ((z - z.mean()) ** 2).sum()  # block-level M2
 )
 
 
@@ -227,15 +227,13 @@ def _dask_mean(sums, counts):  # noqa
     return sums / counts
 
 
-def _parallel_variance(block_counts, block_sums, block_sum_squares):
+def _parallel_variance(block_counts, block_sums, block_m2s):
     """Population variance via Chan-Golub-LeVeque parallel merge.
 
-    Each input is (n_blocks, n_zones).  Returns (n_zones,) variance,
+    Each input is (n_blocks, n_zones).  ``block_m2s`` contains
+    per-block M2 values (sum of squared deviations from the block mean),
+    NOT raw sum-of-squares.  Returns (n_zones,) population variance,
     with NaN for zones that have no valid values in any block.
-
-    This avoids the naive ``(Σx² − (Σx)²/n) / n`` formula whose
-    subtraction can lose most significant digits when the mean is
-    large relative to the standard deviation.
     """
     n_blocks = block_counts.shape[0]
     n_zones = block_counts.shape[1]
@@ -247,14 +245,13 @@ def _parallel_variance(block_counts, block_sums, block_sum_squares):
     for i in range(n_blocks):
         nc = np.asarray(block_counts[i], dtype=np.float64)
         sc = np.asarray(block_sums[i], dtype=np.float64)
-        sqc = np.asarray(block_sum_squares[i], dtype=np.float64)
+        m2_b = np.asarray(block_m2s[i], dtype=np.float64)
 
         has_data = np.isfinite(nc) & (nc > 0)
         nc_safe = np.where(has_data, nc, 1.0)  # avoid /0
 
         with np.errstate(invalid='ignore', divide='ignore'):
             mean_b = sc / nc_safe
-            m2_b = sqc - sc ** 2 / nc_safe  # block-internal M2
 
         nc = np.where(has_data, nc, 0.0)
         n_ab = n_acc + nc
