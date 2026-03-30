@@ -46,16 +46,11 @@ def _resample_nearest_jit(src, row_coords, col_coords, nodata):
             if r < -1.0 or r > sh or c < -1.0 or c > sw:
                 out[i, j] = nodata
                 continue
-            ri = int(r + 0.5)
-            ci = int(c + 0.5)
-            if ri < 0:
-                ri = 0
-            if ri >= sh:
-                ri = sh - 1
-            if ci < 0:
-                ci = 0
-            if ci >= sw:
-                ci = sw - 1
+            ri = int(np.floor(r + 0.5))
+            ci = int(np.floor(c + 0.5))
+            if ri < 0 or ri >= sh or ci < 0 or ci >= sw:
+                out[i, j] = nodata
+                continue
             v = src[ri, ci]
             # NaN check: works for float64
             if v != v:
@@ -109,21 +104,17 @@ def _resample_cubic_jit(src, row_coords, col_coords, nodata):
             has_nan = False
             for di in range(4):
                 ri = r0 - 1 + di
-                ric = ri
-                if ric < 0:
-                    ric = 0
-                elif ric >= sh:
-                    ric = sh - 1
+                if ri < 0 or ri >= sh:
+                    has_nan = True
+                    break
                 # Interpolate along columns for this row
                 rv = 0.0
                 for dj in range(4):
                     cj = c0 - 1 + dj
-                    cjc = cj
-                    if cjc < 0:
-                        cjc = 0
-                    elif cjc >= sw:
-                        cjc = sw - 1
-                    sv = src[ric, cjc]
+                    if cj < 0 or cj >= sw:
+                        has_nan = True
+                        break
+                    sv = src[ri, cj]
                     if sv != sv:  # NaN check
                         has_nan = True
                         break
@@ -339,16 +330,11 @@ if _HAS_CUDA:
         if r < -1.0 or r > sh or c < -1.0 or c > sw:
             out[i, j] = nodata
             return
-        ri = int(r + 0.5)
-        ci = int(c + 0.5)
-        if ri < 0:
-            ri = 0
-        if ri >= sh:
-            ri = sh - 1
-        if ci < 0:
-            ci = 0
-        if ci >= sw:
-            ci = sw - 1
+        ri = int(math.floor(r + 0.5))
+        ci = int(math.floor(c + 0.5))
+        if ri < 0 or ri >= sh or ci < 0 or ci >= sw:
+            out[i, j] = nodata
+            return
         v = src[ri, ci]
         # NaN check
         if v != v:
@@ -452,6 +438,11 @@ if _HAS_CUDA:
 
         val = 0.0
         has_nan = False
+
+        # If any of the 4x4 stencil neighbors is outside source, fall
+        # back to bilinear (matches GDAL behavior for boundary pixels).
+        if r0 - 1 < 0 or r0 + 2 >= sh or c0 - 1 < 0 or c0 + 2 >= sw:
+            has_nan = True
 
         # Row 0
         ric = r0 - 1
@@ -844,7 +835,10 @@ def _resample_cupy(source_window, src_row_coords, src_col_coords,
             nan_mask.astype(cp.float64), coords,
             order=order, mode='constant', cval=1.0
         ).reshape(src_row_coords.shape)
-        oob = oob | (nan_weight > 0.1)
+        # Any nonzero weight means NaN pixels contributed to the output.
+        # Use 1e-6 instead of 0.0 to absorb floating-point interpolation
+        # noise from map_coordinates on the binary mask.
+        oob = oob | (nan_weight > 1e-6)
 
     result[oob] = nodata
 
