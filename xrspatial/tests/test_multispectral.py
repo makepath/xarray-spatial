@@ -215,19 +215,18 @@ def qgis_ndmi():
 
 @pytest.fixture
 def qgis_savi():
-    # this result is obtained by using NIR, and red band data
-    # running through QGIS Raster Calculator with formula:
-    # savi = (nir - red) / ((nir + red + soil_factor) * (1 + soil_factor))
+    # Correct SAVI (Huete 1988):
+    # savi = ((nir - red) / (nir + red + L)) * (1 + L)
     # with default value of soil_factor=1
     result = np.array([
-        [0., 0.10726268, 0.10682587, 0.09168259],
-        [0.10089815, 0.10729991, 0.10749393, np.nan],
-        [0.11363809, 0.11995638, 0.11994251, 0.10915995],
-        [0.10226355, 0.11864913, 0.12966092, 0.11774762],
-        [0.09810041, 0.10675804, 0.12213238, 0.11514599],
-        [0.09377059, 0.10416108, 0.11123802, 0.10735555],
-        [0.09097284, 0.0988547, 0.10404798, 0.10413785],
-        [0.0870268, 0.09878284, 0.105046, 0.10514525]], dtype=np.float32)
+        [0., 0.4290507, 0.4273035, 0.3667304],
+        [0.4035926, 0.4291996, 0.4299757, np.nan],
+        [0.4545524, 0.4798255, 0.4797700, 0.4366398],
+        [0.4090542, 0.4745965, 0.5186437, 0.4709905],
+        [0.3924016, 0.4270322, 0.4885295, 0.4605840],
+        [0.3750824, 0.4166443, 0.4449521, 0.4294222],
+        [0.3638914, 0.3954188, 0.4161919, 0.4165514],
+        [0.3481072, 0.3951314, 0.4201840, 0.4205810]], dtype=np.float32)
     return result
 
 
@@ -314,7 +313,8 @@ def data_uint_dtype_evi(dtype):
 def data_uint_dtype_savi(dtype):
     nir = xr.DataArray(np.array([[1, 1], [1, 1]], dtype=dtype))
     red = xr.DataArray(np.array([[0, 1], [0, 2]], dtype=dtype))
-    result = np.array([[0.25, 0.], [0.25, -0.125]], dtype=np.float32)
+    # Correct SAVI with L=1: ((nir-red)/(nir+red+1)) * 2
+    result = np.array([[1.0, 0.], [1.0, -0.5]], dtype=np.float32)
     return nir, red, result
 
 
@@ -422,6 +422,50 @@ def test_savi_gpu(nir_data, red_data, qgis_savi):
     # test default savi where soil_factor = 1.0
     result = savi(nir_data, red_data, soil_factor=1.0)
     general_output_checks(nir_data, result, qgis_savi)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "cupy", "dask+numpy", "dask+cupy"])
+def test_savi_formula_1094(backend):
+    """Verify SAVI against the Huete (1988) formula directly.
+
+    Regression test for #1094: (1+L) was in the denominator instead
+    of the numerator.
+    """
+    from xrspatial.tests.general_checks import has_cuda_and_cupy, dask_array_available as _dask_avail
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    try:
+        import dask.array
+    except ImportError:
+        if 'dask' in backend:
+            pytest.skip("Requires Dask")
+
+    nir_arr = np.array([[0.8, 0.6], [0.4, 0.0]])
+    red_arr = np.array([[0.2, 0.3], [0.4, 0.0]])
+
+    nir_agg = create_test_raster(nir_arr, backend=backend, chunks=(2, 2))
+    red_agg = create_test_raster(red_arr, backend=backend, chunks=(2, 2))
+
+    L = 0.5
+    result = savi(nir_agg, red_agg, soil_factor=L)
+    data = result.data
+    if hasattr(data, 'compute'):
+        data = data.compute()
+    if hasattr(data, 'get'):
+        data = data.get()
+    data = np.asarray(data)
+
+    # Correct: ((NIR - Red) / (NIR + Red + L)) * (1 + L)
+    expected = np.where(
+        (nir_arr + red_arr + L) != 0,
+        ((nir_arr - red_arr) / (nir_arr + red_arr + L)) * (1 + L),
+        np.nan,
+    ).astype(np.float32)
+
+    np.testing.assert_allclose(data, expected, rtol=1e-5, equal_nan=True)
+
+    # Spot check: NIR=0.8, Red=0.2, L=0.5 -> (0.6/1.5)*1.5 = 0.6
+    assert abs(float(data[0, 0]) - 0.6) < 1e-5
 
 
 # arvi -------------
