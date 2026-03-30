@@ -417,7 +417,7 @@ def _lcc_inv_point(x, y, lon0, n, c, rho0, k0, e, a):
         rho = math.hypot(x, rho0_y)
         lam_n = math.atan2(x, rho0_y)
     if abs(rho) < 1e-30:
-        return math.degrees(lon0 + lam_n / n), 90.0 if n > 0 else -90.0
+        return math.degrees(_norm_lon_rad(lon0 + lam_n / n)), 90.0 if n > 0 else -90.0
     ts = math.pow(rho / (a * k0 * c), 1.0 / n)
     # Recover phi from ts via Newton (pj_sinhpsi2tanphi)
     phi_approx = math.pi / 2.0 - 2.0 * math.atan(ts)
@@ -1739,17 +1739,12 @@ def _tmerc_params(crs):
     else:
         # Conformal latitude of origin
         Z = lat_0 + _clenshaw_sin_py(_CBG, lat_0)
-        # Forward Krueger correction at Ce=0 (central meridian)
+        # Forward Krueger correction at Ce=0 (central meridian):
+        # sin2=sin(2Z), cos2=cos(2Z), sinh2=0, cosh2=1
         sin2Z = math.sin(2.0 * Z)
         cos2Z = math.cos(2.0 * Z)
-        dCn = 0.0
-        for k in range(5, -1, -1):
-            dCn = cos2Z * dCn + _ALPHA[k] * sin2Z
-            # This is a simplified Clenshaw for Ce=0 (sinh=0, cosh=1)
-        # Actually, use the proper complex Clenshaw with Ce=0:
-        # sin2=sin(2Z), cos2=cos(2Z), sinh2=0, cosh2=1
-        dCn_val = _clenshaw_complex_py(_ALPHA, sin2Z, cos2Z, 0.0, 1.0)
-        Zb = -Qn * (Z + dCn_val)
+        dCn = _clenshaw_complex_py(_ALPHA, sin2Z, cos2Z, 0.0, 1.0)
+        Zb = -Qn * (Z + dCn)
 
     return lon_0, k0, fe, fn, Zb, to_meter
 
