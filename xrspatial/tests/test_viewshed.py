@@ -362,3 +362,58 @@ def test_viewshed_max_distance_matches_full(backend):
                 dist_vals[r, c], full_vals[r, c],
                 atol=0.03,
                 err_msg=f"Mismatch at ({r},{c})")
+
+
+def test_viewshed_dask_distance_sweep_target_elev():
+    """Tier C distance sweep must not let target_elev contaminate the
+    horizon profile.  Regression test: previously the horizon was updated
+    with gradients that included target_elev, so intervening terrain
+    appeared artificially tall and caused false occlusion."""
+    from unittest.mock import patch
+
+    ny, nx = 15, 20
+    terrain = np.zeros((ny, nx))
+    # Place a ridge at column 12 that is tall enough to block line-of-sight
+    # to column 15 when target_elev=0, but not when target_elev=8.
+    terrain[:, 12] = 6.0
+
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+
+    obs_x, obs_y = 5.0, 7.0
+    obs_elev = 5
+
+    # Numpy reference: with target_elev=8 the cells behind the ridge at
+    # col 15 should be visible (target sticks up above the ridge).
+    raster_np = xa.DataArray(terrain.copy(), coords=dict(x=xs, y=ys),
+                             dims=["y", "x"])
+    v_np = viewshed(raster_np, x=obs_x, y=obs_y,
+                    observer_elev=obs_elev, target_elev=8)
+
+    # Sanity: numpy says the cell behind the ridge IS visible.
+    assert v_np.values[7, 15] > INVISIBLE, (
+        "numpy reference should see cell (7,15) with target_elev=8")
+
+    # Dask Tier C with same parameters
+    raster_da = xa.DataArray(
+        da.from_array(terrain.copy(), chunks=(5, 5)),
+        coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    with patch('xrspatial.viewshed._available_memory_bytes',
+               return_value=10_000):
+        v_dask = viewshed(raster_da, x=obs_x, y=obs_y,
+                          observer_elev=obs_elev, target_elev=8)
+
+    result = v_dask.values
+
+    # The cell behind the ridge must be visible in Tier C too.
+    assert result[7, 15] > INVISIBLE, (
+        "Tier C distance sweep should see cell (7,15) with target_elev=8 "
+        "(horizon must not include target_elev)")
+
+    # Visible cells should have angles that roughly match numpy.
+    vis_mask = (v_np.values > INVISIBLE) & (result > INVISIBLE)
+    if vis_mask.any():
+        np.testing.assert_allclose(
+            result[vis_mask], v_np.values[vis_mask], atol=1.0,
+            err_msg="Tier C angles diverge too far from numpy reference")
