@@ -195,6 +195,61 @@ class TestInterpolation:
         result = _resample_numpy(src, rows, cols, nodata=-999)
         assert result[0, 0] == -999
 
+    def test_nearest_negative_rounding(self):
+        """int(r + 0.5) must round toward -inf, not toward zero (#1086)."""
+        from xrspatial.reproject._interpolate import _resample_numpy
+        src = np.arange(1, 17, dtype=np.float64).reshape(4, 4)
+        # r = -0.6 is beyond the half-pixel boundary of pixel 0 -> nodata
+        rows = np.array([[-0.6]])
+        cols = np.array([[1.0]])
+        result = _resample_numpy(src, rows, cols, resampling='nearest', nodata=-999)
+        assert result[0, 0] == -999, (
+            f"r=-0.6 should be nodata, got {result[0, 0]}"
+        )
+        # r = -0.4 is within pixel 0's domain -> pixel 0
+        rows2 = np.array([[-0.4]])
+        result2 = _resample_numpy(src, rows2, cols, resampling='nearest', nodata=-999)
+        assert result2[0, 0] == src[0, 1], (
+            f"r=-0.4 should map to pixel 0, got {result2[0, 0]}"
+        )
+
+    def test_cubic_oob_fallback(self):
+        """Cubic must fall back to bilinear when stencil extends outside source (#1086)."""
+        from xrspatial.reproject._interpolate import _resample_numpy
+        # 6x6 source with a gradient
+        src = np.arange(36, dtype=np.float64).reshape(6, 6)
+        # Query at r=0.5, c=0.5: cubic stencil needs row -1, which is OOB.
+        # Should fall back to bilinear using pixels (0,0),(0,1),(1,0),(1,1).
+        rows = np.array([[0.5]])
+        cols = np.array([[0.5]])
+        cubic_result = _resample_numpy(src, rows, cols, resampling='cubic', nodata=-999)
+        bilinear_result = _resample_numpy(src, rows, cols, resampling='bilinear', nodata=-999)
+        # At the boundary, cubic should produce the same result as bilinear
+        np.testing.assert_allclose(
+            cubic_result, bilinear_result, atol=1e-10,
+            err_msg="Cubic near boundary should fall back to bilinear"
+        )
+        # Interior query at r=2.5, c=2.5: full stencil fits, cubic should differ from bilinear
+        rows_int = np.array([[2.5]])
+        cols_int = np.array([[2.5]])
+        cubic_int = _resample_numpy(src, rows_int, cols_int, resampling='cubic', nodata=-999)
+        bilinear_int = _resample_numpy(src, rows_int, cols_int, resampling='bilinear', nodata=-999)
+        # For a linear gradient, cubic and bilinear should agree closely
+        # but the point is the code path exercises the non-fallback branch
+        assert cubic_int[0, 0] != -999
+
+    def test_cubic_oob_bilinear_fallback_renormalizes(self):
+        """Cubic at (-0.8,-0.8): stencil OOB triggers bilinear, which
+        finds pixel (0,0) as the only valid neighbor and returns it (#1086)."""
+        from xrspatial.reproject._interpolate import _resample_numpy
+        src = np.arange(1, 17, dtype=np.float64).reshape(4, 4)
+        rows = np.array([[-0.8]])
+        cols = np.array([[-0.8]])
+        result = _resample_numpy(src, rows, cols, resampling='cubic', nodata=-999)
+        # bilinear fallback: r0=-1 (OOB), r1=0, c0=-1 (OOB), c1=0
+        # only (r1,c1)=(0,0) is valid -> returns src[0,0]=1.0
+        assert result[0, 0] == 1.0
+
     def test_invalid_resampling(self):
         from xrspatial.reproject._interpolate import _validate_resampling
         with pytest.raises(ValueError, match="resampling"):
