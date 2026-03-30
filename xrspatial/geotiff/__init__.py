@@ -411,7 +411,9 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     if use_gpu:
         try:
             write_geotiff_gpu(data, path, crs=crs, nodata=nodata,
-                              compression=compression, tile_size=tile_size,
+                              compression=compression,
+                              compression_level=compression_level,
+                              tile_size=tile_size,
                               predictor=predictor)
             return
         except (ImportError, Exception):
@@ -827,6 +829,7 @@ def write_geotiff_gpu(data, path: str, *,
                       crs: int | str | None = None,
                       nodata=None,
                       compression: str = 'zstd',
+                      compression_level: int | None = None,
                       tile_size: int = 256,
                       predictor: bool = False) -> None:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
@@ -851,6 +854,9 @@ def write_geotiff_gpu(data, path: str, *,
     compression : str
         'zstd' (default, fastest on GPU), 'deflate', 'jpeg', or 'none'.
         JPEG uses nvJPEG when available, falling back to Pillow.
+    compression_level : int or None
+        Compression effort level. Accepted for API compatibility but
+        currently ignored -- nvCOMP does not expose level control.
     tile_size : int
         Tile size in pixels (default 256).
     predictor : bool
