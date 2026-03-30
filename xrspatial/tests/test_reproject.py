@@ -27,6 +27,10 @@ pytestmark = pytest.mark.skipif(
     not HAS_PYPROJ, reason="pyproj required for reproject tests"
 )
 
+# WGS84 constants for projection round-trip tests
+_WGS84_E2 = 2.0 * (1.0 / 298.257223563) - (1.0 / 298.257223563) ** 2
+_WGS84_A = 6378137.0
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1363,10 +1367,6 @@ class TestLongitudeNormalization:
         assert -180 <= lon_out <= 180
         assert abs(lon_out - lon_in) < 1e-6
         assert abs(lat_out - lat_in) < 1e-6
-
-
-_WGS84_E2 = 2.0 * (1.0 / 298.257223563) - (1.0 / 298.257223563) ** 2
-_WGS84_A = 6378137.0
 
 
 class TestReprojWithLiteCRS:

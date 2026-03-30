@@ -417,7 +417,7 @@ def _lcc_inv_point(x, y, lon0, n, c, rho0, k0, e, a):
         rho = math.hypot(x, rho0_y)
         lam_n = math.atan2(x, rho0_y)
     if abs(rho) < 1e-30:
-        return math.degrees(lon0 + lam_n / n), 90.0 if n > 0 else -90.0
+        return math.degrees(_norm_lon_rad(lon0 + lam_n / n)), 90.0 if n > 0 else -90.0
     ts = math.pow(rho / (a * k0 * c), 1.0 / n)
     # Recover phi from ts via Newton (pj_sinhpsi2tanphi)
     phi_approx = math.pi / 2.0 - 2.0 * math.atan(ts)
