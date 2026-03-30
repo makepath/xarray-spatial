@@ -608,13 +608,13 @@ def _focal_min_cuda(data, kernel, out):
 
             if 0 <= ii < rows and 0 <= jj < cols:
                 v = data[ii, jj]
+                if v != v:  # NaN check
+                    continue
                 if (not found) or (v < m):
                     m = v
                     found = True
 
-    # With your mask containing the center, found should be True.
-    # But keep a safe fallback anyway.
-    out[i, j] = m if found else data[i, j]
+    out[i, j] = m if found else math.nan
 
 
 @cuda.jit
@@ -636,20 +636,20 @@ def _focal_max_cuda(data, kernel, out):
         for h in range(kernel.shape[1]):
             w = kernel[k, h]
             if w == 0:
-                continue  # mask says "ignore this neighbor"
+                continue
 
             ii = i + k - dr
             jj = j + h - dc
 
             if 0 <= ii < rows and 0 <= jj < cols:
                 v = data[ii, jj]
+                if v != v:  # NaN check
+                    continue
                 if (not found) or (v > m):
                     m = v
                     found = True
 
-    # With your mask containing the center (1), found should always be True.
-    # But keep this for safety.
-    out[i, j] = m if found else data[i, j]
+    out[i, j] = m if found else math.nan
 
 
 def _focal_range_cupy(data, kernel):
@@ -684,6 +684,8 @@ def _focal_range_cuda(data, kernel, out):
 
             if 0 <= ii < rows and 0 <= jj < cols:
                 v = data[ii, jj]
+                if v != v:  # NaN check
+                    continue
                 if not found:
                     mx = v
                     mn = v
@@ -694,7 +696,7 @@ def _focal_range_cuda(data, kernel, out):
                     if v < mn:
                         mn = v
 
-    out[i, j] = (mx - mn) if found else 0.0
+    out[i, j] = (mx - mn) if found else math.nan
 
 
 @cuda.jit
@@ -716,29 +718,29 @@ def _focal_std_cuda(data, kernel, out):
         for h in range(kernel.shape[1]):
             w = kernel[k, h]
             if w == 0:
-                continue  # mask says ignore
+                continue
 
             ii = i + k - dr
             jj = j + h - dc
 
             if 0 <= ii < rows and 0 <= jj < cols:
                 x = data[ii, jj]
+                if x != x:  # NaN check
+                    continue
                 w_sum += w
                 sum_wx += w * x
                 sum_wx2 += w * x * x
 
-    # With your mask including the center, w_sum should be > 0. Guard anyway.
     if w_sum > 0.0:
         mean = sum_wx / w_sum
         var = (sum_wx2 / w_sum) - (mean * mean)
 
-        # Numerical safety (tiny negative due to floating point)
         if var < 0.0:
             var = 0.0
 
         out[i, j] = math.sqrt(var)
     else:
-        out[i, j] = 0.0
+        out[i, j] = math.nan
 
 
 @cuda.jit
@@ -760,13 +762,15 @@ def _focal_var_cuda(data, kernel, out):
         for h in range(kernel.shape[1]):
             w = kernel[k, h]
             if w == 0:
-                continue  # mask says ignore
+                continue
 
             ii = i + k - dr
             jj = j + h - dc
 
             if 0 <= ii < rows and 0 <= jj < cols:
                 x = data[ii, jj]
+                if x != x:  # NaN check
+                    continue
                 w_sum += w
                 sum_wx += w * x
                 sum_wx2 += w * x * x
@@ -775,13 +779,12 @@ def _focal_var_cuda(data, kernel, out):
         mean = sum_wx / w_sum
         var = (sum_wx2 / w_sum) - (mean * mean)
 
-        # numerical guard for tiny negative due to float rounding
         if var < 0.0:
             var = 0.0
 
         out[i, j] = var
     else:
-        out[i, j] = 0.0
+        out[i, j] = math.nan
 
 
 @cuda.jit
@@ -856,15 +859,18 @@ def _focal_sum_cuda(data, kernel, out):
         for h in range(kernel.shape[1]):
             w = kernel[k, h]
             if w == 0:
-                continue  # mask says ignore
+                continue
 
             ii = i + k - dr
             jj = j + h - dc
 
             if 0 <= ii < rows and 0 <= jj < cols:
-                s += w * data[ii, jj]
+                v = data[ii, jj]
+                if v != v:  # NaN check
+                    continue
+                s += w * v
 
-    out[i, j] = s
+    out[i, j] = s  # nansum: 0 when all NaN (matches numpy)
 
 
 def _focal_stats_func_cupy(data, kernel, func=_focal_max_cuda):
@@ -894,21 +900,22 @@ def _focal_mean_cuda(data, kernel, out):
         for h in range(kernel.shape[1]):
             w = kernel[k, h]
             if w == 0:
-                continue  # mask says ignore
+                continue
 
             ii = i + k - dr
             jj = j + h - dc
 
             if 0 <= ii < rows and 0 <= jj < cols:
-                s += w * data[ii, jj]
+                v = data[ii, jj]
+                if v != v:  # NaN check
+                    continue
+                s += w * v
                 w_sum += w
 
-    # With your mask including the center, w_sum should be > 0.
-    # Guard anyway to avoid divide-by-zero.
     if w_sum > 0.0:
         out[i, j] = s / w_sum
     else:
-        out[i, j] = data[i, j]
+        out[i, j] = math.nan
 
 
 def _focal_stats_cupy(agg, kernel, stats_funcs):
