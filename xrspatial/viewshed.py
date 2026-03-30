@@ -1858,8 +1858,12 @@ def _sweep_ring(rows, cols, elevs, n_cells,
     bin_width = 2.0 * PI / n_angles
     INF = 1e30
 
-    # Pre-compute per-cell values
+    # Pre-compute per-cell values.
+    # Two gradient arrays: one WITH target_elev for visibility testing, one
+    # WITHOUT for the horizon (occlusion) profile.  The terrain itself blocks
+    # the view, not imaginary targets on every cell.
     gradients = np.empty(n_cells, dtype=np.float64)
+    terrain_gradients = np.empty(n_cells, dtype=np.float64)
     center_bins = np.empty(n_cells, dtype=np.int64)
     half_bins_arr = np.empty(n_cells, dtype=np.int64)
     dist_sqs = np.empty(n_cells, dtype=np.float64)
@@ -1887,6 +1891,7 @@ def _sweep_ring(rows, cols, elevs, n_cells,
         eff_elevs[i] = eff_elev
         dist_sqs[i] = dist_sq
         gradients[i] = atan((eff_elev - obs_elev) / dist)
+        terrain_gradients[i] = atan((elev - obs_elev) / dist)
 
         angle = atan2(dy, dx)
         ang_width = cell_size / dist
@@ -1913,13 +1918,13 @@ def _sweep_ring(rows, cols, elevs, n_cells,
             visibility[r, c] = _get_vertical_ang(
                 obs_elev, dist_sqs[i], eff_elevs[i])
 
-    # Pass 2: update horizon with all ring cells
+    # Pass 2: update horizon with raw terrain gradients (no target_elev)
     for i in range(n_cells):
         if valid[i] == 0:
             continue
         cb = center_bins[i]
         hb = half_bins_arr[i]
-        grad = gradients[i]
+        grad = terrain_gradients[i]
         for b in range(-hb, hb + 1):
             idx = (cb + b) % n_angles
             if grad > horizon[idx]:
