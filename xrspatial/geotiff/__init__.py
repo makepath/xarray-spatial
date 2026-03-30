@@ -432,6 +432,26 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     gpu : bool or None
         Force GPU compression. None (default) auto-detects CuPy data.
     """
+    # VRT tiled output
+    if path.lower().endswith('.vrt'):
+        if cog:
+            raise ValueError(
+                "cog=True is not compatible with VRT output. "
+                "VRT writes tiled GeoTIFFs, not a single COG.")
+        if overview_levels is not None:
+            raise ValueError(
+                "overview_levels is not compatible with VRT output. "
+                "VRT tiles do not include overviews.")
+        _write_vrt_tiled(data, path,
+                         crs=crs, nodata=nodata,
+                         compression=compression,
+                         compression_level=compression_level,
+                         tile_size=tile_size,
+                         predictor=predictor,
+                         bigtiff=bigtiff,
+                         gpu=gpu)
+        return
+
     # Auto-detect GPU data and dispatch to write_geotiff_gpu
     use_gpu = gpu if gpu is not None else _is_gpu_data(data)
     if use_gpu:
@@ -569,6 +589,199 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         extra_tags=extra_tags_list,
         bigtiff=bigtiff,
     )
+
+
+def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
+                       nodata, compression, compression_level,
+                       tile_size, predictor, bigtiff):
+    """Write a single tile GeoTIFF. Used by _write_vrt_tiled."""
+    if hasattr(chunk_data, 'compute'):
+        chunk_data = chunk_data.compute()
+    if hasattr(chunk_data, 'get'):
+        chunk_data = chunk_data.get()  # CuPy -> numpy
+
+    arr = np.asarray(chunk_data)
+
+    # Auto-promote unsupported dtypes
+    if arr.dtype == np.float16:
+        arr = arr.astype(np.float32)
+    elif arr.dtype == np.bool_:
+        arr = arr.astype(np.uint8)
+
+    # Restore NaN to nodata sentinel
+    if nodata is not None and arr.dtype.kind == 'f' and not np.isnan(nodata):
+        nan_mask = np.isnan(arr)
+        if nan_mask.any():
+            arr = arr.copy()
+            arr[nan_mask] = arr.dtype.type(nodata)
+
+    write(arr, path,
+          geo_transform=geo_transform,
+          crs_epsg=epsg,
+          crs_wkt=wkt if epsg is None else None,
+          nodata=nodata,
+          compression=compression,
+          tiled=True,
+          tile_size=tile_size,
+          predictor=predictor,
+          compression_level=compression_level,
+          bigtiff=bigtiff)
+
+
+def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
+                     compression='zstd', compression_level=None,
+                     tile_size=256, predictor=False, bigtiff=None,
+                     gpu=None):
+    """Write a DataArray as a directory of tiled GeoTIFFs with a VRT index.
+
+    This enables streaming dask arrays to disk without materializing the
+    full array in RAM.
+    """
+    import os
+
+    # Validate compression_level against codec-specific range
+    if compression_level is not None:
+        level_range = _LEVEL_RANGES.get(compression.lower())
+        if level_range is not None:
+            lo, hi = level_range
+            if not (lo <= compression_level <= hi):
+                raise ValueError(
+                    f"compression_level={compression_level} out of range "
+                    f"for {compression} (valid: {lo}-{hi})")
+
+    # Derive tiles directory from VRT path stem
+    vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
+    stem = os.path.splitext(os.path.basename(vrt_path))[0]
+    tiles_dir_name = stem + '_tiles'
+    tiles_dir = os.path.join(vrt_dir, tiles_dir_name)
+
+    # Validate tiles directory
+    if os.path.isdir(tiles_dir) and os.listdir(tiles_dir):
+        raise FileExistsError(
+            f"Tiles directory already contains files: {tiles_dir}")
+    os.makedirs(tiles_dir, exist_ok=True)
+
+    # Resolve CRS
+    epsg = None
+    wkt_fallback = None
+    if isinstance(crs, int):
+        epsg = crs
+    elif isinstance(crs, str):
+        epsg = _wkt_to_epsg(crs)
+        if epsg is None:
+            wkt_fallback = crs
+
+    geo_transform = None
+
+    if isinstance(data, xr.DataArray):
+        raw = data.data
+        if epsg is None and crs is None:
+            crs_attr = data.attrs.get('crs')
+            if isinstance(crs_attr, str):
+                epsg = _wkt_to_epsg(crs_attr)
+                if epsg is None and wkt_fallback is None:
+                    wkt_fallback = crs_attr
+            elif crs_attr is not None:
+                epsg = int(crs_attr)
+            if epsg is None:
+                wkt = data.attrs.get('crs_wkt')
+                if isinstance(wkt, str):
+                    epsg = _wkt_to_epsg(wkt)
+                    if epsg is None and wkt_fallback is None:
+                        wkt_fallback = wkt
+        if nodata is None:
+            nodata = data.attrs.get('nodata')
+        geo_transform = _coords_to_transform(data)
+    else:
+        raw = data
+
+    # Check for dask backing
+    is_dask = hasattr(raw, 'dask')
+
+    if is_dask:
+        # Use dask chunk grid
+        import dask
+        row_chunks = raw.chunks[0]  # tuple of chunk sizes along y
+        col_chunks = raw.chunks[1]  # tuple of chunk sizes along x
+        n_row_tiles = len(row_chunks)
+        n_col_tiles = len(col_chunks)
+    else:
+        # Numpy: tile using tile_size
+        if hasattr(raw, 'get'):
+            np_arr = raw.get()  # CuPy
+        elif hasattr(raw, 'compute'):
+            np_arr = raw.compute()
+        else:
+            np_arr = np.asarray(raw)
+        height, width = np_arr.shape[:2]
+        n_row_tiles = (height + tile_size - 1) // tile_size
+        n_col_tiles = (width + tile_size - 1) // tile_size
+
+    # Zero-padding width for tile names
+    pad_width = max(2, len(str(max(n_row_tiles, n_col_tiles) - 1)))
+
+    tile_paths = []
+    delayed_tasks = []
+
+    row_offset = 0
+    for ri in range(n_row_tiles):
+        if is_dask:
+            chunk_h = row_chunks[ri]
+        else:
+            chunk_h = min(tile_size, height - row_offset)
+
+        col_offset = 0
+        for ci in range(n_col_tiles):
+            if is_dask:
+                chunk_w = col_chunks[ci]
+            else:
+                chunk_w = min(tile_size, width - col_offset)
+
+            tile_name = f'tile_{ri:0{pad_width}d}_{ci:0{pad_width}d}.tif'
+            tile_path = os.path.join(tiles_dir, tile_name)
+            tile_paths.append(tile_path)
+
+            # Compute per-tile geo_transform
+            tile_gt = None
+            if geo_transform is not None:
+                tile_gt = GeoTransform(
+                    origin_x=geo_transform.origin_x + col_offset * geo_transform.pixel_width,
+                    origin_y=geo_transform.origin_y + row_offset * geo_transform.pixel_height,
+                    pixel_width=geo_transform.pixel_width,
+                    pixel_height=geo_transform.pixel_height,
+                )
+
+            if is_dask:
+                # Slice the dask array for this chunk
+                r_end = row_offset + chunk_h
+                c_end = col_offset + chunk_w
+                chunk_data = raw[row_offset:r_end, col_offset:c_end]
+
+                task = dask.delayed(_write_single_tile)(
+                    chunk_data, tile_path, tile_gt, epsg, wkt_fallback,
+                    nodata, compression, compression_level,
+                    tile_size, predictor, bigtiff)
+                delayed_tasks.append(task)
+            else:
+                # Numpy: slice and write directly
+                chunk_data = np_arr[row_offset:row_offset + chunk_h,
+                                    col_offset:col_offset + chunk_w]
+                _write_single_tile(
+                    chunk_data, tile_path, tile_gt, epsg, wkt_fallback,
+                    nodata, compression, compression_level,
+                    tile_size, predictor, bigtiff)
+
+            col_offset += chunk_w
+        row_offset += chunk_h
+
+    # Execute all dask tasks
+    if delayed_tasks:
+        import dask
+        dask.compute(*delayed_tasks)
+
+    # Write VRT index with relative paths
+    from ._vrt import write_vrt as _write_vrt_fn
+    _write_vrt_fn(vrt_path, tile_paths, relative=True, nodata=nodata)
 
 
 def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
