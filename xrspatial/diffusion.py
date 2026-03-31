@@ -129,38 +129,69 @@ def _diffuse_cupy(data, alpha_arr, steps, dt_over_dx2, boundary):
 # ---- dask + numpy backend ----
 
 def _diffuse_chunk_numpy(chunk, alpha_chunk, steps, dt_over_dx2, block_info=None):
-    """Process a single dask chunk (already overlapped by 1 cell)."""
-    # The chunk arrives with 1-cell overlap on each side from map_overlap.
-    # We run steps iterations; for steps > 1 the boundary data is stale
-    # after the first step, but for typical usage (steps=1 per map_overlap
-    # call) this is correct.  The public function wraps this in a loop.
+    """Process a single dask chunk (already overlapped by 1 cell).
+
+    ``alpha_chunk`` may be a scalar (uniform diffusivity) or a 2-D array
+    matching the overlapped chunk shape.
+    """
     rows = chunk.shape[0] - 2
     cols = chunk.shape[1] - 2
-    interior_alpha = alpha_chunk[1:-1, 1:-1]
+    if np.ndim(alpha_chunk) == 0:
+        # Scalar diffusivity — broadcast to interior shape
+        interior_alpha = np.broadcast_to(float(alpha_chunk),
+                                         (rows, cols))
+    else:
+        interior_alpha = alpha_chunk[1:-1, 1:-1]
 
     u = chunk.copy()
     for _ in range(steps):
         interior = _diffuse_step_numpy(u, interior_alpha, dt_over_dx2, rows, cols)
-        # rebuild padded array from new interior for next iteration
         u[1:-1, 1:-1] = interior
     return u
 
 
-def _diffuse_dask_numpy(data, alpha_arr, steps, dt_over_dx2, boundary):
-    _func = partial(
-        _diffuse_chunk_numpy,
-        alpha_chunk=alpha_arr,
-        steps=1,
-        dt_over_dx2=dt_over_dx2,
-    )
+def _diffuse_dask_numpy(data, alpha, steps, dt_over_dx2, boundary):
+    """Dask+numpy backend.
+
+    ``alpha`` is either a Python float (scalar diffusivity) or a dask
+    array matching data's shape (spatially varying diffusivity).
+    """
+    if isinstance(alpha, (int, float, np.floating)):
+        # Scalar: pass directly — no full-raster allocation, tiny closure.
+        _func = partial(
+            _diffuse_chunk_numpy,
+            alpha_chunk=float(alpha),
+            steps=1,
+            dt_over_dx2=dt_over_dx2,
+        )
+    else:
+        # Spatially varying: alpha is a dask array.  map_overlap will
+        # feed matching chunks automatically.
+        _func = partial(
+            _diffuse_chunk_numpy,
+            steps=1,
+            dt_over_dx2=dt_over_dx2,
+        )
     u = data.astype(np.float64)
     for _ in range(steps):
-        u = u.map_overlap(
-            _func,
-            depth=(1, 1),
-            boundary=_boundary_to_dask(boundary),
-            meta=np.array(()),
-        )
+        if isinstance(alpha, (int, float, np.floating)):
+            u = u.map_overlap(
+                _func,
+                depth=(1, 1),
+                boundary=_boundary_to_dask(boundary),
+                meta=np.array(()),
+            )
+        else:
+            # Pass alpha as a second dask argument to map_overlap
+            u = da.map_overlap(
+                _diffuse_chunk_numpy,
+                u, alpha,
+                depth=(1, 1),
+                boundary=_boundary_to_dask(boundary),
+                meta=np.array(()),
+                steps=1,
+                dt_over_dx2=dt_over_dx2,
+            )
     return u
 
 
@@ -244,7 +275,9 @@ def diffuse(
     _validate_scalar(steps, func_name='diffuse', name='steps', dtype=int, min_val=1)
     _validate_boundary(boundary)
 
-    # resolve diffusivity to a numpy/cupy array matching agg
+    # resolve diffusivity
+    #   - scalar: keep as float for dask paths (avoids full-raster allocation)
+    #   - DataArray: keep as .data (numpy/cupy/dask) for backend dispatch
     if isinstance(diffusivity, xr.DataArray):
         _validate_raster(diffusivity, func_name='diffuse', name='diffusivity', ndim=2)
         if diffusivity.shape != agg.shape:
@@ -252,13 +285,24 @@ def diffuse(
                 f"diffuse(): diffusivity shape {diffusivity.shape} "
                 f"does not match agg shape {agg.shape}"
             )
-        alpha_arr = diffusivity.values.astype(np.float64)
+        alpha_scalar = None
+        alpha_data = diffusivity.data  # may be numpy, cupy, or dask
+        # For numpy/cupy eager paths, materialize to numpy
+        if da is not None and isinstance(alpha_data, da.Array):
+            alpha_arr_eager = None  # deferred — only built if needed
+        else:
+            if hasattr(alpha_data, 'get'):
+                alpha_arr_eager = alpha_data.get().astype(np.float64)
+            else:
+                alpha_arr_eager = np.asarray(alpha_data, dtype=np.float64)
     elif isinstance(diffusivity, (int, float)):
         if diffusivity <= 0:
             raise ValueError(
                 f"diffuse(): diffusivity must be > 0, got {diffusivity}"
             )
-        alpha_arr = np.full(agg.shape, float(diffusivity), dtype=np.float64)
+        alpha_scalar = float(diffusivity)
+        alpha_data = None
+        alpha_arr_eager = np.full(agg.shape, alpha_scalar, dtype=np.float64)
     else:
         raise TypeError(
             f"diffuse(): diffusivity must be a float or xr.DataArray, "
@@ -274,7 +318,13 @@ def diffuse(
     else:
         dx = 1.0
 
-    alpha_max = float(np.nanmax(alpha_arr))
+    if alpha_scalar is not None:
+        alpha_max = alpha_scalar
+    elif alpha_arr_eager is not None:
+        alpha_max = float(np.nanmax(alpha_arr_eager))
+    else:
+        # dask DataArray diffusivity — compute max lazily
+        alpha_max = float(da.nanmax(alpha_data).compute())
     if alpha_max <= 0:
         raise ValueError("diffuse(): all diffusivity values must be > 0")
 
@@ -287,18 +337,30 @@ def diffuse(
 
     dt_over_dx2 = float(dt) / (dx * dx)
 
+    # Build the alpha argument for each backend:
+    #   - numpy/cupy eager: always use alpha_arr_eager (full numpy array)
+    #   - dask: use alpha_scalar (float) or alpha_data (dask array)
+    if alpha_arr_eager is None and alpha_data is not None:
+        # Dask DataArray diffusivity, numpy path not yet built
+        alpha_arr_eager = alpha_data.compute()
+        if hasattr(alpha_arr_eager, 'get'):
+            alpha_arr_eager = alpha_arr_eager.get()
+        alpha_arr_eager = np.asarray(alpha_arr_eager, dtype=np.float64)
+
+    dask_alpha = alpha_scalar if alpha_scalar is not None else alpha_data
+
     # dispatch to backend
     mapper = ArrayTypeFunctionMapping(
-        numpy_func=partial(_diffuse_numpy, alpha_arr=alpha_arr,
+        numpy_func=partial(_diffuse_numpy, alpha_arr=alpha_arr_eager,
                            steps=steps, dt_over_dx2=dt_over_dx2,
                            boundary=boundary),
-        cupy_func=partial(_diffuse_cupy, alpha_arr=alpha_arr,
+        cupy_func=partial(_diffuse_cupy, alpha_arr=alpha_arr_eager,
                           steps=steps, dt_over_dx2=dt_over_dx2,
                           boundary=boundary),
-        dask_func=partial(_diffuse_dask_numpy, alpha_arr=alpha_arr,
+        dask_func=partial(_diffuse_dask_numpy, alpha=dask_alpha,
                           steps=steps, dt_over_dx2=dt_over_dx2,
                           boundary=boundary),
-        dask_cupy_func=partial(_diffuse_dask_cupy, alpha_arr=alpha_arr,
+        dask_cupy_func=partial(_diffuse_dask_cupy, alpha_arr=alpha_arr_eager,
                                steps=steps, dt_over_dx2=dt_over_dx2,
                                boundary=boundary),
     )
