@@ -29,11 +29,11 @@ def _finish_bump(width, height, locs, heights, spread):
         z = heights[i]
         out[y, x] = out[y, x] + z
         if s > 0:
-            for nx in range(max(x - spread, 0), min(x + spread, width)):
-                for ny in range(max(y - spread, 0), min(y + spread, height)):
+            for nx in range(max(x - spread, 0), min(x + spread + 1, width)):
+                for ny in range(max(y - spread, 0), min(y + spread + 1, height)):
                     d2 = (nx - x) * (nx - x) + (ny - y) * (ny - y)
                     if d2 <= s:
-                        out[ny, nx] = out[ny, nx] + (out[y, x] * (d2 / s))
+                        out[ny, nx] = out[ny, nx] + (out[y, x] * ((s - d2) / s))
     return out
 
 

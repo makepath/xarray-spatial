@@ -136,3 +136,46 @@ def test_bump_agg_infers_shape():
     np.random.seed(42)
     result2 = bump(width=25, height=15)
     np.testing.assert_array_equal(result.values, result2.values)
+
+
+def test_bump_decay_strongest_at_center_1102():
+    """Pixels adjacent to center should be taller than pixels far from center.
+
+    Regression test for #1102: decay formula was inverted (d2/s instead
+    of (s-d2)/s), giving more height to farther pixels.
+    """
+    from xrspatial.bump import _finish_bump
+
+    locs = np.array([[5, 5]], dtype=np.uint16)
+    heights = np.array([10.0])
+    out = _finish_bump(11, 11, locs, heights, spread=3)
+
+    center = out[5, 5]
+    adjacent = out[5, 6]  # 1 pixel away
+    far = out[5, 8]       # 3 pixels away (edge of spread)
+
+    assert center > adjacent > 0, f"center={center}, adjacent={adjacent}"
+    assert adjacent > far, f"adjacent={adjacent}, far={far}"
+
+
+def test_bump_spread_reaches_both_sides_1102():
+    """Spread should reach pixels on both sides of center.
+
+    Regression test for #1102: range upper bound excluded x+spread pixel,
+    making the bump one pixel short on the positive side.
+    """
+    from xrspatial.bump import _finish_bump
+
+    locs = np.array([[5, 5]], dtype=np.uint16)
+    heights = np.array([10.0])
+    out = _finish_bump(11, 11, locs, heights, spread=3)
+
+    # Pixels 1 step away on BOTH sides should be reached
+    assert out[5, 4] > 0, "left-1 should be > 0"
+    assert out[5, 6] > 0, "right-1 should be > 0"
+    assert out[4, 5] > 0, "up-1 should be > 0"
+    assert out[6, 5] > 0, "down-1 should be > 0"
+
+    # Pixels well outside spread should be 0
+    assert out[5, 9] == 0, "well outside spread should be 0"
+    assert out[0, 0] == 0, "corner should be 0"
