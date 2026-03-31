@@ -105,6 +105,11 @@ def glcm_texture(
                 f"must be one of {VALID_METRICS}"
             )
 
+    # Sort metrics to match the kernel's output order (VALID_METRICS order).
+    # Without this, coordinate labels would be wrong when the user requests
+    # metrics in a different order (e.g. ['entropy', 'contrast']).
+    metrics = _sorted_metrics(metrics)
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_glcm_numpy,
         cupy_func=_glcm_cupy,
@@ -276,6 +281,16 @@ def _metric_flags(metrics):
     for m in metrics:
         flags[VALID_METRICS.index(m)] = True
     return flags
+
+
+def _sorted_metrics(metrics):
+    """Return *metrics* sorted in VALID_METRICS order.
+
+    The numba kernel always writes output slots in VALID_METRICS order,
+    so coordinate labels must follow the same ordering.
+    """
+    order = {m: i for i, m in enumerate(VALID_METRICS)}
+    return sorted(metrics, key=lambda m: order[m])
 
 
 def _run_glcm_on_quantized(quantized, metrics, window_size, levels,
