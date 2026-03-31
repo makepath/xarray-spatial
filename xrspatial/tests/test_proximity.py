@@ -375,6 +375,30 @@ def _make_kdtree_raster(height=20, width=30, chunks=(10, 15)):
 
 
 @pytest.mark.skipif(da is None, reason="dask is not installed")
+def test_proximity_dask_inf_distance_memory_guard():
+    """Line-sweep path with inf max_distance should raise when memory is tight."""
+    from unittest.mock import patch
+    from xrspatial.proximity import _available_memory_bytes
+
+    data = np.zeros((100, 100), dtype=np.float64)
+    data[50, 50] = 1.0
+    raster = xr.DataArray(
+        da.from_array(data, chunks=(50, 50)),
+        dims=['y', 'x'],
+        coords={
+            'x': np.linspace(-10, 10, 100),
+            'y': np.linspace(-5, 5, 100),
+        },
+    )
+
+    # Force the non-KDTree path by using GREAT_CIRCLE metric
+    # (KDTree only supports EUCLIDEAN/MANHATTAN), and mock tight memory.
+    with patch('xrspatial.proximity._available_memory_bytes', return_value=1024):
+        with pytest.raises(MemoryError, match="exceed available memory"):
+            proximity(raster, target_values=[1], distance_metric="GREAT_CIRCLE")
+
+
+@pytest.mark.skipif(da is None, reason="dask is not installed")
 @pytest.mark.parametrize("metric", ["EUCLIDEAN", "MANHATTAN"])
 def test_proximity_dask_kdtree_matches_numpy(metric):
     """k-d tree dask result must match numpy result for the same raster."""
