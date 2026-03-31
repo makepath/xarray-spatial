@@ -1221,9 +1221,24 @@ def _process(
     def _process_dask(raster, xs, ys):
 
         if max_distance >= max_possible_distance:
-            # consider all targets in the whole raster
-            # the data array is computed at once,
-            # make sure your data fit your memory
+            # The line-sweep needs the full raster in one chunk.
+            # Guard against OOM before rechunking.
+            estimated_bytes = np.prod(raster.shape) * raster.data.dtype.itemsize
+            # ~35 bytes/pixel working memory (distance, output, pan_near,
+            # scan_line, nearest arrays, etc.)
+            estimated_working = estimated_bytes * 35
+            try:
+                from xrspatial.zonal import _available_memory_bytes
+                avail = _available_memory_bytes()
+            except ImportError:
+                avail = 2 * 1024**3
+            if estimated_working > 0.8 * avail:
+                raise ValueError(
+                    f"proximity() with max_distance >= raster diagonal "
+                    f"needs ~{estimated_working / 1e9:.1f} GB but only "
+                    f"~{avail / 1e9:.1f} GB available.  Set a finite "
+                    f"max_distance for out-of-core dask processing."
+                )
             height, width = raster.shape
             raster.data = raster.data.rechunk({0: height, 1: width})
             xs = xs.rechunk({0: height, 1: width})
