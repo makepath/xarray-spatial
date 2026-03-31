@@ -305,6 +305,20 @@ def _precompute_dd_grid(lat_2d, lon_2d, dy, dx):
     """
     H, W = lat_2d.shape
     n = len(dy)
+    # Memory guard: dd_grid is (n_neighbors, H, W) float64
+    estimated = n * H * W * 8
+    try:
+        from xrspatial.zonal import _available_memory_bytes
+        avail = _available_memory_bytes()
+    except ImportError:
+        avail = 2 * 1024**3
+    if estimated > 0.8 * avail:
+        raise MemoryError(
+            f"Geodesic dd_grid needs ~{estimated / 1e9:.1f} GB "
+            f"({n} neighbors x {H}x{W} x 8 bytes) but only "
+            f"~{avail / 1e9:.1f} GB available.  Use planar mode "
+            f"or downsample the raster."
+        )
     dd_grid = np.zeros((n, H, W), dtype=np.float64)
 
     for i in range(n):
