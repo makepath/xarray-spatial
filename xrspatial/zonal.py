@@ -457,12 +457,10 @@ def _stats_dask_numpy(
     stats_df = stats_df[['zone'] + computed_stats]
 
     if not select_all_zones:
-        # only return zones specified in `zone_ids`
-        selected_rows = []
-        for index, row in stats_df.iterrows():
-            if row['zone'] in zone_ids:
-                selected_rows.append(stats_df.loc[index])
-        stats_df = dd.concat(selected_rows, ignore_unknown_divisions=True)
+        # Filter to requested zones using boolean indexing (avoids
+        # iterrows() which materializes every row one at a time).
+        zone_set = set(zone_ids)
+        stats_df = stats_df[stats_df['zone'].isin(zone_set)]
 
     return stats_df
 
@@ -1813,11 +1811,16 @@ def _available_memory_bytes():
 def _regions_dask(data, neighborhood):
     """Dask backend: compute to numpy and run scipy label."""
     avail = _available_memory_bytes()
-    nbytes = data.nbytes
-    if nbytes * 5 > 0.5 * avail:
+    # Estimate without touching .nbytes (which can trigger graph inspection
+    # on large arrays).  The algorithm needs the full array in RAM plus
+    # scratch space (~5x).
+    estimated_bytes = np.prod(data.shape) * data.dtype.itemsize
+    if estimated_bytes * 5 > 0.5 * avail:
         raise MemoryError(
-            f"regions() requires ~{nbytes * 5 / 1e9:.1f} GB but only "
-            f"{avail / 1e9:.1f} GB available."
+            f"regions() needs the full array in memory (~{estimated_bytes * 5 / 1e9:.1f} GB) "
+            f"but only ~{avail / 1e9:.1f} GB is available.  "
+            f"Connected-component labeling is a global operation that cannot be "
+            f"chunked.  Consider downsampling or tiling the input manually."
         )
 
     np_data = data.compute()
@@ -1855,6 +1858,20 @@ def _regions_cupy(data, neighborhood):
 
 def _regions_dask_cupy(data, neighborhood):
     """Dask+CuPy backend: compute to cupy and run GPU label."""
+    estimated_bytes = np.prod(data.shape) * data.dtype.itemsize
+    try:
+        import cupy as cp
+        free_gpu, _total_gpu = cp.cuda.Device().mem_info
+        if estimated_bytes * 5 > 0.5 * free_gpu:
+            raise MemoryError(
+                f"regions() needs the full array on GPU (~{estimated_bytes * 5 / 1e9:.1f} GB) "
+                f"but only ~{free_gpu / 1e9:.1f} GB free.  "
+                f"Connected-component labeling is a global operation that cannot be "
+                f"chunked.  Consider downsampling or tiling the input manually."
+            )
+    except (ImportError, AttributeError):
+        pass
+
     cp_data = data.compute()
     result = _regions_cupy(cp_data, neighborhood)
     return da.from_array(result, chunks=data.chunks)
