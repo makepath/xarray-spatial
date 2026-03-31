@@ -268,3 +268,35 @@ def test_target_values():
     unique = set(np.unique(out[np.isfinite(out)]))
     assert 3.0 not in unique
     assert {1.0, 2.0} == unique
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_balanced_allocation_memory_guard():
+    """Memory guard should raise before computing N cost surfaces."""
+    from unittest.mock import patch
+
+    data = np.zeros((100, 100))
+    data[10, 10] = 1.0
+    data[90, 90] = 2.0
+
+    raster = _make_raster(data, backend='dask+numpy', chunks=(50, 50))
+    friction = _make_raster(np.ones((100, 100)), backend='dask+numpy', chunks=(50, 50))
+
+    # Mock available memory to 1 KB so the guard trips
+    with patch('xrspatial.zonal._available_memory_bytes', return_value=1024):
+        with pytest.raises(MemoryError, match="balanced_allocation with 2 sources"):
+            balanced_allocation(raster, friction)
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_extract_sources_dask_no_materialize():
+    """_extract_sources should use da.unique, not materialize the full array."""
+    from xrspatial.balanced_allocation import _extract_sources
+
+    data = np.zeros((50, 50))
+    data[10, 10] = 1.0
+    data[40, 40] = 2.0
+    raster = _make_raster(data, backend='dask+numpy', chunks=(25, 25))
+
+    ids = _extract_sources(raster, target_values=[])
+    np.testing.assert_array_equal(ids, [1.0, 2.0])
