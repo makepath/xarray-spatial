@@ -52,14 +52,23 @@ def _as_numpy(arr):
 
 
 def _extract_sources(raster, target_values):
-    """Return sorted array of unique source IDs from the raster."""
-    data = _to_numpy(raster.data)
+    """Return sorted array of unique source IDs from the raster.
+
+    For dask arrays, uses ``da.unique`` (per-chunk reduction) so the full
+    raster is never pulled into RAM just to discover source IDs.
+    """
     if len(target_values) > 0:
         ids = np.asarray(target_values, dtype=np.float64)
-    else:
-        mask = np.isfinite(data) & (data != 0)
-        ids = np.unique(data[mask])
-    return ids[np.isfinite(ids)]
+        return ids[np.isfinite(ids)]
+
+    data = raster.data
+    if da is not None and isinstance(data, da.Array):
+        uniq = da.unique(data).compute()  # small result array
+        mask = np.isfinite(uniq) & (uniq != 0)
+        return np.sort(uniq[mask])
+    data_np = _to_numpy(data)
+    mask = np.isfinite(data_np) & (data_np != 0)
+    return np.unique(data_np[mask])
 
 
 def _make_single_source_raster(raster, source_id):
@@ -296,6 +305,25 @@ def balanced_allocation(
         out = np.where(np.isfinite(cd_np), source_ids[0], np.nan)
         return xr.DataArray(out.astype(np.float32), coords=raster.coords,
                             dims=raster.dims, attrs=raster.attrs)
+
+    # Memory guard: we hold N cost surfaces + friction simultaneously.
+    # Estimate total footprint before doing any expensive work.
+    array_bytes = np.prod(raster.shape) * 8  # float64
+    # N cost surfaces + friction + allocation + stacked intermediate
+    total_estimate = array_bytes * (n_sources + 3)
+    try:
+        from xrspatial.zonal import _available_memory_bytes
+        avail = _available_memory_bytes()
+    except ImportError:
+        avail = 2 * 1024**3
+    if total_estimate > 0.8 * avail:
+        raise MemoryError(
+            f"balanced_allocation with {n_sources} sources needs "
+            f"~{total_estimate / 1e9:.1f} GB ({n_sources} cost surfaces "
+            f"+ friction + intermediates) but only ~{avail / 1e9:.1f} GB "
+            f"available.  Reduce the number of sources, downsample the "
+            f"raster, or increase available memory."
+        )
 
     # Step 1: compute per-source cost-distance surfaces
     cost_surfaces = []  # list of raw data arrays (numpy/cupy/dask)
