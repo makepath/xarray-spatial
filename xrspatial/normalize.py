@@ -64,24 +64,20 @@ def _run_numpy_rescale(data, new_min, new_max):
 
 
 def _run_dask_numpy_rescale(data, new_min, new_max):
-    # Compute global stats first (returns scalars), then map element-wise.
+    # Replace non-finite values with NaN so nanmin/nanmax skip them,
+    # avoiding boolean fancy indexing (which materializes dask arrays).
     finite_mask = da.isfinite(data)
-    finite_vals = data[finite_mask]
-    data_min = finite_vals.min()
-    data_max = finite_vals.max()
+    finite_data = da.where(finite_mask, data, np.nan)
+    data_min = da.nanmin(finite_data)
+    data_max = da.nanmax(finite_data)
 
     new_range = new_max - new_min
     data_range = data_max - data_min
-
-    out = da.where(
-        finite_mask,
-        da.where(
-            data_range == 0,
-            new_min,
-            (data - data_min) / data_range * new_range + new_min,
-        ),
-        np.nan,
-    )
+    # Guard against division by zero: use max(data_range, 1) for the
+    # division, then overwrite with new_min where data_range == 0.
+    safe_range = da.where(data_range == 0, 1.0, data_range)
+    scaled = (data - data_min) / safe_range * new_range + new_min
+    out = da.where(finite_mask, da.where(data_range == 0, new_min, scaled), np.nan)
     return out
 
 
@@ -108,22 +104,15 @@ def _run_cupy_rescale(data, new_min, new_max):
 def _run_dask_cupy_rescale(data, new_min, new_max):
     # Same lazy approach as dask+numpy; dask dispatches to cupy chunks.
     finite_mask = da.isfinite(data)
-    finite_vals = data[finite_mask]
-    data_min = finite_vals.min()
-    data_max = finite_vals.max()
+    finite_data = da.where(finite_mask, data, np.nan)
+    data_min = da.nanmin(finite_data)
+    data_max = da.nanmax(finite_data)
 
     new_range = new_max - new_min
     data_range = data_max - data_min
-
-    out = da.where(
-        finite_mask,
-        da.where(
-            data_range == 0,
-            new_min,
-            (data - data_min) / data_range * new_range + new_min,
-        ),
-        np.nan,
-    )
+    safe_range = da.where(data_range == 0, 1.0, data_range)
+    scaled = (data - data_min) / safe_range * new_range + new_min
+    out = da.where(finite_mask, da.where(data_range == 0, new_min, scaled), np.nan)
     return out
 
 
@@ -224,9 +213,9 @@ def _run_numpy_standardize(data, ddof):
 
 def _run_dask_numpy_standardize(data, ddof):
     finite_mask = da.isfinite(data)
-    finite_vals = data[finite_mask]
-    mean = finite_vals.mean()
-    std = finite_vals.std(ddof=ddof)
+    finite_data = da.where(finite_mask, data, np.nan)
+    mean = da.nanmean(finite_data)
+    std = da.nanstd(finite_data, ddof=ddof)
 
     out = da.where(
         finite_mask,
@@ -254,9 +243,9 @@ def _run_cupy_standardize(data, ddof):
 
 def _run_dask_cupy_standardize(data, ddof):
     finite_mask = da.isfinite(data)
-    finite_vals = data[finite_mask]
-    mean = finite_vals.mean()
-    std = finite_vals.std(ddof=ddof)
+    finite_data = da.where(finite_mask, data, np.nan)
+    mean = da.nanmean(finite_data)
+    std = da.nanstd(finite_data, ddof=ddof)
 
     out = da.where(
         finite_mask,
