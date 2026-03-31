@@ -169,6 +169,7 @@ open_geotiff('dem.tif', dtype='float32')             # half memory
 open_geotiff('dem.tif', dtype='float32', chunks=512) # Dask + half memory
 to_geotiff(data, 'out.tif', compression_level=1)     # fast scratch write
 to_geotiff(data, 'out.tif', compression_level=22)    # max compression
+to_geotiff(dask_da, 'out.tif')                       # stream Dask to single TIFF
 to_geotiff(dask_da, 'mosaic.vrt')                    # stream Dask to VRT
 
 # Accessor methods

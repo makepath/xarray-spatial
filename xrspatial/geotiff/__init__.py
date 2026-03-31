@@ -387,6 +387,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                gpu: bool | None = None) -> None:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
+    Dask-backed DataArrays are written in streaming mode: one tile-row
+    at a time, without materialising the full array into RAM.  Peak
+    memory is roughly ``tile_size * width * bytes_per_sample``.  COG
+    output (``cog=True``) still materialises because overviews need the
+    full array.
+
     Automatically dispatches to GPU compression when:
     - ``gpu=True`` is passed, or
     - The input data is CuPy-backed (auto-detected)
