@@ -983,6 +983,373 @@ def write(data: np.ndarray, path: str, *,
         warnings.warn(f"Written file may be corrupt: {e}", stacklevel=2)
 
 
+def _compress_block(arr, block_w, block_h, samples, dtype, bytes_per_sample,
+                    predictor, compression, compression_level=None):
+    """Compress a tile or strip.  *arr* must be contiguous and correctly sized."""
+    if compression == COMPRESSION_JPEG:
+        return jpeg_compress(arr.tobytes(), block_w, block_h, samples)
+
+    if predictor and compression != COMPRESSION_NONE:
+        buf = arr.view(np.uint8).ravel().copy()
+        buf = predictor_encode(buf, block_w, block_h,
+                               bytes_per_sample * samples)
+        raw_data = buf.tobytes()
+    else:
+        raw_data = arr.tobytes()
+
+    if compression == COMPRESSION_JPEG2000:
+        from ._compression import jpeg2000_compress
+        return jpeg2000_compress(raw_data, block_w, block_h,
+                                 samples=samples, dtype=dtype)
+    if compression == COMPRESSION_LERC:
+        from ._compression import lerc_compress
+        return lerc_compress(raw_data, block_w, block_h,
+                             samples=samples, dtype=dtype)
+    if compression_level is None:
+        return compress(raw_data, compression)
+    return compress(raw_data, compression, level=compression_level)
+
+
+# ---------------------------------------------------------------------------
+# Streaming writer (dask -> monolithic TIFF without full materialisation)
+# ---------------------------------------------------------------------------
+
+def write_streaming(dask_data, path: str, *,
+                    geo_transform: 'GeoTransform | None' = None,
+                    crs_epsg: int | None = None,
+                    crs_wkt: str | None = None,
+                    nodata=None,
+                    compression: str = 'zstd',
+                    compression_level: int | None = None,
+                    tiled: bool = True,
+                    tile_size: int = 256,
+                    predictor: bool = False,
+                    raster_type: int = 1,
+                    x_resolution: float | None = None,
+                    y_resolution: float | None = None,
+                    resolution_unit: int | None = None,
+                    gdal_metadata_xml: str | None = None,
+                    extra_tags: list | None = None,
+                    bigtiff: bool | None = None) -> None:
+    """Write a dask array as a GeoTIFF by streaming one tile-row at a time.
+
+    Peak memory is approximately ``tile_height * width * bytes_per_sample``
+    for tiled output, or ``rows_per_strip * width * bytes_per_sample`` for
+    stripped output.
+
+    After all pixel data is written the IFD offset and byte-count arrays
+    are patched in place.
+    """
+    import os
+    import tempfile
+
+    # Fail fast for unsupported destinations
+    if _is_fsspec_uri(path):
+        raise NotImplementedError(
+            "Streaming dask write to cloud storage is not yet supported. "
+            "Use .compute() first or write to a .vrt file.")
+
+    height, width = dask_data.shape[:2]
+    samples = dask_data.shape[2] if dask_data.ndim == 3 else 1
+    dtype = dask_data.dtype
+
+    # Match the eager path's dtype promotion
+    out_dtype = dtype
+    if out_dtype == np.float16:
+        out_dtype = np.float32
+    elif out_dtype == np.bool_:
+        out_dtype = np.uint8
+
+    bits_per_sample, sample_format = numpy_to_tiff_dtype(out_dtype)
+    bytes_per_sample = out_dtype.itemsize
+    comp_tag = _compression_tag(compression)
+
+    if comp_tag == COMPRESSION_JPEG:
+        if out_dtype != np.uint8:
+            raise ValueError(
+                f"JPEG compression requires uint8 data, got {out_dtype}.")
+        if samples not in (1, 3):
+            raise ValueError(
+                f"JPEG compression requires 1 or 3 bands, got {samples}")
+
+    # Layout parameters
+    if tiled:
+        tw = th = tile_size
+        tiles_across = math.ceil(width / tw)
+        tiles_down = math.ceil(height / th)
+        n_entries = tiles_across * tiles_down
+    else:
+        rows_per_strip = min(256, height)
+        n_entries = math.ceil(height / rows_per_strip)
+
+    # BigTIFF detection (use uncompressed size as conservative estimate)
+    uncompressed_bytes = height * width * bytes_per_sample * samples
+    UINT32_MAX = 0xFFFFFFFF
+    if bigtiff is not None:
+        use_bigtiff = bigtiff
+    else:
+        use_bigtiff = uncompressed_bytes > UINT32_MAX
+
+    header_size = 16 if use_bigtiff else 8
+
+    # ---- Build tag list (mirrors _assemble_tiff for level 0) ----
+    tags = []
+    tags.append((TAG_IMAGE_WIDTH, LONG, 1, width))
+    tags.append((TAG_IMAGE_LENGTH, LONG, 1, height))
+    if samples > 1:
+        tags.append((TAG_BITS_PER_SAMPLE, SHORT, samples,
+                     [bits_per_sample] * samples))
+    else:
+        tags.append((TAG_BITS_PER_SAMPLE, SHORT, 1, bits_per_sample))
+    tags.append((TAG_COMPRESSION, SHORT, 1, comp_tag))
+    photometric = 2 if samples >= 3 else 1
+    tags.append((TAG_PHOTOMETRIC, SHORT, 1, photometric))
+    tags.append((TAG_SAMPLES_PER_PIXEL, SHORT, 1, samples))
+    if samples > 1:
+        tags.append((TAG_SAMPLE_FORMAT, SHORT, samples,
+                     [sample_format] * samples))
+    else:
+        tags.append((TAG_SAMPLE_FORMAT, SHORT, 1, sample_format))
+
+    if photometric == 2 and samples > 3:
+        n_extra = samples - 3
+        extra_vals = [2] + [0] * (n_extra - 1)
+        tags.append((TAG_EXTRA_SAMPLES, SHORT, n_extra, extra_vals))
+    elif photometric == 1 and samples > 1:
+        n_extra = samples - 1
+        extra_vals = [0] * n_extra
+        tags.append((TAG_EXTRA_SAMPLES, SHORT, n_extra, extra_vals))
+
+    pred_val = 2 if (predictor and comp_tag != COMPRESSION_NONE) else 1
+    if pred_val != 1:
+        tags.append((TAG_PREDICTOR, SHORT, 1, pred_val))
+
+    if x_resolution is not None:
+        tags.append((TAG_X_RESOLUTION, RATIONAL, 1, x_resolution))
+    if y_resolution is not None:
+        tags.append((TAG_Y_RESOLUTION, RATIONAL, 1, y_resolution))
+    if resolution_unit is not None:
+        tags.append((TAG_RESOLUTION_UNIT, SHORT, 1, resolution_unit))
+
+    # Layout tags with placeholder offsets / byte-counts.
+    # NOTE: offsets use TIFF type LONG (uint32).  For BigTIFF files
+    # exceeding 4 GB these would need LONG8 -- same limitation as the
+    # eager writer.
+    placeholder = [0] * n_entries
+    if tiled:
+        tags.append((TAG_TILE_WIDTH, SHORT, 1, tile_size))
+        tags.append((TAG_TILE_LENGTH, SHORT, 1, tile_size))
+        tags.append((TAG_TILE_OFFSETS, LONG, n_entries, list(placeholder)))
+        tags.append((TAG_TILE_BYTE_COUNTS, LONG, n_entries, list(placeholder)))
+    else:
+        tags.append((TAG_ROWS_PER_STRIP, SHORT, 1, rows_per_strip))
+        tags.append((TAG_STRIP_OFFSETS, LONG, n_entries, list(placeholder)))
+        tags.append((TAG_STRIP_BYTE_COUNTS, LONG, n_entries, list(placeholder)))
+
+    # Geo tags
+    geo_tags_dict = {}
+    if geo_transform is not None:
+        geo_tags_dict = build_geo_tags(
+            geo_transform, crs_epsg, nodata, raster_type=raster_type,
+            crs_wkt=crs_wkt)
+    elif crs_epsg is not None or crs_wkt is not None or nodata is not None:
+        geo_tags_dict = build_geo_tags(
+            GeoTransform(), crs_epsg, nodata, raster_type=raster_type,
+            crs_wkt=crs_wkt)
+        geo_tags_dict.pop(TAG_MODEL_PIXEL_SCALE, None)
+        geo_tags_dict.pop(TAG_MODEL_TIEPOINT, None)
+
+    for gtag, gval in geo_tags_dict.items():
+        if gtag == TAG_MODEL_PIXEL_SCALE:
+            tags.append((gtag, DOUBLE, 3, list(gval)))
+        elif gtag == TAG_MODEL_TIEPOINT:
+            tags.append((gtag, DOUBLE, 6, list(gval)))
+        elif gtag == TAG_GEO_KEY_DIRECTORY:
+            tags.append((gtag, SHORT, len(gval), list(gval)))
+        elif gtag == TAG_GEO_ASCII_PARAMS:
+            tags.append((gtag, ASCII, len(str(gval)) + 1, str(gval)))
+        elif gtag == TAG_GDAL_NODATA:
+            tags.append((gtag, ASCII, len(str(gval)) + 1, str(gval)))
+
+    if gdal_metadata_xml is not None:
+        tags.append((TAG_GDAL_METADATA, ASCII,
+                     len(gdal_metadata_xml) + 1, gdal_metadata_xml))
+
+    if extra_tags is not None:
+        existing_ids = {t[0] for t in tags}
+        for etag_id, etype_id, ecount, evalue in extra_tags:
+            if etag_id not in existing_ids:
+                tags.append((etag_id, etype_id, ecount, evalue))
+
+    # ---- Pre-compute IFD reservation size ----
+    sorted_tags = sorted(tags, key=lambda t: t[0])
+    entry_size = 20 if use_bigtiff else 12
+    count_size = 8 if use_bigtiff else 2
+    next_size = 8 if use_bigtiff else 4
+    num_tags = len(sorted_tags)
+    ifd_block_size = count_size + entry_size * num_tags + next_size
+    overflow_base = header_size + ifd_block_size
+    _, placeholder_overflow = _build_ifd(sorted_tags, overflow_base,
+                                          bigtiff=use_bigtiff)
+    pixel_data_start = overflow_base + len(placeholder_overflow)
+
+    dir_name = os.path.dirname(os.path.abspath(path))
+    os.makedirs(dir_name, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tif.tmp')
+
+    try:
+        # -- Pass 1: write header + placeholder IFD + streaming pixel data --
+        actual_offsets = []
+        actual_counts = []
+        current_offset = pixel_data_start
+
+        with os.fdopen(fd, 'wb') as f:
+            # Header
+            f.write(b'II')
+            if use_bigtiff:
+                f.write(struct.pack(f'{BO}H', 43))
+                f.write(struct.pack(f'{BO}H', 8))
+                f.write(struct.pack(f'{BO}H', 0))
+                f.write(struct.pack(f'{BO}Q', header_size))
+            else:
+                f.write(struct.pack(f'{BO}H', 42))
+                f.write(struct.pack(f'{BO}I', header_size))
+
+            # Placeholder IFD + overflow
+            ifd_bytes, overflow_bytes = _build_ifd(
+                sorted_tags, overflow_base, bigtiff=use_bigtiff)
+            f.write(ifd_bytes)
+            f.write(overflow_bytes)
+
+            # Stream pixel data
+            if tiled:
+                for tr in range(tiles_down):
+                    r0 = tr * th
+                    r1 = min(r0 + th, height)
+                    actual_h = r1 - r0
+
+                    # Compute one tile-row from the dask graph
+                    if dask_data.ndim == 3:
+                        row_np = np.asarray(dask_data[r0:r1, :, :].compute())
+                    else:
+                        row_np = np.asarray(dask_data[r0:r1, :].compute())
+                    if hasattr(row_np, 'get'):
+                        row_np = row_np.get()
+
+                    if row_np.dtype != out_dtype:
+                        row_np = row_np.astype(out_dtype)
+
+                    # NaN -> nodata sentinel
+                    if (nodata is not None and row_np.dtype.kind == 'f'
+                            and not np.isnan(nodata)):
+                        nan_mask = np.isnan(row_np)
+                        if nan_mask.any():
+                            row_np = row_np.copy()
+                            row_np[nan_mask] = row_np.dtype.type(nodata)
+
+                    for tc in range(tiles_across):
+                        c0 = tc * tw
+                        c1 = min(c0 + tw, width)
+                        actual_w = c1 - c0
+
+                        tile_slice = row_np[:, c0:c1]
+
+                        if actual_h < th or actual_w < tw:
+                            if row_np.ndim == 3:
+                                padded = np.zeros((th, tw, samples),
+                                                  dtype=out_dtype)
+                            else:
+                                padded = np.zeros((th, tw), dtype=out_dtype)
+                            padded[:actual_h, :actual_w] = tile_slice
+                            tile_arr = padded
+                        else:
+                            tile_arr = np.ascontiguousarray(tile_slice)
+
+                        compressed = _compress_block(
+                            tile_arr, tw, th, samples, out_dtype,
+                            bytes_per_sample, predictor, comp_tag,
+                            compression_level)
+
+                        actual_offsets.append(current_offset)
+                        actual_counts.append(len(compressed))
+                        f.write(compressed)
+                        current_offset += len(compressed)
+
+                    del row_np
+            else:
+                # Strip layout
+                for i in range(n_entries):
+                    r0 = i * rows_per_strip
+                    r1 = min(r0 + rows_per_strip, height)
+                    strip_rows = r1 - r0
+
+                    if dask_data.ndim == 3:
+                        strip_np = np.asarray(
+                            dask_data[r0:r1, :, :].compute())
+                    else:
+                        strip_np = np.asarray(dask_data[r0:r1, :].compute())
+                    if hasattr(strip_np, 'get'):
+                        strip_np = strip_np.get()
+
+                    if strip_np.dtype != out_dtype:
+                        strip_np = strip_np.astype(out_dtype)
+
+                    if (nodata is not None and strip_np.dtype.kind == 'f'
+                            and not np.isnan(nodata)):
+                        nan_mask = np.isnan(strip_np)
+                        if nan_mask.any():
+                            strip_np = strip_np.copy()
+                            strip_np[nan_mask] = strip_np.dtype.type(nodata)
+
+                    compressed = _compress_block(
+                        np.ascontiguousarray(strip_np),
+                        width, strip_rows, samples, out_dtype,
+                        bytes_per_sample, predictor, comp_tag,
+                        compression_level)
+
+                    actual_offsets.append(current_offset)
+                    actual_counts.append(len(compressed))
+                    f.write(compressed)
+                    current_offset += len(compressed)
+
+                    del strip_np
+
+        # -- Pass 2: patch IFD with actual offsets --
+        patched_tags = []
+        for tag_id, type_id, count, values in sorted_tags:
+            if tag_id in (TAG_TILE_OFFSETS, TAG_STRIP_OFFSETS):
+                patched_tags.append((tag_id, LONG, n_entries, actual_offsets))
+            elif tag_id in (TAG_TILE_BYTE_COUNTS, TAG_STRIP_BYTE_COUNTS):
+                patched_tags.append((tag_id, LONG, n_entries, actual_counts))
+            else:
+                patched_tags.append((tag_id, type_id, count, values))
+
+        with open(tmp_path, 'r+b') as f:
+            f.seek(header_size)
+            ifd_bytes, overflow_bytes = _build_ifd(
+                patched_tags, overflow_base, bigtiff=use_bigtiff)
+            f.write(ifd_bytes)
+            f.write(overflow_bytes)
+
+        # Post-write validation
+        from ._header import parse_header as _ph
+        with open(tmp_path, 'rb') as f:
+            try:
+                _ph(f.read(16))
+            except Exception as e:
+                import warnings
+                warnings.warn(
+                    f"Written file may be corrupt: {e}", stacklevel=2)
+
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def _is_fsspec_uri(path: str) -> bool:
     """Check if a path is a fsspec-compatible URI."""
     if path.startswith(('http://', 'https://')):

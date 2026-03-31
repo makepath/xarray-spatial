@@ -387,6 +387,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                gpu: bool | None = None) -> None:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
+    Dask-backed DataArrays are written in streaming mode: one tile-row
+    at a time, without materialising the full array into RAM.  Peak
+    memory is roughly ``tile_size * width * bytes_per_sample``.  COG
+    output (``cog=True``) still materialises because overviews need the
+    full array.
+
     Automatically dispatches to GPU compression when:
     - ``gpu=True`` is passed, or
     - The input data is CuPy-backed (auto-detected)
@@ -483,25 +489,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
             wkt_fallback = crs
 
     if isinstance(data, xr.DataArray):
-        # Handle CuPy-backed DataArrays: convert to numpy for CPU write
         raw = data.data
-        if hasattr(raw, 'get'):
-            arr = raw.get()  # CuPy -> numpy
-        elif hasattr(raw, 'compute'):
-            arr = raw.compute()  # Dask -> numpy
-            if hasattr(arr, 'get'):
-                arr = arr.get()  # Dask+CuPy -> numpy
-        else:
-            arr = np.asarray(raw)
-        # Handle band-first dimension order (band, y, x) -> (y, x, band)
-        if arr.ndim == 3 and data.dims[0] in ('band', 'bands', 'channel'):
-            arr = np.moveaxis(arr, 0, -1)
+
+        # Extract metadata from DataArray attrs (no materialisation needed)
         if geo_transform is None:
             geo_transform = _coords_to_transform(data)
         if epsg is None and crs is None:
             crs_attr = data.attrs.get('crs')
             if isinstance(crs_attr, str):
-                # WKT string from reproject() or other source
                 epsg = _wkt_to_epsg(crs_attr)
                 if epsg is None and wkt_fallback is None:
                     wkt_fallback = crs_attr
@@ -517,22 +512,75 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
             nodata = data.attrs.get('nodata')
         if data.attrs.get('raster_type') == 'point':
             raster_type = RASTER_PIXEL_IS_POINT
-        # GDAL metadata from attrs (prefer raw XML, fall back to dict)
         gdal_meta_xml = data.attrs.get('gdal_metadata_xml')
         if gdal_meta_xml is None:
             gdal_meta_dict = data.attrs.get('gdal_metadata')
             if isinstance(gdal_meta_dict, dict):
                 from ._geotags import _build_gdal_metadata_xml
                 gdal_meta_xml = _build_gdal_metadata_xml(gdal_meta_dict)
-        # Extra tags for pass-through
         extra_tags_list = data.attrs.get('extra_tags')
-        # Resolution / DPI from attrs
         x_res = data.attrs.get('x_resolution')
         y_res = data.attrs.get('y_resolution')
         unit_str = data.attrs.get('resolution_unit')
         if unit_str is not None:
             _unit_ids = {'none': 1, 'inch': 2, 'centimeter': 3}
             res_unit = _unit_ids.get(str(unit_str), None)
+
+        # Dask-backed: stream tiles to avoid materialising the full array.
+        # COG requires overviews from the full array, so it falls through
+        # to the eager path.
+        if hasattr(raw, 'dask') and not cog:
+            dask_arr = raw
+            # Handle band-first dimension order (band, y, x) -> (y, x, band)
+            if raw.ndim == 3 and data.dims[0] in ('band', 'bands', 'channel'):
+                import dask.array as da
+                dask_arr = da.moveaxis(raw, 0, -1)
+            if dask_arr.ndim not in (2, 3):
+                raise ValueError(
+                    f"Expected 2D or 3D array, got {dask_arr.ndim}D")
+            # Validate compression_level
+            if compression_level is not None:
+                level_range = _LEVEL_RANGES.get(compression.lower())
+                if level_range is not None:
+                    lo, hi = level_range
+                    if not (lo <= compression_level <= hi):
+                        raise ValueError(
+                            f"compression_level={compression_level} out of "
+                            f"range for {compression} (valid: {lo}-{hi})")
+            from ._writer import write_streaming
+            write_streaming(
+                dask_arr, path,
+                geo_transform=geo_transform,
+                crs_epsg=epsg,
+                crs_wkt=wkt_fallback if epsg is None else None,
+                nodata=nodata,
+                compression=compression,
+                compression_level=compression_level,
+                tiled=tiled,
+                tile_size=tile_size,
+                predictor=predictor,
+                raster_type=raster_type,
+                x_resolution=x_res,
+                y_resolution=y_res,
+                resolution_unit=res_unit,
+                gdal_metadata_xml=gdal_meta_xml,
+                extra_tags=extra_tags_list,
+                bigtiff=bigtiff,
+            )
+            return
+
+        # Eager compute (numpy, CuPy, or dask+COG)
+        if hasattr(raw, 'get'):
+            arr = raw.get()  # CuPy -> numpy
+        elif hasattr(raw, 'compute'):
+            arr = raw.compute()  # Dask -> numpy
+            if hasattr(arr, 'get'):
+                arr = arr.get()  # Dask+CuPy -> numpy
+        else:
+            arr = np.asarray(raw)
+        # Handle band-first dimension order (band, y, x) -> (y, x, band)
+        if arr.ndim == 3 and data.dims[0] in ('band', 'bands', 'channel'):
+            arr = np.moveaxis(arr, 0, -1)
     else:
         if hasattr(data, 'get'):
             arr = data.get()  # CuPy -> numpy
