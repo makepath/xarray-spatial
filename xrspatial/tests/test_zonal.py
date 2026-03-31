@@ -1496,6 +1496,38 @@ def test_regions_numpy_dask_match(backend):
     assert result.shape == arr.shape
 
 
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_regions_dask_memory_guard():
+    """_regions_dask should raise MemoryError before .compute() on huge arrays."""
+    from unittest.mock import patch
+    from xrspatial.zonal import _regions_dask
+
+    # Create a dask array that claims to be enormous (shape implies ~80 GB)
+    huge = da.zeros((100_000, 100_000), chunks=(1000, 1000), dtype=np.float64)
+
+    # Mock available memory to 1 GB so the guard trips
+    with patch('xrspatial.zonal._available_memory_bytes', return_value=1 * 1024**3):
+        with pytest.raises(MemoryError, match="Connected-component labeling"):
+            _regions_dask(huge.data if hasattr(huge, 'data') else huge, 4)
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_stats_dask_zone_filter():
+    """stats() with zone_ids filter should return only requested zones."""
+    zones = np.array([[1, 1, 2, 2], [1, 1, 2, 2], [3, 3, 3, 3]], dtype=float)
+    values = np.array([[10, 20, 30, 40], [50, 60, 70, 80], [90, 100, 110, 120]], dtype=float)
+
+    zones_da = xr.DataArray(da.from_array(zones, chunks=(3, 2)), dims=['y', 'x'])
+    values_da = xr.DataArray(da.from_array(values, chunks=(3, 2)), dims=['y', 'x'])
+
+    result = stats(zones_da, values_da, zone_ids=[1, 3])
+    if hasattr(result, 'compute'):
+        result = result.compute()
+
+    assert set(result['zone'].values) == {1.0, 3.0}
+    assert 2.0 not in result['zone'].values
+
+
 def test_trim():
     arr = np.array([[0, 0, 0, 0],
                     [0, 4, 0, 0],
