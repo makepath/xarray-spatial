@@ -2,6 +2,27 @@
 -----------
 
 
+### Version 0.9.4 - 2026-03-30
+
+#### New features
+- Streaming TIFF write for dask inputs (#1084) (#1108)
+- Add dtype, compression_level, and VRT output to geotiff I/O (#1083) (#1085)
+
+#### Bug fixes and improvements
+- Use float64 in Jenks natural breaks internals (#1100) (#1101)
+- Fix multi-metric output mislabeling in glcm_texture (#1106) (#1107)
+- Fix inverted decay and off-by-one in bump spread (#1102) (#1103)
+- Propagate NaN from curve_number in curve_number_runoff (#1104) (#1105)
+- Fix target_elev contaminating horizon in dask viewshed distance sweep (#1098) (#1099)
+- Preserve float64 precision in convolve_2d (#1096) (#1097)
+- Fix SAVI formula: (1+L) was in denominator instead of numerator (#1094) (#1095)
+- Fix NaN handling in focal_stats CUDA kernels (#1092) (#1093)
+- Fix three accuracy bugs in zonal stats dask backend (#1090) (#1091)
+- Add longitude normalization to CUDA inverse projection kernels (#1089)
+- Fix three accuracy bugs in reproject resampling kernels (#1087)
+- Fix three accuracy bugs in open_geotiff/to_geotiff (#1081) (#1082)
+
+
 ### Version 0.9.3 - 2026-03-27
 
 #### New features
