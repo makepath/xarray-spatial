@@ -362,6 +362,32 @@ class TestCNRunoffDaskCuPy:
                               expected_results=result_np.data)
 
 
+def test_cn_runoff_nan_curve_number_1104():
+    """NaN in curve_number should produce NaN output, not 0.
+
+    Regression test for #1104: P > NaN is always False, so np.where
+    took the else-branch and wrote 0.0 instead of NaN.
+    """
+    rainfall = xr.DataArray(
+        np.array([[100.0, 100.0, 100.0]], dtype=np.float64)
+    )
+    cn_data = np.array([[80.0, np.nan, 90.0]], dtype=np.float64)
+    cn_raster = xr.DataArray(cn_data)
+
+    result = curve_number_runoff(rainfall, curve_number=cn_raster)
+    data = result.data
+    if hasattr(data, 'compute'):
+        data = data.compute()
+    data = np.asarray(data)
+
+    # Cell 0 (CN=80): valid runoff
+    assert np.isfinite(data[0, 0]) and data[0, 0] > 0
+    # Cell 1 (CN=NaN): must be NaN, not 0
+    assert np.isnan(data[0, 1]), f"expected NaN, got {data[0, 1]}"
+    # Cell 2 (CN=90): valid runoff
+    assert np.isfinite(data[0, 2]) and data[0, 2] > 0
+
+
 # ===================================================================
 # travel_time
 # ===================================================================

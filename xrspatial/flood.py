@@ -328,8 +328,8 @@ def _cn_runoff_numpy(p, cn):
     s = (25400.0 / cn) - 254.0
     ia = 0.2 * s
     q = np.where(p > ia, (p - ia) ** 2 / (p + 0.8 * s), 0.0)
-    # propagate NaN from rainfall
-    q = np.where(np.isnan(p), np.nan, q)
+    # propagate NaN from rainfall or curve number
+    q = np.where(np.isnan(p) | np.isnan(cn), np.nan, q)
     return q
 
 
@@ -340,7 +340,7 @@ def _cn_runoff_cupy(p, cn):
     s = (25400.0 / cn) - 254.0
     ia = 0.2 * s
     q = cp.where(p > ia, (p - ia) ** 2 / (p + 0.8 * s), 0.0)
-    q = cp.where(cp.isnan(p), cp.nan, q)
+    q = cp.where(cp.isnan(p) | cp.isnan(cn), cp.nan, q)
     return q
 
 
@@ -349,7 +349,7 @@ def _cn_runoff_dask(p, cn):
     s = (25400.0 / cn) - 254.0
     ia = 0.2 * s
     q = _da.where(p > ia, (p - ia) ** 2 / (p + 0.8 * s), 0.0)
-    q = _da.where(_da.isnan(p), np.nan, q)
+    q = _da.where(_da.isnan(p) | _da.isnan(cn), np.nan, q)
     return q
 
 
