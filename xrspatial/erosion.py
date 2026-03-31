@@ -332,12 +332,33 @@ def _erode_numpy(data, random_pos, boy, box, bw, params):
     return hm.astype(np.float32)
 
 
+def _check_erosion_memory(data):
+    """Raise MemoryError if the array is too large to materialize."""
+    estimated = np.prod(data.shape) * data.dtype.itemsize
+    # The erosion kernel needs ~3x: input copy + brush scratch + output
+    working = estimated * 3
+    try:
+        from xrspatial.zonal import _available_memory_bytes
+        avail = _available_memory_bytes()
+    except ImportError:
+        avail = 2 * 1024**3
+    if working > 0.8 * avail:
+        raise MemoryError(
+            f"erode() needs ~{working / 1e9:.1f} GB to materialize and "
+            f"process the full grid but only ~{avail / 1e9:.1f} GB "
+            f"available.  Particle erosion is a global operation that "
+            f"cannot be chunked.  Downsample the input or use a machine "
+            f"with more RAM."
+        )
+
+
 def _erode_dask_numpy(data, random_pos, boy, box, bw, params):
     """Run erosion on a dask+numpy array.
 
     Erosion is a global operation (particles traverse the full grid),
     so we materialize to numpy, run the CPU kernel, then re-wrap.
     """
+    _check_erosion_memory(data)
     np_data = data.compute()
     result = _erode_numpy(np_data, random_pos, boy, box, bw, params)
     return da.from_array(result, chunks=data.chunksize)
@@ -349,6 +370,7 @@ def _erode_dask_cupy(data, random_pos, boy, box, bw, params):
     Materializes to a single CuPy array, runs the GPU kernel, then
     re-wraps as dask.
     """
+    _check_erosion_memory(data)
     cp_data = data.compute()  # CuPy ndarray
     result = _erode_cupy(cp_data, random_pos, boy, box, bw, params)
     return da.from_array(result, chunks=data.chunksize,
