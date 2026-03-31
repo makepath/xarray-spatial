@@ -685,6 +685,22 @@ def validate_disaggregation(
     """
     values_dict = _normalize_values(values)
 
+    # Memory guard: validation requires both arrays in RAM.
+    for arr, label in [(result.data, 'result'), (zones.data, 'zones')]:
+        if has_dask_array() and isinstance(arr, da.Array):
+            est = np.prod(arr.shape) * arr.dtype.itemsize
+            try:
+                from xrspatial.zonal import _available_memory_bytes
+                avail = _available_memory_bytes()
+            except ImportError:
+                avail = 2 * 1024**3
+            if est * 2 > 0.8 * avail:
+                raise MemoryError(
+                    f"validate_disaggregation needs to materialize the "
+                    f"{label} array (~{est / 1e9:.1f} GB) but only "
+                    f"~{avail / 1e9:.1f} GB available."
+                )
+
     # extract numpy arrays from any backend
     result_np = _to_numpy(result.data)
     zones_np = _to_numpy(zones.data)
