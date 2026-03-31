@@ -999,6 +999,19 @@ def _reproject_dask_cupy(
     src_res_x = (src_right - src_left) / src_w
     src_res_y = (src_top - src_bottom) / src_h
 
+    # Memory guard: the full output is allocated on GPU.
+    estimated = out_shape[0] * out_shape[1] * 8  # float64
+    try:
+        free_gpu, _total = cp.cuda.Device().mem_info
+        if estimated > 0.8 * free_gpu:
+            raise MemoryError(
+                f"_reproject_dask_cupy needs ~{estimated / 1e9:.1f} GB on GPU "
+                f"for the full output but only ~{free_gpu / 1e9:.1f} GB free.  "
+                f"Reduce output resolution or use the dask+numpy path."
+            )
+    except (AttributeError, RuntimeError):
+        pass  # no device info available
+
     result = cp.full(out_shape, nodata, dtype=cp.float64)
 
     row_offset = 0
