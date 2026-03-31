@@ -916,6 +916,24 @@ def _cost_distance_dask_iterative(source_da, friction_da,
     n_tile_y = len(chunks_y)
     n_tile_x = len(chunks_x)
 
+    # Memory guard: the tile cache holds all tiles in RAM simultaneously.
+    # Estimate total bytes: source + friction (both arrays, full dataset).
+    total_bytes = (np.prod(source_da.shape) * source_da.dtype.itemsize +
+                   np.prod(friction_da.shape) * friction_da.dtype.itemsize)
+    # Working memory: tile cache (~2x dataset) + result (~1x) + boundaries
+    estimated = total_bytes * 3
+    try:
+        from xrspatial.zonal import _available_memory_bytes
+        avail = _available_memory_bytes()
+    except ImportError:
+        avail = 2 * 1024**3
+    if estimated > 0.8 * avail:
+        raise MemoryError(
+            f"cost_distance iterative Dijkstra needs ~{estimated / 1e9:.1f} GB "
+            f"to cache all tiles but only ~{avail / 1e9:.1f} GB available.  "
+            f"Set a finite max_cost to use the memory-safe map_overlap path."
+        )
+
     # Phase 0: batch-compute all tiles, extract boundaries & source flags
     friction_bdry, has_source, tile_cache = _preprocess_tiles(
         source_da, friction_da, chunks_y, chunks_x, target_values,
@@ -970,8 +988,14 @@ def _assemble_result(tile_cache, boundaries, friction_bdry,
                      cellsize_x, cellsize_y, max_cost, target_values,
                      dy, dx, dd, chunks_y, chunks_x,
                      n_tile_y, n_tile_x, connectivity):
-    """Build result array from cached tiles and converged boundary seeds."""
-    rows = []
+    """Build result dask array from cached tiles and converged boundary seeds.
+
+    Uses ``da.block`` to assemble tiles lazily instead of building a
+    monolithic numpy array with ``np.concatenate``.
+    """
+    import dask
+
+    block_grid = []
     for iy in range(n_tile_y):
         row_blocks = []
         for ix in range(n_tile_x):
@@ -987,10 +1011,13 @@ def _assemble_result(tile_cache, boundaries, friction_bdry,
                 cellsize_x, cellsize_y, max_cost, target_values,
                 dy, dx, dd, *seeds,
             )
-            row_blocks.append(_dist_to_float32(dist, h, w, max_cost))
-        rows.append(np.concatenate(row_blocks, axis=1))
-    full = np.concatenate(rows, axis=0)
-    return da.from_array(full, chunks=(chunks_y, chunks_x))
+            tile = _dist_to_float32(dist, h, w, max_cost)
+            row_blocks.append(da.from_delayed(
+                dask.delayed(lambda t: t)(tile),
+                shape=(h, w), dtype=np.float32,
+            ))
+        block_grid.append(row_blocks)
+    return da.block(block_grid)
 
 
 # ---------------------------------------------------------------------------
