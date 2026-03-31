@@ -2,6 +2,21 @@
 -----------
 
 
+### Version 0.9.5 - 2026-03-31
+
+#### Bug fixes and improvements
+- Add GPU memory guard to reproject dask+cupy path (#1131)
+- Add memory guard to surface_distance geodesic dd_grid (#1129)
+- Add memory guard to dasymetric validate_disaggregation (#1127)
+- Replace boolean indexing with lazy reductions in normalize dask paths (#1125)
+- Keep northness/eastness lazy on dask arrays (#1123)
+- Add memory guard to erosion dask paths (#1121)
+- Add memory guard to cost_distance iterative Dijkstra and da.block assembly (#1119)
+- Fix diffusion dask OOM by passing scalar diffusivity directly to chunks (#1117)
+- Fix balanced_allocation OOM with lazy source extraction and memory guard (#1115)
+- Fix zonal dask memory guards and stats filtering (#1112)
+
+
 ### Version 0.9.4 - 2026-03-30
 
 #### New features
