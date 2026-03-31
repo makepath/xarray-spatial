@@ -196,6 +196,60 @@ class TestStreamingEdgeCases:
         np.testing.assert_array_almost_equal(result.values, arr)
 
 
+# -- Multiband ----------------------------------------------------------------
+
+class TestStreamingMultiband:
+    def test_3d_band_last(self, tmp_path):
+        """3D array with (y, x, band) layout."""
+        arr = np.random.default_rng(1084).random(
+            (100, 100, 3), dtype=np.float32)
+        da = xr.DataArray(arr, dims=['y', 'x', 'band'])
+        dask_da = da.chunk({'y': 50, 'x': 50})
+
+        path = str(tmp_path / 'band_last_1084.tif')
+        to_geotiff(dask_da, path)
+        result = open_geotiff(path)
+        np.testing.assert_array_almost_equal(result.values, arr, decimal=5)
+
+    def test_3d_band_first(self, tmp_path):
+        """Band-first (band, y, x) DataArray gets transposed automatically."""
+        arr = np.random.default_rng(1084).random(
+            (3, 100, 100), dtype=np.float32)
+        da = xr.DataArray(arr, dims=['band', 'y', 'x'])
+        dask_da = da.chunk({'y': 50, 'x': 50})
+
+        path = str(tmp_path / 'band_first_1084.tif')
+        to_geotiff(dask_da, path)
+        result = open_geotiff(path)
+        # Result is (y, x, band), so compare transposed
+        np.testing.assert_array_almost_equal(
+            result.values, np.moveaxis(arr, 0, -1), decimal=5)
+
+
+# -- BigTIFF and error cases --------------------------------------------------
+
+class TestStreamingBigTiffAndErrors:
+    def test_forced_bigtiff(self, tmp_path):
+        """bigtiff=True on a small array should produce a valid BigTIFF."""
+        arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+        da = xr.DataArray(arr, dims=['y', 'x'])
+        dask_da = da.chunk({'y': 4, 'x': 4})
+
+        path = str(tmp_path / 'bigtiff_1084.tif')
+        to_geotiff(dask_da, path, bigtiff=True)
+        result = open_geotiff(path)
+        np.testing.assert_array_equal(result.values, arr)
+
+    def test_cloud_uri_raises(self, tmp_path):
+        """Streaming to cloud storage should raise NotImplementedError."""
+        arr = np.ones((10, 10), dtype=np.float32)
+        da = xr.DataArray(arr, dims=['y', 'x'])
+        dask_da = da.chunk({'y': 5, 'x': 5})
+
+        with pytest.raises(NotImplementedError, match='cloud'):
+            to_geotiff(dask_da, 's3://bucket/file.tif')
+
+
 # -- COG fallback to eager path -----------------------------------------------
 
 class TestCogFallback:

@@ -1043,6 +1043,12 @@ def write_streaming(dask_data, path: str, *,
     import os
     import tempfile
 
+    # Fail fast for unsupported destinations
+    if _is_fsspec_uri(path):
+        raise NotImplementedError(
+            "Streaming dask write to cloud storage is not yet supported. "
+            "Use .compute() first or write to a .vrt file.")
+
     height, width = dask_data.shape[:2]
     samples = dask_data.shape[2] if dask_data.ndim == 3 else 1
     dtype = dask_data.dtype
@@ -1125,7 +1131,10 @@ def write_streaming(dask_data, path: str, *,
     if resolution_unit is not None:
         tags.append((TAG_RESOLUTION_UNIT, SHORT, 1, resolution_unit))
 
-    # Layout tags with placeholder offsets / byte-counts
+    # Layout tags with placeholder offsets / byte-counts.
+    # NOTE: offsets use TIFF type LONG (uint32).  For BigTIFF files
+    # exceeding 4 GB these would need LONG8 -- same limitation as the
+    # eager writer.
     placeholder = [0] * n_entries
     if tiled:
         tags.append((TAG_TILE_WIDTH, SHORT, 1, tile_size))
@@ -1183,12 +1192,6 @@ def write_streaming(dask_data, path: str, *,
     _, placeholder_overflow = _build_ifd(sorted_tags, overflow_base,
                                           bigtiff=use_bigtiff)
     pixel_data_start = overflow_base + len(placeholder_overflow)
-
-    # Cloud storage not supported for streaming (needs seek)
-    if _is_fsspec_uri(path):
-        raise NotImplementedError(
-            "Streaming dask write to cloud storage is not yet supported. "
-            "Use .compute() first or write to a .vrt file.")
 
     dir_name = os.path.dirname(os.path.abspath(path))
     os.makedirs(dir_name, exist_ok=True)
