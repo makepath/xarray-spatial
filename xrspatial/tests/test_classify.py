@@ -488,6 +488,39 @@ def test_natural_breaks_cupy_matches_numpy():
     )
 
 
+def test_natural_breaks_large_offset_1100():
+    """Jenks should separate tight clusters even when data has a large offset.
+
+    Regression test for #1100: float32 internals caused the variance
+    formula to lose all significant digits for offset data.
+    """
+    rng = np.random.default_rng(0)
+    centers = np.array([100_000, 100_010, 100_020, 100_030, 100_040])
+    data = np.concatenate([c + rng.uniform(-1, 1, 200) for c in centers])
+    agg = xr.DataArray(data.reshape(10, 100))
+
+    result = natural_breaks(agg, k=5, num_sample=None)
+    result_data = result.data
+    if hasattr(result_data, 'compute'):
+        result_data = result_data.compute()
+
+    # All 5 classes should be present
+    unique_classes = np.unique(result_data[~np.isnan(result_data)])
+    assert len(unique_classes) == 5, (
+        f"Expected 5 classes, got {len(unique_classes)}: {unique_classes}"
+    )
+
+    # Each center's 200 points should be in a single class
+    flat = result_data.ravel()
+    for i, center in enumerate(centers):
+        start = i * 200
+        end = start + 200
+        chunk_classes = np.unique(flat[start:end])
+        assert len(chunk_classes) == 1, (
+            f"Center {center}: expected 1 class, got {len(chunk_classes)}"
+        )
+
+
 @dask_array_available
 def test_natural_breaks_dask_matches_numpy():
     elevation = np.arange(100, dtype=np.float64).reshape(10, 10)
