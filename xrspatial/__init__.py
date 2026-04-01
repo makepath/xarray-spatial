@@ -104,6 +104,7 @@ from xrspatial.hydro import stream_link  # noqa: unified wrapper
 from xrspatial.hydro import stream_link_d8, stream_link_dinf, stream_link_mfd  # noqa
 from xrspatial.hydro import stream_order  # noqa: unified wrapper
 from xrspatial.hydro import stream_order_d8, stream_order_dinf, stream_order_mfd  # noqa
+from xrspatial.sieve import sieve  # noqa
 from xrspatial.sky_view_factor import sky_view_factor  # noqa
 from xrspatial.slope import slope  # noqa
 from xrspatial.surface_distance import surface_allocation  # noqa
