@@ -208,7 +208,10 @@ def _nanreduce_preserve_allnan(blocks, func):
     ``np.nansum`` returns 0 for all-NaN input; we want NaN so that zones
     with no valid values propagate NaN, consistent with the numpy backend.
     """
-    result = func(blocks, axis=0)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        result = func(blocks, axis=0)
     all_nan = np.all(np.isnan(blocks), axis=0)
     result[all_nan] = np.nan
     return result
@@ -2217,7 +2220,7 @@ def trim(
     else:
         if is_cupy_array(data):
             data = data.get()
-        top, bottom, left, right = _trim(data, values)
+        top, bottom, left, right = _trim(data, np.asarray(values))
 
     arr = raster[top: bottom + 1, left: right + 1]
     arr.name = name
@@ -2493,7 +2496,7 @@ def crop(
     else:
         if is_cupy_array(data):
             data = data.get()
-        top, bottom, left, right = _crop(data, zones_ids)
+        top, bottom, left, right = _crop(data, np.asarray(zones_ids))
 
     arr = values[top: bottom + 1, left: right + 1]
     arr.name = name

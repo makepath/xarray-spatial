@@ -1871,7 +1871,11 @@ class TestVectorZones:
     def test_apply_gdf(self):
         values, gdf, zones_raster = self._zones_raster_and_gdf()
         # rasterize produces float zones; apply needs int zones
-        zones_int = zones_raster.copy(data=zones_raster.values.astype(int))
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', RuntimeWarning)
+            zones_int = zones_raster.copy(
+                data=zones_raster.values.astype(int))
         fn = lambda x: x * 2
         expected = apply(zones_int, values, fn)
         result = apply(gdf, values, fn, column='zone_id',

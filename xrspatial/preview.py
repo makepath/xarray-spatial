@@ -45,7 +45,9 @@ def _is_all_nan(block):
                 return bool(cupy.isnan(cupy.nanmax(block)))
     except ImportError:
         pass
-    with np.errstate(invalid='ignore'):
+    import warnings
+    with np.errstate(invalid='ignore'), warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
         return bool(np.isnan(np.nanmax(block)))
 
 

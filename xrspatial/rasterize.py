@@ -1036,7 +1036,10 @@ def _run_numpy(geometries, props_array, bounds, height, width, fill, dtype,
         _burn_points_cpu(out, written, prows, pcols, pt_idx,
                          point_props, merge_fn)
 
-    return out.astype(dtype)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        return out.astype(dtype)
 
 
 # ---------------------------------------------------------------------------
