@@ -87,7 +87,7 @@
 
 -------
 
-Xarray-Spatial is a Python library for raster analysis built on xarray. It has 100+ functions for surface analysis, hydrology (D8, D-infinity, MFD), fire behavior, flood modeling, multispectral indices, proximity, classification, pathfinding, and interpolation. Functions dispatch automatically across four backends (NumPy, Dask, CuPy, Dask+CuPy). A built-in GeoTIFF/COG reader and writer handles raster I/O without GDAL.
+Xarray-Spatial is a Python library for raster analysis built on xarray. It has 150+ functions for surface analysis, hydrology (D8, D-infinity, MFD), fire behavior, flood modeling, multispectral indices, proximity, classification, pathfinding, and interpolation. Functions dispatch automatically across four backends (NumPy, Dask, CuPy, Dask+CuPy). A built-in GeoTIFF/COG reader and writer handles raster I/O without GDAL.
 
 ### Installation
 ```bash
@@ -134,7 +134,7 @@ In the GIS world, rasters are used for representing continuous phenomena (e.g. e
 #### Supported Spatial Functions with Supported Inputs
 ✅ = native backend &nbsp;&nbsp; 🔄 = accepted (CPU fallback)
 
-[Classification](#classification) · [Diffusion](#diffusion) · [Focal](#focal) · [Morphological](#morphological) · [Fire](#fire) · [Multispectral](#multispectral) · [Multivariate](#multivariate) · [MCDA](#multi-criteria-decision-analysis-mcda) · [Pathfinding](#pathfinding) · [Proximity](#proximity) · [Reproject / Merge](#reproject--merge) · [Raster / Vector Conversion](#raster--vector-conversion) · [Surface](#surface) · [Hydrology](#hydrology) · [Flood](#flood) · [Interpolation](#interpolation) · [Dasymetric](#dasymetric) · [Zonal](#zonal) · [Utilities](#utilities)
+[GeoTIFF / COG I/O](#geotiff--cog-io) · [Classification](#classification) · [Diffusion](#diffusion) · [Focal](#focal) · [Morphological](#morphological) · [Fire](#fire) · [Multispectral](#multispectral) · [Multivariate](#multivariate) · [MCDA](#multi-criteria-decision-analysis-mcda) · [Pathfinding](#pathfinding) · [Proximity](#proximity) · [Reproject / Merge](#reproject--merge) · [Raster / Vector Conversion](#raster--vector-conversion) · [Surface](#surface) · [Hydrology](#hydrology) · [Flood](#flood) · [Interpolation](#interpolation) · [Dasymetric](#dasymetric) · [Zonal](#zonal) · [Utilities](#utilities)
 
 -------
 ### **GeoTIFF / COG I/O**
@@ -315,7 +315,7 @@ Same-CRS tiles skip reprojection entirely and are placed by direct coordinate al
 | [TPI](xrspatial/terrain_metrics.py) | Computes Topographic Position Index (center minus mean of neighbors) | Weiss 2001 | ✅️ | ✅️ | ✅️ | ✅️ |
 | [TRI](xrspatial/terrain_metrics.py) | Computes Terrain Ruggedness Index (local elevation variation) | Riley et al. 1999 | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Landforms](xrspatial/terrain_metrics.py) | Classifies terrain into 10 landform types using the Weiss (2001) TPI scheme | Weiss 2001 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Viewshed](xrspatial/viewshed.py) | Determines visible cells from a given observer point on terrain | GRASS GIS r.viewshed | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Viewshed](xrspatial/viewshed.py) | Determines visible cells from a given observer point on terrain | GRASS GIS r.viewshed | ✅️ | ✅️ | 🔄 | 🔄 |
 | [Min Observable Height](xrspatial/experimental/min_observable_height.py) | Finds the minimum observer height needed to see each cell *(experimental)* | Custom | ✅️ | | | |
 | [Perlin Noise](xrspatial/perlin.py) | Generates smooth continuous random noise for procedural textures | Perlin 1985 | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Worley Noise](xrspatial/worley.py) | Generates cellular (Voronoi) noise returning distance to the nearest feature point | Worley 1996 | ✅️ | ✅️ | ✅️ | ✅️ |
@@ -328,27 +328,35 @@ Same-CRS tiles skip reprojection entirely and are placed by direct coordinate al
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
-| [Flow Direction (D8)](xrspatial/flow_direction.py) | Computes D8 flow direction from each cell toward the steepest downhill neighbor | O'Callaghan & Mark 1984 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Flow Direction (Dinf)](xrspatial/flow_direction_dinf.py) | Computes D-infinity flow direction as a continuous angle toward the steepest downslope facet | Tarboton 1997 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Flow Direction (MFD)](xrspatial/flow_direction_mfd.py) | Partitions flow to all downslope neighbors with an adaptive exponent (Qin et al. 2007) | Qin et al. 2007 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Flow Accumulation (D8)](xrspatial/flow_accumulation.py) | Counts upstream cells draining through each cell in a D8 flow direction grid | Jenson & Domingue 1988 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Flow Accumulation (Dinf)](xrspatial/flow_accumulation_dinf.py) | Accumulates upstream area by splitting flow proportionally between two neighbors (Tarboton 1997) | Tarboton 1997 | ✅️ | ✅️ | ✅️ | 🔄 |
-| [Flow Accumulation (MFD)](xrspatial/flow_accumulation_mfd.py) | Accumulates upstream area through all MFD flow paths weighted by directional fractions | Qin et al. 2007 | ✅️ | ✅️ | ✅️ | 🔄 |
-| [Flow Length (D8)](xrspatial/flow_length.py) | Computes D8 flow path length from each cell to outlet (downstream) or from divide (upstream) | Standard (D8 tracing) | ✅️ | ✅️ | ✅️ | 🔄 |
-| [Flow Length (Dinf)](xrspatial/flow_length_dinf.py) | Proportion-weighted flow path length using D-inf angle decomposition (downstream or upstream) | Tarboton 1997 | ✅️ | ✅️ | ✅️ | 🔄 |
-| [Flow Length (MFD)](xrspatial/flow_length_mfd.py) | Proportion-weighted flow path length using MFD fractions (downstream or upstream) | Qin et al. 2007 | ✅️ | ✅️ | ✅️ | 🔄 |
-| [Watershed](xrspatial/watershed.py) | Labels each cell with the pour point it drains to via D8 flow direction | Standard (D8 tracing) | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Basins](xrspatial/watershed.py) | Delineates drainage basins by labeling each cell with its outlet ID | Standard (D8 tracing) | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Stream Order](xrspatial/stream_order.py) | Assigns Strahler or Shreve stream order to cells in a drainage network | Strahler 1957, Shreve 1966 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Stream Order (Dinf)](xrspatial/stream_order_dinf.py) | Strahler/Shreve stream ordering on D-infinity flow direction grids | Tarboton 1997 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Stream Order (MFD)](xrspatial/stream_order_mfd.py) | Strahler/Shreve stream ordering on MFD fraction grids | Freeman 1991 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Stream Link](xrspatial/stream_link.py) | Assigns unique IDs to each stream segment between junctions | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Stream Link (Dinf)](xrspatial/stream_link_dinf.py) | Stream link segmentation on D-infinity flow direction grids | Tarboton 1997 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Stream Link (MFD)](xrspatial/stream_link_mfd.py) | Stream link segmentation on MFD fraction grids | Freeman 1991 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Snap Pour Point](xrspatial/snap_pour_point.py) | Snaps pour points to the highest-accumulation cell within a search radius | Custom | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Flow Path](xrspatial/flow_path.py) | Traces downstream flow paths from start points through a D8 direction grid | Standard (D8 tracing) | ✅️ | ✅️ | 🔄 | 🔄 |
-| [HAND](xrspatial/hand.py) | Computes Height Above Nearest Drainage by tracing D8 flow to the nearest stream cell | Nobre et al. 2011 | ✅️ | ✅️ | 🔄 | 🔄 |
-| [TWI](xrspatial/twi.py) | Topographic Wetness Index: ln(specific catchment area / tan(slope)) | Beven & Kirkby 1979 | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Flow Direction (D8)](xrspatial/hydro/flow_direction_d8.py) | Computes D8 flow direction from each cell toward the steepest downhill neighbor | O'Callaghan & Mark 1984 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Flow Direction (Dinf)](xrspatial/hydro/flow_direction_dinf.py) | Computes D-infinity flow direction as a continuous angle toward the steepest downslope facet | Tarboton 1997 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Flow Direction (MFD)](xrspatial/hydro/flow_direction_mfd.py) | Partitions flow to all downslope neighbors with an adaptive exponent (Qin et al. 2007) | Qin et al. 2007 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Flow Accumulation (D8)](xrspatial/hydro/flow_accumulation_d8.py) | Counts upstream cells draining through each cell in a D8 flow direction grid | Jenson & Domingue 1988 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Flow Accumulation (Dinf)](xrspatial/hydro/flow_accumulation_dinf.py) | Accumulates upstream area by splitting flow proportionally between two neighbors (Tarboton 1997) | Tarboton 1997 | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Flow Accumulation (MFD)](xrspatial/hydro/flow_accumulation_mfd.py) | Accumulates upstream area through all MFD flow paths weighted by directional fractions | Qin et al. 2007 | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Flow Length (D8)](xrspatial/hydro/flow_length_d8.py) | Computes D8 flow path length from each cell to outlet (downstream) or from divide (upstream) | Standard (D8 tracing) | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Flow Length (Dinf)](xrspatial/hydro/flow_length_dinf.py) | Proportion-weighted flow path length using D-inf angle decomposition (downstream or upstream) | Tarboton 1997 | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Flow Length (MFD)](xrspatial/hydro/flow_length_mfd.py) | Proportion-weighted flow path length using MFD fractions (downstream or upstream) | Qin et al. 2007 | ✅️ | ✅️ | ✅️ | 🔄 |
+| [Fill (D8)](xrspatial/hydro/fill_d8.py) | Fills depressions in a DEM using Planchon-Darboux iterative flooding | Planchon & Darboux 2002 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Sink (D8)](xrspatial/hydro/sink_d8.py) | Identifies and labels depression cells in a D8 flow direction grid | Standard (D8 tracing) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Watershed (D8)](xrspatial/hydro/watershed_d8.py) | Labels each cell with the pour point it drains to via D8 flow direction | Standard (D8 tracing) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Watershed (Dinf)](xrspatial/hydro/watershed_dinf.py) | Labels each cell with the pour point it drains to via D-infinity flow direction | Tarboton 1997 | ✅️ | ✅️ | 🔄 | 🔄 |
+| [Watershed (MFD)](xrspatial/hydro/watershed_mfd.py) | Labels each cell with the pour point it drains to via MFD fractions | Qin et al. 2007 | ✅️ | ✅️ | 🔄 | 🔄 |
+| [Basins](xrspatial/hydro/watershed_d8.py) | Delineates drainage basins by labeling each cell with its outlet ID | Standard (D8 tracing) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Stream Order (D8)](xrspatial/hydro/stream_order_d8.py) | Assigns Strahler or Shreve stream order to cells in a drainage network | Strahler 1957, Shreve 1966 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Stream Order (Dinf)](xrspatial/hydro/stream_order_dinf.py) | Strahler/Shreve stream ordering on D-infinity flow direction grids | Tarboton 1997 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Stream Order (MFD)](xrspatial/hydro/stream_order_mfd.py) | Strahler/Shreve stream ordering on MFD fraction grids | Freeman 1991 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Stream Link (D8)](xrspatial/hydro/stream_link_d8.py) | Assigns unique IDs to each stream segment between junctions | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Stream Link (Dinf)](xrspatial/hydro/stream_link_dinf.py) | Stream link segmentation on D-infinity flow direction grids | Tarboton 1997 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Stream Link (MFD)](xrspatial/hydro/stream_link_mfd.py) | Stream link segmentation on MFD fraction grids | Freeman 1991 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Snap Pour Point](xrspatial/hydro/snap_pour_point_d8.py) | Snaps pour points to the highest-accumulation cell within a search radius | Custom | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Flow Path (D8)](xrspatial/hydro/flow_path_d8.py) | Traces downstream flow paths from start points through a D8 direction grid | Standard (D8 tracing) | ✅️ | ✅️ | 🔄 | 🔄 |
+| [Flow Path (Dinf)](xrspatial/hydro/flow_path_dinf.py) | Traces downstream flow paths using D-infinity dominant neighbor | Tarboton 1997 | ✅️ | ✅️ | 🔄 | 🔄 |
+| [Flow Path (MFD)](xrspatial/hydro/flow_path_mfd.py) | Traces downstream flow paths through MFD fraction-weighted neighbors | Qin et al. 2007 | ✅️ | ✅️ | 🔄 | 🔄 |
+| [HAND (D8)](xrspatial/hydro/hand_d8.py) | Computes Height Above Nearest Drainage by tracing D8 flow to the nearest stream cell | Nobre et al. 2011 | ✅️ | ✅️ | 🔄 | 🔄 |
+| [HAND (Dinf)](xrspatial/hydro/hand_dinf.py) | Computes Height Above Nearest Drainage using D-infinity flow direction | Nobre et al. 2011 | ✅️ | ✅️ | 🔄 | 🔄 |
+| [HAND (MFD)](xrspatial/hydro/hand_mfd.py) | Computes Height Above Nearest Drainage using MFD fractions | Nobre et al. 2011 | ✅️ | ✅️ | 🔄 | 🔄 |
+| [TWI](xrspatial/hydro/twi_d8.py) | Topographic Wetness Index: ln(specific catchment area / tan(slope)) | Beven & Kirkby 1979 | ✅️ | ✅️ | ✅️ | 🔄 |
 
 -----------
 
@@ -396,6 +404,7 @@ Same-CRS tiles skip reprojection entirely and are placed by direct coordinate al
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Binary](xrspatial/classify.py) | Binarizes values by membership in a target set (1 if match, 0 otherwise) | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Box Plot](xrspatial/classify.py) | Classifies values into bins based on box plot quartile boundaries | PySAL mapclassify | ✅️ |✅ | ✅ | 🔄 |
 | [Equal Interval](xrspatial/classify.py) | Divides the value range into equal-width bins | PySAL mapclassify | ✅️ |✅ | ✅ |✅ |
 | [Head/Tail Breaks](xrspatial/classify.py) | Classifies heavy-tailed distributions using recursive mean splitting | PySAL mapclassify | ✅️ |✅ | 🔄 | 🔄 |
@@ -552,7 +561,8 @@ Same-CRS tiles skip reprojection entirely and are placed by direct coordinate al
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Disaggregate](xrspatial/dasymetric.py) | Redistributes zonal totals to pixels using an ancillary weight surface | Mennis 2003 | ✅️ | ✅️ | ✅️ | ✅️ |
-| [Pycnophylactic](xrspatial/dasymetric.py) | Tobler's pycnophylactic interpolation preserving zone totals via Laplacian smoothing | Tobler 1979 | ✅️ | | | |
+| [Pycnophylactic](xrspatial/dasymetric.py) | Tobler's pycnophylactic interpolation preserving zone totals via Laplacian smoothing | Tobler 1979 | ✅️ | | 🔄 | |
+| [Validate Disaggregation](xrspatial/dasymetric.py) | Checks that disaggregated pixel sums match the original zone totals | Standard | ✅️ | ✅️ | 🔄 | 🔄 |
 
 -----------
 
