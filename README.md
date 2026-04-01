@@ -486,6 +486,7 @@ Same-CRS tiles skip reprojection entirely and are placed by direct coordinate al
 | [Gradient](xrspatial/morphology.py) | Dilation minus erosion (edge detection) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [White Top-hat](xrspatial/morphology.py) | Original minus opening (isolate bright features) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Black Top-hat](xrspatial/morphology.py) | Closing minus original (isolate dark features) | Standard (morphology) | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Sieve](xrspatial/sieve.py) | Remove small connected clumps from classified rasters | GDAL sieve | ✅️ | ✅️ | 🔄 | 🔄 |
 
 -------
 
