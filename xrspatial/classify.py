@@ -1382,7 +1382,7 @@ def _run_box_plot(agg, hinge, module):
         q3_l = da.percentile(finite_data, 75)
         max_l = da.nanmax(data_clean)
         q1, q2, q3, max_v = dask.compute(q1_l, q2_l, q3_l, max_l)
-        q1, q2, q3, max_v = float(q1), float(q2), float(q3), float(max_v)
+        q1, q2, q3, max_v = q1.item(), q2.item(), q3.item(), max_v.item()
     else:
         q1 = float(np.percentile(finite_data, 25))
         q2 = float(np.percentile(finite_data, 50))
@@ -1411,7 +1411,7 @@ def _run_dask_cupy_box_plot(agg, hinge):
     q3_l = da.percentile(finite_data, 75)
     max_l = da.nanmax(data_clean)
     q1, q2, q3, max_v = dask.compute(q1_l, q2_l, q3_l, max_l)
-    q1, q2, q3, max_v = float(q1), float(q2), float(q3), float(max_v)
+    q1, q2, q3, max_v = q1.item(), q2.item(), q3.item(), max_v.item()
 
     iqr = q3 - q1
     raw_bins = [q1 - hinge * iqr, q1, q2, q3, q3 + hinge * iqr, max_v]
