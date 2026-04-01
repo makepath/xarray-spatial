@@ -4,6 +4,20 @@
 Proximity
 *********
 
+.. warning::
+
+   ``proximity()`` with ``distance_metric='EUCLIDEAN'`` (the default)
+   returns distances in the **coordinate units** of the DataArray.
+   With default integer indices this equals pixel counts.  Use
+   ``'GREAT_CIRCLE'`` for lat/lon data (returns metres).
+
+.. caution::
+
+   With Dask, ``proximity()`` expands each chunk by ``max_distance`` cells.
+   If ``max_distance`` is infinite (the default), the whole array is loaded
+   into a single chunk.  Set a finite ``max_distance`` to keep memory
+   bounded.
+
 Allocation
 ==========
 .. autosummary::

@@ -4,6 +4,13 @@
 Hydrology
 *********
 
+.. warning::
+
+   NaN cells act as **impassable barriers** in all hydrology functions.
+   Flow cannot cross them.  If your DEM has NaN holes (e.g. water bodies
+   masked out), fill or interpolate them first, or expect disconnected
+   drainage networks.
+
 Flow Direction (D8)
 ===================
 .. autosummary::

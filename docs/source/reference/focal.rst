@@ -4,6 +4,18 @@
 Focal
 *****
 
+.. caution::
+
+   Focal operations use ``dask.array.map_overlap``.  Each chunk dimension
+   must be **larger than the kernel depth** (typically 1 cell for a 3x3
+   kernel).  Chunks smaller than the depth produce wrong results.
+
+.. note::
+
+   Focal functions output **float32**.  NaN handling varies: ``mean``
+   excludes NaN neighbours from the average, while ``hotspots`` propagates
+   NaN from any neighbour.
+
 Apply
 =====
 .. autosummary::

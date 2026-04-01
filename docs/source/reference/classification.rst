@@ -4,6 +4,12 @@
 Classification
 **************
 
+.. warning::
+
+   Classification functions silently set NaN and infinite input values
+   to NaN in the output.  Clean infinities before classifying if you
+   want every cell assigned to a bin.
+
 Equal Interval
 ==============
 .. autosummary::

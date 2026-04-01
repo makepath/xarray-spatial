@@ -4,6 +4,13 @@
 Multispectral
 *************
 
+.. note::
+
+   All spectral indices output **float32**.  Division by zero (e.g.
+   NDVI where NIR + Red = 0) produces NaN or inf silently.  Clean
+   the result with ``xr.where(np.isfinite(result), result, np.nan)``
+   if needed.
+
 Atmospherically Resistant Vegetation Index (ARVI)
 =================================================
 .. autosummary::

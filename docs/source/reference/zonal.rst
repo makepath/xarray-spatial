@@ -4,6 +4,11 @@
 Zonal
 *****
 
+.. note::
+
+   NaN values are excluded from all zonal aggregations.  A zone where
+   every cell is NaN returns NaN (not zero) for sum, mean, etc.
+
 Apply
 =====
 .. autosummary::

@@ -11,8 +11,12 @@ Overview
 
 xarray-spatial standardizes on **float32** (32-bit floating-point) for output data in most analytical functions. This design decision provides a balance between computational precision, memory efficiency, and performance that is well-suited for raster analysis tasks.
 
-.. note::
-   All multispectral indices, terrain analysis functions, and most other operations in xarray-spatial output float32 data, regardless of input data type.
+.. warning::
+
+   All multispectral indices, terrain analysis functions, and most other
+   operations in xarray-spatial output **float32** data, regardless of input
+   data type.  If you pass float64 data, the output is float32.  Cast the
+   result with ``.astype('float64')`` if you need higher precision.
 
 
 Why Float32?
