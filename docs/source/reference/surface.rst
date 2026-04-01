@@ -4,6 +4,20 @@
 Surface
 *******
 
+.. danger::
+
+   ``slope()``, ``aspect()``, ``curvature()``, and ``hillshade()`` with
+   ``method='geodesic'`` assume the **WGS84 ellipsoid** and require
+   coordinates in **degrees** (geographic CRS).  Passing projected
+   coordinates (metres) to the geodesic method produces wrong results.
+   Use ``method='planar'`` (the default) for projected data.
+
+.. note::
+
+   All surface functions output **float32** regardless of input dtype.
+   Edge cells within the 3x3 kernel radius are NaN by default
+   (``boundary='nan'``).
+
 Aspect
 ======
 .. autosummary::

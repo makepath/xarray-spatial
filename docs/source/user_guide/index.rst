@@ -7,6 +7,7 @@ User Guide
 .. toctree::
    :maxdepth: 1
 
+   caveats
    data_types
    classification
    fire
