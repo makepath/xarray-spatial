@@ -181,3 +181,56 @@ def line_of_sight(
         data_vars['fresnel_clear'] = ('sample', fresnel_clear)
 
     return xarray.Dataset(data_vars)
+
+
+def cumulative_viewshed(
+    raster: xarray.DataArray,
+    observers: list,
+    target_elev: float = 0,
+    max_distance: float = None,
+) -> xarray.DataArray:
+    """Count how many observers can see each cell.
+
+    Parameters
+    ----------
+    raster : xarray.DataArray
+        Elevation raster (numpy, cupy, or dask-backed).
+    observers : list of dict
+        Each dict must have ``x`` and ``y`` keys (data-space coords).
+        Optional keys: ``observer_elev`` (default 0), ``target_elev``
+        (overrides function-level default), ``max_distance`` (per-observer
+        analysis radius).
+    target_elev : float
+        Default target elevation for observers that don't specify one.
+    max_distance : float, optional
+        Default maximum analysis radius.
+
+    Returns
+    -------
+    xarray.DataArray
+        Integer raster (int32) with the count of observers that have
+        line-of-sight to each cell.
+    """
+    from .viewshed import viewshed, INVISIBLE
+
+    _validate_raster(raster, func_name='cumulative_viewshed', name='raster')
+    if not observers:
+        raise ValueError("observers list must not be empty")
+
+    count = np.zeros(raster.shape, dtype=np.int32)
+
+    for obs in observers:
+        ox = obs['x']
+        oy = obs['y']
+        oe = obs.get('observer_elev', 0)
+        te = obs.get('target_elev', target_elev)
+        md = obs.get('max_distance', max_distance)
+
+        vs = viewshed(raster, x=ox, y=oy, observer_elev=oe,
+                      target_elev=te, max_distance=md)
+
+        vs_np = vs.values
+        count += (vs_np != INVISIBLE).astype(np.int32)
+
+    return xarray.DataArray(count, coords=raster.coords,
+                            dims=raster.dims, attrs=raster.attrs)

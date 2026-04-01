@@ -155,3 +155,93 @@ class TestLineOfSight:
         # last point should match target
         assert abs(result['x'].values[-1] - 9.0) < 1e-10
         assert abs(result['y'].values[-1] - 2.0) < 1e-10
+
+
+import dask.array as da
+from xrspatial.visibility import cumulative_viewshed
+
+
+class TestCumulativeViewshed:
+    def test_flat_terrain_all_visible(self):
+        """On flat terrain with elevated observers, every cell is visible."""
+        data = np.zeros((10, 10), dtype=float)
+        raster = _make_raster(data)
+        observers = [
+            {'x': 2.0, 'y': 2.0, 'observer_elev': 10},
+            {'x': 7.0, 'y': 7.0, 'observer_elev': 10},
+        ]
+        result = cumulative_viewshed(raster, observers)
+        assert result.dtype == np.int32
+        # every cell should be seen by both observers
+        assert (result.values == 2).all()
+
+    def test_single_observer_matches_viewshed(self):
+        """Single-observer cumulative should match binary viewshed."""
+        from xrspatial import viewshed
+        from xrspatial.viewshed import INVISIBLE
+        data = np.random.RandomState(42).rand(15, 15).astype(float) * 100
+        raster = _make_raster(data)
+        obs = {'x': 7.0, 'y': 7.0, 'observer_elev': 50}
+        result = cumulative_viewshed(raster, [obs])
+        vs = viewshed(raster, x=7.0, y=7.0, observer_elev=50)
+        expected = (vs.values != INVISIBLE).astype(np.int32)
+        np.testing.assert_array_equal(result.values, expected)
+
+    def test_wall_blocks_one_side(self):
+        """A tall wall blocks visibility from the other side."""
+        data = np.zeros((5, 11), dtype=float)
+        data[:, 5] = 1000  # tall wall across all rows
+        raster = _make_raster(data)
+        obs_left = {'x': 0.0, 'y': 2.0, 'observer_elev': 1}
+        obs_right = {'x': 10.0, 'y': 2.0, 'observer_elev': 1}
+        result = cumulative_viewshed(raster, [obs_left, obs_right])
+        # the wall cell itself is visible to both
+        assert result.values[2, 5] == 2
+        # cells far from wall visible to at least one observer
+        assert result.values[2, 0] >= 1
+        assert result.values[2, 10] >= 1
+
+    def test_per_observer_max_distance(self):
+        """Per-observer max_distance limits the analysis radius."""
+        data = np.zeros((20, 20), dtype=float)
+        raster = _make_raster(data)
+        obs = {'x': 10.0, 'y': 10.0, 'observer_elev': 10, 'max_distance': 3}
+        result = cumulative_viewshed(raster, [obs])
+        # corners should be 0 (beyond max_distance)
+        assert result.values[0, 0] == 0
+        assert result.values[19, 19] == 0
+        # center should be 1
+        assert result.values[10, 10] == 1
+
+    def test_empty_observers_raises(self):
+        data = np.zeros((5, 5), dtype=float)
+        raster = _make_raster(data)
+        with pytest.raises(ValueError):
+            cumulative_viewshed(raster, [])
+
+    def test_dask_matches_numpy(self):
+        """Dask backend should produce the same result as numpy."""
+        data = np.random.RandomState(99).rand(15, 15).astype(float) * 50
+        raster_np = _make_raster(data)
+        raster_dask = raster_np.copy()
+        raster_dask.data = da.from_array(data, chunks=(8, 8))
+        observers = [
+            {'x': 3.0, 'y': 3.0, 'observer_elev': 30},
+            {'x': 12.0, 'y': 12.0, 'observer_elev': 30},
+        ]
+        result_np = cumulative_viewshed(raster_np, observers)
+        result_dask = cumulative_viewshed(raster_dask, observers)
+        np.testing.assert_array_equal(result_np.values, result_dask.values)
+
+    def test_preserves_coords_and_dims(self):
+        data = np.zeros((5, 5), dtype=float)
+        raster = _make_raster(data)
+        raster.attrs['crs'] = 'EPSG:4326'
+        observers = [{'x': 2.0, 'y': 2.0, 'observer_elev': 10}]
+        result = cumulative_viewshed(raster, observers)
+        assert result.dims == raster.dims
+        np.testing.assert_array_equal(result.coords['x'].values,
+                                      raster.coords['x'].values)
+        np.testing.assert_array_equal(result.coords['y'].values,
+                                      raster.coords['y'].values)
+        assert result.attrs.get('crs') == 'EPSG:4326'
