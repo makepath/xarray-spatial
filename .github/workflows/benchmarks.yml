@@ -37,7 +37,7 @@ jobs:
         run: |
           asv continuous origin/master HEAD \
             --factor $ASV_FACTOR \
-            --bench "^(Slope|Proximity|Zonal|CostDistance|Focal)" \
+            --bench "^(Slope|Proximity|Zonal|CostDistance|Focal|Rescale|Standardize|Diffusion|Dasymetric)" \
             | tee bench_output.txt
 
       - name: Run benchmarks (push to master)
@@ -45,7 +45,7 @@ jobs:
         working-directory: benchmarks
         run: |
           asv run HEAD^! \
-            --bench "^(Slope|Proximity|Zonal|CostDistance|Focal)" \
+            --bench "^(Slope|Proximity|Zonal|CostDistance|Focal|Rescale|Standardize|Diffusion|Dasymetric)" \
             | tee bench_output.txt
 
       - name: Check for regressions
