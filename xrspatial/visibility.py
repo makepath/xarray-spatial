@@ -234,3 +234,23 @@ def cumulative_viewshed(
 
     return xarray.DataArray(count, coords=raster.coords,
                             dims=raster.dims, attrs=raster.attrs)
+
+
+def visibility_frequency(
+    raster: xarray.DataArray,
+    observers: list,
+    target_elev: float = 0,
+    max_distance: float = None,
+) -> xarray.DataArray:
+    """Fraction of observers that can see each cell.
+
+    Parameters are the same as :func:`cumulative_viewshed`.
+
+    Returns
+    -------
+    xarray.DataArray
+        Float64 raster with values in [0, 1].
+    """
+    cum = cumulative_viewshed(raster, observers, target_elev, max_distance)
+    freq = cum.astype(np.float64) / len(observers)
+    return freq

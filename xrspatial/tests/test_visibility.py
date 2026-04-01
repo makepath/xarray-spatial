@@ -245,3 +245,32 @@ class TestCumulativeViewshed:
         np.testing.assert_array_equal(result.coords['y'].values,
                                       raster.coords['y'].values)
         assert result.attrs.get('crs') == 'EPSG:4326'
+
+
+from xrspatial.visibility import visibility_frequency
+
+
+class TestVisibilityFrequency:
+    def test_flat_terrain_all_ones(self):
+        data = np.zeros((10, 10), dtype=float)
+        raster = _make_raster(data)
+        observers = [
+            {'x': 2.0, 'y': 2.0, 'observer_elev': 10},
+            {'x': 7.0, 'y': 7.0, 'observer_elev': 10},
+        ]
+        result = visibility_frequency(raster, observers)
+        assert result.dtype == np.float64
+        np.testing.assert_allclose(result.values, 1.0)
+
+    def test_equals_cumulative_divided_by_n(self):
+        data = np.random.RandomState(7).rand(15, 15).astype(float) * 100
+        raster = _make_raster(data)
+        observers = [
+            {'x': 3.0, 'y': 3.0, 'observer_elev': 50},
+            {'x': 10.0, 'y': 10.0, 'observer_elev': 50},
+            {'x': 7.0, 'y': 2.0, 'observer_elev': 50},
+        ]
+        freq = visibility_frequency(raster, observers)
+        cum = cumulative_viewshed(raster, observers)
+        expected = cum.values.astype(np.float64) / 3.0
+        np.testing.assert_allclose(freq.values, expected)
