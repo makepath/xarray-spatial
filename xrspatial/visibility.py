@@ -11,6 +11,10 @@ line_of_sight
     Elevation profile and visibility along a straight line between two points.
 """
 
+import numpy as np
+
+from .utils import has_cuda_and_cupy, has_dask_array, is_cupy_array
+
 
 def _bresenham_line(r0, c0, r1, c1):
     """Return list of (row, col) cells along the line from (r0,c0) to (r1,c1).
@@ -36,3 +40,27 @@ def _bresenham_line(r0, c0, r1, c1):
             err += dr
             c += sc
     return cells
+
+
+def _extract_transect(raster, cells):
+    """Extract elevation, x-coords, and y-coords for a list of (row, col) cells.
+
+    For dask or cupy-backed rasters the values are pulled to numpy.
+    Returns (elevations, x_coords, y_coords) as 1-D numpy arrays.
+    """
+    rows = np.array([r for r, c in cells])
+    cols = np.array([c for r, c in cells])
+
+    x_coords = raster.coords['x'].values[cols]
+    y_coords = raster.coords['y'].values[rows]
+
+    data = raster.data
+    if has_dask_array():
+        import dask.array as da
+        if isinstance(data, da.Array):
+            data = data.compute()
+    if has_cuda_and_cupy() and is_cupy_array(data):
+        data = data.get()
+
+    elevations = data[rows, cols].astype(np.float64)
+    return elevations, x_coords, y_coords
