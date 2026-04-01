@@ -212,6 +212,18 @@ class XrsSpatialDataArrayAccessor:
         from .viewshed import viewshed
         return viewshed(self._obj, x, y, **kwargs)
 
+    def cumulative_viewshed(self, observers, **kwargs):
+        from .visibility import cumulative_viewshed
+        return cumulative_viewshed(self._obj, observers, **kwargs)
+
+    def visibility_frequency(self, observers, **kwargs):
+        from .visibility import visibility_frequency
+        return visibility_frequency(self._obj, observers, **kwargs)
+
+    def line_of_sight(self, x0, y0, x1, y1, **kwargs):
+        from .visibility import line_of_sight
+        return line_of_sight(self._obj, x0, y0, x1, y1, **kwargs)
+
     def min_observable_height(self, x, y, **kwargs):
         from .experimental.min_observable_height import min_observable_height
         return min_observable_height(self._obj, x, y, **kwargs)
