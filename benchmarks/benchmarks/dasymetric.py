@@ -28,7 +28,7 @@ class Dasymetric:
             zdata = da.from_array(zones_np, chunks=(max(1, ny // 2), max(1, nx // 2)))
         elif type == "cupy":
             from xrspatial.utils import has_cuda_and_cupy
-            if not has_cuda_and_cupy:
+            if not has_cuda_and_cupy():
                 raise NotImplementedError()
             import cupy
             zdata = cupy.asarray(zones_np)
