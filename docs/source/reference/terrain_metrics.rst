@@ -6,9 +6,9 @@ Terrain Metrics
 
 .. note::
 
-   Terrain metrics use a 3x3 kernel and output **float32**.  Edge cells
-   are NaN by default.  These functions use the planar (Horn) algorithm
-   and assume the input is on a regular grid with uniform cell spacing.
+   Terrain metrics use a 3x3 neighbourhood and output **float64**.  Edge
+   cells are NaN.  These functions assume the input is on a regular grid
+   with uniform cell spacing.
 
 Roughness
 =========

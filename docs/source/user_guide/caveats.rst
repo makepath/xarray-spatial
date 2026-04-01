@@ -118,18 +118,19 @@ the output cell is NaN.  The exact behaviour varies by function:
    ``boundary='reflect'`` if you need values at the edges.
 
 
-Proximity defaults to pixel units
-==================================
+Proximity distances depend on coordinate units
+================================================
 
 .. warning::
 
-   ``proximity()`` returns distances in **pixel units** when
-   ``distance_metric='EUCLIDEAN'`` (the default).  It does not automatically
-   convert to metres or kilometres.
+   ``proximity()`` with ``distance_metric='EUCLIDEAN'`` (the default)
+   computes distances in whatever units the DataArray's coordinates use.
+   If coordinates are default integer indices (0, 1, 2, ...), the result
+   is in pixel counts.  If coordinates are in metres (UTM), the result is
+   in metres.  If coordinates are in degrees, the result is in degrees.
 
-To get distances in real-world units with Euclidean mode, multiply the
-result by your cell size.  Or switch to ``distance_metric='GREAT_CIRCLE'``
-if your data is in degrees, which returns kilometres.
+Switch to ``distance_metric='GREAT_CIRCLE'`` for lat/lon data to get
+distances in **metres** (the radius used is 6 378 137 m).
 
 .. tip::
 
@@ -137,22 +138,21 @@ if your data is in degrees, which returns kilometres.
 
       from xrspatial.proximity import proximity
 
-      # Pixel-unit result
+      # EUCLIDEAN with default coords = pixel-count distances
       dist_px = proximity(raster)
 
-      # Convert to metres (assumes square cells)
-      cell_m = 30.0  # e.g. Landsat 30 m resolution
-      dist_m = dist_px * cell_m
+      # GREAT_CIRCLE with lat/lon coords = distances in metres
+      dist_m = proximity(raster, distance_metric='GREAT_CIRCLE')
 
 
-Haversine uses the semi-major axis
-====================================
+Great-circle distances assume sphere radius = semi-major axis
+==============================================================
 
 .. note::
 
    Great-circle distances in ``proximity()`` and ``surface_distance()``
-   use the WGS84 **semi-major axis** (6 378 137 m) as the Earth radius,
-   not the mean radius (6 371 km).
+   model the Earth as a sphere with radius = WGS84 semi-major axis
+   (6 378 137 m), not the mean radius (~6 371 km).
 
 The difference is about 0.1 %.  This is negligible for most use cases but
 worth knowing if you're comparing against a reference that uses the mean

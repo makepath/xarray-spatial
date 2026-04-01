@@ -6,10 +6,10 @@ Proximity
 
 .. warning::
 
-   ``proximity()`` returns distances in **pixel units** by default
-   (``distance_metric='EUCLIDEAN'``).  Multiply by cell size to get
-   real-world units, or use ``'GREAT_CIRCLE'`` for lat/lon data
-   (returns kilometres).
+   ``proximity()`` with ``distance_metric='EUCLIDEAN'`` (the default)
+   returns distances in the **coordinate units** of the DataArray.
+   With default integer indices this equals pixel counts.  Use
+   ``'GREAT_CIRCLE'`` for lat/lon data (returns metres).
 
 .. caution::
 
