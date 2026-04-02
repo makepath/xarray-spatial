@@ -22,6 +22,7 @@ Reference
    multispectral
    pathfinding
    proximity
+   resample
    surface
    terrain_metrics
    utilities
