@@ -30,6 +30,13 @@ Regions
 
     xrspatial.zonal.regions
 
+Sieve
+=====
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.sieve.sieve
+
 Trim
 ====
 .. autosummary::
