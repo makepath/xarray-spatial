@@ -1,0 +1,9 @@
+{
+  "inspections": {
+    "zonal": { "last_inspected": "2026-03-30T12:00:00Z", "issue": 1090 },
+    "focal": { "last_inspected": "2026-03-30T13:00:00Z", "issue": 1092 },
+    "multispectral": { "last_inspected": "2026-03-30T14:00:00Z", "issue": 1094 },
+    "proximity": { "last_inspected": "2026-03-30T15:00:00Z", "issue": null, "notes": "Direction >= boundary fragile but works due to truncated constant. Float32 truncation is design choice. No wrong-results bugs found." },
+    "curvature": { "last_inspected": "2026-03-30T15:00:00Z", "issue": null, "notes": "Formula matches ArcGIS reference. Backends consistent. No issues found." }
+  }
+}
