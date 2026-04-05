@@ -422,3 +422,83 @@ def test_sieve_numpy_dask_match():
     dk_result = _to_numpy(sieve(dk_raster, threshold=3))
 
     np.testing.assert_array_equal(np_result, dk_result)
+
+
+# ---------------------------------------------------------------------------
+# Convergence warning
+# ---------------------------------------------------------------------------
+
+
+def test_sieve_convergence_warning():
+    """Should warn when the iteration limit is reached."""
+    from unittest.mock import patch
+
+    from xrspatial.sieve import _MAX_ITERATIONS
+
+    # Create a raster where merging is artificially stalled by
+    # patching _MAX_ITERATIONS to 0 so the loop never runs.
+    arr = np.array(
+        [
+            [1, 1, 1],
+            [1, 2, 1],
+            [1, 1, 1],
+        ],
+        dtype=np.float64,
+    )
+    raster = _make_raster(arr, "numpy")
+
+    with patch("xrspatial.sieve._MAX_ITERATIONS", 0):
+        with pytest.warns(UserWarning, match="did not converge"):
+            sieve(raster, threshold=2)
+
+
+# ---------------------------------------------------------------------------
+# Larger synthetic rasters
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_sieve_noisy_classification(backend):
+    """Sieve a noisy 100x100 classification with known outcome."""
+    rng = np.random.RandomState(1162)
+    # 4-class base raster in quadrants
+    base = np.zeros((100, 100), dtype=np.float64)
+    base[:50, :50] = 1
+    base[:50, 50:] = 2
+    base[50:, :50] = 3
+    base[50:, 50:] = 4
+
+    # Sprinkle 5 % salt-and-pepper noise
+    noise_mask = rng.random((100, 100)) < 0.05
+    noise_vals = rng.choice([1.0, 2.0, 3.0, 4.0], size=(100, 100))
+    noisy = base.copy()
+    noisy[noise_mask] = noise_vals[noise_mask]
+
+    raster = _make_raster(noisy, backend)
+    result = sieve(raster, threshold=10)
+    data = _to_numpy(result)
+
+    # After sieving, isolated noise pixels should be gone.
+    # Each quadrant interior (excluding boundary) should be uniform.
+    assert np.all(data[5:45, 5:45] == 1.0)
+    assert np.all(data[5:45, 55:95] == 2.0)
+    assert np.all(data[55:95, 5:45] == 3.0)
+    assert np.all(data[55:95, 55:95] == 4.0)
+
+
+@pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
+def test_sieve_many_small_regions(backend):
+    """Checkerboard produces maximum region count; sieve should unify."""
+    # 20x20 checkerboard: every pixel is its own 1-pixel region
+    arr = np.zeros((20, 20), dtype=np.float64)
+    arr[::2, ::2] = 1
+    arr[1::2, 1::2] = 1
+    arr[arr == 0] = 2
+
+    raster = _make_raster(arr, backend)
+    result = sieve(raster, threshold=2, neighborhood=4)
+    data = _to_numpy(result)
+
+    # With 4-connectivity every pixel is isolated (size 1).
+    # threshold=2 forces all to merge.  Result should be uniform.
+    assert len(np.unique(data)) == 1
