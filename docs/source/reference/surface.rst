@@ -81,6 +81,27 @@ Viewshed
 
     xrspatial.viewshed.viewshed
 
+Cumulative Viewshed
+===================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.visibility.cumulative_viewshed
+
+Visibility Frequency
+====================
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.visibility.visibility_frequency
+
+Line of Sight
+=============
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.visibility.line_of_sight
+
 Perlin Noise
 ============
 .. autosummary::

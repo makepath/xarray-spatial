@@ -120,6 +120,9 @@ from xrspatial.hydro import twi  # noqa: unified wrapper
 from xrspatial.hydro import twi_d8  # noqa
 from xrspatial.polygonize import polygonize  # noqa
 from xrspatial.viewshed import viewshed  # noqa
+from xrspatial.visibility import cumulative_viewshed  # noqa
+from xrspatial.visibility import line_of_sight  # noqa
+from xrspatial.visibility import visibility_frequency  # noqa
 from xrspatial.hydro import basin  # noqa: unified wrapper
 from xrspatial.hydro import basin_d8  # noqa
 from xrspatial.hydro import basins  # noqa: backward-compat alias
