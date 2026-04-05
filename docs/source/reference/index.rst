@@ -7,6 +7,7 @@ Reference
 .. toctree::
    :maxdepth: 2
 
+   dask_laziness
    classification
    dasymetric
    diffusion
