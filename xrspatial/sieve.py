@@ -11,6 +11,7 @@ Supports all four backends: numpy, cupy, dask+numpy, dask+cupy.
 
 from __future__ import annotations
 
+import warnings
 from collections import defaultdict
 from typing import Sequence
 
@@ -36,7 +37,118 @@ from xrspatial.utils import (
     has_cuda_and_cupy,
     is_cupy_array,
     is_dask_cupy,
+    ngjit,
 )
+
+_MAX_ITERATIONS = 50
+
+
+# ---------------------------------------------------------------------------
+# Numba union-find labeling
+# ---------------------------------------------------------------------------
+
+
+@ngjit
+def _uf_find(parent, x):
+    """Find root of *x* with path halving."""
+    while parent[x] != x:
+        parent[x] = parent[parent[x]]
+        x = parent[x]
+    return x
+
+
+@ngjit
+def _uf_union(parent, rank, a, b):
+    """Union by rank."""
+    ra = _uf_find(parent, a)
+    rb = _uf_find(parent, b)
+    if ra == rb:
+        return
+    if rank[ra] < rank[rb]:
+        parent[ra] = rb
+    elif rank[ra] > rank[rb]:
+        parent[rb] = ra
+    else:
+        parent[rb] = ra
+        rank[ra] += 1
+
+
+@ngjit
+def _label_connected(data, valid, neighborhood):
+    """Single-pass connected-component labeling via union-find.
+
+    Labels connected regions of same-value pixels in one O(n) pass,
+    replacing the previous approach of calling ``scipy.ndimage.label``
+    once per unique raster value.
+
+    Uses int32 indices internally, so the raster must have fewer than
+    ~2.1 billion pixels (roughly 46 000 x 46 000).
+
+    Returns
+    -------
+    region_map : ndarray of int32 (2D)
+        Each pixel mapped to its region id (0 = nodata).
+    region_val : ndarray of float64 (1D)
+        Original raster value for each region id.
+    n_regions : int
+        Total number of regions + 1 (length of *region_val*).
+    """
+    rows = data.shape[0]
+    cols = data.shape[1]
+    n = rows * cols
+    parent = np.arange(n, dtype=np.int32)
+    rank = np.zeros(n, dtype=np.int32)
+
+    for r in range(rows):
+        for c in range(cols):
+            if not valid[r, c]:
+                continue
+            idx = r * cols + c
+            val = data[r, c]
+
+            # Check left (already visited)
+            if c > 0 and valid[r, c - 1] and data[r, c - 1] == val:
+                _uf_union(parent, rank, idx, idx - 1)
+            # Check up (already visited)
+            if r > 0 and valid[r - 1, c] and data[r - 1, c] == val:
+                _uf_union(parent, rank, idx, (r - 1) * cols + c)
+
+            if neighborhood == 8:
+                if (
+                    r > 0
+                    and c > 0
+                    and valid[r - 1, c - 1]
+                    and data[r - 1, c - 1] == val
+                ):
+                    _uf_union(parent, rank, idx, (r - 1) * cols + (c - 1))
+                if (
+                    r > 0
+                    and c + 1 < cols
+                    and valid[r - 1, c + 1]
+                    and data[r - 1, c + 1] == val
+                ):
+                    _uf_union(parent, rank, idx, (r - 1) * cols + (c + 1))
+
+    # Assign contiguous region IDs
+    region_map_flat = np.zeros(n, dtype=np.int32)
+    root_to_id = np.zeros(n, dtype=np.int32)
+    region_val_buf = np.full(n + 1, np.nan, dtype=np.float64)
+    next_id = 1
+
+    for i in range(n):
+        r = i // cols
+        c = i % cols
+        if not valid[r, c]:
+            continue
+        root = _uf_find(parent, i)
+        if root_to_id[root] == 0:
+            root_to_id[root] = next_id
+            region_val_buf[next_id] = data[r, c]
+            next_id += 1
+        region_map_flat[i] = root_to_id[root]
+
+    region_map = region_map_flat.reshape(rows, cols)
+    return region_map, region_val_buf[:next_id], next_id
 
 
 # ---------------------------------------------------------------------------
@@ -45,31 +157,44 @@ from xrspatial.utils import (
 
 
 def _build_adjacency(region_map, neighborhood):
-    """Build a region adjacency dict from a labeled map using vectorized shifts.
+    """Build a region adjacency dict from a labeled map.
+
+    Encodes each (lo, hi) region pair as a single int64 so
+    deduplication uses fast 1-D ``np.unique`` instead of the slower
+    ``np.unique(axis=0)`` on 2-D pair arrays.
 
     Returns ``{region_id: set_of_neighbor_ids}``.
     """
-    adjacency: dict[int, set[int]] = defaultdict(set)
+    max_id = np.int64(region_map.max()) + 1
+    encoded_parts: list[np.ndarray] = []
 
-    def _add_pairs(a, b):
+    def _collect(a, b):
         mask = (a > 0) & (b > 0) & (a != b)
         if not mask.any():
             return
-        pairs = np.unique(
-            np.column_stack([a[mask].ravel(), b[mask].ravel()]), axis=0
-        )
-        for x, y in pairs:
-            adjacency[int(x)].add(int(y))
-            adjacency[int(y)].add(int(x))
+        am = a[mask].ravel().astype(np.int64)
+        bm = b[mask].ravel().astype(np.int64)
+        lo = np.minimum(am, bm)
+        hi = np.maximum(am, bm)
+        encoded_parts.append(lo * max_id + hi)
 
-    # 4-connected directions (rook)
-    _add_pairs(region_map[:-1, :], region_map[1:, :])  # vertical
-    _add_pairs(region_map[:, :-1], region_map[:, 1:])  # horizontal
-
-    # 8-connected adds diagonals (queen)
+    _collect(region_map[:-1, :], region_map[1:, :])
+    _collect(region_map[:, :-1], region_map[:, 1:])
     if neighborhood == 8:
-        _add_pairs(region_map[:-1, :-1], region_map[1:, 1:])  # SE
-        _add_pairs(region_map[:-1, 1:], region_map[1:, :-1])  # SW
+        _collect(region_map[:-1, :-1], region_map[1:, 1:])
+        _collect(region_map[:-1, 1:], region_map[1:, :-1])
+
+    adjacency: dict[int, set[int]] = defaultdict(set)
+    if not encoded_parts:
+        return adjacency
+
+    encoded = np.unique(np.concatenate(encoded_parts))
+    lo_arr = encoded // max_id
+    hi_arr = encoded % max_id
+
+    for a, b in zip(lo_arr.tolist(), hi_arr.tolist()):
+        adjacency[a].add(b)
+        adjacency[b].add(a)
 
     return adjacency
 
@@ -79,54 +204,16 @@ def _build_adjacency(region_map, neighborhood):
 # ---------------------------------------------------------------------------
 
 
-def _label_all_regions(result, valid, structure):
-    """Label connected components per unique value.
-
-    Returns
-    -------
-    region_map : ndarray of int32
-        Each pixel mapped to its region id (0 = nodata).
-    region_val : ndarray of float64
-        Original raster value for each region id.
-    n_total : int
-        Total number of regions + 1 (length of *region_val*).
-    """
-    from scipy.ndimage import label
-
-    unique_vals = np.unique(result[valid])
-    region_map = np.zeros(result.shape, dtype=np.int32)
-    region_val_list: list[float] = [np.nan]  # id 0 = nodata
-    uid = 1
-
-    for v in unique_vals:
-        mask = (result == v) & valid
-        labeled, n_features = label(mask, structure=structure)
-        if n_features > 0:
-            nonzero = labeled > 0
-            region_map[nonzero] = labeled[nonzero] + (uid - 1)
-            region_val_list.extend([float(v)] * n_features)
-            uid += n_features
-
-    region_val = np.array(region_val_list, dtype=np.float64)
-    return region_map, region_val, uid
-
-
 def _sieve_numpy(data, threshold, neighborhood, skip_values):
     """Replace connected regions smaller than *threshold* pixels."""
-    structure = (
-        np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
-        if neighborhood == 4
-        else np.ones((3, 3), dtype=int)
-    )
-
     result = data.astype(np.float64, copy=True)
     is_float = np.issubdtype(data.dtype, np.floating)
     valid = ~np.isnan(result) if is_float else np.ones(result.shape, dtype=bool)
     skip_set = set(skip_values) if skip_values is not None else set()
 
-    for _ in range(50):  # convergence limit
-        region_map, region_val, uid = _label_all_regions(
-            result, valid, structure
+    for _ in range(_MAX_ITERATIONS):
+        region_map, region_val, uid = _label_connected(
+            result, valid, neighborhood
         )
         region_size = np.bincount(
             region_map.ravel(), minlength=uid
@@ -140,7 +227,7 @@ def _sieve_numpy(data, threshold, neighborhood, skip_values):
             and region_val[rid] not in skip_set
         ]
         if not small_ids:
-            break
+            return result, True
 
         adjacency = _build_adjacency(region_map, neighborhood)
 
@@ -176,9 +263,9 @@ def _sieve_numpy(data, threshold, neighborhood, skip_values):
             merged_any = True
 
         if not merged_any:
-            break
+            return result, True
 
-    return result
+    return result, False
 
 
 # ---------------------------------------------------------------------------
@@ -190,8 +277,10 @@ def _sieve_cupy(data, threshold, neighborhood, skip_values):
     """CuPy backend: transfer to CPU, sieve, transfer back."""
     import cupy as cp
 
-    np_result = _sieve_numpy(data.get(), threshold, neighborhood, skip_values)
-    return cp.asarray(np_result)
+    np_result, converged = _sieve_numpy(
+        data.get(), threshold, neighborhood, skip_values
+    )
+    return cp.asarray(np_result), converged
 
 
 # ---------------------------------------------------------------------------
@@ -231,8 +320,10 @@ def _sieve_dask(data, threshold, neighborhood, skip_values):
         )
 
     np_data = data.compute()
-    result = _sieve_numpy(np_data, threshold, neighborhood, skip_values)
-    return da.from_array(result, chunks=data.chunks)
+    result, converged = _sieve_numpy(
+        np_data, threshold, neighborhood, skip_values
+    )
+    return da.from_array(result, chunks=data.chunks), converged
 
 
 def _sieve_dask_cupy(data, threshold, neighborhood, skip_values):
@@ -254,8 +345,10 @@ def _sieve_dask_cupy(data, threshold, neighborhood, skip_values):
         pass
 
     cp_data = data.compute()
-    result = _sieve_cupy(cp_data, threshold, neighborhood, skip_values)
-    return da.from_array(result, chunks=data.chunks)
+    result, converged = _sieve_cupy(
+        cp_data, threshold, neighborhood, skip_values
+    )
+    return da.from_array(result, chunks=data.chunks), converged
 
 
 # ---------------------------------------------------------------------------
@@ -349,19 +442,33 @@ def sieve(
     data = raster.data
 
     if isinstance(data, np.ndarray):
-        out = _sieve_numpy(data, threshold, neighborhood, skip_values)
+        out, converged = _sieve_numpy(
+            data, threshold, neighborhood, skip_values
+        )
     elif has_cuda_and_cupy() and is_cupy_array(data):
-        out = _sieve_cupy(data, threshold, neighborhood, skip_values)
+        out, converged = _sieve_cupy(
+            data, threshold, neighborhood, skip_values
+        )
     elif da is not None and isinstance(data, da.Array):
         if is_dask_cupy(raster):
-            out = _sieve_dask_cupy(
+            out, converged = _sieve_dask_cupy(
                 data, threshold, neighborhood, skip_values
             )
         else:
-            out = _sieve_dask(data, threshold, neighborhood, skip_values)
+            out, converged = _sieve_dask(
+                data, threshold, neighborhood, skip_values
+            )
     else:
         raise TypeError(
             f"Unsupported array type {type(data).__name__} for sieve()"
+        )
+
+    if not converged:
+        warnings.warn(
+            f"sieve() did not converge after {_MAX_ITERATIONS} iterations. "
+            f"The result may still contain regions smaller than "
+            f"threshold={threshold}.",
+            stacklevel=2,
         )
 
     return DataArray(
