@@ -2,6 +2,22 @@
 -----------
 
 
+### Version 0.9.6 - 2026-04-05
+
+#### New features
+- Multi-observer viewshed and line-of-sight profiles (#1145) (#1160)
+- Sieve filter for removing small raster clumps (#1159)
+
+#### Bug fixes and improvements
+- Faster sieve labeling, with convergence warning (#1163)
+- Dask laziness docs and regression tests (#1164) (#1165)
+- Fix README feature matrix to match codebase (#1155) (#1158)
+- Fix 196 test-suite warnings (#1148) (#1157)
+- ASV benchmarks for 6 modules changed in v0.9.5 (#1156)
+- Caveat and assumption admonitions in docs (#1134)
+- Miscellaneous code sweeps (#1161)
+
+
 ### Version 0.9.5 - 2026-03-31
 
 #### Bug fixes and improvements
