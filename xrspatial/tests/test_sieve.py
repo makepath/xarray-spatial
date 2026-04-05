@@ -433,8 +433,6 @@ def test_sieve_convergence_warning():
     """Should warn when the iteration limit is reached."""
     from unittest.mock import patch
 
-    from xrspatial.sieve import _MAX_ITERATIONS
-
     # Create a raster where merging is artificially stalled by
     # patching _MAX_ITERATIONS to 0 so the loop never runs.
     arr = np.array(

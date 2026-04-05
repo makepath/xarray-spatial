@@ -81,6 +81,9 @@ def _label_connected(data, valid, neighborhood):
     replacing the previous approach of calling ``scipy.ndimage.label``
     once per unique raster value.
 
+    Uses int32 indices internally, so the raster must have fewer than
+    ~2.1 billion pixels (roughly 46 000 x 46 000).
+
     Returns
     -------
     region_map : ndarray of int32 (2D)
@@ -208,7 +211,6 @@ def _sieve_numpy(data, threshold, neighborhood, skip_values):
     valid = ~np.isnan(result) if is_float else np.ones(result.shape, dtype=bool)
     skip_set = set(skip_values) if skip_values is not None else set()
 
-    converged = False
     for _ in range(_MAX_ITERATIONS):
         region_map, region_val, uid = _label_connected(
             result, valid, neighborhood
@@ -225,8 +227,7 @@ def _sieve_numpy(data, threshold, neighborhood, skip_values):
             and region_val[rid] not in skip_set
         ]
         if not small_ids:
-            converged = True
-            break
+            return result, True
 
         adjacency = _build_adjacency(region_map, neighborhood)
 
@@ -262,18 +263,9 @@ def _sieve_numpy(data, threshold, neighborhood, skip_values):
             merged_any = True
 
         if not merged_any:
-            converged = True
-            break
+            return result, True
 
-    if not converged:
-        warnings.warn(
-            f"sieve() did not converge after {_MAX_ITERATIONS} iterations. "
-            f"The result may still contain regions smaller than "
-            f"threshold={threshold}.",
-            stacklevel=3,
-        )
-
-    return result
+    return result, False
 
 
 # ---------------------------------------------------------------------------
@@ -285,8 +277,10 @@ def _sieve_cupy(data, threshold, neighborhood, skip_values):
     """CuPy backend: transfer to CPU, sieve, transfer back."""
     import cupy as cp
 
-    np_result = _sieve_numpy(data.get(), threshold, neighborhood, skip_values)
-    return cp.asarray(np_result)
+    np_result, converged = _sieve_numpy(
+        data.get(), threshold, neighborhood, skip_values
+    )
+    return cp.asarray(np_result), converged
 
 
 # ---------------------------------------------------------------------------
@@ -326,8 +320,10 @@ def _sieve_dask(data, threshold, neighborhood, skip_values):
         )
 
     np_data = data.compute()
-    result = _sieve_numpy(np_data, threshold, neighborhood, skip_values)
-    return da.from_array(result, chunks=data.chunks)
+    result, converged = _sieve_numpy(
+        np_data, threshold, neighborhood, skip_values
+    )
+    return da.from_array(result, chunks=data.chunks), converged
 
 
 def _sieve_dask_cupy(data, threshold, neighborhood, skip_values):
@@ -349,8 +345,10 @@ def _sieve_dask_cupy(data, threshold, neighborhood, skip_values):
         pass
 
     cp_data = data.compute()
-    result = _sieve_cupy(cp_data, threshold, neighborhood, skip_values)
-    return da.from_array(result, chunks=data.chunks)
+    result, converged = _sieve_cupy(
+        cp_data, threshold, neighborhood, skip_values
+    )
+    return da.from_array(result, chunks=data.chunks), converged
 
 
 # ---------------------------------------------------------------------------
@@ -444,19 +442,33 @@ def sieve(
     data = raster.data
 
     if isinstance(data, np.ndarray):
-        out = _sieve_numpy(data, threshold, neighborhood, skip_values)
+        out, converged = _sieve_numpy(
+            data, threshold, neighborhood, skip_values
+        )
     elif has_cuda_and_cupy() and is_cupy_array(data):
-        out = _sieve_cupy(data, threshold, neighborhood, skip_values)
+        out, converged = _sieve_cupy(
+            data, threshold, neighborhood, skip_values
+        )
     elif da is not None and isinstance(data, da.Array):
         if is_dask_cupy(raster):
-            out = _sieve_dask_cupy(
+            out, converged = _sieve_dask_cupy(
                 data, threshold, neighborhood, skip_values
             )
         else:
-            out = _sieve_dask(data, threshold, neighborhood, skip_values)
+            out, converged = _sieve_dask(
+                data, threshold, neighborhood, skip_values
+            )
     else:
         raise TypeError(
             f"Unsupported array type {type(data).__name__} for sieve()"
+        )
+
+    if not converged:
+        warnings.warn(
+            f"sieve() did not converge after {_MAX_ITERATIONS} iterations. "
+            f"The result may still contain regions smaller than "
+            f"threshold={threshold}.",
+            stacklevel=2,
         )
 
     return DataArray(
