@@ -16,13 +16,6 @@ Known behavioral differences
   size, GDAL and xrspatial may pick different winners.  Tests that would
   depend on tie-breaking are designed to avoid ambiguity.
 * **skip_values**: xrspatial-only feature, not tested here.
-* **Iteration**: xrspatial iterates the merge loop (up to 50 passes) to
-  handle cascading merges.  GDAL runs a single pass.  When *every* region
-  is below threshold, GDAL leaves the raster unchanged (no valid merge
-  target above threshold exists in a single pass).  xrspatial will
-  cascade: merge the smallest into its largest neighbor, re-evaluate,
-  and repeat until convergence.  Tests in ``TestCascadingDifferences``
-  document these cases.
 """
 
 from __future__ import annotations
@@ -210,18 +203,14 @@ class TestThresholdSweep:
             err_msg=f"Mismatch at threshold={threshold}",
         )
 
-    def test_threshold_50_cascading_difference(self, classified_grid):
-        """threshold=50 exceeds all region sizes (max is 34).
-
-        GDAL single-pass: leaves the raster unchanged because no region
-        has a neighbor above threshold.
-        xrspatial iterative: cascades merges until one region absorbs all.
-        """
+    def test_threshold_50(self, classified_grid):
+        """threshold=50 exceeds all region sizes -- nothing merges."""
         xs_out, gdal_out = _run_both(classified_grid, threshold=50)
-        # GDAL: unchanged (single pass, no valid merge target)
-        np.testing.assert_array_equal(gdal_out, classified_grid)
-        # xrspatial: fully merged (iterative cascading)
-        assert len(np.unique(xs_out)) == 1
+        np.testing.assert_array_equal(
+            xs_out,
+            gdal_out,
+            err_msg="Mismatch at threshold=50",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -413,17 +402,10 @@ class TestEdgeCases:
         np.testing.assert_array_equal(xs_out, gdal_out)
 
     def test_two_pixel_raster(self):
-        """Smallest possible non-trivial raster.
-
-        Both pixels are below threshold.  GDAL single-pass leaves them
-        unchanged.  xrspatial merges the smaller-id region into the other.
-        """
+        """Smallest possible non-trivial raster -- both below threshold."""
         arr = np.array([[1, 2]], dtype=np.int32)
         xs_out, gdal_out = _run_both(arr, threshold=2)
-        # GDAL: unchanged (single pass, no above-threshold neighbor)
-        np.testing.assert_array_equal(gdal_out, arr)
-        # xrspatial: fully merged via iteration
-        assert len(np.unique(xs_out)) == 1
+        np.testing.assert_array_equal(xs_out, gdal_out)
 
     def test_single_row(self):
         """1D-like raster (single row)."""
@@ -440,45 +422,24 @@ class TestEdgeCases:
         assert xs_out[3, 0] == 1
 
     def test_checkerboard_4conn(self):
-        """Checkerboard: every pixel is isolated under 4-conn.
-
-        All regions are size 1.  GDAL single-pass leaves the raster
-        unchanged (no neighbor above threshold).  xrspatial iterates
-        and cascades until uniform.
-        """
+        """Checkerboard: all regions size 1, no neighbor >= threshold."""
         arr = np.zeros((8, 8), dtype=np.int32)
         arr[::2, ::2] = 1
         arr[1::2, 1::2] = 1
         arr[arr == 0] = 2
         xs_out, gdal_out = _run_both(arr, threshold=2, connectivity=4)
-        # GDAL: unchanged
-        np.testing.assert_array_equal(gdal_out, arr)
-        # xrspatial: fully merged
-        assert len(np.unique(xs_out)) == 1
+        np.testing.assert_array_equal(xs_out, gdal_out)
 
     def test_stripes(self):
-        """Alternating 1-pixel-wide stripes under 4-connectivity.
-
-        Each stripe is 6 pixels (1 column * 6 rows), threshold=7 means
-        all stripes are below threshold.  GDAL single-pass: unchanged.
-        xrspatial: cascades to uniform.
-        """
+        """Alternating 1-pixel-wide stripes, all below threshold."""
         arr = np.zeros((6, 6), dtype=np.int32)
         arr[:, 0::2] = 1
         arr[:, 1::2] = 2
         xs_out, gdal_out = _run_both(arr, threshold=7, connectivity=4)
-        # GDAL: unchanged
-        np.testing.assert_array_equal(gdal_out, arr)
-        # xrspatial: fully merged
-        assert len(np.unique(xs_out)) == 1
+        np.testing.assert_array_equal(xs_out, gdal_out)
 
     def test_large_threshold_collapses_all(self):
-        """Threshold larger than any region.
-
-        Four 2x2 blocks, threshold=5.  All regions are size 4.
-        GDAL: unchanged (single pass, no above-threshold neighbor).
-        xrspatial: cascades to uniform.
-        """
+        """Threshold larger than any region -- nothing merges."""
         arr = np.array(
             [
                 [1, 1, 2, 2],
@@ -489,10 +450,7 @@ class TestEdgeCases:
             dtype=np.int32,
         )
         xs_out, gdal_out = _run_both(arr, threshold=5)
-        # GDAL: unchanged
-        np.testing.assert_array_equal(gdal_out, arr)
-        # xrspatial: fully merged
-        assert len(np.unique(xs_out)) == 1
+        np.testing.assert_array_equal(xs_out, gdal_out)
 
     def test_dtype_uint8(self):
         """uint8 input should work for both."""
