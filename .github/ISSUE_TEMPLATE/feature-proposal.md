@@ -7,7 +7,6 @@ assignees: ''
 
 ---
 
-**Author of Proposal:**
 ## Reason or Problem
 Describe what the need for this new feature is or what problem this new feature will address.
 ## Proposal

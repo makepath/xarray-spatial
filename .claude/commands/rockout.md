@@ -14,7 +14,8 @@ through all seven steps below. The prompt is: $ARGUMENTS
 2. Pick labels from the repo's existing set. Always include the type label
    (`enhancement`, `bug`, or `proposal`). Add topical labels when they fit
    (e.g. `gpu`, `performance`, `focal tools`, `hydrology`, etc.).
-3. Draft the title and body. Use the repo's issue templates as structure guides:
+3. Draft the title and body. Use the repo's issue templates as structure guides
+   (skip the "Author of Proposal" field -- GitHub already shows the author):
    - Enhancement/proposal: follow `.github/ISSUE_TEMPLATE/feature-proposal.md`
    - Bug: follow `.github/ISSUE_TEMPLATE/bug_report.md`
 4. **Run the body text through the `/humanizer` skill** before creating the issue

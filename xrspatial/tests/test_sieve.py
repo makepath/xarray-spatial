@@ -111,13 +111,12 @@ def test_sieve_four_connectivity(backend):
         dtype=np.float64,
     )
     raster = _make_raster(arr, backend)
-    # With 4-connectivity: each 1 and 2 forms its own 1-pixel region
-    # except center which is 1 pixel.  All regions are size 1.
-    # threshold=2 should merge them all.
+    # With 4-connectivity each pixel is its own 1-pixel region.
+    # All regions are below threshold=2 and no neighbor is >= 2,
+    # so nothing merges (GDAL single-pass semantics).
     result = sieve(raster, threshold=2, neighborhood=4)
     data = _to_numpy(result)
-    # All pixels should end up the same value (merged into one)
-    assert len(np.unique(data)) == 1
+    np.testing.assert_array_equal(data, arr)
 
 
 @pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
@@ -425,29 +424,26 @@ def test_sieve_numpy_dask_match():
 
 
 # ---------------------------------------------------------------------------
-# Convergence warning
+# Single-pass: small regions with no above-threshold neighbor stay
 # ---------------------------------------------------------------------------
 
 
-def test_sieve_convergence_warning():
-    """Should warn when the iteration limit is reached."""
-    from unittest.mock import patch
-
-    # Create a raster where merging is artificially stalled by
-    # patching _MAX_ITERATIONS to 0 so the loop never runs.
+def test_sieve_small_region_no_large_neighbor():
+    """A small region whose only neighbors are also small stays unchanged."""
     arr = np.array(
         [
-            [1, 1, 1],
-            [1, 2, 1],
-            [1, 1, 1],
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+            [3, 3, 4, 4],
+            [3, 3, 4, 4],
         ],
         dtype=np.float64,
     )
     raster = _make_raster(arr, "numpy")
-
-    with patch("xrspatial.sieve._MAX_ITERATIONS", 0):
-        with pytest.warns(UserWarning, match="did not converge"):
-            sieve(raster, threshold=2)
+    # All regions are size 4, threshold=5: no neighbor is >= 5.
+    result = sieve(raster, threshold=5)
+    data = _to_numpy(result)
+    np.testing.assert_array_equal(data, arr)
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +482,7 @@ def test_sieve_noisy_classification(backend):
 
 @pytest.mark.parametrize("backend", ["numpy", "dask+numpy"])
 def test_sieve_many_small_regions(backend):
-    """Checkerboard produces maximum region count; sieve should unify."""
+    """Checkerboard: all regions size 1, no neighbor >= threshold."""
     # 20x20 checkerboard: every pixel is its own 1-pixel region
     arr = np.zeros((20, 20), dtype=np.float64)
     arr[::2, ::2] = 1
@@ -498,5 +494,5 @@ def test_sieve_many_small_regions(backend):
     data = _to_numpy(result)
 
     # With 4-connectivity every pixel is isolated (size 1).
-    # threshold=2 forces all to merge.  Result should be uniform.
-    assert len(np.unique(data)) == 1
+    # No neighbor is >= threshold=2, so nothing merges (GDAL semantics).
+    np.testing.assert_array_equal(data, arr)

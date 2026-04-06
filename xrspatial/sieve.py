@@ -2,16 +2,19 @@
 
 Given a categorical raster and a pixel-count threshold, replaces
 connected regions smaller than the threshold with the value of
-their largest spatial neighbor.  Pairs with classification functions
-(``natural_breaks``, ``reclassify``, etc.) and ``polygonize`` for
-cleaning results before vectorization.
+their largest spatial neighbor that is already at or above the
+threshold.  Matches the single-pass semantics of GDAL's
+``GDALSieveFilter`` / ``rasterio.features.sieve``.
+
+Pairs with classification functions (``natural_breaks``,
+``reclassify``, etc.) and ``polygonize`` for cleaning results
+before vectorization.
 
 Supports all four backends: numpy, cupy, dask+numpy, dask+cupy.
 """
 
 from __future__ import annotations
 
-import warnings
 from collections import defaultdict
 from typing import Sequence
 
@@ -40,7 +43,6 @@ from xrspatial.utils import (
     ngjit,
 )
 
-_MAX_ITERATIONS = 50
 
 
 # ---------------------------------------------------------------------------
@@ -205,67 +207,75 @@ def _build_adjacency(region_map, neighborhood):
 
 
 def _sieve_numpy(data, threshold, neighborhood, skip_values):
-    """Replace connected regions smaller than *threshold* pixels."""
+    """Single-pass sieve matching GDAL's ``GDALSieveFilter`` semantics.
+
+    A small region is only merged into a neighbor whose size is
+    **>= threshold**.  If no such neighbor exists the region stays.
+    Regions are processed smallest-first with in-place size updates
+    so that earlier merges can grow a neighbor above threshold for
+    later ones within the same pass.
+    """
     result = data.astype(np.float64, copy=True)
     is_float = np.issubdtype(data.dtype, np.floating)
     valid = ~np.isnan(result) if is_float else np.ones(result.shape, dtype=bool)
     skip_set = set(skip_values) if skip_values is not None else set()
 
-    for _ in range(_MAX_ITERATIONS):
-        region_map, region_val, uid = _label_connected(
-            result, valid, neighborhood
-        )
-        region_size = np.bincount(
-            region_map.ravel(), minlength=uid
-        ).astype(np.int64)
+    region_map, region_val, uid = _label_connected(
+        result, valid, neighborhood
+    )
+    region_size = np.bincount(
+        region_map.ravel(), minlength=uid
+    ).astype(np.int64)
 
-        # Identify small regions eligible for merging
-        small_ids = [
-            rid
-            for rid in range(1, uid)
-            if region_size[rid] < threshold
-            and region_val[rid] not in skip_set
+    small_ids = [
+        rid
+        for rid in range(1, uid)
+        if region_size[rid] < threshold
+        and region_val[rid] not in skip_set
+    ]
+    if not small_ids:
+        return result
+
+    adjacency = _build_adjacency(region_map, neighborhood)
+
+    # Process smallest regions first so earlier merges can grow
+    # a neighbor above threshold for later candidates.
+    small_ids.sort(key=lambda r: region_size[r])
+
+    for rid in small_ids:
+        if region_size[rid] == 0 or region_size[rid] >= threshold:
+            continue
+
+        neighbors = adjacency.get(rid)
+        if not neighbors:
+            continue  # surrounded by nodata only
+
+        # Only merge into a neighbor that is already >= threshold.
+        valid_neighbors = [
+            n for n in neighbors if region_size[n] >= threshold
         ]
-        if not small_ids:
-            return result, True
+        if not valid_neighbors:
+            continue
 
-        adjacency = _build_adjacency(region_map, neighborhood)
+        largest_nid = max(valid_neighbors, key=lambda n: region_size[n])
+        mask = region_map == rid
+        result[mask] = region_val[largest_nid]
 
-        # Process smallest regions first so they merge into larger neighbors
-        small_ids.sort(key=lambda r: region_size[r])
+        # Update tracking in place
+        region_map[mask] = largest_nid
+        region_size[largest_nid] += region_size[rid]
+        region_size[rid] = 0
 
-        merged_any = False
-        for rid in small_ids:
-            if region_size[rid] == 0 or region_size[rid] >= threshold:
-                continue
+        for n in neighbors:
+            if n != largest_nid:
+                adjacency[n].discard(rid)
+                adjacency[n].add(largest_nid)
+                adjacency.setdefault(largest_nid, set()).add(n)
+        if largest_nid in adjacency:
+            adjacency[largest_nid].discard(rid)
+        del adjacency[rid]
 
-            neighbors = adjacency.get(rid)
-            if not neighbors:
-                continue  # surrounded by nodata only
-
-            largest_nid = max(neighbors, key=lambda n: region_size[n])
-            mask = region_map == rid
-            result[mask] = region_val[largest_nid]
-
-            # Update tracking in place
-            region_map[mask] = largest_nid
-            region_size[largest_nid] += region_size[rid]
-            region_size[rid] = 0
-
-            for n in neighbors:
-                if n != largest_nid:
-                    adjacency[n].discard(rid)
-                    adjacency[n].add(largest_nid)
-                    adjacency.setdefault(largest_nid, set()).add(n)
-            if largest_nid in adjacency:
-                adjacency[largest_nid].discard(rid)
-            del adjacency[rid]
-            merged_any = True
-
-        if not merged_any:
-            return result, True
-
-    return result, False
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -277,10 +287,10 @@ def _sieve_cupy(data, threshold, neighborhood, skip_values):
     """CuPy backend: transfer to CPU, sieve, transfer back."""
     import cupy as cp
 
-    np_result, converged = _sieve_numpy(
+    np_result = _sieve_numpy(
         data.get(), threshold, neighborhood, skip_values
     )
-    return cp.asarray(np_result), converged
+    return cp.asarray(np_result)
 
 
 # ---------------------------------------------------------------------------
@@ -320,10 +330,10 @@ def _sieve_dask(data, threshold, neighborhood, skip_values):
         )
 
     np_data = data.compute()
-    result, converged = _sieve_numpy(
+    result = _sieve_numpy(
         np_data, threshold, neighborhood, skip_values
     )
-    return da.from_array(result, chunks=data.chunks), converged
+    return da.from_array(result, chunks=data.chunks)
 
 
 def _sieve_dask_cupy(data, threshold, neighborhood, skip_values):
@@ -345,10 +355,10 @@ def _sieve_dask_cupy(data, threshold, neighborhood, skip_values):
         pass
 
     cp_data = data.compute()
-    result, converged = _sieve_cupy(
+    result = _sieve_cupy(
         cp_data, threshold, neighborhood, skip_values
     )
-    return da.from_array(result, chunks=data.chunks), converged
+    return da.from_array(result, chunks=data.chunks)
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +377,10 @@ def sieve(
 
     Identifies connected components of same-value pixels and replaces
     regions smaller than *threshold* pixels with the value of their
-    largest spatial neighbor.  NaN pixels are always preserved.
+    largest spatial neighbor that is already at or above *threshold*.
+    Regions whose only neighbors are also below *threshold* are left
+    unchanged, matching GDAL's single-pass semantics.  NaN pixels
+    are always preserved.
 
     Parameters
     ----------
@@ -417,6 +430,11 @@ def sieve(
 
     Notes
     -----
+    Uses single-pass semantics matching GDAL's ``GDALSieveFilter``.
+    A small region is only merged into a neighbor whose current size
+    is >= *threshold*.  If no such neighbor exists the region is left
+    unchanged.
+
     This is a global operation: for dask-backed arrays the entire raster
     is computed into memory before sieving.  Connected-component labeling
     cannot be performed on individual chunks because regions may span
@@ -442,33 +460,19 @@ def sieve(
     data = raster.data
 
     if isinstance(data, np.ndarray):
-        out, converged = _sieve_numpy(
-            data, threshold, neighborhood, skip_values
-        )
+        out = _sieve_numpy(data, threshold, neighborhood, skip_values)
     elif has_cuda_and_cupy() and is_cupy_array(data):
-        out, converged = _sieve_cupy(
-            data, threshold, neighborhood, skip_values
-        )
+        out = _sieve_cupy(data, threshold, neighborhood, skip_values)
     elif da is not None and isinstance(data, da.Array):
         if is_dask_cupy(raster):
-            out, converged = _sieve_dask_cupy(
+            out = _sieve_dask_cupy(
                 data, threshold, neighborhood, skip_values
             )
         else:
-            out, converged = _sieve_dask(
-                data, threshold, neighborhood, skip_values
-            )
+            out = _sieve_dask(data, threshold, neighborhood, skip_values)
     else:
         raise TypeError(
             f"Unsupported array type {type(data).__name__} for sieve()"
-        )
-
-    if not converged:
-        warnings.warn(
-            f"sieve() did not converge after {_MAX_ITERATIONS} iterations. "
-            f"The result may still contain regions smaller than "
-            f"threshold={threshold}.",
-            stacklevel=2,
         )
 
     return DataArray(
