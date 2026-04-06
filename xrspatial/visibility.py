@@ -61,7 +61,9 @@ def _extract_transect(raster, cells):
     if has_dask_array():
         import dask.array as da
         if isinstance(data, da.Array):
-            data = data.compute()
+            # Only compute the needed cells, not the entire array
+            elevations = data.vindex[rows, cols].compute().astype(np.float64)
+            return elevations, x_coords, y_coords
     if has_cuda_and_cupy() and is_cupy_array(data):
         data = data.get()
 
@@ -217,7 +219,16 @@ def cumulative_viewshed(
     if not observers:
         raise ValueError("observers list must not be empty")
 
-    count = np.zeros(raster.shape, dtype=np.int32)
+    # Detect dask backend to keep accumulation lazy
+    _is_dask = False
+    if has_dask_array():
+        import dask.array as da
+        _is_dask = isinstance(raster.data, da.Array)
+
+    if _is_dask:
+        count = da.zeros(raster.shape, dtype=np.int32, chunks=raster.data.chunks)
+    else:
+        count = np.zeros(raster.shape, dtype=np.int32)
 
     for obs in observers:
         ox = obs['x']
@@ -229,11 +240,17 @@ def cumulative_viewshed(
         vs = viewshed(raster, x=ox, y=oy, observer_elev=oe,
                       target_elev=te, max_distance=md)
 
-        vs_np = vs.values
-        count += (vs_np != INVISIBLE).astype(np.int32)
+        vs_data = vs.data
+        if _is_dask and not isinstance(vs_data, da.Array):
+            vs_data = da.from_array(vs_data, chunks=raster.data.chunks)
+        count = count + (vs_data != INVISIBLE).astype(np.int32)
 
-    return xarray.DataArray(count, coords=raster.coords,
-                            dims=raster.dims, attrs=raster.attrs)
+    result = xarray.DataArray(count, coords=raster.coords,
+                              dims=raster.dims, attrs=raster.attrs)
+    if _is_dask:
+        chunk_dict = dict(zip(raster.dims, raster.data.chunks))
+        result = result.chunk(chunk_dict)
+    return result
 
 
 def visibility_frequency(
