@@ -35,6 +35,8 @@ from xrspatial.hydro import fill_d8  # noqa
 from xrspatial.interpolate import idw  # noqa
 from xrspatial.interpolate import kriging  # noqa
 from xrspatial.interpolate import spline  # noqa
+from xrspatial.kde import kde  # noqa
+from xrspatial.kde import line_density  # noqa
 from xrspatial.fire import burn_severity_class  # noqa
 from xrspatial.fire import dnbr  # noqa
 from xrspatial.fire import fireline_intensity  # noqa
