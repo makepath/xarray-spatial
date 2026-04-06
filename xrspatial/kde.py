@@ -8,6 +8,7 @@ Supports numpy, cupy, dask+numpy, and dask+cupy backends.
 """
 from __future__ import annotations
 
+import math
 from math import pi, sqrt
 from functools import partial
 from typing import Optional, Tuple, Union
@@ -263,8 +264,9 @@ def _kde_cuda(xs, ys, ws, out, x0, y0, dx, dy, bw, kernel_id, n_pts):
         u2 = ux * ux + uy * uy
 
         if kid == 0:
-            from math import exp
-            total += norm * ws[p] * exp(-0.5 * u2)
+            # No hard cutoff; exp decays fast enough and each thread
+            # loops independently so the extra iterations are cheap.
+            total += norm * ws[p] * math.exp(-0.5 * u2)
         elif kid == 1:
             if u2 <= 1.0:
                 total += norm * ws[p] * (1.0 - u2)
