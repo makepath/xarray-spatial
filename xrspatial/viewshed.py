@@ -1560,7 +1560,7 @@ def _viewshed_cpu(
     num_events = 3 * (n_rows * n_cols - 1)
     event_list = np.zeros((num_events, 7), dtype=np.float64)
 
-    raster.data = raster.data.astype(np.float64)
+    raster.data = raster.data.astype(np.float64, copy=False)
 
     _init_event_list(event_list=event_list, raster=raster.data,
                      vp_row=viewpoint_row, vp_col=viewpoint_col,
@@ -2167,7 +2167,9 @@ def _viewshed_dask(raster, x, y, observer_elev, target_elev):
     cupy_backed = is_dask_cupy(raster)
 
     # --- Tier B: full grid fits in memory → compute and run exact algo ---
-    r2_bytes = 280 * height * width
+    # Peak memory: event_list sort needs 2x 168*H*W + raster 8*H*W +
+    # visibility_grid 8*H*W ≈ 360 bytes/pixel, plus the computed raster.
+    r2_bytes = 360 * height * width + 8 * height * width  # working + raster
     avail = _available_memory_bytes()
     if r2_bytes < 0.5 * avail:
         raster_mem = raster.copy()
