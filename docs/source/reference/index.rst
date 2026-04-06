@@ -16,6 +16,7 @@ Reference
    focal
    hydrology
    interpolation
+   kde
    mcda
    morphology
    multispectral
