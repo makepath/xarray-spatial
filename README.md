@@ -517,6 +517,15 @@ Same-CRS tiles skip reprojection entirely and are placed by direct coordinate al
 
 --------
 
+### **Kernel Density Estimation**
+
+| Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
+|:-----|:------------|:------:|:------------------:|:-----------------:|:---------------------:|:---------------------:|
+| [KDE](xrspatial/kde.py) | Point-to-raster kernel density estimation (Gaussian, Epanechnikov, quartic) | Silverman 1986 | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Line Density](xrspatial/kde.py) | Line-segment-to-raster density estimation | Standard | ✅️ | | | |
+
+--------
+
 ### **Multivariate**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
