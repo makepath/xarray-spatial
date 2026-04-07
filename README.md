@@ -223,10 +223,11 @@ ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset 
 **Consistency:** 100% pixel-exact match vs rioxarray on all tested files (Landsat 8, Copernicus DEM, USGS 1-arc-second, USGS 1-meter).
 
 -----------
-### **Reproject / Merge**
+### **Reproject / Merge / Resample**
 
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
+| [Resample](xrspatial/resample.py) | Changes raster resolution (cell size) without reprojection. Nearest, bilinear, cubic, average, mode, min, max, median methods | Standard (interpolation / block aggregation) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Reproject](xrspatial/reproject/__init__.py) | Reprojects a raster to a new CRS with Numba JIT / CUDA coordinate transforms and resampling. Supports vertical datums (EGM96, EGM2008) and horizontal datum shifts (NAD27, OSGB36, etc.) | Standard (inverse mapping) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Merge](xrspatial/reproject/__init__.py) | Merges multiple rasters into a single mosaic with configurable overlap strategy | Standard (mosaic) | ✅️ | ✅️ | 🔄 | 🔄 |
 
