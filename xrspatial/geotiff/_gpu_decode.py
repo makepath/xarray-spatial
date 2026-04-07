@@ -2317,3 +2317,80 @@ def gpu_compress_tiles(d_image, tile_width, tile_height,
         result.append(cpu_compress(tile_data, compression))
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# GPU overview (pyramid) generation
+# ---------------------------------------------------------------------------
+
+GPU_OVERVIEW_METHODS = ('mean', 'nearest', 'min', 'max', 'median', 'mode')
+
+
+def _block_reduce_2d_gpu(arr2d, method):
+    """2x block-reduce a single 2D CuPy plane using *method*."""
+    import cupy
+
+    h, w = arr2d.shape
+    h2 = (h // 2) * 2
+    w2 = (w // 2) * 2
+    cropped = arr2d[:h2, :w2]
+    oh, ow = h2 // 2, w2 // 2
+
+    if method == 'nearest':
+        return cropped[::2, ::2].copy()
+
+    if method == 'mode':
+        # Mode is expensive on GPU; fall back to CPU
+        cpu_arr = arr2d.get()
+        from ._writer import _block_reduce_2d
+        cpu_result = _block_reduce_2d(cpu_arr, 'mode')
+        return cupy.asarray(cpu_result)
+
+    # Block reshape for mean/min/max/median
+    if arr2d.dtype.kind == 'f':
+        blocks = cropped.reshape(oh, 2, ow, 2)
+    else:
+        blocks = cropped.astype(cupy.float64).reshape(oh, 2, ow, 2)
+
+    if method == 'mean':
+        result = cupy.nanmean(blocks, axis=(1, 3))
+    elif method == 'min':
+        result = cupy.nanmin(blocks, axis=(1, 3))
+    elif method == 'max':
+        result = cupy.nanmax(blocks, axis=(1, 3))
+    elif method == 'median':
+        flat = blocks.transpose(0, 2, 1, 3).reshape(oh, ow, 4)
+        result = cupy.nanmedian(flat, axis=2)
+    else:
+        raise ValueError(
+            f"Unknown GPU overview resampling method: {method!r}. "
+            f"Use one of: {GPU_OVERVIEW_METHODS}")
+
+    if arr2d.dtype.kind != 'f':
+        return cupy.around(result).astype(arr2d.dtype)
+    return result.astype(arr2d.dtype)
+
+
+def make_overview_gpu(arr, method='mean'):
+    """Generate a 2x decimated overview on GPU.
+
+    Parameters
+    ----------
+    arr : cupy.ndarray
+        2D or 3D (height, width, bands) array on GPU.
+    method : str
+        Resampling method: 'mean', 'nearest', 'min', 'max', 'median',
+        or 'mode'.
+
+    Returns
+    -------
+    cupy.ndarray
+        Half-resolution array on GPU.
+    """
+    import cupy
+
+    if arr.ndim == 3:
+        bands = [_block_reduce_2d_gpu(arr[:, :, b], method)
+                 for b in range(arr.shape[2])]
+        return cupy.stack(bands, axis=2)
+    return _block_reduce_2d_gpu(arr, method)

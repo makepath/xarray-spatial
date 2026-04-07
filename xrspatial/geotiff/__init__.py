@@ -465,7 +465,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                               compression=compression,
                               compression_level=compression_level,
                               tile_size=tile_size,
-                              predictor=predictor)
+                              predictor=predictor,
+                              cog=cog,
+                              overview_levels=overview_levels,
+                              overview_resampling=overview_resampling)
             return
         except (ImportError, Exception):
             pass  # fall through to CPU path
@@ -1154,13 +1157,20 @@ def write_geotiff_gpu(data, path: str, *,
                       compression: str = 'zstd',
                       compression_level: int | None = None,
                       tile_size: int = 256,
-                      predictor: bool = False) -> None:
+                      predictor: bool = False,
+                      cog: bool = False,
+                      overview_levels: list[int] | None = None,
+                      overview_resampling: str = 'mean') -> None:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
 
     Tiles are extracted and compressed on the GPU via nvCOMP, then
     assembled into a TIFF file on CPU. The CuPy array stays on device
     throughout compression -- only the compressed bytes transfer to CPU
     for file writing.
+
+    When ``cog=True``, generates overview pyramids on GPU and writes a
+    Cloud Optimized GeoTIFF with all IFDs at the file start for
+    efficient range-request access.
 
     Falls back to CPU compression if nvCOMP is not available.
 
@@ -1184,13 +1194,22 @@ def write_geotiff_gpu(data, path: str, *,
         Tile size in pixels (default 256).
     predictor : bool
         Apply horizontal differencing predictor.
+    cog : bool
+        Write as Cloud Optimized GeoTIFF with overviews.
+    overview_levels : list[int] or None
+        Overview decimation factors (e.g. [2, 4, 8]). Only used when
+        cog=True. If None and cog=True, auto-generates levels by
+        halving until the smallest overview fits in a single tile.
+    overview_resampling : str
+        Resampling method for overviews: 'mean' (default), 'nearest',
+        'min', 'max', 'median', or 'mode'.
     """
     try:
         import cupy
     except ImportError:
         raise ImportError("cupy is required for GPU writes")
 
-    from ._gpu_decode import gpu_compress_tiles
+    from ._gpu_decode import gpu_compress_tiles, make_overview_gpu
     from ._writer import (
         _compression_tag, _assemble_tiff, _write_bytes,
         GeoTransform as _GT,
@@ -1245,28 +1264,45 @@ def write_geotiff_gpu(data, path: str, *,
     comp_tag = _compression_tag(compression)
     pred_val = 2 if predictor else 1
 
-    # GPU compress
-    compressed_tiles = gpu_compress_tiles(
-        arr, tile_size, tile_size, width, height,
-        comp_tag, pred_val, np_dtype, samples)
+    def _gpu_compress_to_part(gpu_arr, w, h, spp):
+        """Compress a GPU array into a (stub, w, h, offsets, counts, tiles) tuple."""
+        compressed = gpu_compress_tiles(
+            gpu_arr, tile_size, tile_size, w, h,
+            comp_tag, pred_val, np_dtype, spp)
+        rel_off = []
+        bc = []
+        off = 0
+        for tile in compressed:
+            rel_off.append(off)
+            bc.append(len(tile))
+            off += len(tile)
+        stub = np.empty((1, 1, spp) if spp > 1 else (1, 1), dtype=np_dtype)
+        return (stub, w, h, rel_off, bc, compressed)
 
-    # Build offset/bytecount lists
-    rel_offsets = []
-    byte_counts = []
-    offset = 0
-    for tile in compressed_tiles:
-        rel_offsets.append(offset)
-        byte_counts.append(len(tile))
-        offset += len(tile)
+    # Full resolution
+    parts = [_gpu_compress_to_part(arr, width, height, samples)]
 
-    # Assemble TIFF on CPU (only metadata + compressed bytes)
-    # _assemble_tiff needs an array in parts[0] to detect samples_per_pixel
-    shape_stub = np.empty((1, 1, samples) if samples > 1 else (1, 1), dtype=np_dtype)
-    parts = [(shape_stub, width, height, rel_offsets, byte_counts, compressed_tiles)]
+    # Overview generation
+    if cog:
+        if overview_levels is None:
+            overview_levels = []
+            oh, ow = height, width
+            while oh > tile_size and ow > tile_size:
+                oh //= 2
+                ow //= 2
+                if oh > 0 and ow > 0:
+                    overview_levels.append(len(overview_levels) + 1)
+
+        current = arr
+        for _ in overview_levels:
+            current = make_overview_gpu(current, method=overview_resampling)
+            oh, ow = current.shape[:2]
+            parts.append(_gpu_compress_to_part(current, ow, oh, samples))
 
     file_bytes = _assemble_tiff(
         width, height, np_dtype, comp_tag, predictor, True, tile_size,
-        parts, geo_transform, epsg, nodata, is_cog=False,
+        parts, geo_transform, epsg, nodata,
+        is_cog=(cog and len(parts) > 1),
         raster_type=raster_type)
 
     _write_bytes(file_bytes, path)
