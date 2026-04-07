@@ -593,7 +593,8 @@ class TestSimplifyHelpers:
         data = xr.DataArray(raster)
         column_orig, pp_orig = polygonize(data, return_type="numpy")
 
-        pp_simplified = _simplify_polygons(pp_orig, tolerance=1.5)
+        _, pp_simplified = _simplify_polygons(
+            column_orig, pp_orig, tolerance=1.5)
 
         # Vertex count should be reduced for at least one polygon.
         orig_total_verts = sum(
@@ -624,7 +625,7 @@ class TestSimplifyHelpers:
         data = xr.DataArray(raster)
         column, pp = polygonize(data, return_type="numpy")
 
-        pp_simplified = _simplify_polygons(pp, tolerance=0.0)
+        _, pp_simplified = _simplify_polygons(column, pp, tolerance=0.0)
 
         # With tolerance=0, no vertices should be removed; output
         # should match input exactly.
@@ -648,7 +649,7 @@ class TestSimplifyHelpers:
         data = xr.DataArray(raster)
         column, pp = polygonize(data, return_type="numpy")
 
-        pp_simplified = _simplify_polygons(pp, tolerance=1.5)
+        _, pp_simplified = _simplify_polygons(column, pp, tolerance=1.5)
 
         # Check total area is preserved (which requires no gaps/overlaps).
         total_orig = sum(
@@ -708,12 +709,28 @@ class TestSimplifyHelpers:
 
         # Find the small polygon (value 1, single pixel).
         small_idx = column.index(1)
-        small_poly = [pp[small_idx]]  # wrap in list for _simplify_polygons
+        small_col = [column[small_idx]]
+        small_poly = [pp[small_idx]]
 
         # Large tolerance should collapse the single-pixel polygon.
-        result = _simplify_polygons(small_poly, tolerance=10.0)
+        result_col, result_pp = _simplify_polygons(
+            small_col, small_poly, tolerance=10.0)
+        # Column and polygon_points must stay in sync.
+        assert len(result_col) == len(result_pp)
         # The polygon should be dropped since its exterior collapses.
-        assert len(result) == 0 or all(len(r[0]) >= 4 for r in result)
+        assert len(result_pp) == 0 or all(len(r[0]) >= 4 for r in result_pp)
+
+    def test_simplify_column_pp_sync_through_public_api(self):
+        """Public API must keep column and polygon_points in sync."""
+        # Raster with a single-pixel region that may collapse.
+        raster = np.array([
+            [1, 2, 2],
+            [2, 2, 2],
+            [2, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        col, pp = polygonize(data, simplify_tolerance=10.0)
+        assert len(col) == len(pp)
 
 
 class TestPolygonizeSimplify:
@@ -878,6 +895,45 @@ class TestPolygonizeSimplify:
         result = polygonize(data, simplify_tolerance=0.5,
                             return_type="awkward")
         assert result is not None
+
+    def test_simplify_with_holes(self):
+        """Simplification should handle polygons with interior holes."""
+        raster = np.zeros((8, 8), dtype=np.int32)
+        raster[1:7, 1:7] = 1
+        raster[3:5, 3:5] = 0  # hole in the 1-region
+        data = xr.DataArray(raster)
+
+        col_orig, pp_orig = polygonize(data)
+        col_simp, pp_simp = polygonize(data, simplify_tolerance=0.5)
+
+        assert len(col_simp) == len(pp_simp)
+        # Area should be preserved.
+        total_orig = sum(
+            sum(calc_boundary_area(r) for r in rings) for rings in pp_orig)
+        total_simp = sum(
+            sum(calc_boundary_area(r) for r in rings) for rings in pp_simp)
+        assert_allclose(total_simp, total_orig, atol=1e-10)
+
+    def test_simplify_with_transform(self):
+        """Simplification should work with affine transform."""
+        raster = np.array([
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+        ], dtype=np.int64)
+        transform = np.array([10.0, 0.0, 100.0, 0.0, 10.0, 200.0])
+        data = xr.DataArray(raster)
+        col, pp = polygonize(data, transform=transform,
+                             simplify_tolerance=5.0)
+        assert len(col) == len(pp)
+        assert len(col) == 2
+
+    def test_simplify_single_pixel_raster(self):
+        """Simplification on a 1x1 raster should not crash."""
+        raster = np.array([[5]], dtype=np.int64)
+        data = xr.DataArray(raster)
+        col, pp = polygonize(data, simplify_tolerance=1.0)
+        assert len(col) == len(pp)
 
 
 @pytest.mark.skipif(da is None, reason="dask not installed")

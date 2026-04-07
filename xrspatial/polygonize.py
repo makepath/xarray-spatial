@@ -1272,7 +1272,8 @@ def _chain_key(chain):
     return (start, end, interior)
 
 
-def _simplify_polygons(polygon_points, tolerance, method="douglas-peucker"):
+def _simplify_polygons(column, polygon_points, tolerance,
+                       method="douglas-peucker"):
     """Topology-preserving simplification of all polygons.
 
     Uses shared-edge decomposition: finds junction vertices, splits
@@ -1281,6 +1282,8 @@ def _simplify_polygons(polygon_points, tolerance, method="douglas-peucker"):
 
     Parameters
     ----------
+    column : list
+        Pixel values corresponding to each polygon.
     polygon_points : list of list of np.ndarray
         Output of polygonize backend: list of polygons, each polygon
         is [exterior_ring, *hole_rings].
@@ -1292,11 +1295,12 @@ def _simplify_polygons(polygon_points, tolerance, method="douglas-peucker"):
 
     Returns
     -------
-    list of list of np.ndarray
-        Same structure as input, with simplified coordinates.
+    (list, list of list of np.ndarray)
+        Filtered column and simplified polygon_points.  Polygons whose
+        exterior ring collapses below 4 vertices are dropped from both.
     """
     if tolerance <= 0:
-        return polygon_points
+        return column, polygon_points
 
     # Step 1: Find junctions.
     junctions = _find_junctions(polygon_points)
@@ -1330,6 +1334,7 @@ def _simplify_polygons(polygon_points, tolerance, method="douglas-peucker"):
         ring_info.append(poly_info)
 
     # Step 4: Reassemble rings.
+    result_column = []
     result = []
     for poly_idx, rings in enumerate(polygon_points):
         new_rings = []
@@ -1371,9 +1376,10 @@ def _simplify_polygons(polygon_points, tolerance, method="douglas-peucker"):
         for ring in new_rings[1:]:
             if len(ring) >= 4:
                 filtered.append(ring)
+        result_column.append(column[poly_idx])
         result.append(filtered)
 
-    return result
+    return result_column, result
 
 
 def _merge_polygon_rings(polys_list):
@@ -1608,8 +1614,9 @@ def polygonize(
 
     # Apply simplification if requested.
     if simplify_tolerance is not None and simplify_tolerance > 0:
-        polygon_points = _simplify_polygons(
-            polygon_points, simplify_tolerance, method=simplify_method)
+        column, polygon_points = _simplify_polygons(
+            column, polygon_points, simplify_tolerance,
+            method=simplify_method)
 
     # Convert to requested return_type.
     if return_type == "numpy":
