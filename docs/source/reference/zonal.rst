@@ -16,6 +16,13 @@ Apply
 
     xrspatial.zonal.apply
 
+Clip Polygon
+============
+.. autosummary::
+    :toctree: _autosummary
+
+    xrspatial.polygon_clip.clip_polygon
+
 Crop
 ====
 .. autosummary::

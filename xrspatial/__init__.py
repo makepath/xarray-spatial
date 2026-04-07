@@ -120,6 +120,7 @@ from xrspatial.terrain_metrics import tpi  # noqa
 from xrspatial.terrain_metrics import tri  # noqa
 from xrspatial.hydro import twi  # noqa: unified wrapper
 from xrspatial.hydro import twi_d8  # noqa
+from xrspatial.polygon_clip import clip_polygon  # noqa
 from xrspatial.polygonize import polygonize  # noqa
 from xrspatial.viewshed import viewshed  # noqa
 from xrspatial.visibility import cumulative_viewshed  # noqa
