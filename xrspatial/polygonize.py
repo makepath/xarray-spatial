@@ -1002,6 +1002,109 @@ def _douglas_peucker(coords, tolerance):
     return result
 
 
+@ngjit
+def _visvalingam_whyatt(coords, tolerance):
+    """Visvalingam-Whyatt area-based line simplification.
+
+    Iteratively removes the vertex that forms the smallest triangle
+    area with its neighbors, until no triangle area is below tolerance.
+    Endpoints are always preserved.
+
+    Parameters
+    ----------
+    coords : np.ndarray, shape (N, 2)
+        Input coordinate array.
+    tolerance : float
+        Minimum triangle area threshold. Vertices forming triangles
+        with area below this value are removed.
+
+    Returns
+    -------
+    np.ndarray, shape (M, 2)
+        Simplified coordinate array.
+    """
+    n = len(coords)
+    if n <= 2:
+        return coords.copy()
+
+    # Use a doubly-linked list via prev/next index arrays.
+    prev_idx = np.empty(n, dtype=np.int64)
+    next_idx = np.empty(n, dtype=np.int64)
+    for i in range(n):
+        prev_idx[i] = i - 1
+        next_idx[i] = i + 1
+    # Endpoints are never removed (sentinel values).
+    prev_idx[0] = -1
+    next_idx[n - 1] = -1
+
+    # Compute triangle areas for interior vertices.
+    areas = np.full(n, np.inf, dtype=np.float64)
+    for i in range(1, n - 1):
+        ax, ay = coords[prev_idx[i], 0], coords[prev_idx[i], 1]
+        bx, by = coords[i, 0], coords[i, 1]
+        cx, cy = coords[next_idx[i], 0], coords[next_idx[i], 1]
+        areas[i] = abs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) / 2.0)
+
+    removed = np.zeros(n, dtype=np.bool_)
+    remaining = n
+
+    while remaining > 2:
+        # Find vertex with minimum area.
+        min_area = np.inf
+        min_idx = -1
+        for i in range(1, n - 1):
+            if not removed[i] and areas[i] < min_area:
+                min_area = areas[i]
+                min_idx = i
+
+        if min_idx == -1 or min_area >= tolerance:
+            break
+
+        # Remove vertex.
+        removed[min_idx] = True
+        remaining -= 1
+
+        # Update linked list.
+        p = prev_idx[min_idx]
+        nx_i = next_idx[min_idx]
+        if p >= 0:
+            next_idx[p] = nx_i
+        if nx_i >= 0 and nx_i < n:
+            prev_idx[nx_i] = p
+
+        # Recompute areas for affected neighbors.
+        if p > 0 and prev_idx[p] >= 0:
+            ax, ay = coords[prev_idx[p], 0], coords[prev_idx[p], 1]
+            bx, by = coords[p, 0], coords[p, 1]
+            cx, cy = coords[next_idx[p], 0], coords[next_idx[p], 1]
+            new_area = abs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) / 2.0)
+            # Enforce monotonicity: area can only increase.
+            areas[p] = max(new_area, min_area)
+
+        if nx_i >= 0 and nx_i < n - 1 and next_idx[nx_i] >= 0:
+            ax, ay = coords[prev_idx[nx_i], 0], coords[prev_idx[nx_i], 1]
+            bx, by = coords[nx_i, 0], coords[nx_i, 1]
+            cx, cy = coords[next_idx[nx_i], 0], coords[next_idx[nx_i], 1]
+            new_area = abs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) / 2.0)
+            areas[nx_i] = max(new_area, min_area)
+
+    # Collect remaining vertices.
+    count = 0
+    for i in range(n):
+        if not removed[i]:
+            count += 1
+
+    result = np.empty((count, 2), dtype=np.float64)
+    j = 0
+    for i in range(n):
+        if not removed[i]:
+            result[j, 0] = coords[i, 0]
+            result[j, 1] = coords[i, 1]
+            j += 1
+
+    return result
+
+
 def _find_junctions(all_rings):
     """Find junction vertices that must be pinned during simplification.
 
@@ -1169,12 +1272,12 @@ def _chain_key(chain):
     return (start, end, interior)
 
 
-def _simplify_polygons(polygon_points, tolerance):
+def _simplify_polygons(polygon_points, tolerance, method="douglas-peucker"):
     """Topology-preserving simplification of all polygons.
 
     Uses shared-edge decomposition: finds junction vertices, splits
     rings into chains at junctions, simplifies each unique chain once
-    with Douglas-Peucker, then reassembles rings.
+    with the chosen algorithm, then reassembles rings.
 
     Parameters
     ----------
@@ -1182,7 +1285,10 @@ def _simplify_polygons(polygon_points, tolerance):
         Output of polygonize backend: list of polygons, each polygon
         is [exterior_ring, *hole_rings].
     tolerance : float
-        Douglas-Peucker tolerance in coordinate units.
+        Simplification tolerance in coordinate units.
+    method : str, default="douglas-peucker"
+        Simplification algorithm: ``"douglas-peucker"`` or
+        ``"visvalingam-whyatt"``.
 
     Returns
     -------
@@ -1210,7 +1316,10 @@ def _simplify_polygons(polygon_points, tolerance):
             for chain in chains:
                 key = _chain_key(chain)
                 if key not in simplified_chains:
-                    simplified_chains[key] = _douglas_peucker(chain, tolerance)
+                    if method == "douglas-peucker":
+                        simplified_chains[key] = _douglas_peucker(chain, tolerance)
+                    else:
+                        simplified_chains[key] = _visvalingam_whyatt(chain, tolerance)
                 # Determine if this chain was reversed relative to canonical.
                 start = (chain[0, 0], chain[0, 1])
                 canonical_start = (simplified_chains[key][0, 0],
@@ -1376,6 +1485,8 @@ def polygonize(
     transform: Optional[np.ndarray] = None,  # shape (6,)
     column_name: str = "DN",
     return_type: str = "numpy",
+    simplify_tolerance: Optional[float] = None,
+    simplify_method: str = "douglas-peucker",
 ):
     """
     Polygonize creates vector polygons for connected regions of pixels in a
@@ -1415,6 +1526,23 @@ def polygonize(
         Format of returned data.  Allowed values are "numpy", "spatialpandas",
         "geopandas", "awkward" and "geojson".  "numpy" and "geojson" are
         always available, the others require optional dependencies.
+
+    simplify_tolerance: float, optional
+        Simplification tolerance in coordinate units. When set, polygon
+        boundaries are simplified using shared-edge decomposition to
+        preserve topology between adjacent polygons. Default is None
+        (no simplification).
+
+        For ``"douglas-peucker"``, this is the maximum perpendicular
+        distance a vertex may deviate from the simplified line.
+
+        For ``"visvalingam-whyatt"``, this is the minimum triangle area
+        threshold; vertices forming triangles smaller than this are removed.
+
+    simplify_method: str, default="douglas-peucker"
+        Simplification algorithm. Options are ``"douglas-peucker"``
+        (distance-based, good for general use) and ``"visvalingam-whyatt"``
+        (area-based, tends to produce better cartographic results).
 
     Returns
     -------
@@ -1462,6 +1590,16 @@ def polygonize(
             raise ValueError(
                 f"Incorrect transform length of {len(transform)} instead of 6")
 
+    # Check simplification parameters.
+    if simplify_tolerance is not None and simplify_tolerance < 0:
+        raise ValueError(
+            "simplify_tolerance must be non-negative, "
+            f"got {simplify_tolerance}")
+    if simplify_method not in ("douglas-peucker", "visvalingam-whyatt"):
+        raise ValueError(
+            f"simplify_method must be 'douglas-peucker' or "
+            f"'visvalingam-whyatt', got '{simplify_method}'")
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_polygonize_numpy,
         cupy_func=_polygonize_cupy,
@@ -1470,6 +1608,11 @@ def polygonize(
     )
     column, polygon_points = mapper(raster)(
         raster.data, mask_data, connectivity_8, transform)
+
+    # Apply simplification if requested.
+    if simplify_tolerance is not None and simplify_tolerance > 0:
+        polygon_points = _simplify_polygons(
+            polygon_points, simplify_tolerance, method=simplify_method)
 
     # Convert to requested return_type.
     if return_type == "numpy":
