@@ -14,6 +14,7 @@ Reference
    fire
    flood
    focal
+   geotiff
    hydrology
    interpolation
    kde
