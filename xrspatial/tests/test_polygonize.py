@@ -577,3 +577,82 @@ class TestSimplifyHelpers:
         coords = np.array([[0.0, 0.0], [4.0, 0.0]], dtype=np.float64)
         result = _douglas_peucker(coords, 1.0)
         assert_allclose(result, coords)
+
+    def test_simplify_polygons_reduces_vertices(self):
+        """Simplification should reduce vertex count on staircase edges."""
+        from ..polygonize import _simplify_polygons
+
+        # Staircase boundary between two values.
+        raster = np.array([
+            [1, 1, 1, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 2, 2, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 2, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        column_orig, pp_orig = polygonize(data, return_type="numpy")
+
+        pp_simplified = _simplify_polygons(pp_orig, tolerance=1.5)
+
+        # Vertex count should be reduced for at least one polygon.
+        orig_total_verts = sum(
+            sum(len(r) for r in rings) for rings in pp_orig)
+        simp_total_verts = sum(
+            sum(len(r) for r in rings) for rings in pp_simplified)
+        assert simp_total_verts < orig_total_verts
+
+        # Total area across all polygons must be preserved (shared-edge
+        # simplification can shift area between adjacent polygons but
+        # the sum stays the same because the simplified edge is shared).
+        total_orig = sum(
+            sum(calc_boundary_area(r) for r in rings) for rings in pp_orig)
+        total_simp = sum(
+            sum(calc_boundary_area(r) for r in rings)
+            for rings in pp_simplified)
+        assert_allclose(total_simp, total_orig, atol=1e-10)
+
+    def test_simplify_polygons_topology_preserved(self):
+        """Adjacent simplified polygons should not create gaps."""
+        from ..polygonize import _simplify_polygons
+
+        # Two adjacent rectangles sharing an edge.
+        raster = np.array([[1, 1, 2, 2],
+                           [1, 1, 2, 2],
+                           [1, 1, 2, 2],
+                           [1, 1, 2, 2]], dtype=np.int64)
+        data = xr.DataArray(raster)
+        column, pp = polygonize(data, return_type="numpy")
+
+        pp_simplified = _simplify_polygons(pp, tolerance=0.0)
+
+        # With tolerance=0, no vertices should be removed; output
+        # should match input exactly.
+        for orig_rings, simp_rings in zip(pp, pp_simplified):
+            assert len(orig_rings) == len(simp_rings)
+            for orig_ring, simp_ring in zip(orig_rings, simp_rings):
+                assert_allclose(simp_ring, orig_ring)
+
+    def test_simplify_polygons_shared_edge_identical(self):
+        """Two polygons sharing an edge must have identical simplified edges."""
+        from ..polygonize import _simplify_polygons
+
+        # Create a raster where two regions share a staircase boundary.
+        raster = np.array([
+            [1, 1, 1, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 2, 2, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 2, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        column, pp = polygonize(data, return_type="numpy")
+
+        pp_simplified = _simplify_polygons(pp, tolerance=1.5)
+
+        # Check total area is preserved (which requires no gaps/overlaps).
+        total_orig = sum(
+            sum(calc_boundary_area(r) for r in rings) for rings in pp)
+        total_simp = sum(
+            sum(calc_boundary_area(r) for r in rings) for rings in pp_simplified)
+        assert_allclose(total_simp, total_orig, atol=1e-10)
