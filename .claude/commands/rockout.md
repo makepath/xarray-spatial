@@ -71,19 +71,10 @@ through all seven steps below. The prompt is: $ARGUMENTS
 
 ## Step 6 -- Create a User Guide Notebook
 
-The project has an `examples/user_guide/` directory with numbered notebooks.
-
-1. Determine the next available notebook number by listing the directory.
-2. Create a new `.ipynb` notebook following the established pattern:
-   - Markdown cell with title and explanation of the feature
-   - Import cell
-   - Synthetic data generation with visualization
-   - Demonstrate each mode/option of the feature
-   - Show a practical use case or comparison
-3. Use `matplotlib` for plots, consistent with existing notebooks.
-4. Keep the notebook self-contained (no external data dependencies).
-
 **Skip this step** if the change is a pure bug fix with no new user-facing API.
+
+Run the `/user-guide-notebook` skill to create the notebook. It handles structure,
+plotting conventions, GIS alert boxes, preview images, and humanizer passes.
 
 ## Step 7 -- Update the README Feature Matrix
 
