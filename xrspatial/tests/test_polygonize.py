@@ -692,6 +692,29 @@ class TestSimplifyHelpers:
         result = _visvalingam_whyatt(coords, 1.0)
         assert_allclose(result, coords)
 
+    def test_simplify_polygons_drops_degenerate(self):
+        """Polygons that collapse below 4 vertices should be dropped."""
+        from ..polygonize import _simplify_polygons
+
+        # A single-pixel polygon (4 unique vertices forming a unit square).
+        # With a very large tolerance, it should collapse and be dropped.
+        raster = np.array([
+            [1, 2, 2],
+            [2, 2, 2],
+            [2, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        column, pp = polygonize(data, return_type="numpy")
+
+        # Find the small polygon (value 1, single pixel).
+        small_idx = column.index(1)
+        small_poly = [pp[small_idx]]  # wrap in list for _simplify_polygons
+
+        # Large tolerance should collapse the single-pixel polygon.
+        result = _simplify_polygons(small_poly, tolerance=10.0)
+        # The polygon should be dropped since its exterior collapses.
+        assert len(result) == 0 or all(len(r[0]) >= 4 for r in result)
+
 
 class TestPolygonizeSimplify:
     """Tests for simplify_tolerance and simplify_method parameters."""
@@ -830,6 +853,32 @@ class TestPolygonizeSimplify:
         assert len(gdf) == 2
         assert gdf.geometry.is_valid.all()
 
+    def test_simplify_with_spatialpandas(self):
+        """Simplification should work with spatialpandas return type."""
+        pytest.importorskip("spatialpandas")
+        raster = np.array([
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        result = polygonize(data, simplify_tolerance=0.5,
+                            return_type="spatialpandas")
+        assert len(result) == 2
+
+    def test_simplify_with_awkward(self):
+        """Simplification should work with awkward return type."""
+        pytest.importorskip("awkward")
+        raster = np.array([
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        result = polygonize(data, simplify_tolerance=0.5,
+                            return_type="awkward")
+        assert result is not None
+
 
 @pytest.mark.skipif(da is None, reason="dask not installed")
 class TestPolygonizeSimplifyDask:
@@ -895,3 +944,38 @@ class TestPolygonizeSimplifyDask:
 
         for val in areas_np:
             assert_allclose(areas_dask[val], areas_np[val], atol=1e-10)
+
+
+@cuda_and_cupy_available
+class TestPolygonizeSimplifyCuPy:
+    """Simplification with CuPy backend."""
+
+    def test_simplify_cupy_matches_numpy(self):
+        """CuPy simplification should produce same areas as numpy."""
+        import cupy as cp
+        raster = np.array([
+            [1, 1, 1, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 2, 2, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 2, 2, 2],
+        ], dtype=np.int64)
+
+        data_np = xr.DataArray(raster)
+        data_cp = xr.DataArray(cp.asarray(raster))
+
+        col_np, pp_np = polygonize(data_np, simplify_tolerance=1.5)
+        col_cp, pp_cp = polygonize(data_cp, simplify_tolerance=1.5)
+
+        areas_np = {}
+        for val, rings in zip(col_np, pp_np):
+            a = sum(calc_boundary_area(r) for r in rings)
+            areas_np[val] = areas_np.get(val, 0.0) + a
+
+        areas_cp = {}
+        for val, rings in zip(col_cp, pp_cp):
+            a = sum(calc_boundary_area(r) for r in rings)
+            areas_cp[val] = areas_cp.get(val, 0.0) + a
+
+        for val in areas_np:
+            assert_allclose(areas_cp[val], areas_np[val], atol=1e-10)

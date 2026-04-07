@@ -1364,17 +1364,14 @@ def _simplify_polygons(polygon_points, tolerance, method="douglas-peucker"):
                 new_rings.append(assembled)
 
         # Drop degenerate rings (fewer than 4 vertices = triangle minimum).
-        filtered = []
-        for ring in new_rings:
+        # If the exterior ring is degenerate, drop the entire polygon.
+        if len(new_rings) == 0 or len(new_rings[0]) < 4:
+            continue
+        filtered = [new_rings[0]]  # exterior is valid
+        for ring in new_rings[1:]:
             if len(ring) >= 4:
                 filtered.append(ring)
-            elif len(new_rings) > 0 and ring is new_rings[0]:
-                # Keep exterior even if degenerate.
-                filtered.append(ring)
-        if filtered:
-            result.append(filtered)
-        else:
-            result.append(new_rings)
+        result.append(filtered)
 
     return result
 
