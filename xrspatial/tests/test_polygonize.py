@@ -538,3 +538,42 @@ def test_polygonize_1008_geopandas_batch_with_holes():
 
     # Total area should equal raster size.
     assert_allclose(df.geometry.area.sum(), 36.0)
+
+
+class TestSimplifyHelpers:
+    """Tests for internal simplification helper functions."""
+
+    def test_douglas_peucker_straight_line(self):
+        """DP on a straight line should reduce to just endpoints."""
+        from ..polygonize import _douglas_peucker
+        coords = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0],
+                           [3.0, 0.0], [4.0, 0.0]], dtype=np.float64)
+        result = _douglas_peucker(coords, 0.1)
+        expected = np.array([[0.0, 0.0], [4.0, 0.0]], dtype=np.float64)
+        assert_allclose(result, expected)
+
+    def test_douglas_peucker_preserves_bend(self):
+        """DP should keep a vertex that exceeds tolerance."""
+        from ..polygonize import _douglas_peucker
+        coords = np.array([[0.0, 0.0], [2.0, 3.0], [4.0, 0.0]],
+                          dtype=np.float64)
+        # Distance of (2,3) from line (0,0)-(4,0) is 3.0
+        result = _douglas_peucker(coords, 2.0)
+        assert len(result) == 3  # all points kept
+
+    def test_douglas_peucker_removes_below_tolerance(self):
+        """DP should remove a vertex within tolerance."""
+        from ..polygonize import _douglas_peucker
+        coords = np.array([[0.0, 0.0], [2.0, 0.5], [4.0, 0.0]],
+                          dtype=np.float64)
+        # Distance of (2,0.5) from line (0,0)-(4,0) is 0.5
+        result = _douglas_peucker(coords, 1.0)
+        expected = np.array([[0.0, 0.0], [4.0, 0.0]], dtype=np.float64)
+        assert_allclose(result, expected)
+
+    def test_douglas_peucker_two_points(self):
+        """DP on two points should return them unchanged."""
+        from ..polygonize import _douglas_peucker
+        coords = np.array([[0.0, 0.0], [4.0, 0.0]], dtype=np.float64)
+        result = _douglas_peucker(coords, 1.0)
+        assert_allclose(result, coords)

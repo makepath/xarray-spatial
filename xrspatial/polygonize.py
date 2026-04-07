@@ -919,6 +919,89 @@ def _group_rings_into_polygons(rings):
     return result
 
 
+@ngjit
+def _perpendicular_distance(px, py, ax, ay, bx, by):
+    """Perpendicular distance from point (px,py) to line (ax,ay)-(bx,by)."""
+    dx = bx - ax
+    dy = by - ay
+    len_sq = dx * dx + dy * dy
+    if len_sq == 0.0:
+        return np.sqrt((px - ax) ** 2 + (py - ay) ** 2)
+    t = ((px - ax) * dx + (py - ay) * dy) / len_sq
+    t = max(0.0, min(1.0, t))
+    proj_x = ax + t * dx
+    proj_y = ay + t * dy
+    return np.sqrt((px - proj_x) ** 2 + (py - proj_y) ** 2)
+
+
+@ngjit
+def _douglas_peucker(coords, tolerance):
+    """Douglas-Peucker line simplification on an Nx2 float64 array.
+
+    Endpoints are always preserved. Returns a new Nx2 array with
+    only the retained vertices.
+    """
+    n = len(coords)
+    if n <= 2:
+        return coords.copy()
+
+    # Iterative DP using an explicit numpy array stack to avoid recursion
+    # depth issues and stay compatible with numba nopython mode.
+    keep = np.zeros(n, dtype=np.bool_)
+    keep[0] = True
+    keep[n - 1] = True
+
+    # Stack of (start, end) index pairs stored as a pre-allocated array.
+    stack_arr = np.empty((n, 2), dtype=np.int64)
+    stack_arr[0, 0] = np.int64(0)
+    stack_arr[0, 1] = np.int64(n - 1)
+    stack_top = 1
+
+    while stack_top > 0:
+        stack_top -= 1
+        start = stack_arr[stack_top, 0]
+        end = stack_arr[stack_top, 1]
+
+        if end - start < 2:
+            continue
+
+        ax, ay = coords[start, 0], coords[start, 1]
+        bx, by = coords[end, 0], coords[end, 1]
+
+        max_dist = 0.0
+        max_idx = start
+        for i in range(start + 1, end):
+            d = _perpendicular_distance(
+                coords[i, 0], coords[i, 1], ax, ay, bx, by)
+            if d > max_dist:
+                max_dist = d
+                max_idx = i
+
+        if max_dist > tolerance:
+            keep[max_idx] = True
+            stack_arr[stack_top, 0] = start
+            stack_arr[stack_top, 1] = max_idx
+            stack_top += 1
+            stack_arr[stack_top, 0] = max_idx
+            stack_arr[stack_top, 1] = end
+            stack_top += 1
+
+    count = 0
+    for i in range(n):
+        if keep[i]:
+            count += 1
+
+    result = np.empty((count, 2), dtype=np.float64)
+    j = 0
+    for i in range(n):
+        if keep[i]:
+            result[j, 0] = coords[i, 0]
+            result[j, 1] = coords[i, 1]
+            j += 1
+
+    return result
+
+
 def _merge_polygon_rings(polys_list):
     """Merge polygon ring sets that share chunk-boundary edges.
 
