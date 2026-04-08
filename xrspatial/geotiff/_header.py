@@ -15,6 +15,7 @@ from ._dtypes import (
 )
 
 # Well-known TIFF tag IDs
+TAG_NEW_SUBFILE_TYPE = 254
 TAG_IMAGE_WIDTH = 256
 TAG_IMAGE_LENGTH = 257
 TAG_BITS_PER_SAMPLE = 258
