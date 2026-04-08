@@ -16,8 +16,44 @@ from .gpu_rtx import has_rtx
 from .utils import (_boundary_to_dask, _pad_array, _validate_boundary,
                     _validate_raster, _validate_scalar,
                     calc_cuda_dims, get_dataarray_resolution,
-                    has_cuda_and_cupy, is_cupy_array, is_cupy_backed)
+                    has_cuda_and_cupy, is_cupy_array, is_cupy_backed,
+                    ngjit)
 from .dataset_support import supports_dataset
+
+
+@ngjit
+def _horn_hillshade(data, cellsize_x, cellsize_y, sin_alt, cos_alt,
+                    sin_az, cos_az):
+    """Hillshade using Horn's method (weighted 8-neighbor Sobel kernel).
+
+    Gradient kernel matches slope.py and GDAL gdaldem hillshade.
+    """
+    rows, cols = data.shape
+    out = np.empty(data.shape, dtype=np.float32)
+    out[:] = np.nan
+    for y in range(1, rows - 1):
+        for x in range(1, cols - 1):
+            a = data[y + 1, x - 1]
+            b = data[y + 1, x]
+            c = data[y + 1, x + 1]
+            d = data[y, x - 1]
+            f = data[y, x + 1]
+            g = data[y - 1, x - 1]
+            h = data[y - 1, x]
+            i = data[y - 1, x + 1]
+
+            dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / (8 * cellsize_x)
+            dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / (8 * cellsize_y)
+
+            xx_plus_yy = dz_dx * dz_dx + dz_dy * dz_dy
+            shaded = (sin_alt + cos_alt * (dz_dy * cos_az - dz_dx * sin_az)) \
+                / math.sqrt(1.0 + xx_plus_yy)
+            if shaded < 0.0:
+                shaded = 0.0
+            elif shaded > 1.0:
+                shaded = 1.0
+            out[y, x] = shaded
+    return out
 
 
 def _run_numpy(data, azimuth=225, angle_altitude=25,
@@ -37,25 +73,8 @@ def _run_numpy(data, azimuth=225, angle_altitude=25,
     sin_az = np.sin(az_rad)
     cos_az = np.cos(az_rad)
 
-    # Gradient with actual cell spacing (matches GDAL Horn method)
-    dy, dx = np.gradient(data, cellsize_y, cellsize_x)
-    xx_plus_yy = dx * dx + dy * dy
-
-    # GDAL-equivalent hillshade formula (simplified from the original
-    # trig-heavy version; see issue #748 and GDAL gdaldem_lib.cpp):
-    #   shaded = (sin(alt) + cos(alt) * sqrt(xx+yy) * sin(aspect - az))
-    #            / sqrt(1 + xx+yy)
-    # where aspect = atan2(dy, dx), expanded inline:
-    #   sin(aspect - az) = (dy*cos(az) - dx*sin(az)) / sqrt(xx+yy)
-    # so sqrt(xx+yy) cancels, giving:
-    shaded = (sin_alt + cos_alt * (dy * cos_az - dx * sin_az)) \
-        / np.sqrt(1.0 + xx_plus_yy)
-
-    # Clamp negatives (shadow) then scale to [0, 1]
-    result = np.clip(shaded, 0.0, 1.0)
-    result[(0, -1), :] = np.nan
-    result[:, (0, -1)] = np.nan
-    return result
+    return _horn_hillshade(data, cellsize_x, cellsize_y,
+                           sin_alt, cos_alt, sin_az, cos_az)
 
 
 def _run_dask_numpy(data, azimuth, angle_altitude,
@@ -86,15 +105,27 @@ def _gpu_calc_numba(
 
     i, j = cuda.grid(2)
     if i > 0 and i < data.shape[0]-1 and j > 0 and j < data.shape[1] - 1:
-        dx = (data[i, j+1] - data[i, j-1]) / (2.0 * cellsize_x)
-        dy = (data[i+1, j] - data[i-1, j]) / (2.0 * cellsize_y)
+        # Horn's method (weighted 8-neighbor Sobel kernel)
+        a = data[i + 1, j - 1]
+        b = data[i + 1, j]
+        c = data[i + 1, j + 1]
+        d = data[i, j - 1]
+        f = data[i, j + 1]
+        g = data[i - 1, j - 1]
+        h = data[i - 1, j]
+        ii = data[i - 1, j + 1]
 
-        xx_plus_yy = dx * dx + dy * dy
-        shaded = (sin_alt + cos_alt * (dy * cos_az - dx * sin_az)) \
+        dz_dx = ((c + 2.0 * f + ii) - (a + 2.0 * d + g)) / (8.0 * cellsize_x)
+        dz_dy = ((g + 2.0 * h + ii) - (a + 2.0 * b + c)) / (8.0 * cellsize_y)
+
+        xx_plus_yy = dz_dx * dz_dx + dz_dy * dz_dy
+        shaded = (sin_alt + cos_alt * (dz_dy * cos_az - dz_dx * sin_az)) \
             / math.sqrt(1.0 + xx_plus_yy)
 
         if shaded < 0.0:
             shaded = 0.0
+        elif shaded > 1.0:
+            shaded = 1.0
         output[i, j] = shaded
 
 
