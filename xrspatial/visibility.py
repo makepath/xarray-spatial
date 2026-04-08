@@ -11,28 +11,37 @@ line_of_sight
     Elevation profile and visibility along a straight line between two points.
 """
 
+import math
+
 import numpy as np
 import xarray
 
-from .utils import _validate_raster, has_cuda_and_cupy, has_dask_array, is_cupy_array
+from .utils import (
+    _validate_raster, has_cuda_and_cupy, has_dask_array, is_cupy_array, ngjit,
+)
 
 SPEED_OF_LIGHT = 299_792_458.0  # m/s
 
 
+@ngjit
 def _bresenham_line(r0, c0, r1, c1):
-    """Return list of (row, col) cells along the line from (r0,c0) to (r1,c1).
+    """Return (N, 2) int64 array of (row, col) cells along a Bresenham line.
 
-    Uses Bresenham's line algorithm. Both endpoints are included.
+    Both endpoints are included.
     """
-    cells = []
     dr = abs(r1 - r0)
     dc = abs(c1 - c0)
+    max_len = dr + dc + 1
+    out = np.empty((max_len, 2), dtype=np.int64)
     sr = 1 if r1 > r0 else -1
     sc = 1 if c1 > c0 else -1
     err = dr - dc
     r, c = r0, c0
+    idx = 0
     while True:
-        cells.append((r, c))
+        out[idx, 0] = r
+        out[idx, 1] = c
+        idx += 1
         if r == r1 and c == c1:
             break
         e2 = 2 * err
@@ -42,17 +51,18 @@ def _bresenham_line(r0, c0, r1, c1):
         if e2 < dr:
             err += dr
             c += sc
-    return cells
+    return out[:idx]
 
 
 def _extract_transect(raster, cells):
-    """Extract elevation, x-coords, and y-coords for a list of (row, col) cells.
+    """Extract elevation, x-coords, and y-coords for an (N, 2) array of cells.
 
+    *cells* is an (N, 2) int array with columns (row, col).
     For dask or cupy-backed rasters the values are pulled to numpy.
     Returns (elevations, x_coords, y_coords) as 1-D numpy arrays.
     """
-    rows = np.array([r for r, c in cells])
-    cols = np.array([c for r, c in cells])
+    rows = cells[:, 0]
+    cols = cells[:, 1]
 
     x_coords = raster.coords['x'].values[cols]
     y_coords = raster.coords['y'].values[rows]
@@ -61,7 +71,6 @@ def _extract_transect(raster, cells):
     if has_dask_array():
         import dask.array as da
         if isinstance(data, da.Array):
-            # Only compute the needed cells, not the entire array
             elevations = data.vindex[rows, cols].compute().astype(np.float64)
             return elevations, x_coords, y_coords
     if has_cuda_and_cupy() and is_cupy_array(data):
@@ -71,13 +80,77 @@ def _extract_transect(raster, cells):
     return elevations, x_coords, y_coords
 
 
+@ngjit
 def _fresnel_radius_1(d1, d2, freq_hz):
     """First Fresnel zone radius at a point d1 from transmitter, d2 from receiver."""
     D = d1 + d2
-    if D == 0 or freq_hz == 0:
+    if D == 0.0 or freq_hz == 0.0:
         return 0.0
     wavelength = SPEED_OF_LIGHT / freq_hz
-    return np.sqrt(wavelength * d1 * d2 / D)
+    return math.sqrt(wavelength * d1 * d2 / D)
+
+
+@ngjit
+def _los_kernel(xs, ys, elevations, obs_h, tgt_h, freq_hz):
+    """Compute distance, LOS height, visibility, and optional Fresnel arrays.
+
+    All heavy loops live here so they run under numba.
+
+    Parameters
+    ----------
+    xs, ys : 1-D float64 arrays of transect coordinates.
+    elevations : 1-D float64 array of terrain heights.
+    obs_h : float  -- observer height (terrain + offset).
+    tgt_h : float  -- target height (terrain + offset).
+    freq_hz : float -- radio frequency in Hz; <= 0 means skip Fresnel.
+
+    Returns
+    -------
+    distance, los_height, visible, fresnel, fresnel_clear
+    """
+    n = xs.shape[0]
+    distance = np.empty(n, dtype=np.float64)
+    distance[0] = 0.0
+    for i in range(1, n):
+        dx = xs[i] - xs[i - 1]
+        dy = ys[i] - ys[i - 1]
+        distance[i] = distance[i - 1] + math.sqrt(dx * dx + dy * dy)
+
+    total_dist = distance[n - 1] if n > 1 else 0.0
+
+    # LOS height: linear interpolation from observer to target
+    los_height = np.empty(n, dtype=np.float64)
+    if total_dist > 0.0:
+        for i in range(n):
+            los_height[i] = obs_h + (tgt_h - obs_h) * (distance[i] / total_dist)
+    else:
+        los_height[0] = obs_h
+
+    # Visibility: track max elevation angle from observer
+    visible = np.ones(n, dtype=np.bool_)
+    max_angle = -1e300
+    for i in range(1, n):
+        if distance[i] == 0.0:
+            continue
+        angle = (elevations[i] - obs_h) / distance[i]
+        if angle >= max_angle:
+            max_angle = angle
+        else:
+            visible[i] = False
+
+    # Fresnel zone (only when freq_hz > 0)
+    fresnel = np.zeros(n, dtype=np.float64)
+    fresnel_clear = np.ones(n, dtype=np.bool_)
+    if freq_hz > 0.0:
+        for i in range(n):
+            d1 = distance[i]
+            d2 = total_dist - d1
+            fresnel[i] = _fresnel_radius_1(d1, d2, freq_hz)
+            clearance = los_height[i] - elevations[i]
+            if clearance < fresnel[i]:
+                fresnel_clear[i] = False
+
+    return distance, los_height, visible, fresnel, fresnel_clear
 
 
 def line_of_sight(
@@ -128,36 +201,14 @@ def line_of_sight(
     cells = _bresenham_line(r0, c0, r1, c1)
     elevations, xs, ys = _extract_transect(raster, cells)
 
-    n = len(cells)
-
-    # cumulative distance along the transect
-    distance = np.zeros(n, dtype=np.float64)
-    for i in range(1, n):
-        dx = xs[i] - xs[i - 1]
-        dy = ys[i] - ys[i - 1]
-        distance[i] = distance[i - 1] + np.sqrt(dx * dx + dy * dy)
-
-    total_dist = distance[-1] if n > 1 else 0.0
-
-    # LOS height: linear interpolation from observer to target
+    n = len(elevations)
     obs_h = elevations[0] + observer_elev
-    tgt_h = elevations[-1] + target_elev if n > 1 else obs_h
-    if total_dist > 0:
-        los_height = obs_h + (tgt_h - obs_h) * (distance / total_dist)
-    else:
-        los_height = np.array([obs_h])
+    tgt_h = (elevations[-1] + target_elev) if n > 1 else obs_h
+    freq_hz = frequency_mhz * 1e6 if frequency_mhz is not None else -1.0
 
-    # visibility: track max elevation angle from observer
-    visible = np.ones(n, dtype=bool)
-    max_angle = -np.inf
-    for i in range(1, n):
-        if distance[i] == 0:
-            continue
-        angle = (elevations[i] - obs_h) / distance[i]
-        if angle >= max_angle:
-            max_angle = angle
-        else:
-            visible[i] = False
+    distance, los_height, visible, fresnel, fresnel_clear = _los_kernel(
+        xs, ys, elevations, obs_h, tgt_h, freq_hz,
+    )
 
     data_vars = {
         'distance': ('sample', distance),
@@ -169,16 +220,6 @@ def line_of_sight(
     }
 
     if frequency_mhz is not None:
-        freq_hz = frequency_mhz * 1e6
-        fresnel = np.zeros(n, dtype=np.float64)
-        fresnel_clear = np.ones(n, dtype=bool)
-        for i in range(n):
-            d1 = distance[i]
-            d2 = total_dist - d1
-            fresnel[i] = _fresnel_radius_1(d1, d2, freq_hz)
-            clearance = los_height[i] - elevations[i]
-            if clearance < fresnel[i]:
-                fresnel_clear[i] = False
         data_vars['fresnel_radius'] = ('sample', fresnel)
         data_vars['fresnel_clear'] = ('sample', fresnel_clear)
 
