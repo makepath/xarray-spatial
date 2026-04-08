@@ -538,3 +538,500 @@ def test_polygonize_1008_geopandas_batch_with_holes():
 
     # Total area should equal raster size.
     assert_allclose(df.geometry.area.sum(), 36.0)
+
+
+class TestSimplifyHelpers:
+    """Tests for internal simplification helper functions."""
+
+    def test_douglas_peucker_straight_line(self):
+        """DP on a straight line should reduce to just endpoints."""
+        from ..polygonize import _douglas_peucker
+        coords = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0],
+                           [3.0, 0.0], [4.0, 0.0]], dtype=np.float64)
+        result = _douglas_peucker(coords, 0.1)
+        expected = np.array([[0.0, 0.0], [4.0, 0.0]], dtype=np.float64)
+        assert_allclose(result, expected)
+
+    def test_douglas_peucker_preserves_bend(self):
+        """DP should keep a vertex that exceeds tolerance."""
+        from ..polygonize import _douglas_peucker
+        coords = np.array([[0.0, 0.0], [2.0, 3.0], [4.0, 0.0]],
+                          dtype=np.float64)
+        # Distance of (2,3) from line (0,0)-(4,0) is 3.0
+        result = _douglas_peucker(coords, 2.0)
+        assert len(result) == 3  # all points kept
+
+    def test_douglas_peucker_removes_below_tolerance(self):
+        """DP should remove a vertex within tolerance."""
+        from ..polygonize import _douglas_peucker
+        coords = np.array([[0.0, 0.0], [2.0, 0.5], [4.0, 0.0]],
+                          dtype=np.float64)
+        # Distance of (2,0.5) from line (0,0)-(4,0) is 0.5
+        result = _douglas_peucker(coords, 1.0)
+        expected = np.array([[0.0, 0.0], [4.0, 0.0]], dtype=np.float64)
+        assert_allclose(result, expected)
+
+    def test_douglas_peucker_two_points(self):
+        """DP on two points should return them unchanged."""
+        from ..polygonize import _douglas_peucker
+        coords = np.array([[0.0, 0.0], [4.0, 0.0]], dtype=np.float64)
+        result = _douglas_peucker(coords, 1.0)
+        assert_allclose(result, coords)
+
+    def test_simplify_polygons_reduces_vertices(self):
+        """Simplification should reduce vertex count on staircase edges."""
+        from ..polygonize import _simplify_polygons
+
+        # Staircase boundary between two values.
+        raster = np.array([
+            [1, 1, 1, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 2, 2, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 2, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        column_orig, pp_orig = polygonize(data, return_type="numpy")
+
+        _, pp_simplified = _simplify_polygons(
+            column_orig, pp_orig, tolerance=1.5)
+
+        # Vertex count should be reduced for at least one polygon.
+        orig_total_verts = sum(
+            sum(len(r) for r in rings) for rings in pp_orig)
+        simp_total_verts = sum(
+            sum(len(r) for r in rings) for rings in pp_simplified)
+        assert simp_total_verts < orig_total_verts
+
+        # Total area across all polygons must be preserved (shared-edge
+        # simplification can shift area between adjacent polygons but
+        # the sum stays the same because the simplified edge is shared).
+        total_orig = sum(
+            sum(calc_boundary_area(r) for r in rings) for rings in pp_orig)
+        total_simp = sum(
+            sum(calc_boundary_area(r) for r in rings)
+            for rings in pp_simplified)
+        assert_allclose(total_simp, total_orig, atol=1e-10)
+
+    def test_simplify_polygons_topology_preserved(self):
+        """Adjacent simplified polygons should not create gaps."""
+        from ..polygonize import _simplify_polygons
+
+        # Two adjacent rectangles sharing an edge.
+        raster = np.array([[1, 1, 2, 2],
+                           [1, 1, 2, 2],
+                           [1, 1, 2, 2],
+                           [1, 1, 2, 2]], dtype=np.int64)
+        data = xr.DataArray(raster)
+        column, pp = polygonize(data, return_type="numpy")
+
+        _, pp_simplified = _simplify_polygons(column, pp, tolerance=0.0)
+
+        # With tolerance=0, no vertices should be removed; output
+        # should match input exactly.
+        for orig_rings, simp_rings in zip(pp, pp_simplified):
+            assert len(orig_rings) == len(simp_rings)
+            for orig_ring, simp_ring in zip(orig_rings, simp_rings):
+                assert_allclose(simp_ring, orig_ring)
+
+    def test_simplify_polygons_shared_edge_identical(self):
+        """Two polygons sharing an edge must have identical simplified edges."""
+        from ..polygonize import _simplify_polygons
+
+        # Create a raster where two regions share a staircase boundary.
+        raster = np.array([
+            [1, 1, 1, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 2, 2, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 2, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        column, pp = polygonize(data, return_type="numpy")
+
+        _, pp_simplified = _simplify_polygons(column, pp, tolerance=1.5)
+
+        # Check total area is preserved (which requires no gaps/overlaps).
+        total_orig = sum(
+            sum(calc_boundary_area(r) for r in rings) for rings in pp)
+        total_simp = sum(
+            sum(calc_boundary_area(r) for r in rings) for rings in pp_simplified)
+        assert_allclose(total_simp, total_orig, atol=1e-10)
+
+    def test_visvalingam_whyatt_straight_line(self):
+        """VW on a straight line should reduce to just endpoints."""
+        from ..polygonize import _visvalingam_whyatt
+        coords = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0],
+                           [3.0, 0.0], [4.0, 0.0]], dtype=np.float64)
+        result = _visvalingam_whyatt(coords, 0.1)
+        expected = np.array([[0.0, 0.0], [4.0, 0.0]], dtype=np.float64)
+        assert_allclose(result, expected)
+
+    def test_visvalingam_whyatt_preserves_large_triangle(self):
+        """VW should keep a vertex forming a large triangle."""
+        from ..polygonize import _visvalingam_whyatt
+        coords = np.array([[0.0, 0.0], [2.0, 3.0], [4.0, 0.0]],
+                          dtype=np.float64)
+        # Triangle area = 0.5 * |0*(3-0) + 2*(0-0) + 4*(0-3)| = 6.0
+        result = _visvalingam_whyatt(coords, 5.0)
+        assert len(result) == 3  # area 6.0 > tolerance 5.0
+
+    def test_visvalingam_whyatt_removes_small_triangle(self):
+        """VW should remove a vertex forming a small triangle."""
+        from ..polygonize import _visvalingam_whyatt
+        coords = np.array([[0.0, 0.0], [2.0, 0.5], [4.0, 0.0]],
+                          dtype=np.float64)
+        # Triangle area = 0.5 * |0*(0.5-0) + 2*(0-0) + 4*(0-0.5)| = 1.0
+        result = _visvalingam_whyatt(coords, 2.0)
+        expected = np.array([[0.0, 0.0], [4.0, 0.0]], dtype=np.float64)
+        assert_allclose(result, expected)
+
+    def test_visvalingam_whyatt_two_points(self):
+        """VW on two points should return them unchanged."""
+        from ..polygonize import _visvalingam_whyatt
+        coords = np.array([[0.0, 0.0], [4.0, 0.0]], dtype=np.float64)
+        result = _visvalingam_whyatt(coords, 1.0)
+        assert_allclose(result, coords)
+
+    def test_simplify_polygons_drops_degenerate(self):
+        """Polygons that collapse below 4 vertices should be dropped."""
+        from ..polygonize import _simplify_polygons
+
+        # A single-pixel polygon (4 unique vertices forming a unit square).
+        # With a very large tolerance, it should collapse and be dropped.
+        raster = np.array([
+            [1, 2, 2],
+            [2, 2, 2],
+            [2, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        column, pp = polygonize(data, return_type="numpy")
+
+        # Find the small polygon (value 1, single pixel).
+        small_idx = column.index(1)
+        small_col = [column[small_idx]]
+        small_poly = [pp[small_idx]]
+
+        # Large tolerance should collapse the single-pixel polygon.
+        result_col, result_pp = _simplify_polygons(
+            small_col, small_poly, tolerance=10.0)
+        # Column and polygon_points must stay in sync.
+        assert len(result_col) == len(result_pp)
+        # The polygon should be dropped since its exterior collapses.
+        assert len(result_pp) == 0 or all(len(r[0]) >= 4 for r in result_pp)
+
+    def test_simplify_column_pp_sync_through_public_api(self):
+        """Public API must keep column and polygon_points in sync."""
+        # Raster with a single-pixel region that may collapse.
+        raster = np.array([
+            [1, 2, 2],
+            [2, 2, 2],
+            [2, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        col, pp = polygonize(data, simplify_tolerance=10.0)
+        assert len(col) == len(pp)
+
+
+class TestPolygonizeSimplify:
+    """Tests for simplify_tolerance and simplify_method parameters."""
+
+    def test_tolerance_none_no_change(self):
+        """tolerance=None should produce identical output to no-arg call."""
+        raster = np.array([[1, 1, 2, 2],
+                           [1, 1, 2, 2]], dtype=np.int64)
+        data = xr.DataArray(raster)
+        col1, pp1 = polygonize(data)
+        col2, pp2 = polygonize(data, simplify_tolerance=None)
+        assert col1 == col2
+        for r1, r2 in zip(pp1, pp2):
+            for a, b in zip(r1, r2):
+                assert_allclose(a, b)
+
+    def test_tolerance_zero_no_change(self):
+        """tolerance=0.0 should produce identical output."""
+        raster = np.array([[1, 1, 2, 2],
+                           [1, 1, 2, 2]], dtype=np.int64)
+        data = xr.DataArray(raster)
+        col1, pp1 = polygonize(data)
+        col2, pp2 = polygonize(data, simplify_tolerance=0.0)
+        assert col1 == col2
+        for r1, r2 in zip(pp1, pp2):
+            for a, b in zip(r1, r2):
+                assert_allclose(a, b)
+
+    def test_negative_tolerance_raises(self):
+        """Negative tolerance should raise ValueError."""
+        raster = np.array([[1, 1], [1, 1]], dtype=np.int64)
+        data = xr.DataArray(raster)
+        with pytest.raises(ValueError, match="simplify_tolerance"):
+            polygonize(data, simplify_tolerance=-1.0)
+
+    def test_invalid_method_raises(self):
+        """Unknown method should raise ValueError."""
+        raster = np.array([[1, 1], [1, 1]], dtype=np.int64)
+        data = xr.DataArray(raster)
+        with pytest.raises(ValueError, match="simplify_method"):
+            polygonize(data, simplify_tolerance=1.0,
+                       simplify_method="invalid")
+
+    def test_simplify_dp_reduces_vertices(self):
+        """Douglas-Peucker simplification should reduce total vertex count."""
+        raster = np.array([
+            [1, 1, 1, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 2, 2, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 2, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        _, pp_orig = polygonize(data)
+        _, pp_simp = polygonize(data, simplify_tolerance=1.5)
+
+        orig_verts = sum(len(r) for rings in pp_orig for r in rings)
+        simp_verts = sum(len(r) for rings in pp_simp for r in rings)
+        assert simp_verts < orig_verts
+
+    def test_simplify_vw_reduces_vertices(self):
+        """Visvalingam-Whyatt simplification should reduce total vertex count."""
+        raster = np.array([
+            [1, 1, 1, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 2, 2, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 2, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        _, pp_orig = polygonize(data)
+        _, pp_simp = polygonize(data, simplify_tolerance=1.5,
+                                simplify_method="visvalingam-whyatt")
+
+        orig_verts = sum(len(r) for rings in pp_orig for r in rings)
+        simp_verts = sum(len(r) for rings in pp_simp for r in rings)
+        assert simp_verts < orig_verts
+
+    def test_simplify_preserves_total_area(self):
+        """Total area must be preserved after simplification."""
+        raster = np.array([
+            [1, 1, 1, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 2, 2, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 2, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        _, pp_orig = polygonize(data)
+        _, pp_simp = polygonize(data, simplify_tolerance=1.5)
+
+        total_orig = sum(
+            sum(calc_boundary_area(r) for r in rings) for rings in pp_orig)
+        total_simp = sum(
+            sum(calc_boundary_area(r) for r in rings) for rings in pp_simp)
+        assert_allclose(total_simp, total_orig, atol=1e-10)
+
+    def test_simplify_with_geopandas(self):
+        """Simplification should work with geopandas return type."""
+        pytest.importorskip("geopandas")
+        raster = np.array([
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        gdf = polygonize(data, simplify_tolerance=0.5,
+                         return_type="geopandas")
+        assert len(gdf) == 2
+        assert gdf.geometry.is_valid.all()
+
+    def test_simplify_with_geojson(self):
+        """Simplification should work with geojson return type."""
+        raster = np.array([
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        fc = polygonize(data, simplify_tolerance=0.5,
+                        return_type="geojson")
+        assert fc["type"] == "FeatureCollection"
+        assert len(fc["features"]) == 2
+
+    def test_simplify_vw_with_geopandas(self):
+        """VW simplification should work with geopandas return type."""
+        pytest.importorskip("geopandas")
+        raster = np.array([
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        gdf = polygonize(data, simplify_tolerance=0.5,
+                         simplify_method="visvalingam-whyatt",
+                         return_type="geopandas")
+        assert len(gdf) == 2
+        assert gdf.geometry.is_valid.all()
+
+    def test_simplify_with_spatialpandas(self):
+        """Simplification should work with spatialpandas return type."""
+        pytest.importorskip("spatialpandas")
+        raster = np.array([
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        result = polygonize(data, simplify_tolerance=0.5,
+                            return_type="spatialpandas")
+        assert len(result) == 2
+
+    def test_simplify_with_awkward(self):
+        """Simplification should work with awkward return type."""
+        pytest.importorskip("awkward")
+        raster = np.array([
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+        ], dtype=np.int64)
+        data = xr.DataArray(raster)
+        result = polygonize(data, simplify_tolerance=0.5,
+                            return_type="awkward")
+        assert result is not None
+
+    def test_simplify_with_holes(self):
+        """Simplification should handle polygons with interior holes."""
+        raster = np.zeros((8, 8), dtype=np.int32)
+        raster[1:7, 1:7] = 1
+        raster[3:5, 3:5] = 0  # hole in the 1-region
+        data = xr.DataArray(raster)
+
+        col_orig, pp_orig = polygonize(data)
+        col_simp, pp_simp = polygonize(data, simplify_tolerance=0.5)
+
+        assert len(col_simp) == len(pp_simp)
+        # Area should be preserved.
+        total_orig = sum(
+            sum(calc_boundary_area(r) for r in rings) for rings in pp_orig)
+        total_simp = sum(
+            sum(calc_boundary_area(r) for r in rings) for rings in pp_simp)
+        assert_allclose(total_simp, total_orig, atol=1e-10)
+
+    def test_simplify_with_transform(self):
+        """Simplification should work with affine transform."""
+        raster = np.array([
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+        ], dtype=np.int64)
+        transform = np.array([10.0, 0.0, 100.0, 0.0, 10.0, 200.0])
+        data = xr.DataArray(raster)
+        col, pp = polygonize(data, transform=transform,
+                             simplify_tolerance=5.0)
+        assert len(col) == len(pp)
+        assert len(col) == 2
+
+    def test_simplify_single_pixel_raster(self):
+        """Simplification on a 1x1 raster should not crash."""
+        raster = np.array([[5]], dtype=np.int64)
+        data = xr.DataArray(raster)
+        col, pp = polygonize(data, simplify_tolerance=1.0)
+        assert len(col) == len(pp)
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+class TestPolygonizeSimplifyDask:
+    """Simplification with dask backend."""
+
+    def test_simplify_dask_matches_numpy(self):
+        """Dask simplification should produce same areas as numpy."""
+        raster = np.array([
+            [1, 1, 1, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 2, 2, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 2, 2, 2],
+        ], dtype=np.int64)
+
+        data_np = xr.DataArray(raster)
+        data_dask = xr.DataArray(da.from_array(raster, chunks=(3, 3)))
+
+        col_np, pp_np = polygonize(data_np, simplify_tolerance=1.5)
+        col_dask, pp_dask = polygonize(data_dask, simplify_tolerance=1.5)
+
+        # Compare per-value area sums.
+        areas_np = {}
+        for val, rings in zip(col_np, pp_np):
+            a = sum(calc_boundary_area(r) for r in rings)
+            areas_np[val] = areas_np.get(val, 0.0) + a
+
+        areas_dask = {}
+        for val, rings in zip(col_dask, pp_dask):
+            a = sum(calc_boundary_area(r) for r in rings)
+            areas_dask[val] = areas_dask.get(val, 0.0) + a
+
+        for val in areas_np:
+            assert_allclose(areas_dask[val], areas_np[val], atol=1e-10)
+
+    def test_simplify_vw_dask_matches_numpy(self):
+        """VW dask simplification should produce same areas as numpy."""
+        raster = np.array([
+            [1, 1, 1, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 2, 2, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 2, 2, 2],
+        ], dtype=np.int64)
+
+        data_np = xr.DataArray(raster)
+        data_dask = xr.DataArray(da.from_array(raster, chunks=(3, 3)))
+
+        col_np, pp_np = polygonize(data_np, simplify_tolerance=1.5,
+                                   simplify_method="visvalingam-whyatt")
+        col_dask, pp_dask = polygonize(data_dask, simplify_tolerance=1.5,
+                                       simplify_method="visvalingam-whyatt")
+
+        areas_np = {}
+        for val, rings in zip(col_np, pp_np):
+            a = sum(calc_boundary_area(r) for r in rings)
+            areas_np[val] = areas_np.get(val, 0.0) + a
+
+        areas_dask = {}
+        for val, rings in zip(col_dask, pp_dask):
+            a = sum(calc_boundary_area(r) for r in rings)
+            areas_dask[val] = areas_dask.get(val, 0.0) + a
+
+        for val in areas_np:
+            assert_allclose(areas_dask[val], areas_np[val], atol=1e-10)
+
+
+@cuda_and_cupy_available
+class TestPolygonizeSimplifyCuPy:
+    """Simplification with CuPy backend."""
+
+    def test_simplify_cupy_matches_numpy(self):
+        """CuPy simplification should produce same areas as numpy."""
+        import cupy as cp
+        raster = np.array([
+            [1, 1, 1, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 2, 2, 2, 2, 2],
+            [1, 1, 2, 2, 2, 2],
+            [1, 1, 1, 2, 2, 2],
+        ], dtype=np.int64)
+
+        data_np = xr.DataArray(raster)
+        data_cp = xr.DataArray(cp.asarray(raster))
+
+        col_np, pp_np = polygonize(data_np, simplify_tolerance=1.5)
+        col_cp, pp_cp = polygonize(data_cp, simplify_tolerance=1.5)
+
+        areas_np = {}
+        for val, rings in zip(col_np, pp_np):
+            a = sum(calc_boundary_area(r) for r in rings)
+            areas_np[val] = areas_np.get(val, 0.0) + a
+
+        areas_cp = {}
+        for val, rings in zip(col_cp, pp_cp):
+            a = sum(calc_boundary_area(r) for r in rings)
+            areas_cp[val] = areas_cp.get(val, 0.0) + a
+
+        for val in areas_np:
+            assert_allclose(areas_cp[val], areas_np[val], atol=1e-10)

@@ -919,6 +919,469 @@ def _group_rings_into_polygons(rings):
     return result
 
 
+@ngjit
+def _perpendicular_distance(px, py, ax, ay, bx, by):
+    """Perpendicular distance from point (px,py) to line (ax,ay)-(bx,by)."""
+    dx = bx - ax
+    dy = by - ay
+    len_sq = dx * dx + dy * dy
+    if len_sq == 0.0:
+        return np.sqrt((px - ax) ** 2 + (py - ay) ** 2)
+    t = ((px - ax) * dx + (py - ay) * dy) / len_sq
+    t = max(0.0, min(1.0, t))
+    proj_x = ax + t * dx
+    proj_y = ay + t * dy
+    return np.sqrt((px - proj_x) ** 2 + (py - proj_y) ** 2)
+
+
+@ngjit
+def _douglas_peucker(coords, tolerance):
+    """Douglas-Peucker line simplification on an Nx2 float64 array.
+
+    Endpoints are always preserved. Returns a new Nx2 array with
+    only the retained vertices.
+    """
+    n = len(coords)
+    if n <= 2:
+        return coords.copy()
+
+    # Iterative DP using an explicit numpy array stack to avoid recursion
+    # depth issues and stay compatible with numba nopython mode.
+    keep = np.zeros(n, dtype=np.bool_)
+    keep[0] = True
+    keep[n - 1] = True
+
+    # Stack of (start, end) index pairs stored as a pre-allocated array.
+    stack_arr = np.empty((n, 2), dtype=np.int64)
+    stack_arr[0, 0] = np.int64(0)
+    stack_arr[0, 1] = np.int64(n - 1)
+    stack_top = 1
+
+    while stack_top > 0:
+        stack_top -= 1
+        start = stack_arr[stack_top, 0]
+        end = stack_arr[stack_top, 1]
+
+        if end - start < 2:
+            continue
+
+        ax, ay = coords[start, 0], coords[start, 1]
+        bx, by = coords[end, 0], coords[end, 1]
+
+        max_dist = 0.0
+        max_idx = start
+        for i in range(start + 1, end):
+            d = _perpendicular_distance(
+                coords[i, 0], coords[i, 1], ax, ay, bx, by)
+            if d > max_dist:
+                max_dist = d
+                max_idx = i
+
+        if max_dist > tolerance:
+            keep[max_idx] = True
+            stack_arr[stack_top, 0] = start
+            stack_arr[stack_top, 1] = max_idx
+            stack_top += 1
+            stack_arr[stack_top, 0] = max_idx
+            stack_arr[stack_top, 1] = end
+            stack_top += 1
+
+    count = 0
+    for i in range(n):
+        if keep[i]:
+            count += 1
+
+    result = np.empty((count, 2), dtype=np.float64)
+    j = 0
+    for i in range(n):
+        if keep[i]:
+            result[j, 0] = coords[i, 0]
+            result[j, 1] = coords[i, 1]
+            j += 1
+
+    return result
+
+
+@ngjit
+def _visvalingam_whyatt(coords, tolerance):
+    """Visvalingam-Whyatt area-based line simplification.
+
+    Iteratively removes the vertex that forms the smallest triangle
+    area with its neighbors, until no triangle area is below tolerance.
+    Endpoints are always preserved.
+
+    Parameters
+    ----------
+    coords : np.ndarray, shape (N, 2)
+        Input coordinate array.
+    tolerance : float
+        Minimum triangle area threshold. Vertices forming triangles
+        with area below this value are removed.
+
+    Returns
+    -------
+    np.ndarray, shape (M, 2)
+        Simplified coordinate array.
+    """
+    n = len(coords)
+    if n <= 2:
+        return coords.copy()
+
+    # Use a doubly-linked list via prev/next index arrays.
+    prev_idx = np.empty(n, dtype=np.int64)
+    next_idx = np.empty(n, dtype=np.int64)
+    for i in range(n):
+        prev_idx[i] = i - 1
+        next_idx[i] = i + 1
+    # Endpoints are never removed (sentinel values).
+    prev_idx[0] = -1
+    next_idx[n - 1] = -1
+
+    # Compute triangle areas for interior vertices.
+    areas = np.full(n, np.inf, dtype=np.float64)
+    for i in range(1, n - 1):
+        ax, ay = coords[prev_idx[i], 0], coords[prev_idx[i], 1]
+        bx, by = coords[i, 0], coords[i, 1]
+        cx, cy = coords[next_idx[i], 0], coords[next_idx[i], 1]
+        areas[i] = abs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) / 2.0)
+
+    removed = np.zeros(n, dtype=np.bool_)
+    remaining = n
+
+    while remaining > 2:
+        # Find vertex with minimum area.
+        min_area = np.inf
+        min_idx = -1
+        for i in range(1, n - 1):
+            if not removed[i] and areas[i] < min_area:
+                min_area = areas[i]
+                min_idx = i
+
+        if min_idx == -1 or min_area >= tolerance:
+            break
+
+        # Remove vertex.
+        removed[min_idx] = True
+        remaining -= 1
+
+        # Update linked list.
+        p = prev_idx[min_idx]
+        nx_i = next_idx[min_idx]
+        if p >= 0:
+            next_idx[p] = nx_i
+        if nx_i >= 0 and nx_i < n:
+            prev_idx[nx_i] = p
+
+        # Recompute areas for affected neighbors.
+        if p > 0 and prev_idx[p] >= 0:
+            ax, ay = coords[prev_idx[p], 0], coords[prev_idx[p], 1]
+            bx, by = coords[p, 0], coords[p, 1]
+            cx, cy = coords[next_idx[p], 0], coords[next_idx[p], 1]
+            new_area = abs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) / 2.0)
+            # Enforce monotonicity: area can only increase.
+            areas[p] = max(new_area, min_area)
+
+        if nx_i >= 0 and nx_i < n - 1 and next_idx[nx_i] >= 0:
+            ax, ay = coords[prev_idx[nx_i], 0], coords[prev_idx[nx_i], 1]
+            bx, by = coords[nx_i, 0], coords[nx_i, 1]
+            cx, cy = coords[next_idx[nx_i], 0], coords[next_idx[nx_i], 1]
+            new_area = abs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) / 2.0)
+            areas[nx_i] = max(new_area, min_area)
+
+    # Collect remaining vertices.
+    count = 0
+    for i in range(n):
+        if not removed[i]:
+            count += 1
+
+    result = np.empty((count, 2), dtype=np.float64)
+    j = 0
+    for i in range(n):
+        if not removed[i]:
+            result[j, 0] = coords[i, 0]
+            result[j, 1] = coords[i, 1]
+            j += 1
+
+    return result
+
+
+def _find_junctions(all_rings):
+    """Find junction vertices that must be pinned during simplification.
+
+    A junction is any vertex where the topology of shared edges changes.
+    This includes:
+    - Vertices where 3+ distinct rings meet (true topological junctions).
+    - Endpoints of shared edge chains between pairs of rings (where a
+      shared boundary starts or ends).
+
+    These vertices are pinned so that shared edges are simplified
+    identically for all rings that use them.
+
+    Parameters
+    ----------
+    all_rings : list of list of np.ndarray
+        polygon_points structure: list of polygons, each polygon is
+        a list of rings (Nx2 arrays, closed).
+
+    Returns
+    -------
+    set of (float, float)
+    """
+    # Build a set of directed edges per ring, and track which rings
+    # each vertex belongs to.
+    vertex_ring_count = {}  # (x, y) -> set of ring identifiers
+    # Track directed edges: (pt_a, pt_b) -> set of ring_ids
+    edge_rings = {}
+    ring_id = 0
+    for rings in all_rings:
+        for ring in rings:
+            n = len(ring) - 1  # unique vertices (ring is closed)
+            for k in range(n):
+                pt = (ring[k, 0], ring[k, 1])
+                if pt not in vertex_ring_count:
+                    vertex_ring_count[pt] = set()
+                vertex_ring_count[pt].add(ring_id)
+
+                pt_next = (ring[k + 1, 0], ring[k + 1, 1])
+                edge = (pt, pt_next)
+                if edge not in edge_rings:
+                    edge_rings[edge] = set()
+                edge_rings[edge].add(ring_id)
+            ring_id += 1
+
+    # An edge is "shared" if its reverse also exists (in a different ring).
+    # Shared edges connect two polygons along a boundary.
+    shared_edges = set()
+    for (a, b), rids in edge_rings.items():
+        rev = (b, a)
+        if rev in edge_rings:
+            # The forward and reverse edges exist (potentially in different rings).
+            shared_edges.add((min(a, b), max(a, b)))
+
+    # Build set of vertices on shared edges.
+    shared_vertices = set()
+    for a, b in shared_edges:
+        shared_vertices.add(a)
+        shared_vertices.add(b)
+
+    # Find junctions: vertices in 3+ rings, OR shared vertices that
+    # are adjacent to at least one non-shared edge in some ring.
+    junctions = set()
+
+    # Type 1: vertices in 3+ rings.
+    for pt, ids in vertex_ring_count.items():
+        if len(ids) >= 3:
+            junctions.add(pt)
+
+    # Type 2: endpoints of shared chains. A shared vertex is a chain
+    # endpoint if, in any ring, it has an adjacent edge that is NOT shared.
+    ring_id = 0
+    for rings in all_rings:
+        for ring in rings:
+            n = len(ring) - 1
+            for k in range(n):
+                pt = (ring[k, 0], ring[k, 1])
+                if pt not in shared_vertices:
+                    continue
+                # Check the edge leaving this vertex.
+                pt_next = (ring[(k + 1) % n, 0], ring[(k + 1) % n, 1])
+                edge_fwd = (min(pt, pt_next), max(pt, pt_next))
+                # Check the edge arriving at this vertex.
+                pt_prev = (ring[(k - 1) % n, 0], ring[(k - 1) % n, 1])
+                edge_bwd = (min(pt, pt_prev), max(pt, pt_prev))
+
+                if edge_fwd not in shared_edges or edge_bwd not in shared_edges:
+                    junctions.add(pt)
+            ring_id += 1
+
+    return junctions
+
+
+def _split_ring_at_junctions(ring, junctions):
+    """Split a closed ring into chains at junction vertices.
+
+    Each chain starts and ends at a junction vertex (endpoints included
+    in the chain).  If the ring contains no junctions, the entire ring
+    is returned as a single chain.
+
+    Parameters
+    ----------
+    ring : np.ndarray, shape (N, 2)
+        Closed ring (first == last vertex).
+    junctions : set of (float, float)
+
+    Returns
+    -------
+    list of np.ndarray
+        Each array is an Mx2 chain.  Consecutive chains share their
+        endpoint/startpoint.
+    """
+    n = len(ring) - 1  # number of unique vertices
+
+    # Find indices of junction vertices within this ring.
+    junction_indices = []
+    for k in range(n):
+        if (ring[k, 0], ring[k, 1]) in junctions:
+            junction_indices.append(k)
+
+    if len(junction_indices) == 0:
+        # No junctions: return the whole ring as a single chain.
+        return [ring.copy()]
+
+    # Rotate ring so that the first junction is at index 0.
+    first = junction_indices[0]
+    if first > 0:
+        # Rotate unique vertices, then re-close.
+        rotated = np.empty_like(ring)
+        rotated[:n - first] = ring[first:n]
+        rotated[n - first:n] = ring[:first]
+        rotated[n] = rotated[0]
+        ring = rotated
+        junction_indices = [(ji - first) % n for ji in junction_indices]
+        junction_indices.sort()
+
+    # Split at each junction.
+    chains = []
+    for i in range(len(junction_indices)):
+        start = junction_indices[i]
+        if i + 1 < len(junction_indices):
+            end = junction_indices[i + 1]
+        else:
+            end = n  # wrap back to first junction (index 0 after rotation)
+        chains.append(ring[start:end + 1].copy())
+
+    return chains
+
+
+def _chain_key(chain):
+    """Canonical key for deduplicating shared edge chains.
+
+    Two chains that connect the same pair of junctions but are traversed
+    in opposite directions should map to the same key.  We use the sorted
+    endpoint pair plus the frozenset of interior vertices.
+    """
+    start = (chain[0, 0], chain[0, 1])
+    end = (chain[-1, 0], chain[-1, 1])
+    if start > end:
+        start, end = end, start
+    # Include interior points for disambiguation.
+    interior = tuple(
+        (chain[k, 0], chain[k, 1]) for k in range(1, len(chain) - 1))
+    interior_rev = interior[::-1]
+    interior = min(interior, interior_rev)
+    return (start, end, interior)
+
+
+def _simplify_polygons(column, polygon_points, tolerance,
+                       method="douglas-peucker"):
+    """Topology-preserving simplification of all polygons.
+
+    Uses shared-edge decomposition: finds junction vertices, splits
+    rings into chains at junctions, simplifies each unique chain once
+    with the chosen algorithm, then reassembles rings.
+
+    Parameters
+    ----------
+    column : list
+        Pixel values corresponding to each polygon.
+    polygon_points : list of list of np.ndarray
+        Output of polygonize backend: list of polygons, each polygon
+        is [exterior_ring, *hole_rings].
+    tolerance : float
+        Simplification tolerance in coordinate units.
+    method : str, default="douglas-peucker"
+        Simplification algorithm: ``"douglas-peucker"`` or
+        ``"visvalingam-whyatt"``.
+
+    Returns
+    -------
+    (list, list of list of np.ndarray)
+        Filtered column and simplified polygon_points.  Polygons whose
+        exterior ring collapses below 4 vertices are dropped from both.
+    """
+    if tolerance <= 0:
+        return column, polygon_points
+
+    # Step 1: Find junctions.
+    junctions = _find_junctions(polygon_points)
+
+    # Step 2 & 3: Split rings into chains, deduplicate, simplify.
+    simplified_chains = {}  # chain_key -> simplified np.ndarray
+
+    # Track how to reassemble each ring.
+    # ring_info[poly_idx][ring_idx] = list of (chain_key, is_reversed)
+    ring_info = []
+
+    for poly_idx, rings in enumerate(polygon_points):
+        poly_info = []
+        for ring in rings:
+            chains = _split_ring_at_junctions(ring, junctions)
+            chain_refs = []
+            for chain in chains:
+                key = _chain_key(chain)
+                if key not in simplified_chains:
+                    if method == "douglas-peucker":
+                        simplified_chains[key] = _douglas_peucker(chain, tolerance)
+                    else:
+                        simplified_chains[key] = _visvalingam_whyatt(chain, tolerance)
+                # Determine if this chain was reversed relative to canonical.
+                start = (chain[0, 0], chain[0, 1])
+                canonical_start = (simplified_chains[key][0, 0],
+                                   simplified_chains[key][0, 1])
+                is_reversed = (start != canonical_start)
+                chain_refs.append((key, is_reversed))
+            poly_info.append(chain_refs)
+        ring_info.append(poly_info)
+
+    # Step 4: Reassemble rings.
+    result_column = []
+    result = []
+    for poly_idx, rings in enumerate(polygon_points):
+        new_rings = []
+        for ring_idx, chain_refs in enumerate(ring_info[poly_idx]):
+            if len(chain_refs) == 1:
+                key, is_reversed = chain_refs[0]
+                simplified = simplified_chains[key]
+                if is_reversed:
+                    simplified = simplified[::-1].copy()
+                # Ensure ring is closed.
+                if not (simplified[0, 0] == simplified[-1, 0] and
+                        simplified[0, 1] == simplified[-1, 1]):
+                    simplified = np.vstack([simplified, simplified[:1]])
+                new_rings.append(simplified)
+            else:
+                # Multiple chains: concatenate (drop duplicate junction points).
+                parts = []
+                for key, is_reversed in chain_refs:
+                    simplified = simplified_chains[key]
+                    if is_reversed:
+                        simplified = simplified[::-1].copy()
+                    if parts:
+                        # Skip first point (same as last of previous chain).
+                        parts.append(simplified[1:])
+                    else:
+                        parts.append(simplified)
+                assembled = np.vstack(parts)
+                # Ensure ring is closed.
+                if not (assembled[0, 0] == assembled[-1, 0] and
+                        assembled[0, 1] == assembled[-1, 1]):
+                    assembled = np.vstack([assembled, assembled[:1]])
+                new_rings.append(assembled)
+
+        # Drop degenerate rings (fewer than 4 vertices = triangle minimum).
+        # If the exterior ring is degenerate, drop the entire polygon.
+        if len(new_rings) == 0 or len(new_rings[0]) < 4:
+            continue
+        filtered = [new_rings[0]]  # exterior is valid
+        for ring in new_rings[1:]:
+            if len(ring) >= 4:
+                filtered.append(ring)
+        result_column.append(column[poly_idx])
+        result.append(filtered)
+
+    return result_column, result
+
+
 def _merge_polygon_rings(polys_list):
     """Merge polygon ring sets that share chunk-boundary edges.
 
@@ -1025,6 +1488,8 @@ def polygonize(
     transform: Optional[np.ndarray] = None,  # shape (6,)
     column_name: str = "DN",
     return_type: str = "numpy",
+    simplify_tolerance: Optional[float] = None,
+    simplify_method: str = "douglas-peucker",
 ):
     """
     Polygonize creates vector polygons for connected regions of pixels in a
@@ -1064,6 +1529,23 @@ def polygonize(
         Format of returned data.  Allowed values are "numpy", "spatialpandas",
         "geopandas", "awkward" and "geojson".  "numpy" and "geojson" are
         always available, the others require optional dependencies.
+
+    simplify_tolerance: float, optional
+        Simplification tolerance in coordinate units. When set, polygon
+        boundaries are simplified using shared-edge decomposition to
+        preserve topology between adjacent polygons. Default is None
+        (no simplification).
+
+        For ``"douglas-peucker"``, this is the maximum perpendicular
+        distance a vertex may deviate from the simplified line.
+
+        For ``"visvalingam-whyatt"``, this is the minimum triangle area
+        threshold; vertices forming triangles smaller than this are removed.
+
+    simplify_method: str, default="douglas-peucker"
+        Simplification algorithm. Options are ``"douglas-peucker"``
+        (distance-based, good for general use) and ``"visvalingam-whyatt"``
+        (area-based, tends to produce better cartographic results).
 
     Returns
     -------
@@ -1111,6 +1593,16 @@ def polygonize(
             raise ValueError(
                 f"Incorrect transform length of {len(transform)} instead of 6")
 
+    # Check simplification parameters.
+    if simplify_tolerance is not None and simplify_tolerance < 0:
+        raise ValueError(
+            "simplify_tolerance must be non-negative, "
+            f"got {simplify_tolerance}")
+    if simplify_method not in ("douglas-peucker", "visvalingam-whyatt"):
+        raise ValueError(
+            f"simplify_method must be 'douglas-peucker' or "
+            f"'visvalingam-whyatt', got '{simplify_method}'")
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_polygonize_numpy,
         cupy_func=_polygonize_cupy,
@@ -1119,6 +1611,12 @@ def polygonize(
     )
     column, polygon_points = mapper(raster)(
         raster.data, mask_data, connectivity_8, transform)
+
+    # Apply simplification if requested.
+    if simplify_tolerance is not None and simplify_tolerance > 0:
+        column, polygon_points = _simplify_polygons(
+            column, polygon_points, simplify_tolerance,
+            method=simplify_method)
 
     # Convert to requested return_type.
     if return_type == "numpy":
