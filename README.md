@@ -145,6 +145,7 @@ Native GeoTIFF and Cloud Optimized GeoTIFF reader/writer. No GDAL required.
 |:-----|:------------|:-----:|:----:|:--------:|:-------------:|:-----:|
 | [open_geotiff](xrspatial/geotiff/__init__.py) | Read GeoTIFF / COG / VRT | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
 | [to_geotiff](xrspatial/geotiff/__init__.py) | Write DataArray as GeoTIFF / COG | ✅️ | ✅️ | ✅️ | ✅️ | ✅️ |
+| [write_geotiff_gpu](xrspatial/geotiff/__init__.py) | GPU-accelerated GeoTIFF / COG write | | | ✅️ | | |
 | [write_vrt](xrspatial/geotiff/__init__.py) | Generate VRT mosaic from GeoTIFFs | ✅️ | | | | |
 
 `open_geotiff` and `to_geotiff` auto-dispatch to the correct backend:
@@ -163,6 +164,10 @@ open_geotiff('mosaic.vrt')                           # VRT mosaic (auto-detected
 to_geotiff(cupy_array, 'out.tif')                    # auto-detects GPU
 to_geotiff(data, 'out.tif', gpu=True)                # force GPU compress
 to_geotiff(data, 'ortho.tif', compression='jpeg')    # JPEG for orthophotos
+to_geotiff(data, 'cog.tif', cog=True)                # COG with auto overviews
+to_geotiff(data, 'cog.tif', cog=True,                # COG with explicit levels
+           overview_levels=[2, 4, 8],
+           overview_resampling='nearest')
 write_vrt('mosaic.vrt', ['tile1.tif', 'tile2.tif'])  # generate VRT
 
 open_geotiff('dem.tif', dtype='float32')             # half memory
@@ -189,7 +194,7 @@ ds.xrs.open_geotiff('large_dem.tif')                 # read windowed to Dataset 
 - Cloud storage: S3 (`s3://`), GCS (`gs://`), Azure (`az://`) via fsspec
 - GPUDirect Storage: SSD→GPU direct DMA via KvikIO (optional)
 - Thread-safe mmap reads, atomic writes, HTTP connection reuse (urllib3)
-- Overview generation: mean, nearest, min, max, median, mode, cubic
+- Overview generation (CPU and GPU): mean, nearest, min, max, median, mode, cubic
 - Planar config, big-endian byte swap, PixelIsArea/PixelIsPoint
 
 **Read performance** (real-world files, A6000 GPU):

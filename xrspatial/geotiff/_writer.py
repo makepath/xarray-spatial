@@ -39,6 +39,7 @@ from ._geotags import (
     TAG_MODEL_TIEPOINT,
 )
 from ._header import (
+    TAG_NEW_SUBFILE_TYPE,
     TAG_IMAGE_WIDTH,
     TAG_IMAGE_LENGTH,
     TAG_BITS_PER_SAMPLE,
@@ -592,6 +593,11 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
     ifd_specs = []
     for level_idx, (arr, lw, lh, rel_offsets, byte_counts, comp_data) in enumerate(pixel_data_parts):
         tags = []
+
+        # Mark overview IFDs as reduced-resolution images (TIFF tag 254).
+        # GDAL/rasterio use this tag to identify overview sub-IFDs.
+        if level_idx > 0:
+            tags.append((TAG_NEW_SUBFILE_TYPE, LONG, 1, 1))
 
         tags.append((TAG_IMAGE_WIDTH, LONG, 1, lw))
         tags.append((TAG_IMAGE_LENGTH, LONG, 1, lh))
