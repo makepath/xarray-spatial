@@ -96,40 +96,93 @@ def test_hillshade_resolution_sensitivity():
         "hillshade should be sensitive to cell resolution"
 
 
+def _horn_reference(data, cellsize_x, cellsize_y, azimuth, altitude):
+    """Pure-numpy Horn's method reference for testing.
+
+    Computes gradients with the 8-neighbor Sobel kernel and applies the
+    GDAL hillshade formula.
+    """
+    az_rad = azimuth * np.pi / 180.
+    alt_rad = altitude * np.pi / 180.
+
+    # Horn / Sobel kernel gradients (same as GDAL gdaldem)
+    a = data[2:, :-2]
+    b = data[2:, 1:-1]
+    c = data[2:, 2:]
+    d = data[1:-1, :-2]
+    f = data[1:-1, 2:]
+    g = data[:-2, :-2]
+    h = data[:-2, 1:-1]
+    i = data[:-2, 2:]
+
+    dz_dx = ((c + 2 * f + i) - (a + 2 * d + g)) / (8 * cellsize_x)
+    dz_dy = ((g + 2 * h + i) - (a + 2 * b + c)) / (8 * cellsize_y)
+
+    xx_plus_yy = dz_dx**2 + dz_dy**2
+    shaded = (
+        np.sin(alt_rad) + np.cos(alt_rad) * (dz_dy * np.cos(az_rad) - dz_dx * np.sin(az_rad))
+    ) / np.sqrt(1 + xx_plus_yy)
+    return np.clip(shaded, 0.0, 1.0)
+
+
 def test_hillshade_gdal_equivalence():
     """
-    Verify that _run_numpy matches the GDAL hillshade formula directly.
-
-    GDAL formula (gdaldem_lib.cpp):
-        aspect = atan2(dy, dx)
-        shaded = (sin(alt) + cos(alt)*sqrt(xx+yy)*sin(aspect-az))
-                 / sqrt(1 + xx+yy)
-    where dx, dy are gradients divided by cell spacing.
+    Verify that _run_numpy matches the GDAL hillshade formula with
+    Horn's method (weighted 8-neighbor Sobel kernel) for gradients.
     """
     rng = np.random.default_rng(99)
     data = rng.random((20, 20)).astype(np.float32) * 500
     cellsize_x, cellsize_y = 30.0, 30.0
     azimuth, altitude = 315.0, 45.0
 
-    # Reference: direct GDAL formula
-    az_rad = azimuth * np.pi / 180.
-    alt_rad = altitude * np.pi / 180.
-    dy, dx = np.gradient(data, cellsize_y, cellsize_x)
-    xx_plus_yy = dx**2 + dy**2
-    aspect = np.arctan2(dy, dx)
-    gdal_shaded = (
-        np.sin(alt_rad)
-        + np.cos(alt_rad) * np.sqrt(xx_plus_yy) * np.sin(aspect - az_rad)
-    ) / np.sqrt(1 + xx_plus_yy)
-    gdal_ref = np.clip(gdal_shaded, 0.0, 1.0)
+    ref = _horn_reference(data, cellsize_x, cellsize_y, azimuth, altitude)
 
-    # Our implementation
     result = _run_numpy(data, azimuth=azimuth, angle_altitude=altitude,
                         cellsize_x=cellsize_x, cellsize_y=cellsize_y)
 
     interior = slice(1, -1)
-    assert_allclose(result[interior, interior],
-                    gdal_ref[interior, interior], atol=1e-6)
+    assert_allclose(result[interior, interior], ref, atol=1e-6)
+
+
+def test_hillshade_horn_vs_central_diff():
+    """Horn's method should differ from simple central differences on noisy data.
+
+    This validates that the implementation actually uses the 8-neighbor Sobel
+    kernel rather than 2-point np.gradient, which was the bug in #1175.
+    """
+    rng = np.random.default_rng(1175)
+    # Smooth ramp with noise to amplify the difference between methods
+    rows, cols = 64, 64
+    base = np.tile(np.linspace(0, 500, cols), (rows, 1))
+    noise = rng.normal(0, 2, (rows, cols))
+    data = (base + noise).astype(np.float32)
+    cellsize_x, cellsize_y = 30.0, 30.0
+    azimuth, altitude = 315.0, 45.0
+
+    # Our result (should be Horn)
+    result = _run_numpy(data, azimuth=azimuth, angle_altitude=altitude,
+                        cellsize_x=cellsize_x, cellsize_y=cellsize_y)
+    interior = slice(1, -1)
+
+    # Horn reference
+    horn_ref = _horn_reference(data, cellsize_x, cellsize_y, azimuth, altitude)
+    assert_allclose(result[interior, interior], horn_ref, atol=1e-6)
+
+    # np.gradient reference (old method) -- should NOT match
+    az_rad = azimuth * np.pi / 180.
+    alt_rad = altitude * np.pi / 180.
+    dy, dx = np.gradient(data, cellsize_y, cellsize_x)
+    xx_plus_yy = dx**2 + dy**2
+    old_shaded = (
+        np.sin(alt_rad) + np.cos(alt_rad) * (dy * np.cos(az_rad) - dx * np.sin(az_rad))
+    ) / np.sqrt(1 + xx_plus_yy)
+    old_ref = np.clip(old_shaded, 0.0, 1.0)
+
+    max_diff = np.max(np.abs(result[interior, interior] - old_ref[interior, interior]))
+    assert max_diff > 0.01, (
+        f"Expected meaningful difference between Horn and central-diff, "
+        f"got max diff {max_diff}"
+    )
 
 
 @dask_array_available
