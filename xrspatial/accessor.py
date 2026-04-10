@@ -362,6 +362,10 @@ class XrsSpatialDataArrayAccessor:
         from .zonal import crop
         return crop(zones, self._obj, zones_ids, **kwargs)
 
+    def clip_polygon(self, geometry, **kwargs):
+        from .polygon_clip import clip_polygon
+        return clip_polygon(self._obj, geometry, **kwargs)
+
     def trim(self, **kwargs):
         from .zonal import trim
         return trim(self._obj, **kwargs)

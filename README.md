@@ -466,6 +466,7 @@ Same-CRS tiles skip reprojection entirely and are placed by direct coordinate al
 | Name | Description | Source | NumPy xr.DataArray | Dask xr.DataArray | CuPy GPU xr.DataArray | Dask GPU xr.DataArray |
 |:----------:|:------------|:------:|:----------------------:|:--------------------:|:-------------------:|:------:|
 | [Apply](xrspatial/zonal.py) | Applies a custom function to each zone in a classified raster | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
+| [Clip Polygon](xrspatial/polygon_clip.py) | Clips a raster to an arbitrary polygon with masking | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Crop](xrspatial/zonal.py) | Extracts the bounding rectangle of a specific zone | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Regions](xrspatial/zonal.py) | Identifies connected regions of non-zero cells | Standard (CCL) | ✅️ | ✅️ | ✅️ | ✅️ |
 | [Trim](xrspatial/zonal.py) | Removes nodata border rows and columns from a raster | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
