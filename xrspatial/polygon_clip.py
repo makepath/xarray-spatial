@@ -201,46 +201,55 @@ def clip_polygon(
 
     mask = rasterize(geom_pairs, **kw)
 
-    # Get mask as a plain numpy array regardless of what rasterize returned
-    mask_np = mask.data
-    if has_dask_array() and isinstance(mask_np, da.Array):
-        mask_np = mask_np.compute()
-    if has_cuda_and_cupy() and is_cupy_array(mask_np):
-        mask_np = mask_np.get()
+    # Apply the mask.  Keep it lazy for dask backends to avoid
+    # materializing the full mask into RAM (which would OOM for 30TB
+    # inputs).  For non-dask backends, compute the mask eagerly.
+    mask_data = mask.data
 
-    # Apply the mask.  For CuPy backends we operate on the raw array
-    # to avoid an xarray/cupy incompatibility in ``DataArray.where()``.
-    cond_np = mask_np == 1
+    if has_dask_array() and isinstance(raster.data, da.Array):
+        # Dask path: keep mask lazy -- no .compute()
+        if isinstance(mask_data, da.Array):
+            cond = mask_data == 1
+        else:
+            # Mask came back non-dask despite dask input (shouldn't happen,
+            # but handle gracefully)
+            cond = da.from_array(
+                np.asarray(mask_data == 1) if not is_cupy_array(mask_data)
+                else mask_data.get() == 1,
+                chunks=raster.data.chunks[-2:],
+            )
 
-    if has_cuda_and_cupy() and is_cupy_array(raster.data):
+        if has_cuda_and_cupy() and is_dask_cupy(raster):
+            # dask+cupy: use map_blocks with both raster and condition
+            def _apply_mask(raster_block, cond_block):
+                import cupy
+                out = raster_block.copy()
+                out[~cond_block.astype(bool)] = nodata
+                return out
+
+            out = da.map_blocks(
+                _apply_mask, raster.data, cond,
+                dtype=raster.dtype,
+            )
+            result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
+        else:
+            # dask+numpy: xarray.where handles lazy condition natively
+            result = raster.where(cond, other=nodata)
+    elif has_cuda_and_cupy() and is_cupy_array(raster.data):
+        # Pure CuPy: operate on raw arrays to avoid xarray/cupy
+        # incompatibility in DataArray.where().
         import cupy
-        cond_cp = cupy.asarray(cond_np)
+        if is_cupy_array(mask_data):
+            cond_cp = mask_data == 1
+        else:
+            cond_cp = cupy.asarray(np.asarray(mask_data) == 1)
         out = raster.data.copy()
         out[~cond_cp] = nodata
         result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
-    elif has_cuda_and_cupy() and is_dask_cupy(raster):
-        import cupy
-        cond_cp = cupy.asarray(cond_np)
-
-        def _apply_mask(block, block_info=None):
-            if block_info is not None:
-                loc = block_info[0]['array-location']
-                y_sl = slice(loc[-2][0], loc[-2][1])
-                x_sl = slice(loc[-1][0], loc[-1][1])
-                c = cond_cp[y_sl, x_sl]
-            else:
-                c = cond_cp
-            out = block.copy()
-            out[~c] = nodata
-            return out
-
-        out = raster.data.map_blocks(_apply_mask, dtype=raster.dtype)
-        result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
-    elif has_dask_array() and isinstance(raster.data, da.Array):
-        cond_da = da.from_array(cond_np, chunks=raster.data.chunks[-2:])
-        result = raster.where(cond_da, other=nodata)
     else:
-        result = raster.where(cond_np, other=nodata)
+        # Pure numpy
+        cond = np.asarray(mask_data) == 1
+        result = raster.where(cond, other=nodata)
 
     result.attrs = raster.attrs
     result.name = name if name is not None else raster.name

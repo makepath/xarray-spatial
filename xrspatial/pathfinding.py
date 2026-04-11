@@ -1075,7 +1075,9 @@ def a_star_search(surface: xr.DataArray,
         else:
             _check_memory(h, w)
             if friction_np is None:
-                friction_np = np.ones((h, w), dtype=np.float64)
+                # Dummy 1x1 array: kernel never reads friction when
+                # use_friction is False, so avoid allocating h*w float64.
+                friction_np = np.ones((1, 1), dtype=np.float64)
             path_img = np.full(surface.shape, np.nan, dtype=np.float64)
             if start_py != NONE:
                 _a_star_search(surface_np, path_img, start_py, start_px,
@@ -1132,7 +1134,9 @@ def a_star_search(surface: xr.DataArray,
             # Full-grid A*
             _check_memory(h, w)
             if friction_data is None:
-                friction_data = np.ones((h, w), dtype=np.float64)
+                # Dummy 1x1 array: kernel never reads friction when
+                # use_friction is False, so avoid allocating h*w float64.
+                friction_data = np.ones((1, 1), dtype=np.float64)
             path_img = np.full(surface.shape, np.nan, dtype=np.float64)
             if start_py != NONE:
                 _a_star_search(surface_data, path_img, start_py, start_px,

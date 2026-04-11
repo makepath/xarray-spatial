@@ -324,14 +324,38 @@ def _run_kde_cupy(xs, ys, ws, shape, x0, y0, dx, dy, bw, kernel_id):
     return out
 
 
+def _filter_points_to_tile(xs, ys, ws, tile_x0, tile_y0, dx, dy,
+                           tile_rows, tile_cols, cutoff):
+    """Return (xs, ys, ws) subset that could affect this tile.
+
+    Points whose cutoff circle doesn't overlap the tile extent are
+    excluded, reducing serialization and speeding up the kernel.
+    """
+    tile_x1 = tile_x0 + tile_cols * dx
+    tile_y1 = tile_y0 + tile_rows * dy
+    mask = ((xs >= tile_x0 - cutoff) & (xs <= tile_x1 + cutoff) &
+            (ys >= tile_y0 - cutoff) & (ys <= tile_y1 + cutoff))
+    if mask.all():
+        return xs, ys, ws
+    return xs[mask], ys[mask], ws[mask]
+
+
 def _run_kde_dask_numpy(xs, ys, ws, shape, x0, y0, dx, dy, bw, kernel_id,
                         chunks):
-    """Dask-backed KDE: each chunk computes its own tile independently."""
+    """Dask-backed KDE: each chunk computes its own tile independently.
+
+    Points are pre-filtered per tile so each delayed task receives only
+    the relevant subset, reducing serialization from O(n_tiles * n_points)
+    to O(n_tiles * points_per_tile).
+    """
     # Determine chunk layout
     if chunks is None:
         chunks = (min(256, shape[0]), min(256, shape[1]))
     row_splits = _split_sizes(shape[0], chunks[0])
     col_splits = _split_sizes(shape[1], chunks[1])
+
+    # Cutoff radius matching the kernel implementation
+    cutoff = 4.0 * bw if kernel_id == 0 else bw
 
     blocks = []
     row_off = 0
@@ -342,8 +366,11 @@ def _run_kde_dask_numpy(xs, ys, ws, shape, x0, y0, dx, dy, bw, kernel_id,
             tile_y0 = y0 + row_off * dy
             tile_x0 = x0 + col_off * dx
             tile_shape = (rs, cs)
+            # Pre-filter points to this tile's extent + cutoff
+            txs, tys, tws = _filter_points_to_tile(
+                xs, ys, ws, tile_x0, tile_y0, dx, dy, rs, cs, cutoff)
             block = dask.delayed(_run_kde_numpy)(
-                xs, ys, ws, tile_shape,
+                txs, tys, tws, tile_shape,
                 tile_x0, tile_y0, dx, dy, bw, kernel_id,
             )
             row_blocks.append(
@@ -358,11 +385,17 @@ def _run_kde_dask_numpy(xs, ys, ws, shape, x0, y0, dx, dy, bw, kernel_id,
 
 def _run_kde_dask_cupy(xs, ys, ws, shape, x0, y0, dx, dy, bw, kernel_id,
                        chunks):
-    """Dask+CuPy KDE: each chunk uses the GPU kernel."""
+    """Dask+CuPy KDE: each chunk uses the GPU kernel.
+
+    Points are pre-filtered per tile (same as the numpy dask path)
+    so each delayed task serializes only the relevant subset.
+    """
     if chunks is None:
         chunks = (min(256, shape[0]), min(256, shape[1]))
     row_splits = _split_sizes(shape[0], chunks[0])
     col_splits = _split_sizes(shape[1], chunks[1])
+
+    cutoff = 4.0 * bw if kernel_id == 0 else bw
 
     blocks = []
     row_off = 0
@@ -373,8 +406,10 @@ def _run_kde_dask_cupy(xs, ys, ws, shape, x0, y0, dx, dy, bw, kernel_id,
             tile_y0 = y0 + row_off * dy
             tile_x0 = x0 + col_off * dx
             tile_shape = (rs, cs)
+            txs, tys, tws = _filter_points_to_tile(
+                xs, ys, ws, tile_x0, tile_y0, dx, dy, rs, cs, cutoff)
             block = dask.delayed(_run_kde_cupy)(
-                xs, ys, ws, tile_shape,
+                txs, tys, tws, tile_shape,
                 tile_x0, tile_y0, dx, dy, bw, kernel_id,
             )
             row_blocks.append(

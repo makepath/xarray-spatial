@@ -1449,6 +1449,45 @@ def _merge_chunk_polygons(chunk_results, transform):
     return column, polygon_points
 
 
+def _merge_from_separated(all_interior, boundary_by_value, transform):
+    """Merge pre-separated interior/boundary polygons into final output.
+
+    Like _merge_chunk_polygons but takes already-separated data so the
+    caller can accumulate incrementally (one chunk at a time) instead of
+    holding all chunk_results in memory simultaneously.
+    """
+    # Merge boundary polygons per value using edge cancellation.
+    merged = []
+    for val, polys_list in boundary_by_value.items():
+        if len(polys_list) == 1:
+            merged.append((val, polys_list[0]))
+        else:
+            merged_polys = _merge_polygon_rings(polys_list)
+            for rings in merged_polys:
+                merged.append((val, rings))
+
+    all_polys = all_interior + merged
+
+    def sort_key(item):
+        ext = item[1][0]
+        min_y = np.min(ext[:, 1])
+        min_x = np.min(ext[ext[:, 1] == min_y, 0])
+        return (min_y, min_x, item[0])
+
+    all_polys.sort(key=sort_key)
+
+    column = []
+    polygon_points = []
+    for val, rings in all_polys:
+        if transform is not None:
+            for ring in rings:
+                _transform_points(ring, transform)
+        column.append(val)
+        polygon_points.append(rings)
+
+    return column, polygon_points
+
+
 def _polygonize_dask(dask_data, mask_data, connectivity_8, transform):
     """Dask backend for polygonize: per-chunk polygonize + edge merge."""
     # Ensure mask chunks match raster chunks.
@@ -1464,21 +1503,30 @@ def _polygonize_dask(dask_data, mask_data, connectivity_8, transform):
     ny_total = int(sum(row_chunks))
     nx_total = int(sum(col_chunks))
 
-    delayed_results = []
+    # Process chunks incrementally: compute one at a time so only boundary
+    # polygons accumulate in memory.  Interior polygons (fully inside a
+    # chunk, no merging needed) go straight to the output list.  This keeps
+    # peak memory proportional to boundary_polygon_count rather than
+    # total_polygon_count * n_chunks.
+    all_interior = []
+    boundary_by_value = {}
+
     for iy in range(len(row_chunks)):
         for ix in range(len(col_chunks)):
             block = dask_data.blocks[iy, ix]
             mask_block = (mask_data.blocks[iy, ix]
                           if mask_data is not None else None)
-            delayed_results.append(
+            interior, boundary = dask.compute(
                 dask.delayed(_polygonize_chunk)(
                     block, mask_block, connectivity_8,
                     int(row_offsets[iy]), int(col_offsets[ix]),
                     ny_total, nx_total,
-                ))
+                ))[0]
+            all_interior.extend(interior)
+            for val, rings in boundary:
+                boundary_by_value.setdefault(val, []).append(rings)
 
-    chunk_results = dask.compute(*delayed_results)
-    return _merge_chunk_polygons(chunk_results, transform)
+    return _merge_from_separated(all_interior, boundary_by_value, transform)
 
 
 def polygonize(
