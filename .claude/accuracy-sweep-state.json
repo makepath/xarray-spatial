@@ -4,6 +4,9 @@
     "focal": { "last_inspected": "2026-03-30T13:00:00Z", "issue": 1092 },
     "multispectral": { "last_inspected": "2026-03-30T14:00:00Z", "issue": 1094 },
     "proximity": { "last_inspected": "2026-03-30T15:00:00Z", "issue": null, "notes": "Direction >= boundary fragile but works due to truncated constant. Float32 truncation is design choice. No wrong-results bugs found." },
-    "curvature": { "last_inspected": "2026-03-30T15:00:00Z", "issue": null, "notes": "Formula matches ArcGIS reference. Backends consistent. No issues found." }
+    "curvature": { "last_inspected": "2026-03-30T15:00:00Z", "issue": null, "notes": "Formula matches ArcGIS reference. Backends consistent. No issues found." },
+    "hillshade": { "last_inspected": "2026-04-10T12:00:00Z", "issue": null, "notes": "Horn's method correct. All backends consistent. NaN propagation correct. float32 adequate for [0,1] output." },
+    "terrain": { "last_inspected": "2026-04-10T12:00:00Z", "issue": null, "notes": "Perlin/Worley/ridged noise correct. Dask chunk boundaries produce bit-identical results. No precision issues." },
+    "perlin": { "last_inspected": "2026-04-10T12:00:00Z", "issue": null, "notes": "Improved Perlin noise implementation correct. Fade/gradient functions verified. Backend-consistent. Continuous at cell boundaries." }
   }
 }
