@@ -131,10 +131,32 @@ def _label_connected(data, valid, neighborhood):
                 ):
                     _uf_union(parent, rank, idx, (r - 1) * cols + (c + 1))
 
+    # --- Count unique regions first so region_val_buf is right-sized ---
+    # Reuse rank array (no longer needed after union-find) as root_to_id.
+    # This eliminates a separate n-element int32 allocation.
+    root_to_id = rank  # alias; rank is dead after union-find
+    for i in range(n):
+        root_to_id[i] = 0  # clear
+
+    n_regions = 0
+    for i in range(n):
+        r = i // cols
+        c = i % cols
+        if not valid[r, c]:
+            continue
+        root = _uf_find(parent, i)
+        if root_to_id[root] == 0:
+            root_to_id[root] = 1  # mark as seen
+            n_regions += 1
+
+    # Allocate region_val_buf at actual region count, not pixel count.
+    # For a 46K x 46K raster with 100K regions this saves ~16 GB.
+    region_val_buf = np.full(n_regions + 1, np.nan, dtype=np.float64)
+
     # Assign contiguous region IDs
     region_map_flat = np.zeros(n, dtype=np.int32)
-    root_to_id = np.zeros(n, dtype=np.int32)
-    region_val_buf = np.full(n + 1, np.nan, dtype=np.float64)
+    for i in range(n):
+        root_to_id[i] = 0  # clear for ID assignment
     next_id = 1
 
     for i in range(n):
@@ -319,14 +341,17 @@ def _available_memory_bytes():
 def _sieve_dask(data, threshold, neighborhood, skip_values):
     """Dask+numpy backend: compute to numpy, sieve, wrap back."""
     avail = _available_memory_bytes()
-    estimated_bytes = np.prod(data.shape) * data.dtype.itemsize
-    if estimated_bytes * 5 > 0.5 * avail:
+    n_pixels = np.prod(data.shape)
+    # Peak memory: input + result (float64 each) + parent + rank +
+    # region_map_flat (int32 each) = 2*8 + 3*4 = 28 bytes/pixel.
+    estimated_bytes = n_pixels * 28
+    if estimated_bytes > 0.5 * avail:
         raise MemoryError(
-            f"sieve() needs the full array in memory "
-            f"(~{estimated_bytes * 5 / 1e9:.1f} GB) but only "
-            f"~{avail / 1e9:.1f} GB is available.  Connected-component "
-            f"labeling is a global operation that cannot be chunked.  "
-            f"Consider downsampling or tiling the input manually."
+            f"sieve() needs ~{estimated_bytes / 1e9:.1f} GB for the full "
+            f"array plus CCL bookkeeping, but only ~{avail / 1e9:.1f} GB "
+            f"is available.  Connected-component labeling is a global "
+            f"operation that cannot be chunked.  Consider downsampling "
+            f"or tiling the input manually."
         )
 
     np_data = data.compute()
@@ -338,18 +363,19 @@ def _sieve_dask(data, threshold, neighborhood, skip_values):
 
 def _sieve_dask_cupy(data, threshold, neighborhood, skip_values):
     """Dask+CuPy backend: compute to cupy, sieve via CPU fallback, wrap back."""
-    estimated_bytes = np.prod(data.shape) * data.dtype.itemsize
+    n_pixels = np.prod(data.shape)
+    estimated_bytes = n_pixels * 28
     try:
         import cupy as cp
 
         free_gpu, _total = cp.cuda.Device().mem_info
-        if estimated_bytes * 5 > 0.5 * free_gpu:
+        if estimated_bytes > 0.5 * free_gpu:
             raise MemoryError(
-                f"sieve() needs the full array on GPU "
-                f"(~{estimated_bytes * 5 / 1e9:.1f} GB) but only "
-                f"~{free_gpu / 1e9:.1f} GB free.  Connected-component "
-                f"labeling is a global operation that cannot be chunked.  "
-                f"Consider downsampling or tiling the input manually."
+                f"sieve() needs ~{estimated_bytes / 1e9:.1f} GB for the "
+                f"full array plus CCL bookkeeping, but only "
+                f"~{free_gpu / 1e9:.1f} GB free GPU memory.  Connected-"
+                f"component labeling is a global operation that cannot be "
+                f"chunked.  Consider downsampling or tiling the input."
             )
     except (ImportError, AttributeError):
         pass
