@@ -410,6 +410,13 @@ def _reproject_chunk_cupy(
     c_min_clip = max(0, c_min)
     c_max_clip = min(src_w, c_max)
 
+    # Guard: cap source window to prevent GPU OOM if projection maps a
+    # small output chunk to a huge source area (matches numpy path).
+    _MAX_WINDOW_PIXELS = 64 * 1024 * 1024  # 64 Mpix (~512 MB for float64)
+    win_pixels = (r_max_clip - r_min_clip) * (c_max_clip - c_min_clip)
+    if win_pixels > _MAX_WINDOW_PIXELS:
+        return cp.full(chunk_shape, nodata, dtype=cp.float64)
+
     window = source_data[r_min_clip:r_max_clip, c_min_clip:c_max_clip]
     if hasattr(window, 'compute'):
         window = window.compute()
@@ -1105,6 +1112,13 @@ def _reproject_dask_cupy(
             r_max_clip = min(src_h, r_max)
             c_min_clip = max(0, c_min)
             c_max_clip = min(src_w, c_max)
+
+            # Guard: cap source window to prevent GPU OOM (matches numpy path)
+            _MAX_WINDOW_PIXELS = 64 * 1024 * 1024  # 64 Mpix
+            win_pixels = (r_max_clip - r_min_clip) * (c_max_clip - c_min_clip)
+            if win_pixels > _MAX_WINDOW_PIXELS:
+                col_offset += cchunk
+                continue
 
             # Fetch only the needed source window from dask
             window = raster.data[r_min_clip:r_max_clip, c_min_clip:c_max_clip]

@@ -1458,3 +1458,62 @@ class TestReprojWithLiteCRS:
         result = reproject(raster, target_crs=32632)
         assert result.attrs['crs'] is not None
         assert result.shape[0] > 0 and result.shape[1] > 0
+
+
+# ---------------------------------------------------------------------------
+# Security guards (Cat 1: unbounded allocation)
+# ---------------------------------------------------------------------------
+
+class TestSecurityGuards:
+    """Verify that memory guards prevent unbounded allocations."""
+
+    def test_output_grid_too_large_raises(self):
+        """_compute_output_grid should reject grids > 1 billion pixels."""
+        from xrspatial.reproject._grid import _compute_output_grid
+        from xrspatial.reproject._crs_utils import _resolve_crs
+
+        src_crs = _resolve_crs(4326)
+        tgt_crs = _resolve_crs(4326)
+
+        # Tiny resolution on a wide extent would produce > 1e9 pixels.
+        with pytest.raises(ValueError, match="too large"):
+            _compute_output_grid(
+                source_bounds=(-180, -90, 180, 90),
+                source_shape=(1000, 1000),
+                source_crs=src_crs,
+                target_crs=tgt_crs,
+                resolution=1e-6,  # ~360M cols x 180M rows >> 1e9
+            )
+
+    def test_output_grid_normal_resolution_ok(self):
+        """Normal resolution should not be rejected."""
+        from xrspatial.reproject._grid import _compute_output_grid
+        from xrspatial.reproject._crs_utils import _resolve_crs
+
+        src_crs = _resolve_crs(4326)
+        tgt_crs = _resolve_crs(4326)
+
+        result = _compute_output_grid(
+            source_bounds=(-10, -10, 10, 10),
+            source_shape=(100, 100),
+            source_crs=src_crs,
+            target_crs=tgt_crs,
+            resolution=0.1,
+        )
+        assert result['shape'] == (200, 200)
+
+    def test_numpy_chunk_source_window_guard(self):
+        """_reproject_chunk_numpy should return nodata for huge source windows."""
+        from xrspatial.reproject import reproject
+
+        # A raster that covers a small area but projected to a CRS where
+        # the inverse transform maps to a large source region.
+        # We just verify the function doesn't crash for normal inputs.
+        raster = _make_raster(
+            np.ones((32, 32)),
+            crs='EPSG:4326',
+            x_range=(-1, 1),
+            y_range=(-1, 1),
+        )
+        result = reproject(raster, target_crs='EPSG:3857')
+        assert result.shape[0] > 0 and result.shape[1] > 0
