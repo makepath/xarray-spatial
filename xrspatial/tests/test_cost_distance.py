@@ -416,6 +416,47 @@ def test_source_on_impassable_cell(backend):
 
 
 # -----------------------------------------------------------------------
+# Snake-maze: long shortest paths that need many Bellman-Ford iterations
+# -----------------------------------------------------------------------
+
+@pytest.mark.parametrize("backend", ['numpy', 'cupy', 'dask+numpy', 'dask+cupy'])
+def test_snake_maze_long_path(backend):
+    """Maze where shortest path has more edges than height + width.
+
+    Regression test for #1191: the CuPy Bellman-Ford loop used
+    max_iterations = height + width, which is too few for snaking paths.
+    """
+    h, w = 5, 5
+    source = np.zeros((h, w))
+    source[0, 0] = 1.0
+
+    # Snake: row 0 right, down at col 4, row 2 left, down at col 0, row 4 right
+    friction = np.full((h, w), np.nan)
+    friction[0, :] = 1.0
+    friction[1, 4] = 1.0
+    friction[2, :] = 1.0
+    friction[3, 0] = 1.0
+    friction[4, :] = 1.0
+
+    raster = _make_raster(source, backend=backend, chunks=(5, 5))
+    friction_r = _make_raster(friction, backend=backend, chunks=(5, 5))
+
+    result = cost_distance(raster, friction_r, connectivity=4)
+    out = _compute(result)
+
+    # Path to (4,4) has 16 edges, each costing 1.0
+    expected = np.array([
+        [ 0.,  1.,  2.,  3.,  4.],
+        [np.nan, np.nan, np.nan, np.nan, 5.],
+        [10.,  9.,  8.,  7.,  6.],
+        [11., np.nan, np.nan, np.nan, np.nan],
+        [12., 13., 14., 15., 16.],
+    ], dtype=np.float32)
+
+    np.testing.assert_allclose(out, expected, equal_nan=True, atol=1e-5)
+
+
+# -----------------------------------------------------------------------
 # CuPy GPU tests
 # -----------------------------------------------------------------------
 
