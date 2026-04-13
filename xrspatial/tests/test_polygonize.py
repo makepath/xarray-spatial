@@ -540,6 +540,39 @@ def test_polygonize_1008_geopandas_batch_with_holes():
     assert_allclose(df.geometry.area.sum(), 36.0)
 
 
+@pytest.mark.parametrize("connectivity", [4, 8])
+def test_polygonize_nan_pixels_excluded(connectivity):
+    """NaN pixels in float rasters should not produce polygons (#1190)."""
+    data = np.array([
+        [1.0, np.nan],
+        [np.nan, 1.0],
+    ], dtype=np.float64)
+    raster = xr.DataArray(data)
+    values, polygons = polygonize(raster, connectivity=connectivity)
+    # No polygon should have a NaN value.
+    assert not any(np.isnan(v) for v in values), (
+        f"NaN-valued polygons emitted: {values}"
+    )
+    assert all(v == 1.0 for v in values)
+    # 4-connectivity: two separate 1-pixel regions; 8-connectivity: one region.
+    expected = 2 if connectivity == 4 else 1
+    assert len(polygons) == expected
+
+
+@pytest.mark.skipif(da is None, reason="dask not installed")
+def test_polygonize_nan_pixels_excluded_dask():
+    """Dask backend also masks NaN pixels (#1190)."""
+    data = np.array([
+        [1.0, np.nan, 2.0],
+        [np.nan, 1.0, np.nan],
+        [3.0, np.nan, 1.0],
+    ], dtype=np.float64)
+    raster = xr.DataArray(da.from_array(data, chunks=(2, 2)))
+    values, polygons = polygonize(raster, connectivity=4)
+    assert not any(np.isnan(v) for v in values)
+    assert set(values) == {1.0, 2.0, 3.0}
+
+
 class TestSimplifyHelpers:
     """Tests for internal simplification helper functions."""
 
