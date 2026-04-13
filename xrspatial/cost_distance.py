@@ -340,7 +340,7 @@ def _cost_distance_cupy(source_data, friction_data, cellsize_x, cellsize_y,
     changed = cp.zeros(1, dtype=cp.int32)
     griddim, blockdim = cuda_args((height, width))
 
-    max_iterations = height + width
+    max_iterations = height * width
     for _ in range(max_iterations):
         changed[0] = 0
         _cost_distance_relax_kernel[griddim, blockdim](
