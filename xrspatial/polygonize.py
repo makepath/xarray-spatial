@@ -550,6 +550,15 @@ def _polygonize_numpy(
 ) -> Tuple[List[Union[int, float]], List[List[np.ndarray]]]:
 
     ny, nx = values.shape
+
+    # Mask NaN pixels for float arrays, matching the CuPy backend.
+    if np.issubdtype(values.dtype, np.floating):
+        nan_mask = ~np.isnan(values)
+        if mask is not None:
+            mask = mask & nan_mask
+        else:
+            mask = nan_mask
+
     if nx == 1:
         # Algorithm requires nx > 1 to differentiate between facing E
         # (forward == 1) and facing N (forward == nx), so add extra column to
