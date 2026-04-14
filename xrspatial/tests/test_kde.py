@@ -199,6 +199,163 @@ class TestEdgeCases:
 
 
 # ---------------------------------------------------------------------------
+# Descending coordinate templates (#1198)
+# ---------------------------------------------------------------------------
+
+class TestDescendingCoordinates:
+    """KDE must produce correct results when template coords are descending.
+
+    Geospatial rasters commonly have row 0 at the top (descending y).
+    Before the fix in #1198, negative dy/dx caused the bounding-box
+    index math to produce lo > hi, so the inner loops never ran.
+    """
+
+    @pytest.fixture
+    def asc_template(self):
+        return xr.DataArray(
+            np.zeros((16, 16), dtype=np.float64),
+            dims=['y', 'x'],
+            coords={
+                'y': np.linspace(-4, 4, 16),
+                'x': np.linspace(-4, 4, 16),
+            },
+        )
+
+    @pytest.fixture
+    def desc_y_template(self):
+        """Row 0 = top (descending y, ascending x)."""
+        return xr.DataArray(
+            np.zeros((16, 16), dtype=np.float64),
+            dims=['y', 'x'],
+            coords={
+                'y': np.linspace(4, -4, 16),
+                'x': np.linspace(-4, 4, 16),
+            },
+        )
+
+    @pytest.fixture
+    def desc_x_template(self):
+        """Ascending y, descending x."""
+        return xr.DataArray(
+            np.zeros((16, 16), dtype=np.float64),
+            dims=['y', 'x'],
+            coords={
+                'y': np.linspace(-4, 4, 16),
+                'x': np.linspace(4, -4, 16),
+            },
+        )
+
+    @pytest.fixture
+    def desc_both_template(self):
+        """Both axes descending."""
+        return xr.DataArray(
+            np.zeros((16, 16), dtype=np.float64),
+            dims=['y', 'x'],
+            coords={
+                'y': np.linspace(4, -4, 16),
+                'x': np.linspace(4, -4, 16),
+            },
+        )
+
+    def test_descending_y_nonzero(self, desc_y_template):
+        result = kde([0.0], [0.0], bandwidth=1.0, template=desc_y_template)
+        assert float(result.sum()) > 0.0
+
+    def test_descending_y_matches_ascending(self, asc_template, desc_y_template):
+        """Descending-y result should equal ascending-y result, row-flipped."""
+        r_asc = kde([0.0], [0.0], bandwidth=1.0, template=asc_template)
+        r_desc = kde([0.0], [0.0], bandwidth=1.0, template=desc_y_template)
+        np.testing.assert_allclose(
+            r_desc.values[::-1], r_asc.values, rtol=1e-12,
+        )
+
+    def test_descending_x_matches_ascending(self, asc_template, desc_x_template):
+        """Descending-x result should equal ascending-x result, col-flipped."""
+        r_asc = kde([0.0], [0.0], bandwidth=1.0, template=asc_template)
+        r_desc = kde([0.0], [0.0], bandwidth=1.0, template=desc_x_template)
+        np.testing.assert_allclose(
+            r_desc.values[:, ::-1], r_asc.values, rtol=1e-12,
+        )
+
+    def test_both_descending_matches_ascending(self, asc_template,
+                                                desc_both_template):
+        r_asc = kde([0.0], [0.0], bandwidth=1.0, template=asc_template)
+        r_both = kde([0.0], [0.0], bandwidth=1.0, template=desc_both_template)
+        np.testing.assert_allclose(
+            r_both.values[::-1, ::-1], r_asc.values, rtol=1e-12,
+        )
+
+    @pytest.mark.parametrize('kernel', ['epanechnikov', 'quartic'])
+    def test_compact_kernels_descending_y(self, asc_template,
+                                           desc_y_template, kernel):
+        """Compact kernels match exactly (no cutoff-boundary rounding)."""
+        pts_x = [0.0, 1.0, -1.0]
+        pts_y = [0.0, 1.0, -1.0]
+        r_asc = kde(pts_x, pts_y, bandwidth=1.0, kernel=kernel,
+                    template=asc_template)
+        r_desc = kde(pts_x, pts_y, bandwidth=1.0, kernel=kernel,
+                     template=desc_y_template)
+        np.testing.assert_allclose(
+            r_desc.values[::-1], r_asc.values, rtol=1e-12,
+        )
+
+    def test_gaussian_descending_y_multipoint(self, asc_template,
+                                               desc_y_template):
+        """Gaussian with multiple points: allow tiny diffs at cutoff edge.
+
+        The 4*bw box cutoff means int() truncation can include/exclude
+        a different fringe pixel when spacing flips sign. The affected
+        values are near exp(-8) ~ 3e-4, so atol=1e-5 is plenty tight.
+        """
+        pts_x = [0.0, 1.0, -1.0]
+        pts_y = [0.0, 1.0, -1.0]
+        r_asc = kde(pts_x, pts_y, bandwidth=1.0, kernel='gaussian',
+                    template=asc_template)
+        r_desc = kde(pts_x, pts_y, bandwidth=1.0, kernel='gaussian',
+                     template=desc_y_template)
+        np.testing.assert_allclose(
+            r_desc.values[::-1], r_asc.values, atol=1e-5,
+        )
+
+    def test_line_density_descending_y_quartic(self, asc_template,
+                                                desc_y_template):
+        """Compact kernel: exact match with descending y."""
+        r_asc = line_density([0.0], [0.0], [1.0], [1.0],
+                             bandwidth=0.5, kernel='quartic',
+                             template=asc_template)
+        r_desc = line_density([0.0], [0.0], [1.0], [1.0],
+                              bandwidth=0.5, kernel='quartic',
+                              template=desc_y_template)
+        np.testing.assert_allclose(
+            r_desc.values[::-1], r_asc.values, rtol=1e-12,
+        )
+
+    def test_line_density_descending_y_gaussian(self, asc_template,
+                                                 desc_y_template):
+        """Gaussian: allow tiny diffs at the 4*bw cutoff edge."""
+        r_asc = line_density([0.0], [0.0], [1.0], [1.0],
+                             bandwidth=0.5, kernel='gaussian',
+                             template=asc_template)
+        r_desc = line_density([0.0], [0.0], [1.0], [1.0],
+                              bandwidth=0.5, kernel='gaussian',
+                              template=desc_y_template)
+        np.testing.assert_allclose(
+            r_desc.values[::-1], r_asc.values, atol=1e-4,
+        )
+
+    def test_line_density_descending_x(self, asc_template, desc_x_template):
+        r_asc = line_density([0.0], [0.0], [1.0], [1.0],
+                             bandwidth=0.5, kernel='quartic',
+                             template=asc_template)
+        r_desc = line_density([0.0], [0.0], [1.0], [1.0],
+                              bandwidth=0.5, kernel='quartic',
+                              template=desc_x_template)
+        np.testing.assert_allclose(
+            r_desc.values[:, ::-1], r_asc.values, rtol=1e-12,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Line density
 # ---------------------------------------------------------------------------
 
