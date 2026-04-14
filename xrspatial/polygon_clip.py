@@ -79,10 +79,14 @@ def _resolve_geometry(geometry):
     )
 
 
-def _crop_to_bbox(raster, geom_pairs):
+def _crop_to_bbox(raster, geom_pairs, all_touched=False):
     """Slice the raster to the bounding box of the geometry.
 
     Returns the sliced DataArray and the geometry pairs (unchanged).
+
+    When *all_touched* is True the bounding-box comparison is expanded by
+    half a pixel on every side so that pixels whose cells overlap the
+    geometry boundary are not prematurely excluded.
     """
     from shapely.ops import unary_union
     merged = unary_union([g for g, _ in geom_pairs])
@@ -91,19 +95,24 @@ def _crop_to_bbox(raster, geom_pairs):
     y_coords = raster.coords[raster.dims[-2]].values
     x_coords = raster.coords[raster.dims[-1]].values
 
-    # Determine coordinate ordering (ascending or descending)
-    y_ascending = y_coords[-1] >= y_coords[0]
-    x_ascending = x_coords[-1] >= x_coords[0]
+    # When all_touched is set, expand the bbox by half a pixel so that
+    # pixels whose cells overlap the geometry survive the crop.
+    if all_touched:
+        if len(x_coords) > 1:
+            half_px_x = abs(float(x_coords[1] - x_coords[0])) / 2.0
+        else:
+            half_px_x = 0.0
+        if len(y_coords) > 1:
+            half_py_y = abs(float(y_coords[1] - y_coords[0])) / 2.0
+        else:
+            half_py_y = 0.0
+        minx -= half_px_x
+        maxx += half_px_x
+        miny -= half_py_y
+        maxy += half_py_y
 
-    if y_ascending:
-        y_mask = (y_coords >= miny) & (y_coords <= maxy)
-    else:
-        y_mask = (y_coords >= miny) & (y_coords <= maxy)
-
-    if x_ascending:
-        x_mask = (x_coords >= minx) & (x_coords <= maxx)
-    else:
-        x_mask = (x_coords >= minx) & (x_coords <= maxx)
+    y_mask = (y_coords >= miny) & (y_coords <= maxy)
+    x_mask = (x_coords >= minx) & (x_coords <= maxx)
 
     y_idx = np.where(y_mask)[0]
     x_idx = np.where(x_mask)[0]
@@ -186,7 +195,7 @@ def clip_polygon(
 
     # Optionally crop to bounding box first (reduces rasterize cost)
     if crop:
-        raster = _crop_to_bbox(raster, geom_pairs)
+        raster = _crop_to_bbox(raster, geom_pairs, all_touched=all_touched)
 
     # Build a binary mask via rasterize, aligned to the (possibly cropped)
     # raster grid.  Always produce a plain numpy mask first, then convert
