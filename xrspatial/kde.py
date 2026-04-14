@@ -118,10 +118,16 @@ def _kde_cpu(xs, ys, ws, out, x0, y0, dx, dy, bw, kernel_id):
         w = ws[p]
 
         # Pixel range that falls within the cutoff.
-        col_lo = int(max(0, (px - cutoff - x0) / dx))
-        col_hi = int(min(cols - 1, (px + cutoff - x0) / dx)) + 1
-        row_lo = int(max(0, (py - cutoff - y0) / dy))
-        row_hi = int(min(rows - 1, (py + cutoff - y0) / dy)) + 1
+        # Compute both endpoints and use min/max so that negative
+        # spacing (descending coordinates) still produces lo <= hi.
+        c_a = int((px - cutoff - x0) / dx)
+        c_b = int((px + cutoff - x0) / dx)
+        col_lo = max(0, min(c_a, c_b))
+        col_hi = min(cols - 1, max(c_a, c_b)) + 1
+        r_a = int((py - cutoff - y0) / dy)
+        r_b = int((py + cutoff - y0) / dy)
+        row_lo = max(0, min(r_a, r_b))
+        row_hi = min(rows - 1, max(r_a, r_b)) + 1
 
         for r in range(row_lo, row_hi):
             cy = y0 + r * dy
@@ -200,10 +206,14 @@ def _line_density_cpu(x1s, y1s, x2s, y2s, ws, out,
             px = ax + t * (bx - ax)
             py = ay + t * (by - ay)
 
-            col_lo = int(max(0, (px - cutoff - x0) / dx))
-            col_hi = int(min(cols - 1, (px + cutoff - x0) / dx)) + 1
-            row_lo = int(max(0, (py - cutoff - y0) / dy))
-            row_hi = int(min(rows - 1, (py + cutoff - y0) / dy)) + 1
+            c_a = int((px - cutoff - x0) / dx)
+            c_b = int((px + cutoff - x0) / dx)
+            col_lo = max(0, min(c_a, c_b))
+            col_hi = min(cols - 1, max(c_a, c_b)) + 1
+            r_a = int((py - cutoff - y0) / dy)
+            r_b = int((py + cutoff - y0) / dy)
+            row_lo = max(0, min(r_a, r_b))
+            row_hi = min(rows - 1, max(r_a, r_b)) + 1
 
             for r in range(row_lo, row_hi):
                 cy = y0 + r * dy
