@@ -1,6 +1,8 @@
 """Tests for new features: multi-band, integer nodata, packbits, zstd, dask, BigTIFF."""
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -823,11 +825,9 @@ class TestVRT:
         assert vrt.bands[0].nodata == 0.0
         assert len(vrt.bands[0].sources) == 1
         src = vrt.bands[0].sources[0]
-        assert src.filename == '/data/tile.tif'
+        assert src.filename == os.path.realpath('/data/tile.tif')
         assert src.src_rect.x_off == 10
 
-
-import os
 
 class TestCloudStorage:
 

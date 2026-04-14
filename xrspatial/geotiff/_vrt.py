@@ -136,6 +136,8 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
                            relative.get('relativeToVRT', '0') == '1')
             if is_relative and not os.path.isabs(filename):
                 filename = os.path.join(vrt_dir, filename)
+            # Canonicalize to prevent path traversal (e.g. ../)
+            filename = os.path.realpath(filename)
 
             src_band = int(_text(src_elem, 'SourceBand') or '1')
 
