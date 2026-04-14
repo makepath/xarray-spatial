@@ -3,6 +3,7 @@
 Tests for:
 - Unbounded allocation guard (issue #1184)
 - VRT path traversal prevention (issue #1185)
+- GPU read and VRT read allocation guards (issue #1195)
 """
 from __future__ import annotations
 
@@ -115,6 +116,81 @@ class TestDimensionGuard:
 
         arr, _ = read_to_array(path)
         np.testing.assert_array_equal(arr, expected)
+
+    def test_open_geotiff_max_pixels(self, tmp_path):
+        """open_geotiff passes max_pixels through to the reader."""
+        from xrspatial.geotiff import open_geotiff
+
+        expected = np.arange(16, dtype=np.float32).reshape(4, 4)
+        data = make_minimal_tiff(4, 4, np.dtype('float32'), pixel_data=expected)
+        path = str(tmp_path / "small_1195.tif")
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        # Should succeed with generous limit
+        da = open_geotiff(path, max_pixels=1_000_000)
+        np.testing.assert_array_equal(da.values, expected)
+
+        # Should fail with tiny limit
+        with pytest.raises(ValueError, match="exceed the safety limit"):
+            open_geotiff(path, max_pixels=10)
+
+
+# ---------------------------------------------------------------------------
+# Cat 1b: VRT allocation guard (issue #1195)
+# ---------------------------------------------------------------------------
+
+class TestVRTAllocationGuard:
+    def test_read_vrt_rejects_huge_dimensions(self, tmp_path):
+        """read_vrt refuses to allocate when VRT XML claims huge dims."""
+        from xrspatial.geotiff._vrt import read_vrt as _read_vrt_internal
+
+        # Create a VRT with oversized dimensions but no actual source data
+        # needed -- _check_dimensions fires before any file reads
+        vrt_xml = '''<VRTDataset rasterXSize="100000" rasterYSize="100000">
+  <VRTRasterBand dataType="Float32" band="1">
+  </VRTRasterBand>
+</VRTDataset>'''
+
+        vrt_path = str(tmp_path / "huge_1195.vrt")
+        with open(vrt_path, 'w') as f:
+            f.write(vrt_xml)
+
+        with pytest.raises(ValueError, match="exceed the safety limit"):
+            _read_vrt_internal(vrt_path, max_pixels=1_000_000)
+
+    def test_read_vrt_normal_size_ok(self, tmp_path):
+        """Normal-sized VRT passes the allocation guard."""
+        from xrspatial.geotiff._vrt import read_vrt as _read_vrt_internal
+
+        vrt_xml = '''<VRTDataset rasterXSize="4" rasterYSize="4">
+  <VRTRasterBand dataType="Float32" band="1">
+  </VRTRasterBand>
+</VRTDataset>'''
+
+        vrt_path = str(tmp_path / "small_1195.vrt")
+        with open(vrt_path, 'w') as f:
+            f.write(vrt_xml)
+
+        # Should not raise -- 4x4x1 = 16 pixels
+        arr, vrt = _read_vrt_internal(vrt_path, max_pixels=1_000_000)
+        assert arr.shape == (4, 4)
+
+    def test_open_geotiff_vrt_max_pixels(self, tmp_path):
+        """open_geotiff passes max_pixels through to VRT reader."""
+        from xrspatial.geotiff import open_geotiff
+
+        vrt_xml = '''<VRTDataset rasterXSize="100000" rasterYSize="100000">
+  <VRTRasterBand dataType="Float32" band="1">
+  </VRTRasterBand>
+</VRTDataset>'''
+
+        vrt_path = str(tmp_path / "huge_vrt_1195.vrt")
+        with open(vrt_path, 'w') as f:
+            f.write(vrt_xml)
+
+        with pytest.raises(ValueError, match="exceed the safety limit"):
+            open_geotiff(vrt_path, max_pixels=1_000_000)
 
 
 # ---------------------------------------------------------------------------

@@ -192,7 +192,8 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
 
 
 def read_vrt(vrt_path: str, *, window=None,
-             band: int | None = None) -> tuple[np.ndarray, VRTDataset]:
+             band: int | None = None,
+             max_pixels: int | None = None) -> tuple[np.ndarray, VRTDataset]:
     """Read a VRT file by assembling pixel data from its source files.
 
     Parameters
@@ -227,6 +228,12 @@ def read_vrt(vrt_path: str, *, window=None,
 
     out_h = r1 - r0
     out_w = c1 - c0
+
+    from ._reader import _check_dimensions, MAX_PIXELS_DEFAULT
+    if max_pixels is None:
+        max_pixels = MAX_PIXELS_DEFAULT
+    n_bands = len([vrt.bands[band]] if band is not None else vrt.bands)
+    _check_dimensions(out_w, out_h, n_bands, max_pixels)
 
     # Select bands
     if band is not None:
