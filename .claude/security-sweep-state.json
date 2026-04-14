@@ -1,0 +1,22 @@
+{
+  "inspections": {
+    "reproject": {
+      "last_inspected": "2026-04-13",
+      "issue": null,
+      "severity_max": null,
+      "categories_found": []
+    },
+    "geotiff": {
+      "last_inspected": "2026-04-13",
+      "issue": 1195,
+      "severity_max": "HIGH",
+      "categories_found": [1]
+    },
+    "hydro": {
+      "last_inspected": "2026-04-13",
+      "issue": null,
+      "severity_max": "MEDIUM",
+      "categories_found": [1, 6]
+    }
+  }
+}

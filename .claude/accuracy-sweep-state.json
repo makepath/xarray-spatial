@@ -4,6 +4,15 @@
     "focal": { "last_inspected": "2026-03-30T13:00:00Z", "issue": 1092 },
     "multispectral": { "last_inspected": "2026-03-30T14:00:00Z", "issue": 1094 },
     "proximity": { "last_inspected": "2026-03-30T15:00:00Z", "issue": null, "notes": "Direction >= boundary fragile but works due to truncated constant. Float32 truncation is design choice. No wrong-results bugs found." },
-    "curvature": { "last_inspected": "2026-03-30T15:00:00Z", "issue": null, "notes": "Formula matches ArcGIS reference. Backends consistent. No issues found." }
+    "curvature": { "last_inspected": "2026-03-30T15:00:00Z", "issue": null, "notes": "Formula matches ArcGIS reference. Backends consistent. No issues found." },
+    "hillshade": { "last_inspected": "2026-04-10T12:00:00Z", "issue": null, "notes": "Horn's method correct. All backends consistent. NaN propagation correct. float32 adequate for [0,1] output." },
+    "terrain": { "last_inspected": "2026-04-10T12:00:00Z", "issue": null, "notes": "Perlin/Worley/ridged noise correct. Dask chunk boundaries produce bit-identical results. No precision issues." },
+    "perlin": { "last_inspected": "2026-04-10T12:00:00Z", "issue": null, "notes": "Improved Perlin noise implementation correct. Fade/gradient functions verified. Backend-consistent. Continuous at cell boundaries." },
+    "sieve": { "last_inspected": "2026-04-13T12:00:00Z", "issue": null, "notes": "Union-find CCL correct. NaN excluded from labeling. All backends funnel through _sieve_numpy." },
+    "polygonize": { "last_inspected": "2026-04-13T12:00:00Z", "issue": 1190, "notes": "NaN pixels not masked in numpy/dask backends. Fix in PR #1194." },
+    "cost_distance": { "last_inspected": "2026-04-13T12:00:00Z", "issue": 1191, "notes": "CuPy Bellman-Ford max_iterations = h+w instead of h*w. Fix in PR #1192." },
+    "visibility": { "last_inspected": "2026-04-13T12:00:00Z", "issue": null, "notes": "Bresenham line, LOS kernel, Fresnel zone all correct. All backends converge to numpy." },
+    "kde": { "last_inspected": "2026-04-13T12:00:00Z", "issue": 1198, "notes": "kde/line_density return zeros for descending-y templates. Fix in PR #1199." },
+    "polygon_clip": { "last_inspected": "2026-04-13T12:00:00Z", "issue": 1197, "notes": "crop=True + all_touched=True drops boundary pixels. Fix in PR #1200." }
   }
 }
