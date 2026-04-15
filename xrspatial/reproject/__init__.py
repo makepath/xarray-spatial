@@ -410,6 +410,13 @@ def _reproject_chunk_cupy(
     c_min_clip = max(0, c_min)
     c_max_clip = min(src_w, c_max)
 
+    # Guard: cap source window to prevent GPU OOM if projection maps a
+    # small output chunk to a huge source area (matches numpy path).
+    _MAX_WINDOW_PIXELS = 64 * 1024 * 1024  # 64 Mpix (~512 MB for float64)
+    win_pixels = (r_max_clip - r_min_clip) * (c_max_clip - c_min_clip)
+    if win_pixels > _MAX_WINDOW_PIXELS:
+        return cp.full(chunk_shape, nodata, dtype=cp.float64)
+
     window = source_data[r_min_clip:r_max_clip, c_min_clip:c_max_clip]
     if hasattr(window, 'compute'):
         window = window.compute()
@@ -965,20 +972,18 @@ def _reproject_dask_cupy(
     resampling, nodata, precision,
     chunk_size,
 ):
-    """Dask+CuPy backend: process output chunks on GPU sequentially.
+    """Dask+CuPy backend: process output chunks on GPU.
 
-    Instead of dask.delayed per chunk (which has ~15ms overhead each from
-    pyproj init + small CUDA launches), we:
-    1. Create CRS/transformer objects once
-    2. Use GPU-sized output chunks (2048x2048 by default)
-    3. For each output chunk, compute CUDA coordinates and fetch only
-       the source window needed from the dask array
-    4. Assemble the result as a CuPy array
+    Two modes based on available GPU memory:
 
-    For sources that fit in GPU memory, this is ~22x faster than the
-    dask.delayed path.  For sources that don't fit, each chunk fetches
-    only its required window, so GPU memory usage scales with chunk size,
-    not source size.
+    **Fast path** (output fits in GPU VRAM): pre-allocates the full output
+    on GPU and fills it chunk-by-chunk.  ~22x faster than the map_blocks
+    path because CRS/transformer objects are created once and CUDA kernels
+    run with minimal launch overhead.
+
+    **Chunked fallback** (output exceeds GPU VRAM): delegates to
+    ``_reproject_dask(is_cupy=True)`` which uses ``map_blocks`` and
+    processes one chunk at a time with O(chunk_size) GPU memory.
     """
     import cupy as cp
 
@@ -999,18 +1004,29 @@ def _reproject_dask_cupy(
     src_res_x = (src_right - src_left) / src_w
     src_res_y = (src_top - src_bottom) / src_h
 
-    # Memory guard: the full output is allocated on GPU.
+    # Memory check: if the full output doesn't fit in GPU memory,
+    # fall back to the map_blocks path which is O(chunk_size) memory.
     estimated = out_shape[0] * out_shape[1] * 8  # float64
     try:
         free_gpu, _total = cp.cuda.Device().mem_info
-        if estimated > 0.8 * free_gpu:
-            raise MemoryError(
-                f"_reproject_dask_cupy needs ~{estimated / 1e9:.1f} GB on GPU "
-                f"for the full output but only ~{free_gpu / 1e9:.1f} GB free.  "
-                f"Reduce output resolution or use the dask+numpy path."
-            )
+        fits_in_gpu = estimated < 0.5 * free_gpu
     except (AttributeError, RuntimeError):
-        pass  # no device info available
+        fits_in_gpu = False
+
+    if not fits_in_gpu:
+        import warnings
+        warnings.warn(
+            f"Output ({estimated / 1e9:.1f} GB) exceeds GPU memory; "
+            f"falling back to chunked map_blocks path.",
+            stacklevel=3,
+        )
+        return _reproject_dask(
+            raster, src_bounds, src_shape, y_desc,
+            src_wkt, tgt_wkt,
+            out_bounds, out_shape,
+            resampling, nodata, precision,
+            chunk_size or 2048, True,  # is_cupy=True
+        )
 
     result = cp.full(out_shape, nodata, dtype=cp.float64)
 
@@ -1096,6 +1112,13 @@ def _reproject_dask_cupy(
             r_max_clip = min(src_h, r_max)
             c_min_clip = max(0, c_min)
             c_max_clip = min(src_w, c_max)
+
+            # Guard: cap source window to prevent GPU OOM (matches numpy path)
+            _MAX_WINDOW_PIXELS = 64 * 1024 * 1024  # 64 Mpix
+            win_pixels = (r_max_clip - r_min_clip) * (c_max_clip - c_min_clip)
+            if win_pixels > _MAX_WINDOW_PIXELS:
+                col_offset += cchunk
+                continue
 
             # Fetch only the needed source window from dask
             window = raster.data[r_min_clip:r_max_clip, c_min_clip:c_max_clip]

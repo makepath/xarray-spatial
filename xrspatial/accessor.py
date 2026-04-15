@@ -358,6 +358,10 @@ class XrsSpatialDataArrayAccessor:
         from .zonal import crosstab
         return crosstab(zones, self._obj, **kwargs)
 
+    def zonal_hypsometric_integral(self, zones, **kwargs):
+        from .zonal import hypsometric_integral
+        return hypsometric_integral(zones, self._obj, **kwargs)
+
     def crop(self, zones, zones_ids, **kwargs):
         from .zonal import crop
         return crop(zones, self._obj, zones_ids, **kwargs)
@@ -1027,7 +1031,7 @@ class XrsSpatialDatasetAccessor:
         y_min, y_max = float(y.min()), float(y.max())
         x_min, x_max = float(x.min()), float(x.max())
 
-        geo_info, file_h, file_w = _read_geo_info(source)
+        geo_info, file_h, file_w, _dtype, _nbands = _read_geo_info(source)
         t = geo_info.transform
 
         # Expand extent by half a pixel so we capture edge pixels

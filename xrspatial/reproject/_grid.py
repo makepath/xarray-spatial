@@ -201,6 +201,17 @@ def _compute_output_grid(source_bounds, source_shape, source_crs, target_crs,
     if height is None:
         height = max(1, int(round((top - bottom) / res_y)))
 
+    # Guard: reject output grids that would exhaust memory.
+    # 1 billion pixels ~= 8 GB for a single float64 array, and the
+    # reprojection pipeline allocates several arrays of this size.
+    _MAX_OUTPUT_PIXELS = 1_000_000_000
+    if width * height > _MAX_OUTPUT_PIXELS:
+        raise ValueError(
+            f"Computed output grid is too large ({width} x {height} = "
+            f"{width * height:,} pixels, limit is {_MAX_OUTPUT_PIXELS:,}). "
+            f"Increase the resolution parameter or reduce the output extent."
+        )
+
     # Adjust bounds to be exact multiples of resolution
     right = left + width * res_x
     top = bottom + height * res_y

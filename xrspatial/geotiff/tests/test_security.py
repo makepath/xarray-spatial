@@ -192,7 +192,6 @@ class TestVRTAllocationGuard:
         with pytest.raises(ValueError, match="exceed the safety limit"):
             open_geotiff(vrt_path, max_pixels=1_000_000)
 
-
 # ---------------------------------------------------------------------------
 # Cat 5: VRT path traversal
 # ---------------------------------------------------------------------------

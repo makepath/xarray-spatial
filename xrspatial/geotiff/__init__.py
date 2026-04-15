@@ -114,11 +114,19 @@ def _coords_to_transform(da: xr.DataArray) -> GeoTransform | None:
     )
 
 
-def _read_geo_info(source: str):
+def _read_geo_info(source: str, *, overview_level: int | None = None):
     """Read only the geographic metadata and image dimensions from a GeoTIFF.
 
-    Returns (geo_info, height, width) without reading pixel data.
+    Returns (geo_info, height, width, dtype, n_bands) without reading pixel
+    data.  Uses mmap for header-only access -- O(1) memory regardless of file
+    size.
+
+    Parameters
+    ----------
+    overview_level : int or None
+        Overview IFD index (0 = full resolution).
     """
+    from ._dtypes import tiff_dtype_to_numpy
     from ._geotags import extract_geo_info
     from ._header import parse_all_ifds, parse_header
 
@@ -128,9 +136,17 @@ def _read_geo_info(source: str):
     try:
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
-        ifd = ifds[0]
+        ifd_idx = 0
+        if overview_level is not None:
+            ifd_idx = min(overview_level, len(ifds) - 1)
+        ifd = ifds[ifd_idx]
         geo_info = extract_geo_info(ifd, data, header.byte_order)
-        return geo_info, ifd.height, ifd.width
+        bps = ifd.bits_per_sample
+        if isinstance(bps, tuple):
+            bps = bps[0]
+        file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
+        n_bands = ifd.samples_per_pixel if ifd.samples_per_pixel > 1 else 0
+        return geo_info, ifd.height, ifd.width, file_dtype, n_bands
     finally:
         data.close()
 
@@ -884,11 +900,9 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
     if source.lower().endswith('.vrt'):
         return read_vrt(source, dtype=dtype, name=name, chunks=chunks)
 
-    # First, do a metadata-only read to get shape, dtype, coords, attrs
-    arr, geo_info = read_to_array(source, overview_level=overview_level)
-    full_h, full_w = arr.shape[:2]
-    n_bands = arr.shape[2] if arr.ndim == 3 else 0
-    file_dtype = arr.dtype
+    # Metadata-only read: O(1) memory via mmap, no pixel decompression
+    geo_info, full_h, full_w, file_dtype, n_bands = _read_geo_info(
+        source, overview_level=overview_level)
     nodata = geo_info.nodata
 
     # Nodata masking promotes integer arrays to float64 (for NaN).

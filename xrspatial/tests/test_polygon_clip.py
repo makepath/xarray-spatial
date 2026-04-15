@@ -152,6 +152,42 @@ class TestClipPolygonNumpy:
         n_touched = np.count_nonzero(np.isfinite(result_touched.values))
         assert n_touched >= n_default
 
+    def test_all_touched_crop_matches_nocrop(self):
+        """crop=True with all_touched=True must not drop boundary pixels.
+
+        Regression test for #1197: _crop_to_bbox was comparing pixel
+        centers against the geometry bounding box without accounting for
+        pixel cell extent, so pixels whose centers fell just outside the
+        bbox were excluded even though their cells overlapped the polygon.
+        """
+        raster = _make_raster()
+        # Polygon whose edges land between pixel centers on all four
+        # sides.  Pixel spacing is 0.5, so the left edge at x=0.15
+        # sits inside the cell of pixel x=0.0 (cell [-0.25, 0.25]).
+        poly = Polygon([(0.15, 0.15), (0.15, 3.35), (2.35, 3.35),
+                         (2.35, 0.15)])
+
+        result_crop = clip_polygon(raster, poly, crop=True,
+                                   all_touched=True)
+        result_nocrop = clip_polygon(raster, poly, crop=False,
+                                     all_touched=True)
+
+        # The crop path must keep every pixel the nocrop path keeps.
+        n_crop = np.count_nonzero(np.isfinite(result_crop.values))
+        n_nocrop = np.count_nonzero(np.isfinite(result_nocrop.values))
+        assert n_crop == n_nocrop, (
+            f"crop=True lost {n_nocrop - n_crop} boundary pixels"
+        )
+
+        # Pixel values must match wherever both arrays have data.
+        # Align the cropped result back into the full grid for comparison.
+        aligned = result_nocrop.copy()
+        crop_y = result_crop.coords['y'].values
+        crop_x = result_crop.coords['x'].values
+        aligned_slice = aligned.sel(y=crop_y, x=crop_x)
+        np.testing.assert_array_equal(result_crop.values,
+                                      aligned_slice.values)
+
     def test_single_cell_raster(self):
         """1x1 raster with polygon that covers it."""
         data = np.array([[42.0]])
@@ -205,6 +241,23 @@ class TestClipPolygonDask:
 
         np.testing.assert_allclose(
             dk_result.values, np_result.values, equal_nan=True
+        )
+
+    def test_all_touched_crop_matches_nocrop(self):
+        """Dask: crop=True with all_touched=True keeps boundary pixels (#1197)."""
+        dk_raster = _make_raster(backend='dask+numpy', chunks=(4, 3))
+        poly = Polygon([(0.15, 0.15), (0.15, 3.35), (2.35, 3.35),
+                         (2.35, 0.15)])
+
+        result_crop = clip_polygon(dk_raster, poly, crop=True,
+                                   all_touched=True)
+        result_nocrop = clip_polygon(dk_raster, poly, crop=False,
+                                     all_touched=True)
+
+        n_crop = np.count_nonzero(np.isfinite(result_crop.values))
+        n_nocrop = np.count_nonzero(np.isfinite(result_nocrop.values))
+        assert n_crop == n_nocrop, (
+            f"crop=True lost {n_nocrop - n_crop} boundary pixels"
         )
 
 

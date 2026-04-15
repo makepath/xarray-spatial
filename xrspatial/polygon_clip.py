@@ -79,10 +79,14 @@ def _resolve_geometry(geometry):
     )
 
 
-def _crop_to_bbox(raster, geom_pairs):
+def _crop_to_bbox(raster, geom_pairs, all_touched=False):
     """Slice the raster to the bounding box of the geometry.
 
     Returns the sliced DataArray and the geometry pairs (unchanged).
+
+    When *all_touched* is True the bounding-box comparison is expanded by
+    half a pixel on every side so that pixels whose cells overlap the
+    geometry boundary are not prematurely excluded.
     """
     from shapely.ops import unary_union
     merged = unary_union([g for g, _ in geom_pairs])
@@ -91,19 +95,24 @@ def _crop_to_bbox(raster, geom_pairs):
     y_coords = raster.coords[raster.dims[-2]].values
     x_coords = raster.coords[raster.dims[-1]].values
 
-    # Determine coordinate ordering (ascending or descending)
-    y_ascending = y_coords[-1] >= y_coords[0]
-    x_ascending = x_coords[-1] >= x_coords[0]
+    # When all_touched is set, expand the bbox by half a pixel so that
+    # pixels whose cells overlap the geometry survive the crop.
+    if all_touched:
+        if len(x_coords) > 1:
+            half_px_x = abs(float(x_coords[1] - x_coords[0])) / 2.0
+        else:
+            half_px_x = 0.0
+        if len(y_coords) > 1:
+            half_py_y = abs(float(y_coords[1] - y_coords[0])) / 2.0
+        else:
+            half_py_y = 0.0
+        minx -= half_px_x
+        maxx += half_px_x
+        miny -= half_py_y
+        maxy += half_py_y
 
-    if y_ascending:
-        y_mask = (y_coords >= miny) & (y_coords <= maxy)
-    else:
-        y_mask = (y_coords >= miny) & (y_coords <= maxy)
-
-    if x_ascending:
-        x_mask = (x_coords >= minx) & (x_coords <= maxx)
-    else:
-        x_mask = (x_coords >= minx) & (x_coords <= maxx)
+    y_mask = (y_coords >= miny) & (y_coords <= maxy)
+    x_mask = (x_coords >= minx) & (x_coords <= maxx)
 
     y_idx = np.where(y_mask)[0]
     x_idx = np.where(x_mask)[0]
@@ -186,7 +195,7 @@ def clip_polygon(
 
     # Optionally crop to bounding box first (reduces rasterize cost)
     if crop:
-        raster = _crop_to_bbox(raster, geom_pairs)
+        raster = _crop_to_bbox(raster, geom_pairs, all_touched=all_touched)
 
     # Build a binary mask via rasterize, aligned to the (possibly cropped)
     # raster grid.  Always produce a plain numpy mask first, then convert
@@ -201,46 +210,55 @@ def clip_polygon(
 
     mask = rasterize(geom_pairs, **kw)
 
-    # Get mask as a plain numpy array regardless of what rasterize returned
-    mask_np = mask.data
-    if has_dask_array() and isinstance(mask_np, da.Array):
-        mask_np = mask_np.compute()
-    if has_cuda_and_cupy() and is_cupy_array(mask_np):
-        mask_np = mask_np.get()
+    # Apply the mask.  Keep it lazy for dask backends to avoid
+    # materializing the full mask into RAM (which would OOM for 30TB
+    # inputs).  For non-dask backends, compute the mask eagerly.
+    mask_data = mask.data
 
-    # Apply the mask.  For CuPy backends we operate on the raw array
-    # to avoid an xarray/cupy incompatibility in ``DataArray.where()``.
-    cond_np = mask_np == 1
+    if has_dask_array() and isinstance(raster.data, da.Array):
+        # Dask path: keep mask lazy -- no .compute()
+        if isinstance(mask_data, da.Array):
+            cond = mask_data == 1
+        else:
+            # Mask came back non-dask despite dask input (shouldn't happen,
+            # but handle gracefully)
+            cond = da.from_array(
+                np.asarray(mask_data == 1) if not is_cupy_array(mask_data)
+                else mask_data.get() == 1,
+                chunks=raster.data.chunks[-2:],
+            )
 
-    if has_cuda_and_cupy() and is_cupy_array(raster.data):
+        if has_cuda_and_cupy() and is_dask_cupy(raster):
+            # dask+cupy: use map_blocks with both raster and condition
+            def _apply_mask(raster_block, cond_block):
+                import cupy
+                out = raster_block.copy()
+                out[~cond_block.astype(bool)] = nodata
+                return out
+
+            out = da.map_blocks(
+                _apply_mask, raster.data, cond,
+                dtype=raster.dtype,
+            )
+            result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
+        else:
+            # dask+numpy: xarray.where handles lazy condition natively
+            result = raster.where(cond, other=nodata)
+    elif has_cuda_and_cupy() and is_cupy_array(raster.data):
+        # Pure CuPy: operate on raw arrays to avoid xarray/cupy
+        # incompatibility in DataArray.where().
         import cupy
-        cond_cp = cupy.asarray(cond_np)
+        if is_cupy_array(mask_data):
+            cond_cp = mask_data == 1
+        else:
+            cond_cp = cupy.asarray(np.asarray(mask_data) == 1)
         out = raster.data.copy()
         out[~cond_cp] = nodata
         result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
-    elif has_cuda_and_cupy() and is_dask_cupy(raster):
-        import cupy
-        cond_cp = cupy.asarray(cond_np)
-
-        def _apply_mask(block, block_info=None):
-            if block_info is not None:
-                loc = block_info[0]['array-location']
-                y_sl = slice(loc[-2][0], loc[-2][1])
-                x_sl = slice(loc[-1][0], loc[-1][1])
-                c = cond_cp[y_sl, x_sl]
-            else:
-                c = cond_cp
-            out = block.copy()
-            out[~c] = nodata
-            return out
-
-        out = raster.data.map_blocks(_apply_mask, dtype=raster.dtype)
-        result = xr.DataArray(out, dims=raster.dims, coords=raster.coords)
-    elif has_dask_array() and isinstance(raster.data, da.Array):
-        cond_da = da.from_array(cond_np, chunks=raster.data.chunks[-2:])
-        result = raster.where(cond_da, other=nodata)
     else:
-        result = raster.where(cond_np, other=nodata)
+        # Pure numpy
+        cond = np.asarray(mask_data) == 1
+        result = raster.where(cond, other=nodata)
 
     result.attrs = raster.attrs
     result.name = name if name is not None else raster.name
