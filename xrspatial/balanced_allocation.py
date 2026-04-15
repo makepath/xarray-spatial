@@ -158,7 +158,7 @@ def _allocate_from_costs(cost_stack, source_ids, fill_value=np.nan):
     else:
         all_nan = np.all(np.isnan(np.stack(cost_stack, axis=0)), axis=0)
 
-    alloc = alloc.astype(np.float32)
+    alloc = alloc.astype(np.float64)
     alloc[all_nan] = fill_value
 
     return alloc
@@ -199,7 +199,7 @@ def _allocate_biased(cost_stack, biases, source_ids, fill_value=np.nan):
         stacked = np.stack(layers, axis=0)
         best_idx = np.argmin(stacked, axis=0)
 
-    alloc = source_ids[best_idx].astype(np.float32)
+    alloc = source_ids[best_idx].astype(np.float64)
 
     # Mark unreachable cells
     if da is not None and isinstance(first, da.Array):
