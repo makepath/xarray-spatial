@@ -182,6 +182,48 @@ class TestCorrectness:
         # Verify interior is within tolerance of the linear gradient
         assert np.all(np.isfinite(out.values))
 
+    @pytest.mark.parametrize('method', ['nearest', 'bilinear', 'cubic'])
+    def test_interp_coordinate_alignment_downsample(self, method):
+        """Interpolated values should match output coordinate labels (#1202).
+
+        On a linear gradient where value == x-coordinate, a correct
+        block-centered resample produces output values equal to the output
+        coordinate labels (within floating-point tolerance).
+        """
+        data = np.tile(np.arange(8, dtype=np.float32), (8, 1))
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)},
+                                 dims=['y', 'x'])
+        out = resample(agg, scale_factor=0.5, method=method)
+
+        # Output x-coords are block-centered: 0.5, 2.5, 4.5, 6.5
+        # Values should match because the input is a linear gradient
+        np.testing.assert_allclose(
+            out.values[0], out.x.values, atol=0.6,
+            err_msg=f"{method}: values should be close to x-coordinates"
+        )
+        # For bilinear on a linear gradient, the match should be exact
+        if method == 'bilinear':
+            np.testing.assert_allclose(
+                out.values[0], out.x.values, atol=1e-5,
+                err_msg="bilinear on linear gradient must be exact"
+            )
+
+    def test_bilinear_coordinate_alignment_upsample(self):
+        """Upsampled interior pixels should match coordinates on a gradient."""
+        data = np.tile(np.arange(8, dtype=np.float32), (8, 1))
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)},
+                                 dims=['y', 'x'])
+        out = resample(agg, scale_factor=2.0, method='bilinear')
+
+        # Interior pixels (away from boundary clamping) should be exact
+        # for bilinear on a linear gradient.  Skip first and last pixel
+        # which may be clamped by mode='nearest' boundary handling.
+        interior = slice(1, -1)
+        np.testing.assert_allclose(
+            out.values[0, interior], out.x.values[interior], atol=1e-4,
+            err_msg="bilinear: interior values should match x-coordinates"
+        )
+
 
 # ---------------------------------------------------------------------------
 # NaN handling
@@ -280,6 +322,19 @@ class TestDaskParity:
         dk_out = resample(dk_agg, scale_factor=sf, method=method)
         np.testing.assert_allclose(dk_out.values, np_out.values,
                                    atol=1e-5, equal_nan=True)
+
+    @pytest.mark.parametrize('method', ['bilinear'])
+    def test_dask_coordinate_alignment(self, method):
+        """Dask bilinear on a linear gradient should match coordinates (#1202)."""
+        data = np.tile(np.arange(20, dtype=np.float32), (20, 1))
+        dk_agg = create_test_raster(data, backend='dask+numpy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=(8, 8))
+        out = resample(dk_agg, scale_factor=0.5, method=method)
+        np.testing.assert_allclose(
+            out.values[0], out.x.values, atol=1e-4,
+            err_msg="dask bilinear values should match x-coordinates"
+        )
 
     @pytest.mark.parametrize('method', ['average', 'min', 'max', 'median', 'mode'])
     def test_aggregate_parity(self, numpy_and_dask_rasters, method):
