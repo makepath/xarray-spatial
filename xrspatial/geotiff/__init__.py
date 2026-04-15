@@ -185,7 +185,8 @@ def open_geotiff(source: str, *, dtype=None, window=None,
                  band: int | None = None,
                  name: str | None = None,
                  chunks: int | tuple | None = None,
-                 gpu: bool = False) -> xr.DataArray:
+                 gpu: bool = False,
+                 max_pixels: int | None = None) -> xr.DataArray:
     """Read a GeoTIFF, COG, or VRT file into an xarray.DataArray.
 
     Automatically dispatches to the best backend:
@@ -216,6 +217,10 @@ def open_geotiff(source: str, *, dtype=None, window=None,
         Chunk size for Dask lazy reading.
     gpu : bool
         Use GPU-accelerated decompression (requires cupy + nvCOMP).
+    max_pixels : int or None
+        Maximum allowed pixel count (width * height * samples). None
+        uses the default (~1 billion). Raise to read legitimately
+        large files.
 
     Returns
     -------
@@ -225,22 +230,28 @@ def open_geotiff(source: str, *, dtype=None, window=None,
     # VRT files
     if source.lower().endswith('.vrt'):
         return read_vrt(source, dtype=dtype, window=window, band=band,
-                        name=name, chunks=chunks, gpu=gpu)
+                        name=name, chunks=chunks, gpu=gpu,
+                        max_pixels=max_pixels)
 
     # GPU path
     if gpu:
         return read_geotiff_gpu(source, dtype=dtype,
                                 overview_level=overview_level,
-                                name=name, chunks=chunks)
+                                name=name, chunks=chunks,
+                                max_pixels=max_pixels)
 
     # Dask path (CPU)
     if chunks is not None:
         return read_geotiff_dask(source, dtype=dtype, chunks=chunks,
                                  overview_level=overview_level, name=name)
 
+    kwargs = {}
+    if max_pixels is not None:
+        kwargs['max_pixels'] = max_pixels
     arr, geo_info = read_to_array(
         source, window=window,
         overview_level=overview_level, band=band,
+        **kwargs,
     )
 
     height, width = arr.shape[:2]
@@ -995,7 +1006,8 @@ def read_geotiff_gpu(source: str, *,
                      dtype=None,
                      overview_level: int | None = None,
                      name: str | None = None,
-                     chunks: int | tuple | None = None) -> xr.DataArray:
+                     chunks: int | tuple | None = None,
+                     max_pixels: int | None = None) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
 
     Decompresses all tiles in parallel on the GPU and returns a
@@ -1018,6 +1030,9 @@ def read_geotiff_gpu(source: str, *,
         chunks, (row, col) tuple for rectangular.
     name : str or None
         Name for the DataArray.
+    max_pixels : int or None
+        Maximum allowed pixel count (width * height * samples). None
+        uses the default (~1 billion).
 
     Returns
     -------
@@ -1031,11 +1046,14 @@ def read_geotiff_gpu(source: str, *,
             "cupy is required for GPU reads. "
             "Install it with: pip install cupy-cuda12x")
 
-    from ._reader import _FileSource
+    from ._reader import _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT
     from ._header import parse_header, parse_all_ifds
     from ._dtypes import tiff_dtype_to_numpy
     from ._geotags import extract_geo_info
     from ._gpu_decode import gpu_decode_tiles
+
+    if max_pixels is None:
+        max_pixels = MAX_PIXELS_DEFAULT
 
     # Parse metadata on CPU (fast, <1ms)
     src = _FileSource(source)
@@ -1087,6 +1105,8 @@ def read_geotiff_gpu(source: str, *,
         th = ifd.tile_height
         width = ifd.width
         height = ifd.height
+
+        _check_dimensions(width, height, samples, max_pixels)
 
     finally:
         src.close()
@@ -1326,7 +1346,8 @@ def read_vrt(source: str, *, dtype=None, window=None,
              band: int | None = None,
              name: str | None = None,
              chunks: int | tuple | None = None,
-             gpu: bool = False) -> xr.DataArray:
+             gpu: bool = False,
+             max_pixels: int | None = None) -> xr.DataArray:
     """Read a GDAL Virtual Raster Table (.vrt) into an xarray.DataArray.
 
     The VRT's source GeoTIFFs are read via windowed reads and assembled
@@ -1358,7 +1379,8 @@ def read_vrt(source: str, *, dtype=None, window=None,
     """
     from ._vrt import read_vrt as _read_vrt_internal
 
-    arr, vrt = _read_vrt_internal(source, window=window, band=band)
+    arr, vrt = _read_vrt_internal(source, window=window, band=band,
+                                   max_pixels=max_pixels)
 
     if name is None:
         import os
