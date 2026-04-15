@@ -179,3 +179,84 @@ def test_bump_spread_reaches_both_sides_1102():
     # Pixels well outside spread should be 0
     assert out[5, 9] == 0, "well outside spread should be 0"
     assert out[0, 0] == 0, "corner should be 0"
+
+
+# --- Issue #1206 regression tests ---
+
+def test_bump_locs_use_int32_not_uint16():
+    """Coordinates > 65535 must not wrap around (#1206)."""
+    from xrspatial.bump import _finish_bump
+
+    # Place a bump at x=70000. With uint16 this wraps to 4464.
+    locs = np.array([[70000, 50]], dtype=np.int32)
+    heights = np.array([10.0])
+    out = _finish_bump(80000, 100, locs, heights, spread=0)
+
+    assert out[50, 70000] > 0, "bump should land at the actual coordinate"
+    assert out[50, 4464] == 0, "uint16 wrap-around location should be empty"
+
+
+def test_bump_default_count_capped():
+    """Default count should not exceed _MAX_DEFAULT_COUNT (#1206)."""
+    from xrspatial.bump import _MAX_DEFAULT_COUNT
+
+    # 20000 x 20000 → w*h//10 = 40M, should be capped to 10M
+    result = bump(width=20000, height=20000, spread=0)
+    assert result.shape == (20000, 20000)
+    # The number of non-zero pixels can't exceed count (no spread means
+    # only center pixels get values), so verify the cap took effect
+    nonzero = np.count_nonzero(result.values)
+    assert nonzero <= _MAX_DEFAULT_COUNT
+
+
+def test_bump_memory_guard_raises():
+    """Memory guard should reject huge explicit count (#1206)."""
+    import pytest
+
+    # Request more bumps than memory can hold (50 billion)
+    with pytest.raises(MemoryError, match="bump.*count"):
+        bump(width=100, height=100, count=50_000_000_000)
+
+
+@dask_array_available
+def test_bump_dask_closure_size():
+    """Dask task graph should not serialize full locs into every chunk (#1206).
+
+    With per-chunk partitioning, the total serialized data in the graph
+    should be proportional to the total bump count, not count * n_chunks.
+    """
+    import pickle
+
+    agg = xr.DataArray(
+        da.zeros((100, 100), chunks=(25, 25), dtype=np.float64),
+        dims=['y', 'x'],
+    )
+    np.random.seed(42)
+    result = bump(agg=agg, count=200, spread=1)
+    graph_bytes = len(pickle.dumps(result.data.__dask_graph__()))
+
+    # With the old closure approach, 200 bumps * 16 chunks * 16 bytes/bump
+    # = ~51 kB minimum from duplicated arrays.  With partitioning, the total
+    # is ~200 * 16 = 3.2 kB plus overhead.  Allow generous headroom but
+    # ensure it's well below the duplication threshold.
+    max_expected = 200 * 16 * 4  # 4x overhead for pickle framing
+    assert graph_bytes < max_expected, (
+        f"graph size {graph_bytes} bytes suggests locs are duplicated per chunk"
+    )
+
+
+@dask_array_available
+def test_bump_dask_partitioned_matches_numpy():
+    """Partitioned dask path should produce the same result as numpy
+    when all bumps fit in a single chunk (#1206)."""
+    agg_np = xr.DataArray(np.zeros((30, 40)), dims=['y', 'x'])
+    agg_dask = agg_np.copy()
+    agg_dask.data = da.from_array(agg_dask.data, chunks=(30, 40))
+
+    np.random.seed(123)
+    result_np = bump(agg=agg_np, count=50, spread=2)
+
+    np.random.seed(123)
+    result_dask = bump(agg=agg_dask, count=50, spread=2)
+
+    np.testing.assert_array_equal(result_np.values, result_dask.values)
