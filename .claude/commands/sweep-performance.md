@@ -395,12 +395,20 @@ If no modules qualify, print:
 `--skip-phase1` to refresh the triage."
 Then stop.
 
-### 6b. Print the ralph-loop command
+### 6b. Invoke the ralph-loop automatically
 
-Using the target list, generate and print:
+Using the target list, invoke the ralph-loop skill directly via the Skill tool.
+Do NOT print the command for manual copy-paste — execute it immediately.
 
-````
-/ralph-loop "Performance sweep Phase 2: benchmark and fix HIGH-severity findings.
+Set `--max-iterations` to the number of target modules plus 2 (buffer for
+retries).
+
+Call the Skill tool with `skill: "ralph-loop"` and pass the following as `args`
+(with `<module>`, `<N>`, `<OOM verdict>`, `<SIZE>`, and `<N+2>` substituted
+from the actual triage results):
+
+```
+"Performance sweep Phase 2: benchmark and fix HIGH-severity findings.
 
 **Target modules in priority order:**
 1. <module> (<N> HIGH findings, <OOM verdict>) -- <one-line summary of worst finding>
@@ -446,19 +454,17 @@ Using the target list, generate and print:
 
 If all targets have been addressed or confirmed as false positives:
 <promise>ALL PERFORMANCE ISSUES FIXED</promise>." --max-iterations <N+2> --completion-promise "ALL PERFORMANCE ISSUES FIXED"
-````
+```
 
-Set `--max-iterations` to the number of target modules plus 2 (buffer for
-retries).
+### 6c. Print status
 
-### 6c. Print reminder text
+After invoking the ralph-loop, print:
 
 ```
-Phase 1 triage complete. To proceed with fixes:
-  Copy the ralph-loop command above and paste it.
+Phase 2 ralph-loop launched with <N> target modules.
 
 Other options:
-  Fix one manually:    copy any /rockout command from the report above
+  Fix one manually:    copy any /rockout command from the triage report above
   Rerun triage only:   /sweep-performance --report-only
   Skip Phase 1:        /sweep-performance --skip-phase1 (reuses last triage)
   Reset all tracking:  /sweep-performance --reset-state

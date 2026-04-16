@@ -1,0 +1,171 @@
+{
+  "scope": [
+    "_reader.py",
+    "_compression.py",
+    "_header.py",
+    "_geotags.py",
+    "__init__.py"
+  ],
+  "focus": "read performance",
+  "backend": "numpy",
+  "timings": {
+    "read_512_uncomp_strip": {
+      "median_ms": 0.17,
+      "runs": [
+        0.15,
+        0.15,
+        0.15,
+        0.17,
+        0.24,
+        0.46,
+        0.48
+      ]
+    },
+    "read_512_uncomp_tiled": {
+      "median_ms": 0.21,
+      "runs": [
+        0.15,
+        0.16,
+        0.17,
+        0.21,
+        0.25,
+        0.46,
+        0.46
+      ]
+    },
+    "read_512_deflate_strip": {
+      "median_ms": 3.77,
+      "runs": [
+        3.7,
+        3.7,
+        3.75,
+        3.77,
+        3.8,
+        3.91,
+        3.97
+      ]
+    },
+    "read_512_deflate_tiled": {
+      "median_ms": 3.81,
+      "runs": [
+        3.74,
+        3.76,
+        3.76,
+        3.81,
+        3.81,
+        4.04,
+        4.15
+      ]
+    },
+    "read_512_lzw_strip": {
+      "median_ms": 4.25,
+      "runs": [
+        4.17,
+        4.24,
+        4.24,
+        4.25,
+        4.33,
+        4.33,
+        4.45
+      ]
+    },
+    "read_2048_uncomp_strip": {
+      "median_ms": 18.73,
+      "runs": [
+        18.47,
+        18.61,
+        18.73,
+        18.91,
+        20.47
+      ]
+    },
+    "read_2048_deflate_strip": {
+      "median_ms": 78.41,
+      "runs": [
+        77.25,
+        78.08,
+        78.41,
+        78.72,
+        79.31
+      ]
+    },
+    "read_2048_deflate_tiled": {
+      "median_ms": 61.85,
+      "runs": [
+        61.39,
+        61.42,
+        61.85,
+        62.21,
+        69.72
+      ]
+    },
+    "lzw_decompress_1MB": {
+      "median_ms": 3.96,
+      "runs": [
+        3.93,
+        3.95,
+        3.96,
+        3.96,
+        3.96,
+        3.96,
+        4.0
+      ]
+    },
+    "deflate_decompress_1MB": {
+      "median_ms": 3.47,
+      "runs": [
+        3.45,
+        3.46,
+        3.47,
+        3.47,
+        3.52,
+        3.54,
+        3.56
+      ]
+    },
+    "fp_pred_decode_1024x1024": {
+      "median_ms": 4.54,
+      "runs": [
+        4.44,
+        4.47,
+        4.53,
+        4.54,
+        4.56,
+        4.65,
+        4.69
+      ]
+    },
+    "read_rtx_uncomp_187x253": {
+      "median_ms": 0.07,
+      "runs": [
+        0.07,
+        0.07,
+        0.07,
+        0.07,
+        0.08,
+        0.12,
+        0.22
+      ]
+    },
+    "read_rtx_deflate_fpred_3600": {
+      "median_ms": 270.61,
+      "runs": [
+        269.13,
+        270.57,
+        270.61,
+        281.0,
+        285.51
+      ]
+    },
+    "read_rtx_lzw_fpred_3612": {
+      "median_ms": 268.56,
+      "runs": [
+        265.58,
+        268.26,
+        268.56,
+        276.02,
+        278.11
+      ]
+    }
+  }
+}
