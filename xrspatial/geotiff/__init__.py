@@ -937,6 +937,27 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
     else:
         ch_h, ch_w = chunks
 
+    # Graph-size guard. Each chunk becomes a delayed task whose Python graph
+    # entry retains ~1KB. At very large chunk counts the graph itself OOMs
+    # the driver before any read executes (30TB at chunks=256 => ~500M tasks
+    # => ~500GB graph on host). Auto-scale chunks up to cap total task count.
+    _MAX_DASK_CHUNKS = 1_000_000
+    n_chunks = ((full_h + ch_h - 1) // ch_h) * ((full_w + ch_w - 1) // ch_w)
+    if n_chunks > _MAX_DASK_CHUNKS:
+        import math
+        scale = math.sqrt(n_chunks / _MAX_DASK_CHUNKS)
+        new_ch_h = int(math.ceil(ch_h * scale))
+        new_ch_w = int(math.ceil(ch_w * scale))
+        import warnings
+        warnings.warn(
+            f"read_geotiff_dask: requested chunks=({ch_h}, {ch_w}) on a "
+            f"{full_h}x{full_w} image would produce {n_chunks} dask tasks, "
+            f"exceeding the {_MAX_DASK_CHUNKS}-task cap. Auto-scaling to "
+            f"chunks=({new_ch_h}, {new_ch_w}).",
+            stacklevel=2,
+        )
+        ch_h, ch_w = new_ch_h, new_ch_w
+
     # Build dask array from delayed windowed reads
     rows = list(range(0, full_h, ch_h))
     cols = list(range(0, full_w, ch_w))
