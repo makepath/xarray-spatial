@@ -198,8 +198,9 @@ def clip_polygon(
         raster = _crop_to_bbox(raster, geom_pairs, all_touched=all_touched)
 
     # Build a binary mask via rasterize, aligned to the (possibly cropped)
-    # raster grid.  Always produce a plain numpy mask first, then convert
-    # to the raster's backend so xarray's .where() sees matching types.
+    # raster grid.  Propagate the raster's chunk structure so the mask is
+    # built lazily for dask backends instead of materializing a full numpy
+    # array.
     from .rasterize import rasterize
 
     kw = dict(rasterize_kw or {})
@@ -207,6 +208,12 @@ def clip_polygon(
     kw['fill'] = 0.0
     kw['dtype'] = np.uint8
     kw['all_touched'] = all_touched
+
+    if has_dask_array() and isinstance(raster.data, da.Array):
+        rc, cc = raster.data.chunks[-2], raster.data.chunks[-1]
+        kw.setdefault('chunks', (rc[0], cc[0]))
+        if has_cuda_and_cupy() and is_dask_cupy(raster):
+            kw.setdefault('use_cuda', True)
 
     mask = rasterize(geom_pairs, **kw)
 

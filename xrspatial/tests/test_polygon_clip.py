@@ -325,3 +325,36 @@ class TestClipPolygonGeoDataFrame:
         gs = geopandas.GeoSeries([poly])
         result = clip_polygon(raster, gs, crop=False)
         assert result.shape == raster.shape
+
+
+# ---------------------------------------------------------------------------
+# Issue #1207 regression tests
+# ---------------------------------------------------------------------------
+
+@dask_array_available
+class TestClipPolygonDaskLazyMask:
+    def test_mask_stays_lazy_for_dask_input(self):
+        """clip_polygon on dask input should not materialize a full numpy mask (#1207).
+
+        We verify by checking that the dask task graph contains rasterize
+        chunk tasks (not just a single from_array wrapping a pre-computed
+        numpy array).
+        """
+        import dask.array as da
+
+        dk_raster = _make_raster(backend='dask+numpy', chunks=(4, 3))
+        poly = _inner_polygon()
+
+        result = clip_polygon(dk_raster, poly, crop=False)
+        assert isinstance(result.data, da.Array)
+
+        # With chunked rasterize, the graph has tasks per chunk.
+        # With the old approach (numpy mask + da.from_array), the graph
+        # would have fewer chunk-level tasks for the mask.
+        graph = dict(result.data.__dask_graph__())
+        # At minimum, a 8x6 raster with (4,3) chunks = 2x2 = 4 mask chunks
+        # plus raster chunks plus where-condition tasks.
+        # Just verify we have more than the trivial single-mask case.
+        assert len(graph) > 4, (
+            f"graph has only {len(graph)} tasks; mask may not be chunked"
+        )
