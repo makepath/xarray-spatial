@@ -1,0 +1,138 @@
+{
+  "scope": [
+    "_writer.py",
+    "_compression.py",
+    "__init__.py"
+  ],
+  "array_shapes": [
+    "512x512",
+    "2048x2048"
+  ],
+  "backend": "numpy",
+  "timings": {
+    "write_512_none_strip": {
+      "median_ms": 0.84,
+      "runs": [
+        0.71,
+        0.74,
+        0.84,
+        0.88,
+        2.03
+      ]
+    },
+    "write_512_none_tiled": {
+      "median_ms": 0.95,
+      "runs": [
+        0.91,
+        0.93,
+        0.95,
+        0.96,
+        1.05
+      ]
+    },
+    "write_512_deflate_strip": {
+      "median_ms": 24.9,
+      "runs": [
+        24.64,
+        24.71,
+        24.9,
+        25.22,
+        25.29
+      ]
+    },
+    "write_512_deflate_tiled": {
+      "median_ms": 24.83,
+      "runs": [
+        24.57,
+        24.76,
+        24.83,
+        24.89,
+        24.9
+      ]
+    },
+    "write_512_lzw_strip": {
+      "median_ms": 43.04,
+      "runs": [
+        42.41,
+        42.87,
+        43.04,
+        43.05,
+        43.87
+      ]
+    },
+    "write_512_lzw_tiled": {
+      "median_ms": 43.46,
+      "runs": [
+        43.23,
+        43.42,
+        43.46,
+        43.62,
+        43.76
+      ]
+    },
+    "write_2048_none_strip": {
+      "median_ms": 35.84,
+      "runs": [
+        32.7,
+        35.84,
+        43.5
+      ]
+    },
+    "write_2048_deflate_strip": {
+      "median_ms": 424.07,
+      "runs": [
+        421.05,
+        424.07,
+        424.27
+      ]
+    },
+    "write_2048_none_tiled": {
+      "median_ms": 30.89,
+      "runs": [
+        30.42,
+        30.89,
+        45.35
+      ]
+    },
+    "deflate_compress_1MB": {
+      "median_ms": 24.34,
+      "runs": [
+        23.76,
+        24.11,
+        24.34,
+        24.45,
+        24.68
+      ]
+    },
+    "lzw_compress_1MB": {
+      "median_ms": 41.96,
+      "runs": [
+        41.68,
+        41.68,
+        41.96,
+        42.05,
+        42.86
+      ]
+    },
+    "tobytes_512": {
+      "median_ms": 0.02,
+      "runs": [
+        0.01,
+        0.01,
+        0.02,
+        0.03,
+        0.07
+      ]
+    },
+    "tobytes_2048": {
+      "median_ms": 1.23,
+      "runs": [
+        0.91,
+        1.09,
+        1.23,
+        1.29,
+        1.33
+      ]
+    }
+  }
+}
