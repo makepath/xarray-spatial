@@ -17,6 +17,28 @@ except ImportError:
 
 from xrspatial.utils import ArrayTypeFunctionMapping, _validate_scalar, ngjit
 
+# Upper bound on bump count to prevent accidental OOM from the default
+# w*h//10 heuristic.  16 bytes per bump (int32 loc pair + float64 height),
+# so 10M bumps ~ 160 MB.
+_MAX_DEFAULT_COUNT = 10_000_000
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
 
 @ngjit
 def _finish_bump(width, height, locs, heights, spread):
@@ -45,58 +67,88 @@ def _bump_cupy(data, width, height, locs, heights, spread):
     return cupy.asarray(_finish_bump(width, height, locs, heights, spread))
 
 
+def _partition_bumps(data, locs, heights, spread):
+    """Split bumps into per-chunk subsets so closures stay small.
+
+    Returns a dict mapping ``(yi, xi)`` chunk indices to
+    ``(local_locs, local_heights)`` pairs (or *None* when a chunk has
+    no bumps).  Coordinates in *local_locs* are relative to the chunk
+    origin.  Bumps whose spread overlaps a chunk boundary are assigned
+    to the chunk that contains their centre pixel.
+    """
+    y_offsets = np.concatenate([[0], np.cumsum(data.chunks[0])])
+    x_offsets = np.concatenate([[0], np.cumsum(data.chunks[1])])
+    ny = len(data.chunks[0])
+    nx = len(data.chunks[1])
+
+    partitions = {}
+    for yi in range(ny):
+        y0, y1 = int(y_offsets[yi]), int(y_offsets[yi + 1])
+        for xi in range(nx):
+            x0, x1 = int(x_offsets[xi]), int(x_offsets[xi + 1])
+            mask = ((locs[:, 0] >= x0) & (locs[:, 0] < x1) &
+                    (locs[:, 1] >= y0) & (locs[:, 1] < y1))
+            if np.any(mask):
+                local_locs = locs[mask].copy()
+                local_locs[:, 0] -= x0
+                local_locs[:, 1] -= y0
+                partitions[(yi, xi)] = (local_locs, heights[mask].copy())
+            else:
+                partitions[(yi, xi)] = None
+    return partitions
+
+
 def _bump_dask_numpy(data, width, height, locs, heights, spread):
-    def _chunk_bump(block, block_info=None):
-        info = block_info[0]
-        y_start, y_end = info['array-location'][0]
-        x_start, x_end = info['array-location'][1]
-        chunk_h, chunk_w = block.shape
+    import dask
 
-        mask = ((locs[:, 0] >= x_start) & (locs[:, 0] < x_end) &
-                (locs[:, 1] >= y_start) & (locs[:, 1] < y_end))
-
-        if not np.any(mask):
-            return np.zeros((chunk_h, chunk_w))
-
-        local_locs = locs[mask]
-        local_locs[:, 0] -= x_start
-        local_locs[:, 1] -= y_start
-
-        return _finish_bump(chunk_w, chunk_h, local_locs, heights[mask], spread)
-
-    return da.map_blocks(
-        _chunk_bump, data,
-        dtype=np.float64,
-        meta=np.array((), dtype=np.float64),
-    )
+    partitions = _partition_bumps(data, locs, heights, spread)
+    rows = []
+    for yi, ch in enumerate(data.chunks[0]):
+        row = []
+        for xi, cw in enumerate(data.chunks[1]):
+            ch_int, cw_int = int(ch), int(cw)
+            part = partitions[(yi, xi)]
+            if part is None:
+                row.append(da.zeros((ch_int, cw_int),
+                                    chunks=(ch_int, cw_int),
+                                    dtype=np.float64))
+            else:
+                p_locs, p_heights = part
+                delayed = dask.delayed(_finish_bump)(
+                    cw_int, ch_int, p_locs, p_heights, spread)
+                row.append(da.from_delayed(delayed,
+                                           shape=(ch_int, cw_int),
+                                           dtype=np.float64))
+        rows.append(row)
+    return da.block(rows)
 
 
 def _bump_dask_cupy(data, width, height, locs, heights, spread):
-    def _chunk_bump(block, block_info=None):
-        info = block_info[0]
-        y_start, y_end = info['array-location'][0]
-        x_start, x_end = info['array-location'][1]
-        chunk_h, chunk_w = block.shape
+    import dask
 
-        mask = ((locs[:, 0] >= x_start) & (locs[:, 0] < x_end) &
-                (locs[:, 1] >= y_start) & (locs[:, 1] < y_end))
+    def _finish_bump_cupy(cw, ch, p_locs, p_heights, spread):
+        return cupy.asarray(_finish_bump(cw, ch, p_locs, p_heights, spread))
 
-        if not np.any(mask):
-            return cupy.zeros((chunk_h, chunk_w))
-
-        local_locs = locs[mask]
-        local_locs[:, 0] -= x_start
-        local_locs[:, 1] -= y_start
-
-        return cupy.asarray(
-            _finish_bump(chunk_w, chunk_h, local_locs, heights[mask], spread)
-        )
-
-    return da.map_blocks(
-        _chunk_bump, data,
-        dtype=np.float64,
-        meta=cupy.array((), dtype=np.float64),
-    )
+    partitions = _partition_bumps(data, locs, heights, spread)
+    rows = []
+    for yi, ch in enumerate(data.chunks[0]):
+        row = []
+        for xi, cw in enumerate(data.chunks[1]):
+            ch_int, cw_int = int(ch), int(cw)
+            part = partitions[(yi, xi)]
+            if part is None:
+                row.append(da.zeros((ch_int, cw_int),
+                                    chunks=(ch_int, cw_int),
+                                    dtype=np.float64))
+            else:
+                p_locs, p_heights = part
+                delayed = dask.delayed(_finish_bump_cupy)(
+                    cw_int, ch_int, p_locs, p_heights, spread)
+                row.append(da.from_delayed(delayed,
+                                           shape=(ch_int, cw_int),
+                                           dtype=np.float64))
+        rows.append(row)
+    return da.block(rows)
 
 
 def bump(width: int = None,
@@ -286,13 +338,24 @@ def bump(width: int = None,
     liny = range(h)
 
     if count is None:
-        count = w * h // 10
+        count = min(w * h // 10, _MAX_DEFAULT_COUNT)
+
+    # 16 bytes per bump: 2 x int32 coords + 1 x float64 height
+    required_bytes = count * 16
+    available = _available_memory_bytes()
+    if required_bytes > 0.5 * available:
+        raise MemoryError(
+            f"bump() with count={count:,} requires ~{required_bytes / 1e9:.1f} GB "
+            f"for location/height arrays, but only "
+            f"{available / 1e9:.1f} GB is available.  "
+            f"Pass a smaller count explicitly."
+        )
 
     if height_func is None:
         height_func = lambda bumps: np.ones(len(bumps))  # noqa
 
     # create 2d array of random x, y for bump locations
-    locs = np.empty((count, 2), dtype=np.uint16)
+    locs = np.empty((count, 2), dtype=np.int32)
     locs[:, 0] = np.random.choice(linx, count)
     locs[:, 1] = np.random.choice(liny, count)
 
