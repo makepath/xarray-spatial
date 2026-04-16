@@ -1813,15 +1813,24 @@ def _nvcomp_batch_compress(d_tile_bufs, tile_byte_counts, tile_bytes,
             return None
 
         # For deflate, compute adler32 checksums from uncompressed tiles
-        # before reading compressed data (need the originals)
+        # before reading compressed data (need the originals).
+        # Batch the GPU->CPU transfer so all tiles move in a single DMA
+        # instead of one .get() per tile (which serializes on the default
+        # stream and is the dominant cost on the deflate path).
         adler_checksums = None
         if compression in (8, 32946):
             import zlib
             import struct
-            adler_checksums = []
-            for i in range(n_tiles):
-                uncomp = d_tile_bufs[i].get().tobytes()
-                adler_checksums.append(zlib.adler32(uncomp))
+            adler_checksums = [None] * n_tiles
+            if n_tiles > 0:
+                d_contig = cupy.empty(n_tiles * tile_bytes, dtype=cupy.uint8)
+                for i in range(n_tiles):
+                    d_contig[i * tile_bytes:(i + 1) * tile_bytes] = \
+                        d_tile_bufs[i][:tile_bytes]
+                host_view = memoryview(d_contig.get())
+                for i in range(n_tiles):
+                    adler_checksums[i] = zlib.adler32(
+                        host_view[i * tile_bytes:(i + 1) * tile_bytes])
 
         # Read compressed sizes and data back to CPU
         comp_sizes = d_comp_sizes.get().astype(int)
