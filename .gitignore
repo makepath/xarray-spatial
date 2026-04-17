@@ -98,3 +98,4 @@ dmypy.json
 xrspatial-examples/
 *.zarr/
 .claude/worktrees/
+docs/superpowers/

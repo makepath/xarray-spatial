@@ -39,7 +39,7 @@ Store results in memory -- do NOT write intermediate files.
 
 ## Step 2 -- Load inspection state
 
-Read `.claude/security-sweep-state.json`.
+Read `.claude/sweep-security-state.json`.
 
 If it does not exist, treat every module as never-inspected.
 
@@ -194,12 +194,15 @@ Also read xrspatial/utils.py to understand _validate_raster() behavior.
    For MEDIUM/LOW issues, document them but do not fix.
 
 5. After finishing (whether you found issues or not), update the inspection
-   state file .claude/security-sweep-state.json by reading its current
+   state file .claude/sweep-security-state.json by reading its current
    contents and adding/updating the entry for "{module}" with:
    - "last_inspected": today's ISO date
    - "issue": the issue number from rockout (or null if clean / MEDIUM-only)
    - "severity_max": highest severity found (or null if clean)
    - "categories_found": list of category numbers that had findings (e.g. [1, 2])
+
+   Then `git add .claude/sweep-security-state.json` and commit it to the
+   worktree branch so the state update is included in the PR.
 
 Important:
 - Only flag real, exploitable issues. False positives waste time.
@@ -229,7 +232,7 @@ State is updated by the subagents themselves (see agent prompt step 5).
 After completion, verify state with:
 
 ```
-cat .claude/security-sweep-state.json
+cat .claude/sweep-security-state.json
 ```
 
 To reset all tracking: `/sweep-security --reset-state`
@@ -241,8 +244,8 @@ To reset all tracking: `/sweep-security --reset-state`
 - Do NOT modify any source files directly. Subagents handle fixes via /rockout.
 - Keep the output concise -- the table and agent dispatch are the deliverables.
 - If $ARGUMENTS is empty, use defaults: top 3, no category filter, no exclusions.
-- State file (`.claude/security-sweep-state.json`) is gitignored by convention --
-  do not add it to git.
+- State file (`.claude/sweep-security-state.json`) is tracked in git.
+  Subagents must `git add` and commit it so the state update lands in the PR.
 - For subpackage modules (geotiff, reproject, hydro), the subagent should read
   ALL `.py` files in the subpackage directory, not just `__init__.py`.
 - Only flag patterns that are ACTUALLY present in the code. Do not report

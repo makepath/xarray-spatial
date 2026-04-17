@@ -25,7 +25,7 @@ Store results in a temporary variable -- do NOT write intermediate files.
 
 ## Step 2 -- Load inspection state
 
-Read the state file at `.claude/accuracy-sweep-state.json`.
+Read the state file at `.claude/sweep-accuracy-state.json`.
 
 If it does not exist, treat every module as never-inspected.
 
@@ -114,7 +114,12 @@ like this (adapt the module list to actual results):
    - Missing or wrong Earth curvature corrections
    - Backend inconsistencies (numpy vs cupy vs dask results differ)
 2. Run /rockout to fix the issue end-to-end (issue, worktree, fix, tests, docs)
-3. After completing rockout for ONE module, output <promise>ITERATION DONE</promise>
+3. Update .claude/sweep-accuracy-state.json in the worktree by adding or
+   updating the entry for the module:
+   { \"module_name\": { \"last_inspected\": \"ISO-DATE\", \"issue\": ISSUE_NUMBER } }
+   Then git add and commit it to the worktree branch so the state update
+   lands in the PR.
+4. After completing rockout for ONE module, output <promise>ITERATION DONE</promise>
 
 If you find no accuracy issues in the current target module, skip it and move
 to the next one.
@@ -129,24 +134,17 @@ Set `--max-iterations` to the number of target modules + 2 (buffer for retries).
 
 ```
 To run this sweep:  copy the command above and paste it.
-To update state after a manual rockout:  edit .claude/accuracy-sweep-state.json
-To reset all tracking:  /accuracy-sweep --reset-state
+To update state after a manual rockout:  edit .claude/sweep-accuracy-state.json
+To reset all tracking:  /sweep-accuracy --reset-state
 ```
 
-## Step 6 -- Update state (ONLY when called from inside a ralph-loop)
+## Step 6 -- Update state
 
-This step is informational. The accuracy-sweep command itself does NOT update
-the state file. State is updated when `/rockout` completes -- the rockout
-workflow should append to `.claude/accuracy-sweep-state.json` after creating
-the issue.
-
-To enable this, print a note reminding the user that after each rockout
-iteration completes, they can manually record the inspection:
-
-```json
-// Add to .claude/accuracy-sweep-state.json after each rockout:
-{ "module_name": { "last_inspected": "ISO-DATE", "issue": ISSUE_NUMBER } }
-```
+The sweep-accuracy command itself does NOT update the state file. State is
+updated by the ralph-loop prompt generated in Step 5b, which instructs the
+agent to write and commit `.claude/sweep-accuracy-state.json` in the
+worktree branch as part of each rockout iteration so the state update is
+included in the PR.
 
 ---
 
