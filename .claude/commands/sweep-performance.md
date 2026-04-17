@@ -22,7 +22,7 @@ Parse $ARGUMENTS for these flags (multiple may combine):
 | `--only-focal` | Restrict to: focal, convolution, morphology, bilateral, edge_detection, glcm |
 | `--only-hydro` | Restrict to: flood, cost_distance, geodesic, surface_distance, viewshed, erosion, diffusion |
 | `--only-io` | Restrict to: geotiff, reproject, rasterize, polygonize |
-| `--reset-state` | Delete `.claude/performance-sweep-state.json` and treat all modules as never-inspected |
+| `--reset-state` | Delete `.claude/sweep-performance-state.json` and treat all modules as never-inspected |
 | `--skip-phase1` | Skip triage; reuse last state file; go straight to ralph-loop generation for unresolved HIGH items |
 | `--report-only` | Run Phase 1 triage but do not generate a ralph-loop command |
 | `--size small` | Phase 2 benchmarks use 128x128 arrays |
@@ -64,7 +64,7 @@ For every module in scope, collect:
 
 ### Load inspection state
 
-Read `.claude/performance-sweep-state.json`. If it does not exist, treat every
+Read `.claude/sweep-performance-state.json`. If it does not exist, treat every
 module as never-inspected. If `--reset-state` was set, delete the file first.
 
 State file schema:
@@ -344,7 +344,7 @@ rockout has full context.
 
 ## Step 5 -- Update state file
 
-Write `.claude/performance-sweep-state.json` with the triage results:
+Write `.claude/sweep-performance-state.json` with the triage results:
 
 ```json
 {
@@ -448,7 +448,9 @@ from the actual triage results):
    | dask+numpy | peak_rss_mb | 892    | 34     | 0.04x | IMPROVED   |
    Thresholds: IMPROVED < 0.8x, REGRESSION > 1.2x, else UNCHANGED.
 
-6. Update .claude/performance-sweep-state.json with the issue number.
+6. Update .claude/sweep-performance-state.json with the issue number, then
+   `git add` and commit it to the worktree branch so the state update is
+   included in the PR.
 
 7. Output <promise>ITERATION DONE</promise>
 
@@ -489,8 +491,8 @@ Other options:
   on a known-numpy array), do not flag it.
 - The 30TB simulation constructs the dask task graph only; it NEVER calls
   `.compute()`.
-- State file (`.claude/performance-sweep-state.json`) is gitignored by
-  convention — do not add it to git.
+- State file (`.claude/sweep-performance-state.json`) is tracked in git.
+  Subagents must `git add` and commit it so the state update lands in the PR.
 - If $ARGUMENTS is empty, use defaults: audit all modules, benchmark at
   512x512, generate ralph-loop for HIGH items.
 - For subpackage modules (geotiff, reproject), the subagent should read ALL
