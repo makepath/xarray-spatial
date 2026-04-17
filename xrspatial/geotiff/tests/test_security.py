@@ -137,6 +137,111 @@ class TestDimensionGuard:
 
 
 # ---------------------------------------------------------------------------
+# Cat 1c: Tile dimension guard (issue #1215)
+# ---------------------------------------------------------------------------
+
+class TestTileDimensionGuard:
+    """Per-tile dims must also respect max_pixels, not just image dims.
+
+    A crafted TIFF can declare a tiny image while claiming a 2^30 x 2^30
+    tile. Without this guard, _decode_strip_or_tile asks the decompressor
+    for terabytes.
+    """
+
+    def test_read_tiles_rejects_huge_tile_dims(self):
+        """_read_tiles refuses to decode when tile dims would OOM."""
+        data = make_minimal_tiff(8, 8, np.dtype('float32'),
+                                 tiled=True, tile_size=4)
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+        ifd = ifds[0]
+
+        # Forge tile_width / tile_length to simulate an attacker-controlled
+        # header. Image dims stay small so the image-level check passes.
+        from xrspatial.geotiff._header import IFDEntry
+        ifd.entries[322] = IFDEntry(tag=322, type_id=4, count=1,
+                                    value=1_000_000)
+        ifd.entries[323] = IFDEntry(tag=323, type_id=4, count=1,
+                                    value=1_000_000)
+
+        dtype = tiff_dtype_to_numpy(ifd.bits_per_sample, ifd.sample_format)
+
+        with pytest.raises(ValueError, match="exceed the safety limit"):
+            _read_tiles(data, ifd, header, dtype, max_pixels=1_000_000)
+
+    def test_read_tiles_rejects_zero_tile_dims(self):
+        """_read_tiles rejects tile dims of zero rather than dividing by 0."""
+        data = make_minimal_tiff(8, 8, np.dtype('float32'),
+                                 tiled=True, tile_size=4)
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+        ifd = ifds[0]
+
+        from xrspatial.geotiff._header import IFDEntry
+        ifd.entries[322] = IFDEntry(tag=322, type_id=4, count=1, value=0)
+        ifd.entries[323] = IFDEntry(tag=323, type_id=4, count=1, value=0)
+
+        dtype = tiff_dtype_to_numpy(ifd.bits_per_sample, ifd.sample_format)
+
+        with pytest.raises(ValueError, match="Invalid tile dimensions"):
+            _read_tiles(data, ifd, header, dtype, max_pixels=1_000_000)
+
+    def test_normal_tile_dims_pass(self, tmp_path):
+        """Legitimate tile_size=4 on an 8x8 image still works."""
+        expected = np.arange(64, dtype=np.float32).reshape(8, 8)
+        data = make_minimal_tiff(8, 8, np.dtype('float32'),
+                                 pixel_data=expected,
+                                 tiled=True, tile_size=4)
+        path = str(tmp_path / "tile_dims_1215.tif")
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        # max_pixels=1000 is generous enough for a 4x4 tile (16 pixels)
+        arr, _ = read_to_array(path, max_pixels=1000)
+        np.testing.assert_array_equal(arr, expected)
+
+    def test_open_geotiff_forged_tile_dims(self, tmp_path):
+        """End-to-end: open_geotiff rejects a TIFF with forged tile dims.
+
+        Writes a real TIFF file with a small image but a huge TileWidth
+        field, then checks that open_geotiff raises rather than OOMing.
+        """
+        from xrspatial.geotiff import open_geotiff
+
+        # Build a tiny tiled TIFF, then patch the tile_width field in the
+        # raw bytes. make_minimal_tiff stores tile_width as a SHORT at
+        # tag 322, so we re-parse, find the entry, and overwrite the
+        # inline value with a 32-bit LONG pointing at a huge number.
+        base = make_minimal_tiff(8, 8, np.dtype('float32'),
+                                 tiled=True, tile_size=4)
+        path = str(tmp_path / "forged_tile_1215.tif")
+        with open(path, 'wb') as f:
+            f.write(base)
+
+        # Parse to locate the tile-width entry, then rewrite it in place.
+        # The conftest TIFF uses little-endian SHORT for TileWidth (322).
+        import struct
+        header = parse_header(base)
+        # IFD starts at offset 8, then 2-byte count, then 12-byte entries
+        num_entries = struct.unpack_from('<H', base, 8)[0]
+        patched = bytearray(base)
+        for i in range(num_entries):
+            eo = 10 + i * 12
+            tag = struct.unpack_from('<H', patched, eo)[0]
+            if tag == 322 or tag == 323:
+                # Rewrite as LONG (type=4), count=1, value=1_000_000
+                struct.pack_into('<HHII', patched, eo,
+                                 tag, 4, 1, 1_000_000)
+
+        forged_path = str(tmp_path / "forged_1215_huge.tif")
+        with open(forged_path, 'wb') as f:
+            f.write(bytes(patched))
+
+        with pytest.raises(ValueError, match="exceed the safety limit"):
+            open_geotiff(forged_path, max_pixels=1_000_000)
+
+
+# ---------------------------------------------------------------------------
 # Cat 1b: VRT allocation guard (issue #1195)
 # ---------------------------------------------------------------------------
 

@@ -475,6 +475,14 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     if offsets is None or byte_counts is None:
         raise ValueError("Missing tile offsets or byte counts")
 
+    if tw <= 0 or th <= 0:
+        raise ValueError(
+            f"Invalid tile dimensions: TileWidth={tw}, TileLength={th}")
+
+    # Reject crafted tile dims that would force huge per-tile allocations.
+    # A single tile's decoded bytes must also fit under the pixel budget.
+    _check_dimensions(tw, th, samples, max_pixels)
+
     planar = ifd.planar_config
     tiles_across = math.ceil(width / tw)
     tiles_down = math.ceil(height / th)
@@ -645,10 +653,16 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     offsets = ifd.tile_offsets
     byte_counts = ifd.tile_byte_counts
 
+    if tw <= 0 or th <= 0:
+        raise ValueError(
+            f"Invalid tile dimensions: TileWidth={tw}, TileLength={th}")
+
     tiles_across = math.ceil(width / tw)
     tiles_down = math.ceil(height / th)
 
     _check_dimensions(width, height, samples, max_pixels)
+    # A single tile's decoded bytes must also fit under the pixel budget.
+    _check_dimensions(tw, th, samples, max_pixels)
 
     if samples > 1:
         result = np.empty((height, width, samples), dtype=dtype)
