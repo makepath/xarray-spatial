@@ -1127,7 +1127,13 @@ def read_geotiff_gpu(source: str, *,
         width = ifd.width
         height = ifd.height
 
+        if tw <= 0 or th <= 0:
+            raise ValueError(
+                f"Invalid tile dimensions: TileWidth={tw}, TileLength={th}")
+
         _check_dimensions(width, height, samples, max_pixels)
+        # A single tile's decoded bytes must also fit under the pixel budget.
+        _check_dimensions(tw, th, samples, max_pixels)
 
     finally:
         src.close()
