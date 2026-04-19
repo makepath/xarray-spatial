@@ -10,7 +10,8 @@
       "last_inspected": "2026-04-17",
       "issue": 1215,
       "severity_max": "HIGH",
-      "categories_found": [1, 4]
+      "categories_found": [1, 4],
+      "followup_issues": [1219]
     }
   }
 }

@@ -17,7 +17,7 @@ from ._compression import (
 )
 from ._dtypes import SUB_BYTE_BPS, tiff_dtype_to_numpy
 from ._geotags import GeoInfo, GeoTransform, extract_geo_info
-from ._header import IFD, TIFFHeader, parse_all_ifds, parse_header
+from ._header import IFD, TIFFHeader, parse_all_ifds, parse_header, validate_tile_layout
 
 # ---------------------------------------------------------------------------
 # Allocation guard: reject TIFF dimensions that would exhaust memory
@@ -501,6 +501,11 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
 
     _check_dimensions(out_w, out_h, samples, max_pixels)
 
+    # Reject malformed TIFFs whose declared tile grid exceeds the number of
+    # supplied TileOffsets entries. Silent skipping in the CPU loop below
+    # would mask the problem, and the GPU path reads OOB. See issue #1219.
+    validate_tile_layout(ifd)
+
     _alloc = np.zeros if window is not None else np.empty
     if samples > 1:
         result = _alloc((out_h, out_w, samples), dtype=dtype)
@@ -663,6 +668,10 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     _check_dimensions(width, height, samples, max_pixels)
     # A single tile's decoded bytes must also fit under the pixel budget.
     _check_dimensions(tw, th, samples, max_pixels)
+
+    # Reject malformed TIFFs whose declared tile grid exceeds the supplied
+    # TileOffsets length. See issue #1219.
+    validate_tile_layout(ifd)
 
     if samples > 1:
         result = np.empty((height, width, samples), dtype=dtype)
