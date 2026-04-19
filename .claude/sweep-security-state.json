@@ -9,8 +9,10 @@
     "geotiff": {
       "last_inspected": "2026-04-17",
       "issue": 1215,
+      "followup_issues": [1220],
       "severity_max": "HIGH",
-      "categories_found": [1, 4]
+      "categories_found": [1, 4],
+      "notes": "Follow-up #1220: GPU predictor=2 kernel over-indexed d_decomp for multi-sample tiled TIFFs (silent OOB GPU write). Fixed by passing width=tile_width instead of tile_width*samples."
     }
   }
 }
