@@ -1,6 +1,7 @@
 """TIFF/BigTIFF header and IFD parsing."""
 from __future__ import annotations
 
+import math
 import struct
 from dataclasses import dataclass, field
 from typing import Any
@@ -206,6 +207,68 @@ class IFD:
         if isinstance(v, bytes):
             return v.rstrip(b'\x00').decode('ascii', errors='replace')
         return str(v).rstrip('\x00')
+
+
+def validate_tile_layout(ifd: IFD) -> None:
+    """Validate that a tiled IFD's TileOffsets covers the declared tile grid.
+
+    A well-formed tiled TIFF must supply at least `tiles_across * tiles_down`
+    TileOffsets entries (times samples_per_pixel for planar config 2). An
+    adversarial or malformed file can declare larger image dimensions than
+    its offsets array covers, which causes out-of-bounds reads in
+    downstream decoders (notably the GPU tile-assembly kernel).
+
+    Parameters
+    ----------
+    ifd : IFD
+        Parsed IFD. Must be tiled.
+
+    Raises
+    ------
+    ValueError
+        If TileOffsets or TileByteCounts is missing, if tile width/height
+        is zero, or if the declared grid exceeds the offsets array length.
+    """
+    if not ifd.is_tiled:
+        return
+
+    offsets = ifd.tile_offsets
+    byte_counts = ifd.tile_byte_counts
+    if offsets is None or byte_counts is None:
+        raise ValueError("Tiled TIFF is missing TileOffsets or TileByteCounts")
+
+    tw = ifd.tile_width
+    th = ifd.tile_height
+    if tw <= 0 or th <= 0:
+        raise ValueError(
+            f"Invalid tile dimensions: tile_width={tw}, tile_height={th}")
+
+    width = ifd.width
+    height = ifd.height
+    if width <= 0 or height <= 0:
+        raise ValueError(
+            f"Invalid image dimensions: width={width}, height={height}")
+
+    tiles_across = math.ceil(width / tw)
+    tiles_down = math.ceil(height / th)
+    planar = ifd.planar_config
+    samples = ifd.samples_per_pixel
+    bands = samples if (planar == 2 and samples > 1) else 1
+    expected = tiles_across * tiles_down * bands
+
+    if len(offsets) < expected:
+        raise ValueError(
+            f"Malformed TIFF: declared tile grid requires {expected} tile "
+            f"offsets ({tiles_across} x {tiles_down}"
+            f"{f' x {bands} bands' if bands > 1 else ''}), "
+            f"but TileOffsets has only {len(offsets)} entries"
+        )
+    if len(byte_counts) < expected:
+        raise ValueError(
+            f"Malformed TIFF: declared tile grid requires {expected} tile "
+            f"byte counts, but TileByteCounts has only {len(byte_counts)} "
+            f"entries"
+        )
 
 
 def parse_header(data: bytes | memoryview) -> TIFFHeader:

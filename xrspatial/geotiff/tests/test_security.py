@@ -137,6 +137,111 @@ class TestDimensionGuard:
 
 
 # ---------------------------------------------------------------------------
+# Cat 1c: Tile dimension guard (issue #1215)
+# ---------------------------------------------------------------------------
+
+class TestTileDimensionGuard:
+    """Per-tile dims must also respect max_pixels, not just image dims.
+
+    A crafted TIFF can declare a tiny image while claiming a 2^30 x 2^30
+    tile. Without this guard, _decode_strip_or_tile asks the decompressor
+    for terabytes.
+    """
+
+    def test_read_tiles_rejects_huge_tile_dims(self):
+        """_read_tiles refuses to decode when tile dims would OOM."""
+        data = make_minimal_tiff(8, 8, np.dtype('float32'),
+                                 tiled=True, tile_size=4)
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+        ifd = ifds[0]
+
+        # Forge tile_width / tile_length to simulate an attacker-controlled
+        # header. Image dims stay small so the image-level check passes.
+        from xrspatial.geotiff._header import IFDEntry
+        ifd.entries[322] = IFDEntry(tag=322, type_id=4, count=1,
+                                    value=1_000_000)
+        ifd.entries[323] = IFDEntry(tag=323, type_id=4, count=1,
+                                    value=1_000_000)
+
+        dtype = tiff_dtype_to_numpy(ifd.bits_per_sample, ifd.sample_format)
+
+        with pytest.raises(ValueError, match="exceed the safety limit"):
+            _read_tiles(data, ifd, header, dtype, max_pixels=1_000_000)
+
+    def test_read_tiles_rejects_zero_tile_dims(self):
+        """_read_tiles rejects tile dims of zero rather than dividing by 0."""
+        data = make_minimal_tiff(8, 8, np.dtype('float32'),
+                                 tiled=True, tile_size=4)
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+        ifd = ifds[0]
+
+        from xrspatial.geotiff._header import IFDEntry
+        ifd.entries[322] = IFDEntry(tag=322, type_id=4, count=1, value=0)
+        ifd.entries[323] = IFDEntry(tag=323, type_id=4, count=1, value=0)
+
+        dtype = tiff_dtype_to_numpy(ifd.bits_per_sample, ifd.sample_format)
+
+        with pytest.raises(ValueError, match="Invalid tile dimensions"):
+            _read_tiles(data, ifd, header, dtype, max_pixels=1_000_000)
+
+    def test_normal_tile_dims_pass(self, tmp_path):
+        """Legitimate tile_size=4 on an 8x8 image still works."""
+        expected = np.arange(64, dtype=np.float32).reshape(8, 8)
+        data = make_minimal_tiff(8, 8, np.dtype('float32'),
+                                 pixel_data=expected,
+                                 tiled=True, tile_size=4)
+        path = str(tmp_path / "tile_dims_1215.tif")
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        # max_pixels=1000 is generous enough for a 4x4 tile (16 pixels)
+        arr, _ = read_to_array(path, max_pixels=1000)
+        np.testing.assert_array_equal(arr, expected)
+
+    def test_open_geotiff_forged_tile_dims(self, tmp_path):
+        """End-to-end: open_geotiff rejects a TIFF with forged tile dims.
+
+        Writes a real TIFF file with a small image but a huge TileWidth
+        field, then checks that open_geotiff raises rather than OOMing.
+        """
+        from xrspatial.geotiff import open_geotiff
+
+        # Build a tiny tiled TIFF, then patch the tile_width field in the
+        # raw bytes. make_minimal_tiff stores tile_width as a SHORT at
+        # tag 322, so we re-parse, find the entry, and overwrite the
+        # inline value with a 32-bit LONG pointing at a huge number.
+        base = make_minimal_tiff(8, 8, np.dtype('float32'),
+                                 tiled=True, tile_size=4)
+        path = str(tmp_path / "forged_tile_1215.tif")
+        with open(path, 'wb') as f:
+            f.write(base)
+
+        # Parse to locate the tile-width entry, then rewrite it in place.
+        # The conftest TIFF uses little-endian SHORT for TileWidth (322).
+        import struct
+        header = parse_header(base)
+        # IFD starts at offset 8, then 2-byte count, then 12-byte entries
+        num_entries = struct.unpack_from('<H', base, 8)[0]
+        patched = bytearray(base)
+        for i in range(num_entries):
+            eo = 10 + i * 12
+            tag = struct.unpack_from('<H', patched, eo)[0]
+            if tag == 322 or tag == 323:
+                # Rewrite as LONG (type=4), count=1, value=1_000_000
+                struct.pack_into('<HHII', patched, eo,
+                                 tag, 4, 1, 1_000_000)
+
+        forged_path = str(tmp_path / "forged_1215_huge.tif")
+        with open(forged_path, 'wb') as f:
+            f.write(bytes(patched))
+
+        with pytest.raises(ValueError, match="exceed the safety limit"):
+            open_geotiff(forged_path, max_pixels=1_000_000)
+
+
+# ---------------------------------------------------------------------------
 # Cat 1b: VRT allocation guard (issue #1195)
 # ---------------------------------------------------------------------------
 
@@ -267,3 +372,148 @@ class TestVRTPathTraversal:
 
         assert ".." not in source_path
         assert source_path == os.path.realpath("/tmp/../tmp/test.tif")
+
+
+# ---------------------------------------------------------------------------
+# Tile layout validation (issue #1219)
+#
+# An adversarial TIFF can declare image dimensions that imply more tiles
+# than its TileOffsets tag supplies. The CPU path silently skipped the
+# missing tiles (zero-padded output) and the GPU tile-assembly kernel
+# read past the end of the decompression-offsets array on device.
+# ---------------------------------------------------------------------------
+
+def _make_short_offsets_tiff(
+    width: int,
+    height: int,
+    tile_size: int,
+    declared_offset_count: int,
+    dtype: np.dtype = np.dtype('float32'),
+) -> bytes:
+    """Build a tiled TIFF whose TileOffsets tag count is less than what
+    the image/tile dimensions imply.
+
+    The produced bytes are a valid TIFF that rioxarray/GDAL might still
+    accept with a warning, but our reader should reject them.
+    """
+    import math
+
+    # Start from a normal tiled TIFF, then rewrite the TileOffsets IFD
+    # entry to advertise a smaller count.
+    data = bytearray(make_minimal_tiff(
+        width, height, dtype, tiled=True, tile_size=tile_size))
+
+    # Parse to locate the TileOffsets entry.
+    header = parse_header(bytes(data))
+    ifds = parse_all_ifds(bytes(data), header)
+    ifd = ifds[0]
+
+    offsets = ifd.tile_offsets
+    assert offsets is not None
+    tiles_across = math.ceil(width / tile_size)
+    tiles_down = math.ceil(height / tile_size)
+    true_count = tiles_across * tiles_down
+    assert len(offsets) == true_count
+    assert declared_offset_count < true_count
+
+    # Find the IFD entry bytes for tag 324 (TileOffsets) and rewrite its
+    # count field. TIFF (non-BigTIFF) entries are 12 bytes: HHIi
+    # (tag, type, count, value_or_ptr).
+    bo = header.byte_order
+    ifd_offset = header.first_ifd_offset
+    num_entries = struct.unpack_from(f'{bo}H', data, ifd_offset)[0]
+    entry_offset = ifd_offset + 2
+    for i in range(num_entries):
+        eo = entry_offset + i * 12
+        tag = struct.unpack_from(f'{bo}H', data, eo)[0]
+        if tag == 324:  # TileOffsets
+            # Overwrite the count field at eo+4 (4 bytes, unsigned int).
+            struct.pack_into(
+                f'{bo}I', data, eo + 4, declared_offset_count)
+            break
+    else:
+        raise AssertionError("TileOffsets tag not found in IFD")
+
+    return bytes(data)
+
+
+class TestTileLayoutValidation:
+    """Regression tests for issue #1219."""
+
+    def test_validate_tile_layout_rejects_short_offsets(self):
+        """validate_tile_layout raises when offsets count < declared grid."""
+        from xrspatial.geotiff._header import validate_tile_layout
+
+        # 16x16 image with 4x4 tiles = 16 tiles, but only 4 offsets declared.
+        data = _make_short_offsets_tiff(
+            width=16, height=16, tile_size=4, declared_offset_count=4)
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+        ifd = ifds[0]
+
+        with pytest.raises(ValueError, match="Malformed TIFF.*tile offsets"):
+            validate_tile_layout(ifd)
+
+    def test_validate_tile_layout_accepts_well_formed(self):
+        """validate_tile_layout accepts a normal tiled TIFF."""
+        from xrspatial.geotiff._header import validate_tile_layout
+
+        data = make_minimal_tiff(
+            8, 8, np.dtype('float32'), tiled=True, tile_size=4)
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+        ifd = ifds[0]
+
+        # Should not raise.
+        validate_tile_layout(ifd)
+
+    def test_validate_tile_layout_ignores_stripped(self):
+        """validate_tile_layout is a no-op for stripped TIFFs."""
+        from xrspatial.geotiff._header import validate_tile_layout
+
+        data = make_minimal_tiff(4, 4, np.dtype('float32'))
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+        ifd = ifds[0]
+
+        # Should not raise -- stripped file, not tiled.
+        validate_tile_layout(ifd)
+
+    def test_read_tiles_rejects_short_offsets(self):
+        """_read_tiles surfaces the malformed-TIFF error instead of
+        silently zero-padding missing tiles."""
+        data = _make_short_offsets_tiff(
+            width=16, height=16, tile_size=4, declared_offset_count=4)
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+        ifd = ifds[0]
+        dtype = tiff_dtype_to_numpy(ifd.bits_per_sample, ifd.sample_format)
+
+        with pytest.raises(ValueError, match="Malformed TIFF"):
+            _read_tiles(data, ifd, header, dtype)
+
+    def test_read_to_array_rejects_short_offsets(self, tmp_path):
+        """End-to-end: reading a short-offsets TIFF raises a clear
+        ValueError (not a silent zero output or CUDA crash)."""
+        data = _make_short_offsets_tiff(
+            width=16, height=16, tile_size=4, declared_offset_count=4)
+        path = str(tmp_path / "malformed_1219.tif")
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        with pytest.raises(ValueError, match="Malformed TIFF"):
+            read_to_array(path)
+
+    def test_boundary_exact_count_ok(self, tmp_path):
+        """A TIFF with exactly the required number of offsets reads fine."""
+        # 8x8 image, 4x4 tiles => 4 tiles exactly.
+        expected = np.arange(64, dtype=np.float32).reshape(8, 8)
+        data = make_minimal_tiff(
+            8, 8, np.dtype('float32'),
+            pixel_data=expected, tiled=True, tile_size=4)
+        path = str(tmp_path / "exact_1219.tif")
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        arr, _ = read_to_array(path)
+        np.testing.assert_array_equal(arr, expected)

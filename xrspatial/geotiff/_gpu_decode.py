@@ -1336,8 +1336,11 @@ def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
         total_rows = n_tiles * tile_height
         tpb = min(256, total_rows)
         bpg = math.ceil(total_rows / tpb)
+        # Kernel uses row_bytes = width * bytes_per_sample, so pass pixel
+        # width and full per-pixel size (itemsize * samples). Matches CPU
+        # call at _reader.py _apply_predictor(..., bytes_per_sample * samples).
         _predictor_decode_kernel[bpg, tpb](
-            d_decomp, tile_width * samples, total_rows, dtype.itemsize * samples)
+            d_decomp, tile_width, total_rows, dtype.itemsize * samples)
         cuda.synchronize()
     elif predictor == 3:
         total_rows = n_tiles * tile_height
@@ -1579,9 +1582,11 @@ def gpu_decode_tiles(
         total_rows = n_tiles * tile_height
         tpb = min(256, total_rows)
         bpg = math.ceil(total_rows / tpb)
-        # Reshape so each tile's rows are contiguous (they already are)
+        # Reshape so each tile's rows are contiguous (they already are).
+        # Kernel uses row_bytes = width * bytes_per_sample, so pass pixel
+        # width and full per-pixel size (itemsize * samples).
         _predictor_decode_kernel[bpg, tpb](
-            d_decomp, tile_width * samples, total_rows, dtype.itemsize * samples)
+            d_decomp, tile_width, total_rows, dtype.itemsize * samples)
         cuda.synchronize()
 
     elif predictor == 3:

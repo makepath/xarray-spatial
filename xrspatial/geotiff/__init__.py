@@ -1068,7 +1068,7 @@ def read_geotiff_gpu(source: str, *,
             "Install it with: pip install cupy-cuda12x")
 
     from ._reader import _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT
-    from ._header import parse_header, parse_all_ifds
+    from ._header import parse_header, parse_all_ifds, validate_tile_layout
     from ._dtypes import tiff_dtype_to_numpy
     from ._geotags import extract_geo_info
     from ._gpu_decode import gpu_decode_tiles
@@ -1127,7 +1127,18 @@ def read_geotiff_gpu(source: str, *,
         width = ifd.width
         height = ifd.height
 
+        if tw <= 0 or th <= 0:
+            raise ValueError(
+                f"Invalid tile dimensions: TileWidth={tw}, TileLength={th}")
+
         _check_dimensions(width, height, samples, max_pixels)
+        # A single tile's decoded bytes must also fit under the pixel budget.
+        _check_dimensions(tw, th, samples, max_pixels)
+
+        # Reject malformed TIFFs whose declared tile grid exceeds the
+        # supplied TileOffsets length. The GPU tile-assembly kernel would
+        # read OOB otherwise. See issue #1219.
+        validate_tile_layout(ifd)
 
     finally:
         src.close()
