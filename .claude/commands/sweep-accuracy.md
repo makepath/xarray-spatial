@@ -1,156 +1,257 @@
-# Accuracy Sweep: Generate a Ralph Loop targeting under-inspected modules
+# Accuracy Sweep: Dispatch subagents to audit modules for numerical accuracy issues
 
-Analyze xrspatial modules by recency and inspection history, then print a
-ready-to-run `/ralph-loop` command that targets the highest-priority modules.
+Audit xrspatial modules for numerical accuracy issues: floating point
+precision loss, incorrect NaN propagation, off-by-one errors in neighborhood
+operations, missing or wrong Earth curvature corrections, and backend
+inconsistencies (numpy vs cupy vs dask results differ). Subagents fix
+findings via /rockout.
 
 Optional arguments: $ARGUMENTS
-(e.g. `--top 5`, `--exclude slope,aspect`, `--only-terrain`, `--reset-state`)
+(e.g. `--top 3`, `--exclude slope,aspect`, `--only-terrain`, `--reset-state`)
 
 ---
 
 ## Step 1 -- Gather module metadata via git
 
-For every `.py` file directly under `xrspatial/` (skip `__init__.py`,
-`_version.py`, `__main__.py`, `utils.py`, `accessor.py`, `preview.py`,
-`dataset_support.py`, `diagnostics.py`, `analytics.py`), collect:
+Enumerate candidate modules:
+
+**Single-file modules:** Every `.py` file directly under `xrspatial/`, excluding
+`__init__.py`, `_version.py`, `__main__.py`, `utils.py`, `accessor.py`,
+`preview.py`, `dataset_support.py`, `diagnostics.py`, `analytics.py`.
+
+**Subpackage modules:** `geotiff/`, `reproject/`, and `hydro/` directories under
+`xrspatial/`. Treat each as a single audit unit. List all `.py` files within
+each (excluding `__init__.py`).
+
+For every module, collect:
 
 | Field | How |
 |-------|-----|
-| **last_modified** | `git log -1 --format=%aI -- xrspatial/<module>.py` |
-| **first_commit** | `git log --diff-filter=A --format=%aI -- xrspatial/<module>.py` |
-| **total_commits** | `git log --oneline -- xrspatial/<module>.py \| wc -l` |
-| **recent_accuracy_commits** | `git log --oneline --grep='accuracy\|precision\|numerical\|geodesic' -- xrspatial/<module>.py` |
+| **last_modified** | `git log -1 --format=%aI -- <path>` (for subpackages, most recent file) |
+| **total_commits** | `git log --oneline -- <path> \| wc -l` |
+| **loc** | `wc -l < <path>` (for subpackages, sum all files) |
+| **recent_accuracy_commits** | `git log --oneline --grep='accuracy\|precision\|numerical\|geodesic' -- <path>` |
 
-Store results in a temporary variable -- do NOT write intermediate files.
+Store results in memory -- do NOT write intermediate files.
 
 ## Step 2 -- Load inspection state
 
-Read the state file at `.claude/sweep-accuracy-state.json`.
+Read `.claude/sweep-accuracy-state.json`.
 
 If it does not exist, treat every module as never-inspected.
 
 If `$ARGUMENTS` contains `--reset-state`, delete the file and treat
 everything as never-inspected.
 
-The state file schema:
+State file schema:
 
 ```json
 {
   "inspections": {
-    "slope": { "last_inspected": "2026-03-28T14:00:00Z", "issue": 1042 },
-    "aspect": { "last_inspected": "2026-03-28T15:30:00Z", "issue": 1043 }
+    "slope": {
+      "last_inspected": "2026-03-28T14:00:00Z",
+      "issue": 1042,
+      "severity_max": "HIGH",
+      "categories_found": [1, 3]
+    }
   }
 }
 ```
 
 ## Step 3 -- Score each module
 
-Compute a priority score for each module. Higher = more urgent.
-
 ```
-days_since_inspected = (today - last_inspected).days   # 9999 if never inspected
+days_since_inspected = (today - last_inspected).days   # 9999 if never
 days_since_modified  = (today - last_modified).days
-total_commits        = from Step 1
 has_recent_accuracy_work = 1 if recent_accuracy_commits is non-empty, else 0
 
 score = (days_since_inspected * 3)
       + (total_commits * 0.5)
       - (days_since_modified * 0.2)
       - (has_recent_accuracy_work * 500)
+      + (loc * 0.05)
 ```
 
 Rationale:
 - Modules never inspected dominate (9999 * 3)
-- More commits = more complex = more likely to have bugs
+- More commits = more complex = more likely to have accuracy bugs
 - Recently modified modules slightly deprioritized (someone just touched them)
 - Modules with existing accuracy work heavily deprioritized
+- Larger files have more surface area (0.05 per line)
 
 ## Step 4 -- Apply filters from $ARGUMENTS
 
-- `--top N` -- only include the top N modules (default: 5)
+- `--top N` -- only audit the top N modules (default: 3)
 - `--exclude mod1,mod2` -- remove named modules from the list
-- `--only-terrain` -- restrict to slope, aspect, curvature, terrain,
+- `--only-terrain` -- restrict to: slope, aspect, curvature, terrain,
   terrain_metrics, hillshade, sky_view_factor
-- `--only-focal` -- restrict to focal, convolution, morphology, bilateral,
+- `--only-focal` -- restrict to: focal, convolution, morphology, bilateral,
   edge_detection, glcm
-- `--only-hydro` -- restrict to flood, cost_distance, geodesic,
-  surface_distance, viewshed, erosion, diffusion
+- `--only-hydro` -- restrict to: flood, cost_distance, geodesic,
+  surface_distance, viewshed, erosion, diffusion, hydro (subpackage)
+- `--only-io` -- restrict to: geotiff, reproject, rasterize, polygonize
 
-## Step 5 -- Print the results
+## Step 5 -- Print the ranked table and launch subagents
 
 ### 5a. Print the ranked table
 
-Print a markdown table showing ALL scored modules (not just the selected ones),
+Print a markdown table showing ALL scored modules (not just selected ones),
 sorted by score descending:
 
 ```
-| Rank | Module          | Score  | Last Inspected | Last Modified | Commits |
-|------|-----------------|--------|----------------|---------------|---------|
-| 1    | viewshed        | 30012  | never          | 45 days ago   | 23      |
-| 2    | flood           | 29998  | never          | 120 days ago  | 18      |
-| ...  | ...             | ...    | ...            | ...           | ...     |
+| Rank | Module          | Score  | Last Inspected | Last Modified | Commits | LOC  |
+|------|-----------------|--------|----------------|---------------|---------|------|
+| 1    | viewshed        | 30012  | never          | 45 days ago   | 23      | 800  |
+| 2    | flood           | 29998  | never          | 120 days ago  | 18      | 600  |
+| ...  | ...             | ...    | ...            | ...           | ...     | ...  |
 ```
 
-### 5b. Print the generated ralph-loop command
+### 5b. Launch subagents for the top N modules
 
-Using the top N modules from the ranked list, generate and print a command
-like this (adapt the module list to actual results):
+For each of the top N modules (default 3), launch an Agent in parallel using
+`isolation: "worktree"` and `mode: "auto"`. All N agents must be dispatched
+in a single message so they run concurrently.
 
-````
-/ralph-loop "Survey xarray-spatial modules for numerical accuracy issues.
-
-**Target these modules in priority order:**
-1. viewshed (xrspatial/viewshed.py) -- never inspected, 23 commits
-2. flood (xrspatial/flood.py) -- never inspected, 18 commits
-3. focal (xrspatial/focal.py) -- never inspected, 31 commits
-4. erosion (xrspatial/erosion.py) -- never inspected, 12 commits
-5. classify (xrspatial/classify.py) -- never inspected, 9 commits
-
-**For each module, in order:**
-1. Read the source and identify potential accuracy issues:
-   - Floating point precision loss
-   - Incorrect NaN propagation
-   - Off-by-one errors in neighborhood operations
-   - Missing or wrong Earth curvature corrections
-   - Backend inconsistencies (numpy vs cupy vs dask results differ)
-2. Run /rockout to fix the issue end-to-end (issue, worktree, fix, tests, docs)
-3. Update .claude/sweep-accuracy-state.json in the worktree by adding or
-   updating the entry for the module:
-   { \"module_name\": { \"last_inspected\": \"ISO-DATE\", \"issue\": ISSUE_NUMBER } }
-   Then git add and commit it to the worktree branch so the state update
-   lands in the PR.
-4. After completing rockout for ONE module, output <promise>ITERATION DONE</promise>
-
-If you find no accuracy issues in the current target module, skip it and move
-to the next one.
-
-If all target modules have been addressed or have no issues, output
-<promise>ALL ACCURACY ISSUES FIXED</promise>." --max-iterations {N} --completion-promise "ALL ACCURACY ISSUES FIXED"
-````
-
-Set `--max-iterations` to the number of target modules + 2 (buffer for retries).
-
-### 5c. Print a reminder
+Each agent's prompt must be self-contained and follow this template (adapt
+the module name, paths, and metadata):
 
 ```
-To run this sweep:  copy the command above and paste it.
-To update state after a manual rockout:  edit .claude/sweep-accuracy-state.json
-To reset all tracking:  /sweep-accuracy --reset-state
+You are auditing the xrspatial module "{module}" for numerical accuracy issues.
+
+This module has {commits} commits and {loc} lines of code.
+
+Read these files: {module_files}
+
+Also read xrspatial/utils.py to understand _validate_raster() behavior and
+xrspatial/tests/general_checks.py for the cross-backend comparison helpers.
+
+**Your task:**
+
+1. Read all listed files thoroughly, including the matching test file(s)
+   under xrspatial/tests/ so you understand expected behavior.
+
+2. Audit for these 5 accuracy categories. For each, look for the specific
+   patterns described. Only flag issues ACTUALLY present in the code.
+
+   **Cat 1 — Floating Point Precision Loss**
+   - Accumulation loops that sum many small values into a large running
+     total without Kahan summation or compensated accumulation
+   - float32 used where float64 is required for stable intermediate results
+     (e.g. large grids, long gradients, iterative solvers)
+   - Subtraction of nearly-equal large quantities (catastrophic cancellation)
+   - Division by small numbers without a stability floor
+   Severity: HIGH if the result is visibly wrong on realistic inputs;
+   MEDIUM if only observable on adversarial inputs
+
+   **Cat 2 — NaN / Inf Propagation Errors**
+   - NaN input silently produces a finite output (masked, skipped, or
+     treated as zero without being documented)
+   - NaN check using `==` instead of `!= x` for NaN detection in numba
+   - Neighborhood operations that ignore NaN pixels but do not update the
+     normalization denominator, biasing the result
+   - Inf / -Inf inputs treated as numbers in comparisons without guards
+   - Divide-by-zero producing Inf that then corrupts downstream accumulation
+   Severity: HIGH if NaN input yields a wrong but finite output;
+   MEDIUM if the behavior is documented but still surprising
+
+   **Cat 3 — Off-by-One Errors in Neighborhood Operations**
+   - Loop bounds that exclude the last row/column (e.g. `range(H-1)` where
+     `range(H)` is intended)
+   - `map_overlap` depth that is smaller than the actual stencil radius
+   - Boundary handling that duplicates or skips edge pixels
+   - Asymmetric kernel indexing (one-sided rather than centered)
+   - CUDA kernel bounds guard that is `i > H` instead of `i >= H`
+   Severity: HIGH if it causes a silent wrong result at all chunk boundaries;
+   MEDIUM if it only affects a single-pixel edge
+
+   **Cat 4 — Missing or Wrong Earth Curvature / Projection Corrections**
+   - Geodesic calculations that assume a flat projection without curvature
+     correction (see slope.py, aspect.py, geodesic.py for the reference
+     pattern: `u += (e² + n²) / (2R)`)
+   - Haversine / great-circle distance using the wrong Earth radius
+     constant, or using a spherical approximation where WGS84 is needed
+   - Mixing projected and geographic coordinates in the same calculation
+     without a transform
+   - Using cell size in degrees as if it were meters
+   Severity: HIGH if the correction is missing entirely on a public API;
+   MEDIUM if the correction is present but uses a questionable constant
+
+   **Cat 5 — Backend Inconsistency (numpy vs cupy vs dask)**
+   - numpy and cupy paths use different algorithms that can diverge on
+     identical inputs (e.g. different boundary handling, different NaN
+     semantics, different numerical precision)
+   - dask path silently falls back to materializing the full array
+   - dask `map_overlap` chunk function returns a different shape than the
+     input, corrupting the reassembled array
+   - A backend raises on valid input that another backend accepts
+   - Result dtype differs across backends without documentation
+   Severity: HIGH if numerically different results on the same input;
+   MEDIUM if only metadata (dtype, coords) differs
+
+3. For each real issue found, assign a severity (CRITICAL/HIGH/MEDIUM/LOW)
+   and note the exact file and line number.
+
+4. If any CRITICAL or HIGH issue is found, run /rockout to fix it end-to-end
+   (GitHub issue, worktree branch, fix, tests, and PR).
+   For MEDIUM/LOW issues, document them but do not fix.
+
+5. After finishing (whether you found issues or not), update the inspection
+   state file .claude/sweep-accuracy-state.json by reading its current
+   contents and adding/updating the entry for "{module}" with:
+   - "last_inspected": today's ISO date
+   - "issue": the issue number from rockout (or null if clean / MEDIUM-only)
+   - "severity_max": highest severity found (or null if clean)
+   - "categories_found": list of category numbers that had findings (e.g. [1, 3])
+
+   Then `git add .claude/sweep-accuracy-state.json` and commit it to the
+   worktree branch so the state update is included in the PR.
+
+Important:
+- Only flag real accuracy issues. False positives waste time.
+- Read the tests for this module to understand expected behavior before
+  flagging a result as wrong -- the test may codify the current behavior.
+- For backend comparisons, check that the cross-backend tests in
+  xrspatial/tests/general_checks.py actually exercise the code path you
+  are suspicious of; missing test coverage is itself a finding.
+- Do NOT flag the use of numba @jit itself as an accuracy issue. Focus on
+  what the JIT code does, not that it uses JIT.
+- For the hydro subpackage: focus on one representative variant (d8) in
+  detail, then note which dinf/mfd files share the same pattern. Do not
+  read all 29 files line by line.
+- This repo uses ArrayTypeFunctionMapping to dispatch across numpy/cupy/dask
+  backends. Check all backend paths, not just numpy.
 ```
 
-## Step 6 -- Update state
+### 5c. Print a status line
 
-The sweep-accuracy command itself does NOT update the state file. State is
-updated by the ralph-loop prompt generated in Step 5b, which instructs the
-agent to write and commit `.claude/sweep-accuracy-state.json` in the
-worktree branch as part of each rockout iteration so the state update is
-included in the PR.
+After dispatching, print:
+
+```
+Launched {N} accuracy audit agents: {module1}, {module2}, {module3}
+```
+
+## Step 6 -- State updates
+
+State is updated by the subagents themselves (see agent prompt step 5).
+After completion, verify state with:
+
+```
+cat .claude/sweep-accuracy-state.json
+```
+
+To reset all tracking: `/sweep-accuracy --reset-state`
 
 ---
 
 ## General Rules
 
-- Do NOT modify any source files. This command is read-only analysis.
-- Do NOT create GitHub issues. This command only generates the ralph-loop command.
-- Keep the output concise -- the table and command are the deliverables.
-- If $ARGUMENTS is empty, use defaults: top 5, no category filter, no exclusions.
+- Do NOT modify any source files directly. Subagents handle fixes via /rockout.
+- Keep the output concise -- the table and agent dispatch are the deliverables.
+- If $ARGUMENTS is empty, use defaults: top 3, no category filter, no exclusions.
+- State file (`.claude/sweep-accuracy-state.json`) is tracked in git.
+  Subagents must `git add` and commit it so the state update lands in the PR.
+- For subpackage modules (geotiff, reproject, hydro), the subagent should read
+  ALL `.py` files in the subpackage directory, not just `__init__.py`.
+- Only flag patterns that are ACTUALLY present in the code. Do not report
+  hypothetical issues or patterns that "could" occur with imaginary inputs.
+- False positives are worse than missed issues. When in doubt, skip.
