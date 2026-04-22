@@ -293,6 +293,55 @@ class TestValidation:
         with pytest.raises(ValueError, match="bounds must be provided"):
             rasterize([], width=10, height=10)
 
+    def test_oversize_explicit_dimensions_rejected(self):
+        # width * height = 4e18, far above the 1e9 default cap.  Must
+        # raise before any np.full allocation runs.
+        with pytest.raises(ValueError, match="exceed the safety limit"):
+            rasterize([(box(0, 0, 1, 1), 1.0)],
+                      width=2_000_000_000, height=2_000_000_000,
+                      bounds=(0, 0, 1, 1))
+
+    def test_oversize_resolution_rejected(self):
+        # resolution=1e-6 with 10x10 bounds resolves to 10M x 10M =
+        # 1e14 pixels, well above the default cap.
+        with pytest.raises(ValueError, match="exceed the safety limit"):
+            rasterize([(box(0, 0, 1, 1), 1.0)],
+                      resolution=1e-6, bounds=(0, 0, 10, 10))
+
+    def test_moderate_oversize_explicit_rejected(self):
+        # Realistic attack: ~2e9 pixels = ~16 GB float64 + 2 GB int8.
+        # Still above the default cap, still rejected.
+        with pytest.raises(ValueError, match="exceed the safety limit"):
+            rasterize([(box(0, 0, 1, 1), 1.0)],
+                      width=50_000, height=50_000,
+                      bounds=(0, 0, 1, 1))
+
+    def test_max_pixels_override_permits_larger(self):
+        # A caller who genuinely needs a >1e9-pixel raster can raise the
+        # cap explicitly.  Use a moderate size that actually allocates.
+        result = rasterize(
+            [(box(0, 0, 1, 1), 1.0)],
+            width=2000, height=2000, bounds=(0, 0, 1, 1),
+            max_pixels=10_000_000,
+        )
+        assert result.shape == (2000, 2000)
+
+    def test_max_pixels_at_boundary_permitted(self):
+        # width * height == max_pixels must pass (strict >).
+        result = rasterize(
+            [(box(0, 0, 1, 1), 1.0)],
+            width=100, height=100, bounds=(0, 0, 1, 1),
+            max_pixels=10_000,
+        )
+        assert result.shape == (100, 100)
+
+    def test_max_pixels_one_over_rejected(self):
+        # width * height = 10_001, cap = 10_000 -> reject.
+        with pytest.raises(ValueError, match="exceed the safety limit"):
+            rasterize([(box(0, 0, 1, 1), 1.0)],
+                      width=101, height=100, bounds=(0, 0, 1, 1),
+                      max_pixels=10_000)
+
 
 # ---------------------------------------------------------------------------
 # all_touched mode

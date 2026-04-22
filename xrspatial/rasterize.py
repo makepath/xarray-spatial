@@ -38,6 +38,33 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
+# Allocation guard: reject output dimensions that would exhaust memory
+# ---------------------------------------------------------------------------
+
+#: Default maximum total output pixel count (width * height).
+#: ~1 billion pixels, which is ~8 GB for float64 single-band plus an int8
+#: ``written`` mask.  Override per call via the ``max_pixels`` keyword.
+MAX_PIXELS_DEFAULT = 1_000_000_000
+
+
+def _check_output_dimensions(width, height, max_pixels):
+    """Raise ValueError if the requested output raster exceeds *max_pixels*.
+
+    Called before any host or device allocation so a hostile ``width``,
+    ``height``, or ``resolution`` cannot trigger a multi-gigabyte
+    ``np.full`` / ``cupy.full`` before the error surfaces.
+    """
+    total = int(width) * int(height)
+    if total > max_pixels:
+        raise ValueError(
+            f"rasterize output dimensions ({width} x {height} = "
+            f"{total:,} pixels) exceed the safety limit of "
+            f"{max_pixels:,} pixels.  Pass a larger max_pixels value to "
+            f"rasterize() if this size is intentional."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Merge functions (CPU, numba-jitted)
 #
 # Signature: merge_fn(pixel, props, is_first) -> float64
@@ -1948,6 +1975,7 @@ def rasterize(
     like: Optional[xr.DataArray] = None,
     merge='last',
     chunks: Optional[Union[int, Tuple[int, int]]] = None,
+    max_pixels: int = MAX_PIXELS_DEFAULT,
 ) -> xr.DataArray:
     """Rasterize vector geometries into a 2D DataArray.
 
@@ -2034,6 +2062,11 @@ def rasterize(
         tiles of this size ``(row_chunk, col_chunk)``.  A single int
         uses the same chunk size for both axes.  Combined with
         ``use_cuda`` to select dask+numpy vs dask+cupy.
+    max_pixels : int, default 1_000_000_000
+        Safety cap on the resolved output size (``width * height``).  The
+        function raises ``ValueError`` before any host or device
+        allocation if the cap is exceeded.  Raise this explicitly when
+        rasterizing a legitimately large grid.
 
     Returns
     -------
@@ -2135,6 +2168,10 @@ def rasterize(
         raise ValueError(
             f"width and height must be >= 1, got width={final_width}, "
             f"height={final_height}")
+
+    # Reject oversize outputs before any host or device allocation.  Covers
+    # the explicit width/height path and the resolution-derived path.
+    _check_output_dimensions(final_width, final_height, max_pixels)
 
     # Resolve dtype: explicit > like > default
     if dtype is not None:
