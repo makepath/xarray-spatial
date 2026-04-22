@@ -417,3 +417,45 @@ def test_viewshed_dask_distance_sweep_target_elev():
         np.testing.assert_allclose(
             result[vis_mask], v_np.values[vis_mask], atol=1.0,
             err_msg="Tier C angles diverge too far from numpy reference")
+
+
+def test_viewshed_cpu_memory_guard():
+    """_viewshed_cpu should refuse rasters that would blow past RAM.
+
+    Regression test for the DoS vulnerability where the numpy path
+    allocated ~500 bytes/pixel of working memory with no size check.
+    """
+    from unittest.mock import patch
+
+    ny, nx = 100, 100
+    terrain = np.zeros((ny, nx))
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+    raster = xa.DataArray(terrain, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    # 100x100 needs ~5 MB of working memory.  Report 1 MB available so
+    # the 50% threshold (~500 kB) is exceeded and the guard trips.
+    with patch('xrspatial.viewshed._available_memory_bytes',
+               return_value=1_000_000):
+        with pytest.raises(MemoryError, match="max_distance"):
+            viewshed(raster, x=50.0, y=50.0, observer_elev=5)
+
+
+def test_viewshed_cpu_memory_guard_passes_with_max_distance():
+    """max_distance should bypass the memory guard by windowing first."""
+    from unittest.mock import patch
+
+    ny, nx = 100, 100
+    terrain = np.zeros((ny, nx))
+    xs = np.arange(nx, dtype=float)
+    ys = np.arange(ny, dtype=float)
+    raster = xa.DataArray(terrain, coords=dict(x=xs, y=ys), dims=["y", "x"])
+
+    # Same tight memory budget as above — but max_distance=3 shrinks the
+    # working window to a 7x7 tile, so the guard on the small window
+    # does not trip.
+    with patch('xrspatial.viewshed._available_memory_bytes',
+               return_value=1_000_000):
+        v = viewshed(raster, x=50.0, y=50.0, observer_elev=5,
+                     max_distance=3.0)
+    assert v.values[50, 50] == 180.0

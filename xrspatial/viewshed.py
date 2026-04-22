@@ -1514,6 +1514,22 @@ def _viewshed_cpu(
 
     height, width = raster.shape
 
+    # Peak-memory guard.  The sweep algorithm allocates an event_list of
+    # 3*H*W rows (168 bytes/pixel), plus the red-black status structure
+    # (status_values + status_struct + idle ~= 104 bytes/pixel),
+    # visibility_grid and raster (~16 bytes/pixel), and a lexsort
+    # temporary that roughly doubles event_list during sort.
+    # Round to ~500 bytes/pixel and refuse if it would eat most of RAM.
+    peak_bytes = 500 * height * width
+    avail = _available_memory_bytes()
+    if peak_bytes > 0.5 * avail:
+        raise MemoryError(
+            f"viewshed CPU sweep would need ~{peak_bytes / 1e9:.1f} GB of "
+            f"working memory for a {height}x{width} raster, which exceeds "
+            f"50% of available RAM ({avail / 1e9:.1f} GB). "
+            f"Pass max_distance= to limit the analysis area."
+        )
+
     y_coords = raster.indexes.get('y').values
     x_coords = raster.indexes.get('x').values
 

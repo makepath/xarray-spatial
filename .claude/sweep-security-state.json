@@ -33,6 +33,13 @@
       "severity_max": "HIGH",
       "categories_found": [1, 2, 6],
       "notes": "HIGH (fixed #1227): _stats_cupy used `if nodata_values:` (truthy) so nodata_values=0 silently skipped the filter on the cupy backend, producing wrong stats vs every other backend. MEDIUM (unfixed): _strides uses np.int32 for stride indices — can wrap for arrays > ~2B elements in the numpy path. MEDIUM (unfixed): hypsometric_integral() skips _validate_raster on zones/values; _regions_numpy has no memory guard (numpy-only path, bounded by caller-allocated input). MEDIUM (unfixed): _stats_numpy return_type='xarray.DataArray' allocates np.full((n_stats, values.size)) with no guard."
+    },
+    "viewshed": {
+      "last_inspected": "2026-04-22",
+      "issue": 1229,
+      "severity_max": "HIGH",
+      "categories_found": [1],
+      "notes": "HIGH (fixed #1229): _viewshed_cpu allocated ~500 bytes/pixel of working memory (event_list 3*H*W*7*8 bytes + status_values/status_struct/idle + visibility_grid + lexsort temporary) with no guard. A 20000x20000 raster tried to allocate ~200 GB. Fixed by adding peak-memory guard mirroring the _viewshed_dask pattern (_available_memory_bytes() check, raises MemoryError with max_distance= hint). No other HIGH findings: dask path already guarded, _validate_raster is called, distance-sweep uses dtype=float64, _calc_dist_n_grad guards zero distance."
     }
   }
 }
