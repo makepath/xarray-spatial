@@ -801,6 +801,45 @@ def test_stats_nodata_wipes_zone(backend):
     check_results(backend, df_result, expected)
 
 
+@pytest.mark.parametrize("backend", ['numpy', 'dask+numpy', 'cupy', 'dask+cupy'])
+def test_stats_nodata_values_zero_across_backends_1227(backend):
+    """Regression: nodata_values=0 must be filtered on every backend.
+
+    The cupy path previously used `if nodata_values:` (truthiness), so passing
+    nodata_values=0 silently skipped the filter and zeros were included in
+    the per-zone statistics.  Every other backend used `is not None` and
+    dropped the zeros correctly — that divergence is what this test pins.
+    """
+    if 'cupy' in backend and not has_cuda_and_cupy():
+        pytest.skip("Requires CUDA and CuPy")
+    if 'dask' in backend and not dask_array_available():
+        pytest.skip("Requires Dask")
+
+    # Zone 1: one zero (should be dropped) and three 10s -> mean=10, count=3.
+    # Zone 2: one zero (should be dropped) and three 20s -> mean=20, count=3.
+    zones_data = np.array([[1, 1, 2, 2],
+                           [1, 1, 2, 2]], dtype=float)
+    values_data = np.array([[0.0, 10.0, 0.0, 20.0],
+                            [10.0, 10.0, 20.0, 20.0]])
+
+    zones = create_test_raster(zones_data, backend, chunks=(2, 2))
+    values = create_test_raster(values_data, backend, chunks=(2, 2))
+
+    funcs = ['mean', 'sum', 'count']
+    df_result = stats(
+        zones=zones, values=values,
+        stats_funcs=funcs, nodata_values=0,
+    )
+
+    expected = {
+        'zone':  [1, 2],
+        'mean':  [10.0, 20.0],
+        'sum':   [30.0, 60.0],
+        'count': [3, 3],
+    }
+    check_results(backend, df_result, expected)
+
+
 @pytest.mark.skipif(not dask_array_available(), reason="Requires Dask")
 @pytest.mark.parametrize("backend", ['dask+numpy', 'dask+cupy'])
 def test_stats_zone_in_subset_of_blocks(backend):

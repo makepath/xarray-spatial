@@ -26,6 +26,13 @@
       "severity_max": "HIGH",
       "categories_found": [1, 2],
       "notes": "HIGH: unbounded out/written allocation in _run_numpy/_run_cupy driven by user-supplied width/height/resolution (no cap). MEDIUM (unfixed): _build_row_csr_numba total=row_ptr[height] is int32 and can wrap for very tall rasters with many long edges."
+    },
+    "zonal": {
+      "last_inspected": "2026-04-22",
+      "issue": 1227,
+      "severity_max": "HIGH",
+      "categories_found": [1, 2, 6],
+      "notes": "HIGH (fixed #1227): _stats_cupy used `if nodata_values:` (truthy) so nodata_values=0 silently skipped the filter on the cupy backend, producing wrong stats vs every other backend. MEDIUM (unfixed): _strides uses np.int32 for stride indices — can wrap for arrays > ~2B elements in the numpy path. MEDIUM (unfixed): hypsometric_integral() skips _validate_raster on zones/values; _regions_numpy has no memory guard (numpy-only path, bounded by caller-allocated input). MEDIUM (unfixed): _stats_numpy return_type='xarray.DataArray' allocates np.full((n_stats, values.size)) with no guard."
     }
   }
 }
