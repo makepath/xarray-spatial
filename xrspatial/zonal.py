@@ -544,7 +544,9 @@ def _stats_cupy(
     values_by_zone = values[sorted_indices]
 
     # filter out values that are non-finite or values equal to nodata_values
-    if nodata_values:
+    # Note: use `is not None` instead of truthiness so that nodata_values=0
+    # (a common sentinel) still triggers the filter, matching the numpy path.
+    if nodata_values is not None:
         filter_values = cupy.isfinite(values_by_zone) & (
             values_by_zone != nodata_values)
     else:
