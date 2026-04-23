@@ -15,7 +15,13 @@ try:
 except ImportError:
     da = None
 
-from xrspatial.utils import ArrayTypeFunctionMapping, _validate_scalar, ngjit
+from xrspatial.utils import (
+    ArrayTypeFunctionMapping,
+    _validate_scalar,
+    has_cuda_and_cupy,
+    is_cupy_array,
+    ngjit,
+)
 
 # Upper bound on bump count to prevent accidental OOM from the default
 # w*h//10 heuristic.  16 bytes per bump (int32 loc pair + float64 height),
@@ -340,15 +346,38 @@ def bump(width: int = None,
     if count is None:
         count = min(w * h // 10, _MAX_DEFAULT_COUNT)
 
-    # 16 bytes per bump: 2 x int32 coords + 1 x float64 height
-    required_bytes = count * 16
+    # The dask backends build the output lazily per-chunk, so the full
+    # raster never lives in memory at once.  Only guard against raster
+    # size when we will actually materialize it.
+    materializes_raster = (
+        agg is None
+        or isinstance(agg.data, np.ndarray)
+        or (has_cuda_and_cupy() and is_cupy_array(agg.data))
+    )
+
+    # Budget: 16 bytes per bump (2 x int32 coord + float64 height) plus
+    # the full output raster at 8 bytes/cell (float64) when the backend
+    # will materialize it.  Guard both so a huge w*h cannot allocate
+    # multi-TB arrays silently.
+    bump_bytes = count * 16
+    raster_bytes = w * h * 8 if materializes_raster else 0
+    required_bytes = bump_bytes + raster_bytes
     available = _available_memory_bytes()
     if required_bytes > 0.5 * available:
+        if raster_bytes > 0:
+            detail = (
+                f"({raster_bytes / 1e9:.1f} GB for the output raster plus "
+                f"{bump_bytes / 1e9:.1f} GB for location/height arrays)"
+            )
+            hint = "Use a smaller raster or pass a dask-backed agg."
+        else:
+            detail = "for location/height arrays"
+            hint = "Pass a smaller count explicitly."
         raise MemoryError(
-            f"bump() with count={count:,} requires ~{required_bytes / 1e9:.1f} GB "
-            f"for location/height arrays, but only "
-            f"{available / 1e9:.1f} GB is available.  "
-            f"Pass a smaller count explicitly."
+            f"bump() with width={w:,}, height={h:,}, count={count:,} "
+            f"requires ~{required_bytes / 1e9:.1f} GB {detail}, "
+            f"but only {available / 1e9:.1f} GB is available.  "
+            f"{hint}"
         )
 
     if height_func is None:

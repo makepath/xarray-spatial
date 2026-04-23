@@ -196,9 +196,18 @@ def test_bump_locs_use_int32_not_uint16():
     assert out[50, 4464] == 0, "uint16 wrap-around location should be empty"
 
 
-def test_bump_default_count_capped():
+def test_bump_default_count_capped(monkeypatch):
     """Default count should not exceed _MAX_DEFAULT_COUNT (#1206)."""
+    import sys
+
     from xrspatial.bump import _MAX_DEFAULT_COUNT
+
+    # The 20000 x 20000 raster is 3.2 GB, which exceeds the memory guard on
+    # small CI runners (#1234). Stub available memory so the guard does not
+    # interfere with this count-cap assertion. xrspatial.__init__ rebinds
+    # the `bump` name to the function, so reach the module via sys.modules.
+    bump_mod = sys.modules["xrspatial.bump"]
+    monkeypatch.setattr(bump_mod, "_available_memory_bytes", lambda: 64 * 1024**3)
 
     # 20000 x 20000 → w*h//10 = 40M, should be capped to 10M
     result = bump(width=20000, height=20000, spread=0)
@@ -260,3 +269,43 @@ def test_bump_dask_partitioned_matches_numpy():
     result_dask = bump(agg=agg_dask, count=50, spread=2)
 
     np.testing.assert_array_equal(result_np.values, result_dask.values)
+
+
+# --- Issue #1231 regression tests ---
+
+def test_bump_raster_memory_guard_rejects_pathological_size():
+    """Memory guard should reject huge width*height even with a small
+    count (#1231).
+
+    Pre-fix: ``bump(width=1_000_000, height=1_000_000)`` would pass the
+    bump-count guard (default count capped at 10M ~ 160 MB) and then
+    allocate an 8 TB float64 output raster inside ``_finish_bump``.
+    """
+    import pytest
+
+    with pytest.raises(MemoryError, match=r"bump.*width=1,000,000"):
+        bump(width=1_000_000, height=1_000_000)
+
+
+def test_bump_raster_memory_guard_mentions_raster_bytes():
+    """Error message should name the raster allocation as the culprit
+    when the raster dominates the budget (#1231)."""
+    import pytest
+
+    with pytest.raises(MemoryError, match="output raster"):
+        bump(width=500_000, height=500_000, count=1)
+
+
+@dask_array_available
+def test_bump_dask_bypasses_raster_guard():
+    """Dask paths build the output lazily, so the raster-size guard
+    must not reject a huge dask-backed agg (#1231)."""
+    # 100k x 100k float64 would be 80 GB if materialized, but the dask
+    # backend never holds the full array in memory.
+    agg = xr.DataArray(
+        da.zeros((100_000, 100_000), chunks=(1_000, 1_000), dtype=np.float64),
+        dims=['y', 'x'],
+    )
+    result = bump(agg=agg, count=10, spread=0)
+    assert result.shape == (100_000, 100_000)
+    assert isinstance(result.data, da.Array)
