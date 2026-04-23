@@ -1747,6 +1747,87 @@ class TestBigTIFF:
             header = parse_header(f.read(16))
         assert not header.is_bigtiff
 
+    def _assert_offset_tags_are_long8(self, path):
+        """Parse *path*'s first IFD and assert offset tags use LONG8."""
+        from xrspatial.geotiff._header import (
+            parse_all_ifds, TAG_STRIP_OFFSETS, TAG_STRIP_BYTE_COUNTS,
+            TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS,
+        )
+        from xrspatial.geotiff._dtypes import LONG8
+
+        with open(path, 'rb') as f:
+            buf = f.read()
+        header = parse_header(buf)
+        assert header.is_bigtiff, (
+            "Test precondition: file must be BigTIFF.")
+        ifds = parse_all_ifds(buf, header)
+        assert len(ifds) >= 1
+        entries = ifds[0].entries
+
+        offset_tags = (TAG_STRIP_OFFSETS, TAG_STRIP_BYTE_COUNTS,
+                       TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS)
+        present = [t for t in offset_tags if t in entries]
+        assert present, (
+            "File had no strip/tile offset tags; "
+            "cannot verify the LONG8 promotion.")
+        for tag_id in present:
+            entry = entries[tag_id]
+            assert entry.type_id == LONG8, (
+                f"Tag {tag_id} in BigTIFF output was typed "
+                f"{entry.type_id}, expected LONG8 (16).  A 32-bit "
+                "offset would truncate on files larger than 4 GB.")
+
+    def test_bigtiff_eager_tile_offsets_are_long8_1247(self, tmp_path):
+        """Eager writer emits LONG8 TileOffsets in BigTIFF output.
+
+        Regression for the Medium Cat 3 finding in the #1247 audit:
+        eager ``_assemble_tiff`` hard-coded LONG for TileOffsets /
+        TileByteCounts regardless of the BigTIFF decision.  Anything
+        past 4 GB would silently truncate (or, with ``struct.pack``,
+        fail at pack time).
+
+        Asserting on a small-but-forced BigTIFF is enough: the fix
+        is width-of-the-offset-field, not value-range.
+        """
+        arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+        path = str(tmp_path / 'bigtiff_long8_eager_1247.tif')
+        to_geotiff(arr, path, compression='none',
+                   tiled=True, tile_size=4, bigtiff=True)
+        self._assert_offset_tags_are_long8(path)
+        # Data must still round-trip.
+        np.testing.assert_array_equal(open_geotiff(path).values, arr)
+
+    def test_bigtiff_eager_strip_offsets_are_long8_1247(self, tmp_path):
+        """Eager writer emits LONG8 StripOffsets for stripped BigTIFF."""
+        arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+        path = str(tmp_path / 'bigtiff_long8_eager_strip_1247.tif')
+        to_geotiff(arr, path, compression='none',
+                   tiled=False, bigtiff=True)
+        self._assert_offset_tags_are_long8(path)
+        np.testing.assert_array_equal(open_geotiff(path).values, arr)
+
+    def test_bigtiff_streaming_tile_offsets_are_long8_1247(self, tmp_path):
+        """Streaming writer emits LONG8 TileOffsets in BigTIFF output.
+
+        Covers the pre-fix code comment at ``_writer.write_streaming``
+        that explicitly acknowledged LONG8 was needed and hadn't been
+        done.  Uses a small dask array so the test doesn't actually
+        need to produce a >4 GB file.
+        """
+        import dask.array as da
+        import xarray as xr
+
+        arr = np.arange(256, dtype=np.float32).reshape(16, 16)
+        dask_da = xr.DataArray(
+            da.from_array(arr, chunks=8),
+            dims=['y', 'x'],
+        )
+        path = str(tmp_path / 'bigtiff_long8_stream_1247.tif')
+        to_geotiff(dask_da, path, compression='none',
+                   tiled=True, tile_size=4, bigtiff=True)
+        self._assert_offset_tags_are_long8(path)
+        np.testing.assert_array_equal(open_geotiff(path).values, arr)
+
 
 # -----------------------------------------------------------------------
 # Sub-byte bit depths (1-bit, 4-bit, 12-bit)

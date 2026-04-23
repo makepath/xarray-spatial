@@ -25,6 +25,7 @@ from ._dtypes import (
     RATIONAL,
     SHORT,
     LONG,
+    LONG8,
     ASCII,
     numpy_to_tiff_dtype,
     TIFF_TYPE_SIZES,
@@ -196,6 +197,12 @@ def _serialize_tag_value(type_id, count, values):
         if isinstance(values, (list, tuple)):
             return struct.pack(f'{BO}{count}I', *values)
         return struct.pack(f'{BO}I', values)
+    elif type_id == LONG8:
+        # BigTIFF 64-bit unsigned.  Used for StripOffsets / TileOffsets
+        # (and their byte-count siblings) in files larger than 4 GB.
+        if isinstance(values, (list, tuple)):
+            return struct.pack(f'{BO}{count}Q', *values)
+        return struct.pack(f'{BO}Q', values)
     elif type_id == RATIONAL:
         # RATIONAL = two LONGs (numerator, denominator) per value
         if isinstance(values, (list, tuple)) and isinstance(values[0], (list, tuple)):
@@ -703,12 +710,45 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
 
     header_size = 16 if bigtiff else 8
 
+    # In BigTIFF, StripOffsets / TileOffsets and their byte-count
+    # siblings must use 64-bit offsets.  The ifd_specs above were
+    # built with LONG (uint32) because bigtiff wasn't yet decided;
+    # promote them to LONG8 here.  This is the write-side counterpart
+    # of the 64-bit offset handling in _header.parse_ifd.
+    if bigtiff:
+        ifd_specs = [_promote_offsets_to_long8(tags) for tags in ifd_specs]
+
     if is_cog and len(ifd_specs) > 1:
         return _assemble_cog_layout(header_size, ifd_specs, pixel_data_parts,
                                     bigtiff=bigtiff)
     else:
         return _assemble_standard_layout(header_size, ifd_specs, pixel_data_parts,
                                          bigtiff=bigtiff)
+
+
+# Tags whose LONG encoding must become LONG8 in BigTIFF output.
+_BIGTIFF_OFFSET_TAGS = frozenset({
+    TAG_STRIP_OFFSETS,
+    TAG_STRIP_BYTE_COUNTS,
+    TAG_TILE_OFFSETS,
+    TAG_TILE_BYTE_COUNTS,
+})
+
+
+def _promote_offsets_to_long8(tags: list) -> list:
+    """Retype strip/tile offset and byte-count tags from LONG to LONG8.
+
+    Used when switching to BigTIFF output: 32-bit offsets cannot
+    address past 4 GB, so the offset arrays must be emitted as
+    LONG8 (uint64).  Non-offset tags pass through unchanged.
+    """
+    out = []
+    for tag_id, type_id, count, values in tags:
+        if tag_id in _BIGTIFF_OFFSET_TAGS and type_id == LONG:
+            out.append((tag_id, LONG8, count, values))
+        else:
+            out.append((tag_id, type_id, count, values))
+    return out
 
 
 def _assemble_standard_layout(header_size: int,
@@ -1137,20 +1177,20 @@ def write_streaming(dask_data, path: str, *,
     if resolution_unit is not None:
         tags.append((TAG_RESOLUTION_UNIT, SHORT, 1, resolution_unit))
 
-    # Layout tags with placeholder offsets / byte-counts.
-    # NOTE: offsets use TIFF type LONG (uint32).  For BigTIFF files
-    # exceeding 4 GB these would need LONG8 -- same limitation as the
-    # eager writer.
+    # Layout tags with placeholder offsets / byte-counts.  BigTIFF
+    # needs 64-bit offsets (LONG8) since strip/tile positions can
+    # exceed 4 GB; classic TIFF uses LONG (uint32).
+    offset_type = LONG8 if use_bigtiff else LONG
     placeholder = [0] * n_entries
     if tiled:
         tags.append((TAG_TILE_WIDTH, SHORT, 1, tile_size))
         tags.append((TAG_TILE_LENGTH, SHORT, 1, tile_size))
-        tags.append((TAG_TILE_OFFSETS, LONG, n_entries, list(placeholder)))
-        tags.append((TAG_TILE_BYTE_COUNTS, LONG, n_entries, list(placeholder)))
+        tags.append((TAG_TILE_OFFSETS, offset_type, n_entries, list(placeholder)))
+        tags.append((TAG_TILE_BYTE_COUNTS, offset_type, n_entries, list(placeholder)))
     else:
         tags.append((TAG_ROWS_PER_STRIP, SHORT, 1, rows_per_strip))
-        tags.append((TAG_STRIP_OFFSETS, LONG, n_entries, list(placeholder)))
-        tags.append((TAG_STRIP_BYTE_COUNTS, LONG, n_entries, list(placeholder)))
+        tags.append((TAG_STRIP_OFFSETS, offset_type, n_entries, list(placeholder)))
+        tags.append((TAG_STRIP_BYTE_COUNTS, offset_type, n_entries, list(placeholder)))
 
     # Geo tags
     geo_tags_dict = {}
@@ -1320,13 +1360,16 @@ def write_streaming(dask_data, path: str, *,
 
                     del strip_np
 
-        # -- Pass 2: patch IFD with actual offsets --
+        # -- Pass 2: patch IFD with actual offsets.  Reuse the type
+        # chosen at tag-build time (LONG for classic, LONG8 for
+        # BigTIFF) so the patch stays width-consistent with the
+        # placeholders reserved in pass 1.
         patched_tags = []
         for tag_id, type_id, count, values in sorted_tags:
             if tag_id in (TAG_TILE_OFFSETS, TAG_STRIP_OFFSETS):
-                patched_tags.append((tag_id, LONG, n_entries, actual_offsets))
+                patched_tags.append((tag_id, type_id, n_entries, actual_offsets))
             elif tag_id in (TAG_TILE_BYTE_COUNTS, TAG_STRIP_BYTE_COUNTS):
-                patched_tags.append((tag_id, LONG, n_entries, actual_counts))
+                patched_tags.append((tag_id, type_id, n_entries, actual_counts))
             else:
                 patched_tags.append((tag_id, type_id, count, values))
 
