@@ -922,6 +922,15 @@ def _run_equal_interval(agg, k, module):
         min_data = float(min_lazy)
         max_data = float(max_lazy)
 
+    # Degenerate data: all-NaN/inf, or every finite pixel has the same value.
+    # Collapse to a single bin so finite pixels map to class 0 and any
+    # non-finite pixels remain NaN (handled by _cpu_bin's isfinite check).
+    if not np.isfinite(max_data - min_data) or max_data == min_data:
+        cut_value = max_data if np.isfinite(max_data) else 0.0
+        cuts = np.array([cut_value], dtype=np.float64)
+        out = _bin(agg, cuts, np.arange(1))
+        return out
+
     width = (max_data - min_data) / k
     # Build cuts as numpy — only k elements, no need for dask/cupy overhead
     cuts = np.arange(min_data + width, max_data + width, width)
