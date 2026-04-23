@@ -64,6 +64,13 @@ class VRTDataset:
     crs_wkt: str | None = None
     geo_transform: tuple | None = None  # (origin_x, res_x, skew_x, origin_y, skew_y, res_y)
     bands: list[_VRTBand] = field(default_factory=list)
+    # GDAL raster registration metadata.  'area' (default) means the
+    # GeoTransform origin is the top-left *corner* of pixel (0, 0) and
+    # pixel-center coords need the usual half-pixel shift.  'point'
+    # means the origin is already at the *center* of pixel (0, 0) and
+    # coords must be emitted without the shift.  Parsed from
+    # ``<Metadata><MDI key="AREA_OR_POINT">Point</MDI></Metadata>``.
+    raster_type: str = 'area'  # 'area' or 'point'
 
 
 def _parse_rect(elem) -> _Rect:
@@ -113,6 +120,19 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
         parts = [float(x.strip()) for x in gt_str.split(',')]
         if len(parts) == 6:
             geo_transform = tuple(parts)
+
+    # Registration metadata (AREA_OR_POINT).  GDAL stores this as
+    # ``<Metadata><MDI key="AREA_OR_POINT">Point</MDI></Metadata>``
+    # at the dataset level.  Default is Area.
+    raster_type = 'area'
+    for md_elem in root.findall('Metadata'):
+        if md_elem.get('domain') not in (None, '', 'default'):
+            continue  # skip domain-scoped metadata (IMAGE_STRUCTURE etc.)
+        for mdi in md_elem.findall('MDI'):
+            if mdi.get('key') == 'AREA_OR_POINT':
+                txt = (mdi.text or '').strip().lower()
+                if txt == 'point':
+                    raster_type = 'point'
 
     # Bands
     bands = []
@@ -188,6 +208,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
         crs_wkt=crs_wkt,
         geo_transform=geo_transform,
         bands=bands,
+        raster_type=raster_type,
     )
 
 

@@ -883,6 +883,97 @@ class TestVRT:
         assert vals[0, 1] == 2.0
         assert vals[1, 1] == 4.0
 
+    def test_vrt_pixel_is_point_no_half_pixel_shift(self, tmp_path):
+        """VRT with AREA_OR_POINT=Point does not apply a half-pixel shift.
+
+        Before the fix, ``read_vrt`` always added ``(c + 0.5) * res``
+        to the GeoTransform origin, even when the VRT advertised
+        Point registration.  That shifted coords by half a cell in
+        world space on any Point-tagged VRT.
+
+        The expected GDAL convention: when ``AREA_OR_POINT=Point``
+        the GeoTransform origin is already the *center* of pixel
+        (0, 0), so coords[0] must equal origin exactly.
+        """
+        arr = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+        tile_path = self._write_tile(tmp_path, 'point_1247.tif', arr)
+
+        origin_x, origin_y = 100.0, 50.0
+        pixel_w, pixel_h = 10.0, -10.0
+        vrt_xml = (
+            f'<VRTDataset rasterXSize="2" rasterYSize="2">\n'
+            f'  <Metadata>\n'
+            f'    <MDI key="AREA_OR_POINT">Point</MDI>\n'
+            f'  </Metadata>\n'
+            f'  <GeoTransform>{origin_x}, {pixel_w}, 0.0, '
+            f'{origin_y}, 0.0, {pixel_h}</GeoTransform>\n'
+            f'  <VRTRasterBand dataType="Float32" band="1">\n'
+            f'    <SimpleSource>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            f'      <SourceBand>1</SourceBand>\n'
+            f'      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            f'      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            f'    </SimpleSource>\n'
+            f'  </VRTRasterBand>\n'
+            f'</VRTDataset>\n'
+        )
+        vrt_path = str(tmp_path / 'point_1247.vrt')
+        with open(vrt_path, 'w') as f:
+            f.write(vrt_xml)
+
+        da = open_geotiff(vrt_path)
+
+        # Point registration: coords[0] == origin, no 0.5*pixel shift.
+        assert float(da.coords['x'].values[0]) == pytest.approx(origin_x)
+        assert float(da.coords['y'].values[0]) == pytest.approx(origin_y)
+        # Adjacent cell is one full pixel away.
+        assert float(da.coords['x'].values[1]) == pytest.approx(
+            origin_x + pixel_w)
+        assert float(da.coords['y'].values[1]) == pytest.approx(
+            origin_y + pixel_h)
+        # Raster type is surfaced in attrs.
+        assert da.attrs.get('raster_type') == 'point'
+
+    def test_vrt_pixel_is_area_still_shifts(self, tmp_path):
+        """Default VRT (no AREA_OR_POINT metadata) keeps the half-pixel shift.
+
+        This is the backwards-compat guard for the Point fix: Area
+        registration must continue to add ``0.5 * pixel`` to the
+        origin.
+        """
+        arr = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+        tile_path = self._write_tile(tmp_path, 'area_1247.tif', arr)
+
+        origin_x, origin_y = 100.0, 50.0
+        pixel_w, pixel_h = 10.0, -10.0
+        vrt_xml = (
+            f'<VRTDataset rasterXSize="2" rasterYSize="2">\n'
+            f'  <GeoTransform>{origin_x}, {pixel_w}, 0.0, '
+            f'{origin_y}, 0.0, {pixel_h}</GeoTransform>\n'
+            f'  <VRTRasterBand dataType="Float32" band="1">\n'
+            f'    <SimpleSource>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            f'      <SourceBand>1</SourceBand>\n'
+            f'      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            f'      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            f'    </SimpleSource>\n'
+            f'  </VRTRasterBand>\n'
+            f'</VRTDataset>\n'
+        )
+        vrt_path = str(tmp_path / 'area_1247.vrt')
+        with open(vrt_path, 'w') as f:
+            f.write(vrt_xml)
+
+        da = open_geotiff(vrt_path)
+
+        # Area registration: coords[0] == origin + 0.5 * pixel.
+        assert float(da.coords['x'].values[0]) == pytest.approx(
+            origin_x + 0.5 * pixel_w)
+        assert float(da.coords['y'].values[0]) == pytest.approx(
+            origin_y + 0.5 * pixel_h)
+        # No raster_type attr when Area (default).
+        assert da.attrs.get('raster_type') != 'point'
+
 
 class TestCloudStorage:
 
