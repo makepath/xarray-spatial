@@ -2,6 +2,53 @@
 -----------
 
 
+### Version 0.9.7 - 2026-04-23
+
+#### New features
+- Add kernel density estimation (KDE) (#1170)
+- Add standalone raster resampling (#1152) (#1172)
+- Add GPU COG overview support (#1150) (#1174)
+- Add geometry simplification to polygonize() (#1176)
+- Add polygon clipping function (#1144) (#1173)
+- Add hypsometric_integral to zonal module (#1073)
+
+#### Bug fixes and improvements
+- Fix dask OOM in visibility and viewshed modules (#1167)
+- QA/QC: align sieve with GDAL and add parity tests (#1169)
+- Numba-ize visibility module loops (#1177) (#1179)
+- Fix hillshade gradient to use Horn's method (#1175) (#1178)
+- Fix duplicate notebook numbers and restructure to standard format (#1181)
+- Fix OOM in geotiff dask read, sieve memory, and reproject GPU fallback (#1183)
+- Add memory guards to reproject CuPy paths and output grid (#1186, #1187) (#1188)
+- Fix NaN pixels producing spurious polygons in numpy/dask backends (#1190) (#1194)
+- Fix CuPy Bellman-Ford iteration limit in cost_distance (#1192)
+- Fix geotiff unbounded allocation DoS and VRT path traversal (#1189)
+- Fix KDE all-zero output with descending-coordinate templates (#1199)
+- Fix crop=True dropping boundary pixels when all_touched=True (#1197) (#1200)
+- Add allocation guards to GPU read and VRT read paths (#1196)
+- Fix resample interpolation coordinate mapping (#1202) (#1204)
+- Fix float32 truncation in balanced_allocation iteration loop (#1203) (#1205)
+- Fix bump OOM with int32 coords, default-count cap, per-chunk dask partitioning (#1206) (#1208)
+- Pass dask chunks to rasterize in clip_polygon to keep mask lazy (#1207) (#1209)
+- Cut head_tail_breaks and box_plot dask re-scans (#1213)
+- Fuse hypsometric_integral dask path to a single graph evaluation (#1212)
+- Cap dask graph size in read_geotiff_dask and batch adler32 transfers (#1211)
+- Bound per-tile allocations in TIFF reader (#1215) (#1216)
+- Fix GPU predictor kernel stride for multi-sample tiled TIFFs (#1220) (#1222)
+- Reject TIFFs whose declared tile grid exceeds TileOffsets length (#1219) (#1221)
+- Reject oversize rasterize outputs before allocation (#1223) (#1224)
+- Fix cupy zonal_stats silently ignoring nodata_values=0 (#1227) (#1228)
+- Guard viewshed numpy path against oversize rasters (#1229) (#1230)
+- Reject integer-dtyped input in perlin() (#1232) (#1233)
+- Reject oversize bump output rasters before allocation (#1231) (#1234)
+- Clamp bilateral kernel radius to raster extent (#1236) (#1238)
+- Fix CPU fp_predictor_decode for multi-band predictor=3 TIFFs (#1247) (#1250)
+- Guard natural_breaks against oversize Jenks matrices (#1246) (#1248)
+- Handle degenerate input in equal_interval (#1244) (#1245)
+- Reject oversize convolution kernels before allocation (#1241) (#1243)
+- Guard contour segment buffers against oversize allocation (#1240) (#1242)
+
+
 ### Version 0.9.6 - 2026-04-05
 
 #### New features
