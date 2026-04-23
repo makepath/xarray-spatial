@@ -16,6 +16,7 @@
     "polygon_clip": { "last_inspected": "2026-04-13T12:00:00Z", "issue": 1197, "notes": "crop=True + all_touched=True drops boundary pixels. Fix in PR #1200." },
     "resample": { "last_inspected": "2026-04-14T12:00:00Z", "issue": 1202, "notes": "Interpolation used edge-aligned coords instead of block-centered. Fix in PR #1204." },
     "balanced_allocation": { "last_inspected": "2026-04-14T12:00:00Z", "issue": 1203, "notes": "float32 allocation array caused source ID mismatch for non-integer IDs. Fix in PR #1205." },
-    "dasymetric": { "last_inspected": "2026-04-14T12:00:00Z", "issue": null, "notes": "Mass conservation correct. Weighted/binary/limiting_variable all verified. Pycnophylactic Tobler algorithm correct." }
+    "dasymetric": { "last_inspected": "2026-04-14T12:00:00Z", "issue": null, "notes": "Mass conservation correct. Weighted/binary/limiting_variable all verified. Pycnophylactic Tobler algorithm correct." },
+    "geotiff": { "last_inspected": "2026-04-23", "issue": 1247, "severity_max": "HIGH", "categories_found": [1, 3, 4, 5], "notes": "CPU fp_predictor_decode uses wrong byte-lane layout for multi-sample predictor=3; GPU path is correct. Plus MEDIUM findings: streaming writer LONG-type offsets in BigTIFF, VRT read ignores raster_type, VRT nodata cast to float32." }
   }
 }
