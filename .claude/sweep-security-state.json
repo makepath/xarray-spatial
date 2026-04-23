@@ -40,6 +40,13 @@
       "severity_max": "HIGH",
       "categories_found": [1],
       "notes": "HIGH (fixed #1229): _viewshed_cpu allocated ~500 bytes/pixel of working memory (event_list 3*H*W*7*8 bytes + status_values/status_struct/idle + visibility_grid + lexsort temporary) with no guard. A 20000x20000 raster tried to allocate ~200 GB. Fixed by adding peak-memory guard mirroring the _viewshed_dask pattern (_available_memory_bytes() check, raises MemoryError with max_distance= hint). No other HIGH findings: dask path already guarded, _validate_raster is called, distance-sweep uses dtype=float64, _calc_dist_n_grad guards zero distance."
+    },
+    "perlin": {
+      "last_inspected": "2026-04-22",
+      "issue": 1232,
+      "severity_max": "HIGH",
+      "categories_found": [6],
+      "notes": "HIGH (fixed #1232): perlin() accepted integer-dtyped DataArrays via _validate_raster, but all four backends write float noise into the input buffer in place, then normalize by ptp. With integer storage the float values cast to 0, ptp=0, and the div-by-zero produced NaN/Inf that cast back to INT_MIN on every pixel. Fixed by adding an np.issubdtype(agg.dtype, np.floating) check in perlin() that raises ValueError. MEDIUM (unfixed follow-up): _perlin_numpy/_perlin_cupy/_perlin_dask_numpy/_perlin_dask_cupy all divide by ptp/(max-min) with no zero guard, so degenerate inputs like freq=(0,0) still emit NaN through the normalization step. GPU kernels have bounds guards, shared memory is fixed-size 512 int32 (not user-influenced), cuda.syncthreads() is present after the cooperative load. No file I/O."
     }
   }
 }
