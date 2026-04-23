@@ -30,6 +30,23 @@ except ImportError:
     cuda = None
 
 
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
 @ngjit
 def _marching_squares_kernel(data, level, seg_rows, seg_cols, seg_count):
     """Process all 2x2 quads for a single contour level.
@@ -301,6 +318,20 @@ def _contours_numpy(data, levels):
     data = np.asarray(data, dtype=np.float64)
     ny, nx = data.shape
     max_segs_per_level = (ny - 1) * (nx - 1) * 2  # worst case: every quad saddle
+
+    # Peak per level: two float64 (row, col) arrays of shape (max_segs, 2).
+    # 16 bytes per segment per array, two arrays -> 32 bytes per segment.
+    # Only one level's buffers are live at a time, so check a single level.
+    required_bytes = max_segs_per_level * 32
+    available = _available_memory_bytes()
+    if required_bytes > 0.5 * available:
+        raise MemoryError(
+            f"contours() on a {ny}x{nx} raster needs "
+            f"~{required_bytes / 1e9:.1f} GB for segment buffers per level, "
+            f"but only {available / 1e9:.1f} GB is available.  "
+            f"Pass a dask-backed agg so chunks are processed independently, "
+            f"or use a smaller raster."
+        )
 
     results = []
     for level in levels:

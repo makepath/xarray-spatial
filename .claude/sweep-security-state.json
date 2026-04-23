@@ -83,6 +83,13 @@
       "categories_found": [],
       "notes": "Clean. aspect() calls _validate_raster at line 400 and _validate_boundary at line 406. northness()/eastness() delegate to aspect() so inherit validation. Cat 1: allocations match input shape. Cat 3: CPU and GPU kernels propagate NaN correctly through arctan2. Cat 4: _run_gpu (planar, aspect.py:144-147) uses combined bounds+stencil guard. _run_gpu_geodesic_aspect (geodesic.py:395) has explicit bounds check. No shared memory. Cat 5: no file I/O. Cat 6: all backends cast dtype explicitly; tests cover int32/int64/uint32/uint64/float32/float64."
     },
+    "contour": {
+      "last_inspected": "2026-04-23",
+      "issue": 1240,
+      "severity_max": "HIGH",
+      "categories_found": [1],
+      "notes": "HIGH (fixed #1240): _contours_numpy allocated two (max_segs_per_level, 2) float64 buffers per level with no memory check, where max_segs_per_level = 2*(ny-1)*(nx-1). A 20000x20000 raster peaked at ~12.8 GB per level before touching _stitch_segments' endpoint dict. Fixed by adding _available_memory_bytes() guard (32 bytes/segment) that raises MemoryError before np.empty when estimate > 0.5 * available. CuPy path transfers to CPU and inherits the guard; dask paths process each chunk independently and are not affected. MEDIUM (unfixed, Cat 6): contours() does not call _validate_raster -- only ndim and shape are checked, dtype is not validated (object/string dtypes would fail later with a confusing error). No CUDA kernels. No file I/O. NaN handling via self-comparison (line 50) and division-by-zero guarded in _emit_seg interpolation."
+    },
     "balanced_allocation": {
       "last_inspected": "2026-04-23",
       "issue": null,
