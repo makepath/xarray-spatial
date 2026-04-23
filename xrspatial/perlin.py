@@ -330,6 +330,16 @@ def perlin(agg: xr.DataArray,
     """
     _validate_raster(agg, func_name='perlin', name='agg')
 
+    # perlin writes float noise into the raster in place, then normalizes
+    # by ptp.  With an integer buffer the float values cast to 0, ptp is 0,
+    # and the normalization divides by zero, corrupting every pixel to
+    # INT_MIN.  Reject non-float dtypes up front with a clear error.
+    if not np.issubdtype(agg.dtype, np.floating):
+        raise ValueError(
+            f"perlin(): `agg` must have a floating-point dtype "
+            f"(float32 or float64), got {agg.dtype}"
+        )
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_perlin_numpy,
         cupy_func=_perlin_cupy,
