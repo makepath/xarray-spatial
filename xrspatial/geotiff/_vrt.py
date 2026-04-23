@@ -294,11 +294,19 @@ def read_vrt(vrt_path: str, *, window=None,
             except Exception:
                 continue  # skip missing/unreadable sources
 
-            # Handle source nodata
+            # Handle source nodata.  Cast the sentinel to the *source*
+            # dtype so the equality test round-trips exactly: a float64
+            # source with a fractional nodata (e.g. -9999.25) would
+            # previously miss the mask because ``np.float32(-9999.25)``
+            # rounds to the nearest float32 and then compares unequal
+            # to the float64 pixel value.  ``src.nodata or nodata`` is
+            # kept for backward compatibility but intentionally treats
+            # ``0.0`` as unset (a long-standing quirk of this reader).
             src_nodata = src.nodata or nodata
             if src_nodata is not None and src_arr.dtype.kind == 'f':
                 src_arr = src_arr.copy()
-                src_arr[src_arr == np.float32(src_nodata)] = np.nan
+                sentinel = src_arr.dtype.type(src_nodata)
+                src_arr[src_arr == sentinel] = np.nan
 
             # Apply ComplexSource scaling
             if src.scale is not None and src.scale != 1.0:

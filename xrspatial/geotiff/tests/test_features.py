@@ -828,6 +828,61 @@ class TestVRT:
         assert src.filename == os.path.realpath('/data/tile.tif')
         assert src.src_rect.x_off == 10
 
+    def test_vrt_float64_fractional_nodata_masked(self, tmp_path):
+        """VRT read masks float64 fractional nodata exactly.
+
+        Regression for the ``np.float32(src_nodata)`` hard-cast in
+        ``_vrt.read_vrt``.  A float64 source with a fractional
+        sentinel that is not exactly representable in float32
+        (e.g. -9999.1) used to miss the mask because
+        ``np.float32(-9999.1) != np.float64(-9999.1)`` in the ``==``
+        comparison.  The fix casts the sentinel to the source
+        array's own dtype.
+
+        -9999.1 is chosen over -9999.25 because the latter is
+        exactly representable in float32 and would not exercise
+        the bug.
+        """
+        sentinel = np.float64(-9999.1)
+        # Sanity check the premise of the regression: the float32
+        # cast must not round-trip back to the float64 value.
+        assert np.float32(sentinel) != sentinel
+
+        arr = np.array(
+            [[1.0, 2.0],
+             [sentinel, 4.0]],
+            dtype=np.float64,
+        )
+        tile_path = self._write_tile(tmp_path, 'f64_nodata_1247.tif', arr)
+
+        vrt_xml = (
+            '<VRTDataset rasterXSize="2" rasterYSize="2">\n'
+            '  <VRTRasterBand dataType="Float64" band="1">\n'
+            '    <NoDataValue>-9999.1</NoDataValue>\n'
+            '    <SimpleSource>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            '      <SourceBand>1</SourceBand>\n'
+            '      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            '      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            '    </SimpleSource>\n'
+            '  </VRTRasterBand>\n'
+            '</VRTDataset>\n'
+        )
+        vrt_path = str(tmp_path / 'f64_nodata_1247.vrt')
+        with open(vrt_path, 'w') as f:
+            f.write(vrt_xml)
+
+        da = open_geotiff(vrt_path)
+        vals = da.values
+
+        # The sentinel pixel must be NaN.
+        assert np.isnan(vals[1, 0]), (
+            f"float64 fractional nodata not masked: got {vals[1, 0]!r}")
+        # Other pixels untouched.
+        assert vals[0, 0] == 1.0
+        assert vals[0, 1] == 2.0
+        assert vals[1, 1] == 4.0
+
 
 class TestCloudStorage:
 
