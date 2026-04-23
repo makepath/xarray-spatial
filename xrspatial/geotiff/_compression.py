@@ -873,61 +873,6 @@ def lz4_compress(data: bytes, level: int = 0) -> bytes:
     return _lz4.compress(data, compression_level=level)
 
 
-# -- LERC codec (via lerc) ----------------------------------------------------
-
-LERC_AVAILABLE = False
-try:
-    import lerc as _lerc
-    LERC_AVAILABLE = True
-except ImportError:
-    _lerc = None
-
-
-def lerc_decompress(data: bytes, width: int = 0, height: int = 0,
-                    samples: int = 1) -> bytes:
-    """Decompress LERC data. Requires the ``lerc`` package."""
-    if not LERC_AVAILABLE:
-        raise ImportError(
-            "lerc is required to read LERC-compressed TIFFs. "
-            "Install it with: pip install lerc")
-    result = _lerc.decode(data)
-    # lerc.decode returns (result_code, data_array, valid_mask, ...)
-    if result[0] != 0:
-        raise RuntimeError(f"LERC decode failed with error code {result[0]}")
-    arr = result[1]
-    return arr.tobytes()
-
-
-def lerc_compress(data: bytes, width: int, height: int,
-                  samples: int = 1, dtype: np.dtype = np.dtype('float32'),
-                  max_z_error: float = 0.0) -> bytes:
-    """Compress raw pixel data with LERC. Requires the ``lerc`` package.
-
-    Parameters
-    ----------
-    max_z_error : float
-        Maximum encoding error per pixel. 0 = lossless.
-    """
-    if not LERC_AVAILABLE:
-        raise ImportError(
-            "lerc is required to write LERC-compressed TIFFs. "
-            "Install it with: pip install lerc")
-    if samples == 1:
-        arr = np.frombuffer(data, dtype=dtype).reshape(height, width)
-    else:
-        arr = np.frombuffer(data, dtype=dtype).reshape(height, width, samples)
-    n_values_per_pixel = samples
-    # lerc.encode(npArr, nValuesPerPixel, bHasMask, npValidMask,
-    #             maxZErr, nBytesHint)
-    # nBytesHint=1 triggers actual encoding (0 = compute size only)
-    result = _lerc.encode(arr, n_values_per_pixel, False, None,
-                          max_z_error, 1)
-    if result[0] != 0:
-        raise RuntimeError(f"LERC encode failed with error code {result[0]}")
-    # result is (error_code, nBytesWritten, ctypes_buffer)
-    return bytes(result[2])
-
-
 # -- Dispatch helpers ---------------------------------------------------------
 
 # TIFF compression tag values
