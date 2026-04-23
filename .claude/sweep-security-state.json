@@ -75,6 +75,13 @@
       "severity_max": "HIGH",
       "categories_found": [1],
       "notes": "HIGH (fixed #1231): _finish_bump allocated np.zeros((height, width)) with no memory guard. The existing count guard (added in #1206) only protected the locs/heights arrays, so bump(width=1_000_000, height=1_000_000) passed the guard (count capped at 10M ~ 160 MB) and then tried to allocate an 8 TB float64 raster. Fixed by extending the memory budget check to include raster_bytes = w * h * 8 when the backend will materialize the full array; dask paths build per-chunk and are excluded. No other HIGH findings: _bump_dask_numpy/_bump_dask_cupy build output lazily via da.from_delayed, no CUDA kernels (cupy path wraps the numba CPU kernel), no file I/O, no int32 overflow in realistic scenarios. MEDIUM (unfixed, Cat 6): bump() does not call _validate_raster on agg (dtype is not checked; shape unpacking catches wrong-ndim, but a non-numeric DataArray would fail confusingly downstream)."
+    },
+    "bilateral": {
+      "last_inspected": "2026-04-23",
+      "issue": 1236,
+      "severity_max": "HIGH",
+      "categories_found": [1],
+      "notes": "HIGH (fixed #1236): bilateral() validated sigma_spatial only as > 0, with no upper bound. The derived kernel radius = ceil(2*sigma_spatial) drove the _pad_array allocation (H+2r, W+2r) when boundary != 'nan' and the dask map_overlap depth on every backend. sigma_spatial=1e9 on a 100x100 raster -> radius=2e9 -> ~128 EB padded float64 allocation. sigma_spatial=1e5 -> ~320 GB. Fixed by clamping radius to max(rows, cols) in bilateral() before dispatch; inner numba/CUDA loops were already clamped to rows/cols so the output is unchanged for realistic inputs. No other HIGH findings: GPU kernel has bounds guard (if 0 <= x < cols and 0 <= y < rows), _validate_raster is called on agg, agg.data.astype(float) is applied before dispatch, NaN propagation is explicit (center NaN -> NaN out, neighbor NaN skipped), division by w_sum is guarded (w_sum > 0.0). MEDIUM (unfixed, Cat 3): sigma_spatial underflow (e.g. 1e-200) makes inv_2_ss = inf and can propagate NaN through exp() at the center pixel, but not safety-critical."
     }
   }
 }

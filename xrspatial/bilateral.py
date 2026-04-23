@@ -309,6 +309,19 @@ def bilateral(agg, sigma_spatial=1.0, sigma_range=10.0,
     sigma_range = float(sigma_range)
     radius = _kernel_radius(sigma_spatial)
 
+    # Clamp the kernel radius to the raster extent.  A radius larger than
+    # max(rows, cols) already covers the whole raster, so the filter
+    # output is unchanged by letting it grow further.  Without this clamp
+    # an oversized sigma_spatial drives a quadratic allocation in
+    # _pad_array (when boundary != 'nan') and a quadratic overlap depth
+    # in the dask paths, so one float from the caller can DoS the host
+    # (e.g. sigma_spatial=1e9 -> radius=2e9 -> exabyte-scale padding).
+    # The numba/CUDA inner loops are already clamped to rows/cols.
+    rows, cols = agg.shape[-2], agg.shape[-1]
+    max_radius = max(rows, cols)
+    if radius > max_radius:
+        radius = max_radius
+
     if agg.ndim == 3:
         from xrspatial.focal import _apply_per_band
         return _apply_per_band(
