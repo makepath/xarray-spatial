@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import xarray as xr
 
 from xrspatial import perlin
@@ -91,3 +92,29 @@ def test_perlin_dask_gpu():
         perlin_cupy.data.get(), perlin_dask_cupy.data.compute().get(),
         rtol=1e-4, atol=1e-4, equal_nan=True
     )
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [np.int8, np.int16, np.int32, np.int64, np.uint8, np.uint16, np.uint32],
+)
+def test_perlin_rejects_integer_dtype(dtype):
+    # Regression for issue #1232: integer-dtyped input silently produced
+    # INT_MIN everywhere because the float noise was written in place and
+    # then normalized by a zero ptp.  We now raise ValueError instead.
+    data = np.zeros((20, 20), dtype=dtype)
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    with pytest.raises(ValueError, match="floating-point dtype"):
+        perlin(raster)
+
+
+def test_perlin_float64_input():
+    # float64 should still work (not just float32).
+    data = np.zeros((20, 20), dtype=np.float64)
+    raster = xr.DataArray(data, dims=['y', 'x'])
+    result = perlin(raster)
+    assert result.dtype == np.float64
+    assert np.isfinite(result.data).all()
+    # Normalized to [0, 1]
+    assert result.data.min() >= 0.0
+    assert result.data.max() <= 1.0
