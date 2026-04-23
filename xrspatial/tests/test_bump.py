@@ -196,9 +196,18 @@ def test_bump_locs_use_int32_not_uint16():
     assert out[50, 4464] == 0, "uint16 wrap-around location should be empty"
 
 
-def test_bump_default_count_capped():
+def test_bump_default_count_capped(monkeypatch):
     """Default count should not exceed _MAX_DEFAULT_COUNT (#1206)."""
+    import sys
+
     from xrspatial.bump import _MAX_DEFAULT_COUNT
+
+    # The 20000 x 20000 raster is 3.2 GB, which exceeds the memory guard on
+    # small CI runners (#1234). Stub available memory so the guard does not
+    # interfere with this count-cap assertion. xrspatial.__init__ rebinds
+    # the `bump` name to the function, so reach the module via sys.modules.
+    bump_mod = sys.modules["xrspatial.bump"]
+    monkeypatch.setattr(bump_mod, "_available_memory_bytes", lambda: 64 * 1024**3)
 
     # 20000 x 20000 → w*h//10 = 40M, should be capped to 10M
     result = bump(width=20000, height=20000, spread=0)
