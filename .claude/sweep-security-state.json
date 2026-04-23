@@ -89,6 +89,13 @@
       "severity_max": null,
       "categories_found": [],
       "notes": "Clean. Cat 1: memory guard at lines 311-326 uses _available_memory_bytes() and raises MemoryError when total_estimate (array_bytes * (n_sources + 3)) exceeds 0.8 * avail BEFORE computing any cost surface. Trivial n_sources==0/1 paths only allocate arrays matching input size. Cat 2: np.prod(raster.shape) returns int64, no overflow. Cat 3: divisions by target_weight (lines 373, 380) are guarded by total==0 break (364) and target_weight>0 check (379); fric_weight strips NaN via np.where(np.isfinite & >0). Cat 4: no CUDA kernels. Cat 5: no file I/O. Cat 6: _validate_raster called on both raster and friction (lines 275-277)."
+    },
+    "convolution": {
+      "last_inspected": "2026-04-23",
+      "issue": 1241,
+      "severity_max": "HIGH",
+      "categories_found": [1],
+      "notes": "HIGH (fixed #1241): circle_kernel() and annulus_kernel() in xrspatial/convolution.py accepted a user-supplied radius with no upper bound. The kernel is built via _ellipse_kernel(half_w, half_h) where half_w = int(radius_meters/cellsize_x), so memory grew quadratically with the radius. cellsize=1, radius=100000 -> 200001x200001 float64 ~ 320 GB. annulus_kernel calls circle_kernel twice so the same hole applied. Fixed by adding _check_kernel_memory() (local _available_memory_bytes() helper like bump.py/viewshed.py) and calling it in circle_kernel before _ellipse_kernel. Budget = 32 bytes/cell to cover the output plus linspace/ellipse-mask temporaries; raises MemoryError when required > 0.5*available. No other HIGH findings: _convolve_2d_cuda has bounds guard (lines 371-373) and inner-index check (lines 384-385), no shared memory/syncthreads needed. All four backends call _promote_float on input dtype so integer inputs cast to float32 cleanly; _convolve_2d_numpy propagates NaN through multiply+accumulate. No file I/O. MEDIUM (unfixed, Cat 6): convolve_2d() does not call _validate_raster on input; non-numeric DataArray would fail inside numba/cupy with a confusing error. MEDIUM (unfixed, Cat 1): custom_kernel() does not cap kernel shape, so a caller can still pass a huge np.ones((N,N)) directly -- but that is a self-inflicted allocation outside the library, and _convolve_2d_numpy would still try to padded-allocate around it via _pad_array."
     }
   }
 }
