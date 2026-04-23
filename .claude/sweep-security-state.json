@@ -47,6 +47,20 @@
       "severity_max": "HIGH",
       "categories_found": [6],
       "notes": "HIGH (fixed #1232): perlin() accepted integer-dtyped DataArrays via _validate_raster, but all four backends write float noise into the input buffer in place, then normalize by ptp. With integer storage the float values cast to 0, ptp=0, and the div-by-zero produced NaN/Inf that cast back to INT_MIN on every pixel. Fixed by adding an np.issubdtype(agg.dtype, np.floating) check in perlin() that raises ValueError. MEDIUM (unfixed follow-up): _perlin_numpy/_perlin_cupy/_perlin_dask_numpy/_perlin_dask_cupy all divide by ptp/(max-min) with no zero guard, so degenerate inputs like freq=(0,0) still emit NaN through the normalization step. GPU kernels have bounds guards, shared memory is fixed-size 512 int32 (not user-influenced), cuda.syncthreads() is present after the cooperative load. No file I/O."
+    },
+    "pathfinding": {
+      "last_inspected": "2026-04-22",
+      "issue": null,
+      "severity_max": "MEDIUM",
+      "categories_found": [1, 6],
+      "notes": "No CRITICAL/HIGH findings. Cat 1 already well-guarded: _check_memory(h, w) runs before every numpy/cupy _a_star_search allocation and covers the ~65 bytes/pixel footprint (parent_ys/xs int64, g_cost f64, visited i8, three heap arrays h_keys/h_rows/h_cols sized h*w). Auto-radius falls back when full grid exceeds 50% RAM, HPA* kicks in for long paths. Dask path uses sparse dict/set and on-demand chunk cache so no full-grid numpy materialisation. No CUDA kernels (cupy backend transfers to CPU). No file-path I/O from user input (only /proc/meminfo read). MEDIUM (unfixed, Cat 1): multi_stop_search does not cap len(waypoints); _optimize_waypoint_order builds an O(N^2) dist matrix and runs N^2 A* calls, and _nearest_neighbor_2opt is O(N^3), so pathological waypoint lists can cause extreme CPU consumption (DoS). MEDIUM (unfixed, Cat 6): a_star_search and multi_stop_search do not call _validate_raster(surface) -- only ndim==2 is checked, dtype is not; non-numeric dtypes would fail inside numba with confusing errors rather than a clean TypeError. int64 overflow in height*width (line 214 max_heap) is not reachable given the memory guard (~46340x46340 would already raise MemoryError long before 2**63)."
+    },
+    "bump": {
+      "last_inspected": "2026-04-22",
+      "issue": 1231,
+      "severity_max": "HIGH",
+      "categories_found": [1],
+      "notes": "HIGH (fixed #1231): _finish_bump allocated np.zeros((height, width)) with no memory guard. The existing count guard (added in #1206) only protected the locs/heights arrays, so bump(width=1_000_000, height=1_000_000) passed the guard (count capped at 10M ~ 160 MB) and then tried to allocate an 8 TB float64 raster. Fixed by extending the memory budget check to include raster_bytes = w * h * 8 when the backend will materialize the full array; dask paths build per-chunk and are excluded. No other HIGH findings: _bump_dask_numpy/_bump_dask_cupy build output lazily via da.from_delayed, no CUDA kernels (cupy path wraps the numba CPU kernel), no file I/O, no int32 overflow in realistic scenarios. MEDIUM (unfixed, Cat 6): bump() does not call _validate_raster on agg (dtype is not checked; shape unpacking catches wrong-ndim, but a non-numeric DataArray would fail confusingly downstream)."
     }
   }
 }
