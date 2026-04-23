@@ -417,6 +417,31 @@ def test_natural_breaks_numpy_num_sample_none(result_natural_breaks):
     general_output_checks(numpy_agg, result, expected_result, verify_dtype=True)
 
 
+# --- Memory guard for natural_breaks ---
+
+def test_natural_breaks_rejects_oversize_jenks(monkeypatch):
+    # A 400x400 raster produces 160_000 finite points -> Jenks matrices
+    # ~15 MB at k=5. Shrink the memory budget so the guard trips.
+    import xrspatial.classify as classify_mod
+    monkeypatch.setattr(
+        classify_mod, '_available_memory_bytes', lambda: 1_000_000
+    )
+    agg = xr.DataArray(np.random.RandomState(0).rand(400, 400))
+    with pytest.raises(MemoryError, match='natural_breaks would allocate'):
+        natural_breaks(agg, num_sample=None, k=5)
+
+
+def test_natural_breaks_allows_within_budget(monkeypatch):
+    # Same raster, generous budget -> no error.
+    import xrspatial.classify as classify_mod
+    monkeypatch.setattr(
+        classify_mod, '_available_memory_bytes', lambda: 8 * 1024 ** 3
+    )
+    agg = xr.DataArray(np.random.RandomState(0).rand(50, 50))
+    result = natural_breaks(agg, num_sample=None, k=3)
+    assert result.shape == (50, 50)
+
+
 # --- Edge cases for equal_interval ---
 
 def test_equal_interval_k_equals_1():
@@ -431,14 +456,29 @@ def test_equal_interval_k_equals_1():
     assert np.all(np.isnan(result_data[~input_finite]))
 
 
-# --- All-NaN edge cases ---
-# These document current failure behavior for degenerate inputs.
+# --- Degenerate input edge cases ---
 
 def test_equal_interval_all_nan():
     data = np.full((4, 5), np.nan)
     agg = xr.DataArray(data)
-    with pytest.raises(ValueError):
-        equal_interval(agg, k=3)
+    result = equal_interval(agg, k=3)
+    assert np.all(np.isnan(result.data))
+
+
+def test_equal_interval_all_same_values():
+    data = np.full((4, 5), 7.0)
+    agg = xr.DataArray(data)
+    result = equal_interval(agg, k=3)
+    finite_mask = np.isfinite(result.data)
+    assert np.all(result.data[finite_mask] == 0)
+
+
+def test_equal_interval_all_inf():
+    data = np.full((4, 5), np.inf)
+    agg = xr.DataArray(data)
+    result = equal_interval(agg, k=3)
+    # inf values are non-finite and should map to NaN
+    assert np.all(np.isnan(result.data))
 
 
 def test_natural_breaks_all_nan():

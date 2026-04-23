@@ -828,6 +828,152 @@ class TestVRT:
         assert src.filename == os.path.realpath('/data/tile.tif')
         assert src.src_rect.x_off == 10
 
+    def test_vrt_float64_fractional_nodata_masked(self, tmp_path):
+        """VRT read masks float64 fractional nodata exactly.
+
+        Regression for the ``np.float32(src_nodata)`` hard-cast in
+        ``_vrt.read_vrt``.  A float64 source with a fractional
+        sentinel that is not exactly representable in float32
+        (e.g. -9999.1) used to miss the mask because
+        ``np.float32(-9999.1) != np.float64(-9999.1)`` in the ``==``
+        comparison.  The fix casts the sentinel to the source
+        array's own dtype.
+
+        -9999.1 is chosen over -9999.25 because the latter is
+        exactly representable in float32 and would not exercise
+        the bug.
+        """
+        sentinel = np.float64(-9999.1)
+        # Sanity check the premise of the regression: the float32
+        # cast must not round-trip back to the float64 value.
+        assert np.float32(sentinel) != sentinel
+
+        arr = np.array(
+            [[1.0, 2.0],
+             [sentinel, 4.0]],
+            dtype=np.float64,
+        )
+        tile_path = self._write_tile(tmp_path, 'f64_nodata_1247.tif', arr)
+
+        vrt_xml = (
+            '<VRTDataset rasterXSize="2" rasterYSize="2">\n'
+            '  <VRTRasterBand dataType="Float64" band="1">\n'
+            '    <NoDataValue>-9999.1</NoDataValue>\n'
+            '    <SimpleSource>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            '      <SourceBand>1</SourceBand>\n'
+            '      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            '      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            '    </SimpleSource>\n'
+            '  </VRTRasterBand>\n'
+            '</VRTDataset>\n'
+        )
+        vrt_path = str(tmp_path / 'f64_nodata_1247.vrt')
+        with open(vrt_path, 'w') as f:
+            f.write(vrt_xml)
+
+        da = open_geotiff(vrt_path)
+        vals = da.values
+
+        # The sentinel pixel must be NaN.
+        assert np.isnan(vals[1, 0]), (
+            f"float64 fractional nodata not masked: got {vals[1, 0]!r}")
+        # Other pixels untouched.
+        assert vals[0, 0] == 1.0
+        assert vals[0, 1] == 2.0
+        assert vals[1, 1] == 4.0
+
+    def test_vrt_pixel_is_point_no_half_pixel_shift(self, tmp_path):
+        """VRT with AREA_OR_POINT=Point does not apply a half-pixel shift.
+
+        Before the fix, ``read_vrt`` always added ``(c + 0.5) * res``
+        to the GeoTransform origin, even when the VRT advertised
+        Point registration.  That shifted coords by half a cell in
+        world space on any Point-tagged VRT.
+
+        The expected GDAL convention: when ``AREA_OR_POINT=Point``
+        the GeoTransform origin is already the *center* of pixel
+        (0, 0), so coords[0] must equal origin exactly.
+        """
+        arr = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+        tile_path = self._write_tile(tmp_path, 'point_1247.tif', arr)
+
+        origin_x, origin_y = 100.0, 50.0
+        pixel_w, pixel_h = 10.0, -10.0
+        vrt_xml = (
+            f'<VRTDataset rasterXSize="2" rasterYSize="2">\n'
+            f'  <Metadata>\n'
+            f'    <MDI key="AREA_OR_POINT">Point</MDI>\n'
+            f'  </Metadata>\n'
+            f'  <GeoTransform>{origin_x}, {pixel_w}, 0.0, '
+            f'{origin_y}, 0.0, {pixel_h}</GeoTransform>\n'
+            f'  <VRTRasterBand dataType="Float32" band="1">\n'
+            f'    <SimpleSource>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            f'      <SourceBand>1</SourceBand>\n'
+            f'      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            f'      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            f'    </SimpleSource>\n'
+            f'  </VRTRasterBand>\n'
+            f'</VRTDataset>\n'
+        )
+        vrt_path = str(tmp_path / 'point_1247.vrt')
+        with open(vrt_path, 'w') as f:
+            f.write(vrt_xml)
+
+        da = open_geotiff(vrt_path)
+
+        # Point registration: coords[0] == origin, no 0.5*pixel shift.
+        assert float(da.coords['x'].values[0]) == pytest.approx(origin_x)
+        assert float(da.coords['y'].values[0]) == pytest.approx(origin_y)
+        # Adjacent cell is one full pixel away.
+        assert float(da.coords['x'].values[1]) == pytest.approx(
+            origin_x + pixel_w)
+        assert float(da.coords['y'].values[1]) == pytest.approx(
+            origin_y + pixel_h)
+        # Raster type is surfaced in attrs.
+        assert da.attrs.get('raster_type') == 'point'
+
+    def test_vrt_pixel_is_area_still_shifts(self, tmp_path):
+        """Default VRT (no AREA_OR_POINT metadata) keeps the half-pixel shift.
+
+        This is the backwards-compat guard for the Point fix: Area
+        registration must continue to add ``0.5 * pixel`` to the
+        origin.
+        """
+        arr = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+        tile_path = self._write_tile(tmp_path, 'area_1247.tif', arr)
+
+        origin_x, origin_y = 100.0, 50.0
+        pixel_w, pixel_h = 10.0, -10.0
+        vrt_xml = (
+            f'<VRTDataset rasterXSize="2" rasterYSize="2">\n'
+            f'  <GeoTransform>{origin_x}, {pixel_w}, 0.0, '
+            f'{origin_y}, 0.0, {pixel_h}</GeoTransform>\n'
+            f'  <VRTRasterBand dataType="Float32" band="1">\n'
+            f'    <SimpleSource>\n'
+            f'      <SourceFilename relativeToVRT="1">{os.path.basename(tile_path)}</SourceFilename>\n'
+            f'      <SourceBand>1</SourceBand>\n'
+            f'      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            f'      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>\n'
+            f'    </SimpleSource>\n'
+            f'  </VRTRasterBand>\n'
+            f'</VRTDataset>\n'
+        )
+        vrt_path = str(tmp_path / 'area_1247.vrt')
+        with open(vrt_path, 'w') as f:
+            f.write(vrt_xml)
+
+        da = open_geotiff(vrt_path)
+
+        # Area registration: coords[0] == origin + 0.5 * pixel.
+        assert float(da.coords['x'].values[0]) == pytest.approx(
+            origin_x + 0.5 * pixel_w)
+        assert float(da.coords['y'].values[0]) == pytest.approx(
+            origin_y + 0.5 * pixel_h)
+        # No raster_type attr when Area (default).
+        assert da.attrs.get('raster_type') != 'point'
+
 
 class TestCloudStorage:
 
@@ -1600,6 +1746,87 @@ class TestBigTIFF:
         with open(path, 'rb') as f:
             header = parse_header(f.read(16))
         assert not header.is_bigtiff
+
+    def _assert_offset_tags_are_long8(self, path):
+        """Parse *path*'s first IFD and assert offset tags use LONG8."""
+        from xrspatial.geotiff._header import (
+            parse_all_ifds, TAG_STRIP_OFFSETS, TAG_STRIP_BYTE_COUNTS,
+            TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS,
+        )
+        from xrspatial.geotiff._dtypes import LONG8
+
+        with open(path, 'rb') as f:
+            buf = f.read()
+        header = parse_header(buf)
+        assert header.is_bigtiff, (
+            "Test precondition: file must be BigTIFF.")
+        ifds = parse_all_ifds(buf, header)
+        assert len(ifds) >= 1
+        entries = ifds[0].entries
+
+        offset_tags = (TAG_STRIP_OFFSETS, TAG_STRIP_BYTE_COUNTS,
+                       TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS)
+        present = [t for t in offset_tags if t in entries]
+        assert present, (
+            "File had no strip/tile offset tags; "
+            "cannot verify the LONG8 promotion.")
+        for tag_id in present:
+            entry = entries[tag_id]
+            assert entry.type_id == LONG8, (
+                f"Tag {tag_id} in BigTIFF output was typed "
+                f"{entry.type_id}, expected LONG8 (16).  A 32-bit "
+                "offset would truncate on files larger than 4 GB.")
+
+    def test_bigtiff_eager_tile_offsets_are_long8_1247(self, tmp_path):
+        """Eager writer emits LONG8 TileOffsets in BigTIFF output.
+
+        Regression for the Medium Cat 3 finding in the #1247 audit:
+        eager ``_assemble_tiff`` hard-coded LONG for TileOffsets /
+        TileByteCounts regardless of the BigTIFF decision.  Anything
+        past 4 GB would silently truncate (or, with ``struct.pack``,
+        fail at pack time).
+
+        Asserting on a small-but-forced BigTIFF is enough: the fix
+        is width-of-the-offset-field, not value-range.
+        """
+        arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+        path = str(tmp_path / 'bigtiff_long8_eager_1247.tif')
+        to_geotiff(arr, path, compression='none',
+                   tiled=True, tile_size=4, bigtiff=True)
+        self._assert_offset_tags_are_long8(path)
+        # Data must still round-trip.
+        np.testing.assert_array_equal(open_geotiff(path).values, arr)
+
+    def test_bigtiff_eager_strip_offsets_are_long8_1247(self, tmp_path):
+        """Eager writer emits LONG8 StripOffsets for stripped BigTIFF."""
+        arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+        path = str(tmp_path / 'bigtiff_long8_eager_strip_1247.tif')
+        to_geotiff(arr, path, compression='none',
+                   tiled=False, bigtiff=True)
+        self._assert_offset_tags_are_long8(path)
+        np.testing.assert_array_equal(open_geotiff(path).values, arr)
+
+    def test_bigtiff_streaming_tile_offsets_are_long8_1247(self, tmp_path):
+        """Streaming writer emits LONG8 TileOffsets in BigTIFF output.
+
+        Covers the pre-fix code comment at ``_writer.write_streaming``
+        that explicitly acknowledged LONG8 was needed and hadn't been
+        done.  Uses a small dask array so the test doesn't actually
+        need to produce a >4 GB file.
+        """
+        import dask.array as da
+        import xarray as xr
+
+        arr = np.arange(256, dtype=np.float32).reshape(16, 16)
+        dask_da = xr.DataArray(
+            da.from_array(arr, chunks=8),
+            dims=['y', 'x'],
+        )
+        path = str(tmp_path / 'bigtiff_long8_stream_1247.tif')
+        to_geotiff(dask_da, path, compression='none',
+                   tiled=True, tile_size=4, bigtiff=True)
+        self._assert_offset_tags_are_long8(path)
+        np.testing.assert_array_equal(open_geotiff(path).values, arr)
 
 
 # -----------------------------------------------------------------------

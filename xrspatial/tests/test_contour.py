@@ -348,6 +348,44 @@ class TestAccessor:
 
 
 # ---------------------------------------------------------------------------
+# Memory guard (#1240)
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryGuard:
+
+    def test_rejects_oversize_numpy(self, monkeypatch):
+        """contours() raises MemoryError when segment buffers exceed budget."""
+        import xrspatial.contour as contour_mod
+
+        # Force available memory to 1 MB so even a small raster trips the
+        # guard.  A 1000x1000 raster needs ~32 MB per level's buffers.
+        monkeypatch.setattr(
+            contour_mod, '_available_memory_bytes', lambda: 1 * 1024 * 1024
+        )
+
+        data = np.zeros((1000, 1000), dtype=np.float64)
+        agg = xr.DataArray(data, dims=['y', 'x'])
+
+        with pytest.raises(MemoryError, match="segment buffers per level"):
+            contours(agg, levels=[0.5])
+
+    def test_allows_within_budget(self, monkeypatch):
+        """A small raster stays under the guard and returns normally."""
+        import xrspatial.contour as contour_mod
+
+        monkeypatch.setattr(
+            contour_mod, '_available_memory_bytes', lambda: 8 * 1024 ** 3
+        )
+
+        data = _make_peak()
+        agg = create_test_raster(data, backend='numpy')
+        result = contours(agg, levels=[1.5])
+        assert isinstance(result, list)
+        assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
 # Reference validation against skimage.measure.find_contours
 # ---------------------------------------------------------------------------
 

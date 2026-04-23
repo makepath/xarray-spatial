@@ -1418,7 +1418,13 @@ def read_vrt(source: str, *, dtype=None, window=None,
         import os
         name = os.path.splitext(os.path.basename(source))[0]
 
-    # Build coordinates from GeoTransform
+    # Build coordinates from GeoTransform.
+    #
+    # GDAL's convention: when AREA_OR_POINT=Area (default) the
+    # GeoTransform origin is the top-left corner of pixel (0, 0) and
+    # pixel centers need a half-pixel shift.  When AREA_OR_POINT=Point
+    # the origin already *is* the center of pixel (0, 0) and no shift
+    # is applied.  This mirrors ``_geo_to_coords`` for non-VRT reads.
     gt = vrt.geo_transform
     if gt is not None:
         origin_x, res_x, _, origin_y, _, res_y = gt
@@ -1429,8 +1435,14 @@ def read_vrt(source: str, *, dtype=None, window=None,
         else:
             r0, c0 = 0, 0
         height, width = arr.shape[:2]
-        x = np.arange(width, dtype=np.float64) * res_x + origin_x + (c0 + 0.5) * res_x
-        y = np.arange(height, dtype=np.float64) * res_y + origin_y + (r0 + 0.5) * res_y
+        if vrt.raster_type == 'point':
+            x_shift = c0 * res_x
+            y_shift = r0 * res_y
+        else:
+            x_shift = (c0 + 0.5) * res_x
+            y_shift = (r0 + 0.5) * res_y
+        x = np.arange(width, dtype=np.float64) * res_x + origin_x + x_shift
+        y = np.arange(height, dtype=np.float64) * res_y + origin_y + y_shift
         coords = {'y': y, 'x': x}
     else:
         coords = {}
@@ -1441,6 +1453,8 @@ def read_vrt(source: str, *, dtype=None, window=None,
         if epsg is not None:
             attrs['crs'] = epsg
         attrs['crs_wkt'] = vrt.crs_wkt
+    if vrt.raster_type == 'point':
+        attrs['raster_type'] = 'point'
     if vrt.bands:
         nodata = vrt.bands[0].nodata
         if nodata is not None:

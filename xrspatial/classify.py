@@ -35,6 +35,23 @@ from xrspatial.utils import (
 from xrspatial.dataset_support import supports_dataset
 
 
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
 @ngjit
 def _cpu_binary(data, values):
     out = np.empty(data.shape, dtype=data.dtype)
@@ -661,6 +678,24 @@ def _compute_natural_break_bins(data_flat_np, num_sample, k, max_data):
 
     # only include finite values
     sample_data = sample_data[np.isfinite(sample_data)]
+
+    # _run_jenks allocates two float64 matrices of shape
+    # (n_data + 1, n_classes + 1). Reject inputs that would exceed half of
+    # available memory so a num_sample=None call on a large raster fails
+    # fast instead of OOMing the process.
+    jenks_bytes = 2 * (sample_data.size + 1) * (k + 1) * 8
+    avail = _available_memory_bytes()
+    if jenks_bytes > 0.5 * avail:
+        raise MemoryError(
+            'natural_breaks would allocate ~{:.1f} GB for the Jenks '
+            'matrices ({} data points, k={}), exceeding the memory budget '
+            'of {:.1f} GB. Pass a smaller num_sample to subsample the '
+            'input.'.format(
+                jenks_bytes / 1024 ** 3, sample_data.size, k,
+                0.5 * avail / 1024 ** 3,
+            )
+        )
+
     uv = np.unique(sample_data)
     uvk = len(uv)
 
@@ -886,6 +921,15 @@ def _run_equal_interval(agg, k, module):
     else:
         min_data = float(min_lazy)
         max_data = float(max_lazy)
+
+    # Degenerate data: all-NaN/inf, or every finite pixel has the same value.
+    # Collapse to a single bin so finite pixels map to class 0 and any
+    # non-finite pixels remain NaN (handled by _cpu_bin's isfinite check).
+    if not np.isfinite(max_data - min_data) or max_data == min_data:
+        cut_value = max_data if np.isfinite(max_data) else 0.0
+        cuts = np.array([cut_value], dtype=np.float64)
+        out = _bin(agg, cuts, np.arange(1))
+        return out
 
     width = (max_data - min_data) / k
     # Build cuts as numpy — only k elements, no need for dask/cupy overhead

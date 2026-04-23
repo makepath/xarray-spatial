@@ -200,6 +200,30 @@ def test_kernel(kernel_circle_1_1_1, kernel_annulus_2_2_2_1):
     np.testing.assert_allclose(kernel_annulus, kernel_annulus_2_2_2_1, equal_nan=True)
 
 
+def test_circle_kernel_rejects_oversize_radius_1241():
+    # Regression test for #1241: circle_kernel() with no radius cap.
+    # cellsize=1, radius=1_000_000 implies a ~2M x 2M float64 kernel
+    # (~32 TB), which should be rejected before allocation.
+    with pytest.raises(MemoryError, match="radius=1000000"):
+        circle_kernel(1, 1, 1_000_000)
+
+
+def test_annulus_kernel_rejects_oversize_radius_1241():
+    # Regression test for #1241: annulus_kernel() calls circle_kernel
+    # twice, so the same oversize-radius guard must fire for either
+    # outer or inner radius.
+    with pytest.raises(MemoryError, match="radius=1000000"):
+        annulus_kernel(1, 1, 1_000_000, 1)
+
+
+def test_circle_kernel_small_radius_not_rejected_1241():
+    # Regression test for #1241: the guard must not fire for realistic
+    # kernel sizes.  A radius=100 on cellsize=1 gives a 201x201 kernel
+    # (~320 KB float64) which should allocate fine.
+    kernel = circle_kernel(1, 1, 100)
+    assert kernel.shape == (201, 201)
+
+
 def test_convolution_numpy(
     convolve_2d_data,
     convolution_custom_kernel,

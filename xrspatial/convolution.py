@@ -142,6 +142,47 @@ def calc_cellsize(raster):
     return cellsize_x, np.abs(cellsize_y)
 
 
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    # Try /proc/meminfo (Linux)
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    # Try psutil
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    # Fallback: 2 GB
+    return 2 * 1024 ** 3
+
+
+def _check_kernel_memory(half_w, half_h, radius):
+    """Raise MemoryError if the kernel would exceed half of available RAM.
+
+    ``_ellipse_kernel`` allocates a float64 array of shape
+    ``(2*half_h + 1, 2*half_w + 1)``, plus temporaries of the same size
+    for the ellipse mask and the linspace grids.  Budget ~32 bytes per
+    cell to cover the output plus the intermediate arrays.
+    """
+    cells = (2 * half_w + 1) * (2 * half_h + 1)
+    required = cells * 32
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"kernel radius={radius} with cellsize implies a "
+            f"{2 * half_h + 1}x{2 * half_w + 1} kernel that needs "
+            f"~{required / 1e9:.1f} GB, but only "
+            f"{available / 1e9:.1f} GB is available. "
+            f"Use a smaller radius or a larger cellsize."
+        )
+
+
 def _ellipse_kernel(half_w, half_h):
     # x values of interest
     x = np.linspace(-half_w, half_w, 2 * half_w + 1)
@@ -199,6 +240,12 @@ def circle_kernel(cellsize_x, cellsize_y, radius):
 
     kernel_half_w = int(r / cellsize_x)
     kernel_half_h = int(r / cellsize_y)
+
+    # Guard against runaway allocation: the ellipse kernel grows
+    # quadratically with the radius, so a user-supplied radius with no
+    # cap can OOM the host (e.g. cellsize=1, radius=100000 gives a
+    # 200001x200001 float64 kernel ~ 320 GB).
+    _check_kernel_memory(kernel_half_w, kernel_half_h, radius)
 
     kernel = _ellipse_kernel(kernel_half_w, kernel_half_h)
     return kernel

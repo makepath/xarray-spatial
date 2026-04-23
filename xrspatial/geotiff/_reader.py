@@ -247,12 +247,29 @@ def _open_source(source: str):
 
 
 def _apply_predictor(chunk: np.ndarray, pred: int, width: int,
-                     height: int, bytes_per_sample: int) -> np.ndarray:
-    """Apply the appropriate predictor decode to decompressed data."""
+                     height: int, bytes_per_sample: int,
+                     samples: int = 1) -> np.ndarray:
+    """Apply the appropriate predictor decode to decompressed data.
+
+    ``width``, ``height``, ``bytes_per_sample``, and ``samples`` describe
+    the raw pixel layout before predictor inversion: ``width * samples``
+    samples per row, each ``bytes_per_sample`` bytes wide.
+
+    Predictor=2 (horizontal differencing) works byte-wise on a stride of
+    ``bytes_per_sample * samples``.
+
+    Predictor=3 (floating-point) byte-swizzles each row into
+    ``bytes_per_sample`` interleaved lanes of length ``width * samples``,
+    per TIFF Technical Note 3.  Passing ``bytes_per_sample * samples`` as
+    the lane count (the pre-fix behaviour) swizzles over the wrong lane
+    count and scrambles multi-band pixel values.
+    """
     if pred == 2:
-        return predictor_decode(chunk, width, height, bytes_per_sample)
+        return predictor_decode(chunk, width, height,
+                                bytes_per_sample * samples)
     elif pred == 3:
-        return fp_predictor_decode(chunk, width, height, bytes_per_sample)
+        return fp_predictor_decode(chunk, width * samples, height,
+                                   bytes_per_sample)
     return chunk
 
 
@@ -288,7 +305,7 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
         if not chunk.flags.writeable:
             chunk = chunk.copy()
         chunk = _apply_predictor(chunk, pred, width, height,
-                                 bytes_per_sample * samples)
+                                 bytes_per_sample, samples=samples)
 
     if is_sub_byte:
         pixels = unpack_bits(chunk, bps, pixel_count)
