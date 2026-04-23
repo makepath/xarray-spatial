@@ -431,14 +431,29 @@ def test_equal_interval_k_equals_1():
     assert np.all(np.isnan(result_data[~input_finite]))
 
 
-# --- All-NaN edge cases ---
-# These document current failure behavior for degenerate inputs.
+# --- Degenerate input edge cases ---
 
 def test_equal_interval_all_nan():
     data = np.full((4, 5), np.nan)
     agg = xr.DataArray(data)
-    with pytest.raises(ValueError):
-        equal_interval(agg, k=3)
+    result = equal_interval(agg, k=3)
+    assert np.all(np.isnan(result.data))
+
+
+def test_equal_interval_all_same_values():
+    data = np.full((4, 5), 7.0)
+    agg = xr.DataArray(data)
+    result = equal_interval(agg, k=3)
+    finite_mask = np.isfinite(result.data)
+    assert np.all(result.data[finite_mask] == 0)
+
+
+def test_equal_interval_all_inf():
+    data = np.full((4, 5), np.inf)
+    agg = xr.DataArray(data)
+    result = equal_interval(agg, k=3)
+    # inf values are non-finite and should map to NaN
+    assert np.all(np.isnan(result.data))
 
 
 def test_natural_breaks_all_nan():
