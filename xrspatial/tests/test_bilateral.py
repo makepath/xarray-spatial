@@ -135,6 +135,46 @@ def test_bilateral_validation_errors():
         bilateral(agg, boundary='invalid')
 
 
+def test_bilateral_clamps_oversize_sigma_spatial():
+    """An oversized sigma_spatial should be clamped internally so that the
+    derived kernel radius never exceeds max(rows, cols).
+
+    Without this clamp, _pad_array would allocate (H + 2*radius,
+    W + 2*radius) and the dask map_overlap depth would grow unbounded, so
+    a single float from the caller could exhaust host memory (DoS).
+    """
+    # 10x20 raster -> max_radius=20.  sigma_spatial=1e9 would normally
+    # derive radius ~ 2e9, which would blow up the padded allocation.
+    # The clamp bounds internal work to max(rows, cols), so the call must
+    # return quickly with a finite result.
+    rng = np.random.default_rng(1236)
+    data = rng.standard_normal((10, 20)).astype(np.float64)
+    agg = xr.DataArray(data)
+
+    # Large sigma with boundary='nearest' exercises the padding path.
+    result = bilateral(
+        agg, sigma_spatial=1e9, sigma_range=1000.0, boundary='nearest',
+    )
+    assert result.shape == agg.shape
+    assert np.all(np.isfinite(result.data))
+
+    # Large sigma with boundary='nan' exercises the pure numba path.
+    result_nan = bilateral(
+        agg, sigma_spatial=1e9, sigma_range=1000.0, boundary='nan',
+    )
+    assert result_nan.shape == agg.shape
+    assert np.all(np.isfinite(result_nan.data))
+
+    # 3D input: clamp should use the last two dims.
+    agg3d = xr.DataArray(
+        rng.standard_normal((2, 8, 8)).astype(np.float64),
+        dims=['band', 'y', 'x'],
+    )
+    result3d = bilateral(agg3d, sigma_spatial=1e9, sigma_range=1000.0)
+    assert result3d.shape == agg3d.shape
+    assert np.all(np.isfinite(result3d.data))
+
+
 def test_bilateral_known_values():
     """Verify output against hand-computed bilateral filter on a 3x3 raster."""
     data = np.array([
