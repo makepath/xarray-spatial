@@ -111,6 +111,13 @@
       "severity_max": "MEDIUM",
       "categories_found": [1, 3],
       "notes": "No CRITICAL/HIGH findings. All 10 public APIs call _validate_raster; natural_breaks/quantile/maximum_breaks also call _validate_scalar(k). Both CUDA kernels (_run_gpu_binary at line 72, _run_gpu_bin at line 241) have bounds guards. Dask paths use seeded sampling via _generate_sample_indices rather than materializing full arrays. MEDIUM (fixed #1244, Cat 3): equal_interval raised ZeroDivisionError when max==min and ValueError on all-NaN input (_run_equal_interval.np.arange with width=0 or NaN). Fixed by collapsing the degenerate case to a single bin that maps finite pixels to class 0. MEDIUM (fixed #1246, Cat 1): _compute_natural_break_bins passed the full raster to _run_jenks when num_sample=None on numpy/cupy backends; _run_numpy_jenks_matrices then allocated two (n_data+1, n_classes+1) float64 matrices (~9.6 GB per matrix pair for a 10kx10k k=5 call). Fixed by adding an _available_memory_bytes() guard that raises MemoryError when the matrices would exceed 50% of available memory. LOW (unfixed): _cpu_bin has `elif val > bins[mid - 1]` which would index bins[-1] at mid=0 via numba wraparound, but the outer val <= bins[0] / val <= bins[nbins-1] guards mean mid=0 cannot reach that branch in valid execution."
+    },
+    "morphology": {
+      "last_inspected": "2026-04-24",
+      "issue": 1256,
+      "severity_max": "HIGH",
+      "categories_found": [1],
+      "notes": "HIGH (fixed #1256): morph_erode/morph_dilate/morph_opening/morph_closing/morph_gradient/morph_white_tophat/morph_black_tophat accepted a user-supplied kernel with only shape/dtype/odd-size validation. Kernel dimensions drove np.pad/cp.pad on every backend and map_overlap depth on dask paths; a 99999x99999 kernel on a 1000x1000 raster would try to allocate ~80 GB of padded float64 memory with no warning. Fixed by adding local _available_memory_bytes() helper and _check_kernel_memory(rows, cols, ky, kx) that raises MemoryError before allocation when padded size exceeds 50% of available RAM; wired into _dispatch() so every public API entry point is guarded across all four backends. Mirrors bilateral #1236, convolution #1241, bump #1231. No other HIGH findings: Cat 2 (loop indices are Python ints, numba promotes to int64), Cat 3 (NaN propagation explicit via v!=v in both numpy and CUDA paths, tests verify), Cat 4 (GPU kernels _erode_gpu/_dilate_gpu have if i<rows and j<cols bounds guards, no shared memory), Cat 5 (no file I/O), Cat 6 (_validate_raster called in _dispatch, all backends cast to float64 before kernel)."
     }
   }
 }

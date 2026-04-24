@@ -47,6 +47,52 @@ from xrspatial.dataset_support import supports_dataset
 
 
 # ---------------------------------------------------------------------------
+# Memory guard
+# ---------------------------------------------------------------------------
+
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    # Try /proc/meminfo (Linux)
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    # Try psutil
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    # Fallback: 2 GB
+    return 2 * 1024 ** 3
+
+
+def _check_kernel_memory(rows, cols, ky, kx, func_name):
+    """Raise MemoryError if the padded float64 array would exceed 50% of RAM.
+
+    Each morphology backend allocates a padded copy of the input of shape
+    ``(rows + ky - 1, cols + kx - 1)`` as float64, plus an output of shape
+    ``(rows, cols)``.  Budget ~16 bytes per padded cell to cover both
+    allocations plus small temporaries.
+    """
+    padded_rows = rows + ky - 1
+    padded_cols = cols + kx - 1
+    required = padded_rows * padded_cols * 16
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"{func_name}(): kernel shape ({ky}, {kx}) on a "
+            f"({rows}, {cols}) raster needs ~{required / 1e9:.1f} GB "
+            f"of padded float64 memory, but only "
+            f"{available / 1e9:.1f} GB is available. "
+            f"Use a smaller kernel."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Kernel construction
 # ---------------------------------------------------------------------------
 
@@ -387,6 +433,10 @@ def _dispatch(agg, kernel, boundary, name, numpy_fn, cupy_fn, dask_fn, dask_cupy
     _validate_raster(agg, func_name=name, name='agg', ndim=2)
     kernel = _validate_kernel(kernel, name)
     _validate_boundary(boundary)
+
+    rows, cols = agg.shape
+    ky, kx = kernel.shape
+    _check_kernel_memory(rows, cols, ky, kx, name)
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(numpy_fn, kernel=kernel, boundary=boundary),

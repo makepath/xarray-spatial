@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
+import xrspatial.morphology as morphology_mod
 from xrspatial.morphology import (
     _circle_kernel,
     morph_closing,
@@ -373,3 +374,53 @@ def test_erode_dataset():
     result = morph_erode(ds, boundary='nearest')
     assert isinstance(result, xr.Dataset)
     assert set(result.data_vars) == {'a', 'b'}
+
+
+# ---------------------------------------------------------------------------
+# Memory guard (issue #1256)
+# ---------------------------------------------------------------------------
+
+def test_oversized_kernel_raises_memory_error(monkeypatch):
+    """Oversized kernel should raise MemoryError with an informative message.
+
+    Patches ``_available_memory_bytes`` to a tiny value so a modest
+    kernel trips the 50% budget check without actually allocating
+    anything large.
+    """
+    monkeypatch.setattr(
+        morphology_mod, "_available_memory_bytes", lambda: 1 * 1024 * 1024,
+    )
+    agg = create_test_raster(np.ones((100, 100), dtype=np.float64))
+    # 101x101 kernel on a 100x100 raster -> padded (200, 200) float64
+    # ~ 640 KB which exceeds 50% of the 1 MB budget.
+    big_kernel = np.ones((101, 101), dtype=np.uint8)
+    with pytest.raises(MemoryError, match="kernel shape"):
+        morph_erode(agg, kernel=big_kernel)
+
+
+def test_kernel_memory_guard_allows_normal_use(monkeypatch):
+    """The guard must not block ordinary kernels under realistic memory."""
+    monkeypatch.setattr(
+        morphology_mod, "_available_memory_bytes", lambda: 2 * 1024 ** 3,
+    )
+    agg = create_test_raster(_DATA)
+    # Default 3x3 kernel on a 5x5 raster fits comfortably.
+    result = morph_erode(agg, kernel=_KERNEL_3x3)
+    general_output_checks(agg, result, verify_attrs=True)
+
+
+def test_kernel_memory_guard_runs_for_all_public_apis(monkeypatch):
+    """Every public API entry point should trigger the guard via _dispatch."""
+    monkeypatch.setattr(
+        morphology_mod, "_available_memory_bytes", lambda: 1 * 1024 * 1024,
+    )
+    agg = create_test_raster(np.ones((100, 100), dtype=np.float64))
+    big_kernel = np.ones((101, 101), dtype=np.uint8)
+    for func in [
+        morph_erode, morph_dilate, morph_opening, morph_closing,
+        morphology_mod.morph_gradient,
+        morphology_mod.morph_white_tophat,
+        morphology_mod.morph_black_tophat,
+    ]:
+        with pytest.raises(MemoryError, match="kernel shape"):
+            func(agg, kernel=big_kernel)
