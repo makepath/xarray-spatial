@@ -36,7 +36,7 @@ arguments.
    ndvi_result = ndvi(my_dataset, nir='band_5', red='band_4')
 
 
-Check out the user guide `here <https://github.com/xarray-contrib/xarray-spatial/blob/master/examples/user_guide>`_.
+Check out the user guide `here <https://github.com/xarray-contrib/xarray-spatial/blob/main/examples/user_guide>`_.
 
 
 Dependencies

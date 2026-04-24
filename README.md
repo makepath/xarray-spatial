@@ -24,7 +24,7 @@
 <tr>
   <td>License</td>
   <td>
-    <a href="https://github.com/xarray-contrib/xarray-spatial/blob/master/LICENSE.txt">
+    <a href="https://github.com/xarray-contrib/xarray-spatial/blob/main/LICENSE.txt">
     <img src="https://img.shields.io/pypi/l/xarray-spatial.svg"
          alt="MIT" />
     </a>
@@ -62,7 +62,7 @@
   <td>
     <div>
       <a href="https:https://codecov.io/gh/xarray-contrib/xarray-spatial">
-      <img alt="Language grade: Python" src="https://codecov.io/gh/xarray-contrib/xarray-spatial/branch/master/graph/badge.svg"/>
+      <img alt="Language grade: Python" src="https://codecov.io/gh/xarray-contrib/xarray-spatial/branch/main/graph/badge.svg"/>
       </a>
     </div>
   </td>
