@@ -4,7 +4,7 @@ on:
   pull_request:
     types: [labeled]
   push:
-    branches: [master]
+    branches: [master, main]
 
 env:
   ASV_FACTOR: "1.2"
