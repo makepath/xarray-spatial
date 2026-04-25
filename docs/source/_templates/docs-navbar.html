@@ -3,7 +3,7 @@
 
     {% if logo %}
       {% if not theme_logo_link %}
-      <a class="navbar-brand" href="{{ pathto(master_doc) }}">
+      <a class="navbar-brand" href="{{ pathto(root_doc) }}">
         <img src="{{ pathto('_static/' + logo, 1) }}" class="logo" alt="logo">
       </a>
       {% elif theme_logo_link[:4] == 'http' %}
@@ -16,7 +16,7 @@
       </a>      
       {% endif %}
     {% else %}
-    <a class="navbar-brand" href="{{ pathto(master_doc) }}">
+    <a class="navbar-brand" href="{{ pathto(root_doc) }}">
       <p class="title">{{ project }}</p>
     </a>
     {% endif %}
