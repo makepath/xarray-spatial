@@ -60,19 +60,19 @@ def test_glcm_rejects_small_window():
 
 
 def test_glcm_rejects_bad_metric():
-    agg = xr.DataArray(np.zeros((5, 5)), dims=['y', 'x'])
+    agg = xr.DataArray(np.zeros((8, 8)), dims=['y', 'x'])
     with pytest.raises(ValueError, match="unknown metric"):
         glcm_texture(agg, metric='bogus')
 
 
 def test_glcm_rejects_bad_angle():
-    agg = xr.DataArray(np.zeros((5, 5)), dims=['y', 'x'])
+    agg = xr.DataArray(np.zeros((8, 8)), dims=['y', 'x'])
     with pytest.raises(ValueError, match="angle"):
         glcm_texture(agg, angle=30)
 
 
 def test_glcm_rejects_bad_levels():
-    agg = xr.DataArray(np.zeros((5, 5)), dims=['y', 'x'])
+    agg = xr.DataArray(np.zeros((8, 8)), dims=['y', 'x'])
     with pytest.raises(ValueError, match=">= 2"):
         glcm_texture(agg, levels=1)
     with pytest.raises(ValueError, match="<= 256"):
@@ -83,6 +83,45 @@ def test_glcm_rejects_3d():
     agg = xr.DataArray(np.zeros((3, 5, 5)), dims=['band', 'y', 'x'])
     with pytest.raises(ValueError, match="2D"):
         glcm_texture(agg)
+
+
+def test_glcm_rejects_window_larger_than_raster():
+    # window_size larger than the raster would iterate window_size**2 times
+    # per pixel without producing any new information -- CPU-time DoS.
+    agg = xr.DataArray(np.zeros((10, 10)), dims=['y', 'x'])
+    with pytest.raises(ValueError, match="window_size"):
+        glcm_texture(agg, window_size=1_000_001)
+
+
+def test_glcm_rejects_window_larger_than_min_dim():
+    # Non-square raster: cap is min(rows, cols).
+    agg = xr.DataArray(np.zeros((20, 5)), dims=['y', 'x'])
+    with pytest.raises(ValueError, match="<= 5"):
+        glcm_texture(agg, window_size=7)
+
+
+def test_glcm_window_size_equal_to_raster_ok():
+    # Boundary case: window_size exactly equal to min(rows, cols) is allowed.
+    agg = xr.DataArray(np.ones((5, 5)), dims=['y', 'x'])
+    result = glcm_texture(agg, metric='contrast', window_size=5, levels=4)
+    assert result.shape == (5, 5)
+
+
+def test_glcm_rejects_distance_larger_than_half_window():
+    # distance greater than window_size // 2 places every pair outside the
+    # window, so no GLCM entries get populated. Reject upfront.
+    agg = xr.DataArray(np.zeros((10, 10)), dims=['y', 'x'])
+    with pytest.raises(ValueError, match="distance"):
+        glcm_texture(agg, window_size=5, distance=10**9)
+
+
+def test_glcm_distance_equal_to_half_window_ok():
+    # Boundary case: distance == window_size // 2 is the largest separation
+    # where a pair can still fit inside the window.
+    agg = xr.DataArray(np.ones((8, 8)), dims=['y', 'x'])
+    result = glcm_texture(agg, metric='contrast', window_size=5,
+                          distance=2, levels=4)
+    assert result.shape == (8, 8)
 
 
 # ---- Quantize ----
