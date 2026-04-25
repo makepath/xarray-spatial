@@ -757,3 +757,107 @@ def test_numpy_memory_guard_passes_for_small_raster():
     out = _compute(result)
     assert out[0, 0] == 0.0
     np.testing.assert_allclose(out[0, 1], 1.0, atol=1e-5)
+
+
+# -----------------------------------------------------------------------
+# Memory guard on CuPy GPU path (Issue #1262)
+# -----------------------------------------------------------------------
+
+def test_check_gpu_memory_raises_when_required_exceeds_half_free():
+    """_check_gpu_memory(h, w) should raise when 50% of free GPU < required."""
+    from unittest.mock import patch
+    from xrspatial.cost_distance import _check_gpu_memory
+
+    # 1000 bytes free, 4x4 grid needs 4*4*24 = 384 bytes.  Half-free = 500,
+    # 384 < 500, so this should NOT raise.
+    with patch(
+        'xrspatial.cost_distance._available_gpu_memory_bytes',
+        return_value=1000,
+    ):
+        _check_gpu_memory(4, 4)
+
+    # 100 bytes free, 4x4 grid needs 384 bytes.  Half-free = 50, well below
+    # required, so this MUST raise.
+    with patch(
+        'xrspatial.cost_distance._available_gpu_memory_bytes',
+        return_value=100,
+    ):
+        with pytest.raises(MemoryError, match="max_cost"):
+            _check_gpu_memory(4, 4)
+
+
+def test_check_gpu_memory_skipped_when_no_cuda():
+    """When _available_gpu_memory_bytes returns 0, the guard is a no-op."""
+    from unittest.mock import patch
+    from xrspatial.cost_distance import _check_gpu_memory
+
+    with patch(
+        'xrspatial.cost_distance._available_gpu_memory_bytes',
+        return_value=0,
+    ):
+        # Should not raise even for an absurd size when no GPU info.
+        _check_gpu_memory(10**9, 10**9)
+
+
+def test_check_gpu_memory_error_mentions_dask_and_max_cost():
+    """The error message should point users at the two escape hatches."""
+    from unittest.mock import patch
+    from xrspatial.cost_distance import _check_gpu_memory
+
+    with patch(
+        'xrspatial.cost_distance._available_gpu_memory_bytes',
+        return_value=10,
+    ):
+        with pytest.raises(MemoryError) as excinfo:
+            _check_gpu_memory(4, 4)
+
+    msg = str(excinfo.value)
+    assert "max_cost" in msg
+    assert "dask" in msg.lower()
+
+
+@cuda_and_cupy_available
+def test_cupy_memory_guard_raises_for_oversize_raster():
+    """End-to-end: cupy path raises MemoryError before GPU allocation."""
+    from unittest.mock import patch
+
+    source = np.zeros((4, 4))
+    source[0, 0] = 1.0
+    friction = np.ones((4, 4))
+
+    raster = _make_raster(source, backend='cupy')
+    fric = _make_raster(friction, backend='cupy')
+
+    # Pretend only 100 bytes of GPU memory are free.  A 4x4 raster needs
+    # 384 bytes of working memory, which sits well above 50 (half-free), so
+    # the guard fires before any cp.full allocation.
+    with patch(
+        'xrspatial.cost_distance._available_gpu_memory_bytes',
+        return_value=100,
+    ):
+        with pytest.raises(MemoryError, match="max_cost"):
+            cost_distance(raster, fric)
+
+
+@cuda_and_cupy_available
+def test_cupy_memory_guard_passes_for_small_raster():
+    """A tiny cupy raster should pass the guard with realistic free memory."""
+    from unittest.mock import patch
+
+    source = np.zeros((4, 4))
+    source[0, 0] = 1.0
+    friction = np.ones((4, 4))
+
+    raster = _make_raster(source, backend='cupy')
+    fric = _make_raster(friction, backend='cupy')
+
+    # 1 MB reported free: 4x4 working set is ~384 B, well under the cutoff.
+    with patch(
+        'xrspatial.cost_distance._available_gpu_memory_bytes',
+        return_value=1024 * 1024,
+    ):
+        result = cost_distance(raster, fric)
+
+    out = _compute(result)
+    assert out[0, 0] == 0.0
+    np.testing.assert_allclose(out[0, 1], 1.0, atol=1e-5)
