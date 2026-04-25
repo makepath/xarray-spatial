@@ -253,6 +253,14 @@ def curvature(agg: xr.DataArray,
     _validate_raster(agg, func_name='curvature', name='agg')
 
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
+    if (not np.isfinite(cellsize_x) or not np.isfinite(cellsize_y)
+            or cellsize_x == 0 or cellsize_y == 0):
+        raise ValueError(
+            "curvature() requires a non-zero, finite cell size on both axes; "
+            f"got cellsize_x={cellsize_x!r}, cellsize_y={cellsize_y!r}. "
+            "Set agg.attrs['res'] to a (x, y) tuple of non-zero floats, "
+            "or attach numeric x/y coordinates to the DataArray."
+        )
     cellsize = (cellsize_x + cellsize_y) / 2
 
     _validate_boundary(boundary)

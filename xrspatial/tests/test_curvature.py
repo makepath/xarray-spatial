@@ -164,3 +164,15 @@ def test_boundary_invalid():
     agg = create_test_raster(data, attrs={'res': (1, 1)})
     with pytest.raises(ValueError, match="boundary must be one of"):
         curvature(agg, boundary='invalid')
+
+
+@pytest.mark.parametrize("res", [(0, 0), (0, 1), (1, 0),
+                                 (np.inf, 1), (1, np.nan)])
+def test_curvature_invalid_cellsize(res):
+    """curvature() must reject zero or non-finite cell sizes instead of
+    silently returning inf for every interior pixel.
+    """
+    data = np.zeros((5, 5), dtype=np.float32)
+    agg = create_test_raster(data, attrs={'res': res})
+    with pytest.raises(ValueError, match="non-zero, finite cell size"):
+        curvature(agg)
