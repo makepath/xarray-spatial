@@ -457,3 +457,87 @@ class TestEmergeDaskCuPy:
                 dc_vals, ds_np[var].values, atol=1e-5,
                 err_msg=f"mismatch in {var}",
             )
+
+
+# ---------------------------------------------------------------------------
+# Memory guard (issue #1274)
+# ---------------------------------------------------------------------------
+
+class TestMemoryGuard:
+    """Memory guard on the public emerging_hotspots() API (#1274).
+
+    The numpy and cupy backends materialise three full ``(T, H, W)``
+    cubes (a float32 input copy, gi_zscore float32, gi_bin int8) plus
+    small H*W temporaries.  The public API estimates this footprint and
+    raises ``MemoryError`` before the first allocation when it would
+    exceed 50% of available RAM.  Dask-backed inputs are not guarded
+    because their map_blocks/map_overlap path processes per-chunk.
+    """
+
+    def _stub_available(self, monkeypatch, n_bytes):
+        """Pin _available_memory_bytes to a fixed return value."""
+        import sys
+        mod = sys.modules['xrspatial.emerging_hotspots']
+        monkeypatch.setattr(mod, '_available_memory_bytes', lambda: n_bytes)
+
+    def test_numpy_raises_when_budget_exceeded(self, monkeypatch):
+        """numpy backend should refuse a cube too large for memory."""
+        # A (5, 100, 100) cube needs ~600 KB; with 1 KB "available" the
+        # guard must trip.
+        self._stub_available(monkeypatch, 1024)
+        rng = np.random.default_rng(0)
+        data = rng.standard_normal((5, 100, 100)).astype('f4')
+        raster = _make_raster(data)
+        with pytest.raises(MemoryError, match=r"emerging_hotspots"):
+            emerging_hotspots(raster, _kernel_3x3())
+
+    def test_numpy_passes_when_budget_ample(self, monkeypatch):
+        """Small inputs should pass the guard with normal RAM headroom."""
+        self._stub_available(monkeypatch, 64 * 1024 ** 3)
+        rng = np.random.default_rng(0)
+        data = rng.standard_normal((5, 20, 20)).astype('f4')
+        raster = _make_raster(data)
+        ds = emerging_hotspots(raster, _kernel_3x3())
+        assert ds['category'].shape == (20, 20)
+
+    def test_error_message_mentions_shape_and_gb(self, monkeypatch):
+        """Error message should surface the cube shape and projected size."""
+        self._stub_available(monkeypatch, 1024)
+        rng = np.random.default_rng(0)
+        data = rng.standard_normal((4, 50, 50)).astype('f4')
+        raster = _make_raster(data)
+        with pytest.raises(MemoryError, match=r"\(4, 50, 50\)"):
+            emerging_hotspots(raster, _kernel_3x3())
+
+    def test_cupy_raises_when_budget_exceeded(self, monkeypatch):
+        """CuPy backend honours the same in-RAM guard."""
+        cp = pytest.importorskip("cupy")
+        self._stub_available(monkeypatch, 1024)
+        rng = np.random.default_rng(0)
+        data = cp.asarray(
+            rng.standard_normal((5, 100, 100)).astype('f4')
+        )
+        raster = _make_raster(data)
+        with pytest.raises(MemoryError, match=r"emerging_hotspots"):
+            emerging_hotspots(raster, _kernel_3x3())
+
+    def test_dask_skips_in_ram_guard(self, monkeypatch):
+        """Dask-backed inputs should not be blocked by the in-RAM guard.
+
+        The numpy/cupy guard targets backends that materialise the full
+        cube; dask paths process per-chunk via map_blocks/map_overlap.
+        """
+        da_mod = pytest.importorskip("dask.array")
+        # Even with 1 byte "available", the dask path should pass the
+        # public-API check because the guard is skipped for dask inputs.
+        self._stub_available(monkeypatch, 1)
+        rng = np.random.default_rng(0)
+        data = da_mod.from_array(
+            rng.standard_normal((5, 20, 20)).astype('f4'),
+            chunks=(5, 10, 10),
+        )
+        raster = _make_raster(data)
+        ds = emerging_hotspots(raster, _kernel_3x3())
+        # Materialise the lazy result to confirm the full pipeline runs.
+        ds = ds.compute()
+        assert ds['category'].shape == (20, 20)

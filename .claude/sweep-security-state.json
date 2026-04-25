@@ -153,6 +153,13 @@
       "severity_max": null,
       "categories_found": [],
       "notes": "Clean. Small (271 LOC) module computing 3x3 second-derivative stencil. Cat 1: only single output buffer matching input shape (np.empty at line 37, cupy.empty at line 101) -- bounded by caller, per audit guidance not a finding. Cat 2: _cpu numba kernel uses range(1, rows-1)/range(1, cols-1) with simple (y, x) indices; no flat indexing or queue arrays; numba range loops produce int64. Cat 3: division by cellsize*cellsize on line 44 -- cellsize comes from get_dataarray_resolution() (raster property, not user-direct); cellsize=0 is unrealistic and would produce inf consistently across backends. NaN inputs propagate correctly through float arithmetic. Cat 4: _run_gpu (line 79-86) has full bounds guard via 'i + di <= out.shape[0] - 1 and j + dj <= out.shape[1] - 1' which guarantees i < shape[0] and j < shape[1] before the out[i, j] write; no shared memory; out is pre-filled with NaN at line 102 so threads outside the guard correctly leave NaN. Cat 5: no file I/O. Cat 6: curvature() calls _validate_raster at line 253; all four backend paths explicitly cast to float32 (lines 51, 62, 97, 112) so dtype is normalized before any computation; tests cover int32/int64/uint32/uint64/float32/float64 across numpy/cupy/dask+numpy/dask+cupy."
+    },
+    "emerging_hotspots": {
+      "last_inspected": "2026-04-25",
+      "issue": 1274,
+      "severity_max": "HIGH",
+      "categories_found": [1],
+      "notes": "HIGH (fixed #1274): emerging_hotspots() public API only validated ndim and shape[0] >= 2. The numpy and cupy backends each materialised three full (T, H, W) cubes (a float32 input copy, gi_zscore float32, gi_bin int8) plus H*W temporaries with no memory check; a (100, 20000, 20000) input projected to ~480 GB. Fixed by adding _available_memory_bytes()/_check_memory(n_times, ny, nx) (12 bytes per cube cell budget) and calling it from the public API for non-dask inputs. Dask paths skip the guard because their map_blocks/map_overlap chunk functions do not materialise the full cube. MEDIUM (unfixed, Cat 6): public API does not call _validate_raster() so non-numeric dtypes fail later with a confusing error rather than a clean TypeError. No GPU kernels in this module (uses convolve_2d). No file I/O. Cat 3 statistical paths are robust: _mann_kendall_statistic_numpy guards var_s <= 0 before sqrt, both numpy and cupy backends raise ZeroDivisionError on global_std == 0, and _mk_pvalue handles z==0 explicitly."
     }
   }
 }
