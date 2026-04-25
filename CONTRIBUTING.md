@@ -1,6 +1,6 @@
 # Contributing to Xarray-Spatial
 
-As stated in [Xarray Spatial code of conduct](https://github.com/xarray-contrib/xarray-spatial/blob/master/CODE_OF_CONDUCT.md), a primary goal of Xarray Spatial is to be inclusive to the largest number of contributors. However, we do have some requests for how contributions should be made. Please read these guidelines before contributing to have a most positive experience with Xarray Spatial.
+As stated in [Xarray Spatial code of conduct](https://github.com/xarray-contrib/xarray-spatial/blob/main/CODE_OF_CONDUCT.md), a primary goal of Xarray Spatial is to be inclusive to the largest number of contributors. However, we do have some requests for how contributions should be made. Please read these guidelines before contributing to have a most positive experience with Xarray Spatial.
 
 ### Getting Started
 
@@ -30,7 +30,7 @@ In order to avoid duplication of effort, it's always a good idea to comment on a
 
 2. Create a fork of the Xarray Spatial repository on GitHub (this is only done before *first*) contribution.
 
-3. Create a branch off the `master` branch with a meaningful name. Preferably include issue number and a few keywords, so that we will have a rough idea what the branch refers to, without looking up the issue. 
+3. Create a branch off the `main` branch with a meaningful name. Preferably include issue number and a few keywords, so that we will have a rough idea what the branch refers to, without looking up the issue. 
 
 4. Commit your changes and push them to GitHub.
 
@@ -40,7 +40,7 @@ In order to avoid duplication of effort, it's always a good idea to comment on a
 
 7. We don't accept code contributions without tests. If there are valid reasons for not including a test, please discuss this in the issue.
 
-8. We will review your PR as time permits. Reviewers may comment on your contributions, ask you questions regarding the implementation or request changes. If changes are requested, push new commits to the existing branch. Do *NOT* rebase, amend, or cherry-pick published commits. Any of those actions will make us start the review from scratch. If you need updates from `master`, just merge it into your branch.
+8. We will review your PR as time permits. Reviewers may comment on your contributions, ask you questions regarding the implementation or request changes. If changes are requested, push new commits to the existing branch. Do *NOT* rebase, amend, or cherry-pick published commits. Any of those actions will make us start the review from scratch. If you need updates from `main`, just merge it into your branch.
 
 
 ### Attribution

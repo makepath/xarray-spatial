@@ -1,6 +1,6 @@
 # Bench: Local Performance Comparison
 
-Run ASV benchmarks for the current branch against master and report regressions
+Run ASV benchmarks for the current branch against main and report regressions
 and improvements. The prompt is: $ARGUMENTS
 
 ---
@@ -9,7 +9,7 @@ and improvements. The prompt is: $ARGUMENTS
 
 1. If $ARGUMENTS names specific benchmark classes or functions (e.g. `Slope`,
    `flow_accumulation`), use those directly.
-2. If $ARGUMENTS is empty or says "auto", run `git diff origin/master --name-only`
+2. If $ARGUMENTS is empty or says "auto", run `git diff origin/main --name-only`
    to find changed source files under `xrspatial/`. Map each changed file to the
    corresponding benchmark module in `benchmarks/benchmarks/`. Use the filename
    and imports to match (e.g. changes to `slope.py` map to `benchmarks/benchmarks/slope.py`).
@@ -30,7 +30,7 @@ and improvements. The prompt is: $ARGUMENTS
 Run ASV in continuous-comparison mode from the `benchmarks/` directory:
 
 ```bash
-cd benchmarks && asv continuous origin/master HEAD -b "<regex>" -e
+cd benchmarks && asv continuous origin/main HEAD -b "<regex>" -e
 ```
 
 Where `<regex>` is a pattern matching the benchmark classes identified in Step 1
@@ -64,7 +64,7 @@ Parse the output and classify each result:
 ## Step 5 -- Generate the report
 
 ```
-## Benchmark Report: <branch> vs master
+## Benchmark Report: <branch> vs main
 
 ### Changed files
 - <list of changed source files>
@@ -74,7 +74,7 @@ Parse the output and classify each result:
 
 ### Results
 
-| Benchmark                          | master    | HEAD      | Ratio | Status     |
+| Benchmark                          | main    | HEAD      | Ratio | Status     |
 |------------------------------------|-----------|-----------|-------|------------|
 | slope.Slope.time_numpy             | 3.45 ms   | 3.51 ms   | 1.02x | UNCHANGED  |
 | slope.Slope.time_dask_numpy        | 8.12 ms   | 4.23 ms   | 0.52x | IMPROVED   |
@@ -124,4 +124,4 @@ Do NOT write benchmark files automatically. Report the gap and propose, then wai
   analysis (unless the user explicitly asks for a benchmark to be written in
   response to Step 6).
 - If $ARGUMENTS says "compare <branch1> <branch2>", run
-  `asv continuous <branch1> <branch2>` instead of the default origin/master vs HEAD.
+  `asv continuous <branch1> <branch2>` instead of the default origin/main vs HEAD.

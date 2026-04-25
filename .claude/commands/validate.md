@@ -10,7 +10,7 @@ four backends. The prompt is: $ARGUMENTS
 
 1. If $ARGUMENTS names a specific function (e.g. `slope`, `flow_accumulation`),
    use that.
-2. If $ARGUMENTS is empty or says "auto", run `git diff origin/master --name-only`
+2. If $ARGUMENTS is empty or says "auto", run `git diff origin/main --name-only`
    to find changed source files under `xrspatial/`. Identify which public functions
    were added or modified. If multiple functions changed, validate each one.
 3. Read the function's source to understand:

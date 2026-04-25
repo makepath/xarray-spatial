@@ -22,7 +22,7 @@ If you want to benchmark `cupy`-backed `DataArray`s and have the hardware and dr
 
 If you want to benchmark algorithms that use the ray-tracing code in `rtxpy`, then uncomment the `rtxpy` line in `asv.conf.json` as well as the `cupy` line.
 
-To run all benchmarks against the default `master` branch:
+To run all benchmarks against the default `main` branch:
 ```
 cd benchmarks
 asv run
@@ -30,9 +30,9 @@ asv run
 
 The first time this is run it will create a machine file to store information about your machine. Then a virtual environment will be created and each benchmark will be run multiple times to obtain a statistically valid benchmark time.
 
-To list the benchmark timings stored for the `master` branch use:
+To list the benchmark timings stored for the `main` branch use:
 ```
-asv show master
+asv show main
 ```
 
 ASV ships with its own simple webserver to interactively display the results in a webbrowser. To use this:
@@ -70,15 +70,15 @@ where the text after the `-b` flag is used as a regex to match benchmark file, c
 Benchmarking code changes
 -------------------------
 
-You can compare the performance of code on different branches and in different commits. Usually if you want to determine how much faster a new algorithm is, the old code will be in the `master` branch and the new code will be in a new feature branch. Because ASV uses virtual environments and checks out the `xarray-spatial` source code into these virtual environments, your new code must be committed into the new feature branch.
+You can compare the performance of code on different branches and in different commits. Usually if you want to determine how much faster a new algorithm is, the old code will be in the `main` branch and the new code will be in a new feature branch. Because ASV uses virtual environments and checks out the `xarray-spatial` source code into these virtual environments, your new code must be committed into the new feature branch.
 
-To benchmark the latest commits on `master` and your new feature branch, edit `asv.conf.json` to change the line
+To benchmark the latest commits on `main` and your new feature branch, edit `asv.conf.json` to change the line
 ```
-"branches": ["master"],
+"branches": ["main"],
 ```
 into
 ```
-"branches": ["master", "new_feature_branch"],
+"branches": ["main", "new_feature_branch"],
 ```
 or similar.
 
