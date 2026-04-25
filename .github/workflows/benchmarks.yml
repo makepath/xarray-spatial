@@ -4,7 +4,7 @@ on:
   pull_request:
     types: [labeled]
   push:
-    branches: [master]
+    branches: [main]
 
 env:
   ASV_FACTOR: "1.2"
@@ -35,12 +35,12 @@ jobs:
         if: github.event_name == 'pull_request'
         working-directory: benchmarks
         run: |
-          asv continuous origin/master HEAD \
+          asv continuous origin/main HEAD \
             --factor $ASV_FACTOR \
             --bench "^(Slope|Proximity|Zonal|CostDistance|Focal|Rescale|Standardize|Diffusion|Dasymetric)" \
             | tee bench_output.txt
 
-      - name: Run benchmarks (push to master)
+      - name: Run benchmarks (push to main)
         if: github.event_name == 'push'
         working-directory: benchmarks
         run: |

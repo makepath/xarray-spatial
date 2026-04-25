@@ -58,11 +58,13 @@ def glcm_texture(
         One or more of: 'contrast', 'dissimilarity', 'homogeneity',
         'energy', 'correlation', 'entropy'.
     window_size : int
-        Side length of the sliding window (must be odd, >= 3).
+        Side length of the sliding window. Must be odd, >= 3, and
+        <= min(rows, cols) of the input raster.
     levels : int
         Number of gray levels for quantization (2-256).
     distance : int
-        Pixel pair distance (>= 1).
+        Pixel pair distance. Must be >= 1 and <= window_size // 2 so
+        both pixels of a pair can fit inside the window.
     angle : int or None
         Co-occurrence angle in degrees: 0, 45, 90, or 135.
         If None, averages over all four angles.
@@ -75,15 +77,26 @@ def glcm_texture(
         with a leading 'metric' dimension.
     """
     _validate_raster(agg, func_name='glcm_texture', ndim=2)
+    # Cap window_size at min(rows, cols). A window larger than the raster
+    # cannot sample anything new, and an arbitrarily large cap would let a
+    # caller pass e.g. window_size=1e6 and spin the per-pixel window_size**2
+    # numba loop for hours (CPU-time DoS). On the dask backends the window
+    # also drives map_overlap depth, so an uncapped value triggers oversize
+    # per-chunk padding allocations (memory DoS).
+    rows, cols = agg.shape[-2:]
+    max_window = max(3, min(rows, cols))
     _validate_scalar(window_size, func_name='glcm_texture', name='window_size',
-                     dtype=int, min_val=3)
+                     dtype=int, min_val=3, max_val=max_window)
     if window_size % 2 == 0:
         raise ValueError("glcm_texture(): `window_size` must be odd, "
                          f"got {window_size}")
     _validate_scalar(levels, func_name='glcm_texture', name='levels',
                      dtype=int, min_val=2, max_val=256)
+    # distance must fit inside the window; otherwise every (pixel, neighbor)
+    # pair falls outside and no GLCM entries are populated.
+    max_distance = max(1, window_size // 2)
     _validate_scalar(distance, func_name='glcm_texture', name='distance',
-                     dtype=int, min_val=1)
+                     dtype=int, min_val=1, max_val=max_distance)
 
     if angle is not None:
         if angle not in _ANGLE_OFFSETS:

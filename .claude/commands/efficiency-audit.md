@@ -267,7 +267,7 @@ Thresholds: IMPROVED < 0.8x, REGRESSION > 1.2x, else UNCHANGED.
 - If $ARGUMENTS includes a severity filter (e.g. "high only"), only report
   findings at that severity level.
 - If $ARGUMENTS includes "diff" or "changed", restrict the audit to files
-  changed on the current branch vs origin/master.
+  changed on the current branch vs origin/main.
 - Baseline benchmark scripts are disposable. Clean up `/tmp/` scripts after
   capturing results.
 - The 512x512 array size is a default. If $ARGUMENTS includes a size like

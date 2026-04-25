@@ -16,7 +16,7 @@ $ARGUMENTS
 ## Step 2 -- Create a release branch
 
 ```bash
-git checkout master && git pull
+git checkout main && git pull
 git checkout -b release/vX.Y.Z
 ```
 
@@ -49,7 +49,7 @@ git push -u origin release/vX.Y.Z
 
 ## Step 5 -- Verify CI
 
-1. Run `gh pr create --title "Release vX.Y.Z" --body "Changelog update for vX.Y.Z minor release."` to open a PR against master.
+1. Run `gh pr create --title "Release vX.Y.Z" --body "Changelog update for vX.Y.Z minor release."` to open a PR against main.
 2. Wait for CI:
    ```bash
    gh pr checks <PR_NUMBER> --watch
@@ -65,7 +65,7 @@ gh pr merge <PR_NUMBER> --merge --delete-branch
 ## Step 7 -- Tag the release
 
 ```bash
-git checkout master && git pull
+git checkout main && git pull
 git tag -a vX.Y.Z -m "Version X.Y.Z"
 git push origin vX.Y.Z
 ```

@@ -24,7 +24,7 @@ xarray-spatial does not depend on GDAL / GEOS, which makes it fully extensible i
 
    ---
    .. image:: _static/img/0-0.png
-      :target: https://github.com/xarray-contrib/xarray-spatial/blob/master/examples
+      :target: https://github.com/xarray-contrib/xarray-spatial/blob/main/examples
    ---
    .. image:: _static/img/0-1.png
       :target: user_guide/proximity.html
@@ -36,7 +36,7 @@ xarray-spatial does not depend on GDAL / GEOS, which makes it fully extensible i
       :target: user_guide/proximity.html
    ---
    .. image:: _static/img/0-4.png
-      :target: https://github.com/xarray-contrib/xarray-spatial/blob/master/examples/pharmacy-deserts.ipynb
+      :target: https://github.com/xarray-contrib/xarray-spatial/blob/main/examples/pharmacy-deserts.ipynb
    ---
    .. image:: _static/img/1-0.png
       :target: user_guide/surface.html
@@ -51,7 +51,7 @@ xarray-spatial does not depend on GDAL / GEOS, which makes it fully extensible i
       :target: user_guide/surface.html
    ---
    .. image:: _static/img/1-4.png
-      :target: https://github.com/xarray-contrib/xarray-spatial/blob/master/examples/pharmacy-deserts.ipynb
+      :target: https://github.com/xarray-contrib/xarray-spatial/blob/main/examples/pharmacy-deserts.ipynb
    ---
    .. image:: _static/img/2-0.png
       :target: user_guide/surface.html
@@ -66,25 +66,25 @@ xarray-spatial does not depend on GDAL / GEOS, which makes it fully extensible i
       :target: user_guide/classification.html
    ---
    .. image:: _static/img/2-4.png
-      :target: https://github.com/xarray-contrib/xarray-spatial/blob/master/examples/pharmacy-deserts.ipynb
+      :target: https://github.com/xarray-contrib/xarray-spatial/blob/main/examples/pharmacy-deserts.ipynb
    ---
    .. image:: _static/img/3-0.png
-      :target: https://github.com/xarray-contrib/xarray-spatial/blob/master/examples
+      :target: https://github.com/xarray-contrib/xarray-spatial/blob/main/examples
    ---
    .. image:: _static/img/3-1.png
-      :target: https://github.com/xarray-contrib/xarray-spatial/blob/master/examples
+      :target: https://github.com/xarray-contrib/xarray-spatial/blob/main/examples
    ---
    .. image:: _static/img/3-2.png
       :target: user_guide/classification.html
    ---
    .. image:: _static/img/3-3.png
-      :target: https://github.com/xarray-contrib/xarray-spatial/blob/master/examples/pharmacy-deserts.ipynb
+      :target: https://github.com/xarray-contrib/xarray-spatial/blob/main/examples/pharmacy-deserts.ipynb
    ---
    .. image:: _static/img/3-4.png
-      :target: https://github.com/xarray-contrib/xarray-spatial/blob/master/examples
+      :target: https://github.com/xarray-contrib/xarray-spatial/blob/main/examples
    ---
    .. image:: _static/img/4-0.png
-      :target: https://github.com/xarray-contrib/xarray-spatial/blob/master/examples/Pathfinding_Austin_Road_Network.ipynb
+      :target: https://github.com/xarray-contrib/xarray-spatial/blob/main/examples/Pathfinding_Austin_Road_Network.ipynb
    ---
    .. image:: _static/img/4-1.png
       :target: user_guide/surface.html#Hillshade
@@ -96,7 +96,7 @@ xarray-spatial does not depend on GDAL / GEOS, which makes it fully extensible i
       :target: user_guide/surface.html#Slope
    ---
    .. image:: _static/img/4-4.png
-      :target: https://github.com/xarray-contrib/xarray-spatial/blob/master/examples/pharmacy-deserts.ipynb#Create-a-%22Distance-to-Nearest-Pharmacy%22-Layer-&-Classify-into-5-Groups
+      :target: https://github.com/xarray-contrib/xarray-spatial/blob/main/examples/pharmacy-deserts.ipynb#Create-a-%22Distance-to-Nearest-Pharmacy%22-Layer-&-Classify-into-5-Groups
 
 .. toctree::
    :maxdepth: 1
