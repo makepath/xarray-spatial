@@ -65,6 +65,83 @@ VALID_METHODS = ('binary', 'weighted', 'limiting_variable')
 # helpers
 # ---------------------------------------------------------------------------
 
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _check_disaggregate_memory(shape, method, n_zones):
+    """Guard the peak working memory of the numpy disaggregate paths.
+
+    ``method='weighted'`` and ``method='binary'`` keep ~5 full-shape arrays
+    alive (zones_arr, weight_arr, invalid bool, mask bool, result float64).
+    ``method='limiting_variable'`` adds ``pixel_class`` (int32) and per-zone
+    masks during the inner loop, peaking around 7-8x input size.
+
+    Raises MemoryError before the first allocation when the projected
+    footprint exceeds 50% of available RAM.
+    """
+    n_pixels = int(shape[0]) * int(shape[1])
+    # bytes per pixel: each float64 array is 8, each bool array is 1,
+    # int32 array is 4.  See module docstring for the breakdown.
+    if method == 'limiting_variable':
+        # 2 float64 (zones_arr, weight_arr, result share buffers)
+        # 4 bool full-shape (invalid, zmask, cls_mask, overflow_mask)
+        # 1 int32 (pixel_class)
+        # 1 float64 (result)
+        bytes_per_pixel = 3 * 8 + 4 * 1 + 4
+    else:
+        bytes_per_pixel = 3 * 8 + 2 * 1
+    required_bytes = n_pixels * bytes_per_pixel
+    available = _available_memory_bytes()
+    if required_bytes > 0.5 * available:
+        raise MemoryError(
+            f"disaggregate() with shape={shape}, method={method!r} "
+            f"requires ~{required_bytes / 1e9:.1f} GB of working memory, "
+            f"but only {available / 1e9:.1f} GB is available.  "
+            f"Use a smaller raster or rechunk a dask-backed input."
+        )
+
+
+def _check_pycnophylactic_memory(shape, n_zones):
+    """Guard the peak working memory of pycnophylactic.
+
+    ``_pycnophylactic_numpy`` keeps four float64 full-shape arrays
+    (surface, smoothed, neighbour_sum, neighbour_count), two bool
+    arrays (valid, has_neighbours), plus one full-shape bool mask per
+    zone in ``zone_masks``.  For 1000 zones on a 10000x10000 raster the
+    masks alone come to ~100 GB.
+
+    Raises MemoryError before the first allocation when the projected
+    footprint exceeds 50% of available RAM.
+    """
+    n_pixels = int(shape[0]) * int(shape[1])
+    # 4 float64 + 2 bool + n_zones bool masks
+    bytes_per_pixel = 4 * 8 + 2 * 1 + max(0, int(n_zones)) * 1
+    required_bytes = n_pixels * bytes_per_pixel
+    available = _available_memory_bytes()
+    if required_bytes > 0.5 * available:
+        raise MemoryError(
+            f"pycnophylactic() with shape={shape}, n_zones={n_zones} "
+            f"requires ~{required_bytes / 1e9:.1f} GB of working memory "
+            f"(per-zone masks scale with len(values)), "
+            f"but only {available / 1e9:.1f} GB is available.  "
+            f"Use a smaller raster or fewer zones."
+        )
+
+
 def _normalize_values(values):
     """Convert *values* (dict or pd.Series) to ``dict[int, float]``."""
     if isinstance(values, pd.Series):
@@ -430,6 +507,8 @@ def disaggregate(
             raise NotImplementedError(
                 "method='limiting_variable' is not supported for cupy arrays"
             )
+        # peak working memory check before any allocation
+        _check_disaggregate_memory(zones.shape, method, len(values_dict))
         lv_breaks = class_breaks if class_breaks is not None else (0.0,)
         result_data = _disaggregate_limiting_numpy(
             zones.data, weight.data, values_dict, nodata_zone,
@@ -439,6 +518,15 @@ def disaggregate(
             result_data, dims=zones.dims, coords=zones.coords,
             attrs=zones.attrs, name=name,
         )
+
+    # peak working memory check for in-RAM backends before any allocation;
+    # dask paths are bounded per chunk so we skip the guard there.
+    _data_in = zones.data
+    materializes = isinstance(_data_in, np.ndarray) or (
+        has_cuda_and_cupy() and is_cupy_array(_data_in)
+    )
+    if materializes:
+        _check_disaggregate_memory(zones.shape, method, len(values_dict))
 
     # --- dispatch by backend ---
     mapper = ArrayTypeFunctionMapping(
@@ -622,6 +710,10 @@ def pycnophylactic(
             "pycnophylactic is not supported for dask arrays. "
             "Compute zones first with zones.compute()."
         )
+
+    # peak working memory check before any allocation; per-zone masks
+    # scale linearly with len(values).
+    _check_pycnophylactic_memory(zones.shape, len(values_dict))
 
     # cupy: CPU fallback
     if has_cuda_and_cupy() and is_cupy_array(_data):
