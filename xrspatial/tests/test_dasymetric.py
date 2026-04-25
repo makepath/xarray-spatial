@@ -683,3 +683,131 @@ class TestValidateDisaggregation:
         weight = create_test_raster(simple_weight_data, backend='cupy')
         result = disaggregate(zones, simple_values, weight)
         assert validate_disaggregation(result, zones, simple_values)
+
+
+# ---------------------------------------------------------------------------
+# TestMemoryGuard (issue #1261)
+# ---------------------------------------------------------------------------
+
+class TestMemoryGuard:
+    """Memory guards on disaggregate() and pycnophylactic() (#1261).
+
+    Both public functions now estimate peak working memory and raise
+    ``MemoryError`` before the first allocation when the projected
+    footprint exceeds 50% of available RAM.  pycnophylactic in particular
+    keeps one bool mask per zone alive, so the budget grows with the
+    number of zones in ``values``.
+    """
+
+    def _stub_available(self, monkeypatch, n_bytes):
+        """Pin _available_memory_bytes to a fixed return value."""
+        import sys
+        mod = sys.modules['xrspatial.dasymetric']
+        monkeypatch.setattr(mod, '_available_memory_bytes', lambda: n_bytes)
+
+    def test_disaggregate_weighted_raises_when_budget_exceeded(
+        self, monkeypatch
+    ):
+        """weighted method should refuse a raster too large for memory."""
+        # ~3 GB worth of working memory required, but only 64 MB available
+        self._stub_available(monkeypatch, 64 * 1024 * 1024)
+        zones = xr.DataArray(
+            np.ones((20000, 20000), dtype=np.float64), dims=['y', 'x'],
+        )
+        weight = xr.DataArray(
+            np.ones((20000, 20000), dtype=np.float64), dims=['y', 'x'],
+        )
+        with pytest.raises(MemoryError, match=r"disaggregate.*weighted"):
+            disaggregate(zones, {1: 100.0}, weight)
+
+    def test_disaggregate_limiting_variable_raises_when_budget_exceeded(
+        self, monkeypatch
+    ):
+        """limiting_variable method has higher per-pixel cost; same guard."""
+        self._stub_available(monkeypatch, 64 * 1024 * 1024)
+        zones = xr.DataArray(
+            np.ones((20000, 20000), dtype=np.float64), dims=['y', 'x'],
+        )
+        weight = xr.DataArray(
+            np.ones((20000, 20000), dtype=np.float64), dims=['y', 'x'],
+        )
+        with pytest.raises(MemoryError,
+                           match=r"disaggregate.*limiting_variable"):
+            disaggregate(zones, {1: 100.0}, weight,
+                         method='limiting_variable')
+
+    def test_disaggregate_passes_when_budget_ample(
+        self, simple_zones, simple_weight, simple_values, monkeypatch
+    ):
+        """Small rasters should pass the guard with normal RAM headroom."""
+        self._stub_available(monkeypatch, 64 * 1024 ** 3)
+        result = disaggregate(simple_zones, simple_values, simple_weight)
+        assert result.shape == simple_zones.shape
+
+    def test_pycnophylactic_raises_when_zone_count_explodes(
+        self, monkeypatch
+    ):
+        """Per-zone mask budget should reject many-zone inputs early.
+
+        With 1000 zones and a 10000x10000 raster the masks alone come to
+        ~100 GB; the guard should fire before any allocation when only
+        2 GB are available.
+        """
+        self._stub_available(monkeypatch, 2 * 1024 ** 3)
+        zones_data = np.tile(np.arange(1, 1001, dtype=np.float64),
+                             (10000, 10))
+        zones = xr.DataArray(zones_data, dims=['y', 'x'])
+        values = {i: 100.0 for i in range(1, 1001)}
+        with pytest.raises(MemoryError,
+                           match=r"pycnophylactic.*n_zones=1000"):
+            pycnophylactic(zones, values)
+
+    def test_pycnophylactic_raises_when_raster_too_large(
+        self, monkeypatch
+    ):
+        """Even with few zones, a giant raster should be rejected."""
+        self._stub_available(monkeypatch, 64 * 1024 * 1024)
+        zones = xr.DataArray(
+            np.ones((20000, 20000), dtype=np.float64), dims=['y', 'x'],
+        )
+        with pytest.raises(MemoryError, match=r"pycnophylactic"):
+            pycnophylactic(zones, {1: 100.0})
+
+    def test_pycnophylactic_passes_when_budget_ample(
+        self, simple_zones, simple_values, monkeypatch
+    ):
+        """Small inputs should pass the guard with normal RAM headroom."""
+        self._stub_available(monkeypatch, 64 * 1024 ** 3)
+        result = pycnophylactic(simple_zones, simple_values)
+        assert result.shape == simple_zones.shape
+
+    def test_disaggregate_dask_skips_in_ram_guard(
+        self, simple_zones_data, simple_weight_data, simple_values,
+        monkeypatch
+    ):
+        """Dask-backed inputs should not be blocked by the in-RAM guard.
+
+        The numpy-only guard targets backends that materialize the
+        full array; dask paths process per-chunk and budget themselves.
+        """
+        if not has_dask_array():
+            pytest.skip("dask not available")
+        # Even with 0 bytes "available", dask path should succeed because
+        # the in-RAM guard is skipped for dask.Array inputs.
+        self._stub_available(monkeypatch, 1)
+        zones = create_test_raster(simple_zones_data,
+                                   backend='dask+numpy', chunks=(2, 2))
+        weight = create_test_raster(simple_weight_data,
+                                    backend='dask+numpy', chunks=(2, 2))
+        result = disaggregate(zones, simple_values, weight)
+        assert result.shape == zones.shape
+
+    def test_pycnophylactic_error_mentions_n_zones(self, monkeypatch):
+        """Error message should surface the zone count for diagnostics."""
+        self._stub_available(monkeypatch, 32 * 1024 * 1024)
+        zones = xr.DataArray(
+            np.ones((5000, 5000), dtype=np.float64), dims=['y', 'x'],
+        )
+        values = {i: 1.0 for i in range(1, 51)}
+        with pytest.raises(MemoryError, match="n_zones=50"):
+            pycnophylactic(zones, values)
