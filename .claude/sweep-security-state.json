@@ -118,6 +118,13 @@
       "severity_max": null,
       "categories_found": [],
       "notes": "Clean. Cat 1: corridor = cd_a + cd_b allocates a same-shape array, but cost_distance already applies its own memory guards before materializing cd_a and cd_b, so no new unbounded allocation is introduced here. Pairwise mode creates N*(N-1)/2 corridor surfaces from a user-supplied sources list, but each is bounded by cost_distance's guard and N is under caller control. Cat 2: no int32 index math. Cat 3: cost_distance returns NaN for unreachable pixels (not Inf); NaN propagates correctly through cd_a + cd_b and through the - corridor_min subtraction, so reach-one-unreachable pixels stay NaN. The all-unreachable case (corridor_min is NaN) is handled explicitly via np.isfinite(corridor_min) check returning all-NaN. No divisions in corridor.py. Cat 4: no CUDA kernels. Cat 5: no file I/O. Cat 6: _validate_raster is called on source_a, source_b, each entry in sources, and friction (when precomputed=False). cost_distance itself enforces raster.shape == friction.shape. Precomputed path treats source_a/source_b as cost-distance surfaces and still runs _validate_raster on them. Minor UX (not a security issue): relative threshold uses threshold * corridor_min, which collapses to 0 when sources overlap (corridor_min=0)."
+    },
+    "dasymetric": {
+      "last_inspected": "2026-04-25",
+      "issue": 1261,
+      "severity_max": "HIGH",
+      "categories_found": [1, 6],
+      "notes": "HIGH (fixed #1261): pycnophylactic() and disaggregate(method='limiting_variable') allocated full-shape working arrays without checking available memory first. _pycnophylactic_numpy additionally stored one full-shape bool mask per zone in zone_masks, so peak memory grew with N_zones * H * W (1000 zones on a 10000x10000 raster ~ 100 GB just for masks on top of ~3.4 GB of iteration buffers). Fixed by adding _available_memory_bytes() helper and two budget functions (_check_disaggregate_memory, _check_pycnophylactic_memory) that raise MemoryError before the first allocation when projected working memory exceeds 50% of available RAM. The disaggregate guard runs only for in-RAM backends (numpy, cupy); dask paths process per-chunk and are skipped. The pycnophylactic guard scales with len(values_dict) so an exploding zone count is rejected even on a small raster. MEDIUM (unfixed, Cat 6): disaggregate() and pycnophylactic() do not call _validate_raster on zones/weight; they only check isinstance(xr.DataArray), ndim, and shape. Object-dtype or other non-numeric input would fail with confusing TypeError from inside numpy.asarray rather than a clean ValueError. Deferred to a separate PR per the security-sweep one-fix-per-PR policy."
     }
   }
 }
