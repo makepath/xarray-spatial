@@ -217,3 +217,130 @@ def test_diffusivity_shape_mismatch():
 def test_non_dataarray_input():
     with pytest.raises(TypeError):
         diffuse(np.ones((5, 5)))
+
+
+# ---- security guards (issue #1267) ----
+
+def test_steps_upper_bound_rejected():
+    """`steps` above the safety cap should raise ValueError."""
+    data = np.ones((4, 4))
+    agg = create_test_raster(data)
+    with pytest.raises(ValueError, match='steps'):
+        diffuse(agg, steps=10**12)
+
+
+def test_max_steps_constant_documented():
+    """The documented step cap should match _MAX_STEPS."""
+    from xrspatial.diffusion import _MAX_STEPS
+    assert _MAX_STEPS == 100_000
+
+
+def test_oversize_raster_raises_memory_error(monkeypatch):
+    """A raster whose buffers exceed the memory budget should raise."""
+    import xrspatial.diffusion as _diff
+
+    # Pretend the host has only 16 MB of available RAM.
+    monkeypatch.setattr(_diff, '_available_memory_bytes',
+                        lambda: 16 * 1024 * 1024)
+
+    # 4096x4096 float64 buffers = ~512 MB peak working set, well over
+    # 50% of 16 MB.
+    data = np.ones((4096, 4096), dtype=np.float64)
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+
+    with pytest.raises(MemoryError, match='diffuse'):
+        diffuse(agg, diffusivity=1.0, steps=1, boundary='nearest')
+
+
+def test_dask_scalar_diffusivity_does_not_materialize_alpha(monkeypatch):
+    """Dask + scalar diffusivity must not call np.full at agg.shape.
+
+    Regression for issue #1267: the public API used to call
+    np.full(agg.shape, alpha) up front, even when the dispatched
+    backend was dask + scalar (which can pass the scalar through).
+    A 100kx100k input would force an 80 GB numpy alloc.
+    """
+    if not _has_dask:
+        pytest.skip('dask not available')
+
+    import xrspatial.diffusion as _diff
+
+    calls = []
+    real_full = np.full
+
+    def tracking_full(shape, *args, **kwargs):
+        calls.append(tuple(shape) if hasattr(shape, '__iter__') else (shape,))
+        return real_full(shape, *args, **kwargs)
+
+    monkeypatch.setattr(_diff.np, 'full', tracking_full)
+
+    data = np.ones((64, 64), dtype=np.float64)
+    dask_agg = create_test_raster(data, backend='dask',
+                                  attrs={'res': (1.0, 1.0)},
+                                  chunks=(16, 16))
+
+    diffuse(dask_agg, diffusivity=0.5, steps=2,
+            boundary='nearest').data.compute()
+
+    full_shape_calls = [c for c in calls if c == data.shape]
+    assert full_shape_calls == [], (
+        f"np.full was called with the full raster shape {data.shape}: "
+        f"{full_shape_calls}. Scalar diffusivity on a dask path should "
+        f"not materialise a full numpy alpha array."
+    )
+
+
+def test_dask_scalar_matches_dask_array_diffusivity():
+    """Scalar-alpha and uniform-array-alpha dask paths should agree."""
+    if not _has_dask:
+        pytest.skip('dask not available')
+
+    data = _make_hotspot((11, 11))
+    dask_agg = create_test_raster(data, backend='dask',
+                                  attrs={'res': (1.0, 1.0)},
+                                  chunks=(6, 6))
+    alpha_xr = create_test_raster(np.full((11, 11), 0.5),
+                                  backend='dask',
+                                  attrs={'res': (1.0, 1.0)},
+                                  chunks=(6, 6))
+
+    r_scalar = diffuse(dask_agg, diffusivity=0.5, steps=3,
+                       boundary='nearest')
+    r_array = diffuse(dask_agg, diffusivity=alpha_xr, steps=3,
+                      boundary='nearest')
+
+    np.testing.assert_allclose(
+        r_scalar.data.compute(), r_array.data.compute(), rtol=1e-12
+    )
+
+
+def test_oversize_raster_raises_before_alpha_alloc(monkeypatch):
+    """The memory guard fires before np.full(agg.shape) runs."""
+    import xrspatial.diffusion as _diff
+
+    monkeypatch.setattr(_diff, '_available_memory_bytes',
+                        lambda: 16 * 1024 * 1024)
+
+    full_calls = []
+    real_full = np.full
+
+    def tracking_full(shape, *args, **kwargs):
+        full_calls.append(shape)
+        return real_full(shape, *args, **kwargs)
+
+    monkeypatch.setattr(_diff.np, 'full', tracking_full)
+
+    data = np.ones((4096, 4096), dtype=np.float64)
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+
+    with pytest.raises(MemoryError):
+        diffuse(agg, diffusivity=1.0, steps=1, boundary='nearest')
+
+    oversize_full_calls = [
+        c for c in full_calls
+        if hasattr(c, '__iter__') and tuple(c) == data.shape
+    ]
+    assert oversize_full_calls == [], (
+        f"np.full was called with the oversize shape {data.shape} "
+        f"before the memory guard: {oversize_full_calls}"
+    )
