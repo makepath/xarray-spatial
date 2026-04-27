@@ -22,7 +22,7 @@ Parse $ARGUMENTS for these flags (multiple may combine):
 | `--only-focal` | Restrict to: focal, convolution, morphology, bilateral, edge_detection, glcm |
 | `--only-hydro` | Restrict to: flood, cost_distance, geodesic, surface_distance, viewshed, erosion, diffusion |
 | `--only-io` | Restrict to: geotiff, reproject, rasterize, polygonize |
-| `--reset-state` | Delete `.claude/sweep-performance-state.json` and treat all modules as never-inspected |
+| `--reset-state` | Delete `.claude/sweep-performance-state.csv` and treat all modules as never-inspected |
 | `--skip-phase1` | Skip triage; reuse last state file; go straight to ralph-loop generation for unresolved HIGH items |
 | `--report-only` | Run Phase 1 triage but do not generate a ralph-loop command |
 | `--size small` | Phase 2 benchmarks use 128x128 arrays |
@@ -64,25 +64,31 @@ For every module in scope, collect:
 
 ### Load inspection state
 
-Read `.claude/sweep-performance-state.json`. If it does not exist, treat every
+Read `.claude/sweep-performance-state.csv`. If it does not exist, treat every
 module as never-inspected. If `--reset-state` was set, delete the file first.
 
-State file schema:
+State file schema (one row per module):
 
-```json
-{
-  "last_triage": "ISO-DATE",
-  "modules": {
-    "slope": {
-      "last_inspected": "ISO-DATE",
-      "oom_verdict": "SAFE",
-      "bottleneck": "compute-bound",
-      "high_count": 0,
-      "issue": null
-    }
-  }
-}
 ```
+module,last_inspected,oom_verdict,bottleneck,high_count,issue,notes
+slope,2026-04-15,SAFE,compute-bound,0,,"optional single-line notes"
+```
+
+- `oom_verdict` is one of `SAFE`, `RISKY`, `WILL OOM`, or `N/A`.
+- `bottleneck` is one of `IO-bound`, `memory-bound`, `compute-bound`, `graph-bound`.
+- `issue` is normally an integer, but may be a string token like
+  `false-positive`, `fixed-in-tree`, or empty.
+- `notes` is CSV-quoted; newlines must be flattened to spaces on write so
+  every module stays exactly one line.
+
+There is no top-level `last_triage` field; the most recent triage date is
+derivable as `max(last_inspected)` across rows.
+
+The file is registered with `merge=union` in `.gitattributes`, so two
+parallel sweeps touching different modules auto-merge without conflict.
+A transient duplicate-row state can occur after a merge if both branches
+modified the same module; the read-update-write cycle in step 5 keys rows
+by `module` and last-write-wins, so the next write cleans up.
 
 ### Compute scores
 
@@ -344,25 +350,49 @@ rockout has full context.
 
 ## Step 5 -- Update state file
 
-Write `.claude/sweep-performance-state.json` with the triage results:
+Update `.claude/sweep-performance-state.csv` with the triage results.
+Header:
 
-```json
-{
-  "last_triage": "<current ISO datetime>",
-  "modules": {
-    "<module_name>": {
-      "last_inspected": "<current ISO datetime>",
-      "oom_verdict": "<SAFE|RISKY|WILL OOM>",
-      "bottleneck": "<IO-bound|memory-bound|compute-bound|graph-bound>",
-      "high_count": "<number of HIGH findings>",
-      "issue": null
+`module,last_inspected,oom_verdict,bottleneck,high_count,issue,notes`
+
+Use this Python pattern to read existing rows, update entries for modules
+that were just audited, and keep entries for modules not in this run's
+scope. Do NOT hand-edit the file -- always go through csv.DictReader /
+csv.DictWriter so quoting stays consistent:
+
+```python
+import csv
+from pathlib import Path
+
+path = Path(".claude/sweep-performance-state.csv")
+header = ["module", "last_inspected", "oom_verdict", "bottleneck",
+          "high_count", "issue", "notes"]
+
+rows = {}
+if path.exists():
+    with path.open() as f:
+        for r in csv.DictReader(f):
+            rows[r["module"]] = r  # last write wins on dupes
+
+for module, result in triage_results.items():
+    rows[module] = {
+        "module": module,
+        "last_inspected": "<current ISO datetime>",
+        "oom_verdict": result["oom_verdict"],   # SAFE / RISKY / WILL OOM
+        "bottleneck": result["bottleneck"],     # IO-bound / memory-bound / compute-bound / graph-bound
+        "high_count": str(result["high_count"]),
+        "issue": "",                             # filled later by Phase 2 if a fix lands
+        "notes": rows.get(module, {}).get("notes", ""),  # preserve any existing notes
     }
-  }
-}
+
+with path.open("w", newline="") as f:
+    w = csv.DictWriter(f, fieldnames=header, quoting=csv.QUOTE_MINIMAL)
+    w.writeheader()
+    for m in sorted(rows):
+        w.writerow(rows[m])
 ```
 
-If the file already exists, merge — update entries for modules that were
-just audited, keep entries for modules not in this run's scope.
+Use empty strings (not `null`) for missing values.
 
 If `--report-only` is set, stop here. Do not proceed to Step 6.
 
@@ -448,7 +478,10 @@ from the actual triage results):
    | dask+numpy | peak_rss_mb | 892    | 34     | 0.04x | IMPROVED   |
    Thresholds: IMPROVED < 0.8x, REGRESSION > 1.2x, else UNCHANGED.
 
-6. Update .claude/sweep-performance-state.json with the issue number, then
+6. Update .claude/sweep-performance-state.csv with the issue number using
+   the read-update-write pattern documented in Step 5 (csv.DictReader /
+   DictWriter, keyed by module, last-write-wins on duplicates). Set the
+   `issue` field for this module to the rockout-filed issue number. Then
    `git add` and commit it to the worktree branch so the state update is
    included in the PR.
 
@@ -491,8 +524,10 @@ Other options:
   on a known-numpy array), do not flag it.
 - The 30TB simulation constructs the dask task graph only; it NEVER calls
   `.compute()`.
-- State file (`.claude/sweep-performance-state.json`) is tracked in git.
-  Subagents must `git add` and commit it so the state update lands in the PR.
+- State file (`.claude/sweep-performance-state.csv`) is tracked in git, with
+  `merge=union` set in `.gitattributes` so parallel sweeps touching
+  different modules auto-merge. Subagents must `git add` and commit it so
+  the state update lands in the PR.
 - If $ARGUMENTS is empty, use defaults: audit all modules, benchmark at
   512x512, generate ralph-loop for HIGH items.
 - For subpackage modules (geotiff, reproject), the subagent should read ALL

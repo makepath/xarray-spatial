@@ -1,2 +1,4 @@
 __init__.py export-subst
 setup.py export-subst
+
+.claude/sweep-*-state.csv merge=union
