@@ -58,6 +58,57 @@ _MK_ALPHA = 0.05  # significance level for Mann-Kendall trend test
 
 
 # ---------------------------------------------------------------------------
+# Memory guard
+# ---------------------------------------------------------------------------
+
+# Peak working-memory footprint per cell of the (T, H, W) cube on the
+# numpy/cupy backends:
+#   data.astype(float32) copy : 4
+#   gi_zscore (float32)       : 4
+#   gi_bin (int8)              : 1
+# Plus 2-D temporaries (H*W) for convolved scratch, category, trend_z,
+# trend_p, which are negligible relative to the cube for realistic T.
+# Round up to 12 bytes per cube cell to cover small temporaries.
+_BYTES_PER_CUBE_CELL = 12
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _check_memory(n_times, ny, nx):
+    """Raise MemoryError if the (T, H, W) working buffers would exceed 50% RAM.
+
+    The numpy and cupy backends each materialise three full-cube arrays
+    (a float32 input copy, gi_zscore float32, gi_bin int8) plus small
+    H*W temporaries.  Budget ~12 bytes per cube cell.
+    """
+    required = int(n_times) * int(ny) * int(nx) * _BYTES_PER_CUBE_CELL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"emerging_hotspots on a ({n_times}, {ny}, {nx}) cube requires "
+            f"~{required / 1e9:.1f} GB of working memory but only "
+            f"~{available / 1e9:.1f} GB is available.  "
+            f"Use a smaller raster or pass a dask-backed DataArray for "
+            f"out-of-core processing."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Mann-Kendall helpers (Numba-JIT for use inside pixel loops)
 # ---------------------------------------------------------------------------
 
@@ -694,6 +745,13 @@ def emerging_hotspots(raster, kernel, boundary='nan'):
         )
 
     _validate_boundary(boundary)
+
+    # Memory guard for numpy/cupy backends only.  The dask backends
+    # process per-chunk via map_blocks/map_overlap and do not need a
+    # whole-cube guard.
+    if da is None or not isinstance(raster.data, da.Array):
+        n_times, ny, nx = raster.shape
+        _check_memory(n_times, ny, nx)
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_emerging_hotspots_numpy, boundary=boundary),
