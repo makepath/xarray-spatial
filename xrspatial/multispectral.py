@@ -26,6 +26,79 @@ except ImportError:
     da = None
 
 
+# Memory guard for the eager true_color() backends.
+# _true_color_numpy / _true_color_cupy materialize an (H, W, 4) uint8 cube
+# plus three (H, W) float32 normalize buffers and one (H, W) alpha buffer
+# from np.where -- roughly 17 bytes per input pixel at peak.  Round up to
+# a comfortable budget that also covers the temporaries inside
+# _normalize_data_cpu (val - min_val, exp(...), etc.).  Dask paths build
+# the cube lazily via da.stack and don't need the guard.
+_TRUE_COLOR_BYTES_PER_PIXEL = 24
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3  # 2 GB fallback
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 when the query fails -- callers treat that as a sentinel
+    meaning "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_true_color_memory(rows, cols):
+    """Raise MemoryError if the numpy true_color buffers exceed 50% of RAM."""
+    required = int(rows) * int(cols) * _TRUE_COLOR_BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"true_color() on a {rows}x{cols} raster needs "
+            f"~{required / 1e9:.1f} GB of working memory, but only "
+            f"~{available / 1e9:.1f} GB is available. "
+            f"Use a smaller raster or a dask-backed DataArray."
+        )
+
+
+def _check_true_color_gpu_memory(rows, cols):
+    """Raise MemoryError if the cupy true_color buffers exceed 50% of free VRAM.
+
+    Skipped silently when the free-memory query fails -- the cupy
+    allocator will surface its own error in that case.
+    """
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(rows) * int(cols) * _TRUE_COLOR_BYTES_PER_PIXEL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"true_color() on a {rows}x{cols} raster needs "
+            f"~{required / 1e9:.1f} GB of GPU working memory, but only "
+            f"~{available / 1e9:.1f} GB is free on the active device. "
+            f"Use a smaller raster or a dask+cupy DataArray."
+        )
+
+
 @ngjit
 def _arvi_cpu(nir_data, red_data, blue_data):
     out = np.full(nir_data.shape, np.nan, dtype=np.float32)
@@ -1600,9 +1673,11 @@ def _normalize_data(agg, pixel_max, c, th):
 
 
 def _true_color_numpy(r, g, b, nodata, c, th):
+    h, w = r.shape
+    _check_true_color_memory(h, w)
+
     a = np.where(np.logical_or(np.isnan(r), r <= nodata), 0, 255)
 
-    h, w = r.shape
     out = np.zeros((h, w, 4), dtype=np.uint8)
 
     pixel_max = 255
@@ -1629,6 +1704,9 @@ def _true_color_dask(r, g, b, nodata, c, th):
 
 
 def _true_color_cupy(r, g, b, nodata, c, th):
+    h, w = r.shape
+    _check_true_color_gpu_memory(h, w)
+
     pixel_max = 255
     r_data = r.data
     a = cupy.where(
@@ -1686,6 +1764,14 @@ def true_color(r, g, b, nodata=1, c=10.0, th=0.125, name='true_color'):
     true_color_agg : xarray.DataArray of the same type as inputs
         3D array true color image with dims of [y, x, band].
         All output attributes are copied from red band image.
+
+    Raises
+    ------
+    MemoryError
+        On the numpy and cupy backends, raised when the projected peak
+        working memory (about 24 bytes per input pixel) exceeds 50% of
+        available host RAM or free GPU VRAM.  Use a smaller raster or a
+        dask-backed DataArray for out-of-core processing.
 
     Examples
     --------
