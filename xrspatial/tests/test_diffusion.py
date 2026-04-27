@@ -344,3 +344,53 @@ def test_oversize_raster_raises_before_alpha_alloc(monkeypatch):
         f"np.full was called with the oversize shape {data.shape} "
         f"before the memory guard: {oversize_full_calls}"
     )
+
+
+# ---- CFL stability tests ----
+
+def test_dt_above_cfl_bound_raises():
+    """User-supplied dt above the CFL bound must raise ValueError.
+
+    With dx=1 and alpha=1, the stable bound is 0.25; dt=1.0 is 4x too large
+    and would diverge silently to Inf/NaN over many steps.
+    """
+    data = np.ones((10, 10)) + 0.01 * np.arange(100).reshape(10, 10)
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    with pytest.raises(ValueError, match='CFL'):
+        diffuse(agg, diffusivity=1.0, steps=10, dt=1.0, boundary='nearest')
+
+
+def test_dt_at_cfl_bound_accepted():
+    """dt exactly at the CFL bound is the auto-dt choice and must be allowed."""
+    data = _make_hotspot((11, 11))
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    # alpha=1, dx=1 -> cfl_max = 0.25
+    result = diffuse(agg, diffusivity=1.0, steps=5, dt=0.25, boundary='nearest')
+    assert np.all(np.isfinite(result.values))
+
+
+def test_auto_dt_still_works():
+    """The CFL guard must not break the dt=None path."""
+    data = _make_hotspot((11, 11))
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    result = diffuse(agg, diffusivity=1.0, steps=10, dt=None, boundary='nearest')
+    assert np.all(np.isfinite(result.values))
+
+
+def test_cfl_bound_uses_max_alpha():
+    """For spatially varying alpha, the CFL bound is set by max(alpha)."""
+    data = _make_hotspot((7, 7))
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+
+    alpha_arr = np.full((7, 7), 0.1)
+    alpha_arr[3, 3] = 2.0  # peak alpha at the center
+    alpha = create_test_raster(alpha_arr, attrs={'res': (1.0, 1.0)})
+
+    # cfl_max = 0.25 * 1 / 2.0 = 0.125; dt=0.2 should be rejected
+    with pytest.raises(ValueError, match='CFL'):
+        diffuse(agg, diffusivity=alpha, steps=5, dt=0.2, boundary='nearest')
+
+    # dt at the bound for max alpha is fine
+    result = diffuse(agg, diffusivity=alpha, steps=5, dt=0.125,
+                     boundary='nearest')
+    assert np.all(np.isfinite(result.values))
