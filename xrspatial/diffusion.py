@@ -45,6 +45,91 @@ from xrspatial.utils import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Memory guard
+# ---------------------------------------------------------------------------
+#
+# Per-step working set on the eager numpy / cupy paths:
+#   * u           : rows*cols  float64 (8 B)
+#   * out         : rows*cols  float64 (8 B)
+#   * alpha_arr   : rows*cols  float64 (8 B)   (only when materialised)
+#   * padded copy : rows*cols  float64 (8 B)   (rough upper bound for the
+#                                              padded buffer, ignoring the
+#                                              1-cell border)
+# Total ~32 bytes per pixel.  For dask paths the equivalent footprint is
+# per-chunk and is bounded by chunk size, so the public-API guard targets
+# the eager paths only.
+_BYTES_PER_PIXEL = 32
+
+# Hard cap on the number of explicit Euler iterations a single diffuse()
+# call will run.  100k steps on a modest 1024x1024 raster is already minutes
+# of CPU work; anything beyond this is almost certainly a misuse.
+_MAX_STEPS = 100_000
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3  # 2 GB fallback
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 when the query fails -- callers treat that as a sentinel
+    meaning "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_memory(rows, cols):
+    """Raise MemoryError if the eager numpy diffuse buffers exceed 50% of RAM."""
+    required = int(rows) * int(cols) * _BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"diffuse() on a {rows}x{cols} raster needs "
+            f"~{required / 1e9:.1f} GB of working memory, but only "
+            f"~{available / 1e9:.1f} GB is available. "
+            f"Use a dask-backed DataArray for out-of-core processing."
+        )
+
+
+def _check_gpu_memory(rows, cols):
+    """Raise MemoryError if the CuPy diffuse buffers exceed 50% of free GPU RAM.
+
+    Skipped (returns silently) when the free-memory query fails -- the
+    kernel will then fail at the cupy.asarray boundary anyway.
+    """
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(rows) * int(cols) * _BYTES_PER_PIXEL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"diffuse() on a {rows}x{cols} raster needs "
+            f"~{required / 1e9:.1f} GB of GPU working memory, but only "
+            f"~{available / 1e9:.1f} GB is free on the active device. "
+            f"Use a dask+cupy DataArray for out-of-core processing."
+        )
+
+
 # ---- numpy backend ----
 
 @ngjit
@@ -74,6 +159,7 @@ def _diffuse_step_numpy(u, alpha_arr, dt_over_dx2, rows, cols):
 
 def _diffuse_numpy(data, alpha_arr, steps, dt_over_dx2, boundary):
     rows, cols = data.shape
+    _check_memory(rows, cols)
     u = data.astype(np.float64)
     for _ in range(steps):
         if boundary == 'nan':
@@ -110,9 +196,10 @@ def _diffuse_step_gpu(u, alpha_arr, dt_over_dx2, out):
 def _diffuse_cupy(data, alpha_arr, steps, dt_over_dx2, boundary):
     import cupy as cp
 
+    rows, cols = data.shape
+    _check_gpu_memory(rows, cols)
     u = cp.asarray(data, dtype=cp.float64)
     alpha_dev = cp.asarray(alpha_arr, dtype=cp.float64)
-    rows, cols = u.shape
     bpg, tpb = calc_cuda_dims((rows, cols))
 
     for _ in range(steps):
@@ -200,9 +287,12 @@ def _diffuse_dask_numpy(data, alpha, steps, dt_over_dx2, boundary):
 def _diffuse_chunk_cupy(chunk, alpha_chunk, dt_over_dx2, block_info=None):
     import cupy as cp
 
-    alpha_dev = cp.asarray(alpha_chunk[1:-1, 1:-1], dtype=cp.float64)
     rows = chunk.shape[0] - 2
     cols = chunk.shape[1] - 2
+    if np.ndim(alpha_chunk) == 0:
+        alpha_dev = cp.full((rows, cols), float(alpha_chunk), dtype=cp.float64)
+    else:
+        alpha_dev = cp.asarray(alpha_chunk[1:-1, 1:-1], dtype=cp.float64)
     bpg, tpb = calc_cuda_dims((rows, cols))
     out = cp.empty((rows, cols), dtype=cp.float64)
     _diffuse_step_gpu[bpg, tpb](chunk, alpha_dev, dt_over_dx2, out)
@@ -212,22 +302,32 @@ def _diffuse_chunk_cupy(chunk, alpha_chunk, dt_over_dx2, block_info=None):
     return result
 
 
-def _diffuse_dask_cupy(data, alpha_arr, steps, dt_over_dx2, boundary):
+def _diffuse_dask_cupy(data, alpha, steps, dt_over_dx2, boundary):
     import cupy as cp
 
-    _func = partial(
-        _diffuse_chunk_cupy,
-        alpha_chunk=alpha_arr,
-        dt_over_dx2=dt_over_dx2,
-    )
     u = data.astype(cp.float64)
     for _ in range(steps):
-        u = u.map_overlap(
-            _func,
-            depth=(1, 1),
-            boundary=_boundary_to_dask(boundary, is_cupy=True),
-            meta=cp.array(()),
-        )
+        if isinstance(alpha, (int, float, np.floating)):
+            _func = partial(
+                _diffuse_chunk_cupy,
+                alpha_chunk=float(alpha),
+                dt_over_dx2=dt_over_dx2,
+            )
+            u = u.map_overlap(
+                _func,
+                depth=(1, 1),
+                boundary=_boundary_to_dask(boundary, is_cupy=True),
+                meta=cp.array(()),
+            )
+        else:
+            u = da.map_overlap(
+                _diffuse_chunk_cupy,
+                u, alpha,
+                depth=(1, 1),
+                boundary=_boundary_to_dask(boundary, is_cupy=True),
+                meta=cp.array(()),
+                dt_over_dx2=dt_over_dx2,
+            )
     return u
 
 
@@ -256,7 +356,8 @@ def diffuse(
         DataArray of the same shape allows spatially varying
         diffusivity.
     steps : int, default 1
-        Number of time steps to run.
+        Number of time steps to run.  Capped at 100,000 to prevent a
+        single call from pinning a CPU indefinitely.
     dt : float or None
         Time step size.  When ``None`` the largest stable step is
         chosen automatically: ``dt = 0.25 * dx**2 / max(alpha)``.
@@ -272,11 +373,19 @@ def diffuse(
         Scalar field after *steps* diffusion steps.
     """
     _validate_raster(agg, func_name='diffuse', name='agg', ndim=2)
-    _validate_scalar(steps, func_name='diffuse', name='steps', dtype=int, min_val=1)
+    _validate_scalar(
+        steps,
+        func_name='diffuse',
+        name='steps',
+        dtype=int,
+        min_val=1,
+        max_val=_MAX_STEPS,
+    )
     _validate_boundary(boundary)
 
     # resolve diffusivity
-    #   - scalar: keep as float for dask paths (avoids full-raster allocation)
+    #   - scalar: keep as float; only materialised to a full raster if the
+    #     dispatched backend is eager (numpy/cupy) and actually needs it
     #   - DataArray: keep as .data (numpy/cupy/dask) for backend dispatch
     if isinstance(diffusivity, xr.DataArray):
         _validate_raster(diffusivity, func_name='diffuse', name='diffusivity', ndim=2)
@@ -302,7 +411,10 @@ def diffuse(
             )
         alpha_scalar = float(diffusivity)
         alpha_data = None
-        alpha_arr_eager = np.full(agg.shape, alpha_scalar, dtype=np.float64)
+        # Defer the np.full allocation: dask paths can use the scalar
+        # directly, and the eager paths build their own broadcast view
+        # below after passing the memory guard.
+        alpha_arr_eager = None
     else:
         raise TypeError(
             f"diffuse(): diffusivity must be a float or xr.DataArray, "
@@ -337,15 +449,33 @@ def diffuse(
 
     dt_over_dx2 = float(dt) / (dx * dx)
 
-    # Build the alpha argument for each backend:
-    #   - numpy/cupy eager: always use alpha_arr_eager (full numpy array)
-    #   - dask: use alpha_scalar (float) or alpha_data (dask array)
-    if alpha_arr_eager is None and alpha_data is not None:
-        # Dask DataArray diffusivity, numpy path not yet built
-        alpha_arr_eager = alpha_data.compute()
-        if hasattr(alpha_arr_eager, 'get'):
-            alpha_arr_eager = alpha_arr_eager.get()
-        alpha_arr_eager = np.asarray(alpha_arr_eager, dtype=np.float64)
+    # Decide which backend will run before materialising any full-raster
+    # alpha buffer.  This matters for the dask + scalar case: we want to
+    # leave alpha as a scalar all the way through to the per-chunk worker
+    # rather than allocating an N*M float64 raster up front.
+    is_eager_numpy = isinstance(agg.data, np.ndarray)
+    is_eager_cupy = (
+        has_cuda_and_cupy() and is_cupy_array(agg.data)
+    )
+    needs_eager_alpha = is_eager_numpy or is_eager_cupy
+
+    if needs_eager_alpha and alpha_arr_eager is None:
+        if alpha_scalar is not None:
+            # Run the memory guard *before* allocating the full raster.
+            # The guard already accounts for alpha_arr in its budget.
+            rows_, cols_ = agg.shape
+            if is_eager_cupy:
+                _check_gpu_memory(rows_, cols_)
+            else:
+                _check_memory(rows_, cols_)
+            alpha_arr_eager = np.full(agg.shape, alpha_scalar, dtype=np.float64)
+        elif alpha_data is not None:
+            # Dask DataArray diffusivity but the input array itself is eager.
+            # This is unusual but supported: materialise alpha now.
+            alpha_arr_eager = alpha_data.compute()
+            if hasattr(alpha_arr_eager, 'get'):
+                alpha_arr_eager = alpha_arr_eager.get()
+            alpha_arr_eager = np.asarray(alpha_arr_eager, dtype=np.float64)
 
     dask_alpha = alpha_scalar if alpha_scalar is not None else alpha_data
 
@@ -360,7 +490,7 @@ def diffuse(
         dask_func=partial(_diffuse_dask_numpy, alpha=dask_alpha,
                           steps=steps, dt_over_dx2=dt_over_dx2,
                           boundary=boundary),
-        dask_cupy_func=partial(_diffuse_dask_cupy, alpha_arr=alpha_arr_eager,
+        dask_cupy_func=partial(_diffuse_dask_cupy, alpha=dask_alpha,
                                steps=steps, dt_over_dx2=dt_over_dx2,
                                boundary=boundary),
     )

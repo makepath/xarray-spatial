@@ -202,6 +202,33 @@ class TestEdgeCases:
 
 
 # ---------------------------------------------------------------------------
+# Input validation
+# ---------------------------------------------------------------------------
+
+class TestInputValidation:
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_non_dataarray_raises_type_error(self, func):
+        # plain numpy array should be rejected with a clean TypeError,
+        # not an AttributeError from agg.data
+        with pytest.raises(TypeError, match='must be an xarray.DataArray'):
+            func(np.zeros((5, 5), dtype=np.float64))
+
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_1d_dataarray_raises_value_error(self, func):
+        # 1-D input should raise ValueError, not fail later inside the kernel
+        agg = xr.DataArray(np.zeros(10, dtype=np.float64), dims=['x'])
+        with pytest.raises(ValueError, match='2D'):
+            func(agg)
+
+    @pytest.mark.parametrize('func', [sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y])
+    def test_3d_dataarray_raises_value_error(self, func):
+        agg = xr.DataArray(np.zeros((3, 5, 6), dtype=np.float64),
+                           dims=['z', 'y', 'x'])
+        with pytest.raises(ValueError, match='2D'):
+            func(agg)
+
+
+# ---------------------------------------------------------------------------
 # Boundary modes
 # ---------------------------------------------------------------------------
 
