@@ -140,6 +140,13 @@
       "categories_found": [1],
       "notes": "HIGH (fixed #1256): morph_erode/morph_dilate/morph_opening/morph_closing/morph_gradient/morph_white_tophat/morph_black_tophat accepted a user-supplied kernel with only shape/dtype/odd-size validation. Kernel dimensions drove np.pad/cp.pad on every backend and map_overlap depth on dask paths; a 99999x99999 kernel on a 1000x1000 raster would try to allocate ~80 GB of padded float64 memory with no warning. Fixed by adding local _available_memory_bytes() helper and _check_kernel_memory(rows, cols, ky, kx) that raises MemoryError before allocation when padded size exceeds 50% of available RAM; wired into _dispatch() so every public API entry point is guarded across all four backends. Mirrors bilateral #1236, convolution #1241, bump #1231. No other HIGH findings: Cat 2 (loop indices are Python ints, numba promotes to int64), Cat 3 (NaN propagation explicit via v!=v in both numpy and CUDA paths, tests verify), Cat 4 (GPU kernels _erode_gpu/_dilate_gpu have if i<rows and j<cols bounds guards, no shared memory), Cat 5 (no file I/O), Cat 6 (_validate_raster called in _dispatch, all backends cast to float64 before kernel)."
     },
+    "curvature": {
+      "last_inspected": "2026-04-25",
+      "issue": 1270,
+      "severity_max": "MEDIUM",
+      "categories_found": [3],
+      "notes": "MEDIUM (fixed #1270): curvature() divided by (cellsize * cellsize) in every backend kernel with no zero guard. cellsize came from get_dataarray_resolution(agg) which reads agg.attrs['res']; a raster with res=(0, 0) (or one zero component) produced inf for every interior pixel instead of a clean error. Fixed by validating cellsize_x/cellsize_y in the public curvature() API before backend dispatch and raising ValueError when either component is zero or non-finite (np.inf / np.nan). Inner numba/cupy kernels untouched. All four backends (numpy, cupy, dask+numpy, dask+cupy) inherit the check. No other findings: _validate_raster and _validate_boundary already in place; GPU kernel _run_gpu has bounds guard at curvature.py:84-86; _run_dask_numpy/_run_dask_cupy use map_overlap with depth=(1,1) bounded by chunk size; no file I/O; no int32 index math."
+    },
     "cost_distance": {
       "last_inspected": "2026-04-25",
       "issue": 1262,
