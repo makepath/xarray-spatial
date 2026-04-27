@@ -2,6 +2,7 @@ import numpy as np
 import xarray as xr
 
 from xrspatial.convolution import convolve_2d
+from xrspatial.utils import _validate_raster
 
 # -- Sobel kernels ----------------------------------------------------------
 SOBEL_X = np.array([[-1, 0, 1],
@@ -50,6 +51,7 @@ def sobel_x(agg, name='sobel_x', boundary='nan'):
     xarray.DataArray
         Horizontal gradient with the same shape and backend as the input.
     """
+    _validate_raster(agg, func_name='sobel_x', name='agg')
     out = convolve_2d(agg.data, SOBEL_X, boundary)
     return xr.DataArray(out, name=name, coords=agg.coords,
                         dims=agg.dims, attrs=agg.attrs)
@@ -78,6 +80,7 @@ def sobel_y(agg, name='sobel_y', boundary='nan'):
     xarray.DataArray
         Vertical gradient with the same shape and backend as the input.
     """
+    _validate_raster(agg, func_name='sobel_y', name='agg')
     out = convolve_2d(agg.data, SOBEL_Y, boundary)
     return xr.DataArray(out, name=name, coords=agg.coords,
                         dims=agg.dims, attrs=agg.attrs)
@@ -106,6 +109,7 @@ def laplacian(agg, name='laplacian', boundary='nan'):
     xarray.DataArray
         Laplacian response with the same shape and backend as the input.
     """
+    _validate_raster(agg, func_name='laplacian', name='agg')
     out = convolve_2d(agg.data, LAPLACIAN_KERNEL, boundary)
     return xr.DataArray(out, name=name, coords=agg.coords,
                         dims=agg.dims, attrs=agg.attrs)
@@ -134,6 +138,7 @@ def prewitt_x(agg, name='prewitt_x', boundary='nan'):
     xarray.DataArray
         Horizontal gradient with the same shape and backend as the input.
     """
+    _validate_raster(agg, func_name='prewitt_x', name='agg')
     out = convolve_2d(agg.data, PREWITT_X, boundary)
     return xr.DataArray(out, name=name, coords=agg.coords,
                         dims=agg.dims, attrs=agg.attrs)
@@ -162,6 +167,7 @@ def prewitt_y(agg, name='prewitt_y', boundary='nan'):
     xarray.DataArray
         Vertical gradient with the same shape and backend as the input.
     """
+    _validate_raster(agg, func_name='prewitt_y', name='agg')
     out = convolve_2d(agg.data, PREWITT_Y, boundary)
     return xr.DataArray(out, name=name, coords=agg.coords,
                         dims=agg.dims, attrs=agg.attrs)
