@@ -167,6 +167,13 @@
       "severity_max": "MEDIUM",
       "categories_found": [6],
       "notes": "MEDIUM (fixed #1271): the five public functions sobel_x, sobel_y, laplacian, prewitt_x, prewitt_y did not call _validate_raster on agg. Non-DataArray inputs raised AttributeError from agg.data and wrong-ndim DataArrays failed inside numba/cupy with confusing errors instead of clean TypeError/ValueError. Numerical correctness was unaffected because convolve_2d._promote_float casts integer dtypes to float32 before the kernel runs. Fixed by adding _validate_raster(agg, func_name=..., name='agg') at the top of each function. No CRITICAL/HIGH findings: convolve_2d enforces 3x3 odd kernels and 2D agg.data, allocations match input shape, no CUDA kernels owned by this module, no file I/O."
+    },
+    "emerging_hotspots": {
+      "last_inspected": "2026-04-25",
+      "issue": 1274,
+      "severity_max": "HIGH",
+      "categories_found": [1],
+      "notes": "HIGH (fixed #1274): emerging_hotspots() public API only validated ndim and shape[0] >= 2. The numpy and cupy backends each materialised three full (T, H, W) cubes (a float32 input copy, gi_zscore float32, gi_bin int8) plus H*W temporaries with no memory check; a (100, 20000, 20000) input projected to ~480 GB. Fixed by adding _available_memory_bytes()/_check_memory(n_times, ny, nx) (12 bytes per cube cell budget) and calling it from the public API for non-dask inputs. Dask paths skip the guard because their map_blocks/map_overlap chunk functions do not materialise the full cube. MEDIUM (unfixed, Cat 6): public API does not call _validate_raster() so non-numeric dtypes fail later with a confusing error rather than a clean TypeError. No GPU kernels in this module (uses convolve_2d). No file I/O. Cat 3 statistical paths are robust: _mann_kendall_statistic_numpy guards var_s <= 0 before sqrt, both numpy and cupy backends raise ZeroDivisionError on global_std == 0, and _mk_pvalue handles z==0 explicitly."
     }
   }
 }
