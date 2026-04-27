@@ -289,3 +289,89 @@ def test_accessor():
     np.testing.assert_allclose(
         acc_result.values, direct_result.values, rtol=1e-12
     )
+
+
+# --- memory guard (issue #1288) ---
+
+def test_memory_guard_rejects_oversize(monkeypatch):
+    """A raster whose projected working set > 50% of available memory
+    must raise MemoryError before any np.stack happens."""
+    import sys
+    mahalanobis_mod = sys.modules['xrspatial.mahalanobis']
+
+    # Pretend we only have ~1 GB of RAM.
+    monkeypatch.setattr(
+        mahalanobis_mod, '_available_memory_bytes', lambda: 1 * 1024 ** 3
+    )
+
+    # 100k x 100k x 3 bands @ 32 B/cell/band = ~960 GB projected.
+    # Build the inputs without actually allocating: use a stride trick.
+    big_zero = np.broadcast_to(np.float32(0.0), (100_000, 100_000))
+    bands = [
+        xr.DataArray(big_zero, dims=['y', 'x']) for _ in range(3)
+    ]
+
+    with pytest.raises(MemoryError, match='mahalanobis on 3 bands'):
+        mahalanobis(bands)
+
+
+def test_memory_guard_passes_normal(monkeypatch):
+    """Tiny rasters still complete after the guard is in place."""
+    import sys
+    mahalanobis_mod = sys.modules['xrspatial.mahalanobis']
+
+    monkeypatch.setattr(
+        mahalanobis_mod, '_available_memory_bytes', lambda: 1 * 1024 ** 3
+    )
+
+    rng = np.random.default_rng(0)
+    bands = [
+        xr.DataArray(rng.standard_normal((8, 6)), dims=['y', 'x'])
+        for _ in range(3)
+    ]
+    result = mahalanobis(bands)
+    assert result.shape == (8, 6)
+    assert np.all(np.isfinite(result.values))
+
+
+@dask_array_available
+def test_memory_guard_skipped_for_dask(monkeypatch, band_arrays):
+    """Dask paths process bounded chunks, so the guard is skipped."""
+    import sys
+    mahalanobis_mod = sys.modules['xrspatial.mahalanobis']
+
+    monkeypatch.setattr(
+        mahalanobis_mod, '_available_memory_bytes', lambda: 1
+    )
+
+    dk_bands = [
+        create_test_raster(b, backend='dask+numpy', chunks=(4, 2))
+        for b in band_arrays
+    ]
+    # Should not raise even though 1 byte is well below any sane budget.
+    result = mahalanobis(dk_bands)
+    assert result.shape == dk_bands[0].shape
+
+
+@cuda_and_cupy_available
+def test_memory_guard_cupy_rejects_oversize(monkeypatch):
+    """CuPy backend raises MemoryError when projected VRAM > 50% of free."""
+    import sys
+    mahalanobis_mod = sys.modules['xrspatial.mahalanobis']
+
+    # Pretend we only have ~1 GB free on the GPU.
+    monkeypatch.setattr(
+        mahalanobis_mod, '_available_gpu_memory_bytes',
+        lambda: 1 * 1024 ** 3,
+    )
+
+    import cupy as cp
+    # Use a 1-element cupy array, then a strided view of huge shape.  This
+    # avoids materialising the array on the device while still routing the
+    # dispatcher down the cupy path.
+    seed = cp.zeros((1, 1), dtype=cp.float32)
+    big = cp.broadcast_to(seed, (100_000, 100_000))
+    bands = [xr.DataArray(big, dims=['y', 'x']) for _ in range(3)]
+
+    with pytest.raises(MemoryError, match='mahalanobis on 3 bands'):
+        mahalanobis(bands)
