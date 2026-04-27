@@ -212,6 +212,41 @@ class TestGeodesicAspectValidation:
             aspect(raster, method='geodesic')
 
 
+class TestGeodesicAspectMemoryGuard:
+    """``_check_geodesic_memory`` must raise ``MemoryError`` before the
+    geodesic backends allocate their ``(3, H, W)`` float64 stacked array
+    when the raster is too large for available RAM."""
+
+    def test_oversized_raster_raises_memory_error(self, monkeypatch):
+        monkeypatch.setattr(
+            'xrspatial.geodesic._available_memory_bytes', lambda: 1024 * 1024
+        )
+        elev = _flat_surface(H=200, W=200)
+        raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        with pytest.raises(MemoryError, match="aspect"):
+            aspect(raster, method='geodesic')
+
+    def test_normal_size_raster_passes(self, monkeypatch):
+        monkeypatch.setattr(
+            'xrspatial.geodesic._available_memory_bytes',
+            lambda: 16 * 1024 ** 3,
+        )
+        elev = _flat_surface(H=8, W=8)
+        raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        result = aspect(raster, method='geodesic')
+        assert result.shape == (8, 8)
+
+    def test_planar_method_skips_guard(self, monkeypatch):
+        """planar path doesn't touch the geodesic guard."""
+        monkeypatch.setattr(
+            'xrspatial.geodesic._available_memory_bytes', lambda: 0
+        )
+        elev = _flat_surface(H=8, W=8)
+        raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        result = aspect(raster, method='planar')
+        assert result.shape == (8, 8)
+
+
 # ---------------------------------------------------------------------------
 # Tests — cross-backend consistency
 # ---------------------------------------------------------------------------
