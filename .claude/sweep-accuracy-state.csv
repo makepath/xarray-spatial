@@ -1,0 +1,19 @@
+module,last_inspected,issue,severity_max,categories_found,notes
+balanced_allocation,2026-04-14T12:00:00Z,1203,,,float32 allocation array caused source ID mismatch for non-integer IDs. Fix in PR #1205.
+cost_distance,2026-04-13T12:00:00Z,1191,,,CuPy Bellman-Ford max_iterations = h+w instead of h*w. Fix in PR #1192.
+curvature,2026-03-30T15:00:00Z,,,,Formula matches ArcGIS reference. Backends consistent. No issues found.
+dasymetric,2026-04-14T12:00:00Z,,,,Mass conservation correct. Weighted/binary/limiting_variable all verified. Pycnophylactic Tobler algorithm correct.
+focal,2026-03-30T13:00:00Z,1092,,,
+geotiff,2026-04-23,1247,HIGH,1;3;4;5,HIGH fixed: CPU fp_predictor_decode wrong byte-lane layout for multi-sample predictor=3 (GPU was correct). MEDIUMs also fixed on same PR: eager and streaming writers emit LONG8 strip/tile offsets in BigTIFF output (were LONG); VRT read honors AREA_OR_POINT=Point; VRT nodata cast uses source dtype instead of float32. LOW fixed: duplicate LERC codec block removed from _compression.py.
+hillshade,2026-04-10T12:00:00Z,,,,"Horn's method correct. All backends consistent. NaN propagation correct. float32 adequate for [0,1] output."
+kde,2026-04-13T12:00:00Z,1198,,,kde/line_density return zeros for descending-y templates. Fix in PR #1199.
+multispectral,2026-03-30T14:00:00Z,1094,,,
+perlin,2026-04-10T12:00:00Z,,,,Improved Perlin noise implementation correct. Fade/gradient functions verified. Backend-consistent. Continuous at cell boundaries.
+polygon_clip,2026-04-13T12:00:00Z,1197,,,crop=True + all_touched=True drops boundary pixels. Fix in PR #1200.
+polygonize,2026-04-13T12:00:00Z,1190,,,NaN pixels not masked in numpy/dask backends. Fix in PR #1194.
+proximity,2026-03-30T15:00:00Z,,,,Direction >= boundary fragile but works due to truncated constant. Float32 truncation is design choice. No wrong-results bugs found.
+resample,2026-04-14T12:00:00Z,1202,,,Interpolation used edge-aligned coords instead of block-centered. Fix in PR #1204.
+sieve,2026-04-13T12:00:00Z,,,,Union-find CCL correct. NaN excluded from labeling. All backends funnel through _sieve_numpy.
+terrain,2026-04-10T12:00:00Z,,,,Perlin/Worley/ridged noise correct. Dask chunk boundaries produce bit-identical results. No precision issues.
+visibility,2026-04-13T12:00:00Z,,,,"Bresenham line, LOS kernel, Fresnel zone all correct. All backends converge to numpy."
+zonal,2026-03-30T12:00:00Z,1090,,,

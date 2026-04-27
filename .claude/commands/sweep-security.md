@@ -39,27 +39,30 @@ Store results in memory -- do NOT write intermediate files.
 
 ## Step 2 -- Load inspection state
 
-Read `.claude/sweep-security-state.json`.
+Read `.claude/sweep-security-state.csv`.
 
 If it does not exist, treat every module as never-inspected.
 
 If `$ARGUMENTS` contains `--reset-state`, delete the file and treat
 everything as never-inspected.
 
-State file schema:
+State file schema (one row per module):
 
-```json
-{
-  "inspections": {
-    "cost_distance": {
-      "last_inspected": "2026-04-10T14:00:00Z",
-      "issue": 1150,
-      "severity_max": "HIGH",
-      "categories_found": [1, 2]
-    }
-  }
-}
 ```
+module,last_inspected,issue,severity_max,categories_found,followup_issues,notes
+cost_distance,2026-04-10,1150,HIGH,1;2,,"optional single-line notes"
+```
+
+- `categories_found` and `followup_issues` are semicolon-separated integer
+  lists (empty when null).
+- `notes` is CSV-quoted; newlines must be flattened to spaces on write so
+  every module stays exactly one line.
+
+The file is registered with `merge=union` in `.gitattributes`, so two
+parallel sweeps touching different modules auto-merge without conflict.
+A transient duplicate-row state can occur after a merge if both branches
+modified the same module; the read-update-write cycle in step 5 keys rows
+by `module` and last-write-wins, so the next write cleans up.
 
 ## Step 3 -- Score each module
 
@@ -194,14 +197,50 @@ Also read xrspatial/utils.py to understand _validate_raster() behavior.
    For MEDIUM/LOW issues, document them but do not fix.
 
 5. After finishing (whether you found issues or not), update the inspection
-   state file .claude/sweep-security-state.json by reading its current
-   contents and adding/updating the entry for "{module}" with:
-   - "last_inspected": today's ISO date
-   - "issue": the issue number from rockout (or null if clean / MEDIUM-only)
-   - "severity_max": highest severity found (or null if clean)
-   - "categories_found": list of category numbers that had findings (e.g. [1, 2])
+   state file .claude/sweep-security-state.csv. The file is row-per-module
+   CSV with header:
 
-   Then `git add .claude/sweep-security-state.json` and commit it to the
+   `module,last_inspected,issue,severity_max,categories_found,followup_issues,notes`
+
+   Use this Python pattern to read, update, and write it (do NOT hand-edit
+   the file -- always go through csv.DictReader / csv.DictWriter so quoting
+   stays consistent):
+
+   ```python
+   import csv
+   from pathlib import Path
+
+   path = Path(".claude/sweep-security-state.csv")
+   header = ["module", "last_inspected", "issue", "severity_max",
+             "categories_found", "followup_issues", "notes"]
+
+   rows = {}
+   if path.exists():
+       with path.open() as f:
+           for r in csv.DictReader(f):
+               rows[r["module"]] = r  # last write wins on dupes
+
+   rows["{module}"] = {
+       "module": "{module}",
+       "last_inspected": "<today's ISO date, e.g. 2026-04-27>",
+       "issue": "<issue number from rockout, or empty string>",
+       "severity_max": "<HIGH|MEDIUM|LOW, or empty>",
+       "categories_found": "<semicolon-joined ints, e.g. 1;2, or empty>",
+       "followup_issues": "<semicolon-joined ints, or empty>",
+       "notes": "<single-line notes (replace any newlines with spaces), or empty>",
+   }
+
+   with path.open("w", newline="") as f:
+       w = csv.DictWriter(f, fieldnames=header, quoting=csv.QUOTE_MINIMAL)
+       w.writeheader()
+       for m in sorted(rows):
+           w.writerow(rows[m])
+   ```
+
+   Use empty strings (not `null`) for missing values. Set `issue` to the
+   issue number when one was filed, otherwise leave it empty.
+
+   Then `git add .claude/sweep-security-state.csv` and commit it to the
    worktree branch so the state update is included in the PR.
 
 Important:
@@ -232,7 +271,7 @@ State is updated by the subagents themselves (see agent prompt step 5).
 After completion, verify state with:
 
 ```
-cat .claude/sweep-security-state.json
+column -t -s, .claude/sweep-security-state.csv | less
 ```
 
 To reset all tracking: `/sweep-security --reset-state`
@@ -244,8 +283,10 @@ To reset all tracking: `/sweep-security --reset-state`
 - Do NOT modify any source files directly. Subagents handle fixes via /rockout.
 - Keep the output concise -- the table and agent dispatch are the deliverables.
 - If $ARGUMENTS is empty, use defaults: top 3, no category filter, no exclusions.
-- State file (`.claude/sweep-security-state.json`) is tracked in git.
-  Subagents must `git add` and commit it so the state update lands in the PR.
+- State file (`.claude/sweep-security-state.csv`) is tracked in git, with
+  `merge=union` set in `.gitattributes` so parallel sweeps touching
+  different modules auto-merge. Subagents must `git add` and commit it so
+  the state update lands in the PR.
 - For subpackage modules (geotiff, reproject, hydro), the subagent should read
   ALL `.py` files in the subpackage directory, not just `__init__.py`.
 - Only flag patterns that are ACTUALLY present in the code. Do not report
