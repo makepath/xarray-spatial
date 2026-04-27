@@ -224,6 +224,43 @@ def test_circle_kernel_small_radius_not_rejected_1241():
     assert kernel.shape == (201, 201)
 
 
+def test_apply_rejects_oversize_kernel_1284():
+    # Regression for #1284: focal.apply must reject a user-supplied
+    # kernel that would OOM on the padded raster + kernel allocation.
+    # custom_kernel only checks shape parity, so a tiny raster paired
+    # with a giant kernel used to allocate many GB before any work.
+    raster = xr.DataArray(np.zeros((10, 10), dtype=np.float32))
+    big_kernel = np.ones((50001, 50001), dtype=np.float32)
+    with pytest.raises(MemoryError, match=r"apply\(\): kernel of shape"):
+        apply(raster, big_kernel)
+
+
+def test_focal_stats_rejects_oversize_kernel_1284():
+    # Regression for #1284: focal_stats must apply the same kernel
+    # vs raster guard before dispatching to any backend.
+    raster = xr.DataArray(np.zeros((10, 10), dtype=np.float32))
+    big_kernel = np.ones((50001, 50001), dtype=np.float32)
+    with pytest.raises(MemoryError, match=r"focal_stats\(\): kernel of shape"):
+        focal_stats(raster, big_kernel, stats_funcs=['mean'])
+
+
+def test_hotspots_rejects_oversize_kernel_1284():
+    # Regression for #1284: hotspots calls convolve_2d under the hood,
+    # which inherits the same padded-allocation footprint.
+    raster = xr.DataArray(np.zeros((10, 10), dtype=np.float32))
+    big_kernel = np.ones((50001, 50001), dtype=np.float32)
+    with pytest.raises(MemoryError, match=r"hotspots\(\): kernel of shape"):
+        hotspots(raster, big_kernel)
+
+
+def test_apply_small_kernel_not_rejected_1284():
+    # The guard must not fire for realistic kernel + raster combos.
+    raster = xr.DataArray(np.ones((50, 50), dtype=np.float32))
+    kernel = circle_kernel(1, 1, 3)
+    out = apply(raster, kernel)
+    assert out.shape == (50, 50)
+
+
 def test_convolution_numpy(
     convolve_2d_data,
     convolution_custom_kernel,
