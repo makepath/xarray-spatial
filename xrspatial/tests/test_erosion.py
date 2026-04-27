@@ -4,7 +4,14 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.erosion import erode, _build_brush
+from xrspatial import erosion as erosion_mod
+from xrspatial.erosion import (
+    erode,
+    _build_brush,
+    _MAX_ITERATIONS,
+    _MAX_LIFETIME,
+    _MAX_RADIUS,
+)
 from xrspatial.tests.general_checks import (
     create_test_raster,
     general_output_checks,
@@ -205,3 +212,130 @@ def test_erode_dask_cupy_runs():
     result_np = result.data.compute().get()
     assert not np.array_equal(result_np, data)
     assert np.isfinite(result_np).all()
+
+
+# ---- parameter validation (issue #1275) ----
+
+def test_erode_iterations_zero_rejected():
+    """iterations < 1 should raise ValueError."""
+    agg = _input(_make_terrain(size=16), 'numpy')
+    with pytest.raises(ValueError, match="iterations"):
+        erode(agg, iterations=0)
+
+
+def test_erode_iterations_too_large_rejected():
+    """iterations > _MAX_ITERATIONS should raise ValueError."""
+    agg = _input(_make_terrain(size=16), 'numpy')
+    with pytest.raises(ValueError, match="iterations"):
+        erode(agg, iterations=_MAX_ITERATIONS + 1)
+
+
+def test_erode_iterations_huge_rejected_before_alloc():
+    """iterations=10**12 must not allocate the (10**12, 2) random_pos buffer.
+
+    The validator should fire before any np.random call, so the test
+    completes in milliseconds even though the buffer would be ~16 TB.
+    """
+    agg = _input(_make_terrain(size=16), 'numpy')
+    with pytest.raises(ValueError, match="iterations"):
+        erode(agg, iterations=10**12)
+
+
+def test_erode_iterations_non_int_rejected():
+    """A float iterations argument should raise TypeError."""
+    agg = _input(_make_terrain(size=16), 'numpy')
+    with pytest.raises(TypeError, match="iterations"):
+        erode(agg, iterations=1.5)
+
+
+def test_erode_radius_zero_rejected():
+    """radius < 1 should raise ValueError."""
+    agg = _input(_make_terrain(size=16), 'numpy')
+    with pytest.raises(ValueError, match="radius"):
+        erode(agg, iterations=10, params={'radius': 0})
+
+
+def test_erode_radius_too_large_rejected():
+    """radius > _MAX_RADIUS should raise ValueError before _build_brush runs.
+
+    radius=100_000 would walk (200_001)**2 cells (~40 billion iterations)
+    before allocating the brush; the validator must fire first.
+    """
+    agg = _input(_make_terrain(size=16), 'numpy')
+    with pytest.raises(ValueError, match="radius"):
+        erode(agg, iterations=10, params={'radius': _MAX_RADIUS + 1})
+
+
+def test_erode_max_lifetime_zero_rejected():
+    """max_lifetime < 1 should raise ValueError."""
+    agg = _input(_make_terrain(size=16), 'numpy')
+    with pytest.raises(ValueError, match="max_lifetime"):
+        erode(agg, iterations=10, params={'max_lifetime': 0})
+
+
+def test_erode_max_lifetime_too_large_rejected():
+    """max_lifetime > _MAX_LIFETIME should raise ValueError."""
+    agg = _input(_make_terrain(size=16), 'numpy')
+    with pytest.raises(ValueError, match="max_lifetime"):
+        erode(agg, iterations=10, params={'max_lifetime': _MAX_LIFETIME + 1})
+
+
+def test_erode_at_iteration_cap_runs():
+    """A small raster with iterations exactly at the cap must still be
+    accepted by the validator (the memory guard handles infeasible
+    combinations separately)."""
+    agg = _input(_make_terrain(size=8), 'numpy')
+    # We can't actually run iterations=_MAX_ITERATIONS in a test; the
+    # point here is that the validator accepts the boundary value.
+    # Use monkeypatch-free check: call _validate_scalar directly via
+    # a tiny wrapper.
+    from xrspatial.utils import _validate_scalar
+    _validate_scalar(
+        _MAX_ITERATIONS, func_name='erode', name='iterations',
+        dtype=int, min_val=1, max_val=_MAX_ITERATIONS,
+    )
+
+
+def test_erode_memory_guard_fires_numpy(monkeypatch):
+    """The memory guard must fire on the numpy path (not just dask)."""
+    # Pretend we have only 1 MB of RAM available.  A 128x128 float32 raster
+    # with iterations=10000 needs a ~196 KB raster working set plus a
+    # ~160 KB rng buffer, well within 1 MB.  Force the guard with a tighter
+    # budget by using a larger raster.
+    monkeypatch.setattr(erosion_mod, '_available_memory_bytes',
+                        lambda: 1 * 1024 * 1024)
+    agg = _input(_make_terrain(size=512), 'numpy')
+    with pytest.raises(MemoryError, match="erode"):
+        erode(agg, iterations=1000)
+
+
+@cuda_and_cupy_available
+def test_erode_memory_guard_fires_cupy(monkeypatch):
+    """The memory guard must fire on the cupy path (not just dask)."""
+    monkeypatch.setattr(erosion_mod, '_available_memory_bytes',
+                        lambda: 1 * 1024 * 1024)
+    agg = _input(_make_terrain(size=512), 'cupy')
+    with pytest.raises(MemoryError, match="erode"):
+        erode(agg, iterations=1000)
+
+
+def test_erode_memory_guard_includes_random_pos(monkeypatch):
+    """A huge iterations count on a tiny raster must trip the memory
+    guard (the random_pos buffer dominates)."""
+    monkeypatch.setattr(erosion_mod, '_available_memory_bytes',
+                        lambda: 10 * 1024 * 1024)
+    agg = _input(_make_terrain(size=4), 'numpy')
+    # 10**7 particles ~ 160 MB float64 buffer, well under _MAX_ITERATIONS
+    # but huge relative to a 4x4 raster's working set.  The error message
+    # should call out the random_pos buffer specifically.
+    with pytest.raises(MemoryError, match="random_pos"):
+        erode(agg, iterations=10_000_000)
+
+
+def test_erode_default_params_still_work():
+    """Sanity check: the defaults stay well below every cap."""
+    data = _make_terrain(size=32)
+    agg = _input(data, 'numpy')
+    result = erode(agg, iterations=500)  # default seed/params
+    assert result.shape == (32, 32)
+    assert np.isfinite(result.data).all()

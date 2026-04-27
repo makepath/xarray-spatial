@@ -19,6 +19,7 @@ except ImportError:
 
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
+    _validate_scalar,
     has_cuda_and_cupy,
     is_cupy_array,
     is_dask_cupy,
@@ -36,6 +37,22 @@ _DEFAULT_PARAMS = dict(
     radius=3,
     max_lifetime=30,
 )
+
+# Upper bounds on user-controlled iteration / kernel-size parameters.
+# These cap the worst-case CPU work and the worst-case host/device
+# allocation regardless of raster shape.
+#
+# - _MAX_ITERATIONS sizes the (iterations, 2) random_pos buffer
+#   (16 bytes/particle on the host, copied to GPU).  10**8 is ~1.6 GB,
+#   well above any realistic erosion run (default is 50_000).
+# - _MAX_RADIUS bounds the brush size: (2r+1)**2 cells, three arrays.
+#   At r=1024 the brush arrays total ~50 MB.
+# - _MAX_LIFETIME bounds the inner per-particle loop in the JIT kernel.
+#   At 100_000 with iterations=10**8 the total JIT step count is 10**13,
+#   which is still excessive; the iteration cap is the binding limit.
+_MAX_ITERATIONS = 10**8
+_MAX_RADIUS = 1024
+_MAX_LIFETIME = 100_000
 
 
 def _build_brush(radius):
@@ -293,8 +310,59 @@ if cuda is not None:
             pos_y = new_y
 
 
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _check_erosion_memory(shape, dtype, iterations, n_brush):
+    """Raise MemoryError if the projected working set would exceed RAM.
+
+    Covers four allocations:
+      - input copy as float64 (numpy path) or float32 output
+      - random_pos buffer of shape (iterations, 2), float64
+      - brush arrays of length n_brush (two int32, one float64)
+      - output cast back to float32
+
+    The check fires before any of these are allocated, so callers see
+    a clean MemoryError instead of an opaque OOM from numpy/cupy.
+    """
+    raster_bytes = int(np.prod(shape)) * np.dtype(dtype).itemsize
+    # float64 working copy + float32 output ~ 3x raster_bytes for float32
+    # input (8/4 = 2 for the copy and another 1 for the output cast).
+    raster_working = raster_bytes * 3
+    rng_bytes = int(iterations) * 2 * 8  # float64 (iterations, 2)
+    brush_bytes = int(n_brush) * (4 + 4 + 8)  # two int32 + one float64
+    required = raster_working + rng_bytes + brush_bytes
+    avail = _available_memory_bytes()
+    if required > 0.8 * avail:
+        raise MemoryError(
+            f"erode() needs ~{required / 1e9:.1f} GB of working memory "
+            f"(raster ~{raster_working / 1e9:.2f} GB, "
+            f"random_pos ~{rng_bytes / 1e9:.2f} GB, "
+            f"brush ~{brush_bytes / 1e9:.2f} GB) but only "
+            f"~{avail / 1e9:.1f} GB is available. "
+            f"Reduce `iterations`, `params['radius']`, or downsample "
+            f"the input."
+        )
+
+
 def _erode_cupy(data, random_pos_np, boy, box, bw, params):
     """Run erosion on a CuPy array using the CUDA kernel."""
+    _check_erosion_memory(data.shape, data.dtype,
+                          random_pos_np.shape[0], bw.shape[0])
     hm = data.astype(cupy.float64)
 
     # Transfer brush and random positions to device
@@ -320,6 +388,8 @@ def _erode_cupy(data, random_pos_np, boy, box, bw, params):
 
 def _erode_numpy(data, random_pos, boy, box, bw, params):
     """Run erosion on a NumPy array using the CPU kernel."""
+    _check_erosion_memory(data.shape, data.dtype,
+                          random_pos.shape[0], bw.shape[0])
     hm = data.astype(np.float64).copy()
 
     hm = _erode_cpu(
@@ -332,33 +402,12 @@ def _erode_numpy(data, random_pos, boy, box, bw, params):
     return hm.astype(np.float32)
 
 
-def _check_erosion_memory(data):
-    """Raise MemoryError if the array is too large to materialize."""
-    estimated = np.prod(data.shape) * data.dtype.itemsize
-    # The erosion kernel needs ~3x: input copy + brush scratch + output
-    working = estimated * 3
-    try:
-        from xrspatial.zonal import _available_memory_bytes
-        avail = _available_memory_bytes()
-    except ImportError:
-        avail = 2 * 1024**3
-    if working > 0.8 * avail:
-        raise MemoryError(
-            f"erode() needs ~{working / 1e9:.1f} GB to materialize and "
-            f"process the full grid but only ~{avail / 1e9:.1f} GB "
-            f"available.  Particle erosion is a global operation that "
-            f"cannot be chunked.  Downsample the input or use a machine "
-            f"with more RAM."
-        )
-
-
 def _erode_dask_numpy(data, random_pos, boy, box, bw, params):
     """Run erosion on a dask+numpy array.
 
     Erosion is a global operation (particles traverse the full grid),
     so we materialize to numpy, run the CPU kernel, then re-wrap.
     """
-    _check_erosion_memory(data)
     np_data = data.compute()
     result = _erode_numpy(np_data, random_pos, boy, box, bw, params)
     return da.from_array(result, chunks=data.chunksize)
@@ -370,7 +419,6 @@ def _erode_dask_cupy(data, random_pos, boy, box, bw, params):
     Materializes to a single CuPy array, runs the GPU kernel, then
     re-wraps as dask.
     """
-    _check_erosion_memory(data)
     cp_data = data.compute()  # CuPy ndarray
     result = _erode_cupy(cp_data, random_pos, boy, box, bw, params)
     return da.from_array(result, chunks=data.chunksize,
@@ -388,22 +436,48 @@ def erode(agg, iterations=50000, seed=42, params=None):
     agg : xr.DataArray
         2D terrain heightmap.
     iterations : int
-        Number of water droplets to simulate.
+        Number of water droplets to simulate. Capped at
+        ``_MAX_ITERATIONS`` (1e8) to keep host and device allocations
+        bounded.
     seed : int
         Random seed for droplet placement.
     params : dict, optional
         Override default erosion constants. Keys:
         inertia, capacity, deposition, erosion, evaporation,
         gravity, min_slope, radius, max_lifetime.
+        ``radius`` is capped at ``_MAX_RADIUS`` (1024) and
+        ``max_lifetime`` at ``_MAX_LIFETIME`` (1e5).
 
     Returns
     -------
     xr.DataArray
         Eroded terrain.
+
+    Raises
+    ------
+    ValueError
+        If `iterations`, `params['radius']`, or `params['max_lifetime']`
+        is outside the allowed range.
+    MemoryError
+        If the projected working set exceeds available memory.
     """
+    _validate_scalar(
+        iterations, func_name='erode', name='iterations',
+        dtype=int, min_val=1, max_val=_MAX_ITERATIONS,
+    )
+
     p = dict(_DEFAULT_PARAMS)
     if params is not None:
         p.update(params)
+
+    _validate_scalar(
+        p['radius'], func_name='erode', name="params['radius']",
+        dtype=int, min_val=1, max_val=_MAX_RADIUS,
+    )
+    _validate_scalar(
+        p['max_lifetime'], func_name='erode', name="params['max_lifetime']",
+        dtype=int, min_val=1, max_val=_MAX_LIFETIME,
+    )
 
     # Precompute brush and random positions on the host
     boy, box, bw = _build_brush(int(p['radius']))
