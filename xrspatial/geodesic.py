@@ -33,6 +33,55 @@ WGS84_R_MEAN = (2.0 * WGS84_A + WGS84_B) / 3.0
 INV_2R = 1.0 / (2.0 * WGS84_R_MEAN)
 
 
+# ---------------------------------------------------------------------------
+# Memory guard
+# ---------------------------------------------------------------------------
+
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    # Try /proc/meminfo (Linux)
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    # Try psutil
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    # Fallback: 2 GB
+    return 2 * 1024 ** 3
+
+
+def _check_geodesic_memory(rows, cols, func_name):
+    """Raise MemoryError if the geodesic working buffers would exceed 50%
+    of available RAM.
+
+    The geodesic backends allocate, per call:
+      - one ``(3, H, W)`` float64 stacked array (data, lat, lon) = 24 bytes/cell
+      - one ``(H, W)`` float32 output                            =  4 bytes/cell
+      - a padded copy of each channel when boundary != 'nan'     = up to 24 bytes/cell
+
+    Budget ~56 bytes per cell to cover all allocations plus small temporaries.
+    """
+    if rows <= 0 or cols <= 0:
+        return
+    required = rows * cols * 56
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"{func_name}(method='geodesic'): a ({rows}, {cols}) raster "
+            f"needs ~{required / 1e9:.1f} GB of working memory "
+            f"(stacked float64 + padded copies + float32 output), but only "
+            f"{available / 1e9:.1f} GB is available. "
+            f"Use a smaller raster or process it in chunks."
+        )
+
+
 # =====================================================================
 # CPU (Numba ngjit) primitives
 # =====================================================================

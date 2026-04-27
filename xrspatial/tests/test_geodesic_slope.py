@@ -232,6 +232,47 @@ class TestGeodesicSlopeValidation:
             slope(raster, method='geodesic')
 
 
+class TestGeodesicSlopeMemoryGuard:
+    """The geodesic path allocates a ``(3, H, W)`` float64 stacked array
+    plus padded copies and a float32 output. ``_check_geodesic_memory``
+    must raise ``MemoryError`` before that allocation if the raster is
+    too large for available RAM."""
+
+    def test_oversized_raster_raises_memory_error(self, monkeypatch):
+        # Pretend only 1 MB is available; even a tiny raster trips the guard.
+        monkeypatch.setattr(
+            'xrspatial.geodesic._available_memory_bytes', lambda: 1024 * 1024
+        )
+        elev = _flat_surface(H=200, W=200)
+        raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        with pytest.raises(MemoryError, match="slope"):
+            slope(raster, method='geodesic')
+
+    def test_normal_size_raster_passes(self, monkeypatch):
+        # 16 GB of headroom — plenty for a small raster.
+        monkeypatch.setattr(
+            'xrspatial.geodesic._available_memory_bytes',
+            lambda: 16 * 1024 ** 3,
+        )
+        elev = _flat_surface(H=8, W=8)
+        raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        # Should not raise.
+        result = slope(raster, method='geodesic')
+        assert result.shape == (8, 8)
+
+    def test_planar_method_skips_guard(self, monkeypatch):
+        """The guard is geodesic-only — planar should still work even
+        when ``_available_memory_bytes`` reports zero."""
+        monkeypatch.setattr(
+            'xrspatial.geodesic._available_memory_bytes', lambda: 0
+        )
+        elev = _flat_surface(H=8, W=8)
+        raster = _make_geo_raster(elev, 40.0, 41.0, 10.0, 11.0)
+        # planar path doesn't touch the geodesic guard.
+        result = slope(raster, method='planar')
+        assert result.shape == (8, 8)
+
+
 # ---------------------------------------------------------------------------
 # Tests — cross-backend consistency
 # ---------------------------------------------------------------------------
