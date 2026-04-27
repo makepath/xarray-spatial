@@ -47,6 +47,50 @@ _NORM_QUARTIC = 3.0 / pi
 
 
 # ---------------------------------------------------------------------------
+# Memory guard
+# ---------------------------------------------------------------------------
+
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    # Try /proc/meminfo (Linux)
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    # Try psutil
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    # Fallback: 2 GB
+    return 2 * 1024 ** 3
+
+
+def _check_grid_memory(rows, cols):
+    """Raise MemoryError if a single float64 grid of (rows, cols) would
+    exceed half of available RAM.
+
+    The eager numpy and cupy backends allocate one ``(rows, cols)``
+    float64 buffer up front. A user passing huge ``width``/``height``
+    would otherwise OOM the process or surface an opaque CUDA allocator
+    error.
+    """
+    required = int(rows) * int(cols) * 8
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"output grid of {rows}x{cols} float64 needs "
+            f"~{required / 1e9:.1f} GB, but only "
+            f"{available / 1e9:.1f} GB is available. "
+            f"Use smaller width/height or pass a dask-backed template."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Bandwidth selection
 # ---------------------------------------------------------------------------
 
@@ -559,6 +603,13 @@ def kde(
 
     shape = (rows, cols)
 
+    # -- Memory guard for eager backends ------------------------------------
+    # Dask paths build per-tile allocations lazily, so chunk size already
+    # bounds peak memory. The eager numpy/cupy paths allocate the full
+    # (rows, cols) float64 buffer up front and need an explicit guard.
+    if not use_dask:
+        _check_grid_memory(rows, cols)
+
     # -- Dispatch -----------------------------------------------------------
     if use_dask and use_cupy:
         data = _run_kde_dask_cupy(
@@ -703,6 +754,7 @@ def line_density(
         y_coords = np.linspace(y_range[0], y_range[1], rows)
 
     shape = (rows, cols)
+    _check_grid_memory(rows, cols)
     out = np.zeros(shape, dtype=np.float64)
     _line_density_cpu(x1a, y1a, x2a, y2a, w_arr, out,
                       x0, y0, dx, dy, bw, kid)
