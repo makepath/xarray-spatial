@@ -43,6 +43,90 @@ ALL_METHODS = set(INTERP_METHODS) | AGGREGATE_METHODS
 # epsilon.
 _INTERP_DEPTH = {'nearest': 1, 'bilinear': 1, 'cubic': 10}
 
+# Approximate working-set size per output cell for the eager backends:
+# one float64 working buffer (8 B) plus a float32 output cell (4 B).
+# scipy.ndimage.map_coordinates also allocates a temporary of the same
+# size during higher-order spline evaluation; the 0.5 * available bound
+# below leaves room for that.
+_BYTES_PER_OUTPUT_CELL = 12
+
+
+# -- Memory guard ------------------------------------------------------------
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    # Try /proc/meminfo (Linux)
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    # Try psutil
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    # Fallback: 2 GB
+    return 2 * 1024 ** 3
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 when CuPy / CUDA is unavailable or the query fails -- callers
+    treat that as a sentinel meaning "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_resample_memory(out_h, out_w):
+    """Raise MemoryError if the eager output buffer would exceed RAM.
+
+    The numpy and cupy-eager backends allocate a single (out_h, out_w)
+    float64 working buffer plus a float32 output before any actual work.
+    A user passing a huge ``scale_factor`` (or a tiny ``target_resolution``)
+    would otherwise OOM the process before this function returns.
+    """
+    required = int(out_h) * int(out_w) * _BYTES_PER_OUTPUT_CELL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"resample output of {out_h}x{out_w} would need "
+            f"~{required / 1e9:.1f} GB of working memory but only "
+            f"~{available / 1e9:.1f} GB is available. "
+            f"Use a smaller scale_factor / larger target_resolution, "
+            f"or pass a dask-backed DataArray for out-of-core processing."
+        )
+
+
+def _check_resample_gpu_memory(out_h, out_w):
+    """Raise MemoryError if the cupy-eager output buffer would exceed VRAM.
+
+    Skips the check (returns silently) when free GPU memory cannot be
+    queried -- the kernel will fail later at the cupy.empty boundary
+    anyway.
+    """
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(out_h) * int(out_w) * _BYTES_PER_OUTPUT_CELL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"resample output of {out_h}x{out_w} would need "
+            f"~{required / 1e9:.1f} GB of GPU working memory but only "
+            f"~{available / 1e9:.1f} GB is free on the active device. "
+            f"Use a smaller scale_factor / larger target_resolution, "
+            f"or pass a dask+cupy DataArray for out-of-core processing."
+        )
+
 
 # -- Output-geometry helpers -------------------------------------------------
 
@@ -742,6 +826,21 @@ def resample(
         out.name = name
         return out
 
+    # -- memory guard for eager backends ------------------------------------
+    # Dask paths build per-chunk allocations lazily (chunk size already
+    # bounds peak memory). The eager numpy and cupy paths allocate the
+    # full (out_h, out_w) buffer up front and need an explicit guard.
+    in_h, in_w = agg.shape[-2:]
+    out_h, out_w = _output_shape(in_h, in_w, scale_y, scale_x)
+
+    is_dask = da is not None and isinstance(agg.data, da.Array)
+    is_cupy = cupy is not None and isinstance(agg.data, cupy.ndarray)
+    if not is_dask:
+        if is_cupy:
+            _check_resample_gpu_memory(out_h, out_w)
+        else:
+            _check_resample_memory(out_h, out_w)
+
     # -- dispatch to backend -------------------------------------------------
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_run_numpy,
@@ -752,9 +851,6 @@ def resample(
     result_data = mapper(agg)(agg.data, scale_y, scale_x, method)
 
     # -- build output coordinates -------------------------------------------
-    in_h, in_w = agg.shape[-2:]
-    out_h, out_w = _output_shape(in_h, in_w, scale_y, scale_x)
-
     ydim, xdim = agg.dims[-2], agg.dims[-1]
     y_vals = np.asarray(agg[ydim].values, dtype=np.float64)
     x_vals = np.asarray(agg[xdim].values, dtype=np.float64)

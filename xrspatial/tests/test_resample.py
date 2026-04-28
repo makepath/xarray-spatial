@@ -378,3 +378,55 @@ class TestCuPyParity:
         cp_out = resample(cp_agg, scale_factor=0.5, method=method)
         np.testing.assert_allclose(cp_out.data.get(), np_out.values,
                                    atol=1e-5, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# Memory guard (#1295)
+# ---------------------------------------------------------------------------
+
+class TestMemoryGuard:
+    """Reject scale factors that would OOM the eager backends."""
+
+    def test_huge_scale_factor_raises(self, grid_4x4):
+        # 4 * 1e9 ~= 4e9 cells per axis -> 1.6e19 cells -> ~190 EB
+        with pytest.raises(MemoryError, match="resample output of"):
+            resample(grid_4x4, scale_factor=1e9, method='nearest')
+
+    def test_huge_target_resolution_inverse_raises(self, grid_4x4):
+        # cellsize=1.0, target_resolution=1e-9 -> ~4e9 cells per axis
+        with pytest.raises(MemoryError, match="resample output of"):
+            resample(grid_4x4, target_resolution=1e-9, method='nearest')
+
+    def test_huge_scale_factor_aggregate_path_unaffected(self, grid_4x4):
+        # Aggregate methods reject scale > 1.0 with ValueError before
+        # the memory guard runs; confirm that error path still wins.
+        with pytest.raises(ValueError, match="only supports downsampling"):
+            resample(grid_4x4, scale_factor=1e9, method='average')
+
+    def test_normal_inputs_unaffected(self, grid_4x4):
+        # Sanity: a normal upsample call still works.
+        out = resample(grid_4x4, scale_factor=2.0, method='nearest')
+        assert out.shape == (8, 8)
+
+    def test_error_message_names_parameters(self, grid_4x4):
+        # The hint should point the user at the parameters they control.
+        with pytest.raises(MemoryError) as excinfo:
+            resample(grid_4x4, scale_factor=1e9, method='bilinear')
+        msg = str(excinfo.value)
+        assert "scale_factor" in msg
+        assert "target_resolution" in msg
+
+    def test_dask_path_skips_guard(self, grid_4x4):
+        # Dask backends build per-chunk allocations lazily -- the guard
+        # should not fire even for shapes that would OOM the eager path.
+        # We only check that the output graph builds; we never compute it.
+        if not dask_array_available():
+            pytest.skip("dask not installed")
+        import dask.array as da
+        dask_agg = grid_4x4.copy()
+        dask_agg.data = da.from_array(grid_4x4.data, chunks=2)
+        # scale_factor=100 -> 400x400 output, well within RAM budget
+        # but still exercises the dask dispatch.  We just want the
+        # guard not to short-circuit a reasonable dask call.
+        out = resample(dask_agg, scale_factor=100.0, method='nearest')
+        assert out.shape == (400, 400)
