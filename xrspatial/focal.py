@@ -29,11 +29,55 @@ except ImportError:
 
 from xrspatial.convolution import (
     convolve_2d, custom_kernel, _convolve_2d_numpy, _convolve_2d_cupy,
+    _available_memory_bytes,
 )
 from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
                              _validate_boundary, _validate_raster, _validate_scalar,
                              cuda_args, ngjit, not_implemented_func)
 from xrspatial.dataset_support import supports_dataset
+
+
+def _check_kernel_vs_raster_memory(kernel, rows, cols, func_name):
+    """Reject kernel + raster combinations that would OOM the host.
+
+    The focal public APIs (apply, focal_stats, hotspots) accept any 2-D
+    kernel passed through ``custom_kernel``, which only validates shape
+    parity.  Several downstream allocations are driven by ``kernel.shape``
+    on top of the raster shape:
+
+    - ``_apply_numpy`` allocates ``np.zeros_like(kernel)`` per call.
+    - The non-NaN boundary path pads the raster by ``kernel.shape // 2``
+      on each side via ``_pad_array`` -> ``np.pad``.
+    - The dask paths use ``map_overlap`` with depth ``kernel.shape // 2``
+      per chunk.
+
+    Without a guard, a small raster paired with an oversized kernel can
+    OOM the host (e.g. kernel of shape (50001, 50001) is ~10 GB on its
+    own; the padded raster is larger).  Budget 4 bytes per kernel cell
+    (float32 internal dtype) plus the padded raster footprint, and raise
+    ``MemoryError`` when the total exceeds half of available memory.
+    """
+    krows, kcols = kernel.shape
+    pad_h = krows // 2
+    pad_w = kcols // 2
+
+    # 4 bytes per cell -- focal internals cast to float32.
+    kernel_bytes = krows * kcols * 4
+    padded_rows = rows + 2 * pad_h
+    padded_cols = cols + 2 * pad_w
+    padded_bytes = padded_rows * padded_cols * 4
+
+    required = kernel_bytes + padded_bytes
+    available = _available_memory_bytes()
+
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"{func_name}(): kernel of shape {kernel.shape} on a "
+            f"{rows}x{cols} raster would need ~{required / 1e9:.1f} GB "
+            f"(kernel + padded raster), but only "
+            f"{available / 1e9:.1f} GB is available. "
+            f"Use a smaller kernel or a coarser cellsize."
+        )
 
 
 def _apply_per_band(band_func, agg, *args, **kwargs):
@@ -565,6 +609,9 @@ def apply(raster, kernel, func=_calc_mean, name='focal_apply', boundary='nan'):
 
     _validate_boundary(boundary)
 
+    rows, cols = raster.shape[-2], raster.shape[-1]
+    _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='apply')
+
     # apply kernel to raster values
     # if raster is a numpy or dask with numpy backed data array,
     # the function func must be a @ngjit
@@ -1073,6 +1120,9 @@ def focal_stats(agg,
 
     _validate_boundary(boundary)
 
+    rows, cols = agg.shape[-2], agg.shape[-1]
+    _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='focal_stats')
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_focal_stats_cpu, boundary=boundary),
         cupy_func=_focal_stats_cupy,
@@ -1353,6 +1403,9 @@ def hotspots(raster, kernel, boundary='nan'):
                                boundary=boundary)
 
     _validate_boundary(boundary)
+
+    rows, cols = raster.shape[-2], raster.shape[-1]
+    _check_kernel_vs_raster_memory(kernel, rows, cols, func_name='hotspots')
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=partial(_hotspots_numpy, boundary=boundary),

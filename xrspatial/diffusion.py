@@ -441,11 +441,22 @@ def diffuse(
         raise ValueError("diffuse(): all diffusivity values must be > 0")
 
     # auto dt from CFL stability condition
+    cfl_max = 0.25 * dx * dx / alpha_max
     if dt is None:
-        dt = 0.25 * dx * dx / alpha_max
+        dt = cfl_max
     else:
         _validate_scalar(dt, func_name='diffuse', name='dt', dtype=(int, float),
                          min_val=0, min_exclusive=True)
+        # Explicit forward-Euler is unconditionally unstable above the CFL
+        # bound; without this check, oversized dt silently produces Inf/NaN
+        # that compound across iterations.
+        if dt > cfl_max:
+            raise ValueError(
+                f"diffuse(): dt={dt} exceeds the CFL stability bound "
+                f"{cfl_max} (= 0.25 * dx**2 / max(alpha)). "
+                f"Pass dt=None to use the largest stable step automatically, "
+                f"or reduce dt below {cfl_max}."
+            )
 
     dt_over_dx2 = float(dt) / (dx * dx)
 

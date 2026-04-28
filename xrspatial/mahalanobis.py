@@ -36,6 +36,99 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
+# Memory guards
+# ---------------------------------------------------------------------------
+#
+# Both the statistics phase and the per-pixel phase materialise float64
+# working buffers of shape (n_bands, H*W).  A conservative count of the
+# live copies for each eager backend:
+#
+#   stack          (float64) : 8 bytes/cell * n_bands
+#   reshape/.T     (float64) : 8 bytes/cell * n_bands  (transpose forces a
+#                                                       contiguous copy when
+#                                                       passed to BLAS)
+#   centered/diff  (float64) : 8 bytes/cell * n_bands
+#   diff @ inv_cov (float64) : 8 bytes/cell * n_bands
+#
+# Total ~32 bytes/cell * n_bands.  The (n_bands, n_bands) inverse covariance
+# is negligible by comparison.
+_BYTES_PER_CELL_PER_BAND = 32
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    # Try /proc/meminfo (Linux)
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    # Try psutil
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    # Fallback: 2 GB
+    return 2 * 1024 ** 3
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 if CuPy / CUDA is unavailable or the query fails -- callers
+    use that as a sentinel meaning "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _projected_bytes(n_bands, height, width):
+    return int(n_bands) * int(height) * int(width) * _BYTES_PER_CELL_PER_BAND
+
+
+def _check_memory(n_bands, height, width):
+    """Raise MemoryError if the host working set would exceed 50% of RAM."""
+    required = _projected_bytes(n_bands, height, width)
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"mahalanobis on {n_bands} bands of shape "
+            f"({height}, {width}) needs ~{required / 1e9:.1f} GB of "
+            f"working memory but only ~{available / 1e9:.1f} GB is "
+            f"available.  Use a dask-backed DataArray for out-of-core "
+            f"processing, or pass smaller inputs."
+        )
+
+
+def _check_gpu_memory(n_bands, height, width):
+    """Raise MemoryError if the GPU working set would exceed 50% of free VRAM.
+
+    Returns silently when ``_available_gpu_memory_bytes`` cannot determine
+    the free memory -- e.g. on hosts without CUDA, where the kernel will
+    fail at the cupy boundary anyway.
+    """
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = _projected_bytes(n_bands, height, width)
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"mahalanobis on {n_bands} bands of shape "
+            f"({height}, {width}) needs ~{required / 1e9:.1f} GB of "
+            f"GPU working memory but only ~{available / 1e9:.1f} GB is "
+            f"free on the active device.  Use a dask+cupy DataArray for "
+            f"out-of-core processing, or pass smaller inputs."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Phase 1: compute statistics (mean vector, inverse covariance)
 # ---------------------------------------------------------------------------
 
@@ -312,6 +405,18 @@ def mahalanobis(
     ref = bands[0]
     bands_data = [b.data for b in bands]
 
+    # --- memory guard (eager backends only) ---
+    # Dask paths process bounded chunks, so the per-task working set is
+    # capped by the user's chunk size rather than the full raster shape.
+    height, width = ref.shape
+    is_dask = has_dask_array() and isinstance(ref.data, da.Array)
+    is_cupy = has_cuda_and_cupy() and is_cupy_array(ref.data)
+    if not is_dask:
+        if is_cupy:
+            _check_gpu_memory(n_bands, height, width)
+        else:
+            _check_memory(n_bands, height, width)
+
     # --- cast to float64 ---
     # (handled inside each backend function)
 
@@ -331,9 +436,9 @@ def mahalanobis(
             )
     else:
         # auto-compute stats — dispatch by backend
-        if has_dask_array() and isinstance(ref.data, da.Array):
+        if is_dask:
             mu, icov = _compute_stats_dask(bands_data)
-        elif has_cuda_and_cupy() and is_cupy_array(ref.data):
+        elif is_cupy:
             mu, icov = _compute_stats_cupy(bands_data)
         else:
             mu, icov = _compute_stats_numpy(bands_data)

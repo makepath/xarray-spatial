@@ -49,6 +49,7 @@ from xrspatial.geodesic import (
     INV_2R,
     WGS84_A2,
     WGS84_B2,
+    _check_geodesic_memory,
     _cpu_geodesic_slope,
     _run_gpu_geodesic_slope,
 )
@@ -404,6 +405,9 @@ def slope(agg: xr.DataArray,
                 f"got {z_unit!r}"
             )
         z_factor = Z_UNITS[z_unit]
+
+        rows, cols = agg.shape[-2], agg.shape[-1]
+        _check_geodesic_memory(rows, cols, func_name='slope')
 
         lat_2d, lon_2d = _extract_latlon_coords(agg)
 

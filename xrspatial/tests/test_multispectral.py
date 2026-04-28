@@ -762,6 +762,84 @@ def test_true_color_gpu(random_data, backend):
     )
 
 
+# true_color memory guards ----------
+def test_true_color_numpy_memory_guard(monkeypatch):
+    """Numpy true_color path raises MemoryError before allocation when the
+    projected footprint exceeds 50% of available RAM."""
+    from xrspatial import multispectral
+
+    # Pretend only 1 MB of RAM is available.  Even a 2x2 raster needs
+    # 24 * 2 * 2 = 96 bytes which is under 0.5 * 1 MB, so we also pretend
+    # the request is huge by faking a much larger raster shape via
+    # patching _check_true_color_memory's input.  Cleaner: use a 10000x10000
+    # raster shape but only allocate a 2x2 array, by patching _check first.
+    monkeypatch.setattr(
+        multispectral, '_available_memory_bytes', lambda: 1024 * 1024
+    )
+
+    red = xr.DataArray(np.ones((2, 2), dtype=np.float32), dims=['y', 'x'])
+    green = xr.DataArray(np.ones((2, 2), dtype=np.float32), dims=['y', 'x'])
+    blue = xr.DataArray(np.ones((2, 2), dtype=np.float32), dims=['y', 'x'])
+    red = red.assign_coords(y=[0, 1], x=[0, 1])
+    green = green.assign_coords(y=[0, 1], x=[0, 1])
+    blue = blue.assign_coords(y=[0, 1], x=[0, 1])
+
+    # 2x2 with 1 MB available is fine -- guard should pass.
+    out = multispectral.true_color(red, green, blue)
+    assert out.shape == (2, 2, 4)
+
+    # Now call _check_true_color_memory directly with a "huge" shape to
+    # confirm it raises before any allocation runs.
+    with pytest.raises(MemoryError, match='true_color'):
+        multispectral._check_true_color_memory(100_000, 100_000)
+
+
+def test_true_color_numpy_memory_guard_blocks_large_input(monkeypatch):
+    """End-to-end: the numpy true_color path raises MemoryError at the
+    public API entry, before np.zeros runs."""
+    from xrspatial import multispectral
+
+    # 100x100 raster, but pretend only 1000 bytes of RAM are free.  The
+    # 24 bytes/pixel * 100 * 100 = 240_000 byte budget exceeds 0.5 * 1000
+    # by orders of magnitude, so the guard fires.
+    monkeypatch.setattr(multispectral, '_available_memory_bytes', lambda: 1000)
+
+    red = xr.DataArray(np.ones((100, 100), dtype=np.float32), dims=['y', 'x'])
+    green = xr.DataArray(np.ones((100, 100), dtype=np.float32), dims=['y', 'x'])
+    blue = xr.DataArray(np.ones((100, 100), dtype=np.float32), dims=['y', 'x'])
+    red = red.assign_coords(y=np.arange(100), x=np.arange(100))
+    green = green.assign_coords(y=np.arange(100), x=np.arange(100))
+    blue = blue.assign_coords(y=np.arange(100), x=np.arange(100))
+
+    with pytest.raises(MemoryError, match='100x100'):
+        multispectral.true_color(red, green, blue)
+
+
+def test_true_color_gpu_memory_guard_silent_when_query_fails(monkeypatch):
+    """The GPU guard is a no-op when _available_gpu_memory_bytes returns 0
+    (cupy not installed or memGetInfo failed)."""
+    from xrspatial import multispectral
+
+    monkeypatch.setattr(
+        multispectral, '_available_gpu_memory_bytes', lambda: 0
+    )
+    # No raise: even a "100kx100k" input is allowed past the guard since
+    # the helper returned 0.
+    multispectral._check_true_color_gpu_memory(100_000, 100_000)
+
+
+def test_true_color_gpu_memory_guard_raises_when_oversized(monkeypatch):
+    """When free GPU memory is reported as small, _check_true_color_gpu_memory
+    raises MemoryError for an oversized request."""
+    from xrspatial import multispectral
+
+    monkeypatch.setattr(
+        multispectral, '_available_gpu_memory_bytes', lambda: 1024 * 1024
+    )
+    with pytest.raises(MemoryError, match='GPU working memory'):
+        multispectral._check_true_color_gpu_memory(100_000, 100_000)
+
+
 # NDSI ----------
 @pytest.fixture
 def expected_ndsi():
