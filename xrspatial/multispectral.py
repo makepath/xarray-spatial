@@ -1793,6 +1793,8 @@ def true_color(r, g, b, nodata=1, c=10.0, th=0.125, name='true_color'):
     _validate_raster(g, func_name='true_color', name='g')
     _validate_raster(b, func_name='true_color', name='b')
 
+    validate_arrays(r, g, b)
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_true_color_numpy,
         dask_func=_true_color_dask,
