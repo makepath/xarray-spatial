@@ -396,6 +396,36 @@ def test_sieve_dask_memory_guard():
             _sieve_dask(huge, 10, 4, None)
 
 
+def test_sieve_numpy_memory_guard():
+    """Numpy backend raises MemoryError before allocating CCL buffers."""
+    from unittest.mock import patch
+
+    from xrspatial.sieve import _sieve_numpy
+
+    # Use a tiny array but mock available memory to 1 byte so the
+    # guard fires regardless of host RAM.
+    arr = np.zeros((4, 4), dtype=np.float64)
+    with patch("xrspatial.sieve._available_memory_bytes", return_value=1):
+        with pytest.raises(MemoryError, match="working memory"):
+            _sieve_numpy(arr, 10, 4, None)
+
+
+def test_sieve_numpy_memory_guard_via_public_api():
+    """The public sieve() entry point trips the numpy guard."""
+    from unittest.mock import patch
+
+    from xrspatial.sieve import sieve as _sieve
+
+    raster = xr.DataArray(
+        np.zeros((4, 4), dtype=np.float64), dims=["y", "x"]
+    )
+
+    # Mock available memory to 1 byte so even a 4x4 raster trips it.
+    with patch("xrspatial.sieve._available_memory_bytes", return_value=1):
+        with pytest.raises(MemoryError, match="working memory"):
+            _sieve(raster, threshold=2)
+
+
 # ---------------------------------------------------------------------------
 # Numpy / dask consistency
 # ---------------------------------------------------------------------------

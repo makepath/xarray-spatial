@@ -224,6 +224,93 @@ def _build_adjacency(region_map, neighborhood):
 
 
 # ---------------------------------------------------------------------------
+# Memory guards
+# ---------------------------------------------------------------------------
+
+# Peak working set for the union-find pass:
+#   result copy             8 bytes (float64)
+#   parent                  4 bytes (int32)
+#   rank / root_to_id       4 bytes (int32, reused)
+#   region_map_flat         4 bytes (int32)
+#   slack for region_val,
+#   region_size, valid mask 8 bytes
+# Total ~28 bytes/pixel.  Matches the budget the dask paths already use.
+_BYTES_PER_PIXEL = 28
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    try:
+        with open("/proc/meminfo", "r") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024**3
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 when CuPy / CUDA is unavailable or the query fails -- callers
+    treat that as "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_memory(rows, cols):
+    """Raise MemoryError if the union-find pass would exceed 50% of RAM."""
+    required = int(rows) * int(cols) * _BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"sieve() on a {rows}x{cols} raster needs "
+            f"~{required / 1e9:.1f} GB of working memory but only "
+            f"~{available / 1e9:.1f} GB is available.  "
+            f"Connected-component labeling is a global operation that "
+            f"cannot be chunked.  Consider downsampling or tiling the "
+            f"input manually."
+        )
+
+
+def _check_gpu_memory(rows, cols):
+    """Raise MemoryError when the CuPy round-trip would not fit.
+
+    The CuPy backend transfers to host and runs the CPU sieve, so the
+    host budget still applies; we also check free GPU RAM so a user
+    with little VRAM gets a clear error before ``data.get()`` runs.
+    Skips silently when the GPU memory query fails.
+    """
+    _check_memory(rows, cols)
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    # Round-trip needs the float64 input on device plus a float64 result.
+    required = int(rows) * int(cols) * 16
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"sieve() on a {rows}x{cols} cupy raster needs "
+            f"~{required / 1e9:.1f} GB of GPU memory for the round-trip "
+            f"but only ~{available / 1e9:.1f} GB is free on the active "
+            f"device.  Use a dask+cupy DataArray for out-of-core "
+            f"processing or downsample the input."
+        )
+
+
+# ---------------------------------------------------------------------------
 # numpy backend
 # ---------------------------------------------------------------------------
 
@@ -237,6 +324,7 @@ def _sieve_numpy(data, threshold, neighborhood, skip_values):
     so that earlier merges can grow a neighbor above threshold for
     later ones within the same pass.
     """
+    _check_memory(data.shape[0], data.shape[1])
     result = data.astype(np.float64, copy=True)
     is_float = np.issubdtype(data.dtype, np.floating)
     valid = ~np.isnan(result) if is_float else np.ones(result.shape, dtype=bool)
@@ -309,6 +397,7 @@ def _sieve_cupy(data, threshold, neighborhood, skip_values):
     """CuPy backend: transfer to CPU, sieve, transfer back."""
     import cupy as cp
 
+    _check_gpu_memory(data.shape[0], data.shape[1])
     np_result = _sieve_numpy(
         data.get(), threshold, neighborhood, skip_values
     )
@@ -318,24 +407,6 @@ def _sieve_cupy(data, threshold, neighborhood, skip_values):
 # ---------------------------------------------------------------------------
 # dask backends
 # ---------------------------------------------------------------------------
-
-
-def _available_memory_bytes():
-    """Best-effort estimate of available memory in bytes."""
-    try:
-        with open("/proc/meminfo", "r") as f:
-            for line in f:
-                if line.startswith("MemAvailable:"):
-                    return int(line.split()[1]) * 1024
-    except (OSError, ValueError, IndexError):
-        pass
-    try:
-        import psutil
-
-        return psutil.virtual_memory().available
-    except (ImportError, AttributeError):
-        pass
-    return 2 * 1024**3
 
 
 def _sieve_dask(data, threshold, neighborhood, skip_values):
