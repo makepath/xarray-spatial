@@ -199,6 +199,44 @@ class TestEdgeCases:
 
 
 # ---------------------------------------------------------------------------
+# Memory guard (#1287)
+# ---------------------------------------------------------------------------
+
+class TestMemoryGuard:
+    """kde() and line_density() must reject grids that would OOM."""
+
+    def test_kde_huge_grid_raises_memory_error(self):
+        # 1Mx1M float64 = 8 TB, well above any realistic budget.
+        with pytest.raises(MemoryError, match='width/height'):
+            kde([0.0], [0.0], bandwidth=1.0,
+                width=1_000_000, height=1_000_000)
+
+    def test_line_density_huge_grid_raises_memory_error(self):
+        with pytest.raises(MemoryError, match='width/height'):
+            line_density([0.0], [0.0], [1.0], [1.0],
+                         bandwidth=1.0,
+                         width=1_000_000, height=1_000_000)
+
+    def test_kde_normal_grid_passes(self):
+        # Sanity: typical grid sizes still work.
+        result = kde([0.0], [0.0], bandwidth=1.0, width=256, height=256)
+        assert result.shape == (256, 256)
+
+    def test_line_density_normal_grid_passes(self):
+        result = line_density([0.0], [0.0], [1.0], [1.0],
+                              bandwidth=0.5, width=256, height=256)
+        assert result.shape == (256, 256)
+
+    def test_kde_memory_error_names_parameter(self):
+        """Error message should hint at width/height so the user can fix it."""
+        with pytest.raises(MemoryError) as exc:
+            kde([0.0], [0.0], bandwidth=1.0,
+                width=1_000_000, height=1_000_000)
+        # Message should mention either dimension or the dask escape hatch.
+        assert 'width' in str(exc.value) or 'height' in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
 # Descending coordinate templates (#1198)
 # ---------------------------------------------------------------------------
 
