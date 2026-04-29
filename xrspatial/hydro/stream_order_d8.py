@@ -49,6 +49,100 @@ from xrspatial.dataset_support import supports_dataset
 from xrspatial.hydro.flow_accumulation_d8 import _code_to_offset, _code_to_offset_py
 
 
+# =====================================================================
+# Memory guards
+# =====================================================================
+#
+# CPU peak working set per pixel for the eager Strahler/Shreve kernels:
+#   order     : float64 -> 8
+#   in_degree : int32   -> 4
+#   max_in    : float64 -> 8   (Strahler only; Shreve omits it)
+#   cnt_max   : int32   -> 4   (Strahler only)
+#   queue_r   : int64   -> 8
+#   queue_c   : int64   -> 8
+# Total ~40 bytes/pixel for Strahler, ~32 for Shreve.  We budget for the
+# worst case.  Caller-provided ``flow_dir`` and ``flow_accum`` already
+# live in RAM before the kernel runs and are not double-counted here.
+_BYTES_PER_PIXEL = 40
+
+# GPU peak working set per pixel for ``_stream_order_cupy``:
+#   flow_dir_f64   : float64 -> 8
+#   stream_mask_i8 : int8    -> 1
+#   in_degree      : int32   -> 4
+#   state          : int32   -> 4
+#   order          : float64 -> 8
+#   max_in         : float64 -> 8
+#   cnt_max        : int32   -> 4
+# Total ~37 bytes/pixel.  The ``fa`` input copy adds 8 B/px on the
+# device but is created from the caller's CuPy array.  Use 40 B/px as
+# a conservative budget.
+_GPU_BYTES_PER_PIXEL = 40
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 if CuPy / CUDA is unavailable or the query fails -- callers
+    use that as a sentinel meaning "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_memory(height, width):
+    """Raise MemoryError if the kernel would exceed 50% of RAM."""
+    required = int(height) * int(width) * _BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"stream_order_d8 on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of working memory but only "
+            f"~{available / 1e9:.1f} GB is available.  Use a "
+            f"dask-backed DataArray for out-of-core processing."
+        )
+
+
+def _check_gpu_memory(height, width):
+    """Raise MemoryError if the CuPy kernel would exceed 50% of free GPU RAM.
+
+    Skips the check (returns silently) when ``_available_gpu_memory_bytes``
+    cannot determine the free memory -- e.g. on hosts without CUDA, where
+    the kernel will fail at the cupy.asarray boundary anyway.
+    """
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(height) * int(width) * _GPU_BYTES_PER_PIXEL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"stream_order_d8 on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of GPU working memory but only "
+            f"~{available / 1e9:.1f} GB is free on the active device.  "
+            f"Use a dask+cupy DataArray for out-of-core processing."
+        )
+
+
 def _to_numpy_f64(arr):
     """Convert *arr* to a contiguous numpy float64 array (handles CuPy)."""
     if hasattr(arr, 'get'):
@@ -1510,6 +1604,7 @@ def stream_order_d8(flow_dir: xr.DataArray,
     fa_data = flow_accum.data
 
     if isinstance(fd_data, np.ndarray):
+        _check_memory(*fd_data.shape)
         fd = fd_data.astype(np.float64)
         fa = np.asarray(fa_data, dtype=np.float64)
         stream_mask = np.where(fa >= threshold, 1, 0).astype(np.int8)
@@ -1523,6 +1618,7 @@ def stream_order_d8(flow_dir: xr.DataArray,
             out = _shreve_cpu(fd, stream_mask, h, w)
 
     elif has_cuda_and_cupy() and is_cupy_array(fd_data):
+        _check_gpu_memory(*fd_data.shape)
         import cupy as cp
         fa_cp = cp.asarray(fa_data, dtype=cp.float64)
         fd_cp = fd_data.astype(cp.float64)
