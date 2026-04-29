@@ -417,3 +417,77 @@ class TestFlowLengthMfdDaskCuPy:
         np.testing.assert_allclose(
             result_np.data, result_dc.data.compute().get(),
             equal_nan=True, rtol=1e-10)
+
+
+# ====================================================================
+# Memory guard tests
+# ====================================================================
+
+class TestMemoryGuard:
+    """Memory guard on the eager numpy / cupy backends."""
+
+    def test_numpy_huge_raster_raises(self):
+        """Numpy backend raises MemoryError when projected RAM exceeds budget."""
+        from unittest.mock import patch
+
+        fracs = _all_east_fractions(4, 4)
+        raster = _make_mfd_raster(fracs)
+
+        with patch(
+            "xrspatial.hydro.flow_length_mfd._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                flow_length_mfd(raster, direction='downstream')
+
+    def test_numpy_normal_input_succeeds(self):
+        """Normal-size raster passes the guard with real memory."""
+        fracs = _all_east_fractions(3, 5)
+        raster = _make_mfd_raster(fracs)
+        result = flow_length_mfd(raster, direction='downstream')
+        assert result.shape == (3, 5)
+
+    @dask_array_available
+    def test_dask_path_skips_guard(self):
+        """Dask backend bypasses the guard -- per-tile allocations are bounded."""
+        from unittest.mock import patch
+
+        fracs = _all_south_fractions(6, 6)
+        raster = _make_mfd_raster(fracs, backend='dask', chunks=(3, 3))
+
+        with patch(
+            "xrspatial.hydro.flow_length_mfd._available_memory_bytes",
+            return_value=1,
+        ):
+            # Dask path must not trigger the guard at dispatch time
+            result = flow_length_mfd(raster, direction='downstream')
+            assert result is not None
+
+    def test_error_message_mentions_dimensions(self):
+        """The error message should mention the grid dimensions and dask."""
+        from unittest.mock import patch
+
+        fracs = _all_east_fractions(7, 9)
+        raster = _make_mfd_raster(fracs)
+
+        with patch(
+            "xrspatial.hydro.flow_length_mfd._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match=r"7x9.*dask"):
+                flow_length_mfd(raster, direction='upstream')
+
+    @cuda_and_cupy_available
+    def test_cupy_huge_raster_raises(self):
+        """CuPy backend raises MemoryError when projected GPU RAM exceeds budget."""
+        from unittest.mock import patch
+
+        fracs = _all_east_fractions(4, 4)
+        raster = _make_mfd_raster(fracs, backend='cupy')
+
+        with patch(
+            "xrspatial.hydro.flow_length_mfd._available_gpu_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="GPU working memory"):
+                flow_length_mfd(raster, direction='downstream')
