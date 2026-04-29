@@ -357,3 +357,60 @@ class TestFlowAccumulationMFDDataset:
         np.testing.assert_allclose(
             accum_ds['mfd'].values, accum_da.values,
             atol=1e-10, equal_nan=True)
+
+
+# =====================================================================
+# Memory guard
+# =====================================================================
+
+class TestMemoryGuard:
+    """Memory guard on the eager numpy / cupy backends."""
+
+    def test_numpy_huge_raster_raises(self):
+        """Numpy backend raises MemoryError when projected RAM exceeds budget."""
+        from unittest.mock import patch
+
+        elev = _make_bowl(7)
+        mfd = flow_direction_mfd(elev)
+
+        with patch(
+            "xrspatial.hydro.flow_accumulation_mfd._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                flow_accumulation_mfd(mfd)
+
+    def test_numpy_normal_input_succeeds(self):
+        """Normal-size raster passes the guard with real memory."""
+        elev = _make_bowl(7)
+        mfd = flow_direction_mfd(elev)
+        result = flow_accumulation_mfd(mfd)
+        assert result.shape == (7, 7)
+
+    def test_error_message_mentions_dimensions(self):
+        """Error message should mention the offending grid dimensions."""
+        from unittest.mock import patch
+
+        elev = _make_bowl(7)
+        mfd = flow_direction_mfd(elev)
+
+        with patch(
+            "xrspatial.hydro.flow_accumulation_mfd._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="7x7"):
+                flow_accumulation_mfd(mfd)
+
+    def test_error_message_mentions_dask(self):
+        """The error message should suggest the dask alternative."""
+        from unittest.mock import patch
+
+        elev = _make_bowl(7)
+        mfd = flow_direction_mfd(elev)
+
+        with patch(
+            "xrspatial.hydro.flow_accumulation_mfd._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="dask"):
+                flow_accumulation_mfd(mfd)
