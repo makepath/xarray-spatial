@@ -431,6 +431,23 @@ def test_landforms_invalid_outer_radius():
         landforms(agg, inner_radius=5, outer_radius=3)
 
 
+def test_landforms_outer_radius_memory_guard():
+    """Issue #1302: huge outer_radius must raise MemoryError before
+    allocating the circular kernel."""
+    data = np.ones((10, 10), dtype=np.float64)
+    agg = create_test_raster(data)
+    with pytest.raises(MemoryError, match="outer_radius=200000"):
+        landforms(agg, inner_radius=3, outer_radius=200000)
+
+
+def test_landforms_inner_radius_memory_guard():
+    """Issue #1302: huge inner_radius must also raise MemoryError."""
+    data = np.ones((10, 10), dtype=np.float64)
+    agg = create_test_raster(data)
+    with pytest.raises(MemoryError, match="inner_radius=200000"):
+        landforms(agg, inner_radius=200000, outer_radius=300000)
+
+
 def test_landforms_output_shape_and_attrs():
     data = np.random.default_rng(42).random((30, 40)) * 100
     agg = create_test_raster(data)

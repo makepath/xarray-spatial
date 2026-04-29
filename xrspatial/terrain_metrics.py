@@ -403,6 +403,46 @@ def roughness(agg: xr.DataArray,
 # TPI at arbitrary radius (helpers for landforms)
 # ---------------------------------------------------------------------------
 
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    # Try /proc/meminfo (Linux)
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    # Try psutil
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    # Fallback: 2 GB
+    return 2 * 1024 ** 3
+
+
+def _check_kernel_memory(radius, param_name='radius'):
+    """Raise MemoryError if a circular kernel of *radius* won't fit in RAM.
+
+    ``_circular_kernel`` allocates a ``(2*radius+1, 2*radius+1)`` float64
+    array.  ``np.ogrid`` plus the boolean comparison adds intermediates
+    of similar size, so budget ~16 bytes per cell.
+    """
+    side = 2 * int(radius) + 1
+    cells = side * side
+    required = cells * 16
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"{param_name}={radius} implies a {side}x{side} kernel that "
+            f"needs ~{required / 1e9:.1f} GB, but only "
+            f"{available / 1e9:.1f} GB is available. "
+            f"Use a smaller {param_name}."
+        )
+
+
 def _circular_kernel(radius):
     """Circular boolean kernel with center excluded."""
     y, x = np.ogrid[-radius:radius + 1, -radius:radius + 1]
@@ -534,6 +574,12 @@ def landforms(agg: xr.DataArray,
         10  Mountain top / high ridge
         ==  =================================
 
+    Raises
+    ------
+    MemoryError
+        If ``inner_radius`` or ``outer_radius`` would require a kernel
+        larger than half of the available memory.
+
     References
     ----------
     Weiss, A. (2001). Topographic Position and Landforms Analysis.
@@ -549,6 +595,11 @@ def landforms(agg: xr.DataArray,
         raise ValueError(
             f"outer_radius ({outer_radius}) must be greater than "
             f"inner_radius ({inner_radius})")
+
+    # Guard against unbounded kernel allocations.  Both radii flow into
+    # ``_circular_kernel`` which allocates a (2r+1)^2 float64 array.
+    _check_kernel_memory(inner_radius, param_name='inner_radius')
+    _check_kernel_memory(outer_radius, param_name='outer_radius')
 
     # 1. TPI at two scales
     tpi_s = _compute_tpi_at_radius(agg, inner_radius)
