@@ -293,3 +293,80 @@ def test_stream_link_dask_cupy_random():
         np.testing.assert_allclose(
             np_result.data, dcp_result.data.compute().get(), equal_nan=True,
         ), f"Mismatch with chunks={chunks}"
+
+
+# ====================================================================
+# Memory guard tests
+# ====================================================================
+
+class TestMemoryGuard:
+    """Memory guard on the eager numpy / cupy backends."""
+
+    def test_numpy_huge_raster_raises(self):
+        """Numpy backend raises MemoryError when projected RAM exceeds budget."""
+        from unittest.mock import patch
+
+        flow_dir = np.zeros((4, 4), dtype=np.float64)
+        flow_accum = np.ones((4, 4), dtype=np.float64)
+
+        with patch(
+            "xrspatial.hydro.stream_link_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                _make_stream_link(flow_dir, flow_accum, threshold=1)
+
+    def test_numpy_normal_input_succeeds(self):
+        """Normal-size raster passes the guard with real memory."""
+        flow_dir = np.array([[1.0, 1.0, 0.0]], dtype=np.float64)
+        flow_accum = np.array([[1.0, 2.0, 3.0]], dtype=np.float64)
+        result = _make_stream_link(flow_dir, flow_accum, threshold=1)
+        assert result.shape == (1, 3)
+
+    @dask_array_available
+    def test_dask_path_skips_guard(self):
+        """Dask backend bypasses the guard -- per-tile allocations are bounded."""
+        from unittest.mock import patch
+
+        flow_dir = np.zeros((6, 6), dtype=np.float64)
+        flow_accum = np.ones((6, 6), dtype=np.float64)
+        da_fd = create_test_raster(flow_dir, backend='dask', chunks=(3, 3))
+        da_fa = create_test_raster(flow_accum, backend='dask', chunks=(3, 3))
+
+        with patch(
+            "xrspatial.hydro.stream_link_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            result = stream_link(da_fd, da_fa, threshold=1)
+            _ = result.data[:3, :3].compute()
+
+    def test_error_message_mentions_dimensions(self):
+        """The error message should mention the grid dimensions and dask."""
+        from unittest.mock import patch
+
+        flow_dir = np.zeros((7, 9), dtype=np.float64)
+        flow_accum = np.ones((7, 9), dtype=np.float64)
+
+        with patch(
+            "xrspatial.hydro.stream_link_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match=r"7x9.*dask"):
+                _make_stream_link(flow_dir, flow_accum, threshold=1)
+
+    @cuda_and_cupy_available
+    def test_cupy_huge_raster_raises(self):
+        """CuPy backend raises MemoryError when projected GPU RAM exceeds budget."""
+        from unittest.mock import patch
+
+        flow_dir = np.zeros((4, 4), dtype=np.float64)
+        flow_accum = np.ones((4, 4), dtype=np.float64)
+        cp_fd = create_test_raster(flow_dir, backend='cupy')
+        cp_fa = create_test_raster(flow_accum, backend='cupy')
+
+        with patch(
+            "xrspatial.hydro.stream_link_d8._available_gpu_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="GPU working memory"):
+                stream_link(cp_fd, cp_fa, threshold=1)
