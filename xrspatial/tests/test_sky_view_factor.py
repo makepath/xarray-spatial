@@ -236,3 +236,87 @@ def test_known_svf_simple_ramp():
     assert np.isfinite(center)
     assert center < 1.0, f"Expected SVF < 1 on tilted plane, got {center}"
     assert center > 0.5, f"Expected SVF > 0.5 on gentle tilt, got {center}"
+
+
+# ---------------------------------------------------------------------------
+# Memory guard
+# ---------------------------------------------------------------------------
+
+class TestMemoryGuard:
+    """Memory guard on the eager numpy / cupy backends."""
+
+    def test_numpy_huge_raster_raises(self):
+        """Numpy backend raises MemoryError when projected RAM exceeds budget."""
+        from unittest.mock import patch
+
+        data = np.ones((4, 4), dtype=np.float64)
+        agg = create_test_raster(data)
+
+        # Mock available memory to 1 byte so even a 4x4 raster trips it.
+        with patch(
+            "xrspatial.sky_view_factor._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                sky_view_factor(agg, max_radius=2, n_directions=4)
+
+    def test_numpy_normal_input_succeeds(self):
+        """Normal-size raster passes the guard with real memory."""
+        data = np.ones((10, 10), dtype=np.float64)
+        agg = create_test_raster(data)
+        # Should not raise -- 10x10 needs ~1.6 KB.
+        result = sky_view_factor(agg, max_radius=2, n_directions=4)
+        assert result.shape == (10, 10)
+
+    def test_validation_error_takes_precedence(self):
+        """Invalid scalar args raise ValueError before the memory guard runs."""
+        from unittest.mock import patch
+
+        data = np.ones((4, 4), dtype=np.float64)
+        agg = create_test_raster(data)
+
+        with patch(
+            "xrspatial.sky_view_factor._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(ValueError, match="max_radius"):
+                sky_view_factor(agg, max_radius=0)
+            with pytest.raises(ValueError, match="n_directions"):
+                sky_view_factor(agg, n_directions=0)
+
+    @dask_array_available
+    def test_dask_path_skips_guard(self):
+        """Dask backend bypasses the guard -- per-chunk allocations are bounded."""
+        from unittest.mock import patch
+
+        import dask.array as da
+
+        # 1000x1000 chunked at 100x100 -- per-chunk allocation is ~80 KB,
+        # well under any sane budget.  But the total array size (~8 MB)
+        # would trip the guard if it ran on the full shape.
+        arr = da.zeros((1000, 1000), chunks=(100, 100), dtype=np.float64)
+        agg = xr.DataArray(arr, dims=["y", "x"])
+
+        # Mock available memory to 1 byte.  If the guard ran on the dask
+        # path, this would raise.  It should not.
+        with patch(
+            "xrspatial.sky_view_factor._available_memory_bytes",
+            return_value=1,
+        ):
+            result = sky_view_factor(agg, max_radius=2, n_directions=4)
+            # Force a small compute window to prove no MemoryError fires.
+            _ = result.data[:4, :4].compute()
+
+    def test_error_message_mentions_dask(self):
+        """The error message should suggest the dask alternative."""
+        from unittest.mock import patch
+
+        data = np.ones((4, 4), dtype=np.float64)
+        agg = create_test_raster(data)
+
+        with patch(
+            "xrspatial.sky_view_factor._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="dask"):
+                sky_view_factor(agg, max_radius=2, n_directions=4)
