@@ -42,6 +42,98 @@ from xrspatial.utils import (
 
 
 # =====================================================================
+# Memory guards
+# =====================================================================
+#
+# CPU peak working set per pixel for ``_hand_dinf_cpu``:
+#   in_degree  : int32   -> 4
+#   valid      : int8    -> 1
+#   is_stream  : int8    -> 1
+#   drain_elev : float64 -> 8
+#   hand_out   : float64 -> 8
+#   order_r    : int64   -> 8
+#   order_c    : int64   -> 8
+# Total ~38 bytes/pixel.  Caller-provided ``flow_dir``, ``flow_accum``,
+# and ``elevation`` arrays already live in RAM before the kernel runs
+# and are not double-counted here.
+_BYTES_PER_PIXEL = 38
+
+# GPU peak working set per pixel for ``_hand_dinf_cupy``: that path
+# copies fd/fa/elev to host via ``.get()`` then runs ``_hand_dinf_cpu``.
+# Host working set is dominated by the same 38 B/px as the numpy path;
+# on the device we keep the three input arrays (3 * float64 = 24 B/px)
+# and the output (float64 = 8 B/px) -- 32 B/px total on the GPU side,
+# but the input copies already exist before dispatch, so the marginal
+# device allocation is 8 B/px.  Use 32 B/px as a conservative budget
+# mirroring the d8 and mfd siblings.
+_GPU_BYTES_PER_PIXEL = 32
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 if CuPy / CUDA is unavailable or the query fails -- callers
+    use that as a sentinel meaning "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_memory(height, width):
+    """Raise MemoryError if the HAND kernel would exceed 50% of RAM."""
+    required = int(height) * int(width) * _BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"hand_dinf on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of working memory but only "
+            f"~{available / 1e9:.1f} GB is available.  Use a "
+            f"dask-backed DataArray for out-of-core processing."
+        )
+
+
+def _check_gpu_memory(height, width):
+    """Raise MemoryError if the CuPy kernel would exceed 50% of free GPU RAM.
+
+    Skips the check (returns silently) when ``_available_gpu_memory_bytes``
+    cannot determine the free memory -- e.g. on hosts without CUDA, where
+    the kernel will fail at the cupy.asarray boundary anyway.
+    """
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(height) * int(width) * _GPU_BYTES_PER_PIXEL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"hand_dinf on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of GPU working memory but only "
+            f"~{available / 1e9:.1f} GB is free on the active device.  "
+            f"Use a dask+cupy DataArray for out-of-core processing."
+        )
+
+
+# =====================================================================
 # CPU kernel
 # =====================================================================
 
@@ -587,6 +679,7 @@ def hand_dinf(flow_dir_dinf: xr.DataArray,
     el_data = elevation.data
 
     if isinstance(fd_data, np.ndarray):
+        _check_memory(*fd_data.shape)
         fd = fd_data.astype(np.float64)
         fa = np.asarray(fa_data, dtype=np.float64)
         el = np.asarray(el_data, dtype=np.float64)
@@ -594,6 +687,8 @@ def hand_dinf(flow_dir_dinf: xr.DataArray,
         out = _hand_dinf_cpu(fd, fa, el, H, W, float(threshold))
 
     elif has_cuda_and_cupy() and is_cupy_array(fd_data):
+        _check_gpu_memory(*fd_data.shape)
+        _check_memory(*fd_data.shape)
         out = _hand_dinf_cupy(fd_data, fa_data, el_data, float(threshold))
 
     elif has_cuda_and_cupy() and is_dask_cupy(flow_dir_dinf):
