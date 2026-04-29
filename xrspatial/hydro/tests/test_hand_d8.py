@@ -260,3 +260,87 @@ class TestHandDaskCuPy:
         np.testing.assert_allclose(
             result_np.data, result_dc.data.compute().get(),
             equal_nan=True, rtol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Memory guard
+# ---------------------------------------------------------------------------
+
+class TestMemoryGuard:
+    """Memory guard on the eager numpy / cupy backends."""
+
+    def test_numpy_huge_raster_raises(self):
+        """Numpy backend raises MemoryError when projected RAM exceeds budget."""
+        from unittest.mock import patch
+
+        fd = np.zeros((4, 4), dtype=np.float64)
+        fa = np.zeros((4, 4), dtype=np.float64)
+        el = np.zeros((4, 4), dtype=np.float64)
+        fd_r, fa_r, el_r = _make_hand_rasters(fd, fa, el, backend='numpy')
+
+        with patch(
+            "xrspatial.hydro.hand_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                hand(fd_r, fa_r, el_r, threshold=1)
+
+    def test_numpy_normal_input_succeeds(self):
+        """Normal-size raster passes the guard with real memory."""
+        fd = np.zeros((10, 10), dtype=np.float64)
+        fa = np.zeros((10, 10), dtype=np.float64)
+        el = np.zeros((10, 10), dtype=np.float64)
+        fd_r, fa_r, el_r = _make_hand_rasters(fd, fa, el, backend='numpy')
+        result = hand(fd_r, fa_r, el_r, threshold=1)
+        assert result.shape == (10, 10)
+
+    @dask_array_available
+    def test_dask_path_skips_guard(self):
+        """Dask backend bypasses the guard -- per-tile allocations are bounded."""
+        from unittest.mock import patch
+
+        fd = np.zeros((6, 6), dtype=np.float64)
+        fa = np.zeros((6, 6), dtype=np.float64)
+        el = np.zeros((6, 6), dtype=np.float64)
+        fd_r, fa_r, el_r = _make_hand_rasters(
+            fd, fa, el, backend='dask', chunks=(3, 3))
+
+        with patch(
+            "xrspatial.hydro.hand_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            result = hand(fd_r, fa_r, el_r, threshold=1)
+            _ = result.data[:3, :3].compute()
+
+    def test_error_message_mentions_dimensions(self):
+        """The error message should mention the grid dimensions and dask."""
+        from unittest.mock import patch
+
+        fd = np.zeros((7, 9), dtype=np.float64)
+        fa = np.zeros((7, 9), dtype=np.float64)
+        el = np.zeros((7, 9), dtype=np.float64)
+        fd_r, fa_r, el_r = _make_hand_rasters(fd, fa, el, backend='numpy')
+
+        with patch(
+            "xrspatial.hydro.hand_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match=r"7x9.*dask"):
+                hand(fd_r, fa_r, el_r, threshold=1)
+
+    @cuda_and_cupy_available
+    def test_cupy_huge_raster_raises(self):
+        """CuPy backend raises MemoryError when projected GPU RAM exceeds budget."""
+        from unittest.mock import patch
+
+        fd = np.zeros((4, 4), dtype=np.float64)
+        fa = np.zeros((4, 4), dtype=np.float64)
+        el = np.zeros((4, 4), dtype=np.float64)
+        fd_r, fa_r, el_r = _make_hand_rasters(fd, fa, el, backend='cupy')
+
+        with patch(
+            "xrspatial.hydro.hand_d8._available_gpu_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="GPU working memory"):
+                hand(fd_r, fa_r, el_r, threshold=1)
