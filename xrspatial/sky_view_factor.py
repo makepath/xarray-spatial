@@ -50,6 +50,83 @@ from xrspatial.utils import (
 
 
 # ---------------------------------------------------------------------------
+# Memory guards
+# ---------------------------------------------------------------------------
+# Peak working set per pixel:
+#   float64 input cast    8 bytes
+#   float64 output array  8 bytes
+# Total ~16 bytes/pixel.  Same budget pattern as resample / kde / sieve.
+_BYTES_PER_PIXEL = 16
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open("/proc/meminfo", "r") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024**3
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 when CuPy / CUDA is unavailable or the query fails.
+    Callers treat that as "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_memory(rows, cols):
+    """Raise MemoryError if the eager numpy pass would exceed 50% of RAM."""
+    required = int(rows) * int(cols) * _BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"sky_view_factor() on a {rows}x{cols} raster needs "
+            f"~{required / 1e9:.1f} GB of working memory but only "
+            f"~{available / 1e9:.1f} GB is available.  Use a dask-backed "
+            f"DataArray for out-of-core processing or downsample the input."
+        )
+
+
+def _check_gpu_memory(rows, cols):
+    """Raise MemoryError when the cupy allocation would not fit.
+
+    Checks host memory first because the input may already be staged on
+    the host before transfer.  Skips silently when the GPU query fails.
+    """
+    _check_memory(rows, cols)
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(rows) * int(cols) * _BYTES_PER_PIXEL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"sky_view_factor() on a {rows}x{cols} cupy raster needs "
+            f"~{required / 1e9:.1f} GB of GPU memory but only "
+            f"~{available / 1e9:.1f} GB is free on the active device.  "
+            f"Use a dask+cupy DataArray for out-of-core processing or "
+            f"downsample the input."
+        )
+
+
+# ---------------------------------------------------------------------------
 # CPU kernel
 # ---------------------------------------------------------------------------
 
@@ -143,11 +220,13 @@ def _svf_gpu(data, out, max_radius, n_directions):
 # ---------------------------------------------------------------------------
 
 def _run_numpy(data, max_radius, n_directions):
+    _check_memory(data.shape[0], data.shape[1])
     data = data.astype(np.float64)
     return _svf_cpu(data, max_radius, n_directions)
 
 
 def _run_cupy(data, max_radius, n_directions):
+    _check_gpu_memory(data.shape[0], data.shape[1])
     data = data.astype(cupy.float64)
     out = cupy.full(data.shape, cupy.nan, dtype=cupy.float64)
     griddim, blockdim = cuda_args(data.shape)
