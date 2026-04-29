@@ -40,6 +40,97 @@ _DX = np.array([1, 1, 0, -1, -1, -1, 0, 1], dtype=np.int64)
 
 
 # =====================================================================
+# Memory guards
+# =====================================================================
+#
+# CPU peak working set per pixel for ``_flow_length_mfd_*_cpu``:
+#   in_degree  : int32   -> 4
+#   valid      : int8    -> 1
+#   flow_len   : float64 -> 8
+#   order_r    : int64   -> 8
+#   order_c    : int64   -> 8
+# Subtotal: 29 B/px kernel locals.
+#
+# The public numpy dispatch also runs ``frac = data.astype(np.float64)``
+# before the kernel, an explicit 64 B/px copy of the ``(8, H, W)`` input
+# fractions array.  That copy lives on top of the kernel locals at peak
+# and is the dominant cost.  Total numpy peak: 29 + 64 = 93 B/px.
+_BYTES_PER_PIXEL = 93
+
+# GPU peak working set per pixel for ``_flow_length_mfd_cupy``: that
+# path copies the (8, H, W) fractions to host via ``.get().astype()``
+# (64 B/px host) and runs the CPU kernel (29 B/px host) before
+# converting the float64 output back to device via ``cp.asarray``.
+# Device-side residency at peak is the input float64 (64 B/px) plus the
+# output float64 (8 B/px).  Use 100 B/px as a conservative GPU budget.
+_GPU_BYTES_PER_PIXEL = 100
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 if CuPy / CUDA is unavailable or the query fails -- callers
+    use that as a sentinel meaning "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_memory(height, width):
+    """Raise MemoryError if the kernel would exceed 50% of available RAM."""
+    required = int(height) * int(width) * _BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"flow_length_mfd on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of working memory but only "
+            f"~{available / 1e9:.1f} GB is available.  Use a "
+            f"dask-backed DataArray for out-of-core processing."
+        )
+
+
+def _check_gpu_memory(height, width):
+    """Raise MemoryError if the CuPy kernel would exceed 50% of free GPU RAM.
+
+    Skips the check (returns silently) when ``_available_gpu_memory_bytes``
+    cannot determine the free memory -- e.g. on hosts without CUDA, where
+    the kernel will fail at the cupy.asarray boundary anyway.
+    """
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(height) * int(width) * _GPU_BYTES_PER_PIXEL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"flow_length_mfd on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of GPU working memory but only "
+            f"~{available / 1e9:.1f} GB is free on the active device.  "
+            f"Use a dask+cupy DataArray for out-of-core processing."
+        )
+
+
+# =====================================================================
 # Step-distance helper
 # =====================================================================
 
@@ -940,6 +1031,7 @@ def flow_length_mfd(flow_dir_mfd: xr.DataArray,
     cellsize_y = abs(cellsize_y)
 
     if isinstance(data, np.ndarray):
+        _check_memory(data.shape[1], data.shape[2])
         frac = data.astype(np.float64)
         _, H, W = frac.shape
         if direction == 'downstream':
@@ -950,6 +1042,8 @@ def flow_length_mfd(flow_dir_mfd: xr.DataArray,
                 frac, H, W, cellsize_x, cellsize_y)
 
     elif has_cuda_and_cupy() and is_cupy_array(data):
+        _check_gpu_memory(data.shape[1], data.shape[2])
+        _check_memory(data.shape[1], data.shape[2])
         out = _flow_length_mfd_cupy(data, direction, cellsize_x, cellsize_y)
 
     elif has_cuda_and_cupy() and is_dask_cupy(flow_dir_mfd):
