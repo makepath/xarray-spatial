@@ -201,3 +201,83 @@ def test_dask_matches_numpy():
     np.testing.assert_array_equal(
         np.nan_to_num(np_result.values, nan=-999),
         np.nan_to_num(dask_result.values, nan=-999))
+
+
+# ====================================================================
+# Memory guard tests
+# ====================================================================
+
+class TestMemoryGuard:
+    """Memory guard on the eager numpy / cupy backends."""
+
+    def test_numpy_huge_raster_raises(self):
+        """Numpy backend raises MemoryError when projected RAM exceeds budget."""
+        from unittest.mock import patch
+
+        angles = np.zeros((4, 4), dtype=np.float64)
+        accum = np.ones((4, 4), dtype=np.float64)
+
+        with patch(
+            "xrspatial.hydro.stream_order_dinf._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                _call(angles, accum, threshold=1)
+
+    def test_numpy_normal_input_succeeds(self):
+        """Normal-size raster passes the guard with real memory."""
+        angles = np.array([[ANGLE_E, ANGLE_E, PIT]], dtype=np.float64)
+        accum = np.array([[1.0, 2.0, 3.0]], dtype=np.float64)
+        result = _call(angles, accum, threshold=1)
+        assert result.shape == (1, 3)
+
+    @dask_array_available
+    def test_dask_path_skips_guard(self):
+        """Dask backend bypasses the guard -- per-tile allocations are bounded."""
+        from unittest.mock import patch
+        import dask.array as da
+
+        angles = np.zeros((6, 6), dtype=np.float64)
+        accum = np.ones((6, 6), dtype=np.float64)
+        a_dask = xr.DataArray(
+            da.from_array(angles, chunks=(3, 3)), dims=['y', 'x'])
+        fa_dask = xr.DataArray(
+            da.from_array(accum, chunks=(3, 3)), dims=['y', 'x'])
+
+        with patch(
+            "xrspatial.hydro.stream_order_dinf._available_memory_bytes",
+            return_value=1,
+        ):
+            result = stream_order_dinf(a_dask, fa_dask, threshold=1)
+            _ = result.data[:3, :3].compute()
+
+    def test_error_message_mentions_dimensions(self):
+        """The error message should mention the grid dimensions and dask."""
+        from unittest.mock import patch
+
+        angles = np.zeros((7, 9), dtype=np.float64)
+        accum = np.ones((7, 9), dtype=np.float64)
+
+        with patch(
+            "xrspatial.hydro.stream_order_dinf._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match=r"7x9.*dask"):
+                _call(angles, accum, threshold=1)
+
+    @cuda_and_cupy_available
+    def test_cupy_huge_raster_raises(self):
+        """CuPy backend raises MemoryError when projected GPU RAM exceeds budget."""
+        from unittest.mock import patch
+
+        angles = np.zeros((4, 4), dtype=np.float64)
+        accum = np.ones((4, 4), dtype=np.float64)
+        cp_a = create_test_raster(angles, backend='cupy')
+        cp_fa = create_test_raster(accum, backend='cupy')
+
+        with patch(
+            "xrspatial.hydro.stream_order_dinf._available_gpu_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="GPU working memory"):
+                stream_order_dinf(cp_a, cp_fa, threshold=1)
