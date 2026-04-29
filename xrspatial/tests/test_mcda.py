@@ -758,6 +758,40 @@ class TestSensitivityMonteCarlo:
                 criteria_dataset, weights_3, combine_method="bad",
             )
 
+    def test_monte_carlo_n_samples_zero_raises(
+        self, criteria_dataset, weights_3,
+    ):
+        # Issue #1371: n_samples=0 used to silently divide by zero and
+        # return a raster of zeros. Should raise ValueError now.
+        with pytest.raises(ValueError, match="n_samples"):
+            sensitivity(
+                criteria_dataset, weights_3,
+                method="monte_carlo", n_samples=0,
+            )
+
+    def test_monte_carlo_n_samples_negative_raises(
+        self, criteria_dataset, weights_3,
+    ):
+        # Issue #1371: range(-1) is empty, so negative values used to
+        # silently return zeros too.
+        with pytest.raises(ValueError, match="n_samples"):
+            sensitivity(
+                criteria_dataset, weights_3,
+                method="monte_carlo", n_samples=-1,
+            )
+
+    def test_monte_carlo_n_samples_one_succeeds(
+        self, criteria_dataset, weights_3,
+    ):
+        # n_samples=1 is the meaningful minimum: variance is zero
+        # everywhere, but the call should still succeed.
+        result = sensitivity(
+            criteria_dataset, weights_3,
+            method="monte_carlo", n_samples=1,
+        )
+        assert result is not None
+        assert not np.any(np.isnan(result.values))
+
 
 @pytest.mark.skipif(not HAS_DASK, reason="Requires dask")
 class TestSensitivityDask:
