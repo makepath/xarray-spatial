@@ -2,6 +2,58 @@
 -----------
 
 
+### Version 0.9.8 - 2026-04-29
+
+#### Bug fixes and improvements
+- Guard stream_order_dinf() against unbounded memory allocations (#1350) (#1354)
+- Guard basin_d8() against unbounded memory allocations (#1357) (#1359)
+- Guard flow_length_dinf() against unbounded memory allocations (#1355) (#1358)
+- Guard flow_length_mfd() against unbounded memory allocations (#1351) (#1353)
+- Guard stream_order_mfd() against unbounded memory allocations (#1349) (#1352)
+- Guard watershed_dinf() against unbounded memory allocations (#1345) (#1348)
+- Guard stream_link_dinf() against unbounded memory allocations (#1343) (#1347)
+- Guard hand_dinf() against unbounded memory allocations (#1344) (#1346)
+- Guard stream_link_mfd() against unbounded memory allocations (#1337) (#1341)
+- Guard flow_length_d8() against unbounded memory allocations (#1327) (#1332)
+- Guard hand_d8() against unbounded memory allocations (#1323) (#1326)
+- Guard hand_mfd() against unbounded memory allocations (#1338) (#1340)
+- Guard watershed_mfd() against unbounded memory allocations (#1339) (#1342)
+- Guard watershed_d8() against unbounded memory allocations (#1329) (#1330)
+- Guard fill_d8() against unbounded eager allocations (#1334) (#1336)
+- Guard stream_link_d8() against unbounded memory allocations (#1333) (#1335)
+- Guard stream_order_d8() against unbounded memory allocations (#1328) (#1331)
+- Guard flow_accumulation_dinf() against unbounded memory allocations (#1322) (#1325)
+- Guard flow_accumulation_mfd() against unbounded memory allocations (#1321) (#1324)
+- Guard gpu_rtx hillshade and viewshed against unbounded GPU allocations (#1308) (#1310)
+- Guard min_observable_height() against unbounded boolean stack (#1317) (#1320)
+- Guard flow_accumulation() against unbounded eager allocations (#1318) (#1319)
+- Reject NaN/Inf weights in mcda combine and ahp_weights (#1311) (#1312)
+- Support TIFF predictor=3 on the CPU write path (#1313) (#1314)
+- Guard kriging() against unbounded N x N and grid x N allocations (#1307) (#1309)
+- Guard surface_distance() against unbounded eager allocations (#1303) (#1305)
+- Guard landforms() against unbounded kernel allocations (#1302) (#1304)
+- Enforce equal band shapes in true_color() (#1293) (#1301)
+- Guard sky_view_factor() against unbounded eager allocations (#1299) (#1300)
+- Guard resample() against unbounded output allocations (#1295) (#1297)
+- Guard sieve() numpy and cupy backends against oversized rasters (#1296) (#1298)
+- Guard kde and line_density against oversize output grids (#1287) (#1289)
+- Reject oversize focal kernels before allocation (#1284) (#1286)
+- Guard mahalanobis allocations against oversized rasters (#1288) (#1290)
+- Guard true_color() eager backends against oversized rasters (#1291) (#1292)
+- Add memory guard to geodesic slope/aspect (#1283) (#1285)
+- Validate dt against CFL stability bound in diffuse() (#1281) (#1282)
+- Cap erode() parameters and run memory guard on every backend (#1275) (#1277)
+- Validate cellsize in curvature() (#1270) (#1272)
+- Add memory guard to emerging_hotspots public API (#1274) (#1276)
+- Validate input rasters in edge_detection public API (#1271) (#1273)
+- Guard diffuse() against unbounded allocations and steps loop (#1267) (#1268)
+- Add memory guards to dasymetric public API (#1261) (#1263)
+- Guard cost_distance CuPy backend against oversize rasters (#1262) (#1264)
+- Guard morphology kernel allocations against oversized kernels (#1256) (#1258)
+- Cap window_size and distance in glcm_texture (#1257) (#1259)
+- Guard cost_distance numpy path against oversize rasters (#1252) (#1253)
+
+
 ### Version 0.9.7 - 2026-04-23
 
 #### New features
