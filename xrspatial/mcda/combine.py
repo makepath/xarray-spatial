@@ -19,6 +19,30 @@ def _validate_criteria(criteria: xr.Dataset) -> None:
         raise ValueError("criteria Dataset has no variables")
 
 
+def _check_finite_weights(weights: dict[str, float], label: str) -> None:
+    """Reject weight dicts that contain NaN or infinite values.
+
+    Without this guard, a single NaN weight slips past the sum-to-1 check
+    (``abs(NaN - 1.0) > 0.01`` is False) and propagates through every
+    pixel, returning an all-NaN raster with no error.
+    """
+    bad = []
+    for name, value in weights.items():
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"{label}[{name!r}] must be a real number, got {value!r}"
+            )
+        if not np.isfinite(v):
+            bad.append((name, v))
+    if bad:
+        details = ", ".join(f"{n!r}={v}" for n, v in bad)
+        raise ValueError(
+            f"{label} must be finite; got non-finite value(s): {details}"
+        )
+
+
 def _validate_weights(
     weights: dict[str, float], criteria: xr.Dataset
 ) -> None:
@@ -32,6 +56,7 @@ def _validate_weights(
         raise ValueError(
             f"Weights contain keys not in criteria Dataset: {extra}"
         )
+    _check_finite_weights(weights, "weights")
     total = sum(weights.values())
     if abs(total - 1.0) > 0.01:
         raise ValueError(
@@ -150,6 +175,24 @@ def owa(
         raise ValueError(
             f"order_weights length ({len(order_weights)}) must match "
             f"number of criteria ({n})"
+        )
+    # Reject NaN/Inf entries before the sum check, since
+    # ``abs(NaN - 1.0) > 0.01`` is False and would let the bad value through.
+    bad_ow = []
+    for i, value in enumerate(order_weights):
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"order_weights[{i}] must be a real number, got {value!r}"
+            )
+        if not np.isfinite(v):
+            bad_ow.append((i, v))
+    if bad_ow:
+        details = ", ".join(f"[{i}]={v}" for i, v in bad_ow)
+        raise ValueError(
+            f"order_weights must be finite; got non-finite value(s): "
+            f"{details}"
         )
     ow_sum = sum(order_weights)
     if abs(ow_sum - 1.0) > 0.01:

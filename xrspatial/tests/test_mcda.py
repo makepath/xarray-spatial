@@ -1710,3 +1710,121 @@ class TestEndToEnd:
         valid = suitability.values[~water.values & np.isfinite(suitability.values)]
         assert valid.min() >= 0.0
         assert valid.max() <= 1.0
+
+
+# ===========================================================================
+# NaN/Inf weight rejection (#1311)
+# ===========================================================================
+
+class TestNonFiniteWeights1311:
+    """Reject NaN and Inf weights before they propagate to all-NaN output.
+
+    Without these guards, ``abs(NaN - 1.0) > 0.01`` is False, the
+    sum-to-1 check passes, and the bad value reaches every pixel.
+    """
+
+    def test_wlc_rejects_nan_weight(self, criteria_dataset):
+        bad = {"slope": 0.4, "distance": 0.35, "ndvi": float("nan")}
+        with pytest.raises(ValueError, match="finite"):
+            wlc(criteria_dataset, bad)
+
+    def test_wlc_rejects_inf_weight(self, criteria_dataset):
+        bad = {"slope": 0.4, "distance": 0.35, "ndvi": float("inf")}
+        with pytest.raises(ValueError, match="finite"):
+            wlc(criteria_dataset, bad)
+
+    def test_wlc_rejects_negative_inf_weight(self, criteria_dataset):
+        bad = {"slope": 0.4, "distance": 0.35, "ndvi": float("-inf")}
+        with pytest.raises(ValueError, match="finite"):
+            wlc(criteria_dataset, bad)
+
+    def test_wlc_error_names_offending_criterion(self, criteria_dataset):
+        bad = {"slope": 0.4, "distance": 0.35, "ndvi": float("nan")}
+        with pytest.raises(ValueError, match="ndvi"):
+            wlc(criteria_dataset, bad)
+
+    def test_wpm_rejects_nan_weight(self, criteria_dataset):
+        bad = {"slope": 0.4, "distance": 0.35, "ndvi": float("nan")}
+        with pytest.raises(ValueError, match="finite"):
+            wpm(criteria_dataset, bad)
+
+    def test_wpm_rejects_inf_weight(self, criteria_dataset):
+        bad = {"slope": 0.4, "distance": 0.35, "ndvi": float("inf")}
+        with pytest.raises(ValueError, match="finite"):
+            wpm(criteria_dataset, bad)
+
+    def test_owa_rejects_nan_criterion_weight(self, criteria_dataset):
+        bad = {"slope": 0.4, "distance": 0.35, "ndvi": float("nan")}
+        with pytest.raises(ValueError, match="finite"):
+            owa(criteria_dataset, bad, [0.5, 0.3, 0.2])
+
+    def test_owa_rejects_nan_order_weight(self, criteria_dataset, weights_3):
+        bad_order = [0.5, float("nan"), 0.5]
+        with pytest.raises(ValueError, match="finite"):
+            owa(criteria_dataset, weights_3, bad_order)
+
+    def test_owa_rejects_inf_order_weight(self, criteria_dataset, weights_3):
+        bad_order = [0.5, float("inf"), 0.5]
+        with pytest.raises(ValueError, match="finite"):
+            owa(criteria_dataset, weights_3, bad_order)
+
+    def test_owa_order_weight_error_names_position(
+        self, criteria_dataset, weights_3,
+    ):
+        bad_order = [0.5, float("nan"), 0.5]
+        with pytest.raises(ValueError, match=r"\[1\]"):
+            owa(criteria_dataset, weights_3, bad_order)
+
+    def test_ahp_rejects_nan_comparison(self):
+        with pytest.raises(ValueError, match="finite"):
+            ahp_weights(
+                ["a", "b", "c"],
+                {("a", "b"): float("nan"), ("a", "c"): 2.0, ("b", "c"): 3.0},
+            )
+
+    def test_ahp_rejects_inf_comparison(self):
+        with pytest.raises(ValueError, match="finite"):
+            ahp_weights(
+                ["a", "b", "c"],
+                {("a", "b"): float("inf"), ("a", "c"): 2.0, ("b", "c"): 3.0},
+            )
+
+    def test_ahp_rejects_negative_inf_comparison(self):
+        # -inf is non-finite; the finite check fires before <= 0.
+        with pytest.raises(ValueError, match="finite"):
+            ahp_weights(
+                ["a", "b", "c"],
+                {("a", "b"): float("-inf"), ("a", "c"): 2.0,
+                 ("b", "c"): 3.0},
+            )
+
+    def test_ahp_still_rejects_zero(self):
+        # Pre-existing positivity guard must still fire.
+        with pytest.raises(ValueError, match="positive"):
+            ahp_weights(
+                ["a", "b", "c"],
+                {("a", "b"): 0.0, ("a", "c"): 2.0, ("b", "c"): 3.0},
+            )
+
+    def test_ahp_still_rejects_negative(self):
+        with pytest.raises(ValueError, match="positive"):
+            ahp_weights(
+                ["a", "b", "c"],
+                {("a", "b"): -1.0, ("a", "c"): 2.0, ("b", "c"): 3.0},
+            )
+
+    def test_wlc_valid_weights_still_work(self, criteria_dataset, weights_3):
+        # Sanity: the new check does not break the happy path.
+        result = wlc(criteria_dataset, weights_3)
+        assert np.all(np.isfinite(result.values))
+
+    def test_owa_valid_weights_still_work(self, criteria_dataset, weights_3):
+        result = owa(criteria_dataset, weights_3, [0.5, 0.3, 0.2])
+        assert np.all(np.isfinite(result.values))
+
+    def test_ahp_valid_comparisons_still_work(self):
+        weights, _ = ahp_weights(
+            ["a", "b", "c"],
+            {("a", "b"): 2.0, ("a", "c"): 4.0, ("b", "c"): 2.0},
+        )
+        assert all(np.isfinite(v) for v in weights.values())
