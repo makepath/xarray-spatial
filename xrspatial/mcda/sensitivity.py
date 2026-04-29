@@ -34,6 +34,7 @@ def sensitivity(
         Perturbation magnitude for one-at-a-time (default 0.05).
     n_samples : int
         Number of random weight vectors for Monte Carlo (default 1000).
+        Must be >= 1 when ``method="monte_carlo"``.
     seed : int
         Random seed for Monte Carlo reproducibility.
     name : str
@@ -57,8 +58,12 @@ def sensitivity(
     if method == "one_at_a_time":
         return _oat(criteria, weights, combine_fn, delta, name)
     elif method == "monte_carlo":
+        if not isinstance(n_samples, (int, np.integer)) or n_samples < 1:
+            raise ValueError(
+                f"n_samples must be a positive integer >= 1, got {n_samples!r}"
+            )
         return _monte_carlo(
-            criteria, weights, combine_fn, n_samples, seed, name
+            criteria, weights, combine_fn, int(n_samples), seed, name
         )
     else:
         raise ValueError(
