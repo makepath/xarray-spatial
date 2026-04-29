@@ -1828,3 +1828,50 @@ class TestNonFiniteWeights1311:
             {("a", "b"): 2.0, ("a", "c"): 4.0, ("b", "c"): 2.0},
         )
         assert all(np.isfinite(v) for v in weights.values())
+
+
+# ===========================================================================
+# Memory guard for owa() (#1370)
+# ===========================================================================
+
+class TestOWAMemoryGuard:
+    """Memory guard on the eager owa() path."""
+
+    def test_oversize_raises(self, criteria_dataset, weights_3):
+        """owa raises MemoryError when the criteria stack exceeds the budget."""
+        from unittest.mock import patch
+
+        with patch(
+            "xrspatial.mcda.combine._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                owa(criteria_dataset, weights_3, [0.5, 0.3, 0.2])
+
+    def test_normal_succeeds(self, criteria_dataset, weights_3):
+        """A normal-size dataset passes the guard with real available memory."""
+        result = owa(criteria_dataset, weights_3, [0.5, 0.3, 0.2])
+        assert result.shape == criteria_dataset["slope"].shape
+        assert np.all(np.isfinite(result.values))
+
+    def test_error_message_names_dimensions_and_count(
+        self, criteria_dataset, weights_3,
+    ):
+        """The error message identifies the criterion count and grid shape."""
+        from unittest.mock import patch
+
+        n = len(criteria_dataset.data_vars)
+        h, w = criteria_dataset["slope"].shape
+        shape_token = f"{h}x{w}"
+
+        with patch(
+            "xrspatial.mcda.combine._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError) as exc_info:
+                owa(criteria_dataset, weights_3, [0.5, 0.3, 0.2])
+
+        msg = str(exc_info.value)
+        assert f"{n} criteria" in msg
+        assert shape_token in msg
+        assert "dask" in msg
