@@ -22,6 +22,41 @@ import xarray
 from ..viewshed import viewshed, INVISIBLE
 
 
+# Bool stack uses 1 byte per cell.
+_BYTES_PER_CELL = 1
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3  # 2 GB fallback
+
+
+def _check_memory(n_steps, rows, cols):
+    """Raise MemoryError if the boolean visibility stack exceeds 50% of RAM."""
+    required = int(n_steps) * int(rows) * int(cols) * _BYTES_PER_CELL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"min_observable_height() on a {rows}x{cols} raster with "
+            f"{n_steps} height steps needs ~{required / 1e9:.1f} GB for "
+            f"the visibility stack, but only ~{available / 1e9:.1f} GB is "
+            f"available. Reduce `max_height` / `precision` ratio or use a "
+            f"smaller raster."
+        )
+
+
 def min_observable_height(
     raster: xarray.DataArray,
     x: Union[int, float],
@@ -116,6 +151,10 @@ def min_observable_height(
     if n_steps < 2:
         n_steps = 2
     heights = np.linspace(0.0, max_height, n_steps)
+
+    # ---- guard against unbounded allocation ------------------------------
+    rows, cols = raster.shape
+    _check_memory(n_steps, rows, cols)
 
     # ---- collect visibility at each height level -------------------------
     # visibility_stack[k] is True where the cell is visible at heights[k].
