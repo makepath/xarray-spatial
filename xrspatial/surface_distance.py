@@ -64,6 +64,98 @@ DISTANCE = 0
 ALLOCATION = 1
 DIRECTION = 2
 
+
+# ---------------------------------------------------------------------------
+# Memory guards
+# ---------------------------------------------------------------------------
+# Peak working set per pixel for the eager numpy backend:
+#   dist (float64)              8
+#   alloc (float64)             8
+#   src_row (int64)             8
+#   src_col (int64)             8
+#   visited (int8)              1
+#   h_keys (float64)            8
+#   h_rows (int64)              8
+#   h_cols (int64)              8
+#   output (float32)            4
+#   direction-mode temps        ~16
+# Total ~80 bytes/pixel.  A 50000x50000 raster needs ~200 GB.
+_BYTES_PER_PIXEL = 80
+
+# CuPy backend skips the explicit binary heap (parallel relaxation instead)
+# but still allocates dist, alloc, srow, scol, src cast, elev cast, mask,
+# row_idx/col_idx, output.  ~72 bytes/pixel.
+_GPU_BYTES_PER_PIXEL = 72
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open("/proc/meminfo", "r") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024**3
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 when CuPy / CUDA is unavailable or the query fails.
+    Callers treat that as "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_memory(rows, cols):
+    """Raise MemoryError if the eager numpy pass would exceed 50% of RAM."""
+    required = int(rows) * int(cols) * _BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"surface_distance() on a {rows}x{cols} raster needs "
+            f"~{required / 1e9:.1f} GB of working memory but only "
+            f"~{available / 1e9:.1f} GB is available.  Set a finite "
+            f"`max_distance=` to bound the search, or use a dask-backed "
+            f"DataArray for out-of-core processing."
+        )
+
+
+def _check_gpu_memory(rows, cols):
+    """Raise MemoryError when the cupy allocation would not fit.
+
+    Checks host memory first because the input may already be staged on
+    the host before transfer.  Skips silently when the GPU query fails.
+    """
+    _check_memory(rows, cols)
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(rows) * int(cols) * _GPU_BYTES_PER_PIXEL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"surface_distance() on a {rows}x{cols} cupy raster needs "
+            f"~{required / 1e9:.1f} GB of GPU memory but only "
+            f"~{available / 1e9:.1f} GB is free on the active device.  "
+            f"Set a finite `max_distance=` to bound the search, or use a "
+            f"dask+cupy DataArray for out-of-core processing."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Numba kernels
 # ---------------------------------------------------------------------------
@@ -360,6 +452,7 @@ def _surface_distance_numpy(source_data, elev_data, cellsize_x, cellsize_y,
                             dd_grid, use_geodesic, mode):
     """NumPy backend: run Dijkstra and extract requested output."""
     H, W = source_data.shape
+    _check_memory(H, W)
     dist, alloc, src_row, src_col = _init_arrays(H, W)
 
     _seed_sources(source_data, elev_data, target_values,
@@ -442,6 +535,7 @@ def _surface_distance_cupy(source_data, elev_data, cellsize_x, cellsize_y,
     import cupy as cp
 
     H, W = source_data.shape
+    _check_gpu_memory(H, W)
     src = source_data.astype(cp.float64)
     elev = elev_data.astype(cp.float64)
 
