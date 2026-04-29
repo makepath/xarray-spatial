@@ -181,3 +181,97 @@ def test_dask_matches_numpy():
     np.testing.assert_array_equal(
         np.nan_to_num(np_result.values, nan=-999),
         np.nan_to_num(dask_result.values, nan=-999))
+
+
+# ====================================================================
+# Memory guard tests
+# ====================================================================
+
+class TestMemoryGuard:
+    """Memory guard on the eager numpy / cupy backends."""
+
+    def test_numpy_huge_raster_raises(self):
+        """Numpy backend raises MemoryError when projected RAM exceeds budget."""
+        from unittest.mock import patch
+
+        fracs = _make_fractions({(0, 0): []}, (4, 4))
+        accum = np.ones((4, 4), dtype=np.float64)
+
+        with patch(
+            "xrspatial.hydro.stream_link_mfd._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                _call(fracs, accum, threshold=1)
+
+    def test_numpy_normal_input_succeeds(self):
+        """Normal-size raster passes the guard with real memory."""
+        fracs = _make_fractions({
+            (0, 0): [(0, 1.0)],
+            (0, 1): [(0, 1.0)],
+            (0, 2): [],
+        }, (1, 3))
+        accum = np.array([[1.0, 2.0, 3.0]], dtype=np.float64)
+        result = _call(fracs, accum, threshold=1)
+        assert result.shape == (1, 3)
+
+    @dask_array_available
+    def test_dask_path_skips_guard(self):
+        """Dask backend bypasses the guard -- per-tile allocations are bounded."""
+        from unittest.mock import patch
+        import dask.array as da
+
+        fracs = _make_fractions({(0, 0): []}, (6, 6))
+        # Replace NaN with zeros so dask path doesn't choke
+        fracs = np.nan_to_num(fracs, nan=0.0)
+        accum = np.ones((6, 6), dtype=np.float64)
+
+        frac_dask = xr.DataArray(
+            da.from_array(fracs, chunks=(8, 3, 3)),
+            dims=['neighbor', 'y', 'x'])
+        fa_dask = xr.DataArray(
+            da.from_array(accum, chunks=(3, 3)),
+            dims=['y', 'x'])
+
+        with patch(
+            "xrspatial.hydro.stream_link_mfd._available_memory_bytes",
+            return_value=1,
+        ):
+            # Dask path must not trigger the guard at dispatch time
+            result = stream_link_mfd(frac_dask, fa_dask, threshold=1)
+            # We don't need to fully compute -- just assert no MemoryError
+            assert result is not None
+
+    def test_error_message_mentions_dimensions(self):
+        """The error message should mention the grid dimensions and dask."""
+        from unittest.mock import patch
+
+        fracs = _make_fractions({(0, 0): []}, (7, 9))
+        accum = np.ones((7, 9), dtype=np.float64)
+
+        with patch(
+            "xrspatial.hydro.stream_link_mfd._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match=r"7x9.*dask"):
+                _call(fracs, accum, threshold=1)
+
+    @cuda_and_cupy_available
+    def test_cupy_huge_raster_raises(self):
+        """CuPy backend raises MemoryError when projected GPU RAM exceeds budget."""
+        from unittest.mock import patch
+        import cupy as cp
+
+        fracs = _make_fractions({(0, 0): []}, (4, 4))
+        accum = np.ones((4, 4), dtype=np.float64)
+
+        frac_cp = xr.DataArray(
+            cp.asarray(fracs), dims=['neighbor', 'y', 'x'])
+        fa_cp = xr.DataArray(cp.asarray(accum), dims=['y', 'x'])
+
+        with patch(
+            "xrspatial.hydro.stream_link_mfd._available_gpu_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="GPU working memory"):
+                stream_link_mfd(frac_cp, fa_cp, threshold=1)
