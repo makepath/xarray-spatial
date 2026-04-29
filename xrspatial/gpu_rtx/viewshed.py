@@ -11,6 +11,7 @@ import xarray as xr
 from rtxpy import RTX
 
 from ..utils import calc_cuda_dims
+from ._memory import _check_gpu_memory
 from .cuda_utils import add, diff, dot, float3, invert, make_float3, mul
 from .mesh_utils import create_triangulation
 
@@ -275,6 +276,9 @@ def viewshed_gpu(
 ) -> xr.DataArray:
     if not isinstance(raster.data, cupy.ndarray):
         raise TypeError("raster.data must be a cupy array")
+
+    H, W = raster.shape
+    _check_gpu_memory("viewshed_gpu", H, W)
 
     optix = RTX()
     scale = create_triangulation(raster, optix)
