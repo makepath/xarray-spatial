@@ -42,6 +42,90 @@ _DY_NP = np.array([0, 1, 1, 1, 0, -1, -1, -1], dtype=np.int64)
 _DX_NP = np.array([1, 1, 0, -1, -1, -1, 0, 1], dtype=np.int64)
 
 
+# =====================================================================
+# Memory guards
+# =====================================================================
+#
+# CPU peak working set per pixel for ``flow_path_mfd`` numpy dispatch:
+#   data.astype(float64) copy of (8, H, W) fractions -> 64
+#   np.asarray(sp_data, dtype=float64) copy          -> 8
+#   out (H, W) float64                               -> 8
+# Total ~80 B/px.
+_BYTES_PER_PIXEL = 80
+
+# GPU peak working set per pixel for ``_flow_path_mfd_cupy``:
+#   host fr_np = data.get()       -> 64
+#   host sp_np                    -> 8
+#   host out (H, W) float64       -> 8
+#   device output                 -> 8
+# Total ~88 B/px (conservative, treating host residency as the bound).
+_GPU_BYTES_PER_PIXEL = 88
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 if CuPy / CUDA is unavailable or the query fails -- callers
+    use that as a sentinel meaning "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_memory(height, width):
+    """Raise MemoryError if the kernel would exceed 50% of available RAM."""
+    required = int(height) * int(width) * _BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"flow_path_mfd on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of working memory but only "
+            f"~{available / 1e9:.1f} GB is available.  Use a "
+            f"dask-backed DataArray for out-of-core processing."
+        )
+
+
+def _check_gpu_memory(height, width):
+    """Raise MemoryError if the CuPy kernel would exceed 50% of free GPU RAM.
+
+    Skips the check (returns silently) when ``_available_gpu_memory_bytes``
+    cannot determine the free memory -- e.g. on hosts without CUDA, where
+    the kernel will fail at the cupy.asarray boundary anyway.
+    """
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(height) * int(width) * _GPU_BYTES_PER_PIXEL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"flow_path_mfd on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of GPU working memory but only "
+            f"~{available / 1e9:.1f} GB is free on the active device.  "
+            f"Use a dask+cupy DataArray for out-of-core processing."
+        )
+
+
 def _dominant_neighbor_py(fractions, r, c):
     """Pure-Python: find dominant neighbor direction and offset.
 
@@ -345,11 +429,14 @@ def flow_path_mfd(flow_dir_mfd: xr.DataArray,
     _, H, W = data.shape
 
     if isinstance(data, np.ndarray):
+        _check_memory(H, W)
         fr = data.astype(np.float64)
         sp = np.asarray(sp_data, dtype=np.float64)
         out = _flow_path_mfd_cpu(fr, sp, H, W)
 
     elif has_cuda_and_cupy() and is_cupy_array(data):
+        _check_gpu_memory(H, W)
+        _check_memory(H, W)
         out = _flow_path_mfd_cupy(data, sp_data)
 
     elif has_cuda_and_cupy() and is_dask_cupy(flow_dir_mfd):
