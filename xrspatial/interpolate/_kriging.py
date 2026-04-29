@@ -336,6 +336,68 @@ def _kriging_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
 # Public API
 # ---------------------------------------------------------------------------
 
+def _check_kriging_memory(n_points, grid_pixels):
+    """Raise MemoryError if kriging() would exceed available memory.
+
+    Three allocations dominate kriging memory use:
+
+    * Experimental variogram pair arrays.  ``np.triu_indices`` produces
+      two int64 index arrays of length ``N*(N-1)/2``, plus float64
+      ``dists`` and ``semivar`` of the same length.  Roughly
+      ``4 * N*(N-1)/2 * 8`` bytes.
+    * Kriging matrix.  ``K`` and ``K_inv`` are both ``(N+1, N+1)``
+      float64, plus an N x N intermediate distance matrix.  About
+      ``3 * (N+1)**2 * 8`` bytes.
+    * Prediction ``k0`` matrix of shape ``(grid_pixels, N+1)`` float64,
+      plus matching ``dists`` and ``w`` of similar size.  About
+      ``3 * grid_pixels * (N+1) * 8`` bytes.
+
+    Worst case is the maximum of these three.  The variogram and matrix
+    builds run sequentially, and ``k0`` is built later, so peak usage
+    is bounded by the largest single allocation.
+    """
+    n = int(n_points)
+    g = int(grid_pixels)
+
+    pair_bytes = 4 * (n * (n - 1) // 2) * 8 if n > 1 else 0
+    matrix_bytes = 3 * (n + 1) * (n + 1) * 8
+    k0_bytes = 3 * g * (n + 1) * 8
+
+    estimate = max(pair_bytes, matrix_bytes, k0_bytes)
+
+    try:
+        from xrspatial.zonal import _available_memory_bytes
+        avail = _available_memory_bytes()
+    except ImportError:
+        avail = 2 * 1024 ** 3
+
+    if estimate > 0.8 * avail:
+        if estimate == k0_bytes:
+            culprit = (
+                f"prediction matrix of shape ({g}, {n + 1}) "
+                f"(grid_pixels x N+1)"
+            )
+            advice = (
+                "Reduce the template grid size or the number of input "
+                "points, or use a chunked dask-backed template."
+            )
+        elif estimate == matrix_bytes:
+            culprit = f"kriging matrix of shape ({n + 1}, {n + 1})"
+            advice = "Reduce the number of input points."
+        else:
+            culprit = (
+                f"variogram pair arrays of length {n * (n - 1) // 2} "
+                f"(N*(N-1)/2 for N={n})"
+            )
+            advice = "Reduce the number of input points."
+
+        raise MemoryError(
+            f"kriging() needs ~{estimate / 1e9:.1f} GB to allocate the "
+            f"{culprit}, but only ~{avail / 1e9:.1f} GB is available. "
+            f"{advice}"
+        )
+
+
 def kriging(x, y, z, template, variogram_model='spherical', nlags=15,
             return_variance=False, name='kriging'):
     """Ordinary Kriging interpolation.
@@ -361,6 +423,13 @@ def kriging(x, y, z, template, variogram_model='spherical', nlags=15,
     xr.DataArray or tuple of xr.DataArray
         Prediction raster, or ``(prediction, variance)`` if
         *return_variance* is True.
+
+    Raises
+    ------
+    MemoryError
+        If the worst-case allocation (variogram pair arrays, kriging
+        matrix, or prediction matrix) would exceed 80% of available
+        memory.
     """
     _validate_raster(template, func_name='kriging', name='template')
     x_arr, y_arr, z_arr = validate_points(x, y, z, func_name='kriging')
@@ -373,6 +442,11 @@ def kriging(x, y, z, template, variogram_model='spherical', nlags=15,
 
     _validate_scalar(nlags, func_name='kriging', name='nlags',
                      dtype=int, min_val=1)
+
+    # Memory guard.  Runs after input validation so we know N and the
+    # template grid size, but before any large allocation.
+    grid_pixels = int(np.prod(template.shape))
+    _check_kriging_memory(len(x_arr), grid_pixels)
 
     # Experimental variogram
     lag_h, lag_sv = _experimental_variogram(x_arr, y_arr, z_arr, nlags)
