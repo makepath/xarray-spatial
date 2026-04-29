@@ -1,8 +1,17 @@
+from unittest import mock
+
 import numpy as np
 import pytest
 import xarray as xa
 
+import sys
+
 from xrspatial.experimental import min_observable_height
+
+# The package __init__ re-exports the function under the same name as the
+# submodule, so we look up the underlying module via sys.modules to patch
+# its memory-probe helper.
+moh_module = sys.modules['xrspatial.experimental.min_observable_height']
 
 
 def _make_raster(data, xs=None, ys=None):
@@ -184,6 +193,53 @@ def test_finer_precision():
     # (finer search can find an equal or lower threshold).
     mask = np.isfinite(fine.values) & np.isfinite(coarse.values)
     assert np.all(fine.values[mask] <= coarse.values[mask] + 1e-10)
+
+
+# ---- accessor integration ------------------------------------------------
+
+# ---- memory guard --------------------------------------------------------
+
+def test_memory_guard_rejects_oversized_stack():
+    """A tiny memory budget should make the guard fire before allocation."""
+    r = _make_raster(np.zeros((100, 100)))
+    # 1 byte of available memory: any stack > 0.5 bytes must error out.
+    with mock.patch.object(
+        moh_module, '_available_memory_bytes', return_value=1
+    ):
+        with pytest.raises(MemoryError, match="visibility stack"):
+            min_observable_height(r, x=50.0, y=50.0,
+                                  max_height=20.0, precision=1.0)
+
+
+def test_memory_guard_message_mentions_dimensions():
+    r = _make_raster(np.zeros((50, 60)))
+    with mock.patch.object(
+        moh_module, '_available_memory_bytes', return_value=1
+    ):
+        with pytest.raises(MemoryError, match=r"50x60"):
+            min_observable_height(r, x=10.0, y=10.0,
+                                  max_height=10.0, precision=1.0)
+
+
+def test_memory_guard_passes_with_ample_memory():
+    """With enough memory the guard does not fire and the call succeeds."""
+    r = _make_raster(np.zeros((4, 4)))
+    with mock.patch.object(
+        moh_module, '_available_memory_bytes', return_value=10 * 1024 ** 3
+    ):
+        result = min_observable_height(r, x=1.0, y=1.0,
+                                       max_height=8.0, precision=1.0)
+    assert result.shape == r.shape
+
+
+def test_memory_guard_runs_after_param_validation():
+    """ValueError on invalid params should still fire even with no RAM."""
+    r = _make_raster(np.zeros((10, 10)))
+    with mock.patch.object(
+        moh_module, '_available_memory_bytes', return_value=1
+    ):
+        with pytest.raises(ValueError, match="max_height must be positive"):
+            min_observable_height(r, x=1.0, y=1.0, max_height=0.0)
 
 
 # ---- accessor integration ------------------------------------------------
