@@ -397,3 +397,92 @@ class TestValidation:
         template = _make_template([0.0], [0.5])
         result = idw(x, y, z, template)
         assert np.isfinite(result.values[0, 0])
+
+
+# ===================================================================
+# Memory guard tests (issue #1307)
+# ===================================================================
+
+class TestKrigingMemoryGuard:
+    """Verify kriging() refuses to allocate more than ~80% of RAM.
+
+    Allocations scale with point count N (variogram + matrix) and with
+    grid_pixels * N (prediction).  We monkeypatch the available-memory
+    helper to a small number so tests can simulate "too big" without
+    actually allocating gigabytes.
+    """
+
+    def test_predict_matrix_exceeds_memory(self, monkeypatch):
+        """Large grid x N k0 matrix triggers the guard."""
+        from xrspatial.interpolate import _kriging as _kr
+
+        # Pretend we only have 64 MB available.
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 64 * 1024 ** 2,
+        )
+
+        x = np.array([0.0, 1.0, 2.0, 0.5])
+        y = np.array([0.0, 0.0, 1.0, 1.5])
+        z = np.array([1.0, 2.0, 3.0, 4.0])
+        # 2000x2000 grid * 5 cols * 8 bytes ~= 160 MB > 64 MB * 0.8
+        template = _make_template(
+            np.arange(2000, dtype=np.float64),
+            np.arange(2000, dtype=np.float64),
+        )
+
+        with pytest.raises(MemoryError, match='prediction matrix'):
+            kriging(x, y, z, template)
+
+    def test_variogram_pairs_exceed_memory(self, monkeypatch):
+        """Large N triggers the variogram-pair guard before the matrix one."""
+        from xrspatial.interpolate import _kriging as _kr
+
+        # 32 MB available.  N=4000 -> N*(N-1)/2 ~ 8e6 pairs * 4 buffers
+        # * 8 bytes = ~256 MB.  Larger than the 4001x4001 matrix path
+        # (~384 MB), so let's use a different N that makes pair_bytes win.
+        # N=10000 -> pair_bytes ~ 1.6 GB; matrix_bytes ~ 2.4 GB.
+        # Matrix wins for any N because of the 3x multiplier vs 4x and the
+        # (N+1)^2 term.  Use a smaller N so matrix wins; check generic msg.
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 32 * 1024 ** 2,
+        )
+
+        n = 3000
+        rng = np.random.RandomState(0)
+        x = rng.uniform(0, 10, n)
+        y = rng.uniform(0, 10, n)
+        z = rng.uniform(0, 10, n)
+        template = _make_template([0.0, 1.0], [0.0, 1.0])
+
+        # n=3000 -> matrix_bytes = 3 * 3001^2 * 8 ~= 216 MB > 32*0.8 MB
+        with pytest.raises(MemoryError, match='kriging matrix'):
+            kriging(x, y, z, template)
+
+    def test_small_input_allowed(self, monkeypatch):
+        """Tiny inputs pass the guard even with very low available memory."""
+        # 16 MB available is plenty for a 4-point, 3x3 grid problem.
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 16 * 1024 ** 2,
+        )
+
+        x, y, z = _grid_points()
+        template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+        # Should not raise.
+        result = kriging(x, y, z, template)
+        assert result.shape == template.shape
+
+    def test_check_helper_estimate_message(self, monkeypatch):
+        """_check_kriging_memory reports GB and identifies culprit."""
+        from xrspatial.interpolate._kriging import _check_kriging_memory
+
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 1 * 1024 ** 2,  # 1 MB
+        )
+
+        # n=10, grid_pixels=100000 -> k0 ~ 26 MB > 1 MB * 0.8.
+        with pytest.raises(MemoryError, match='prediction matrix'):
+            _check_kriging_memory(n_points=10, grid_pixels=100_000)
