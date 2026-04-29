@@ -175,3 +175,69 @@ def test_numpy_equals_dask_cupy():
     dcp_result = sink(dcp_agg)
     np.testing.assert_allclose(
         np_result.data, dcp_result.data.compute().get(), equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# Memory guard
+# ---------------------------------------------------------------------------
+
+class TestMemoryGuard:
+    """Memory guard on the eager numpy / cupy backends."""
+
+    def test_numpy_huge_raster_raises(self):
+        """Numpy backend raises MemoryError when projected RAM exceeds budget."""
+        from unittest.mock import patch
+
+        flow_dir = np.zeros((4, 4), dtype=np.float64)
+        agg = create_test_raster(flow_dir, backend='numpy')
+
+        with patch(
+            "xrspatial.hydro.sink_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                sink(agg)
+
+    def test_numpy_normal_input_succeeds(self):
+        """Normal-size raster passes the guard with real memory."""
+        flow_dir = np.zeros((10, 10), dtype=np.float64)
+        agg = create_test_raster(flow_dir, backend='numpy')
+        result = sink(agg)
+        assert result.shape == (10, 10)
+
+    @dask_array_available
+    def test_dask_path_skips_guard(self):
+        """Dask backend bypasses the guard -- per-tile allocations are bounded."""
+        from unittest.mock import patch
+
+        flow_dir = np.zeros((20, 20), dtype=np.float64)
+        agg = create_test_raster(flow_dir, backend='dask+numpy', chunks=(5, 5))
+
+        with patch(
+            "xrspatial.hydro.sink_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            result = sink(agg)
+            _ = result.data[:4, :4].compute()
+
+    def test_error_message_mentions_dask(self):
+        """The error message should suggest the dask alternative."""
+        from unittest.mock import patch
+
+        flow_dir = np.zeros((4, 4), dtype=np.float64)
+        agg = create_test_raster(flow_dir, backend='numpy')
+
+        with patch(
+            "xrspatial.hydro.sink_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="dask"):
+                sink(agg)
+
+    def test_byte_per_pixel_constants(self):
+        """Pin the documented per-pixel costs so refactors flag accidental changes."""
+        import importlib
+        mod = importlib.import_module("xrspatial.hydro.sink_d8")
+
+        assert mod._BYTES_PER_PIXEL == 24
+        assert mod._GPU_BYTES_PER_PIXEL == 8
