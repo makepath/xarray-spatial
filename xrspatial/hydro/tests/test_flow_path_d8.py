@@ -297,6 +297,85 @@ def test_numpy_equals_cupy():
 # Cross-backend tests: Dask+CuPy
 # -------------------------------------------------------------------
 
+class TestMemoryGuard:
+    """Memory guard on the eager numpy / cupy backends."""
+
+    def test_numpy_huge_raster_raises(self):
+        """Numpy backend raises MemoryError when projected RAM exceeds budget."""
+        from unittest.mock import patch
+
+        fd = np.zeros((4, 4), dtype=np.float64)
+        sp = np.full((4, 4), np.nan, dtype=np.float64)
+        sp[0, 0] = 1.0
+        fd_da, sp_da = _make_fd_and_sp(fd, sp)
+
+        with patch(
+            "xrspatial.hydro.flow_path_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                flow_path(fd_da, sp_da)
+
+    def test_numpy_normal_input_succeeds(self):
+        """Normal-size raster passes the guard with real memory."""
+        fd = np.zeros((10, 10), dtype=np.float64)
+        sp = np.full((10, 10), np.nan, dtype=np.float64)
+        sp[0, 0] = 1.0
+        fd_da, sp_da = _make_fd_and_sp(fd, sp)
+        result = flow_path(fd_da, sp_da)
+        assert result.shape == (10, 10)
+
+    @dask_array_available
+    def test_dask_path_skips_guard(self):
+        """Dask backend bypasses the guard -- per-tile allocations are bounded."""
+        from unittest.mock import patch
+
+        fd = np.zeros((6, 6), dtype=np.float64)
+        sp = np.full((6, 6), np.nan, dtype=np.float64)
+        sp[0, 0] = 1.0
+        fd_da, sp_da = _make_fd_and_sp(fd, sp, backend='dask', chunks=(3, 3))
+
+        with patch(
+            "xrspatial.hydro.flow_path_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            result = flow_path(fd_da, sp_da)
+            _ = result.data[:3, :3].compute()
+
+    def test_error_message_mentions_dimensions(self):
+        """The error message should mention the grid dimensions and dask."""
+        from unittest.mock import patch
+
+        fd = np.zeros((7, 9), dtype=np.float64)
+        sp = np.full((7, 9), np.nan, dtype=np.float64)
+        sp[0, 0] = 1.0
+        fd_da, sp_da = _make_fd_and_sp(fd, sp)
+
+        with patch(
+            "xrspatial.hydro.flow_path_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match=r"7x9.*dask"):
+                flow_path(fd_da, sp_da)
+
+    @cuda_and_cupy_available
+    def test_cupy_huge_raster_raises(self):
+        """CuPy backend raises MemoryError when projected GPU RAM exceeds budget."""
+        from unittest.mock import patch
+
+        fd = np.zeros((4, 4), dtype=np.float64)
+        sp = np.full((4, 4), np.nan, dtype=np.float64)
+        sp[0, 0] = 1.0
+        fd_da, sp_da = _make_fd_and_sp(fd, sp, backend='cupy')
+
+        with patch(
+            "xrspatial.hydro.flow_path_d8._available_gpu_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="GPU working memory"):
+                flow_path(fd_da, sp_da)
+
+
 @dask_array_available
 @cuda_and_cupy_available
 def test_numpy_equals_dask_cupy():
