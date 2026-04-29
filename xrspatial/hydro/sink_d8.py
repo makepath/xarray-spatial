@@ -33,6 +33,89 @@ from xrspatial.dataset_support import supports_dataset
 
 
 # =====================================================================
+# Memory guards
+# =====================================================================
+#
+# CPU peak working set per pixel for ``_sink_cpu``:
+#   labels  : float64 -> 8
+#   queue_r : int64   -> 8
+#   queue_c : int64   -> 8
+# Total ~24 bytes/pixel.  The caller-provided ``flow_dir`` array already
+# lives in RAM before the kernel runs and is not double-counted here.
+_BYTES_PER_PIXEL = 24
+
+# GPU peak working set per pixel for ``_sink_cupy``:
+#   labels : float64 -> 8
+# Total ~8 bytes/pixel.  ``flow_dir_data`` already lives on the device
+# before the kernel runs and is not double-counted here.
+_GPU_BYTES_PER_PIXEL = 8
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 if CuPy / CUDA is unavailable or the query fails -- callers
+    use that as a sentinel meaning "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_memory(height, width):
+    """Raise MemoryError if the BFS kernel would exceed 50% of RAM."""
+    required = int(height) * int(width) * _BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"sink_d8 on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of working memory but only "
+            f"~{available / 1e9:.1f} GB is available.  Use a "
+            f"dask-backed DataArray for out-of-core processing."
+        )
+
+
+def _check_gpu_memory(height, width):
+    """Raise MemoryError if the CuPy kernel would exceed 50% of free GPU RAM.
+
+    Skips the check (returns silently) when ``_available_gpu_memory_bytes``
+    cannot determine the free memory -- e.g. on hosts without CUDA, where
+    the kernel will fail at the cupy.asarray boundary anyway.
+    """
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(height) * int(width) * _GPU_BYTES_PER_PIXEL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"sink_d8 on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of GPU working memory but only "
+            f"~{available / 1e9:.1f} GB is free on the active device.  "
+            f"Use a dask+cupy DataArray for out-of-core processing."
+        )
+
+
+# =====================================================================
 # CPU kernel
 # =====================================================================
 
@@ -255,9 +338,11 @@ def sink_d8(flow_dir: xr.DataArray,
     data = flow_dir.data
 
     if isinstance(data, np.ndarray):
+        _check_memory(*data.shape)
         out = _run_numpy(data)
 
     elif has_cuda_and_cupy() and is_cupy_array(data):
+        _check_gpu_memory(*data.shape)
         out = _sink_cupy(data)
 
     elif has_cuda_and_cupy() and is_dask_cupy(flow_dir):
