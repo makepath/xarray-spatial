@@ -673,3 +673,122 @@ def test_geodesic_basic():
     # Cardinal neighbours should be ~111 km (1 degree at equator)
     for pos in [(0, 1), (2, 1), (1, 0), (1, 2)]:
         assert 100000 < sd[pos] < 130000  # roughly 100-130 km
+
+
+# ---------------------------------------------------------------------------
+# Memory guard
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryGuard:
+    """Memory guard on the eager numpy / cupy backends."""
+
+    def test_numpy_huge_raster_raises(self):
+        """Numpy backend raises MemoryError when projected RAM exceeds budget."""
+        from unittest.mock import patch
+
+        source = np.zeros((4, 4), dtype=np.float64)
+        source[1, 1] = 1.0
+        elev = np.zeros((4, 4), dtype=np.float64)
+        raster = _make_raster(source)
+        elevation = _make_raster(elev)
+
+        # Mock available memory to 1 byte so even a 4x4 raster trips it.
+        with patch(
+            "xrspatial.surface_distance._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                surface_distance(raster, elevation)
+            with pytest.raises(MemoryError, match="working memory"):
+                surface_allocation(raster, elevation)
+            with pytest.raises(MemoryError, match="working memory"):
+                surface_direction(raster, elevation)
+
+    def test_numpy_normal_input_succeeds(self):
+        """Normal-size raster passes the guard with real memory."""
+        source = np.zeros((10, 10), dtype=np.float64)
+        source[5, 5] = 1.0
+        elev = np.zeros((10, 10), dtype=np.float64)
+        raster = _make_raster(source)
+        elevation = _make_raster(elev)
+        # Should not raise -- 10x10 needs ~8 KB.
+        result = surface_distance(raster, elevation)
+        assert result.shape == (10, 10)
+
+    def test_validation_error_takes_precedence(self):
+        """Invalid args raise ValueError before the memory guard runs."""
+        from unittest.mock import patch
+
+        source = np.zeros((4, 4), dtype=np.float64)
+        elev_wrong = np.zeros((5, 5), dtype=np.float64)
+        raster = _make_raster(source)
+        elevation = xr.DataArray(
+            elev_wrong,
+            dims=['y', 'x'],
+            coords={'y': np.arange(5, dtype=np.float64),
+                    'x': np.arange(5, dtype=np.float64)},
+            attrs={'res': (1.0, 1.0)},
+        )
+
+        with patch(
+            "xrspatial.surface_distance._available_memory_bytes",
+            return_value=1,
+        ):
+            # Mismatched shapes raise ValueError before any allocation.
+            with pytest.raises(ValueError, match="same shape"):
+                surface_distance(raster, elevation)
+
+            # Invalid connectivity raises ValueError too.
+            elev_ok = _make_raster(np.zeros((4, 4), dtype=np.float64))
+            with pytest.raises(ValueError, match="connectivity"):
+                surface_distance(raster, elev_ok, connectivity=5)
+
+    def test_dask_path_bounded_per_chunk(self):
+        """Dask backend inherits the guard per-chunk (not on the full shape).
+
+        A dask raster whose total footprint would trip the guard but whose
+        per-chunk footprint fits comfortably should compute successfully.
+        """
+        if da is None:
+            pytest.skip("dask not installed")
+
+        from unittest.mock import patch
+
+        # 200x200 total (~6.4 MB at 80 B/pixel) chunked at 20x20
+        # (~32 KB per chunk).  Mock available memory to 1 MB: the full
+        # array would exceed 50% of that, but each 20x20 chunk needs
+        # only ~32 KB so per-chunk allocation passes.
+        source = np.zeros((200, 200), dtype=np.float64)
+        source[100, 100] = 1.0
+        elev = np.zeros((200, 200), dtype=np.float64)
+        raster = _make_raster(source, backend='dask+numpy', chunks=(20, 20))
+        elevation = _make_raster(elev, backend='dask+numpy', chunks=(20, 20))
+
+        with patch(
+            "xrspatial.surface_distance._available_memory_bytes",
+            return_value=1024 * 1024,  # 1 MB
+        ):
+            # max_distance=5 keeps map_overlap depth small (< chunk size).
+            result = surface_distance(raster, elevation, max_distance=5.0)
+            # Force a small compute window to prove per-chunk passes.
+            _ = result.data[:4, :4].compute()
+
+    def test_error_message_mentions_grid_size(self):
+        """The error message names the grid dimensions and the dask alternative."""
+        from unittest.mock import patch
+
+        source = np.zeros((7, 11), dtype=np.float64)
+        source[3, 5] = 1.0
+        elev = np.zeros((7, 11), dtype=np.float64)
+        raster = _make_raster(source)
+        elevation = _make_raster(elev)
+
+        with patch(
+            "xrspatial.surface_distance._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="7x11"):
+                surface_distance(raster, elevation)
+            with pytest.raises(MemoryError, match="dask"):
+                surface_distance(raster, elevation)
