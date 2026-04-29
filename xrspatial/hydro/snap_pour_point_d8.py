@@ -45,6 +45,92 @@ from xrspatial.utils import (
 from xrspatial.dataset_support import supports_dataset
 
 
+# =====================================================================
+# Memory guards
+# =====================================================================
+#
+# CPU peak working set per pixel for the numpy dispatch + ``_snap_pour_point_cpu``:
+#   fa  (float64 cast)   -> 8
+#   pp  (float64 cast)   -> 8
+#   out (float64)        -> 8
+# Total 24 bytes/pixel.  The caller's input arrays already live in RAM
+# before dispatch and are not double-counted here.
+_BYTES_PER_PIXEL = 24
+
+# GPU peak working set per pixel for ``_snap_pour_point_cupy``:
+#   fa  (float64 cast)   -> 8
+#   pp  (float64 cast)   -> 8
+#   out (float64)        -> 8
+# Total 24 bytes/pixel on the device.  The sparse pour-point coordinate
+# arrays scale with the number of pour points (typically << H*W) and are
+# not counted here.
+_GPU_BYTES_PER_PIXEL = 24
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 if CuPy / CUDA is unavailable or the query fails -- callers
+    use that as a sentinel meaning "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_memory(height, width):
+    """Raise MemoryError if the snap kernel would exceed 50% of RAM."""
+    required = int(height) * int(width) * _BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"snap_pour_point_d8 on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of working memory but only "
+            f"~{available / 1e9:.1f} GB is available.  Use a "
+            f"dask-backed DataArray for out-of-core processing."
+        )
+
+
+def _check_gpu_memory(height, width):
+    """Raise MemoryError if the CuPy kernel would exceed 50% of free GPU RAM.
+
+    Skips the check (returns silently) when ``_available_gpu_memory_bytes``
+    cannot determine the free memory -- e.g. on hosts without CUDA, where
+    the kernel will fail at the cupy.asarray boundary anyway.
+    """
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(height) * int(width) * _GPU_BYTES_PER_PIXEL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"snap_pour_point_d8 on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of GPU working memory but only "
+            f"~{available / 1e9:.1f} GB is free on the active device.  "
+            f"Use a dask+cupy DataArray for out-of-core processing."
+        )
+
+
 def _to_numpy_f64(arr):
     """Convert *arr* to a contiguous numpy float64 array (handles CuPy)."""
     if hasattr(arr, 'get'):
@@ -484,12 +570,14 @@ def snap_pour_point_d8(flow_accum: xr.DataArray,
     pp_data = pour_points.data
 
     if isinstance(fa_data, np.ndarray):
+        _check_memory(*fa_data.shape)
         fa = fa_data.astype(np.float64)
         pp = np.asarray(pp_data, dtype=np.float64)
         H, W = fa.shape
         out = _snap_pour_point_cpu(fa, pp, search_radius, H, W)
 
     elif has_cuda_and_cupy() and is_cupy_array(fa_data):
+        _check_gpu_memory(*fa_data.shape)
         out = _snap_pour_point_cupy(fa_data, pp_data, search_radius)
 
     elif has_cuda_and_cupy() and is_dask_cupy(flow_accum):

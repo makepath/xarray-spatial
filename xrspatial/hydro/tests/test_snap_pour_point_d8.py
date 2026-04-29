@@ -328,3 +328,87 @@ def test_dask_cupy_chunk_configs(chunks):
     np.testing.assert_allclose(
         np_result.data, dcp_result.data.compute().get(), equal_nan=True,
     ), f"Mismatch with chunks={chunks}"
+
+
+# ====================================================================
+# Memory guard tests
+# ====================================================================
+
+class TestMemoryGuard:
+    """Memory guard on the eager numpy / cupy backends."""
+
+    def test_numpy_huge_raster_raises(self):
+        """Numpy backend raises MemoryError when projected RAM exceeds budget."""
+        from unittest.mock import patch
+
+        accum = np.zeros((4, 4), dtype=np.float64)
+        pp = np.full((4, 4), np.nan, dtype=np.float64)
+        pp[0, 0] = 1.0
+        fa, pour = _make_accum_and_pp(accum, pp, backend='numpy')
+
+        with patch(
+            "xrspatial.hydro.snap_pour_point_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                snap_pour_point(fa, pour, search_radius=2)
+
+    def test_numpy_normal_input_succeeds(self):
+        """Normal-size raster passes the guard with real memory."""
+        accum = np.arange(100, dtype=np.float64).reshape(10, 10)
+        pp = np.full((10, 10), np.nan, dtype=np.float64)
+        pp[0, 0] = 1.0
+        fa, pour = _make_accum_and_pp(accum, pp, backend='numpy')
+        result = snap_pour_point(fa, pour, search_radius=3)
+        assert result.shape == (10, 10)
+
+    def test_error_message_mentions_dask(self):
+        """The error message should suggest the dask alternative."""
+        from unittest.mock import patch
+
+        accum = np.zeros((4, 4), dtype=np.float64)
+        pp = np.full((4, 4), np.nan, dtype=np.float64)
+        pp[0, 0] = 1.0
+        fa, pour = _make_accum_and_pp(accum, pp, backend='numpy')
+
+        with patch(
+            "xrspatial.hydro.snap_pour_point_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="dask"):
+                snap_pour_point(fa, pour, search_radius=2)
+
+    @dask_array_available
+    def test_dask_path_skips_guard(self):
+        """Dask backend bypasses the guard -- per-window allocations are bounded."""
+        from unittest.mock import patch
+
+        accum = np.arange(400, dtype=np.float64).reshape(20, 20)
+        pp = np.full((20, 20), np.nan, dtype=np.float64)
+        pp[0, 0] = 1.0
+        fa, pour = _make_accum_and_pp(
+            accum, pp, backend='dask+numpy', chunks=(5, 5))
+
+        with patch(
+            "xrspatial.hydro.snap_pour_point_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            result = snap_pour_point(fa, pour, search_radius=3)
+            # Force compute -- dask path must not consult the host guard.
+            _ = np.asarray(result.data)
+
+    def test_error_message_includes_grid_size(self):
+        """The error message should report the requested grid dimensions."""
+        from unittest.mock import patch
+
+        accum = np.zeros((7, 9), dtype=np.float64)
+        pp = np.full((7, 9), np.nan, dtype=np.float64)
+        pp[0, 0] = 1.0
+        fa, pour = _make_accum_and_pp(accum, pp, backend='numpy')
+
+        with patch(
+            "xrspatial.hydro.snap_pour_point_d8._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match=r"7x9"):
+                snap_pour_point(fa, pour, search_radius=2)
