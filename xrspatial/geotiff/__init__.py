@@ -406,7 +406,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                compression_level: int | None = None,
                tiled: bool = True,
                tile_size: int = 256,
-               predictor: bool = False,
+               predictor: bool | int = False,
                cog: bool = False,
                overview_levels: list[int] | None = None,
                overview_resampling: str = 'mean',
@@ -453,8 +453,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         Use tiled layout (default True).
     tile_size : int
         Tile size in pixels (default 256).
-    predictor : bool
-        Use horizontal differencing predictor.
+    predictor : bool or int
+        TIFF predictor. ``False``/``0``/``1`` -> none, ``True``/``2`` ->
+        horizontal differencing (good for integer data), ``3`` ->
+        floating-point predictor (float dtypes only; typically gives
+        better deflate/zstd ratios on float data than predictor 2).
     cog : bool
         Write as Cloud Optimized GeoTIFF.
     overview_levels : list[int] or None
@@ -707,7 +710,8 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
 
 def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                      compression='zstd', compression_level=None,
-                     tile_size=256, predictor=False, bigtiff=None):
+                     tile_size=256, predictor: bool | int = False,
+                     bigtiff=None):
     """Write a DataArray as a directory of tiled GeoTIFFs with a VRT index.
 
     This enables streaming dask arrays to disk without materializing the
@@ -1223,7 +1227,7 @@ def write_geotiff_gpu(data, path: str, *,
                       compression: str = 'zstd',
                       compression_level: int | None = None,
                       tile_size: int = 256,
-                      predictor: bool = False,
+                      predictor: bool | int = False,
                       cog: bool = False,
                       overview_levels: list[int] | None = None,
                       overview_resampling: str = 'mean') -> None:
@@ -1258,8 +1262,10 @@ def write_geotiff_gpu(data, path: str, *,
         currently ignored -- nvCOMP does not expose level control.
     tile_size : int
         Tile size in pixels (default 256).
-    predictor : bool
-        Apply horizontal differencing predictor.
+    predictor : bool or int
+        TIFF predictor. ``False``/``0``/``1`` -> none, ``True``/``2`` ->
+        horizontal differencing, ``3`` -> floating-point predictor
+        (float dtypes only).
     cog : bool
         Write as Cloud Optimized GeoTIFF with overviews.
     overview_levels : list[int] or None
@@ -1278,6 +1284,7 @@ def write_geotiff_gpu(data, path: str, *,
     from ._gpu_decode import gpu_compress_tiles, make_overview_gpu
     from ._writer import (
         _compression_tag, _assemble_tiff, _write_bytes,
+        normalize_predictor,
         GeoTransform as _GT,
     )
     from ._dtypes import numpy_to_tiff_dtype
@@ -1328,7 +1335,7 @@ def write_geotiff_gpu(data, path: str, *,
     np_dtype = np.dtype(str(arr.dtype))  # cupy dtype -> numpy dtype
 
     comp_tag = _compression_tag(compression)
-    pred_val = 2 if predictor else 1
+    pred_val = normalize_predictor(predictor, np_dtype, comp_tag)
 
     def _gpu_compress_to_part(gpu_arr, w, h, spp):
         """Compress a GPU array into a (stub, w, h, offsets, counts, tiles) tuple."""
@@ -1366,7 +1373,7 @@ def write_geotiff_gpu(data, path: str, *,
             parts.append(_gpu_compress_to_part(current, ow, oh, samples))
 
     file_bytes = _assemble_tiff(
-        width, height, np_dtype, comp_tag, predictor, True, tile_size,
+        width, height, np_dtype, comp_tag, pred_val, True, tile_size,
         parts, geo_transform, epsg, nodata,
         is_cog=(cog and len(parts) > 1),
         raster_type=raster_type)
