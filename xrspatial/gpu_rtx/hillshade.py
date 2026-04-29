@@ -9,6 +9,7 @@ from rtxpy import RTX
 from scipy.spatial.transform import Rotation as R
 
 from ..utils import calc_cuda_dims
+from ._memory import _check_gpu_memory
 from .cuda_utils import add, dot, invert, make_float3, mul
 from .mesh_utils import create_triangulation
 
@@ -187,6 +188,9 @@ def hillshade_rtx(raster: xr.DataArray,
                   shadows: bool) -> xr.DataArray:
     if not isinstance(raster.data, cupy.ndarray):
         raise TypeError("raster.data must be a cupy array")
+
+    H, W = raster.shape
+    _check_gpu_memory("hillshade_rtx", H, W)
 
     optix = RTX()
     create_triangulation(raster, optix)
