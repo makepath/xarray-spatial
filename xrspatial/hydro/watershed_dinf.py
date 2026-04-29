@@ -48,6 +48,94 @@ def _to_numpy_f64(arr):
     return np.asarray(arr, dtype=np.float64)
 
 
+# =====================================================================
+# Memory guards
+# =====================================================================
+#
+# CPU peak working set per pixel for the numpy dispatch + the
+# ``_watershed_dinf_cpu`` kernel:
+#   fd (float64 cast)    -> 8
+#   labels (float64)     -> 8
+#   state  (int8)        -> 1
+#   path_r (int64)       -> 8
+#   path_c (int64)       -> 8
+# Total ~33 bytes/pixel.  D-inf encodes its downstream direction as a
+# single real-valued angle, so the per-pixel footprint matches D8 rather
+# than MFD's eight-channel fractions buffer.
+_BYTES_PER_PIXEL = 33
+
+# GPU peak working set per pixel for ``_watershed_dinf_cupy``.  The
+# function copies the device flow_dir to the host, runs the CPU kernel,
+# and ships the result back.  Device-resident peak is the caller's
+# float64 flow_dir input (8) plus the caller's float64 pour_points (8)
+# plus the final ``cp.asarray(out)`` (8) -> 24 bytes/pixel.
+_GPU_BYTES_PER_PIXEL = 24
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _available_gpu_memory_bytes():
+    """Best-effort estimate of free GPU memory in bytes.
+
+    Returns 0 if CuPy / CUDA is unavailable or the query fails -- callers
+    use that as a sentinel meaning "no GPU info, skip the guard".
+    """
+    try:
+        import cupy as _cp
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_memory(height, width):
+    """Raise MemoryError if the watershed_dinf kernel would exceed 50% of RAM."""
+    required = int(height) * int(width) * _BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"watershed_dinf on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of working memory but only "
+            f"~{available / 1e9:.1f} GB is available.  Use a "
+            f"dask-backed DataArray for out-of-core processing."
+        )
+
+
+def _check_gpu_memory(height, width):
+    """Raise MemoryError if the cupy path would exceed 50% of free GPU RAM.
+
+    Skips the check (returns silently) when ``_available_gpu_memory_bytes``
+    cannot determine the free memory -- e.g. on hosts without CUDA, where
+    the kernel will fail at the cupy.asarray boundary anyway.
+    """
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(height) * int(width) * _GPU_BYTES_PER_PIXEL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"watershed_dinf on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of GPU working memory but only "
+            f"~{available / 1e9:.1f} GB is free on the active device.  "
+            f"Use a dask+cupy DataArray for out-of-core processing."
+        )
+
+
 def _dominant_offset_py(angle):
     """Return (dy, dx) for the dominant D-inf neighbor, or (0,0) for pit/NaN."""
     dy1, dx1, w1, dy2, dx2, w2 = _angle_to_neighbors_py(angle)
@@ -603,6 +691,7 @@ def watershed_dinf(flow_dir_dinf: xr.DataArray,
     pp_data = pour_points.data
 
     if isinstance(data, np.ndarray):
+        _check_memory(*data.shape)
         fd = data.astype(np.float64)
         pp = np.asarray(pp_data, dtype=np.float64)
         h, w = fd.shape
@@ -620,6 +709,7 @@ def watershed_dinf(flow_dir_dinf: xr.DataArray,
         out = _watershed_dinf_cpu(fd, labels, state, h, w)
 
     elif has_cuda_and_cupy() and is_cupy_array(data):
+        _check_gpu_memory(*data.shape)
         out = _watershed_dinf_cupy(data, pp_data)
 
     elif has_cuda_and_cupy() and is_dask_cupy(flow_dir_dinf):
