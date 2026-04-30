@@ -547,3 +547,84 @@ class TestIDWMemoryGuard:
         assert '1000000' in msg
         assert '8' in msg
         assert 'GB' in msg
+
+
+# ===================================================================
+# Spline memory guard tests (issue #1372)
+# ===================================================================
+
+class TestSplineMemoryGuard:
+    """Verify spline() refuses to allocate more than ~80% of RAM.
+
+    The TPS solver builds N x N kernel matrices (K, dx, dy, r2) and an
+    (N+3) x (N+3) augmented system.  Tests monkeypatch the
+    available-memory helper so we can simulate "too big" without
+    actually allocating gigabytes.
+    """
+
+    def test_kernel_block_exceeds_memory(self, monkeypatch):
+        """Large N triggers the kernel-block guard."""
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 8 * 1024 ** 2,  # 8 MB
+        )
+
+        # N=600 -> kernel_bytes = 4 * 600**2 * 8 = ~11.5 MB > 8*0.8 MB.
+        n = 600
+        rng = np.random.RandomState(0)
+        x = rng.uniform(0, 10, n)
+        y = rng.uniform(0, 10, n)
+        z = rng.uniform(0, 10, n)
+        template = _make_template([0.0, 1.0], [0.0, 1.0])
+
+        with pytest.raises(MemoryError, match='kernel block K'):
+            spline(x, y, z, template)
+
+    def test_grid_size_irrelevant_to_guard(self, monkeypatch):
+        """Guard fires on N alone; grid pixels do not enter the estimate.
+
+        TPS evaluates the spline cell-by-cell inside a numba kernel,
+        so no grid x N prediction matrix is materialized.  A huge grid
+        with a small N must still pass the guard.
+        """
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 8 * 1024 ** 2,  # 8 MB
+        )
+
+        x = np.array([0.0, 1.0, 2.0, 0.5])
+        y = np.array([0.0, 0.0, 1.0, 1.5])
+        z = np.array([1.0, 2.0, 3.0, 4.0])
+        # Big grid, but N is tiny -> guard must let it through.
+        template = _make_template(
+            np.arange(1000, dtype=np.float64),
+            np.arange(1000, dtype=np.float64),
+        )
+        result = spline(x, y, z, template)
+        assert result.shape == template.shape
+
+    def test_small_input_allowed(self, monkeypatch):
+        """Tiny inputs pass the guard even with very low available memory."""
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 16 * 1024 ** 2,  # 16 MB
+        )
+
+        x, y, z = _grid_points()
+        template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+        # Should not raise.
+        result = spline(x, y, z, template)
+        assert result.shape == template.shape
+
+    def test_check_helper_estimate_message(self, monkeypatch):
+        """_check_spline_memory reports GB and identifies the culprit."""
+        from xrspatial.interpolate._spline import _check_spline_memory
+
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 1 * 1024 ** 2,  # 1 MB
+        )
+
+        # N=500 -> kernel_bytes = 4 * 500**2 * 8 = 8 MB > 1*0.8 MB.
+        with pytest.raises(MemoryError, match='kernel block K'):
+            _check_spline_memory(n_points=500, grid_pixels=100)

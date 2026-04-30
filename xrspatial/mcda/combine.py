@@ -10,6 +10,63 @@ import numpy as np
 import xarray as xr
 
 
+# =====================================================================
+# Memory guards
+# =====================================================================
+#
+# ``owa()`` builds a temporary stack of every weighted criterion layer
+# along a new ``__mcda_criterion`` axis, then sorts that stack
+# descending along axis 0.  Peak working set on the eager numpy path
+# is dominated by the float64 stack itself:
+#
+#   stack : float64 -> 8 bytes per pixel per criterion
+#
+# So bytes per output pixel scale with the criterion count rather than
+# being a fixed constant, which is why this module's check takes
+# ``n_criteria`` as input instead of using a per-pixel constant.
+_BYTES_PER_VALUE = 8
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _check_owa_memory(n_criteria, shape):
+    """Raise MemoryError if the OWA stack would exceed 50% of RAM.
+
+    The eager numpy path materializes the full
+    ``(n_criteria,) + shape`` float64 stack, which is the dominant
+    working buffer.  The dask path is bounded per chunk and skips this
+    check at the call site.
+    """
+    pixels = 1
+    for dim in shape:
+        pixels *= int(dim)
+    required = int(n_criteria) * pixels * _BYTES_PER_VALUE
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        shape_str = "x".join(str(int(d)) for d in shape)
+        raise MemoryError(
+            f"owa with {int(n_criteria)} criteria on a {shape_str} "
+            f"grid requires ~{required / 1e9:.1f} GB of working memory "
+            f"but only ~{available / 1e9:.1f} GB is available.  Use a "
+            f"dask-backed Dataset for out-of-core processing."
+        )
+
+
 def _validate_criteria(criteria: xr.Dataset) -> None:
     if not isinstance(criteria, xr.Dataset):
         raise TypeError(
@@ -202,6 +259,21 @@ def owa(
 
     order_weights_arr = np.array(order_weights, dtype=np.float64)
 
+    # Memory guard: the eager path materializes the full
+    # (n, *shape) float64 stack via xr.concat below, so refuse early
+    # when that buffer would dominate available RAM.  Dask-backed
+    # inputs are bounded per chunk and skip the check.
+    first_var = list(criteria.data_vars)[0]
+    first_data = criteria[first_var].data
+    is_dask = False
+    try:
+        import dask.array as _da
+        is_dask = isinstance(first_data, _da.Array)
+    except ImportError:
+        pass
+    if not is_dask:
+        _check_owa_memory(n, criteria[first_var].shape)
+
     # First apply criterion weights
     weighted_layers = []
     for var_name in criteria.data_vars:
@@ -229,7 +301,6 @@ def owa(
     result_data = (sorted_data * ow).sum(axis=0)
 
     # Pick dims/coords from first data var
-    first_var = list(criteria.data_vars)[0]
     template = criteria[first_var]
     return xr.DataArray(
         result_data, name=name, dims=template.dims,

@@ -226,6 +226,62 @@ def _spline_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
 # Public API
 # ---------------------------------------------------------------------------
 
+def _check_spline_memory(n_points, grid_pixels):
+    """Raise MemoryError if spline() would exceed available memory.
+
+    Two allocations dominate TPS memory use:
+
+    * Kernel build.  Lines 67-70 construct ``dx``, ``dy``, ``r2`` and
+      ``K`` each as N x N float64.  About ``4 * N**2 * 8`` bytes during
+      construction.
+    * Augmented system.  Line 81 builds ``A`` of shape ``(N+3, N+3)``
+      float64, and ``np.linalg.solve`` copies it during LU
+      factorization.  About ``2 * (N+3)**2 * 8`` bytes peak.
+
+    The kernel build runs first and is freed before the solve, so peak
+    usage is bounded by the larger of the two.  The grid is iterated
+    point-by-point inside a numba kernel, so prediction does not
+    materialize a grid x N matrix.
+    """
+    n = int(n_points)
+
+    if n < 3:
+        return  # short-circuit path, no big allocations
+
+    kernel_bytes = 4 * n * n * 8
+    solve_bytes = 2 * (n + 3) * (n + 3) * 8
+
+    estimate = max(kernel_bytes, solve_bytes)
+
+    try:
+        from xrspatial.zonal import _available_memory_bytes
+        avail = _available_memory_bytes()
+    except ImportError:
+        avail = 2 * 1024 ** 3
+
+    # Match the kriging guard's 0.8 fraction (PR #1309) so users get
+    # consistent behaviour across interpolators.  The TPS solve and the
+    # kernel build do not run concurrently with other large arrays in
+    # this function, so 80% of available RAM is the right ceiling.
+    if estimate > 0.8 * avail:
+        if estimate == solve_bytes:
+            culprit = (
+                f"augmented system A of shape ({n + 3}, {n + 3}) "
+                f"plus its LU factorization copy"
+            )
+        else:
+            culprit = (
+                f"radial-basis kernel block K of shape ({n}, {n}) "
+                f"(plus dx, dy, r2 of the same shape)"
+            )
+
+        raise MemoryError(
+            f"spline() needs ~{estimate / 1e9:.1f} GB to allocate the "
+            f"{culprit}, but only ~{avail / 1e9:.1f} GB is available. "
+            f"Reduce the number of input points."
+        )
+
+
 def spline(x, y, z, template, smoothing=0.0, name='spline'):
     """Thin Plate Spline interpolation.
 
@@ -244,6 +300,12 @@ def spline(x, y, z, template, smoothing=0.0, name='spline'):
     Returns
     -------
     xr.DataArray
+
+    Raises
+    ------
+    MemoryError
+        If the worst-case allocation (kernel block K or augmented
+        system A) would exceed 80% of available memory.
     """
     _validate_raster(template, func_name='spline', name='template')
     x_arr, y_arr, z_arr = validate_points(x, y, z, func_name='spline')
@@ -251,6 +313,11 @@ def spline(x, y, z, template, smoothing=0.0, name='spline'):
                      min_val=0.0)
 
     x_grid, y_grid = extract_grid_coords(template, func_name='spline')
+
+    # Memory guard.  Runs after input validation so we know N, but
+    # before the TPS system is built.
+    grid_pixels = int(np.prod(template.shape))
+    _check_spline_memory(len(x_arr), grid_pixels)
 
     # Solve TPS system once on CPU
     weights = _tps_build_and_solve(x_arr, y_arr, z_arr, smoothing)
