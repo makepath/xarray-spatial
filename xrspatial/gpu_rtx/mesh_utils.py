@@ -4,9 +4,20 @@ import numpy as np
 
 
 def create_triangulation(raster, optix):
-    datahash = np.uint64(hash(str(raster.data.get())) % (1 << 64))
-    optixhash = np.uint64(optix.getHash())
+    """Build a triangulated mesh on the GPU from a 2D elevation raster.
 
+    The mesh z-coordinate is scaled by ``max(H, W) / maxH`` so the terrain
+    ratio is suitable for ray tracing.  This requires a positive, finite
+    maximum elevation: an all-zero or all-NaN raster has no elevation
+    variance and yields ``inf`` or ``NaN`` mesh vertices that the OptiX
+    raytracer cannot use sensibly.
+
+    Raises
+    ------
+    ValueError
+        If ``cupy.amax(raster.data)`` is non-positive or non-finite, i.e.
+        the raster has no positive elevation variance to scale by.
+    """
     # Calculate a scale factor for the height that maintains the ratio
     # width/height
     H, W = raster.shape
@@ -16,7 +27,22 @@ def create_triangulation(raster, optix):
     # raytracing will give best accuracy
     maxH = float(cupy.amax(raster.data))
     maxDim = max(H, W)
+
+    # Guard against a divide-by-zero / divide-by-NaN that would propagate
+    # inf or NaN into every vertex z-coordinate (issue #1378).  An all-zero
+    # raster gives maxH == 0.0, an all-NaN raster gives maxH == nan, and a
+    # raster with only non-positive values would invert the mesh.  All of
+    # these cases produce garbage geometry downstream, so fail fast before
+    # any hash or device-buffer work.
+    if not np.isfinite(maxH) or maxH <= 0.0:
+        raise ValueError(
+            "raster has no positive elevation variance "
+            f"(max={maxH}); cannot build mesh for hillshade/viewshed"
+        )
     scale = maxDim / maxH
+
+    datahash = np.uint64(hash(str(raster.data.get())) % (1 << 64))
+    optixhash = np.uint64(optix.getHash())
 
     if optixhash != datahash:
         num_tris = (H - 1) * (W - 1) * 2
