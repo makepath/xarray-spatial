@@ -15,6 +15,7 @@ import xarray as xr
 
 from xrspatial.utils import (
     ArrayTypeFunctionMapping,
+    _validate_raster,
     has_cuda_and_cupy,
     has_dask_array,
     is_cupy_array,
@@ -393,6 +394,17 @@ def mahalanobis(
     # --- input validation ---
     if len(bands) < 2:
         raise ValueError("At least 2 bands are required.")
+
+    # Per-band dtype/ndim check.  ``validate_arrays`` only enforces matching
+    # shape and array-type, so without this loop a boolean or other
+    # non-numeric DataArray would silently coerce to float64.
+    for i, band in enumerate(bands):
+        _validate_raster(
+            band,
+            func_name='mahalanobis',
+            name=f'bands[{i}]',
+            ndim=2,
+        )
 
     validate_arrays(*bands)
 
