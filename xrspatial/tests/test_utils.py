@@ -3,8 +3,27 @@ import xarray as xr
 import pytest
 import warnings
 
+import dask.array as da
 
 from xrspatial import utils
+from xrspatial.utils import validate_arrays
+
+try:
+    import cupy
+
+    _has_cupy = True
+    try:
+        cupy.zeros(1)
+    except Exception:
+        _has_cupy = False
+except ImportError:
+    cupy = None
+    _has_cupy = False
+
+
+cupy_required = pytest.mark.skipif(
+    not _has_cupy, reason="cupy unavailable in this environment"
+)
 
 
 def test_warn_if_unit_mismatch_degrees_horizontal_elevation_vertical(monkeypatch):
@@ -117,3 +136,45 @@ def test_validate_raster_accepts_real_numeric_dtypes(dtype):
     raster = xr.DataArray(np.zeros((4, 4), dtype=dtype))
     # Should not raise.
     utils._validate_raster(raster, func_name="example")
+
+
+def test_validate_arrays_dask_numpy_pair_passes():
+    a = xr.DataArray(da.from_array(np.zeros((8, 8)), chunks=4))
+    b = xr.DataArray(da.from_array(np.ones((8, 8)), chunks=4))
+    validate_arrays(a, b)  # should not raise
+
+
+def test_validate_arrays_numpy_pair_passes():
+    a = xr.DataArray(np.zeros((6, 6)))
+    b = xr.DataArray(np.ones((6, 6)))
+    validate_arrays(a, b)  # should not raise
+
+
+def test_validate_arrays_mixed_dask_numpy_and_eager_numpy_rejected():
+    a = xr.DataArray(da.from_array(np.zeros((6, 6))))
+    b = xr.DataArray(np.ones((6, 6)))
+    with pytest.raises(ValueError, match="same backend"):
+        validate_arrays(a, b)
+
+
+@cupy_required
+def test_validate_arrays_dask_cupy_pair_passes():
+    a = xr.DataArray(da.from_array(cupy.zeros((8, 8)), chunks=4))
+    b = xr.DataArray(da.from_array(cupy.ones((8, 8)), chunks=4))
+    validate_arrays(a, b)  # should not raise
+
+
+@cupy_required
+def test_validate_arrays_mixed_dask_numpy_and_dask_cupy_rejected():
+    a = xr.DataArray(da.from_array(np.zeros((8, 8))))
+    b = xr.DataArray(da.from_array(cupy.zeros((8, 8))))
+    with pytest.raises(ValueError, match="dask\\+numpy.*dask\\+cupy"):
+        validate_arrays(a, b)
+
+
+@cupy_required
+def test_validate_arrays_mixed_eager_numpy_and_cupy_rejected():
+    a = xr.DataArray(np.zeros((6, 6)))
+    b = xr.DataArray(cupy.zeros((6, 6)))
+    with pytest.raises(ValueError, match="numpy.*cupy"):
+        validate_arrays(a, b)

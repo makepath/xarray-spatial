@@ -1313,12 +1313,16 @@ def _build_row_csr_numba(edge_y_min, edge_y_max, height):
     """
     n_edges = len(edge_y_min)
     if n_edges == 0:
-        return (np.zeros(height + 1, dtype=np.int32),
+        return (np.zeros(height + 1, dtype=np.int64),
                 np.empty(0, dtype=np.int32))
 
     # Pass 1: difference-array counting — O(n_edges + height)
     # diff[r] += 1 when an edge starts, diff[r+1] -= 1 when it ends.
-    diff = np.zeros(height + 1, dtype=np.int32)
+    # row_ptr / diff / offsets are int64 so the cumulative edge-count
+    # (sum over rows of edges_per_row) cannot overflow int32 on tall
+    # rasters with many long edges. col_idx values stay int32 since
+    # they hold edge indices, not cumulative counts.
+    diff = np.zeros(height + 1, dtype=np.int64)
     for e in range(n_edges):
         y_lo = edge_y_min[e]
         y_hi = edge_y_max[e]
@@ -1329,9 +1333,9 @@ def _build_row_csr_numba(edge_y_min, edge_y_max, height):
             diff[y_hi + 1] -= 1
 
     # Prefix sum on diff -> counts, and build row_ptr simultaneously
-    row_ptr = np.empty(height + 1, dtype=np.int32)
+    row_ptr = np.empty(height + 1, dtype=np.int64)
     row_ptr[0] = 0
-    running = np.int32(0)
+    running = np.int64(0)
     for r in range(height):
         running += diff[r]
         row_ptr[r + 1] = row_ptr[r] + running
@@ -1339,7 +1343,7 @@ def _build_row_csr_numba(edge_y_min, edge_y_max, height):
     # Pass 2: fill col_idx — each edge placed into its row range
     total = row_ptr[height]
     col_idx = np.empty(total, dtype=np.int32)
-    offsets = np.empty(height, dtype=np.int32)
+    offsets = np.empty(height, dtype=np.int64)
     for r in range(height):
         offsets[r] = row_ptr[r]
 
