@@ -6,8 +6,8 @@ import xarray as xr
 from numba import cuda, jit, prange
 
 from xrspatial.utils import (ArrayTypeFunctionMapping, _boundary_to_dask, _pad_array,
-                             _validate_boundary, cuda_args, get_dataarray_resolution,
-                             not_implemented_func)
+                             _validate_boundary, _validate_raster, cuda_args,
+                             get_dataarray_resolution, not_implemented_func)
 
 # 3rd-party
 try:
@@ -469,6 +469,10 @@ def _convolve_2d_dask_cupy(data, kernel, boundary='nan'):
 
 
 def convolve_2d(data, kernel, boundary='nan'):
+    # Wrap raw arrays so _validate_raster can check dtype/ndim consistently
+    # across numpy, cupy, and dask backends before the kernel runs.
+    agg = xr.DataArray(data)
+    _validate_raster(agg, func_name='convolve_2d', ndim=2)
     _validate_boundary(boundary)
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_convolve_2d_numpy_boundary,
@@ -476,7 +480,7 @@ def convolve_2d(data, kernel, boundary='nan'):
         dask_func=_convolve_2d_dask_numpy,
         dask_cupy_func=_convolve_2d_dask_cupy
     )
-    out = mapper(xr.DataArray(data))(data, kernel, boundary)
+    out = mapper(agg)(data, kernel, boundary)
     return out
 
 
