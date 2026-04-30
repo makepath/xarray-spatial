@@ -1507,3 +1507,88 @@ class TestMultiColumn:
                               width=10, height=10, bounds=(0, 0, 10, 10),
                               fill=0, chunks=(5, 5))
         np.testing.assert_array_equal(np_result.values, dk_result.values)
+
+
+# ---------------------------------------------------------------------------
+# CSR builder int64 row_ptr (issue #1388)
+# ---------------------------------------------------------------------------
+
+class TestBuildRowCsrInt64:
+    """`_build_row_csr_numba` uses int64 row_ptr to avoid int32 overflow."""
+
+    def test_row_ptr_dtype_is_int64(self):
+        """row_ptr is allocated as int64 so cumulative counts cannot wrap."""
+        from xrspatial.rasterize import _build_row_csr_numba
+
+        edge_y_min = np.array([0, 0, 1], dtype=np.int32)
+        edge_y_max = np.array([2, 1, 2], dtype=np.int32)
+        row_ptr, col_idx = _build_row_csr_numba(edge_y_min, edge_y_max, 3)
+
+        assert row_ptr.dtype == np.int64
+        assert col_idx.dtype == np.int32
+
+    def test_empty_edges_returns_int64_row_ptr(self):
+        """The n_edges == 0 short-circuit also returns int64 row_ptr."""
+        from xrspatial.rasterize import _build_row_csr_numba
+
+        edge_y_min = np.empty(0, dtype=np.int32)
+        edge_y_max = np.empty(0, dtype=np.int32)
+        row_ptr, col_idx = _build_row_csr_numba(edge_y_min, edge_y_max, 5)
+
+        assert row_ptr.dtype == np.int64
+        assert row_ptr.shape == (6,)
+        assert np.all(row_ptr == 0)
+
+    def test_row_ptr_holds_value_above_int32_max(self):
+        """The cumulative count survives a value past int32 max.
+
+        Construct a small CSR by hand and confirm that adding past
+        2**31 - 1 inside int64 row_ptr does not wrap. The actual numba
+        kernel writes per-edge so we cannot drive 2.5e9 edges in a unit
+        test, but we can verify the dtype contract by writing past the
+        int32 boundary directly into a returned row_ptr.
+        """
+        from xrspatial.rasterize import _build_row_csr_numba
+
+        edge_y_min = np.array([0], dtype=np.int32)
+        edge_y_max = np.array([0], dtype=np.int32)
+        row_ptr, _ = _build_row_csr_numba(edge_y_min, edge_y_max, 2)
+
+        assert row_ptr.dtype == np.int64
+        # int64 can hold > 2**31; assigning would wrap on int32.
+        big = np.int64(2**31 + 17)
+        row_ptr[0] = big
+        assert int(row_ptr[0]) == int(big)
+
+    def test_csr_correct_for_overlapping_edges(self):
+        """Overlapping edges populate col_idx in row order without corruption."""
+        from xrspatial.rasterize import _build_row_csr_numba
+
+        # Three edges spanning rows [0,2], [1,3], [2,2] in a 4-row raster.
+        edge_y_min = np.array([0, 1, 2], dtype=np.int32)
+        edge_y_max = np.array([2, 3, 2], dtype=np.int32)
+        row_ptr, col_idx = _build_row_csr_numba(edge_y_min, edge_y_max, 4)
+
+        # Per-row counts: row 0 -> {0}; row 1 -> {0,1}; row 2 -> {0,1,2};
+        # row 3 -> {1}; total = 7.
+        assert row_ptr.tolist() == [0, 1, 3, 6, 7]
+        assert col_idx.shape == (7,)
+        # Row 0 holds edge 0.
+        assert col_idx[row_ptr[0]:row_ptr[1]].tolist() == [0]
+        # Row 2 holds edges 0, 1, 2 in arrival order.
+        assert sorted(col_idx[row_ptr[2]:row_ptr[3]].tolist()) == [0, 1, 2]
+        # Row 3 holds edge 1.
+        assert col_idx[row_ptr[3]:row_ptr[4]].tolist() == [1]
+
+    def test_rasterize_public_path_still_works_after_int64_change(self):
+        """End-to-end rasterize call still produces correct output."""
+        gdf = gpd.GeoDataFrame(
+            {'value': [3.0]},
+            geometry=[box(2, 2, 8, 8)],
+        )
+        result = rasterize(
+            gdf, column='value',
+            width=10, height=10, bounds=(0, 0, 10, 10), fill=0,
+        )
+        # The polygon covers a 6x6 inner block; just check it burned in.
+        assert np.any(result.values == 3.0)
