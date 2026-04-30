@@ -100,6 +100,41 @@ def wlc(
     return result
 
 
+def _check_wpm_positive(criteria: xr.Dataset) -> None:
+    """Reject criterion layers with zero or negative values.
+
+    ``wpm`` computes ``prod(x_i ** w_i)``. For non-integer weights this is
+    only well-defined when ``x_i > 0``: a single zero collapses the
+    product to zero (masking upstream bugs) and a negative base produces
+    NaN with no error. NaN values are allowed through so the documented
+    NaN-propagation behaviour is preserved.
+    """
+    bad = []
+    for var_name in criteria.data_vars:
+        arr = criteria[var_name].data
+        # Mask NaN so they pass through; we only want to flag <= 0.
+        try:
+            import dask.array as da
+            if isinstance(arr, da.Array):
+                # Compute once; cheap relative to the full product pass.
+                min_val = float(da.nanmin(arr).compute())
+            else:
+                min_val = float(np.nanmin(arr))
+        except ImportError:
+            min_val = float(np.nanmin(arr))
+        except ValueError:
+            # All-NaN slice; nothing to flag.
+            continue
+        if not np.isnan(min_val) and min_val <= 0.0:
+            bad.append((var_name, min_val))
+    if bad:
+        details = ", ".join(f"{n!r} (min={v})" for n, v in bad)
+        raise ValueError(
+            "wpm requires strictly positive criterion values; got "
+            f"non-positive value(s) in: {details}"
+        )
+
+
 def wpm(
     criteria: xr.Dataset,
     weights: dict[str, float],
@@ -113,7 +148,10 @@ def wpm(
     Parameters
     ----------
     criteria : xr.Dataset
-        Standardized criterion layers (0-1).
+        Standardized criterion layers. Values must be strictly positive
+        (``> 0``); zero or negative inputs raise ``ValueError`` because
+        ``x ** w`` is undefined or collapses to zero for non-integer
+        weights. NaN values propagate through to the output.
     weights : dict
         ``{criterion_name: weight}``, must sum to ~1.0.
     name : str
@@ -126,6 +164,7 @@ def wpm(
     """
     _validate_criteria(criteria)
     _validate_weights(weights, criteria)
+    _check_wpm_positive(criteria)
 
     result = None
     for var_name in criteria.data_vars:
