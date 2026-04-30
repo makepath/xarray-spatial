@@ -255,11 +255,14 @@ def bilateral(agg, sigma_spatial=1.0, sigma_range=10.0,
     sigma_spatial : float, default 1.0
         Standard deviation of the spatial Gaussian.  Controls the size
         of the neighbourhood: kernel radius = ceil(2 * sigma_spatial).
-        Must be > 0.
+        Must be at least ``sqrt(np.finfo(float64).tiny)`` (~1.49e-154)
+        so that ``2 * sigma_spatial**2`` does not underflow to a
+        denormal and turn the Gaussian weight into NaN.
     sigma_range : float, default 10.0
         Standard deviation of the range (value-similarity) Gaussian.
         Larger values allow more smoothing across value differences;
-        smaller values preserve more edges.  Must be > 0.
+        smaller values preserve more edges.  Same lower bound as
+        ``sigma_spatial``.
     name : str, default 'bilateral'
         Name for the output DataArray.
     boundary : str, default 'nan'
@@ -297,12 +300,17 @@ def bilateral(agg, sigma_spatial=1.0, sigma_range=10.0,
     ICCV 1998.
     """
     _validate_raster(agg, func_name='bilateral', name='agg', ndim=(2, 3))
+    # Lower bound on each sigma so 2*sigma**2 stays a normal float64.  Below
+    # sqrt(tiny) the squared term denormalises to zero and 1/(2*sigma**2)
+    # becomes +inf (or raises ZeroDivisionError under numba), and exp(-d *
+    # inf) -> 0*inf -> NaN propagates through the whole output.
+    _sigma_min = float(np.sqrt(np.finfo(np.float64).tiny))
     _validate_scalar(sigma_spatial, func_name='bilateral',
                      name='sigma_spatial', dtype=(int, float),
-                     min_val=0, min_exclusive=True)
+                     min_val=_sigma_min)
     _validate_scalar(sigma_range, func_name='bilateral',
                      name='sigma_range', dtype=(int, float),
-                     min_val=0, min_exclusive=True)
+                     min_val=_sigma_min)
     _validate_boundary(boundary)
 
     sigma_spatial = float(sigma_spatial)

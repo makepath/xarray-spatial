@@ -135,6 +135,52 @@ def test_bilateral_validation_errors():
         bilateral(agg, boundary='invalid')
 
 
+def test_bilateral_rejects_underflow_sigma_spatial():
+    """sigma_spatial small enough to denormalise 2*sigma**2 must raise.
+
+    Below ``sqrt(np.finfo(float64).tiny)`` the squared term underflows to
+    zero (or to a denormal that makes ``1/(2*sigma**2)`` infinite), and
+    ``exp(-dist2 * inf) = 0 * inf = NaN`` propagates through the whole
+    output.  Regression test for issue #1390.
+    """
+    agg = xr.DataArray(np.ones((10, 10)))
+    with pytest.raises(ValueError, match='sigma_spatial'):
+        bilateral(agg, sigma_spatial=1e-200, sigma_range=1.0)
+    # Also reject the denormal-but-nonzero case that previously yielded
+    # all-NaN output instead of an error.
+    with pytest.raises(ValueError, match='sigma_spatial'):
+        bilateral(agg, sigma_spatial=1e-160, sigma_range=1.0)
+    # And the same bound applies to sigma_range.
+    with pytest.raises(ValueError, match='sigma_range'):
+        bilateral(agg, sigma_spatial=1.0, sigma_range=1e-200)
+
+
+def test_bilateral_rejects_zero_sigma():
+    """sigma_spatial=0 and sigma_range=0 still raise (regression).
+
+    The lower bound was previously ``> 0``; tightening it to
+    ``>= sqrt(tiny)`` must keep rejecting zero.
+    """
+    agg = xr.DataArray(np.ones((5, 5)))
+    with pytest.raises(ValueError, match='sigma_spatial'):
+        bilateral(agg, sigma_spatial=0.0, sigma_range=1.0)
+    with pytest.raises(ValueError, match='sigma_range'):
+        bilateral(agg, sigma_spatial=1.0, sigma_range=0.0)
+
+
+def test_bilateral_accepts_normal_sigma():
+    """Realistic sigma values must still produce a finite result.
+
+    Guards against an overly aggressive lower bound regression.
+    """
+    rng = np.random.default_rng(1390)
+    data = rng.standard_normal((8, 8)).astype(np.float64)
+    agg = xr.DataArray(data)
+    result = bilateral(agg, sigma_spatial=1.0, sigma_range=1.0)
+    assert result.shape == agg.shape
+    assert np.all(np.isfinite(result.data))
+
+
 def test_bilateral_clamps_oversize_sigma_spatial():
     """An oversized sigma_spatial should be clamped internally so that the
     derived kernel radius never exceeds max(rows, cols).
