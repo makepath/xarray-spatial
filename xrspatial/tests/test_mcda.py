@@ -517,14 +517,55 @@ class TestWPM:
         expected = 0.2 ** 0.4 * 0.5 ** 0.35 * 0.6 ** 0.25
         assert float(result.values[0, 0]) == pytest.approx(expected)
 
-    def test_zero_value_kills_product(self):
-        """A zero criterion value should produce zero output."""
+    def test_zero_value_raises(self):
+        """A zero criterion value is rejected.
+
+        ``0 ** w`` collapses the whole product to zero for any positive
+        weight, which masks bugs in upstream standardization. ``wpm``
+        now requires strictly positive inputs.
+        """
         ds = xr.Dataset({
             "a": xr.DataArray(np.array([[0.0]]), dims=["y", "x"]),
             "b": xr.DataArray(np.array([[0.8]]), dims=["y", "x"]),
         })
+        with pytest.raises(ValueError, match="non-positive"):
+            wpm(ds, {"a": 0.5, "b": 0.5})
+
+    def test_negative_value_raises(self):
+        """A negative criterion value is rejected.
+
+        ``(-x) ** w`` is NaN for non-integer ``w``; without validation
+        the function silently returns NaN.
+        """
+        ds = xr.Dataset({
+            "a": xr.DataArray(np.array([[-0.1, 0.5]]), dims=["y", "x"]),
+            "b": xr.DataArray(np.array([[0.7, 0.7]]), dims=["y", "x"]),
+        })
+        with pytest.raises(ValueError, match="non-positive"):
+            wpm(ds, {"a": 0.5, "b": 0.5})
+
+    def test_error_names_offending_variable(self):
+        """The error message identifies which variable is bad."""
+        ds = xr.Dataset({
+            "ok": xr.DataArray(np.array([[0.5]]), dims=["y", "x"]),
+            "bad": xr.DataArray(np.array([[-1.0]]), dims=["y", "x"]),
+        })
+        with pytest.raises(ValueError, match="bad"):
+            wpm(ds, {"ok": 0.5, "bad": 0.5})
+
+    def test_strictly_positive_inputs_work(self):
+        """The positive path is unchanged."""
+        ds = xr.Dataset({
+            "a": xr.DataArray(np.array([[0.2, 0.5]]), dims=["y", "x"]),
+            "b": xr.DataArray(np.array([[0.8, 0.4]]), dims=["y", "x"]),
+        })
         result = wpm(ds, {"a": 0.5, "b": 0.5})
-        assert float(result.values[0, 0]) == pytest.approx(0.0)
+        assert float(result.values[0, 0]) == pytest.approx(
+            0.2 ** 0.5 * 0.8 ** 0.5
+        )
+        assert float(result.values[0, 1]) == pytest.approx(
+            0.5 ** 0.5 * 0.4 ** 0.5
+        )
 
 
 class TestWLCNaN:
@@ -1152,14 +1193,14 @@ class TestWPMEdgeCases:
         r = wpm(ds, {"a": 0.3, "b": 0.7})
         assert float(r.values[0, 0]) == pytest.approx(1.0)
 
-    def test_all_zeros(self):
-        """All criteria at 0.0 should produce 0.0."""
+    def test_all_zeros_raises(self):
+        """All criteria at 0.0 is rejected by the positive-input check."""
         ds = xr.Dataset({
             "a": xr.DataArray(np.array([[0.0]]), dims=["y", "x"]),
             "b": xr.DataArray(np.array([[0.0]]), dims=["y", "x"]),
         })
-        r = wpm(ds, {"a": 0.5, "b": 0.5})
-        assert float(r.values[0, 0]) == pytest.approx(0.0)
+        with pytest.raises(ValueError, match="non-positive"):
+            wpm(ds, {"a": 0.5, "b": 0.5})
 
 
 class TestConstrainEdgeCases:
