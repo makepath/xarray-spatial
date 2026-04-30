@@ -880,7 +880,7 @@ def test_true_color_mismatched_backends_raises():
     blue = xr.DataArray(np.ones((4, 4), dtype=np.float32), dims=['y', 'x'])
     blue = blue.assign_coords(y=np.arange(4), x=np.arange(4))
 
-    with pytest.raises(ValueError, match='same type'):
+    with pytest.raises(ValueError, match='same backend'):
         true_color(red, green, blue)
 
 
