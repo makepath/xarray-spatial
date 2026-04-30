@@ -140,6 +140,178 @@ def test_dask_nan_positions(chunks):
 
 
 # -------------------------------------------------------------------
+# Cross-tile connected components -- regression for #1394
+# -------------------------------------------------------------------
+#
+# Per-tile CCL must be merged across tile boundaries so a connected
+# sink that straddles a chunk gets one label, matching the numpy
+# backend's behavior.
+
+def _equiv_labels(arr_a, arr_b):
+    """Return True if two label rasters describe the same partitioning.
+
+    Two outputs are equivalent when they agree on which cells are sinks
+    (NaN pattern matches) and when same-label-in-A pairs are also
+    same-label-in-B.  We don't require literal label equality because
+    the dask path uses position-based IDs that differ from the numpy
+    path's IDs after cross-tile merging.
+    """
+    if arr_a.shape != arr_b.shape:
+        return False
+    nan_a = np.isnan(arr_a)
+    nan_b = np.isnan(arr_b)
+    if not np.array_equal(nan_a, nan_b):
+        return False
+
+    valid = ~nan_a
+    a_vals = arr_a[valid]
+    b_vals = arr_b[valid]
+    # Build mapping a_label -> b_label and check it's consistent.
+    mapping = {}
+    for a, b in zip(a_vals.tolist(), b_vals.tolist()):
+        if a in mapping:
+            if mapping[a] != b:
+                return False
+        else:
+            mapping[a] = b
+    # And the reverse mapping must also be 1:1.
+    rev = {}
+    for a, b in mapping.items():
+        if b in rev:
+            return False
+        rev[b] = a
+    return True
+
+
+@dask_array_available
+@pytest.mark.parametrize("chunks", [
+    (1, 1), (1, 2), (1, 3),
+])
+def test_dask_horizontal_sink_across_tiles(chunks):
+    """Horizontal connected sink straddling a chunk boundary."""
+    flow_dir = np.array([[1.0, 0.0, 0.0, 16.0]], dtype=np.float64)
+    np_agg = create_test_raster(flow_dir, backend='numpy')
+    dk_agg = create_test_raster(flow_dir, backend='dask', chunks=chunks)
+    np_result = sink(np_agg).data
+    dk_result = sink(dk_agg).data.compute()
+    assert _equiv_labels(np_result, dk_result), (
+        f"chunks={chunks}: dask result {dk_result} does not match "
+        f"numpy partitioning {np_result}"
+    )
+    # Specifically, the two sink cells should share a label
+    assert dk_result[0, 1] == dk_result[0, 2]
+
+
+@dask_array_available
+@pytest.mark.parametrize("chunks", [
+    (1, 1), (2, 1), (3, 1),
+])
+def test_dask_vertical_sink_across_tiles(chunks):
+    """Vertical connected sink straddling a chunk boundary."""
+    flow_dir = np.array([
+        [1.0, 1.0, 16.0],
+        [1.0, 0.0, 16.0],
+        [1.0, 0.0, 16.0],
+        [1.0, 1.0, 16.0],
+    ], dtype=np.float64)
+    np_agg = create_test_raster(flow_dir, backend='numpy')
+    dk_agg = create_test_raster(flow_dir, backend='dask', chunks=chunks)
+    np_result = sink(np_agg).data
+    dk_result = sink(dk_agg).data.compute()
+    assert _equiv_labels(np_result, dk_result)
+    assert dk_result[1, 1] == dk_result[2, 1]
+
+
+@dask_array_available
+@pytest.mark.parametrize("chunks", [
+    (1, 1), (2, 2), (1, 2), (2, 1),
+])
+def test_dask_diagonal_sink_across_tiles(chunks):
+    """Diagonal connected sink across a corner-shared tile boundary.
+
+    8-connectivity means a sink chain along the NW-SE diagonal must
+    survive a chunk boundary that separates the two cells corner-to-corner.
+    """
+    flow_dir = np.array([
+        [0.0, 1.0, 1.0, 1.0],
+        [1.0, 0.0, 1.0, 1.0],
+        [1.0, 1.0, 0.0, 1.0],
+        [1.0, 1.0, 1.0, 0.0],
+    ], dtype=np.float64)
+    np_agg = create_test_raster(flow_dir, backend='numpy')
+    dk_agg = create_test_raster(flow_dir, backend='dask', chunks=chunks)
+    np_result = sink(np_agg).data
+    dk_result = sink(dk_agg).data.compute()
+    assert _equiv_labels(np_result, dk_result)
+    # All four diagonal cells are one connected sink under 8-connectivity
+    sink_cells = [(0, 0), (1, 1), (2, 2), (3, 3)]
+    first = dk_result[sink_cells[0]]
+    for r, c in sink_cells[1:]:
+        assert dk_result[r, c] == first
+
+
+@dask_array_available
+@pytest.mark.parametrize("chunks", [
+    (1, 1), (2, 2), (1, 2), (2, 1), (3, 3),
+])
+def test_dask_block_sink_across_four_tiles(chunks):
+    """Sink block spanning a 2x2 grid of tiles (all four corners meet)."""
+    flow_dir = np.array([
+        [1.0, 0.0, 0.0, 0.0, 16.0],
+        [1.0, 0.0, 0.0, 0.0, 16.0],
+    ], dtype=np.float64)
+    np_agg = create_test_raster(flow_dir, backend='numpy')
+    dk_agg = create_test_raster(flow_dir, backend='dask', chunks=chunks)
+    np_result = sink(np_agg).data
+    dk_result = sink(dk_agg).data.compute()
+    assert _equiv_labels(np_result, dk_result)
+    # All six sink cells should share one label
+    sink_cells = [(r, c) for r in range(2) for c in range(1, 4)]
+    first = dk_result[sink_cells[0]]
+    for r, c in sink_cells[1:]:
+        assert dk_result[r, c] == first
+
+
+@dask_array_available
+def test_dask_separate_sinks_stay_separate():
+    """Two distinct sinks separated by a non-sink chunk keep distinct labels."""
+    flow_dir = np.array([
+        [0.0, 1.0, 1.0, 1.0, 0.0],
+    ], dtype=np.float64)
+    np_agg = create_test_raster(flow_dir, backend='numpy')
+    dk_agg = create_test_raster(flow_dir, backend='dask', chunks=(1, 2))
+    np_result = sink(np_agg).data
+    dk_result = sink(dk_agg).data.compute()
+    assert _equiv_labels(np_result, dk_result)
+    # Different sinks -> different labels in both
+    assert dk_result[0, 0] != dk_result[0, 4]
+
+
+@dask_array_available
+@pytest.mark.parametrize("chunks", [(1, 1), (2, 2), (3, 3)])
+def test_dask_label_count_matches_numpy(chunks):
+    """Number of unique labels in dask output equals numpy output."""
+    flow_dir = np.array([
+        [0.0, 0.0, 1.0, 0.0, 0.0],
+        [1.0, 0.0, 1.0, 0.0, 1.0],
+        [1.0, 1.0, 0.0, 1.0, 1.0],
+        [0.0, 1.0, 0.0, 1.0, 0.0],
+        [0.0, 1.0, 1.0, 1.0, 0.0],
+    ], dtype=np.float64)
+    np_agg = create_test_raster(flow_dir, backend='numpy')
+    dk_agg = create_test_raster(flow_dir, backend='dask', chunks=chunks)
+    np_result = sink(np_agg).data
+    dk_result = sink(dk_agg).data.compute()
+    np_labels = np.unique(np_result[~np.isnan(np_result)])
+    dk_labels = np.unique(dk_result[~np.isnan(dk_result)])
+    assert len(np_labels) == len(dk_labels), (
+        f"chunks={chunks}: numpy found {len(np_labels)} sinks, "
+        f"dask found {len(dk_labels)}"
+    )
+    assert _equiv_labels(np_result, dk_result)
+
+
+# -------------------------------------------------------------------
 # GPU cross-backend tests
 # -------------------------------------------------------------------
 
