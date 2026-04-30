@@ -116,6 +116,28 @@ def test_warn_if_unit_mismatch_degrees_but_angle_vertical(monkeypatch):
     assert len(w) == 0, "Expected no warnings when vertical units are angles"
 
 
+# ---------------------------------------------------------------------------
+# _validate_raster dtype handling
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("dtype", [np.complex64, np.complex128])
+def test_validate_raster_rejects_complex_dtype(dtype):
+    """Complex dtypes are not real numeric and must be rejected."""
+    raster = xr.DataArray(np.zeros((4, 4), dtype=dtype))
+    with pytest.raises(ValueError, match="real numeric"):
+        utils._validate_raster(raster, func_name="example")
+
+
+@pytest.mark.parametrize(
+    "dtype", [np.float32, np.float64, np.int32, np.int64, np.uint8],
+)
+def test_validate_raster_accepts_real_numeric_dtypes(dtype):
+    """Integer and float dtypes pass the default numeric check."""
+    raster = xr.DataArray(np.zeros((4, 4), dtype=dtype))
+    # Should not raise.
+    utils._validate_raster(raster, func_name="example")
+
+
 def test_validate_arrays_dask_numpy_pair_passes():
     a = xr.DataArray(da.from_array(np.zeros((8, 8)), chunks=4))
     b = xr.DataArray(da.from_array(np.ones((8, 8)), chunks=4))
