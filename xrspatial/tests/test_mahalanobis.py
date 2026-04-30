@@ -254,6 +254,43 @@ def test_error_inv_cov_wrong_shape():
         mahalanobis([b1, b2], mean=np.zeros(2), inv_cov=np.eye(3))
 
 
+def test_error_bool_band_rejected():
+    """Boolean DataArrays must be rejected up front, not silently coerced."""
+    rng = np.random.default_rng(0)
+    b1 = xr.DataArray(
+        rng.integers(0, 2, size=(8, 8)).astype(bool), dims=['y', 'x']
+    )
+    b2 = xr.DataArray(
+        rng.integers(0, 2, size=(8, 8)).astype(bool), dims=['y', 'x']
+    )
+    with pytest.raises(ValueError, match="numeric dtype"):
+        mahalanobis([b1, b2])
+
+
+def test_error_string_band_rejected():
+    """String-dtype DataArrays must raise rather than fail deep inside numpy."""
+    data = np.array([['a', 'b'], ['c', 'd']])
+    b1 = xr.DataArray(data, dims=['y', 'x'])
+    b2 = xr.DataArray(data.copy(), dims=['y', 'x'])
+    with pytest.raises(ValueError, match="numeric dtype"):
+        mahalanobis([b1, b2])
+
+
+def test_mixed_numeric_dtypes_accepted():
+    """Mixing float and int bands is a valid numeric input."""
+    rng = np.random.default_rng(1)
+    b1 = xr.DataArray(
+        rng.standard_normal((6, 5)).astype(np.float64), dims=['y', 'x']
+    )
+    b2 = xr.DataArray(
+        rng.integers(0, 100, size=(6, 5)).astype(np.int32), dims=['y', 'x']
+    )
+    result = mahalanobis([b1, b2])
+    assert result.shape == (6, 5)
+    assert result.dtype == np.float64
+    assert np.all(np.isfinite(result.values))
+
+
 # --- output metadata ---
 
 def test_output_metadata():
