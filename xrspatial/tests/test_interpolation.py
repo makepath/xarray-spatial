@@ -486,3 +486,64 @@ class TestKrigingMemoryGuard:
         # n=10, grid_pixels=100000 -> k0 ~ 26 MB > 1 MB * 0.8.
         with pytest.raises(MemoryError, match='prediction matrix'):
             _check_kriging_memory(n_points=10, grid_pixels=100_000)
+
+
+class TestIDWMemoryGuard:
+    """Verify idw(k=...) refuses to allocate more than ~80% of RAM.
+
+    The k-nearest path materialises a ``(grid_pixels, k)`` float64
+    distance array and an int64 index array via ``cKDTree.query``.  Peak
+    use is ``grid_pixels * k * 16`` bytes.  The guard is monkeypatched
+    against a small memory budget so tests can simulate "too big"
+    without allocating GB.
+    """
+
+    def test_oversize_grid_raises(self, monkeypatch):
+        """Large grid x k allocation triggers the guard."""
+        # 32 MB available.  2000x2000 grid * k=4 * 16 B = 256 MB > 0.8*32 MB.
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 32 * 1024 ** 2,
+        )
+
+        x, y, z = _grid_points()
+        template = _make_template(
+            np.arange(2000, dtype=np.float64),
+            np.arange(2000, dtype=np.float64),
+        )
+
+        with pytest.raises(MemoryError, match='idw'):
+            idw(x, y, z, template, k=4)
+
+    def test_normal_succeeds(self, monkeypatch):
+        """Small inputs pass the guard with a tight memory budget."""
+        # 16 MB available is plenty for a 9-point, 3x3 grid problem.
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 16 * 1024 ** 2,
+        )
+
+        x, y, z = _grid_points()
+        template = _make_template([0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
+
+        # Should not raise.
+        result = idw(x, y, z, template, k=3)
+        assert result.shape == template.shape
+
+    def test_message_names_grid_and_k(self, monkeypatch):
+        """Error message identifies grid size and k for the user."""
+        from xrspatial.interpolate._idw import _check_idw_memory
+
+        monkeypatch.setattr(
+            'xrspatial.zonal._available_memory_bytes',
+            lambda: 1 * 1024 ** 2,  # 1 MB
+        )
+
+        # grid_pixels=1_000_000, k=8 -> 128 MB > 0.8 MB.
+        with pytest.raises(MemoryError) as excinfo:
+            _check_idw_memory(grid_pixels=1_000_000, k=8)
+
+        msg = str(excinfo.value)
+        assert '1000000' in msg
+        assert '8' in msg
+        assert 'GB' in msg

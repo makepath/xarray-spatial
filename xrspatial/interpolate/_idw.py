@@ -232,6 +232,37 @@ def _idw_dask_cupy(x_pts, y_pts, z_pts, x_grid, y_grid,
 # Public API
 # ---------------------------------------------------------------------------
 
+def _check_idw_memory(grid_pixels, k):
+    """Raise MemoryError if the k-nearest IDW path would exceed memory.
+
+    ``scipy.spatial.cKDTree.query(query_pts, k=k)`` returns two arrays of
+    shape ``(grid_pixels, k)``: a float64 distance array (8 B/cell) and an
+    int64 index array (8 B/cell), for a peak of ``grid_pixels * k * 16``
+    bytes before any IDW arithmetic runs.  Downstream ``weights``,
+    ``z_vals``, and ``wz`` arrays share the same shape, so this estimate
+    bounds the dominant allocation.
+    """
+    g = int(grid_pixels)
+    kk = int(k)
+    estimate = g * kk * 16
+
+    try:
+        from xrspatial.zonal import _available_memory_bytes
+        avail = _available_memory_bytes()
+    except ImportError:
+        avail = 2 * 1024 ** 3
+
+    if estimate > 0.8 * avail:
+        raise MemoryError(
+            f"idw() needs ~{estimate / 1e9:.1f} GB to allocate the "
+            f"(grid_pixels, k) distance and index arrays of shape "
+            f"({g}, {kk}) for the k-nearest cKDTree query, but only "
+            f"~{avail / 1e9:.1f} GB is available.  Reduce the template "
+            f"grid size, reduce k, or use a chunked dask-backed template "
+            f"so the guard runs per chunk."
+        )
+
+
 def idw(x, y, z, template, power=2.0, k=None,
         fill_value=np.nan, name='idw'):
     """Inverse Distance Weighting interpolation.
@@ -256,6 +287,13 @@ def idw(x, y, z, template, power=2.0, k=None,
     Returns
     -------
     xr.DataArray
+
+    Raises
+    ------
+    MemoryError
+        When ``k`` is set on a numpy-backed template and the
+        ``(grid_pixels, k)`` distance and index arrays from the
+        ``cKDTree`` query would exceed 80% of available memory.
     """
     _validate_raster(template, func_name='idw', name='template')
     x_arr, y_arr, z_arr = validate_points(x, y, z, func_name='idw')
@@ -268,6 +306,18 @@ def idw(x, y, z, template, power=2.0, k=None,
         k = min(k, len(x_arr))
 
     x_grid, y_grid = extract_grid_coords(template, func_name='idw')
+
+    # Memory guard for the k-nearest scipy.cKDTree path.  Runs only on the
+    # numpy backend, which materialises the full (grid_pixels, k) distance
+    # and index arrays in one call.  The dask+numpy backend dispatches
+    # _idw_knearest_numpy per chunk via map_blocks, so per-chunk grid size
+    # bounds the allocation and the guard would refuse legitimate chunked
+    # workloads.  GPU backends reject k early.
+    if k is not None:
+        is_dask = da is not None and isinstance(template.data, da.Array)
+        if not is_dask:
+            grid_pixels = int(np.prod(template.shape))
+            _check_idw_memory(grid_pixels, k)
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_idw_numpy,
