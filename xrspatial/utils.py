@@ -63,7 +63,9 @@ def _validate_raster(
     ndim : int, tuple of int, or None
         Allowed number of dimensions.  ``None`` skips the check.
     numeric : bool
-        If True, require a numeric dtype (int or float).
+        If True, require a real numeric dtype (integer or float).
+        Complex dtypes are rejected because xrspatial operations
+        assume real-valued raster data.
     integer_only : bool
         If True, require an integer dtype specifically.
 
@@ -97,10 +99,13 @@ def _validate_raster(
                     f"got {agg.dtype}"
                 )
         else:
-            if not np.issubdtype(agg.dtype, np.number):
+            if (
+                not np.issubdtype(agg.dtype, np.number)
+                or np.issubdtype(agg.dtype, np.complexfloating)
+            ):
                 raise ValueError(
-                    f"{func_name}(): `{name}` must have a numeric dtype "
-                    f"(integer or float), got {agg.dtype}"
+                    f"{func_name}(): `{name}` must have a real numeric "
+                    f"dtype (integer or float), got {agg.dtype}"
                 )
 
 
