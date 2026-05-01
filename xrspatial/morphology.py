@@ -132,28 +132,31 @@ def _validate_kernel(kernel, func_name):
 
 @ngjit
 def _erode_kernel_numpy(data, kernel, rows, cols, ky, kx):
-    """Erosion (local minimum) on a padded array."""
+    """Erosion (local minimum) on a padded array.
+
+    Only kernel cells with non-zero entries contribute to the output.
+    The centre cell is included only when ``kernel[hy, hx]`` is non-zero.
+    NaN neighbours included by the kernel propagate to NaN. Cells where
+    the kernel covers no non-zero entries return NaN.
+    """
     out = np.empty((rows, cols), dtype=data.dtype)
-    hy = ky // 2
-    hx = kx // 2
     for i in prange(rows):
         for j in range(cols):
-            val = data[i + hy, j + hx]
-            if val != val:  # NaN
-                out[i, j] = val
-                continue
-            mn = val
+            mn = np.nan
+            seen = False
             for dy in range(ky):
                 for dx in range(kx):
                     if kernel[dy, dx] == 0:
                         continue
                     v = data[i + dy, j + dx]
-                    if v != v:  # NaN neighbour
+                    if v != v:  # NaN neighbour propagates
                         mn = v
+                        seen = True
                         break
-                    if v < mn:
+                    if not seen or v < mn:
                         mn = v
-                if mn != mn:  # propagate NaN
+                        seen = True
+                if seen and mn != mn:
                     break
             out[i, j] = mn
     return out
@@ -161,28 +164,31 @@ def _erode_kernel_numpy(data, kernel, rows, cols, ky, kx):
 
 @ngjit
 def _dilate_kernel_numpy(data, kernel, rows, cols, ky, kx):
-    """Dilation (local maximum) on a padded array."""
+    """Dilation (local maximum) on a padded array.
+
+    Only kernel cells with non-zero entries contribute to the output.
+    The centre cell is included only when ``kernel[hy, hx]`` is non-zero.
+    NaN neighbours included by the kernel propagate to NaN. Cells where
+    the kernel covers no non-zero entries return NaN.
+    """
     out = np.empty((rows, cols), dtype=data.dtype)
-    hy = ky // 2
-    hx = kx // 2
     for i in prange(rows):
         for j in range(cols):
-            val = data[i + hy, j + hx]
-            if val != val:  # NaN
-                out[i, j] = val
-                continue
-            mx = val
+            mx = np.nan
+            seen = False
             for dy in range(ky):
                 for dx in range(kx):
                     if kernel[dy, dx] == 0:
                         continue
                     v = data[i + dy, j + dx]
-                    if v != v:  # NaN neighbour
+                    if v != v:  # NaN neighbour propagates
                         mx = v
+                        seen = True
                         break
-                    if v > mx:
+                    if not seen or v > mx:
                         mx = v
-                if mx != mx:
+                        seen = True
+                if seen and mx != mx:
                     break
             out[i, j] = mx
     return out
@@ -233,11 +239,8 @@ def _erode_gpu(data, kernel, out, hy, hx, ky, kx):
     rows = out.shape[0]
     cols = out.shape[1]
     if i < rows and j < cols:
-        val = data[i + hy, j + hx]
-        if val != val:
-            out[i, j] = val
-            return
-        mn = val
+        mn = np.nan
+        seen = False
         for dy in range(ky):
             for dx in range(kx):
                 if kernel[dy, dx] == 0:
@@ -245,10 +248,12 @@ def _erode_gpu(data, kernel, out, hy, hx, ky, kx):
                 v = data[i + dy, j + dx]
                 if v != v:
                     mn = v
+                    seen = True
                     break
-                if v < mn:
+                if not seen or v < mn:
                     mn = v
-            if mn != mn:
+                    seen = True
+            if seen and mn != mn:
                 break
         out[i, j] = mn
 
@@ -259,11 +264,8 @@ def _dilate_gpu(data, kernel, out, hy, hx, ky, kx):
     rows = out.shape[0]
     cols = out.shape[1]
     if i < rows and j < cols:
-        val = data[i + hy, j + hx]
-        if val != val:
-            out[i, j] = val
-            return
-        mx = val
+        mx = np.nan
+        seen = False
         for dy in range(ky):
             for dx in range(kx):
                 if kernel[dy, dx] == 0:
@@ -271,10 +273,12 @@ def _dilate_gpu(data, kernel, out, hy, hx, ky, kx):
                 v = data[i + dy, j + dx]
                 if v != v:
                     mx = v
+                    seen = True
                     break
-                if v > mx:
+                if not seen or v > mx:
                     mx = v
-            if mx != mx:
+                    seen = True
+            if seen and mx != mx:
                 break
         out[i, j] = mx
 
