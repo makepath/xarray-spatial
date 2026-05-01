@@ -3,7 +3,7 @@
 ### Preparation
 - Create a new branch containing the following changes:
   - Update CHANGELOG.md with new version number and list of changes extracted from `git log --pretty=oneline --pretty=format:"- %s" <lastest_release_tag>..HEAD`.
-- Commit changes and submit them as a PR to the `master` branch.
+- Commit changes and submit them as a PR to the `main` branch.
 - If the CI passes OK, merge the PR.
 
 ### Tag release
