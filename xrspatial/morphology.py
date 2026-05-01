@@ -334,7 +334,7 @@ def _morph_chunk_numpy(chunk, kernel, op, block_info=None):
     else:
         interior = _dilate_kernel_numpy(chunk, kernel, rows, cols, ky, kx)
     result = chunk.copy()
-    result[hy:-hy, hx:-hx] = interior
+    result[hy:hy + rows, hx:hx + cols] = interior
     return result
 
 
@@ -388,7 +388,7 @@ def _morph_chunk_cupy(chunk, kernel, op, block_info=None):
     else:
         _dilate_gpu[bpg, tpb](chunk, kern_dev, out, hy, hx, ky, kx)
     result = chunk.copy()
-    result[hy:-hy, hx:-hx] = out
+    result[hy:hy + rows, hx:hx + cols] = out
     return result
 
 
