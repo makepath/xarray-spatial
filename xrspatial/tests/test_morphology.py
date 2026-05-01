@@ -284,6 +284,30 @@ def test_closing_dask_equals_numpy():
     assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, morph_closing, nan_edges=True)
 
 
+@dask_array_available
+@pytest.mark.parametrize("kernel", [
+    np.array([[1, 1, 1]], dtype=np.uint8),
+    np.array([[1], [1], [1]], dtype=np.uint8),
+])
+def test_erode_dask_1d_kernel_matches_numpy(kernel):
+    numpy_agg = create_test_raster(_DATA, backend='numpy')
+    dask_agg = create_test_raster(_DATA, backend='dask')
+    fn = partial(morph_erode, kernel=kernel)
+    assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, fn, nan_edges=False)
+
+
+@dask_array_available
+@pytest.mark.parametrize("kernel", [
+    np.array([[1, 1, 1]], dtype=np.uint8),
+    np.array([[1], [1], [1]], dtype=np.uint8),
+])
+def test_dilate_dask_1d_kernel_matches_numpy(kernel):
+    numpy_agg = create_test_raster(_DATA, backend='numpy')
+    dask_agg = create_test_raster(_DATA, backend='dask')
+    fn = partial(morph_dilate, kernel=kernel)
+    assert_numpy_equals_dask_numpy(numpy_agg, dask_agg, fn, nan_edges=False)
+
+
 # ---------------------------------------------------------------------------
 # CuPy backend
 # ---------------------------------------------------------------------------
