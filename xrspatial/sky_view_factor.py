@@ -45,6 +45,7 @@ from xrspatial.utils import (
     _validate_raster,
     _validate_scalar,
     cuda_args,
+    get_dataarray_resolution,
     ngjit,
 )
 
@@ -131,8 +132,14 @@ def _check_gpu_memory(rows, cols):
 # ---------------------------------------------------------------------------
 
 @ngjit
-def _svf_cpu(data, max_radius, n_directions):
-    """Compute SVF over an entire 2-D array on the CPU."""
+def _svf_cpu(data, max_radius, n_directions, cellsize_x, cellsize_y):
+    """Compute SVF over an entire 2-D array on the CPU.
+
+    *cellsize_x* and *cellsize_y* are the ground distance per cell along
+    the x and y axes, in the same units as the elevation values.  They
+    are used to convert the integer ray step *r* into a true ground
+    distance for the horizon angle calculation.
+    """
     rows, cols = data.shape
     out = np.empty((rows, cols), dtype=np.float64)
     out[:] = np.nan
@@ -159,7 +166,9 @@ def _svf_cpu(data, max_radius, n_directions):
                     if elev != elev:  # NaN
                         break
                     dz = elev - center
-                    dist = float(r)
+                    gx = (sx - x) * cellsize_x
+                    gy = (sy - y) * cellsize_y
+                    dist = _sqrt(gx * gx + gy * gy)
                     elev_angle = _atan2(dz, dist)
                     if elev_angle > max_elev_angle:
                         max_elev_angle = elev_angle
@@ -175,7 +184,7 @@ def _svf_cpu(data, max_radius, n_directions):
 # ---------------------------------------------------------------------------
 
 @cuda.jit
-def _svf_gpu(data, out, max_radius, n_directions):
+def _svf_gpu(data, out, max_radius, n_directions, cellsize_x, cellsize_y):
     """CUDA global kernel: one thread per cell."""
     y, x = cuda.grid(2)
     rows, cols = data.shape
@@ -205,7 +214,9 @@ def _svf_gpu(data, out, max_radius, n_directions):
             if elev != elev:  # NaN
                 break
             dz = elev - center
-            dist = float(r)
+            gx = (sx - x) * cellsize_x
+            gy = (sy - y) * cellsize_y
+            dist = _sqrt(gx * gx + gy * gy)
             elev_angle = _atan2(dz, dist)
             if elev_angle > max_elev_angle:
                 max_elev_angle = elev_angle
@@ -219,24 +230,32 @@ def _svf_gpu(data, out, max_radius, n_directions):
 # Backend wrappers
 # ---------------------------------------------------------------------------
 
-def _run_numpy(data, max_radius, n_directions):
+def _run_numpy(data, max_radius, n_directions, cellsize_x, cellsize_y):
     _check_memory(data.shape[0], data.shape[1])
     data = data.astype(np.float64)
-    return _svf_cpu(data, max_radius, n_directions)
+    return _svf_cpu(data, max_radius, n_directions, cellsize_x, cellsize_y)
 
 
-def _run_cupy(data, max_radius, n_directions):
+def _run_cupy(data, max_radius, n_directions, cellsize_x, cellsize_y):
     _check_gpu_memory(data.shape[0], data.shape[1])
     data = data.astype(cupy.float64)
     out = cupy.full(data.shape, cupy.nan, dtype=cupy.float64)
     griddim, blockdim = cuda_args(data.shape)
-    _svf_gpu[griddim, blockdim](data, out, max_radius, n_directions)
+    _svf_gpu[griddim, blockdim](
+        data, out, max_radius, n_directions, cellsize_x, cellsize_y
+    )
     return out
 
 
-def _run_dask_numpy(data, max_radius, n_directions):
+def _run_dask_numpy(data, max_radius, n_directions, cellsize_x, cellsize_y):
     data = data.astype(np.float64)
-    _func = partial(_svf_cpu, max_radius=max_radius, n_directions=n_directions)
+    _func = partial(
+        _svf_cpu,
+        max_radius=max_radius,
+        n_directions=n_directions,
+        cellsize_x=cellsize_x,
+        cellsize_y=cellsize_y,
+    )
     out = data.map_overlap(
         _func,
         depth=(max_radius, max_radius),
@@ -246,9 +265,15 @@ def _run_dask_numpy(data, max_radius, n_directions):
     return out
 
 
-def _run_dask_cupy(data, max_radius, n_directions):
+def _run_dask_cupy(data, max_radius, n_directions, cellsize_x, cellsize_y):
     data = data.astype(cupy.float64)
-    _func = partial(_run_cupy, max_radius=max_radius, n_directions=n_directions)
+    _func = partial(
+        _run_cupy,
+        max_radius=max_radius,
+        n_directions=n_directions,
+        cellsize_x=cellsize_x,
+        cellsize_y=cellsize_y,
+    )
     out = data.map_overlap(
         _func,
         depth=(max_radius, max_radius),
@@ -267,6 +292,8 @@ def sky_view_factor(
     agg: xr.DataArray,
     max_radius: int = 10,
     n_directions: int = 16,
+    cellsize_x: Optional[float] = None,
+    cellsize_y: Optional[float] = None,
     name: Optional[str] = 'sky_view_factor',
 ) -> xr.DataArray:
     """Compute the sky-view factor for each cell of a DEM.
@@ -277,6 +304,10 @@ def sky_view_factor(
     *max_radius* cells, and the maximum elevation angle along each
     ray determines the horizon obstruction.
 
+    The horizon angle along each ray uses true ground distance
+    (``cell_step * cellsize``), so cell size must be in the same unit
+    as the elevation values (e.g. meters for both).
+
     Parameters
     ----------
     agg : xarray.DataArray or xr.Dataset
@@ -286,10 +317,17 @@ def sky_view_factor(
         data variable independently.
     max_radius : int, default=10
         Maximum search distance in cells along each ray direction.
-        Cells within *max_radius* of the raster edge will be NaN.
     n_directions : int, default=16
         Number of azimuth directions to sample, evenly spaced
         around 360 degrees.
+    cellsize_x : float, optional
+        Ground distance per cell along the x axis, in the same unit
+        as the elevation values.  If not provided, it is read from
+        ``agg.attrs['res']`` or computed from the x coordinate.
+    cellsize_y : float, optional
+        Ground distance per cell along the y axis, in the same unit
+        as the elevation values.  If not provided, it is read from
+        ``agg.attrs['res']`` or computed from the y coordinate.
     name : str, default='sky_view_factor'
         Name of the output DataArray.
 
@@ -316,13 +354,33 @@ def sky_view_factor(
     _validate_scalar(n_directions, func_name='sky_view_factor',
                      name='n_directions', dtype=int, min_val=1)
 
+    if cellsize_x is None or cellsize_y is None:
+        try:
+            res_x, res_y = get_dataarray_resolution(agg)
+        except Exception:
+            res_x, res_y = 1.0, 1.0
+        if cellsize_x is None:
+            cellsize_x = float(abs(res_x)) if res_x else 1.0
+        if cellsize_y is None:
+            cellsize_y = float(abs(res_y)) if res_y else 1.0
+    else:
+        cellsize_x = float(abs(cellsize_x))
+        cellsize_y = float(abs(cellsize_y))
+
+    if cellsize_x <= 0:
+        cellsize_x = 1.0
+    if cellsize_y <= 0:
+        cellsize_y = 1.0
+
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_run_numpy,
         cupy_func=_run_cupy,
         dask_func=_run_dask_numpy,
         dask_cupy_func=_run_dask_cupy,
     )
-    out = mapper(agg)(agg.data, max_radius, n_directions)
+    out = mapper(agg)(
+        agg.data, max_radius, n_directions, cellsize_x, cellsize_y
+    )
     return xr.DataArray(
         out,
         name=name,
