@@ -1,5 +1,6 @@
 module,last_inspected,issue,severity_max,categories_found,notes
 balanced_allocation,2026-04-14T12:00:00Z,1203,,,float32 allocation array caused source ID mismatch for non-integer IDs. Fix in PR #1205.
+contour,2026-05-01,,,,"Marching squares correct: NaN check uses self-inequality, loop bounds (ny-1,nx-1) cover all quads, dask overlap depth=1 matches 2x2 stencil, float64 cast consistent across backends, saddle disambiguation via center value. No CRIT/HIGH issues; minor LOW (Inf inputs not specifically rejected) not flagged."
 cost_distance,2026-04-13T12:00:00Z,1191,,,CuPy Bellman-Ford max_iterations = h+w instead of h*w. Fix in PR #1192.
 curvature,2026-03-30T15:00:00Z,,,,Formula matches ArcGIS reference. Backends consistent. No issues found.
 dasymetric,2026-04-14T12:00:00Z,,,,Mass conservation correct. Weighted/binary/limiting_variable all verified. Pycnophylactic Tobler algorithm correct.
