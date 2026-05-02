@@ -198,12 +198,21 @@ def test_checkerboard_has_high_contrast(checkerboard):
 # ---- NaN handling ----
 
 def test_all_nan_raster():
+    # Regression test for issue #1408: an all-NaN window has no valid pairs,
+    # so every metric should be NaN. Both the single-angle and angle=None
+    # paths must agree -- previously angle=None returned 0.0 because the
+    # averaging step replaced per-angle NaN with 0 before dividing by 4.
     data = np.full((6, 6), np.nan)
     agg = create_test_raster(data)
-    result = glcm_texture(agg, metric='contrast', window_size=3, levels=8)
-    # No valid pixel pairs -> all NaN (or zero from averaging)
-    # Just verify it doesn't crash and returns correct shape
-    assert result.shape == (6, 6)
+    for angle in [None, 0, 45, 90, 135]:
+        for m in VALID_METRICS:
+            result = glcm_texture(agg, metric=m, window_size=3, levels=8,
+                                  angle=angle)
+            assert result.shape == (6, 6)
+            assert np.all(np.isnan(result.values)), (
+                f"metric={m} angle={angle} produced finite values "
+                f"on all-NaN input: {np.unique(result.values)}"
+            )
 
 
 def test_partial_nan(texture_data):
@@ -217,14 +226,40 @@ def test_partial_nan(texture_data):
     assert np.isfinite(result.values[3, 3])
 
 
+def test_angle_none_partial_nan_uses_valid_angles():
+    # Regression test for issue #1408: when only some angles produce a valid
+    # value at a pixel, the angle=None result should be the mean of the valid
+    # angles only -- not (sum / 4) with NaN treated as 0.
+    rng = np.random.default_rng(7)
+    data = rng.random((8, 8))
+    agg = create_test_raster(data)
+
+    avg = glcm_texture(agg, metric='correlation', window_size=3, levels=4)
+    per_angle = []
+    for ang in [0, 45, 90, 135]:
+        r = glcm_texture(agg, metric='correlation', window_size=3,
+                         levels=4, angle=ang)
+        per_angle.append(r.values)
+    expected = np.nanmean(per_angle, axis=0)
+    np.testing.assert_allclose(avg.values, expected, rtol=1e-10,
+                               equal_nan=True)
+
+
 # ---- Single-cell / tiny rasters ----
 
 def test_single_cell():
+    # Regression test for issue #1408: a 1x1 raster has no valid pairs at any
+    # angle, so the result must be NaN for both single-angle and angle=None.
     data = np.array([[5.0]])
     agg = create_test_raster(data)
-    # Window extends beyond array; no valid pairs
-    result = glcm_texture(agg, metric='contrast', window_size=3, levels=4)
-    assert result.shape == (1, 1)
+    for angle in [None, 0, 45, 90, 135]:
+        result = glcm_texture(agg, metric='contrast', window_size=3,
+                              levels=4, angle=angle)
+        assert result.shape == (1, 1)
+        assert np.isnan(result.values[0, 0]), (
+            f"angle={angle} produced finite value {result.values[0, 0]} "
+            "on 1x1 raster (no valid pairs)"
+        )
 
 
 # ---- Angle parameter ----
@@ -240,7 +275,8 @@ def test_each_angle_produces_output(texture_data):
 
 def test_angle_none_averages(texture_data):
     agg = create_test_raster(texture_data)
-    # angle=None should be the mean of all four angles
+    # angle=None averages over angles that produced a valid (non-NaN) value
+    # at each pixel. Pixels where every angle is NaN stay NaN.
     avg = glcm_texture(agg, metric='contrast', window_size=3, levels=16)
     per_angle = []
     for ang in [0, 45, 90, 135]:
@@ -248,11 +284,8 @@ def test_angle_none_averages(texture_data):
                          levels=16, angle=ang)
         per_angle.append(r.values)
     expected = np.nanmean(per_angle, axis=0)
-    # Replace NaN->0 to match the averaging in the implementation
-    for i in range(4):
-        per_angle[i] = np.where(np.isnan(per_angle[i]), 0, per_angle[i])
-    expected = np.mean(per_angle, axis=0)
-    np.testing.assert_allclose(avg.values, expected, rtol=1e-10)
+    np.testing.assert_allclose(avg.values, expected, rtol=1e-10,
+                               equal_nan=True)
 
 
 # ---- All metrics produce finite values ----
