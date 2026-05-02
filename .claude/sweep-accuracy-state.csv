@@ -29,4 +29,5 @@ sky_view_factor,2026-05-01,1407,HIGH,4,Horizon angle ignored cell size; fixed by
 terrain,2026-04-10T12:00:00Z,,,,Perlin/Worley/ridged noise correct. Dask chunk boundaries produce bit-identical results. No precision issues.
 terrain_metrics,2026-04-30,,LOW,2;5,"LOW: Inf input not rejected, propagates as Inf (consistent across backends but undocumented). LOW: dask+cupy non-nan boundary path double-pads (wasted compute, central output values still correct). No CRIT/HIGH; tests cover NaN propagation, all 4 backends, all 4 boundary modes, dtype acceptance."
 visibility,2026-04-13T12:00:00Z,,,,"Bresenham line, LOS kernel, Fresnel zone all correct. All backends converge to numpy."
+worley,2026-05-01,,MEDIUM,2;5,"MEDIUM: numpy backend uses np.empty_like(data) so integer input dtype produces integer output (distances truncated to 0); cupy/dask paths always produce float32. LOW: freq=inf produces 100000 sentinel (sqrt of initial min_dist=1e10), no validation of freq/seed for non-finite values."
 zonal,2026-03-30T12:00:00Z,1090,,,
