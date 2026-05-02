@@ -13,6 +13,7 @@ hydro,2026-04-30,,LOW,1,Only LOW: twi log(0)=-inf if fa=0 (out-of-contract); MFD
 kde,2026-04-13T12:00:00Z,1198,,,kde/line_density return zeros for descending-y templates. Fix in PR #1199.
 morphology,2026-04-30,"1397,1399",HIGH,2;5,HIGH fixed in #1397/PR #1398: morph_erode/dilate seeded centre cell into running min/max even when kernel[centre]==0 (all 4 backends). HIGH fixed in #1399/PR #1400: dask backends raised on 1xN/Nx1 kernels because empty-slice writeback (0:-0).
 multispectral,2026-03-30T14:00:00Z,1094,,,
+normalize,2026-05-01,,,,rescale and standardize across all 4 backends. NaN/inf filtered via isfinite mask before min/max/mean/std. Constant input handled (range=0 -> new_min; std=0 -> 0.0). Output dtype float64 consistently. Backend parity covered by test_matches_numpy. No accuracy issues found.
 perlin,2026-04-10T12:00:00Z,,,,Improved Perlin noise implementation correct. Fade/gradient functions verified. Backend-consistent. Continuous at cell boundaries.
 polygon_clip,2026-04-13T12:00:00Z,1197,,,crop=True + all_touched=True drops boundary pixels. Fix in PR #1200.
 polygonize,2026-04-13T12:00:00Z,1190,,,NaN pixels not masked in numpy/dask backends. Fix in PR #1194.
