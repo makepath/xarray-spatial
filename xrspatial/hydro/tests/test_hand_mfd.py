@@ -165,6 +165,61 @@ class TestHandMfdDask:
             equal_nan=True, rtol=1e-10)
 
 
+@dask_array_available
+class TestHandMfdDaskLazyAssembly:
+    """Regression for issue #1416.
+
+    The dask assembly phase must use ``map_blocks`` so each tile is
+    recomputed on demand from the converged boundary state.  An earlier
+    implementation built a list-of-lists of pre-computed numpy arrays
+    and called ``da.block``, which held every tile in driver memory at
+    once and OOMed on large inputs.
+    """
+
+    def test_dask_result_is_lazy(self):
+        import dask.array as da
+
+        fracs = _make_all_east(8, 8)
+        fa = np.ones((8, 8), dtype=np.float64)
+        elev = np.zeros((8, 8), dtype=np.float64)
+        fd_da, fa_da, el_da = _make_hand_mfd_rasters(
+            fracs, fa, elev, backend='dask', chunks=(2, 2))
+
+        result = hand_mfd(fd_da, fa_da, el_da, threshold=1)
+
+        # The result must be a dask-backed DataArray with intact chunking.
+        assert isinstance(result.data, da.Array)
+        assert result.data.chunks == ((2, 2, 2, 2), (2, 2, 2, 2))
+
+    def test_dask_assembly_does_not_materialize_all_tiles(self):
+        """The lazy graph must contain a separate task per output chunk.
+
+        ``da.block`` of pre-computed arrays produces a single ``from_array``
+        task plus concatenation overhead.  ``map_blocks`` produces one
+        kernel-call task per chunk, which is what we need so that only one
+        tile is in RAM at a time during execution.
+        """
+        import dask.array as da
+
+        fracs = _make_all_east(6, 6)
+        fa = np.ones((6, 6), dtype=np.float64)
+        elev = np.zeros((6, 6), dtype=np.float64)
+        fd_da, fa_da, el_da = _make_hand_mfd_rasters(
+            fracs, fa, elev, backend='dask', chunks=(2, 2))
+
+        result = hand_mfd(fd_da, fa_da, el_da, threshold=1)
+
+        # 3x3 = 9 output chunks.  Number of leaf keys for the result name
+        # must match the chunk count.
+        result_arr = result.data
+        assert isinstance(result_arr, da.Array)
+        result_keys = [
+            k for k in result_arr.__dask_graph__()
+            if isinstance(k, tuple) and k[0] == result_arr.name
+        ]
+        assert len(result_keys) == 9
+
+
 @cuda_and_cupy_available
 class TestHandMfdCuPy:
     def test_numpy_equals_cupy(self):

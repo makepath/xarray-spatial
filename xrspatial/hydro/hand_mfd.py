@@ -597,35 +597,49 @@ def _hand_mfd_dask(fractions_da, flow_accum_da, elev_da, threshold,
 
     boundaries = boundaries.snapshot()
 
-    # Assemble
-    rows = []
-    for iy in range(n_tile_y):
-        row = []
-        for ix in range(n_tile_x):
-            y_start = sum(chunks_y[:iy])
-            y_end = y_start + chunks_y[iy]
-            x_start = sum(chunks_x[:ix])
-            x_end = x_start + chunks_x[ix]
+    # Lazy assembly: each tile is recomputed on demand from the converged
+    # boundary state.  Driver memory holds only the captured ``boundaries``
+    # / ``frac_bdry`` snapshots (boundary strips, not full tiles), so peak
+    # memory scales with chunk size rather than the full grid.
+    #
+    # ``fractions_da`` is 3D (8, H, W); we cannot align its chunks with the
+    # 2D output via map_blocks directly.  We pre-compute the (y_start,
+    # y_end, x_start, x_end) offsets per tile so each map_blocks closure
+    # call only triggers its own fractions slice.
+    cum_y = np.zeros(n_tile_y + 1, dtype=np.int64)
+    np.cumsum(chunks_y, out=cum_y[1:])
+    cum_x = np.zeros(n_tile_x + 1, dtype=np.int64)
+    np.cumsum(chunks_x, out=cum_x[1:])
 
-            fr_chunk = np.asarray(
-                fractions_da[:, y_start:y_end, x_start:x_end].compute(),
-                dtype=np.float64)
-            fa_chunk = np.asarray(
-                flow_accum_da.blocks[iy, ix].compute(), dtype=np.float64)
-            el_chunk = np.asarray(
-                elev_da.blocks[iy, ix].compute(), dtype=np.float64)
-            _, h, w = fr_chunk.shape
+    def _tile_fn(fa_block, el_block, block_info=None):
+        if block_info is None or 0 not in block_info:
+            return np.full(fa_block.shape, np.nan, dtype=np.float64)
+        iy, ix = block_info[0]['chunk-location']
+        y_start = int(cum_y[iy])
+        y_end = int(cum_y[iy + 1])
+        x_start = int(cum_x[ix])
+        x_end = int(cum_x[ix + 1])
 
-            exits = _compute_exit_labels_mfd(
-                iy, ix, boundaries, frac_bdry,
-                chunks_y, chunks_x, n_tile_y, n_tile_x)
+        fr_chunk = np.asarray(
+            fractions_da[:, y_start:y_end, x_start:x_end].compute(),
+            dtype=np.float64)
+        fa_chunk = np.asarray(fa_block, dtype=np.float64)
+        el_chunk = np.asarray(el_block, dtype=np.float64)
+        _, h, w = fr_chunk.shape
 
-            tile = _hand_mfd_tile_kernel(
-                fr_chunk, fa_chunk, el_chunk, h, w, threshold, *exits)
-            row.append(da.from_array(tile, chunks=tile.shape))
-        rows.append(row)
+        exits = _compute_exit_labels_mfd(
+            iy, ix, boundaries, frac_bdry,
+            chunks_y, chunks_x, n_tile_y, n_tile_x)
 
-    return da.block(rows)
+        return _hand_mfd_tile_kernel(
+            fr_chunk, fa_chunk, el_chunk, h, w, threshold, *exits)
+
+    return da.map_blocks(
+        _tile_fn,
+        flow_accum_da, elev_da,
+        dtype=np.float64,
+        meta=np.array((), dtype=np.float64),
+    )
 
 
 def _hand_mfd_dask_cupy(fractions_da, flow_accum_da, elev_da, threshold,
