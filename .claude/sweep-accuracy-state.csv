@@ -12,6 +12,7 @@ geotiff,2026-04-23,1247,HIGH,1;3;4;5,HIGH fixed: CPU fp_predictor_decode wrong b
 hillshade,2026-04-10T12:00:00Z,,,,"Horn's method correct. All backends consistent. NaN propagation correct. float32 adequate for [0,1] output."
 hydro,2026-04-30,,LOW,1,Only LOW: twi log(0)=-inf if fa=0 (out-of-contract); MFD weighted sum no Kahan (negligible). No CRIT/HIGH issues.
 kde,2026-04-13T12:00:00Z,1198,,,kde/line_density return zeros for descending-y templates. Fix in PR #1199.
+mahalanobis,2026-05-01,,LOW,1,"LOW: np.linalg.inv (no pinv fallback) returns garbage for near-singular cov without raising. LOW: two-pass mean/cov instead of Welford could lose precision for inputs with very large mean/small variance. No CRIT/HIGH; all four backends use float64 throughout, NaN handled via isfinite, dist_sq clamped non-negative, singular case raises ValueError."
 morphology,2026-04-30,"1397,1399",HIGH,2;5,HIGH fixed in #1397/PR #1398: morph_erode/dilate seeded centre cell into running min/max even when kernel[centre]==0 (all 4 backends). HIGH fixed in #1399/PR #1400: dask backends raised on 1xN/Nx1 kernels because empty-slice writeback (0:-0).
 multispectral,2026-03-30T14:00:00Z,1094,,,
 perlin,2026-04-10T12:00:00Z,,,,Improved Perlin noise implementation correct. Fade/gradient functions verified. Backend-consistent. Continuous at cell boundaries.
