@@ -24,6 +24,7 @@ perlin,2026-04-10T12:00:00Z,,,,Improved Perlin noise implementation correct. Fad
 polygon_clip,2026-04-13T12:00:00Z,1197,,,crop=True + all_touched=True drops boundary pixels. Fix in PR #1200.
 polygonize,2026-04-13T12:00:00Z,1190,,,NaN pixels not masked in numpy/dask backends. Fix in PR #1194.
 proximity,2026-03-30T15:00:00Z,,,,Direction >= boundary fragile but works due to truncated constant. Float32 truncation is design choice. No wrong-results bugs found.
+reproject,2026-05-01,,MEDIUM,1;5,MEDIUM: GPU dispatcher (_projections_cuda.py) uses _is_geographic_wgs84_or_nad83 (only 4326/4269) and lacks the NAD27/Helmert datum-shift wrapper that CPU has — silently falls back to pyproj for NAD27 inputs; functionally correct but inconsistent fast-path coverage. LOW: _lcc_params line 376 dead variable m2 (cosphi2 is recomputed correctly so math is right but naming misleading). LOW: _interp_geoid_point uses %w column wrap (correct for global EGM grids only). LOW: _ecef_to_geodetic fixed 10-iter no early-exit (converges fine). LOW: bilinear/cubic wsum>1e-10 threshold loose. No CRIT/HIGH issues; CPU/GPU Krueger/authalic/Helmert math is float64 and matches.
 resample,2026-04-14T12:00:00Z,1202,,,Interpolation used edge-aligned coords instead of block-centered. Fix in PR #1204.
 sieve,2026-04-13T12:00:00Z,,,,Union-find CCL correct. NaN excluded from labeling. All backends funnel through _sieve_numpy.
 sky_view_factor,2026-05-01,1407,HIGH,4,Horizon angle ignored cell size; fixed by passing cellsize_x/cellsize_y into CPU+GPU kernels and using ground distance
