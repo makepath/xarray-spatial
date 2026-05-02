@@ -324,17 +324,25 @@ def _run_glcm_on_quantized(quantized, metrics, window_size, levels,
         dx *= distance
         _glcm_numba_kernel(quantized, out, flags, levels, half, dy, dx)
     else:
-        out = np.zeros((n_metrics, h, w), dtype=np.float64)
+        # Average across all four angles using nanmean-style accumulation:
+        # only count angles that produced a valid (non-NaN) value at each
+        # pixel. If no angle produced a valid value (e.g. all-NaN window,
+        # 1x1 raster), the output stays NaN -- otherwise the user could
+        # not distinguish "metric is 0" from "no valid data".
+        sums = np.zeros((n_metrics, h, w), dtype=np.float64)
+        counts = np.zeros((n_metrics, h, w), dtype=np.int32)
         for a in _ANGLE_OFFSETS:
             tmp = np.full((n_metrics, h, w), np.nan, dtype=np.float64)
             dy, dx = _ANGLE_OFFSETS[a]
             dy *= distance
             dx *= distance
             _glcm_numba_kernel(quantized, tmp, flags, levels, half, dy, dx)
-            nan_mask = np.isnan(tmp)
-            tmp[nan_mask] = 0.0
-            out += tmp
-        out /= 4.0
+            valid = ~np.isnan(tmp)
+            sums[valid] += tmp[valid]
+            counts[valid] += 1
+        out = np.full((n_metrics, h, w), np.nan, dtype=np.float64)
+        any_valid = counts > 0
+        out[any_valid] = sums[any_valid] / counts[any_valid]
 
     return out
 

@@ -230,12 +230,133 @@ def test_known_svf_simple_ramp():
     rows, cols = 30, 30
     x = np.arange(cols, dtype=np.float64)
     data = np.broadcast_to(x * 1.0, (rows, cols)).copy()
-    agg = create_test_raster(data)
-    result = sky_view_factor(agg, max_radius=5, n_directions=16)
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    result = sky_view_factor(agg, max_radius=5, n_directions=16,
+                             cellsize_x=1.0, cellsize_y=1.0)
     center = result.data[15, 15]
     assert np.isfinite(center)
     assert center < 1.0, f"Expected SVF < 1 on tilted plane, got {center}"
     assert center > 0.5, f"Expected SVF > 0.5 on gentle tilt, got {center}"
+
+
+# ---------------------------------------------------------------------------
+# Cell size correctness
+# ---------------------------------------------------------------------------
+
+def test_cellsize_changes_horizon_angle():
+    """Halving the cell size should double the horizon angle.
+
+    For a uniform z = x ramp with rise-per-cell = 1:
+      cell_size=1.0 -> horizon angle = atan(1/1)   = 45 deg, sin = 0.7071
+      cell_size=0.5 -> horizon angle = atan(1/0.5) = 63.43 deg, sin = 0.8944
+
+    The buggy code used dist=r (cells) and produced 45 deg in both
+    cases, so SVF was the same regardless of cell size.
+    """
+    rows, cols = 30, 30
+    x = np.arange(cols, dtype=np.float64)
+    data = np.broadcast_to(x, (rows, cols)).copy()
+
+    agg_unit = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    agg_half = create_test_raster(data, attrs={'res': (0.5, 0.5)})
+
+    res_unit = sky_view_factor(agg_unit, max_radius=5, n_directions=16)
+    res_half = sky_view_factor(agg_half, max_radius=5, n_directions=16)
+
+    # Smaller cell size -> steeper horizon -> lower SVF
+    assert res_half.data[15, 15] < res_unit.data[15, 15] - 0.05, (
+        "Expected SVF to drop noticeably when cell size shrinks; "
+        f"got unit={res_unit.data[15, 15]} half={res_half.data[15, 15]}"
+    )
+
+
+def test_cellsize_explicit_override():
+    """Explicit cellsize_x / cellsize_y override the DataArray attrs."""
+    rows, cols = 30, 30
+    x = np.arange(cols, dtype=np.float64)
+    data = np.broadcast_to(x, (rows, cols)).copy()
+
+    # DataArray says res=1.0 but we override to 0.5
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    res_default = sky_view_factor(agg, max_radius=5, n_directions=16)
+    res_override = sky_view_factor(
+        agg, max_radius=5, n_directions=16, cellsize_x=0.5, cellsize_y=0.5,
+    )
+
+    assert res_override.data[15, 15] < res_default.data[15, 15] - 0.05, (
+        "Explicit cellsize override should change the result; "
+        f"got default={res_default.data[15, 15]} "
+        f"override={res_override.data[15, 15]}"
+    )
+
+
+def test_cellsize_45_degree_ramp_value():
+    """A z=x ramp with cellsize=1 should produce a horizon angle of
+    exactly 45 degrees in the uphill direction.
+
+    SVF = 1 - mean_d sin(max_horizon_angle_d).  For 16 directions on
+    a uniform planar ramp, the contribution along the uphill ray
+    dominates and hits sin(45) = sqrt(2)/2 ~= 0.7071.  A coarse
+    sanity check: SVF should sit near (1 - 0.7071/16) = 0.956 to
+    well below 1, but never above the no-correction value when cell
+    size is unit, and below it when cell size is sub-unit.
+    """
+    rows, cols = 30, 30
+    x = np.arange(cols, dtype=np.float64)
+    data = np.broadcast_to(x, (rows, cols)).copy()
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    result = sky_view_factor(agg, max_radius=5, n_directions=16,
+                             cellsize_x=1.0, cellsize_y=1.0)
+    center = result.data[15, 15]
+    # 45 deg horizon means sin = 0.7071; with 16 directions and
+    # symmetric horizons, SVF stays in a plausible band.
+    assert 0.55 < center < 0.95, (
+        f"Expected SVF in (0.55, 0.95) for 45-deg ramp, got {center}"
+    )
+
+
+def test_anisotropic_cellsize():
+    """Anisotropic cell sizes (cellsize_x != cellsize_y).
+
+    Build a uniform z = x ramp (gradient along x only) and probe an
+    interior cell.  Scaling cellsize_x changes the ground distance to
+    the uphill horizon, which must change the horizon angle and SVF.
+    cellsize_y does not affect a ramp that is constant in y, so we
+    isolate the x-axis scaling.
+    """
+    rows, cols = 30, 30
+    x = np.arange(cols, dtype=np.float64)
+    data = np.broadcast_to(x, (rows, cols)).copy()
+
+    agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+    res_wide_x = sky_view_factor(
+        agg, max_radius=5, n_directions=16,
+        cellsize_x=10.0, cellsize_y=1.0,
+    )
+    res_narrow_x = sky_view_factor(
+        agg, max_radius=5, n_directions=16,
+        cellsize_x=0.1, cellsize_y=1.0,
+    )
+    # Larger cellsize_x -> smaller horizon angle -> larger SVF
+    assert (res_wide_x.data[15, 15]
+            > res_narrow_x.data[15, 15] + 0.05), (
+        "Wider cellsize_x should give larger SVF; "
+        f"got wide={res_wide_x.data[15, 15]} "
+        f"narrow={res_narrow_x.data[15, 15]}"
+    )
+
+
+def test_flat_surface_unaffected_by_cellsize():
+    """SVF on flat terrain is 1 regardless of cell size."""
+    data = np.full((30, 30), 100.0, dtype=np.float64)
+    for csx, csy in [(0.5, 0.5), (1.0, 1.0), (30.0, 30.0)]:
+        agg = create_test_raster(data, attrs={'res': (csx, csy)})
+        result = sky_view_factor(agg, max_radius=5, n_directions=16)
+        interior = result.data[5:-5, 5:-5]
+        np.testing.assert_allclose(
+            interior, 1.0, atol=1e-10,
+            err_msg=f"flat terrain at cellsize=({csx}, {csy})",
+        )
 
 
 # ---------------------------------------------------------------------------

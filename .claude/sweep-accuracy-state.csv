@@ -1,17 +1,21 @@
 module,last_inspected,issue,severity_max,categories_found,notes
 balanced_allocation,2026-04-14T12:00:00Z,1203,,,float32 allocation array caused source ID mismatch for non-integer IDs. Fix in PR #1205.
 bilateral,2026-05-01,,,,"No CRIT/HIGH/MEDIUM. Sigma underflow validated via sqrt(tiny) bound; oversize sigma clamped. float64 throughout numpy/cupy. NaN center returns NaN; NaN neighbors skipped (denom not incremented). w_sum>0 guard avoids div-by-zero. map_overlap depth==kernel radius. CUDA bounds correct. Inf input could yield 0*inf=NaN in v_sum but unvalidated input is general xrspatial pattern, not bilateral-specific."
+contour,2026-05-01,,,,"Marching squares correct: NaN check uses self-inequality, loop bounds (ny-1,nx-1) cover all quads, dask overlap depth=1 matches 2x2 stencil, float64 cast consistent across backends, saddle disambiguation via center value. No CRIT/HIGH issues; minor LOW (Inf inputs not specifically rejected) not flagged."
 cost_distance,2026-04-13T12:00:00Z,1191,,,CuPy Bellman-Ford max_iterations = h+w instead of h*w. Fix in PR #1192.
 curvature,2026-03-30T15:00:00Z,,,,Formula matches ArcGIS reference. Backends consistent. No issues found.
 dasymetric,2026-04-14T12:00:00Z,,,,Mass conservation correct. Weighted/binary/limiting_variable all verified. Pycnophylactic Tobler algorithm correct.
+diffusion,2026-05-01,,LOW,1;2;5,"LOW: no Kahan summation across long iterations (drift over 100k steps, standard for explicit Euler); lap=n+s+w+e-4*val has catastrophic cancellation for nearly-uniform large values; res=0 in attrs causes div-by-zero (no guard); dask+cupy boundary='nan' relies on dask accepting cp.nan as fill. CPU/GPU NaN handling consistent (np.isnan vs val!=val). depth=1 matches stencil radius. Memory guards, CFL check, step cap all in place. No CRIT/HIGH."
 emerging_hotspots,2026-04-30,,MEDIUM,2;3,MEDIUM: threshold_90 uses int() (truncation) instead of ceil() so n_times=11 requires only 9/11 (81.8%) instead of 90%. MEDIUM: NaN time steps produce gi_bin=0 which classifier counts as 'non-significant' rather than missing; threshold_90 uses full n_times not valid count. LOW: 'global_std == 0' check does not catch NaN std for fully/mostly NaN inputs.
 fire,2026-04-30,,,,All ops per-pixel (no accumulation/stencil/projected distance). NaN handled via x!=x; CUDA bounds use strict <; rdnbr and ros divisions guarded; CPU/GPU/dask paths algorithmically identical. No accuracy issues found.
 flood,2026-04-30,,MEDIUM,2;5,"MEDIUM (not fixed): dask backend preserves float32 input dtype while numpy promotes to float64 in flood_depth and curve_number_runoff; DataArray inputs for curve_number, mannings_n bypass scalar > 0 (and CN <= 100) range validation, silently producing NaN/garbage."
 focal,2026-03-30T13:00:00Z,1092,,,
 geotiff,2026-04-23,1247,HIGH,1;3;4;5,HIGH fixed: CPU fp_predictor_decode wrong byte-lane layout for multi-sample predictor=3 (GPU was correct). MEDIUMs also fixed on same PR: eager and streaming writers emit LONG8 strip/tile offsets in BigTIFF output (were LONG); VRT read honors AREA_OR_POINT=Point; VRT nodata cast uses source dtype instead of float32. LOW fixed: duplicate LERC codec block removed from _compression.py.
+glcm,2026-05-01,1408,HIGH,2,"angle=None averaged NaN as 0, masking no-valid-pairs as zero texture; fixed via nanmean-style averaging"
 hillshade,2026-04-10T12:00:00Z,,,,"Horn's method correct. All backends consistent. NaN propagation correct. float32 adequate for [0,1] output."
 hydro,2026-04-30,,LOW,1,Only LOW: twi log(0)=-inf if fa=0 (out-of-contract); MFD weighted sum no Kahan (negligible). No CRIT/HIGH issues.
 kde,2026-04-13T12:00:00Z,1198,,,kde/line_density return zeros for descending-y templates. Fix in PR #1199.
+mahalanobis,2026-05-01,,LOW,1,"LOW: np.linalg.inv (no pinv fallback) returns garbage for near-singular cov without raising. LOW: two-pass mean/cov instead of Welford could lose precision for inputs with very large mean/small variance. No CRIT/HIGH; all four backends use float64 throughout, NaN handled via isfinite, dist_sq clamped non-negative, singular case raises ValueError."
 morphology,2026-04-30,"1397,1399",HIGH,2;5,HIGH fixed in #1397/PR #1398: morph_erode/dilate seeded centre cell into running min/max even when kernel[centre]==0 (all 4 backends). HIGH fixed in #1399/PR #1400: dask backends raised on 1xN/Nx1 kernels because empty-slice writeback (0:-0).
 multispectral,2026-03-30T14:00:00Z,1094,,,
 perlin,2026-04-10T12:00:00Z,,,,Improved Perlin noise implementation correct. Fade/gradient functions verified. Backend-consistent. Continuous at cell boundaries.
@@ -20,6 +24,7 @@ polygonize,2026-04-13T12:00:00Z,1190,,,NaN pixels not masked in numpy/dask backe
 proximity,2026-03-30T15:00:00Z,,,,Direction >= boundary fragile but works due to truncated constant. Float32 truncation is design choice. No wrong-results bugs found.
 resample,2026-04-14T12:00:00Z,1202,,,Interpolation used edge-aligned coords instead of block-centered. Fix in PR #1204.
 sieve,2026-04-13T12:00:00Z,,,,Union-find CCL correct. NaN excluded from labeling. All backends funnel through _sieve_numpy.
+sky_view_factor,2026-05-01,1407,HIGH,4,Horizon angle ignored cell size; fixed by passing cellsize_x/cellsize_y into CPU+GPU kernels and using ground distance
 terrain,2026-04-10T12:00:00Z,,,,Perlin/Worley/ridged noise correct. Dask chunk boundaries produce bit-identical results. No precision issues.
 terrain_metrics,2026-04-30,,LOW,2;5,"LOW: Inf input not rejected, propagates as Inf (consistent across backends but undocumented). LOW: dask+cupy non-nan boundary path double-pads (wasted compute, central output values still correct). No CRIT/HIGH; tests cover NaN propagation, all 4 backends, all 4 boundary modes, dtype acceptance."
 visibility,2026-04-13T12:00:00Z,,,,"Bresenham line, LOS kernel, Fresnel zone all correct. All backends converge to numpy."
