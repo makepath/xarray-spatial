@@ -1068,3 +1068,49 @@ class TestPolygonizeSimplifyCuPy:
 
         for val in areas_np:
             assert_allclose(areas_cp[val], areas_np[val], atol=1e-10)
+
+
+# =====================================================================
+# Issue #1441: _validate_raster on raster + mask
+# =====================================================================
+
+import xarray as _xr_for_validation
+
+
+class TestPolygonizeInputValidation:
+    """polygonize() rejects bad raster / mask inputs (#1441)."""
+
+    @staticmethod
+    def _good_raster():
+        return _xr_for_validation.DataArray(
+            np.zeros((4, 4), dtype=np.int32),
+            dims=('y', 'x'),
+            coords={'y': np.arange(4), 'x': np.arange(4)},
+        )
+
+    def test_rejects_non_dataarray_raster(self):
+        from xrspatial.polygonize import polygonize
+        with pytest.raises(TypeError, match="xarray.DataArray"):
+            polygonize(np.zeros((4, 4), dtype=np.int32))
+
+    def test_rejects_complex_dtype_raster(self):
+        from xrspatial.polygonize import polygonize
+        bad = _xr_for_validation.DataArray(
+            np.zeros((4, 4), dtype=np.complex128),
+            dims=('y', 'x'),
+            coords={'y': np.arange(4), 'x': np.arange(4)},
+        )
+        with pytest.raises(ValueError, match="real numeric"):
+            polygonize(bad)
+
+    def test_rejects_1d_raster(self):
+        from xrspatial.polygonize import polygonize
+        bad = _xr_for_validation.DataArray(
+            np.zeros(4, dtype=np.int32), dims=('y',))
+        with pytest.raises(ValueError, match=r"must be 2D"):
+            polygonize(bad)
+
+    def test_rejects_non_dataarray_mask(self):
+        from xrspatial.polygonize import polygonize
+        with pytest.raises(TypeError, match="xarray.DataArray"):
+            polygonize(self._good_raster(), mask=np.ones((4, 4), dtype=bool))
