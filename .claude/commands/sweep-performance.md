@@ -1,8 +1,9 @@
 # Performance Sweep: Dispatch subagents to audit and fix performance issues
 
 Audit xrspatial modules for performance bottlenecks, OOM risk under 30TB dask
-workloads, and backend-specific anti-patterns. Subagents fix HIGH-severity
-findings via /rockout in the same agent that did the audit, in parallel.
+workloads, and backend-specific anti-patterns. Subagents fix HIGH and
+MEDIUM-severity findings via /rockout in the same agent that did the audit,
+in parallel.
 
 Optional arguments: $ARGUMENTS
 (e.g. `--top 5`, `--exclude slope,aspect`, `--only-io`, `--reset-state`)
@@ -214,10 +215,11 @@ xrspatial/tests/general_checks.py for cross-backend test helpers.
 4. For each real issue found, assign a severity (CRITICAL/HIGH/MEDIUM/LOW)
    and note the exact file and line number.
 
-5. If any CRITICAL or HIGH issue is found, run /rockout to fix it end-to-end
-   (GitHub issue, worktree branch, fix, tests, and PR). Include the OOM
-   verdict, bottleneck classification, and affected backends in the rockout
-   prompt so it has full performance context.
+5. If any CRITICAL, HIGH, or MEDIUM issue is found, run /rockout to fix it
+   end-to-end (GitHub issue, worktree branch, fix, tests, and PR). Include
+   the OOM verdict, bottleneck classification, and affected backends in the
+   rockout prompt so it has full performance context. For LOW issues,
+   document them but do not fix.
 
    Skip step 5 entirely if `--no-fix` was passed to the parent sweep.
 

@@ -193,9 +193,9 @@ xrspatial/tests/general_checks.py for the cross-backend comparison helpers.
 3. For each real issue found, assign a severity (CRITICAL/HIGH/MEDIUM/LOW)
    and note the exact file and line number.
 
-4. If any CRITICAL or HIGH issue is found, run /rockout to fix it end-to-end
-   (GitHub issue, worktree branch, fix, tests, and PR).
-   For MEDIUM/LOW issues, document them but do not fix.
+4. If any CRITICAL, HIGH, or MEDIUM issue is found, run /rockout to fix it
+   end-to-end (GitHub issue, worktree branch, fix, tests, and PR).
+   For LOW issues, document them but do not fix.
 
 5. After finishing (whether you found issues or not), update the inspection
    state file .claude/sweep-accuracy-state.csv. The file is row-per-module
