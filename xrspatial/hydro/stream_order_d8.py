@@ -1594,6 +1594,7 @@ def stream_order_d8(flow_dir: xr.DataArray,
     of Geology, 74(1), 17-37.
     """
     _validate_raster(flow_dir, func_name='stream_order', name='flow_dir')
+    _validate_raster(flow_accum, func_name='stream_order', name='flow_accum')
 
     method = ordering.lower()
     if method not in ('strahler', 'shreve'):

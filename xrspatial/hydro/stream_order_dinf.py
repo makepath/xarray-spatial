@@ -1934,6 +1934,9 @@ def stream_order_dinf(flow_dir_dinf: xr.DataArray,
     _validate_raster(flow_dir_dinf,
                      func_name='stream_order_dinf',
                      name='flow_dir_dinf')
+    _validate_raster(flow_accum,
+                     func_name='stream_order_dinf',
+                     name='flow_accum')
 
     method = method.lower()
     if method not in ('strahler', 'shreve'):
