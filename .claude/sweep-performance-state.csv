@@ -25,7 +25,7 @@ hydro,2026-05-01,RISKY,memory-bound,0,1416,"Fixed-in-tree 2026-05-01: hand_mfd._
 kde,2026-04-14T12:00:00Z,SAFE,compute-bound,0,,Graph construction serialized per-tile. _filter_points_to_tile scans all points per tile. No HIGH findings.
 mahalanobis,2026-03-31T18:00:00Z,SAFE,compute-bound,0,,False positive. Numpy path materializes by design. Dask path uses lazy reductions + map_blocks.
 morphology,2026-03-31T18:00:00Z,SAFE,compute-bound,0,,
-multispectral,2026-03-31T18:00:00Z,SAFE,compute-bound,0,,
+multispectral,2026-05-02,SAFE,compute-bound,0,,"Re-audit 2026-05-02 after PRs 1292 (true_color memory guard) and 1301 (validate_arrays in true_color). Verified SAFE. No HIGH. MEDIUM: da.stack in _true_color_dask/_true_color_dask_cupy at L1702/L1731 creates (1,1,1,1) chunks along band axis (4 bands so impact is minor, scheduling overhead not OOM). LOW: np.zeros((h,w,4)) at L1681 then full overwrite -- np.empty would suffice. All 17 indices use plain map_blocks with no halo; 8192x8192 ndvi graph is 80 tasks, evi/arvi/ebbi 112 tasks."
 normalize,2026-03-31T18:00:00Z,SAFE,compute-bound,0,1124,Boolean indexing replaced with lazy nanmin/nanmax/nanmean/nanstd.
 pathfinding,2026-04-15T12:00:00Z,SAFE,compute-bound,0,false-positive,Downgraded. CuPy .get() is required -- A* has no GPU kernel. Per-pixel .compute() is only 2 calls for start/goal validation. seg.values in multi_stop_search collects already-computed results for stitching.
 perlin,2026-03-31T18:00:00Z,WILL OOM,memory-bound,0,,
