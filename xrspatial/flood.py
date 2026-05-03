@@ -38,6 +38,25 @@ from xrspatial.utils import (
 # Minimum tan(slope) clamp: tan(0.001 deg), same as TWI
 _TAN_MIN = np.tan(np.radians(0.001))
 
+
+def _validate_mannings_n_dataarray(mannings_n):
+    """Enforce finite, strictly positive values on a mannings_n DataArray.
+
+    Mirrors the scalar-path check (`if mannings_n <= 0: raise`).  Without
+    this guard, a roughness raster containing 0 silently produces inf
+    velocity / 0 travel time, and negatives produce negative travel time.
+    """
+    _validate_raster(mannings_n, func_name='flood',
+                     name='mannings_n', ndim=2)
+    arr = np.asarray(mannings_n.values)
+    if arr.size and (
+        not np.isfinite(arr).all() or not (arr > 0).all()
+    ):
+        raise ValueError(
+            "mannings_n DataArray must contain finite, strictly positive "
+            "values (no zeros, negatives, NaN, or Inf)."
+        )
+
 # ---------------------------------------------------------------------------
 # NLCD-to-Manning's n lookup (Chow 1959; Arcement & Schneider 1989)
 # ---------------------------------------------------------------------------
@@ -416,6 +435,7 @@ def travel_time(
     _validate_raster(slope_agg, func_name='travel_time', name='slope_agg')
 
     if isinstance(mannings_n, xr.DataArray):
+        _validate_mannings_n_dataarray(mannings_n)
         n_data = mannings_n.data
     elif isinstance(mannings_n, (int, float)):
         if mannings_n <= 0:
@@ -850,6 +870,7 @@ def flood_depth_vegetation(
         raise ValueError("unit_discharge must be > 0")
 
     if isinstance(mannings_n, xr.DataArray):
+        _validate_mannings_n_dataarray(mannings_n)
         n_data = mannings_n.data
     elif isinstance(mannings_n, (int, float)):
         if mannings_n <= 0:
