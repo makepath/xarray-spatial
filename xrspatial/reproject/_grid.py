@@ -4,6 +4,90 @@ from __future__ import annotations
 import numpy as np
 
 
+def _validate_grid_params(*, resolution, bounds, width, height,
+                          transform_precision, func_name):
+    """Range-check user-supplied grid parameters."""
+    if resolution is not None:
+        if isinstance(resolution, (tuple, list)):
+            if len(resolution) != 2:
+                raise ValueError(
+                    f"{func_name}(): resolution tuple must have length 2, "
+                    f"got length {len(resolution)}"
+                )
+            res_values = list(resolution)
+        else:
+            res_values = [resolution]
+        for r in res_values:
+            try:
+                r_float = float(r)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"{func_name}(): resolution must be a positive finite "
+                    f"number, got {r!r}"
+                )
+            if not (np.isfinite(r_float) and r_float > 0):
+                raise ValueError(
+                    f"{func_name}(): resolution must be a positive finite "
+                    f"number, got {r!r}"
+                )
+
+    for label, val in (('width', width), ('height', height)):
+        if val is None:
+            continue
+        if not isinstance(val, (int, np.integer)) or isinstance(val, bool):
+            raise ValueError(
+                f"{func_name}(): {label} must be a positive integer, got {val!r}"
+            )
+        if val <= 0:
+            raise ValueError(
+                f"{func_name}(): {label} must be a positive integer, got {val!r}"
+            )
+
+    if bounds is not None:
+        try:
+            left, bottom, right, top = bounds
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"{func_name}(): bounds must be a 4-tuple "
+                f"(left, bottom, right, top), got {bounds!r}"
+            )
+        for label, v in (('left', left), ('bottom', bottom),
+                         ('right', right), ('top', top)):
+            try:
+                v_float = float(v)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"{func_name}(): bounds {label}={v!r} is not numeric"
+                )
+            if not np.isfinite(v_float):
+                raise ValueError(
+                    f"{func_name}(): bounds {label} must be finite, got {v!r}"
+                )
+        if float(right) <= float(left):
+            raise ValueError(
+                f"{func_name}(): bounds right ({right}) must be greater "
+                f"than left ({left})"
+            )
+        if float(top) <= float(bottom):
+            raise ValueError(
+                f"{func_name}(): bounds top ({top}) must be greater "
+                f"than bottom ({bottom})"
+            )
+
+    if transform_precision is not None:
+        if (not isinstance(transform_precision, (int, np.integer))
+                or isinstance(transform_precision, bool)):
+            raise ValueError(
+                f"{func_name}(): transform_precision must be a non-negative "
+                f"integer, got {transform_precision!r}"
+            )
+        if transform_precision < 0:
+            raise ValueError(
+                f"{func_name}(): transform_precision must be a non-negative "
+                f"integer, got {transform_precision!r}"
+            )
+
+
 def _transform_boundary(source_crs, target_crs, xs, ys):
     """Transform coordinate arrays, preferring Numba fast path over pyproj.
 

@@ -20,6 +20,7 @@ from ._grid import (
     _compute_chunk_layout,
     _compute_output_grid,
     _make_output_coords,
+    _validate_grid_params,
 )
 from ._interpolate import (
     _resample_cupy,
@@ -526,6 +527,15 @@ def reproject(
             f"reproject(): raster must be an xr.DataArray, "
             f"got {type(raster).__name__}"
         )
+
+    _validate_grid_params(
+        resolution=resolution,
+        bounds=bounds,
+        width=width,
+        height=height,
+        transform_precision=transform_precision,
+        func_name='reproject',
+    )
 
     _validate_resampling(resampling)
 
@@ -1349,6 +1359,15 @@ def merge(
     """
     if not rasters:
         raise ValueError("merge(): rasters list must not be empty")
+
+    _validate_grid_params(
+        resolution=resolution,
+        bounds=bounds,
+        width=None,
+        height=None,
+        transform_precision=None,
+        func_name='merge',
+    )
 
     _validate_resampling(resampling)
     _validate_strategy(strategy)
