@@ -990,6 +990,14 @@ def flow_length_dinf(flow_dir: xr.DataArray,
             f"direction must be 'downstream' or 'upstream', got {direction!r}")
 
     cellsize_x, cellsize_y = get_dataarray_resolution(flow_dir)
+    if not (np.isfinite(cellsize_x) and cellsize_x != 0
+            and np.isfinite(cellsize_y) and cellsize_y != 0):
+        raise ValueError(
+            f"flow_length_dinf(): cellsize must be finite and non-zero "
+            f"(got cellsize_x={cellsize_x}, cellsize_y={cellsize_y}).  "
+            f"Ensure flow_dir has at least 2 cells per spatial dimension "
+            f"with finite coords."
+        )
     cellsize_x = abs(cellsize_x)
     cellsize_y = abs(cellsize_y)
 
