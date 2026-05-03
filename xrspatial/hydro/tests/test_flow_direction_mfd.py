@@ -273,9 +273,9 @@ def test_fixed_exponent_high():
 def test_invalid_p():
     data = np.ones((4, 5), dtype=np.float64)
     agg = create_test_raster(data)
-    with pytest.raises(ValueError, match="p must be a positive number"):
+    with pytest.raises(ValueError, match="positive finite"):
         flow_direction_mfd(agg, p=-1.0)
-    with pytest.raises(ValueError, match="p must be a positive number"):
+    with pytest.raises(ValueError, match="positive finite"):
         flow_direction_mfd(agg, p=0.0)
 
 
