@@ -945,12 +945,53 @@ def _run_dask_cupy(data, scale_y, scale_x, method):
 
 # -- Public API --------------------------------------------------------------
 
+def _resolve_nodata(agg, nodata):
+    """Resolve the input-side nodata sentinel.
+
+    Explicit *nodata* wins. Otherwise fall back to ``_FillValue`` then
+    ``nodata`` in ``agg.attrs``. Returns ``None`` when no sentinel was
+    found (the caller skips the masking step).
+
+    NaN sentinels are returned as NaN so the caller can branch on
+    ``np.isnan`` rather than ``==`` (which never matches NaN).
+    """
+    if nodata is None:
+        for key in ('_FillValue', 'nodata'):
+            v = agg.attrs.get(key)
+            if v is not None:
+                nodata = v
+                break
+    if nodata is None:
+        return None
+    nd = float(nodata)
+    if np.isinf(nd):
+        raise ValueError(f"nodata must be finite or NaN, got {nodata!r}")
+    return nd
+
+
+def _apply_nodata_mask(agg, nodata):
+    """Return a float copy of *agg* with sentinel pixels replaced by NaN.
+
+    Works for numpy, cupy, dask+numpy, and dask+cupy backings via
+    xarray's ``.where`` (which dispatches per backend).
+    """
+    if nodata is None:
+        return agg
+    # Promote to float so NaN can be stored. xr.where keeps the backend.
+    if not np.issubdtype(agg.dtype, np.floating):
+        agg = agg.astype(np.float64)
+    if np.isnan(nodata):
+        return agg  # already-NaN sentinels need no replacement
+    return agg.where(agg != nodata)
+
+
 @supports_dataset
 def resample(
     agg,
     scale_factor=None,
     target_resolution=None,
     method='nearest',
+    nodata=None,
     name='resample',
 ):
     """Change raster resolution without changing its CRS.
@@ -960,21 +1001,30 @@ def resample(
     Parameters
     ----------
     agg : xarray.DataArray
-        Input raster (2-D).
+        Input raster. 2-D ``(y, x)`` or 3-D ``(band, y, x)``. For 3-D
+        inputs each band is resampled independently and the leading
+        non-spatial coordinate is preserved.
     scale_factor : float or (float, float), optional
         Multiplicative factor applied to the number of pixels.
         ``0.5`` halves the pixel count (doubles the cell size);
         ``2.0`` doubles the pixel count (halves the cell size).
         A two-element tuple sets ``(scale_y, scale_x)`` independently.
-    target_resolution : float, optional
+    target_resolution : float or (float, float), optional
         Desired cell size in the same units as the raster coordinates.
-        Both axes are set to this resolution.
+        A scalar sets both axes to the same resolution; a 2-tuple sets
+        ``(res_y, res_x)`` independently.
     method : str, default ``'nearest'``
         Resampling algorithm.  Interpolation methods (``'nearest'``,
         ``'bilinear'``, ``'cubic'``) work for both upsampling and
         downsampling.  Aggregation methods (``'average'``, ``'min'``,
         ``'max'``, ``'median'``, ``'mode'``) only support downsampling
         (scale_factor <= 1).
+    nodata : float, optional
+        Sentinel value in the input that should be treated as missing.
+        Input pixels equal to *nodata* are replaced with NaN before
+        resampling. When ``None``, falls back to ``agg.attrs['_FillValue']``
+        then ``agg.attrs['nodata']``. The output uses NaN as the sentinel
+        regardless of the input convention.
     name : str, default ``'resample'``
         Name for the output DataArray.
 
@@ -984,7 +1034,7 @@ def resample(
         Resampled raster with updated coordinates, ``res`` attribute,
         and float32 dtype.
     """
-    _validate_raster(agg, func_name='resample', name='agg')
+    _validate_raster(agg, func_name='resample', name='agg', ndim=(2, 3))
 
     if method not in ALL_METHODS:
         raise ValueError(
@@ -1025,11 +1075,55 @@ def resample(
             f"(scale_factor <= 1.0)"
         )
 
+    # -- nodata: replace sentinels with NaN before resampling ----------------
+    nd_resolved = _resolve_nodata(agg, nodata)
+    has_nodata = nd_resolved is not None
+    if has_nodata:
+        agg = _apply_nodata_mask(agg, nd_resolved)
+
     # -- fast path: identity -------------------------------------------------
     if scale_y == 1.0 and scale_x == 1.0:
         out = agg.copy()
         out.name = name
+        # When nodata was applied, advertise NaN as the new sentinel.
+        if has_nodata:
+            out.attrs['_FillValue'] = float('nan')
         return out
+
+    # -- 3D: dispatch per band ----------------------------------------------
+    if agg.ndim == 3:
+        leading_dim = agg.dims[0]
+        bands = []
+        for i in range(agg.sizes[leading_dim]):
+            band_2d = agg.isel({leading_dim: i})
+            band_out = resample(
+                band_2d,
+                scale_factor=scale_factor,
+                target_resolution=target_resolution,
+                method=method,
+                # Pass NaN so the recursive call short-circuits masking
+                # (we already applied the mask on the 3D input above) and
+                # ignores the original attrs sentinel.
+                nodata=float('nan'),
+                name=name,
+            )
+            bands.append(band_out)
+        # Stack along the leading dim. concat preserves the per-band
+        # coordinate when each input has it.
+        result = xr.concat(bands, dim=leading_dim)
+        # concat may reorder dims; transpose to the original layout.
+        result = result.transpose(*agg.dims)
+        result.name = name
+        # Carry across input attrs (concat picks the first; merge with input).
+        new_attrs = dict(agg.attrs)
+        new_attrs.update(bands[0].attrs)  # res from per-band resample
+        if has_nodata:
+            new_attrs['_FillValue'] = float('nan')
+        result.attrs = new_attrs
+        # Preserve the leading-dim coordinate if it was on the input.
+        if leading_dim in agg.coords:
+            result = result.assign_coords({leading_dim: agg.coords[leading_dim]})
+        return result
 
     # -- memory guard for eager backends ------------------------------------
     # Dask paths build per-chunk allocations lazily (chunk size already
@@ -1077,6 +1171,8 @@ def resample(
 
     new_attrs = dict(agg.attrs)
     new_attrs['res'] = (abs(px), abs(py))
+    if has_nodata:
+        new_attrs['_FillValue'] = float('nan')
 
     # Refresh `transform` if the input had one. The rasterio 6-tuple is
     # (res_x, 0.0, left, 0.0, -res_y, top). `top` is the upper edge of

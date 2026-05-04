@@ -728,3 +728,181 @@ class TestDaskAggregateInlined:
         assert elapsed < 30.0, (
             f"dask aggregate took {elapsed:.2f}s; expected well under 5s"
         )
+
+
+# ---------------------------------------------------------------------------
+# 3D rasters (issue #1466)
+# ---------------------------------------------------------------------------
+
+class TestThreeDRasters:
+    """Multi-band ``(band, y, x)`` rasters resample per-band."""
+
+    def _make_3d(self, backend='numpy'):
+        # 3 bands of an 8x8 gradient. Each band has a unique offset so we
+        # can confirm bands aren't mixed during the dispatch.
+        y, x = np.mgrid[0:8, 0:8]
+        band0 = (y * 10 + x).astype(np.float32)
+        band1 = band0 + 100
+        band2 = band0 + 200
+        data = np.stack([band0, band1, band2], axis=0)
+        agg = xr.DataArray(
+            data,
+            dims=('band', 'y', 'x'),
+            coords={
+                'band': np.array([1, 2, 3]),
+                'y': np.arange(8, dtype=np.float64),
+                'x': np.arange(8, dtype=np.float64),
+            },
+            attrs={'res': (1.0, 1.0)},
+            name='myraster',
+        )
+        if backend == 'dask':
+            import dask.array as da
+            agg = agg.copy()
+            agg.data = da.from_array(agg.data, chunks=(1, 4, 4))
+        elif backend == 'cupy':
+            import cupy
+            agg = agg.copy()
+            agg.data = cupy.asarray(agg.data)
+        return agg
+
+    def test_3d_numpy_shape_and_band_coord(self):
+        agg = self._make_3d('numpy')
+        out = resample(agg, scale_factor=0.5, method='nearest')
+        assert out.shape == (3, 4, 4)
+        assert out.dims == ('band', 'y', 'x')
+        np.testing.assert_array_equal(out['band'].values, [1, 2, 3])
+
+    def test_3d_per_band_independence(self):
+        """Each band's output should be the 2D resample of that band."""
+        agg = self._make_3d('numpy')
+        out = resample(agg, scale_factor=0.5, method='average')
+        for i in range(3):
+            band_2d = agg.isel(band=i).reset_coords(drop=True)
+            ref = resample(band_2d, scale_factor=0.5, method='average')
+            np.testing.assert_allclose(out.isel(band=i).values, ref.values,
+                                       atol=1e-5)
+
+    def test_3d_target_resolution_tuple(self):
+        agg = self._make_3d('numpy')
+        out = resample(agg, target_resolution=(2.0, 4.0))
+        assert out.shape == (3, 4, 2)
+
+    @dask_array_available
+    def test_3d_dask(self):
+        agg = self._make_3d('dask')
+        out = resample(agg, scale_factor=0.5, method='nearest')
+        assert out.shape == (3, 4, 4)
+        np.testing.assert_array_equal(out['band'].values, [1, 2, 3])
+
+    @cuda_and_cupy_available
+    def test_3d_cupy(self):
+        agg = self._make_3d('cupy')
+        out = resample(agg, scale_factor=0.5, method='nearest')
+        assert out.shape == (3, 4, 4)
+        np.testing.assert_array_equal(out['band'].values, [1, 2, 3])
+
+
+# ---------------------------------------------------------------------------
+# nodata handling (issue #1466)
+# ---------------------------------------------------------------------------
+
+class TestNodata:
+    def test_explicit_nodata_int_sentinel(self):
+        # Integer raster with -9999 sentinel. After resample those pixels
+        # should become NaN; valid pixels stay as float interpolations.
+        data = np.array([
+            [-9999, -9999, 10, 10],
+            [-9999, -9999, 10, 10],
+            [20, 20, 30, 30],
+            [20, 20, 30, 30],
+        ], dtype=np.int32)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method='nearest',
+                       nodata=-9999)
+        assert out.shape == (2, 2)
+        # Top-left output pixel maps to the -9999 region -> NaN
+        assert np.isnan(out.values[0, 0])
+        # Bottom-right pixel maps to a valid region -> finite
+        assert np.isfinite(out.values[1, 1])
+        assert out.attrs.get('_FillValue') is not None
+        assert np.isnan(out.attrs['_FillValue'])
+
+    def test_nodata_from_fillvalue_attr(self):
+        # Same data, but sentinel discovered via _FillValue attr.
+        data = np.array([
+            [-9999, -9999, 10, 10],
+            [-9999, -9999, 10, 10],
+            [20, 20, 30, 30],
+            [20, 20, 30, 30],
+        ], dtype=np.int32)
+        agg = create_test_raster(
+            data, attrs={'res': (1.0, 1.0), '_FillValue': -9999}
+        )
+        out = resample(agg, scale_factor=0.5, method='nearest')
+        assert np.isnan(out.values[0, 0])
+        assert np.isfinite(out.values[1, 1])
+
+    def test_nodata_from_nodata_attr(self):
+        data = np.array([
+            [-9999, -9999, 10, 10],
+            [-9999, -9999, 10, 10],
+            [20, 20, 30, 30],
+            [20, 20, 30, 30],
+        ], dtype=np.int32)
+        agg = create_test_raster(
+            data, attrs={'res': (1.0, 1.0), 'nodata': -9999}
+        )
+        out = resample(agg, scale_factor=0.5, method='average')
+        assert np.isnan(out.values[0, 0])
+
+    def test_nodata_none_no_attrs_unchanged(self):
+        # Without an explicit param or attr, behavior matches the old
+        # (pre-#1466) implementation -- no masking, no _FillValue added.
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method='nearest')
+        assert '_FillValue' not in out.attrs
+
+    def test_nodata_float_explicit(self):
+        # Float sentinel -- e.g. -1.0 marking masked pixels.
+        data = np.array([[-1.0, -1.0, 5.0, 5.0],
+                         [-1.0, -1.0, 5.0, 5.0],
+                         [3.0, 3.0, 7.0, 7.0],
+                         [3.0, 3.0, 7.0, 7.0]], dtype=np.float32)
+        agg = create_test_raster(data, attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method='nearest', nodata=-1.0)
+        assert np.isnan(out.values[0, 0])
+
+    def test_explicit_nodata_overrides_attr(self):
+        # Explicit param wins over _FillValue attr.
+        # 4x4 with -1 in the top-left 2x2 block. _FillValue says -999
+        # (which doesn't appear); explicit nodata=-1 should mask the corner.
+        data = np.array([[-1.0, -1.0, 5.0, 5.0],
+                         [-1.0, -1.0, 5.0, 5.0],
+                         [3.0, 3.0, 7.0, 7.0],
+                         [3.0, 3.0, 7.0, 7.0]], dtype=np.float32)
+        agg = create_test_raster(
+            data, attrs={'res': (1.0, 1.0), '_FillValue': -999.0}
+        )
+        out = resample(agg, scale_factor=0.5, method='nearest', nodata=-1.0)
+        # Without override the attr would say -999 (no match) and -1 would
+        # leak through; with override the top-left output pixel is NaN.
+        assert np.isnan(out.values[0, 0])
+
+
+# ---------------------------------------------------------------------------
+# target_resolution as 2-tuple (issue #1466)
+# ---------------------------------------------------------------------------
+
+class TestTargetResolutionTuple:
+    def test_tuple_resolution_independent_axes(self, grid_8x8):
+        # 8x8 grid with res=(1, 1) -> target (2, 4) -> output (4, 2).
+        out = resample(grid_8x8, target_resolution=(2.0, 4.0))
+        assert out.shape == (4, 2)
+
+    def test_tuple_resolution_matches_scale_factor(self, grid_8x8):
+        # target_resolution=(2.0, 2.0) should match scale_factor=0.5.
+        a = resample(grid_8x8, target_resolution=(2.0, 2.0), method='nearest')
+        b = resample(grid_8x8, scale_factor=0.5, method='nearest')
+        np.testing.assert_allclose(a.values, b.values)
