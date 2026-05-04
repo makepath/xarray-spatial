@@ -530,6 +530,17 @@ def reproject(
         The output ``attrs['crs']`` is in WKT format.
         If vertical transformation was applied, ``attrs['vertical_crs']``
         records the target vertical datum.
+
+        The output y coordinate is always emitted in descending order
+        (top-down, north-up) regardless of the input direction. This
+        matches the standard raster convention and the output of common
+        GIS libraries.
+
+        Non-spatial coords from the input (such as a scalar ``time``
+        coord or a non-dimension coord that is not aligned to the
+        spatial dims) are carried through to the output. Coords that
+        are aligned to the input y or x dims are dropped because their
+        values do not apply to the rebuilt grid.
     """
     _validate_raster(raster, func_name='reproject', name='raster',
                      ndim=(2, 3))
@@ -691,9 +702,27 @@ def reproject(
         out_coords = {ydim: y_coords, xdim: x_coords}
         if band_dim in raster.coords:
             out_coords[band_dim] = raster.coords[band_dim]
+        # Carry forward non-spatial coords (e.g. scalar 'time' coord).
+        # Skip coords aligned to the rebuilt spatial dims because their
+        # values do not apply to the new grid.
+        for cname, cval in raster.coords.items():
+            if cname in (ydim, xdim, band_dim):
+                continue
+            if ydim in cval.dims or xdim in cval.dims:
+                continue
+            out_coords[cname] = cval
     else:
         out_dims = [ydim, xdim]
         out_coords = {ydim: y_coords, xdim: x_coords}
+        # Carry forward non-spatial coords (e.g. scalar 'time' coord).
+        # Skip coords aligned to the rebuilt spatial dims because their
+        # values do not apply to the new grid.
+        for cname, cval in raster.coords.items():
+            if cname in (ydim, xdim):
+                continue
+            if ydim in cval.dims or xdim in cval.dims:
+                continue
+            out_coords[cname] = cval
 
     result = xr.DataArray(
         result_data,
@@ -1372,6 +1401,15 @@ def merge(
     Returns
     -------
     xr.DataArray
+        The output y coordinate is always emitted in descending order
+        (top-down, north-up) regardless of the input direction. This
+        matches the standard raster convention and the output of common
+        GIS libraries.
+
+        Non-spatial coords from the first raster (such as a scalar
+        ``time`` coord) are carried through to the output. Coords
+        aligned to the spatial dims are dropped because their values
+        do not apply to the merged grid.
     """
     if not rasters:
         raise ValueError("merge(): rasters list must not be empty")
@@ -1485,10 +1523,21 @@ def merge(
     ydim = rasters[0].dims[-2]
     xdim = rasters[0].dims[-1]
 
+    out_coords = {ydim: y_coords, xdim: x_coords}
+    # Carry forward non-spatial coords from the first raster (e.g. scalar
+    # 'time' coord). Skip coords aligned to the rebuilt spatial dims
+    # because their values do not apply to the new grid.
+    for cname, cval in rasters[0].coords.items():
+        if cname in (ydim, xdim):
+            continue
+        if ydim in cval.dims or xdim in cval.dims:
+            continue
+        out_coords[cname] = cval
+
     result = xr.DataArray(
         result_data,
         dims=[ydim, xdim],
-        coords={ydim: y_coords, xdim: x_coords},
+        coords=out_coords,
         name=name or 'merged',
         attrs={
             'crs': tgt_wkt,

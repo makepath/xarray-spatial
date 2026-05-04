@@ -1940,3 +1940,105 @@ class TestCupyReprojectParity:
             np.testing.assert_allclose(
                 np_result[finite], dc_vals[finite], rtol=1e-5, atol=1e-5,
             )
+
+
+class TestCoordsPreservation:
+    """Non-spatial coords pass through reproject() and merge()."""
+
+    def _small_raster(self, name='test'):
+        from xrspatial.tests.test_reproject import _make_raster
+        data = np.random.RandomState(0).rand(8, 8).astype(np.float64)
+        return _make_raster(data, name=name)
+
+    def test_reproject_preserves_scalar_time_coord(self):
+        from xrspatial.reproject import reproject
+        raster = self._small_raster()
+        ts = np.datetime64('2024-01-15')
+        raster = raster.assign_coords(time=ts)
+
+        out = reproject(raster, 'EPSG:3857')
+        assert 'time' in out.coords
+        assert out.coords['time'].values == ts
+
+    def test_reproject_preserves_non_spatial_string_coord(self):
+        from xrspatial.reproject import reproject
+        raster = self._small_raster()
+        raster = raster.assign_coords(source='tile_a')
+
+        out = reproject(raster, 'EPSG:3857')
+        assert 'source' in out.coords
+        assert str(out.coords['source'].values) == 'tile_a'
+
+    def test_reproject_drops_stale_y_coord_alias(self):
+        from xrspatial.reproject import reproject
+        raster = self._small_raster()
+        # 'latitude' is a non-dim coord aligned to the y dim.
+        latitude = ('y', raster.coords['y'].values.copy())
+        raster = raster.assign_coords(latitude=latitude)
+        assert 'latitude' in raster.coords
+
+        out = reproject(raster, 'EPSG:3857')
+        # The new grid's y values do not match the stale 'latitude'
+        # values, so it must be dropped.
+        assert 'latitude' not in out.coords
+
+    def test_reproject_preserves_band_coord(self):
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(1).rand(8, 8, 3).astype(np.float64)
+        y = np.linspace(1, -1, 8)
+        x = np.linspace(-1, 1, 8)
+        raster = xr.DataArray(
+            data, dims=['y', 'x', 'band'],
+            coords={'y': y, 'x': x, 'band': ['R', 'G', 'B']},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+
+        out = reproject(raster, 'EPSG:3857')
+        assert 'band' in out.coords
+        assert list(out.coords['band'].values) == ['R', 'G', 'B']
+
+    def test_merge_preserves_first_raster_scalar_coord(self):
+        from xrspatial.reproject import merge
+        r1 = self._small_raster(name='r1')
+        r2 = self._small_raster(name='r2')
+        ts = np.datetime64('2024-06-01')
+        r1 = r1.assign_coords(time=ts)
+
+        out = merge([r1, r2], target_crs='EPSG:4326')
+        assert 'time' in out.coords
+        assert out.coords['time'].values == ts
+
+    def test_reproject_y_descending_regardless_of_input(self):
+        from xrspatial.reproject import reproject
+        # Build a y-ascending input (override default y direction)
+        data = np.random.RandomState(2).rand(8, 8).astype(np.float64)
+        y_asc = np.linspace(-1, 1, 8)  # ascending
+        x = np.linspace(-1, 1, 8)
+        raster = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y_asc, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+
+        out = reproject(raster, 'EPSG:3857')
+        y_out = out.coords['y'].values
+        # Strictly descending (top-down, north-up).
+        assert np.all(np.diff(y_out) < 0), (
+            f"Output y must be descending, got {y_out}"
+        )
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_reproject_y_descending_dask(self):
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(3).rand(8, 8).astype(np.float64)
+        y_asc = np.linspace(-1, 1, 8)
+        x = np.linspace(-1, 1, 8)
+        raster = xr.DataArray(
+            da.from_array(data, chunks=4), dims=['y', 'x'],
+            coords={'y': y_asc, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+
+        out = reproject(raster, 'EPSG:3857')
+        y_out = out.coords['y'].values
+        assert np.all(np.diff(y_out) < 0)
