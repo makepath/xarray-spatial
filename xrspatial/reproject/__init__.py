@@ -687,15 +687,25 @@ def reproject(
 
     ydim, xdim = _find_spatial_dims(raster)
     # Carry input attrs forward so units, long_name, scale_factor, etc.
-    # survive the transform. Pop attrs that are stale after reprojection:
-    # the affine `transform` and grid `res` describe the old grid, and
-    # `crs_wkt` would duplicate (or contradict) the canonical `crs` we re-emit.
+    # survive the transform. Re-emit `transform` and `res` for the new
+    # output grid (rasterio 6-tuple convention). Drop `crs_wkt` since it
+    # would duplicate (or contradict) the canonical `crs` we re-emit.
+    out_left, _out_bottom, _out_right, out_top = grid['bounds']
+    out_res_x = grid['res_x']
+    out_res_y = grid['res_y']
     out_attrs = {**raster.attrs}
-    out_attrs.pop('transform', None)
     out_attrs.pop('crs_wkt', None)
-    out_attrs.pop('res', None)
     out_attrs['crs'] = tgt_wkt
     out_attrs['nodata'] = nd
+    out_attrs['res'] = (out_res_x, out_res_y)
+    out_attrs['transform'] = (
+        out_res_x, 0.0, out_left, 0.0, -out_res_y, out_top,
+    )
+    # If the input used `_FillValue`, propagate the resolved nodata to
+    # both keys so downstream consumers reading either find a consistent
+    # value. If `_FillValue` was absent, leave it absent.
+    if '_FillValue' in raster.attrs:
+        out_attrs['_FillValue'] = nd
     if tgt_vertical_crs is not None:
         out_attrs['vertical_crs'] = tgt_vertical_crs
 
@@ -1479,7 +1489,8 @@ def merge(
                 "Ensure all rasters have CRS metadata."
             )
         sb = _source_bounds(r)
-        ss = (r.sizes[r.dims[-2]], r.sizes[r.dims[-1]])
+        r_ydim, r_xdim = _find_spatial_dims(r)
+        ss = (r.sizes[r_ydim], r.sizes[r_xdim])
         yd = _is_y_descending(r)
         # Per-raster input nodata sentinel. Detected independently of the
         # user-supplied output nodata so that mixed-sentinel inputs are
@@ -1552,8 +1563,7 @@ def merge(
         )
 
     y_coords, x_coords = _make_output_coords(out_bounds, out_shape)
-    ydim = rasters[0].dims[-2]
-    xdim = rasters[0].dims[-1]
+    ydim, xdim = _find_spatial_dims(rasters[0])
 
     out_coords = {ydim: y_coords, xdim: x_coords}
     # Carry forward non-spatial coords from the first raster (e.g. scalar
@@ -1567,14 +1577,24 @@ def merge(
         out_coords[cname] = cval
 
     # Carry the first raster's attrs forward (matches the default
-    # strategy='first'). Drop attrs describing the old grid: `transform`,
-    # `res`, and the duplicate `crs_wkt` are no longer accurate.
+    # strategy='first'). Drop the duplicate `crs_wkt` and re-emit
+    # `transform` and `res` for the new output grid (rasterio 6-tuple).
+    out_left, _out_bottom, _out_right, out_top = grid['bounds']
+    out_res_x = grid['res_x']
+    out_res_y = grid['res_y']
     out_attrs = {**rasters[0].attrs}
-    out_attrs.pop('transform', None)
     out_attrs.pop('crs_wkt', None)
-    out_attrs.pop('res', None)
     out_attrs['crs'] = tgt_wkt
     out_attrs['nodata'] = nd
+    out_attrs['res'] = (out_res_x, out_res_y)
+    out_attrs['transform'] = (
+        out_res_x, 0.0, out_left, 0.0, -out_res_y, out_top,
+    )
+    # If the first raster used `_FillValue`, propagate the resolved
+    # nodata to both keys for consistent round-trip. Leave absent
+    # otherwise.
+    if '_FillValue' in rasters[0].attrs:
+        out_attrs['_FillValue'] = nd
 
     result = xr.DataArray(
         result_data,
