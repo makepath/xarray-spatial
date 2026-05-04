@@ -44,11 +44,42 @@ ALL_METHODS = set(INTERP_METHODS) | AGGREGATE_METHODS
 _INTERP_DEPTH = {'nearest': 1, 'bilinear': 1, 'cubic': 10}
 
 # Approximate working-set size per output cell for the eager backends:
-# one float64 working buffer (8 B) plus a float32 output cell (4 B).
-# scipy.ndimage.map_coordinates also allocates a temporary of the same
-# size during higher-order spline evaluation; the 0.5 * available bound
-# below leaves room for that.
-_BYTES_PER_OUTPUT_CELL = 12
+# one float64 working buffer (8 B) plus a float64 output cell (8 B) in
+# the worst case. scipy.ndimage.map_coordinates also allocates a
+# temporary of the same size during higher-order spline evaluation; the
+# 0.5 * available bound below leaves room for that.
+_BYTES_PER_OUTPUT_CELL = 16
+
+
+# -- Working / output dtype selection ----------------------------------------
+
+def _working_dtype(input_dtype):
+    """Pick the working float dtype for resampling.
+
+    float64 inputs stay in float64 to preserve precision; everything else
+    (smaller floats, integers, bool) uses float32.
+    """
+    dt = np.dtype(input_dtype)
+    if dt.kind == 'f' and dt.itemsize >= 8:
+        return np.float64
+    return np.float32
+
+
+def _output_dtype(input_dtype):
+    """Pick the output dtype for resampling.
+
+    Float inputs keep their dtype. Integer / bool inputs return float32
+    because NaN-sentinel resampling needs a float type.
+    """
+    dt = np.dtype(input_dtype)
+    if dt.kind == 'f':
+        return dt.type
+    return np.float32
+
+
+def _maybe_astype(arr, dtype):
+    """astype copy that no-ops when already at the requested dtype."""
+    return arr if arr.dtype == np.dtype(dtype) else arr.astype(dtype)
 
 
 # -- Memory guard ------------------------------------------------------------
@@ -388,13 +419,13 @@ _AGG_FUNCS = {
 def _interp_block_np(block, global_in_h, global_in_w,
                      global_out_h, global_out_w,
                      cum_in_y, cum_in_x, cum_out_y, cum_out_x,
-                     depth, order, block_info=None):
+                     depth, order, work_dtype, out_dtype, block_info=None):
     """Interpolate one (possibly overlapped) numpy block."""
     yi, xi = block_info[0]['chunk-location']
     target_h = int(cum_out_y[yi + 1] - cum_out_y[yi])
     target_w = int(cum_out_x[xi + 1] - cum_out_x[xi])
 
-    block = block.astype(np.float64)
+    block = _maybe_astype(block, work_dtype)
 
     # Global output pixel indices for this chunk
     oy = np.arange(cum_out_y[yi], cum_out_y[yi + 1], dtype=np.float64)
@@ -417,19 +448,19 @@ def _interp_block_np(block, global_in_h, global_in_w,
         result = _scipy_map_coords(block, coords, order=order, mode='nearest')
     else:
         filled = np.where(mask, 0.0, block)
-        weights = (~mask).astype(np.float64)
+        weights = (~mask).astype(block.dtype)
         z_data = _scipy_map_coords(filled, coords, order=order, mode='nearest')
         z_wt = _scipy_map_coords(weights, coords, order=order, mode='nearest')
         result = np.where(z_wt > 0.01,
                           z_data / np.maximum(z_wt, 1e-10), np.nan)
 
-    return result.reshape(target_h, target_w).astype(np.float32)
+    return _maybe_astype(result.reshape(target_h, target_w), out_dtype)
 
 
 def _interp_block_cupy(block, global_in_h, global_in_w,
                        global_out_h, global_out_w,
                        cum_in_y, cum_in_x, cum_out_y, cum_out_x,
-                       depth, order, block_info=None):
+                       depth, order, work_dtype, out_dtype, block_info=None):
     """CuPy variant of :func:`_interp_block_np`."""
     from cupyx.scipy.ndimage import map_coordinates as _cupy_map_coords
 
@@ -437,7 +468,8 @@ def _interp_block_cupy(block, global_in_h, global_in_w,
     target_h = int(cum_out_y[yi + 1] - cum_out_y[yi])
     target_w = int(cum_out_x[xi + 1] - cum_out_x[xi])
 
-    block = block.astype(cupy.float64)
+    if block.dtype != cupy.dtype(work_dtype):
+        block = block.astype(work_dtype)
 
     oy = cupy.arange(int(cum_out_y[yi]), int(cum_out_y[yi + 1]),
                      dtype=cupy.float64)
@@ -459,25 +491,30 @@ def _interp_block_cupy(block, global_in_h, global_in_w,
         result = _cupy_map_coords(block, coords, order=order, mode='nearest')
     else:
         filled = cupy.where(mask, 0.0, block)
-        weights = (~mask).astype(cupy.float64)
+        weights = (~mask).astype(block.dtype)
         z_data = _cupy_map_coords(filled, coords, order=order, mode='nearest')
         z_wt = _cupy_map_coords(weights, coords, order=order, mode='nearest')
         result = cupy.where(z_wt > 0.01,
                             z_data / cupy.maximum(z_wt, 1e-10), cupy.nan)
 
-    return result.reshape(target_h, target_w).astype(cupy.float32)
+    result = result.reshape(target_h, target_w)
+    if result.dtype != cupy.dtype(out_dtype):
+        result = result.astype(out_dtype)
+    return result
 
 
 def _agg_block_np(block, method, global_in_h, global_in_w,
                   global_out_h, global_out_w,
                   cum_in_y, cum_in_x, cum_out_y, cum_out_x,
-                  depth_y, depth_x, block_info=None):
+                  depth_y, depth_x, out_dtype, block_info=None):
     """Block-aggregate one (possibly overlapped) numpy chunk."""
     yi, xi = block_info[0]['chunk-location']
     target_h = int(cum_out_y[yi + 1] - cum_out_y[yi])
     target_w = int(cum_out_x[xi + 1] - cum_out_x[xi])
 
-    block = block.astype(np.float64)
+    # _AGG_FUNCS kernels are @ngjit-compiled with hard-coded float64
+    # working buffers; cast accordingly so numba dispatch matches.
+    block = _maybe_astype(block, np.float64)
     # The overlapped block starts depth pixels before the original chunk
     in_y0 = int(cum_in_y[yi]) - depth_y
     in_x0 = int(cum_in_x[xi]) - depth_x
@@ -495,20 +532,20 @@ def _agg_block_np(block, method, global_in_h, global_in_w,
             sub = block[gy0:gy1, gx0:gx1]
             out[lo_y, lo_x] = func(sub, 1, 1)[0, 0]
 
-    return out.astype(np.float32)
+    return _maybe_astype(out, out_dtype)
 
 
 def _agg_block_cupy(block, method, global_in_h, global_in_w,
                     global_out_h, global_out_w,
                     cum_in_y, cum_in_x, cum_out_y, cum_out_x,
-                    depth_y, depth_x, block_info=None):
+                    depth_y, depth_x, out_dtype, block_info=None):
     """Block-aggregate one cupy chunk (falls back to CPU)."""
     cpu = cupy.asnumpy(block)
     result = _agg_block_np(
         cpu, method, global_in_h, global_in_w,
         global_out_h, global_out_w,
         cum_in_y, cum_in_x, cum_out_y, cum_out_x,
-        depth_y, depth_x, block_info=block_info,
+        depth_y, depth_x, out_dtype, block_info=block_info,
     )
     return cupy.asarray(result)
 
@@ -516,23 +553,30 @@ def _agg_block_cupy(block, method, global_in_h, global_in_w,
 # -- Per-backend runners -----------------------------------------------------
 
 def _run_numpy(data, scale_y, scale_x, method):
-    data = data.astype(np.float64)
+    work_dt = _working_dtype(data.dtype)
+    out_dt = _output_dtype(data.dtype)
+    data = _maybe_astype(data, work_dt)
     out_h, out_w = _output_shape(*data.shape, scale_y, scale_x)
 
     if method in INTERP_METHODS:
-        return _nan_aware_interp_np(data, out_h, out_w,
-                                    INTERP_METHODS[method]).astype(np.float32)
+        result = _nan_aware_interp_np(data, out_h, out_w,
+                                      INTERP_METHODS[method])
+        return _maybe_astype(result, out_dt)
 
-    return _AGG_FUNCS[method](data, out_h, out_w).astype(np.float32)
+    result = _AGG_FUNCS[method](data, out_h, out_w)
+    return _maybe_astype(result, out_dt)
 
 
 def _run_cupy(data, scale_y, scale_x, method):
-    data = data.astype(cupy.float64)
+    work_dt = _working_dtype(data.dtype)
+    out_dt = _output_dtype(data.dtype)
+    data = data if data.dtype == cupy.dtype(work_dt) else data.astype(work_dt)
     out_h, out_w = _output_shape(*data.shape, scale_y, scale_x)
 
     if method in INTERP_METHODS:
-        return _nan_aware_interp_cupy(data, out_h, out_w,
-                                      INTERP_METHODS[method]).astype(cupy.float32)
+        result = _nan_aware_interp_cupy(data, out_h, out_w,
+                                        INTERP_METHODS[method])
+        return result if result.dtype == cupy.dtype(out_dt) else result.astype(out_dt)
 
     # Aggregate: GPU reshape+reduce for integer factors, CPU fallback otherwise
     fy, fx = data.shape[0] / out_h, data.shape[1] / out_w
@@ -544,11 +588,12 @@ def _run_cupy(data, scale_y, scale_x, method):
         reducer = {'average': cupy.nanmean,
                    'min': cupy.nanmin,
                    'max': cupy.nanmax}[method]
-        return reducer(reshaped, axis=(1, 3)).astype(cupy.float32)
+        result = reducer(reshaped, axis=(1, 3))
+        return result if result.dtype == cupy.dtype(out_dt) else result.astype(out_dt)
 
     cpu = cupy.asnumpy(data)
     return cupy.asarray(
-        _AGG_FUNCS[method](cpu, out_h, out_w).astype(np.float32)
+        _maybe_astype(_AGG_FUNCS[method](cpu, out_h, out_w), out_dt)
     )
 
 
@@ -581,8 +626,11 @@ def _ensure_min_chunksize(data, min_size):
 
 
 def _run_dask_numpy(data, scale_y, scale_x, method):
-    data = data.astype(np.float64)
-    meta = np.array((), dtype=np.float32)
+    work_dt = _working_dtype(data.dtype)
+    out_dt = _output_dtype(data.dtype)
+    if data.dtype != np.dtype(work_dt):
+        data = data.astype(work_dt)
+    meta = np.array((), dtype=out_dt)
 
     if method in INTERP_METHODS:
         order = INTERP_METHODS[method]
@@ -616,9 +664,10 @@ def _run_dask_numpy(data, scale_y, scale_x, method):
                      global_out_h=global_out_h, global_out_w=global_out_w,
                      cum_in_y=cum_in_y, cum_in_x=cum_in_x,
                      cum_out_y=cum_out_y, cum_out_x=cum_out_x,
-                     depth=depth, order=order)
+                     depth=depth, order=order,
+                     work_dtype=work_dt, out_dtype=out_dt)
         return da.map_blocks(fn, src, chunks=(out_y, out_x),
-                             dtype=np.float32, meta=meta)
+                             dtype=out_dt, meta=meta)
 
     import math
     min_size = max(_min_chunksize_for_scale(scale_y),
@@ -658,14 +707,18 @@ def _run_dask_numpy(data, scale_y, scale_x, method):
                  global_out_h=global_out_h, global_out_w=global_out_w,
                  cum_in_y=cum_in_y, cum_in_x=cum_in_x,
                  cum_out_y=cum_out_y, cum_out_x=cum_out_x,
-                 depth_y=depth_y, depth_x=depth_x)
+                 depth_y=depth_y, depth_x=depth_x,
+                 out_dtype=out_dt)
     return da.map_blocks(fn, src, chunks=(out_y, out_x),
-                         dtype=np.float32, meta=meta)
+                         dtype=out_dt, meta=meta)
 
 
 def _run_dask_cupy(data, scale_y, scale_x, method):
-    data = data.astype(cupy.float64)
-    meta = cupy.array((), dtype=cupy.float32)
+    work_dt = _working_dtype(data.dtype)
+    out_dt = _output_dtype(data.dtype)
+    if data.dtype != cupy.dtype(work_dt):
+        data = data.astype(work_dt)
+    meta = cupy.array((), dtype=out_dt)
 
     if method in INTERP_METHODS:
         order = INTERP_METHODS[method]
@@ -699,9 +752,10 @@ def _run_dask_cupy(data, scale_y, scale_x, method):
                      global_out_h=global_out_h, global_out_w=global_out_w,
                      cum_in_y=cum_in_y, cum_in_x=cum_in_x,
                      cum_out_y=cum_out_y, cum_out_x=cum_out_x,
-                     depth=depth, order=order)
+                     depth=depth, order=order,
+                     work_dtype=work_dt, out_dtype=out_dt)
         return da.map_blocks(fn, src, chunks=(out_y, out_x),
-                             dtype=cupy.float32, meta=meta)
+                             dtype=out_dt, meta=meta)
 
     import math
     min_size = max(_min_chunksize_for_scale(scale_y),
@@ -733,9 +787,10 @@ def _run_dask_cupy(data, scale_y, scale_x, method):
                  global_out_h=global_out_h, global_out_w=global_out_w,
                  cum_in_y=cum_in_y, cum_in_x=cum_in_x,
                  cum_out_y=cum_out_y, cum_out_x=cum_out_x,
-                 depth_y=depth_y, depth_x=depth_x)
+                 depth_y=depth_y, depth_x=depth_x,
+                 out_dtype=out_dt)
     return da.map_blocks(fn, src, chunks=(out_y, out_x),
-                         dtype=cupy.float32, meta=meta)
+                         dtype=out_dt, meta=meta)
 
 
 # -- Public API --------------------------------------------------------------
@@ -776,8 +831,10 @@ def resample(
     Returns
     -------
     xarray.DataArray
-        Resampled raster with updated coordinates, ``res`` attribute,
-        and float32 dtype.
+        Resampled raster with updated coordinates and ``res`` attribute.
+        Output dtype matches the input float dtype (float32 or float64);
+        integer inputs return float32 since NaN-sentinel resampling
+        requires a float type.
     """
     _validate_raster(agg, func_name='resample', name='agg')
 
