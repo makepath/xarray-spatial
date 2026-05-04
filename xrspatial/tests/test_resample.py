@@ -823,15 +823,17 @@ class TestInfHandling:
 
 
 # ---------------------------------------------------------------------------
-# 3D input rejection message (T-7)
+# 4D input rejection message (T-7)
 # ---------------------------------------------------------------------------
 
 class TestDimensionRejection:
-    def test_3d_input_error_message(self):
-        data = np.zeros((2, 4, 4), dtype=np.float32)
+    def test_4d_input_error_message(self):
+        # 3D (band, y, x) is now valid; 4D should still be rejected.
+        data = np.zeros((2, 2, 4, 4), dtype=np.float32)
         agg = xr.DataArray(
-            data, dims=('band', 'y', 'x'),
+            data, dims=('time', 'band', 'y', 'x'),
             coords={
+                'time': [0, 1],
                 'band': [1, 2],
                 'y': np.arange(4, dtype=np.float64),
                 'x': np.arange(4, dtype=np.float64),
