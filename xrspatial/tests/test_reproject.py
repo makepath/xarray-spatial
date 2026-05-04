@@ -2509,3 +2509,78 @@ class TestCoordsPreservation:
         out = reproject(raster, 'EPSG:3857')
         y_out = out.coords['y'].values
         assert np.all(np.diff(y_out) < 0)
+
+
+# ---------------------------------------------------------------------------
+# Inf input and chunk_size / max_memory parameter coverage
+# ---------------------------------------------------------------------------
+
+def test_reproject_handles_inf_input():
+    """Reprojecting a raster with +/-Inf pixels must not crash.
+
+    The output behavior is implementation-defined: Inf may propagate
+    or be coerced to NaN. We only assert that the call returns and
+    the spatial geometry is intact.
+    """
+    from xrspatial.reproject import reproject
+    data = np.ones((32, 32), dtype=np.float64)
+    data[0, 0] = np.inf
+    data[1, 1] = -np.inf
+    raster = xr.DataArray(
+        data, dims=['y', 'x'],
+        coords={'y': np.linspace(55, 45, 32),
+                'x': np.linspace(-5, 5, 32)},
+        attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+    )
+    result = reproject(raster, 'EPSG:32633')
+    assert result.ndim == 2
+    assert result.shape[0] >= 1 and result.shape[1] >= 1
+
+
+@pytest.mark.skipif(not HAS_DASK, reason="dask required")
+def test_reproject_chunk_size_tuple():
+    """Tuple chunk_size should propagate to the output dask chunks."""
+    from xrspatial.reproject import reproject
+    data = np.random.RandomState(0).rand(128, 128).astype(np.float64)
+    raster = xr.DataArray(
+        da.from_array(data, chunks=64), dims=['y', 'x'],
+        coords={'y': np.linspace(55, 45, 128),
+                'x': np.linspace(-5, 5, 128)},
+        attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+    )
+    out = reproject(raster, 'EPSG:32633', chunk_size=(64, 32))
+    assert hasattr(out.data, 'chunks'), "expected dask-backed output"
+    row_chunks, col_chunks = out.data.chunks
+    # Allow the last chunk to be a remainder, but the leading chunk
+    # should match the requested size.
+    assert row_chunks[0] == 64
+    assert col_chunks[0] == 32
+
+
+def test_reproject_max_memory_string_arg():
+    """Reproject must accept human-readable max_memory strings."""
+    from xrspatial.reproject import reproject
+    data = np.random.RandomState(0).rand(32, 32).astype(np.float64)
+    raster = xr.DataArray(
+        data, dims=['y', 'x'],
+        coords={'y': np.linspace(55, 45, 32),
+                'x': np.linspace(-5, 5, 32)},
+        attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+    )
+    for mem in ('256MB', '1GB'):
+        out = reproject(raster, 'EPSG:32633', max_memory=mem)
+        assert out.ndim == 2
+
+
+def test_reproject_max_memory_int_arg():
+    """Reproject must accept integer byte counts for max_memory."""
+    from xrspatial.reproject import reproject
+    data = np.random.RandomState(0).rand(32, 32).astype(np.float64)
+    raster = xr.DataArray(
+        data, dims=['y', 'x'],
+        coords={'y': np.linspace(55, 45, 32),
+                'x': np.linspace(-5, 5, 32)},
+        attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+    )
+    out = reproject(raster, 'EPSG:32633', max_memory=512 * 1024 * 1024)
+    assert out.ndim == 2
