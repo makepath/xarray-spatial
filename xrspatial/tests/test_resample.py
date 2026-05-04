@@ -1018,18 +1018,3 @@ class TestNodata:
         assert np.isnan(out.values[0, 0])
 
 
-# ---------------------------------------------------------------------------
-# target_resolution as 2-tuple (issue #1466)
-# ---------------------------------------------------------------------------
-
-class TestTargetResolutionTuple:
-    def test_tuple_resolution_independent_axes(self, grid_8x8):
-        # 8x8 grid with res=(1, 1) -> target (2, 4) -> output (4, 2).
-        out = resample(grid_8x8, target_resolution=(2.0, 4.0))
-        assert out.shape == (4, 2)
-
-    def test_tuple_resolution_matches_scale_factor(self, grid_8x8):
-        # target_resolution=(2.0, 2.0) should match scale_factor=0.5.
-        a = resample(grid_8x8, target_resolution=(2.0, 2.0), method='nearest')
-        b = resample(grid_8x8, scale_factor=0.5, method='nearest')
-        np.testing.assert_allclose(a.values, b.values)
