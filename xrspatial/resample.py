@@ -376,6 +376,211 @@ _AGG_FUNCS = {
 }
 
 
+# -- Block-aggregation kernels for dask chunks -------------------------------
+#
+# These mirror the eager `_agg_mean / _agg_min / ...` family but compute
+# per-pixel windows from the *global* input/output geometry and a chunk
+# offset, rather than from the local block shape.  The whole chunk runs
+# inside a single jitted call, instead of one numba dispatch per output
+# pixel as the previous `func(sub, 1, 1)[0, 0]` loop did.
+#
+# Window bounds for output pixel `go` (a *global* output index):
+#     gy0 = int(go * global_in_h / global_out_h) - in_y0
+#     gy1 = max(gy0 + 1,
+#               int((go + 1) * global_in_h / global_out_h) - in_y0)
+# where `in_y0` is the global input index of the chunk's first row
+# (negative if `_add_overlap` extended the chunk past the input edge).
+
+@ngjit
+def _agg_block_mean_nb(data, target_h, target_w,
+                       go_y0, go_x0,
+                       global_in_h, global_in_w,
+                       global_out_h, global_out_w,
+                       in_y0, in_x0):
+    out = np.empty((target_h, target_w), dtype=np.float64)
+    for lo_y in range(target_h):
+        go_y = go_y0 + lo_y
+        gy0 = int(go_y * global_in_h / global_out_h) - in_y0
+        gy1 = int((go_y + 1) * global_in_h / global_out_h) - in_y0
+        if gy1 < gy0 + 1:
+            gy1 = gy0 + 1
+        for lo_x in range(target_w):
+            go_x = go_x0 + lo_x
+            gx0 = int(go_x * global_in_w / global_out_w) - in_x0
+            gx1 = int((go_x + 1) * global_in_w / global_out_w) - in_x0
+            if gx1 < gx0 + 1:
+                gx1 = gx0 + 1
+            total = 0.0
+            count = 0
+            for y in range(gy0, gy1):
+                for x in range(gx0, gx1):
+                    v = data[y, x]
+                    if not np.isnan(v):
+                        total += v
+                        count += 1
+            out[lo_y, lo_x] = total / count if count > 0 else np.nan
+    return out
+
+
+@ngjit
+def _agg_block_min_nb(data, target_h, target_w,
+                      go_y0, go_x0,
+                      global_in_h, global_in_w,
+                      global_out_h, global_out_w,
+                      in_y0, in_x0):
+    out = np.empty((target_h, target_w), dtype=np.float64)
+    for lo_y in range(target_h):
+        go_y = go_y0 + lo_y
+        gy0 = int(go_y * global_in_h / global_out_h) - in_y0
+        gy1 = int((go_y + 1) * global_in_h / global_out_h) - in_y0
+        if gy1 < gy0 + 1:
+            gy1 = gy0 + 1
+        for lo_x in range(target_w):
+            go_x = go_x0 + lo_x
+            gx0 = int(go_x * global_in_w / global_out_w) - in_x0
+            gx1 = int((go_x + 1) * global_in_w / global_out_w) - in_x0
+            if gx1 < gx0 + 1:
+                gx1 = gx0 + 1
+            best = np.inf
+            found = False
+            for y in range(gy0, gy1):
+                for x in range(gx0, gx1):
+                    v = data[y, x]
+                    if not np.isnan(v) and v < best:
+                        best = v
+                        found = True
+            out[lo_y, lo_x] = best if found else np.nan
+    return out
+
+
+@ngjit
+def _agg_block_max_nb(data, target_h, target_w,
+                      go_y0, go_x0,
+                      global_in_h, global_in_w,
+                      global_out_h, global_out_w,
+                      in_y0, in_x0):
+    out = np.empty((target_h, target_w), dtype=np.float64)
+    for lo_y in range(target_h):
+        go_y = go_y0 + lo_y
+        gy0 = int(go_y * global_in_h / global_out_h) - in_y0
+        gy1 = int((go_y + 1) * global_in_h / global_out_h) - in_y0
+        if gy1 < gy0 + 1:
+            gy1 = gy0 + 1
+        for lo_x in range(target_w):
+            go_x = go_x0 + lo_x
+            gx0 = int(go_x * global_in_w / global_out_w) - in_x0
+            gx1 = int((go_x + 1) * global_in_w / global_out_w) - in_x0
+            if gx1 < gx0 + 1:
+                gx1 = gx0 + 1
+            best = -np.inf
+            found = False
+            for y in range(gy0, gy1):
+                for x in range(gx0, gx1):
+                    v = data[y, x]
+                    if not np.isnan(v) and v > best:
+                        best = v
+                        found = True
+            out[lo_y, lo_x] = best if found else np.nan
+    return out
+
+
+@ngjit
+def _agg_block_median_nb(data, target_h, target_w,
+                         go_y0, go_x0,
+                         global_in_h, global_in_w,
+                         global_out_h, global_out_w,
+                         in_y0, in_x0):
+    out = np.empty((target_h, target_w), dtype=np.float64)
+    for lo_y in range(target_h):
+        go_y = go_y0 + lo_y
+        gy0 = int(go_y * global_in_h / global_out_h) - in_y0
+        gy1 = int((go_y + 1) * global_in_h / global_out_h) - in_y0
+        if gy1 < gy0 + 1:
+            gy1 = gy0 + 1
+        for lo_x in range(target_w):
+            go_x = go_x0 + lo_x
+            gx0 = int(go_x * global_in_w / global_out_w) - in_x0
+            gx1 = int((go_x + 1) * global_in_w / global_out_w) - in_x0
+            if gx1 < gx0 + 1:
+                gx1 = gx0 + 1
+            buf = np.empty((gy1 - gy0) * (gx1 - gx0), dtype=np.float64)
+            n = 0
+            for y in range(gy0, gy1):
+                for x in range(gx0, gx1):
+                    v = data[y, x]
+                    if not np.isnan(v):
+                        buf[n] = v
+                        n += 1
+            if n == 0:
+                out[lo_y, lo_x] = np.nan
+            else:
+                s = np.sort(buf[:n])
+                if n % 2 == 1:
+                    out[lo_y, lo_x] = s[n // 2]
+                else:
+                    out[lo_y, lo_x] = (s[n // 2 - 1] + s[n // 2]) / 2.0
+    return out
+
+
+@ngjit
+def _agg_block_mode_nb(data, target_h, target_w,
+                       go_y0, go_x0,
+                       global_in_h, global_in_w,
+                       global_out_h, global_out_w,
+                       in_y0, in_x0):
+    out = np.empty((target_h, target_w), dtype=np.float64)
+    for lo_y in range(target_h):
+        go_y = go_y0 + lo_y
+        gy0 = int(go_y * global_in_h / global_out_h) - in_y0
+        gy1 = int((go_y + 1) * global_in_h / global_out_h) - in_y0
+        if gy1 < gy0 + 1:
+            gy1 = gy0 + 1
+        for lo_x in range(target_w):
+            go_x = go_x0 + lo_x
+            gx0 = int(go_x * global_in_w / global_out_w) - in_x0
+            gx1 = int((go_x + 1) * global_in_w / global_out_w) - in_x0
+            if gx1 < gx0 + 1:
+                gx1 = gx0 + 1
+            buf = np.empty((gy1 - gy0) * (gx1 - gx0), dtype=np.float64)
+            n = 0
+            for y in range(gy0, gy1):
+                for x in range(gx0, gx1):
+                    v = data[y, x]
+                    if not np.isnan(v):
+                        buf[n] = v
+                        n += 1
+            if n == 0:
+                out[lo_y, lo_x] = np.nan
+                continue
+            s = np.sort(buf[:n])
+            best_val = s[0]
+            best_cnt = 1
+            cur_val = s[0]
+            cur_cnt = 1
+            for i in range(1, n):
+                if s[i] == cur_val:
+                    cur_cnt += 1
+                else:
+                    if cur_cnt > best_cnt:
+                        best_cnt = cur_cnt
+                        best_val = cur_val
+                    cur_val = s[i]
+                    cur_cnt = 1
+            if cur_cnt > best_cnt:
+                best_val = cur_val
+            out[lo_y, lo_x] = best_val
+    return out
+
+
+_AGG_BLOCK_FUNCS = {
+    'average': _agg_block_mean_nb,
+    'min': _agg_block_min_nb,
+    'max': _agg_block_max_nb,
+    'median': _agg_block_median_nb,
+    'mode': _agg_block_mode_nb,
+}
+
+
 # -- Dask block helpers ------------------------------------------------------
 #
 # Interpolation uses map_coordinates with *global* coordinate mapping so
@@ -472,7 +677,12 @@ def _agg_block_np(block, method, global_in_h, global_in_w,
                   global_out_h, global_out_w,
                   cum_in_y, cum_in_x, cum_out_y, cum_out_x,
                   depth_y, depth_x, block_info=None):
-    """Block-aggregate one (possibly overlapped) numpy chunk."""
+    """Block-aggregate one (possibly overlapped) numpy chunk.
+
+    Runs the entire chunk inside one numba dispatch via the
+    `_agg_block_*_nb` kernels.  Earlier versions called a 1x1 jitted
+    aggregate per output pixel, which scaled badly for large rasters.
+    """
     yi, xi = block_info[0]['chunk-location']
     target_h = int(cum_out_y[yi + 1] - cum_out_y[yi])
     target_w = int(cum_out_x[xi + 1] - cum_out_x[xi])
@@ -481,20 +691,15 @@ def _agg_block_np(block, method, global_in_h, global_in_w,
     # The overlapped block starts depth pixels before the original chunk
     in_y0 = int(cum_in_y[yi]) - depth_y
     in_x0 = int(cum_in_x[xi]) - depth_x
-    func = _AGG_FUNCS[method]
+    go_y0 = int(cum_out_y[yi])
+    go_x0 = int(cum_out_x[xi])
 
-    out = np.empty((target_h, target_w), dtype=np.float64)
-    for lo_y in range(target_h):
-        go_y = int(cum_out_y[yi]) + lo_y
-        gy0 = int(go_y * global_in_h / global_out_h) - in_y0
-        gy1 = max(gy0 + 1, int((go_y + 1) * global_in_h / global_out_h) - in_y0)
-        for lo_x in range(target_w):
-            go_x = int(cum_out_x[xi]) + lo_x
-            gx0 = int(go_x * global_in_w / global_out_w) - in_x0
-            gx1 = max(gx0 + 1, int((go_x + 1) * global_in_w / global_out_w) - in_x0)
-            sub = block[gy0:gy1, gx0:gx1]
-            out[lo_y, lo_x] = func(sub, 1, 1)[0, 0]
-
+    kernel = _AGG_BLOCK_FUNCS[method]
+    out = kernel(block, target_h, target_w,
+                 go_y0, go_x0,
+                 int(global_in_h), int(global_in_w),
+                 int(global_out_h), int(global_out_w),
+                 in_y0, in_x0)
     return out.astype(np.float32)
 
 
@@ -958,15 +1163,42 @@ def resample(
         edge_start = vals[0] - half_first
         edge_end = vals[-1] + half_last
         px = (edge_end - edge_start) / n_out
-        return np.linspace(edge_start + px / 2, edge_end - px / 2, n_out), px
+        coords = np.linspace(edge_start + px / 2, edge_end - px / 2, n_out)
+        return coords, px, edge_start, edge_end
 
-    new_y, py = _new_coords(y_vals, out_h)
-    new_x, px = _new_coords(x_vals, out_w)
+    new_y, py, y_edge_start, y_edge_end = _new_coords(y_vals, out_h)
+    new_x, px, x_edge_start, x_edge_end = _new_coords(x_vals, out_w)
 
     new_attrs = dict(agg.attrs)
     new_attrs['res'] = (abs(px), abs(py))
     if has_nodata:
         new_attrs['_FillValue'] = float('nan')
+
+    # Refresh `transform` if the input had one. The rasterio 6-tuple is
+    # (res_x, 0.0, left, 0.0, -res_y, top). `top` is the upper edge of
+    # the first row, which is `y_edge_start` when y is descending and
+    # `y_edge_end` when y is ascending. `left` is the lower edge of the
+    # first column, which is `x_edge_start` when x is ascending and
+    # `x_edge_end` when x is descending.
+    if 'transform' in agg.attrs:
+        out_res_x = abs(px)
+        out_res_y = abs(py)
+        top = y_edge_start if y_vals[0] > y_vals[-1] else y_edge_end
+        left = x_edge_start if x_vals[0] < x_vals[-1] else x_edge_end
+        new_attrs['transform'] = (
+            out_res_x, 0.0, left, 0.0, -out_res_y, top,
+        )
+
+    # Resample currently emits float32 with NaN as the missing-data
+    # sentinel regardless of input dtype. If the input declared a
+    # different sentinel via `_FillValue` or `nodatavals`, replace the
+    # value with NaN so the metadata matches the actual data. Leave the
+    # keys absent when the input did not have them.
+    if '_FillValue' in agg.attrs:
+        new_attrs['_FillValue'] = float('nan')
+    if 'nodatavals' in agg.attrs:
+        old = agg.attrs['nodatavals']
+        new_attrs['nodatavals'] = tuple(float('nan') for _ in old)
 
     result = xr.DataArray(
         result_data,

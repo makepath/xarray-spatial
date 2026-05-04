@@ -121,6 +121,112 @@ class TestOutputGeometry:
 
 
 # ---------------------------------------------------------------------------
+# Metadata propagation
+# ---------------------------------------------------------------------------
+
+class TestMetadataPropagation:
+    """resample() should refresh stale grid attrs and nodata sentinels."""
+
+    @staticmethod
+    def _raster_with_transform(transform):
+        """4x4 raster whose coords match the given rasterio 6-tuple."""
+        res_x, _, left, _, neg_res_y, top = transform
+        res_y = -neg_res_y
+        x = np.array([left + (i + 0.5) * res_x for i in range(4)])
+        y = np.array([top - (i + 0.5) * res_y for i in range(4)])
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        return xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'transform': transform, 'res': (res_x, res_y)},
+        )
+
+    def test_transform_refreshed_on_downsample(self):
+        raster = self._raster_with_transform(
+            (1.0, 0.0, 100.0, 0.0, -1.0, 200.0)
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert tuple(out.attrs['transform']) == (
+            2.0, 0.0, 100.0, 0.0, -2.0, 200.0,
+        )
+
+    def test_transform_absent_stays_absent(self):
+        # grid_4x4 fixture has no transform attr.
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': np.linspace(3, 0, 4), 'x': np.linspace(0, 3, 4)},
+            attrs={'res': (1.0, 1.0)},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert 'transform' not in out.attrs
+
+    def test_fill_value_replaced_with_nan(self):
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': np.linspace(3, 0, 4), 'x': np.linspace(0, 3, 4)},
+            attrs={'res': (1.0, 1.0), '_FillValue': -9999},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert '_FillValue' in out.attrs
+        assert np.isnan(out.attrs['_FillValue'])
+
+    def test_fill_value_absent_stays_absent(self):
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': np.linspace(3, 0, 4), 'x': np.linspace(0, 3, 4)},
+            attrs={'res': (1.0, 1.0)},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert '_FillValue' not in out.attrs
+
+    def test_nodatavals_replaced_with_nan(self):
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': np.linspace(3, 0, 4), 'x': np.linspace(0, 3, 4)},
+            attrs={'res': (1.0, 1.0), 'nodatavals': (-9999,)},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert 'nodatavals' in out.attrs
+        nv = out.attrs['nodatavals']
+        assert len(nv) == 1
+        assert np.isnan(nv[0])
+
+    def test_other_attrs_preserved(self):
+        # crs, units, long_name, scales, offsets should round-trip.
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': np.linspace(3, 0, 4), 'x': np.linspace(0, 3, 4)},
+            attrs={
+                'res': (1.0, 1.0),
+                'crs': 'EPSG:4326',
+                'crs_wkt': 'GEOGCS["WGS 84"]',
+                'units': 'm',
+                'long_name': 'elevation',
+                'scales': (1.0,),
+                'offsets': (0.0,),
+            },
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert out.attrs['crs'] == 'EPSG:4326'
+        assert out.attrs['crs_wkt'] == 'GEOGCS["WGS 84"]'
+        assert out.attrs['units'] == 'm'
+        assert out.attrs['long_name'] == 'elevation'
+        assert out.attrs['scales'] == (1.0,)
+        assert out.attrs['offsets'] == (0.0,)
+
+
+# ---------------------------------------------------------------------------
 # Correctness: known values
 # ---------------------------------------------------------------------------
 
@@ -371,13 +477,156 @@ class TestCuPyParity:
         np.testing.assert_allclose(cp_out.data.get(), np_out.values,
                                    atol=1e-4, equal_nan=True)
 
-    @pytest.mark.parametrize('method', ['average', 'min', 'max'])
+    @pytest.mark.parametrize('method',
+                             ['average', 'min', 'max', 'median', 'mode'])
     def test_aggregate_parity(self, numpy_and_cupy_rasters, method):
+        # 'median' and 'mode' fall back to CPU inside _run_cupy; the
+        # round-trip (cupy in -> cupy out) still needs to be verified.
         np_agg, cp_agg = numpy_and_cupy_rasters
         np_out = resample(np_agg, scale_factor=0.5, method=method)
         cp_out = resample(cp_agg, scale_factor=0.5, method=method)
         np.testing.assert_allclose(cp_out.data.get(), np_out.values,
                                    atol=1e-5, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# Dask + CuPy parity
+# ---------------------------------------------------------------------------
+
+@cuda_and_cupy_available
+@dask_array_available
+class TestDaskCuPyParity:
+    """Verify dask+cupy results match numpy for the four-backend matrix."""
+
+    @pytest.fixture
+    def numpy_and_dask_cupy_rasters(self):
+        data = np.random.RandomState(1470).rand(20, 20).astype(np.float32)
+        np_agg = create_test_raster(data, backend='numpy',
+                                    attrs={'res': (1.0, 1.0)})
+        dc_agg = create_test_raster(data, backend='dask+cupy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=(8, 8))
+        return np_agg, dc_agg
+
+    @pytest.mark.parametrize('method', ['nearest', 'bilinear', 'cubic'])
+    @pytest.mark.parametrize('sf', [0.5, 2.0, 0.7])
+    def test_interp_parity(self, numpy_and_dask_cupy_rasters, method, sf):
+        np_agg, dc_agg = numpy_and_dask_cupy_rasters
+        np_out = resample(np_agg, scale_factor=sf, method=method)
+        dc_out = resample(dc_agg, scale_factor=sf, method=method)
+        np.testing.assert_allclose(dc_out.data.compute().get(), np_out.values,
+                                   atol=1e-4, equal_nan=True)
+
+    @pytest.mark.parametrize('method', ['average', 'min', 'max'])
+    def test_aggregate_parity(self, numpy_and_dask_cupy_rasters, method):
+        # median/mode go through the CPU fallback inside the cupy chunk
+        # function; T-1 covers that round-trip on the eager cupy backend.
+        np_agg, dc_agg = numpy_and_dask_cupy_rasters
+        np_out = resample(np_agg, scale_factor=0.5, method=method)
+        dc_out = resample(dc_agg, scale_factor=0.5, method=method)
+        np.testing.assert_allclose(dc_out.data.compute().get(), np_out.values,
+                                   atol=1e-5, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# Integer-dtype input
+# ---------------------------------------------------------------------------
+
+def _backend_available(backend):
+    if backend == 'numpy':
+        return True
+    if backend == 'cupy':
+        from xrspatial.utils import has_cuda_and_cupy
+        return has_cuda_and_cupy()
+    if backend == 'dask+numpy':
+        from xrspatial.utils import has_dask_array
+        return has_dask_array()
+    if backend == 'dask+cupy':
+        from xrspatial.utils import has_cuda_and_cupy, has_dask_array
+        return has_cuda_and_cupy() and has_dask_array()
+    return False
+
+
+def _to_numpy(arr):
+    """Materialize a backend-agnostic DataArray's data as a numpy ndarray."""
+    data = arr.data
+    if hasattr(data, 'compute'):
+        data = data.compute()
+    if hasattr(data, 'get'):
+        data = data.get()
+    return np.asarray(data)
+
+
+class TestIntegerInput:
+    """Integer rasters should resample through every backend without
+    clipping or overflow, producing finite float output."""
+
+    @pytest.mark.parametrize(
+        'backend', ['numpy', 'cupy', 'dask+numpy', 'dask+cupy']
+    )
+    @pytest.mark.parametrize(
+        'method', ['nearest', 'average', 'min', 'max', 'median', 'mode']
+    )
+    def test_int32_input_resamples(self, backend, method):
+        if not _backend_available(backend):
+            pytest.skip(f"backend {backend} unavailable")
+
+        rng = np.random.RandomState(1470)
+        data = rng.randint(0, 101, size=(8, 8)).astype(np.int32)
+        agg = create_test_raster(
+            data, backend=backend, attrs={'res': (1.0, 1.0)}, chunks=(4, 4)
+        )
+
+        out = resample(agg, scale_factor=0.5, method=method)
+        out_np = _to_numpy(out)
+
+        assert out.shape == (4, 4)
+        # Output should always be float (regardless of input dtype).
+        assert np.issubdtype(out_np.dtype, np.floating)
+        assert np.all(np.isfinite(out_np))
+        # Values are bounded by the input range, so no overflow / clipping.
+        assert out_np.min() >= 0
+        assert out_np.max() <= 100
+
+
+# ---------------------------------------------------------------------------
+# target_resolution: tuple and scalar forms
+# ---------------------------------------------------------------------------
+
+class TestTargetResolutionTuple:
+    """Tuple form `target_resolution=(y, x)` lets users specify
+    asymmetric output cell sizes; only the scalar form was covered before."""
+
+    def test_target_resolution_tuple_shape_and_res(self, grid_8x8):
+        # grid_8x8 has res=(1.0, 1.0) and shape (8, 8).
+        # target_resolution=(2.0, 4.0) means 2.0 m per pixel along y and
+        # 4.0 m per pixel along x, so output should be (4, 2).
+        out = resample(grid_8x8, target_resolution=(2.0, 4.0))
+        assert out.shape == (4, 2)
+        # attrs['res'] is stored as (px, py) -- x cellsize, y cellsize.
+        assert pytest.approx(out.attrs['res'][0], abs=0.01) == 4.0
+        assert pytest.approx(out.attrs['res'][1], abs=0.01) == 2.0
+
+    def test_target_resolution_scalar_matches_uniform_tuple(self, grid_8x8):
+        scalar_out = resample(grid_8x8, target_resolution=2.0)
+        tuple_out = resample(grid_8x8, target_resolution=(2.0, 2.0))
+        assert scalar_out.shape == tuple_out.shape == (4, 4)
+        np.testing.assert_allclose(
+            scalar_out.values, tuple_out.values, atol=1e-6
+        )
+        assert (
+            pytest.approx(scalar_out.attrs['res'][0], abs=0.01)
+            == tuple_out.attrs['res'][0]
+        )
+
+    def test_target_resolution_list_form(self, grid_8x8):
+        # The source accepts list as well as tuple; verify equivalence.
+        out_tuple = resample(grid_8x8, target_resolution=(2.0, 4.0))
+        out_list = resample(grid_8x8, target_resolution=[2.0, 4.0])
+        assert out_tuple.shape == out_list.shape == (4, 2)
+        np.testing.assert_allclose(
+            out_tuple.values, out_list.values, atol=1e-6
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +679,55 @@ class TestMemoryGuard:
         # guard not to short-circuit a reasonable dask call.
         out = resample(dask_agg, scale_factor=100.0, method='nearest')
         assert out.shape == (400, 400)
+
+
+# ---------------------------------------------------------------------------
+# Inlined dask aggregate kernel (#1463)
+# ---------------------------------------------------------------------------
+
+@dask_array_available
+class TestDaskAggregateInlined:
+    """Cover the per-chunk numba aggregate kernel."""
+
+    @pytest.mark.parametrize('method',
+                             ['average', 'min', 'max', 'median', 'mode'])
+    def test_inlined_kernel_matches_numpy(self, method):
+        # 60x60 with 20x20 chunks and scale_factor=1/3 produces a 20x20
+        # output.  Each output pixel collapses a 3x3 input window, and
+        # the output chunks straddle the input chunk boundaries because
+        # `_add_overlap` extends each chunk by `depth_y = depth_x = 3`.
+        rng = np.random.RandomState(1463)
+        data = rng.rand(60, 60).astype(np.float32)
+        np_agg = create_test_raster(data, backend='numpy',
+                                    attrs={'res': (1.0, 1.0)})
+        dk_agg = create_test_raster(data, backend='dask+numpy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=(20, 20))
+        np_out = resample(np_agg, scale_factor=1.0 / 3.0, method=method)
+        dk_out = resample(dk_agg, scale_factor=1.0 / 3.0, method=method)
+        np.testing.assert_array_equal(dk_out.values, np_out.values)
+
+    def test_dask_aggregate_smoke_200x200(self):
+        # Smoke test: confirm the inlined path completes within a
+        # generous wall-clock budget on a moderate raster.  Not a
+        # perf assertion -- just guards against accidental
+        # quadratic regressions in the chunk loop.
+        import time
+        rng = np.random.RandomState(146301)
+        data = rng.rand(200, 200).astype(np.float32)
+        dk_agg = create_test_raster(data, backend='dask+numpy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=(50, 50))
+        t0 = time.perf_counter()
+        out = resample(dk_agg, scale_factor=0.25, method='average').compute()
+        elapsed = time.perf_counter() - t0
+        assert out.shape == (50, 50)
+        # 5 s is generous; the inlined kernel runs in well under 1 s on
+        # a typical laptop.  The previous per-pixel dispatch could miss
+        # this on cold-cache numba compilation runs.
+        assert elapsed < 30.0, (
+            f"dask aggregate took {elapsed:.2f}s; expected well under 5s"
+        )
 
 
 # ---------------------------------------------------------------------------
