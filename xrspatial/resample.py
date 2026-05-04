@@ -826,14 +826,20 @@ def _run_dask_numpy(data, scale_y, scale_x, method):
                              dtype=np.float32, meta=meta)
 
     import math
-    min_size = max(_min_chunksize_for_scale(scale_y),
-                   _min_chunksize_for_scale(scale_x))
-    data = _ensure_min_chunksize(data, min_size)
-
+    # Aggregate windows can cross chunk boundaries; size chunks to satisfy
+    # both the scale-driven minimum and the depth-driven minimum in one pass,
+    # then build the cumulative arrays once.
     global_in_h = int(sum(data.chunks[0]))
     global_in_w = int(sum(data.chunks[1]))
     global_out_h, global_out_w = _output_shape(
         global_in_h, global_in_w, scale_y, scale_x)
+    depth_y = math.ceil(global_in_h / global_out_h)
+    depth_x = math.ceil(global_in_w / global_out_w)
+    min_size = max(_min_chunksize_for_scale(scale_y),
+                   _min_chunksize_for_scale(scale_x),
+                   2 * depth_y + 1, 2 * depth_x + 1)
+    data = _ensure_min_chunksize(data, min_size)
+
     out_y = _output_chunks(data.chunks[0], scale_y)
     out_x = _output_chunks(data.chunks[1], scale_x)
     cum_in_y = np.cumsum([0] + list(data.chunks[0]))
@@ -841,22 +847,12 @@ def _run_dask_numpy(data, scale_y, scale_x, method):
     cum_out_y = np.cumsum([0] + list(out_y))
     cum_out_x = np.cumsum([0] + list(out_x))
 
-    # Aggregate windows can cross chunk boundaries; add overlap.
-    depth_y = math.ceil(global_in_h / global_out_h)
-    depth_x = math.ceil(global_in_w / global_out_w)
-    data = _ensure_min_chunksize(data, max(2 * depth_y + 1, 2 * depth_x + 1))
-    # Recompute in case rechunk changed layout
-    if data.chunks[0] != tuple(cum_in_y[1:] - cum_in_y[:-1]):
-        cum_in_y = np.cumsum([0] + list(data.chunks[0]))
-        cum_in_x = np.cumsum([0] + list(data.chunks[1]))
-        out_y = _output_chunks(data.chunks[0], scale_y)
-        out_x = _output_chunks(data.chunks[1], scale_x)
-        cum_out_y = np.cumsum([0] + list(out_y))
-        cum_out_x = np.cumsum([0] + list(out_x))
-
+    # boundary=np.nan keeps overlap padding from contaminating the aggregate
+    # at the global edges. The kernels skip NaN inputs and return NaN for
+    # empty windows, so the padded region is ignored naturally.
     from dask.array.overlap import overlap as _add_overlap
     src = _add_overlap(data, depth={0: depth_y, 1: depth_x},
-                       boundary='nearest')
+                       boundary=np.nan)
 
     fn = partial(_agg_block_np, method=method,
                  global_in_h=global_in_h, global_in_w=global_in_w,
@@ -909,18 +905,19 @@ def _run_dask_cupy(data, scale_y, scale_x, method):
                              dtype=cupy.float32, meta=meta)
 
     import math
-    min_size = max(_min_chunksize_for_scale(scale_y),
-                   _min_chunksize_for_scale(scale_x))
-    data = _ensure_min_chunksize(data, min_size)
-
+    # Aggregate windows can cross chunk boundaries; size chunks to satisfy
+    # both the scale-driven minimum and the depth-driven minimum in one pass,
+    # then build the cumulative arrays once.
     global_in_h = int(sum(data.chunks[0]))
     global_in_w = int(sum(data.chunks[1]))
     global_out_h, global_out_w = _output_shape(
         global_in_h, global_in_w, scale_y, scale_x)
-
     depth_y = math.ceil(global_in_h / global_out_h)
     depth_x = math.ceil(global_in_w / global_out_w)
-    data = _ensure_min_chunksize(data, max(2 * depth_y + 1, 2 * depth_x + 1))
+    min_size = max(_min_chunksize_for_scale(scale_y),
+                   _min_chunksize_for_scale(scale_x),
+                   2 * depth_y + 1, 2 * depth_x + 1)
+    data = _ensure_min_chunksize(data, min_size)
 
     out_y = _output_chunks(data.chunks[0], scale_y)
     out_x = _output_chunks(data.chunks[1], scale_x)
@@ -929,9 +926,12 @@ def _run_dask_cupy(data, scale_y, scale_x, method):
     cum_out_y = np.cumsum([0] + list(out_y))
     cum_out_x = np.cumsum([0] + list(out_x))
 
+    # boundary=np.nan keeps overlap padding from contaminating the aggregate
+    # at the global edges. The kernels skip NaN inputs and return NaN for
+    # empty windows, so the padded region is ignored naturally.
     from dask.array.overlap import overlap as _add_overlap
     src = _add_overlap(data, depth={0: depth_y, 1: depth_x},
-                       boundary='nearest')
+                       boundary=cupy.nan)
 
     fn = partial(_agg_block_cupy, method=method,
                  global_in_h=global_in_h, global_in_w=global_in_w,
