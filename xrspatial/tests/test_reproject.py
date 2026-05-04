@@ -718,6 +718,129 @@ class TestMerge:
         assert computed.shape[0] > 0
 
 
+class TestMergeMixedNodata:
+    """merge() must honor each raster's own nodata sentinel."""
+
+    def test_merge_mixed_nodata_sentinels(self):
+        """Raster A NaN sentinel, raster B -9999 sentinel.
+
+        B's -9999 pixels must be recognized as nodata, not leaked as
+        real data into the merged output.
+        """
+        from xrspatial.reproject import merge
+
+        # Raster A: all valid, value 10
+        a_data = np.full((16, 16), 10.0, dtype=np.float64)
+        a = _make_raster(
+            a_data, x_range=(-10, 0), y_range=(-5, 5), nodata=np.nan
+        )
+
+        # Raster B: half valid (=20), half -9999 sentinel
+        b_data = np.full((16, 16), 20.0, dtype=np.float64)
+        b_data[:, :8] = -9999.0  # left half is nodata
+        b = _make_raster(
+            b_data, x_range=(0, 10), y_range=(-5, 5), nodata=-9999.0
+        )
+
+        result = merge([a, b], strategy='mean', resolution=1.0)
+        vals = result.values
+
+        # The output should never contain -9999 as a data value.
+        # B's -9999 pixels were correctly recognized as nodata.
+        assert not np.any(vals == -9999.0), (
+            "B's -9999 nodata pixels leaked into the merged output"
+        )
+
+        # B's right half (x > ~5) should still surface as 20.
+        x = result.coords['x'].values
+        right_mask = x > 6
+        if right_mask.any():
+            right = vals[:, right_mask]
+            valid = ~np.isnan(right)
+            if valid.any():
+                np.testing.assert_allclose(
+                    right[valid], 20.0, atol=1.0
+                )
+
+    def test_merge_nan_then_int_sentinel(self):
+        """Mean strategy must not fold sentinel zeros into the average."""
+        from xrspatial.reproject import merge
+
+        a_data = np.full((8, 8), 10.0, dtype=np.float64)
+        a = _make_raster(
+            a_data, x_range=(-5, 5), y_range=(-5, 5), nodata=np.nan
+        )
+
+        # Raster B uses 0.0 as nodata sentinel
+        b_data = np.full((8, 8), 0.0, dtype=np.float64)
+        b = _make_raster(
+            b_data, x_range=(-5, 5), y_range=(-5, 5), nodata=0.0
+        )
+
+        result = merge([a, b], strategy='mean', resolution=1.0)
+        vals = result.values
+        interior = vals[1:-1, 1:-1]
+        valid = ~np.isnan(interior)
+        if valid.any():
+            # If B's zeros were treated as data, mean would be ~5.
+            # Treated as nodata, mean is just 10.
+            np.testing.assert_allclose(
+                interior[valid], 10.0, atol=1.0
+            )
+
+    def test_merge_explicit_user_nodata_with_mixed_inputs(self):
+        """User-specified output nodata is independent of input sentinels."""
+        from xrspatial.reproject import merge
+
+        # Raster A: NaN nodata, all valid
+        a_data = np.full((16, 16), 10.0, dtype=np.float64)
+        a = _make_raster(
+            a_data, x_range=(-10, 0), y_range=(-5, 5), nodata=np.nan
+        )
+
+        # Raster B: -9999 nodata, half valid (=20)
+        b_data = np.full((16, 16), 20.0, dtype=np.float64)
+        b_data[:, :8] = -9999.0
+        b = _make_raster(
+            b_data, x_range=(0, 10), y_range=(-5, 5), nodata=-9999.0
+        )
+
+        result = merge(
+            [a, b], strategy='mean', resolution=1.0, nodata=-9999.0
+        )
+        vals = result.values
+
+        # Output uses -9999 as the nodata sentinel, but data pixels must
+        # never be 0 from B's zero-sentinel test (different test). Here
+        # the only -9999 in the output should be true nodata regions
+        # (no overlap with any input). We verify B's right half surfaces
+        # as 20 (not -9999) and A's region surfaces as 10.
+        x = result.coords['x'].values
+
+        right_mask = x > 6
+        if right_mask.any():
+            right = vals[:, right_mask]
+            data_mask = right != -9999.0
+            if data_mask.any():
+                np.testing.assert_allclose(
+                    right[data_mask], 20.0, atol=1.0
+                )
+
+        left_mask = x < -6
+        if left_mask.any():
+            left = vals[:, left_mask]
+            data_mask = left != -9999.0
+            if data_mask.any():
+                np.testing.assert_allclose(
+                    left[data_mask], 10.0, atol=1.0
+                )
+
+        # No NaN in the output -- user requested -9999 as the sentinel.
+        assert not np.any(np.isnan(vals)), (
+            "user requested -9999 nodata but output contains NaN"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Accessor integration
 # ---------------------------------------------------------------------------
@@ -1804,6 +1927,120 @@ class TestNodataFiniteness:
         from xrspatial.reproject._crs_utils import _detect_nodata
         r = xr.DataArray(np.zeros((4, 4)), dims=('y', 'x'))
         assert _detect_nodata(r, nodata=-9999) == -9999.0
+
+
+class TestMetadataPreservation:
+    """reproject() and merge() must carry input attrs forward."""
+
+    @staticmethod
+    def _raster_with_attrs(extra_attrs=None, h=8, w=8,
+                           crs='EPSG:4326',
+                           x_range=(-1, 1), y_range=(-1, 1),
+                           name='dem'):
+        data = np.ones((h, w), dtype=np.float64)
+        attrs = {'crs': crs, 'nodata': np.nan}
+        if extra_attrs:
+            attrs.update(extra_attrs)
+        y = np.linspace(y_range[1], y_range[0], h)
+        x = np.linspace(x_range[0], x_range[1], w)
+        return xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            name=name, attrs=attrs,
+        )
+
+    # reproject() ----------------------------------------------------------
+
+    def test_reproject_preserves_units_attr(self):
+        from xrspatial.reproject import reproject
+        raster = self._raster_with_attrs({'units': 'meters'})
+        result = reproject(raster, 'EPSG:4326', resolution=0.25)
+        assert result.attrs.get('units') == 'meters'
+
+    def test_reproject_preserves_scale_offset(self):
+        from xrspatial.reproject import reproject
+        raster = self._raster_with_attrs(
+            {'scale_factor': 0.1, 'add_offset': 10.0}
+        )
+        result = reproject(raster, 'EPSG:4326', resolution=0.25)
+        assert result.attrs.get('scale_factor') == 0.1
+        assert result.attrs.get('add_offset') == 10.0
+
+    def test_reproject_preserves_long_name(self):
+        from xrspatial.reproject import reproject
+        raster = self._raster_with_attrs({'long_name': 'elevation'})
+        result = reproject(raster, 'EPSG:4326', resolution=0.25)
+        assert result.attrs.get('long_name') == 'elevation'
+
+    def test_reproject_drops_stale_transform(self):
+        from xrspatial.reproject import reproject
+        raster = self._raster_with_attrs(
+            {'transform': (1.0, 0.0, 0.0, 0.0, -1.0, 0.0)}
+        )
+        result = reproject(raster, 'EPSG:3857')
+        assert 'transform' not in result.attrs
+
+    def test_reproject_drops_stale_res(self):
+        from xrspatial.reproject import reproject
+        raster = self._raster_with_attrs({'res': (1.0, 1.0)})
+        result = reproject(raster, 'EPSG:3857')
+        assert 'res' not in result.attrs
+
+    def test_reproject_overrides_crs(self):
+        from xrspatial.reproject import reproject
+        raster = self._raster_with_attrs(crs='EPSG:4326')
+        result = reproject(raster, 'EPSG:3857')
+        # Output crs is the new target CRS WKT, not the input EPSG:4326
+        assert 'crs' in result.attrs
+        out_crs = result.attrs['crs']
+        assert out_crs != 'EPSG:4326'
+        # WKT for 3857 mentions Mercator / pseudo-mercator
+        assert 'Mercator' in out_crs or '3857' in out_crs
+
+    def test_reproject_drops_stale_crs_wkt(self):
+        from xrspatial.reproject import reproject
+        raster = self._raster_with_attrs({'crs_wkt': 'OLD_DUPLICATE_WKT'})
+        result = reproject(raster, 'EPSG:3857')
+        assert 'crs_wkt' not in result.attrs
+
+    # merge() --------------------------------------------------------------
+
+    def test_merge_preserves_first_raster_attrs(self):
+        from xrspatial.reproject import merge
+        a = self._raster_with_attrs(
+            {'units': 'm', 'long_name': 'elev'},
+            x_range=(-5, 0), y_range=(-5, 5), name='dem_a',
+        )
+        b = self._raster_with_attrs(
+            {'units': 'feet'},
+            x_range=(0, 5), y_range=(-5, 5), name='dem_b',
+        )
+        result = merge([a, b], resolution=1.0)
+        assert result.attrs.get('units') == 'm'
+        assert result.attrs.get('long_name') == 'elev'
+
+    def test_merge_drops_stale_transform(self):
+        from xrspatial.reproject import merge
+        a = self._raster_with_attrs(
+            {'transform': (1.0, 0.0, 0.0, 0.0, -1.0, 0.0)},
+            x_range=(-5, 0), y_range=(-5, 5),
+        )
+        b = self._raster_with_attrs(
+            x_range=(0, 5), y_range=(-5, 5),
+        )
+        result = merge([a, b], resolution=1.0)
+        assert 'transform' not in result.attrs
+
+    def test_merge_name_falls_back_to_first_raster(self):
+        from xrspatial.reproject import merge
+        a = self._raster_with_attrs(
+            x_range=(-5, 0), y_range=(-5, 5), name='dem_a',
+        )
+        b = self._raster_with_attrs(
+            x_range=(0, 5), y_range=(-5, 5), name='dem_b',
+        )
+        result = merge([a, b], resolution=1.0)
+        assert result.name == 'dem_a'
 
 
 # ---------------------------------------------------------------------------
