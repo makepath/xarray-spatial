@@ -346,6 +346,60 @@ class TestDaskParity:
 
 
 # ---------------------------------------------------------------------------
+# Aggregate dask boundary contamination (issue #1469)
+# ---------------------------------------------------------------------------
+
+@dask_array_available
+class TestAggregateDaskBoundary:
+    """Aggregate dask path must not let overlap-padding bias the result."""
+
+    @pytest.mark.parametrize('method', ['min', 'max', 'median'])
+    def test_chunk_spanning_window_bit_identical(self, method):
+        """Aggregate windows that cross chunk boundaries must equal eager
+        numpy bit-exactly (same kernel, no padding contribution)."""
+        rng = np.random.RandomState(20240504)
+        data = rng.rand(24, 24).astype(np.float32)
+        np_agg = create_test_raster(data, backend='numpy',
+                                    attrs={'res': (1.0, 1.0)})
+        # Use a chunk size that does NOT divide the input cleanly so that
+        # output windows span chunk boundaries.
+        dk_agg = create_test_raster(data, backend='dask+numpy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=(7, 7))
+        np_out = resample(np_agg, scale_factor=0.5, method=method)
+        dk_out = resample(dk_agg, scale_factor=0.5, method=method)
+        # min/max/median over the same set of source cells should be
+        # bit-identical -- no atol slack.
+        np.testing.assert_array_equal(dk_out.values, np_out.values)
+
+    @pytest.mark.parametrize('method', ['min', 'max', 'median'])
+    def test_global_edge_extremes_match_eager(self, method):
+        """Extreme values on the global array edges must not contaminate
+        adjacent output windows. The aggregate kernel's indexing keeps the
+        global-edge pad out of any window, and boundary=np.nan reinforces
+        that contract: pad cells are NaN and would be skipped even if read.
+        Result must match the eager (non-overlapped) numpy path exactly."""
+        # Inner field is in a low range; the rightmost column is an
+        # extreme value that, if duplicated by 'nearest' padding, would
+        # show up in adjacent output windows that should not see it.
+        rng = np.random.RandomState(1469)
+        data = rng.uniform(0.0, 0.1, size=(20, 20)).astype(np.float32)
+        data[:, -1] = 999.0   # extreme right column
+        data[:, 0] = -999.0   # extreme left column
+        data[-1, :] = 999.0   # extreme bottom row
+        data[0, :] = -999.0   # extreme top row
+
+        np_agg = create_test_raster(data, backend='numpy',
+                                    attrs={'res': (1.0, 1.0)})
+        dk_agg = create_test_raster(data, backend='dask+numpy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=(8, 8))
+        np_out = resample(np_agg, scale_factor=0.5, method=method)
+        dk_out = resample(dk_agg, scale_factor=0.5, method=method)
+        np.testing.assert_array_equal(dk_out.values, np_out.values)
+
+
+# ---------------------------------------------------------------------------
 # CuPy parity
 # ---------------------------------------------------------------------------
 
