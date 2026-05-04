@@ -1407,7 +1407,7 @@ def merge(
             "Could not detect target CRS. Pass target_crs explicitly."
         )
 
-    # Detect nodata
+    # Detect output nodata (the sentinel the user asked for)
     nd = nodata if nodata is not None else _detect_nodata(rasters[0], nodata)
 
     # Gather source info for each raster
@@ -1422,6 +1422,10 @@ def merge(
         sb = _source_bounds(r)
         ss = (r.sizes[r.dims[-2]], r.sizes[r.dims[-1]])
         yd = _is_y_descending(r)
+        # Per-raster input nodata sentinel. Detected independently of the
+        # user-supplied output nodata so that mixed-sentinel inputs are
+        # canonicalized correctly during merge.
+        r_nd = _detect_nodata(r, None)
         raster_infos.append({
             'raster': r,
             'src_crs': src_crs,
@@ -1429,6 +1433,7 @@ def merge(
             'src_shape': ss,
             'y_desc': yd,
             'src_wkt': src_crs.to_wkt(),
+            'raster_nodata': r_nd,
         })
 
     # Compute unified output grid
@@ -1582,32 +1587,48 @@ def _merge_inmemory(
 
     Detects same-CRS tiles and uses fast direct placement instead
     of reprojection.
+
+    Each raster is reprojected using its own nodata sentinel and then
+    canonicalized to NaN before the strategy merge so that mixed-sentinel
+    inputs do not leak invalid pixels into the mosaic. After merging, the
+    NaN canonical sentinel is converted back to the user-requested
+    output ``nodata``.
     """
     from ._crs_utils import _crs_from_wkt
     tgt_crs = _crs_from_wkt(tgt_wkt)
 
     arrays = []
     for info in raster_infos:
+        r_nd = info.get('raster_nodata', float('nan'))
         # Check if source CRS matches target (no reprojection needed)
         placed = None
         if info['src_crs'] == tgt_crs:
             placed = _place_same_crs(
                 info['raster'].values,
                 info['src_bounds'], info['src_shape'], info['y_desc'],
-                out_bounds, out_shape, nodata,
+                out_bounds, out_shape, r_nd,
             )
         if placed is not None:
-            arrays.append(placed)
+            arr = placed
         else:
-            reprojected = _reproject_chunk_numpy(
+            arr = _reproject_chunk_numpy(
                 info['raster'].values,
                 info['src_bounds'], info['src_shape'], info['y_desc'],
                 info['src_wkt'], tgt_wkt,
                 out_bounds, out_shape,
-                resampling, nodata, 16,
+                resampling, r_nd, 16,
             )
-            arrays.append(reprojected)
-    return _merge_arrays_numpy(arrays, nodata, strategy)
+        # Canonicalize this raster's sentinel to NaN before the merge so
+        # rasters with different sentinels merge correctly.
+        if not np.isnan(r_nd):
+            arr = np.asarray(arr, dtype=np.float64)
+            arr = np.where(arr == r_nd, np.nan, arr)
+        arrays.append(arr)
+
+    merged = _merge_arrays_numpy(arrays, float('nan'), strategy)
+    if not np.isnan(nodata):
+        merged = np.where(np.isnan(merged), nodata, merged)
+    return merged
 
 
 def _merge_block_adapter(
@@ -1616,9 +1637,14 @@ def _merge_block_adapter(
     src_wkt_list, tgt_wkt,
     out_bounds, out_shape,
     resampling, nodata, strategy, precision,
-    src_footprints_tgt, same_crs_list,
+    src_footprints_tgt, raster_nodata_list, same_crs_list,
 ):
-    """``map_blocks`` adapter for merge."""
+    """``map_blocks`` adapter for merge.
+
+    Each raster is reprojected with its own input nodata sentinel and
+    canonicalized to NaN before the strategy merge. The final result is
+    converted back to the user-requested output ``nodata``.
+    """
     info = block_info[0]
     (row_start, row_end), (col_start, col_end) = info['array-location']
     chunk_shape = (row_end - row_start, col_end - col_start)
@@ -1631,7 +1657,7 @@ def _merge_block_adapter(
         if (src_footprints_tgt[i] is not None
                 and not _bounds_overlap(cb, src_footprints_tgt[i])):
             continue
-
+        r_nd = raster_nodata_list[i]
         placed = None
         if same_crs_list[i]:
             # Same-CRS path: direct pixel placement (no resampling).
@@ -1642,23 +1668,29 @@ def _merge_block_adapter(
             placed = _place_same_crs(
                 np.asarray(src_data),
                 src_bounds_list[i], src_shape_list[i], y_desc_list[i],
-                cb, chunk_shape, nodata,
+                cb, chunk_shape, r_nd,
             )
         if placed is not None:
-            arrays.append(placed)
+            arr = placed
         else:
-            reprojected = _reproject_chunk_numpy(
+            arr = _reproject_chunk_numpy(
                 raster_data_list[i],
                 src_bounds_list[i], src_shape_list[i], y_desc_list[i],
                 src_wkt_list[i], tgt_wkt,
                 cb, chunk_shape,
-                resampling, nodata, precision,
+                resampling, r_nd, precision,
             )
-            arrays.append(reprojected)
+        if not np.isnan(r_nd):
+            arr = np.asarray(arr, dtype=np.float64)
+            arr = np.where(arr == r_nd, np.nan, arr)
+        arrays.append(arr)
 
     if not arrays:
         return np.full(chunk_shape, nodata, dtype=np.float64)
-    return _merge_arrays_numpy(arrays, nodata, strategy)
+    merged = _merge_arrays_numpy(arrays, float('nan'), strategy)
+    if not np.isnan(nodata):
+        merged = np.where(np.isnan(merged), nodata, merged)
+    return merged
 
 
 def _merge_dask(
@@ -1678,6 +1710,9 @@ def _merge_dask(
     shape_list = [info['src_shape'] for info in raster_infos]
     ydesc_list = [info['y_desc'] for info in raster_infos]
     wkt_list = [info['src_wkt'] for info in raster_infos]
+    rnodata_list = [
+        info.get('raster_nodata', float('nan')) for info in raster_infos
+    ]
 
     # Precompute source footprints in target CRS
     footprints = [
@@ -1711,6 +1746,7 @@ def _merge_dask(
         strategy=strategy,
         precision=16,
         src_footprints_tgt=footprints,
+        raster_nodata_list=rnodata_list,
         same_crs_list=same_crs_list,
     )
 
