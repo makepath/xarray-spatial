@@ -2377,6 +2377,37 @@ class TestCupyReprojectParity:
                 np_result[finite], dc_vals[finite], rtol=1e-5, atol=1e-5,
             )
 
+    def test_cupy_reproject_with_nan_chunks(self):
+        """Regression: target chunks projecting outside the source must
+        return all-nodata, exercising the batched min/max early-return."""
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(3).rand(16, 16).astype(np.float64)
+        # Source covers a small region near the prime meridian / equator.
+        coords = {'y': np.linspace(2, -2, 16), 'x': np.linspace(-2, 2, 16)}
+        attrs = {'crs': 'EPSG:4326', 'nodata': np.nan}
+        cp_raster = xr.DataArray(cp.asarray(data), dims=['y', 'x'],
+                                 coords=coords, attrs=attrs)
+
+        # Reproject to a target far outside the source. Coordinates that fall
+        # outside the source produce NaN row/col pixels, so the batched
+        # nanmin/nanmax should be NaN and trigger the all-nodata early return.
+        target_bounds = (5_000_000, 5_000_000, 5_100_000, 5_100_000)
+        out = reproject(cp_raster, 'EPSG:3857', bounds=target_bounds,
+                        width=8, height=8)
+        out_vals = out.data.get() if hasattr(out.data, 'get') else np.asarray(out.data)
+        assert out_vals.shape == (8, 8)
+        # Out-of-bounds output: all entries must be nodata (NaN here).
+        assert np.all(np.isnan(out_vals))
+
+        # Same target as the source exercises the in-bounds branch and must
+        # return finite values from the same batched-reduction code path.
+        in_bounds = reproject(cp_raster, 'EPSG:4326',
+                              bounds=(-1.5, -1.5, 1.5, 1.5),
+                              width=8, height=8)
+        in_vals = (in_bounds.data.get() if hasattr(in_bounds.data, 'get')
+                   else np.asarray(in_bounds.data))
+        assert np.isfinite(in_vals).any()
+
 
 class TestCoordsPreservation:
     """Non-spatial coords pass through reproject() and merge()."""

@@ -287,7 +287,6 @@ def _reproject_chunk_numpy(
         for b in range(n_bands):
             band_data = window[:, :, b].astype(np.float64)
             if not np.isnan(nodata):
-                band_data = band_data.copy()
                 band_data[band_data == nodata] = np.nan
             band_result = _resample_numpy(band_data, local_row, local_col,
                                           resampling=resampling, nodata=nodata)
@@ -302,7 +301,6 @@ def _reproject_chunk_numpy(
 
     # Convert sentinel nodata to NaN so numba kernels can detect it
     if not np.isnan(nodata):
-        window = window.copy()
         window[window == nodata] = np.nan
 
     result = _resample_numpy(window, local_row, local_col,
@@ -353,14 +351,18 @@ def _reproject_chunk_cupy(
             src_row_px = (src_top - src_y) / src_res_y - 0.5
         else:
             src_row_px = (src_y - src_bottom) / src_res_y - 0.5
-        # Need min/max on CPU for window selection
-        r_min_val = float(cp.nanmin(src_row_px).get())
-        if not np.isfinite(r_min_val):
-            return cp.full(chunk_shape, nodata, dtype=cp.float64)
-        r_max_val = float(cp.nanmax(src_row_px).get())
-        c_min_val = float(cp.nanmin(src_col_px).get())
-        c_max_val = float(cp.nanmax(src_col_px).get())
-        if not np.isfinite(r_max_val) or not np.isfinite(c_min_val) or not np.isfinite(c_max_val):
+        # Need min/max on CPU for window selection.
+        # Stack the four reductions and pull them across in one device-to-host
+        # transfer to avoid four separate synchronous syncs.
+        mins_maxes = cp.stack([
+            cp.nanmin(src_row_px), cp.nanmax(src_row_px),
+            cp.nanmin(src_col_px), cp.nanmax(src_col_px),
+        ])
+        r_min_val, r_max_val, c_min_val, c_max_val = (
+            float(v) for v in mins_maxes.get()
+        )
+        if not (np.isfinite(r_min_val) and np.isfinite(r_max_val)
+                and np.isfinite(c_min_val) and np.isfinite(c_max_val)):
             return cp.full(chunk_shape, nodata, dtype=cp.float64)
         r_min = int(np.floor(r_min_val)) - 2
         r_max = int(np.ceil(r_max_val)) + 3
@@ -440,7 +442,6 @@ def _reproject_chunk_cupy(
     else:
         # CPU coordinates -- convert sentinel nodata to NaN before map_coordinates
         if not np.isnan(nodata):
-            window = window.copy()
             window[window == nodata] = cp.nan
 
         result = _resample_cupy(window, local_row, local_col,
@@ -1119,14 +1120,17 @@ def _reproject_dask_cupy(
                 else:
                     src_row_px = (src_y - src_bottom) / src_res_y - 0.5
 
-                r_min_val = float(cp.nanmin(src_row_px).get())
-                if not np.isfinite(r_min_val):
-                    col_offset += cchunk
-                    continue
-                r_max_val = float(cp.nanmax(src_row_px).get())
-                c_min_val = float(cp.nanmin(src_col_px).get())
-                c_max_val = float(cp.nanmax(src_col_px).get())
-                if not np.isfinite(r_max_val) or not np.isfinite(c_min_val) or not np.isfinite(c_max_val):
+                # Batch the four reductions into a single device-to-host
+                # transfer instead of four separate synchronous .get() calls.
+                mins_maxes = cp.stack([
+                    cp.nanmin(src_row_px), cp.nanmax(src_row_px),
+                    cp.nanmin(src_col_px), cp.nanmax(src_col_px),
+                ])
+                r_min_val, r_max_val, c_min_val, c_max_val = (
+                    float(v) for v in mins_maxes.get()
+                )
+                if not (np.isfinite(r_min_val) and np.isfinite(r_max_val)
+                        and np.isfinite(c_min_val) and np.isfinite(c_max_val)):
                     col_offset += cchunk
                     continue
                 r_min = int(np.floor(r_min_val)) - 2
@@ -1190,7 +1194,6 @@ def _reproject_dask_cupy(
             window = window.astype(cp.float64)
 
             if not np.isnan(nodata):
-                window = window.copy()
                 window[window == nodata] = cp.nan
 
             local_row = src_row_px - r_min_clip
