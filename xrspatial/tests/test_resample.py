@@ -371,13 +371,156 @@ class TestCuPyParity:
         np.testing.assert_allclose(cp_out.data.get(), np_out.values,
                                    atol=1e-4, equal_nan=True)
 
-    @pytest.mark.parametrize('method', ['average', 'min', 'max'])
+    @pytest.mark.parametrize('method',
+                             ['average', 'min', 'max', 'median', 'mode'])
     def test_aggregate_parity(self, numpy_and_cupy_rasters, method):
+        # 'median' and 'mode' fall back to CPU inside _run_cupy; the
+        # round-trip (cupy in -> cupy out) still needs to be verified.
         np_agg, cp_agg = numpy_and_cupy_rasters
         np_out = resample(np_agg, scale_factor=0.5, method=method)
         cp_out = resample(cp_agg, scale_factor=0.5, method=method)
         np.testing.assert_allclose(cp_out.data.get(), np_out.values,
                                    atol=1e-5, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# Dask + CuPy parity
+# ---------------------------------------------------------------------------
+
+@cuda_and_cupy_available
+@dask_array_available
+class TestDaskCuPyParity:
+    """Verify dask+cupy results match numpy for the four-backend matrix."""
+
+    @pytest.fixture
+    def numpy_and_dask_cupy_rasters(self):
+        data = np.random.RandomState(1470).rand(20, 20).astype(np.float32)
+        np_agg = create_test_raster(data, backend='numpy',
+                                    attrs={'res': (1.0, 1.0)})
+        dc_agg = create_test_raster(data, backend='dask+cupy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=(8, 8))
+        return np_agg, dc_agg
+
+    @pytest.mark.parametrize('method', ['nearest', 'bilinear', 'cubic'])
+    @pytest.mark.parametrize('sf', [0.5, 2.0, 0.7])
+    def test_interp_parity(self, numpy_and_dask_cupy_rasters, method, sf):
+        np_agg, dc_agg = numpy_and_dask_cupy_rasters
+        np_out = resample(np_agg, scale_factor=sf, method=method)
+        dc_out = resample(dc_agg, scale_factor=sf, method=method)
+        np.testing.assert_allclose(dc_out.data.compute().get(), np_out.values,
+                                   atol=1e-4, equal_nan=True)
+
+    @pytest.mark.parametrize('method', ['average', 'min', 'max'])
+    def test_aggregate_parity(self, numpy_and_dask_cupy_rasters, method):
+        # median/mode go through the CPU fallback inside the cupy chunk
+        # function; T-1 covers that round-trip on the eager cupy backend.
+        np_agg, dc_agg = numpy_and_dask_cupy_rasters
+        np_out = resample(np_agg, scale_factor=0.5, method=method)
+        dc_out = resample(dc_agg, scale_factor=0.5, method=method)
+        np.testing.assert_allclose(dc_out.data.compute().get(), np_out.values,
+                                   atol=1e-5, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# Integer-dtype input
+# ---------------------------------------------------------------------------
+
+def _backend_available(backend):
+    if backend == 'numpy':
+        return True
+    if backend == 'cupy':
+        from xrspatial.utils import has_cuda_and_cupy
+        return has_cuda_and_cupy()
+    if backend == 'dask+numpy':
+        from xrspatial.utils import has_dask_array
+        return has_dask_array()
+    if backend == 'dask+cupy':
+        from xrspatial.utils import has_cuda_and_cupy, has_dask_array
+        return has_cuda_and_cupy() and has_dask_array()
+    return False
+
+
+def _to_numpy(arr):
+    """Materialize a backend-agnostic DataArray's data as a numpy ndarray."""
+    data = arr.data
+    if hasattr(data, 'compute'):
+        data = data.compute()
+    if hasattr(data, 'get'):
+        data = data.get()
+    return np.asarray(data)
+
+
+class TestIntegerInput:
+    """Integer rasters should resample through every backend without
+    clipping or overflow, producing finite float output."""
+
+    @pytest.mark.parametrize(
+        'backend', ['numpy', 'cupy', 'dask+numpy', 'dask+cupy']
+    )
+    @pytest.mark.parametrize(
+        'method', ['nearest', 'average', 'min', 'max', 'median', 'mode']
+    )
+    def test_int32_input_resamples(self, backend, method):
+        if not _backend_available(backend):
+            pytest.skip(f"backend {backend} unavailable")
+
+        rng = np.random.RandomState(1470)
+        data = rng.randint(0, 101, size=(8, 8)).astype(np.int32)
+        agg = create_test_raster(
+            data, backend=backend, attrs={'res': (1.0, 1.0)}, chunks=(4, 4)
+        )
+
+        out = resample(agg, scale_factor=0.5, method=method)
+        out_np = _to_numpy(out)
+
+        assert out.shape == (4, 4)
+        # Output should always be float (regardless of input dtype).
+        assert np.issubdtype(out_np.dtype, np.floating)
+        assert np.all(np.isfinite(out_np))
+        # Values are bounded by the input range, so no overflow / clipping.
+        assert out_np.min() >= 0
+        assert out_np.max() <= 100
+
+
+# ---------------------------------------------------------------------------
+# target_resolution: tuple and scalar forms
+# ---------------------------------------------------------------------------
+
+class TestTargetResolutionTuple:
+    """Tuple form `target_resolution=(y, x)` lets users specify
+    asymmetric output cell sizes; only the scalar form was covered before."""
+
+    def test_target_resolution_tuple_shape_and_res(self, grid_8x8):
+        # grid_8x8 has res=(1.0, 1.0) and shape (8, 8).
+        # target_resolution=(2.0, 4.0) means 2.0 m per pixel along y and
+        # 4.0 m per pixel along x, so output should be (4, 2).
+        out = resample(grid_8x8, target_resolution=(2.0, 4.0))
+        assert out.shape == (4, 2)
+        # attrs['res'] is stored as (px, py) -- x cellsize, y cellsize.
+        assert pytest.approx(out.attrs['res'][0], abs=0.01) == 4.0
+        assert pytest.approx(out.attrs['res'][1], abs=0.01) == 2.0
+
+    def test_target_resolution_scalar_matches_uniform_tuple(self, grid_8x8):
+        scalar_out = resample(grid_8x8, target_resolution=2.0)
+        tuple_out = resample(grid_8x8, target_resolution=(2.0, 2.0))
+        assert scalar_out.shape == tuple_out.shape == (4, 4)
+        np.testing.assert_allclose(
+            scalar_out.values, tuple_out.values, atol=1e-6
+        )
+        assert (
+            pytest.approx(scalar_out.attrs['res'][0], abs=0.01)
+            == tuple_out.attrs['res'][0]
+        )
+
+    def test_target_resolution_list_form(self, grid_8x8):
+        # The source accepts list as well as tuple; verify equivalence.
+        out_tuple = resample(grid_8x8, target_resolution=(2.0, 4.0))
+        out_list = resample(grid_8x8, target_resolution=[2.0, 4.0])
+        assert out_tuple.shape == out_list.shape == (4, 2)
+        np.testing.assert_allclose(
+            out_tuple.values, out_list.values, atol=1e-6
+        )
 
 
 # ---------------------------------------------------------------------------
