@@ -1801,6 +1801,56 @@ class TestValidateMergeGridParams:
         with pytest.raises(ValueError, match="right"):
             merge([self._raster()], bounds=(10, 0, 0, 10))
 
+    def test_merge_accepts_transform_precision_zero(self):
+        """``transform_precision=0`` requests exact per-pixel transforms."""
+        from xrspatial.reproject import merge
+        raster = _gradient_raster(h=8, w=8)
+        result = merge([raster], transform_precision=0, resolution=1.0)
+        assert result.shape[0] > 0
+        assert result.shape[1] > 0
+
+    def test_merge_accepts_transform_precision_default(self):
+        """Default ``transform_precision`` (16) leaves merge() callable."""
+        from xrspatial.reproject import merge
+        raster = _gradient_raster(h=8, w=8)
+        result = merge([raster], resolution=1.0)
+        assert result.shape[0] > 0
+        assert result.shape[1] > 0
+
+    def test_merge_rejects_negative_transform_precision(self):
+        from xrspatial.reproject import merge
+        with pytest.raises(ValueError, match="transform_precision"):
+            merge([self._raster()], transform_precision=-1)
+
+    def test_merge_rejects_float_transform_precision(self):
+        from xrspatial.reproject import merge
+        with pytest.raises(ValueError, match="transform_precision"):
+            merge([self._raster()], transform_precision=1.5)
+
+    def test_merge_transform_precision_threaded_to_chunks(self):
+        """precision=0 (exact) and precision=16 should agree on smooth inputs.
+
+        For inputs where the control-grid approximation is already very
+        close to the per-pixel transform, the two paths should give the
+        same merged output to floating-point tolerance.
+        """
+        from xrspatial.reproject import merge
+        # Two adjacent same-CRS gradients in EPSG:4326 reprojected to
+        # the same CRS: the control grid is dense enough that precision=16
+        # and precision=0 produce identical numbers.
+        a = _gradient_raster(h=16, w=16, x_range=(-5, 0), y_range=(-5, 5))
+        b = _gradient_raster(h=16, w=16, x_range=(0, 5), y_range=(-5, 5))
+        out16 = merge([a, b], target_crs='EPSG:4326',
+                      resolution=1.0, transform_precision=16)
+        out0 = merge([a, b], target_crs='EPSG:4326',
+                     resolution=1.0, transform_precision=0)
+        assert out16.shape == out0.shape
+        v16 = out16.values
+        v0 = out0.values
+        valid = ~np.isnan(v16) & ~np.isnan(v0)
+        assert valid.any()
+        np.testing.assert_allclose(v0[valid], v16[valid], rtol=1e-10)
+
 
 # =====================================================================
 # Issue #1435: NaN/Inf rejection in scalar inputs
