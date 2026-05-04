@@ -318,3 +318,51 @@ def test_negative_octaves():
     data = create_test_arr()
     with pytest.raises(ValueError, match="octaves"):
         generate_terrain(data, octaves=0)
+
+
+# =====================================================================
+# Issue #1443: memory guard + scalar validation
+# =====================================================================
+
+import xarray as _xr_test
+
+
+class TestTerrainMemoryAndValidation:
+
+    @staticmethod
+    def _template(h=8, w=8):
+        return _xr_test.DataArray(
+            np.zeros((h, w), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': np.arange(h), 'x': np.arange(w)},
+        )
+
+    def test_numpy_memory_guard(self):
+        from unittest.mock import patch
+        from xrspatial.terrain import generate_terrain
+        with patch(
+            "xrspatial.terrain._available_memory_bytes", return_value=1
+        ):
+            with pytest.raises(MemoryError, match="scratch memory"):
+                generate_terrain(self._template())
+
+    def test_numpy_memory_guard_message_dimensions(self):
+        from unittest.mock import patch
+        from xrspatial.terrain import generate_terrain
+        with patch(
+            "xrspatial.terrain._available_memory_bytes", return_value=1
+        ):
+            with pytest.raises(MemoryError, match="8x8"):
+                generate_terrain(self._template(8, 8))
+
+    @pytest.mark.parametrize("lac", [0, -1.0, float('inf'), float('nan')])
+    def test_lacunarity_rejected(self, lac):
+        from xrspatial.terrain import generate_terrain
+        with pytest.raises(ValueError, match="lacunarity"):
+            generate_terrain(self._template(), lacunarity=lac)
+
+    @pytest.mark.parametrize("per", [0, -0.5, float('inf'), float('nan')])
+    def test_persistence_rejected(self, per):
+        from xrspatial.terrain import generate_terrain
+        with pytest.raises(ValueError, match="persistence"):
+            generate_terrain(self._template(), persistence=per)
