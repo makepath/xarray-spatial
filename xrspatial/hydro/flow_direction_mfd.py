@@ -446,8 +446,10 @@ def flow_direction_mfd(agg: xr.DataArray,
     _validate_boundary(boundary)
 
     if p is not None:
-        if p <= 0:
-            raise ValueError("p must be a positive number, got %s" % p)
+        if not (np.isfinite(p) and p > 0):
+            raise ValueError(
+                "p must be a positive finite number, got %s" % p
+            )
         p_fixed = float(p)
     else:
         p_fixed = -1.0  # sentinel for adaptive mode
