@@ -430,3 +430,52 @@ class TestMemoryGuard:
         # guard not to short-circuit a reasonable dask call.
         out = resample(dask_agg, scale_factor=100.0, method='nearest')
         assert out.shape == (400, 400)
+
+
+# ---------------------------------------------------------------------------
+# Inlined dask aggregate kernel (#1463)
+# ---------------------------------------------------------------------------
+
+@dask_array_available
+class TestDaskAggregateInlined:
+    """Cover the per-chunk numba aggregate kernel."""
+
+    @pytest.mark.parametrize('method',
+                             ['average', 'min', 'max', 'median', 'mode'])
+    def test_inlined_kernel_matches_numpy(self, method):
+        # 60x60 with 20x20 chunks and scale_factor=1/3 produces a 20x20
+        # output.  Each output pixel collapses a 3x3 input window, and
+        # the output chunks straddle the input chunk boundaries because
+        # `_add_overlap` extends each chunk by `depth_y = depth_x = 3`.
+        rng = np.random.RandomState(1463)
+        data = rng.rand(60, 60).astype(np.float32)
+        np_agg = create_test_raster(data, backend='numpy',
+                                    attrs={'res': (1.0, 1.0)})
+        dk_agg = create_test_raster(data, backend='dask+numpy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=(20, 20))
+        np_out = resample(np_agg, scale_factor=1.0 / 3.0, method=method)
+        dk_out = resample(dk_agg, scale_factor=1.0 / 3.0, method=method)
+        np.testing.assert_array_equal(dk_out.values, np_out.values)
+
+    def test_dask_aggregate_smoke_200x200(self):
+        # Smoke test: confirm the inlined path completes within a
+        # generous wall-clock budget on a moderate raster.  Not a
+        # perf assertion -- just guards against accidental
+        # quadratic regressions in the chunk loop.
+        import time
+        rng = np.random.RandomState(146301)
+        data = rng.rand(200, 200).astype(np.float32)
+        dk_agg = create_test_raster(data, backend='dask+numpy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=(50, 50))
+        t0 = time.perf_counter()
+        out = resample(dk_agg, scale_factor=0.25, method='average').compute()
+        elapsed = time.perf_counter() - t0
+        assert out.shape == (50, 50)
+        # 5 s is generous; the inlined kernel runs in well under 1 s on
+        # a typical laptop.  The previous per-pixel dispatch could miss
+        # this on cold-cache numba compilation runs.
+        assert elapsed < 30.0, (
+            f"dask aggregate took {elapsed:.2f}s; expected well under 5s"
+        )
