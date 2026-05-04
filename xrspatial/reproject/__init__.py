@@ -14,6 +14,8 @@ import math
 import numpy as np
 import xarray as xr
 
+from xrspatial.utils import _validate_raster
+
 from ._crs_utils import _detect_nodata, _detect_source_crs, _resolve_crs
 from ._grid import (
     _chunk_bounds,
@@ -522,11 +524,8 @@ def reproject(
         If vertical transformation was applied, ``attrs['vertical_crs']``
         records the target vertical datum.
     """
-    if not isinstance(raster, xr.DataArray):
-        raise TypeError(
-            f"reproject(): raster must be an xr.DataArray, "
-            f"got {type(raster).__name__}"
-        )
+    _validate_raster(raster, func_name='reproject', name='raster',
+                     ndim=(2, 3))
 
     _validate_grid_params(
         resolution=resolution,
@@ -1359,6 +1358,10 @@ def merge(
     """
     if not rasters:
         raise ValueError("merge(): rasters list must not be empty")
+
+    for i, r in enumerate(rasters):
+        _validate_raster(r, func_name='merge', name=f'rasters[{i}]',
+                         ndim=(2, 3))
 
     _validate_grid_params(
         resolution=resolution,

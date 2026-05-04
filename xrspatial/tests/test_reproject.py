@@ -507,7 +507,7 @@ class TestReproject:
 
     def test_non_dataarray_raises(self):
         from xrspatial.reproject import reproject
-        with pytest.raises(TypeError, match="xr.DataArray"):
+        with pytest.raises(TypeError, match="xarray.DataArray"):
             reproject(np.zeros((4, 4)), 'EPSG:4326')
 
     def test_output_has_crs_attr(self):
@@ -1517,6 +1517,51 @@ class TestSecurityGuards:
         )
         result = reproject(raster, target_crs='EPSG:3857')
         assert result.shape[0] > 0 and result.shape[1] > 0
+
+
+# =====================================================================
+# Issue #1431: _validate_raster on public API inputs
+# =====================================================================
+
+class TestValidateRasterInputs:
+    """reproject(), merge(), geoid_height_raster() validate inputs (#1431)."""
+
+    def test_reproject_rejects_1d_dataarray(self):
+        from xrspatial.reproject import reproject
+        bad = xr.DataArray(np.zeros(5, dtype=np.float64), dims=('y',))
+        with pytest.raises(ValueError, match=r"must be 2D ?or 3D"):
+            reproject(bad, 'EPSG:4326')
+
+    def test_reproject_rejects_complex_dtype(self):
+        from xrspatial.reproject import reproject
+        bad = xr.DataArray(
+            np.zeros((4, 4), dtype=np.complex128),
+            dims=('y', 'x'),
+            coords={'y': np.arange(4), 'x': np.arange(4)},
+        )
+        with pytest.raises(ValueError, match="real numeric"):
+            reproject(bad, 'EPSG:4326')
+
+    def test_merge_rejects_non_dataarray_element(self):
+        from xrspatial.reproject import merge
+        good = xr.DataArray(
+            np.zeros((4, 4), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': np.arange(4), 'x': np.arange(4)},
+        )
+        with pytest.raises(TypeError, match="xarray.DataArray"):
+            merge([good, np.zeros((4, 4))])
+
+    def test_geoid_height_raster_rejects_non_dataarray(self):
+        from xrspatial.reproject import geoid_height_raster
+        with pytest.raises(TypeError, match="xarray.DataArray"):
+            geoid_height_raster(np.zeros((4, 4)))
+
+    def test_geoid_height_raster_rejects_1d_dataarray(self):
+        from xrspatial.reproject import geoid_height_raster
+        bad = xr.DataArray(np.zeros(5, dtype=np.float64), dims=('y',))
+        with pytest.raises(ValueError, match=r"must be 2D ?or 3D"):
+            geoid_height_raster(bad)
 
 
 # =====================================================================
