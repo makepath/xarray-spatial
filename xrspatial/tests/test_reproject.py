@@ -718,6 +718,129 @@ class TestMerge:
         assert computed.shape[0] > 0
 
 
+class TestMergeMixedNodata:
+    """merge() must honor each raster's own nodata sentinel."""
+
+    def test_merge_mixed_nodata_sentinels(self):
+        """Raster A NaN sentinel, raster B -9999 sentinel.
+
+        B's -9999 pixels must be recognized as nodata, not leaked as
+        real data into the merged output.
+        """
+        from xrspatial.reproject import merge
+
+        # Raster A: all valid, value 10
+        a_data = np.full((16, 16), 10.0, dtype=np.float64)
+        a = _make_raster(
+            a_data, x_range=(-10, 0), y_range=(-5, 5), nodata=np.nan
+        )
+
+        # Raster B: half valid (=20), half -9999 sentinel
+        b_data = np.full((16, 16), 20.0, dtype=np.float64)
+        b_data[:, :8] = -9999.0  # left half is nodata
+        b = _make_raster(
+            b_data, x_range=(0, 10), y_range=(-5, 5), nodata=-9999.0
+        )
+
+        result = merge([a, b], strategy='mean', resolution=1.0)
+        vals = result.values
+
+        # The output should never contain -9999 as a data value.
+        # B's -9999 pixels were correctly recognized as nodata.
+        assert not np.any(vals == -9999.0), (
+            "B's -9999 nodata pixels leaked into the merged output"
+        )
+
+        # B's right half (x > ~5) should still surface as 20.
+        x = result.coords['x'].values
+        right_mask = x > 6
+        if right_mask.any():
+            right = vals[:, right_mask]
+            valid = ~np.isnan(right)
+            if valid.any():
+                np.testing.assert_allclose(
+                    right[valid], 20.0, atol=1.0
+                )
+
+    def test_merge_nan_then_int_sentinel(self):
+        """Mean strategy must not fold sentinel zeros into the average."""
+        from xrspatial.reproject import merge
+
+        a_data = np.full((8, 8), 10.0, dtype=np.float64)
+        a = _make_raster(
+            a_data, x_range=(-5, 5), y_range=(-5, 5), nodata=np.nan
+        )
+
+        # Raster B uses 0.0 as nodata sentinel
+        b_data = np.full((8, 8), 0.0, dtype=np.float64)
+        b = _make_raster(
+            b_data, x_range=(-5, 5), y_range=(-5, 5), nodata=0.0
+        )
+
+        result = merge([a, b], strategy='mean', resolution=1.0)
+        vals = result.values
+        interior = vals[1:-1, 1:-1]
+        valid = ~np.isnan(interior)
+        if valid.any():
+            # If B's zeros were treated as data, mean would be ~5.
+            # Treated as nodata, mean is just 10.
+            np.testing.assert_allclose(
+                interior[valid], 10.0, atol=1.0
+            )
+
+    def test_merge_explicit_user_nodata_with_mixed_inputs(self):
+        """User-specified output nodata is independent of input sentinels."""
+        from xrspatial.reproject import merge
+
+        # Raster A: NaN nodata, all valid
+        a_data = np.full((16, 16), 10.0, dtype=np.float64)
+        a = _make_raster(
+            a_data, x_range=(-10, 0), y_range=(-5, 5), nodata=np.nan
+        )
+
+        # Raster B: -9999 nodata, half valid (=20)
+        b_data = np.full((16, 16), 20.0, dtype=np.float64)
+        b_data[:, :8] = -9999.0
+        b = _make_raster(
+            b_data, x_range=(0, 10), y_range=(-5, 5), nodata=-9999.0
+        )
+
+        result = merge(
+            [a, b], strategy='mean', resolution=1.0, nodata=-9999.0
+        )
+        vals = result.values
+
+        # Output uses -9999 as the nodata sentinel, but data pixels must
+        # never be 0 from B's zero-sentinel test (different test). Here
+        # the only -9999 in the output should be true nodata regions
+        # (no overlap with any input). We verify B's right half surfaces
+        # as 20 (not -9999) and A's region surfaces as 10.
+        x = result.coords['x'].values
+
+        right_mask = x > 6
+        if right_mask.any():
+            right = vals[:, right_mask]
+            data_mask = right != -9999.0
+            if data_mask.any():
+                np.testing.assert_allclose(
+                    right[data_mask], 20.0, atol=1.0
+                )
+
+        left_mask = x < -6
+        if left_mask.any():
+            left = vals[:, left_mask]
+            data_mask = left != -9999.0
+            if data_mask.any():
+                np.testing.assert_allclose(
+                    left[data_mask], 10.0, atol=1.0
+                )
+
+        # No NaN in the output -- user requested -9999 as the sentinel.
+        assert not np.any(np.isnan(vals)), (
+            "user requested -9999 nodata but output contains NaN"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Accessor integration
 # ---------------------------------------------------------------------------
