@@ -796,15 +796,16 @@ class TestDtypePreservation:
             pytest.skip("resample() has no nodata parameter (yet)")
 
         data = np.arange(64 * 64, dtype=np.int32).reshape(64, 64)
-        data[0, 0] = -9999  # sentinel
+        # With scale_factor=0.5 and block-centered coords, output pixel (0, 0)
+        # samples from input coord ~(0.5, 0.5) which rounds to input (1, 1).
+        data[1, 1] = -9999  # sentinel at a position sampled by output (0, 0)
         agg = create_test_raster(data, backend='numpy',
                                  attrs={'res': (1.0, 1.0)})
         out = resample(agg, scale_factor=0.5, method='nearest',
                        nodata=-9999)
         assert out.dtype == np.float32
-        # nearest-neighbour at output (0,0) samples input near the
-        # sentinel cell; expect NaN somewhere in the top-left output.
-        assert np.isnan(out.values[:2, :2]).any()
+        # output (0, 0) should be NaN because input (1, 1) was masked.
+        assert np.isnan(out.values[0, 0])
 
 
 # ---------------------------------------------------------------------------

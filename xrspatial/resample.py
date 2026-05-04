@@ -1033,8 +1033,9 @@ def _apply_nodata_mask(agg, nodata):
     if nodata is None:
         return agg
     # Promote to float so NaN can be stored. xr.where keeps the backend.
+    # Integer / bool inputs become float32 (consistent with _output_dtype).
     if not np.issubdtype(agg.dtype, np.floating):
-        agg = agg.astype(np.float64)
+        agg = agg.astype(np.float32)
     if np.isnan(nodata):
         return agg  # already-NaN sentinels need no replacement
     return agg.where(agg != nodata)
