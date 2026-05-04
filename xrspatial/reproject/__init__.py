@@ -504,7 +504,9 @@ def reproject(
         Higher values increase accuracy at the cost of more pyproj calls.
         Set to 0 for exact per-pixel transforms matching GDAL/rasterio.
     chunk_size : int or (int, int) or None
-        Output chunk size for dask. Defaults to 512.
+        Output chunk size for dask. If None, defaults to 512 for the
+        standard dask path and 2048 for the in-memory streaming and
+        dask+cupy paths (chosen to amortize kernel launch overhead).
     name : str or None
         Name for the output DataArray.
     max_memory : int or str or None
@@ -541,6 +543,22 @@ def reproject(
         spatial dims) are carried through to the output. Coords that
         are aligned to the input y or x dims are dropped because their
         values do not apply to the rebuilt grid.
+
+    Examples
+    --------
+    >>> import xarray as xr
+    >>> import numpy as np
+    >>> from xrspatial.reproject import reproject
+    >>> raster = xr.DataArray(
+    ...     np.random.rand(64, 64),
+    ...     dims=['y', 'x'],
+    ...     coords={'y': np.linspace(50, 40, 64),
+    ...             'x': np.linspace(-5, 5, 64)},
+    ...     attrs={'crs': 'EPSG:4326'},
+    ... )
+    >>> result = reproject(raster, 'EPSG:3857')
+    >>> result.attrs['crs'].startswith(('PROJCRS', 'PROJCS'))
+    True
     """
     _validate_raster(raster, func_name='reproject', name='raster',
                      ndim=(2, 3))
@@ -1411,7 +1429,9 @@ def merge(
     strategy : str
         Merge strategy: 'first', 'last', 'mean', 'max', 'min'.
     chunk_size : int or (int, int) or None
-        Chunk size for dask output.
+        Output chunk size for dask. If None, defaults to 512 for the
+        standard dask path and 2048 for the in-memory streaming and
+        dask+cupy paths (chosen to amortize kernel launch overhead).
     transform_precision : int
         Control-grid subdivisions for the coordinate transform (default 16).
         Higher values increase accuracy at the cost of more pyproj calls.
@@ -1437,6 +1457,27 @@ def merge(
     There is no streaming in-memory path; for very large output mosaics,
     pass dask-backed inputs (or rely on the automatic promotion to the
     dask path) so that each output chunk is computed independently.
+
+    Examples
+    --------
+    >>> import xarray as xr
+    >>> import numpy as np
+    >>> from xrspatial.reproject import merge
+    >>> tile_a = xr.DataArray(
+    ...     np.full((32, 32), 1.0), dims=['y', 'x'],
+    ...     coords={'y': np.linspace(50, 45, 32),
+    ...             'x': np.linspace(-5, 0, 32)},
+    ...     attrs={'crs': 'EPSG:4326'},
+    ... )
+    >>> tile_b = xr.DataArray(
+    ...     np.full((32, 32), 2.0), dims=['y', 'x'],
+    ...     coords={'y': np.linspace(50, 45, 32),
+    ...             'x': np.linspace(0, 5, 32)},
+    ...     attrs={'crs': 'EPSG:4326'},
+    ... )
+    >>> mosaic = merge([tile_a, tile_b], resolution=0.5)
+    >>> mosaic.shape[1] >= 32
+    True
     """
     if not rasters:
         raise ValueError("merge(): rasters list must not be empty")
