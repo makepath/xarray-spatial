@@ -1929,6 +1929,155 @@ class TestNodataFiniteness:
         assert _detect_nodata(r, nodata=-9999) == -9999.0
 
 
+def _egm2008_available():
+    """Return True if the EGM2008 grid can be loaded."""
+    try:
+        from xrspatial.reproject._vertical import _load_geoid
+        _load_geoid('EGM2008')
+        return True
+    except (FileNotFoundError, OSError, Exception):
+        return False
+
+
+class TestVerticalShift:
+    """End-to-end coverage for src_vertical_crs / tgt_vertical_crs."""
+
+    def _ny_raster(self, h=8, w=8, value=100.0, nodata=np.nan):
+        # Small raster centred on New York. EGM96 undulation there is ~-33 m.
+        y = np.linspace(41.1, 40.3, h)
+        x = np.linspace(-74.4, -73.6, w)
+        data = np.full((h, w), value, dtype=np.float64)
+        return xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': nodata},
+        )
+
+    def test_reproject_egm96_to_ellipsoidal(self):
+        """Orthometric to ellipsoidal: output = input + N (negative near NY)."""
+        from xrspatial.reproject import reproject, geoid_height
+        raster = self._ny_raster(value=100.0)
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+        )
+        # Reference undulation at the centre.
+        cy = float(result.coords['y'].values[result.shape[0] // 2])
+        cx = float(result.coords['x'].values[result.shape[1] // 2])
+        N = geoid_height(cx, cy, model='EGM96')
+        assert N < 0  # geoid below ellipsoid in NY
+        cval = float(result.values[result.shape[0] // 2, result.shape[1] // 2])
+        # 100 m orthometric + N -> ~67 m ellipsoidal. Allow generous tolerance.
+        assert abs(cval - (100.0 + N)) < 1.0
+        assert result.attrs.get('vertical_crs') == 'ellipsoidal'
+
+    def test_reproject_ellipsoidal_to_egm96(self):
+        """Ellipsoidal to orthometric: shift has the opposite sign."""
+        from xrspatial.reproject import reproject, geoid_height
+        raster = self._ny_raster(value=100.0)
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='ellipsoidal', tgt_vertical_crs='EGM96',
+        )
+        cy = float(result.coords['y'].values[result.shape[0] // 2])
+        cx = float(result.coords['x'].values[result.shape[1] // 2])
+        N = geoid_height(cx, cy, model='EGM96')
+        cval = float(result.values[result.shape[0] // 2, result.shape[1] // 2])
+        # 100 m ellipsoidal - N -> ~133 m orthometric.
+        assert abs(cval - (100.0 - N)) < 1.0
+
+    @pytest.mark.skipif(
+        not _egm2008_available(),
+        reason="EGM2008 grid not available",
+    )
+    def test_reproject_egm96_to_egm2008(self):
+        """Two geoid-based vertical CRSes: shift is small everywhere."""
+        from xrspatial.reproject import reproject
+        raster = self._ny_raster(value=100.0)
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96', tgt_vertical_crs='EGM2008',
+        )
+        diffs = result.values - 100.0
+        # EGM96 vs EGM2008 differ by under 2 m globally.
+        assert np.all(np.abs(diffs) < 2.0)
+
+    def test_reproject_no_vertical_shift_when_same(self):
+        """Identical src and tgt vertical CRS leaves values untouched."""
+        from xrspatial.reproject import reproject
+        raster = self._ny_raster(value=100.0)
+        baseline = reproject(raster, 'EPSG:4326')
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96', tgt_vertical_crs='EGM96',
+        )
+        np.testing.assert_array_equal(result.values, baseline.values)
+
+    def test_reproject_no_vertical_shift_when_one_none(self):
+        """Only one side set -> no shift applied."""
+        from xrspatial.reproject import reproject
+        raster = self._ny_raster(value=100.0)
+        baseline = reproject(raster, 'EPSG:4326')
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96',
+            tgt_vertical_crs=None,
+        )
+        np.testing.assert_array_equal(result.values, baseline.values)
+
+    def test_reproject_vertical_shift_with_projected_crs(self):
+        """Projected target exercises the inverse-projection branch."""
+        from xrspatial.reproject import reproject
+        # Build a raster in UTM 33N (around 12 E, 48 N). EGM96 N is ~46 m there.
+        h, w = 8, 8
+        data = np.full((h, w), 100.0, dtype=np.float64)
+        # ~10 km box near Vienna in EPSG:32633.
+        y = np.linspace(5_330_000, 5_320_000, h)
+        x = np.linspace(595_000, 605_000, w)
+        raster = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:32633', 'nodata': np.nan},
+        )
+        result = reproject(
+            raster, 'EPSG:32633',
+            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+        )
+        vals = result.values
+        finite = vals[np.isfinite(vals)]
+        assert finite.size > 0
+        # Shift over central Europe is roughly 40-50 m.
+        shifts = finite - 100.0
+        assert np.all(shifts > 30.0)
+        assert np.all(shifts < 60.0)
+
+    def test_reproject_vertical_shift_handles_polar_singularity(self):
+        """Regression test: polar-stereographic inverse can emit non-finite
+        coords near the pole; the call must not hang on the inf longitude
+        wrap loop in _interp_geoid_point."""
+        from xrspatial.reproject import reproject
+        # Source raster spans 89 to 90 N in lon/lat.
+        h, w = 8, 16
+        y = np.linspace(90.0, 89.0, h)
+        x = np.linspace(-180.0, 180.0, w)
+        data = np.full((h, w), 100.0, dtype=np.float64)
+        raster = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        # EPSG:3413 is North Polar Stereographic. The inverse transform at
+        # x=y=0 maps to the pole, which often returns inf longitude.
+        result = reproject(
+            raster, 'EPSG:3413',
+            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+        )
+        # Must produce some finite output where the source had finite values.
+        assert np.isfinite(result.values).any()
+        # NaN at the singularity is acceptable; inf is not.
+        assert not np.isinf(result.values).any()
+
+
 class TestMetadataPreservation:
     """reproject() and merge() must carry input attrs forward."""
 
@@ -2227,3 +2376,105 @@ class TestCupyReprojectParity:
             np.testing.assert_allclose(
                 np_result[finite], dc_vals[finite], rtol=1e-5, atol=1e-5,
             )
+
+
+class TestCoordsPreservation:
+    """Non-spatial coords pass through reproject() and merge()."""
+
+    def _small_raster(self, name='test'):
+        from xrspatial.tests.test_reproject import _make_raster
+        data = np.random.RandomState(0).rand(8, 8).astype(np.float64)
+        return _make_raster(data, name=name)
+
+    def test_reproject_preserves_scalar_time_coord(self):
+        from xrspatial.reproject import reproject
+        raster = self._small_raster()
+        ts = np.datetime64('2024-01-15')
+        raster = raster.assign_coords(time=ts)
+
+        out = reproject(raster, 'EPSG:3857')
+        assert 'time' in out.coords
+        assert out.coords['time'].values == ts
+
+    def test_reproject_preserves_non_spatial_string_coord(self):
+        from xrspatial.reproject import reproject
+        raster = self._small_raster()
+        raster = raster.assign_coords(source='tile_a')
+
+        out = reproject(raster, 'EPSG:3857')
+        assert 'source' in out.coords
+        assert str(out.coords['source'].values) == 'tile_a'
+
+    def test_reproject_drops_stale_y_coord_alias(self):
+        from xrspatial.reproject import reproject
+        raster = self._small_raster()
+        # 'latitude' is a non-dim coord aligned to the y dim.
+        latitude = ('y', raster.coords['y'].values.copy())
+        raster = raster.assign_coords(latitude=latitude)
+        assert 'latitude' in raster.coords
+
+        out = reproject(raster, 'EPSG:3857')
+        # The new grid's y values do not match the stale 'latitude'
+        # values, so it must be dropped.
+        assert 'latitude' not in out.coords
+
+    def test_reproject_preserves_band_coord(self):
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(1).rand(8, 8, 3).astype(np.float64)
+        y = np.linspace(1, -1, 8)
+        x = np.linspace(-1, 1, 8)
+        raster = xr.DataArray(
+            data, dims=['y', 'x', 'band'],
+            coords={'y': y, 'x': x, 'band': ['R', 'G', 'B']},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+
+        out = reproject(raster, 'EPSG:3857')
+        assert 'band' in out.coords
+        assert list(out.coords['band'].values) == ['R', 'G', 'B']
+
+    def test_merge_preserves_first_raster_scalar_coord(self):
+        from xrspatial.reproject import merge
+        r1 = self._small_raster(name='r1')
+        r2 = self._small_raster(name='r2')
+        ts = np.datetime64('2024-06-01')
+        r1 = r1.assign_coords(time=ts)
+
+        out = merge([r1, r2], target_crs='EPSG:4326')
+        assert 'time' in out.coords
+        assert out.coords['time'].values == ts
+
+    def test_reproject_y_descending_regardless_of_input(self):
+        from xrspatial.reproject import reproject
+        # Build a y-ascending input (override default y direction)
+        data = np.random.RandomState(2).rand(8, 8).astype(np.float64)
+        y_asc = np.linspace(-1, 1, 8)  # ascending
+        x = np.linspace(-1, 1, 8)
+        raster = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y_asc, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+
+        out = reproject(raster, 'EPSG:3857')
+        y_out = out.coords['y'].values
+        # Strictly descending (top-down, north-up).
+        assert np.all(np.diff(y_out) < 0), (
+            f"Output y must be descending, got {y_out}"
+        )
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_reproject_y_descending_dask(self):
+        from xrspatial.reproject import reproject
+        data = np.random.RandomState(3).rand(8, 8).astype(np.float64)
+        y_asc = np.linspace(-1, 1, 8)
+        x = np.linspace(-1, 1, 8)
+        raster = xr.DataArray(
+            da.from_array(data, chunks=4), dims=['y', 'x'],
+            coords={'y': y_asc, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+
+        out = reproject(raster, 'EPSG:3857')
+        y_out = out.coords['y'].values
+        assert np.all(np.diff(y_out) < 0)
