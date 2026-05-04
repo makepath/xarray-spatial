@@ -39,8 +39,9 @@ ALL_METHODS = set(INTERP_METHODS) | AGGREGATE_METHODS
 # Overlap depth (input pixels) each interpolation kernel needs from
 # neighbouring chunks when processing dask arrays.  Cubic requires extra
 # depth because the B-spline prefilter is a global IIR filter whose
-# boundary transient decays as ~0.268^n; depth 10 brings it to machine
-# epsilon.
+# boundary transient decays as ~0.268^n; depth 10 brings the boundary
+# transient to ~1e-7 (sufficient for float32 output and well under
+# typical interpolation error).
 _INTERP_DEPTH = {'nearest': 1, 'bilinear': 1, 'cubic': 10}
 
 # Approximate working-set size per output cell for the eager backends:
@@ -191,7 +192,11 @@ def _nan_aware_interp_np(data, out_h, out_w, order):
     z_data = _scipy_map_coords(filled, coords, order=order, mode='nearest')
     z_wt = _scipy_map_coords(weights, coords, order=order, mode='nearest')
 
-    result = np.where(z_wt > 0.01,
+    # Gate on majority weight: an output pixel is valid only when more
+    # than half of the resampling kernel weight came from valid input
+    # pixels.  This rejects pixels lit only by cubic-kernel sidelobes
+    # leaking small positive weight from a single neighbour.
+    result = np.where(z_wt > 0.5,
                       z_data / np.maximum(z_wt, 1e-10),
                       np.nan)
     return result.reshape(out_h, out_w)
@@ -223,7 +228,8 @@ def _nan_aware_interp_cupy(data, out_h, out_w, order):
     z_data = _cupy_map_coords(filled, coords, order=order, mode='nearest')
     z_wt = _cupy_map_coords(weights, coords, order=order, mode='nearest')
 
-    result = cupy.where(z_wt > 0.01,
+    # Majority-weight gate (see _nan_aware_interp_np for rationale).
+    result = cupy.where(z_wt > 0.5,
                         z_data / cupy.maximum(z_wt, 1e-10),
                         cupy.nan)
     return result.reshape(out_h, out_w)
@@ -420,7 +426,8 @@ def _interp_block_np(block, global_in_h, global_in_w,
         weights = (~mask).astype(np.float64)
         z_data = _scipy_map_coords(filled, coords, order=order, mode='nearest')
         z_wt = _scipy_map_coords(weights, coords, order=order, mode='nearest')
-        result = np.where(z_wt > 0.01,
+        # Majority-weight gate (see _nan_aware_interp_np for rationale).
+        result = np.where(z_wt > 0.5,
                           z_data / np.maximum(z_wt, 1e-10), np.nan)
 
     return result.reshape(target_h, target_w).astype(np.float32)
@@ -462,7 +469,8 @@ def _interp_block_cupy(block, global_in_h, global_in_w,
         weights = (~mask).astype(cupy.float64)
         z_data = _cupy_map_coords(filled, coords, order=order, mode='nearest')
         z_wt = _cupy_map_coords(weights, coords, order=order, mode='nearest')
-        result = cupy.where(z_wt > 0.01,
+        # Majority-weight gate (see _nan_aware_interp_np for rationale).
+        result = cupy.where(z_wt > 0.5,
                             z_data / cupy.maximum(z_wt, 1e-10), cupy.nan)
 
     return result.reshape(target_h, target_w).astype(cupy.float32)
