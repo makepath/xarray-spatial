@@ -35,6 +35,65 @@ NEIGHBOR_NAMES = ['E', 'SE', 'S', 'SW', 'W', 'NW', 'N', 'NE']
 
 _SQRT2_INV = 1.0 / math.sqrt(2.0)
 
+# Working memory budget for the (8, H, W) float64 fractions array.
+_BYTES_PER_PIXEL = 8 * 8  # 8 bands * 8 bytes/float64
+_GPU_BYTES_PER_PIXEL = 8 * 8
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _available_gpu_memory_bytes():
+    """Free GPU memory in bytes, or 0 when CUDA is unavailable."""
+    try:
+        import cupy as _cp
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_memory(height, width):
+    """Raise MemoryError if the (8, H, W) buffer would exceed 50% of RAM."""
+    required = int(height) * int(width) * _BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"flow_direction_mfd on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of working memory but only "
+            f"~{available / 1e9:.1f} GB is available.  Use a "
+            f"dask-backed DataArray for out-of-core processing."
+        )
+
+
+def _check_gpu_memory(height, width):
+    """Raise MemoryError if the (8, H, W) buffer would exceed 50% of free VRAM."""
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(height) * int(width) * _GPU_BYTES_PER_PIXEL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"flow_direction_mfd on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of GPU working memory but only "
+            f"~{available / 1e9:.1f} GB is free on the active device.  "
+            f"Use a dask+cupy DataArray for out-of-core processing."
+        )
+
 
 # =====================================================================
 # CPU kernel
@@ -230,6 +289,7 @@ def _run_numpy(data: np.ndarray,
                cellsize_y: Union[int, float],
                p_fixed: float,
                boundary: str = 'nan') -> np.ndarray:
+    _check_memory(data.shape[0], data.shape[1])
     data = data.astype(np.float64)
     if boundary == 'nan':
         return _cpu(data, cellsize_x, cellsize_y, p_fixed)
@@ -271,6 +331,7 @@ def _run_cupy(data: cupy.ndarray,
               cellsize_y: Union[int, float],
               p_fixed: float,
               boundary: str = 'nan') -> cupy.ndarray:
+    _check_gpu_memory(data.shape[0], data.shape[1])
     if boundary != 'nan':
         padded = _pad_array(data, 1, boundary)
         result = _run_cupy(padded, cellsize_x, cellsize_y, p_fixed)
