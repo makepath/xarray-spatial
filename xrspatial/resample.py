@@ -864,13 +864,40 @@ def resample(
         edge_start = vals[0] - half_first
         edge_end = vals[-1] + half_last
         px = (edge_end - edge_start) / n_out
-        return np.linspace(edge_start + px / 2, edge_end - px / 2, n_out), px
+        coords = np.linspace(edge_start + px / 2, edge_end - px / 2, n_out)
+        return coords, px, edge_start, edge_end
 
-    new_y, py = _new_coords(y_vals, out_h)
-    new_x, px = _new_coords(x_vals, out_w)
+    new_y, py, y_edge_start, y_edge_end = _new_coords(y_vals, out_h)
+    new_x, px, x_edge_start, x_edge_end = _new_coords(x_vals, out_w)
 
     new_attrs = dict(agg.attrs)
     new_attrs['res'] = (abs(px), abs(py))
+
+    # Refresh `transform` if the input had one. The rasterio 6-tuple is
+    # (res_x, 0.0, left, 0.0, -res_y, top). `top` is the upper edge of
+    # the first row, which is `y_edge_start` when y is descending and
+    # `y_edge_end` when y is ascending. `left` is the lower edge of the
+    # first column, which is `x_edge_start` when x is ascending and
+    # `x_edge_end` when x is descending.
+    if 'transform' in agg.attrs:
+        out_res_x = abs(px)
+        out_res_y = abs(py)
+        top = y_edge_start if y_vals[0] > y_vals[-1] else y_edge_end
+        left = x_edge_start if x_vals[0] < x_vals[-1] else x_edge_end
+        new_attrs['transform'] = (
+            out_res_x, 0.0, left, 0.0, -out_res_y, top,
+        )
+
+    # Resample currently emits float32 with NaN as the missing-data
+    # sentinel regardless of input dtype. If the input declared a
+    # different sentinel via `_FillValue` or `nodatavals`, replace the
+    # value with NaN so the metadata matches the actual data. Leave the
+    # keys absent when the input did not have them.
+    if '_FillValue' in agg.attrs:
+        new_attrs['_FillValue'] = float('nan')
+    if 'nodatavals' in agg.attrs:
+        old = agg.attrs['nodatavals']
+        new_attrs['nodatavals'] = tuple(float('nan') for _ in old)
 
     result = xr.DataArray(
         result_data,
