@@ -453,6 +453,14 @@ def flow_direction_mfd(agg: xr.DataArray,
         p_fixed = -1.0  # sentinel for adaptive mode
 
     cellsize_x, cellsize_y = get_dataarray_resolution(agg)
+    if not (np.isfinite(cellsize_x) and cellsize_x != 0
+            and np.isfinite(cellsize_y) and cellsize_y != 0):
+        raise ValueError(
+            f"flow_direction_mfd(): cellsize must be finite and non-zero "
+            f"(got cellsize_x={cellsize_x}, cellsize_y={cellsize_y}).  "
+            f"Ensure agg has at least 2 cells per spatial dimension "
+            f"with finite coords."
+        )
 
     mapper = ArrayTypeFunctionMapping(
         numpy_func=_run_numpy,

@@ -56,6 +56,14 @@ def twi_d8(flow_accum: xr.DataArray,
     _validate_raster(slope_agg, func_name='twi', name='slope_agg')
 
     cellsize_x, cellsize_y = get_dataarray_resolution(flow_accum)
+    if not (np.isfinite(cellsize_x) and cellsize_x != 0
+            and np.isfinite(cellsize_y) and cellsize_y != 0):
+        raise ValueError(
+            f"twi(): cellsize must be finite and non-zero "
+            f"(got cellsize_x={cellsize_x}, cellsize_y={cellsize_y}).  "
+            f"Ensure flow_accum has at least 2 cells per spatial dimension "
+            f"with finite coords."
+        )
     cellsize = np.sqrt(abs(cellsize_x * cellsize_y))
 
     fa_data = flow_accum.data
