@@ -239,6 +239,11 @@ def geoid_height_raster(raster, model='EGM96'):
     """
     import xarray as xr
 
+    from xrspatial.utils import _validate_raster
+
+    _validate_raster(raster, func_name='geoid_height_raster',
+                     name='raster', ndim=(2, 3))
+
     data, left, top, res_x, res_y, h, w = _load_geoid(model)
 
     y = raster.coords[raster.dims[-2]].values.astype(np.float64)
