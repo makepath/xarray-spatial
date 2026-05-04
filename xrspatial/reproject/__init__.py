@@ -1340,6 +1340,7 @@ def merge(
     nodata=None,
     strategy='first',
     chunk_size=None,
+    transform_precision=16,
     name=None,
 ):
     """Merge multiple rasters into a single mosaic.
@@ -1366,12 +1367,22 @@ def merge(
         Merge strategy: 'first', 'last', 'mean', 'max', 'min'.
     chunk_size : int or (int, int) or None
         Chunk size for dask output.
+    transform_precision : int
+        Control-grid subdivisions for the coordinate transform (default 16).
+        Higher values increase accuracy at the cost of more pyproj calls.
+        Set to 0 for exact per-pixel transforms matching GDAL/rasterio.
     name : str or None
         Name for the output DataArray.
 
     Returns
     -------
     xr.DataArray
+
+    Notes
+    -----
+    There is no streaming in-memory path; for very large output mosaics,
+    pass dask-backed inputs (or rely on the automatic promotion to the
+    dask path) so that each output chunk is computed independently.
     """
     if not rasters:
         raise ValueError("merge(): rasters list must not be empty")
@@ -1385,7 +1396,7 @@ def merge(
         bounds=bounds,
         width=None,
         height=None,
-        transform_precision=None,
+        transform_precision=transform_precision,
         func_name='merge',
     )
 
@@ -1473,12 +1484,12 @@ def merge(
     if any_dask:
         result_data = _merge_dask(
             raster_infos, tgt_wkt, out_bounds, out_shape,
-            resampling, nd, strategy, chunk_size,
+            resampling, nd, strategy, chunk_size, transform_precision,
         )
     else:
         result_data = _merge_inmemory(
             raster_infos, tgt_wkt, out_bounds, out_shape,
-            resampling, nd, strategy,
+            resampling, nd, strategy, transform_precision,
         )
 
     y_coords, x_coords = _make_output_coords(out_bounds, out_shape)
@@ -1563,7 +1574,7 @@ def _place_same_crs(src_data, src_bounds, src_shape, y_desc,
 
 def _merge_inmemory(
     raster_infos, tgt_wkt, out_bounds, out_shape,
-    resampling, nodata, strategy,
+    resampling, nodata, strategy, transform_precision,
 ):
     """In-memory merge using numpy.
 
@@ -1591,7 +1602,7 @@ def _merge_inmemory(
                 info['src_bounds'], info['src_shape'], info['y_desc'],
                 info['src_wkt'], tgt_wkt,
                 out_bounds, out_shape,
-                resampling, nodata, 16,
+                resampling, nodata, transform_precision,
             )
             arrays.append(reprojected)
     return _merge_arrays_numpy(arrays, nodata, strategy)
@@ -1650,7 +1661,7 @@ def _merge_block_adapter(
 
 def _merge_dask(
     raster_infos, tgt_wkt, out_bounds, out_shape,
-    resampling, nodata, strategy, chunk_size,
+    resampling, nodata, strategy, chunk_size, transform_precision,
 ):
     """Dask merge backend using ``map_blocks``."""
     import functools
@@ -1696,7 +1707,7 @@ def _merge_dask(
         resampling=resampling,
         nodata=nodata,
         strategy=strategy,
-        precision=16,
+        precision=transform_precision,
         src_footprints_tgt=footprints,
         same_crs_list=same_crs_list,
     )
