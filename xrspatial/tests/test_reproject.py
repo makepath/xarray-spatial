@@ -1709,3 +1709,152 @@ class TestNodataFiniteness:
         from xrspatial.reproject._crs_utils import _detect_nodata
         r = xr.DataArray(np.zeros((4, 4)), dims=('y', 'x'))
         assert _detect_nodata(r, nodata=-9999) == -9999.0
+
+
+def _egm2008_available():
+    """Return True if the EGM2008 grid can be loaded."""
+    try:
+        from xrspatial.reproject._vertical import _load_geoid
+        _load_geoid('EGM2008')
+        return True
+    except (FileNotFoundError, OSError, Exception):
+        return False
+
+
+class TestVerticalShift:
+    """End-to-end coverage for src_vertical_crs / tgt_vertical_crs."""
+
+    def _ny_raster(self, h=8, w=8, value=100.0, nodata=np.nan):
+        # Small raster centred on New York. EGM96 undulation there is ~-33 m.
+        y = np.linspace(41.1, 40.3, h)
+        x = np.linspace(-74.4, -73.6, w)
+        data = np.full((h, w), value, dtype=np.float64)
+        return xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': nodata},
+        )
+
+    def test_reproject_egm96_to_ellipsoidal(self):
+        """Orthometric to ellipsoidal: output = input + N (negative near NY)."""
+        from xrspatial.reproject import reproject, geoid_height
+        raster = self._ny_raster(value=100.0)
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+        )
+        # Reference undulation at the centre.
+        cy = float(result.coords['y'].values[result.shape[0] // 2])
+        cx = float(result.coords['x'].values[result.shape[1] // 2])
+        N = geoid_height(cx, cy, model='EGM96')
+        assert N < 0  # geoid below ellipsoid in NY
+        cval = float(result.values[result.shape[0] // 2, result.shape[1] // 2])
+        # 100 m orthometric + N -> ~67 m ellipsoidal. Allow generous tolerance.
+        assert abs(cval - (100.0 + N)) < 1.0
+        assert result.attrs.get('vertical_crs') == 'ellipsoidal'
+
+    def test_reproject_ellipsoidal_to_egm96(self):
+        """Ellipsoidal to orthometric: shift has the opposite sign."""
+        from xrspatial.reproject import reproject, geoid_height
+        raster = self._ny_raster(value=100.0)
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='ellipsoidal', tgt_vertical_crs='EGM96',
+        )
+        cy = float(result.coords['y'].values[result.shape[0] // 2])
+        cx = float(result.coords['x'].values[result.shape[1] // 2])
+        N = geoid_height(cx, cy, model='EGM96')
+        cval = float(result.values[result.shape[0] // 2, result.shape[1] // 2])
+        # 100 m ellipsoidal - N -> ~133 m orthometric.
+        assert abs(cval - (100.0 - N)) < 1.0
+
+    @pytest.mark.skipif(
+        not _egm2008_available(),
+        reason="EGM2008 grid not available",
+    )
+    def test_reproject_egm96_to_egm2008(self):
+        """Two geoid-based vertical CRSes: shift is small everywhere."""
+        from xrspatial.reproject import reproject
+        raster = self._ny_raster(value=100.0)
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96', tgt_vertical_crs='EGM2008',
+        )
+        diffs = result.values - 100.0
+        # EGM96 vs EGM2008 differ by under 2 m globally.
+        assert np.all(np.abs(diffs) < 2.0)
+
+    def test_reproject_no_vertical_shift_when_same(self):
+        """Identical src and tgt vertical CRS leaves values untouched."""
+        from xrspatial.reproject import reproject
+        raster = self._ny_raster(value=100.0)
+        baseline = reproject(raster, 'EPSG:4326')
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96', tgt_vertical_crs='EGM96',
+        )
+        np.testing.assert_array_equal(result.values, baseline.values)
+
+    def test_reproject_no_vertical_shift_when_one_none(self):
+        """Only one side set -> no shift applied."""
+        from xrspatial.reproject import reproject
+        raster = self._ny_raster(value=100.0)
+        baseline = reproject(raster, 'EPSG:4326')
+        result = reproject(
+            raster, 'EPSG:4326',
+            src_vertical_crs='EGM96',
+            tgt_vertical_crs=None,
+        )
+        np.testing.assert_array_equal(result.values, baseline.values)
+
+    def test_reproject_vertical_shift_with_projected_crs(self):
+        """Projected target exercises the inverse-projection branch."""
+        from xrspatial.reproject import reproject
+        # Build a raster in UTM 33N (around 12 E, 48 N). EGM96 N is ~46 m there.
+        h, w = 8, 8
+        data = np.full((h, w), 100.0, dtype=np.float64)
+        # ~10 km box near Vienna in EPSG:32633.
+        y = np.linspace(5_330_000, 5_320_000, h)
+        x = np.linspace(595_000, 605_000, w)
+        raster = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:32633', 'nodata': np.nan},
+        )
+        result = reproject(
+            raster, 'EPSG:32633',
+            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+        )
+        vals = result.values
+        finite = vals[np.isfinite(vals)]
+        assert finite.size > 0
+        # Shift over central Europe is roughly 40-50 m.
+        shifts = finite - 100.0
+        assert np.all(shifts > 30.0)
+        assert np.all(shifts < 60.0)
+
+    def test_reproject_vertical_shift_handles_polar_singularity(self):
+        """Regression test: polar-stereographic inverse can emit non-finite
+        coords near the pole; the call must not hang on the inf longitude
+        wrap loop in _interp_geoid_point."""
+        from xrspatial.reproject import reproject
+        # Source raster spans 89 to 90 N in lon/lat.
+        h, w = 8, 16
+        y = np.linspace(90.0, 89.0, h)
+        x = np.linspace(-180.0, 180.0, w)
+        data = np.full((h, w), 100.0, dtype=np.float64)
+        raster = xr.DataArray(
+            data, dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        # EPSG:3413 is North Polar Stereographic. The inverse transform at
+        # x=y=0 maps to the pole, which often returns inf longitude.
+        result = reproject(
+            raster, 'EPSG:3413',
+            src_vertical_crs='EGM96', tgt_vertical_crs='ellipsoidal',
+        )
+        # Must produce some finite output where the source had finite values.
+        assert np.isfinite(result.values).any()
+        # NaN at the singularity is acceptable; inf is not.
+        assert not np.isinf(result.values).any()

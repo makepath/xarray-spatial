@@ -775,12 +775,22 @@ def _apply_vertical_shift(data, y_coords, x_coords,
             xx_strip = np.asarray(lon_s, dtype=np.float64).reshape(n_rows, out_w)
             yy_strip = np.asarray(lat_s, dtype=np.float64).reshape(n_rows, out_w)
 
+        # Guard against non-finite output coords (projection singularities,
+        # antimeridian, polar regions). Hand NaN to the JIT batch so the
+        # longitude wrap loop in _interp_geoid_point does not see inf and
+        # spin forever.
+        finite_coord = np.isfinite(xx_strip) & np.isfinite(yy_strip)
+        if not finite_coord.all():
+            xx_strip = np.where(finite_coord, xx_strip, np.nan)
+            yy_strip = np.where(finite_coord, yy_strip, np.nan)
+
         # Apply each geoid shift
         strip_data = result[r0:r1]
         if is_nan_nodata:
             is_valid = np.isfinite(strip_data)
         else:
             is_valid = strip_data != nodata
+        is_valid = is_valid & finite_coord
 
         for (grid_data, g_left, g_top, g_rx, g_ry, g_h, g_w), sign in zip(geoids, signs):
             N_strip = np.empty((n_rows, out_w), dtype=np.float64)
