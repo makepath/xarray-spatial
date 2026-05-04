@@ -381,6 +381,72 @@ class TestCuPyParity:
 
 
 # ---------------------------------------------------------------------------
+# Cubic prefilter chunk-seam parity (#1464)
+# ---------------------------------------------------------------------------
+
+@dask_array_available
+class TestCubicPrefilterParity:
+    """Explicit spline prefilter keeps cubic resample bit-identical between
+    the eager numpy path and the chunked dask+numpy path.
+    """
+
+    def _make_pair(self, data, chunks=(8, 8)):
+        np_agg = create_test_raster(data, backend='numpy',
+                                    attrs={'res': (1.0, 1.0)})
+        dk_agg = create_test_raster(data, backend='dask+numpy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=chunks)
+        return np_agg, dk_agg
+
+    def test_cubic_polynomial_chunk_seam_high_precision(self):
+        """Degree-2 polynomial is exactly representable by cubic splines.
+        With enough chunks to expose multiple seams, eager and chunked
+        paths must agree to float64 round-off.
+        """
+        y, x = np.mgrid[0:60, 0:60].astype(np.float64)
+        f = (x * x + y * y - x * y).astype(np.float32)
+        np_agg, dk_agg = self._make_pair(f, chunks=(13, 13))
+        np_out = resample(np_agg, scale_factor=0.5, method='cubic').values
+        dk_out = resample(dk_agg, scale_factor=0.5, method='cubic').values
+        # Tightened from the 1e-5 used in TestDaskParity to catch prefilter
+        # boundary drift; would have caught the implicit-prefilter bug.
+        np.testing.assert_allclose(dk_out, np_out, atol=1e-10)
+
+    def test_cubic_random_chunk_seam_tight(self):
+        """Random data also matches once the explicit prefilter is in place.
+        Without the fix the implicit per-block prefilter leaks ~1e-6 of
+        boundary transient into chunk-interior samples.
+        """
+        data = np.random.RandomState(1152).rand(50, 50).astype(np.float32)
+        np_agg, dk_agg = self._make_pair(data, chunks=(11, 11))
+        np_out = resample(np_agg, scale_factor=0.5, method='cubic').values
+        dk_out = resample(dk_agg, scale_factor=0.5, method='cubic').values
+        np.testing.assert_allclose(dk_out, np_out, atol=1e-10)
+
+    @pytest.mark.parametrize('sf', [0.5, 2.0, 0.7])
+    def test_cubic_chunk_seam_various_scales(self, sf):
+        """Tight parity holds across upsample, downsample, and odd ratios."""
+        data = np.random.RandomState(7).rand(48, 48).astype(np.float32)
+        np_agg, dk_agg = self._make_pair(data, chunks=(11, 11))
+        np_out = resample(np_agg, scale_factor=sf, method='cubic').values
+        dk_out = resample(dk_agg, scale_factor=sf, method='cubic').values
+        np.testing.assert_allclose(dk_out, np_out, atol=1e-10)
+
+    def test_cubic_chunk_seam_with_nan(self):
+        """NaN-aware path uses two prefilter passes (filled + weights);
+        both must stay deterministic across chunk boundaries.
+        """
+        data = np.random.RandomState(99).rand(50, 50).astype(np.float32)
+        data[5, 5] = np.nan
+        data[20, 30] = np.nan
+        np_agg, dk_agg = self._make_pair(data, chunks=(11, 11))
+        np_out = resample(np_agg, scale_factor=0.5, method='cubic').values
+        dk_out = resample(dk_agg, scale_factor=0.5, method='cubic').values
+        np.testing.assert_allclose(dk_out, np_out, atol=1e-10,
+                                   equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
 # Memory guard (#1295)
 # ---------------------------------------------------------------------------
 
