@@ -1004,3 +1004,55 @@ def test_multi_stop_cupy_matches_numpy():
         path_np.values,
         equal_nan=True, atol=1e-10,
     )
+
+
+# =====================================================================
+# Issue #1439: input validation
+# =====================================================================
+
+import xarray as _xr_for_validation
+
+
+class TestPathfindingInputValidation:
+    """a_star_search / multi_stop_search reject bad surface and waypoint cap (#1439)."""
+
+    @staticmethod
+    def _good_surface():
+        return _xr_for_validation.DataArray(
+            np.zeros((10, 10), dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': np.arange(10), 'x': np.arange(10)},
+        )
+
+    def test_a_star_rejects_non_dataarray_surface(self):
+        from xrspatial.pathfinding import a_star_search
+        with pytest.raises(TypeError, match="xarray.DataArray"):
+            a_star_search(np.zeros((10, 10)), (0, 0), (5, 5))
+
+    def test_a_star_rejects_complex_dtype_surface(self):
+        from xrspatial.pathfinding import a_star_search
+        bad = _xr_for_validation.DataArray(
+            np.zeros((10, 10), dtype=np.complex128),
+            dims=('y', 'x'),
+            coords={'y': np.arange(10), 'x': np.arange(10)},
+        )
+        with pytest.raises(ValueError, match="real numeric"):
+            a_star_search(bad, (0, 0), (5, 5))
+
+    def test_a_star_rejects_non_dataarray_friction(self):
+        from xrspatial.pathfinding import a_star_search
+        s = self._good_surface()
+        with pytest.raises(TypeError, match="xarray.DataArray"):
+            a_star_search(s, (0, 0), (5, 5), friction=np.ones((10, 10)))
+
+    def test_multi_stop_rejects_non_dataarray_surface(self):
+        from xrspatial.pathfinding import multi_stop_search
+        with pytest.raises(TypeError, match="xarray.DataArray"):
+            multi_stop_search(np.zeros((10, 10)), [(0, 0), (5, 5)])
+
+    def test_multi_stop_caps_waypoints(self):
+        from xrspatial.pathfinding import multi_stop_search, _MAX_WAYPOINTS
+        s = self._good_surface()
+        too_many = [(i % 10, (i * 7) % 10) for i in range(_MAX_WAYPOINTS + 1)]
+        with pytest.raises(ValueError, match=f"at most {_MAX_WAYPOINTS}"):
+            multi_stop_search(s, too_many)

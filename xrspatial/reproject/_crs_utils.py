@@ -5,6 +5,8 @@ then fall back to pyproj for codes/formats not in the built-in table.
 """
 from __future__ import annotations
 
+import numpy as np
+
 from xrspatial.reproject._lite_crs import CRS as LiteCRS
 
 
@@ -111,9 +113,18 @@ def _detect_source_crs(raster):
 
 
 def _detect_nodata(raster, nodata=None):
-    """Determine nodata value from explicit arg, rioxarray, or attrs."""
+    """Determine nodata value from explicit arg, rioxarray, or attrs.
+
+    NaN is the canonical sentinel for missing data and is allowed.
+    +/-Inf would break downstream `np.isnan` masks, so it is rejected.
+    """
     if nodata is not None:
-        return float(nodata)
+        nd = float(nodata)
+        if np.isinf(nd):
+            raise ValueError(
+                f"nodata must be finite or NaN, got {nodata!r}"
+            )
+        return nd
 
     # rioxarray
     try:

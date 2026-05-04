@@ -257,6 +257,26 @@ def itrf_transform(lon, lat, h=0.0, *, src, tgt, epoch):
     --------
     >>> itrf_transform(-74.0, 40.7, 10.0, src='ITRF2014', tgt='ITRF2020', epoch=2024.0)
     """
+    if not isinstance(src, str) or not src:
+        raise ValueError(
+            f"itrf_transform(): src must be a non-empty string, got {src!r}"
+        )
+    if not isinstance(tgt, str) or not tgt:
+        raise ValueError(
+            f"itrf_transform(): tgt must be a non-empty string, got {tgt!r}"
+        )
+
+    try:
+        epoch_float = float(epoch)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"itrf_transform(): epoch must be a finite number, got {epoch!r}"
+        )
+    if not np.isfinite(epoch_float):
+        raise ValueError(
+            f"itrf_transform(): epoch must be a finite number, got {epoch!r}"
+        )
+
     raw_params, is_reverse = _find_transform(src, tgt)
     if raw_params is None:
         raise ValueError(
