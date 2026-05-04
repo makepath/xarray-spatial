@@ -1280,6 +1280,9 @@ def stream_link_dinf(flow_dir_dinf: xr.DataArray,
     _validate_raster(flow_dir_dinf,
                      func_name='stream_link_dinf',
                      name='flow_dir_dinf')
+    _validate_raster(flow_accum,
+                     func_name='stream_link_dinf',
+                     name='flow_accum')
 
     fd_data = flow_dir_dinf.data
     fa_data = flow_accum.data

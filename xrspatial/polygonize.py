@@ -45,7 +45,12 @@ try:
 except ImportError:
     cupy = None
 
-from .utils import ArrayTypeFunctionMapping, is_cupy_array, ngjit
+from .utils import (
+    ArrayTypeFunctionMapping,
+    _validate_raster,
+    is_cupy_array,
+    ngjit,
+)
 
 _regions_dtype = np.uint32
 _visited_dtype = np.uint8
@@ -1620,12 +1625,15 @@ def polygonize(
     For Dask+CuPy, each chunk is transferred independently, keeping peak
     CPU memory proportional to chunk size rather than full raster size.
     """
-    if raster.ndim != 2 or raster.shape[0] < 1 or raster.shape[1] < 1:
+    _validate_raster(raster, func_name='polygonize', name='raster', ndim=2)
+    if raster.shape[0] < 1 or raster.shape[1] < 1:
         raise ValueError(
             "Raster array must be 2D with a shape of at least (1, 1)")
 
     # Check mask.
     if mask is not None:
+        _validate_raster(mask, func_name='polygonize', name='mask',
+                         ndim=2, numeric=False)
         if not (type(raster.data) is type(mask.data)):  # noqa: E721
             raise TypeError(
                 "raster and mask have different underlying types: "

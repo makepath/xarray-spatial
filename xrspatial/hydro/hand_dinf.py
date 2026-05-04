@@ -674,6 +674,11 @@ def hand_dinf(flow_dir_dinf: xr.DataArray,
     _validate_raster(flow_accum, func_name='hand_dinf', name='flow_accum')
     _validate_raster(elevation, func_name='hand_dinf', name='elevation')
 
+    if not np.isfinite(threshold):
+        raise ValueError(
+            "threshold must be a finite number, got %s" % threshold
+        )
+
     fd_data = flow_dir_dinf.data
     fa_data = flow_accum.data
     el_data = elevation.data

@@ -458,6 +458,8 @@ def flow_path_d8(flow_dir: xr.DataArray,
         raster-scan order wins.
     """
     _validate_raster(flow_dir, func_name='flow_path', name='flow_dir')
+    _validate_raster(start_points, func_name='flow_path',
+                     name='start_points')
 
     fd_data = flow_dir.data
     sp_data = start_points.data

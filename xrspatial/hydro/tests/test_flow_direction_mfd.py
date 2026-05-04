@@ -273,9 +273,9 @@ def test_fixed_exponent_high():
 def test_invalid_p():
     data = np.ones((4, 5), dtype=np.float64)
     agg = create_test_raster(data)
-    with pytest.raises(ValueError, match="p must be a positive number"):
+    with pytest.raises(ValueError, match="positive finite"):
         flow_direction_mfd(agg, p=-1.0)
-    with pytest.raises(ValueError, match="p must be a positive number"):
+    with pytest.raises(ValueError, match="positive finite"):
         flow_direction_mfd(agg, p=0.0)
 
 
@@ -512,3 +512,56 @@ def test_known_values_cardinal_vs_diagonal():
     # SE: slope = 5/diag = 5/0.707 = 7.07, contour = 1/sqrt(2) = 0.707, weight = 5.0
     # E should get more than SE
     assert e_frac > se_frac, f"E={e_frac} should exceed SE={se_frac}"
+
+
+# =====================================================================
+# Memory guard
+# =====================================================================
+
+class TestMemoryGuard:
+    """Memory guard on the eager numpy / cupy backends (issue #1423)."""
+
+    def test_numpy_huge_raster_raises(self):
+        """Numpy backend raises MemoryError when projected RAM exceeds budget."""
+        from unittest.mock import patch
+
+        elev = np.full((7, 7), 5.0, dtype=np.float64)
+
+        with patch(
+            "xrspatial.hydro.flow_direction_mfd._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="working memory"):
+                flow_direction_mfd(create_test_raster(elev))
+
+    def test_numpy_normal_input_succeeds(self):
+        """Normal-size raster passes the guard with real memory."""
+        elev = np.full((7, 7), 5.0, dtype=np.float64)
+        result = flow_direction_mfd(create_test_raster(elev))
+        assert result.shape == (8, 7, 7)
+
+    def test_error_message_mentions_dimensions(self):
+        """Error message should mention the offending grid dimensions."""
+        from unittest.mock import patch
+
+        elev = np.full((7, 7), 5.0, dtype=np.float64)
+
+        with patch(
+            "xrspatial.hydro.flow_direction_mfd._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="7x7"):
+                flow_direction_mfd(create_test_raster(elev))
+
+    def test_error_message_mentions_dask(self):
+        """The error message should suggest the dask alternative."""
+        from unittest.mock import patch
+
+        elev = np.full((7, 7), 5.0, dtype=np.float64)
+
+        with patch(
+            "xrspatial.hydro.flow_direction_mfd._available_memory_bytes",
+            return_value=1,
+        ):
+            with pytest.raises(MemoryError, match="dask"):
+                flow_direction_mfd(create_test_raster(elev))

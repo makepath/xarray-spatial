@@ -566,6 +566,12 @@ def fill_d8(dem: xr.DataArray,
     """
     _validate_raster(dem, func_name='fill', name='dem')
 
+    if z_limit is not None and not (np.isfinite(z_limit) and z_limit >= 0):
+        raise ValueError(
+            "z_limit must be a non-negative finite number or None, got %s"
+            % (z_limit,)
+        )
+
     data = dem.data
 
     if isinstance(data, np.ndarray):

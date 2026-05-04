@@ -25,6 +25,66 @@ except ImportError:
 from xrspatial.utils import (ArrayTypeFunctionMapping, _validate_raster, cuda_args,
                              get_dataarray_resolution, not_implemented_func)
 
+# Scratch-buffer budget: 5-7 same-shape float32 arrays plus headroom.
+# 24 bytes/pixel covers (data, x, y, warp_x, warp_y, weight) at 4 B each.
+_SCRATCH_BYTES_PER_PIXEL = 24
+_GPU_SCRATCH_BYTES_PER_PIXEL = 24
+
+
+def _available_memory_bytes():
+    """Best-effort estimate of available host memory in bytes."""
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, AttributeError):
+        pass
+    return 2 * 1024 ** 3
+
+
+def _available_gpu_memory_bytes():
+    """Free GPU memory in bytes, or 0 when CUDA is unavailable."""
+    try:
+        import cupy as _cp
+        free, _total = _cp.cuda.runtime.memGetInfo()
+        return int(free)
+    except Exception:
+        return 0
+
+
+def _check_memory(height, width):
+    """Raise MemoryError if scratch buffers would exceed 50% of RAM."""
+    required = int(height) * int(width) * _SCRATCH_BYTES_PER_PIXEL
+    available = _available_memory_bytes()
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"generate_terrain on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of scratch memory but only "
+            f"~{available / 1e9:.1f} GB is available.  Use a "
+            f"dask-backed DataArray for out-of-core processing."
+        )
+
+
+def _check_gpu_memory(height, width):
+    """Raise MemoryError if scratch buffers would exceed 50% of free VRAM."""
+    available = _available_gpu_memory_bytes()
+    if available <= 0:
+        return
+    required = int(height) * int(width) * _GPU_SCRATCH_BYTES_PER_PIXEL
+    if required > 0.5 * available:
+        raise MemoryError(
+            f"generate_terrain on a {height}x{width} grid requires "
+            f"~{required / 1e9:.1f} GB of GPU scratch memory but only "
+            f"~{available / 1e9:.1f} GB is free on the active device.  "
+            f"Use a dask+cupy DataArray for out-of-core processing."
+        )
+
 from .perlin import _make_perm_table, _perlin, _perlin_gpu, _perlin_gpu_xy
 from .worley import _worley_cpu, _worley_numpy_xy, _worley_gpu, _worley_gpu_xy
 
@@ -119,6 +179,7 @@ def _terrain_numpy(data, seed, x_range_scaled, y_range_scaled, zfactor,
                    octaves, lacunarity, persistence, noise_mode,
                    warp_strength, warp_octaves,
                    worley_blend, worley_seed):
+    _check_memory(data.shape[0], data.shape[1])
     data = data * 0
     data[:] = _gen_terrain(
         data, seed, x_range=x_range_scaled, y_range=y_range_scaled,
@@ -373,6 +434,7 @@ def _terrain_cupy(data, seed, x_range_scaled, y_range_scaled, zfactor,
                   octaves, lacunarity, persistence, noise_mode,
                   warp_strength, warp_octaves,
                   worley_blend, worley_seed):
+    _check_gpu_memory(data.shape[0], data.shape[1])
     data = data * 0
     data[:] = _terrain_gpu(
         data, seed, x_range=x_range_scaled, y_range=y_range_scaled,
@@ -593,6 +655,16 @@ def generate_terrain(agg: xr.DataArray,
 
     if octaves < 1:
         raise ValueError(f"octaves must be >= 1, got {octaves}")
+
+    if not (np.isfinite(lacunarity) and lacunarity > 0):
+        raise ValueError(
+            f"lacunarity must be a positive finite number, got {lacunarity!r}"
+        )
+
+    if not (np.isfinite(persistence) and persistence > 0):
+        raise ValueError(
+            f"persistence must be a positive finite number, got {persistence!r}"
+        )
 
     if full_extent is None:
         full_extent = (x_range[0], y_range[0],

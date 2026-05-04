@@ -565,6 +565,14 @@ def snap_pour_point_d8(flow_accum: xr.DataArray,
         locations.  Non-pour-point cells are NaN.
     """
     _validate_raster(flow_accum, func_name='snap_pour_point', name='flow_accum')
+    _validate_raster(pour_points, func_name='snap_pour_point',
+                     name='pour_points')
+
+    if not isinstance(search_radius, (int, np.integer)) or search_radius < 1:
+        raise ValueError(
+            "search_radius must be a positive integer, got %r"
+            % (search_radius,)
+        )
 
     fa_data = flow_accum.data
     pp_data = pour_points.data

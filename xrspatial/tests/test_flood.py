@@ -981,3 +981,71 @@ class TestFDVDaskCuPy:
 
         general_output_checks(h_dc, result_dc,
                               expected_results=result_np.data)
+
+
+# =====================================================================
+# Issue #1437: mannings_n DataArray validation
+# =====================================================================
+
+class TestMannigsNDataArrayValidation:
+    """travel_time and flood_depth_vegetation enforce mannings_n>0 on DataArrays (#1437)."""
+
+    @staticmethod
+    def _good_raster(value=1.0):
+        return xr.DataArray(
+            np.full((4, 4), value, dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': np.arange(4), 'x': np.arange(4)},
+        )
+
+    def test_travel_time_rejects_zero_mannings_n_dataarray(self):
+        from xrspatial.flood import travel_time
+        fl = self._good_raster(10.0)
+        slope = self._good_raster(5.0)
+        bad_n = self._good_raster(0.0)
+        with pytest.raises(ValueError, match="mannings_n"):
+            travel_time(fl, slope, bad_n)
+
+    def test_travel_time_rejects_negative_mannings_n_dataarray(self):
+        from xrspatial.flood import travel_time
+        fl = self._good_raster(10.0)
+        slope = self._good_raster(5.0)
+        bad_n = self._good_raster(-0.05)
+        with pytest.raises(ValueError, match="mannings_n"):
+            travel_time(fl, slope, bad_n)
+
+    def test_travel_time_rejects_nan_mannings_n_dataarray(self):
+        from xrspatial.flood import travel_time
+        fl = self._good_raster(10.0)
+        slope = self._good_raster(5.0)
+        bad_n = xr.DataArray(
+            np.array([[0.05, np.nan, 0.05, 0.05]] * 4, dtype=np.float64),
+            dims=('y', 'x'),
+            coords={'y': np.arange(4), 'x': np.arange(4)},
+        )
+        with pytest.raises(ValueError, match="mannings_n"):
+            travel_time(fl, slope, bad_n)
+
+    def test_travel_time_accepts_valid_mannings_n_dataarray(self):
+        from xrspatial.flood import travel_time
+        fl = self._good_raster(10.0)
+        slope = self._good_raster(5.0)
+        good_n = self._good_raster(0.05)
+        result = travel_time(fl, slope, good_n)
+        assert result.shape == (4, 4)
+
+    def test_flood_depth_vegetation_rejects_zero_mannings_n_dataarray(self):
+        from xrspatial.flood import flood_depth_vegetation
+        hand = self._good_raster(2.0)
+        slope = self._good_raster(0.5)
+        bad_n = self._good_raster(0.0)
+        with pytest.raises(ValueError, match="mannings_n"):
+            flood_depth_vegetation(hand, slope, bad_n, unit_discharge=1.0)
+
+    def test_flood_depth_vegetation_rejects_negative_mannings_n_dataarray(self):
+        from xrspatial.flood import flood_depth_vegetation
+        hand = self._good_raster(2.0)
+        slope = self._good_raster(0.5)
+        bad_n = self._good_raster(-0.1)
+        with pytest.raises(ValueError, match="mannings_n"):
+            flood_depth_vegetation(hand, slope, bad_n, unit_discharge=1.0)
