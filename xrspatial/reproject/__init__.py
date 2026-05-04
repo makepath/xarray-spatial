@@ -675,10 +675,16 @@ def reproject(
             )
 
     ydim, xdim = _find_spatial_dims(raster)
-    out_attrs = {
-        'crs': tgt_wkt,
-        'nodata': nd,
-    }
+    # Carry input attrs forward so units, long_name, scale_factor, etc.
+    # survive the transform. Pop attrs that are stale after reprojection:
+    # the affine `transform` and grid `res` describe the old grid, and
+    # `crs_wkt` would duplicate (or contradict) the canonical `crs` we re-emit.
+    out_attrs = {**raster.attrs}
+    out_attrs.pop('transform', None)
+    out_attrs.pop('crs_wkt', None)
+    out_attrs.pop('res', None)
+    out_attrs['crs'] = tgt_wkt
+    out_attrs['nodata'] = nd
     if tgt_vertical_crs is not None:
         out_attrs['vertical_crs'] = tgt_vertical_crs
 
@@ -1485,15 +1491,22 @@ def merge(
     ydim = rasters[0].dims[-2]
     xdim = rasters[0].dims[-1]
 
+    # Carry the first raster's attrs forward (matches the default
+    # strategy='first'). Drop attrs describing the old grid: `transform`,
+    # `res`, and the duplicate `crs_wkt` are no longer accurate.
+    out_attrs = {**rasters[0].attrs}
+    out_attrs.pop('transform', None)
+    out_attrs.pop('crs_wkt', None)
+    out_attrs.pop('res', None)
+    out_attrs['crs'] = tgt_wkt
+    out_attrs['nodata'] = nd
+
     result = xr.DataArray(
         result_data,
         dims=[ydim, xdim],
         coords={ydim: y_coords, xdim: x_coords},
-        name=name or 'merged',
-        attrs={
-            'crs': tgt_wkt,
-            'nodata': nd,
-        },
+        name=name or rasters[0].name or 'merged',
+        attrs=out_attrs,
     )
     return result
 
