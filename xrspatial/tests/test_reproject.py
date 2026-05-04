@@ -1517,3 +1517,80 @@ class TestSecurityGuards:
         )
         result = reproject(raster, target_crs='EPSG:3857')
         assert result.shape[0] > 0 and result.shape[1] > 0
+
+
+# =====================================================================
+# Issue #1435: NaN/Inf rejection in scalar inputs
+# =====================================================================
+
+class TestItrfFiniteness:
+    @pytest.mark.parametrize("epoch", [float('nan'), float('inf'), float('-inf')])
+    def test_itrf_rejects_non_finite_epoch(self, epoch):
+        from xrspatial.reproject import itrf_transform
+        with pytest.raises(ValueError, match="epoch"):
+            itrf_transform(0.0, 0.0, 0.0,
+                           src='ITRF2014', tgt='ITRF2020', epoch=epoch)
+
+    def test_itrf_rejects_empty_src(self):
+        from xrspatial.reproject import itrf_transform
+        with pytest.raises(ValueError, match="src"):
+            itrf_transform(0.0, 0.0, 0.0,
+                           src='', tgt='ITRF2020', epoch=2024.0)
+
+    def test_itrf_rejects_empty_tgt(self):
+        from xrspatial.reproject import itrf_transform
+        with pytest.raises(ValueError, match="tgt"):
+            itrf_transform(0.0, 0.0, 0.0,
+                           src='ITRF2014', tgt='', epoch=2024.0)
+
+
+class TestGeoidFiniteness:
+    @pytest.mark.parametrize("lon", [float('nan'), float('inf')])
+    def test_geoid_rejects_non_finite_lon(self, lon):
+        from xrspatial.reproject import geoid_height
+        with pytest.raises(ValueError, match="lon"):
+            geoid_height(lon, 0.0)
+
+    @pytest.mark.parametrize("lat", [float('nan'), float('inf')])
+    def test_geoid_rejects_non_finite_lat(self, lat):
+        from xrspatial.reproject import geoid_height
+        with pytest.raises(ValueError, match="lat"):
+            geoid_height(0.0, lat)
+
+    @pytest.mark.parametrize("lat", [-91.0, 91.0])
+    def test_geoid_rejects_out_of_range_lat(self, lat):
+        from xrspatial.reproject import geoid_height
+        with pytest.raises(ValueError, match=r"\[-90, 90\]"):
+            geoid_height(0.0, lat)
+
+    def test_geoid_rejects_array_with_nan(self):
+        from xrspatial.reproject import geoid_height
+        lon = np.array([0.0, float('nan'), 10.0])
+        lat = np.array([0.0, 0.0, 0.0])
+        with pytest.raises(ValueError, match="lon"):
+            geoid_height(lon, lat)
+
+
+class TestNodataFiniteness:
+    def test_detect_nodata_rejects_inf(self):
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        r = xr.DataArray(np.zeros((4, 4)), dims=('y', 'x'))
+        with pytest.raises(ValueError, match="nodata"):
+            _detect_nodata(r, nodata=float('inf'))
+
+    def test_detect_nodata_rejects_neg_inf(self):
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        r = xr.DataArray(np.zeros((4, 4)), dims=('y', 'x'))
+        with pytest.raises(ValueError, match="nodata"):
+            _detect_nodata(r, nodata=float('-inf'))
+
+    def test_detect_nodata_accepts_nan(self):
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        r = xr.DataArray(np.zeros((4, 4)), dims=('y', 'x'))
+        nd = _detect_nodata(r, nodata=float('nan'))
+        assert np.isnan(nd)
+
+    def test_detect_nodata_accepts_finite(self):
+        from xrspatial.reproject._crs_utils import _detect_nodata
+        r = xr.DataArray(np.zeros((4, 4)), dims=('y', 'x'))
+        assert _detect_nodata(r, nodata=-9999) == -9999.0
