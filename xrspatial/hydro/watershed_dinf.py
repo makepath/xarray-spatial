@@ -686,6 +686,8 @@ def watershed_dinf(flow_dir_dinf: xr.DataArray,
     """
     _validate_raster(flow_dir_dinf, func_name='watershed_dinf',
                      name='flow_dir_dinf')
+    _validate_raster(pour_points, func_name='watershed_dinf',
+                     name='pour_points')
 
     data = flow_dir_dinf.data
     pp_data = pour_points.data

@@ -1495,6 +1495,8 @@ def stream_order_mfd(fractions: xr.DataArray,
     """
     _validate_raster(fractions, func_name='stream_order_mfd',
                      name='fractions', ndim=3)
+    _validate_raster(flow_accum, func_name='stream_order_mfd',
+                     name='flow_accum')
 
     method = method.lower()
     if method not in ('strahler', 'shreve'):

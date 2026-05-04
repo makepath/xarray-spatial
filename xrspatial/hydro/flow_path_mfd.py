@@ -418,6 +418,8 @@ def flow_path_mfd(flow_dir_mfd: xr.DataArray,
     """
     _validate_raster(flow_dir_mfd, func_name='flow_path_mfd',
                      name='flow_dir_mfd', ndim=3)
+    _validate_raster(start_points, func_name='flow_path_mfd',
+                     name='start_points')
 
     data = flow_dir_mfd.data
     sp_data = start_points.data

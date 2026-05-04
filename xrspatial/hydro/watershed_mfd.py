@@ -668,6 +668,8 @@ def watershed_mfd(flow_dir_mfd: xr.DataArray,
     """
     _validate_raster(flow_dir_mfd, func_name='watershed_mfd',
                      name='flow_dir_mfd', ndim=3)
+    _validate_raster(pour_points, func_name='watershed_mfd',
+                     name='pour_points')
 
     data = flow_dir_mfd.data
     pp_data = pour_points.data

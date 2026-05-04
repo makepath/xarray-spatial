@@ -565,6 +565,8 @@ def snap_pour_point_d8(flow_accum: xr.DataArray,
         locations.  Non-pour-point cells are NaN.
     """
     _validate_raster(flow_accum, func_name='snap_pour_point', name='flow_accum')
+    _validate_raster(pour_points, func_name='snap_pour_point',
+                     name='pour_points')
 
     fa_data = flow_accum.data
     pp_data = pour_points.data

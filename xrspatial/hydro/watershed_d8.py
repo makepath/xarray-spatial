@@ -1045,6 +1045,7 @@ def watershed_d8(flow_dir: xr.DataArray,
         NaN for nodata or cells not reaching any pour point.
     """
     _validate_raster(flow_dir, func_name='watershed', name='flow_dir')
+    _validate_raster(pour_points, func_name='watershed', name='pour_points')
 
     data = flow_dir.data
     pp_data = pour_points.data

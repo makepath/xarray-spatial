@@ -1103,6 +1103,7 @@ def stream_link_d8(flow_dir: xr.DataArray,
         integer ID.  Non-stream cells are NaN.
     """
     _validate_raster(flow_dir, func_name='stream_link', name='flow_dir')
+    _validate_raster(flow_accum, func_name='stream_link', name='flow_accum')
 
     fd_data = flow_dir.data
     fa_data = flow_accum.data
