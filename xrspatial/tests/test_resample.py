@@ -121,6 +121,112 @@ class TestOutputGeometry:
 
 
 # ---------------------------------------------------------------------------
+# Metadata propagation
+# ---------------------------------------------------------------------------
+
+class TestMetadataPropagation:
+    """resample() should refresh stale grid attrs and nodata sentinels."""
+
+    @staticmethod
+    def _raster_with_transform(transform):
+        """4x4 raster whose coords match the given rasterio 6-tuple."""
+        res_x, _, left, _, neg_res_y, top = transform
+        res_y = -neg_res_y
+        x = np.array([left + (i + 0.5) * res_x for i in range(4)])
+        y = np.array([top - (i + 0.5) * res_y for i in range(4)])
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        return xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+            attrs={'transform': transform, 'res': (res_x, res_y)},
+        )
+
+    def test_transform_refreshed_on_downsample(self):
+        raster = self._raster_with_transform(
+            (1.0, 0.0, 100.0, 0.0, -1.0, 200.0)
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert tuple(out.attrs['transform']) == (
+            2.0, 0.0, 100.0, 0.0, -2.0, 200.0,
+        )
+
+    def test_transform_absent_stays_absent(self):
+        # grid_4x4 fixture has no transform attr.
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': np.linspace(3, 0, 4), 'x': np.linspace(0, 3, 4)},
+            attrs={'res': (1.0, 1.0)},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert 'transform' not in out.attrs
+
+    def test_fill_value_replaced_with_nan(self):
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': np.linspace(3, 0, 4), 'x': np.linspace(0, 3, 4)},
+            attrs={'res': (1.0, 1.0), '_FillValue': -9999},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert '_FillValue' in out.attrs
+        assert np.isnan(out.attrs['_FillValue'])
+
+    def test_fill_value_absent_stays_absent(self):
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': np.linspace(3, 0, 4), 'x': np.linspace(0, 3, 4)},
+            attrs={'res': (1.0, 1.0)},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert '_FillValue' not in out.attrs
+
+    def test_nodatavals_replaced_with_nan(self):
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': np.linspace(3, 0, 4), 'x': np.linspace(0, 3, 4)},
+            attrs={'res': (1.0, 1.0), 'nodatavals': (-9999,)},
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert 'nodatavals' in out.attrs
+        nv = out.attrs['nodatavals']
+        assert len(nv) == 1
+        assert np.isnan(nv[0])
+
+    def test_other_attrs_preserved(self):
+        # crs, units, long_name, scales, offsets should round-trip.
+        data = np.arange(16, dtype=np.float32).reshape(4, 4)
+        raster = xr.DataArray(
+            data,
+            dims=['y', 'x'],
+            coords={'y': np.linspace(3, 0, 4), 'x': np.linspace(0, 3, 4)},
+            attrs={
+                'res': (1.0, 1.0),
+                'crs': 'EPSG:4326',
+                'crs_wkt': 'GEOGCS["WGS 84"]',
+                'units': 'm',
+                'long_name': 'elevation',
+                'scales': (1.0,),
+                'offsets': (0.0,),
+            },
+        )
+        out = resample(raster, scale_factor=0.5)
+        assert out.attrs['crs'] == 'EPSG:4326'
+        assert out.attrs['crs_wkt'] == 'GEOGCS["WGS 84"]'
+        assert out.attrs['units'] == 'm'
+        assert out.attrs['long_name'] == 'elevation'
+        assert out.attrs['scales'] == (1.0,)
+        assert out.attrs['offsets'] == (0.0,)
+
+
+# ---------------------------------------------------------------------------
 # Correctness: known values
 # ---------------------------------------------------------------------------
 
