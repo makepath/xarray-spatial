@@ -16,11 +16,17 @@ except ImportError:
 
 from xrspatial.cost_distance import _heap_push, _heap_pop
 from xrspatial.utils import (
+    _validate_raster,
     get_dataarray_resolution, ngjit,
     has_cuda_and_cupy, is_cupy_array, is_dask_cupy, has_dask_array,
 )
 
 NONE = -1
+
+# Maximum waypoint count for multi_stop_search.  optimize_order builds an
+# N x N distance matrix and runs N(N-1)/2 A* calls (O(N^3) when stitched
+# with 2-opt), so unbounded N is a CPU DoS.
+_MAX_WAYPOINTS = 1000
 
 
 def _get_pixel_id(point, raster, xdim=None, ydim=None):
@@ -894,8 +900,12 @@ def a_star_search(surface: xr.DataArray,
         >>> path_agg = a_star_search(agg, start, goal, barriers, 'lon', 'lat')
     """
 
-    if surface.ndim != 2:
-        raise ValueError("input `surface` must be 2D")
+    _validate_raster(surface, func_name='a_star_search',
+                     name='surface', ndim=2)
+
+    if friction is not None:
+        _validate_raster(friction, func_name='a_star_search',
+                         name='friction', ndim=2)
 
     if surface.dims != (y, x):
         raise ValueError("`surface.coords` should be named as coordinates:"
@@ -1370,11 +1380,22 @@ def multi_stop_search(surface: xr.DataArray,
         unreachable.
     """
     # --- Input validation ---
-    if surface.ndim != 2:
-        raise ValueError("input `surface` must be 2D")
+    _validate_raster(surface, func_name='multi_stop_search',
+                     name='surface', ndim=2)
+
+    if friction is not None:
+        _validate_raster(friction, func_name='multi_stop_search',
+                         name='friction', ndim=2)
 
     if len(waypoints) < 2:
         raise ValueError("at least 2 waypoints are required")
+
+    if len(waypoints) > _MAX_WAYPOINTS:
+        raise ValueError(
+            f"multi_stop_search() supports at most {_MAX_WAYPOINTS} "
+            f"waypoints, got {len(waypoints)}.  optimize_order is "
+            f"O(N^3) so larger lists can hang the worker."
+        )
 
     for idx, wp in enumerate(waypoints):
         if len(wp) != 2:
