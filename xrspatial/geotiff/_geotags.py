@@ -278,18 +278,40 @@ def _extract_transform(ifd: IFD) -> GeoTransform:
     """Extract affine transform from ModelTransformation, or
     ModelTiepoint + ModelPixelScale tags."""
 
-    # Try ModelTransformationTag (4x4 matrix)
+    # Try ModelTransformationTag (4x4 row-major matrix, 16 doubles).
+    # Per the GeoTIFF spec this tag wins over ModelPixelScale + ModelTiepoint
+    # when present.
+    #
+    #   x = M[0]*col + M[1]*row + M[2]*z + M[3]
+    #   y = M[4]*col + M[5]*row + M[6]*z + M[7]
+    #
+    # GeoTransform only carries the axis-aligned case.  For rotated, sheared,
+    # or z-coupled transforms we raise NotImplementedError instead of silently
+    # dropping the off-diagonal terms.
     transform_tag = ifd.get_value(TAG_MODEL_TRANSFORMATION)
     if transform_tag is not None:
         if isinstance(transform_tag, tuple) and len(transform_tag) >= 12:
-            # 4x4 row-major matrix
-            # x = M[0]*col + M[1]*row + M[3]
-            # y = M[4]*col + M[5]*row + M[7]
+            m = transform_tag
+            # Off-diagonal terms (rotation/skew) and z-coupling.  Use a small
+            # tolerance scaled to the diagonal to absorb floating-point noise.
+            scale = max(abs(m[0]), abs(m[5]), 1.0)
+            tol = 1e-12 * scale
+            rotation_terms = (m[1], m[4])
+            z_terms = (m[2], m[6]) if len(m) >= 8 else (0.0, 0.0)
+            if any(abs(t) > tol for t in rotation_terms + z_terms):
+                raise NotImplementedError(
+                    "ModelTransformationTag (34264) contains rotation, "
+                    "skew, or z-coupling terms "
+                    f"(M[1]={m[1]!r}, M[4]={m[4]!r}, "
+                    f"M[2]={m[2] if len(m) > 2 else 0.0!r}, "
+                    f"M[6]={m[6] if len(m) > 6 else 0.0!r}). "
+                    "Only axis-aligned affine transforms are supported."
+                )
             return GeoTransform(
-                origin_x=transform_tag[3],
-                origin_y=transform_tag[7],
-                pixel_width=transform_tag[0],
-                pixel_height=transform_tag[5],
+                origin_x=m[3],
+                origin_y=m[7],
+                pixel_width=m[0],
+                pixel_height=m[5],
             )
 
     # Try ModelTiepoint + ModelPixelScale

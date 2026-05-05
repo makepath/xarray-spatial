@@ -301,6 +301,21 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
     chunk = decompress(data_slice, compression, expected,
                        width=width, height=height, samples=samples)
 
+    # Validate the decompressed byte count.  A truncated deflate stream or a
+    # buggy compressor can produce fewer or more bytes than expected.  Without
+    # this check the downstream reshape raises an opaque "cannot reshape array
+    # of size N into shape (h, w)" that hides which tile/strip broke.  Edge
+    # tiles in a valid TIFF still decompress to the full tile_height x
+    # tile_width (the caller slices the top-left region), so this only fires
+    # on genuine corruption.
+    if chunk.size != expected:
+        raise ValueError(
+            f"Decompressed tile/strip size mismatch: expected {expected} "
+            f"bytes for a {width} x {height} x {samples} block "
+            f"(bps={bps}, compression={compression}), got {chunk.size}. "
+            f"The TIFF data is likely truncated or corrupt."
+        )
+
     if pred in (2, 3) and not is_sub_byte:
         if not chunk.flags.writeable:
             chunk = chunk.copy()
