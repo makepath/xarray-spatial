@@ -7,6 +7,7 @@ import os as _os_module
 import threading
 import urllib.request
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
@@ -235,6 +236,39 @@ class _HTTPSource:
         )
         with urllib.request.urlopen(req) as resp:
             return resp.read()
+
+    def read_ranges(
+        self,
+        ranges: list[tuple[int, int]],
+        max_workers: int = 8,
+    ) -> list[bytes]:
+        """Fetch multiple ranges concurrently using a thread pool.
+
+        Each ``(start, length)`` pair is fetched with its own range request,
+        but requests run in parallel so total wall time is bounded by the
+        slowest worker rather than ``len(ranges) * RTT``.
+
+        Returns the bytes for each range in input order.
+        """
+        if not ranges:
+            return []
+        if len(ranges) == 1:
+            start, length = ranges[0]
+            return [self.read_range(start, length)]
+
+        workers = min(max_workers, len(ranges))
+        results: list[bytes | None] = [None] * len(ranges)
+
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            future_to_idx = {
+                ex.submit(self.read_range, start, length): i
+                for i, (start, length) in enumerate(ranges)
+            }
+            for fut in future_to_idx:
+                idx = future_to_idx[fut]
+                results[idx] = fut.result()
+
+        return results  # type: ignore[return-value]
 
     def read_all(self) -> bytes:
         if self._pool is not None:
@@ -690,6 +724,11 @@ def _read_cog_http(url: str, overview_level: int | None = None,
                    ) -> tuple[np.ndarray, GeoInfo]:
     """Read a COG via HTTP range requests.
 
+    Tile fetches run concurrently through a small thread pool so that the
+    total wall time is bounded by the slowest tile request rather than
+    ``num_tiles * RTT``. The pool size can be overridden with the
+    ``XRSPATIAL_COG_HTTP_WORKERS`` environment variable (default 8).
+
     Parameters
     ----------
     url : str
@@ -774,31 +813,47 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     else:
         result = np.empty((height, width), dtype=dtype)
 
+    # Pass 1: collect every tile's range and where it lands in the output.
+    # Empty tiles (byte_count == 0) and any tile_idx beyond the offsets
+    # array are skipped here so the fetch list stays exactly aligned with
+    # the placements list.
+    fetch_ranges: list[tuple[int, int]] = []
+    placements: list[tuple[int, int]] = []  # (tr, tc) per fetched tile
     for tr in range(tiles_down):
         for tc in range(tiles_across):
             tile_idx = tr * tiles_across + tc
             if tile_idx >= len(offsets):
                 continue
-
             off = offsets[tile_idx]
             bc = byte_counts[tile_idx]
             if bc == 0:
                 continue
+            fetch_ranges.append((off, bc))
+            placements.append((tr, tc))
 
-            tile_data = source.read_range(off, bc)
-            tile_pixels = _decode_strip_or_tile(
-                tile_data, compression, tw, th, samples,
-                bps, bytes_per_sample, is_sub_byte, dtype, pred,
-                byte_order=header.byte_order)
+    # Pass 2: fetch all tile bytes in parallel. Worker pool size is tunable
+    # via XRSPATIAL_COG_HTTP_WORKERS so users on very slow links can dial
+    # it up without code changes.
+    try:
+        workers = max(1, int(_os_module.environ.get('XRSPATIAL_COG_HTTP_WORKERS', '8')))
+    except ValueError:
+        workers = 8
+    tile_bytes_list = source.read_ranges(fetch_ranges, max_workers=workers)
 
-            # Place tile
-            y0 = tr * th
-            x0 = tc * tw
-            y1 = min(y0 + th, height)
-            x1 = min(x0 + tw, width)
-            actual_h = y1 - y0
-            actual_w = x1 - x0
-            result[y0:y1, x0:x1] = tile_pixels[:actual_h, :actual_w]
+    # Pass 3: decode each tile and place it.
+    for (tr, tc), tile_data in zip(placements, tile_bytes_list):
+        tile_pixels = _decode_strip_or_tile(
+            tile_data, compression, tw, th, samples,
+            bps, bytes_per_sample, is_sub_byte, dtype, pred,
+            byte_order=header.byte_order)
+
+        y0 = tr * th
+        x0 = tc * tw
+        y1 = min(y0 + th, height)
+        x1 = min(x0 + tw, width)
+        actual_h = y1 - y0
+        actual_w = x1 - x0
+        result[y0:y1, x0:x1] = tile_pixels[:actual_h, :actual_w]
 
     source.close()
     return result, geo_info
