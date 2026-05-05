@@ -52,7 +52,16 @@ def _geo_to_coords(geo_info, height: int, width: int) -> dict:
     origin_y)``. ``to_geotiff`` prefers that attr over recomputing the
     transform from the coord arrays, which avoids float drift on
     fractional-precision rasters.
+
+    When the file carries no GeoTIFF tags (``has_georef=False``), fall back
+    to integer pixel coordinates 0..N-1 instead of inventing fractional
+    values from the default unit transform.
     """
+    if not getattr(geo_info, 'has_georef', True):
+        return {
+            'y': np.arange(height, dtype=np.int64),
+            'x': np.arange(width, dtype=np.int64),
+        }
     t = geo_info.transform
     if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
         # Tiepoint is pixel center -- no offset needed

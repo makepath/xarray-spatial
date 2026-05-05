@@ -114,6 +114,11 @@ class GeoTransform:
 class GeoInfo:
     """Geographic metadata extracted from GeoTIFF tags."""
     transform: GeoTransform = field(default_factory=GeoTransform)
+    # True when ModelTransformation, ModelPixelScale, or ModelTiepoint tags
+    # were present in the IFD. False for plain TIFFs with no GeoTIFF tags --
+    # callers should fall back to integer pixel coordinates rather than
+    # using the default transform (which would produce negative y values).
+    has_georef: bool = False
     crs_epsg: int | None = None
     model_type: int = 0
     raster_type: int = RASTER_PIXEL_IS_AREA
@@ -288,9 +293,17 @@ def _parse_geokeys(ifd: IFD, data: bytes | memoryview,
     return geokeys
 
 
-def _extract_transform(ifd: IFD) -> GeoTransform:
+def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
     """Extract affine transform from ModelTransformation, or
-    ModelTiepoint + ModelPixelScale tags."""
+    ModelTiepoint + ModelPixelScale tags.
+
+    Returns
+    -------
+    (transform, has_georef)
+        ``has_georef`` is True when at least one of the geo-transform tags
+        was present.  When False, ``transform`` is the default identity
+        and callers should fall back to pixel coordinates.
+    """
 
     # Try ModelTransformationTag (4x4 row-major matrix, 16 doubles).
     # Per the GeoTIFF spec this tag wins over ModelPixelScale + ModelTiepoint
@@ -326,7 +339,7 @@ def _extract_transform(ifd: IFD) -> GeoTransform:
                 origin_y=m[7],
                 pixel_width=m[0],
                 pixel_height=m[5],
-            )
+            ), True
 
     # Try ModelTiepoint + ModelPixelScale
     tiepoint = ifd.get_value(TAG_MODEL_TIEPOINT)
@@ -356,11 +369,15 @@ def _extract_transform(ifd: IFD) -> GeoTransform:
                 origin_y=origin_y,
                 pixel_width=sx,
                 pixel_height=-sy,  # negative because y decreases
-            )
+            ), True
 
-        return GeoTransform(pixel_width=sx, pixel_height=-sy)
+        return GeoTransform(pixel_width=sx, pixel_height=-sy), True
 
-    return GeoTransform()
+    # Tiepoint without scale: still flag as georeferenced (origin known)
+    if tiepoint is not None:
+        return GeoTransform(), True
+
+    return GeoTransform(), False
 
 
 def extract_geo_info(ifd: IFD, data: bytes | memoryview,
@@ -380,7 +397,7 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
     -------
     GeoInfo
     """
-    transform = _extract_transform(ifd)
+    transform, has_georef = _extract_transform(ifd)
     geokeys = _parse_geokeys(ifd, data, byte_order)
 
     # Extract EPSG
@@ -546,6 +563,7 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
 
     return GeoInfo(
         transform=transform,
+        has_georef=has_georef,
         crs_epsg=epsg,
         model_type=int(model_type) if isinstance(model_type, (int, float)) else 0,
         raster_type=int(raster_type) if isinstance(raster_type, (int, float)) else RASTER_PIXEL_IS_AREA,

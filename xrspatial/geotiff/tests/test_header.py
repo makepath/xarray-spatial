@@ -6,9 +6,11 @@ import struct
 import numpy as np
 import pytest
 
+from xrspatial.geotiff._dtypes import RATIONAL, SRATIONAL
 from xrspatial.geotiff._header import (
     IFD,
     TIFFHeader,
+    _read_value,
     parse_all_ifds,
     parse_header,
     parse_ifd,
@@ -121,3 +123,177 @@ class TestIFDProperties:
         assert ifd.photometric == 1
         assert ifd.planar_config == 1
         assert not ifd.is_tiled
+
+
+class TestIFDChainLoop:
+    """Verify parse_all_ifds bails out on a malicious IFD chain cycle.
+
+    Issue #1482 (T-2): the parser keeps a ``seen`` set of offsets and
+    breaks the loop when an IFD's next-pointer points back to an offset
+    already visited.  Without that guard, a crafted file with IFD2
+    pointing back at IFD1 would loop forever.
+    """
+
+    def _build_two_ifd_loop(self) -> bytes:
+        """Build a TIFF where IFD #2's next-pointer points back at IFD #1."""
+        bo = '<'
+        # Header: II, magic 42, first-IFD offset
+        out = bytearray()
+        out.extend(b'II')
+        out.extend(struct.pack(f'{bo}H', 42))
+
+        ifd1_offset = 8
+        # IFD layout: 1 entry + next-IFD pointer = 2 + 12 + 4 = 18 bytes
+        ifd2_offset = ifd1_offset + 18
+        out.extend(struct.pack(f'{bo}I', ifd1_offset))
+
+        # IFD #1: one entry (ImageWidth=1), next = ifd2_offset
+        out.extend(struct.pack(f'{bo}H', 1))  # num_entries
+        out.extend(struct.pack(f'{bo}HHI', TAG_IMAGE_WIDTH, 3, 1))
+        out.extend(struct.pack(f'{bo}I', 1))  # value (inline padded)
+        out.extend(struct.pack(f'{bo}I', ifd2_offset))  # next-IFD
+
+        # IFD #2: one entry (ImageWidth=2), next = ifd1_offset (cycle!)
+        out.extend(struct.pack(f'{bo}H', 1))
+        out.extend(struct.pack(f'{bo}HHI', TAG_IMAGE_WIDTH, 3, 1))
+        out.extend(struct.pack(f'{bo}I', 2))
+        out.extend(struct.pack(f'{bo}I', ifd1_offset))  # cycle back
+
+        return bytes(out)
+
+    def test_cycle_does_not_infinite_loop(self):
+        data = self._build_two_ifd_loop()
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+
+        # Each unique offset is parsed exactly once.  Cycle detection
+        # must stop us at IFD #2 even though its next-pointer is non-zero.
+        assert len(ifds) == 2
+        # Values should match what we wrote, in order.
+        assert ifds[0].width == 1
+        assert ifds[1].width == 2
+
+    def test_cycle_completes_quickly(self):
+        """Parsing must terminate without exhausting the buffer."""
+        data = self._build_two_ifd_loop()
+        header = parse_header(data)
+        # If the seen-set guard regresses this would hang; pytest-timeout
+        # would catch it but the bounded len() check below is enough.
+        ifds = parse_all_ifds(data, header)
+        assert len(ifds) <= 4  # generous upper bound -- we expect 2
+
+    def test_self_loop(self):
+        """An IFD whose next-pointer is its own offset terminates."""
+        bo = '<'
+        out = bytearray()
+        out.extend(b'II')
+        out.extend(struct.pack(f'{bo}H', 42))
+        ifd_offset = 8
+        out.extend(struct.pack(f'{bo}I', ifd_offset))
+        out.extend(struct.pack(f'{bo}H', 1))
+        out.extend(struct.pack(f'{bo}HHI', TAG_IMAGE_WIDTH, 3, 1))
+        out.extend(struct.pack(f'{bo}I', 7))
+        out.extend(struct.pack(f'{bo}I', ifd_offset))  # points to self
+        ifds = parse_all_ifds(bytes(out), parse_header(bytes(out)))
+        assert len(ifds) == 1
+        assert ifds[0].width == 7
+
+
+class TestReadValueRationals:
+    """T-8 coverage for RATIONAL / SRATIONAL edge cases in _read_value."""
+
+    def test_rational_denominator_zero_returns_zero(self):
+        # numerator=5, denominator=0 -- by convention return 0.0
+        buf = struct.pack('<II', 5, 0)
+        result = _read_value(buf, 0, RATIONAL, 1, '<')
+        assert result == 0.0
+
+    def test_srational_denominator_zero_returns_zero(self):
+        buf = struct.pack('<ii', -3, 0)
+        result = _read_value(buf, 0, SRATIONAL, 1, '<')
+        assert result == 0.0
+
+    def test_rational_normal_value(self):
+        buf = struct.pack('<II', 22, 7)
+        result = _read_value(buf, 0, RATIONAL, 1, '<')
+        assert result == pytest.approx(22 / 7)
+
+    def test_srational_negative_value(self):
+        buf = struct.pack('<ii', -10, 4)
+        result = _read_value(buf, 0, SRATIONAL, 1, '<')
+        assert result == pytest.approx(-2.5)
+
+    def test_rational_count_overflow_raises(self):
+        # Buffer holds one RATIONAL (8 bytes) but count=4 demands 32.
+        # struct.error is fine -- the point is that we don't silently
+        # read past the buffer.
+        buf = struct.pack('<II', 1, 1)
+        with pytest.raises(struct.error):
+            _read_value(buf, 0, RATIONAL, 4, '<')
+
+
+
+class TestTruncatedIFD:
+    """T-8: a truncated IFD entry buffer should fail cleanly, not crash silently."""
+
+    def test_ifd_count_exceeds_buffer(self):
+        bo = '<'
+        out = bytearray()
+        out.extend(b'II')
+        out.extend(struct.pack(f'{bo}H', 42))
+        out.extend(struct.pack(f'{bo}I', 8))  # first IFD at 8
+        # Claim 5 entries but only provide 3 full ones (36 bytes < 60).
+        out.extend(struct.pack(f'{bo}H', 5))
+        for _ in range(3):
+            out.extend(struct.pack(f'{bo}HHI', TAG_IMAGE_WIDTH, 3, 1))
+            out.extend(struct.pack(f'{bo}I', 1))
+        # Stop here -- last 2 entries plus next-IFD pointer are missing.
+        data = bytes(out)
+        header = parse_header(data)
+        # struct.error is acceptable; what we want is "raises something",
+        # not infinite read or silent truncation to a half-parsed IFD.
+        with pytest.raises((struct.error, ValueError)):
+            parse_ifd(data, header.first_ifd_offset, header)
+
+
+class TestBigTIFFEdges:
+    """T-8: BigTIFF malformations."""
+
+    def test_bigtiff_offset_size_not_eight(self):
+        """BigTIFF with magic 43 but offset_size != 8 must raise."""
+        # II, magic 43, offset_size=4 (wrong -- must be 8), pad, ifd offset
+        bad = b'II' + struct.pack('<H', 43) + struct.pack('<H', 4) \
+            + struct.pack('<H', 0) + struct.pack('<Q', 16)
+        with pytest.raises(ValueError, match="BigTIFF offset size"):
+            parse_header(bad)
+
+    def test_bigtiff_truncated_header(self):
+        """BigTIFF magic but file shorter than the 16-byte header."""
+        # Need at least 8 bytes to get past the initial length check, then
+        # parse_header should refuse because BigTIFF needs 16.
+        short = b'II' + struct.pack('<H', 43) + struct.pack('<H', 8) \
+            + struct.pack('<H', 0)  # 8 bytes total
+        with pytest.raises(ValueError, match="BigTIFF"):
+            parse_header(short)
+
+
+class TestClassicTIFFLargeOffset:
+    """T-8: classic TIFF stores 32-bit offsets; offsets > 4 GB don't fit.
+
+    There's no way to actually express an offset > 4 GB in a classic
+    TIFF (the field is uint32).  What we want to verify is that pointing
+    a classic-TIFF first-IFD at an offset beyond the buffer terminates
+    cleanly via ``parse_all_ifds`` rather than reading garbage.
+    """
+
+    def test_first_ifd_offset_past_buffer(self):
+        bo = '<'
+        # Header points to offset 0xFFFFFF00 -- well past any plausible
+        # buffer.  parse_all_ifds short-circuits when offset >= len(data).
+        out = bytearray()
+        out.extend(b'II')
+        out.extend(struct.pack(f'{bo}H', 42))
+        out.extend(struct.pack(f'{bo}I', 0xFFFFFF00))
+        header = parse_header(bytes(out))
+        ifds = parse_all_ifds(bytes(out), header)
+        assert ifds == []  # no IFDs, no crash
