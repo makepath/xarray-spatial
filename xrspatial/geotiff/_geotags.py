@@ -15,13 +15,22 @@ from ._header import (
     TAG_PREDICTOR, TAG_COLORMAP,
     TAG_TILE_WIDTH, TAG_TILE_LENGTH,
     TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS,
+    TAG_EXTRA_SAMPLES,
     TAG_SAMPLE_FORMAT, TAG_GDAL_METADATA, TAG_GDAL_NODATA,
     TAG_MODEL_PIXEL_SCALE, TAG_MODEL_TIEPOINT,
     TAG_MODEL_TRANSFORMATION,
     TAG_GEO_KEY_DIRECTORY, TAG_GEO_DOUBLE_PARAMS, TAG_GEO_ASCII_PARAMS,
 )
 
-# Tags that the writer manages -- everything else can be passed through
+# ImageDescription tag (270). Captured for round-trip but not managed
+# by the writer -- it flows through extra_tags pass-through.
+TAG_IMAGE_DESCRIPTION = 270
+
+# Tags the writer manages directly. Tags not in this set are collected
+# into GeoInfo.extra_tags on read and re-emitted on write via the
+# extra_tags pass-through. ColorMap (320), ExtraSamples (338, only emitted
+# automatically when samples > 1), and ImageDescription (270) intentionally
+# stay OUT of this set so they round-trip without dedicated writer plumbing.
 _MANAGED_TAGS = frozenset({
     TAG_IMAGE_WIDTH, TAG_IMAGE_LENGTH, TAG_BITS_PER_SAMPLE,
     TAG_COMPRESSION, TAG_PHOTOMETRIC,
@@ -29,7 +38,7 @@ _MANAGED_TAGS = frozenset({
     TAG_ROWS_PER_STRIP, TAG_STRIP_BYTE_COUNTS,
     TAG_X_RESOLUTION, TAG_Y_RESOLUTION,
     TAG_PLANAR_CONFIG, TAG_RESOLUTION_UNIT,
-    TAG_PREDICTOR, TAG_COLORMAP,
+    TAG_PREDICTOR,
     TAG_TILE_WIDTH, TAG_TILE_LENGTH,
     TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS,
     TAG_SAMPLE_FORMAT, TAG_GDAL_METADATA, TAG_GDAL_NODATA,
@@ -139,6 +148,11 @@ class GeoInfo:
     # Extra TIFF tags not managed by the writer (pass-through on round-trip)
     # List of (tag_id, type_id, count, raw_value) tuples.
     extra_tags: list | None = None
+    # ImageDescription tag (270) decoded as a Python str, when present.
+    image_description: str | None = None
+    # ExtraSamples tag (338) as a tuple of int alpha/extra-sample codes,
+    # when present.
+    extra_samples: tuple | None = None
     # Raw geokeys dict for anything else
     geokeys: dict[int, int | float | str] = field(default_factory=dict)
 
@@ -478,9 +492,28 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
 
     # Collect extra (non-managed) tags for pass-through
     extra_tags = []
+    image_description = None
+    extra_samples = None
     for tag_id, entry in ifd.entries.items():
-        if tag_id not in _MANAGED_TAGS:
-            extra_tags.append((tag_id, entry.type_id, entry.count, entry.value))
+        if tag_id in _MANAGED_TAGS:
+            continue
+        extra_tags.append((tag_id, entry.type_id, entry.count, entry.value))
+        # Surface a few well-known extras as friendly attrs while still
+        # carrying the raw entry in extra_tags so to_geotiff can rewrite
+        # it byte-for-byte.
+        if tag_id == TAG_IMAGE_DESCRIPTION:
+            v = entry.value
+            if isinstance(v, bytes):
+                v = v.rstrip(b'\x00').decode('ascii', errors='replace')
+            elif isinstance(v, str):
+                v = v.rstrip('\x00')
+            image_description = v
+        elif tag_id == TAG_EXTRA_SAMPLES:
+            v = entry.value
+            if isinstance(v, tuple):
+                extra_samples = tuple(int(x) for x in v)
+            elif isinstance(v, int):
+                extra_samples = (int(v),)
     if not extra_tags:
         extra_tags = None
 
@@ -518,6 +551,8 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
         gdal_metadata=gdal_metadata,
         gdal_metadata_xml=gdal_metadata_xml,
         extra_tags=extra_tags,
+        image_description=image_description,
+        extra_samples=extra_samples,
         geokeys=geokeys,
     )
 
