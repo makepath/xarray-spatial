@@ -24,10 +24,10 @@ from xrspatial.geotiff._writer import write
 class _FakeHTTPSource(_HTTPSource):
     """_HTTPSource that fakes read_range with a configurable sleep.
 
-    Used to exercise the threadpool path without a real network. Each
-    call sleeps for ``per_request_sleep`` seconds and then returns
-    deterministic bytes encoding (start, length) so callers can verify
-    ordering.
+    Tracks both total call count and the maximum observed in-flight
+    concurrency so tests can verify the threadpool dispatch directly
+    rather than relying on wall-clock timing (which is flaky on busy
+    CI runners).
     """
 
     def __init__(self, per_request_sleep: float = 0.05):
@@ -37,13 +37,22 @@ class _FakeHTTPSource(_HTTPSource):
         self._pool = None
         self._per_request_sleep = per_request_sleep
         self.call_count = 0
+        self.in_flight = 0
+        self.max_in_flight = 0
         self._lock = threading.Lock()
 
     def read_range(self, start: int, length: int) -> bytes:
         with self._lock:
             self.call_count += 1
-        time.sleep(self._per_request_sleep)
-        return f'{start}:{length}'.encode('ascii')
+            self.in_flight += 1
+            if self.in_flight > self.max_in_flight:
+                self.max_in_flight = self.in_flight
+        try:
+            time.sleep(self._per_request_sleep)
+            return f'{start}:{length}'.encode('ascii')
+        finally:
+            with self._lock:
+                self.in_flight -= 1
 
 
 def test_read_ranges_returns_results_in_input_order():
@@ -67,28 +76,30 @@ def test_read_ranges_single_request_skips_pool():
     assert src.call_count == 1
 
 
-def test_read_ranges_concurrency_masks_latency():
-    """N concurrent requests should finish faster than N sequential ones.
+def test_read_ranges_dispatches_concurrently():
+    """The threadpool should run multiple requests in flight at once.
 
-    The check is intentionally loose (factor 0.5) to avoid flakiness on
-    busy CI nodes, but it's tight enough to fail if the implementation
-    accidentally serializes.
+    Asserting on observed in-flight concurrency is robust to CI scheduler
+    jitter; a wall-clock assertion of the same effect is flaky on busy
+    runners (the previous version of this test was a 50 ms per-request
+    × 20-request setup that occasionally exceeded its 0.5 s budget by a
+    few ms on macOS).
     """
     n = 20
-    per_req = 0.05  # 50 ms each
-    src = _FakeHTTPSource(per_request_sleep=per_req)
+    workers = 8
+    src = _FakeHTTPSource(per_request_sleep=0.02)
     ranges = [(i * 100, 10) for i in range(n)]
 
-    t0 = time.perf_counter()
-    out = src.read_ranges(ranges, max_workers=8)
-    t_total = time.perf_counter() - t0
+    out = src.read_ranges(ranges, max_workers=workers)
 
     assert src.call_count == n
     assert len(out) == n
-    # Sequential would be n * per_req. Require at least 2x speedup.
-    assert t_total < n * per_req * 0.5, (
-        f'expected concurrent fetch to be <{n * per_req * 0.5:.2f}s, '
-        f'got {t_total:.2f}s'
+    # Sequential dispatch would peak at 1 in flight. The pool should
+    # run several in parallel; require at least 2 (very loose) to keep
+    # the test robust on heavily oversubscribed CI runners.
+    assert src.max_in_flight >= 2, (
+        f'expected >=2 concurrent in-flight calls, '
+        f'got max_in_flight={src.max_in_flight}'
     )
 
 
