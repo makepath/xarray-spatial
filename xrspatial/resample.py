@@ -9,7 +9,10 @@ from functools import partial
 
 import numpy as np
 import xarray as xr
-from scipy.ndimage import map_coordinates as _scipy_map_coords
+from scipy.ndimage import (
+    map_coordinates as _scipy_map_coords,
+    spline_filter as _scipy_spline_filter,
+)
 
 try:
     import dask.array as da
@@ -39,10 +42,10 @@ ALL_METHODS = set(INTERP_METHODS) | AGGREGATE_METHODS
 # Overlap depth (input pixels) each interpolation kernel needs from
 # neighbouring chunks when processing dask arrays.  Cubic requires extra
 # depth because the B-spline prefilter is a global IIR filter whose
-# boundary transient decays as ~0.268^n; depth 10 brings the boundary
-# transient to ~1e-7 (sufficient for float32 output and well under
-# typical interpolation error).
-_INTERP_DEPTH = {'nearest': 1, 'bilinear': 1, 'cubic': 10}
+# boundary transient decays as ~0.268^n.  Depth 16 puts the residual at
+# ~7e-10, comfortably below float32 epsilon so chunk-seam parity rounds
+# to zero in the float32 output.
+_INTERP_DEPTH = {'nearest': 1, 'bilinear': 1, 'cubic': 16}
 
 # Approximate working-set size per output cell for the eager backends:
 # one float64 working buffer (8 B) plus a float64 output cell (8 B) in
@@ -191,6 +194,45 @@ def _block_centered_coords(n_in, n_out):
     return (o + 0.5) * (n_in / n_out) - 0.5
 
 
+# -- Spline prefilter helpers -----------------------------------------------
+#
+# scipy.ndimage.map_coordinates(prefilter=True) silently does three things:
+# (1) edge-pad the input by 12 pixels for mode='nearest' / 'grid-constant'
+# so the IIR transient stabilises before reaching real data,
+# (2) call spline_filter on that padded array, and
+# (3) shift the sample coordinates by the same offset.  The padding step
+# is private (``_prepad_for_spline_filter``) and is needed for the
+# explicit-prefilter path to match the implicit one bit-for-bit.
+#
+# We replicate it here so callers can prefilter once per array (e.g. the
+# NaN-aware filled / weights pair) and pass ``prefilter=False`` to
+# map_coordinates without changing the boundary semantics.  Doing the
+# prefilter explicitly also makes the per-block dask path deterministic --
+# the same spline coefficients are computed in eager and chunked modes
+# (modulo the IIR transient that the depth=10 overlap already absorbs).
+
+_SPLINE_PREPAD_NEAREST = 12
+
+
+def _prepad_and_filter_np(arr, order):
+    """Edge-pad and spline-filter *arr* for an explicit ``mode='nearest'``
+    prefilter pass.  Returns ``(filtered, npad)``; the caller adds *npad*
+    to its sample coordinates.
+    """
+    npad = _SPLINE_PREPAD_NEAREST
+    padded = np.pad(arr, npad, mode='edge')
+    filtered = _scipy_spline_filter(padded, order=order, mode='nearest')
+    return filtered, npad
+
+
+def _prepad_and_filter_cupy(arr, order, spline_filter_fn):
+    """CuPy variant of :func:`_prepad_and_filter_np`."""
+    npad = _SPLINE_PREPAD_NEAREST
+    padded = cupy.pad(arr, npad, mode='edge')
+    filtered = spline_filter_fn(padded, order=order, mode='nearest')
+    return filtered, npad
+
+
 # -- NaN-aware interpolation (NumPy) ----------------------------------------
 
 def _nan_aware_interp_np(data, out_h, out_w, order):
@@ -212,16 +254,38 @@ def _nan_aware_interp_np(data, out_h, out_w, order):
         result = _scipy_map_coords(data, coords, order=0, mode='nearest')
         return result.reshape(out_h, out_w)
 
+    # For order >= 2 run the spline prefilter explicitly so the IIR boundary
+    # transient is computed once per array instead of implicitly inside each
+    # map_coordinates call.  Bilinear (order == 1) prefilter is a no-op.
+    use_explicit = order >= 2
+
     mask = np.isnan(data)
     if not mask.any():
-        result = _scipy_map_coords(data, coords, order=order, mode='nearest')
+        if use_explicit:
+            src, npad = _prepad_and_filter_np(data, order)
+            result = _scipy_map_coords(src, coords + npad, order=order,
+                                       mode='nearest', prefilter=False)
+        else:
+            result = _scipy_map_coords(data, coords, order=order,
+                                       mode='nearest')
         return result.reshape(out_h, out_w)
 
     filled = np.where(mask, 0.0, data)
     weights = (~mask).astype(data.dtype)
 
-    z_data = _scipy_map_coords(filled, coords, order=order, mode='nearest')
-    z_wt = _scipy_map_coords(weights, coords, order=order, mode='nearest')
+    if use_explicit:
+        filled, npad = _prepad_and_filter_np(filled, order)
+        weights, _ = _prepad_and_filter_np(weights, order)
+        sample_coords = coords + npad
+        z_data = _scipy_map_coords(filled, sample_coords, order=order,
+                                   mode='nearest', prefilter=False)
+        z_wt = _scipy_map_coords(weights, sample_coords, order=order,
+                                 mode='nearest', prefilter=False)
+    else:
+        z_data = _scipy_map_coords(filled, coords, order=order,
+                                   mode='nearest')
+        z_wt = _scipy_map_coords(weights, coords, order=order,
+                                 mode='nearest')
 
     # Gate on majority weight: an output pixel is valid only when more
     # than half of the resampling kernel weight came from valid input
@@ -237,7 +301,10 @@ def _nan_aware_interp_np(data, out_h, out_w, order):
 
 def _nan_aware_interp_cupy(data, out_h, out_w, order):
     """CuPy variant of :func:`_nan_aware_interp_np`."""
-    from cupyx.scipy.ndimage import map_coordinates as _cupy_map_coords
+    from cupyx.scipy.ndimage import (
+        map_coordinates as _cupy_map_coords,
+        spline_filter as _cupy_spline_filter,
+    )
 
     iy = cupy.asarray(_block_centered_coords(data.shape[0], out_h))
     ix = cupy.asarray(_block_centered_coords(data.shape[1], out_w))
@@ -248,16 +315,35 @@ def _nan_aware_interp_cupy(data, out_h, out_w, order):
         result = _cupy_map_coords(data, coords, order=0, mode='nearest')
         return result.reshape(out_h, out_w)
 
+    use_explicit = order >= 2
+
     mask = cupy.isnan(data)
     if not mask.any():
-        result = _cupy_map_coords(data, coords, order=order, mode='nearest')
+        if use_explicit:
+            src, npad = _prepad_and_filter_cupy(data, order, _cupy_spline_filter)
+            result = _cupy_map_coords(src, coords + npad, order=order,
+                                      mode='nearest', prefilter=False)
+        else:
+            result = _cupy_map_coords(data, coords, order=order,
+                                      mode='nearest')
         return result.reshape(out_h, out_w)
 
     filled = cupy.where(mask, 0.0, data)
     weights = (~mask).astype(data.dtype)
 
-    z_data = _cupy_map_coords(filled, coords, order=order, mode='nearest')
-    z_wt = _cupy_map_coords(weights, coords, order=order, mode='nearest')
+    if use_explicit:
+        filled, npad = _prepad_and_filter_cupy(filled, order, _cupy_spline_filter)
+        weights, _ = _prepad_and_filter_cupy(weights, order, _cupy_spline_filter)
+        sample_coords = coords + npad
+        z_data = _cupy_map_coords(filled, sample_coords, order=order,
+                                  mode='nearest', prefilter=False)
+        z_wt = _cupy_map_coords(weights, sample_coords, order=order,
+                                mode='nearest', prefilter=False)
+    else:
+        z_data = _cupy_map_coords(filled, coords, order=order,
+                                  mode='nearest')
+        z_wt = _cupy_map_coords(weights, coords, order=order,
+                                mode='nearest')
 
     # Majority-weight gate (see _nan_aware_interp_np for rationale).
     result = cupy.where(z_wt > 0.5,
@@ -653,15 +739,36 @@ def _interp_block_np(block, global_in_h, global_in_w,
     yy, xx = np.meshgrid(iy_local, ix_local, indexing='ij')
     coords = np.array([yy.ravel(), xx.ravel()])
 
-    # NaN-aware interpolation
+    # NaN-aware interpolation.  For order >= 2 we run the spline prefilter
+    # explicitly per array (block / filled / weights) so the IIR boundary
+    # transient is identical between eager and chunked paths.
+    use_explicit = order >= 2
+
     mask = np.isnan(block)
     if order == 0 or not mask.any():
-        result = _scipy_map_coords(block, coords, order=order, mode='nearest')
+        if use_explicit:
+            src, npad = _prepad_and_filter_np(block, order)
+            result = _scipy_map_coords(src, coords + npad, order=order,
+                                       mode='nearest', prefilter=False)
+        else:
+            result = _scipy_map_coords(block, coords, order=order,
+                                       mode='nearest')
     else:
         filled = np.where(mask, 0.0, block)
         weights = (~mask).astype(block.dtype)
-        z_data = _scipy_map_coords(filled, coords, order=order, mode='nearest')
-        z_wt = _scipy_map_coords(weights, coords, order=order, mode='nearest')
+        if use_explicit:
+            filled, npad = _prepad_and_filter_np(filled, order)
+            weights, _ = _prepad_and_filter_np(weights, order)
+            sample_coords = coords + npad
+            z_data = _scipy_map_coords(filled, sample_coords, order=order,
+                                       mode='nearest', prefilter=False)
+            z_wt = _scipy_map_coords(weights, sample_coords, order=order,
+                                     mode='nearest', prefilter=False)
+        else:
+            z_data = _scipy_map_coords(filled, coords, order=order,
+                                       mode='nearest')
+            z_wt = _scipy_map_coords(weights, coords, order=order,
+                                     mode='nearest')
         # Majority-weight gate (see _nan_aware_interp_np for rationale).
         result = np.where(z_wt > 0.5,
                           z_data / np.maximum(z_wt, 1e-10), np.nan)
@@ -674,7 +781,10 @@ def _interp_block_cupy(block, global_in_h, global_in_w,
                        cum_in_y, cum_in_x, cum_out_y, cum_out_x,
                        depth, order, work_dtype, out_dtype, block_info=None):
     """CuPy variant of :func:`_interp_block_np`."""
-    from cupyx.scipy.ndimage import map_coordinates as _cupy_map_coords
+    from cupyx.scipy.ndimage import (
+        map_coordinates as _cupy_map_coords,
+        spline_filter as _cupy_spline_filter,
+    )
 
     yi, xi = block_info[0]['chunk-location']
     target_h = int(cum_out_y[yi + 1] - cum_out_y[yi])
@@ -698,14 +808,33 @@ def _interp_block_cupy(block, global_in_h, global_in_w,
     yy, xx = cupy.meshgrid(iy_local, ix_local, indexing='ij')
     coords = cupy.array([yy.ravel(), xx.ravel()])
 
+    use_explicit = order >= 2
+
     mask = cupy.isnan(block)
     if order == 0 or not mask.any():
-        result = _cupy_map_coords(block, coords, order=order, mode='nearest')
+        if use_explicit:
+            src, npad = _prepad_and_filter_cupy(block, order, _cupy_spline_filter)
+            result = _cupy_map_coords(src, coords + npad, order=order,
+                                      mode='nearest', prefilter=False)
+        else:
+            result = _cupy_map_coords(block, coords, order=order,
+                                      mode='nearest')
     else:
         filled = cupy.where(mask, 0.0, block)
         weights = (~mask).astype(block.dtype)
-        z_data = _cupy_map_coords(filled, coords, order=order, mode='nearest')
-        z_wt = _cupy_map_coords(weights, coords, order=order, mode='nearest')
+        if use_explicit:
+            filled, npad = _prepad_and_filter_cupy(filled, order, _cupy_spline_filter)
+            weights, _ = _prepad_and_filter_cupy(weights, order, _cupy_spline_filter)
+            sample_coords = coords + npad
+            z_data = _cupy_map_coords(filled, sample_coords, order=order,
+                                      mode='nearest', prefilter=False)
+            z_wt = _cupy_map_coords(weights, sample_coords, order=order,
+                                    mode='nearest', prefilter=False)
+        else:
+            z_data = _cupy_map_coords(filled, coords, order=order,
+                                      mode='nearest')
+            z_wt = _cupy_map_coords(weights, coords, order=order,
+                                    mode='nearest')
         # Majority-weight gate (see _nan_aware_interp_np for rationale).
         result = cupy.where(z_wt > 0.5,
                             z_data / cupy.maximum(z_wt, 1e-10), cupy.nan)
