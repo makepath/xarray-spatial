@@ -452,6 +452,60 @@ class TestDaskParity:
 
 
 # ---------------------------------------------------------------------------
+# Aggregate dask boundary contamination (issue #1469)
+# ---------------------------------------------------------------------------
+
+@dask_array_available
+class TestAggregateDaskBoundary:
+    """Aggregate dask path must not let overlap-padding bias the result."""
+
+    @pytest.mark.parametrize('method', ['min', 'max', 'median'])
+    def test_chunk_spanning_window_bit_identical(self, method):
+        """Aggregate windows that cross chunk boundaries must equal eager
+        numpy bit-exactly (same kernel, no padding contribution)."""
+        rng = np.random.RandomState(20240504)
+        data = rng.rand(24, 24).astype(np.float32)
+        np_agg = create_test_raster(data, backend='numpy',
+                                    attrs={'res': (1.0, 1.0)})
+        # Use a chunk size that does NOT divide the input cleanly so that
+        # output windows span chunk boundaries.
+        dk_agg = create_test_raster(data, backend='dask+numpy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=(7, 7))
+        np_out = resample(np_agg, scale_factor=0.5, method=method)
+        dk_out = resample(dk_agg, scale_factor=0.5, method=method)
+        # min/max/median over the same set of source cells should be
+        # bit-identical -- no atol slack.
+        np.testing.assert_array_equal(dk_out.values, np_out.values)
+
+    @pytest.mark.parametrize('method', ['min', 'max', 'median'])
+    def test_global_edge_extremes_match_eager(self, method):
+        """Extreme values on the global array edges must not contaminate
+        adjacent output windows. The aggregate kernel's indexing keeps the
+        global-edge pad out of any window, and boundary=np.nan reinforces
+        that contract: pad cells are NaN and would be skipped even if read.
+        Result must match the eager (non-overlapped) numpy path exactly."""
+        # Inner field is in a low range; the rightmost column is an
+        # extreme value that, if duplicated by 'nearest' padding, would
+        # show up in adjacent output windows that should not see it.
+        rng = np.random.RandomState(1469)
+        data = rng.uniform(0.0, 0.1, size=(20, 20)).astype(np.float32)
+        data[:, -1] = 999.0   # extreme right column
+        data[:, 0] = -999.0   # extreme left column
+        data[-1, :] = 999.0   # extreme bottom row
+        data[0, :] = -999.0   # extreme top row
+
+        np_agg = create_test_raster(data, backend='numpy',
+                                    attrs={'res': (1.0, 1.0)})
+        dk_agg = create_test_raster(data, backend='dask+numpy',
+                                    attrs={'res': (1.0, 1.0)},
+                                    chunks=(8, 8))
+        np_out = resample(np_agg, scale_factor=0.5, method=method)
+        dk_out = resample(dk_agg, scale_factor=0.5, method=method)
+        np.testing.assert_array_equal(dk_out.values, np_out.values)
+
+
+# ---------------------------------------------------------------------------
 # CuPy parity
 # ---------------------------------------------------------------------------
 
@@ -627,6 +681,12 @@ class TestTargetResolutionTuple:
         np.testing.assert_allclose(
             out_tuple.values, out_list.values, atol=1e-6
         )
+
+    def test_target_resolution_matches_scale_factor(self, grid_8x8):
+        # target_resolution=(2.0, 2.0) should match scale_factor=0.5.
+        a = resample(grid_8x8, target_resolution=(2.0, 2.0), method='nearest')
+        b = resample(grid_8x8, scale_factor=0.5, method='nearest')
+        np.testing.assert_allclose(a.values, b.values)
 
 
 # ---------------------------------------------------------------------------
@@ -806,6 +866,136 @@ class TestDtypePreservation:
         assert out.dtype == np.float32
         # output (0, 0) should be NaN because input (1, 1) was masked.
         assert np.isnan(out.values[0, 0])
+
+
+# ---------------------------------------------------------------------------
+# Coordinate orientation (T-3)
+# ---------------------------------------------------------------------------
+
+class TestCoordinateOrientation:
+    """Resampling must preserve the y-axis orientation of the input."""
+
+    def test_descending_y_preserved(self):
+        # 8x8 grid with strong vertical asymmetry: row 0 = 100, row 7 = 0.
+        data = np.zeros((8, 8), dtype=np.float32)
+        for r in range(8):
+            data[r, :] = (7 - r) * (100.0 / 7.0)
+        # Descending y: 10, 9, ..., 3.  x ascending.
+        y = np.arange(10, 2, -1, dtype=np.float64)
+        x = np.arange(8, dtype=np.float64)
+        agg = xr.DataArray(
+            data, dims=('y', 'x'), coords={'y': y, 'x': x},
+            attrs={'res': (1.0, 1.0)},
+        )
+
+        out = resample(agg, scale_factor=0.5, method='average')
+
+        # Output should have 4 y-coords, still descending.
+        assert out.shape == (4, 4)
+        assert np.all(np.diff(out.y.values) < 0), (
+            "output y must remain descending"
+        )
+
+        # Cell-centered y-coords for a 4-pixel output spanning the same
+        # extent as input y in [2.5, 10.5]: centers at 9.5, 7.5, 5.5, 3.5.
+        np.testing.assert_allclose(
+            out.y.values, [9.5, 7.5, 5.5, 3.5], atol=1e-6
+        )
+
+        # Top row of output should average the (high-value) top of the
+        # input, bottom row should average the (low-value) bottom.  No
+        # vertical flip.
+        assert out.values[0, 0] > out.values[-1, 0], (
+            "top of output should be greater than bottom (no flip)"
+        )
+        # Block-average of rows 0 and 1 = mean of 100 and ~85.7 = ~92.86.
+        np.testing.assert_allclose(out.values[0, 0], 92.857143, atol=1e-4)
+        # Bottom block averages rows 6 and 7 = mean of ~14.29 and 0 = ~7.14.
+        np.testing.assert_allclose(out.values[-1, 0], 7.142857, atol=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# Inf input behavior (T-6)
+# ---------------------------------------------------------------------------
+
+class TestInfHandling:
+    """Lock in the current behavior: infs propagate, they are not NaN-coerced.
+
+    The NaN-aware interpolation path treats infs the same as any other
+    finite value (they pass through ``np.isnan`` checks), so the
+    interpolation kernel includes them in its weighted sum and the
+    aggregate kernel includes them in min / max / mean.  Output values
+    that depend on an inf input cell come back as +/- inf.
+    """
+
+    @pytest.fixture
+    def grid_with_infs(self):
+        data = np.ones((6, 6), dtype=np.float32)
+        data[1, 1] = np.inf
+        data[4, 4] = -np.inf
+        return create_test_raster(data, attrs={'res': (1.0, 1.0)})
+
+    def test_bilinear_propagates_inf(self, grid_with_infs):
+        out = resample(grid_with_infs, scale_factor=0.5, method='bilinear')
+        # +inf and -inf both reach the output, no NaN coercion.
+        assert np.isposinf(out.values).any()
+        assert np.isneginf(out.values).any()
+        assert not np.isnan(out.values).any()
+
+    def test_average_propagates_inf(self, grid_with_infs):
+        out = resample(grid_with_infs, scale_factor=0.5, method='average')
+        assert np.isposinf(out.values).any()
+        assert np.isneginf(out.values).any()
+        assert not np.isnan(out.values).any()
+
+    def test_nearest_passes_inf_through(self, grid_with_infs):
+        out = resample(grid_with_infs, scale_factor=0.5, method='nearest')
+        # Nearest only picks one input cell per output pixel, so at
+        # least one infinite input survives in the output.
+        assert np.isinf(out.values).any()
+
+
+# ---------------------------------------------------------------------------
+# 4D input rejection message (T-7)
+# ---------------------------------------------------------------------------
+
+class TestDimensionRejection:
+    def test_4d_input_error_message(self):
+        # 3D (band, y, x) is now valid; 4D should still be rejected.
+        data = np.zeros((2, 2, 4, 4), dtype=np.float32)
+        agg = xr.DataArray(
+            data, dims=('time', 'band', 'y', 'x'),
+            coords={
+                'time': [0, 1],
+                'band': [1, 2],
+                'y': np.arange(4, dtype=np.float64),
+                'x': np.arange(4, dtype=np.float64),
+            },
+            attrs={'res': (1.0, 1.0)},
+        )
+        with pytest.raises(ValueError, match="must be 2D"):
+            resample(agg, scale_factor=0.5, method='nearest')
+
+
+# ---------------------------------------------------------------------------
+# Bit reproducibility (T-9)
+# ---------------------------------------------------------------------------
+
+class TestReproducibility:
+    """Repeat calls with identical inputs must produce identical outputs."""
+
+    @pytest.fixture
+    def random_grid(self):
+        data = np.random.RandomState(1471).rand(20, 20).astype(np.float32)
+        return create_test_raster(data, attrs={'res': (1.0, 1.0)})
+
+    @pytest.mark.parametrize('method', ['bilinear', 'cubic', 'average'])
+    def test_bit_identical_repeat(self, random_grid, method):
+        out1 = resample(random_grid, scale_factor=0.5, method=method)
+        out2 = resample(random_grid, scale_factor=0.5, method=method)
+        assert np.array_equal(out1.values, out2.values), (
+            f"{method} resample is not bit-identical across runs"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1016,5 +1206,3 @@ class TestNodata:
         # Without override the attr would say -999 (no match) and -1 would
         # leak through; with override the top-left output pixel is NaN.
         assert np.isnan(out.values[0, 0])
-
-
