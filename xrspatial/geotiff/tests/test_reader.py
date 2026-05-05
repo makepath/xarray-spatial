@@ -115,3 +115,71 @@ class TestReadToArray:
         arr, geo_info = read_to_array(path)
         assert geo_info.crs_epsg == 4326
         assert geo_info.transform.origin_x == pytest.approx(-120.0)
+
+
+class TestPartialTileValidation_1486:
+    """Issue #1486: corrupt tile/strip data should raise a clear error.
+
+    Without validation a truncated deflate stream causes numpy.reshape to
+    raise an opaque "cannot reshape array of size N" with no hint of which
+    tile is at fault.  These tests pin the new behaviour: a clear ValueError
+    naming the size mismatch.
+    """
+
+    def _zero_out_last_tile(self, path):
+        """Replace the last tile's compressed bytes with zeros so deflate
+        decodes a short stream."""
+        from xrspatial.geotiff._header import parse_all_ifds, parse_header
+        with open(path, 'rb') as f:
+            data = bytearray(f.read())
+        header = parse_header(bytes(data))
+        ifds = parse_all_ifds(bytes(data), header)
+        ifd = ifds[0]
+        if ifd.tile_offsets is not None:
+            offsets = ifd.tile_offsets
+            counts = ifd.tile_byte_counts
+        else:
+            offsets = ifd.strip_offsets
+            counts = ifd.strip_byte_counts
+        last_off = offsets[-1]
+        last_count = counts[-1]
+        # Zero deflate stream: header 0x78 0x9C followed by an empty stored
+        # block.  zlib will return 0 bytes -- a clear undersized result.
+        zero_stream = b'\x78\x9c\x03\x00\x00\x00\x00\x01'
+        # Pad with zeros to original length so file layout stays intact.
+        padded = zero_stream + b'\x00' * max(0, last_count - len(zero_stream))
+        for i, b in enumerate(padded[:last_count]):
+            data[last_off + i] = b
+        with open(path, 'wb') as f:
+            f.write(bytes(data))
+
+    def test_truncated_tile_raises_clear_error(self, tmp_path):
+        from xrspatial.geotiff._writer import write
+
+        pixels = np.arange(256, dtype=np.float32).reshape(16, 16)
+        path = str(tmp_path / 'truncated_1486.tif')
+        write(pixels, path, compression='deflate', tiled=True, tile_size=8)
+
+        self._zero_out_last_tile(path)
+
+        with pytest.raises(ValueError) as exc:
+            read_to_array(path)
+        msg = str(exc.value)
+        assert 'size mismatch' in msg
+        assert 'expected' in msg
+        assert 'truncated or corrupt' in msg
+
+    def test_valid_edge_tile_still_works(self, tmp_path):
+        """Edge tiles in a valid file decompress to full tile size; the
+        validation should not flag this as corrupt."""
+        from xrspatial.geotiff._writer import write
+
+        # 9 x 9 with tile_size=4 -> a 3x3 tile grid where the right and
+        # bottom tiles are partial.  These exercise the legitimate
+        # "decompress full tile, slice top-left actual_h x actual_w" path.
+        pixels = np.arange(81, dtype=np.float32).reshape(9, 9)
+        path = str(tmp_path / 'edge_tiles_1486.tif')
+        write(pixels, path, compression='deflate', tiled=True, tile_size=4)
+
+        arr, _ = read_to_array(path)
+        np.testing.assert_array_equal(arr, pixels)
