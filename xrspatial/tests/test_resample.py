@@ -742,6 +742,133 @@ class TestMemoryGuard:
 
 
 # ---------------------------------------------------------------------------
+# Dtype preservation (issue #1467)
+# ---------------------------------------------------------------------------
+
+class TestDtypePreservation:
+    """resample() should preserve input float dtype rather than always
+    forcing float32.  Integer input still becomes float32 because
+    NaN-sentinel resampling needs a float type."""
+
+    @pytest.mark.parametrize("method",
+                             ['nearest', 'bilinear', 'cubic', 'average'])
+    def test_float64_input_keeps_float64(self, method):
+        data = np.linspace(0, 1, 64 * 64,
+                           dtype=np.float64).reshape(64, 64)
+        agg = create_test_raster(data, backend='numpy',
+                                 attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method=method)
+        assert out.dtype == np.float64
+
+    @pytest.mark.parametrize("method",
+                             ['nearest', 'bilinear', 'cubic', 'average'])
+    def test_float32_input_keeps_float32(self, method):
+        data = np.linspace(0, 1, 64 * 64,
+                           dtype=np.float32).reshape(64, 64)
+        agg = create_test_raster(data, backend='numpy',
+                                 attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method=method)
+        assert out.dtype == np.float32
+
+    @pytest.mark.parametrize("dtype", [np.int16, np.int32, np.int64,
+                                       np.uint8, np.uint16])
+    def test_integer_input_returns_float32(self, dtype):
+        data = np.arange(64 * 64, dtype=dtype).reshape(64, 64)
+        agg = create_test_raster(data, backend='numpy',
+                                 attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method='nearest')
+        assert out.dtype == np.float32
+
+    def test_float64_precision_preserved(self):
+        # Use a smooth float64 signal whose downsampled values can be
+        # predicted analytically and require >float32 precision to verify.
+        y, x = np.mgrid[0:32, 0:32].astype(np.float64)
+        data = (y + x) * 1e-10  # values < float32 ULP at 1.0
+        agg = create_test_raster(data, backend='numpy',
+                                 attrs={'res': (1.0, 1.0)})
+
+        out = resample(agg, scale_factor=0.5, method='nearest')
+        assert out.dtype == np.float64
+
+        # A float32 round-trip would round these tiny values to a
+        # quantised grid -- check we did NOT do that.
+        as_float32 = data.astype(np.float32).astype(np.float64)
+        # The float64 result should differ from a float32 round-trip
+        # at the indexed sample positions (i.e. precision retained).
+        sampled = data[1::2, 1::2]
+        sampled_f32 = as_float32[1::2, 1::2]
+        # They differ at the float32 quantisation level.
+        assert not np.array_equal(sampled, sampled_f32)
+        # And our nearest-neighbour result matches the float64 sampling
+        # to full precision, not the float32 quantised version.
+        np.testing.assert_allclose(out.values, sampled, atol=1e-12)
+
+    @pytest.mark.skipif(not dask_array_available(),
+                        reason="dask not installed")
+    @pytest.mark.parametrize("method", ['nearest', 'bilinear', 'average'])
+    def test_dask_float64_keeps_float64(self, method):
+        import dask.array as da
+        data = np.linspace(0, 1, 64 * 64,
+                           dtype=np.float64).reshape(64, 64)
+        darr = da.from_array(data, chunks=16)
+        agg = create_test_raster(data, backend='numpy',
+                                 attrs={'res': (1.0, 1.0)})
+        agg.data = darr
+        out = resample(agg, scale_factor=0.5, method=method)
+        assert out.dtype == np.float64
+        assert out.compute().dtype == np.float64
+
+    @pytest.mark.skipif(not dask_array_available(),
+                        reason="dask not installed")
+    @pytest.mark.parametrize("method", ['nearest', 'bilinear', 'average'])
+    def test_dask_float32_keeps_float32(self, method):
+        import dask.array as da
+        data = np.linspace(0, 1, 64 * 64,
+                           dtype=np.float32).reshape(64, 64)
+        darr = da.from_array(data, chunks=16)
+        agg = create_test_raster(data, backend='numpy',
+                                 attrs={'res': (1.0, 1.0)})
+        agg.data = darr
+        out = resample(agg, scale_factor=0.5, method=method)
+        assert out.dtype == np.float32
+        assert out.compute().dtype == np.float32
+
+    @pytest.mark.skipif(not dask_array_available(),
+                        reason="dask not installed")
+    def test_dask_int_input_returns_float32(self):
+        import dask.array as da
+        data = np.arange(64 * 64, dtype=np.int32).reshape(64, 64)
+        darr = da.from_array(data, chunks=16)
+        agg = create_test_raster(data, backend='numpy',
+                                 attrs={'res': (1.0, 1.0)})
+        agg.data = darr
+        out = resample(agg, scale_factor=0.5, method='nearest')
+        assert out.dtype == np.float32
+        assert out.compute().dtype == np.float32
+
+    def test_int_input_with_nodata_propagates_nan(self):
+        # Gated on whether resample() exposes a `nodata` parameter --
+        # if it doesn't, skip the NaN-sentinel piece since there's no
+        # way to mark integer cells as missing.
+        import inspect
+        sig = inspect.signature(resample)
+        if 'nodata' not in sig.parameters:
+            pytest.skip("resample() has no nodata parameter (yet)")
+
+        data = np.arange(64 * 64, dtype=np.int32).reshape(64, 64)
+        # With scale_factor=0.5 and block-centered coords, output pixel (0, 0)
+        # samples from input coord ~(0.5, 0.5) which rounds to input (1, 1).
+        data[1, 1] = -9999  # sentinel at a position sampled by output (0, 0)
+        agg = create_test_raster(data, backend='numpy',
+                                 attrs={'res': (1.0, 1.0)})
+        out = resample(agg, scale_factor=0.5, method='nearest',
+                       nodata=-9999)
+        assert out.dtype == np.float32
+        # output (0, 0) should be NaN because input (1, 1) was masked.
+        assert np.isnan(out.values[0, 0])
+
+
+# ---------------------------------------------------------------------------
 # Coordinate orientation (T-3)
 # ---------------------------------------------------------------------------
 
