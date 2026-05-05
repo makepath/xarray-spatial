@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import math
 import mmap
+import os as _os_module
 import threading
 import urllib.request
+from collections import OrderedDict
 
 import numpy as np
 
@@ -45,28 +47,55 @@ def _check_dimensions(width, height, samples, max_pixels):
 # Data source abstraction
 # ---------------------------------------------------------------------------
 
+#: Soft cap on the number of mmap entries the reader keeps open at once.
+#: When the cache size exceeds this, the least-recently-used *idle* entry
+#: (refcount 0) is closed. In-use entries are never evicted. Override via
+#: the ``XRSPATIAL_GEOTIFF_MMAP_CACHE_SIZE`` environment variable.
+_DEFAULT_MMAP_CACHE_SIZE = 32
+
+
+def _mmap_cache_size_from_env() -> int:
+    """Read the cache size cap from the environment, falling back to the default."""
+    raw = _os_module.environ.get('XRSPATIAL_GEOTIFF_MMAP_CACHE_SIZE')
+    if raw is None:
+        return _DEFAULT_MMAP_CACHE_SIZE
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_MMAP_CACHE_SIZE
+    return max(1, val)
+
+
 class _MmapCache:
-    """Thread-safe, reference-counted mmap cache.
+    """Thread-safe, reference-counted, bounded LRU mmap cache.
 
     Multiple threads reading the same file share a single read-only mmap.
-    The mmap is closed when the last reference is released.
+    The cache keeps idle (refcount 0) mmaps around so repeated opens of the
+    same file avoid the cost of re-mapping. When the number of entries
+    exceeds the cap (default 32, or ``XRSPATIAL_GEOTIFF_MMAP_CACHE_SIZE``),
+    the least-recently-used *idle* entry is evicted. Entries with active
+    references are never evicted.
+
     mmap slicing on a read-only mapping is thread-safe (no seek involved).
     """
 
-    def __init__(self):
+    def __init__(self, max_size: int | None = None):
         self._lock = threading.Lock()
-        # path -> (fh, mm, refcount)
-        self._entries: dict[str, tuple] = {}
+        # path -> [fh, mm, size, refcount] (list so we can mutate in place)
+        # OrderedDict gives LRU semantics via move_to_end on access.
+        self._entries: OrderedDict[str, list] = OrderedDict()
+        self._max_size = (max_size if max_size is not None
+                          else _mmap_cache_size_from_env())
 
     def acquire(self, path: str):
         """Get or create a read-only mmap for *path*. Returns (mm, size)."""
-        import os
-        real = os.path.realpath(path)
+        real = _os_module.path.realpath(path)
         with self._lock:
-            if real in self._entries:
-                fh, mm, size, rc = self._entries[real]
-                self._entries[real] = (fh, mm, size, rc + 1)
-                return mm, size
+            entry = self._entries.get(real)
+            if entry is not None:
+                entry[3] += 1
+                self._entries.move_to_end(real)
+                return entry[1], entry[2]
 
             fh = open(real, 'rb')
             fh.seek(0, 2)
@@ -76,26 +105,56 @@ class _MmapCache:
                 mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
             else:
                 mm = None
-            self._entries[real] = (fh, mm, size, 1)
+            self._entries[real] = [fh, mm, size, 1]
+            self._evict_locked()
             return mm, size
 
     def release(self, path: str):
-        """Decrement the reference count; close the mmap when it hits zero."""
-        import os
-        real = os.path.realpath(path)
+        """Decrement the reference count.
+
+        When the count hits zero the entry stays cached (keyed by realpath)
+        until LRU eviction or :meth:`clear` is called.
+        """
+        real = _os_module.path.realpath(path)
         with self._lock:
             entry = self._entries.get(real)
             if entry is None:
                 return
-            fh, mm, size, rc = entry
-            rc -= 1
-            if rc <= 0:
-                del self._entries[real]
+            entry[3] -= 1
+            if entry[3] <= 0:
+                # Idle but still cached; mark LRU position.
+                self._entries.move_to_end(real)
+                self._evict_locked()
+
+    def _evict_locked(self):
+        """Drop oldest *idle* entries until the cache is at or below the cap."""
+        if len(self._entries) <= self._max_size:
+            return
+        # Walk from the front (oldest); only close idle (refcount 0) entries.
+        # An in-use entry can still happen to be at the front if the same
+        # file was acquired long ago and held; skip it.
+        to_drop = []
+        for key, entry in list(self._entries.items()):
+            if len(self._entries) - len(to_drop) <= self._max_size:
+                break
+            if entry[3] <= 0:
+                to_drop.append(key)
+        for key in to_drop:
+            entry = self._entries.pop(key)
+            _, mm, _, _ = entry
+            if mm is not None:
+                mm.close()
+            entry[0].close()
+
+    def clear(self):
+        """Close and drop all idle entries (used by tests)."""
+        with self._lock:
+            for key in [k for k, v in self._entries.items() if v[3] <= 0]:
+                entry = self._entries.pop(key)
+                _, mm, _, _ = entry
                 if mm is not None:
                     mm.close()
-                fh.close()
-            else:
-                self._entries[real] = (fh, mm, size, rc)
+                entry[0].close()
 
 
 # Module-level cache shared across all reads
@@ -565,9 +624,14 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
                     continue
                 tile_jobs.append((band_idx, tr, tc, tile_idx, tile_samples))
 
-    # Decode tiles -- parallel for compressed, sequential for uncompressed
+    # Decode tiles in parallel when the work per tile is large enough to
+    # outweigh the thread-pool overhead. Uncompressed multi-tile reads also
+    # benefit because numpy frombuffer + slice copies aren't free at large
+    # tile sizes. Threshold (~64K decoded pixels per tile) was picked to
+    # avoid pool overhead on small 64x64 / 128x128 tile reads.
     n_tiles = len(tile_jobs)
-    use_parallel = (compression != 1 and n_tiles > 4)  # 1 = COMPRESSION_NONE
+    tile_pixels = tw * th
+    use_parallel = (n_tiles > 1 and tile_pixels > 64 * 1024)
 
     def _decode_one(job):
         band_idx, tr, tc, tile_idx, tile_samples = job
