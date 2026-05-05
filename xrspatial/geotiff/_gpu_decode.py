@@ -11,6 +11,51 @@ import math
 import numpy as np
 from numba import cuda
 
+#: Fraction of free GPU memory we're willing to allocate in a single call.
+#: Above this, raise MemoryError up-front so the caller gets an actionable
+#: error rather than a CUDA OOM deep inside the kernel launch.
+_GPU_FREE_MEMORY_FRACTION = 0.9
+
+
+def _check_gpu_memory(required_bytes: int, what: str = "tile buffer") -> None:
+    """Raise MemoryError if *required_bytes* would exhaust the GPU.
+
+    Calls ``cupy.cuda.runtime.memGetInfo()`` and refuses any allocation
+    that would consume more than ``_GPU_FREE_MEMORY_FRACTION`` of the
+    currently free memory. This is a soft guard -- another process can
+    grab memory between the check and the allocation -- but it catches
+    the common 'this single tensor is way too big' case before CUDA
+    raises a less informative error.
+
+    Parameters
+    ----------
+    required_bytes : int
+        Bytes the caller is about to allocate (sum across all buffers in
+        the same logical step).
+    what : str
+        Short label included in the error message, e.g. ``"tile buffer"``.
+    """
+    if required_bytes <= 0:
+        return
+    try:
+        import cupy
+        free, total = cupy.cuda.runtime.memGetInfo()
+    except Exception:
+        # If we can't query, fall through and let the real allocation
+        # surface the error. Don't add a second failure mode here.
+        return
+
+    budget = int(free * _GPU_FREE_MEMORY_FRACTION)
+    if required_bytes > budget:
+        raise MemoryError(
+            f"GPU out of memory: {what} needs {required_bytes:,} bytes "
+            f"but only {free:,} bytes free on device (cap is "
+            f"{_GPU_FREE_MEMORY_FRACTION:.0%} of free = {budget:,} "
+            "bytes). Consider reading the file in chunks via "
+            "read_geotiff_dask(..., chunks=...) or freeing GPU memory "
+            "with cupy.get_default_memory_pool().free_all_blocks()."
+        )
+
 # LZW constants (same as _compression.py)
 LZW_CLEAR_CODE = 256
 LZW_EOI_CODE = 257
@@ -1006,6 +1051,8 @@ def _try_nvjpeg_batch_decode(compressed_tiles, tile_width, tile_height,
                         ('pitch', ctypes.c_size_t * 4),
                     ]
 
+                _check_gpu_memory(n_tiles * tile_bytes,
+                                  what="nvJPEG output buffer")
                 d_all = cupy.empty(n_tiles * tile_bytes, dtype=cupy.uint8)
 
                 decode_fn = getattr(lib, 'nvjpegDecode')
@@ -1353,6 +1400,8 @@ def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
 
     tiles_across = math.ceil(image_width / tile_width)
     total_pixels = image_width * image_height
+    _check_gpu_memory(total_pixels * bytes_per_pixel,
+                      what="full-image output buffer")
     d_output = cupy.empty(total_pixels * bytes_per_pixel, dtype=cupy.uint8)
 
     tpb = 256
@@ -1440,6 +1489,7 @@ def gpu_decode_tiles(
 
         # Allocate decompressed buffer on device
         decomp_offsets = np.arange(n_tiles, dtype=np.int64) * tile_bytes
+        _check_gpu_memory(n_tiles * tile_bytes, what="tile decode buffer")
         d_decomp = cupy.zeros(n_tiles * tile_bytes, dtype=cupy.uint8)
         d_decomp_offsets = cupy.asarray(decomp_offsets)
         d_tile_sizes = cupy.full(n_tiles, tile_bytes, dtype=cupy.int64)
@@ -1470,6 +1520,7 @@ def gpu_decode_tiles(
         d_comp_sizes = cupy.asarray(np.array(comp_sizes, dtype=np.int64))
 
         decomp_offsets = np.arange(n_tiles, dtype=np.int64) * tile_bytes
+        _check_gpu_memory(n_tiles * tile_bytes, what="tile decode buffer")
         d_decomp = cupy.zeros(n_tiles * tile_bytes, dtype=cupy.uint8)
         d_decomp_offsets = cupy.asarray(decomp_offsets)
         d_tile_sizes = cupy.full(n_tiles, tile_bytes, dtype=cupy.int64)
@@ -1602,6 +1653,8 @@ def gpu_decode_tiles(
     # Assemble tiles into output image on GPU
     tiles_across = math.ceil(image_width / tile_width)
     total_pixels = image_width * image_height
+    _check_gpu_memory(total_pixels * bytes_per_pixel,
+                      what="full-image output buffer")
     d_output = cupy.empty(total_pixels * bytes_per_pixel, dtype=cupy.uint8)
 
     tpb = 256
