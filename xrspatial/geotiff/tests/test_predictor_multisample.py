@@ -396,3 +396,53 @@ def test_apply_predictor3_matches_tn3_reference_1247():
     decoded = _apply_predictor(encoded.copy(), 3, w, h, bps, samples=samples)
 
     np.testing.assert_array_equal(decoded, raw)
+
+
+# ---------------------------------------------------------------------------
+# Issue #1479: GPU predictor=3 multi-sample coverage gap
+# ---------------------------------------------------------------------------
+
+@gpu_only
+@pytest.mark.parametrize("samples,dtype_str", [
+    (3, "float32"),
+    (4, "float32"),
+    (3, "float64"),
+    (4, "float64"),
+])
+def test_gpu_predictor3_multisample_matches_cpu_1479(
+        tmp_path, samples, dtype_str):
+    """GPU decode of a tiled multi-sample float TIFF with predictor=3.
+
+    Regression coverage for issue #1479.  The GPU
+    ``_fp_predictor_decode_kernel`` correctly handles multi-sample float
+    rasters, but predictor=3 was not exercised by CI (only predictor=2
+    multi-sample was).  This test round-trips random float data through
+    ``to_geotiff`` with ``predictor=3`` and asserts the GPU decode is
+    bit-exactly equal to the CPU decode and to the source array.
+    """
+    dtype = np.dtype(dtype_str)
+    h, w = 64, 64
+    rng = np.random.RandomState(1479)
+    data = rng.uniform(-1000.0, 1000.0,
+                       size=(h, w, samples)).astype(dtype)
+    da = xr.DataArray(data, dims=['y', 'x', 'band'])
+
+    path = str(tmp_path / f"fp_pred3_{samples}_{dtype_str}_1479.tif")
+    to_geotiff(da, path, compression='deflate', predictor=3,
+               tiled=True, tile_size=32)
+
+    cpu_arr = open_geotiff(path).values
+    assert cpu_arr.shape == (h, w, samples)
+    assert cpu_arr.dtype == dtype
+    # CPU round-trip must reproduce the source exactly (predictor=3 is
+    # lossless).
+    np.testing.assert_array_equal(cpu_arr, data)
+
+    gpu_da = open_geotiff(path, gpu=True)
+    gpu_arr = _gpu_to_numpy(gpu_da)
+
+    assert gpu_arr.shape == cpu_arr.shape
+    assert gpu_arr.dtype == cpu_arr.dtype
+    # Bit-for-bit GPU vs CPU parity is the regression we're guarding.
+    np.testing.assert_array_equal(gpu_arr, cpu_arr)
+    np.testing.assert_array_equal(gpu_arr, data)
