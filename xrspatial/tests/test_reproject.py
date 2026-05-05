@@ -2435,8 +2435,23 @@ class TestMergeDaskParity:
         np.testing.assert_array_equal(eager[~eager_nan], dasked[~dask_nan])
 
     def test_merge_dask_different_crs_matches_eager(self):
-        """Different-CRS merge should match within float tolerance."""
+        """Different-CRS merge should match within float tolerance.
+
+        Uses the synchronous dask scheduler. Multi-CRS reprojection
+        creates a fresh ``pyproj.Transformer`` per chunk, and PROJ's
+        first-time CRS-database load is not safe under concurrent
+        threaded workers on macOS (the test would SIGABRT mid-compute).
+        Synchronous compute exercises the same dask graph without the
+        threading dimension; CRS thread-safety is its own concern,
+        outside the scope of this parity test.
+        """
+        import pyproj
         from xrspatial.reproject import merge
+        # Pre-warm the PROJ database in this thread so that any first-init
+        # work happens here, not concurrently inside dask compute.
+        pyproj.CRS.from_epsg(4326)
+        pyproj.CRS.from_epsg(3857)
+
         a_data = np.arange(256, dtype=np.float64).reshape(16, 16)
         b_data = (np.arange(256, dtype=np.float64) + 100.0).reshape(16, 16)
         # One in WGS84, one in Web Mercator (forces reprojection)
@@ -2448,7 +2463,7 @@ class TestMergeDaskParity:
 
         eager = merge(
             [a, b], target_crs='EPSG:4326', resolution=1.0,
-        ).compute().values
+        ).compute(scheduler='synchronous').values
 
         a_dask = a.copy()
         b_dask = b.copy()
@@ -2457,7 +2472,7 @@ class TestMergeDaskParity:
         dasked = merge(
             [a_dask, b_dask], target_crs='EPSG:4326',
             resolution=1.0, chunk_size=8,
-        ).compute().values
+        ).compute(scheduler='synchronous').values
 
         assert eager.shape == dasked.shape
         np.testing.assert_array_equal(np.isnan(eager), np.isnan(dasked))
