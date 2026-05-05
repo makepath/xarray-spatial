@@ -411,7 +411,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                overview_levels: list[int] | None = None,
                overview_resampling: str = 'mean',
                bigtiff: bool | None = None,
-               gpu: bool | None = None) -> None:
+               gpu: bool | None = None,
+               streaming_buffer_bytes: int = 256 * 1024 * 1024) -> None:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Dask-backed DataArrays are written in streaming mode: one tile-row
@@ -467,6 +468,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         'min', 'max', 'median', 'mode', or 'cubic'.
     gpu : bool or None
         Force GPU compression. None (default) auto-detects CuPy data.
+    streaming_buffer_bytes : int
+        Soft cap on bytes materialised per dask compute call when
+        streaming a dask-backed DataArray. Defaults to 256 MB. Wide
+        rasters whose tile-row exceeds this budget are split into
+        horizontal segments. Ignored for numpy / CuPy / COG paths.
     """
     # VRT tiled output
     if path.lower().endswith('.vrt'):
@@ -599,6 +605,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                 gdal_metadata_xml=gdal_meta_xml,
                 extra_tags=extra_tags_list,
                 bigtiff=bigtiff,
+                streaming_buffer_bytes=streaming_buffer_bytes,
             )
             return
 

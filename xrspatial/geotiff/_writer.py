@@ -1118,15 +1118,31 @@ def write_streaming(dask_data, path: str, *,
                     resolution_unit: int | None = None,
                     gdal_metadata_xml: str | None = None,
                     extra_tags: list | None = None,
-                    bigtiff: bool | None = None) -> None:
-    """Write a dask array as a GeoTIFF by streaming one tile-row at a time.
+                    bigtiff: bool | None = None,
+                    streaming_buffer_bytes: int = 256 * 1024 * 1024) -> None:
+    """Write a dask array as a GeoTIFF by streaming pixel data.
 
-    Peak memory is approximately ``tile_height * width * bytes_per_sample``
-    for tiled output, or ``rows_per_strip * width * bytes_per_sample`` for
-    stripped output.
+    For tiled output, each tile-row is computed in horizontal segments
+    that fit within ``streaming_buffer_bytes``. Most rasters fit in a
+    single segment per tile-row, matching the previous behaviour. Wide
+    rasters get bounded peak memory at the cost of more dask compute
+    calls.
+
+    Peak materialised memory is approximately
+    ``min(streaming_buffer_bytes, tile_height * width * bytes_per_sample
+    * samples)`` for tiled output, or
+    ``rows_per_strip * width * bytes_per_sample * samples`` for stripped
+    output (no horizontal segmentation in strip mode).
 
     After all pixel data is written the IFD offset and byte-count arrays
     are patched in place.
+
+    Parameters
+    ----------
+    streaming_buffer_bytes : int
+        Soft cap on bytes materialised per dask compute call when
+        writing tiles. Defaults to 256 MB. Values smaller than one tile
+        column are clamped up to one tile column.
     """
     import os
     import tempfile
@@ -1312,59 +1328,83 @@ def write_streaming(dask_data, path: str, *,
 
             # Stream pixel data
             if tiled:
+                # Decide how many tile-columns we can buffer at once.
+                # bytes_per_full_tile_row = tile_h * width * dtype * samples;
+                # if it fits the budget we buffer the whole row (matches
+                # original behaviour). Otherwise segment horizontally,
+                # always at tile boundaries to keep slicing aligned.
+                bytes_per_tile_col = (
+                    th * tw * bytes_per_sample * samples)
+                bytes_per_full_row = bytes_per_tile_col * tiles_across
+                if bytes_per_full_row <= streaming_buffer_bytes:
+                    tiles_per_segment = tiles_across
+                else:
+                    tiles_per_segment = max(
+                        1, streaming_buffer_bytes // bytes_per_tile_col)
+
                 for tr in range(tiles_down):
                     r0 = tr * th
                     r1 = min(r0 + th, height)
                     actual_h = r1 - r0
 
-                    # Compute one tile-row from the dask graph
-                    if dask_data.ndim == 3:
-                        row_np = np.asarray(dask_data[r0:r1, :, :].compute())
-                    else:
-                        row_np = np.asarray(dask_data[r0:r1, :].compute())
-                    if hasattr(row_np, 'get'):
-                        row_np = row_np.get()
+                    for seg_start in range(0, tiles_across, tiles_per_segment):
+                        seg_end = min(seg_start + tiles_per_segment,
+                                       tiles_across)
+                        seg_c0 = seg_start * tw
+                        seg_c1 = min(seg_end * tw, width)
 
-                    if row_np.dtype != out_dtype:
-                        row_np = row_np.astype(out_dtype)
-
-                    # NaN -> nodata sentinel
-                    if (nodata is not None and row_np.dtype.kind == 'f'
-                            and not np.isnan(nodata)):
-                        nan_mask = np.isnan(row_np)
-                        if nan_mask.any():
-                            row_np = row_np.copy()
-                            row_np[nan_mask] = row_np.dtype.type(nodata)
-
-                    for tc in range(tiles_across):
-                        c0 = tc * tw
-                        c1 = min(c0 + tw, width)
-                        actual_w = c1 - c0
-
-                        tile_slice = row_np[:, c0:c1]
-
-                        if actual_h < th or actual_w < tw:
-                            if row_np.ndim == 3:
-                                padded = np.zeros((th, tw, samples),
-                                                  dtype=out_dtype)
-                            else:
-                                padded = np.zeros((th, tw), dtype=out_dtype)
-                            padded[:actual_h, :actual_w] = tile_slice
-                            tile_arr = padded
+                        # Compute just this horizontal segment
+                        if dask_data.ndim == 3:
+                            seg_np = np.asarray(
+                                dask_data[r0:r1, seg_c0:seg_c1, :].compute())
                         else:
-                            tile_arr = np.ascontiguousarray(tile_slice)
+                            seg_np = np.asarray(
+                                dask_data[r0:r1, seg_c0:seg_c1].compute())
+                        if hasattr(seg_np, 'get'):
+                            seg_np = seg_np.get()
 
-                        compressed = _compress_block(
-                            tile_arr, tw, th, samples, out_dtype,
-                            bytes_per_sample, pred_int, comp_tag,
-                            compression_level)
+                        if seg_np.dtype != out_dtype:
+                            seg_np = seg_np.astype(out_dtype)
 
-                        actual_offsets.append(current_offset)
-                        actual_counts.append(len(compressed))
-                        f.write(compressed)
-                        current_offset += len(compressed)
+                        # NaN -> nodata sentinel
+                        if (nodata is not None and seg_np.dtype.kind == 'f'
+                                and not np.isnan(nodata)):
+                            nan_mask = np.isnan(seg_np)
+                            if nan_mask.any():
+                                seg_np = seg_np.copy()
+                                seg_np[nan_mask] = seg_np.dtype.type(nodata)
 
-                    del row_np
+                        for tc in range(seg_start, seg_end):
+                            c0 = tc * tw
+                            c1 = min(c0 + tw, width)
+                            actual_w = c1 - c0
+
+                            local_c0 = c0 - seg_c0
+                            local_c1 = c1 - seg_c0
+                            tile_slice = seg_np[:, local_c0:local_c1]
+
+                            if actual_h < th or actual_w < tw:
+                                if seg_np.ndim == 3:
+                                    padded = np.zeros((th, tw, samples),
+                                                      dtype=out_dtype)
+                                else:
+                                    padded = np.zeros((th, tw), dtype=out_dtype)
+                                padded[:actual_h, :actual_w] = tile_slice
+                                tile_arr = padded
+                            else:
+                                tile_arr = np.ascontiguousarray(tile_slice)
+
+                            compressed = _compress_block(
+                                tile_arr, tw, th, samples, out_dtype,
+                                bytes_per_sample, pred_int, comp_tag,
+                                compression_level)
+
+                            actual_offsets.append(current_offset)
+                            actual_counts.append(len(compressed))
+                            f.write(compressed)
+                            current_offset += len(compressed)
+
+                        del seg_np
             else:
                 # Strip layout
                 for i in range(n_entries):

@@ -261,3 +261,74 @@ class TestCogFallback:
         result = open_geotiff(path)
         np.testing.assert_array_almost_equal(
             result.values, sample_raster.values, decimal=5)
+
+
+# -- Tile-row segmentation by streaming_buffer_bytes (#1485) ------------------
+
+class TestStreamingBufferBudget:
+    """Horizontal segmentation when a tile-row exceeds the buffer budget."""
+
+    def test_round_trip_wide_raster(self, tmp_path):
+        """Tight buffer forces multi-segment compute; output must be byte-equal."""
+        rng = np.random.default_rng(1485)
+        arr = rng.random((1024, 8192), dtype=np.float64)
+        da = xr.DataArray(arr, dims=['y', 'x'])
+        dask_da = da.chunk({'y': 256, 'x': 1024})
+
+        # Default budget: one segment covers the whole row (control)
+        ref_path = str(tmp_path / 'wide_default_1485.tif')
+        to_geotiff(dask_da, ref_path, compression='zstd')
+        ref = open_geotiff(ref_path).values
+
+        # Tight budget: forces ~2-tile segments per tile-row
+        seg_path = str(tmp_path / 'wide_segmented_1485.tif')
+        to_geotiff(dask_da, seg_path, compression='zstd',
+                   streaming_buffer_bytes=2 * 256 * 256 * 8)  # 2 tile cols
+        seg = open_geotiff(seg_path).values
+
+        np.testing.assert_array_equal(ref, arr)
+        np.testing.assert_array_equal(seg, arr)
+
+    def test_tight_4mb_budget_succeeds(self, tmp_path):
+        """A 4 MB cap on a wide raster must succeed without OOM."""
+        # 256 rows * 8192 cols * 8 bytes = 16 MB per tile-row.
+        # 4 MB budget forces splitting each tile-row into segments.
+        arr = np.arange(256 * 8192, dtype=np.float64).reshape(256, 8192)
+        da = xr.DataArray(arr, dims=['y', 'x'])
+        dask_da = da.chunk({'y': 256, 'x': 2048})
+
+        path = str(tmp_path / 'tight_budget_1485.tif')
+        to_geotiff(dask_da, path, compression='zstd',
+                   streaming_buffer_bytes=4 * 1024 * 1024)
+
+        result = open_geotiff(path).values
+        np.testing.assert_array_equal(result, arr)
+
+    def test_smaller_than_one_tile_clamps(self, tmp_path):
+        """Budget below one tile must still produce a valid file (clamped)."""
+        arr = np.arange(256 * 1024, dtype=np.float32).reshape(256, 1024)
+        da = xr.DataArray(arr, dims=['y', 'x'])
+        dask_da = da.chunk({'y': 256, 'x': 256})
+
+        path = str(tmp_path / 'tiny_budget_1485.tif')
+        # 1 byte is well below one tile (256*256*4 = 262144 bytes)
+        to_geotiff(dask_da, path, compression='zstd',
+                   streaming_buffer_bytes=1)
+
+        result = open_geotiff(path).values
+        np.testing.assert_array_equal(result, arr)
+
+    def test_multiband_segmentation(self, tmp_path):
+        """3-band float64 raster with horizontal segmentation."""
+        rng = np.random.default_rng(1485)
+        arr = rng.random((512, 2048, 3), dtype=np.float64)
+        da = xr.DataArray(arr, dims=['y', 'x', 'band'])
+        dask_da = da.chunk({'y': 256, 'x': 512, 'band': 3})
+
+        path = str(tmp_path / 'multiband_1485.tif')
+        # Force ~2 tile-cols per segment
+        to_geotiff(dask_da, path, compression='zstd',
+                   streaming_buffer_bytes=2 * 256 * 256 * 8 * 3)
+
+        result = open_geotiff(path).values
+        np.testing.assert_array_almost_equal(result, arr, decimal=10)
