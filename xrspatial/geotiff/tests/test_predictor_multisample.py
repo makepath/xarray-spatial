@@ -402,6 +402,194 @@ def test_apply_predictor3_matches_tn3_reference_1247():
 # Issue #1479: GPU predictor=3 multi-sample coverage gap
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Sample-level predictor=2 (libtiff/GDAL convention) for multi-byte dtypes
+# ---------------------------------------------------------------------------
+#
+# Per TIFF Technical Note: predictor=2 differences are taken between
+# adjacent same-component samples in the sample's natural bit width
+# (uint16 wraps at 65536, uint32 at 2^32, ...).  A byte-wise
+# implementation drops the inter-byte carry for any sample wider than
+# one byte, so xrspatial must read uint16/int16/uint32/int32 TIFFs
+# written with predictor=2 by libtiff-compatible tools (rasterio, GDAL,
+# tifffile) without corruption, and write TIFFs that those tools can
+# read back without corruption.
+
+try:
+    import tifffile as _tifffile  # noqa: F401
+    _HAS_TIFFFILE = True
+except Exception:
+    _HAS_TIFFFILE = False
+
+
+tifffile_required = pytest.mark.skipif(
+    not _HAS_TIFFFILE, reason="Requires the tifffile package")
+
+
+@tifffile_required
+@pytest.mark.parametrize("dtype_str", ["uint16", "int16", "uint32", "int32"])
+def test_predictor2_reads_libtiff_multibyte_correctly(tmp_path, dtype_str):
+    """xrspatial reads predictor=2 TIFFs with multi-byte samples correctly.
+
+    The bug: the byte-wise predictor decode dropped inter-byte carry,
+    so libtiff-style sample-wise differences came back as garbage.  We
+    write a known array via tifffile (which uses libtiff conventions)
+    and verify xrspatial reads it back exactly.
+    """
+    import tifffile
+
+    dtype = np.dtype(dtype_str)
+    arr = np.array([[1000, 2000, 3000, 4000],
+                    [5000, 6000, 7000, 8000],
+                    [9000, 10000, 11000, 12000],
+                    [13000, 14000, 15000, 16000]], dtype=dtype)
+
+    path = str(tmp_path / f"libtiff_pred2_{dtype_str}.tif")
+    tifffile.imwrite(path, arr, compression='deflate', predictor=2)
+
+    out = open_geotiff(path).values
+    np.testing.assert_array_equal(out, arr)
+
+
+@tifffile_required
+def test_predictor2_reads_libtiff_multiband_uint16(tmp_path):
+    """Multi-band chunky uint16 with predictor=2 round-trips through tifffile."""
+    import tifffile
+
+    arr = (np.arange(48).reshape(4, 4, 3) * 100).astype(np.uint16)
+    path = str(tmp_path / "libtiff_pred2_rgb_uint16.tif")
+    tifffile.imwrite(path, arr, compression='deflate',
+                     predictor=2, photometric='rgb')
+
+    out = open_geotiff(path).values
+    np.testing.assert_array_equal(out, arr)
+
+
+@tifffile_required
+@pytest.mark.parametrize("dtype_str", ["uint16", "int16", "uint32", "int32"])
+def test_predictor2_writer_interops_with_libtiff(tmp_path, dtype_str):
+    """xrspatial-written predictor=2 TIFFs decode correctly under tifffile.
+
+    The encoder must produce sample-level differences so that
+    libtiff/GDAL/rasterio can decode the file.  Round-trip through
+    xrspatial alone is not enough -- a byte-wise encoder paired with a
+    byte-wise decoder agrees with itself but corrupts the file for
+    everyone else.
+    """
+    import tifffile
+
+    dtype = np.dtype(dtype_str)
+    arr = (np.arange(16, dtype=dtype) * 250).reshape(4, 4)
+    da = xr.DataArray(arr, dims=('y', 'x'))
+
+    path = str(tmp_path / f"xrs_pred2_{dtype_str}.tif")
+    to_geotiff(da, path, compression='deflate', predictor=2)
+
+    out_xrs = open_geotiff(path).values
+    np.testing.assert_array_equal(out_xrs, arr)
+
+    out_tiff = tifffile.imread(path)
+    np.testing.assert_array_equal(out_tiff, arr)
+
+
+@gpu_only
+@tifffile_required
+@pytest.mark.parametrize("dtype_str", ["uint16", "int16", "uint32"])
+def test_gpu_predictor2_multibyte_matches_cpu(tmp_path, dtype_str):
+    """GPU decode of predictor=2 with multi-byte samples matches CPU.
+
+    Regression for the same sample-level differencing fix on the GPU
+    kernels.  The image is written via tifffile (libtiff convention) so
+    both backends must walk the predictor inverse at sample resolution.
+    """
+    import tifffile
+
+    dtype = np.dtype(dtype_str)
+    h, w = 32, 32
+    rng = np.random.RandomState(42)
+    high = np.iinfo(dtype).max // 4
+    low = np.iinfo(dtype).min // 4 if dtype.kind == 'i' else 0
+    data = rng.randint(low, high, size=(h, w), dtype=dtype)
+
+    path = str(tmp_path / f"gpu_pred2_{dtype_str}.tif")
+    tifffile.imwrite(path, data, compression='deflate', predictor=2,
+                     tile=(16, 16))
+
+    cpu_arr = open_geotiff(path).values
+    np.testing.assert_array_equal(cpu_arr, data)
+
+    gpu_arr = _gpu_to_numpy(open_geotiff(path, gpu=True))
+    np.testing.assert_array_equal(gpu_arr, cpu_arr)
+
+
+@gpu_only
+@pytest.mark.parametrize("dtype_str", ["uint16", "int16", "uint32"])
+def test_gpu_predictor2_multibyte_writer_round_trip(tmp_path, dtype_str):
+    """xrspatial writer + GPU reader round-trip for multi-byte predictor=2."""
+    dtype = np.dtype(dtype_str)
+    h, w = 32, 32
+    rng = np.random.RandomState(7)
+    high = np.iinfo(dtype).max // 4
+    low = np.iinfo(dtype).min // 4 if dtype.kind == 'i' else 0
+    data = rng.randint(low, high, size=(h, w), dtype=dtype)
+    da = xr.DataArray(data, dims=['y', 'x'])
+
+    path = str(tmp_path / f"gpu_pred2_writer_{dtype_str}.tif")
+    to_geotiff(da, path, compression='deflate', tile_size=16, predictor=2)
+
+    cpu_arr = open_geotiff(path).values
+    np.testing.assert_array_equal(cpu_arr, data)
+
+    gpu_arr = _gpu_to_numpy(open_geotiff(path, gpu=True))
+    np.testing.assert_array_equal(gpu_arr, cpu_arr)
+
+
+@gpu_only
+@tifffile_required
+def test_gpu_predictor2_multiband_uint16_matches_cpu(tmp_path):
+    """GPU decode of multi-band uint16 predictor=2 matches CPU and source."""
+    import tifffile
+
+    arr = (np.arange(32 * 32 * 3).reshape(32, 32, 3) % 50000).astype(np.uint16)
+    path = str(tmp_path / "gpu_pred2_rgb_uint16.tif")
+    tifffile.imwrite(path, arr, compression='deflate', predictor=2,
+                     photometric='rgb', tile=(16, 16))
+
+    cpu_arr = open_geotiff(path).values
+    np.testing.assert_array_equal(cpu_arr, arr)
+
+    gpu_arr = _gpu_to_numpy(open_geotiff(path, gpu=True))
+    np.testing.assert_array_equal(gpu_arr, cpu_arr)
+
+
+@gpu_only
+@pytest.mark.parametrize("dtype_str", ["uint16", "int16", "uint32"])
+def test_gpu_predictor2_writer_round_trip(tmp_path, dtype_str):
+    """xrspatial writer + GPU encode path round-trip for multi-byte predictor=2.
+
+    With ``gpu=True`` the writer takes the CUDA encode path; the file
+    that lands on disk must still decode correctly on both CPU and GPU
+    readers.
+    """
+    dtype = np.dtype(dtype_str)
+    h, w = 32, 32
+    rng = np.random.RandomState(1234)
+    high = np.iinfo(dtype).max // 4
+    low = np.iinfo(dtype).min // 4 if dtype.kind == 'i' else 0
+    data = rng.randint(low, high, size=(h, w), dtype=dtype)
+    da = xr.DataArray(data, dims=['y', 'x'])
+
+    path = str(tmp_path / f"gpu_pred2_enc_{dtype_str}.tif")
+    to_geotiff(da, path, compression='deflate', tile_size=16,
+               predictor=2, gpu=True)
+
+    cpu_arr = open_geotiff(path).values
+    np.testing.assert_array_equal(cpu_arr, data)
+
+    gpu_arr = _gpu_to_numpy(open_geotiff(path, gpu=True))
+    np.testing.assert_array_equal(gpu_arr, cpu_arr)
+
+
 @gpu_only
 @pytest.mark.parametrize("samples,dtype_str", [
     (3, "float32"),

@@ -94,10 +94,15 @@ def normalize_predictor(predictor, dtype, compression: int) -> int:
 def _apply_predictor_encode(buf: np.ndarray, predictor: int,
                             width: int, height: int,
                             bytes_per_sample: int, samples: int) -> np.ndarray:
-    """Apply the chosen predictor to a flat uint8 buffer."""
+    """Apply the chosen predictor to a flat uint8 buffer.
+
+    Files always go to disk in little-endian order (see ``BO``), so
+    ``predictor_encode`` is invoked with ``byte_order='<'``.
+    """
     if predictor == 2:
         return predictor_encode(buf, width, height,
-                                bytes_per_sample * samples)
+                                bytes_per_sample, samples=samples,
+                                byte_order=BO)
     if predictor == 3:
         return fp_predictor_encode(buf, width * samples, height,
                                    bytes_per_sample)
