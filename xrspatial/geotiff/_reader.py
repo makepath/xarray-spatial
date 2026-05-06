@@ -341,7 +341,7 @@ def _open_source(source: str):
 
 def _apply_predictor(chunk: np.ndarray, pred: int, width: int,
                      height: int, bytes_per_sample: int,
-                     samples: int = 1) -> np.ndarray:
+                     samples: int = 1, byte_order: str = '<') -> np.ndarray:
     """Apply the appropriate predictor decode to decompressed data.
 
     ``width``, ``height``, ``bytes_per_sample``, and ``samples`` describe
@@ -353,16 +353,17 @@ def _apply_predictor(chunk: np.ndarray, pred: int, width: int,
 
     Predictor=3 (floating-point) byte-swizzles each row into
     ``bytes_per_sample`` interleaved lanes of length ``width * samples``,
-    per TIFF Technical Note 3.  Passing ``bytes_per_sample * samples`` as
-    the lane count (the pre-fix behaviour) swizzles over the wrong lane
-    count and scrambles multi-band pixel values.
+    per TIFF Technical Note 3.  The un-transpose stage has to put the
+    MSB lane at the file's high-order byte position, which differs for
+    big- vs little-endian files; ``byte_order`` carries that.
     """
     if pred == 2:
         return predictor_decode(chunk, width, height,
                                 bytes_per_sample * samples)
     elif pred == 3:
         return fp_predictor_decode(chunk, width * samples, height,
-                                   bytes_per_sample)
+                                   bytes_per_sample,
+                                   big_endian=(byte_order == '>'))
     return chunk
 
 
@@ -413,7 +414,8 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
         if not chunk.flags.writeable:
             chunk = chunk.copy()
         chunk = _apply_predictor(chunk, pred, width, height,
-                                 bytes_per_sample, samples=samples)
+                                 bytes_per_sample, samples=samples,
+                                 byte_order=byte_order)
 
     if is_sub_byte:
         pixels = unpack_bits(chunk, bps, pixel_count)

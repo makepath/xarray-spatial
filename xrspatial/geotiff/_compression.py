@@ -425,10 +425,18 @@ def predictor_encode(data: np.ndarray, width: int, height: int,
 # Decode: undo differencing, then un-transpose (lane b -> native byte bps-1-b).
 
 @ngjit
-def _fp_predictor_decode_row(row_data, width, bps):
+def _fp_predictor_decode_row(row_data, width, bps, big_endian):
     """Undo floating-point predictor for one row (in-place).
 
-    row_data: uint8 array of length width * bps
+    row_data: uint8 array of length width * bps.
+
+    Per TIFF Tech Note 3, lane 0 contains the most significant byte of
+    each sample regardless of the file's byte order.  After
+    un-transposing, the MSB has to land at the byte position that
+    corresponds to "most significant" *in the file's byte order*: index 0
+    for big-endian files and index ``bps-1`` for little-endian files.
+    The previous implementation always wrote MSB at index ``bps-1``,
+    which scrambled big-endian predictor=3 reads.
     """
     n = width * bps
 
@@ -436,26 +444,35 @@ def _fp_predictor_decode_row(row_data, width, bps):
     for i in range(1, n):
         row_data[i] = np.uint8((np.int32(row_data[i]) + np.int32(row_data[i - 1])) & 0xFF)
 
-    # Step 2: un-transpose bytes back to native sample order
+    # Step 2: un-transpose bytes back to the file's native sample order
     tmp = np.empty(n, dtype=np.uint8)
-    for sample in range(width):
-        for b in range(bps):
-            tmp[sample * bps + b] = row_data[(bps - 1 - b) * width + sample]
+    if big_endian:
+        # MSB lane (lane 0) -> byte index 0 in each output sample.
+        for sample in range(width):
+            for b in range(bps):
+                tmp[sample * bps + b] = row_data[b * width + sample]
+    else:
+        # MSB lane -> byte index ``bps-1`` (the high-order byte in LE).
+        for sample in range(width):
+            for b in range(bps):
+                tmp[sample * bps + b] = row_data[(bps - 1 - b) * width + sample]
     for i in range(n):
         row_data[i] = tmp[i]
 
 
 @ngjit
-def _fp_predictor_decode_rows(data, width, height, bps):
+def _fp_predictor_decode_rows(data, width, height, bps, big_endian):
     """Dispatch per-row decode from Numba, avoiding Python loop overhead."""
     row_len = width * bps
     for row in range(height):
         start = row * row_len
-        _fp_predictor_decode_row(data[start:start + row_len], width, bps)
+        _fp_predictor_decode_row(
+            data[start:start + row_len], width, bps, big_endian)
 
 
 def fp_predictor_decode(data: np.ndarray, width: int, height: int,
-                        bytes_per_sample: int) -> np.ndarray:
+                        bytes_per_sample: int,
+                        big_endian: bool = False) -> np.ndarray:
     """Undo floating-point predictor (predictor=3).
 
     Parameters
@@ -466,6 +483,10 @@ def fp_predictor_decode(data: np.ndarray, width: int, height: int,
         Tile/strip dimensions.
     bytes_per_sample : int
         Bytes per sample (e.g. 4 for float32, 8 for float64).
+    big_endian : bool
+        Whether the source file is big-endian (BOM ``MM``).  The
+        un-transpose puts the MSB lane at byte index 0 of each output
+        sample for BE files, and at byte index ``bps-1`` for LE files.
 
     Returns
     -------
@@ -473,7 +494,8 @@ def fp_predictor_decode(data: np.ndarray, width: int, height: int,
         Corrected array.
     """
     buf = np.ascontiguousarray(data)
-    _fp_predictor_decode_rows(buf, width, height, bytes_per_sample)
+    _fp_predictor_decode_rows(buf, width, height, bytes_per_sample,
+                              big_endian)
     return buf
 
 
