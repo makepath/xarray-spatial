@@ -208,7 +208,14 @@ def _lzw_decode_tiles_kernel(
 
 
 # Type aliases for Numba CUDA local arrays
-from numba import int32 as numba_int32, uint8 as numba_uint8, int64 as numba_int64
+from numba import (
+    int32 as numba_int32,
+    uint8 as numba_uint8,
+    uint16 as numba_uint16,
+    uint32 as numba_uint32,
+    uint64 as numba_uint64,
+    int64 as numba_int64,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -628,19 +635,68 @@ def _inflate_tiles_kernel(
 # ---------------------------------------------------------------------------
 
 @cuda.jit
-def _predictor_decode_kernel(data, width, height, bytes_per_sample):
-    """Undo horizontal differencing (predictor=2), one thread per row."""
+def _predictor_decode_kernel_u8(data, width, height, samples_per_pixel):
+    """Undo predictor=2 for 8-bit samples, one thread per row.
+
+    Stride is ``samples_per_pixel`` bytes.  Byte-wise modular sum is
+    correct here because each sample fits in a single byte.
+    """
     row = cuda.grid(1)
     if row >= height:
         return
 
-    row_bytes = width * bytes_per_sample
+    row_bytes = width * samples_per_pixel
     row_start = row * row_bytes
 
-    for col in range(bytes_per_sample, row_bytes):
+    for col in range(samples_per_pixel, row_bytes):
         idx = row_start + col
         data[idx] = numba_uint8(
-            (numba_int32(data[idx]) + numba_int32(data[idx - bytes_per_sample])) & 0xFF)
+            (numba_int32(data[idx]) + numba_int32(data[idx - samples_per_pixel])) & 0xFF)
+
+
+@cuda.jit
+def _predictor_decode_kernel_u16(view, width, height, samples_per_pixel):
+    """Undo predictor=2 on a uint16 view, one thread per row."""
+    row = cuda.grid(1)
+    if row >= height:
+        return
+
+    row_samples = width * samples_per_pixel
+    row_start = row * row_samples
+
+    for col in range(samples_per_pixel, row_samples):
+        idx = row_start + col
+        view[idx] = (view[idx] + view[idx - samples_per_pixel]) & numba_int32(0xFFFF)
+
+
+@cuda.jit
+def _predictor_decode_kernel_u32(view, width, height, samples_per_pixel):
+    """Undo predictor=2 on a uint32 view, one thread per row."""
+    row = cuda.grid(1)
+    if row >= height:
+        return
+
+    row_samples = width * samples_per_pixel
+    row_start = row * row_samples
+
+    for col in range(samples_per_pixel, row_samples):
+        idx = row_start + col
+        view[idx] = (view[idx] + view[idx - samples_per_pixel]) & numba_uint32(0xFFFFFFFF)
+
+
+@cuda.jit
+def _predictor_decode_kernel_u64(view, width, height, samples_per_pixel):
+    """Undo predictor=2 on a uint64 view, one thread per row."""
+    row = cuda.grid(1)
+    if row >= height:
+        return
+
+    row_samples = width * samples_per_pixel
+    row_start = row * row_samples
+
+    for col in range(samples_per_pixel, row_samples):
+        idx = row_start + col
+        view[idx] = view[idx] + view[idx - samples_per_pixel]
 
 
 @cuda.jit
@@ -1370,6 +1426,70 @@ def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
         return None
 
 
+def _gpu_predictor2_decode(d_decomp, tile_width, total_rows, dtype, samples):
+    """Run the right predictor=2 decode kernel for *dtype*.
+
+    TIFF predictor=2 differences adjacent same-component samples in the
+    sample's natural width (uint8/16/32/64).  We view the byte buffer as
+    the matching unsigned dtype and dispatch to a per-width kernel so
+    the modular wrap matches what GDAL/libtiff write.
+    """
+    import cupy
+
+    tpb = min(256, total_rows) if total_rows > 0 else 1
+    bpg = math.ceil(total_rows / tpb) if tpb > 0 else 1
+    bps = dtype.itemsize
+
+    if bps == 1:
+        _predictor_decode_kernel_u8[bpg, tpb](
+            d_decomp, tile_width, total_rows, samples)
+    elif bps == 2:
+        view = d_decomp.view(cupy.uint16)
+        _predictor_decode_kernel_u16[bpg, tpb](
+            view, tile_width, total_rows, samples)
+    elif bps == 4:
+        view = d_decomp.view(cupy.uint32)
+        _predictor_decode_kernel_u32[bpg, tpb](
+            view, tile_width, total_rows, samples)
+    elif bps == 8:
+        view = d_decomp.view(cupy.uint64)
+        _predictor_decode_kernel_u64[bpg, tpb](
+            view, tile_width, total_rows, samples)
+    else:
+        raise ValueError(
+            f"GPU predictor=2 unsupported for bytes_per_sample={bps}")
+    cuda.synchronize()
+
+
+def _gpu_predictor2_encode(d_decomp, tile_width, total_rows, dtype, samples):
+    """Run the right predictor=2 encode kernel for *dtype*."""
+    import cupy
+
+    tpb = min(256, total_rows) if total_rows > 0 else 1
+    bpg = math.ceil(total_rows / tpb) if tpb > 0 else 1
+    bps = dtype.itemsize
+
+    if bps == 1:
+        _predictor_encode_kernel_u8[bpg, tpb](
+            d_decomp, tile_width, total_rows, samples)
+    elif bps == 2:
+        view = d_decomp.view(cupy.uint16)
+        _predictor_encode_kernel_u16[bpg, tpb](
+            view, tile_width, total_rows, samples)
+    elif bps == 4:
+        view = d_decomp.view(cupy.uint32)
+        _predictor_encode_kernel_u32[bpg, tpb](
+            view, tile_width, total_rows, samples)
+    elif bps == 8:
+        view = d_decomp.view(cupy.uint64)
+        _predictor_encode_kernel_u64[bpg, tpb](
+            view, tile_width, total_rows, samples)
+    else:
+        raise ValueError(
+            f"GPU predictor=2 unsupported for bytes_per_sample={bps}")
+    cuda.synchronize()
+
+
 def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
                                     tile_width, tile_height,
                                     image_width, image_height,
@@ -1381,14 +1501,11 @@ def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
 
     if predictor == 2:
         total_rows = n_tiles * tile_height
-        tpb = min(256, total_rows)
-        bpg = math.ceil(total_rows / tpb)
-        # Kernel uses row_bytes = width * bytes_per_sample, so pass pixel
-        # width and full per-pixel size (itemsize * samples). Matches CPU
-        # call at _reader.py _apply_predictor(..., bytes_per_sample * samples).
-        _predictor_decode_kernel[bpg, tpb](
-            d_decomp, tile_width, total_rows, dtype.itemsize * samples)
-        cuda.synchronize()
+        # Sample-level differencing: stride is samples_per_pixel samples,
+        # row width is tile_width pixels.  Per-dtype kernels handle the
+        # modular wrap at the sample's natural bit width.
+        _gpu_predictor2_decode(
+            d_decomp, tile_width, total_rows, dtype, samples)
     elif predictor == 3:
         total_rows = n_tiles * tile_height
         tpb = min(256, total_rows)
@@ -1629,16 +1746,11 @@ def gpu_decode_tiles(
 
     # Apply predictor on GPU
     if predictor == 2:
-        # Horizontal differencing: one thread per row across all tiles
+        # Sample-level horizontal differencing: stride is samples_per_pixel
+        # samples; per-dtype kernels handle the natural-width modular wrap.
         total_rows = n_tiles * tile_height
-        tpb = min(256, total_rows)
-        bpg = math.ceil(total_rows / tpb)
-        # Reshape so each tile's rows are contiguous (they already are).
-        # Kernel uses row_bytes = width * bytes_per_sample, so pass pixel
-        # width and full per-pixel size (itemsize * samples).
-        _predictor_decode_kernel[bpg, tpb](
-            d_decomp, tile_width, total_rows, dtype.itemsize * samples)
-        cuda.synchronize()
+        _gpu_predictor2_decode(
+            d_decomp, tile_width, total_rows, dtype, samples)
 
     elif predictor == 3:
         # Float predictor: one thread per row
@@ -1720,21 +1832,64 @@ def _extract_tiles_kernel(
 # ---------------------------------------------------------------------------
 
 @cuda.jit
-def _predictor_encode_kernel(data, width, height, bytes_per_sample):
-    """Apply horizontal differencing (predictor=2), one thread per row.
-    Process right-to-left to avoid overwriting values we still need.
-    """
+def _predictor_encode_kernel_u8(data, width, height, samples_per_pixel):
+    """Apply predictor=2 for 8-bit samples (right-to-left), one thread per row."""
     row = cuda.grid(1)
     if row >= height:
         return
 
-    row_bytes = width * bytes_per_sample
+    row_bytes = width * samples_per_pixel
     row_start = row * row_bytes
 
-    for col in range(row_bytes - 1, bytes_per_sample - 1, -1):
+    for col in range(row_bytes - 1, samples_per_pixel - 1, -1):
         idx = row_start + col
         data[idx] = numba_uint8(
-            (numba_int32(data[idx]) - numba_int32(data[idx - bytes_per_sample])) & 0xFF)
+            (numba_int32(data[idx]) - numba_int32(data[idx - samples_per_pixel])) & 0xFF)
+
+
+@cuda.jit
+def _predictor_encode_kernel_u16(view, width, height, samples_per_pixel):
+    """Apply predictor=2 on a uint16 view (right-to-left), one thread per row."""
+    row = cuda.grid(1)
+    if row >= height:
+        return
+
+    row_samples = width * samples_per_pixel
+    row_start = row * row_samples
+
+    for col in range(row_samples - 1, samples_per_pixel - 1, -1):
+        idx = row_start + col
+        view[idx] = (view[idx] - view[idx - samples_per_pixel]) & numba_int32(0xFFFF)
+
+
+@cuda.jit
+def _predictor_encode_kernel_u32(view, width, height, samples_per_pixel):
+    """Apply predictor=2 on a uint32 view (right-to-left), one thread per row."""
+    row = cuda.grid(1)
+    if row >= height:
+        return
+
+    row_samples = width * samples_per_pixel
+    row_start = row * row_samples
+
+    for col in range(row_samples - 1, samples_per_pixel - 1, -1):
+        idx = row_start + col
+        view[idx] = (view[idx] - view[idx - samples_per_pixel]) & numba_uint32(0xFFFFFFFF)
+
+
+@cuda.jit
+def _predictor_encode_kernel_u64(view, width, height, samples_per_pixel):
+    """Apply predictor=2 on a uint64 view (right-to-left), one thread per row."""
+    row = cuda.grid(1)
+    if row >= height:
+        return
+
+    row_samples = width * samples_per_pixel
+    row_start = row * row_samples
+
+    for col in range(row_samples - 1, samples_per_pixel - 1, -1):
+        idx = row_start + col
+        view[idx] = view[idx] - view[idx - samples_per_pixel]
 
 
 @cuda.jit
@@ -2305,11 +2460,10 @@ def gpu_compress_tiles(d_image, tile_width, tile_height,
     # Apply predictor encode on GPU
     total_rows = n_tiles * tile_height
     if predictor == 2:
-        tpb_r = min(256, total_rows)
-        bpg_r = math.ceil(total_rows / tpb_r)
-        _predictor_encode_kernel[bpg_r, tpb_r](
-            d_tile_buf, tile_width * samples, total_rows, dtype.itemsize * samples)
-        cuda.synchronize()
+        # Sample-level differencing: stride is samples_per_pixel samples,
+        # row width is tile_width pixels.
+        _gpu_predictor2_encode(
+            d_tile_buf, tile_width, total_rows, dtype, samples)
     elif predictor == 3:
         tpb_r = min(256, total_rows)
         bpg_r = math.ceil(total_rows / tpb_r)
