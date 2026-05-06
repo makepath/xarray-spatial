@@ -10,6 +10,19 @@ Optional arguments: $ARGUMENTS
 
 ---
 
+## Step 0 -- Detect CUDA availability
+
+Before discovering modules, probe the host for CUDA:
+
+```bash
+python -c "from numba import cuda; print(cuda.is_available())" 2>/dev/null
+```
+
+Capture the result as `CUDA_AVAILABLE` (`true` if the command prints `True`,
+`false` otherwise — including import failure). Interpolate this flag into
+each subagent prompt below so the agent knows whether to run cupy and
+dask+cupy paths or limit itself to static review of the GPU code.
+
 ## Step 1 -- Gather module metadata via git and grep
 
 Enumerate candidate modules:
@@ -133,6 +146,27 @@ This module has {commits} commits and {loc} lines of code.
 Read these files: {module_files}
 
 Also read xrspatial/utils.py to understand _validate_raster() behavior.
+
+CUDA available on this host: {cuda_available}
+
+If CUDA_AVAILABLE is true:
+- For Cat 4 (GPU kernel bounds), validate suspected missing bounds
+  guards by running the kernel on adversarial input shapes (1x1, Nx1,
+  large prime dimensions) and confirm no out-of-bounds access. Use
+  `compute-sanitizer` if installed; otherwise rely on test runs that
+  exercise edge sizes.
+- For Cat 1 (unbounded allocation) on cupy paths, confirm the
+  allocation actually executes on the GPU and observe peak memory via
+  `cupy.cuda.runtime.memGetInfo()` rather than reasoning from source.
+- A /rockout fix that touches CUDA code must include a cupy run in its
+  verification step before opening the PR.
+
+If CUDA_AVAILABLE is false:
+- Inspect the cupy / dask+cupy paths and CUDA kernels by reading the
+  source only.
+- Skip executing CUDA kernels. Add the token `cuda-unavailable` to the
+  `notes` column of the state CSV so a future re-run on a GPU host
+  knows to re-validate the GPU paths.
 
 **Your task:**
 
