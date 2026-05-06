@@ -1401,6 +1401,7 @@ def read_geotiff_gpu(source: str, *,
                 source, offsets, byte_counts,
                 tw, th, width, height,
                 compression, predictor, file_dtype, samples,
+                byte_order=header.byte_order,
             )
         except Exception:
             pass
@@ -1423,6 +1424,7 @@ def read_geotiff_gpu(source: str, *,
                 compressed_tiles,
                 tw, th, width, height,
                 compression, predictor, file_dtype, samples,
+                byte_order=header.byte_order,
             )
         except (ValueError, Exception):
             # Unsupported compression -- fall back to CPU then transfer

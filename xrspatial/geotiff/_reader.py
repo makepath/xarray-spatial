@@ -358,9 +358,9 @@ def _apply_predictor(chunk: np.ndarray, pred: int, width: int,
 
     Predictor=3 (floating-point) byte-swizzles each row into
     ``bytes_per_sample`` interleaved lanes of length ``width * samples``,
-    per TIFF Technical Note 3.  Passing ``bytes_per_sample * samples`` as
-    the lane count (the pre-fix behaviour) swizzles over the wrong lane
-    count and scrambles multi-band pixel values.
+    per TIFF Technical Note 3.  The un-transpose stage has to put the
+    MSB lane at the file's high-order byte position, which differs for
+    big- vs little-endian files; ``byte_order`` carries that.
     """
     if pred == 2:
         return predictor_decode(chunk, width, height,
@@ -368,7 +368,8 @@ def _apply_predictor(chunk: np.ndarray, pred: int, width: int,
                                 byte_order=byte_order)
     elif pred == 3:
         return fp_predictor_decode(chunk, width * samples, height,
-                                   bytes_per_sample)
+                                   bytes_per_sample,
+                                   big_endian=(byte_order == '>'))
     return chunk
 
 

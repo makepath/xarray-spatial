@@ -2,6 +2,12 @@
 -----------
 
 
+### Unreleased
+
+#### Bug fixes and improvements
+- Decode TIFF predictor=3 un-transpose by file byte order so big-endian floating-point TIFFs read back exactly
+
+
 ### Version 0.9.9 - 2026-05-05
 
 #### Bug fixes and improvements

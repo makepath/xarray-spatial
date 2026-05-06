@@ -700,11 +700,14 @@ def _predictor_decode_kernel_u64(view, width, height, samples_per_pixel):
 
 
 @cuda.jit
-def _fp_predictor_decode_kernel(data, tmp, width, height, bps):
+def _fp_predictor_decode_kernel(data, tmp, width, height, bps, big_endian):
     """Undo floating-point predictor (predictor=3), one thread per row.
 
     data: flat uint8 device array
     tmp: scratch buffer, same size as data
+    big_endian: when True, place the MSB lane at byte index 0 of each
+        output sample (file is big-endian); when False, place it at
+        byte index ``bps-1`` (file is little-endian).
     """
     row = cuda.grid(1)
     if row >= height:
@@ -719,10 +722,17 @@ def _fp_predictor_decode_kernel(data, tmp, width, height, bps):
         data[idx] = numba_uint8(
             (numba_int32(data[idx]) + numba_int32(data[idx - 1])) & 0xFF)
 
-    # Step 2: un-transpose byte lanes (MSB-first) back to native order
-    for sample in range(width):
-        for b in range(bps):
-            tmp[start + sample * bps + b] = data[start + (bps - 1 - b) * width + sample]
+    # Step 2: un-transpose byte lanes back to the file's native sample
+    # order.  Lane 0 always contains the MSB byte (TIFF Tech Note 3); the
+    # MSB lands at byte index 0 (BE) or bps-1 (LE) of each output sample.
+    if big_endian:
+        for sample in range(width):
+            for b in range(bps):
+                tmp[start + sample * bps + b] = data[start + b * width + sample]
+    else:
+        for sample in range(width):
+            for b in range(bps):
+                tmp[start + sample * bps + b] = data[start + (bps - 1 - b) * width + sample]
 
     # Copy back
     for i in range(row_len):
@@ -1315,6 +1325,7 @@ def gpu_decode_tiles_from_file(
     predictor: int,
     dtype: np.dtype,
     samples: int = 1,
+    byte_order: str = '<',
 ):
     """Decode tiles from a file, using GDS if available.
 
@@ -1345,7 +1356,8 @@ def gpu_decode_tiles_from_file(
                 return _apply_predictor_and_assemble(
                     d_decomp, d_decomp_offsets, len(d_tiles),
                     tile_width, tile_height, image_width, image_height,
-                    predictor, dtype, samples, tile_bytes)
+                    predictor, dtype, samples, tile_bytes,
+                    byte_order=byte_order)
 
         # GDS read succeeded but nvCOMP can't decompress on GPU,
         # or it's LZW/deflate. Copy tiles to host and use normal path.
@@ -1357,7 +1369,8 @@ def gpu_decode_tiles_from_file(
 
     return gpu_decode_tiles(
         compressed_tiles, tile_width, tile_height,
-        image_width, image_height, compression, predictor, dtype, samples)
+        image_width, image_height, compression, predictor, dtype, samples,
+        byte_order=byte_order)
 
 
 def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
@@ -1493,11 +1506,13 @@ def _gpu_predictor2_encode(d_decomp, tile_width, total_rows, dtype, samples):
 def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
                                     tile_width, tile_height,
                                     image_width, image_height,
-                                    predictor, dtype, samples, tile_bytes):
+                                    predictor, dtype, samples, tile_bytes,
+                                    byte_order: str = '<'):
     """Apply predictor decode and tile assembly on GPU."""
     import cupy
 
     bytes_per_pixel = dtype.itemsize * samples
+    big_endian = (byte_order == '>')
 
     if predictor == 2:
         total_rows = n_tiles * tile_height
@@ -1512,7 +1527,8 @@ def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
         bpg = math.ceil(total_rows / tpb)
         d_tmp = cupy.empty_like(d_decomp)
         _fp_predictor_decode_kernel[bpg, tpb](
-            d_decomp, d_tmp, tile_width * samples, total_rows, dtype.itemsize)
+            d_decomp, d_tmp, tile_width * samples, total_rows,
+            dtype.itemsize, big_endian)
         cuda.synchronize()
 
     tiles_across = math.ceil(image_width / tile_width)
@@ -1532,10 +1548,15 @@ def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
     cuda.synchronize()
 
     if samples > 1:
-        return d_output.view(dtype=cupy.dtype(dtype)).reshape(
+        out = d_output.view(dtype=cupy.dtype(dtype)).reshape(
             image_height, image_width, samples)
-    return d_output.view(dtype=cupy.dtype(dtype)).reshape(
-        image_height, image_width)
+    else:
+        out = d_output.view(dtype=cupy.dtype(dtype)).reshape(
+            image_height, image_width)
+    if big_endian and dtype.itemsize > 1:
+        # See gpu_decode_tiles for why BE samples need a final byteswap.
+        out = out.byteswap()
+    return out
 
 
 def gpu_decode_tiles(
@@ -1548,6 +1569,7 @@ def gpu_decode_tiles(
     predictor: int,
     dtype: np.dtype,
     samples: int = 1,
+    byte_order: str = '<',
 ):
     """Decode and assemble TIFF tiles entirely on GPU.
 
@@ -1759,7 +1781,8 @@ def gpu_decode_tiles(
         bpg = math.ceil(total_rows / tpb)
         d_tmp = cupy.empty_like(d_decomp)
         _fp_predictor_decode_kernel[bpg, tpb](
-            d_decomp, d_tmp, tile_width * samples, total_rows, dtype.itemsize)
+            d_decomp, d_tmp, tile_width * samples, total_rows,
+            dtype.itemsize, byte_order == '>')
         cuda.synchronize()
 
     # Assemble tiles into output image on GPU
@@ -1781,10 +1804,18 @@ def gpu_decode_tiles(
 
     # Reshape to image
     if samples > 1:
-        return d_output.view(dtype=cupy.dtype(dtype)).reshape(
+        out = d_output.view(dtype=cupy.dtype(dtype)).reshape(
             image_height, image_width, samples)
-    return d_output.view(dtype=cupy.dtype(dtype)).reshape(
-        image_height, image_width)
+    else:
+        out = d_output.view(dtype=cupy.dtype(dtype)).reshape(
+            image_height, image_width)
+    # The decoded byte stream is in the file's byte order; cupy view
+    # interprets it as native (always little-endian on supported GPUs),
+    # so big-endian samples that are wider than a byte must be swapped
+    # back to native before the values mean anything.
+    if byte_order == '>' and dtype.itemsize > 1:
+        out = out.byteswap()
+    return out
 
 
 # ---------------------------------------------------------------------------
