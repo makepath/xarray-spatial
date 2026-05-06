@@ -1385,18 +1385,25 @@ def read_geotiff_gpu(source: str, *,
     finally:
         src.close()
 
-    # GPU decode: try GDS (SSD→GPU direct) first, then CPU mmap path
-    from ._gpu_decode import gpu_decode_tiles_from_file
-    arr_gpu = None
+    # GPU decode: try GDS (SSD→GPU direct) first, then CPU mmap path.
+    # Sparse tiles (byte_count == 0) are unsupported on the GPU pipeline;
+    # the CPU reader fills them with nodata and copies onto the GPU.
+    has_sparse_tile = any(bc == 0 for bc in byte_counts)
+    if has_sparse_tile:
+        arr_cpu, _ = read_to_array(source, overview_level=overview_level)
+        arr_gpu = cupy.asarray(arr_cpu)
+    else:
+        from ._gpu_decode import gpu_decode_tiles_from_file
+        arr_gpu = None
 
-    try:
-        arr_gpu = gpu_decode_tiles_from_file(
-            source, offsets, byte_counts,
-            tw, th, width, height,
-            compression, predictor, file_dtype, samples,
-        )
-    except Exception:
-        pass
+        try:
+            arr_gpu = gpu_decode_tiles_from_file(
+                source, offsets, byte_counts,
+                tw, th, width, height,
+                compression, predictor, file_dtype, samples,
+            )
+        except Exception:
+            pass
 
     if arr_gpu is None:
         # Fallback: extract tiles via CPU mmap, then GPU decode

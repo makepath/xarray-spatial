@@ -440,6 +440,38 @@ import sys as _sys
 _NATIVE_ORDER = '<' if _sys.byteorder == 'little' else '>'
 
 
+def _sparse_fill_value(ifd: IFD, dtype: np.dtype):
+    """Resolve the fill value for sparse tiles/strips.
+
+    A sparse TIFF entry has TileByteCounts/StripByteCounts == 0 (and
+    typically the matching Offset == 0). GDAL emits these for SPARSE_OK
+    files where blocks containing only the nodata value are omitted.
+    The reader is expected to materialise such blocks as nodata, or
+    zero when nodata is unset (the default per the GDAL convention).
+    """
+    nodata_str = ifd.nodata_str
+    if nodata_str is not None:
+        try:
+            v = float(nodata_str)
+            if dtype.kind == 'f':
+                return dtype.type(v)
+            if not math.isnan(v) and not math.isinf(v):
+                return dtype.type(int(v))
+        except (TypeError, ValueError):
+            pass
+    return dtype.type(0)
+
+
+def _has_sparse(byte_counts) -> bool:
+    """Return True if any tile/strip is empty (byte_count == 0)."""
+    if byte_counts is None:
+        return False
+    for bc in byte_counts:
+        if bc == 0:
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Strip reader
 # ---------------------------------------------------------------------------
@@ -502,7 +534,17 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
 
     _check_dimensions(out_w, out_h, samples, max_pixels)
 
-    if samples > 1:
+    # Sparse strips (StripByteCounts == 0) must materialise as nodata or 0
+    # rather than be decoded.  Pre-fill the result so any skipped strips
+    # land on a known fill value.
+    sparse = _has_sparse(byte_counts)
+    if sparse:
+        fill = _sparse_fill_value(ifd, dtype)
+        if samples > 1:
+            result = np.full((out_h, out_w, samples), fill, dtype=dtype)
+        else:
+            result = np.full((out_h, out_w), fill, dtype=dtype)
+    elif samples > 1:
         result = np.empty((out_h, out_w, samples), dtype=dtype)
     else:
         result = np.empty((out_h, out_w), dtype=dtype)
@@ -517,6 +559,9 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
             for strip_idx in range(first_strip, last_strip + 1):
                 global_idx = band_offset + strip_idx
                 if global_idx >= len(offsets):
+                    continue
+                if byte_counts[global_idx] == 0:
+                    # Sparse strip: result is already pre-filled.
                     continue
                 strip_row = strip_idx * rps
                 strip_rows = min(rps, height - strip_row)
@@ -543,6 +588,9 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
             strip_row = strip_idx * rps
             strip_rows = min(rps, height - strip_row)
             if strip_rows <= 0:
+                continue
+            if byte_counts[strip_idx] == 0:
+                # Sparse strip: result is already pre-filled.
                 continue
 
             strip_data = data[offsets[strip_idx]:offsets[strip_idx] + byte_counts[strip_idx]]
@@ -638,11 +686,24 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     # would mask the problem, and the GPU path reads OOB. See issue #1219.
     validate_tile_layout(ifd)
 
-    _alloc = np.zeros if window is not None else np.empty
-    if samples > 1:
-        result = _alloc((out_h, out_w, samples), dtype=dtype)
+    # Sparse tiles (TileByteCounts == 0) must materialise as nodata or 0
+    # rather than be decoded.  Pre-fill the result so any skipped tiles
+    # land on a known fill value; otherwise sparse regions would leak
+    # uninitialised memory (full-image read) or stay zeroed regardless
+    # of the file's nodata setting (windowed read).
+    sparse = _has_sparse(byte_counts)
+    if sparse:
+        fill = _sparse_fill_value(ifd, dtype)
+        if samples > 1:
+            result = np.full((out_h, out_w, samples), fill, dtype=dtype)
+        else:
+            result = np.full((out_h, out_w), fill, dtype=dtype)
     else:
-        result = _alloc((out_h, out_w), dtype=dtype)
+        _alloc = np.zeros if window is not None else np.empty
+        if samples > 1:
+            result = _alloc((out_h, out_w, samples), dtype=dtype)
+        else:
+            result = _alloc((out_h, out_w), dtype=dtype)
 
     tile_row_start = r0 // th
     tile_row_end = min(math.ceil(r1 / th), tiles_down)
@@ -652,7 +713,8 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     band_count = samples if (planar == 2 and samples > 1) else 1
     tiles_per_band = tiles_across * tiles_down
 
-    # Build list of tiles to decode
+    # Build list of tiles to decode.  Sparse tiles (byte_count==0) are
+    # skipped here -- the result is pre-filled with the sparse fill value.
     tile_jobs = []
     for band_idx in range(band_count):
         band_tile_offset = band_idx * tiles_per_band if band_count > 1 else 0
@@ -662,6 +724,8 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
             for tc in range(tile_col_start, tile_col_end):
                 tile_idx = band_tile_offset + tr * tiles_across + tc
                 if tile_idx >= len(offsets):
+                    continue
+                if byte_counts[tile_idx] == 0:
                     continue
                 tile_jobs.append((band_idx, tr, tc, tile_idx, tile_samples))
 
@@ -815,7 +879,17 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     # TileOffsets length. See issue #1219.
     validate_tile_layout(ifd)
 
-    if samples > 1:
+    # Sparse tiles (TileByteCounts == 0) need to land on the file's nodata
+    # value (or 0 if unset) rather than uninitialised memory.  Detect them
+    # up front so the result buffer is pre-filled before tile placement.
+    sparse = _has_sparse(byte_counts)
+    if sparse:
+        fill = _sparse_fill_value(ifd, dtype)
+        if samples > 1:
+            result = np.full((height, width, samples), fill, dtype=dtype)
+        else:
+            result = np.full((height, width), fill, dtype=dtype)
+    elif samples > 1:
         result = np.empty((height, width, samples), dtype=dtype)
     else:
         result = np.empty((height, width), dtype=dtype)
