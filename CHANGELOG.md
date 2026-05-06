@@ -2,6 +2,12 @@
 -----------
 
 
+### Unreleased
+
+#### Bug fixes and improvements
+- Decode TIFF predictor=2 sample-wise so multi-byte integer files written by libtiff/GDAL read back exactly
+
+
 ### Version 0.9.9 - 2026-05-05
 
 #### Bug fixes and improvements

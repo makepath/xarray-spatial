@@ -333,80 +333,164 @@ def lzw_compress(data: bytes) -> bytes:
 
 
 # -- Horizontal predictor (Numba) --------------------------------------------
+#
+# TIFF predictor=2 (horizontal differencing) operates on whole *samples*
+# (per-pixel-component values), not on individual bytes.  For multi-byte
+# integer samples the difference is computed across full sample values, so
+# carries between the low and high bytes are honoured.  The byte stream that
+# lands on disk is the difference samples re-encoded in the file's byte
+# order (always little-endian for files this writer emits, but readers must
+# also handle big-endian sources).
+#
+# The previous implementation here did byte-wise cumulative sum at a sample
+# stride, which produced the right answer for 8-bit data but silently
+# scrambled multi-byte integers whenever the difference between adjacent
+# samples crossed a byte boundary (i.e. needed a carry).  Both halves were
+# wrong in matching ways, so files this codebase wrote could be re-read,
+# but cross-tool reads of files written by libtiff/GDAL produced incorrect
+# pixel values.  See accuracy sweep finding (2026-05-06).
 
 @ngjit
-def _predictor_decode(data, width, height, bytes_per_sample):
-    """Undo horizontal differencing predictor (TIFF predictor=2).
+def _predictor_decode_u8(data, row_len, height, stride):
+    """Undo horizontal differencing on a byte stream (in-place, mod 256).
 
-    Operates in-place on the flat byte array, performing cumulative sum
-    per row at the sample level.
+    ``row_len`` is the full row length in bytes; ``stride`` is the number
+    of bytes between adjacent same-channel samples (e.g. samples_per_pixel
+    for chunky 8-bit multi-band data).
     """
-    row_bytes = width * bytes_per_sample
     for row in range(height):
-        row_start = row * row_bytes
-        for col in range(bytes_per_sample, row_bytes):
+        row_start = row * row_len
+        for col in range(stride, row_len):
             idx = row_start + col
-            data[idx] = np.uint8((np.int32(data[idx]) + np.int32(data[idx - bytes_per_sample])) & 0xFF)
+            data[idx] = np.uint8(
+                (np.int32(data[idx]) + np.int32(data[idx - stride])) & 0xFF)
 
 
 @ngjit
-def _predictor_encode(data, width, height, bytes_per_sample):
-    """Apply horizontal differencing predictor (TIFF predictor=2).
-
-    Operates in-place, converting absolute values to differences.
-    Process right-to-left to avoid overwriting values we still need.
-    """
-    row_bytes = width * bytes_per_sample
+def _predictor_encode_u8(data, row_len, height, stride):
+    """Apply horizontal differencing on a byte stream (in-place, mod 256)."""
     for row in range(height):
-        row_start = row * row_bytes
-        for col in range(row_bytes - 1, bytes_per_sample - 1, -1):
+        row_start = row * row_len
+        for col in range(row_len - 1, stride - 1, -1):
             idx = row_start + col
-            data[idx] = np.uint8((np.int32(data[idx]) - np.int32(data[idx - bytes_per_sample])) & 0xFF)
+            data[idx] = np.uint8(
+                (np.int32(data[idx]) - np.int32(data[idx - stride])) & 0xFF)
+
+
+def _predictor_decode_samples(data, image_width, height, dtype, samples=1):
+    """Sample-wise decode for multi-byte sample dtypes.
+
+    Modifies *data* (a flat uint8 buffer) in place.  ``dtype`` carries the
+    file's byte order so that the buffer is interpreted with the right
+    endianness; the result is written back in the same byte order.
+
+    For chunky multi-band data the cumulative sum runs per-channel so that
+    each channel's value is differenced against the previous same-channel
+    pixel (TIFF Technical Note 1, predictor=2).
+    """
+    if samples == 1:
+        view = data.view(dtype).reshape(height, image_width)
+    else:
+        view = data.view(dtype).reshape(height, image_width, samples)
+    # In-place cumsum in the dtype's modular arithmetic.  The ``out`` cast
+    # keeps the result wrapping inside the sample width for fixed-width
+    # integers.  Float dtypes never reach this branch (the public
+    # ``predictor_decode`` routes them to the byte-wise legacy kernel)
+    # because predictor=2 differencing on floats does not invert exactly.
+    np.cumsum(view, axis=1, dtype=dtype, out=view)
+
+
+def _predictor_encode_samples(data, image_width, height, dtype, samples=1):
+    """Sample-wise encode for multi-byte sample dtypes (in-place)."""
+    if samples == 1:
+        view = data.view(dtype).reshape(height, image_width)
+    else:
+        view = data.view(dtype).reshape(height, image_width, samples)
+    view[:, 1:] = np.diff(view, axis=1)
 
 
 def predictor_decode(data: np.ndarray, width: int, height: int,
-                     bytes_per_sample: int) -> np.ndarray:
+                     bytes_per_sample: int,
+                     dtype: np.dtype | None = None,
+                     samples: int = 1) -> np.ndarray:
     """Undo horizontal differencing predictor (predictor=2).
 
     Parameters
     ----------
     data : np.ndarray
         Flat uint8 array of decompressed pixel data (modified in-place).
-    width, height : int
-        Image dimensions.
+    width : int
+        Image width in pixels.  For chunky multi-band data the number of
+        samples per row is ``width * samples``.
+    height : int
+        Number of rows.
     bytes_per_sample : int
-        Bytes per sample (e.g. 1 for uint8, 4 for float32).
+        Bytes per sample (1, 2, 4, or 8).
+    dtype : np.dtype, optional
+        Sample dtype including the file's byte order.  Required when
+        ``bytes_per_sample > 1`` so the byte stream can be interpreted
+        as whole sample values; per TIFF spec, differencing is
+        sample-level (carries propagate within each sample's bytes).
+    samples : int
+        Samples per pixel for chunky planar config.
 
     Returns
     -------
     np.ndarray
         Same array, modified in-place.
+
+    Notes
+    -----
+    Predictor=2 differences each sample against the previous same-channel
+    sample (TIFF Tech Note 1).  For chunky multi-band data the byte
+    stride between same-channel samples is ``samples * bytes_per_sample``.
     """
     buf = np.ascontiguousarray(data)
-    _predictor_decode(buf, width, height, bytes_per_sample)
+    if bytes_per_sample == 1:
+        # Byte-wise math is exact for 8-bit samples; stride = channels.
+        _predictor_decode_u8(buf, width * samples, height, samples)
+    elif dtype is not None and np.dtype(dtype).kind in ('i', 'u'):
+        _predictor_decode_samples(buf, width, height, np.dtype(dtype),
+                                  samples=samples)
+    elif dtype is not None and np.dtype(dtype).kind == 'f':
+        # Predictor=2 on floats is outside the TIFF spec (which restricts
+        # this predictor to integers).  xrspatial historically allowed it
+        # with byte-wise differencing, which round-trips because the byte
+        # sequence is restored exactly even though the per-sample
+        # arithmetic is meaningless.  Preserve that behaviour here so
+        # files written by older versions still read back unchanged.
+        _predictor_decode_u8(buf, width * samples * bytes_per_sample,
+                             height, samples * bytes_per_sample)
+    else:
+        # Legacy path: byte-wise with caller-supplied stride.  Only correct
+        # for round-trips with a matching byte-wise encoder; do not feed
+        # this path libtiff/GDAL files for multi-byte sample data.
+        _predictor_decode_u8(buf, width * bytes_per_sample, height,
+                             bytes_per_sample)
     return buf
 
 
 def predictor_encode(data: np.ndarray, width: int, height: int,
-                     bytes_per_sample: int) -> np.ndarray:
+                     bytes_per_sample: int,
+                     dtype: np.dtype | None = None,
+                     samples: int = 1) -> np.ndarray:
     """Apply horizontal differencing predictor (predictor=2).
 
-    Parameters
-    ----------
-    data : np.ndarray
-        Flat uint8 array of pixel data (modified in-place).
-    width, height : int
-        Image dimensions.
-    bytes_per_sample : int
-        Bytes per sample.
-
-    Returns
-    -------
-    np.ndarray
-        Same array, modified in-place.
+    Parameters mirror :func:`predictor_decode`.
     """
     buf = np.ascontiguousarray(data)
-    _predictor_encode(buf, width, height, bytes_per_sample)
+    if bytes_per_sample == 1:
+        _predictor_encode_u8(buf, width * samples, height, samples)
+    elif dtype is not None and np.dtype(dtype).kind in ('i', 'u'):
+        _predictor_encode_samples(buf, width, height, np.dtype(dtype),
+                                  samples=samples)
+    elif dtype is not None and np.dtype(dtype).kind == 'f':
+        # See ``predictor_decode`` for why floats stay byte-wise.
+        _predictor_encode_u8(buf, width * samples * bytes_per_sample,
+                             height, samples * bytes_per_sample)
+    else:
+        _predictor_encode_u8(buf, width * bytes_per_sample, height,
+                             bytes_per_sample)
     return buf
 
 

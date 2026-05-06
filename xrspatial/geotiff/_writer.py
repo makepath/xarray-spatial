@@ -93,11 +93,18 @@ def normalize_predictor(predictor, dtype, compression: int) -> int:
 
 def _apply_predictor_encode(buf: np.ndarray, predictor: int,
                             width: int, height: int,
-                            bytes_per_sample: int, samples: int) -> np.ndarray:
-    """Apply the chosen predictor to a flat uint8 buffer."""
+                            bytes_per_sample: int, samples: int,
+                            dtype: np.dtype | None = None) -> np.ndarray:
+    """Apply the chosen predictor to a flat uint8 buffer.
+
+    For predictor=2 with multi-byte samples the buffer is interpreted as
+    samples in *dtype*'s byte order (the file's byte order, always
+    little-endian for files this writer emits).
+    """
     if predictor == 2:
         return predictor_encode(buf, width, height,
-                                bytes_per_sample * samples)
+                                bytes_per_sample, dtype=dtype,
+                                samples=samples)
     if predictor == 3:
         return fp_predictor_encode(buf, width * samples, height,
                                    bytes_per_sample)
@@ -380,7 +387,8 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: int,
             strip_arr = np.ascontiguousarray(data[r0:r1])
             buf = strip_arr.view(np.uint8).ravel().copy()
             buf = _apply_predictor_encode(
-                buf, predictor, width, strip_rows, bytes_per_sample, samples)
+                buf, predictor, width, strip_rows, bytes_per_sample, samples,
+                dtype=np.dtype(dtype).newbyteorder(BO))
             strip_data = buf.tobytes()
             if compression_level is None:
                 compressed = compress(strip_data, compression)
@@ -447,7 +455,8 @@ def _prepare_tile(data, tr, tc, th, tw, height, width, samples, dtype,
     elif predictor != 1 and compression != COMPRESSION_NONE:
         buf = tile_arr.view(np.uint8).ravel().copy()
         buf = _apply_predictor_encode(
-            buf, predictor, tw, th, bytes_per_sample, samples)
+            buf, predictor, tw, th, bytes_per_sample, samples,
+            dtype=np.dtype(dtype).newbyteorder(BO))
         tile_data = buf.tobytes()
     else:
         tile_data = tile_arr.tobytes()
@@ -1089,7 +1098,8 @@ def _compress_block(arr, block_w, block_h, samples, dtype, bytes_per_sample,
     if predictor != 1 and compression != COMPRESSION_NONE:
         buf = arr.view(np.uint8).ravel().copy()
         buf = _apply_predictor_encode(
-            buf, predictor, block_w, block_h, bytes_per_sample, samples)
+            buf, predictor, block_w, block_h, bytes_per_sample, samples,
+            dtype=np.dtype(dtype).newbyteorder(BO))
         raw_data = buf.tobytes()
     else:
         raw_data = arr.tobytes()

@@ -629,7 +629,12 @@ def _inflate_tiles_kernel(
 
 @cuda.jit
 def _predictor_decode_kernel(data, width, height, bytes_per_sample):
-    """Undo horizontal differencing (predictor=2), one thread per row."""
+    """Undo horizontal differencing (predictor=2), one thread per row.
+
+    Byte-wise variant retained for 8-bit samples; multi-byte samples must
+    use :func:`_predictor_decode_kernel_samples` so carries between bytes
+    of the same sample propagate correctly.
+    """
     row = cuda.grid(1)
     if row >= height:
         return
@@ -641,6 +646,27 @@ def _predictor_decode_kernel(data, width, height, bytes_per_sample):
         idx = row_start + col
         data[idx] = numba_uint8(
             (numba_int32(data[idx]) + numba_int32(data[idx - bytes_per_sample])) & 0xFF)
+
+
+@cuda.jit
+def _predictor_decode_kernel_samples(data_view, samples_per_row, height,
+                                     stride):
+    """Sample-wise horizontal-differencing decode, one thread per row.
+
+    *data_view* is a 1-D device array typed as the file's sample dtype
+    (e.g. uint16 / int32 / float32) so that ``+=`` between elements
+    preserves carries between bytes within the same sample.  *stride* is
+    the number of typed samples between adjacent same-channel samples
+    (1 for single-band, samples_per_pixel for chunky multi-band) per
+    TIFF Tech Note 1.  Operates in place.
+    """
+    row = cuda.grid(1)
+    if row >= height:
+        return
+    row_start = row * samples_per_row
+    for col in range(stride, samples_per_row):
+        idx = row_start + col
+        data_view[idx] = data_view[idx] + data_view[idx - stride]
 
 
 @cuda.jit
@@ -1383,11 +1409,21 @@ def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
         total_rows = n_tiles * tile_height
         tpb = min(256, total_rows)
         bpg = math.ceil(total_rows / tpb)
-        # Kernel uses row_bytes = width * bytes_per_sample, so pass pixel
-        # width and full per-pixel size (itemsize * samples). Matches CPU
-        # call at _reader.py _apply_predictor(..., bytes_per_sample * samples).
-        _predictor_decode_kernel[bpg, tpb](
-            d_decomp, tile_width, total_rows, dtype.itemsize * samples)
+        # TIFF predictor=2 differences whole samples (per channel).  For
+        # 8-bit samples (and for floats, where the spec disallows
+        # predictor=2 but xrspatial historically wrote byte-wise diffs
+        # that round-trip via the same byte-wise decoder) the byte-wise
+        # kernel runs.  Multi-byte integer samples view the buffer as the
+        # sample dtype so carries propagate within each sample.
+        sample_wise = (dtype.itemsize > 1 and dtype.kind in ('i', 'u'))
+        if not sample_wise:
+            _predictor_decode_kernel[bpg, tpb](
+                d_decomp, tile_width, total_rows, samples * dtype.itemsize)
+        else:
+            samples_per_row = tile_width * samples
+            view = d_decomp.view(dtype=cupy.dtype(dtype))
+            _predictor_decode_kernel_samples[bpg, tpb](
+                view, samples_per_row, total_rows, samples)
         cuda.synchronize()
     elif predictor == 3:
         total_rows = n_tiles * tile_height
@@ -1629,15 +1665,22 @@ def gpu_decode_tiles(
 
     # Apply predictor on GPU
     if predictor == 2:
-        # Horizontal differencing: one thread per row across all tiles
+        # Horizontal differencing: one thread per row across all tiles.
+        # Multi-byte integer samples use the sample-wise kernel so carries
+        # propagate; 8-bit samples and floats stay byte-wise (see comment
+        # in _apply_predictor_and_assemble for why floats are byte-wise).
         total_rows = n_tiles * tile_height
         tpb = min(256, total_rows)
         bpg = math.ceil(total_rows / tpb)
-        # Reshape so each tile's rows are contiguous (they already are).
-        # Kernel uses row_bytes = width * bytes_per_sample, so pass pixel
-        # width and full per-pixel size (itemsize * samples).
-        _predictor_decode_kernel[bpg, tpb](
-            d_decomp, tile_width, total_rows, dtype.itemsize * samples)
+        sample_wise = (dtype.itemsize > 1 and dtype.kind in ('i', 'u'))
+        if not sample_wise:
+            _predictor_decode_kernel[bpg, tpb](
+                d_decomp, tile_width, total_rows, samples * dtype.itemsize)
+        else:
+            samples_per_row = tile_width * samples
+            view = d_decomp.view(dtype=cupy.dtype(dtype))
+            _predictor_decode_kernel_samples[bpg, tpb](
+                view, samples_per_row, total_rows, samples)
         cuda.synchronize()
 
     elif predictor == 3:
@@ -1723,6 +1766,8 @@ def _extract_tiles_kernel(
 def _predictor_encode_kernel(data, width, height, bytes_per_sample):
     """Apply horizontal differencing (predictor=2), one thread per row.
     Process right-to-left to avoid overwriting values we still need.
+
+    Byte-wise variant retained for 8-bit samples.
     """
     row = cuda.grid(1)
     if row >= height:
@@ -1735,6 +1780,24 @@ def _predictor_encode_kernel(data, width, height, bytes_per_sample):
         idx = row_start + col
         data[idx] = numba_uint8(
             (numba_int32(data[idx]) - numba_int32(data[idx - bytes_per_sample])) & 0xFF)
+
+
+@cuda.jit
+def _predictor_encode_kernel_samples(data_view, samples_per_row, height,
+                                     stride):
+    """Sample-wise horizontal-differencing encode, one thread per row.
+
+    Counterpart to :func:`_predictor_decode_kernel_samples` -- *stride* is
+    the per-channel sample stride (1 for single-band, samples_per_pixel
+    for chunky multi-band).  Operates right-to-left, in place.
+    """
+    row = cuda.grid(1)
+    if row >= height:
+        return
+    row_start = row * samples_per_row
+    for col in range(samples_per_row - 1, stride - 1, -1):
+        idx = row_start + col
+        data_view[idx] = data_view[idx] - data_view[idx - stride]
 
 
 @cuda.jit
@@ -2307,8 +2370,19 @@ def gpu_compress_tiles(d_image, tile_width, tile_height,
     if predictor == 2:
         tpb_r = min(256, total_rows)
         bpg_r = math.ceil(total_rows / tpb_r)
-        _predictor_encode_kernel[bpg_r, tpb_r](
-            d_tile_buf, tile_width * samples, total_rows, dtype.itemsize * samples)
+        # Sample-wise encode for multi-byte integer dtypes; byte-wise for
+        # 8-bit samples and floats (predictor=2 on floats is outside spec
+        # but xrspatial historically used byte-wise diffs, which the
+        # decoder still expects).
+        sample_wise = (dtype.itemsize > 1 and dtype.kind in ('i', 'u'))
+        if not sample_wise:
+            _predictor_encode_kernel[bpg_r, tpb_r](
+                d_tile_buf, tile_width, total_rows, samples * dtype.itemsize)
+        else:
+            samples_per_row = tile_width * samples
+            view = d_tile_buf.view(dtype=cupy.dtype(dtype))
+            _predictor_encode_kernel_samples[bpg_r, tpb_r](
+                view, samples_per_row, total_rows, samples)
         cuda.synchronize()
     elif predictor == 3:
         tpb_r = min(256, total_rows)
