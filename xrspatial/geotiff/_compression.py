@@ -333,80 +333,231 @@ def lzw_compress(data: bytes) -> bytes:
 
 
 # -- Horizontal predictor (Numba) --------------------------------------------
+#
+# TIFF predictor=2 (horizontal differencing) operates at the *sample* level,
+# not the byte level.  Per TIFF Technical Note: "the difference is taken
+# between adjacent samples (not between adjacent bytes) of the same
+# component."  This means for multi-byte samples the encoder computes
+#
+#     diff[i] = sample[i] - sample[i - samples_per_pixel]   (mod 2^bits)
+#
+# in the sample's natural bit width (uint16 wraps at 65536, etc.), not
+# byte-by-byte.  A byte-wise implementation drops the inter-byte carry
+# and produces wrong values for any sample wider than one byte.  This
+# is what libtiff's horAcc16/horAcc32 do, and what GDAL/rasterio/tifffile
+# write to disk.  The byte-wise path remains correct (and faster) for the
+# 8-bit case.
+
 
 @ngjit
-def _predictor_decode(data, width, height, bytes_per_sample):
-    """Undo horizontal differencing predictor (TIFF predictor=2).
+def _predictor_decode_u8(data, width, height, samples_per_pixel):
+    """Undo predictor=2 for 8-bit samples (one byte per sample).
 
-    Operates in-place on the flat byte array, performing cumulative sum
-    per row at the sample level.
+    Stride is samples_per_pixel bytes.  The byte-wise modular sum is
+    correct because each sample fits in a single byte.
     """
-    row_bytes = width * bytes_per_sample
+    row_bytes = width * samples_per_pixel
     for row in range(height):
         row_start = row * row_bytes
-        for col in range(bytes_per_sample, row_bytes):
+        for col in range(samples_per_pixel, row_bytes):
             idx = row_start + col
-            data[idx] = np.uint8((np.int32(data[idx]) + np.int32(data[idx - bytes_per_sample])) & 0xFF)
+            data[idx] = np.uint8(
+                (np.int32(data[idx]) + np.int32(data[idx - samples_per_pixel])) & 0xFF)
 
 
 @ngjit
-def _predictor_encode(data, width, height, bytes_per_sample):
-    """Apply horizontal differencing predictor (TIFF predictor=2).
+def _predictor_decode_u16(view, width, height, samples_per_pixel):
+    """Undo predictor=2 on a uint16 view (in-place, sample-resolution).
 
-    Operates in-place, converting absolute values to differences.
-    Process right-to-left to avoid overwriting values we still need.
+    *view* indexes by sample.  Stride is *samples_per_pixel* samples.
     """
-    row_bytes = width * bytes_per_sample
+    row_samples = width * samples_per_pixel
+    for row in range(height):
+        row_start = row * row_samples
+        for col in range(samples_per_pixel, row_samples):
+            idx = row_start + col
+            view[idx] = np.uint16(
+                (np.int32(view[idx]) + np.int32(view[idx - samples_per_pixel])) & 0xFFFF)
+
+
+@ngjit
+def _predictor_decode_u32(view, width, height, samples_per_pixel):
+    """Undo predictor=2 on a uint32 view (in-place, sample-resolution)."""
+    row_samples = width * samples_per_pixel
+    for row in range(height):
+        row_start = row * row_samples
+        for col in range(samples_per_pixel, row_samples):
+            idx = row_start + col
+            view[idx] = np.uint32(
+                (np.uint64(view[idx]) + np.uint64(view[idx - samples_per_pixel]))
+                & np.uint64(0xFFFFFFFF))
+
+
+@ngjit
+def _predictor_decode_u64(view, width, height, samples_per_pixel):
+    """Undo predictor=2 on a uint64 view (in-place, sample-resolution)."""
+    row_samples = width * samples_per_pixel
+    for row in range(height):
+        row_start = row * row_samples
+        for col in range(samples_per_pixel, row_samples):
+            idx = row_start + col
+            view[idx] = np.uint64(view[idx]) + np.uint64(view[idx - samples_per_pixel])
+
+
+@ngjit
+def _predictor_encode_u8(data, width, height, samples_per_pixel):
+    """Apply predictor=2 for 8-bit samples (right-to-left, in-place)."""
+    row_bytes = width * samples_per_pixel
     for row in range(height):
         row_start = row * row_bytes
-        for col in range(row_bytes - 1, bytes_per_sample - 1, -1):
+        for col in range(row_bytes - 1, samples_per_pixel - 1, -1):
             idx = row_start + col
-            data[idx] = np.uint8((np.int32(data[idx]) - np.int32(data[idx - bytes_per_sample])) & 0xFF)
+            data[idx] = np.uint8(
+                (np.int32(data[idx]) - np.int32(data[idx - samples_per_pixel])) & 0xFF)
+
+
+@ngjit
+def _predictor_encode_u16(view, width, height, samples_per_pixel):
+    """Apply predictor=2 on a uint16 view (right-to-left, in-place)."""
+    row_samples = width * samples_per_pixel
+    for row in range(height):
+        row_start = row * row_samples
+        for col in range(row_samples - 1, samples_per_pixel - 1, -1):
+            idx = row_start + col
+            view[idx] = np.uint16(
+                (np.int32(view[idx]) - np.int32(view[idx - samples_per_pixel])) & 0xFFFF)
+
+
+@ngjit
+def _predictor_encode_u32(view, width, height, samples_per_pixel):
+    """Apply predictor=2 on a uint32 view (right-to-left, in-place)."""
+    row_samples = width * samples_per_pixel
+    for row in range(height):
+        row_start = row * row_samples
+        for col in range(row_samples - 1, samples_per_pixel - 1, -1):
+            idx = row_start + col
+            view[idx] = np.uint32(
+                (np.uint64(view[idx]) - np.uint64(view[idx - samples_per_pixel]))
+                & np.uint64(0xFFFFFFFF))
+
+
+@ngjit
+def _predictor_encode_u64(view, width, height, samples_per_pixel):
+    """Apply predictor=2 on a uint64 view (right-to-left, in-place)."""
+    row_samples = width * samples_per_pixel
+    for row in range(height):
+        row_start = row * row_samples
+        for col in range(row_samples - 1, samples_per_pixel - 1, -1):
+            idx = row_start + col
+            view[idx] = np.uint64(view[idx]) - np.uint64(view[idx - samples_per_pixel])
+
+
+def _sample_view(buf: np.ndarray, bytes_per_sample: int,
+                 byte_order: str = '<') -> np.ndarray:
+    """Return *buf* viewed as a 1-D array of unsigned samples.
+
+    The view shares memory with *buf* and uses the file's byte order so
+    that the sample-resolution differencing wraps at the correct width.
+    """
+    if bytes_per_sample == 1:
+        return buf
+    sample_dtype = np.dtype(f'{byte_order}u{bytes_per_sample}')
+    return buf.view(sample_dtype)
 
 
 def predictor_decode(data: np.ndarray, width: int, height: int,
-                     bytes_per_sample: int) -> np.ndarray:
+                     bytes_per_sample: int, samples: int = 1,
+                     byte_order: str = '<') -> np.ndarray:
     """Undo horizontal differencing predictor (predictor=2).
+
+    Operates at the sample level, per TIFF Technical Note: differences
+    are taken between adjacent same-component samples in the sample's
+    natural bit width.  For multi-band chunky data the stride is the
+    number of samples per pixel.
 
     Parameters
     ----------
     data : np.ndarray
         Flat uint8 array of decompressed pixel data (modified in-place).
     width, height : int
-        Image dimensions.
+        Image dimensions in pixels.
     bytes_per_sample : int
-        Bytes per sample (e.g. 1 for uint8, 4 for float32).
+        Bytes per sample (1, 2, 4, or 8).
+    samples : int
+        Samples per pixel (1 for single-band, 3 for RGB, ...).
+    byte_order : str
+        '<' for little-endian, '>' for big-endian.  Used to interpret
+        multi-byte sample bytes during the in-place differencing.
 
     Returns
     -------
     np.ndarray
-        Same array, modified in-place.
+        The same uint8 array with predictor=2 inverted.
     """
     buf = np.ascontiguousarray(data)
-    _predictor_decode(buf, width, height, bytes_per_sample)
+    if bytes_per_sample == 1:
+        _predictor_decode_u8(buf, width, height, samples)
+        return buf
+
+    view = _sample_view(buf, bytes_per_sample, byte_order)
+    if bytes_per_sample == 2:
+        _predictor_decode_u16(view, width, height, samples)
+    elif bytes_per_sample == 4:
+        _predictor_decode_u32(view, width, height, samples)
+    elif bytes_per_sample == 8:
+        _predictor_decode_u64(view, width, height, samples)
+    else:
+        raise ValueError(
+            f"predictor=2 with bytes_per_sample={bytes_per_sample} is not "
+            "supported (TIFF specifies sample-level differencing for 1/2/4/8 "
+            "byte samples)."
+        )
     return buf
 
 
 def predictor_encode(data: np.ndarray, width: int, height: int,
-                     bytes_per_sample: int) -> np.ndarray:
+                     bytes_per_sample: int, samples: int = 1,
+                     byte_order: str = '<') -> np.ndarray:
     """Apply horizontal differencing predictor (predictor=2).
+
+    See :func:`predictor_decode` for the sample-level semantics.
 
     Parameters
     ----------
     data : np.ndarray
         Flat uint8 array of pixel data (modified in-place).
     width, height : int
-        Image dimensions.
+        Image dimensions in pixels.
     bytes_per_sample : int
         Bytes per sample.
+    samples : int
+        Samples per pixel.
+    byte_order : str
+        '<' or '>'.  Defaults to little-endian, the writer's output order.
 
     Returns
     -------
     np.ndarray
-        Same array, modified in-place.
+        The same uint8 array with predictor=2 applied.
     """
     buf = np.ascontiguousarray(data)
-    _predictor_encode(buf, width, height, bytes_per_sample)
+    if bytes_per_sample == 1:
+        _predictor_encode_u8(buf, width, height, samples)
+        return buf
+
+    view = _sample_view(buf, bytes_per_sample, byte_order)
+    if bytes_per_sample == 2:
+        _predictor_encode_u16(view, width, height, samples)
+    elif bytes_per_sample == 4:
+        _predictor_encode_u32(view, width, height, samples)
+    elif bytes_per_sample == 8:
+        _predictor_encode_u64(view, width, height, samples)
+    else:
+        raise ValueError(
+            f"predictor=2 with bytes_per_sample={bytes_per_sample} is not "
+            "supported (TIFF specifies sample-level differencing for 1/2/4/8 "
+            "byte samples)."
+        )
     return buf
 
 
