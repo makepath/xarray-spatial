@@ -12,6 +12,19 @@ Optional arguments: $ARGUMENTS
 
 ---
 
+## Step 0 -- Detect CUDA availability
+
+Before discovering modules, probe the host for CUDA:
+
+```bash
+python -c "from numba import cuda; print(cuda.is_available())" 2>/dev/null
+```
+
+Capture the result as `CUDA_AVAILABLE` (`true` if the command prints `True`,
+`false` otherwise — including import failure). Interpolate this flag into
+each subagent prompt below so the agent knows whether to run cupy and
+dask+cupy paths or limit itself to static review of the GPU code.
+
 ## Step 1 -- Gather module metadata via git
 
 Enumerate candidate modules:
@@ -121,6 +134,24 @@ Also read xrspatial/utils.py to understand:
 - ngjit / ArrayTypeFunctionMapping dispatch helpers
 
 Read xrspatial/tests/general_checks.py for cross-backend test helpers.
+
+CUDA available on this host: {cuda_available}
+
+If CUDA_AVAILABLE is true:
+- For Cat 1 (attrs), Cat 2 (coords), Cat 3 (dims), Cat 4 (dtype/nodata),
+  and Cat 5 (backend-inconsistent metadata), construct cupy and
+  dask+cupy DataArrays and run the function end-to-end. Check
+  attrs/coords/dims on the actual returned object — do not infer from
+  source.
+- A /rockout fix that touches metadata-emitting code must verify all
+  four backends (numpy, cupy, dask+numpy, dask+cupy) before opening
+  the PR.
+
+If CUDA_AVAILABLE is false:
+- Inspect the cupy / dask+cupy paths by reading the source only.
+- Skip executing tests on those backends. Add the token
+  `cuda-unavailable` to the `notes` column of the state CSV so a
+  future re-run on a GPU host knows to re-validate the GPU paths.
 
 **Your task:**
 

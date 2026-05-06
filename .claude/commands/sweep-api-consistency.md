@@ -13,6 +13,19 @@ Optional arguments: $ARGUMENTS
 
 ---
 
+## Step 0 -- Detect CUDA availability
+
+Before discovering modules, probe the host for CUDA:
+
+```bash
+python -c "from numba import cuda; print(cuda.is_available())" 2>/dev/null
+```
+
+Capture the result as `CUDA_AVAILABLE` (`true` if the command prints `True`,
+`false` otherwise — including import failure). Interpolate this flag into
+each subagent prompt below so the agent knows whether to run cupy and
+dask+cupy paths or limit itself to static review of the GPU code.
+
 ## Step 1 -- Gather module metadata via git
 
 Enumerate candidate modules:
@@ -105,6 +118,22 @@ For comparison, read 2-3 sibling modules (analogous functions). Examples:
 - For glcm: also read focal.py and convolution.py
 The point is to compare parameter naming and return shapes against
 modules with similar function families.
+
+CUDA available on this host: {cuda_available}
+
+If CUDA_AVAILABLE is true:
+- When checking signature parity, also import the cupy backend variants
+  and confirm they accept the same kwargs. Run a quick smoke test on a
+  cupy DataArray for each public function so signature drift between
+  numpy and cupy paths surfaces.
+- A /rockout fix that touches public signatures must verify both numpy
+  and cupy entry points before opening the PR.
+
+If CUDA_AVAILABLE is false:
+- Inspect the cupy backend signatures by reading the source only.
+- Add the token `cuda-unavailable` to the `notes` column of the state
+  CSV so a future re-run on a GPU host knows to re-validate the cupy
+  signatures.
 
 **Your task:**
 

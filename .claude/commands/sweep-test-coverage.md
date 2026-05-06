@@ -12,6 +12,20 @@ Optional arguments: $ARGUMENTS
 
 ---
 
+## Step 0 -- Detect CUDA availability
+
+Before discovering modules, probe the host for CUDA:
+
+```bash
+python -c "from numba import cuda; print(cuda.is_available())" 2>/dev/null
+```
+
+Capture the result as `CUDA_AVAILABLE` (`true` if the command prints `True`,
+`false` otherwise — including import failure). Interpolate this flag into
+each subagent prompt below so the agent knows whether new tests can be
+executed against cupy / dask+cupy backends or only added with a `pytest.skip`
+guard for environments without CUDA.
+
 ## Step 1 -- Gather module metadata via git
 
 Enumerate candidate modules:
@@ -107,6 +121,24 @@ Read these files:
 - xrspatial/tests/general_checks.py (cross-backend test helpers)
 - xrspatial/utils.py (ArrayTypeFunctionMapping, _validate_raster)
 - xrspatial/conftest.py (shared fixtures)
+
+CUDA available on this host: {cuda_available}
+
+If CUDA_AVAILABLE is true:
+- New cupy / dask+cupy tests must execute locally before /rockout opens
+  a PR. Use the cross-backend helpers in general_checks.py so the new
+  test exercises all four backends on a CUDA host.
+- Verify the test actually fails before the fix and passes after — do
+  not commit a test that was never observed running on a GPU.
+
+If CUDA_AVAILABLE is false:
+- New cupy / dask+cupy tests are still added (CI runs them on a GPU
+  host) but must be guarded with the project's existing GPU-skip
+  decorator so local runs without CUDA do not error. Note that the
+  test was not executed locally.
+- Add the token `cuda-unavailable` to the `notes` column of the state
+  CSV so a future re-run on a GPU host knows to re-validate that the
+  newly added cupy tests pass.
 
 **Your task:**
 

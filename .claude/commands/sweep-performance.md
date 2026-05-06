@@ -26,6 +26,20 @@ Parse $ARGUMENTS for these flags (multiple may combine):
 | `--no-fix` | Audit only; subagents do not run /rockout. Useful for re-triage without producing PRs. |
 | `--high-only` | Drop modules whose state row shows zero HIGH findings from the last triage within the past 30 days. |
 
+## Step 0.5 -- Detect CUDA availability
+
+After parsing arguments and before discovering modules, probe the host
+for CUDA:
+
+```bash
+python -c "from numba import cuda; print(cuda.is_available())" 2>/dev/null
+```
+
+Capture the result as `CUDA_AVAILABLE` (`true` if the command prints `True`,
+`false` otherwise — including import failure). Interpolate this flag into
+each subagent prompt below so the agent knows whether to run cupy and
+dask+cupy paths or limit itself to static review of the GPU code.
+
 ## Step 1 -- Discover modules in scope
 
 Enumerate all candidate modules. For each, record its file path(s):
@@ -137,6 +151,25 @@ Read these files: {module_files}
 
 Also read xrspatial/utils.py for _validate_raster() behavior, and
 xrspatial/tests/general_checks.py for cross-backend test helpers.
+
+CUDA available on this host: {cuda_available}
+
+If CUDA_AVAILABLE is true:
+- For Cat 3 (GPU transfer) and Cat 6 (OOM verdict), validate findings
+  by actually running the cupy and dask+cupy paths. Construct a small
+  cupy-backed DataArray and execute the function end-to-end. Time the
+  result and confirm there is no host-device round trip.
+- For register-pressure findings, compile the kernel with
+  `numba.cuda.compile_ptx` or run it on a small input and report the
+  observed register count rather than guessing from source.
+- A /rockout fix that touches CUDA code must include a cupy run in its
+  verification step before opening the PR.
+
+If CUDA_AVAILABLE is false:
+- Inspect the cupy / dask+cupy paths by reading the source only.
+- Skip executing CUDA kernels and skip cupy benchmarking. Add the
+  token `cuda-unavailable` to the `notes` column of the state CSV so
+  a future re-run on a GPU host knows to re-validate the GPU paths.
 
 **Your task:**
 
