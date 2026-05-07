@@ -1496,16 +1496,25 @@ def write_streaming(dask_data, path: str, *,
         raise
 
 
-def _is_fsspec_uri(path: str) -> bool:
-    """Check if a path is a fsspec-compatible URI."""
+def _is_fsspec_uri(path) -> bool:
+    """Check if a path is a fsspec-compatible URI (string only)."""
+    if not isinstance(path, str):
+        return False
     if path.startswith(('http://', 'https://')):
         return False
     return '://' in path
 
 
-def _write_bytes(file_bytes: bytes, path: str) -> None:
-    """Write bytes to a local file (atomic) or cloud storage (via fsspec)."""
+def _write_bytes(file_bytes: bytes, path) -> None:
+    """Write bytes to a local file (atomic), cloud storage (via fsspec),
+    or any binary file-like object exposing ``write``."""
     import os
+
+    # File-like destination: append the encoded bytes. The caller owns
+    # the buffer's lifetime (we don't close it).
+    if not isinstance(path, str) and hasattr(path, 'write'):
+        path.write(file_bytes)
+        return
 
     if _is_fsspec_uri(path):
         try:

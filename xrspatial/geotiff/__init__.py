@@ -179,25 +179,49 @@ def _coords_to_transform(da: xr.DataArray) -> GeoTransform | None:
     )
 
 
-def _read_geo_info(source: str, *, overview_level: int | None = None):
+def _read_geo_info(source, *, overview_level: int | None = None):
     """Read only the geographic metadata and image dimensions from a GeoTIFF.
 
     Returns (geo_info, height, width, dtype, n_bands) without reading pixel
-    data.  Uses mmap for header-only access -- O(1) memory regardless of file
-    size.
+    data.  Uses mmap for header-only access on string paths; for file-like
+    inputs it reads the bytes directly. O(1) memory regardless of file size
+    when a path is supplied.
 
     Parameters
     ----------
+    source : str or binary file-like
+        Path or any object with ``read``/``seek``.
     overview_level : int or None
         Overview IFD index (0 = full resolution).
     """
     from ._dtypes import tiff_dtype_to_numpy
     from ._geotags import extract_geo_info
     from ._header import parse_all_ifds, parse_header
+    from ._reader import _is_file_like
 
-    with open(source, 'rb') as f:
-        import mmap
-        data = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+    if _is_file_like(source):
+        # File-like: read its full bytes; we don't try to mmap arbitrary
+        # buffers because they may not back a real file descriptor.
+        try:
+            cur = source.tell()
+        except (OSError, AttributeError):
+            cur = 0
+        source.seek(0)
+        data = source.read()
+        try:
+            source.seek(cur)
+        except (OSError, AttributeError):
+            pass
+        close_data = False
+    elif isinstance(source, str):
+        with open(source, 'rb') as f:
+            import mmap
+            data = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+        close_data = True
+    else:
+        raise TypeError(
+            "source must be a str path or binary file-like, "
+            f"got {type(source).__name__}")
     try:
         header = parse_header(data)
         ifds = parse_all_ifds(data, header)
@@ -213,7 +237,8 @@ def _read_geo_info(source: str, *, overview_level: int | None = None):
         n_bands = ifd.samples_per_pixel if ifd.samples_per_pixel > 1 else 0
         return geo_info, ifd.height, ifd.width, file_dtype, n_bands
     finally:
-        data.close()
+        if close_data:
+            data.close()
 
 
 def _extent_to_window(transform, file_height, file_width,
@@ -245,7 +270,7 @@ def _extent_to_window(transform, file_height, file_width,
 
 
 
-def open_geotiff(source: str, *, dtype=None, window=None,
+def open_geotiff(source, *, dtype=None, window=None,
                  overview_level: int | None = None,
                  band: int | None = None,
                  name: str | None = None,
@@ -264,8 +289,11 @@ def open_geotiff(source: str, *, dtype=None, window=None,
 
     Parameters
     ----------
-    source : str
-        File path, HTTP URL, or cloud URI (s3://, gs://, az://).
+    source : str or binary file-like
+        File path, HTTP URL, cloud URI (s3://, gs://, az://), or a
+        binary file-like object (e.g. ``io.BytesIO``) with read+seek.
+        VRT, dask-chunked, GPU, and remote-URL paths require a string;
+        in-memory file-like buffers go through the eager numpy reader.
     dtype : str, numpy.dtype, or None
         Cast the result to this dtype after reading. None keeps the
         file's native dtype. Float-to-int casts raise ValueError to
@@ -315,11 +343,24 @@ def open_geotiff(source: str, *, dtype=None, window=None,
     is lossy in a way users rarely intend; cast explicitly after read if
     you need it).
     """
-    # VRT files
-    if source.lower().endswith('.vrt'):
+    # VRT files (string paths only -- VRT XML references other files on disk)
+    if isinstance(source, str) and source.lower().endswith('.vrt'):
         return read_vrt(source, dtype=dtype, window=window, band=band,
                         name=name, chunks=chunks, gpu=gpu,
                         max_pixels=max_pixels)
+
+    # File-like buffers don't support the GPU or dask code paths because
+    # those re-open the source by path from worker tasks or device-side
+    # readers. Reject early with a clear message.
+    if not isinstance(source, str):
+        if gpu:
+            raise ValueError(
+                "gpu=True is not supported for file-like sources. "
+                "Pass a path string instead.")
+        if chunks is not None:
+            raise ValueError(
+                "chunks=... (dask) is not supported for file-like sources. "
+                "Pass a path string instead.")
 
     # GPU path
     if gpu:
@@ -358,9 +399,11 @@ def open_geotiff(source: str, *, dtype=None, window=None,
         coords = {'y': full_y, 'x': full_x}
 
     if name is None:
-        # Derive from source path
-        import os
-        name = os.path.splitext(os.path.basename(source))[0]
+        # Derive from source path. File-like buffers don't have a path,
+        # so leave name unset rather than fabricating one.
+        if isinstance(source, str):
+            import os
+            name = os.path.splitext(os.path.basename(source))[0]
 
     attrs = {}
     if geo_info.crs_epsg is not None:
@@ -579,7 +622,7 @@ def _merge_friendly_extra_tags(extra_tags_list, attrs: dict) -> list | None:
     return existing or None
 
 
-def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
+def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
                crs: int | str | None = None,
                nodata=None,
                compression: str = 'zstd',
@@ -612,8 +655,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
     ----------
     data : xr.DataArray or np.ndarray
         2D raster data.
-    path : str
-        Output file path.
+    path : str or binary file-like
+        Output file path, or any object exposing a ``write`` method
+        (e.g. ``io.BytesIO``). When a file-like is passed, the encoded
+        TIFF bytes are written to that object once assembly completes.
+        ``cog=True`` and ``.vrt`` outputs require a string path.
     crs : int, str, or None
         EPSG code (int), WKT string, or PROJ string. If None and data
         is a DataArray, tries to read from attrs ('crs' for EPSG,
@@ -668,6 +714,21 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                 f"Unknown compression {compression!r}. "
                 f"Valid options: {list(_VALID_COMPRESSIONS)}.")
 
+    # File-like (BytesIO etc.) destinations: the streaming, GPU, COG, and
+    # VRT writers all need a real filesystem path (atomic rename, overview
+    # passes, sidecar writes). Reject those combos up front so the user
+    # gets a clear error instead of a deep traceback.
+    _path_is_file_like = (not isinstance(path, str)) and hasattr(path, 'write')
+    if _path_is_file_like:
+        if cog:
+            raise ValueError(
+                "cog=True is not supported for file-like destinations. "
+                "Pass a string path or write to BytesIO without cog=True.")
+    elif not isinstance(path, str):
+        raise TypeError(
+            f"path must be a str or a binary file-like with a write() "
+            f"method, got {type(path).__name__}")
+
     # tile_size only applies to tiled output; warn if the caller passed a
     # non-default size alongside strip mode (it would otherwise be silently
     # ignored).
@@ -680,8 +741,9 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
             stacklevel=2,
         )
 
-    # VRT tiled output
-    if path.lower().endswith('.vrt'):
+    # VRT tiled output (string paths only -- VRT writes a real .vrt file
+    # plus per-tile GeoTIFFs to a directory)
+    if isinstance(path, str) and path.lower().endswith('.vrt'):
         if cog:
             raise ValueError(
                 "cog=True is not compatible with VRT output. "
@@ -785,8 +847,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
 
         # Dask-backed: stream tiles to avoid materialising the full array.
         # COG requires overviews from the full array, so it falls through
-        # to the eager path.
-        if hasattr(raw, 'dask') and not cog:
+        # to the eager path. Streaming write needs a real filesystem path
+        # (it builds a temp file then atomic-renames); for file-like
+        # destinations we materialise eagerly and assemble in-memory.
+        if hasattr(raw, 'dask') and not cog and not _path_is_file_like:
             dask_arr = raw
             # Handle band-first dimension order (band, y, x) -> (y, x, band)
             if raw.ndim == 3 and data.dims[0] in ('band', 'bands', 'channel'):
