@@ -452,16 +452,21 @@ def _predictor_encode_u64(view, width, height, samples_per_pixel):
             view[idx] = np.uint64(view[idx]) - np.uint64(view[idx - samples_per_pixel])
 
 
-def _sample_view(buf: np.ndarray, bytes_per_sample: int,
-                 byte_order: str = '<') -> np.ndarray:
-    """Return *buf* viewed as a 1-D array of unsigned samples.
+import sys as _sys
+_NATIVE_BO = '<' if _sys.byteorder == 'little' else '>'
 
-    The view shares memory with *buf* and uses the file's byte order so
-    that the sample-resolution differencing wraps at the correct width.
+
+def _sample_view(buf: np.ndarray, bytes_per_sample: int) -> np.ndarray:
+    """Return *buf* viewed as a 1-D array of native-byte-order samples.
+
+    The view shares memory with *buf*. Numba's nopython mode rejects arrays
+    with a non-native byte order ("Unsupported array dtype: >u2" etc.), so
+    callers that need to operate on data from a big-endian file must
+    byteswap the underlying bytes before and after invoking the kernels.
     """
     if bytes_per_sample == 1:
         return buf
-    sample_dtype = np.dtype(f'{byte_order}u{bytes_per_sample}')
+    sample_dtype = np.dtype(f'u{bytes_per_sample}')
     return buf.view(sample_dtype)
 
 
@@ -499,7 +504,14 @@ def predictor_decode(data: np.ndarray, width: int, height: int,
         _predictor_decode_u8(buf, width, height, samples)
         return buf
 
-    view = _sample_view(buf, bytes_per_sample, byte_order)
+    # Numba can't compile non-native-byte-order arrays. For big-endian
+    # files, swap the bytes in place so the native-order kernel sees
+    # correct sample values, then swap back so the caller's downstream
+    # ``chunk.view(file_dtype)`` reads the bytes in the file's order.
+    swap = (byte_order != _NATIVE_BO)
+    view = _sample_view(buf, bytes_per_sample)
+    if swap:
+        view.byteswap(inplace=True)
     if bytes_per_sample == 2:
         _predictor_decode_u16(view, width, height, samples)
     elif bytes_per_sample == 4:
@@ -507,11 +519,15 @@ def predictor_decode(data: np.ndarray, width: int, height: int,
     elif bytes_per_sample == 8:
         _predictor_decode_u64(view, width, height, samples)
     else:
+        if swap:
+            view.byteswap(inplace=True)
         raise ValueError(
             f"predictor=2 with bytes_per_sample={bytes_per_sample} is not "
             "supported (TIFF specifies sample-level differencing for 1/2/4/8 "
             "byte samples)."
         )
+    if swap:
+        view.byteswap(inplace=True)
     return buf
 
 
@@ -545,7 +561,14 @@ def predictor_encode(data: np.ndarray, width: int, height: int,
         _predictor_encode_u8(buf, width, height, samples)
         return buf
 
-    view = _sample_view(buf, bytes_per_sample, byte_order)
+    # Mirror the decode path: byteswap to native around the kernel call so
+    # numba can compile the in-place differencing. The writer always emits
+    # ``BO='<'`` today so this is normally a no-op, but the function stays
+    # robust to callers that pass the BE branch.
+    swap = (byte_order != _NATIVE_BO)
+    view = _sample_view(buf, bytes_per_sample)
+    if swap:
+        view.byteswap(inplace=True)
     if bytes_per_sample == 2:
         _predictor_encode_u16(view, width, height, samples)
     elif bytes_per_sample == 4:
@@ -553,11 +576,15 @@ def predictor_encode(data: np.ndarray, width: int, height: int,
     elif bytes_per_sample == 8:
         _predictor_encode_u64(view, width, height, samples)
     else:
+        if swap:
+            view.byteswap(inplace=True)
         raise ValueError(
             f"predictor=2 with bytes_per_sample={bytes_per_sample} is not "
             "supported (TIFF specifies sample-level differencing for 1/2/4/8 "
             "byte samples)."
         )
+    if swap:
+        view.byteswap(inplace=True)
     return buf
 
 
