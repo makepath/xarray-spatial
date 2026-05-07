@@ -194,6 +194,37 @@ class TestP3MmapLRU:
         cache = _MmapCache()
         assert cache._max_size == 5
 
+    def test_fingerprint_mismatch_invalidates_idle_entry(self, tmp_path):
+        """Platform-agnostic check that the invalidation logic itself
+        runs. The end-to-end ``os.replace`` and truncate scenarios are
+        POSIX-only because Windows blocks the precondition, but the
+        fingerprint comparison is the actual line of code that prevents
+        stale reads -- exercise it directly by mutating the cached
+        fingerprint to simulate a file that changed underneath us."""
+        cache = _MmapCache()
+        p = tmp_path / 'fingerprint_1488.bin'
+        p.write_bytes(b'A' * 16)
+
+        mm1, _ = cache.acquire(str(p))
+        cache.release(str(p))
+
+        real = os.path.realpath(str(p))
+        # Force the cached fingerprint to a value the file cannot match,
+        # which mimics any real-world change (replace, truncate, rename
+        # back) without depending on the OS allowing those operations
+        # while we hold an mmap.
+        cache._entries[real][4] = (-1, -1, -1)
+
+        # Next acquire must notice the mismatch and re-mmap. The mm
+        # object identity should change; the new entry's fingerprint
+        # should match the live file.
+        mm2, _ = cache.acquire(str(p))
+        try:
+            assert mm2 is not mm1
+            assert cache._entries[real][4] == cache._file_ident(real)
+        finally:
+            cache.release(str(p))
+
     @pytest.mark.skipif(
         sys.platform.startswith('win'),
         reason="Windows holds a file lock while a path is mmapped, "
