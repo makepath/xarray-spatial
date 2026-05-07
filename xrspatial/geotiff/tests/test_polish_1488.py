@@ -17,6 +17,7 @@ Covers ten low-severity audit items:
 from __future__ import annotations
 
 import os
+import sys
 import warnings
 
 import numpy as np
@@ -193,6 +194,13 @@ class TestP3MmapLRU:
         cache = _MmapCache()
         assert cache._max_size == 5
 
+    @pytest.mark.skipif(
+        sys.platform.startswith('win'),
+        reason="Windows holds a file lock while a path is mmapped, "
+               "so os.replace fails before the cache lookup runs. "
+               "The stale-cache bug this test guards against can only "
+               "occur on POSIX.",
+    )
     def test_replaced_file_invalidates_idle_entry(self, tmp_path):
         """``os.replace`` swaps the inode under a stable path. The cache
         must spot the new inode and re-mmap rather than serve stale bytes.
@@ -217,6 +225,12 @@ class TestP3MmapLRU:
         assert bytes(mm2[:16]) == b'B' * 16
         cache.release(str(p))
 
+    @pytest.mark.skipif(
+        sys.platform.startswith('win'),
+        reason="Windows blocks open(path, 'wb') while the path is "
+               "mmapped, so the in-place rewrite fails before the "
+               "cache invalidation check. POSIX-only scenario.",
+    )
     def test_truncated_file_invalidates_idle_entry(self, tmp_path):
         """In-place truncate-and-overwrite (``open(p, 'wb')``) preserves the
         inode but changes size and mtime, so the cache must still
