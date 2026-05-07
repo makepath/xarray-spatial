@@ -193,6 +193,53 @@ class TestP3MmapLRU:
         cache = _MmapCache()
         assert cache._max_size == 5
 
+    def test_replaced_file_invalidates_idle_entry(self, tmp_path):
+        """``os.replace`` swaps the inode under a stable path. The cache
+        must spot the new inode and re-mmap rather than serve stale bytes.
+        Reproduces a real ``to_geotiff`` round-trip pattern -- the writer
+        does an atomic rename, so a re-read after overwriting the same
+        path used to return data from the unlinked old file."""
+        cache = _MmapCache()
+        p = tmp_path / 'replaced_1488.bin'
+        p.write_bytes(b'A' * 16)
+
+        mm1, _ = cache.acquire(str(p))
+        first = bytes(mm1[:16])
+        assert first == b'A' * 16
+        cache.release(str(p))
+
+        # Atomic-rename style replacement: same path, new inode.
+        new = tmp_path / 'replaced_1488.bin.tmp'
+        new.write_bytes(b'B' * 16)
+        os.replace(str(new), str(p))
+
+        mm2, _ = cache.acquire(str(p))
+        assert bytes(mm2[:16]) == b'B' * 16
+        cache.release(str(p))
+
+    def test_truncated_file_invalidates_idle_entry(self, tmp_path):
+        """In-place truncate-and-overwrite (``open(p, 'wb')``) preserves the
+        inode but changes size and mtime, so the cache must still
+        invalidate."""
+        cache = _MmapCache()
+        p = tmp_path / 'truncate_1488.bin'
+        p.write_bytes(b'A' * 32)
+
+        mm1, sz1 = cache.acquire(str(p))
+        assert sz1 == 32
+        cache.release(str(p))
+
+        # In-place rewrite with a smaller payload.
+        import time
+        time.sleep(0.01)  # ensure st_mtime_ns advances
+        with open(str(p), 'wb') as fh:
+            fh.write(b'C' * 8)
+
+        mm2, sz2 = cache.acquire(str(p))
+        assert sz2 == 8
+        assert bytes(mm2[:8]) == b'C' * 8
+        cache.release(str(p))
+
 
 # ---------------------------------------------------------------------------
 # P-4: decode parallelism threshold

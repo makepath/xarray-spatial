@@ -82,17 +82,44 @@ class _MmapCache:
 
     def __init__(self, max_size: int | None = None):
         self._lock = threading.Lock()
-        # path -> [fh, mm, size, refcount] (list so we can mutate in place)
-        # OrderedDict gives LRU semantics via move_to_end on access.
+        # path -> [fh, mm, size, refcount, ident]
+        # ``ident`` is (st_ino, st_size, st_mtime_ns) used to spot files that
+        # were replaced (e.g. via ``os.replace`` on an atomic write) at the
+        # same path. ``list`` so we can mutate in place; ``OrderedDict`` gives
+        # LRU semantics via move_to_end.
         self._entries: OrderedDict[str, list] = OrderedDict()
         self._max_size = (max_size if max_size is not None
                           else _mmap_cache_size_from_env())
+
+    @staticmethod
+    def _file_ident(path: str):
+        """Return a (st_ino, st_size, st_mtime_ns) tuple for *path* or None."""
+        try:
+            st = _os_module.stat(path)
+        except OSError:
+            return None
+        return (st.st_ino, st.st_size, st.st_mtime_ns)
 
     def acquire(self, path: str):
         """Get or create a read-only mmap for *path*. Returns (mm, size)."""
         real = _os_module.path.realpath(path)
         with self._lock:
             entry = self._entries.get(real)
+            ident = self._file_ident(real)
+            if entry is not None:
+                # If the file at this path has been replaced (different inode,
+                # size, or mtime) the cached mmap is stale. Drop the entry so
+                # we re-open below. If the old entry is still in use by other
+                # callers, leave their mmap valid -- they still hold a
+                # reference -- but unlink the cache slot so it isn't reused.
+                if ident is not None and entry[4] != ident:
+                    self._entries.pop(real)
+                    if entry[3] <= 0:
+                        if entry[1] is not None:
+                            entry[1].close()
+                        entry[0].close()
+                    entry = None
+
             if entry is not None:
                 entry[3] += 1
                 self._entries.move_to_end(real)
@@ -106,7 +133,9 @@ class _MmapCache:
                 mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
             else:
                 mm = None
-            self._entries[real] = [fh, mm, size, 1]
+            # Re-stat after opening so size matches the mmap we built.
+            ident = self._file_ident(real) or (0, size, 0)
+            self._entries[real] = [fh, mm, size, 1, ident]
             self._evict_locked()
             return mm, size
 
@@ -142,7 +171,7 @@ class _MmapCache:
                 to_drop.append(key)
         for key in to_drop:
             entry = self._entries.pop(key)
-            _, mm, _, _ = entry
+            mm = entry[1]
             if mm is not None:
                 mm.close()
             entry[0].close()
@@ -152,7 +181,7 @@ class _MmapCache:
         with self._lock:
             for key in [k for k, v in self._entries.items() if v[3] <= 0]:
                 entry = self._entries.pop(key)
-                _, mm, _, _ = entry
+                mm = entry[1]
                 if mm is not None:
                     mm.close()
                 entry[0].close()
