@@ -592,7 +592,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                overview_resampling: str = 'mean',
                bigtiff: bool | None = None,
                gpu: bool | None = None,
-               streaming_buffer_bytes: int = 256 * 1024 * 1024) -> None:
+               streaming_buffer_bytes: int = 256 * 1024 * 1024,
+               max_z_error: float = 0.0) -> None:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Dask-backed DataArrays are written in streaming mode: one tile-row
@@ -658,6 +659,13 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         streaming a dask-backed DataArray. Defaults to 256 MB. Wide
         rasters whose tile-row exceeds this budget are split into
         horizontal segments. Ignored for numpy / CuPy / COG paths.
+    max_z_error : float
+        Per-pixel error budget for LERC compression. ``0.0`` (default)
+        is lossless; larger values let the encoder approximate values
+        within the bound, producing smaller files at the cost of accuracy
+        bounded by ``abs(decoded - original) <= max_z_error``. Only used
+        when ``compression='lerc'``; passing a non-zero value with any
+        other codec raises ``ValueError``.
     """
     # Up-front validation: catch bad compression names before they reach
     # any of the deeper write paths (streaming, GPU, VRT, COG) where the
@@ -667,6 +675,18 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
             raise ValueError(
                 f"Unknown compression {compression!r}. "
                 f"Valid options: {list(_VALID_COMPRESSIONS)}.")
+
+    # max_z_error only applies to LERC; reject negative values and reject
+    # non-zero values paired with any other codec so the caller learns the
+    # parameter was ignored before bytes hit disk.
+    if max_z_error < 0:
+        raise ValueError(
+            f"max_z_error must be >= 0, got {max_z_error}")
+    if max_z_error != 0 and (
+            not isinstance(compression, str)
+            or compression.lower() != 'lerc'):
+        raise ValueError(
+            "max_z_error is only valid with compression='lerc'")
 
     # tile_size only applies to tiled output; warn if the caller passed a
     # non-default size alongside strip mode (it would otherwise be silently
@@ -696,12 +716,20 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                          compression_level=compression_level,
                          tile_size=tile_size,
                          predictor=predictor,
-                         bigtiff=bigtiff)
+                         bigtiff=bigtiff,
+                         max_z_error=max_z_error)
         return
 
     # Auto-detect GPU data and dispatch to write_geotiff_gpu
     use_gpu = gpu if gpu is not None else _is_gpu_data(data)
     if use_gpu:
+        # GPU writer uses nvCOMP and does not support LERC; refuse rather
+        # than silently dropping the requested error budget.
+        if max_z_error != 0:
+            raise ValueError(
+                "max_z_error is not supported on the GPU writer "
+                "(nvCOMP has no LERC backend). Use the CPU path "
+                "(gpu=False) or omit max_z_error.")
         try:
             write_geotiff_gpu(data, path, crs=crs, nodata=nodata,
                               compression=compression,
@@ -824,6 +852,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
                 extra_tags=extra_tags_list,
                 bigtiff=bigtiff,
                 streaming_buffer_bytes=streaming_buffer_bytes,
+                max_z_error=max_z_error,
             )
             return
 
@@ -893,12 +922,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
         gdal_metadata_xml=gdal_meta_xml,
         extra_tags=extra_tags_list,
         bigtiff=bigtiff,
+        max_z_error=max_z_error,
     )
 
 
 def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
                        nodata, compression, compression_level,
-                       tile_size, predictor, bigtiff):
+                       tile_size, predictor, bigtiff,
+                       max_z_error: float = 0.0):
     """Write a single tile GeoTIFF. Used by _write_vrt_tiled."""
     if hasattr(chunk_data, 'compute'):
         chunk_data = chunk_data.compute()
@@ -930,13 +961,14 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
           tile_size=tile_size,
           predictor=predictor,
           compression_level=compression_level,
-          bigtiff=bigtiff)
+          bigtiff=bigtiff,
+          max_z_error=max_z_error)
 
 
 def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                      compression='zstd', compression_level=None,
                      tile_size=256, predictor: bool | int = False,
-                     bigtiff=None):
+                     bigtiff=None, max_z_error: float = 0.0):
     """Write a DataArray as a directory of tiled GeoTIFFs with a VRT index.
 
     This enables streaming dask arrays to disk without materializing the
@@ -1075,7 +1107,7 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                 task = dask.delayed(_write_single_tile)(
                     chunk_data, tile_path, tile_gt, epsg, wkt_fallback,
                     nodata, compression, compression_level,
-                    tile_size, predictor, bigtiff)
+                    tile_size, predictor, bigtiff, max_z_error)
                 delayed_tasks.append(task)
             else:
                 # Numpy: slice and write directly
@@ -1084,7 +1116,7 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                 _write_single_tile(
                     chunk_data, tile_path, tile_gt, epsg, wkt_fallback,
                     nodata, compression, compression_level,
-                    tile_size, predictor, bigtiff)
+                    tile_size, predictor, bigtiff, max_z_error)
 
             col_offset += chunk_w
         row_offset += chunk_h

@@ -353,7 +353,8 @@ def _build_ifd(tags: list[tuple], overflow_base: int,
 
 def _write_stripped(data: np.ndarray, compression: int, predictor: int,
                     rows_per_strip: int = 256,
-                    compression_level: int | None = None) -> tuple[list, list, list]:
+                    compression_level: int | None = None,
+                    max_z_error: float = 0.0) -> tuple[list, list, list]:
     """Compress data as strips.
 
     Returns
@@ -401,7 +402,8 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: int,
             elif compression == COMPRESSION_LERC:
                 from ._compression import lerc_compress
                 compressed = lerc_compress(
-                    strip_data, width, strip_rows, samples=samples, dtype=dtype)
+                    strip_data, width, strip_rows, samples=samples, dtype=dtype,
+                    max_z_error=max_z_error)
             elif compression_level is None:
                 compressed = compress(strip_data, compression)
             else:
@@ -421,7 +423,7 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: int,
 
 def _prepare_tile(data, tr, tc, th, tw, height, width, samples, dtype,
                   bytes_per_sample, predictor: int, compression,
-                  compression_level=None):
+                  compression_level=None, max_z_error: float = 0.0):
     """Extract, pad, and compress a single tile.  Thread-safe."""
     r0 = tr * th
     c0 = tc * tw
@@ -464,7 +466,8 @@ def _prepare_tile(data, tr, tc, th, tw, height, width, samples, dtype,
     if compression == COMPRESSION_LERC:
         from ._compression import lerc_compress
         return lerc_compress(
-            tile_data, tw, th, samples=samples, dtype=dtype)
+            tile_data, tw, th, samples=samples, dtype=dtype,
+            max_z_error=max_z_error)
     if compression_level is None:
         return compress(tile_data, compression)
     return compress(tile_data, compression, level=compression_level)
@@ -472,7 +475,8 @@ def _prepare_tile(data, tr, tc, th, tw, height, width, samples, dtype,
 
 def _write_tiled(data: np.ndarray, compression: int, predictor: int,
                  tile_size: int = 256,
-                 compression_level: int | None = None) -> tuple[list, list, list]:
+                 compression_level: int | None = None,
+                 max_z_error: float = 0.0) -> tuple[list, list, list]:
     """Compress data as tiles, using parallel compression.
 
     For compressed formats (deflate, lzw, zstd), tiles are compressed
@@ -545,7 +549,7 @@ def _write_tiled(data: np.ndarray, compression: int, predictor: int,
                 compressed = _prepare_tile(
                     data, tr, tc, th, tw, height, width,
                     samples, dtype, bytes_per_sample, predictor, compression,
-                    compression_level,
+                    compression_level, max_z_error,
                 )
                 rel_offsets.append(current_offset)
                 byte_counts.append(len(compressed))
@@ -566,7 +570,7 @@ def _write_tiled(data: np.ndarray, compression: int, predictor: int,
             pool.submit(
                 _prepare_tile, data, tr, tc, th, tw, height, width,
                 samples, dtype, bytes_per_sample, predictor, compression,
-                compression_level,
+                compression_level, max_z_error,
             )
             for tr, tc in tile_indices
         ]
@@ -976,7 +980,8 @@ def write(data: np.ndarray, path: str, *,
           resolution_unit: int | None = None,
           gdal_metadata_xml: str | None = None,
           extra_tags: list | None = None,
-          bigtiff: bool | None = None) -> None:
+          bigtiff: bool | None = None,
+          max_z_error: float = 0.0) -> None:
     """Write a numpy array as a GeoTIFF or COG.
 
     Parameters
@@ -1027,10 +1032,12 @@ def write(data: np.ndarray, path: str, *,
     # Full resolution
     if tiled:
         rel_off, bc, comp_data = _write_tiled(data, comp_tag, pred_int, tile_size,
-                                               compression_level=compression_level)
+                                               compression_level=compression_level,
+                                               max_z_error=max_z_error)
     else:
         rel_off, bc, comp_data = _write_stripped(data, comp_tag, pred_int,
-                                                  compression_level=compression_level)
+                                                  compression_level=compression_level,
+                                                  max_z_error=max_z_error)
 
     h, w = data.shape[:2]
     parts.append((data, w, h, rel_off, bc, comp_data))
@@ -1057,10 +1064,12 @@ def write(data: np.ndarray, path: str, *,
             if tiled:
                 o_off, o_bc, o_data = _write_tiled(current, comp_tag, pred_int,
                                                     tile_size,
-                                                    compression_level=compression_level)
+                                                    compression_level=compression_level,
+                                                    max_z_error=max_z_error)
             else:
                 o_off, o_bc, o_data = _write_stripped(current, comp_tag, pred_int,
-                                                       compression_level=compression_level)
+                                                       compression_level=compression_level,
+                                                       max_z_error=max_z_error)
             parts.append((current, ow, oh, o_off, o_bc, o_data))
 
     file_bytes = _assemble_tiff(
@@ -1086,7 +1095,8 @@ def write(data: np.ndarray, path: str, *,
 
 
 def _compress_block(arr, block_w, block_h, samples, dtype, bytes_per_sample,
-                    predictor: int, compression, compression_level=None):
+                    predictor: int, compression, compression_level=None,
+                    max_z_error: float = 0.0):
     """Compress a tile or strip.  *arr* must be contiguous and correctly sized."""
     if compression == COMPRESSION_JPEG:
         return jpeg_compress(arr.tobytes(), block_w, block_h, samples)
@@ -1106,7 +1116,8 @@ def _compress_block(arr, block_w, block_h, samples, dtype, bytes_per_sample,
     if compression == COMPRESSION_LERC:
         from ._compression import lerc_compress
         return lerc_compress(raw_data, block_w, block_h,
-                             samples=samples, dtype=dtype)
+                             samples=samples, dtype=dtype,
+                             max_z_error=max_z_error)
     if compression_level is None:
         return compress(raw_data, compression)
     return compress(raw_data, compression, level=compression_level)
@@ -1133,7 +1144,8 @@ def write_streaming(dask_data, path: str, *,
                     gdal_metadata_xml: str | None = None,
                     extra_tags: list | None = None,
                     bigtiff: bool | None = None,
-                    streaming_buffer_bytes: int = 256 * 1024 * 1024) -> None:
+                    streaming_buffer_bytes: int = 256 * 1024 * 1024,
+                    max_z_error: float = 0.0) -> None:
     """Write a dask array as a GeoTIFF by streaming pixel data.
 
     For tiled output, each tile-row is computed in horizontal segments
@@ -1411,7 +1423,7 @@ def write_streaming(dask_data, path: str, *,
                             compressed = _compress_block(
                                 tile_arr, tw, th, samples, out_dtype,
                                 bytes_per_sample, pred_int, comp_tag,
-                                compression_level)
+                                compression_level, max_z_error)
 
                             actual_offsets.append(current_offset)
                             actual_counts.append(len(compressed))
@@ -1448,7 +1460,7 @@ def write_streaming(dask_data, path: str, *,
                         np.ascontiguousarray(strip_np),
                         width, strip_rows, samples, out_dtype,
                         bytes_per_sample, pred_int, comp_tag,
-                        compression_level)
+                        compression_level, max_z_error)
 
                     actual_offsets.append(current_offset)
                     actual_counts.append(len(compressed))
