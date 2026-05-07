@@ -82,11 +82,18 @@ class _MmapCache:
 
     def __init__(self, max_size: int | None = None):
         self._lock = threading.Lock()
-        # path -> [fh, mm, size, refcount, ident]
+        # path -> entry list. Each entry is
+        # [fh, mm, size, refcount, ident, orphaned]
+        #
         # ``ident`` is (st_ino, st_size, st_mtime_ns) used to spot files that
         # were replaced (e.g. via ``os.replace`` on an atomic write) at the
-        # same path. ``list`` so we can mutate in place; ``OrderedDict`` gives
-        # LRU semantics via move_to_end.
+        # same path. ``orphaned`` is True once the entry has been removed
+        # from ``self._entries`` (typically because the underlying file was
+        # replaced). An orphaned entry is no longer the cache slot for the
+        # path, but live ``_FileSource`` instances still hold the entry list
+        # by reference and decrement *its* refcount on release. This keeps
+        # holders of the old mmap unaffected by any new acquires for the
+        # same path. ``OrderedDict`` gives LRU semantics via move_to_end.
         self._entries: OrderedDict[str, list] = OrderedDict()
         self._max_size = (max_size if max_size is not None
                           else _mmap_cache_size_from_env())
@@ -100,8 +107,21 @@ class _MmapCache:
             return None
         return (st.st_ino, st.st_size, st.st_mtime_ns)
 
+    @staticmethod
+    def _close_entry_locked(entry):
+        """Close the file handle and mmap for *entry* (must be idle)."""
+        if entry[1] is not None:
+            entry[1].close()
+        entry[0].close()
+
     def acquire(self, path: str):
-        """Get or create a read-only mmap for *path*. Returns (mm, size)."""
+        """Get or create a read-only mmap for *path*.
+
+        Returns ``(mm, size, entry)``. The opaque ``entry`` token must be
+        passed back to :meth:`release` so the matching reference count is
+        decremented even after the cache slot has been replaced (e.g. by an
+        atomic file overwrite at the same path).
+        """
         real = _os_module.path.realpath(path)
         with self._lock:
             entry = self._entries.get(real)
@@ -111,19 +131,20 @@ class _MmapCache:
                 # size, or mtime) the cached mmap is stale. Drop the entry so
                 # we re-open below. If the old entry is still in use by other
                 # callers, leave their mmap valid -- they still hold a
-                # reference -- but unlink the cache slot so it isn't reused.
+                # reference -- but mark it orphaned so a later release of
+                # *that* entry closes its own resources rather than touching
+                # the new cache slot.
                 if ident is not None and entry[4] != ident:
                     self._entries.pop(real)
+                    entry[5] = True  # orphaned
                     if entry[3] <= 0:
-                        if entry[1] is not None:
-                            entry[1].close()
-                        entry[0].close()
+                        self._close_entry_locked(entry)
                     entry = None
 
             if entry is not None:
                 entry[3] += 1
                 self._entries.move_to_end(real)
-                return entry[1], entry[2]
+                return entry[1], entry[2], entry
 
             fh = open(real, 'rb')
             fh.seek(0, 2)
@@ -135,26 +156,35 @@ class _MmapCache:
                 mm = None
             # Re-stat after opening so size matches the mmap we built.
             ident = self._file_ident(real) or (0, size, 0)
-            self._entries[real] = [fh, mm, size, 1, ident]
+            new_entry = [fh, mm, size, 1, ident, False]
+            self._entries[real] = new_entry
             self._evict_locked()
-            return mm, size
+            return mm, size, new_entry
 
-    def release(self, path: str):
-        """Decrement the reference count.
+    def release(self, entry):
+        """Decrement the reference count for the supplied entry token.
 
-        When the count hits zero the entry stays cached (keyed by realpath)
-        until LRU eviction or :meth:`clear` is called.
+        When the count hits zero on a still-cached entry, it stays cached
+        (keyed by realpath) until LRU eviction or :meth:`clear`. When the
+        count hits zero on an orphaned entry, its file handle and mmap are
+        closed immediately because no further callers can reach it.
         """
-        real = _os_module.path.realpath(path)
         with self._lock:
-            entry = self._entries.get(real)
-            if entry is None:
-                return
             entry[3] -= 1
-            if entry[3] <= 0:
-                # Idle but still cached; mark LRU position.
-                self._entries.move_to_end(real)
-                self._evict_locked()
+            if entry[3] > 0:
+                return
+            if entry[5]:
+                # Orphaned: not in the dict; close now.
+                self._close_entry_locked(entry)
+                return
+            # Find the path so we can move it to the LRU tail. The entry
+            # identity is unique per realpath while non-orphaned, so a
+            # linear search over a small dict is fine.
+            for key, ent in self._entries.items():
+                if ent is entry:
+                    self._entries.move_to_end(key)
+                    break
+            self._evict_locked()
 
     def _evict_locked(self):
         """Drop oldest *idle* entries until the cache is at or below the cap."""
@@ -171,20 +201,14 @@ class _MmapCache:
                 to_drop.append(key)
         for key in to_drop:
             entry = self._entries.pop(key)
-            mm = entry[1]
-            if mm is not None:
-                mm.close()
-            entry[0].close()
+            self._close_entry_locked(entry)
 
     def clear(self):
         """Close and drop all idle entries (used by tests)."""
         with self._lock:
             for key in [k for k, v in self._entries.items() if v[3] <= 0]:
                 entry = self._entries.pop(key)
-                mm = entry[1]
-                if mm is not None:
-                    mm.close()
-                entry[0].close()
+                self._close_entry_locked(entry)
 
 
 # Module-level cache shared across all reads
@@ -196,7 +220,7 @@ class _FileSource:
 
     def __init__(self, path: str):
         self._path = path
-        self._mm, self._size = _mmap_cache.acquire(path)
+        self._mm, self._size, self._entry = _mmap_cache.acquire(path)
 
     def read_range(self, start: int, length: int) -> bytes:
         if self._mm is not None:
@@ -214,7 +238,9 @@ class _FileSource:
         return self._size
 
     def close(self):
-        _mmap_cache.release(self._path)
+        if self._entry is not None:
+            _mmap_cache.release(self._entry)
+            self._entry = None
 
 
 def _get_http_pool():

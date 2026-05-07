@@ -166,8 +166,8 @@ class TestP3MmapLRU:
 
         # Acquire and release each: all become idle.
         for f in files:
-            cache.acquire(f)
-            cache.release(f)
+            _, _, ent = cache.acquire(f)
+            cache.release(ent)
 
         # Cache should be at the cap (2), with the oldest evicted.
         assert len(cache._entries) == 2
@@ -181,9 +181,9 @@ class TestP3MmapLRU:
         b = tmp_path / 'p3_b_1488.bin'
         b.write_bytes(b'b' * 32)
 
-        cache.acquire(str(a))  # rc=1, in use
-        cache.acquire(str(b))  # would exceed cap, but a is in use
-        cache.release(str(b))  # b idle now
+        cache.acquire(str(a))  # rc=1, in use; entry intentionally leaked
+        _, _, ent_b = cache.acquire(str(b))  # would exceed cap, but a is in use
+        cache.release(ent_b)  # b idle now
 
         # a still in cache because rc > 0.
         assert os.path.realpath(str(a)) in cache._entries
@@ -205,8 +205,8 @@ class TestP3MmapLRU:
         p = tmp_path / 'fingerprint_1488.bin'
         p.write_bytes(b'A' * 16)
 
-        mm1, _ = cache.acquire(str(p))
-        cache.release(str(p))
+        mm1, _, ent1 = cache.acquire(str(p))
+        cache.release(ent1)
 
         real = os.path.realpath(str(p))
         # Force the cached fingerprint to a value the file cannot match,
@@ -218,12 +218,12 @@ class TestP3MmapLRU:
         # Next acquire must notice the mismatch and re-mmap. The mm
         # object identity should change; the new entry's fingerprint
         # should match the live file.
-        mm2, _ = cache.acquire(str(p))
+        mm2, _, ent2 = cache.acquire(str(p))
         try:
             assert mm2 is not mm1
             assert cache._entries[real][4] == cache._file_ident(real)
         finally:
-            cache.release(str(p))
+            cache.release(ent2)
 
     @pytest.mark.skipif(
         sys.platform.startswith('win'),
@@ -242,19 +242,19 @@ class TestP3MmapLRU:
         p = tmp_path / 'replaced_1488.bin'
         p.write_bytes(b'A' * 16)
 
-        mm1, _ = cache.acquire(str(p))
+        mm1, _, ent1 = cache.acquire(str(p))
         first = bytes(mm1[:16])
         assert first == b'A' * 16
-        cache.release(str(p))
+        cache.release(ent1)
 
         # Atomic-rename style replacement: same path, new inode.
         new = tmp_path / 'replaced_1488.bin.tmp'
         new.write_bytes(b'B' * 16)
         os.replace(str(new), str(p))
 
-        mm2, _ = cache.acquire(str(p))
+        mm2, _, ent2 = cache.acquire(str(p))
         assert bytes(mm2[:16]) == b'B' * 16
-        cache.release(str(p))
+        cache.release(ent2)
 
     @pytest.mark.skipif(
         sys.platform.startswith('win'),
@@ -270,9 +270,9 @@ class TestP3MmapLRU:
         p = tmp_path / 'truncate_1488.bin'
         p.write_bytes(b'A' * 32)
 
-        mm1, sz1 = cache.acquire(str(p))
+        mm1, sz1, ent1 = cache.acquire(str(p))
         assert sz1 == 32
-        cache.release(str(p))
+        cache.release(ent1)
 
         # In-place rewrite with a smaller payload.
         import time
@@ -280,10 +280,58 @@ class TestP3MmapLRU:
         with open(str(p), 'wb') as fh:
             fh.write(b'C' * 8)
 
-        mm2, sz2 = cache.acquire(str(p))
+        mm2, sz2, ent2 = cache.acquire(str(p))
         assert sz2 == 8
         assert bytes(mm2[:8]) == b'C' * 8
-        cache.release(str(p))
+        cache.release(ent2)
+
+    @pytest.mark.skipif(
+        sys.platform.startswith('win'),
+        reason="POSIX-only os.replace semantics",
+    )
+    def test_release_after_path_replacement_does_not_clobber_new_holder(
+        self, tmp_path,
+    ):
+        """A holder that acquired the *old* mmap before an ``os.replace``
+        must decrement its own refcount, not the refcount of whatever
+        new entry now lives at the same path.
+
+        Pre-fix, ``release(path)`` looked up by realpath, so a late
+        release after a file swap could free another caller's still-live
+        mmap. With a small cache the next acquire would then evict the
+        prematurely-zeroed entry, breaking reads in flight.
+        """
+        cache = _MmapCache(max_size=1)
+        a = tmp_path / 'race_a_1488.bin'
+        a.write_bytes(b'A' * 16)
+
+        mm_a, _, ent_a = cache.acquire(str(a))
+
+        # Replace the file at the same path while ent_a is still held.
+        new = tmp_path / 'race_a_1488.bin.tmp'
+        new.write_bytes(b'B' * 16)
+        import time
+        time.sleep(0.01)
+        os.replace(str(new), str(a))
+
+        # Second acquire creates a fresh entry for the replaced file.
+        mm_b, _, ent_b = cache.acquire(str(a))
+        assert mm_b is not mm_a
+
+        # Original holder releases late. Must not touch ent_b.
+        cache.release(ent_a)
+        assert ent_b[3] == 1
+
+        # Force eviction of any idle entry by acquiring an unrelated
+        # file. ent_b is in use and must stay alive.
+        c = tmp_path / 'race_c_1488.bin'
+        c.write_bytes(b'C' * 16)
+        _, _, ent_c = cache.acquire(str(c))
+        try:
+            assert bytes(mm_b[:16]) == b'B' * 16
+        finally:
+            cache.release(ent_b)
+            cache.release(ent_c)
 
 
 # ---------------------------------------------------------------------------
