@@ -5,6 +5,7 @@
 ### Unreleased
 
 #### Bug fixes and improvements
+- Refresh the geotiff mmap cache when a file is replaced under the same path so re-reads after an atomic-rename overwrite no longer return stale bytes
 - Decode TIFF predictor=3 un-transpose by file byte order so big-endian floating-point TIFFs read back exactly
 
 

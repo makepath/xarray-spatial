@@ -17,6 +17,7 @@ Covers ten low-severity audit items:
 from __future__ import annotations
 
 import os
+import sys
 import warnings
 
 import numpy as np
@@ -192,6 +193,97 @@ class TestP3MmapLRU:
         # New cache picks up the env setting.
         cache = _MmapCache()
         assert cache._max_size == 5
+
+    def test_fingerprint_mismatch_invalidates_idle_entry(self, tmp_path):
+        """Platform-agnostic check that the invalidation logic itself
+        runs. The end-to-end ``os.replace`` and truncate scenarios are
+        POSIX-only because Windows blocks the precondition, but the
+        fingerprint comparison is the actual line of code that prevents
+        stale reads -- exercise it directly by mutating the cached
+        fingerprint to simulate a file that changed underneath us."""
+        cache = _MmapCache()
+        p = tmp_path / 'fingerprint_1488.bin'
+        p.write_bytes(b'A' * 16)
+
+        mm1, _ = cache.acquire(str(p))
+        cache.release(str(p))
+
+        real = os.path.realpath(str(p))
+        # Force the cached fingerprint to a value the file cannot match,
+        # which mimics any real-world change (replace, truncate, rename
+        # back) without depending on the OS allowing those operations
+        # while we hold an mmap.
+        cache._entries[real][4] = (-1, -1, -1)
+
+        # Next acquire must notice the mismatch and re-mmap. The mm
+        # object identity should change; the new entry's fingerprint
+        # should match the live file.
+        mm2, _ = cache.acquire(str(p))
+        try:
+            assert mm2 is not mm1
+            assert cache._entries[real][4] == cache._file_ident(real)
+        finally:
+            cache.release(str(p))
+
+    @pytest.mark.skipif(
+        sys.platform.startswith('win'),
+        reason="Windows holds a file lock while a path is mmapped, "
+               "so os.replace fails before the cache lookup runs. "
+               "The stale-cache bug this test guards against can only "
+               "occur on POSIX.",
+    )
+    def test_replaced_file_invalidates_idle_entry(self, tmp_path):
+        """``os.replace`` swaps the inode under a stable path. The cache
+        must spot the new inode and re-mmap rather than serve stale bytes.
+        Reproduces a real ``to_geotiff`` round-trip pattern -- the writer
+        does an atomic rename, so a re-read after overwriting the same
+        path used to return data from the unlinked old file."""
+        cache = _MmapCache()
+        p = tmp_path / 'replaced_1488.bin'
+        p.write_bytes(b'A' * 16)
+
+        mm1, _ = cache.acquire(str(p))
+        first = bytes(mm1[:16])
+        assert first == b'A' * 16
+        cache.release(str(p))
+
+        # Atomic-rename style replacement: same path, new inode.
+        new = tmp_path / 'replaced_1488.bin.tmp'
+        new.write_bytes(b'B' * 16)
+        os.replace(str(new), str(p))
+
+        mm2, _ = cache.acquire(str(p))
+        assert bytes(mm2[:16]) == b'B' * 16
+        cache.release(str(p))
+
+    @pytest.mark.skipif(
+        sys.platform.startswith('win'),
+        reason="Windows blocks open(path, 'wb') while the path is "
+               "mmapped, so the in-place rewrite fails before the "
+               "cache invalidation check. POSIX-only scenario.",
+    )
+    def test_truncated_file_invalidates_idle_entry(self, tmp_path):
+        """In-place truncate-and-overwrite (``open(p, 'wb')``) preserves the
+        inode but changes size and mtime, so the cache must still
+        invalidate."""
+        cache = _MmapCache()
+        p = tmp_path / 'truncate_1488.bin'
+        p.write_bytes(b'A' * 32)
+
+        mm1, sz1 = cache.acquire(str(p))
+        assert sz1 == 32
+        cache.release(str(p))
+
+        # In-place rewrite with a smaller payload.
+        import time
+        time.sleep(0.01)  # ensure st_mtime_ns advances
+        with open(str(p), 'wb') as fh:
+            fh.write(b'C' * 8)
+
+        mm2, sz2 = cache.acquire(str(p))
+        assert sz2 == 8
+        assert bytes(mm2[:8]) == b'C' * 8
+        cache.release(str(p))
 
 
 # ---------------------------------------------------------------------------
