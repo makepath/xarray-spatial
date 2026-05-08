@@ -78,6 +78,30 @@ def _xp_byteswap(arr):
     return u8[..., ::-1].copy().view(arr.dtype).reshape(arr.shape)
 
 
+@cuda.jit
+def _byte_swap_lanes_kernel(buf, bps):
+    """Reverse bytes within each *bps*-sized sample, one thread per sample.
+
+    Each thread loads ``bps`` bytes from its sample, swaps them in place
+    via register-resident temporaries, and writes them back. No global
+    memory beyond *buf* is touched, so peak GPU memory is unchanged.
+    """
+    i = cuda.grid(1)
+    n_samples = buf.size // bps
+    if i >= n_samples:
+        return
+    base = i * bps
+    half = bps // 2
+    for j in range(half):
+        a = buf[base + j]
+        b = buf[base + bps - 1 - j]
+        buf[base + j] = b
+        buf[base + bps - 1 - j] = a
+
+
+_BPS_TO_UINT = {2: np.uint16, 4: np.uint32, 8: np.uint64}
+
+
 def _swap_byte_lanes(buf, bps: int) -> None:
     """Reverse bytes within each *bps*-sized sample of a flat uint8 buffer.
 
@@ -87,11 +111,11 @@ def _swap_byte_lanes(buf, bps: int) -> None:
     unsigned integers, so on big-endian files the prefix-sum would run on
     a byte-swapped integer interpretation and produce wrong values.
 
-    The original buffer is mutated, but the swap goes through a same-sized
-    temporary (``view[:, ::-1].copy()``); this roughly doubles peak memory
-    for the buffer being swapped. Callers should size their working set
-    accordingly. A true zero-temp swap is possible with a small CUDA
-    kernel; for now the simple form keeps numpy and cupy on the same path.
+    The swap is true in-place: no same-sized temporary is allocated.
+    On numpy arrays it dispatches to ``ndarray.byteswap(inplace=True)``
+    via a uint16/32/64 view; on cupy device arrays it launches
+    :func:`_byte_swap_lanes_kernel`, which swaps bytes per sample using
+    only register-resident temporaries.
     """
     if bps <= 1:
         return
@@ -99,8 +123,17 @@ def _swap_byte_lanes(buf, bps: int) -> None:
     if n % bps != 0:
         raise ValueError(
             f"buffer size {n} is not a multiple of bps={bps}")
-    view = buf.reshape(n // bps, bps)
-    view[:, :] = view[:, ::-1].copy()
+    if bps not in _BPS_TO_UINT:
+        raise ValueError(f"unsupported bps={bps}; expected 2, 4, or 8")
+
+    if isinstance(buf, np.ndarray):
+        buf.view(_BPS_TO_UINT[bps]).byteswap(inplace=True)
+        return
+
+    n_samples = n // bps
+    threads = 256
+    blocks = (n_samples + threads - 1) // threads
+    _byte_swap_lanes_kernel[blocks, threads](buf, bps)
 
 
 # LZW constants (same as _compression.py)

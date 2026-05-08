@@ -227,7 +227,7 @@ def test_gpu_predictor3_big_endian_still_works(tmp_path, monkeypatch):
     np.testing.assert_array_equal(gpu_da.data.get(), cpu)
 
 
-def test_swap_byte_lanes_numpy():
+def test_swap_byte_lanes_numpy_bps2():
     """The byte-swap helper reverses bytes per sample on a numpy buffer."""
     from xrspatial.geotiff._gpu_decode import _swap_byte_lanes
 
@@ -238,6 +238,29 @@ def test_swap_byte_lanes_numpy():
                                                 dtype=np.uint8))
 
 
+def test_swap_byte_lanes_numpy_bps4():
+    """bps=4: full byte reversal within each 4-byte sample."""
+    from xrspatial.geotiff._gpu_decode import _swap_byte_lanes
+
+    buf = np.array([0x01, 0x02, 0x03, 0x04,
+                    0x05, 0x06, 0x07, 0x08], dtype=np.uint8)
+    _swap_byte_lanes(buf, 4)
+    np.testing.assert_array_equal(
+        buf, np.array([0x04, 0x03, 0x02, 0x01,
+                       0x08, 0x07, 0x06, 0x05], dtype=np.uint8))
+
+
+def test_swap_byte_lanes_numpy_bps8():
+    """bps=8: full byte reversal within each 8-byte sample."""
+    from xrspatial.geotiff._gpu_decode import _swap_byte_lanes
+
+    sample = np.arange(1, 9, dtype=np.uint8)
+    buf = np.tile(sample, 2).copy()
+    _swap_byte_lanes(buf, 8)
+    np.testing.assert_array_equal(
+        buf, np.tile(sample[::-1], 2))
+
+
 def test_swap_byte_lanes_uint8_noop():
     """bps=1 must be a no-op."""
     from xrspatial.geotiff._gpu_decode import _swap_byte_lanes
@@ -245,3 +268,75 @@ def test_swap_byte_lanes_uint8_noop():
     buf = np.array([1, 2, 3], dtype=np.uint8)
     _swap_byte_lanes(buf, 1)
     np.testing.assert_array_equal(buf, np.array([1, 2, 3], dtype=np.uint8))
+
+
+def test_swap_byte_lanes_rejects_unsupported_bps():
+    """Unsupported bps values raise ValueError rather than corrupt data."""
+    from xrspatial.geotiff._gpu_decode import _swap_byte_lanes
+
+    buf = np.zeros(6, dtype=np.uint8)
+    with pytest.raises(ValueError, match="unsupported bps"):
+        _swap_byte_lanes(buf, 3)
+
+
+def test_swap_byte_lanes_rejects_misaligned_size():
+    """Buffer size must be a multiple of bps."""
+    from xrspatial.geotiff._gpu_decode import _swap_byte_lanes
+
+    buf = np.zeros(5, dtype=np.uint8)
+    with pytest.raises(ValueError, match="not a multiple"):
+        _swap_byte_lanes(buf, 2)
+
+
+def test_swap_byte_lanes_numpy_is_zero_temp():
+    """The numpy path must mutate the original buffer without realloc."""
+    from xrspatial.geotiff._gpu_decode import _swap_byte_lanes
+
+    buf = np.array([0x01, 0x02, 0x03, 0x04], dtype=np.uint8)
+    addr_before = buf.ctypes.data
+    _swap_byte_lanes(buf, 2)
+    assert buf.ctypes.data == addr_before
+    np.testing.assert_array_equal(buf, np.array([0x02, 0x01, 0x04, 0x03],
+                                                dtype=np.uint8))
+
+
+@_gpu_only
+@pytest.mark.parametrize("bps,dtype", [
+    (2, np.uint16),
+    (4, np.uint32),
+    (8, np.uint64),
+])
+def test_swap_byte_lanes_cupy_kernel(bps, dtype):
+    """The cupy path runs the CUDA kernel and matches numpy.byteswap."""
+    import cupy
+
+    from xrspatial.geotiff._gpu_decode import _swap_byte_lanes
+
+    rng = np.random.RandomState(20260512 + bps)
+    n_samples = 1024
+    src = rng.randint(0, np.iinfo(dtype).max, size=n_samples,
+                      dtype=np.uint64).astype(dtype)
+    expected = src.byteswap()  # numpy reference, returns swapped copy
+
+    d_buf = cupy.asarray(src.view(np.uint8))
+    addr_before = int(d_buf.data.ptr)
+    _swap_byte_lanes(d_buf, bps)
+    addr_after = int(d_buf.data.ptr)
+
+    assert addr_after == addr_before, "kernel must operate in place"
+    np.testing.assert_array_equal(
+        d_buf.get().view(dtype), expected,
+    )
+
+
+@_gpu_only
+def test_swap_byte_lanes_cupy_uint8_noop():
+    """bps=1 leaves cupy buffers untouched (no kernel launch)."""
+    import cupy
+
+    from xrspatial.geotiff._gpu_decode import _swap_byte_lanes
+
+    src = np.arange(16, dtype=np.uint8)
+    d_buf = cupy.asarray(src)
+    _swap_byte_lanes(d_buf, 1)
+    np.testing.assert_array_equal(d_buf.get(), src)
