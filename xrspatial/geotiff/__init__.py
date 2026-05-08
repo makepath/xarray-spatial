@@ -13,6 +13,8 @@ write_vrt(vrt_path, source_files, ...)
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import xarray as xr
 
@@ -1399,7 +1401,8 @@ def read_geotiff_gpu(source: str, *,
                      overview_level: int | None = None,
                      name: str | None = None,
                      chunks: int | tuple | None = None,
-                     max_pixels: int | None = None) -> xr.DataArray:
+                     max_pixels: int | None = None,
+                     gpu: str = 'auto') -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
 
     Decompresses all tiles in parallel on the GPU and returns a
@@ -1425,12 +1428,38 @@ def read_geotiff_gpu(source: str, *,
     max_pixels : int or None
         Maximum allowed pixel count (width * height * samples). None
         uses the default (~1 billion).
+    gpu : {'auto', 'strict'}, default 'auto'
+        Behaviour when any GPU decode stage raises an exception.
+
+        The GPU pipeline has two stages: first ``gpu_decode_tiles_from_file``
+        (GDS-style direct read), then ``gpu_decode_tiles`` over CPU-mmap
+        extracted tile bytes. Both stages still run on the GPU. The CPU
+        fallback (``read_to_array`` + ``cupy.asarray``) only fires after
+        both GPU stages have failed.
+
+        - ``'auto'``: each GPU-stage failure emits a ``RuntimeWarning``
+          reporting the original exception type and message, then falls
+          through to the next stage (CPU mmap re-decode for the first
+          failure, full CPU decode + GPU transfer for the second). This
+          preserves backward-compatible behaviour while making GPU
+          regressions visible.
+        - ``'strict'``: re-raise the original exception from either stage
+          so GPU bugs surface immediately. Useful in tests and CI for the
+          GPU fast path.
+
+        Stripped layouts and sparse-tile files route directly to the CPU
+        reader before either GPU decode stage runs, so the ``gpu`` kwarg
+        does not affect them. A failure inside the subsequent
+        ``cupy.asarray(...)`` upload propagates unchanged in both modes.
 
     Returns
     -------
     xr.DataArray
         CuPy-backed DataArray on GPU device.
     """
+    if gpu not in ('auto', 'strict'):
+        raise ValueError(
+            f"gpu must be 'auto' or 'strict', got {gpu!r}")
     try:
         import cupy
     except ImportError:
@@ -1537,8 +1566,16 @@ def read_geotiff_gpu(source: str, *,
                 compression, predictor, file_dtype, samples,
                 byte_order=header.byte_order,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            if gpu == 'strict':
+                raise
+            warnings.warn(
+                f"read_geotiff_gpu: GPU decode failed "
+                f"({type(e).__name__}: {e}); falling back to CPU.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            arr_gpu = None
 
     if arr_gpu is None:
         # Fallback: extract tiles via CPU mmap, then GPU decode
@@ -1560,8 +1597,15 @@ def read_geotiff_gpu(source: str, *,
                 compression, predictor, file_dtype, samples,
                 byte_order=header.byte_order,
             )
-        except (ValueError, Exception):
-            # Unsupported compression -- fall back to CPU then transfer
+        except Exception as e:
+            if gpu == 'strict':
+                raise
+            warnings.warn(
+                f"read_geotiff_gpu: GPU decode failed "
+                f"({type(e).__name__}: {e}); falling back to CPU.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             arr_cpu, _ = read_to_array(source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
 
