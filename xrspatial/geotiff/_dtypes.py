@@ -118,6 +118,47 @@ def tiff_dtype_to_numpy(bits_per_sample: int, sample_format: int = 1) -> np.dtyp
 SUB_BYTE_BPS = {1, 2, 4, 12}
 
 
+def resolve_bits_per_sample(bps) -> int:
+    """Resolve a TIFF ``BitsPerSample`` tag value to a single integer.
+
+    The TIFF spec allows ``BitsPerSample`` to be either a scalar or a tuple
+    with one entry per sample. xarray-spatial decodes a whole IFD with one
+    numpy dtype, so the per-sample widths must agree.
+
+    Parameters
+    ----------
+    bps : int or tuple of int
+        Raw value from ``IFD.bits_per_sample``.
+
+    Returns
+    -------
+    int
+        The shared bits-per-sample value.
+
+    Raises
+    ------
+    ValueError
+        If ``bps`` is a tuple whose entries are not all equal. Files with
+        per-band bit depths (e.g. RGB+8-bit-alpha with ``(16, 16, 16, 8)``)
+        are not supported; convert with GDAL/rasterio first, e.g.
+        ``gdal_translate -ot UInt16 in.tif out.tif``.
+    """
+    if isinstance(bps, (tuple, list)):
+        if len(bps) == 0:
+            raise ValueError("BitsPerSample tuple is empty")
+        first = bps[0]
+        for v in bps[1:]:
+            if v != first:
+                raise ValueError(
+                    f"Mixed BitsPerSample per band is not supported: {tuple(bps)}. "
+                    "xarray-spatial decodes all bands with a single dtype. "
+                    "Convert the file to a uniform bit depth first, "
+                    "e.g. `gdal_translate -ot UInt16 in.tif out.tif`."
+                )
+        return int(first)
+    return int(bps)
+
+
 def numpy_to_tiff_dtype(dt: np.dtype) -> tuple[int, int]:
     """Convert a numpy dtype to (bits_per_sample, sample_format).
 
