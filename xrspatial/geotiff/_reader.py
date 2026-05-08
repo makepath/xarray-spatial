@@ -345,9 +345,87 @@ _CLOUD_SCHEMES = ('s3://', 'gs://', 'az://', 'abfs://')
 
 def _is_fsspec_uri(path: str) -> bool:
     """Check if a path is a fsspec-compatible URI (not http/https/local)."""
+    if not isinstance(path, str):
+        return False
     if path.startswith(('http://', 'https://')):
         return False
     return '://' in path
+
+
+def _is_file_like(obj) -> bool:
+    """Return True if obj exposes a binary file-like interface (read+seek+tell).
+
+    ``tell`` is required because :class:`_BytesIOSource` uses it to compute
+    the buffer length via seek-to-end. ``os.PathLike`` instances don't
+    expose ``read``/``seek``/``tell`` and are excluded here so that
+    :func:`_coerce_path` can convert them to ``str`` upstream.
+    """
+    return (
+        not isinstance(obj, str)
+        and hasattr(obj, 'read')
+        and hasattr(obj, 'seek')
+        and hasattr(obj, 'tell')
+    )
+
+
+def _coerce_path(source):
+    """Normalize ``os.PathLike`` (e.g. ``pathlib.Path``) to ``str``.
+
+    Strings and binary file-likes pass through unchanged. Used at the top
+    of every public reader/writer entry so that ``Path('mosaic.vrt')``
+    dispatches to the VRT path, ``Path('x.tif')`` derives a ``name``, etc.
+    """
+    if isinstance(source, _os_module.PathLike):
+        return _os_module.fspath(source)
+    return source
+
+
+class _BytesIOSource:
+    """Data source backed by an in-memory or any seekable binary file-like.
+
+    Wraps a `BytesIO` or any object exposing ``read``/``seek`` so the reader
+    can issue windowed byte reads without touching the filesystem. Concurrent
+    callers (e.g. parallel tile decode) are serialized through a lock around
+    the seek+read pair so they don't race on the underlying buffer's cursor.
+    """
+
+    def __init__(self, fileobj):
+        # _is_file_like (the gate that lets us reach this constructor)
+        # already requires read/seek/tell, so we can call tell() directly
+        # rather than guarding it. We do still defend against tell raising
+        # on a closed/detached buffer with an informative error.
+        self._fh = fileobj
+        self._lock = threading.Lock()
+        try:
+            cur = fileobj.tell()
+            fileobj.seek(0, 2)
+            self._size = fileobj.tell()
+            fileobj.seek(cur)
+        except (OSError, ValueError) as e:
+            raise ValueError(
+                f"file-like source is not usable for size measurement: "
+                f"{type(e).__name__}: {e}"
+            ) from e
+
+    def read_range(self, start: int, length: int) -> bytes:
+        if length <= 0:
+            return b''
+        with self._lock:
+            self._fh.seek(start)
+            return self._fh.read(length)
+
+    def read_all(self):
+        with self._lock:
+            self._fh.seek(0)
+            return self._fh.read()
+
+    @property
+    def size(self) -> int:
+        return self._size
+
+    def close(self):
+        # Don't close the caller's buffer -- they own it.
+        self._fh = None
 
 
 class _CloudSource:
@@ -385,8 +463,15 @@ class _CloudSource:
         pass
 
 
-def _open_source(source: str):
-    """Open a data source (local file, URL, or cloud path)."""
+def _open_source(source):
+    """Open a data source (local file, URL, cloud path, or file-like)."""
+    source = _coerce_path(source)
+    if _is_file_like(source):
+        return _BytesIOSource(source)
+    if not isinstance(source, str):
+        raise TypeError(
+            f"source must be a str path/URL or a binary file-like object "
+            f"with read+seek methods, got {type(source).__name__}")
     if source.startswith(('http://', 'https://')):
         return _HTTPSource(source)
     if _is_fsspec_uri(source):
@@ -1000,7 +1085,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
 # Main read function
 # ---------------------------------------------------------------------------
 
-def read_to_array(source: str, *, window=None, overview_level: int | None = None,
+def read_to_array(source, *, window=None, overview_level: int | None = None,
                   band: int | None = None,
                   max_pixels: int = MAX_PIXELS_DEFAULT,
                   ) -> tuple[np.ndarray, GeoInfo]:
@@ -1008,8 +1093,8 @@ def read_to_array(source: str, *, window=None, overview_level: int | None = None
 
     Parameters
     ----------
-    source : str
-        File path or URL.
+    source : str or binary file-like
+        File path, URL, or a file-like object with ``read``/``seek``.
     window : tuple or None
         (row_start, col_start, row_stop, col_stop).
     overview_level : int or None
@@ -1025,12 +1110,15 @@ def read_to_array(source: str, *, window=None, overview_level: int | None = None
     -------
     (np.ndarray, GeoInfo) tuple
     """
-    if source.startswith(('http://', 'https://')):
+    source = _coerce_path(source)
+    if isinstance(source, str) and source.startswith(('http://', 'https://')):
         return _read_cog_http(source, overview_level=overview_level, band=band,
                               max_pixels=max_pixels)
 
-    # Local file or cloud storage: read all bytes then parse
-    if _is_fsspec_uri(source):
+    # Local file, cloud storage, or file-like buffer: read all bytes then parse
+    if _is_file_like(source):
+        src = _BytesIOSource(source)
+    elif _is_fsspec_uri(source):
         src = _CloudSource(source)
     else:
         src = _FileSource(source)
