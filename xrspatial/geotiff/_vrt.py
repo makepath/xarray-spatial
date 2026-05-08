@@ -394,6 +394,7 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     from ._header import parse_header, parse_all_ifds
     from ._geotags import extract_geo_info
     from ._reader import _FileSource
+    from ._dtypes import resolve_bits_per_sample
 
     if not source_files:
         raise ValueError("source_files must not be empty")
@@ -409,9 +410,7 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
         geo = extract_geo_info(ifd, data, header.byte_order)
         src.close()
 
-        bps = ifd.bits_per_sample
-        if isinstance(bps, tuple):
-            bps = bps[0]
+        bps = resolve_bits_per_sample(ifd.bits_per_sample)
 
         sources_meta.append({
             'path': src_path,

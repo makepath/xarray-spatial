@@ -18,7 +18,7 @@ from ._compression import (
     predictor_decode,
     unpack_bits,
 )
-from ._dtypes import SUB_BYTE_BPS, tiff_dtype_to_numpy
+from ._dtypes import SUB_BYTE_BPS, resolve_bits_per_sample, tiff_dtype_to_numpy
 from ._geotags import GeoInfo, GeoTransform, extract_geo_info
 from ._header import (
     IFD,
@@ -663,9 +663,7 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     offsets = ifd.strip_offsets
     byte_counts = ifd.strip_byte_counts
     pred = ifd.predictor
-    bps = ifd.bits_per_sample
-    if isinstance(bps, tuple):
-        bps = bps[0]
+    bps = resolve_bits_per_sample(ifd.bits_per_sample)
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
     jpeg_tables = ifd.jpeg_tables
@@ -802,9 +800,7 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     samples = ifd.samples_per_pixel
     compression = ifd.compression
     pred = ifd.predictor
-    bps = ifd.bits_per_sample
-    if isinstance(bps, tuple):
-        bps = bps[0]
+    bps = resolve_bits_per_sample(ifd.bits_per_sample)
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
     jpeg_tables = ifd.jpeg_tables
@@ -994,9 +990,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     # Select IFD based on overview level, skipping any mask IFDs
     ifd = select_overview_ifd(ifds, overview_level)
 
-    bps = ifd.bits_per_sample
-    if isinstance(bps, tuple):
-        bps = bps[0]
+    bps = resolve_bits_per_sample(ifd.bits_per_sample)
     dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
     geo_info = extract_geo_info(ifd, header_bytes, header.byte_order)
 
@@ -1211,9 +1205,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         # Select IFD, skipping any mask IFDs
         ifd = select_overview_ifd(ifds, overview_level)
 
-        bps = ifd.bits_per_sample
-        if isinstance(bps, tuple):
-            bps = bps[0]
+        bps = resolve_bits_per_sample(ifd.bits_per_sample)
         dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         geo_info = extract_geo_info(ifd, data, header.byte_order)
 

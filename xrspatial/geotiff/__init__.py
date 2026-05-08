@@ -194,7 +194,7 @@ def _read_geo_info(source, *, overview_level: int | None = None):
     overview_level : int or None
         Overview IFD index (0 = full resolution).
     """
-    from ._dtypes import tiff_dtype_to_numpy
+    from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
     from ._geotags import extract_geo_info
     from ._header import parse_all_ifds, parse_header, select_overview_ifd
     from ._reader import _coerce_path, _is_file_like
@@ -230,9 +230,7 @@ def _read_geo_info(source, *, overview_level: int | None = None):
             raise ValueError("No IFDs found in TIFF file")
         ifd = select_overview_ifd(ifds, overview_level)
         geo_info = extract_geo_info(ifd, data, header.byte_order)
-        bps = ifd.bits_per_sample
-        if isinstance(bps, tuple):
-            bps = bps[0]
+        bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         n_bands = ifd.samples_per_pixel if ifd.samples_per_pixel > 1 else 0
         return geo_info, ifd.height, ifd.width, file_dtype, n_bands
@@ -1446,7 +1444,7 @@ def read_geotiff_gpu(source: str, *,
     from ._header import (
         parse_header, parse_all_ifds, select_overview_ifd, validate_tile_layout,
     )
-    from ._dtypes import tiff_dtype_to_numpy
+    from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
     from ._geotags import extract_geo_info
     from ._gpu_decode import gpu_decode_tiles
 
@@ -1469,9 +1467,7 @@ def read_geotiff_gpu(source: str, *,
         # Skip mask IFDs (NewSubfileType bit 2)
         ifd = select_overview_ifd(ifds, overview_level)
 
-        bps = ifd.bits_per_sample
-        if isinstance(bps, tuple):
-            bps = bps[0]
+        bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         geo_info = extract_geo_info(ifd, data, header.byte_order)
 
