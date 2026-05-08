@@ -2,11 +2,24 @@
 -----------
 
 
-### Unreleased
+### Version 0.9.10 - 2026-05-08
 
 #### Bug fixes and improvements
-- Refresh the geotiff mmap cache when a file is replaced under the same path so re-reads after an atomic-rename overwrite no longer return stale bytes
-- Decode TIFF predictor=3 un-transpose by file byte order so big-endian floating-point TIFFs read back exactly
+- Reject mixed BitsPerSample per band in TIFF readers (#1519)
+- Apply TIFF Orientation tag (274) on read (#1521)
+- Skip mask IFDs when resolving overview_level (#1504) (#1518)
+- Decode tiled JPEG TIFFs by splicing JPEGTables (tag 347) (#1520)
+- Fix read_geotiff_gpu byteswap on big-endian multi-byte TIFFs (#1515)
+- Accept binary file-like objects in to_geotiff and the readers (#1512)
+- Reject compression='jpeg' in to_geotiff when no JPEGTables are emitted (#1514)
+- Add max_z_error parameter for lossy LERC compression (#1513)
+- Fix _MmapCache refcount confusion after a file is replaced at the same path (#1509)
+- Decode predictor=2 on big-endian TIFFs by swapping to native order (#1507)
+- Refresh geotiff mmap cache when the file at a path is replaced (#1506)
+- Decode TIFF predictor=3 by file byte order so big-endian floats read back exactly (#1500)
+- Fill sparse COG tiles with nodata instead of crashing or leaking memory (#1501)
+- Apply predictor=2 differencing at sample width, not byte width (#1498)
+- Detect CUDA in sweep skills and exercise GPU paths when available (#1497)
 
 
 ### Version 0.9.9 - 2026-05-05
