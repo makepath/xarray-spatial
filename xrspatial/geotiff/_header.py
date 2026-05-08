@@ -38,6 +38,7 @@ TAG_TILE_BYTE_COUNTS = 325
 TAG_COLORMAP = 320
 TAG_EXTRA_SAMPLES = 338
 TAG_SAMPLE_FORMAT = 339
+TAG_JPEG_TABLES = 347
 TAG_GDAL_METADATA = 42112
 TAG_GDAL_NODATA = 42113
 
@@ -165,6 +166,26 @@ class IFD:
     @property
     def planar_config(self) -> int:
         return self.get_value(TAG_PLANAR_CONFIG, 1)
+
+    @property
+    def jpeg_tables(self) -> bytes | None:
+        """JPEGTables tag (347): shared DQT/DHT segments for tiled JPEG.
+
+        GDAL-tiled ``compress=JPEG`` TIFFs store the quantization and
+        Huffman tables once in this tag; each tile's payload is a JPEG
+        fragment that needs the tables spliced in before libjpeg can
+        decode it. Returns the raw bytes of the abbreviated JPEG stream
+        (SOI ... DQT/DHT ... EOI), or None if absent.
+        """
+        v = self.get_value(TAG_JPEG_TABLES)
+        if v is None:
+            return None
+        if isinstance(v, (bytes, bytearray)):
+            return bytes(v)
+        # BYTE arrays may surface as a tuple of ints
+        if isinstance(v, tuple):
+            return bytes(v)
+        return bytes(v)
 
     @property
     def x_resolution(self) -> float | None:

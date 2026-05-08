@@ -866,15 +866,58 @@ except ImportError:
     pass
 
 
+def _splice_jpeg_tables(tile_data: bytes, jpeg_tables: bytes) -> bytes:
+    """Splice a JPEGTables stream into a tile's JPEG fragment.
+
+    GDAL-style tiled JPEG TIFFs store DQT/DHT tables once in tag 347
+    (an abbreviated JPEG: SOI + tables + EOI) and each tile is a JPEG
+    fragment whose own DQT/DHT segments were stripped. To make a tile
+    self-contained, drop the tables stream's leading SOI and trailing
+    EOI and insert what remains after the tile's SOI marker.
+
+    Both buffers must start with SOI (FF D8). If either does not, the
+    tile data is returned unchanged so libjpeg sees its original input
+    and raises a meaningful error.
+    """
+    if not jpeg_tables:
+        return tile_data
+    if len(tile_data) < 2 or tile_data[0] != 0xFF or tile_data[1] != 0xD8:
+        return tile_data
+    if len(jpeg_tables) < 4:
+        return tile_data
+    if jpeg_tables[0] != 0xFF or jpeg_tables[1] != 0xD8:
+        return tile_data
+    # Strip SOI from the tables stream, and EOI if present at the end.
+    tables_body = jpeg_tables[2:]
+    if len(tables_body) >= 2 and tables_body[-2] == 0xFF and tables_body[-1] == 0xD9:
+        tables_body = tables_body[:-2]
+    return tile_data[:2] + tables_body + tile_data[2:]
+
+
 def jpeg_decompress(data: bytes, width: int = 0, height: int = 0,
-                    samples: int = 1) -> bytes:
-    """Decompress JPEG tile/strip data. Requires Pillow."""
+                    samples: int = 1, jpeg_tables: bytes | None = None) -> bytes:
+    """Decompress JPEG tile/strip data. Requires Pillow.
+
+    Parameters
+    ----------
+    data : bytes
+        Raw JPEG bytes from one TIFF strip or tile. May be a fragment
+        when ``jpeg_tables`` is supplied (GDAL tiled JPEG).
+    jpeg_tables : bytes, optional
+        Contents of TIFF tag 347 (JPEGTables). If supplied, the shared
+        DQT/DHT segments are spliced into ``data`` before decoding so
+        the resulting stream is a complete JPEG.
+    """
     if not JPEG_AVAILABLE:
         raise ImportError(
             "Pillow is required to read JPEG-compressed TIFFs. "
             "Install it with: pip install Pillow")
     import io
+    if jpeg_tables:
+        data = _splice_jpeg_tables(data, jpeg_tables)
     img = Image.open(io.BytesIO(data))
+    # libjpeg already converts YCbCr->RGB during decode, so rely on the
+    # mode Pillow returns. Calling .convert() unnecessarily would copy.
     return np.asarray(img).tobytes()
 
 
@@ -1089,7 +1132,8 @@ COMPRESSION_ADOBE_DEFLATE = 32946
 
 
 def decompress(data, compression: int, expected_size: int = 0,
-               width: int = 0, height: int = 0, samples: int = 1) -> np.ndarray:
+               width: int = 0, height: int = 0, samples: int = 1,
+               jpeg_tables: bytes | None = None) -> np.ndarray:
     """Decompress tile/strip data based on TIFF compression tag.
 
     Parameters
@@ -1116,8 +1160,10 @@ def decompress(data, compression: int, expected_size: int = 0,
     elif compression == COMPRESSION_PACKBITS:
         return np.frombuffer(packbits_decompress(data), dtype=np.uint8)
     elif compression == COMPRESSION_JPEG:
-        return np.frombuffer(jpeg_decompress(data, width, height, samples),
-                             dtype=np.uint8)
+        return np.frombuffer(
+            jpeg_decompress(data, width, height, samples,
+                            jpeg_tables=jpeg_tables),
+            dtype=np.uint8)
     elif compression == COMPRESSION_ZSTD:
         return np.frombuffer(zstd_decompress(data), dtype=np.uint8)
     elif compression == COMPRESSION_JPEG2000:
