@@ -20,7 +20,14 @@ from ._compression import (
 )
 from ._dtypes import SUB_BYTE_BPS, tiff_dtype_to_numpy
 from ._geotags import GeoInfo, GeoTransform, extract_geo_info
-from ._header import IFD, TIFFHeader, parse_all_ifds, parse_header, validate_tile_layout
+from ._header import (
+    IFD,
+    TIFFHeader,
+    parse_all_ifds,
+    parse_header,
+    select_overview_ifd,
+    validate_tile_layout,
+)
 
 # ---------------------------------------------------------------------------
 # Allocation guard: reject TIFF dimensions that would exhaust memory
@@ -984,11 +991,8 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     if len(ifds) == 0:
         raise ValueError("No IFDs found in COG")
 
-    # Select IFD based on overview level
-    ifd_idx = 0
-    if overview_level is not None:
-        ifd_idx = min(overview_level, len(ifds) - 1)
-    ifd = ifds[ifd_idx]
+    # Select IFD based on overview level, skipping any mask IFDs
+    ifd = select_overview_ifd(ifds, overview_level)
 
     bps = ifd.bits_per_sample
     if isinstance(bps, tuple):
@@ -1145,11 +1149,8 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         if len(ifds) == 0:
             raise ValueError("No IFDs found in TIFF file")
 
-        # Select IFD
-        ifd_idx = 0
-        if overview_level is not None:
-            ifd_idx = min(overview_level, len(ifds) - 1)
-        ifd = ifds[ifd_idx]
+        # Select IFD, skipping any mask IFDs
+        ifd = select_overview_ifd(ifds, overview_level)
 
         bps = ifd.bits_per_sample
         if isinstance(bps, tuple):
