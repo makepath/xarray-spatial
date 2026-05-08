@@ -1452,6 +1452,7 @@ def gpu_decode_tiles_from_file(
     dtype: np.dtype,
     samples: int = 1,
     byte_order: str = '<',
+    masked_fill=None,
 ):
     """Decode tiles from a file, using GDS if available.
 
@@ -1496,7 +1497,7 @@ def gpu_decode_tiles_from_file(
     return gpu_decode_tiles(
         compressed_tiles, tile_width, tile_height,
         image_width, image_height, compression, predictor, dtype, samples,
-        byte_order=byte_order)
+        byte_order=byte_order, masked_fill=masked_fill)
 
 
 def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
@@ -1711,6 +1712,7 @@ def gpu_decode_tiles(
     dtype: np.dtype,
     samples: int = 1,
     byte_order: str = '<',
+    masked_fill=None,
 ):
     """Decode and assemble TIFF tiles entirely on GPU.
 
@@ -1730,6 +1732,12 @@ def gpu_decode_tiles(
         Output pixel dtype.
     samples : int
         Samples per pixel.
+    masked_fill : scalar or None
+        Value to write into pixels that LERC reports as invalid.  Only
+        consulted for LERC-compressed inputs (tag 34887).  ``None``
+        leaves any masked pixels at LERC's zero fill.  Use
+        ``_resolve_masked_fill(ifd.nodata_str, dtype)`` from
+        ``_reader.py`` to mirror the CPU reader's nodata semantics.
 
     Returns
     -------
@@ -1741,6 +1749,12 @@ def gpu_decode_tiles(
     n_tiles = len(compressed_tiles)
     bytes_per_pixel = dtype.itemsize * samples
     tile_bytes = tile_width * tile_height * bytes_per_pixel
+
+    # Per-tile LERC valid masks; populated only by the LERC branch
+    # below.  Kept as a flat local so the post-assembly fill block at
+    # the end of this function can find it regardless of which decode
+    # branch ran.
+    _lerc_masks: list[np.ndarray | None] | None = None
 
     # Try nvCOMP batch decompression first (much faster if available)
     nvcomp_result = _try_nvcomp_batch_decompress(
@@ -1869,19 +1883,34 @@ def gpu_decode_tiles(
             d_decomp_offsets = cupy.asarray(decomp_offsets)
 
     elif compression == 34887:  # LERC
-        from ._compression import lerc_decompress
+        from ._compression import lerc_decompress_with_mask
         raw_host = np.empty(n_tiles * tile_bytes, dtype=np.uint8)
+        # Per-tile valid masks captured from LERC.  None entries mean
+        # "all valid" (LERC returned no mask, or an all-True mask).
+        # The host-side mask buffer is materialised lazily: it stays
+        # None until at least one tile reports a real partial mask.
+        per_tile_masks: list[np.ndarray | None] = [None] * n_tiles
+        any_lerc_mask = False
         for i, tile in enumerate(compressed_tiles):
             start = i * tile_bytes
-            chunk = np.frombuffer(
-                lerc_decompress(tile, tile_width, tile_height, samples),
-                dtype=np.uint8)
+            decoded_bytes, valid_mask = lerc_decompress_with_mask(tile)
+            chunk = np.frombuffer(decoded_bytes, dtype=np.uint8)
             raw_host[start:start + min(len(chunk), tile_bytes)] = \
                 chunk[:tile_bytes] if len(chunk) >= tile_bytes else \
                 np.pad(chunk, (0, tile_bytes - len(chunk)))
+            if valid_mask is not None:
+                per_tile_masks[i] = np.asarray(valid_mask)
+                any_lerc_mask = True
         d_decomp = cupy.asarray(raw_host)
         decomp_offsets = np.arange(n_tiles, dtype=np.int64) * tile_bytes
         d_decomp_offsets = cupy.asarray(decomp_offsets)
+        if any_lerc_mask:
+            # Stash per-tile masks for the post-assembly fill pass below.
+            # Stored in a ``_lerc_masks`` local that the LERC fill block
+            # picks up after predictor decode and tile assembly.
+            _lerc_masks = per_tile_masks
+        else:
+            _lerc_masks = None
 
     elif compression == 1:  # Uncompressed
         raw_host = np.empty(n_tiles * tile_bytes, dtype=np.uint8)
@@ -1965,6 +1994,72 @@ def gpu_decode_tiles(
     if byte_order == '>' and dtype.itemsize > 1 and predictor != 2:
         # cupy.ndarray has no .byteswap(), so use the dtype-view helper.
         out = _xp_byteswap(out)
+
+    # LERC valid-mask fill: GDAL writes LERC TIFFs with masked pixels
+    # zero-filled in the data array, so without restoring nodata here a
+    # masked pixel reads back as a real zero measurement.  Mirrors the
+    # CPU path in ``_decode_strip_or_tile`` (PR #1529).
+    if _lerc_masks is not None and masked_fill is not None:
+        out = _apply_lerc_mask_fill(
+            out, _lerc_masks, tile_width, tile_height,
+            image_width, image_height, samples, masked_fill)
+    return out
+
+
+def _apply_lerc_mask_fill(out, per_tile_masks, tile_width, tile_height,
+                          image_width, image_height, samples, masked_fill):
+    """Write *masked_fill* into LERC-invalid positions of an assembled image.
+
+    Each tile contributes either an ``(h, w)``/``(h, w, samples)`` valid
+    mask (1=valid, 0=invalid) or ``None`` for "all valid".  The host
+    builds a single assembled boolean invalid-mask sized to the output
+    image, transfers it to the GPU once, and uses it to overwrite
+    masked positions on device.
+    """
+    import cupy
+
+    n_tiles = len(per_tile_masks)
+    tiles_across = math.ceil(image_width / tile_width)
+    tiles_down = math.ceil(image_height / tile_height)
+    if n_tiles != tiles_across * tiles_down:
+        # Defensive: tile grid mismatch means we cannot place masks
+        # safely.  Skip the fill rather than corrupt the output.
+        return out
+
+    invalid = np.zeros((image_height, image_width), dtype=bool)
+    for idx, mask in enumerate(per_tile_masks):
+        if mask is None:
+            continue
+        tr = idx // tiles_across
+        tc = idx % tiles_across
+        y0 = tr * tile_height
+        x0 = tc * tile_width
+        # Trim the tile mask to the visible portion of the image so
+        # right- and bottom-edge tile padding does not leak into the
+        # assembled mask.
+        h = min(tile_height, image_height - y0)
+        w = min(tile_width, image_width - x0)
+        if h <= 0 or w <= 0:
+            continue
+        m = np.asarray(mask)
+        # LERC may report the mask as (h, w) or (h, w, samples); for the
+        # invalid-fill we collapse multi-sample masks via "any sample
+        # invalid".
+        if m.ndim == 3:
+            m2 = (m == 0).any(axis=2)
+        else:
+            m2 = (m == 0)
+        invalid[y0:y0 + h, x0:x0 + w] = m2[:h, :w]
+
+    if not invalid.any():
+        return out
+
+    d_invalid = cupy.asarray(invalid)
+    if out.ndim == 3:
+        # Broadcast (H, W) mask across the sample axis.
+        out[d_invalid, ...] = out.dtype.type(masked_fill)
+    else:
+        out[d_invalid] = out.dtype.type(masked_fill)
     return out
 
 
