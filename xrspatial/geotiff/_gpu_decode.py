@@ -78,6 +78,64 @@ def _xp_byteswap(arr):
     return u8[..., ::-1].copy().view(arr.dtype).reshape(arr.shape)
 
 
+@cuda.jit
+def _byte_swap_lanes_kernel(buf, bps):
+    """Reverse bytes within each *bps*-sized sample, one thread per sample.
+
+    Each thread loads ``bps`` bytes from its sample, swaps them in place
+    via register-resident temporaries, and writes them back. No global
+    memory beyond *buf* is touched, so peak GPU memory is unchanged.
+    """
+    i = cuda.grid(1)
+    n_samples = buf.size // bps
+    if i >= n_samples:
+        return
+    base = i * bps
+    half = bps // 2
+    for j in range(half):
+        a = buf[base + j]
+        b = buf[base + bps - 1 - j]
+        buf[base + j] = b
+        buf[base + bps - 1 - j] = a
+
+
+_BPS_TO_UINT = {2: np.uint16, 4: np.uint32, 8: np.uint64}
+
+
+def _swap_byte_lanes(buf, bps: int) -> None:
+    """Reverse bytes within each *bps*-sized sample of a flat uint8 buffer.
+
+    Used by the GPU predictor=2 path to convert the raw decompressed byte
+    stream from file byte order to native byte order before differencing
+    (#1517). The per-dtype predictor kernels view ``buf`` as native
+    unsigned integers, so on big-endian files the prefix-sum would run on
+    a byte-swapped integer interpretation and produce wrong values.
+
+    The swap is true in-place: no same-sized temporary is allocated.
+    On numpy arrays it dispatches to ``ndarray.byteswap(inplace=True)``
+    via a uint16/32/64 view; on cupy device arrays it launches
+    :func:`_byte_swap_lanes_kernel`, which swaps bytes per sample using
+    only register-resident temporaries.
+    """
+    if bps <= 1:
+        return
+    n = buf.size
+    if n % bps != 0:
+        raise ValueError(
+            f"buffer size {n} is not a multiple of bps={bps}")
+    if bps not in _BPS_TO_UINT:
+        raise ValueError(f"unsupported bps={bps}; expected 2, 4, or 8")
+
+    if isinstance(buf, np.ndarray):
+        buf.view(_BPS_TO_UINT[bps]).byteswap(inplace=True)
+        return
+
+    n_samples = n // bps
+    threads = 256
+    blocks = (n_samples + threads - 1) // threads
+    _byte_swap_lanes_kernel[blocks, threads](buf, bps)
+
+
 # LZW constants (same as _compression.py)
 LZW_CLEAR_CODE = 256
 LZW_EOI_CODE = 257
@@ -1538,6 +1596,15 @@ def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
 
     if predictor == 2:
         total_rows = n_tiles * tile_height
+        # Predictor=2 differences adjacent samples at the sample's natural
+        # width (uint8/16/32/64). The per-dtype kernels view the byte
+        # buffer as native unsigned dtype, so on big-endian files we must
+        # swap the bytes to native order BEFORE running the kernel,
+        # otherwise the prefix-sum runs on the wrong integer
+        # interpretation (#1517). The pre-swap then makes the post-
+        # assembly byteswap unnecessary; see the BE branch below.
+        if big_endian and dtype.itemsize > 1:
+            _swap_byte_lanes(d_decomp, dtype.itemsize)
         # Sample-level differencing: stride is samples_per_pixel samples,
         # row width is tile_width pixels.  Per-dtype kernels handle the
         # modular wrap at the sample's natural bit width.
@@ -1575,7 +1642,12 @@ def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
     else:
         out = d_output.view(dtype=cupy.dtype(dtype)).reshape(
             image_height, image_width)
-    if big_endian and dtype.itemsize > 1:
+    # Predictor=2 BE swapped d_decomp to native order pre-decode (#1517),
+    # so the assembled output is already native; skip the final swap.
+    needs_post_swap = (
+        big_endian and dtype.itemsize > 1 and predictor != 2
+    )
+    if needs_post_swap:
         # See gpu_decode_tiles for why BE samples need a final byteswap.
         # cupy.ndarray has no .byteswap(), so use the dtype-view helper.
         out = _xp_byteswap(out)
@@ -1793,6 +1865,12 @@ def gpu_decode_tiles(
     if predictor == 2:
         # Sample-level horizontal differencing: stride is samples_per_pixel
         # samples; per-dtype kernels handle the natural-width modular wrap.
+        # On big-endian multi-byte files the kernels would otherwise view
+        # the buffer with the wrong integer interpretation, so swap to
+        # native order first and skip the post-assembly swap below
+        # (#1517).
+        if byte_order == '>' and dtype.itemsize > 1:
+            _swap_byte_lanes(d_decomp, dtype.itemsize)
         total_rows = n_tiles * tile_height
         _gpu_predictor2_decode(
             d_decomp, tile_width, total_rows, dtype, samples)
@@ -1835,8 +1913,10 @@ def gpu_decode_tiles(
     # The decoded byte stream is in the file's byte order; cupy view
     # interprets it as native (always little-endian on supported GPUs),
     # so big-endian samples that are wider than a byte must be swapped
-    # back to native before the values mean anything.
-    if byte_order == '>' and dtype.itemsize > 1:
+    # back to native before the values mean anything. Predictor=2 BE
+    # already swapped the buffer pre-decode (#1517), so skip the swap
+    # in that case.
+    if byte_order == '>' and dtype.itemsize > 1 and predictor != 2:
         # cupy.ndarray has no .byteswap(), so use the dtype-view helper.
         out = _xp_byteswap(out)
     return out
