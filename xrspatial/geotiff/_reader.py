@@ -520,7 +520,7 @@ def _packed_byte_count(pixel_count: int, bps: int) -> int:
 
 def _decode_strip_or_tile(data_slice, compression, width, height, samples,
                           bps, bytes_per_sample, is_sub_byte, dtype, pred,
-                          byte_order='<'):
+                          byte_order='<', jpeg_tables=None):
     """Decompress, apply predictor, unpack sub-byte, and reshape a strip/tile.
 
     Parameters
@@ -529,6 +529,12 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
         '<' for little-endian, '>' for big-endian.  When the file byte
         order differs from the system's native order, pixel data is
         byte-swapped after decompression.
+    jpeg_tables : bytes or None
+        Raw bytes of the file's JPEGTables tag (347), or None if the file
+        doesn't have one. GDAL-style tiled JPEG TIFFs store DQT/DHT tables
+        once in this tag and each tile is a JPEG fragment that depends on
+        them; the JPEG decoder splices the tables in before handing the
+        tile to libjpeg. Ignored for non-JPEG compressions.
 
     Returns an array shaped (height, width) or (height, width, samples).
     """
@@ -539,7 +545,8 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
         expected = pixel_count * bytes_per_sample
 
     chunk = decompress(data_slice, compression, expected,
-                       width=width, height=height, samples=samples)
+                       width=width, height=height, samples=samples,
+                       jpeg_tables=jpeg_tables)
 
     # Validate the decompressed byte count.  A truncated deflate stream or a
     # buggy compressor can produce fewer or more bytes than expected.  Without
@@ -654,6 +661,7 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
         bps = bps[0]
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
+    jpeg_tables = ifd.jpeg_tables
 
     if offsets is None or byte_counts is None:
         raise ValueError("Missing strip offsets or byte counts")
@@ -713,7 +721,8 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
                 strip_pixels = _decode_strip_or_tile(
                     strip_data, compression, width, strip_rows, 1,
                     bps, bytes_per_sample, is_sub_byte, dtype, pred,
-                    byte_order=header.byte_order)
+                    byte_order=header.byte_order,
+                    jpeg_tables=jpeg_tables)
 
                 src_r0 = max(r0 - strip_row, 0)
                 src_r1 = min(r1 - strip_row, strip_rows)
@@ -738,7 +747,8 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
             strip_pixels = _decode_strip_or_tile(
                 strip_data, compression, width, strip_rows, samples,
                 bps, bytes_per_sample, is_sub_byte, dtype, pred,
-                byte_order=header.byte_order)
+                byte_order=header.byte_order,
+                jpeg_tables=jpeg_tables)
 
             src_r0 = max(r0 - strip_row, 0)
             src_r1 = min(r1 - strip_row, strip_rows)
@@ -790,6 +800,7 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
         bps = bps[0]
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
+    jpeg_tables = ifd.jpeg_tables
 
     offsets = ifd.tile_offsets
     byte_counts = ifd.tile_byte_counts
@@ -885,7 +896,8 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
         return _decode_strip_or_tile(
             tile_data, compression, tw, th, tile_samples,
             bps, bytes_per_sample, is_sub_byte, dtype, pred,
-            byte_order=header.byte_order)
+            byte_order=header.byte_order,
+            jpeg_tables=jpeg_tables)
 
     if use_parallel:
         from concurrent.futures import ThreadPoolExecutor
@@ -1001,6 +1013,7 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     pred = ifd.predictor
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
+    jpeg_tables = ifd.jpeg_tables
 
     offsets = ifd.tile_offsets
     byte_counts = ifd.tile_byte_counts
@@ -1067,7 +1080,8 @@ def _read_cog_http(url: str, overview_level: int | None = None,
         tile_pixels = _decode_strip_or_tile(
             tile_data, compression, tw, th, samples,
             bps, bytes_per_sample, is_sub_byte, dtype, pred,
-            byte_order=header.byte_order)
+            byte_order=header.byte_order,
+            jpeg_tables=jpeg_tables)
 
         y0 = tr * th
         x0 = tc * tw
