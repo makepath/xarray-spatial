@@ -182,10 +182,18 @@ class IFD:
             return None
         if isinstance(v, (bytes, bytearray)):
             return bytes(v)
-        # BYTE arrays may surface as a tuple of ints
-        if isinstance(v, tuple):
+        # BYTE arrays may surface as a tuple/list of ints
+        if isinstance(v, (tuple, list)):
             return bytes(v)
-        return bytes(v)
+        # A single-byte tag value comes back as an int; wrap it in a
+        # one-element bytes object. Plain ``bytes(v)`` would (incorrectly)
+        # allocate v zero bytes -- a malformed file with a huge int here
+        # could otherwise blow up memory.
+        if isinstance(v, int):
+            return bytes([v & 0xFF])
+        raise TypeError(
+            f"unexpected JPEGTables tag value type: {type(v).__name__}"
+        )
 
     @property
     def x_resolution(self) -> float | None:

@@ -529,6 +529,12 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
         '<' for little-endian, '>' for big-endian.  When the file byte
         order differs from the system's native order, pixel data is
         byte-swapped after decompression.
+    jpeg_tables : bytes or None
+        Raw bytes of the file's JPEGTables tag (347), or None if the file
+        doesn't have one. GDAL-style tiled JPEG TIFFs store DQT/DHT tables
+        once in this tag and each tile is a JPEG fragment that depends on
+        them; the JPEG decoder splices the tables in before handing the
+        tile to libjpeg. Ignored for non-JPEG compressions.
 
     Returns an array shaped (height, width) or (height, width, samples).
     """

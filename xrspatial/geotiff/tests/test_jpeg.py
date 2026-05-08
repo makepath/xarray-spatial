@@ -1,6 +1,8 @@
 """Tests for JPEG compression support (issue #1050)."""
 from __future__ import annotations
 
+import importlib.util
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -211,10 +213,15 @@ class TestJpegTablesSplice:
 
 
 # rasterio-driven tests for issue #1502: GDAL writes tiled JPEG TIFFs
-# whose per-tile fragments share DQT/DHT tables in tag 347.
-rasterio = pytest.importorskip('rasterio')
+# whose per-tile fragments share DQT/DHT tables in tag 347. Skip the
+# class -- not the whole module -- when rasterio is missing so the
+# codec/splice unit tests above still run.
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec('rasterio') is None,
+    reason='rasterio is required to write GDAL-style tiled JPEG TIFFs',
+)
 class TestGdalTiledJpegRead:
     """Read GDAL-style tiled JPEG TIFFs that use the JPEGTables tag."""
 

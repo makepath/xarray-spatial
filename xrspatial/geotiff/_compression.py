@@ -866,7 +866,8 @@ except ImportError:
     pass
 
 
-def _splice_jpeg_tables(tile_data: bytes, jpeg_tables: bytes) -> bytes:
+def _splice_jpeg_tables(tile_data: bytes,
+                        jpeg_tables: bytes | None) -> bytes:
     """Splice a JPEGTables stream into a tile's JPEG fragment.
 
     GDAL-style tiled JPEG TIFFs store DQT/DHT tables once in tag 347
