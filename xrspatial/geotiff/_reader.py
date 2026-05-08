@@ -1103,6 +1103,65 @@ def _read_cog_http(url: str, overview_level: int | None = None,
 # Main read function
 # ---------------------------------------------------------------------------
 
+def _apply_orientation(arr: np.ndarray, orientation: int) -> np.ndarray:
+    """Reorient a decoded TIFF array according to the Orientation tag (274).
+
+    The TIFF 6.0 spec defines eight orientations describing where the
+    *first row* and *first column* of the stored data sit relative to the
+    visual top-left of the image:
+
+    ===  =================  ========================================
+     1   top-left           identity (default, no transform)
+     2   top-right          mirror horizontally (flip columns)
+     3   bottom-right       rotate 180 degrees
+     4   bottom-left        mirror vertically (flip rows)
+     5   left-top           transpose (rows<->columns)
+     6   right-top          rotate 90 clockwise
+     7   right-bottom       transverse (anti-transpose)
+     8   left-bottom        rotate 90 counter-clockwise
+    ===  =================  ========================================
+
+    Values 5-8 swap rows and columns: the file's stored width becomes the
+    output's height and vice versa.
+
+    The input ``arr`` is shaped ``(height, width)`` or
+    ``(height, width, samples)``. Multi-band 3D arrays only have their
+    first two axes transformed; the sample axis is preserved.
+    """
+    if orientation == 1:
+        return arr
+    if orientation == 2:
+        return np.ascontiguousarray(arr[:, ::-1])
+    if orientation == 3:
+        return np.ascontiguousarray(arr[::-1, ::-1])
+    if orientation == 4:
+        return np.ascontiguousarray(arr[::-1, :])
+    # Orientations 5-8 swap rows and columns.
+    if arr.ndim == 3:
+        # Transpose only the spatial axes; keep the sample axis trailing.
+        if orientation == 5:
+            return np.ascontiguousarray(arr.transpose(1, 0, 2))
+        if orientation == 6:
+            return np.ascontiguousarray(arr.transpose(1, 0, 2)[:, ::-1])
+        if orientation == 7:
+            return np.ascontiguousarray(arr.transpose(1, 0, 2)[::-1, ::-1])
+        if orientation == 8:
+            return np.ascontiguousarray(arr.transpose(1, 0, 2)[::-1, :])
+    else:
+        if orientation == 5:
+            return np.ascontiguousarray(arr.T)
+        if orientation == 6:
+            return np.ascontiguousarray(arr.T[:, ::-1])
+        if orientation == 7:
+            return np.ascontiguousarray(arr.T[::-1, ::-1])
+        if orientation == 8:
+            return np.ascontiguousarray(arr.T[::-1, :])
+    raise ValueError(
+        f"Invalid TIFF Orientation tag value: {orientation} "
+        f"(must be 1-8 per TIFF 6.0)"
+    )
+
+
 def read_to_array(source, *, window=None, overview_level: int | None = None,
                   band: int | None = None,
                   max_pixels: int = MAX_PIXELS_DEFAULT,
@@ -1158,6 +1217,24 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         geo_info = extract_geo_info(ifd, data, header.byte_order)
 
+        # Orientation tag (274): values 2-8 mean the stored pixel order
+        # differs from display order. We need to remap the array post
+        # decode. A windowed read against a non-default orientation has
+        # ambiguous semantics (does the window refer to file pixels or
+        # display pixels?) so we reject that combo rather than guess.
+        # ``read_geotiff_dask`` chunks the file by issuing windowed reads,
+        # so this check also rejects ``chunks=`` for non-default
+        # orientation; the error mentions both so the failure is easy to
+        # diagnose if it surfaces under dask.
+        orientation = ifd.orientation
+        if orientation != 1 and window is not None:
+            raise ValueError(
+                f"Orientation tag (274) is {orientation}; windowed reads "
+                f"(window=...) and dask-chunked reads (chunks=...) are not "
+                f"supported for non-default orientation. Read the full "
+                f"array first, then slice."
+            )
+
         if ifd.is_tiled:
             arr = _read_tiles(data, ifd, header, dtype, window,
                               max_pixels=max_pixels)
@@ -1165,9 +1242,46 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
             arr = _read_strips(data, ifd, header, dtype, window,
                                max_pixels=max_pixels)
 
-        # For multi-band with band selection, extract single band
+        # Extract the requested band before reorienting so we work on a
+        # smaller 2D array rather than reorienting a full multi-band cube
+        # only to slice it afterwards.
         if arr.ndim == 3 and ifd.samples_per_pixel > 1 and band is not None:
             arr = arr[:, :, band]
+
+        if orientation != 1:
+            arr = _apply_orientation(arr, orientation)
+            # Orientations 5-8 swap rows and columns, so the file's stored
+            # pixel_width sits on the y-axis of the displayed array and
+            # vice versa. Swap the transform's pixel sizes so the coord
+            # arrays come out the right length. Signs are preserved
+            # rather than coerced to north-up, since some legitimate files
+            # use a non-standard sign convention (south-up, west-up).
+            #
+            # For orientations 6/7/8 (rotations + flips, not a pure
+            # transpose) the swap is geometrically inexact for georef'd
+            # files: a strict implementation would also adjust origin
+            # and re-sign per axis. Such files are vanishingly rare in
+            # practice (TIFF Orientation 5-8 with a meaningful
+            # ModelTransformation), and getting it right requires a
+            # design pass; we warn instead so the user knows to verify.
+            if orientation in (5, 6, 7, 8):
+                t = geo_info.transform
+                geo_info.transform = GeoTransform(
+                    origin_x=t.origin_x,
+                    origin_y=t.origin_y,
+                    pixel_width=t.pixel_height,
+                    pixel_height=t.pixel_width,
+                )
+                if (geo_info.crs_epsg is not None
+                        or geo_info.crs_wkt is not None):
+                    import warnings
+                    warnings.warn(
+                        f"Orientation {orientation} swaps spatial axes on "
+                        f"a georeferenced file; the returned coords are "
+                        f"shape-correct but the geographic transform may "
+                        f"need manual adjustment.",
+                        stacklevel=2,
+                    )
 
         # MinIsWhite (photometric=0): invert single-band grayscale values
         if ifd.photometric == 0 and ifd.samples_per_pixel == 1:
