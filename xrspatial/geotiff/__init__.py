@@ -1519,7 +1519,13 @@ def read_geotiff_gpu(source: str, *,
                 target = np.dtype(dtype)
                 _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
                 arr_gpu = arr_gpu.astype(target)
-            return xr.DataArray(arr_gpu, dims=['y', 'x'],
+            # Mirror the tiled branch: 3-D (y, x, band) for multi-band reads.
+            if arr_gpu.ndim == 3:
+                dims = ['y', 'x', 'band']
+                coords['band'] = np.arange(arr_gpu.shape[2])
+            else:
+                dims = ['y', 'x']
+            return xr.DataArray(arr_gpu, dims=dims,
                                 coords=coords, name=name, attrs=attrs)
 
         offsets = ifd.tile_offsets
