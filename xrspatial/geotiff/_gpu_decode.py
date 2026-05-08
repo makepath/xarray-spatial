@@ -56,6 +56,28 @@ def _check_gpu_memory(required_bytes: int, what: str = "tile buffer") -> None:
             "with cupy.get_default_memory_pool().free_all_blocks()."
         )
 
+def _xp_byteswap(arr):
+    """Return *arr* with each element's bytes physically reversed.
+
+    Equivalent to ``numpy.ndarray.byteswap()``: the dtype is preserved
+    (still native-endian on output), and the bytes that make up each
+    element are flipped end-for-end. Works on both numpy and cupy.
+
+    The earlier ``arr.view(arr.dtype.newbyteorder()).copy()`` shortcut
+    looked equivalent but produced an array whose dtype was tagged with
+    the opposite byte order (e.g. ``>u2`` instead of ``<u2``). Downstream
+    consumers -- numba ``@ngjit`` kernels in particular -- reject
+    non-native dtypes (#1507 was exactly this), and the CPU reader's
+    contract is that decoded arrays come back native, so we mirror that
+    here by working in a uint8 view, reversing along the byte axis, and
+    re-viewing as the original dtype.
+    """
+    if arr.itemsize == 1:
+        return arr
+    u8 = arr.view('u1').reshape(*arr.shape, arr.itemsize)
+    return u8[..., ::-1].copy().view(arr.dtype).reshape(arr.shape)
+
+
 # LZW constants (same as _compression.py)
 LZW_CLEAR_CODE = 256
 LZW_EOI_CODE = 257
@@ -1555,7 +1577,8 @@ def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
             image_height, image_width)
     if big_endian and dtype.itemsize > 1:
         # See gpu_decode_tiles for why BE samples need a final byteswap.
-        out = out.byteswap()
+        # cupy.ndarray has no .byteswap(), so use the dtype-view helper.
+        out = _xp_byteswap(out)
     return out
 
 
@@ -1814,7 +1837,8 @@ def gpu_decode_tiles(
     # so big-endian samples that are wider than a byte must be swapped
     # back to native before the values mean anything.
     if byte_order == '>' and dtype.itemsize > 1:
-        out = out.byteswap()
+        # cupy.ndarray has no .byteswap(), so use the dtype-view helper.
+        out = _xp_byteswap(out)
     return out
 
 
