@@ -1207,10 +1207,17 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         # decode. A windowed read against a non-default orientation has
         # ambiguous semantics (does the window refer to file pixels or
         # display pixels?) so we reject that combo rather than guess.
+        # ``read_geotiff_dask`` chunks the file by issuing windowed reads,
+        # so this check also rejects ``chunks=`` for non-default
+        # orientation; the error mentions both so the failure is easy to
+        # diagnose if it surfaces under dask.
         orientation = ifd.orientation
         if orientation != 1 and window is not None:
             raise ValueError(
-                "orientation != 1 with window= is not supported"
+                f"Orientation tag (274) is {orientation}; windowed reads "
+                f"(window=...) and dask-chunked reads (chunks=...) are not "
+                f"supported for non-default orientation. Read the full "
+                f"array first, then slice."
             )
 
         if ifd.is_tiled:
@@ -1220,29 +1227,46 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
             arr = _read_strips(data, ifd, header, dtype, window,
                                max_pixels=max_pixels)
 
+        # Extract the requested band before reorienting so we work on a
+        # smaller 2D array rather than reorienting a full multi-band cube
+        # only to slice it afterwards.
+        if arr.ndim == 3 and ifd.samples_per_pixel > 1 and band is not None:
+            arr = arr[:, :, band]
+
         if orientation != 1:
             arr = _apply_orientation(arr, orientation)
             # Orientations 5-8 swap rows and columns, so the file's stored
             # pixel_width sits on the y-axis of the displayed array and
-            # vice versa. Replace the transform with one whose pixel_width
-            # comes from the file's pixel_height (and vice versa) so that
-            # the returned coords have the right number of entries on each
-            # axis. Orientation 5-8 with rotated geographies is rare in
-            # practice; the sign convention here keeps y decreasing
-            # downward, matching the standard top-left-origin convention.
+            # vice versa. Swap the transform's pixel sizes so the coord
+            # arrays come out the right length. Signs are preserved
+            # rather than coerced to north-up, since some legitimate files
+            # use a non-standard sign convention (south-up, west-up).
+            #
+            # For orientations 6/7/8 (rotations + flips, not a pure
+            # transpose) the swap is geometrically inexact for georef'd
+            # files: a strict implementation would also adjust origin
+            # and re-sign per axis. Such files are vanishingly rare in
+            # practice (TIFF Orientation 5-8 with a meaningful
+            # ModelTransformation), and getting it right requires a
+            # design pass; we warn instead so the user knows to verify.
             if orientation in (5, 6, 7, 8):
                 t = geo_info.transform
-                from ._geotags import GeoTransform
                 geo_info.transform = GeoTransform(
                     origin_x=t.origin_x,
                     origin_y=t.origin_y,
-                    pixel_width=abs(t.pixel_height),
-                    pixel_height=-abs(t.pixel_width),
+                    pixel_width=t.pixel_height,
+                    pixel_height=t.pixel_width,
                 )
-
-        # For multi-band with band selection, extract single band
-        if arr.ndim == 3 and ifd.samples_per_pixel > 1 and band is not None:
-            arr = arr[:, :, band]
+                if (geo_info.crs_epsg is not None
+                        or geo_info.crs_wkt is not None):
+                    import warnings
+                    warnings.warn(
+                        f"Orientation {orientation} swaps spatial axes on "
+                        f"a georeferenced file; the returned coords are "
+                        f"shape-correct but the geographic transform may "
+                        f"need manual adjustment.",
+                        stacklevel=2,
+                    )
 
         # MinIsWhite (photometric=0): invert single-band grayscale values
         if ifd.photometric == 0 and ifd.samples_per_pixel == 1:

@@ -147,3 +147,111 @@ def test_orientation_1_with_window_still_works(tmp_path):
     da = open_geotiff(str(path), window=(0, 0, 2, 3))
     assert da.values.shape == (2, 3)
     np.testing.assert_array_equal(da.values, arr[:2, :3])
+
+
+@pytest.mark.parametrize("orientation", [2, 3, 4, 5, 6, 7, 8])
+def test_orientation_tag_not_passed_through_extra_tags(tmp_path, orientation):
+    """Tag 274 must not survive on the returned DataArray.
+
+    Without this, a read+write round-trip would re-emit the original
+    Orientation tag even though the pixel buffer is already remapped --
+    downstream readers would apply the orientation a second time.
+    """
+    arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
+    path = tmp_path / f"orient_passthrough_{orientation}.tif"
+    _write_with_orientation(path, arr, orientation)
+
+    da = open_geotiff(str(path))
+    extra = da.attrs.get('extra_tags') or []
+    tag_ids = [t[0] if isinstance(t, tuple) else t for t in extra]
+    assert 274 not in tag_ids, (
+        f"orientation={orientation}: tag 274 leaked into extra_tags={extra}"
+    )
+
+
+def test_orientation_round_trip_does_not_double_apply(tmp_path):
+    """open_geotiff -> to_geotiff -> open_geotiff returns the same array.
+
+    Concretely: a file written with orientation=4 reads as flipped
+    (correct), the writer emits a normal file (no orientation tag), and
+    a second read returns the same array. If tag 274 leaked through
+    extra_tags, the second read would apply orientation=4 again.
+    """
+    from xrspatial.geotiff import to_geotiff
+
+    arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
+    path1 = tmp_path / "orient4_in.tif"
+    _write_with_orientation(path1, arr, 4)
+
+    da1 = open_geotiff(str(path1))
+
+    path2 = tmp_path / "orient4_out.tif"
+    to_geotiff(da1, str(path2))
+    da2 = open_geotiff(str(path2))
+
+    np.testing.assert_array_equal(da2.values, da1.values)
+
+
+@pytest.mark.parametrize("orientation", [5, 6, 7, 8])
+def test_orientation_5_to_8_warn_on_georef(tmp_path, orientation):
+    """Axis-swap orientations on georef'd files emit a warning.
+
+    The transform swap is shape-correct but geometrically approximate
+    for orientations 6/7/8; the user should be told.
+    """
+    import warnings as _warnings
+
+    arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
+    path = tmp_path / f"orient_georef_{orientation}.tif"
+    # tifffile lets us tag a CRS via the resolution + metadata; the
+    # simplest path that triggers our georef branch is to embed a
+    # ModelPixelScale + GeoKeyDirectory pair pointing at EPSG:4326.
+    tifffile.imwrite(
+        str(path), arr,
+        extratags=[
+            (274, 'H', 1, orientation, True),
+            # ModelPixelScaleTag (33550): scale_x, scale_y, scale_z
+            (33550, 'd', 3, (1.0, 1.0, 0.0), True),
+            # ModelTiepointTag (33922): I, J, K, X, Y, Z
+            (33922, 'd', 6, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0), True),
+            # GeoKeyDirectoryTag (34735): version 1.1.0, 1 key,
+            # GTModelType=2 (Geographic), GeographicType=4326
+            (34735, 'H', 12, (
+                1, 1, 0, 2,
+                1024, 0, 1, 2,   # GTModelTypeGeoKey = 2
+                2048, 0, 1, 4326,  # GeographicTypeGeoKey = 4326
+            ), True),
+        ],
+    )
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter('always')
+        da = open_geotiff(str(path))
+
+    assert da is not None
+    msgs = [str(w.message) for w in caught if 'Orientation' in str(w.message)]
+    assert msgs, (
+        f"orientation={orientation}: no warning emitted on georef file"
+    )
+
+
+def test_orientation_with_band_selection_returns_2d(tmp_path):
+    """band= followed by an orientation transpose returns a 2D array.
+
+    Regression: an earlier draft applied orientation before slicing the
+    band, which wasted memory and produced confusing intermediates.
+    Now band slicing happens first.
+    """
+    rgb = np.arange(4 * 6 * 3, dtype=np.uint8).reshape(4, 6, 3)
+    path = tmp_path / "orient5_rgb.tif"
+    tifffile.imwrite(
+        str(path), rgb, photometric='rgb',
+        extratags=[(274, 'H', 1, 5, True)],
+    )
+
+    # Orientation 5 transposes spatial axes, so output spatial shape is
+    # (6, 4). Band 1 returns just that channel.
+    da = open_geotiff(str(path), band=1)
+    assert da.values.shape == (6, 4)
+    expected = rgb[..., 1].T  # band 1 then transpose
+    np.testing.assert_array_equal(da.values, expected)
