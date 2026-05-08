@@ -12,9 +12,11 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 from ._compression import (
+    COMPRESSION_LERC,
     COMPRESSION_NONE,
     decompress,
     fp_predictor_decode,
+    lerc_decompress_with_mask,
     predictor_decode,
     unpack_bits,
 )
@@ -525,9 +527,33 @@ def _packed_byte_count(pixel_count: int, bps: int) -> int:
     return (pixel_count * bps + 7) // 8
 
 
+def _resolve_masked_fill(nodata_str: str | None, dtype: np.dtype):
+    """Resolve the value to use when restoring LERC-masked pixels.
+
+    Mirrors :func:`_sparse_fill_value` but defaults to NaN for floating
+    dtypes when the file does not declare a nodata sentinel.  Float
+    rasters with no GDAL_NODATA tag still benefit from NaN propagation
+    because LERC's zero fill would silently masquerade as a real
+    measurement at z == 0.
+    """
+    if nodata_str is not None:
+        try:
+            v = float(nodata_str)
+            if dtype.kind == 'f':
+                return dtype.type(v)
+            if not math.isnan(v) and not math.isinf(v):
+                return dtype.type(int(v))
+        except (TypeError, ValueError):
+            pass
+    if dtype.kind == 'f':
+        return dtype.type(np.nan)
+    return dtype.type(0)
+
+
 def _decode_strip_or_tile(data_slice, compression, width, height, samples,
                           bps, bytes_per_sample, is_sub_byte, dtype, pred,
-                          byte_order='<', jpeg_tables=None):
+                          byte_order='<', jpeg_tables=None,
+                          masked_fill=None):
     """Decompress, apply predictor, unpack sub-byte, and reshape a strip/tile.
 
     Parameters
@@ -551,9 +577,18 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
     else:
         expected = pixel_count * bytes_per_sample
 
-    chunk = decompress(data_slice, compression, expected,
-                       width=width, height=height, samples=samples,
-                       jpeg_tables=jpeg_tables)
+    lerc_mask = None
+    if compression == COMPRESSION_LERC:
+        # LERC needs special handling: lerc.decode also returns a
+        # valid-mask which the generic decompress() dispatcher discards.
+        # We capture it here so masked pixels can be restored to nodata
+        # below, instead of leaking LERC's zero fill into the output.
+        decoded_bytes, lerc_mask = lerc_decompress_with_mask(data_slice)
+        chunk = np.frombuffer(decoded_bytes, dtype=np.uint8)
+    else:
+        chunk = decompress(data_slice, compression, expected,
+                           width=width, height=height, samples=samples,
+                           jpeg_tables=jpeg_tables)
 
     # Validate the decompressed byte count.  A truncated deflate stream or a
     # buggy compressor can produce fewer or more bytes than expected.  Without
@@ -587,8 +622,23 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
             pixels = pixels.astype(dtype)
 
     if samples > 1:
-        return pixels.reshape(height, width, samples)
-    return pixels.reshape(height, width)
+        out = pixels.reshape(height, width, samples)
+    else:
+        out = pixels.reshape(height, width)
+
+    # Restore nodata in positions LERC flagged as invalid.  LERC
+    # zero-fills masked pixels in the data array, which would otherwise
+    # be indistinguishable from real zero readings downstream.
+    if lerc_mask is not None and masked_fill is not None:
+        mask_arr = np.asarray(lerc_mask)
+        if mask_arr.ndim == 2 and out.ndim == 3:
+            mask_arr = mask_arr[..., None]
+        invalid = np.broadcast_to(mask_arr == 0, out.shape)
+        if invalid.any():
+            if not out.flags.writeable:
+                out = out.copy()
+            np.putmask(out, invalid, masked_fill)
+    return out
 
 
 import sys as _sys
@@ -667,6 +717,8 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
     jpeg_tables = ifd.jpeg_tables
+    masked_fill = (_resolve_masked_fill(ifd.nodata_str, dtype)
+                   if compression == COMPRESSION_LERC else None)
 
     if offsets is None or byte_counts is None:
         raise ValueError("Missing strip offsets or byte counts")
@@ -727,7 +779,8 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
                     strip_data, compression, width, strip_rows, 1,
                     bps, bytes_per_sample, is_sub_byte, dtype, pred,
                     byte_order=header.byte_order,
-                    jpeg_tables=jpeg_tables)
+                    jpeg_tables=jpeg_tables,
+                    masked_fill=masked_fill)
 
                 src_r0 = max(r0 - strip_row, 0)
                 src_r1 = min(r1 - strip_row, strip_rows)
@@ -753,7 +806,8 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
                 strip_data, compression, width, strip_rows, samples,
                 bps, bytes_per_sample, is_sub_byte, dtype, pred,
                 byte_order=header.byte_order,
-                jpeg_tables=jpeg_tables)
+                jpeg_tables=jpeg_tables,
+                masked_fill=masked_fill)
 
             src_r0 = max(r0 - strip_row, 0)
             src_r1 = min(r1 - strip_row, strip_rows)
@@ -804,6 +858,8 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
     jpeg_tables = ifd.jpeg_tables
+    masked_fill = (_resolve_masked_fill(ifd.nodata_str, dtype)
+                   if compression == COMPRESSION_LERC else None)
 
     offsets = ifd.tile_offsets
     byte_counts = ifd.tile_byte_counts
@@ -900,7 +956,8 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
             tile_data, compression, tw, th, tile_samples,
             bps, bytes_per_sample, is_sub_byte, dtype, pred,
             byte_order=header.byte_order,
-            jpeg_tables=jpeg_tables)
+            jpeg_tables=jpeg_tables,
+            masked_fill=masked_fill)
 
     if use_parallel:
         from concurrent.futures import ThreadPoolExecutor
@@ -1012,6 +1069,8 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
     jpeg_tables = ifd.jpeg_tables
+    masked_fill = (_resolve_masked_fill(ifd.nodata_str, dtype)
+                   if compression == COMPRESSION_LERC else None)
 
     offsets = ifd.tile_offsets
     byte_counts = ifd.tile_byte_counts
@@ -1079,7 +1138,8 @@ def _read_cog_http(url: str, overview_level: int | None = None,
             tile_data, compression, tw, th, samples,
             bps, bytes_per_sample, is_sub_byte, dtype, pred,
             byte_order=header.byte_order,
-            jpeg_tables=jpeg_tables)
+            jpeg_tables=jpeg_tables,
+            masked_fill=masked_fill)
 
         y0 = tr * th
         x0 = tc * tw
