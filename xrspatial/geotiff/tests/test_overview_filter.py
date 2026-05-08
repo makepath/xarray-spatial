@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-import tifffile
 
-from xrspatial.geotiff import open_geotiff
-from xrspatial.geotiff._header import (
-    IFD,
+tifffile = pytest.importorskip("tifffile")
+
+from xrspatial.geotiff import open_geotiff  # noqa: E402
+from xrspatial.geotiff._header import (  # noqa: E402
     parse_all_ifds,
     parse_header,
     select_overview_ifd,
@@ -112,8 +112,8 @@ class TestSelectOverviewIFD:
         msg = str(excinfo.value)
         assert 'overview_level=99' in msg
         # Useful diagnostic: tells the user how many real IFDs there are.
-        assert '2 non-mask IFDs' in msg
-        assert 'mask' in msg.lower()
+        assert '2 pyramid IFDs' in msg
+        assert 'non-pyramid' in msg.lower() or 'mask' in msg.lower()
 
     def test_negative_raises(self, tmp_path):
         path = tmp_path / 'plain.tif'
@@ -122,6 +122,67 @@ class TestSelectOverviewIFD:
         ifds = self._ifds_for(path)
         with pytest.raises(ValueError, match='must be >= 0'):
             select_overview_ifd(ifds, -1)
+
+    def test_skips_page_ifd(self, tmp_path):
+        """NewSubfileType bit 1 (multi-page document page) is also filtered.
+
+        Even though geotiff usage rarely sets bit 1, the spec lets it
+        coexist with overviews. ``overview_level`` should index the
+        pyramid only and ignore page IFDs the same way it ignores masks.
+        """
+        path = tmp_path / 'with_page.tif'
+        full = np.arange(64 * 64, dtype=np.uint16).reshape(64, 64)
+        page = np.zeros((64, 64), dtype=np.uint16)
+        ov = np.arange(32 * 32, dtype=np.uint16).reshape(32, 32)
+
+        with tifffile.TiffWriter(str(path)) as tw:
+            tw.write(full, tile=(16, 16), photometric='minisblack')
+            # subfiletype=2 -> bit 1 set, page-of-multi-page-doc.
+            tw.write(page, tile=(16, 16), photometric='minisblack',
+                     subfiletype=2)
+            tw.write(ov, tile=(16, 16), photometric='minisblack',
+                     subfiletype=1)
+
+        ifds = self._ifds_for(path)
+        assert len(ifds) == 3
+        assert ifds[1].subfile_type == 2  # page
+
+        sel0 = select_overview_ifd(ifds, 0)
+        assert sel0.width == 64 and sel0.height == 64
+        sel1 = select_overview_ifd(ifds, 1)
+        # Must skip the page IFD and land on the 32x32 overview.
+        assert sel1.width == 32 and sel1.height == 32
+
+    def test_skips_overview_of_mask(self, tmp_path):
+        """An overview-of-mask IFD (subfile_type=5: bits 0+2) is excluded.
+
+        The presence of the mask bit dominates -- this is a mask, even if
+        it happens to be a reduced-resolution one.
+        """
+        path = tmp_path / 'with_overview_mask.tif'
+        full = np.arange(64 * 64, dtype=np.uint16).reshape(64, 64)
+        ov = np.arange(32 * 32, dtype=np.uint16).reshape(32, 32)
+        ov_mask = np.zeros((32, 32), dtype=bool)
+
+        with tifffile.TiffWriter(str(path)) as tw:
+            tw.write(full, tile=(16, 16), photometric='minisblack')
+            tw.write(ov, tile=(16, 16), photometric='minisblack',
+                     subfiletype=1)
+            # subfiletype=5 -> bits 0+2: reduced-resolution mask.
+            tw.write(ov_mask, tile=(16, 16), photometric='minisblack',
+                     subfiletype=5)
+
+        ifds = self._ifds_for(path)
+        assert ifds[2].subfile_type == 5
+        assert ifds[2].is_mask  # mask-bit dominates
+
+        sel1 = select_overview_ifd(ifds, 1)
+        assert sel1.width == 32  # the real overview, not the masked one
+        assert not sel1.is_mask
+
+        # No level 2 -- only 2 pyramid IFDs.
+        with pytest.raises(ValueError, match='2 pyramid IFDs'):
+            select_overview_ifd(ifds, 2)
 
     def test_normal_cog_works(self, tmp_path):
         path = tmp_path / 'normal_cog.tif'
@@ -177,7 +238,7 @@ class TestOpenGeotiffSkipsMask:
             open_geotiff(str(path), overview_level=99)
         msg = str(excinfo.value)
         assert 'overview_level=99' in msg
-        assert '2 non-mask IFDs' in msg
+        assert '2 pyramid IFDs' in msg
 
     def test_normal_cog_unchanged(self, tmp_path):
         path = tmp_path / 'normal_cog.tif'

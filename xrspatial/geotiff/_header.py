@@ -445,15 +445,35 @@ def parse_ifd(data: bytes | memoryview, offset: int,
     return IFD(entries=entries, next_ifd_offset=next_ifd)
 
 
+def _is_overview_or_full_res(ifd: IFD) -> bool:
+    """Return True if *ifd* is the full-resolution image or an overview.
+
+    NewSubfileType (tag 254) is a bit field per TIFF 6.0:
+
+    * bit 0 (value 1) -- reduced-resolution version of another image (overview)
+    * bit 1 (value 2) -- single page of a multi-page document
+    * bit 2 (value 4) -- transparency mask
+
+    The full-resolution IFD has ``NewSubfileType=0``. We accept it plus
+    any IFD that is an overview *and* not a mask. Pages and any future
+    flag combinations get filtered out so ``overview_level`` indexes the
+    pyramid only.
+    """
+    st = ifd.subfile_type
+    if st & 4:
+        return False  # transparency mask (or overview-of-mask, st=5)
+    return st == 0 or (st & 1) != 0
+
+
 def select_overview_ifd(ifds: list[IFD], overview_level: int | None) -> IFD:
-    """Pick the IFD for a requested overview level, skipping mask IFDs.
+    """Pick the IFD for a requested overview level, skipping non-pyramid IFDs.
 
     Some COG variants (notably GDAL with internal masks) interleave
     transparency-mask IFDs (NewSubfileType bit 2 set) with overview IFDs.
-    Indexing the raw IFD list by ``overview_level`` then returns a binary
-    mask instead of a reduced-resolution overview. This helper builds a
-    filtered list of full-resolution + overview IFDs (mask-bit clear) and
-    indexes into that.
+    Multi-page TIFFs additionally carry page IFDs (bit 1 set). Indexing the
+    raw IFD list by ``overview_level`` returns the wrong layer in either
+    case. This helper builds a filtered list of full-resolution and
+    overview IFDs only, and indexes into that.
 
     ``overview_level=0`` (or ``None``) returns the full-resolution IFD;
     ``overview_level=1`` returns the first overview, and so on.
@@ -473,29 +493,29 @@ def select_overview_ifd(ifds: list[IFD], overview_level: int | None) -> IFD:
     ------
     ValueError
         If ``ifds`` is empty, or if ``overview_level`` exceeds the number
-        of non-mask IFDs in the file.
+        of pyramid IFDs in the file.
     """
     if not ifds:
         raise ValueError("No IFDs found in TIFF file")
 
-    filtered = [ifd for ifd in ifds if not ifd.is_mask]
+    filtered = [ifd for ifd in ifds if _is_overview_or_full_res(ifd)]
     if not filtered:
         raise ValueError(
             "TIFF file contains no full-resolution or overview IFDs "
-            "(all IFDs are transparency masks)")
+            "(every IFD is a mask, page, or other non-pyramid layer)")
 
     level = 0 if overview_level is None else overview_level
     if level < 0:
         raise ValueError(f"overview_level must be >= 0, got {level}")
     if level >= len(filtered):
         n_overviews = len(filtered) - 1
-        n_masks = len(ifds) - len(filtered)
+        n_skipped = len(ifds) - len(filtered)
         raise ValueError(
             f"overview_level={level} is out of range: TIFF has "
-            f"{len(filtered)} non-mask IFDs (1 full-resolution + "
+            f"{len(filtered)} pyramid IFDs (1 full-resolution + "
             f"{n_overviews} overview{'s' if n_overviews != 1 else ''}"
-            f"{f', plus {n_masks} mask IFD' if n_masks else ''}"
-            f"{'s' if n_masks > 1 else ''}). Valid overview_level values "
+            f"{f', plus {n_skipped} non-pyramid IFD' if n_skipped else ''}"
+            f"{'s' if n_skipped > 1 else ''}). Valid overview_level values "
             f"are 0..{len(filtered) - 1}.")
 
     return filtered[level]
