@@ -57,14 +57,25 @@ def _check_gpu_memory(required_bytes: int, what: str = "tile buffer") -> None:
         )
 
 def _xp_byteswap(arr):
-    """Return *arr* with each element's bytes reversed.
+    """Return *arr* with each element's bytes physically reversed.
 
-    ``numpy.ndarray`` exposes ``byteswap()`` directly, but ``cupy.ndarray``
-    (as of cupy 13.x) does not. The view-then-copy trick works on both:
-    re-interpret the buffer as the swapped-order dtype, then copy to
-    materialise the swapped bytes as a real array in that dtype.
+    Equivalent to ``numpy.ndarray.byteswap()``: the dtype is preserved
+    (still native-endian on output), and the bytes that make up each
+    element are flipped end-for-end. Works on both numpy and cupy.
+
+    The earlier ``arr.view(arr.dtype.newbyteorder()).copy()`` shortcut
+    looked equivalent but produced an array whose dtype was tagged with
+    the opposite byte order (e.g. ``>u2`` instead of ``<u2``). Downstream
+    consumers -- numba ``@ngjit`` kernels in particular -- reject
+    non-native dtypes (#1507 was exactly this), and the CPU reader's
+    contract is that decoded arrays come back native, so we mirror that
+    here by working in a uint8 view, reversing along the byte axis, and
+    re-viewing as the original dtype.
     """
-    return arr.view(arr.dtype.newbyteorder()).copy()
+    if arr.itemsize == 1:
+        return arr
+    u8 = arr.view('u1').reshape(*arr.shape, arr.itemsize)
+    return u8[..., ::-1].copy().view(arr.dtype).reshape(arr.shape)
 
 
 # LZW constants (same as _compression.py)
