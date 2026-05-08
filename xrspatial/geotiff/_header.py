@@ -34,6 +34,16 @@ from ._dtypes import (
 MAX_IFD_ENTRY_COUNT = 100_000
 MAX_IFD_ENTRY_BYTES = 1 << 18  # 256 KiB
 
+# Maximum number of IFDs we walk in `parse_all_ifds` before giving up.
+# Real-world COGs carry the full-resolution IFD plus a handful of overview
+# levels and (optionally) per-band masks, so they sit comfortably below 64
+# even for deep pyramids. A crafted TIFF can chain millions of distinct
+# IFD offsets via `next_ifd_offset`; the cycle-detection `seen` set won't
+# catch those because every offset is unique. 256 is a generous ceiling
+# that bounds memory while leaving plenty of headroom for any legitimate
+# pyramid layout.
+MAX_IFDS = 256
+
 # Well-known TIFF tag IDs
 TAG_NEW_SUBFILE_TYPE = 254
 TAG_IMAGE_WIDTH = 256
@@ -648,6 +658,14 @@ def parse_all_ifds(data: bytes | memoryview,
             break
         ifd = parse_ifd(data, offset, header)
         ifds.append(ifd)
+        # The `seen` set catches cycles, but a crafted file can chain a
+        # very long list of distinct offsets, each pointing at a small
+        # valid IFD. Cap the chain at MAX_IFDS to bound memory.
+        if len(ifds) >= MAX_IFDS:
+            raise ValueError(
+                f"TIFF IFD chain exceeds limit (MAX_IFDS={MAX_IFDS}); "
+                f"file is malformed or attempting denial-of-service"
+            )
         offset = ifd.next_ifd_offset
 
     return ifds
