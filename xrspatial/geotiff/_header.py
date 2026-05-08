@@ -23,6 +23,7 @@ TAG_BITS_PER_SAMPLE = 258
 TAG_COMPRESSION = 259
 TAG_PHOTOMETRIC = 262
 TAG_STRIP_OFFSETS = 273
+TAG_ORIENTATION = 274
 TAG_SAMPLES_PER_PIXEL = 277
 TAG_ROWS_PER_STRIP = 278
 TAG_STRIP_BYTE_COUNTS = 279
@@ -161,6 +162,20 @@ class IFD:
     @property
     def photometric(self) -> int:
         return self.get_value(TAG_PHOTOMETRIC, 1)
+
+    @property
+    def orientation(self) -> int:
+        """Orientation tag (274). Default 1 = top-left (no transform).
+
+        Per TIFF 6.0 the eight valid values are:
+        1=top-left, 2=top-right, 3=bottom-right, 4=bottom-left,
+        5=left-top, 6=right-top, 7=right-bottom, 8=left-bottom.
+        Values 5-8 swap rows and columns relative to the stored layout.
+        """
+        v = self.get_value(TAG_ORIENTATION, 1)
+        if isinstance(v, tuple):
+            v = v[0]
+        return int(v)
 
     @property
     def planar_config(self) -> int:
