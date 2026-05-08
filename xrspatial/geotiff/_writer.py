@@ -1400,6 +1400,8 @@ def write_streaming(dask_data, path: str, *,
                                 seg_np = seg_np.copy()
                                 seg_np[nan_mask] = seg_np.dtype.type(nodata)
 
+                        # Build tile arrays for this segment
+                        seg_tile_arrs = []
                         for tc in range(seg_start, seg_end):
                             c0 = tc * tw
                             c1 = min(c0 + tw, width)
@@ -1420,17 +1422,48 @@ def write_streaming(dask_data, path: str, *,
                             else:
                                 tile_arr = np.ascontiguousarray(tile_slice)
 
-                            compressed = _compress_block(
-                                tile_arr, tw, th, samples, out_dtype,
-                                bytes_per_sample, pred_int, comp_tag,
-                                compression_level, max_z_error)
+                            seg_tile_arrs.append(tile_arr)
 
+                        # Parallel compress: zlib/zstd/LZW release the GIL,
+                        # so threading actually parallelises the C-level work.
+                        # Memory cost is bounded by the segment size
+                        # (tiles_per_segment compressed buffers held in RAM
+                        # before the sequential write phase below).
+                        n_seg_tiles = len(seg_tile_arrs)
+                        if n_seg_tiles <= 1:
+                            seg_compressed = [
+                                _compress_block(
+                                    ta, tw, th, samples, out_dtype,
+                                    bytes_per_sample, pred_int, comp_tag,
+                                    compression_level, max_z_error)
+                                for ta in seg_tile_arrs
+                            ]
+                        else:
+                            from concurrent.futures import (
+                                ThreadPoolExecutor)
+                            n_workers = min(n_seg_tiles,
+                                            os.cpu_count() or 4)
+                            with ThreadPoolExecutor(
+                                    max_workers=n_workers) as pool:
+                                futures = [
+                                    pool.submit(
+                                        _compress_block,
+                                        ta, tw, th, samples, out_dtype,
+                                        bytes_per_sample, pred_int, comp_tag,
+                                        compression_level, max_z_error)
+                                    for ta in seg_tile_arrs
+                                ]
+                                seg_compressed = [
+                                    fut.result() for fut in futures]
+
+                        # Sequential file write to preserve on-disk tile order
+                        for compressed in seg_compressed:
                             actual_offsets.append(current_offset)
                             actual_counts.append(len(compressed))
                             f.write(compressed)
                             current_offset += len(compressed)
 
-                        del seg_np
+                        del seg_np, seg_tile_arrs, seg_compressed
             else:
                 # Strip layout
                 for i in range(n_entries):
