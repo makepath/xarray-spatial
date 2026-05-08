@@ -92,6 +92,25 @@ class IFD:
 
     # Convenience properties
     @property
+    def subfile_type(self) -> int:
+        """NewSubfileType (tag 254) bit flags. 0 if absent.
+
+        Bit flags (TIFF 6.0 spec):
+            bit 0 (& 1) - reduced-resolution overview
+            bit 1 (& 2) - page of multi-page document
+            bit 2 (& 4) - transparency mask
+        """
+        v = self.get_value(TAG_NEW_SUBFILE_TYPE, 0)
+        if isinstance(v, tuple):
+            v = v[0] if v else 0
+        return int(v)
+
+    @property
+    def is_mask(self) -> bool:
+        """True if this IFD's NewSubfileType marks it as a transparency mask."""
+        return bool(self.subfile_type & 4)
+
+    @property
     def width(self) -> int:
         return self.get_value(TAG_IMAGE_WIDTH, 0)
 
@@ -424,6 +443,62 @@ def parse_ifd(data: bytes | memoryview, offset: int,
         next_ifd = struct.unpack_from(f'{bo}I', data, next_offset_pos)[0]
 
     return IFD(entries=entries, next_ifd_offset=next_ifd)
+
+
+def select_overview_ifd(ifds: list[IFD], overview_level: int | None) -> IFD:
+    """Pick the IFD for a requested overview level, skipping mask IFDs.
+
+    Some COG variants (notably GDAL with internal masks) interleave
+    transparency-mask IFDs (NewSubfileType bit 2 set) with overview IFDs.
+    Indexing the raw IFD list by ``overview_level`` then returns a binary
+    mask instead of a reduced-resolution overview. This helper builds a
+    filtered list of full-resolution + overview IFDs (mask-bit clear) and
+    indexes into that.
+
+    ``overview_level=0`` (or ``None``) returns the full-resolution IFD;
+    ``overview_level=1`` returns the first overview, and so on.
+
+    Parameters
+    ----------
+    ifds : list[IFD]
+        All IFDs as parsed from the file.
+    overview_level : int or None
+        Which overview to return. ``None`` is treated as ``0``.
+
+    Returns
+    -------
+    IFD
+
+    Raises
+    ------
+    ValueError
+        If ``ifds`` is empty, or if ``overview_level`` exceeds the number
+        of non-mask IFDs in the file.
+    """
+    if not ifds:
+        raise ValueError("No IFDs found in TIFF file")
+
+    filtered = [ifd for ifd in ifds if not ifd.is_mask]
+    if not filtered:
+        raise ValueError(
+            "TIFF file contains no full-resolution or overview IFDs "
+            "(all IFDs are transparency masks)")
+
+    level = 0 if overview_level is None else overview_level
+    if level < 0:
+        raise ValueError(f"overview_level must be >= 0, got {level}")
+    if level >= len(filtered):
+        n_overviews = len(filtered) - 1
+        n_masks = len(ifds) - len(filtered)
+        raise ValueError(
+            f"overview_level={level} is out of range: TIFF has "
+            f"{len(filtered)} non-mask IFDs (1 full-resolution + "
+            f"{n_overviews} overview{'s' if n_overviews != 1 else ''}"
+            f"{f', plus {n_masks} mask IFD' if n_masks else ''}"
+            f"{'s' if n_masks > 1 else ''}). Valid overview_level values "
+            f"are 0..{len(filtered) - 1}.")
+
+    return filtered[level]
 
 
 def parse_all_ifds(data: bytes | memoryview,
