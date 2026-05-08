@@ -40,8 +40,34 @@ _gpu_only = pytest.mark.skipif(
 )
 
 
+def _block_cpu_fallback(monkeypatch):
+    """Make any call to ``read_to_array`` from ``read_geotiff_gpu`` fail loudly.
+
+    ``read_geotiff_gpu`` returns a cupy-backed array even when its silent CPU
+    fallback fires (the fallback wraps the CPU result with ``cupy.asarray``),
+    so ``isinstance(gpu_da.data, cupy.ndarray)`` cannot distinguish the two
+    paths. Patching the module-bound ``read_to_array`` to raise turns any
+    silent fallback into a hard test failure, which is what we want when the
+    point of a test is to exercise the actual GPU decode kernels.
+
+    Tests that legitimately rely on the CPU fallback (e.g. stripped
+    layouts) must not call this helper.
+    """
+    from xrspatial import geotiff as geotiff_pkg
+
+    def _no_fallback(*args, **kwargs):
+        raise AssertionError(
+            "read_geotiff_gpu fell back to read_to_array; "
+            "the GPU decode path was not exercised."
+        )
+
+    monkeypatch.setattr(
+        geotiff_pkg, 'read_to_array', _no_fallback, raising=True,
+    )
+
+
 @_gpu_only
-def test_gpu_predictor2_big_endian_int32_tiled_reproducer(tmp_path):
+def test_gpu_predictor2_big_endian_int32_tiled_reproducer(tmp_path, monkeypatch):
     """Exact reproducer from issue #1517: BE int32 tiled deflate + pred=2."""
     import cupy
     import tifffile
@@ -63,10 +89,9 @@ def test_gpu_predictor2_big_endian_int32_tiled_reproducer(tmp_path):
     cpu, _ = read_to_array(str(path))
     np.testing.assert_array_equal(cpu, arr)
 
+    _block_cpu_fallback(monkeypatch)
     gpu_da = read_geotiff_gpu(str(path))
-    assert isinstance(gpu_da.data, cupy.ndarray), (
-        "expected cupy-backed DataArray; GPU path may have fallen back"
-    )
+    assert isinstance(gpu_da.data, cupy.ndarray)
     assert gpu_da.data.dtype == np.dtype(np.int32)
     assert gpu_da.data.dtype.isnative
     np.testing.assert_array_equal(gpu_da.data.get(), cpu)
@@ -77,7 +102,7 @@ def test_gpu_predictor2_big_endian_int32_tiled_reproducer(tmp_path):
     "dtype",
     [np.uint16, np.int16, np.uint32, np.int32],
 )
-def test_gpu_predictor2_big_endian_dtypes_tiled(tmp_path, dtype):
+def test_gpu_predictor2_big_endian_dtypes_tiled(tmp_path, monkeypatch, dtype):
     """BE predictor=2 tiled files match CPU baseline across dtypes."""
     import cupy
     import tifffile
@@ -103,6 +128,7 @@ def test_gpu_predictor2_big_endian_dtypes_tiled(tmp_path, dtype):
     cpu, _ = read_to_array(str(path))
     np.testing.assert_array_equal(cpu, arr)
 
+    _block_cpu_fallback(monkeypatch)
     gpu_da = read_geotiff_gpu(str(path))
     assert isinstance(gpu_da.data, cupy.ndarray)
     assert gpu_da.data.dtype == np.dtype(dtype)
@@ -144,7 +170,7 @@ def test_gpu_predictor2_big_endian_stripped_uint16(tmp_path):
 
 
 @_gpu_only
-def test_gpu_predictor2_little_endian_still_works(tmp_path):
+def test_gpu_predictor2_little_endian_still_works(tmp_path, monkeypatch):
     """LE predictor=2 must still round-trip after the BE fix."""
     import cupy
     import tifffile
@@ -166,6 +192,7 @@ def test_gpu_predictor2_little_endian_still_works(tmp_path):
     cpu, _ = read_to_array(str(path))
     np.testing.assert_array_equal(cpu, arr)
 
+    _block_cpu_fallback(monkeypatch)
     gpu_da = read_geotiff_gpu(str(path))
     assert isinstance(gpu_da.data, cupy.ndarray)
     assert gpu_da.data.dtype == np.dtype(np.int32)
@@ -173,7 +200,7 @@ def test_gpu_predictor2_little_endian_still_works(tmp_path):
 
 
 @_gpu_only
-def test_gpu_predictor3_big_endian_still_works(tmp_path):
+def test_gpu_predictor3_big_endian_still_works(tmp_path, monkeypatch):
     """Floating-point predictor BE must still match CPU after the fix."""
     import cupy
     import tifffile
@@ -193,27 +220,28 @@ def test_gpu_predictor3_big_endian_still_works(tmp_path):
     cpu, _ = read_to_array(str(path))
     np.testing.assert_array_equal(cpu, arr)
 
+    _block_cpu_fallback(monkeypatch)
     gpu_da = read_geotiff_gpu(str(path))
     assert isinstance(gpu_da.data, cupy.ndarray)
     assert gpu_da.data.dtype == np.dtype(np.float32)
     np.testing.assert_array_equal(gpu_da.data.get(), cpu)
 
 
-def test_swap_bytes_inplace_numpy():
+def test_swap_byte_lanes_numpy():
     """The byte-swap helper reverses bytes per sample on a numpy buffer."""
-    from xrspatial.geotiff._gpu_decode import _swap_bytes_inplace
+    from xrspatial.geotiff._gpu_decode import _swap_byte_lanes
 
     # uint16 values 0x0102, 0x0304 in BE bytes: 01 02 03 04
     buf = np.array([0x01, 0x02, 0x03, 0x04], dtype=np.uint8)
-    _swap_bytes_inplace(buf, 2)
+    _swap_byte_lanes(buf, 2)
     np.testing.assert_array_equal(buf, np.array([0x02, 0x01, 0x04, 0x03],
                                                 dtype=np.uint8))
 
 
-def test_swap_bytes_inplace_uint8_noop():
+def test_swap_byte_lanes_uint8_noop():
     """bps=1 must be a no-op."""
-    from xrspatial.geotiff._gpu_decode import _swap_bytes_inplace
+    from xrspatial.geotiff._gpu_decode import _swap_byte_lanes
 
     buf = np.array([1, 2, 3], dtype=np.uint8)
-    _swap_bytes_inplace(buf, 1)
+    _swap_byte_lanes(buf, 1)
     np.testing.assert_array_equal(buf, np.array([1, 2, 3], dtype=np.uint8))

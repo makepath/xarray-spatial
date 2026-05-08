@@ -78,7 +78,7 @@ def _xp_byteswap(arr):
     return u8[..., ::-1].copy().view(arr.dtype).reshape(arr.shape)
 
 
-def _swap_bytes_inplace(buf, bps: int) -> None:
+def _swap_byte_lanes(buf, bps: int) -> None:
     """Reverse bytes within each *bps*-sized sample of a flat uint8 buffer.
 
     Used by the GPU predictor=2 path to convert the raw decompressed byte
@@ -87,9 +87,11 @@ def _swap_bytes_inplace(buf, bps: int) -> None:
     unsigned integers, so on big-endian files the prefix-sum would run on
     a byte-swapped integer interpretation and produce wrong values.
 
-    Operates on the underlying buffer of *buf* via a uint8 reshape, so
-    callers see the bytes mutated in place. Works on both numpy and cupy
-    arrays.
+    The original buffer is mutated, but the swap goes through a same-sized
+    temporary (``view[:, ::-1].copy()``); this roughly doubles peak memory
+    for the buffer being swapped. Callers should size their working set
+    accordingly. A true zero-temp swap is possible with a small CUDA
+    kernel; for now the simple form keeps numpy and cupy on the same path.
     """
     if bps <= 1:
         return
@@ -1569,7 +1571,7 @@ def _apply_predictor_and_assemble(d_decomp, d_decomp_offsets, n_tiles,
         # interpretation (#1517). The pre-swap then makes the post-
         # assembly byteswap unnecessary; see the BE branch below.
         if big_endian and dtype.itemsize > 1:
-            _swap_bytes_inplace(d_decomp, dtype.itemsize)
+            _swap_byte_lanes(d_decomp, dtype.itemsize)
         # Sample-level differencing: stride is samples_per_pixel samples,
         # row width is tile_width pixels.  Per-dtype kernels handle the
         # modular wrap at the sample's natural bit width.
@@ -1835,7 +1837,7 @@ def gpu_decode_tiles(
         # native order first and skip the post-assembly swap below
         # (#1517).
         if byte_order == '>' and dtype.itemsize > 1:
-            _swap_bytes_inplace(d_decomp, dtype.itemsize)
+            _swap_byte_lanes(d_decomp, dtype.itemsize)
         total_rows = n_tiles * tile_height
         _gpu_predictor2_decode(
             d_decomp, tile_width, total_rows, dtype, samples)
