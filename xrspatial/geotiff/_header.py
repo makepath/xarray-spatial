@@ -15,6 +15,15 @@ from ._dtypes import (
     UNDEFINED,
 )
 
+# Maximum allowed `count` for IFD entries that aren't pixel-data offset or
+# byte-count arrays. Pixel-data arrays scale with image dimensions and a
+# legitimate large image may have millions of tiles; metadata tags
+# (DateTime, Software, ImageDescription, GeoKeys, etc.) should never be
+# anywhere near this size. Picked well above any realistic metadata
+# payload but small enough to bound the allocation a parser can be forced
+# to perform from a single malformed entry.
+MAX_IFD_ENTRY_COUNT = 10_000_000
+
 # Well-known TIFF tag IDs
 TAG_NEW_SUBFILE_TYPE = 254
 TAG_IMAGE_WIDTH = 256
@@ -451,6 +460,17 @@ def parse_ifd(data: bytes | memoryview, offset: int,
     inline_max = 8 if is_big else 4
     entries = {}
 
+    # Tags whose `count` legitimately scales with image size (one entry per
+    # strip / tile / colormap slot). These are exempt from MAX_IFD_ENTRY_COUNT.
+    pixel_array_tags = {
+        TAG_STRIP_OFFSETS,
+        TAG_STRIP_BYTE_COUNTS,
+        TAG_TILE_OFFSETS,
+        TAG_TILE_BYTE_COUNTS,
+        TAG_COLORMAP,
+    }
+    data_len = len(data)
+
     for i in range(num_entries):
         eo = entry_offset + i * entry_size
 
@@ -465,6 +485,16 @@ def parse_ifd(data: bytes | memoryview, offset: int,
             count = struct.unpack_from(f'{bo}I', data, eo + 4)[0]
             value_area_offset = eo + 8
 
+        # Reject absurd counts on non-pixel tags before any allocation.
+        # Pixel-data offset/byte-count arrays may legitimately be very
+        # large for high-resolution tiled images, so they're exempt.
+        if tag not in pixel_array_tags and count > MAX_IFD_ENTRY_COUNT:
+            raise ValueError(
+                f"IFD entry tag={tag} count={count} exceeds "
+                f"MAX_IFD_ENTRY_COUNT={MAX_IFD_ENTRY_COUNT}; refusing to "
+                f"parse possibly malformed TIFF"
+            )
+
         type_size = TIFF_TYPE_SIZES.get(type_id, 1)
         total_size = count * type_size
 
@@ -475,6 +505,15 @@ def parse_ifd(data: bytes | memoryview, offset: int,
                 ptr = struct.unpack_from(f'{bo}Q', data, value_area_offset)[0]
             else:
                 ptr = struct.unpack_from(f'{bo}I', data, value_area_offset)[0]
+            # Bound-check the value range against file length before
+            # _read_value triggers struct.unpack_from on a possibly huge
+            # count that would allocate a multi-GB tuple.
+            end = ptr + total_size
+            if ptr < 0 or end > data_len:
+                raise ValueError(
+                    f"IFD entry tag={tag} value range "
+                    f"[{ptr}, {end}) exceeds file length {data_len}"
+                )
             value = _read_value(data, ptr, type_id, count, bo)
 
         entries[tag] = IFDEntry(tag=tag, type_id=type_id, count=count, value=value)
