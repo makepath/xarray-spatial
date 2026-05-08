@@ -211,7 +211,15 @@ def test_strict_mode_reraises_second_stage(tiled_tiff_path, monkeypatch):
 
 
 def test_default_mode_warns_on_second_stage_failure(tiled_tiff_path, monkeypatch):
-    """``gpu='auto'`` warns once per stage failure and falls back to CPU."""
+    """``gpu='auto'`` warns once per stage failure and falls back to CPU.
+
+    Both GPU decode stages are forced to raise, so the user sees two
+    distinct ``RuntimeWarning`` records (one per stage) before the CPU
+    fallback fires. Asserting the exact count guards against a
+    regression where one of the two handlers stops warning.
+    """
+    import warnings as _warnings
+
     inserted_stub = _ensure_cupy_stub()
     try:
         from xrspatial.geotiff import read_geotiff_gpu
@@ -221,8 +229,19 @@ def test_default_mode_warns_on_second_stage_failure(tiled_tiff_path, monkeypatch
         synthetic = RuntimeError("simulated second-stage GPU failure")
         _patch_both_gpu_stages_to_raise(monkeypatch, synthetic)
 
-        with pytest.warns(RuntimeWarning, match="GPU decode failed"):
+        with _warnings.catch_warnings(record=True) as records:
+            _warnings.simplefilter("always")
             result = read_geotiff_gpu(path)
+
+        gpu_warnings = [
+            w for w in records
+            if issubclass(w.category, RuntimeWarning)
+            and "GPU decode failed" in str(w.message)
+        ]
+        assert len(gpu_warnings) == 2, (
+            f"expected one warning per GPU stage; got {len(gpu_warnings)}: "
+            f"{[str(w.message) for w in gpu_warnings]}"
+        )
 
         out = result.data
         if hasattr(out, 'get'):

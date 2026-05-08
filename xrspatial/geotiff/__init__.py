@@ -1447,6 +1447,11 @@ def read_geotiff_gpu(source: str, *,
           so GPU bugs surface immediately. Useful in tests and CI for the
           GPU fast path.
 
+        Stripped layouts and sparse-tile files route directly to the CPU
+        reader before either GPU decode stage runs, so the ``gpu`` kwarg
+        does not affect them. A failure inside the subsequent
+        ``cupy.asarray(...)`` upload propagates unchanged in both modes.
+
     Returns
     -------
     xr.DataArray
