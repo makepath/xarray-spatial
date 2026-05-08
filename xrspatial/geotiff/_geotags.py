@@ -21,6 +21,7 @@ from ._header import (
     TAG_MODEL_TRANSFORMATION,
     TAG_GEO_KEY_DIRECTORY, TAG_GEO_DOUBLE_PARAMS, TAG_GEO_ASCII_PARAMS,
 )
+from ._dtypes import resolve_bits_per_sample
 
 # ImageDescription tag (270). Captured for round-trip but not managed
 # by the writer -- it flows through extra_tags pass-through.
@@ -514,7 +515,6 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
     if ifd.photometric == 3:
         raw_cmap = ifd.colormap
         if raw_cmap is not None:
-            from ._dtypes import resolve_bits_per_sample
             bps_val = resolve_bits_per_sample(ifd.bits_per_sample)
             n_colors = 1 << bps_val  # 2^BitsPerSample
             # TIFF ColorMap: 3 * n_colors uint16 values

@@ -137,6 +137,29 @@ class TestResolveBitsPerSample:
         assert "(16, 16, 16, 8)" in msg
         assert "gdal_translate" in msg
 
+    def test_error_message_ot_matches_widest_bps(self):
+        """gdal_translate hint should suggest a type wide enough for input."""
+        # 32-bit + 8-bit alpha -> widest is 32, default sample format = uint
+        with pytest.raises(ValueError) as exc:
+            resolve_bits_per_sample((32, 32, 32, 8))
+        assert "-ot UInt32" in str(exc.value)
+
+        # Widest is 16-bit -> UInt16 (the original hard-coded suggestion).
+        with pytest.raises(ValueError) as exc:
+            resolve_bits_per_sample((16, 16, 16, 8))
+        assert "-ot UInt16" in str(exc.value)
+
+    def test_error_message_ot_uses_sample_format_hint(self):
+        """sample_format=3 (float) at 32-bit -> Float32 instead of UInt32."""
+        with pytest.raises(ValueError) as exc:
+            resolve_bits_per_sample((32, 32, 32, 8), sample_format=3)
+        assert "-ot Float32" in str(exc.value)
+
+        # sample_format=2 (int) at 16-bit -> Int16 instead of UInt16.
+        with pytest.raises(ValueError) as exc:
+            resolve_bits_per_sample((16, 16, 8), sample_format=2)
+        assert "-ot Int16" in str(exc.value)
+
     def test_empty_tuple_raises(self):
         with pytest.raises(ValueError):
             resolve_bits_per_sample(())
