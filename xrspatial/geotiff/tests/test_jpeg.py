@@ -133,8 +133,16 @@ class TestJpegValidation:
 class TestWriteGeotiffJpeg:
     """Test the public to_geotiff API with compression='jpeg'."""
 
-    def test_to_geotiff_jpeg(self, tmp_path):
-        from xrspatial.geotiff import open_geotiff, to_geotiff
+    def test_to_geotiff_jpeg_rejected(self, tmp_path):
+        """to_geotiff refuses compression='jpeg'.
+
+        The encoder writes self-contained JFIF streams without the
+        TIFF-required JPEGTables tag (347), so libtiff / GDAL / rasterio
+        cannot decode the file. Round-tripping internally via Pillow
+        would mask the interop break, so the public writer rejects the
+        codec until a JPEGTables-aware encoder is in place.
+        """
+        from xrspatial.geotiff import to_geotiff
 
         rng = np.random.RandomState(1050)
         data = rng.randint(50, 200, (32, 32), dtype=np.uint8)
@@ -144,8 +152,5 @@ class TestWriteGeotiffJpeg:
                     'x': np.arange(32, dtype=float)},
         )
         path = str(tmp_path / 'api_1050.tif')
-        to_geotiff(da, path, compression='jpeg', tile_size=16)
-
-        result = open_geotiff(path)
-        assert result.shape == (32, 32)
-        assert np.abs(result.values.astype(int) - data.astype(int)).mean() < 10
+        with pytest.raises(ValueError, match="JPEGTables"):
+            to_geotiff(da, path, compression='jpeg', tile_size=16)

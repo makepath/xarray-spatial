@@ -675,6 +675,23 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path: str, *,
             raise ValueError(
                 f"Unknown compression {compression!r}. "
                 f"Valid options: {list(_VALID_COMPRESSIONS)}.")
+        # JPEG-in-TIFF (compression=7) requires the JPEGTables tag (347)
+        # carrying the abbreviated quantization/Huffman tables. The
+        # current encoder writes a self-contained JFIF stream per
+        # tile/strip and omits JPEGTables, which makes the resulting
+        # files unreadable by libtiff / GDAL / rasterio: they reject the
+        # tile data with "TIFFReadEncodedStrip() failed". The internal
+        # reader round-trips because Pillow re-decodes the JFIF stream
+        # directly, masking the interop break. Refuse the write rather
+        # than emit files no other tool can decode. See issue tracking
+        # the proper JPEGTables fix for re-enabling this codec.
+        if compression.lower() == 'jpeg':
+            raise ValueError(
+                "compression='jpeg' is not supported: the encoder writes "
+                "self-contained JFIF streams without the required "
+                "JPEGTables tag (347), so other readers (libtiff, GDAL, "
+                "rasterio) reject the file. Use 'deflate', 'zstd', or "
+                "'lzw' instead.")
 
     # max_z_error only applies to LERC; reject negative values and reject
     # non-zero values paired with any other codec so the caller learns the
