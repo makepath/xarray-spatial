@@ -270,6 +270,109 @@ def _get_http_pool():
 _http_pool = None
 
 
+# ---------------------------------------------------------------------------
+# HTTP range coalescing
+# ---------------------------------------------------------------------------
+
+#: Default gap threshold (bytes) for merging adjacent COG tile ranges into a
+#: single GET. COG tiles are stored sequentially, so most adjacent ranges
+#: differ by zero (back-to-back) or a few bytes; 1 MB tolerates small holes
+#: caused by interleaved overview/mask data without ballooning over-fetch.
+#: Most tiles are well under 1 MB compressed, so the coalesced GET stays
+#: O(num_tiles) bytes plus at most one threshold of slack between tiles.
+COALESCE_GAP_THRESHOLD_DEFAULT = 1 << 20  # 1 MB
+
+
+def coalesce_ranges(
+    ranges: list[tuple[int, int]],
+    gap_threshold: int = COALESCE_GAP_THRESHOLD_DEFAULT,
+) -> tuple[list[tuple[int, int]], list[tuple[int, int, int]]]:
+    """Merge nearby ``(offset, length)`` ranges into fewer larger ones.
+
+    Parameters
+    ----------
+    ranges : list of (offset, length)
+        Per-tile byte ranges to fetch. Order is preserved in the
+        ``mapping`` output so callers can reassemble per-tile bytes.
+    gap_threshold : int
+        Maximum gap, in bytes, between two adjacent ranges before they
+        are merged. A gap of zero means perfectly back-to-back; larger
+        gaps trade some over-fetch for fewer round-trips.
+
+    Returns
+    -------
+    merged : list of (start, length)
+        Coalesced ranges, sorted by ``start``. Issue one GET per entry.
+    mapping : list of (merged_idx, rel_offset, length)
+        For each input range (in input order), the index of the merged
+        range its bytes live in, the offset within that merged range,
+        and the original length. Use with :func:`split_coalesced_bytes`.
+
+    Notes
+    -----
+    Empty input returns ``([], [])``. Negative gap thresholds disable
+    merging entirely (every input becomes its own merged range).
+    """
+    if not ranges:
+        return [], []
+
+    # Tag each input with its original index so we can rebuild mapping.
+    indexed = sorted(
+        ((off, length, i) for i, (off, length) in enumerate(ranges)),
+        key=lambda t: t[0],
+    )
+
+    merged: list[tuple[int, int]] = []
+    # mapping[input_idx] -> (merged_idx, rel_offset, length)
+    mapping: list[tuple[int, int, int]] = [(0, 0, 0)] * len(ranges)
+
+    cur_start, cur_length, first_idx = indexed[0]
+    cur_end = cur_start + cur_length
+    members = [(first_idx, cur_start, cur_length)]
+
+    for off, length, orig_idx in indexed[1:]:
+        gap = off - cur_end
+        if gap_threshold >= 0 and gap <= gap_threshold:
+            # Extend current merged range. Gaps may be negative if a
+            # later-listed range overlaps an earlier one; clamp so the
+            # merged length covers both.
+            new_end = max(cur_end, off + length)
+            cur_length = new_end - cur_start
+            cur_end = new_end
+            members.append((orig_idx, off, length))
+        else:
+            merged_idx = len(merged)
+            merged.append((cur_start, cur_length))
+            for orig, m_off, m_len in members:
+                mapping[orig] = (merged_idx, m_off - cur_start, m_len)
+            cur_start, cur_length, cur_end = off, length, off + length
+            members = [(orig_idx, off, length)]
+
+    merged_idx = len(merged)
+    merged.append((cur_start, cur_length))
+    for orig, m_off, m_len in members:
+        mapping[orig] = (merged_idx, m_off - cur_start, m_len)
+
+    return merged, mapping
+
+
+def split_coalesced_bytes(
+    merged_bytes: list[bytes],
+    mapping: list[tuple[int, int, int]],
+) -> list[bytes]:
+    """Slice merged-GET payloads back into per-tile bytes using *mapping*.
+
+    Inverse of :func:`coalesce_ranges`. ``merged_bytes[i]`` must be the
+    bytes returned by the GET for the ``i``th merged range; the output
+    is one bytes object per original input range, in input order.
+    """
+    out: list[bytes] = [b''] * len(mapping)
+    for orig_idx, (merged_idx, rel_off, length) in enumerate(mapping):
+        chunk = merged_bytes[merged_idx]
+        out[orig_idx] = chunk[rel_off:rel_off + length]
+    return out
+
+
 class _HTTPSource:
     """HTTP data source using range requests with connection reuse.
 
@@ -331,6 +434,29 @@ class _HTTPSource:
                 results[idx] = fut.result()
 
         return results  # type: ignore[return-value]
+
+    def read_ranges_coalesced(
+        self,
+        ranges: list[tuple[int, int]],
+        max_workers: int = 8,
+        gap_threshold: int = COALESCE_GAP_THRESHOLD_DEFAULT,
+    ) -> list[bytes]:
+        """Fetch *ranges* using merged GETs where adjacent ranges allow it.
+
+        Wrapper around :meth:`read_ranges` that first calls
+        :func:`coalesce_ranges` to group nearby ranges into fewer larger
+        GETs, then splits the responses back per-input via
+        :func:`split_coalesced_bytes`. Returns bytes in input order, same
+        as :meth:`read_ranges`.
+
+        Setting *gap_threshold* to a negative number disables merging
+        and falls back to one GET per input range.
+        """
+        if not ranges:
+            return []
+        merged, mapping = coalesce_ranges(ranges, gap_threshold=gap_threshold)
+        merged_bytes = self.read_ranges(merged, max_workers=max_workers)
+        return split_coalesced_bytes(merged_bytes, mapping)
 
     def read_all(self) -> bytes:
         if self._pool is not None:
@@ -945,6 +1071,38 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
 # COG HTTP reader
 # ---------------------------------------------------------------------------
 
+def _parse_cog_http_meta(
+    source: _HTTPSource,
+    overview_level: int | None = None,
+) -> tuple[TIFFHeader, IFD, GeoInfo, bytes]:
+    """Fetch + parse the leading IFDs of an HTTP COG once.
+
+    Issues one (or rarely two) range GET(s) for the leading 16 KB / 64 KB
+    of the file, parses the header and IFD list, and returns the selected
+    IFD plus the raw header bytes (kept for ``extract_geo_info`` callers
+    that might want the IFD's tag offsets).
+
+    Pulled out of :func:`_read_cog_http` so :func:`read_geotiff_dask`
+    can parse metadata once per graph rather than once per chunk task
+    (P5: each delayed task used to fire its own 16 KB header GET).
+    """
+    header_bytes = source.read_range(0, 16384)
+    header = parse_header(header_bytes)
+    ifds = parse_all_ifds(header_bytes, header)
+
+    # If we didn't get all IFDs, try a larger fetch
+    if len(ifds) == 0:
+        header_bytes = source.read_range(0, 65536)
+        ifds = parse_all_ifds(header_bytes, header)
+
+    if len(ifds) == 0:
+        raise ValueError("No IFDs found in COG")
+
+    ifd = select_overview_ifd(ifds, overview_level)
+    geo_info = extract_geo_info(ifd, header_bytes, header.byte_order)
+    return header, ifd, geo_info, header_bytes
+
+
 def _read_cog_http(url: str, overview_level: int | None = None,
                    band: int | None = None,
                    max_pixels: int = MAX_PIXELS_DEFAULT,
@@ -972,35 +1130,43 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     (array, geo_info) tuple
     """
     source = _HTTPSource(url)
+    header, ifd, geo_info, header_bytes = _parse_cog_http_meta(
+        source, overview_level=overview_level)
 
-    # Initial fetch: get header + IFDs (COGs put metadata first)
-    header_bytes = source.read_range(0, 16384)
+    arr = _fetch_decode_cog_http_tiles(
+        source, header, ifd, max_pixels=max_pixels, window=None)
+    source.close()
+    return arr, geo_info
 
-    header = parse_header(header_bytes)
-    ifds = parse_all_ifds(header_bytes, header)
 
-    # If we didn't get all IFDs, try a larger fetch
-    if len(ifds) == 0:
-        header_bytes = source.read_range(0, 65536)
-        ifds = parse_all_ifds(header_bytes, header)
+def _fetch_decode_cog_http_tiles(
+    source: _HTTPSource,
+    header: TIFFHeader,
+    ifd: IFD,
+    *,
+    max_pixels: int = MAX_PIXELS_DEFAULT,
+    window: tuple[int, int, int, int] | None = None,
+) -> np.ndarray:
+    """Fetch and decode the tiles of a tiled COG over HTTP.
 
-    if len(ifds) == 0:
-        raise ValueError("No IFDs found in COG")
-
-    # Select IFD based on overview level, skipping any mask IFDs
-    ifd = select_overview_ifd(ifds, overview_level)
-
+    Pulled out of :func:`_read_cog_http` so that callers with
+    pre-parsed metadata (notably :func:`read_geotiff_dask`) can reuse a
+    single IFD parse across many tile-fetch calls. When *window* is
+    given, only tiles intersecting the window are fetched + decoded;
+    the result is sized to the (clamped) window rather than the full
+    image. Coalescing of adjacent ranges still applies.
+    """
     bps = resolve_bits_per_sample(ifd.bits_per_sample)
     dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
-    geo_info = extract_geo_info(ifd, header_bytes, header.byte_order)
-
-    # COGs are tiled -- fetch individual tiles
     if not ifd.is_tiled:
-        # Fallback: fetch entire file
+        # Stripped HTTP COG: fall back to a full read. Window is honoured
+        # by slicing the decoded array.
         all_data = source.read_all()
         arr = _read_strips(all_data, ifd, header, dtype)
-        source.close()
-        return arr, geo_info
+        if window is not None:
+            r0, c0, r1, c1 = window
+            return arr[r0:r1, c0:c1]
+        return arr
 
     width = ifd.width
     height = ifd.height
@@ -1031,6 +1197,19 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     # TileOffsets length. See issue #1219.
     validate_tile_layout(ifd)
 
+    if window is None:
+        r0_out, c0_out, r1_out, c1_out = 0, 0, height, width
+    else:
+        r0_out, c0_out, r1_out, c1_out = window
+        r0_out = max(0, r0_out)
+        c0_out = max(0, c0_out)
+        r1_out = min(height, r1_out)
+        c1_out = min(width, c1_out)
+
+    out_h = r1_out - r0_out
+    out_w = c1_out - c0_out
+    _check_dimensions(out_w, out_h, samples, max_pixels)
+
     # Sparse tiles (TileByteCounts == 0) need to land on the file's nodata
     # value (or 0 if unset) rather than uninitialised memory.  Detect them
     # up front so the result buffer is pre-filled before tile placement.
@@ -1038,13 +1217,18 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     if sparse:
         fill = _sparse_fill_value(ifd, dtype)
         if samples > 1:
-            result = np.full((height, width, samples), fill, dtype=dtype)
+            result = np.full((out_h, out_w, samples), fill, dtype=dtype)
         else:
-            result = np.full((height, width), fill, dtype=dtype)
+            result = np.full((out_h, out_w), fill, dtype=dtype)
     elif samples > 1:
-        result = np.empty((height, width, samples), dtype=dtype)
+        result = np.empty((out_h, out_w, samples), dtype=dtype)
     else:
-        result = np.empty((height, width), dtype=dtype)
+        result = np.empty((out_h, out_w), dtype=dtype)
+
+    tile_row_start = r0_out // th
+    tile_row_end = min(math.ceil(r1_out / th), tiles_down)
+    tile_col_start = c0_out // tw
+    tile_col_end = min(math.ceil(c1_out / tw), tiles_across)
 
     # Pass 1: collect every tile's range and where it lands in the output.
     # Empty tiles (byte_count == 0) and any tile_idx beyond the offsets
@@ -1052,8 +1236,8 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     # the placements list.
     fetch_ranges: list[tuple[int, int]] = []
     placements: list[tuple[int, int]] = []  # (tr, tc) per fetched tile
-    for tr in range(tiles_down):
-        for tc in range(tiles_across):
+    for tr in range(tile_row_start, tile_row_end):
+        for tc in range(tile_col_start, tile_col_end):
             tile_idx = tr * tiles_across + tc
             if tile_idx >= len(offsets):
                 continue
@@ -1067,13 +1251,26 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     # Pass 2: fetch all tile bytes in parallel. Worker pool size is tunable
     # via XRSPATIAL_COG_HTTP_WORKERS so users on very slow links can dial
     # it up without code changes.
+    #
+    # COG tile offsets are sorted and usually back-to-back, so we coalesce
+    # adjacent ranges into fewer larger GETs (P2). The 1 MB gap threshold
+    # tolerates small interleaved metadata between tiles without dragging
+    # in unrelated overview data. Set XRSPATIAL_COG_COALESCE_GAP=-1 to
+    # disable merging (one GET per tile, the legacy behaviour).
     try:
         workers = max(1, int(_os_module.environ.get('XRSPATIAL_COG_HTTP_WORKERS', '8')))
     except ValueError:
         workers = 8
-    tile_bytes_list = source.read_ranges(fetch_ranges, max_workers=workers)
+    try:
+        gap = int(_os_module.environ.get(
+            'XRSPATIAL_COG_COALESCE_GAP',
+            str(COALESCE_GAP_THRESHOLD_DEFAULT)))
+    except ValueError:
+        gap = COALESCE_GAP_THRESHOLD_DEFAULT
+    tile_bytes_list = source.read_ranges_coalesced(
+        fetch_ranges, max_workers=workers, gap_threshold=gap)
 
-    # Pass 3: decode each tile and place it.
+    # Pass 3: decode each tile and place it (clipped to the window).
     for (tr, tc), tile_data in zip(placements, tile_bytes_list):
         tile_pixels = _decode_strip_or_tile(
             tile_data, compression, tw, th, samples,
@@ -1081,16 +1278,35 @@ def _read_cog_http(url: str, overview_level: int | None = None,
             byte_order=header.byte_order,
             jpeg_tables=jpeg_tables)
 
-        y0 = tr * th
-        x0 = tc * tw
-        y1 = min(y0 + th, height)
-        x1 = min(x0 + tw, width)
-        actual_h = y1 - y0
-        actual_w = x1 - x0
-        result[y0:y1, x0:x1] = tile_pixels[:actual_h, :actual_w]
+        # Tile position in image coordinates.
+        ty0 = tr * th
+        tx0 = tc * tw
+        ty1 = ty0 + th
+        tx1 = tx0 + tw
 
-    source.close()
-    return result, geo_info
+        # Intersect with the requested window.
+        iy0 = max(ty0, r0_out)
+        ix0 = max(tx0, c0_out)
+        iy1 = min(ty1, r1_out)
+        ix1 = min(tx1, c1_out)
+        if iy1 <= iy0 or ix1 <= ix0:
+            continue
+
+        # Source slice within the decoded tile pixels.
+        sy0 = iy0 - ty0
+        sx0 = ix0 - tx0
+        sy1 = sy0 + (iy1 - iy0)
+        sx1 = sx0 + (ix1 - ix0)
+
+        # Destination slice within the output buffer.
+        dy0 = iy0 - r0_out
+        dx0 = ix0 - c0_out
+        dy1 = iy1 - r0_out
+        dx1 = ix1 - c0_out
+
+        result[dy0:dy1, dx0:dx1] = tile_pixels[sy0:sy1, sx0:sx1]
+
+    return result
 
 
 # ---------------------------------------------------------------------------
