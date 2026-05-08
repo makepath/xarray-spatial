@@ -353,12 +353,31 @@ def _is_fsspec_uri(path: str) -> bool:
 
 
 def _is_file_like(obj) -> bool:
-    """Return True if obj exposes a binary file-like interface (read+seek)."""
+    """Return True if obj exposes a binary file-like interface (read+seek+tell).
+
+    ``tell`` is required because :class:`_BytesIOSource` uses it to compute
+    the buffer length via seek-to-end. ``os.PathLike`` instances don't
+    expose ``read``/``seek``/``tell`` and are excluded here so that
+    :func:`_coerce_path` can convert them to ``str`` upstream.
+    """
     return (
         not isinstance(obj, str)
         and hasattr(obj, 'read')
         and hasattr(obj, 'seek')
+        and hasattr(obj, 'tell')
     )
+
+
+def _coerce_path(source):
+    """Normalize ``os.PathLike`` (e.g. ``pathlib.Path``) to ``str``.
+
+    Strings and binary file-likes pass through unchanged. Used at the top
+    of every public reader/writer entry so that ``Path('mosaic.vrt')``
+    dispatches to the VRT path, ``Path('x.tif')`` derives a ``name``, etc.
+    """
+    if isinstance(source, _os_module.PathLike):
+        return _os_module.fspath(source)
+    return source
 
 
 class _BytesIOSource:
@@ -371,20 +390,22 @@ class _BytesIOSource:
     """
 
     def __init__(self, fileobj):
+        # _is_file_like (the gate that lets us reach this constructor)
+        # already requires read/seek/tell, so we can call tell() directly
+        # rather than guarding it. We do still defend against tell raising
+        # on a closed/detached buffer with an informative error.
         self._fh = fileobj
         self._lock = threading.Lock()
-        # Determine size by seeking to the end. Reset the cursor afterwards
-        # so callers that share the buffer don't observe a moved position.
         try:
             cur = fileobj.tell()
-        except (OSError, AttributeError):
-            cur = 0
-        fileobj.seek(0, 2)
-        self._size = fileobj.tell()
-        try:
+            fileobj.seek(0, 2)
+            self._size = fileobj.tell()
             fileobj.seek(cur)
-        except (OSError, AttributeError):
-            fileobj.seek(0)
+        except (OSError, ValueError) as e:
+            raise ValueError(
+                f"file-like source is not usable for size measurement: "
+                f"{type(e).__name__}: {e}"
+            ) from e
 
     def read_range(self, start: int, length: int) -> bytes:
         if length <= 0:
@@ -444,6 +465,7 @@ class _CloudSource:
 
 def _open_source(source):
     """Open a data source (local file, URL, cloud path, or file-like)."""
+    source = _coerce_path(source)
     if _is_file_like(source):
         return _BytesIOSource(source)
     if not isinstance(source, str):
@@ -1088,6 +1110,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
     -------
     (np.ndarray, GeoInfo) tuple
     """
+    source = _coerce_path(source)
     if isinstance(source, str) and source.startswith(('http://', 'https://')):
         return _read_cog_http(source, overview_level=overview_level, band=band,
                               max_pixels=max_pixels)

@@ -1510,9 +1510,19 @@ def _write_bytes(file_bytes: bytes, path) -> None:
     or any binary file-like object exposing ``write``."""
     import os
 
-    # File-like destination: append the encoded bytes. The caller owns
-    # the buffer's lifetime (we don't close it).
+    # File-like destination: match string-path "overwrite" semantics
+    # (writing to '/tmp/x.tif' twice produces a one-TIFF file, not two
+    # concatenated). Rewind+truncate when the buffer supports it so a
+    # caller reusing the same BytesIO across writes doesn't end up with
+    # silently appended TIFFs. The caller still owns the buffer's
+    # lifetime; we don't close it.
     if not isinstance(path, str) and hasattr(path, 'write'):
+        if hasattr(path, 'seek') and hasattr(path, 'truncate'):
+            try:
+                path.seek(0)
+                path.truncate(0)
+            except (OSError, AttributeError):
+                pass
         path.write(file_bytes)
         return
 

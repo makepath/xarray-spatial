@@ -7,7 +7,6 @@ TIFF bytes in memory or stream them through a non-filesystem destination.
 from __future__ import annotations
 
 import io
-import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -155,3 +154,117 @@ class TestBytesIOConcurrentReads:
         assert not errors, errors
         for got, want in zip(results, truth):
             assert got == want
+
+
+# ---------------------------------------------------------------------------
+# PR #1512 review followups: pathlib.Path normalisation, GPU+file-like reject,
+# truncate-on-rewrite semantics, _is_file_like requires tell.
+# ---------------------------------------------------------------------------
+
+
+def _make_small_da():
+    arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+    return xr.DataArray(
+        arr, dims=['y', 'x'],
+        coords={'y': np.arange(8.0), 'x': np.arange(8.0)},
+        attrs={'crs': 4326},
+    )
+
+
+def test_pathlib_path_write_and_read_roundtrip(tmp_path):
+    """``pathlib.Path`` should behave identically to ``str``."""
+    p = tmp_path / 'roundtrip.tif'
+    da = _make_small_da()
+    to_geotiff(da, p)  # Path, not str
+    out = open_geotiff(p)  # Path, not str
+    np.testing.assert_array_equal(out.values, da.values)
+
+
+def test_pathlib_path_vrt_routes_to_read_vrt(tmp_path):
+    """``Path('x.vrt')`` must dispatch to the VRT path, not the TIFF reader."""
+    import pathlib
+
+    da = _make_small_da()
+    tif_path = tmp_path / 'src.tif'
+    to_geotiff(da, str(tif_path))
+
+    vrt_path = tmp_path / 'mosaic.vrt'
+    vrt_path.write_text(f"""<VRTDataset rasterXSize="8" rasterYSize="8">
+  <VRTRasterBand dataType="Float32" band="1">
+    <SimpleSource>
+      <SourceFilename relativeToVRT="0">{tif_path}</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SrcRect xOff="0" yOff="0" xSize="8" ySize="8"/>
+      <DstRect xOff="0" yOff="0" xSize="8" ySize="8"/>
+    </SimpleSource>
+  </VRTRasterBand>
+</VRTDataset>
+""")
+    out = open_geotiff(pathlib.Path(vrt_path))
+    np.testing.assert_array_equal(out.values, da.values)
+
+
+def test_pathlib_path_derives_name(tmp_path):
+    """``name`` should derive from ``Path`` stem, same as for ``str``."""
+    p = tmp_path / 'mydata.tif'
+    to_geotiff(_make_small_da(), p)
+    out = open_geotiff(p)
+    assert out.name == 'mydata'
+
+
+def test_to_geotiff_rejects_gpu_with_file_like():
+    """``gpu=True`` + file-like is untested territory; reject up front."""
+    da = _make_small_da()
+    buf = io.BytesIO()
+    with pytest.raises(ValueError, match='gpu=True is not supported'):
+        to_geotiff(da, buf, gpu=True)
+
+
+def test_to_geotiff_buffer_rewritten_in_place():
+    """Reusing the same BytesIO should overwrite, not append.
+
+    Mirrors ``to_geotiff('/tmp/x.tif', ...)`` followed by another call to
+    the same path -- the second call replaces, not concatenates. PR #1512
+    review found that file-like writes used to ``write()`` at the cursor
+    so two writes to one buffer produced two TIFFs back-to-back.
+    """
+    buf = io.BytesIO()
+    to_geotiff(_make_small_da(), buf)
+    first_size = len(buf.getvalue())
+    assert first_size > 0
+
+    # Write a second, different DataArray to the same buffer.
+    arr2 = np.full((4, 4), 7.0, dtype=np.float32)
+    da2 = xr.DataArray(
+        arr2, dims=['y', 'x'],
+        coords={'y': np.arange(4.0), 'x': np.arange(4.0)},
+        attrs={'crs': 4326},
+    )
+    to_geotiff(da2, buf)
+    second_size = len(buf.getvalue())
+
+    # The second TIFF should fully replace the first, not append.
+    out = open_geotiff(io.BytesIO(buf.getvalue()))
+    np.testing.assert_array_equal(out.values, arr2)
+    # And the buffer must be smaller than first+second (i.e. no concat).
+    assert second_size < first_size + 100
+
+
+def test_is_file_like_requires_tell():
+    """Objects with read+seek but no tell are not accepted as file-like.
+
+    ``_BytesIOSource`` needs ``tell`` to compute the buffer size. We refuse
+    seekable-but-not-tellable inputs at the gate rather than crashing inside
+    ``__init__``.
+    """
+    from xrspatial.geotiff._reader import _is_file_like
+
+    class ReadSeekNoTell:
+        def read(self, n=-1):
+            return b''
+
+        def seek(self, *a, **k):
+            return 0
+
+    assert _is_file_like(io.BytesIO(b'x')) is True
+    assert _is_file_like(ReadSeekNoTell()) is False

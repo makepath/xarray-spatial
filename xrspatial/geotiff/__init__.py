@@ -197,8 +197,9 @@ def _read_geo_info(source, *, overview_level: int | None = None):
     from ._dtypes import tiff_dtype_to_numpy
     from ._geotags import extract_geo_info
     from ._header import parse_all_ifds, parse_header
-    from ._reader import _is_file_like
+    from ._reader import _coerce_path, _is_file_like
 
+    source = _coerce_path(source)
     if _is_file_like(source):
         # File-like: read its full bytes; we don't try to mmap arbitrary
         # buffers because they may not back a real file descriptor.
@@ -343,6 +344,10 @@ def open_geotiff(source, *, dtype=None, window=None,
     is lossy in a way users rarely intend; cast explicitly after read if
     you need it).
     """
+    from ._reader import _coerce_path
+
+    source = _coerce_path(source)
+
     # VRT files (string paths only -- VRT XML references other files on disk)
     if isinstance(source, str) and source.lower().endswith('.vrt'):
         return read_vrt(source, dtype=dtype, window=window, band=band,
@@ -705,6 +710,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
         rasters whose tile-row exceeds this budget are split into
         horizontal segments. Ignored for numpy / CuPy / COG paths.
     """
+    from ._reader import _coerce_path
+
+    path = _coerce_path(path)
+
     # Up-front validation: catch bad compression names before they reach
     # any of the deeper write paths (streaming, GPU, VRT, COG) where the
     # error surfaces from _compression_tag with a less obvious traceback.
@@ -763,6 +772,15 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
 
     # Auto-detect GPU data and dispatch to write_geotiff_gpu
     use_gpu = gpu if gpu is not None else _is_gpu_data(data)
+    if use_gpu and _path_is_file_like:
+        # write_geotiff_gpu's nvCOMP path materialises tile parts and then
+        # calls _write_bytes(path), which would write at the buffer's
+        # current cursor without truncating. More importantly, the GPU
+        # path was never tested with file-like destinations; refuse rather
+        # than silently produce something untested.
+        raise ValueError(
+            "gpu=True is not supported for file-like destinations. "
+            "Pass a string path (or set gpu=False).")
     if use_gpu:
         try:
             write_geotiff_gpu(data, path, crs=crs, nodata=nodata,
@@ -1191,12 +1209,16 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
     """
     import dask.array as da
 
+    from ._reader import _coerce_path
+
+    source = _coerce_path(source)
+
     # ``read_geotiff`` already routes ``.vrt`` to ``read_vrt`` before
     # reaching here, so this branch is only hit when ``read_geotiff_dask``
     # is called directly with a VRT path. Keep it as a defensive fallback
     # rather than letting the windowed-read path try to parse VRT XML as
     # TIFF bytes. ``read_vrt`` is the single source of truth for VRT.
-    if source.lower().endswith('.vrt'):
+    if isinstance(source, str) and source.lower().endswith('.vrt'):
         return read_vrt(source, dtype=dtype, name=name, chunks=chunks)
 
     # Metadata-only read: O(1) memory via mmap, no pixel decompression
@@ -1370,11 +1392,15 @@ def read_geotiff_gpu(source: str, *,
             "cupy is required for GPU reads. "
             "Install it with: pip install cupy-cuda12x")
 
-    from ._reader import _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT
+    from ._reader import (
+        _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT, _coerce_path,
+    )
     from ._header import parse_header, parse_all_ifds, validate_tile_layout
     from ._dtypes import tiff_dtype_to_numpy
     from ._geotags import extract_geo_info
     from ._gpu_decode import gpu_decode_tiles
+
+    source = _coerce_path(source)
 
     if max_pixels is None:
         max_pixels = MAX_PIXELS_DEFAULT
@@ -1740,7 +1766,10 @@ def read_vrt(source: str, *, dtype=None, window=None,
     the original WKT. The source GeoTransform is preserved as a
     rasterio-style 6-tuple in ``attrs['transform']``.
     """
+    from ._reader import _coerce_path
     from ._vrt import read_vrt as _read_vrt_internal
+
+    source = _coerce_path(source)
 
     arr, vrt = _read_vrt_internal(source, window=window, band=band,
                                    max_pixels=max_pixels)
