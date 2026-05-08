@@ -1429,16 +1429,23 @@ def read_geotiff_gpu(source: str, *,
         Maximum allowed pixel count (width * height * samples). None
         uses the default (~1 billion).
     gpu : {'auto', 'strict'}, default 'auto'
-        Behaviour when the GPU decode path raises an exception.
+        Behaviour when any GPU decode stage raises an exception.
 
-        - ``'auto'``: emit a ``RuntimeWarning`` reporting the original
-          exception type and message, then fall back to the CPU path
-          and transfer the result onto the GPU. This preserves
-          backward-compatible behaviour while making GPU regressions
-          visible.
-        - ``'strict'``: re-raise the original exception so GPU bugs
-          surface immediately. Useful in tests and CI for the GPU
-          fast path.
+        The GPU pipeline has two stages: first ``gpu_decode_tiles_from_file``
+        (GDS-style direct read), then ``gpu_decode_tiles`` over CPU-mmap
+        extracted tile bytes. Both stages still run on the GPU. The CPU
+        fallback (``read_to_array`` + ``cupy.asarray``) only fires after
+        both GPU stages have failed.
+
+        - ``'auto'``: each GPU-stage failure emits a ``RuntimeWarning``
+          reporting the original exception type and message, then falls
+          through to the next stage (CPU mmap re-decode for the first
+          failure, full CPU decode + GPU transfer for the second). This
+          preserves backward-compatible behaviour while making GPU
+          regressions visible.
+        - ``'strict'``: re-raise the original exception from either stage
+          so GPU bugs surface immediately. Useful in tests and CI for the
+          GPU fast path.
 
     Returns
     -------
@@ -1585,8 +1592,15 @@ def read_geotiff_gpu(source: str, *,
                 compression, predictor, file_dtype, samples,
                 byte_order=header.byte_order,
             )
-        except (ValueError, Exception):
-            # Unsupported compression -- fall back to CPU then transfer
+        except Exception as e:
+            if gpu == 'strict':
+                raise
+            warnings.warn(
+                f"read_geotiff_gpu: GPU decode failed "
+                f"({type(e).__name__}: {e}); falling back to CPU.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             arr_cpu, _ = read_to_array(source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
 

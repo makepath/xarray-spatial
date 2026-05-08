@@ -32,37 +32,71 @@ import pytest
 from .conftest import make_minimal_tiff
 
 
-def _ensure_cupy_stub():
-    """Install a numpy-backed ``cupy`` shim if cupy is unavailable.
+_CUPY_ORIG_SENTINEL = object()
+_cupy_saved = _CUPY_ORIG_SENTINEL
+_cupy_cuda_saved = _CUPY_ORIG_SENTINEL
 
-    The CPU fallback path inside ``read_geotiff_gpu`` calls
-    ``cupy.asarray(arr_cpu)`` to upload the CPU result onto the GPU.
-    On CPU-only CI we replace cupy with a numpy passthrough so the
-    function still returns a DataArray we can assert on.
+
+def _cuda_actually_available() -> bool:
+    """Return True only if cupy + CUDA are usable on this host.
+
+    cupy may be importable on a machine without a working CUDA runtime
+    (no driver, no device, ROCm-only, etc.). The CPU-fallback branch in
+    ``read_geotiff_gpu`` calls ``cupy.asarray`` which would then fail at
+    allocation time. Treat that case the same as cupy-not-installed.
     """
-    if 'cupy' in sys.modules:
-        return False  # real cupy already imported, leave it alone
     try:
-        import cupy  # noqa: F401
-        return False
+        import cupy
     except ImportError:
-        pass
+        return False
+    try:
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+def _ensure_cupy_stub() -> bool:
+    """Install a numpy-backed ``cupy`` shim if real cupy isn't usable.
+
+    Replaces ``sys.modules['cupy']`` whenever cupy is missing OR cupy is
+    installed but CUDA isn't available. The original module (if any) is
+    saved so :func:`_restore_cupy` can put it back.
+    """
+    global _cupy_saved, _cupy_cuda_saved
+
+    if _cuda_actually_available():
+        return False
+
+    _cupy_saved = sys.modules.get('cupy', _CUPY_ORIG_SENTINEL)
+    _cupy_cuda_saved = sys.modules.get('cupy.cuda', _CUPY_ORIG_SENTINEL)
 
     stub = types.ModuleType('cupy')
     stub.ndarray = np.ndarray
     stub.asarray = np.asarray
 
     cuda_mod = types.ModuleType('cupy.cuda')
-
-    def _is_available():
-        return False
-
-    cuda_mod.is_available = _is_available
+    cuda_mod.is_available = lambda: False
     stub.cuda = cuda_mod
 
     sys.modules['cupy'] = stub
     sys.modules['cupy.cuda'] = cuda_mod
     return True
+
+
+def _restore_cupy() -> None:
+    """Undo :func:`_ensure_cupy_stub`."""
+    global _cupy_saved, _cupy_cuda_saved
+    for name, saved in (
+        ('cupy', _cupy_saved),
+        ('cupy.cuda', _cupy_cuda_saved),
+    ):
+        if saved is _CUPY_ORIG_SENTINEL:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = saved
+    _cupy_saved = _CUPY_ORIG_SENTINEL
+    _cupy_cuda_saved = _CUPY_ORIG_SENTINEL
+    importlib.invalidate_caches()
 
 
 @pytest.fixture
@@ -92,6 +126,21 @@ def _patch_gpu_decode_to_raise(monkeypatch, exc):
     )
 
 
+def _patch_both_gpu_stages_to_raise(monkeypatch, exc):
+    """Make both GPU decode stages raise ``exc`` to exercise the second handler."""
+    from xrspatial.geotiff import _gpu_decode
+
+    def _boom(*args, **kwargs):
+        raise exc
+
+    monkeypatch.setattr(
+        _gpu_decode, 'gpu_decode_tiles_from_file', _boom, raising=True,
+    )
+    monkeypatch.setattr(
+        _gpu_decode, 'gpu_decode_tiles', _boom, raising=True,
+    )
+
+
 def test_default_mode_warns_on_gpu_failure(tiled_tiff_path, monkeypatch):
     """Default ``gpu='auto'`` warns and falls back to the CPU result."""
     inserted_stub = _ensure_cupy_stub()
@@ -115,9 +164,7 @@ def test_default_mode_warns_on_gpu_failure(tiled_tiff_path, monkeypatch):
         np.testing.assert_array_equal(np.asarray(out), expected)
     finally:
         if inserted_stub:
-            sys.modules.pop('cupy', None)
-            sys.modules.pop('cupy.cuda', None)
-            importlib.invalidate_caches()
+            _restore_cupy()
 
 
 def test_strict_mode_reraises(tiled_tiff_path, monkeypatch):
@@ -135,9 +182,55 @@ def test_strict_mode_reraises(tiled_tiff_path, monkeypatch):
             read_geotiff_gpu(path, gpu='strict')
     finally:
         if inserted_stub:
-            sys.modules.pop('cupy', None)
-            sys.modules.pop('cupy.cuda', None)
-            importlib.invalidate_caches()
+            _restore_cupy()
+
+
+def test_strict_mode_reraises_second_stage(tiled_tiff_path, monkeypatch):
+    """``gpu='strict'`` re-raises if the second-stage GPU decode fails too.
+
+    Regression for the case where ``gpu_decode_tiles_from_file`` and the
+    follow-up ``gpu_decode_tiles`` both fail. Previously the second
+    failure was caught by an unconditional ``except (ValueError, Exception)``
+    that fell back to CPU regardless of mode.
+    """
+    inserted_stub = _ensure_cupy_stub()
+    try:
+        from xrspatial.geotiff import read_geotiff_gpu
+
+        path, _ = tiled_tiff_path
+
+        synthetic = RuntimeError("simulated second-stage GPU failure")
+        _patch_both_gpu_stages_to_raise(monkeypatch, synthetic)
+
+        with pytest.raises(RuntimeError,
+                           match="simulated second-stage GPU failure"):
+            read_geotiff_gpu(path, gpu='strict')
+    finally:
+        if inserted_stub:
+            _restore_cupy()
+
+
+def test_default_mode_warns_on_second_stage_failure(tiled_tiff_path, monkeypatch):
+    """``gpu='auto'`` warns once per stage failure and falls back to CPU."""
+    inserted_stub = _ensure_cupy_stub()
+    try:
+        from xrspatial.geotiff import read_geotiff_gpu
+
+        path, expected = tiled_tiff_path
+
+        synthetic = RuntimeError("simulated second-stage GPU failure")
+        _patch_both_gpu_stages_to_raise(monkeypatch, synthetic)
+
+        with pytest.warns(RuntimeWarning, match="GPU decode failed"):
+            result = read_geotiff_gpu(path)
+
+        out = result.data
+        if hasattr(out, 'get'):
+            out = out.get()
+        np.testing.assert_array_equal(np.asarray(out), expected)
+    finally:
+        if inserted_stub:
+            _restore_cupy()
 
 
 def test_invalid_gpu_kwarg_rejected(tiled_tiff_path):
@@ -152,6 +245,4 @@ def test_invalid_gpu_kwarg_rejected(tiled_tiff_path):
             read_geotiff_gpu(path, gpu='loose')
     finally:
         if inserted_stub:
-            sys.modules.pop('cupy', None)
-            sys.modules.pop('cupy.cuda', None)
-            importlib.invalidate_caches()
+            _restore_cupy()
