@@ -161,14 +161,18 @@ def _block_reduce_2d(arr2d, method):
         return zoom(arr2d, 0.5, order=3).astype(arr2d.dtype)
 
     if method == 'mode':
-        # Most-common value per 2x2 block (useful for classified rasters)
+        # Most-common value per 2x2 block (useful for classified rasters).
+        # Vectorized: sort each 4-cell block, then for each position count
+        # how many cells equal it. argmax picks the leftmost max-count
+        # position, which (post-sort) is the smallest tied value, matching
+        # the prior np.unique+argmax tie-break behavior ("lowest wins").
         blocks = cropped.reshape(oh, 2, ow, 2).transpose(0, 2, 1, 3).reshape(oh, ow, 4)
-        out = np.empty((oh, ow), dtype=arr2d.dtype)
-        for r in range(oh):
-            for c in range(ow):
-                vals, counts = np.unique(blocks[r, c], return_counts=True)
-                out[r, c] = vals[counts.argmax()]
-        return out
+        srt = np.sort(blocks, axis=-1)
+        counts = np.empty_like(srt, dtype=np.int8)
+        for i in range(4):
+            counts[..., i] = np.sum(srt == srt[..., i:i + 1], axis=-1)
+        pick = np.argmax(counts, axis=-1)
+        return np.take_along_axis(srt, pick[..., None], axis=-1).squeeze(-1)
 
     # Block reshape for mean/min/max/median
     if arr2d.dtype.kind == 'f':
