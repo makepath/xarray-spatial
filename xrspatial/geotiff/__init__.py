@@ -1398,7 +1398,7 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
 
 
 def _gpu_decode_single_band_tiles(
-    source, shared_data, offsets, byte_counts,
+    source, lazy_data, offsets, byte_counts,
     tw, th, width, height,
     compression, predictor, file_dtype,
     *,
@@ -1415,9 +1415,11 @@ def _gpu_decode_single_band_tiles(
     resulting 2-D arrays into ``(H, W, samples)`` afterwards.
 
     Mirrors the two-stage GPU pipeline in ``read_geotiff_gpu`` -- GDS
-    first, then CPU-extracted-tiles GPU decode. ``shared_data`` is the
-    full file bytes the caller mmapped/read once for the whole planar=2
-    decode, so the second stage doesn't redo ``read_all()`` per band.
+    first, then CPU-extracted-tiles GPU decode. ``lazy_data`` is a
+    zero-arg callable that returns the full file bytes; it caches its
+    result so the first band that needs the stage-2 fallback pays the
+    ``read_all()``, and subsequent bands reuse the same buffer. When
+    every band's GDS path succeeds the file is never read at all.
     Sparse tiles are not expected here; the caller routes sparse files
     to the CPU path.
 
@@ -1450,6 +1452,7 @@ def _gpu_decode_single_band_tiles(
         arr_gpu = None
 
     if arr_gpu is None:
+        shared_data = lazy_data()
         compressed_tiles = [
             bytes(shared_data[offsets[i]:offsets[i] + byte_counts[i]])
             for i in range(len(offsets))
@@ -1668,13 +1671,23 @@ def read_geotiff_gpu(source: str, *,
                 f"TileOffsets entries ({tiles_across} x {tiles_down} x "
                 f"{samples} bands), got {len(offsets)}"
             )
-        # Read the file once for the per-band stage-2 fallback so a GDS
-        # failure on one band doesn't trigger N redundant read_all()s.
-        src2 = _FileSource(source)
-        try:
-            shared_data = src2.read_all()
-        finally:
-            src2.close()
+        # Lazy shared file read for the per-band stage-2 fallback. When
+        # every band's GDS path succeeds, _read_once is never called
+        # and we skip the read_all() entirely; when any band falls
+        # back, the first call materialises the bytes and subsequent
+        # bands reuse the same buffer (so N bands cost at most one
+        # read_all(), not N).
+        _shared_data_cache: list = []
+
+        def _read_once():
+            if not _shared_data_cache:
+                src2 = _FileSource(source)
+                try:
+                    _shared_data_cache.append(src2.read_all())
+                finally:
+                    src2.close()
+            return _shared_data_cache[0]
+
         band_arrays = []
         cpu_fallback_needed = False
         for band_idx in range(samples):
@@ -1683,7 +1696,7 @@ def read_geotiff_gpu(source: str, *,
             band_offsets = list(offsets[b0:b1])
             band_byte_counts = list(byte_counts[b0:b1])
             band_arr = _gpu_decode_single_band_tiles(
-                source, shared_data, band_offsets, band_byte_counts,
+                source, _read_once, band_offsets, band_byte_counts,
                 tw, th, width, height,
                 compression, predictor, file_dtype,
                 byte_order=header.byte_order,
