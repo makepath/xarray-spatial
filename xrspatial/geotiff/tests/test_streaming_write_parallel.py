@@ -10,6 +10,7 @@ deflate write completes within a generous wall-time budget.
 from __future__ import annotations
 
 import inspect
+import os
 import threading
 import time
 
@@ -112,7 +113,16 @@ def test_streaming_write_parallelism_observed(monkeypatch, tmp_path):
     thread ID, then write a raster sized to produce many tiles inside a
     single segment. After the write, assert at least 2 unique thread IDs
     were observed.
+
+    Force ``os.cpu_count()`` to 4 in the global ``os`` module for the
+    duration of the test so the assertion stays deterministic on
+    single-core CI containers (where the real cpu_count would size the
+    pool to 1 and the test would fail for environment reasons). The
+    writer imports ``os`` lazily inside the function, so patching the
+    global module is sufficient.
     """
+    monkeypatch.setattr(os, 'cpu_count', lambda: 4)
+
     real_compress = writer_mod._compress_block
     seen_threads: set[int] = set()
     lock = threading.Lock()
@@ -145,15 +155,22 @@ def test_streaming_write_parallelism_observed(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Wall-clock regression guard
+# Optional wall-clock regression guard (env-gated)
 # ---------------------------------------------------------------------------
 
 def test_streaming_write_perf_sanity(tmp_path):
-    """Pure regression guard. A 4096x4096 deflate streaming write should
-    finish well under 5 s on a typical dev box. Threshold is generous so
-    this is not a perf benchmark - just a tripwire if compress goes
-    serial again.
+    """Opt-in tripwire: a 4096x4096 deflate streaming write under a
+    generous wall-clock threshold. Skipped by default because shared CI
+    runners, CPU throttling, debug builds, and slow filesystems all
+    make absolute timings flaky. Set ``XRSPATIAL_RUN_PERF_TESTS=1`` to
+    enable. The deterministic regression coverage lives in
+    :func:`test_streaming_write_parallelism_observed` -- this is just a
+    sanity bound on top.
     """
+    if os.environ.get('XRSPATIAL_RUN_PERF_TESTS') != '1':
+        pytest.skip(
+            "set XRSPATIAL_RUN_PERF_TESTS=1 to run wall-clock perf tests")
+
     shape = (4096, 4096)
     da = _make_dataarray(shape, dtype=np.float32, seed=2026)
     dask_da = da.chunk({'y': 1024, 'x': 1024})
@@ -164,33 +181,9 @@ def test_streaming_write_perf_sanity(tmp_path):
     to_geotiff(dask_da, path, compression='deflate', tile_size=256)
     elapsed = time.perf_counter() - t0
 
-    # Sanity check the file was written.
     result = open_geotiff(path)
     assert result.shape == shape
 
     assert elapsed < 5.0, (
         f"Streaming 4096x4096 deflate write took {elapsed:.2f}s, "
         f"expected <5s (regression guard)")
-
-
-# ---------------------------------------------------------------------------
-# Single-thread fallback: skipped when no public knob exists
-# ---------------------------------------------------------------------------
-
-def test_streaming_write_with_single_thread_fallback(tmp_path):
-    """If write_streaming exposes a ``threads`` kwarg, callers can opt
-    into deterministic single-thread compress. Currently it does not -
-    skip so the test stays as a placeholder for when a knob is added.
-    """
-    sig = inspect.signature(writer_mod.write_streaming)
-    if 'threads' not in sig.parameters:
-        pytest.skip(
-            "write_streaming has no 'threads' kwarg yet; skipping "
-            "deterministic single-thread fallback test")
-
-    da = _make_dataarray((400, 400), dtype=np.float32)
-    dask_da = da.chunk({'y': 200, 'x': 200})
-    path = str(tmp_path / 'threads1.tif')
-    to_geotiff(dask_da, path, compression='deflate', threads=1)
-    result = open_geotiff(path)
-    np.testing.assert_array_equal(result.values, da.values)
