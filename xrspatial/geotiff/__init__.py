@@ -1617,7 +1617,9 @@ def read_geotiff_gpu(source: str, *,
 
     from ._reader import (
         _FileSource, _check_dimensions, MAX_PIXELS_DEFAULT, _coerce_path,
+        _resolve_masked_fill,
     )
+    from ._compression import COMPRESSION_LERC
     from ._header import (
         parse_header, parse_all_ifds, select_overview_ifd, validate_tile_layout,
     )
@@ -1709,6 +1711,16 @@ def read_geotiff_gpu(source: str, *,
     # Sparse tiles (byte_count == 0) are unsupported on the GPU pipeline;
     # the CPU reader fills them with nodata and copies onto the GPU.
     has_sparse_tile = any(bc == 0 for bc in byte_counts)
+    # LERC tiles can carry a per-pixel valid mask that GDAL writes
+    # zero-filled in the data array.  Compute the nodata fill the same
+    # way the CPU reader does so the GPU decode path can restore it
+    # post-assembly (mirrors PR #1529 for the CPU path). Only the
+    # chunky (planar=1) GPU path threads masked_fill into its kernel
+    # call below; the planar=2 per-band branch falls back to the CPU
+    # reader for masked pixels (rare in practice -- LERC files
+    # typically use chunky layout).
+    masked_fill = (_resolve_masked_fill(ifd.nodata_str, file_dtype)
+                   if compression == COMPRESSION_LERC else None)
 
     # PlanarConfiguration=2 (separate bands): each band has its own list
     # of tiles back-to-back in TileOffsets / TileByteCounts. The GPU
@@ -1795,6 +1807,7 @@ def read_geotiff_gpu(source: str, *,
                 tw, th, width, height,
                 compression, predictor, file_dtype, samples,
                 byte_order=header.byte_order,
+                masked_fill=masked_fill,
             )
         except Exception as e:
             if gpu == 'strict':
@@ -1826,6 +1839,7 @@ def read_geotiff_gpu(source: str, *,
                 tw, th, width, height,
                 compression, predictor, file_dtype, samples,
                 byte_order=header.byte_order,
+                masked_fill=masked_fill,
             )
         except Exception as e:
             if gpu == 'strict':
