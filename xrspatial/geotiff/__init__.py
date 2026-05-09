@@ -13,6 +13,7 @@ write_vrt(vrt_path, source_files, ...)
 """
 from __future__ import annotations
 
+import math
 import warnings
 
 import numpy as np
@@ -1396,6 +1397,92 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
     return _read()
 
 
+def _gpu_decode_single_band_tiles(
+    source, lazy_data, offsets, byte_counts,
+    tw, th, width, height,
+    compression, predictor, file_dtype,
+    *,
+    byte_order: str,
+    gpu: str,
+):
+    """Decode one band's tile sequence into a 2-D ``(H, W)`` cupy array.
+
+    Helper for the ``PlanarConfiguration=2`` GPU path: the existing
+    ``gpu_decode_tiles`` / ``gpu_decode_tiles_from_file`` kernels assume
+    a single chunky tile sequence with ``bytes_per_pixel = itemsize *
+    samples``. For planar=2 each band has its own list of tiles, so we
+    invoke those kernels once per band with ``samples=1`` and stack the
+    resulting 2-D arrays into ``(H, W, samples)`` afterwards.
+
+    Mirrors the two-stage GPU pipeline in ``read_geotiff_gpu`` -- GDS
+    first, then CPU-extracted-tiles GPU decode. ``lazy_data`` is a
+    zero-arg callable that returns the full file bytes; it caches its
+    result so the first band that needs the stage-2 fallback pays the
+    ``read_all()``, and subsequent bands reuse the same buffer. When
+    every band's GDS path succeeds the file is never read at all.
+    Sparse tiles are not expected here; the caller routes sparse files
+    to the CPU path.
+
+    Auto-mode semantics: a stage-1 GDS failure warns and falls through
+    to stage 2; a stage-2 failure warns and returns ``None`` so the
+    caller can trigger a whole-image CPU fallback (a per-band CPU
+    decode would require a single-band CPU path keyed off planar
+    config, which doesn't exist). Strict mode re-raises from either
+    stage.
+    """
+    from ._gpu_decode import gpu_decode_tiles, gpu_decode_tiles_from_file
+
+    arr_gpu = None
+    try:
+        arr_gpu = gpu_decode_tiles_from_file(
+            source, offsets, byte_counts,
+            tw, th, width, height,
+            compression, predictor, file_dtype, 1,
+            byte_order=byte_order,
+        )
+    except Exception as e:
+        if gpu == 'strict':
+            raise
+        warnings.warn(
+            f"read_geotiff_gpu: GPU decode failed "
+            f"({type(e).__name__}: {e}); falling back to CPU.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        arr_gpu = None
+
+    if arr_gpu is None:
+        shared_data = lazy_data()
+        compressed_tiles = [
+            bytes(shared_data[offsets[i]:offsets[i] + byte_counts[i]])
+            for i in range(len(offsets))
+        ]
+        try:
+            arr_gpu = gpu_decode_tiles(
+                compressed_tiles,
+                tw, th, width, height,
+                compression, predictor, file_dtype, 1,
+                byte_order=byte_order,
+            )
+        except Exception as e:
+            if gpu == 'strict':
+                raise
+            warnings.warn(
+                f"read_geotiff_gpu: GPU decode failed "
+                f"({type(e).__name__}: {e}); falling back to CPU.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+            return None
+
+    if arr_gpu.ndim != 2 or arr_gpu.shape != (height, width):
+        raise RuntimeError(
+            f"single-band GPU tile decode produced shape "
+            f"{arr_gpu.shape}, expected ({height}, {width})"
+        )
+    return arr_gpu
+
+
 def read_geotiff_gpu(source: str, *,
                      dtype=None,
                      overview_level: int | None = None,
@@ -1519,7 +1606,9 @@ def read_geotiff_gpu(source: str, *,
                 target = np.dtype(dtype)
                 _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
                 arr_gpu = arr_gpu.astype(target)
-            # Mirror the tiled branch: 3-D (y, x, band) for multi-band reads.
+            # Multi-band stripped reads come back as (y, x, band); mirror
+            # the tiled branch so dims line up with ndim. Single-band stays
+            # 2-D ('y', 'x').
             if arr_gpu.ndim == 3:
                 dims = ['y', 'x', 'band']
                 coords['band'] = np.arange(arr_gpu.shape[2])
@@ -1533,6 +1622,7 @@ def read_geotiff_gpu(source: str, *,
         compression = ifd.compression
         predictor = ifd.predictor
         samples = ifd.samples_per_pixel
+        planar = ifd.planar_config
         tw = ifd.tile_width
         th = ifd.tile_height
         width = ifd.width
@@ -1558,7 +1648,80 @@ def read_geotiff_gpu(source: str, *,
     # Sparse tiles (byte_count == 0) are unsupported on the GPU pipeline;
     # the CPU reader fills them with nodata and copies onto the GPU.
     has_sparse_tile = any(bc == 0 for bc in byte_counts)
-    if has_sparse_tile:
+
+    # PlanarConfiguration=2 (separate bands): each band has its own list
+    # of tiles back-to-back in TileOffsets / TileByteCounts. The GPU
+    # tile-assembly kernel assumes a single chunky tile sequence with
+    # bytes_per_pixel = itemsize * samples, so it cannot handle planar=2
+    # directly. Decode each band's tile slab as a single-band image, then
+    # stack into (H, W, samples). For planar=1 (chunky) the existing
+    # single-pass kernel is correct. Sparse-tile files always route to
+    # the CPU reader regardless of planar config.
+    if planar == 2 and samples > 1 and not has_sparse_tile:
+        tiles_across = math.ceil(width / tw)
+        tiles_down = math.ceil(height / th)
+        tiles_per_band = tiles_across * tiles_down
+        # validate_tile_layout already requires len(offsets) >= the grid;
+        # accept extra trailing entries (some writers emit padding) and
+        # only consume the first tiles_per_band * samples.
+        expected_min = tiles_per_band * samples
+        if len(offsets) < expected_min:
+            raise ValueError(
+                f"PlanarConfiguration=2 expects at least {expected_min} "
+                f"TileOffsets entries ({tiles_across} x {tiles_down} x "
+                f"{samples} bands), got {len(offsets)}"
+            )
+        # Lazy shared file read for the per-band stage-2 fallback. When
+        # every band's GDS path succeeds, _read_once is never called
+        # and we skip the read_all() entirely; when any band falls
+        # back, the first call materialises the bytes and subsequent
+        # bands reuse the same buffer (so N bands cost at most one
+        # read_all(), not N).
+        _shared_data_cache: list = []
+
+        def _read_once():
+            if not _shared_data_cache:
+                src2 = _FileSource(source)
+                try:
+                    _shared_data_cache.append(src2.read_all())
+                finally:
+                    src2.close()
+            return _shared_data_cache[0]
+
+        band_arrays = []
+        cpu_fallback_needed = False
+        for band_idx in range(samples):
+            b0 = band_idx * tiles_per_band
+            b1 = b0 + tiles_per_band
+            band_offsets = list(offsets[b0:b1])
+            band_byte_counts = list(byte_counts[b0:b1])
+            band_arr = _gpu_decode_single_band_tiles(
+                source, _read_once, band_offsets, band_byte_counts,
+                tw, th, width, height,
+                compression, predictor, file_dtype,
+                byte_order=header.byte_order,
+                gpu=gpu,
+            )
+            if band_arr is None:
+                # Auto-mode signal: stage-2 GPU decode failed for this
+                # band. There's no per-band CPU decode path, so fall
+                # back to a whole-image CPU read + GPU upload, matching
+                # the chunky path's auto-mode semantics.
+                cpu_fallback_needed = True
+                break
+            band_arrays.append(band_arr)
+        if cpu_fallback_needed:
+            arr_cpu, _ = read_to_array(source, overview_level=overview_level)
+            arr_gpu = cupy.asarray(arr_cpu)
+        else:
+            arr_gpu = cupy.stack(band_arrays, axis=2)
+            if arr_gpu.shape != (height, width, samples):
+                raise RuntimeError(
+                    f"planar=2 GPU assembly produced shape "
+                    f"{arr_gpu.shape}, expected "
+                    f"({height}, {width}, {samples})"
+                )
+    elif has_sparse_tile:
         arr_cpu, _ = read_to_array(source, overview_level=overview_level)
         arr_gpu = cupy.asarray(arr_cpu)
     else:
@@ -1614,6 +1777,19 @@ def read_geotiff_gpu(source: str, *,
             )
             arr_cpu, _ = read_to_array(source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
+
+    # Multi-band tiled output must be (H, W, samples) regardless of planar
+    # config -- catch any shape regression in the kernels before we attach
+    # dims/coords below. Plain `raise` rather than `assert` so the check
+    # survives `python -O`.
+    if samples > 1:
+        if (arr_gpu.shape[:2] != (height, width)
+                or arr_gpu.shape[2] != samples):
+            raise RuntimeError(
+                f"GPU multi-band tile assembly produced shape "
+                f"{arr_gpu.shape}, expected "
+                f"({height}, {width}, {samples})"
+            )
 
     if dtype is not None:
         target = np.dtype(dtype)
