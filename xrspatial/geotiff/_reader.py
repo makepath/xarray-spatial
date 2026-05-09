@@ -1090,7 +1090,11 @@ def _parse_cog_http_meta(
     header = parse_header(header_bytes)
     ifds = parse_all_ifds(header_bytes, header)
 
-    # If we didn't get all IFDs, try a larger fetch
+    # parse_all_ifds bails the moment it walks past the bytes we
+    # fetched, so a header GET that lands short of the first IFD's
+    # offset returns an empty list. Retry with a larger window in that
+    # case; this is *not* a partial-IFD recovery (overviews chained
+    # past the first 16 KiB are still loaded lazily by other readers).
     if len(ifds) == 0:
         header_bytes = source.read_range(0, 65536)
         ifds = parse_all_ifds(header_bytes, header)
@@ -1189,8 +1193,13 @@ def _fetch_decode_cog_http_tiles(
     tiles_across = math.ceil(width / tw)
     tiles_down = math.ceil(height / th)
 
-    _check_dimensions(width, height, samples, max_pixels)
-    # A single tile's decoded bytes must also fit under the pixel budget.
+    # Cap the *materialised* pixel count, not the declared image size.
+    # A windowed HTTP read of a multi-billion-pixel COG only allocates
+    # the window, so capping the full image would reject legitimate
+    # tiled reads. The full-image cap still applies for whole-file
+    # reads (window is None). The single-tile budget always applies.
+    if window is None:
+        _check_dimensions(width, height, samples, max_pixels)
     _check_dimensions(tw, th, samples, max_pixels)
 
     # Reject malformed TIFFs whose declared tile grid exceeds the supplied

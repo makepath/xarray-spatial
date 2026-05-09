@@ -1276,7 +1276,9 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
         and source.startswith(('http://', 'https://'))
     )
     http_meta = None
+    http_meta_key = None
     if is_http:
+        import dask
         from ._reader import _HTTPSource, _parse_cog_http_meta
         _src = _HTTPSource(source)
         try:
@@ -1285,6 +1287,13 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
         finally:
             _src.close()
         http_meta = (http_header, http_ifd)
+        # Wrap the parsed metadata in a single dask Delayed so every
+        # window task takes it as a graph input, not a Python closure.
+        # Without this, the (TIFFHeader, IFD) pair -- which can carry
+        # multi-million-entry TileOffsets/TileByteCounts tuples on
+        # large COGs -- would be embedded in each chunk task and
+        # serialised N times under distributed/process schedulers.
+        http_meta_key = dask.delayed(http_meta, pure=True)
         geo_info = http_geo
         full_h = http_ifd.height
         full_w = http_ifd.width
@@ -1381,7 +1390,7 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
                                      overview_level, nodata,
                                      band_arg,
                                      target_dtype=target_dtype if dtype is not None else None,
-                                     http_meta=http_meta),
+                                     http_meta_key=http_meta_key),
                 shape=block_shape,
                 dtype=target_dtype,
             )
@@ -1402,18 +1411,20 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
 
 
 def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
-                         band, *, target_dtype=None, http_meta=None):
+                         band, *, target_dtype=None, http_meta_key=None):
     """Dask-delayed function to read a single window.
 
-    *http_meta* is an optional ``(TIFFHeader, IFD)`` tuple parsed once by
-    :func:`read_geotiff_dask`. When supplied, HTTP delayed tasks reuse
-    it instead of re-fetching the leading IFD bytes per chunk (P5).
-    For local sources this argument is ignored.
+    *http_meta_key* is an optional ``Delayed[(TIFFHeader, IFD)]`` parsed
+    once by :func:`read_geotiff_dask` and wrapped via ``dask.delayed``.
+    Passing it as a function argument (rather than a closure capture)
+    makes the metadata a single graph input that all window tasks
+    depend on, so distributed/process schedulers serialise it once
+    instead of once per chunk. For local sources it is ``None``.
     """
     import dask
 
     @dask.delayed
-    def _read():
+    def _read(http_meta):
         if http_meta is not None and isinstance(source, str) and \
                 source.startswith(('http://', 'https://')):
             from ._reader import _HTTPSource, _fetch_decode_cog_http_tiles
@@ -1443,7 +1454,7 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
         if target_dtype is not None:
             arr = arr.astype(target_dtype)
         return arr
-    return _read()
+    return _read(http_meta_key)
 
 
 def read_geotiff_gpu(source: str, *,
