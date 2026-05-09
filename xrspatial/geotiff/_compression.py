@@ -1046,7 +1046,29 @@ except ImportError:
 
 def lerc_decompress(data: bytes, width: int = 0, height: int = 0,
                     samples: int = 1) -> bytes:
-    """Decompress LERC data. Requires the ``lerc`` package."""
+    """Decompress LERC data. Requires the ``lerc`` package.
+
+    Returns the raw decoded pixel bytes.  Any LERC valid-mask is dropped
+    here; masked pixels are returned as LERC's zero fill (the wire
+    format's default).  Callers that need to honour the file's nodata
+    value should use :func:`lerc_decompress_with_mask` instead and apply
+    nodata at the array level once dtype is known.
+    """
+    decoded_bytes, _mask = lerc_decompress_with_mask(data)
+    return decoded_bytes
+
+
+def lerc_decompress_with_mask(data: bytes):
+    """Decompress LERC data and return ``(bytes, valid_mask_or_None)``.
+
+    ``valid_mask`` is ``None`` when LERC reports the block is fully
+    valid (no encoded mask, or a mask that is True everywhere);
+    otherwise it is a numpy array whose shape matches the decoded data
+    (height, width) or (height, width, samples), with ``0`` marking
+    pixels the encoder flagged as invalid.  LERC zero fills masked
+    positions in the data array, so the returned mask is the only
+    signal that lets a reader restore the file's nodata sentinel.
+    """
     if not LERC_AVAILABLE:
         raise ImportError(
             "lerc is required to read LERC-compressed TIFFs. "
@@ -1056,7 +1078,13 @@ def lerc_decompress(data: bytes, width: int = 0, height: int = 0,
     if result[0] != 0:
         raise RuntimeError(f"LERC decode failed with error code {result[0]}")
     arr = result[1]
-    return arr.tobytes()
+    valid_mask = result[2] if len(result) > 2 else None
+    if valid_mask is None:
+        return arr.tobytes(), None
+    valid_mask = np.asarray(valid_mask)
+    if valid_mask.size == 0 or bool(valid_mask.all()):
+        return arr.tobytes(), None
+    return arr.tobytes(), valid_mask
 
 
 def lerc_compress(data: bytes, width: int, height: int,
