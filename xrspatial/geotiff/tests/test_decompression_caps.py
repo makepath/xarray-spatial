@@ -3,16 +3,19 @@
 Each codec used by the TIFF reader (deflate, zstd, lz4, packbits) accepts an
 ``expected_size`` argument and refuses to produce more than ~5% above that
 size before raising ``ValueError``.  Without these caps a small malicious
-TIFF (a few MB compressed) could expand to many GB during decode and OOM
-the reader before the post-decode size check ran.
+TIFF could expand to many GB during decode and OOM the reader before the
+post-decode size check ran.
 
-Each test here builds a minimal TIFF whose strip payload, when decoded,
-would balloon to ~1 GiB while declaring image dimensions implying ~1 KiB
-of pixel data.  The reader must raise cleanly rather than allocate the
-bomb.
+Each end-to-end test here builds a minimal TIFF that declares a 1024x1024
+uint8 image (1 MiB of legitimate pixel data) and feeds in a strip whose
+decoded size is several MiB. That ratio is enough to trip the cap (~1.05
+MiB) without forcing the test process to allocate a multi-gigabyte
+payload host-side -- the audit's original 1024:1 framing was symbolic;
+what we actually verify is "compressed size << decoded size > cap".
 """
 from __future__ import annotations
 
+import importlib.util
 import struct
 
 import numpy as np
@@ -26,6 +29,9 @@ from xrspatial.geotiff._compression import (
     zstd_decompress,
 )
 from xrspatial.geotiff._reader import read_to_array
+
+_HAS_ZSTD = importlib.util.find_spec("zstandard") is not None
+_HAS_LZ4 = importlib.util.find_spec("lz4.frame") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -127,10 +133,7 @@ class TestCodecDirect:
         assert out == b'ABCD'
 
 
-@pytest.mark.skipif(
-    pytest.importorskip("zstandard", reason="zstandard not installed") is None,
-    reason="zstandard not installed",
-)
+@pytest.mark.skipif(not _HAS_ZSTD, reason="zstandard not installed")
 class TestZstdDirect:
     def test_zstd_bomb_raises(self):
         import zstandard
@@ -147,10 +150,7 @@ class TestZstdDirect:
         assert out == data
 
 
-@pytest.mark.skipif(
-    pytest.importorskip("lz4.frame", reason="lz4 not installed") is None,
-    reason="lz4 not installed",
-)
+@pytest.mark.skipif(not _HAS_LZ4, reason="lz4 not installed")
 class TestLz4Direct:
     def test_lz4_bomb_raises(self):
         import lz4.frame
@@ -171,22 +171,23 @@ class TestLz4Direct:
 # End-to-end TIFF tests (audit reproducer shape)
 # ---------------------------------------------------------------------------
 
-# 1024 x 1024 uint8 = 1 MiB declared image.  We feed a strip whose decoded
-# size is 1 GiB, so the reader sees a 1024:1 ratio bomb.  The strip header
-# we patch in claims the compressed length truthfully (a few KB) so the
-# raw I/O step succeeds and the codec is the layer that has to refuse.
+# 1024 x 1024 uint8 = 1 MiB declared image, cap is ~1.05 MiB. We feed a
+# strip whose decoded size is 8 MiB. The cap is exceeded by ~7x, which is
+# enough to prove the codec rejects rather than silently truncates, while
+# keeping the test's host-side allocation small enough for any CI runner.
+# (The audit's original 1024:1 framing was symbolic; the defense fires the
+# moment decoded > cap, not at any specific ratio.)
 _DECLARED_W = 1024
 _DECLARED_H = 1024
 _DECLARED_BYTES = _DECLARED_W * _DECLARED_H  # 1 MiB
-_BOMB_BYTES = 1 << 30                         # 1 GiB
+_BOMB_BYTES = 8 * 1024 * 1024                # 8 MiB
 
 
 def test_deflate_bomb_rejected(tmp_path):
-    """1 MiB declared, 1 GiB decoded — must raise rather than OOM."""
+    """Decoded size > cap must raise rather than allocate the bomb."""
     payload = b'\x00' * _BOMB_BYTES
     strip = zlib.compress(payload, 9)
-    # Sanity: the TIFF on disk should be small.
-    assert len(strip) < 5 * 1024 * 1024
+    assert len(strip) < _BOMB_BYTES // 10
     tiff = _build_tiff_with_strip(strip, compression=8,
                                   width=_DECLARED_W, height=_DECLARED_H)
     path = tmp_path / "deflate_bomb.tif"
@@ -195,11 +196,12 @@ def test_deflate_bomb_rejected(tmp_path):
         read_to_array(str(path))
 
 
+@pytest.mark.skipif(not _HAS_ZSTD, reason="zstandard not installed")
 def test_zstd_bomb_rejected(tmp_path):
-    zstandard = pytest.importorskip("zstandard")
+    import zstandard
     payload = b'\x00' * _BOMB_BYTES
     strip = zstandard.ZstdCompressor().compress(payload)
-    assert len(strip) < 5 * 1024 * 1024
+    assert len(strip) < _BOMB_BYTES // 10
     tiff = _build_tiff_with_strip(strip, compression=50000,
                                   width=_DECLARED_W, height=_DECLARED_H)
     path = tmp_path / "zstd_bomb.tif"
@@ -208,13 +210,14 @@ def test_zstd_bomb_rejected(tmp_path):
         read_to_array(str(path))
 
 
+@pytest.mark.skipif(not _HAS_LZ4, reason="lz4 not installed")
 def test_lz4_bomb_rejected(tmp_path):
-    lz4_frame = pytest.importorskip("lz4.frame")
+    import lz4.frame
     payload = b'\x00' * _BOMB_BYTES
-    strip = lz4_frame.compress(payload)
-    # LZ4 has a higher floor than deflate/zstd for runs of zeros, but should
-    # still be a fraction of a percent of the payload.
-    assert len(strip) < 32 * 1024 * 1024
+    strip = lz4.frame.compress(payload)
+    # LZ4 has a higher floor than deflate/zstd for runs of zeros, but
+    # still well below the bomb size.
+    assert len(strip) < _BOMB_BYTES // 4
     tiff = _build_tiff_with_strip(strip, compression=50004,
                                   width=_DECLARED_W, height=_DECLARED_H)
     path = tmp_path / "lz4_bomb.tif"

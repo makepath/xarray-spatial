@@ -24,15 +24,17 @@ _DECOMPRESS_MARGIN = 1.05
 def _max_output_with_margin(expected_size: int) -> int:
     """Return the cap (in bytes) for a codec given the caller's expected size.
 
-    Adds at least one byte of slack so that callers passing 0 (meaning
-    "unknown") still get a usable buffer for tests, while a single byte of
-    overflow is detected.
+    A positive ``expected_size`` returns ``int(expected_size * 1.05) + 1``,
+    leaving a one-byte sentinel above the legitimate margin so a single
+    byte of overflow is detectable.
+
+    A non-positive ``expected_size`` (the default ``0``) returns ``0``,
+    which the codec wrappers interpret as "no cap": they fall through to
+    the unbounded library decode for backward compatibility with callers
+    that don't supply a size. The reader always supplies a size; this
+    branch is only hit by direct callers and round-trip tests.
     """
     if expected_size <= 0:
-        # No cap available: fall back to a generous default to preserve
-        # backward compatibility with callers that don't supply a size.
-        # The reader always supplies a size, so this branch is mainly for
-        # direct callers and round-trip tests.
         return 0
     return int(expected_size * _DECOMPRESS_MARGIN) + 1
 
@@ -62,9 +64,13 @@ def deflate_decompress(data: bytes, expected_size: int = 0) -> bytes:
         return zlib.decompress(data)
     cap = _max_output_with_margin(expected_size)
     decompressor = zlib.decompressobj()
+    # Accumulate into a bytearray rather than reassigning bytes via ``+=``;
+    # the bytes path was O(n^2) for large strips because every chunk
+    # reallocated and copied the whole accumulated buffer.
+    out = bytearray()
     # Read one byte beyond the cap so that an overflowing stream is detected
     # rather than silently truncated.
-    out = decompressor.decompress(data, max_length=cap + 1)
+    out += decompressor.decompress(data, max_length=cap + 1)
     # Drain any output the decompressor has buffered (including unconsumed
     # input).  We stop as soon as output exceeds the cap, or when the
     # decompressor declares EOF, or when no further bytes are produced.
@@ -88,7 +94,7 @@ def deflate_decompress(data: bytes, expected_size: int = 0) -> bytes:
             f"produced, cap is {cap} (expected {expected_size}).  Likely "
             f"a decompression bomb."
         )
-    return out
+    return bytes(out)
 
 
 def deflate_compress(data: bytes, level: int = 6) -> bytes:
