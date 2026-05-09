@@ -1372,6 +1372,21 @@ def write_streaming(dask_data, path: str, *,
                     tiles_per_segment = max(
                         1, streaming_buffer_bytes // bytes_per_tile_col)
 
+                # Hoist the compression thread pool over the entire tiled
+                # write. Re-creating the executor per segment paid the
+                # thread-startup cost on every horizontal stripe and
+                # offset the parallel speedup on wide rasters; a single
+                # pool reused across all segments avoids that overhead.
+                # Skip the pool when compression is uncompressed (no
+                # C-level work to release the GIL on) or when the host
+                # has only one usable core.
+                from concurrent.futures import ThreadPoolExecutor
+                _pool_workers = min(tiles_per_segment, os.cpu_count() or 4)
+                _use_pool = (comp_tag != COMPRESSION_NONE
+                             and _pool_workers > 1)
+                tile_pool = (ThreadPoolExecutor(max_workers=_pool_workers)
+                             if _use_pool else None)
+
                 for tr in range(tiles_down):
                     r0 = tr * th
                     r1 = min(r0 + th, height)
@@ -1404,6 +1419,8 @@ def write_streaming(dask_data, path: str, *,
                                 seg_np = seg_np.copy()
                                 seg_np[nan_mask] = seg_np.dtype.type(nodata)
 
+                        # Build tile arrays for this segment
+                        seg_tile_arrs = []
                         for tc in range(seg_start, seg_end):
                             c0 = tc * tw
                             c1 = min(c0 + tw, width)
@@ -1424,17 +1441,54 @@ def write_streaming(dask_data, path: str, *,
                             else:
                                 tile_arr = np.ascontiguousarray(tile_slice)
 
-                            compressed = _compress_block(
-                                tile_arr, tw, th, samples, out_dtype,
-                                bytes_per_sample, pred_int, comp_tag,
-                                compression_level, max_z_error)
+                            seg_tile_arrs.append(tile_arr)
 
+                        # Parallel compress on the hoisted ``tile_pool``
+                        # when it exists. zlib/zstd/LZW release the GIL,
+                        # so threading actually parallelises the C-level
+                        # work. Peak memory while the segment is in
+                        # flight covers BOTH the uncompressed
+                        # ``seg_tile_arrs`` (one full tile per column,
+                        # released after the futures resolve) AND the
+                        # compressed buffers ``seg_compressed`` (held
+                        # until the sequential write loop drains them).
+                        # Both lists are bounded by ``tiles_per_segment``
+                        # which the streaming buffer cap sets; fall
+                        # through to a serial path when the pool is None
+                        # (no compression / single core) or when only
+                        # one tile sits in this segment.
+                        n_seg_tiles = len(seg_tile_arrs)
+                        if tile_pool is None or n_seg_tiles <= 1:
+                            seg_compressed = [
+                                _compress_block(
+                                    ta, tw, th, samples, out_dtype,
+                                    bytes_per_sample, pred_int, comp_tag,
+                                    compression_level, max_z_error)
+                                for ta in seg_tile_arrs
+                            ]
+                        else:
+                            futures = [
+                                tile_pool.submit(
+                                    _compress_block,
+                                    ta, tw, th, samples, out_dtype,
+                                    bytes_per_sample, pred_int, comp_tag,
+                                    compression_level, max_z_error)
+                                for ta in seg_tile_arrs
+                            ]
+                            seg_compressed = [
+                                fut.result() for fut in futures]
+
+                        # Sequential file write to preserve on-disk tile order
+                        for compressed in seg_compressed:
                             actual_offsets.append(current_offset)
                             actual_counts.append(len(compressed))
                             f.write(compressed)
                             current_offset += len(compressed)
 
-                        del seg_np
+                        del seg_np, seg_tile_arrs, seg_compressed
+
+                if tile_pool is not None:
+                    tile_pool.shutdown(wait=True)
             else:
                 # Strip layout
                 for i in range(n_entries):
