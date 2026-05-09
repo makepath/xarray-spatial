@@ -965,7 +965,13 @@ def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
 
     lib = _get_nvcomp()
     if lib is None:
-        # Try kvikio.nvcomp as alternative
+        # Fall back to kvikio.nvcomp. We only use DeflateManager here, so
+        # ZSTD (compression=50000) is not supported through this path --
+        # let the caller pick another decoder rather than feed ZSTD bytes
+        # into a Deflate manager (which would also strip what looks like a
+        # zlib header from a ZSTD frame).
+        if compression == 50000:
+            return None
         try:
             import kvikio.nvcomp as nvcomp
         except ImportError:
