@@ -660,8 +660,10 @@ def parse_all_ifds(data: bytes | memoryview,
         ifds.append(ifd)
         # The `seen` set catches cycles, but a crafted file can chain a
         # very long list of distinct offsets, each pointing at a small
-        # valid IFD. Cap the chain at MAX_IFDS to bound memory.
-        if len(ifds) >= MAX_IFDS:
+        # valid IFD. Cap the chain at MAX_IFDS to bound memory. A chain
+        # of exactly MAX_IFDS is allowed; only MAX_IFDS + 1 raises (same
+        # convention as MAX_IFD_ENTRY_COUNT).
+        if len(ifds) > MAX_IFDS:
             raise ValueError(
                 f"TIFF IFD chain exceeds limit (MAX_IFDS={MAX_IFDS}); "
                 f"file is malformed or attempting denial-of-service"

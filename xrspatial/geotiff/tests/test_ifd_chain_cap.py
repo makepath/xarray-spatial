@@ -71,23 +71,24 @@ class TestIFDChainCap:
             parse_all_ifds(data, header)
 
     def test_chain_at_boundary_passes(self):
-        """MAX_IFDS - 1 is the largest accepted chain; MAX_IFDS rejects.
+        """MAX_IFDS is the largest accepted chain; MAX_IFDS + 1 rejects.
 
-        Convention: ``parse_all_ifds`` raises once ``len(ifds) >= MAX_IFDS``
-        after appending, so a chain of length exactly MAX_IFDS triggers
-        the error. Anything strictly below the cap parses cleanly.
+        Convention: ``parse_all_ifds`` raises once ``len(ifds) > MAX_IFDS``
+        after appending. Matches the ``> MAX_IFD_ENTRY_COUNT`` pattern
+        used elsewhere in this module so "MAX = N" reads naturally as
+        "up to and including N is allowed".
         """
-        # MAX_IFDS - 1 IFDs: passes, returns all of them.
-        data_under = _build_chained_ifd_bytes(MAX_IFDS - 1)
-        header_under = parse_header(data_under)
-        ifds_under = parse_all_ifds(data_under, header_under)
-        assert len(ifds_under) == MAX_IFDS - 1
-
-        # MAX_IFDS IFDs: rejected (cap hit on the MAX_IFDS-th append).
+        # MAX_IFDS IFDs: passes, returns all of them.
         data_at = _build_chained_ifd_bytes(MAX_IFDS)
         header_at = parse_header(data_at)
+        ifds_at = parse_all_ifds(data_at, header_at)
+        assert len(ifds_at) == MAX_IFDS
+
+        # MAX_IFDS + 1 IFDs: rejected.
+        data_over = _build_chained_ifd_bytes(MAX_IFDS + 1)
+        header_over = parse_header(data_over)
         with pytest.raises(ValueError, match=str(MAX_IFDS)):
-            parse_all_ifds(data_at, header_at)
+            parse_all_ifds(data_over, header_over)
 
     def test_error_message_mentions_dos_and_limit(self):
         data = _build_chained_ifd_bytes(MAX_IFDS + 5)
