@@ -535,6 +535,13 @@ def _resolve_masked_fill(nodata_str: str | None, dtype: np.dtype):
     rasters with no GDAL_NODATA tag still benefit from NaN propagation
     because LERC's zero fill would silently masquerade as a real
     measurement at z == 0.
+
+    Note: integer dtypes with no GDAL_NODATA tag fall back to ``0``,
+    which is the same value LERC zero-fills masked pixels with -- in
+    that case the mask application is intentionally a no-op.  We avoid
+    inventing an integer sentinel (e.g. iinfo.max) because doing so
+    would silently change pixel values for files that never declared
+    one, breaking downstream consumers that key off the original data.
     """
     if nodata_str is not None:
         try:
@@ -568,6 +575,14 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
         once in this tag and each tile is a JPEG fragment that depends on
         them; the JPEG decoder splices the tables in before handing the
         tile to libjpeg. Ignored for non-JPEG compressions.
+    masked_fill : scalar or None
+        Fill value written into pixels that the LERC valid-mask flags as
+        invalid.  Only consulted for ``compression == COMPRESSION_LERC``
+        when the decoder returns a non-trivial mask; ignored for every
+        other codec.  Callers should compute it once per IFD via
+        :func:`_resolve_masked_fill` (typically NaN for float dtypes or
+        the parsed ``GDAL_NODATA`` sentinel).  When ``None``, masked
+        pixels are left at LERC's zero fill.
 
     Returns an array shaped (height, width) or (height, width, samples).
     """
