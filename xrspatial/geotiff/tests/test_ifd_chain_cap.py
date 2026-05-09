@@ -16,7 +16,6 @@ import pytest
 from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff._header import (
     MAX_IFDS,
-    TAG_IMAGE_LENGTH,
     TAG_IMAGE_WIDTH,
     parse_all_ifds,
     parse_header,
@@ -72,11 +71,11 @@ class TestIFDChainCap:
             parse_all_ifds(data, header)
 
     def test_chain_at_boundary_passes(self):
-        """Exactly MAX_IFDS IFDs is allowed; MAX_IFDS + 1 is rejected.
+        """MAX_IFDS - 1 is the largest accepted chain; MAX_IFDS rejects.
 
-        Convention: we raise once ``len(ifds) >= MAX_IFDS`` after appending,
-        so a chain of length exactly MAX_IFDS triggers the error and
-        MAX_IFDS - 1 is the largest accepted chain.
+        Convention: ``parse_all_ifds`` raises once ``len(ifds) >= MAX_IFDS``
+        after appending, so a chain of length exactly MAX_IFDS triggers
+        the error. Anything strictly below the cap parses cleanly.
         """
         # MAX_IFDS - 1 IFDs: passes, returns all of them.
         data_under = _build_chained_ifd_bytes(MAX_IFDS - 1)
