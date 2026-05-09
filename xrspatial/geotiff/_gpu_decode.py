@@ -2054,6 +2054,14 @@ def _apply_lerc_mask_fill(out, per_tile_masks, tile_width, tile_height,
     if not invalid.any():
         return out
 
+    # Account for the boolean mask buffer up front so a borderline-OK
+    # decode doesn't tip into CUDA OOM on the mask transfer. Boolean
+    # indexing on cupy materialises a temporary index array (typically
+    # int64 of length sum(invalid)); cap that at the worst case of
+    # one int64 per pixel so the budget covers both buffers.
+    _check_gpu_memory(invalid.nbytes, what="LERC valid-mask buffer")
+    _check_gpu_memory(invalid.size * 8, what="LERC mask index buffer")
+
     d_invalid = cupy.asarray(invalid)
     if out.ndim == 3:
         # Broadcast (H, W) mask across the sample axis.
