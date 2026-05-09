@@ -103,12 +103,18 @@ def _build_tiff_with_strip(strip_bytes: bytes, *, compression: int,
 # Codec-level direct tests
 # ---------------------------------------------------------------------------
 
+# Direct-codec bomb size: 4 MiB of zeros, well above the 1 KiB cap used
+# in those tests but small enough to keep CI host allocations under
+# control. 4 MiB / 1 KiB ~ 4000:1 is still bomb-shaped territory; the
+# cap fires the moment decoded > cap.
+_DIRECT_BOMB_BYTES = 4 * 1024 * 1024
+
+
 class TestCodecDirect:
     """Exercise the codec functions directly with bomb payloads."""
 
     def test_deflate_bomb_raises(self):
-        # 100 MiB of zeros compresses to ~100 KiB; the cap is 1 KiB.
-        big = b'\x00' * (100 * 1024 * 1024)
+        big = b'\x00' * _DIRECT_BOMB_BYTES
         comp = zlib.compress(big, 9)
         with pytest.raises(ValueError, match="exceed"):
             deflate_decompress(comp, expected_size=1024)
@@ -119,9 +125,23 @@ class TestCodecDirect:
         out = deflate_decompress(comp, expected_size=len(data))
         assert out == data
 
+    def test_deflate_no_cap_when_expected_size_zero(self):
+        """Backward-compat: ``expected_size=0`` (default) disables the cap.
+
+        Callers that haven't been updated to supply a size must keep
+        getting the unbounded library decode -- otherwise a default
+        cap would silently break them. Round-tripping data larger than
+        any plausible cap proves the disable path is intact.
+        """
+        data = b'A' * (256 * 1024)  # 256 KiB, well above any cap default
+        comp = zlib.compress(data, 9)
+        out = deflate_decompress(comp)  # no expected_size kwarg
+        assert out == data
+
     def test_packbits_bomb_raises(self):
         # 0x81 0x00 = "repeat next byte 128 times".  Repeated 1M times this
-        # decodes to 128 MiB of zeros from a 2 MiB input.
+        # would decode to 128 MiB of zeros from a 2 MiB input -- the cap
+        # stops the decoder long before the full 128 MiB ever materialises.
         bomb = b'\x81\x00' * (1024 * 1024)
         with pytest.raises(ValueError, match="exceed"):
             packbits_decompress(bomb, expected_size=1024)
@@ -132,12 +152,19 @@ class TestCodecDirect:
         out = packbits_decompress(data, expected_size=4)
         assert out == b'ABCD'
 
+    def test_packbits_no_cap_when_expected_size_zero(self):
+        # Same literal-run pattern, no expected_size argument: the
+        # backward-compat path must skip the cap and decode in full.
+        data = b'\x03ABCD' * 1024
+        out = packbits_decompress(data)
+        assert out == b'ABCD' * 1024
+
 
 @pytest.mark.skipif(not _HAS_ZSTD, reason="zstandard not installed")
 class TestZstdDirect:
     def test_zstd_bomb_raises(self):
         import zstandard
-        big = b'\x00' * (100 * 1024 * 1024)
+        big = b'\x00' * _DIRECT_BOMB_BYTES
         comp = zstandard.ZstdCompressor().compress(big)
         with pytest.raises(ValueError, match="exceed"):
             zstd_decompress(comp, expected_size=1024)
@@ -149,12 +176,19 @@ class TestZstdDirect:
         out = zstd_decompress(comp, expected_size=len(data))
         assert out == data
 
+    def test_zstd_no_cap_when_expected_size_zero(self):
+        import zstandard
+        data = b'A' * (256 * 1024)
+        comp = zstandard.ZstdCompressor().compress(data)
+        out = zstd_decompress(comp)
+        assert out == data
+
 
 @pytest.mark.skipif(not _HAS_LZ4, reason="lz4 not installed")
 class TestLz4Direct:
     def test_lz4_bomb_raises(self):
         import lz4.frame
-        big = b'\x00' * (100 * 1024 * 1024)
+        big = b'\x00' * _DIRECT_BOMB_BYTES
         comp = lz4.frame.compress(big)
         with pytest.raises(ValueError, match="exceed"):
             lz4_decompress(comp, expected_size=1024)
@@ -164,6 +198,13 @@ class TestLz4Direct:
         data = b'A' * 4096
         comp = lz4.frame.compress(data)
         out = lz4_decompress(comp, expected_size=len(data))
+        assert out == data
+
+    def test_lz4_no_cap_when_expected_size_zero(self):
+        import lz4.frame
+        data = b'A' * (256 * 1024)
+        comp = lz4.frame.compress(data)
+        out = lz4_decompress(comp)
         assert out == data
 
 
