@@ -15,6 +15,25 @@ from ._dtypes import (
     UNDEFINED,
 )
 
+# Caps for IFD entries that aren't pixel-data offset or byte-count
+# arrays. Pixel-data arrays (TileOffsets, StripOffsets, etc.) scale with
+# image dimensions and are exempt; metadata tags (DateTime, Software,
+# ImageDescription, GeoKeys, ColorMap when treated as pixel data, etc.)
+# should never come close to either bound. Two caps are enforced:
+#
+# - MAX_IFD_ENTRY_COUNT bounds the *number of elements* the parser will
+#   allocate as a Python tuple. struct.unpack_from of N items produces a
+#   tuple of N PyLong objects; even at small per-element byte sizes,
+#   the heap cost is dominated by the tuple, not the bytes.
+# - MAX_IFD_ENTRY_BYTES bounds the *value range read from the file*.
+#   This catches large-itemsize tags (DOUBLE = 8 bytes) where the count
+#   alone is misleading.
+#
+# Together they bound a single malformed entry's worst-case heap impact
+# to the lower of (~tens of MB tuple) and (1 MB raw bytes read).
+MAX_IFD_ENTRY_COUNT = 100_000
+MAX_IFD_ENTRY_BYTES = 1 << 18  # 256 KiB
+
 # Well-known TIFF tag IDs
 TAG_NEW_SUBFILE_TYPE = 254
 TAG_IMAGE_WIDTH = 256
@@ -451,6 +470,17 @@ def parse_ifd(data: bytes | memoryview, offset: int,
     inline_max = 8 if is_big else 4
     entries = {}
 
+    # Tags whose `count` legitimately scales with image size (one entry per
+    # strip / tile / colormap slot). These are exempt from MAX_IFD_ENTRY_COUNT.
+    pixel_array_tags = {
+        TAG_STRIP_OFFSETS,
+        TAG_STRIP_BYTE_COUNTS,
+        TAG_TILE_OFFSETS,
+        TAG_TILE_BYTE_COUNTS,
+        TAG_COLORMAP,
+    }
+    data_len = len(data)
+
     for i in range(num_entries):
         eo = entry_offset + i * entry_size
 
@@ -468,6 +498,24 @@ def parse_ifd(data: bytes | memoryview, offset: int,
         type_size = TIFF_TYPE_SIZES.get(type_id, 1)
         total_size = count * type_size
 
+        # Reject absurd counts/sizes on non-pixel tags before any
+        # allocation. Pixel-data offset/byte-count arrays may legitimately
+        # be very large for high-resolution tiled images, so they're
+        # exempt. Both element-count and byte-range caps fire here.
+        if tag not in pixel_array_tags:
+            if count > MAX_IFD_ENTRY_COUNT:
+                raise ValueError(
+                    f"IFD entry tag={tag} count={count} exceeds "
+                    f"MAX_IFD_ENTRY_COUNT={MAX_IFD_ENTRY_COUNT}; refusing "
+                    f"to parse possibly malformed TIFF"
+                )
+            if total_size > MAX_IFD_ENTRY_BYTES:
+                raise ValueError(
+                    f"IFD entry tag={tag} value size {total_size} bytes "
+                    f"exceeds MAX_IFD_ENTRY_BYTES={MAX_IFD_ENTRY_BYTES}; "
+                    f"refusing to parse possibly malformed TIFF"
+                )
+
         if total_size <= inline_max:
             value = _read_value(data, value_area_offset, type_id, count, bo)
         else:
@@ -475,6 +523,16 @@ def parse_ifd(data: bytes | memoryview, offset: int,
                 ptr = struct.unpack_from(f'{bo}Q', data, value_area_offset)[0]
             else:
                 ptr = struct.unpack_from(f'{bo}I', data, value_area_offset)[0]
+            # Bound-check the value range against file length before
+            # _read_value runs. ptr and total_size are both >= 0 (ptr is
+            # an unsigned uint32/uint64, total_size is count*type_size),
+            # so we only need the upper bound.
+            if ptr + total_size > data_len:
+                raise ValueError(
+                    f"IFD entry tag={tag} value range "
+                    f"[{ptr}, {ptr + total_size}) exceeds file length "
+                    f"{data_len}"
+                )
             value = _read_value(data, ptr, type_id, count, bo)
 
         entries[tag] = IFDEntry(tag=tag, type_id=type_id, count=count, value=value)
