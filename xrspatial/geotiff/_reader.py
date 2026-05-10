@@ -1340,12 +1340,13 @@ def _fetch_decode_cog_http_tiles(
     # array are skipped here so the fetch list stays exactly aligned with
     # the placements list.
     #
-    # Each tile's compressed size is bounded against MAX_TILE_BYTES BEFORE
-    # the fetch list is built. A crafted COG can claim arbitrarily large
-    # TileByteCounts; without this guard the HTTP layer would issue a
-    # Range request sized by the attacker's value (issue #1536). The cap
-    # is overridable via XRSPATIAL_COG_MAX_TILE_BYTES; the local-mmap
-    # path is naturally bounded by file size and does not need this check.
+    # Each tile's compressed size is checked against the cap returned by
+    # _max_tile_bytes_from_env() (default MAX_TILE_BYTES_DEFAULT, 256 MiB)
+    # before the fetch list is built. A crafted COG can claim arbitrarily
+    # large TileByteCounts; without this guard the HTTP layer would issue
+    # a Range request sized by the attacker's value (issue #1536). The cap
+    # is overridable via XRSPATIAL_COG_MAX_TILE_BYTES; the local-mmap path
+    # is naturally bounded by file size and does not need this check.
     max_tile_bytes = _max_tile_bytes_from_env()
     fetch_ranges: list[tuple[int, int]] = []
     placements: list[tuple[int, int]] = []  # (tr, tc) per fetched tile

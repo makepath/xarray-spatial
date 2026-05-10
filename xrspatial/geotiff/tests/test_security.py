@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import struct
 import tempfile
+import threading
 
 import numpy as np
 import pytest
@@ -528,8 +529,6 @@ class TestTileLayoutValidation:
 # The local-mmap path is naturally bounded by file size, so these tests
 # only exercise the HTTP path through a mock _HTTPSource.
 # ---------------------------------------------------------------------------
-
-import threading
 
 
 def _patch_tile_byte_counts(data: bytearray, value: int) -> None:
