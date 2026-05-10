@@ -563,6 +563,41 @@ def _is_gpu_data(data) -> bool:
     return isinstance(data, _cupy_type)
 
 
+def _apply_nodata_mask_gpu(arr_gpu, nodata):
+    """Replace nodata sentinel values with NaN on a CuPy array.
+
+    Mirrors the CPU eager path in :func:`open_geotiff` (lines around the
+    ``# Apply nodata mask`` comment). Float arrays get NaN substituted in
+    place of the sentinel; integer arrays are promoted to float64 with NaN
+    where the sentinel was. NaN nodata on a float array is a no-op (the
+    sentinel already matches NaN-aware code).
+
+    Returns the (possibly promoted, possibly nodata-masked) CuPy array.
+    The caller is responsible for setting ``attrs['nodata']`` so the
+    sentinel is still discoverable downstream.
+    """
+    import cupy
+
+    if nodata is None:
+        return arr_gpu
+    arr_dtype = np.dtype(str(arr_gpu.dtype))
+    if arr_dtype.kind == 'f':
+        if not np.isnan(nodata):
+            sentinel = arr_dtype.type(nodata)
+            arr_gpu = cupy.where(arr_gpu == sentinel,
+                                 arr_dtype.type('nan'), arr_gpu)
+        return arr_gpu
+    if arr_dtype.kind in ('u', 'i'):
+        nodata_int = int(nodata)
+        sentinel = arr_dtype.type(nodata_int)
+        mask = arr_gpu == sentinel
+        if bool(mask.any().item()):
+            arr_gpu = arr_gpu.astype(cupy.float64)
+            arr_gpu = cupy.where(mask, cupy.float64('nan'), arr_gpu)
+        return arr_gpu
+    return arr_gpu
+
+
 _LEVEL_RANGES = {
     'deflate': (1, 9),
     'zstd': (1, 22),
@@ -1665,6 +1700,14 @@ def read_geotiff_gpu(source: str, *,
             t_tuple = _transform_tuple(geo_info)
             if t_tuple is not None:
                 attrs['transform'] = t_tuple
+            # Apply nodata mask + record sentinel so the GPU read agrees
+            # with the CPU eager path. Without this, integer rasters keep
+            # the literal sentinel value and float rasters keep the
+            # sentinel rather than NaN -- a silent backend divergence.
+            nodata = geo_info.nodata
+            if nodata is not None:
+                attrs['nodata'] = nodata
+                arr_gpu = _apply_nodata_mask_gpu(arr_gpu, nodata)
             if dtype is not None:
                 target = np.dtype(dtype)
                 _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
@@ -1866,6 +1909,16 @@ def read_geotiff_gpu(source: str, *,
                 f"({height}, {width}, {samples})"
             )
 
+    # Apply nodata mask + record sentinel so the GPU read agrees with the
+    # CPU eager path (issue #1542). Without this, integer rasters keep the
+    # literal sentinel value and float rasters keep the sentinel rather
+    # than NaN -- a silent backend divergence. Apply before the optional
+    # dtype cast so the float promotion for masked integer rasters doesn't
+    # surprise a user-supplied dtype.
+    nodata = geo_info.nodata
+    if nodata is not None:
+        arr_gpu = _apply_nodata_mask_gpu(arr_gpu, nodata)
+
     if dtype is not None:
         target = np.dtype(dtype)
         _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
@@ -1886,6 +1939,8 @@ def read_geotiff_gpu(source: str, *,
     t_tuple = _transform_tuple(geo_info)
     if t_tuple is not None:
         attrs['transform'] = t_tuple
+    if nodata is not None:
+        attrs['nodata'] = nodata
 
     if arr_gpu.ndim == 3:
         dims = ['y', 'x', 'band']

@@ -80,7 +80,17 @@ def lerc_writer_with_mask(monkeypatch):
 
 
 def _read_cpu_gpu(path):
-    """Read *path* with both readers and return ``(cpu_array, gpu_host_array)``."""
+    """Read *path* with both readers and return ``(cpu_array, gpu_host_array)``.
+
+    Uses the low-level ``read_to_array`` for CPU so that nodata sentinels
+    stay as the literal value (this module checks LERC mask preservation,
+    not the higher-level NaN promotion that ``open_geotiff`` performs).
+
+    The GPU reader (``read_geotiff_gpu``) applies the same nodata masking
+    that ``open_geotiff`` does (PR #1542), so its output uses NaN where
+    the sentinel was. Callers that want a bit-for-bit comparison should
+    pass ``raw_gpu=True`` to skip the high-level masking on the GPU side.
+    """
     from xrspatial.geotiff import read_geotiff_gpu
     from xrspatial.geotiff._reader import read_to_array
 
@@ -88,6 +98,17 @@ def _read_cpu_gpu(path):
     gpu_da = read_geotiff_gpu(path, gpu='strict')
     gpu_host = gpu_da.data.get()
     return cpu, gpu_host
+
+
+def _restore_sentinel(arr, nodata):
+    """Replace NaN positions in *arr* with *nodata* so high-level GPU
+    reads compare bit-exactly against low-level CPU reads (which keep
+    the sentinel value verbatim)."""
+    if nodata is None or arr.dtype.kind != 'f' or np.isnan(nodata):
+        return arr
+    out = arr.copy()
+    out[np.isnan(out)] = arr.dtype.type(nodata)
+    return out
 
 
 @_gpu_only
@@ -141,9 +162,15 @@ class TestGpuLercValidMask:
               nodata=-9999.0)
 
         cpu, gpu = _read_cpu_gpu(path)
-        np.testing.assert_array_equal(cpu, gpu)
+        # ``read_geotiff_gpu`` applies the high-level nodata mask (#1542),
+        # so masked pixels come back as NaN. ``read_to_array`` keeps the
+        # sentinel verbatim. Restore the sentinel on the GPU side so the
+        # bit-for-bit comparison still pins LERC mask preservation.
+        gpu_with_sentinel = _restore_sentinel(gpu, -9999.0)
+        np.testing.assert_array_equal(cpu, gpu_with_sentinel)
         for (r, c) in invalid_positions:
-            assert gpu[r, c] == np.float32(-9999.0)
+            assert np.isnan(gpu[r, c])
+            assert gpu_with_sentinel[r, c] == np.float32(-9999.0)
 
     def test_uint16_sentinel_nodata(self, tmp_path, lerc_writer_with_mask):
         """Uint16 LERC + sentinel nodata (65535): GPU matches CPU."""
@@ -164,9 +191,20 @@ class TestGpuLercValidMask:
               nodata=65535)
 
         cpu, gpu = _read_cpu_gpu(path)
-        np.testing.assert_array_equal(cpu, gpu)
+        # ``read_geotiff_gpu`` applies the high-level nodata mask on
+        # integer rasters (#1542): the array is promoted to float64 with
+        # NaN where the sentinel was. ``read_to_array`` keeps uint16 with
+        # the sentinel literal. Restore the sentinel + dtype on the GPU
+        # side so the bit-for-bit comparison still pins LERC mask
+        # preservation. Replace NaN before the uint16 cast to avoid
+        # numpy's "invalid value encountered in cast" warning.
+        assert gpu.dtype == np.float64
+        gpu_no_nan = np.where(np.isnan(gpu), 65535.0, gpu)
+        gpu_u16 = gpu_no_nan.astype(np.uint16)
+        np.testing.assert_array_equal(cpu, gpu_u16)
         for (r, c) in invalid_positions:
-            assert gpu[r, c] == np.uint16(65535)
+            assert np.isnan(gpu[r, c])
+            assert gpu_u16[r, c] == np.uint16(65535)
 
     def test_no_mask_roundtrip_bitexact(self, tmp_path):
         """All-valid LERC (no encoded mask): GPU and CPU agree bit-exact."""

@@ -105,10 +105,15 @@ class TestSparseTilesGPU:
         _write_sparse_tiled(path, nodata=0)
 
         arr = open_geotiff(path, gpu=True)
-        # GPU read returns raw values (no nodata->NaN promotion); sparse
-        # tiles become the nodata sentinel (0 here).
+        # GPU read now applies the high-level nodata mask (#1542): the
+        # source uint16 raster is promoted to float64 and sentinel
+        # values become NaN, matching the CPU eager path.
         host = arr.data.get()
-        assert host.dtype == np.uint16
-        assert host[:64, :64].sum() == 64 * 64 * 100
-        assert host[:64, 64:].sum() == 0
-        assert host[64:, :].sum() == 0
+        assert host.dtype == np.float64
+        assert arr.attrs.get('nodata') == 0.0
+        # Top-left tile holds the real data (100 in every cell).
+        np.testing.assert_array_equal(host[:64, :64],
+                                      np.full((64, 64), 100.0))
+        # Sparse tiles + the bottom row of tiles become NaN via the mask.
+        assert np.all(np.isnan(host[:64, 64:]))
+        assert np.all(np.isnan(host[64:, :]))
