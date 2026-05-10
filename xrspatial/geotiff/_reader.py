@@ -53,6 +53,28 @@ def _check_dimensions(width, height, samples, max_pixels):
         )
 
 
+#: Default per-tile compressed-byte cap for HTTP COG reads. A crafted
+#: ``TileByteCounts`` entry can declare arbitrarily many bytes, and the
+#: HTTP path then tries to fetch and buffer that many bytes from the
+#: server before it ever decompresses. 256 MiB tolerates legitimate
+#: large tiles (RGB JPEG2000 at very high resolution can land in the
+#: tens of MB) while keeping the fetch bounded. Override via the
+#: ``XRSPATIAL_COG_MAX_TILE_BYTES`` environment variable.
+MAX_TILE_BYTES_DEFAULT = 256 << 20  # 256 MiB
+
+
+def _max_tile_bytes_from_env() -> int:
+    """Read the per-tile byte cap from the environment, or fall back to the default."""
+    raw = _os_module.environ.get('XRSPATIAL_COG_MAX_TILE_BYTES')
+    if raw is None:
+        return MAX_TILE_BYTES_DEFAULT
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return MAX_TILE_BYTES_DEFAULT
+    return max(1, val)
+
+
 # ---------------------------------------------------------------------------
 # Data source abstraction
 # ---------------------------------------------------------------------------
@@ -1317,6 +1339,15 @@ def _fetch_decode_cog_http_tiles(
     # Empty tiles (byte_count == 0) and any tile_idx beyond the offsets
     # array are skipped here so the fetch list stays exactly aligned with
     # the placements list.
+    #
+    # Each tile's compressed size is checked against the cap returned by
+    # _max_tile_bytes_from_env() (default MAX_TILE_BYTES_DEFAULT, 256 MiB)
+    # before the fetch list is built. A crafted COG can claim arbitrarily
+    # large TileByteCounts; without this guard the HTTP layer would issue
+    # a Range request sized by the attacker's value (issue #1536). The cap
+    # is overridable via XRSPATIAL_COG_MAX_TILE_BYTES; the local-mmap path
+    # is naturally bounded by file size and does not need this check.
+    max_tile_bytes = _max_tile_bytes_from_env()
     fetch_ranges: list[tuple[int, int]] = []
     placements: list[tuple[int, int]] = []  # (tr, tc) per fetched tile
     for tr in range(tile_row_start, tile_row_end):
@@ -1328,6 +1359,15 @@ def _fetch_decode_cog_http_tiles(
             bc = byte_counts[tile_idx]
             if bc == 0:
                 continue
+            if bc > max_tile_bytes:
+                raise ValueError(
+                    f"TIFF tile {tile_idx} declares "
+                    f"TileByteCount={bc:,} bytes, which exceeds the HTTP "
+                    f"COG safety cap of {max_tile_bytes:,} bytes. The "
+                    f"file is malformed or attempting denial-of-service. "
+                    f"Override via XRSPATIAL_COG_MAX_TILE_BYTES if this "
+                    f"file is legitimate."
+                )
             fetch_ranges.append((off, bc))
             placements.append((tr, tc))
 
