@@ -30,8 +30,23 @@ from xrspatial.geotiff._compression import (
 )
 from xrspatial.geotiff._reader import read_to_array
 
-_HAS_ZSTD = importlib.util.find_spec("zstandard") is not None
-_HAS_LZ4 = importlib.util.find_spec("lz4.frame") is not None
+def _module_available(name: str) -> bool:
+    """True iff ``import name`` would succeed.
+
+    ``importlib.util.find_spec`` on a submodule (e.g. ``lz4.frame``) imports
+    the parent package to resolve the spec, so it raises ``ModuleNotFoundError``
+    rather than returning ``None`` when the parent itself is missing. Wrap
+    the lookup in try/except so an absent optional dependency cleanly turns
+    into ``False`` regardless of dotted depth.
+    """
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+_HAS_ZSTD = _module_available("zstandard")
+_HAS_LZ4 = _module_available("lz4.frame")
 
 
 # ---------------------------------------------------------------------------
