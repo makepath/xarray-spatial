@@ -509,13 +509,18 @@ def open_geotiff(source, *, dtype=None, window=None,
                 attrs['colormap'] = _tv
                 break
 
-    # Apply nodata mask: replace nodata sentinel values with NaN
+    # Apply nodata mask: replace nodata sentinel values with NaN.
+    # ``arr`` came from ``read_to_array``, which returns a freshly
+    # allocated buffer from ``_read_tiles`` / ``_read_strips`` (and is
+    # ``np.ascontiguousarray``-wrapped if the orientation tag triggered
+    # a remap). Nothing else holds a reference here, so the in-place
+    # write is safe; an extra ``arr.copy()`` would just double peak
+    # memory for a multi-MB raster.
     nodata = geo_info.nodata
     if nodata is not None:
         attrs['nodata'] = nodata
         if arr.dtype.kind == 'f':
             if not np.isnan(nodata):
-                arr = arr.copy()
                 arr[arr == arr.dtype.type(nodata)] = np.nan
         elif arr.dtype.kind in ('u', 'i'):
             # Integer arrays: convert to float to represent NaN
@@ -984,6 +989,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
 
     # Restore NaN pixels to the nodata sentinel value so the written file
     # has sentinel values matching the GDAL_NODATA tag.
+    #
+    # The defensive ``arr.copy()`` here is intentional: ``arr`` may be
+    # ``np.asarray(raw)`` of a caller-owned numpy DataArray (a view,
+    # not a copy) or ``np.moveaxis(arr, 0, -1)`` of one (also a view).
+    # Mutating without a copy would corrupt the user's input buffer.
     if nodata is not None and arr.dtype.kind == 'f' and not np.isnan(nodata):
         nan_mask = np.isnan(arr)
         if nan_mask.any():
@@ -1043,7 +1053,12 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
     elif arr.dtype == np.bool_:
         arr = arr.astype(np.uint8)
 
-    # Restore NaN to nodata sentinel
+    # Restore NaN to nodata sentinel.
+    #
+    # The defensive ``arr.copy()`` here is intentional: ``arr`` came
+    # from ``np.asarray(chunk_data)`` where ``chunk_data`` may be a
+    # caller-owned numpy buffer. Mutating without a copy would corrupt
+    # the user's input.
     if nodata is not None and arr.dtype.kind == 'f' and not np.isnan(nodata):
         nan_mask = np.isnan(arr)
         if nan_mask.any():
@@ -1444,8 +1459,12 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                                    overview_level=overview_level,
                                    band=band)
         if nodata is not None:
+            # ``arr`` was just decoded by ``_fetch_decode_cog_http_tiles``
+            # or ``read_to_array``; both return freshly-allocated buffers
+            # that nothing else references, so the in-place sentinel
+            # rewrite is safe. Skip the defensive ``arr.copy()`` to
+            # avoid a peak-memory doubler on every dask chunk.
             if arr.dtype.kind == 'f' and not np.isnan(nodata):
-                arr = arr.copy()
                 arr[arr == arr.dtype.type(nodata)] = np.nan
             elif arr.dtype.kind in ('u', 'i'):
                 mask = arr == arr.dtype.type(int(nodata))
