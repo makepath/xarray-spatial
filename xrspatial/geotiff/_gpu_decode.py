@@ -1180,10 +1180,18 @@ def _get_nvjpeg():
 # nvJPEG status codes
 _NVJPEG_STATUS_SUCCESS = 0
 
-# nvJPEG output formats
-_NVJPEG_OUTPUT_RGB = 2       # planar RGB
-_NVJPEG_OUTPUT_RGBI = 3      # interleaved RGB (R0G0B0 R1G1B1 ...)
-_NVJPEG_OUTPUT_UNCHANGED = 5  # native colorspace
+# nvJPEG output formats. Values must match ``nvjpegOutputFormat_t`` in
+# ``nvjpeg.h`` (CUDA Toolkit). They were previously off-by-two, which made
+# ``_NVJPEG_OUTPUT_RGBI`` resolve to the SDK's ``NVJPEG_OUTPUT_RGB`` (planar)
+# constant. nvJPEG then dereferenced ``channel[1]``/``channel[2]`` of the
+# output struct, both of which the wrappers below set to NULL for
+# interleaved layouts, producing an out-of-bounds GPU write inside
+# ``ycbcr_to_format_kernel_roi`` and a sticky ``cudaErrorIllegalAddress``
+# (issue #1549).
+_NVJPEG_OUTPUT_UNCHANGED = 0  # source colorspace (channel[0] only for Y)
+_NVJPEG_OUTPUT_Y = 2         # luma plane only
+_NVJPEG_OUTPUT_RGB = 3       # planar RGB
+_NVJPEG_OUTPUT_RGBI = 5      # interleaved RGB (R0G0B0 R1G1B1 ...)
 
 # nvJPEG backend
 _NVJPEG_BACKEND_DEFAULT = 0
@@ -1274,8 +1282,14 @@ def _try_nvjpeg_batch_decode(compressed_tiles, tile_width, tile_height,
                     )
                     if status != _NVJPEG_STATUS_SUCCESS:
                         return None
+                    # nvjpegDecode is asynchronous; the shared jpeg_state
+                    # must not be reused for the next tile until this
+                    # decode is complete.  Without this sync the next
+                    # iteration overwrites jpeg_state mid-decode and the
+                    # output is non-deterministic (tile contents drift
+                    # between runs even when tile_data is identical).
+                    cupy.cuda.Device().synchronize()
 
-                cupy.cuda.Device().synchronize()
                 return d_all
 
             finally:
