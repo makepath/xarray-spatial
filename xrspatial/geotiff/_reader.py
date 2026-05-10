@@ -1085,10 +1085,13 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     # outweigh the thread-pool overhead. Uncompressed multi-tile reads also
     # benefit because numpy frombuffer + slice copies aren't free at large
     # tile sizes. Threshold (~64K decoded pixels per tile) was picked to
-    # avoid pool overhead on small 64x64 / 128x128 tile reads.
+    # avoid pool overhead on small 64x64 / 128x128 tile reads. The bound
+    # is inclusive so the default tile_size=256 (256*256 == 64*1024) lands
+    # on the parallel path -- a strict `>` excluded the most common tile
+    # size in practice (issue #1551).
     n_tiles = len(tile_jobs)
     tile_pixels = tw * th
-    use_parallel = (n_tiles > 1 and tile_pixels > 64 * 1024)
+    use_parallel = (n_tiles > 1 and tile_pixels >= 64 * 1024)
 
     def _decode_one(job):
         band_idx, tr, tc, tile_idx, tile_samples = job
