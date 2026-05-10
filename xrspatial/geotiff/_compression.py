@@ -696,6 +696,15 @@ def _fp_predictor_encode_row(row_data, width, bps):
         row_data[i] = np.uint8((np.int32(row_data[i]) - np.int32(row_data[i - 1])) & 0xFF)
 
 
+@ngjit
+def _fp_predictor_encode_rows(data, width, height, bps):
+    """Dispatch per-row encode from Numba, avoiding Python loop overhead."""
+    row_len = width * bps
+    for row in range(height):
+        start = row * row_len
+        _fp_predictor_encode_row(data[start:start + row_len], width, bps)
+
+
 def fp_predictor_encode(data: np.ndarray, width: int, height: int,
                         bytes_per_sample: int) -> np.ndarray:
     """Apply floating-point predictor (predictor=3).
@@ -715,10 +724,7 @@ def fp_predictor_encode(data: np.ndarray, width: int, height: int,
         Encoded array.
     """
     buf = np.ascontiguousarray(data)
-    row_len = width * bytes_per_sample
-    for row in range(height):
-        start = row * row_len
-        _fp_predictor_encode_row(buf[start:start + row_len], width, bytes_per_sample)
+    _fp_predictor_encode_rows(buf, width, height, bytes_per_sample)
     return buf
 
 
