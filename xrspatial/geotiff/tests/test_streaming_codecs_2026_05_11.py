@@ -9,8 +9,10 @@ dask-streaming-write coverage before today. This file pins:
 * Dask streaming write + LERC (lossless and lossy ``max_z_error``)
   produces identical output to the eager writer.
 * Dask streaming write + LZ4 round-trips a float32 raster.
-* Dask streaming write + packbits round-trips a uint8 raster (the only
-  dtype packbits supports in this writer).
+* Dask streaming write + packbits round-trips a uint8 raster. packbits
+  operates on the raw byte stream so any dtype is technically supported;
+  uint8 is the variant exercised here and the one packbits was designed
+  for (run-length encoding of byte runs).
 * COG output with ``overview_resampling='cubic'`` round-trips through
   scipy.ndimage.zoom (the only overview method that takes a separate
   code path in ``_block_reduce_2d``).
@@ -139,7 +141,7 @@ class TestStreamingLz4:
 
 
 # ---------------------------------------------------------------------------
-# packbits: round-trip on uint8 (the only supported dtype)
+# packbits: round-trip on uint8 (the dtype packbits is designed for)
 # ---------------------------------------------------------------------------
 
 class TestStreamingPackbits:
