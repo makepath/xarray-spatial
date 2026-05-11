@@ -199,15 +199,34 @@ def _build_gdal_metadata_xml(meta: dict) -> str:
 
     Accepts the same dict format that _parse_gdal_metadata produces:
     string keys for dataset-level, (name, band) tuples for per-band.
+
+    Every caller-supplied text and attribute slot is routed through
+    ``xml.sax.saxutils.escape`` / ``quoteattr`` so a key or value
+    containing XML special characters (``& < > " '``) cannot break
+    the document or inject extra elements. Sample indices are emitted
+    from an ``int(...)`` cast and need no escaping. See issue #1614.
     """
+    from xml.sax.saxutils import escape as _xml_escape, quoteattr as _xml_quoteattr
+
+    def _text(v) -> str:
+        if v is None:
+            return ""
+        return _xml_escape(str(v), {'"': "&quot;", "'": "&apos;"})
+
+    def _attr(v) -> str:
+        if v is None:
+            return '""'
+        return _xml_quoteattr(str(v))
+
     lines = ['<GDALMetadata>']
     for key, value in meta.items():
         if isinstance(key, tuple):
             name, sample = key
             lines.append(
-                f'  <Item name="{name}" sample="{sample}">{value}</Item>')
+                f'  <Item name={_attr(name)} sample="{int(sample)}">'
+                f'{_text(value)}</Item>')
         else:
-            lines.append(f'  <Item name="{key}">{value}</Item>')
+            lines.append(f'  <Item name={_attr(key)}>{_text(value)}</Item>')
     lines.append('</GDALMetadata>')
     return '\n'.join(lines) + '\n'
 
