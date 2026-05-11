@@ -1197,8 +1197,22 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
 def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
                        nodata, compression, compression_level,
                        tile_size, predictor, bigtiff,
-                       max_z_error: float = 0.0):
-    """Write a single tile GeoTIFF. Used by _write_vrt_tiled."""
+                       max_z_error: float = 0.0,
+                       raster_type: int = RASTER_PIXEL_IS_AREA,
+                       x_resolution=None,
+                       y_resolution=None,
+                       resolution_unit=None,
+                       gdal_metadata_xml=None,
+                       extra_tags=None):
+    """Write a single tile GeoTIFF. Used by _write_vrt_tiled.
+
+    Forwards the same rich-tag set that ``to_geotiff`` passes through to
+    ``write`` (raster_type, x/y resolution, GDAL metadata, extra tags) so
+    every per-tile file under a VRT carries the same metadata it would
+    have received from a single-file ``to_geotiff(..., out.tif)`` write.
+    Without this, ``to_geotiff(da, "out.vrt")`` silently drops everything
+    except the per-tile geo_transform / crs / nodata. See issue #1606.
+    """
     if hasattr(chunk_data, 'compute'):
         chunk_data = chunk_data.compute()
     if hasattr(chunk_data, 'get'):
@@ -1234,6 +1248,12 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
           tile_size=tile_size,
           predictor=predictor,
           compression_level=compression_level,
+          raster_type=raster_type,
+          x_resolution=x_resolution,
+          y_resolution=y_resolution,
+          resolution_unit=resolution_unit,
+          gdal_metadata_xml=gdal_metadata_xml,
+          extra_tags=extra_tags,
           bigtiff=bigtiff,
           max_z_error=max_z_error)
 
@@ -1282,6 +1302,12 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
             wkt_fallback = crs
 
     geo_transform = None
+    raster_type = RASTER_PIXEL_IS_AREA
+    x_res = None
+    y_res = None
+    res_unit = None
+    gdal_meta_xml = None
+    extra_tags_list = None
 
     if isinstance(data, xr.DataArray):
         raw = data.data
@@ -1300,10 +1326,36 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                     if epsg is None and wkt_fallback is None:
                         wkt_fallback = wkt
         if nodata is None:
-            nodata = data.attrs.get('nodata')
+            # Use the same alias-aware resolver that to_geotiff /
+            # write_geotiff_gpu apply so a rioxarray-style DataArray
+            # (``attrs['nodatavals']``) or a CF-style one
+            # (``attrs['_FillValue']``) round-trips through ``.vrt``
+            # the same way it does through ``.tif``. Before this fix
+            # the VRT path used ``attrs.get('nodata')`` directly and
+            # silently dropped both aliases (issue #1606).
+            nodata = _resolve_nodata_attr(data.attrs)
         geo_transform = _transform_from_attr(data.attrs.get('transform'))
         if geo_transform is None:
             geo_transform = _coords_to_transform(data)
+        # Pull the same rich-tag set that to_geotiff forwards to
+        # ``write`` so per-tile files under the VRT carry it too.
+        if data.attrs.get('raster_type') == 'point':
+            raster_type = RASTER_PIXEL_IS_POINT
+        gdal_meta_xml = data.attrs.get('gdal_metadata_xml')
+        if gdal_meta_xml is None:
+            gdal_meta_dict = data.attrs.get('gdal_metadata')
+            if isinstance(gdal_meta_dict, dict):
+                from ._geotags import _build_gdal_metadata_xml
+                gdal_meta_xml = _build_gdal_metadata_xml(gdal_meta_dict)
+        extra_tags_list = data.attrs.get('extra_tags')
+        extra_tags_list = _merge_friendly_extra_tags(
+            extra_tags_list, data.attrs)
+        x_res = data.attrs.get('x_resolution')
+        y_res = data.attrs.get('y_resolution')
+        unit_str = data.attrs.get('resolution_unit')
+        if unit_str is not None:
+            _unit_ids = {'none': 1, 'inch': 2, 'centimeter': 3}
+            res_unit = _unit_ids.get(str(unit_str), None)
     else:
         raw = data
 
@@ -1380,7 +1432,13 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                 task = dask.delayed(_write_single_tile)(
                     chunk_data, tile_path, tile_gt, epsg, wkt_fallback,
                     nodata, compression, compression_level,
-                    tile_size, predictor, bigtiff, max_z_error)
+                    tile_size, predictor, bigtiff, max_z_error,
+                    raster_type=raster_type,
+                    x_resolution=x_res,
+                    y_resolution=y_res,
+                    resolution_unit=res_unit,
+                    gdal_metadata_xml=gdal_meta_xml,
+                    extra_tags=extra_tags_list)
                 delayed_tasks.append(task)
             else:
                 # Numpy: slice and write directly
@@ -1389,7 +1447,13 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                 _write_single_tile(
                     chunk_data, tile_path, tile_gt, epsg, wkt_fallback,
                     nodata, compression, compression_level,
-                    tile_size, predictor, bigtiff, max_z_error)
+                    tile_size, predictor, bigtiff, max_z_error,
+                    raster_type=raster_type,
+                    x_resolution=x_res,
+                    y_resolution=y_res,
+                    resolution_unit=res_unit,
+                    gdal_metadata_xml=gdal_meta_xml,
+                    extra_tags=extra_tags_list)
 
             col_offset += chunk_w
         row_offset += chunk_h
