@@ -2162,6 +2162,22 @@ def read_geotiff_gpu(source: str, *,
         # only need to copy the post-flip geo_info back here.
         orientation = ifd.orientation
 
+        # Orientation tag (274): values 2-8 mean the stored pixel order
+        # differs from display order. A windowed read against a non-default
+        # orientation has ambiguous semantics (does the window refer to
+        # file pixels or display pixels?), so the CPU reader
+        # ``_reader.read_to_array`` rejects ``window=`` for orientation != 1.
+        # Mirror that here so the GPU path agrees with the CPU path and
+        # ``read_geotiff_dask``. Use the same error wording so the failure
+        # message is identical across backends.
+        if orientation != 1 and window is not None:
+            raise ValueError(
+                f"Orientation tag (274) is {orientation}; windowed reads "
+                f"(window=...) and dask-chunked reads (chunks=...) are not "
+                f"supported for non-default orientation. Read the full "
+                f"array first, then slice."
+            )
+
         # Validate band against the selected IFD's sample count.
         # ``samples_per_pixel`` is at least 1 for any valid TIFF; we treat
         # ``band=0`` as "first band" for single-band files too so the
@@ -2230,8 +2246,20 @@ def read_geotiff_gpu(source: str, *,
                 coords['band'] = np.arange(arr_gpu.shape[2])
             else:
                 dims = ['y', 'x']
-            return xr.DataArray(arr_gpu, dims=dims,
-                                coords=coords, name=name, attrs=attrs)
+            result = xr.DataArray(arr_gpu, dims=dims,
+                                  coords=coords, name=name, attrs=attrs)
+            # ``chunks`` was previously honoured only on the tiled path,
+            # so stripped TIFFs returned an unchunked DataArray even when
+            # the caller asked for a Dask+CuPy result. Mirror the tiled
+            # branch's chunking step so behaviour is consistent across
+            # layouts.
+            if chunks is not None:
+                if isinstance(chunks, int):
+                    chunk_dict = {'y': chunks, 'x': chunks}
+                else:
+                    chunk_dict = {'y': chunks[0], 'x': chunks[1]}
+                result = result.chunk(chunk_dict)
+            return result
 
         offsets = ifd.tile_offsets
         byte_counts = ifd.tile_byte_counts

@@ -194,3 +194,75 @@ def test_read_geotiff_gpu_band_bounds_validation(multi_band_tiff,
 
     with pytest.raises(IndexError, match="single-band file"):
         read_geotiff_gpu(single_path, band=1)
+
+
+@_gpu_only
+def test_read_geotiff_gpu_window_rejected_on_nondefault_orientation(tmp_path):
+    """Mirror the CPU reader: orientation != 1 + window= is ambiguous, raise.
+
+    ``_reader.read_to_array`` rejects this combo with a specific message;
+    the GPU path must match so backend substitutability holds. The
+    stripped branch is the easy way to write an Orientation=2 file via
+    tifffile.
+    """
+    tifffile = pytest.importorskip("tifffile")
+    from xrspatial.geotiff import read_geotiff_gpu
+
+    arr = np.arange(16 * 20, dtype=np.float32).reshape(16, 20)
+    path = tmp_path / "orient2_stripped.tif"
+    # Orientation tag 274 = 2 (top-right, horizontal flip).
+    tifffile.imwrite(
+        str(path), arr,
+        extratags=[(274, 'H', 1, 2, True)],
+    )
+
+    with pytest.raises(ValueError, match=r"Orientation tag \(274\) is 2"):
+        read_geotiff_gpu(str(path), window=(0, 0, 8, 10))
+
+
+@_gpu_only
+def test_read_geotiff_gpu_stripped_chunks_produces_dask(tmp_path):
+    """Stripped-file branch must honour ``chunks=`` like the tiled branch.
+
+    Pre-fix, the stripped branch returned the eager CuPy DataArray without
+    calling ``.chunk(...)``, silently dropping ``chunks=`` for stripped
+    TIFFs. The tiled branch already chunked correctly; this test pins
+    the parity.
+    """
+    tifffile = pytest.importorskip("tifffile")
+    import dask.array as dask_array
+    from xrspatial.geotiff import read_geotiff_gpu
+
+    arr = np.arange(16 * 20, dtype=np.float32).reshape(16, 20)
+    path = tmp_path / "stripped_chunks.tif"
+    # No ``tile=`` argument -> stripped layout. Orientation defaults to 1.
+    tifffile.imwrite(str(path), arr)
+
+    result = read_geotiff_gpu(str(path), chunks=8)
+
+    # The result should be Dask-backed; .data is a dask Array wrapping CuPy.
+    assert isinstance(result.data, dask_array.Array), \
+        f"stripped chunks=8 did not produce a dask-backed DataArray; got " \
+        f"{type(result.data).__name__}"
+    assert result.chunks == ((8, 8), (8, 8, 4))
+    # And the underlying chunks are CuPy arrays, not numpy.
+    block = result.data.blocks[0, 0].compute()
+    assert type(block).__module__.startswith("cupy"), \
+        f"expected CuPy chunk, got {type(block).__module__}"
+    np.testing.assert_array_equal(result.data.compute().get(), arr)
+
+
+@_gpu_only
+def test_read_geotiff_gpu_stripped_chunks_tuple(tmp_path):
+    """Stripped branch accepts the (rh, cw) tuple chunks spec too."""
+    tifffile = pytest.importorskip("tifffile")
+    import dask.array as dask_array
+    from xrspatial.geotiff import read_geotiff_gpu
+
+    arr = np.arange(16 * 20, dtype=np.float32).reshape(16, 20)
+    path = tmp_path / "stripped_chunks_tuple.tif"
+    tifffile.imwrite(str(path), arr)
+
+    result = read_geotiff_gpu(str(path), chunks=(4, 10))
+    assert isinstance(result.data, dask_array.Array)
+    assert result.chunks == ((4, 4, 4, 4), (10, 10))
