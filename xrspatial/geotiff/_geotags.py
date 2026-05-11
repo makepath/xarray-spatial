@@ -170,9 +170,13 @@ def _parse_gdal_metadata(xml_str: str) -> dict:
     Per-band items are stored as ``{(name, band_int): value}``.
     """
     import xml.etree.ElementTree as ET
+    from ._safe_xml import safe_fromstring
     result = {}
     try:
-        root = ET.fromstring(xml_str)
+        # GDALMetadata XML rides inside TIFF tag 42112; a crafted file
+        # can carry a billion-laughs payload there, so refuse DOCTYPEs
+        # before parsing. See issue #1579.
+        root = safe_fromstring(xml_str)
         for item in root.findall('Item'):
             name = item.get('name', '')
             sample = item.get('sample')
@@ -181,7 +185,11 @@ def _parse_gdal_metadata(xml_str: str) -> dict:
                 result[(name, int(sample))] = text
             else:
                 result[name] = text
-    except ET.ParseError:
+    except (ET.ParseError, ValueError):
+        # ValueError surfaces from safe_fromstring when the payload
+        # carries a DOCTYPE. GDALMetadata is non-essential metadata, so
+        # we silently drop it rather than failing the whole read --
+        # matches the existing ParseError fallback.
         pass
     return result
 
