@@ -2593,6 +2593,33 @@ def write_geotiff_gpu(data, path: str, *,
     samples = arr.shape[2] if arr.ndim == 3 else 1
     np_dtype = np.dtype(str(arr.dtype))  # cupy dtype -> numpy dtype
 
+    # Mirror the CPU writer's NaN-to-sentinel substitution (issue #1599).
+    # Without this step the GPU writer emits raw NaN bytes interleaved
+    # with valid data even when ``nodata=<finite>`` is supplied; the
+    # GDAL_NODATA tag still advertises the sentinel but external readers
+    # (rasterio / GDAL / QGIS) mask only on the sentinel value and
+    # therefore see the NaN pixels as valid data. The CPU writer does
+    # the equivalent rewrite at ``to_geotiff`` (lines around
+    # ``arr.copy(); arr[nan_mask] = arr.dtype.type(nodata)``); both
+    # paths must produce byte-equivalent files for the same input.
+    # We always copy before the in-place sentinel write. Some upstream
+    # branches above already produce a fresh buffer (``cupy.asarray``
+    # from numpy/dask, ``ascontiguousarray`` from the band-first
+    # moveaxis); others (a CuPy-backed DataArray taking the no-moveaxis
+    # path, or a plain CuPy positional ``data``) hand ``arr`` back as
+    # the caller's buffer. Rather than tracking provenance across that
+    # branch tree, copy unconditionally when we are about to mutate --
+    # the cost is one GPU array allocation, only on the NaN-present
+    # path, and it guarantees the CPU writer's defensive-copy semantics
+    # in every case.
+    if (nodata is not None
+            and np_dtype.kind == 'f'
+            and not np.isnan(float(nodata))):
+        nan_mask = cupy.isnan(arr)
+        if bool(nan_mask.any()):
+            arr = arr.copy()
+            arr[nan_mask] = np_dtype.type(nodata)
+
     comp_tag = _compression_tag(compression)
     pred_val = normalize_predictor(predictor, np_dtype, comp_tag)
 
