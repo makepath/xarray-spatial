@@ -1641,13 +1641,23 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
             # Translate window-relative chunk coords back to file-relative
             # coords for ``read_to_array``. ``win_r0`` / ``win_c0`` are 0
             # when no window was requested.
+            # Always thread ``target_dtype`` so each delayed chunk lands
+            # in the same dtype that the dask array declared. Without
+            # this, an integer raster with an in-range nodata sentinel
+            # would have ``effective_dtype=float64`` declared on the
+            # dask graph but per-chunk arrays only promoted when a
+            # chunk happened to contain a sentinel pixel. Dask
+            # concatenation then preallocates from the first chunk's
+            # actual dtype (uint16), silently casting later float64
+            # chunks back to int and converting their NaNs to 0. See
+            # issue #1597.
             block = da.from_delayed(
                 _delayed_read_window(source,
                                      r0 + win_r0, c0 + win_c0,
                                      r1 + win_r0, c1 + win_c0,
                                      overview_level, nodata,
                                      band_arg,
-                                     target_dtype=target_dtype if dtype is not None else None,
+                                     target_dtype=target_dtype,
                                      http_meta_key=http_meta_key,
                                      max_pixels=max_pixels),
                 shape=block_shape,
@@ -2582,6 +2592,33 @@ def write_geotiff_gpu(data, path: str, *,
     height, width = arr.shape[:2]
     samples = arr.shape[2] if arr.ndim == 3 else 1
     np_dtype = np.dtype(str(arr.dtype))  # cupy dtype -> numpy dtype
+
+    # Mirror the CPU writer's NaN-to-sentinel substitution (issue #1599).
+    # Without this step the GPU writer emits raw NaN bytes interleaved
+    # with valid data even when ``nodata=<finite>`` is supplied; the
+    # GDAL_NODATA tag still advertises the sentinel but external readers
+    # (rasterio / GDAL / QGIS) mask only on the sentinel value and
+    # therefore see the NaN pixels as valid data. The CPU writer does
+    # the equivalent rewrite at ``to_geotiff`` (lines around
+    # ``arr.copy(); arr[nan_mask] = arr.dtype.type(nodata)``); both
+    # paths must produce byte-equivalent files for the same input.
+    # We always copy before the in-place sentinel write. Some upstream
+    # branches above already produce a fresh buffer (``cupy.asarray``
+    # from numpy/dask, ``ascontiguousarray`` from the band-first
+    # moveaxis); others (a CuPy-backed DataArray taking the no-moveaxis
+    # path, or a plain CuPy positional ``data``) hand ``arr`` back as
+    # the caller's buffer. Rather than tracking provenance across that
+    # branch tree, copy unconditionally when we are about to mutate --
+    # the cost is one GPU array allocation, only on the NaN-present
+    # path, and it guarantees the CPU writer's defensive-copy semantics
+    # in every case.
+    if (nodata is not None
+            and np_dtype.kind == 'f'
+            and not np.isnan(float(nodata))):
+        nan_mask = cupy.isnan(arr)
+        if bool(nan_mask.any()):
+            arr = arr.copy()
+            arr[nan_mask] = np_dtype.type(nodata)
 
     comp_tag = _compression_tag(compression)
     pred_val = normalize_predictor(predictor, np_dtype, comp_tag)

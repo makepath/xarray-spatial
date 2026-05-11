@@ -1,3 +1,4 @@
 module,last_inspected,issue,severity_max,categories_found,notes
 geotiff,2026-05-11,1598,MEDIUM,4,"read_vrt(band=N) used vrt.bands[0].nodata for attrs and integer-promotion mask, mis-masking band N reads with per-band sentinels (#1598)."
+geotiff,2026-05-11,1597,HIGH,4;5,read_geotiff_dask dropped nodata mask when sentinel only hit non-first chunks (per-chunk dtype divergence; #1597).
 reproject,2026-05-10,1572;1573,HIGH,1;3;4,geoid_height_raster dropped input attrs and used dims[-2:] for 3D inputs (#1572). reproject/merge ignored nodatavals (rasterio convention) when rioxarray absent (#1573). Fixed in same branch.
