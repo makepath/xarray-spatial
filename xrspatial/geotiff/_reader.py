@@ -1574,7 +1574,14 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
             # rare in practice (TIFF Orientation 5-8 with a meaningful
             # ModelTransformation); warn so the user knows to verify.
             t = geo_info.transform
-            if t is not None and orientation in (2, 3, 4):
+            # Only georeferenced files have a meaningful transform to flip.
+            # Plain TIFFs with an Orientation tag but no GeoTIFF tags get
+            # their pixel buffer remapped above; their default transform
+            # is left untouched and the downstream consumer falls back to
+            # integer pixel coords.
+            if not geo_info.has_georef:
+                pass
+            elif orientation in (2, 3, 4):
                 # PixelIsPoint tiepoints are at pixel centers, so the
                 # opposite-edge pixel sits ``(N-1) * step`` away. PixelIsArea
                 # tiepoints are at pixel edges, so the opposite edge is

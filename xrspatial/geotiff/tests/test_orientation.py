@@ -394,6 +394,39 @@ def test_orient_2_3_4_no_geo_still_uses_pixel_coords(tmp_path):
         )
 
 
+def test_orient_2_3_4_no_geo_does_not_modify_transform(tmp_path):
+    """Non-georef file: transform attr stays at the default after orient 2/3/4.
+
+    Earlier draft fabricated origin/sign for the default GeoTransform on
+    un-georeferenced files because the gating only checked
+    ``transform is not None`` and the dataclass default is non-None.
+    Downstream consumers rightly fall back to integer pixel coords for
+    these files, but exposing a fake transform via attrs misleads any
+    direct attrs reader. Gate must be ``has_georef``.
+    """
+    arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
+    # Default GeoTransform on a fresh file the writer leaves untouched.
+    baseline_path = tmp_path / "orient_no_geo_baseline.tif"
+    tifffile.imwrite(
+        str(baseline_path), arr,
+        extratags=[(274, 'H', 1, 1, True)],
+    )
+    baseline_transform = open_geotiff(str(baseline_path)).attrs.get('transform')
+
+    for orientation in (2, 3, 4):
+        path = tmp_path / f"orient_no_geo_xform_{orientation}.tif"
+        tifffile.imwrite(
+            str(path), arr,
+            extratags=[(274, 'H', 1, orientation, True)],
+        )
+        da = open_geotiff(str(path))
+        assert da.attrs.get('transform') == baseline_transform, (
+            f"orient={orientation} on a non-georef file modified "
+            f"attrs['transform']: got {da.attrs.get('transform')}, "
+            f"expected baseline {baseline_transform}"
+        )
+
+
 def test_orientation_with_band_selection_returns_2d(tmp_path):
     """band= followed by an orientation transpose returns a 2D array.
 
