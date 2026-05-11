@@ -12,13 +12,14 @@ Test coverage gap sweep 2026-05-11 (pass 5) closes the Cat 3 (geometric
 edge case) and Cat 2 (NaN / Inf) gaps for the non-eager backends:
 
 * 1x1, 1xN, Nx1 reads on every backend (Cat 3 HIGH).
-* 1x1 and 1xN writes through ``write_geotiff_gpu`` (Cat 3 HIGH for
-  the GPU writer's degenerate-shape path).
+* 1x1, 1xN, and Nx1 writes through ``write_geotiff_gpu`` (Cat 3 HIGH
+  for the GPU writer's degenerate-shape path).
 * All-NaN read on GPU and dask backends (Cat 2 MEDIUM).
 * Inf / -Inf read on GPU and dask backends (Cat 2 MEDIUM).
-* NaN sentinel mask on dask read path (Cat 2 MEDIUM; the eager path
-  has it via ``test_dask_int_nodata_chunks_1597`` for integer nodata
-  but no float-NaN equivalent).
+* Finite-sentinel-to-NaN masking on dask read path for a float raster
+  (Cat 2 MEDIUM; the eager path has it via
+  ``test_dask_int_nodata_chunks_1597`` for integer nodata but no float
+  equivalent).
 """
 from __future__ import annotations
 
@@ -209,12 +210,12 @@ class TestSingleColumnRead:
 
 
 # ===========================================================================
-# Cat 3: 1x1 and 1xN writes through write_geotiff_gpu
+# Cat 3: 1x1, 1xN, and Nx1 writes through write_geotiff_gpu
 # ===========================================================================
 
 @_gpu_only
 class TestGpuWriterDegenerateShapes:
-    """``write_geotiff_gpu`` must accept 1-pixel and 1-row inputs.
+    """``write_geotiff_gpu`` must accept 1-pixel, 1-row, and 1-column inputs.
 
     The GPU writer's tile-encoding path uses an internal grid sizing
     helper that fell back to host code for shapes smaller than the
@@ -350,8 +351,8 @@ class TestInfRead:
 
 
 class TestNanSentinelDaskRead:
-    """Float raster with ``nodata=NaN`` sentinel reads consistently
-    across backends.
+    """Float raster with a finite ``nodata`` sentinel (``-9999.0``) is
+    masked to NaN consistently across backends on read.
 
     The integer-sentinel equivalent is pinned by issue #1597. The
     float path has no such per-chunk dtype divergence (the input is
