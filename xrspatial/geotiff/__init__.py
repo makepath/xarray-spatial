@@ -2394,10 +2394,26 @@ def read_vrt(source: str, *, dtype=None, window=None,
         attrs['crs_wkt'] = vrt.crs_wkt
     if vrt.raster_type == 'point':
         attrs['raster_type'] = 'point'
+    nodata = None
     if vrt.bands:
         nodata = vrt.bands[0].nodata
         if nodata is not None:
             attrs['nodata'] = nodata
+
+    # Mirror the integer-with-nodata promotion that open_geotiff /
+    # read_geotiff_dask / read_geotiff_gpu apply post-decode. The VRT
+    # internal reader NaN-masks float source arrays inline (see
+    # ``_vrt._read_data``) but leaves integer sentinels untouched. Without
+    # this branch, ``attrs['nodata']`` would be set while the array still
+    # carried the literal sentinel value, breaking the convention that
+    # downstream code follows (``attrs['nodata']`` is present iff the
+    # array has already been NaN-masked).
+    if nodata is not None and arr.dtype.kind in ('u', 'i'):
+        nodata_int = int(nodata)
+        mask = arr == arr.dtype.type(nodata_int)
+        if mask.any():
+            arr = arr.astype(np.float64)
+            arr[mask] = np.nan
 
     # Surface the source GeoTransform in the same rasterio ordering used
     # by open_geotiff: (pixel_width, 0, origin_x, 0, pixel_height, origin_y).
