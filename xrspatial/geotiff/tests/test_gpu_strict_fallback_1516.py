@@ -25,6 +25,7 @@ from __future__ import annotations
 import importlib
 import sys
 import types
+import warnings
 
 import numpy as np
 import pytest
@@ -260,8 +261,14 @@ def test_invalid_gpu_kwarg_rejected(tiled_tiff_path):
 
         path, _ = tiled_tiff_path
 
-        with pytest.raises(ValueError, match="gpu must be 'auto' or 'strict'"):
-            read_geotiff_gpu(path, gpu='loose')
+        # The kwarg was renamed to ``on_gpu_failure`` in #1560; the
+        # validation error now names the new kwarg even when callers
+        # supply the deprecated ``gpu=`` alias.
+        with pytest.raises(ValueError,
+                           match="on_gpu_failure must be 'auto' or 'strict'"):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                read_geotiff_gpu(path, gpu='loose')
     finally:
         if inserted_stub:
             _restore_cupy()
