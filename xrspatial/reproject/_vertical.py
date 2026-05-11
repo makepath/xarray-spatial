@@ -229,13 +229,18 @@ def geoid_height_raster(raster, model='EGM96'):
     ----------
     raster : xr.DataArray
         Raster with y (latitude) and x (longitude) coordinates in degrees.
+        2D or 3D. For 3D inputs (e.g. ``(y, x, band)``), the band axis is
+        dropped because the geoid undulation depends only on position.
     model : str
         Geoid model name.
 
     Returns
     -------
     xr.DataArray
-        Geoid undulation N in metres, same shape as input.
+        Geoid undulation N in metres on the same y/x grid as the input.
+        Output is always 2D. Input ``attrs`` (``crs``, ``res``,
+        ``transform``, ``_FillValue``, ``long_name``, etc.) are carried
+        forward; ``units`` and ``model`` are added on top.
     """
     import xarray as xr
 
@@ -244,21 +249,32 @@ def geoid_height_raster(raster, model='EGM96'):
     _validate_raster(raster, func_name='geoid_height_raster',
                      name='raster', ndim=(2, 3))
 
+    # Locate the y/x dims regardless of the band layout. Resolved here so
+    # 3D inputs ((y, x, band) or (band, y, x)) produce a correct 2D result.
+    from . import _find_spatial_dims
+    ydim, xdim = _find_spatial_dims(raster)
+
     data, left, top, res_x, res_y, h, w = _load_geoid(model)
 
-    y = raster.coords[raster.dims[-2]].values.astype(np.float64)
-    x = raster.coords[raster.dims[-1]].values.astype(np.float64)
+    y = raster.coords[ydim].values.astype(np.float64)
+    x = raster.coords[xdim].values.astype(np.float64)
     xx, yy = np.meshgrid(x, y)
 
     out = np.empty_like(xx)
     _interp_geoid_2d(xx, yy, out, data, left, top, res_x, res_y, h, w)
 
+    # Carry input attrs forward (crs, res, transform, _FillValue, etc.)
+    # and layer units / model on top. The output grid is identical to the
+    # input grid, so georeferencing metadata still applies.
+    out_attrs = {**raster.attrs}
+    out_attrs['units'] = 'metres'
+    out_attrs['model'] = model
+
     return xr.DataArray(
-        out, dims=raster.dims[-2:],
-        coords={raster.dims[-2]: raster.coords[raster.dims[-2]],
-                raster.dims[-1]: raster.coords[raster.dims[-1]]},
+        out, dims=(ydim, xdim),
+        coords={ydim: raster.coords[ydim], xdim: raster.coords[xdim]},
         name='geoid_undulation',
-        attrs={'units': 'metres', 'model': model},
+        attrs=out_attrs,
     )
 
 

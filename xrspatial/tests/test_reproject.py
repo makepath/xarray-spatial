@@ -2346,6 +2346,144 @@ class TestMetadataPreservation:
         result = merge([a, b], resolution=1.0)
         assert result.name == 'dem_a'
 
+    # nodatavals (rasterio convention) -- #1573 ----------------------------
+
+    def test_reproject_detects_nodata_from_nodatavals(self):
+        from xrspatial.reproject import reproject
+        # Input has nodatavals but no nodata / _FillValue. Without rioxarray
+        # in the lookup chain, reproject must still pick up the sentinel.
+        raster = xr.DataArray(
+            np.full((8, 8), -9999.0, dtype=np.float64),
+            dims=['y', 'x'],
+            coords={'y': np.linspace(5, -5, 8), 'x': np.linspace(-5, 5, 8)},
+            attrs={'crs': 'EPSG:4326', 'nodatavals': (-9999,)},
+        )
+        # Remove `nodata` key so the lookup must walk to nodatavals.
+        assert 'nodata' not in raster.attrs
+        result = reproject(raster, 'EPSG:4326', resolution=1.0)
+        assert result.attrs.get('nodata') == -9999.0
+
+    def test_reproject_refreshes_nodatavals_to_resolved_nodata(self):
+        from xrspatial.reproject import reproject
+        raster = xr.DataArray(
+            np.full((8, 8), -9999.0, dtype=np.float64),
+            dims=['y', 'x'],
+            coords={'y': np.linspace(5, -5, 8), 'x': np.linspace(-5, 5, 8)},
+            attrs={'crs': 'EPSG:4326', 'nodatavals': (-9999,)},
+        )
+        result = reproject(raster, 'EPSG:4326', resolution=1.0,
+                           nodata=np.nan)
+        # nodata key reflects user-provided sentinel
+        assert np.isnan(result.attrs['nodata'])
+        # nodatavals tuple is refreshed to match (no stale -9999)
+        nv = result.attrs['nodatavals']
+        assert isinstance(nv, tuple) and len(nv) == 1
+        assert np.isnan(nv[0])
+
+    def test_reproject_omits_nodatavals_when_input_omits(self):
+        from xrspatial.reproject import reproject
+        raster = self._raster_with_attrs()
+        assert 'nodatavals' not in raster.attrs
+        result = reproject(raster, 'EPSG:4326', resolution=0.25)
+        assert 'nodatavals' not in result.attrs
+
+    def test_merge_propagates_nodatavals(self):
+        from xrspatial.reproject import merge
+        a = xr.DataArray(
+            np.full((8, 8), -9999.0, dtype=np.float64),
+            dims=['y', 'x'],
+            coords={'y': np.linspace(5, -5, 8), 'x': np.linspace(-5, 0, 8)},
+            name='a',
+            attrs={'crs': 'EPSG:4326', 'nodatavals': (-9999,)},
+        )
+        b = xr.DataArray(
+            np.full((8, 8), -9999.0, dtype=np.float64),
+            dims=['y', 'x'],
+            coords={'y': np.linspace(5, -5, 8), 'x': np.linspace(0, 5, 8)},
+            name='b',
+            attrs={'crs': 'EPSG:4326', 'nodatavals': (-9999,)},
+        )
+        result = merge([a, b], resolution=1.0, nodata=-9999)
+        assert result.attrs['nodata'] == -9999.0
+        assert result.attrs['nodatavals'] == (-9999.0,)
+
+
+# ---------------------------------------------------------------------------
+# geoid_height_raster -- metadata propagation (#1572)
+# ---------------------------------------------------------------------------
+
+class TestGeoidHeightRasterMetadata:
+    """geoid_height_raster must preserve georef attrs and handle 3D inputs."""
+
+    def test_geoid_height_raster_carries_input_attrs(self):
+        from xrspatial.reproject import geoid_height_raster
+        raster = xr.DataArray(
+            np.zeros((4, 4)),
+            dims=['y', 'x'],
+            coords={'y': [3.0, 2.0, 1.0, 0.0], 'x': [0.0, 1.0, 2.0, 3.0]},
+            attrs={
+                'crs': 'EPSG:4326',
+                'res': (1.0, 1.0),
+                'transform': (1.0, 0.0, -0.5, 0.0, -1.0, 3.5),
+                '_FillValue': -9999.0,
+                'long_name': 'orthometric_height',
+                'scale_factor': 0.001,
+            },
+        )
+        result = geoid_height_raster(raster)
+        # Input georef attrs must survive.
+        assert result.attrs['crs'] == 'EPSG:4326'
+        assert result.attrs['res'] == (1.0, 1.0)
+        assert result.attrs['transform'] == (
+            1.0, 0.0, -0.5, 0.0, -1.0, 3.5,
+        )
+        assert result.attrs['_FillValue'] == -9999.0
+        assert result.attrs['long_name'] == 'orthometric_height'
+        assert result.attrs['scale_factor'] == 0.001
+        # The function's own attrs are layered on top.
+        assert result.attrs['units'] == 'metres'
+        assert result.attrs['model'] == 'EGM96'
+
+    def test_geoid_height_raster_3d_reduces_to_2d(self):
+        from xrspatial.reproject import geoid_height_raster
+        # 3D input with band as the trailing axis.
+        raster = xr.DataArray(
+            np.zeros((4, 4, 3)),
+            dims=['y', 'x', 'band'],
+            coords={
+                'y': [3.0, 2.0, 1.0, 0.0],
+                'x': [0.0, 1.0, 2.0, 3.0],
+                'band': [1, 2, 3],
+            },
+            attrs={'crs': 'EPSG:4326'},
+        )
+        result = geoid_height_raster(raster)
+        # Output is 2D on the y/x grid -- band is dropped because the
+        # geoid is purely a function of position.
+        assert result.dims == ('y', 'x')
+        assert result.shape == (4, 4)
+        # Coordinate values come from the spatial dims of the input,
+        # not raster.dims[-2:] which would be ('x', 'band').
+        np.testing.assert_array_equal(
+            result.coords['y'].values, [3.0, 2.0, 1.0, 0.0],
+        )
+        np.testing.assert_array_equal(
+            result.coords['x'].values, [0.0, 1.0, 2.0, 3.0],
+        )
+        assert result.attrs['crs'] == 'EPSG:4326'
+
+    def test_geoid_height_raster_2d_unchanged_shape(self):
+        from xrspatial.reproject import geoid_height_raster
+        raster = xr.DataArray(
+            np.zeros((4, 4)),
+            dims=['y', 'x'],
+            coords={'y': [3.0, 2.0, 1.0, 0.0], 'x': [0.0, 1.0, 2.0, 3.0]},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        result = geoid_height_raster(raster)
+        assert result.dims == ('y', 'x')
+        assert result.shape == (4, 4)
+
 
 # ---------------------------------------------------------------------------
 # Backend parity: dask dtype + same-CRS dask merge + cupy
