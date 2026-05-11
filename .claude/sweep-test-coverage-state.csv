@@ -1,1 +1,2 @@
 module,last_inspected,issue,severity_max,categories_found,notes
+geotiff,2026-05-09,1543,MEDIUM,1,"Filed #1543 / PR adds dask+cupy combined backend tests; remaining HIGH gaps (realistic dask chunk-boundary, planar dask, orientation coord-flip, pred=2 int8) deferred"
