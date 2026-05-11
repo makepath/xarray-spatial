@@ -21,8 +21,6 @@ Tests skip cleanly when CuPy or CUDA are unavailable.
 from __future__ import annotations
 
 import importlib.util
-import os
-import tempfile
 
 import numpy as np
 import pytest
@@ -47,7 +45,11 @@ _gpu_only = pytest.mark.skipif(
 
 
 def _assert_dask_cupy(da_arr, expected_chunks, expected_dtype):
-    """Common shape/type checks for a dask-wrapped cupy DataArray."""
+    """Common shape/type checks for a dask-wrapped cupy DataArray.
+
+    Returns the computed DataArray so callers can reuse it for pixel
+    comparison without paying for a second ``.compute()``.
+    """
     import cupy
     import dask.array as da_mod
 
@@ -80,6 +82,7 @@ def _assert_dask_cupy(da_arr, expected_chunks, expected_dtype):
         f"compute() returned {type(computed.data).__name__} "
         "(should stay on device)"
     )
+    return computed
 
 
 @_gpu_only
@@ -96,13 +99,13 @@ def test_open_geotiff_gpu_chunks_int_round_trip(tmp_path):
 
     da_arr = open_geotiff(path, gpu=True, chunks=64)
 
-    _assert_dask_cupy(
+    computed = _assert_dask_cupy(
         da_arr,
         expected_chunks=((64, 64, 64, 64), (64, 64, 64, 64)),
         expected_dtype=np.dtype(np.float32),
     )
 
-    got = da_arr.compute().data.get()
+    got = computed.data.get()
     np.testing.assert_array_equal(got, eager)
 
 
@@ -120,13 +123,13 @@ def test_read_geotiff_gpu_chunks_tuple_round_trip(tmp_path):
 
     da_arr = read_geotiff_gpu(path, chunks=(96, 128))
 
-    _assert_dask_cupy(
+    computed = _assert_dask_cupy(
         da_arr,
         expected_chunks=((96, 96), (128, 128)),
         expected_dtype=np.dtype(np.uint16),
     )
 
-    got = da_arr.compute().data.get()
+    got = computed.data.get()
     np.testing.assert_array_equal(got, eager)
 
 
@@ -151,13 +154,13 @@ def test_open_geotiff_gpu_chunks_multiband(tmp_path):
 
     # Multi-band wraps as ('y', 'x', 'band') and chunking only applies to
     # spatial axes; the band axis becomes a single chunk.
-    _assert_dask_cupy(
+    computed = _assert_dask_cupy(
         da_arr,
         expected_chunks=((64, 64), (64, 64, 64), (3,)),
         expected_dtype=np.dtype(np.uint8),
     )
 
-    got = da_arr.compute().data.get()
+    got = computed.data.get()
     np.testing.assert_array_equal(got, eager)
 
 
@@ -174,13 +177,13 @@ def test_open_geotiff_gpu_chunks_partial_last_chunk(tmp_path):
 
     da_arr = open_geotiff(path, gpu=True, chunks=64)
 
-    _assert_dask_cupy(
+    computed = _assert_dask_cupy(
         da_arr,
         expected_chunks=((64, 36), (64, 64, 22)),
         expected_dtype=np.dtype(np.float32),
     )
 
-    got = da_arr.compute().data.get()
+    got = computed.data.get()
     np.testing.assert_array_equal(got, eager)
 
 
