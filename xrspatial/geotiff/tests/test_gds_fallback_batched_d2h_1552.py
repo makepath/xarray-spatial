@@ -8,7 +8,8 @@ and per-DMA setup overhead dominated wall time.
 
 The fix concatenates all device buffers into one cupy array, runs a
 single ``.get()``, and slices the host bytes by per-tile offsets,
-mirroring the pattern at ``_gpu_decode.py`` lines 2317-2330.
+mirroring the symmetric H2D batched-upload pattern in
+``_try_nvcomp_decompress``.
 
 These tests skip when CuPy + a CUDA device are not available.
 """
@@ -89,6 +90,43 @@ def test_batched_d2h_zero_size_tile_in_list():
     assert out[0] == real.tobytes()
     assert out[1] == b''
     assert out[2] == real[::-1].tobytes()
+
+
+@pytest.mark.skipif(not _gpu_available(), reason="cupy + CUDA required")
+def test_batched_d2h_checks_gpu_memory_before_concat(monkeypatch):
+    """The concat allocates sum(sizes) bytes; the guard must fire before it.
+
+    Pins the OOM-handling contract: ``_check_gpu_memory`` is called with
+    the total batch size before ``cupy.concatenate``. A monkeypatch that
+    raises from the guard must stop execution before any allocation
+    happens.
+    """
+    import cupy
+    from xrspatial.geotiff import _gpu_decode
+
+    seen = {"total_bytes": None, "what": None, "called": False}
+
+    def fake_check(required_bytes, what="tile buffer"):
+        seen["total_bytes"] = int(required_bytes)
+        seen["what"] = what
+        seen["called"] = True
+        raise MemoryError("simulated OOM")
+
+    monkeypatch.setattr(_gpu_decode, "_check_gpu_memory", fake_check)
+
+    sizes = [4096, 8192, 1024]
+    d_tiles = [cupy.zeros(n, dtype=cupy.uint8) for n in sizes]
+
+    with pytest.raises(MemoryError, match="simulated OOM"):
+        _gpu_decode._batched_d2h_to_bytes(d_tiles)
+
+    assert seen["called"], "_check_gpu_memory was not called"
+    assert seen["total_bytes"] == sum(sizes), (
+        f"expected total {sum(sizes)}, got {seen['total_bytes']}"
+    )
+    assert "D2H" in seen["what"] or "staging" in seen["what"], (
+        f"unhelpful 'what' label: {seen['what']!r}"
+    )
 
 
 @pytest.mark.skipif(not _gpu_available(), reason="cupy + CUDA required")

@@ -874,8 +874,9 @@ def _batched_d2h_to_bytes(d_tiles):
     calls, which serialise on the default stream and where the per-DMA
     setup overhead dominates wall time when there are many tiles.
 
-    Mirrors the batched D2H pattern already used on the deflate path
-    (see ``_try_nvcomp_compress_from_device_bufs``).
+    Mirrors the H2D batched-upload pattern in ``_try_nvcomp_decompress``
+    (see "Batch host->device upload" near the deflate/zstd batch
+    decompress branch). Same shape, opposite direction.
 
     Parameters
     ----------
@@ -896,6 +897,12 @@ def _batched_d2h_to_bytes(d_tiles):
     offsets = np.empty(len(d_tiles) + 1, dtype=np.int64)
     offsets[0] = 0
     np.cumsum(sizes, out=offsets[1:])
+
+    # The concat allocates a fresh device buffer of sum(sizes) bytes --
+    # a peak-VRAM bump that the prior per-tile .get() loop avoided.
+    # Fail early with a clear message if there isn't headroom for it.
+    total_bytes = int(offsets[-1])
+    _check_gpu_memory(total_bytes, what="batched D2H staging buffer")
 
     combined = cupy.concatenate(d_tiles)
     host_buf = combined.get()  # one D2H DMA for the whole batch
