@@ -552,12 +552,18 @@ def open_geotiff(source, *, dtype=None, window=None,
             if not np.isnan(nodata):
                 arr[arr == arr.dtype.type(nodata)] = np.nan
         elif arr.dtype.kind in ('u', 'i'):
-            # Integer arrays: convert to float to represent NaN
+            # Integer arrays: convert to float to represent NaN.
+            # An out-of-range sentinel (e.g. uint16 file with
+            # GDAL_NODATA="-9999") cannot match any decoded pixel, so the
+            # mask would be all-False -- skip the cast that would otherwise
+            # raise OverflowError and leave the array unchanged.
             nodata_int = int(nodata)
-            mask = arr == arr.dtype.type(nodata_int)
-            if mask.any():
-                arr = arr.astype(np.float64)
-                arr[mask] = np.nan
+            info = np.iinfo(arr.dtype)
+            if info.min <= nodata_int <= info.max:
+                mask = arr == arr.dtype.type(nodata_int)
+                if mask.any():
+                    arr = arr.astype(np.float64)
+                    arr[mask] = np.nan
 
     if dtype is not None:
         target = np.dtype(dtype)
@@ -623,6 +629,13 @@ def _apply_nodata_mask_gpu(arr_gpu, nodata):
         return arr_gpu
     if arr_dtype.kind in ('u', 'i'):
         nodata_int = int(nodata)
+        info = np.iinfo(arr_dtype)
+        # Out-of-range sentinels (e.g. uint16 + GDAL_NODATA="-9999") cannot
+        # match any decoded pixel; skip the cast that would otherwise raise
+        # OverflowError. attrs['nodata'] is still set by the caller so the
+        # original sentinel survives a write round-trip.
+        if not (info.min <= nodata_int <= info.max):
+            return arr_gpu
         sentinel = arr_dtype.type(nodata_int)
         mask = arr_gpu == sentinel
         if bool(mask.any().item()):
@@ -1392,10 +1405,17 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
 
     # Nodata masking promotes integer arrays to float64 (for NaN).
     # Validate against the effective dtype, not the raw file dtype.
+    # An out-of-range sentinel (e.g. uint16 file + nodata=-9999) is a
+    # no-op for masking and leaves the file dtype unchanged.
+    effective_dtype = file_dtype
     if nodata is not None and file_dtype.kind in ('u', 'i'):
-        effective_dtype = np.dtype('float64')
-    else:
-        effective_dtype = file_dtype
+        try:
+            _nd_int = int(nodata)
+            _info = np.iinfo(file_dtype)
+            if _info.min <= _nd_int <= _info.max:
+                effective_dtype = np.dtype('float64')
+        except (TypeError, ValueError):
+            pass
 
     if dtype is not None:
         target_dtype = np.dtype(dtype)
@@ -1525,10 +1545,16 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             if arr.dtype.kind == 'f' and not np.isnan(nodata):
                 arr[arr == arr.dtype.type(nodata)] = np.nan
             elif arr.dtype.kind in ('u', 'i'):
-                mask = arr == arr.dtype.type(int(nodata))
-                if mask.any():
-                    arr = arr.astype(np.float64)
-                    arr[mask] = np.nan
+                nodata_int = int(nodata)
+                info = np.iinfo(arr.dtype)
+                # Out-of-range sentinels (e.g. uint16 + nodata=-9999)
+                # cannot match any pixel; skip the cast that would
+                # otherwise raise OverflowError and leave arr unchanged.
+                if info.min <= nodata_int <= info.max:
+                    mask = arr == arr.dtype.type(nodata_int)
+                    if mask.any():
+                        arr = arr.astype(np.float64)
+                        arr[mask] = np.nan
         if target_dtype is not None:
             arr = arr.astype(target_dtype)
         return arr
