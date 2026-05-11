@@ -2732,11 +2732,22 @@ def read_vrt(source: str, *, dtype=None, window=None,
         attrs['crs_wkt'] = vrt.crs_wkt
     if vrt.raster_type == 'point':
         attrs['raster_type'] = 'point'
+    # When a specific band is selected, source its nodata from that
+    # band's <NoDataValue> instead of band 0's. Otherwise multi-band
+    # VRTs with per-band sentinels would mis-mask the read: attrs would
+    # advertise band 0's sentinel, the integer-promotion block below
+    # would mask against band 0's sentinel, and band N's actual nodata
+    # pixels would survive as literal integers. See issue #1598.
     nodata = None
     if vrt.bands:
-        nodata = vrt.bands[0].nodata
-        if nodata is not None:
-            attrs['nodata'] = nodata
+        band_idx_for_nodata = band if band is not None else 0
+        # ``_vrt.read_vrt`` already validates ``band`` is in range; the
+        # extra guard keeps a clearer message if a future refactor
+        # widens the public range without updating the internal reader.
+        if 0 <= band_idx_for_nodata < len(vrt.bands):
+            nodata = vrt.bands[band_idx_for_nodata].nodata
+            if nodata is not None:
+                attrs['nodata'] = nodata
 
     # Mirror the integer-with-nodata promotion that open_geotiff /
     # read_geotiff_dask / read_geotiff_gpu apply post-decode. The VRT
