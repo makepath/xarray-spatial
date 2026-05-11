@@ -1969,7 +1969,11 @@ class TestVerticalShift:
         cval = float(result.values[result.shape[0] // 2, result.shape[1] // 2])
         # 100 m orthometric + N -> ~67 m ellipsoidal. Allow generous tolerance.
         assert abs(cval - (100.0 + N)) < 1.0
-        assert result.attrs.get('vertical_crs') == 'ellipsoidal'
+        # vertical_crs now records the EPSG code (4979 = WGS84 3D
+        # ellipsoidal), matching the xrspatial.geotiff convention; the
+        # friendly token is preserved under vertical_datum.
+        assert result.attrs.get('vertical_crs') == 4979
+        assert result.attrs.get('vertical_datum') == 'ellipsoidal'
 
     def test_reproject_ellipsoidal_to_egm96(self):
         """Ellipsoidal to orthometric: shift has the opposite sign."""
@@ -2076,6 +2080,46 @@ class TestVerticalShift:
         assert np.isfinite(result.values).any()
         # NaN at the singularity is acceptable; inf is not.
         assert not np.isinf(result.values).any()
+
+    def test_vertical_crs_attr_is_epsg_int(self):
+        """attrs['vertical_crs'] must be an EPSG int to match xrspatial.geotiff.
+
+        Both ``xrspatial.geotiff.open_geotiff()`` and ``reproject()`` write
+        the ``vertical_crs`` attribute. The geotiff path writes the EPSG
+        integer code, so reproject must do the same. The friendly string
+        token is preserved under ``vertical_datum``. See GH #1570.
+        """
+        from xrspatial.reproject import reproject
+        cases = [
+            ('EGM96', 5773),
+            ('EGM2008', 3855),
+            ('ellipsoidal', 4979),
+        ]
+        for tgt, expected_epsg in cases:
+            raster = self._ny_raster(value=10.0)
+            result = reproject(
+                raster, 'EPSG:4326',
+                src_vertical_crs='EGM96', tgt_vertical_crs=tgt,
+            )
+            assert result.attrs.get('vertical_crs') == expected_epsg, (
+                f"vertical_crs for tgt={tgt!r} should be EPSG {expected_epsg}, "
+                f"got {result.attrs.get('vertical_crs')!r}"
+            )
+            assert isinstance(result.attrs.get('vertical_crs'), int)
+            assert result.attrs.get('vertical_datum') == tgt
+
+    def test_unknown_vertical_crs_raises(self):
+        """Typos / unsupported tokens must raise rather than silently
+        write ``attrs['vertical_crs'] = None``."""
+        from xrspatial.reproject import reproject
+        raster = self._ny_raster(value=10.0)
+        with pytest.raises(ValueError, match="tgt_vertical_crs"):
+            reproject(raster, 'EPSG:4326',
+                      src_vertical_crs='EGM96', tgt_vertical_crs='NAVD88')
+        with pytest.raises(ValueError, match="src_vertical_crs"):
+            reproject(raster, 'EPSG:4326',
+                      src_vertical_crs='egm96',  # case-sensitive
+                      tgt_vertical_crs='ellipsoidal')
 
 
 class TestMetadataPreservation:
