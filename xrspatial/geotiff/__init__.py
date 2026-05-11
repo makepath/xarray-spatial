@@ -2211,12 +2211,20 @@ def write_geotiff_gpu(data, path: str, *,
     # Extract array and metadata
     geo_transform = None
     epsg = None
+    wkt_fallback = None  # WKT string when EPSG is not available
     raster_type = 1
+    gdal_meta_xml = None
+    extra_tags_list = None
+    x_res = None
+    y_res = None
+    res_unit = None
 
     if isinstance(crs, int):
         epsg = crs
     elif isinstance(crs, str):
         epsg = _wkt_to_epsg(crs)
+        if epsg is None:
+            wkt_fallback = crs
 
     if isinstance(data, xr.DataArray):
         arr = data.data
@@ -2229,13 +2237,56 @@ def write_geotiff_gpu(data, path: str, *,
         else:
             arr = cupy.asarray(np.asarray(arr))  # numpy -> GPU
 
-        geo_transform = _coords_to_transform(data)
-        if epsg is None:
-            epsg = data.attrs.get('crs')
+        # Prefer attrs['transform'] over the coord-derived transform: it
+        # is bit-stable across round-trips, while _coords_to_transform
+        # can drift on fractional pixel sizes (the same reasoning the
+        # CPU to_geotiff path applies for issue #1484).
+        geo_transform = _transform_from_attr(data.attrs.get('transform'))
+        if geo_transform is None:
+            geo_transform = _coords_to_transform(data)
+        # Resolve CRS the same way the CPU writer does. attrs['crs'] may
+        # be an int EPSG or a WKT string; attrs['crs_wkt'] only carries
+        # WKT. Without the WKT branch the GPU writer silently drops CRS
+        # on files whose original CRS only resolves to WKT (no recognized
+        # EPSG).
+        if epsg is None and crs is None:
+            crs_attr = data.attrs.get('crs')
+            if isinstance(crs_attr, str):
+                epsg = _wkt_to_epsg(crs_attr)
+                if epsg is None and wkt_fallback is None:
+                    wkt_fallback = crs_attr
+            elif crs_attr is not None:
+                epsg = int(crs_attr)
+            if epsg is None:
+                wkt = data.attrs.get('crs_wkt')
+                if isinstance(wkt, str):
+                    epsg = _wkt_to_epsg(wkt)
+                    if epsg is None and wkt_fallback is None:
+                        wkt_fallback = wkt
         if nodata is None:
             nodata = data.attrs.get('nodata')
         if data.attrs.get('raster_type') == 'point':
             raster_type = RASTER_PIXEL_IS_POINT
+        # Mirror the CPU writer's pass-through of GDAL metadata, the
+        # extra_tags list, the friendly image_description / extra_samples
+        # / colormap synthesis, and the resolution tags. Without these,
+        # a GPU write -> CPU read round-trip silently drops every rich
+        # tag (#1563).
+        gdal_meta_xml = data.attrs.get('gdal_metadata_xml')
+        if gdal_meta_xml is None:
+            gdal_meta_dict = data.attrs.get('gdal_metadata')
+            if isinstance(gdal_meta_dict, dict):
+                from ._geotags import _build_gdal_metadata_xml
+                gdal_meta_xml = _build_gdal_metadata_xml(gdal_meta_dict)
+        extra_tags_list = data.attrs.get('extra_tags')
+        extra_tags_list = _merge_friendly_extra_tags(
+            extra_tags_list, data.attrs)
+        x_res = data.attrs.get('x_resolution')
+        y_res = data.attrs.get('y_resolution')
+        unit_str = data.attrs.get('resolution_unit')
+        if unit_str is not None:
+            _unit_ids = {'none': 1, 'inch': 2, 'centimeter': 3}
+            res_unit = _unit_ids.get(str(unit_str), None)
     else:
         if hasattr(data, 'compute'):
             data = data.compute()  # Dask -> CuPy or numpy
@@ -2297,7 +2348,14 @@ def write_geotiff_gpu(data, path: str, *,
         width, height, np_dtype, comp_tag, pred_val, True, tile_size,
         parts, geo_transform, epsg, nodata,
         is_cog=(cog and len(parts) > 1),
-        raster_type=raster_type)
+        raster_type=raster_type,
+        crs_wkt=wkt_fallback if epsg is None else None,
+        gdal_metadata_xml=gdal_meta_xml,
+        extra_tags=extra_tags_list,
+        x_resolution=x_res,
+        y_resolution=y_res,
+        resolution_unit=res_unit,
+    )
 
     _write_bytes(file_bytes, path)
 
@@ -2394,10 +2452,35 @@ def read_vrt(source: str, *, dtype=None, window=None,
         attrs['crs_wkt'] = vrt.crs_wkt
     if vrt.raster_type == 'point':
         attrs['raster_type'] = 'point'
+    nodata = None
     if vrt.bands:
         nodata = vrt.bands[0].nodata
         if nodata is not None:
             attrs['nodata'] = nodata
+
+    # Mirror the integer-with-nodata promotion that open_geotiff /
+    # read_geotiff_dask / read_geotiff_gpu apply post-decode. The VRT
+    # internal reader NaN-masks float source arrays inline (see
+    # ``_vrt._read_data``) but leaves integer sentinels untouched. Without
+    # this branch, ``attrs['nodata']`` would be set while the array still
+    # carried the literal sentinel value, breaking the convention that
+    # downstream code follows (``attrs['nodata']`` is present iff the
+    # array has already been NaN-masked).
+    if nodata is not None and arr.dtype.kind in ('u', 'i'):
+        # VRT nodata is parsed as float, so reject fractional, non-finite, or
+        # out-of-dtype-range values rather than truncate/wrap them into a
+        # sentinel that could mask real pixels.
+        nodata_f = float(nodata)
+        info = np.iinfo(arr.dtype)
+        if (
+            np.isfinite(nodata_f)
+            and nodata_f.is_integer()
+            and info.min <= nodata_f <= info.max
+        ):
+            mask = arr == arr.dtype.type(int(nodata_f))
+            if mask.any():
+                arr = arr.astype(np.float64)
+                arr[mask] = np.nan
 
     # Surface the source GeoTransform in the same rasterio ordering used
     # by open_geotiff: (pixel_width, 0, origin_x, 0, pixel_height, origin_y).

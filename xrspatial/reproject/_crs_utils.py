@@ -140,4 +140,18 @@ def _detect_nodata(raster, nodata=None):
         if val is not None:
             return float(val)
 
+    # `nodatavals` is the rasterio convention (tuple of per-band sentinels).
+    # Accept either a tuple/list or a bare scalar. This matches what
+    # `xrspatial.resample` already does and keeps reproject behaving
+    # consistently for rasterio-style inputs when rioxarray is not
+    # installed.
+    nv = raster.attrs.get('nodatavals')
+    if nv is not None:
+        try:
+            first = nv[0]
+        except (TypeError, IndexError):
+            first = nv
+        if first is not None:
+            return float(first)
+
     return float('nan')
