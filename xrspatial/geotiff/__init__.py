@@ -3029,21 +3029,65 @@ def read_vrt(source: str, *, dtype=None, window=None,
     # carried the literal sentinel value, breaking the convention that
     # downstream code follows (``attrs['nodata']`` is present iff the
     # array has already been NaN-masked).
-    if nodata is not None and arr.dtype.kind in ('u', 'i'):
-        # VRT nodata is parsed as float, so reject fractional, non-finite, or
-        # out-of-dtype-range values rather than truncate/wrap them into a
-        # sentinel that could mask real pixels.
-        nodata_f = float(nodata)
-        info = np.iinfo(arr.dtype)
-        if (
-            np.isfinite(nodata_f)
-            and nodata_f.is_integer()
-            and info.min <= nodata_f <= info.max
-        ):
-            mask = arr == arr.dtype.type(int(nodata_f))
-            if mask.any():
-                arr = arr.astype(np.float64)
-                arr[mask] = np.nan
+    #
+    # For multi-band reads (``band is None`` and ``arr.ndim == 3``), each
+    # band can declare its own ``<NoDataValue>``. The float-VRT path masks
+    # per-band inline in ``_vrt._read_data``; mirror that here by walking
+    # ``vrt.bands`` and masking each ``arr[..., i]`` slice against its own
+    # sentinel. Before this branch, only band 0's sentinel was applied and
+    # bands 1+ left their integer sentinels as literal finite values in
+    # the returned float64 array. See issue #1611.
+    def _sentinel_for_dtype(nodata_val, dtype):
+        """Return ``dtype``-cast sentinel for ``nodata_val`` or ``None``
+        if the value can't be represented in ``dtype`` (non-integer
+        dtype, out-of-range, non-finite, or fractional). Mirrors the
+        gating PR #1583 added to other read paths via
+        ``_int_nodata_in_range``.
+        """
+        if nodata_val is None or dtype.kind not in ('u', 'i'):
+            return None
+        try:
+            nodata_f = float(nodata_val)
+        except (TypeError, ValueError):
+            return None
+        info = np.iinfo(dtype)
+        if not (np.isfinite(nodata_f) and nodata_f.is_integer()
+                and info.min <= nodata_f <= info.max):
+            return None
+        return dtype.type(int(nodata_f))
+
+    if arr.dtype.kind in ('u', 'i'):
+        if arr.ndim == 3 and band is None and vrt.bands:
+            # Per-band masking: walk ``vrt.bands`` once and stream each
+            # band's mask. The first band with a sentinel hit promotes
+            # ``arr`` to float64 in place; ``int_arr`` keeps the original
+            # integer view alive so subsequent bands still compare against
+            # the exact sentinel dtype (the post-promotion float64 view
+            # works too, but staying on the integer dtype avoids any
+            # rounding edge case on extreme sentinels). Peak boolean-mask
+            # memory is O(H * W), not O(bands * H * W) like the earlier
+            # collect-then-apply implementation.
+            int_arr = arr
+            int_dtype = int_arr.dtype
+            for i, vrt_band in enumerate(vrt.bands):
+                if i >= int_arr.shape[-1]:
+                    break
+                sentinel = _sentinel_for_dtype(vrt_band.nodata, int_dtype)
+                if sentinel is None:
+                    continue
+                mask = int_arr[..., i] == sentinel
+                if not mask.any():
+                    continue
+                if arr.dtype != np.float64:
+                    arr = arr.astype(np.float64)
+                arr[..., i][mask] = np.nan
+        elif nodata is not None:
+            sentinel = _sentinel_for_dtype(nodata, arr.dtype)
+            if sentinel is not None:
+                mask = arr == sentinel
+                if mask.any():
+                    arr = arr.astype(np.float64)
+                    arr[mask] = np.nan
 
     # Surface the source GeoTransform in the same rasterio ordering used
     # by open_geotiff: (pixel_width, 0, origin_x, 0, pixel_height, origin_y).
