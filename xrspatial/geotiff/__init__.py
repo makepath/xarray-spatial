@@ -2409,11 +2409,20 @@ def read_vrt(source: str, *, dtype=None, window=None,
     # downstream code follows (``attrs['nodata']`` is present iff the
     # array has already been NaN-masked).
     if nodata is not None and arr.dtype.kind in ('u', 'i'):
-        nodata_int = int(nodata)
-        mask = arr == arr.dtype.type(nodata_int)
-        if mask.any():
-            arr = arr.astype(np.float64)
-            arr[mask] = np.nan
+        # VRT nodata is parsed as float, so reject fractional, non-finite, or
+        # out-of-dtype-range values rather than truncate/wrap them into a
+        # sentinel that could mask real pixels.
+        nodata_f = float(nodata)
+        info = np.iinfo(arr.dtype)
+        if (
+            np.isfinite(nodata_f)
+            and nodata_f.is_integer()
+            and info.min <= nodata_f <= info.max
+        ):
+            mask = arr == arr.dtype.type(int(nodata_f))
+            if mask.any():
+                arr = arr.astype(np.float64)
+                arr[mask] = np.nan
 
     # Surface the source GeoTransform in the same rasterio ordering used
     # by open_geotiff: (pixel_width, 0, origin_x, 0, pixel_height, origin_y).
