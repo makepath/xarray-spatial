@@ -10,9 +10,29 @@ no longer lose them.
 """
 from __future__ import annotations
 
+import importlib.util
+
 import numpy as np
 import pytest
 import xarray as xr
+
+
+def _gpu_available() -> bool:
+    """True if cupy is importable and CUDA is initialized."""
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+_HAS_GPU = _gpu_available()
+_gpu_only = pytest.mark.skipif(
+    not _HAS_GPU,
+    reason="cupy + CUDA required",
+)
 
 
 @pytest.fixture
@@ -145,32 +165,29 @@ def test_read_geotiff_dask_invalid_band_raises(small_multiband_tiff_path):
 # --------------------------------------------------------------------
 
 
-def test_write_geotiff_gpu_rejects_tiled_false():
+def test_write_geotiff_gpu_rejects_tiled_false(tmp_path):
     """The GPU writer is tiled-only; ``tiled=False`` must fail loudly."""
     from xrspatial.geotiff import write_geotiff_gpu
 
     dummy = np.zeros((2, 2), dtype=np.float32)
     with pytest.raises(ValueError, match="tiled=True"):
         # path is irrelevant -- validation fires before any file I/O.
-        write_geotiff_gpu(dummy, "/tmp/parity_1561_unused.tif", tiled=False)
+        write_geotiff_gpu(dummy, str(tmp_path / 'never.tif'), tiled=False)
 
 
-def test_write_geotiff_gpu_rejects_nonzero_max_z_error():
+def test_write_geotiff_gpu_rejects_nonzero_max_z_error(tmp_path):
     """LERC budget is not implementable on the GPU path."""
     from xrspatial.geotiff import write_geotiff_gpu
 
     dummy = np.zeros((2, 2), dtype=np.float32)
     with pytest.raises(ValueError, match="max_z_error is not supported"):
-        write_geotiff_gpu(dummy, "/tmp/parity_1561_unused.tif", max_z_error=1.0)
+        write_geotiff_gpu(dummy, str(tmp_path / 'never.tif'), max_z_error=1.0)
 
 
+@_gpu_only
 def test_write_geotiff_gpu_accepts_streaming_buffer_bytes_as_noop(tmp_path):
     """``streaming_buffer_bytes`` is accepted for API parity (no-op)."""
-    pytest.importorskip("cupy")
     import cupy
-
-    if not cupy.cuda.is_available():
-        pytest.skip("CUDA runtime not available")
     from xrspatial.geotiff import write_geotiff_gpu, open_geotiff
 
     arr = cupy.arange(16, dtype=cupy.float32).reshape(4, 4)
@@ -185,13 +202,10 @@ def test_write_geotiff_gpu_accepts_streaming_buffer_bytes_as_noop(tmp_path):
     np.testing.assert_array_equal(rd.values, arr.get())
 
 
+@_gpu_only
 def test_to_geotiff_threads_tiled_false_into_gpu_dispatcher(tmp_path):
     """``to_geotiff(..., gpu=True, tiled=False)`` rejects, not silently flips."""
-    pytest.importorskip("cupy")
     import cupy
-
-    if not cupy.cuda.is_available():
-        pytest.skip("CUDA runtime not available")
     from xrspatial.geotiff import to_geotiff
 
     arr = cupy.zeros((2, 2), dtype=cupy.float32)

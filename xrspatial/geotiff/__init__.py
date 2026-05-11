@@ -308,11 +308,13 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     sets it next to its own nodata-masking step (the value's presence in
     attrs signals "this array has been NaN-masked").
 
-    ``window`` is a ``(r0, c0, r1, c1)`` tuple for the eager windowed
-    read; when set, the emitted ``attrs['transform']`` shifts the origin
-    to the window's top-left. The dask and GPU paths do not use this --
-    their windows are per-chunk inside the graph, not on the outer
-    DataArray.
+    ``window`` is a ``(r0, c0, r1, c1)`` tuple for windowed reads; when
+    set, the emitted ``attrs['transform']`` shifts the origin to the
+    window's top-left. The eager path and the dask path (since #1561,
+    which threads ``window=`` through ``read_geotiff_dask``) both pass
+    the outer window through this helper so the resulting DataArray
+    advertises the windowed transform. The GPU path does not currently
+    expose a windowed read, so it passes ``window=None``.
     """
     if geo_info.crs_epsg is not None:
         attrs['crs'] = geo_info.crs_epsg
@@ -1671,12 +1673,18 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
     def _read(http_meta):
         if http_meta is not None and isinstance(source, str) and \
                 source.startswith(('http://', 'https://')):
-            from ._reader import _HTTPSource, _fetch_decode_cog_http_tiles
+            from ._reader import (
+                _HTTPSource, _fetch_decode_cog_http_tiles,
+                MAX_PIXELS_DEFAULT,
+            )
             header, ifd = http_meta
             src = _HTTPSource(source)
             try:
                 arr = _fetch_decode_cog_http_tiles(
-                    src, header, ifd, window=(r0, c0, r1, c1))
+                    src, header, ifd,
+                    max_pixels=(max_pixels if max_pixels is not None
+                                else MAX_PIXELS_DEFAULT),
+                    window=(r0, c0, r1, c1))
             finally:
                 src.close()
             if (arr.ndim == 3 and ifd.samples_per_pixel > 1
