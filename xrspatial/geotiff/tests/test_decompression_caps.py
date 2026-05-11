@@ -396,7 +396,6 @@ class TestJpeg2000Direct:
         ``jp2[:]``.
         """
         import glymur
-        import os
         # Build a real 2000x2000 uint8 codestream (~150 bytes for zeros).
         arr = np.zeros((2000, 2000), dtype=np.uint8)
         tmp = tmp_path / "src.j2k"
@@ -437,3 +436,40 @@ class TestJpeg2000Direct:
         out = jpeg2000_decompress(blob, width=128, height=128, samples=1)
         decoded = np.frombuffer(out, dtype=np.uint8).reshape(128, 128)
         assert decoded.shape == arr.shape
+
+    def test_jpeg2000_unreadable_shape_fails_closed(
+            self, tmp_path, monkeypatch):
+        """If the SIZ marker is unreadable, refuse to call ``jp2[:]``.
+
+        Earlier the wrapper silently disabled the cap on
+        ``Jp2k.shape``/``dtype`` failure, which would let an attacker
+        bypass the bomb guard with a malformed-but-decodable
+        codestream.  The current behaviour is fail-closed: raise
+        ``ValueError`` before any pixel-decoding work runs.
+        """
+        import glymur
+        arr = np.zeros((64, 64), dtype=np.uint8)
+        tmp = tmp_path / "broken.j2k"
+        glymur.Jp2k(str(tmp), data=arr)
+        blob = tmp.read_bytes()
+
+        from xrspatial.geotiff import _compression
+
+        class _BrokenJp2k:
+            def __init__(self, *a, **kw):
+                pass
+
+            @property
+            def shape(self):
+                raise RuntimeError("simulated SIZ marker corruption")
+
+            def __getitem__(self, _):
+                raise AssertionError(
+                    "jp2[:] must not be called when shape is unreadable")
+
+        monkeypatch.setattr(_compression, "_glymur",
+                            type("M", (), {"Jp2k": _BrokenJp2k}))
+        with pytest.raises(ValueError, match="unable to read declared"):
+            _compression.jpeg2000_decompress(
+                blob, width=64, height=64, samples=1,
+                expected_size=arr.nbytes)

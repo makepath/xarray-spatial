@@ -1118,15 +1118,16 @@ def jpeg2000_decompress(data: bytes, width: int = 0, height: int = 0,
     When ``expected_size`` > 0 the wrapper inspects the codestream's
     declared ``shape`` and ``dtype`` via :class:`glymur.Jp2k` (which
     parses only the SIZ marker and does not trigger pixel decoding)
-    and raises ``ValueError`` when ``np.prod(shape) * dtype_bytes``
-    exceeds ``expected_size * 1.05 + 1`` bytes.  This blocks
-    decompression-bomb attacks where a tiny on-disk JPEG 2000 tile
-    declares multi-gigabyte output dimensions.
+    and raises ``ValueError`` when ``prod(shape) * dtype_bytes`` exceeds
+    ``expected_size * 1.05 + 1`` bytes.  The cap fails closed: if the
+    SIZ marker is unreadable, the function raises rather than letting
+    ``glymur.Jp2k[:]`` materialise an attacker-controlled buffer.
     """
     if not JPEG2000_AVAILABLE:
         raise ImportError(
             "glymur is required to read JPEG 2000-compressed TIFFs. "
             "Install it with: pip install glymur")
+    import math
     import tempfile
     import os
     # glymur reads from files, so write the codestream to a temp file
@@ -1136,23 +1137,40 @@ def jpeg2000_decompress(data: bytes, width: int = 0, height: int = 0,
         os.close(fd)
         jp2 = _glymur.Jp2k(tmp)
         if expected_size > 0:
+            # Fail-closed pre-decode cap. ``jp2.shape`` reads only the
+            # SIZ marker (sub-millisecond, no pixel decoding); if we
+            # cannot determine the declared shape and dtype, refuse to
+            # call ``jp2[:]`` rather than silently disabling the cap --
+            # an attacker who can produce a malformed-but-decodable
+            # codestream would otherwise bypass the guard.
             try:
                 shape = jp2.shape
-                dtype = np.dtype(getattr(jp2, 'dtype', np.uint8))
-            except Exception:
-                shape = None
-                dtype = None
-            if shape is not None and dtype is not None:
-                declared = int(np.prod(shape)) * dtype.itemsize
-                cap = _max_output_with_margin(expected_size)
-                if declared > cap:
-                    raise ValueError(
-                        f"jpeg2000 decode would exceed expected size: "
-                        f"declared output is {declared} bytes (shape "
-                        f"{shape}, {dtype.itemsize} B/sample), cap is "
-                        f"{cap} (expected {expected_size}).  Likely a "
-                        f"decompression bomb."
-                    )
+            except Exception as exc:
+                raise ValueError(
+                    "jpeg2000 decode rejected: unable to read declared "
+                    "shape from SIZ marker"
+                ) from exc
+            try:
+                dtype = np.dtype(getattr(jp2, 'dtype', None))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "jpeg2000 decode rejected: unable to read declared "
+                    "dtype from codestream"
+                ) from exc
+            # ``math.prod`` uses arbitrary-precision Python ints, so it
+            # cannot overflow on attacker-declared dimensions (unlike
+            # ``np.prod`` which multiplies in fixed-width intp and can
+            # wrap to a small positive number, masking a bomb).
+            declared = math.prod(int(d) for d in shape) * dtype.itemsize
+            cap = _max_output_with_margin(expected_size)
+            if declared > cap:
+                raise ValueError(
+                    f"jpeg2000 decode would exceed expected size: "
+                    f"declared output is {declared} bytes (shape "
+                    f"{shape}, {dtype.itemsize} B/sample), cap is "
+                    f"{cap} (expected {expected_size}).  Likely a "
+                    f"decompression bomb."
+                )
         arr = jp2[:]
         return arr.tobytes()
     finally:
@@ -1230,6 +1248,12 @@ def _check_lerc_bomb(data: bytes, expected_size: int) -> None:
         # so it produces the canonical error rather than masking it here.
         return
     if len(info) < 7:
+        return
+    # ``info[0]`` is the LERC errCode; when non-zero the remaining
+    # fields may be uninitialised or garbage. Defer to ``lerc.decode``
+    # for the canonical error instead of computing a declared size
+    # from invalid header values.
+    if int(info[0]) != 0:
         return
     data_type = int(info[2])
     n_cols = int(info[4])
