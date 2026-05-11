@@ -41,37 +41,6 @@ def uint16_with_sentinel_in_first_chunk(tmp_path):
     return path, arr
 
 
-def test_float32_chunks_avoid_redundant_copy(float32_no_nodata_tif,
-                                             monkeypatch):
-    """Plain float32 read should not call astype with the same dtype.
-
-    Patches ``ndarray.astype`` via a wrapper installed on the chunk
-    return path to count same-dtype casts. Without the fix every chunk
-    triggers one; with the fix none do.
-    """
-    import xrspatial.geotiff as gt
-
-    path, _ = float32_no_nodata_tif
-    same_dtype_casts: list[tuple] = []
-
-    orig = gt._delayed_read_window
-
-    def wrapped(*args, **kwargs):
-        delayed = orig(*args, **kwargs)
-        return delayed
-
-    monkeypatch.setattr(gt, '_delayed_read_window', wrapped)
-
-    # Force compute so the chunk function actually runs. Patch
-    # numpy.ndarray.astype indirectly by wrapping astype on the
-    # specific arrays the reader returns. Easier: assert by output
-    # dtype identity, plus a shape/value check.
-    dk = read_geotiff_dask(path, chunks=4)
-    assert dk.dtype == np.float32
-    out = dk.compute()
-    assert out.dtype == np.float32
-
-
 def test_uint16_mask_path_still_promotes(uint16_with_sentinel_in_first_chunk):
     """The #1597 promotion still runs when sentinels are present."""
     path, arr = uint16_with_sentinel_in_first_chunk
@@ -82,6 +51,17 @@ def test_uint16_mask_path_still_promotes(uint16_with_sentinel_in_first_chunk):
     assert computed.dtype == np.float64
     np.testing.assert_array_equal(np.isnan(computed.values),
                                   np.isnan(eager.values))
+    # Pixels that held the sentinel in the source array are NaN; every
+    # other pixel matches the source value byte-for-byte after the
+    # uint -> float64 promotion. Anchors the test to fixture values so
+    # any regression in the mask path (e.g. wrong sentinel comparison)
+    # surfaces here, not just as dtype drift.
+    sentinel_mask = arr == 65535
+    np.testing.assert_array_equal(np.isnan(computed.values), sentinel_mask)
+    np.testing.assert_array_equal(
+        computed.values[~sentinel_mask],
+        arr[~sentinel_mask].astype(np.float64),
+    )
 
 
 def test_astype_skipped_when_dtypes_match(float32_no_nodata_tif, monkeypatch):
