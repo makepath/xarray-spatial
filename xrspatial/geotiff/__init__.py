@@ -660,10 +660,14 @@ _VALID_COMPRESSIONS = (
 )
 
 
-# Sentinel distinguishing "user passed gpu= explicitly" from "user passed
-# nothing". A plain default of None would not work because None is itself
-# a value a caller could supply.
+# Sentinels distinguishing "user passed this kwarg explicitly" from "user
+# passed nothing". A plain default of None would not work because None is
+# itself a value a caller could supply. ``read_geotiff_gpu`` needs both
+# sentinels so it can tell whether the deprecated ``gpu=`` and the new
+# ``on_gpu_failure=`` were *each* supplied, and refuse the ambiguous
+# both-supplied case regardless of which values were chosen.
 _GPU_DEPRECATED_SENTINEL = object()
+_ON_GPU_FAILURE_SENTINEL = object()
 
 
 # TIFF type ids needed when synthesizing extra_tags entries from attrs.
@@ -1815,7 +1819,7 @@ def read_geotiff_gpu(source: str, *,
                      name: str | None = None,
                      chunks: int | tuple | None = None,
                      max_pixels: int | None = None,
-                     on_gpu_failure: str = 'auto',
+                     on_gpu_failure=_ON_GPU_FAILURE_SENTINEL,
                      gpu=_GPU_DEPRECATED_SENTINEL) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
 
@@ -1877,14 +1881,16 @@ def read_geotiff_gpu(source: str, *,
     xr.DataArray
         CuPy-backed DataArray on GPU device.
     """
-    if gpu is not _GPU_DEPRECATED_SENTINEL:
-        # Caller passed gpu= explicitly. Forward to on_gpu_failure unless
-        # both were supplied; in that case the intent is ambiguous and we
-        # refuse rather than silently picking one.
-        if on_gpu_failure != 'auto':
-            raise TypeError(
-                "read_geotiff_gpu: pass either 'on_gpu_failure' or the "
-                "deprecated 'gpu' alias, not both.")
+    new_passed = on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL
+    old_passed = gpu is not _GPU_DEPRECATED_SENTINEL
+    if new_passed and old_passed:
+        # Both supplied is ambiguous regardless of which values were
+        # chosen (including the matching ``on_gpu_failure='auto',
+        # gpu='auto'`` pair). Refuse rather than silently picking one.
+        raise TypeError(
+            "read_geotiff_gpu: pass either 'on_gpu_failure' or the "
+            "deprecated 'gpu' alias, not both.")
+    if old_passed:
         warnings.warn(
             "read_geotiff_gpu(..., gpu=...) is deprecated; use "
             "on_gpu_failure=... instead. The kwarg was renamed because "
@@ -1895,6 +1901,8 @@ def read_geotiff_gpu(source: str, *,
             stacklevel=2,
         )
         on_gpu_failure = gpu
+    elif not new_passed:
+        on_gpu_failure = 'auto'
     gpu = on_gpu_failure
     if gpu not in ('auto', 'strict'):
         raise ValueError(
