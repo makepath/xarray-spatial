@@ -24,20 +24,18 @@ import os
 
 import numpy as np
 import pytest
-import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, read_vrt, to_geotiff
 from xrspatial.geotiff._vrt import write_vrt as _write_vrt_internal
 
 
 # ---------------------------------------------------------------------------
-# CUDA gating: GPU tests share a skip predicate with the rest of the
-# geotiff test suite. The token "cuda-unavailable" in the state CSV
-# notes column flags a re-run on a GPU host when a non-CUDA sweep
-# added these tests.
+# GPU gating: matches the ``_gpu_available`` / ``_HAS_GPU`` predicate that
+# the rest of the geotiff test suite (e.g. test_backend_kwarg_parity_1561,
+# test_attrs_parity_1548) uses, so future GPU tests stay greppable.
 # ---------------------------------------------------------------------------
 
-def _cuda_available() -> bool:
+def _gpu_available() -> bool:
     if importlib.util.find_spec("cupy") is None:
         return False
     try:
@@ -47,8 +45,8 @@ def _cuda_available() -> bool:
         return False
 
 
-_HAS_CUDA = _cuda_available()
-_gpu_only = pytest.mark.skipif(not _HAS_CUDA, reason="cupy + CUDA required")
+_HAS_GPU = _gpu_available()
+_gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 
 
 # ---------------------------------------------------------------------------
