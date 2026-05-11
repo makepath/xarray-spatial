@@ -551,31 +551,12 @@ def open_geotiff(source, *, dtype=None, window=None,
     if max_pixels is not None:
         kwargs['max_pixels'] = max_pixels
 
-    # Validate ``window`` up front against the file's extent, mirroring
-    # the dask path's validator in :func:`read_geotiff_dask` (see lines
-    # near ``win_r0, win_c0, win_r1, win_c1 = window``). Without this
-    # the eager code path silently let an out-of-bounds window flow
-    # into ``read_to_array`` (which clamps the bad window to file
-    # bounds and returns a smaller array) and then built the y/x coord
-    # arrays from the *unclamped* indices, producing a length mismatch
-    # that surfaced as an opaque ``xarray.core.coordinates.
-    # CoordinateValidationError`` ("conflicting sizes for dimension
-    # 'y': length 5 on the data but length 10 on coordinate 'y'").
-    # The dask path raised a clear ``ValueError`` for the same input,
-    # so the two backends disagreed on the contract. Raise here with
-    # the dask path's exact message format so callers see one
-    # consistent error regardless of dispatch. See issue #1634.
-    if window is not None:
-        _gi_for_extent, _src_h, _src_w, _, _ = _read_geo_info(
-            source, overview_level=overview_level)
-        _w_r0, _w_c0, _w_r1, _w_c1 = window
-        if (_w_r0 < 0 or _w_c0 < 0
-                or _w_r1 > _src_h or _w_c1 > _src_w
-                or _w_r0 >= _w_r1 or _w_c0 >= _w_c1):
-            raise ValueError(
-                f"window={window} is outside the source extent "
-                f"({_src_h}x{_src_w}) or has non-positive size.")
-
+    # ``read_to_array`` validates ``window`` against the selected IFD's
+    # extent and raises ``ValueError`` for out-of-bounds windows with
+    # the same message format as the dask path's pre-flight validator
+    # in :func:`read_geotiff_dask`. That keeps the two backends in sync
+    # on the contract without forcing a second metadata parse here. See
+    # issue #1634.
     arr, geo_info = read_to_array(
         source, window=window,
         overview_level=overview_level, band=band,
@@ -586,9 +567,9 @@ def open_geotiff(source, *, dtype=None, window=None,
     coords = _geo_to_coords(geo_info, height, width)
 
     if window is not None:
-        # Adjust coordinates for windowed read. ``window`` was validated
-        # against the source extent above so ``r0/c0/r1/c1`` are
-        # guaranteed in-range here (no clamp needed).
+        # Adjust coordinates for windowed read. ``read_to_array`` rejected
+        # out-of-bounds windows above, so ``r0/c0/r1/c1`` are guaranteed
+        # in-range here (no clamp needed).
         r0, c0, r1, c1 = window
         t = geo_info.transform
         if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
