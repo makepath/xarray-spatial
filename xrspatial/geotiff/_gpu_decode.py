@@ -2888,7 +2888,8 @@ def gpu_compress_tiles(d_image, tile_width, tile_height,
 # GPU overview (pyramid) generation
 # ---------------------------------------------------------------------------
 
-GPU_OVERVIEW_METHODS = ('mean', 'nearest', 'min', 'max', 'median', 'mode')
+GPU_OVERVIEW_METHODS = ('mean', 'nearest', 'min', 'max', 'median', 'mode',
+                        'cubic')
 
 
 def _block_reduce_2d_gpu(arr2d, method, nodata=None):
@@ -2917,6 +2918,17 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
         cpu_arr = arr2d.get()
         from ._writer import _block_reduce_2d
         cpu_result = _block_reduce_2d(cpu_arr, 'mode', nodata=nodata)
+        return cupy.asarray(cpu_result)
+
+    if method == 'cubic':
+        # No native cupy cubic resampler that handles arbitrary zoom
+        # factors with the same prefilter=False NaN-safety the CPU
+        # helper uses for issue #1623. Fall back to CPU so cubic on
+        # the GPU writer path produces the same overview bytes as the
+        # CPU writer and so the sentinel handling matches.
+        cpu_arr = arr2d.get()
+        from ._writer import _block_reduce_2d
+        cpu_result = _block_reduce_2d(cpu_arr, 'cubic', nodata=nodata)
         return cupy.asarray(cpu_result)
 
     # Block reshape for mean/min/max/median
@@ -2966,13 +2978,15 @@ def make_overview_gpu(arr, method='mean', nodata=None):
         2D or 3D (height, width, bands) array on GPU.
     method : str
         Resampling method: 'mean', 'nearest', 'min', 'max', 'median',
-        or 'mode'.
+        'mode', or 'cubic'. ``mode`` and ``cubic`` fall back to the CPU
+        implementation in :mod:`xrspatial.geotiff._writer` so the GPU
+        writer path produces the same overview bytes as the CPU writer.
     nodata : scalar or None
         When supplied and ``arr`` is a float dtype, cells equal to the
         sentinel are masked back to NaN before the reduction so the
         sentinel does not bias the result. Required for COG output that
-        sets ``nodata=...`` (issue #1613). Ignored for integer arrays
-        and for ``nearest`` / ``mode``.
+        sets ``nodata=...`` (issue #1613, extended to ``cubic`` in
+        issue #1623). Ignored for integer arrays and for ``nearest``.
 
     Returns
     -------
