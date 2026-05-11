@@ -998,10 +998,21 @@ def write(data: np.ndarray, path: str, *,
         Pixel-to-coordinate mapping.
     crs_epsg : int or None
         EPSG code.
+    crs_wkt : str or None
+        WKT string. Used only when ``crs_epsg`` is None.
     nodata : float, int, or None
         NoData value.
     compression : str
-        'none', 'deflate', or 'lzw'.
+        Codec name. One of ``'none'``, ``'deflate'``, ``'lzw'``,
+        ``'jpeg'``, ``'packbits'``, ``'zstd'``, ``'lz4'``,
+        ``'jpeg2000'`` (alias ``'j2k'``), or ``'lerc'``.
+        ``'jpeg'`` is only valid for ``uint8`` data with 1 or 3 bands;
+        any other dtype or band count raises ``ValueError``.
+    compression_level : int or None
+        Effort level forwarded to the codec. None uses each codec's
+        default. Valid ranges: deflate 1-9, zstd 1-22, lz4 0-16.
+        Codecs without a level concept (lzw, packbits, jpeg) accept any
+        value and ignore it.
     tiled : bool
         Use tiled layout (vs strips).
     tile_size : int
@@ -1013,8 +1024,36 @@ def write(data: np.ndarray, path: str, *,
     cog : bool
         Write as Cloud Optimized GeoTIFF.
     overview_levels : list of int or None
-        Overview decimation factors (e.g. [2, 4, 8]).
-        Only used if cog=True. If None and cog=True, auto-generate.
+        Number of overviews to generate, expressed as a list. Only the
+        list *length* is used: each overview halves the previous one,
+        regardless of the values supplied (``[2, 4, 8]`` and ``[1, 1, 1]``
+        both produce 2x / 4x / 8x decimations). Only used if
+        ``cog=True``. If None and ``cog=True``, levels auto-generate
+        until the next halving would fall below ``tile_size``.
+    overview_resampling : str
+        Resampling method for overviews: ``'mean'`` (default),
+        ``'nearest'``, ``'min'``, ``'max'``, ``'median'``, ``'mode'``,
+        or ``'cubic'``.
+    raster_type : int
+        TIFF ``GTRasterTypeGeoKey`` value. ``1`` (default) = PixelIsArea,
+        ``2`` = PixelIsPoint.
+    x_resolution, y_resolution : float or None
+        Pixels per ``resolution_unit`` along each axis. Written into the
+        TIFF XResolution / YResolution tags.
+    resolution_unit : int or None
+        TIFF ResolutionUnit tag. ``1`` = none, ``2`` = inch, ``3`` = cm.
+    gdal_metadata_xml : str or None
+        Raw XML payload written to the ``GDAL_METADATA`` tag. Used to
+        round-trip arbitrary GDAL-style metadata.
+    extra_tags : list or None
+        Additional TIFF tags to emit, as a list of
+        ``(tag_id, type_id, count, value)`` tuples.
+    bigtiff : bool or None
+        Force BigTIFF (64-bit offsets). None auto-promotes when the
+        estimated file size would exceed the classic-TIFF 4 GB limit.
+    max_z_error : float
+        Per-pixel error budget for LERC compression. ``0.0`` (default)
+        is lossless. Only valid with ``compression='lerc'``.
     """
     comp_tag = _compression_tag(compression)
     pred_int = normalize_predictor(predictor, data.dtype, comp_tag)
