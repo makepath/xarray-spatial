@@ -19,7 +19,6 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import os
-import tempfile
 
 import numpy as np
 import pytest
@@ -71,43 +70,41 @@ def test_write_vrt_signature_exposes_documented_kwargs():
     assert inspect.Parameter.VAR_KEYWORD not in kinds
 
 
-def test_write_vrt_unknown_kwarg_rejected_at_public_level():
+def test_write_vrt_unknown_kwarg_rejected_at_public_level(tmp_path):
     """A typo'd kwarg now raises ``TypeError`` from the public function
     rather than from deep inside ``_vrt.write_vrt``.
     """
-    with tempfile.TemporaryDirectory() as td:
-        arr = np.zeros((8, 8), dtype=np.float32)
-        da = xr.DataArray(
-            arr, dims=['y', 'x'],
-            coords={'y': np.arange(8.0, 0, -1), 'x': np.arange(8.0)},
-            attrs={'crs': 4326, 'transform': (1.0, 0, 0.0, 0, -1.0, 8.0)},
-        )
-        tif_path = os.path.join(td, 't.tif')
-        to_geotiff(da, tif_path)
+    arr = np.zeros((8, 8), dtype=np.float32)
+    da = xr.DataArray(
+        arr, dims=['y', 'x'],
+        coords={'y': np.arange(8.0, 0, -1), 'x': np.arange(8.0)},
+        attrs={'crs': 4326, 'transform': (1.0, 0, 0.0, 0, -1.0, 8.0)},
+    )
+    tif_path = str(tmp_path / 't.tif')
+    to_geotiff(da, tif_path)
 
-        with pytest.raises(TypeError, match='typo_kwarg'):
-            write_vrt(os.path.join(td, 't.vrt'), [tif_path], typo_kwarg=1)
+    with pytest.raises(TypeError, match='typo_kwarg'):
+        write_vrt(str(tmp_path / 't.vrt'), [tif_path], typo_kwarg=1)
 
 
-def test_write_vrt_accepts_documented_kwargs():
+def test_write_vrt_accepts_documented_kwargs(tmp_path):
     """Each documented kwarg round-trips through the explicit signature."""
-    with tempfile.TemporaryDirectory() as td:
-        arr = np.zeros((8, 8), dtype=np.float32)
-        da = xr.DataArray(
-            arr, dims=['y', 'x'],
-            coords={'y': np.arange(8.0, 0, -1), 'x': np.arange(8.0)},
-            attrs={'crs': 4326, 'transform': (1.0, 0, 0.0, 0, -1.0, 8.0)},
-        )
-        tif_path = os.path.join(td, 't.tif')
-        to_geotiff(da, tif_path)
+    arr = np.zeros((8, 8), dtype=np.float32)
+    da = xr.DataArray(
+        arr, dims=['y', 'x'],
+        coords={'y': np.arange(8.0, 0, -1), 'x': np.arange(8.0)},
+        attrs={'crs': 4326, 'transform': (1.0, 0, 0.0, 0, -1.0, 8.0)},
+    )
+    tif_path = str(tmp_path / 't.tif')
+    to_geotiff(da, tif_path)
 
-        vrt_path = os.path.join(td, 't.vrt')
-        out = write_vrt(
-            vrt_path, [tif_path],
-            relative=False, crs_wkt=None, nodata=-9999.0,
-        )
-        assert out == vrt_path
-        assert os.path.exists(vrt_path)
+    vrt_path = str(tmp_path / 't.vrt')
+    out = write_vrt(
+        vrt_path, [tif_path],
+        relative=False, crs_wkt=None, nodata=-9999.0,
+    )
+    assert out == vrt_path
+    assert os.path.exists(vrt_path)
 
 
 def test_write_geotiff_gpu_docstring_lists_cubic():
@@ -145,7 +142,7 @@ def test_write_geotiff_gpu_data_has_type_hint():
 
 
 @_gpu_only
-def test_write_geotiff_gpu_cubic_overview_round_trip():
+def test_write_geotiff_gpu_cubic_overview_round_trip(tmp_path):
     """``overview_resampling='cubic'`` works on the GPU writer.
 
     Sanity check that the docstring update is not advertising an
@@ -154,18 +151,17 @@ def test_write_geotiff_gpu_cubic_overview_round_trip():
     """
     import cupy
 
-    with tempfile.TemporaryDirectory() as td:
-        arr_cpu = np.random.RandomState(0).rand(256, 256).astype(np.float32)
-        arr_gpu = cupy.asarray(arr_cpu)
-        da_gpu = xr.DataArray(
-            arr_gpu, dims=['y', 'x'],
-            coords={'y': np.arange(256.0, 0, -1), 'x': np.arange(256.0)},
-        )
-        path = os.path.join(td, 'cog.tif')
-        write_geotiff_gpu(
-            da_gpu, path,
-            cog=True, tile_size=64, overview_resampling='cubic',
-        )
-        # Overview level 1 = 1/2 resolution
-        ov = open_geotiff(path, overview_level=1)
-        assert ov.shape == (128, 128)
+    arr_cpu = np.random.RandomState(0).rand(256, 256).astype(np.float32)
+    arr_gpu = cupy.asarray(arr_cpu)
+    da_gpu = xr.DataArray(
+        arr_gpu, dims=['y', 'x'],
+        coords={'y': np.arange(256.0, 0, -1), 'x': np.arange(256.0)},
+    )
+    path = str(tmp_path / 'cog.tif')
+    write_geotiff_gpu(
+        da_gpu, path,
+        cog=True, tile_size=64, overview_resampling='cubic',
+    )
+    # Overview level 1 = 1/2 resolution
+    ov = open_geotiff(path, overview_level=1)
+    assert ov.shape == (128, 128)
