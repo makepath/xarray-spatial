@@ -20,14 +20,11 @@ remaining after PR #1565.
 """
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import pytest
 import xarray as xr
 
-dask = pytest.importorskip("dask")
-import dask.array as darr  # noqa: E402
+pytest.importorskip("dask")
 
 from xrspatial.geotiff import open_geotiff, to_geotiff  # noqa: E402
 from xrspatial.geotiff._compression import (  # noqa: E402
