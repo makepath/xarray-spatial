@@ -2482,7 +2482,7 @@ class TestMergeDaskParity:
                 eager[finite], dasked[finite], rtol=1e-10, atol=1e-10,
             )
 
-    def test_merge_dask_same_crs_bounded_materialization(self):
+    def test_merge_dask_same_crs_bounded_materialization(self, monkeypatch):
         """Same-CRS dask merge must not materialize full source per chunk.
 
         Regression test for issue #1571: ``_merge_block_adapter`` used to
@@ -2522,11 +2522,8 @@ class TestMergeDaskParity:
             attrs={'crs': 'EPSG:4326'},
         )
 
-        da.Array.compute = trace
-        try:
-            merge([t1, t2], strategy='first', chunk_size=32).compute()
-        finally:
-            da.Array.compute = orig_compute
+        monkeypatch.setattr(da.Array, 'compute', trace)
+        merge([t1, t2], strategy='first', chunk_size=32).compute()
 
         total_src_pixels = 2 * 256 * 256
         # Pre-fix: ~68x amplification. Post-fix: ~1x.

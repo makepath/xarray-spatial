@@ -1713,71 +1713,6 @@ def _place_same_crs(src_data, src_bounds, src_shape, y_desc,
     return out_data
 
 
-def _place_same_crs_lazy(src_data, src_bounds, src_shape, y_desc,
-                         out_bounds, out_shape, nodata):
-    """Same-CRS placement that slices a dask/lazy source before materializing.
-
-    Equivalent to ``_place_same_crs`` for the same-CRS direct-copy path,
-    but indexes the source array with the source-pixel window first and
-    only calls ``.compute()`` (or ``np.asarray``) on that slice. Numpy
-    sources fall through unchanged.
-
-    Returns the placed array or None to fall through to reprojection.
-    """
-    out_h, out_w = out_shape
-    src_h, src_w = src_shape
-    o_left, o_bottom, o_right, o_top = out_bounds
-    s_left, s_bottom, s_right, s_top = src_bounds
-
-    o_res_x = (o_right - o_left) / out_w
-    o_res_y = (o_top - o_bottom) / out_h
-    s_res_x = (s_right - s_left) / src_w
-    s_res_y = (s_top - s_bottom) / src_h
-
-    col_start = int(round((s_left - o_left) / o_res_x))
-    col_end = int(round((s_right - o_left) / o_res_x))
-    row_start = int(round((o_top - s_top) / o_res_y))
-    row_end = int(round((o_top - s_bottom) / o_res_y))
-
-    col_start_clip = max(0, col_start)
-    col_end_clip = min(out_w, col_end)
-    row_start_clip = max(0, row_start)
-    row_end_clip = min(out_h, row_end)
-
-    if col_start_clip >= col_end_clip or row_start_clip >= row_end_clip:
-        return np.full(out_shape, nodata, dtype=np.float64)
-
-    src_col_start = col_start_clip - col_start
-    src_row_start = row_start_clip - row_start
-
-    res_ratio_x = s_res_x / o_res_x
-    res_ratio_y = s_res_y / o_res_y
-    if abs(res_ratio_x - 1.0) > 0.01 or abs(res_ratio_y - 1.0) > 0.01:
-        return None
-
-    out_data = np.full(out_shape, nodata, dtype=np.float64)
-    n_rows = row_end_clip - row_start_clip
-    n_cols = col_end_clip - col_start_clip
-
-    src_r_end = min(src_row_start + n_rows, src_h)
-    src_c_end = min(src_col_start + n_cols, src_w)
-    actual_rows = src_r_end - src_row_start
-    actual_cols = src_c_end - src_col_start
-
-    if actual_rows <= 0 or actual_cols <= 0:
-        return out_data
-
-    # Slice the source FIRST, then materialize. For dask arrays this
-    # reduces the materialized region from full-source to chunk-footprint.
-    window = src_data[src_row_start:src_r_end, src_col_start:src_c_end]
-    if hasattr(window, 'compute'):
-        window = window.compute()
-    src_window = np.asarray(window, dtype=np.float64)
-    out_data[row_start_clip:row_start_clip + actual_rows,
-             col_start_clip:col_start_clip + actual_cols] = src_window
-    return out_data
-
-
 def _merge_inmemory(
     raster_infos, tgt_wkt, out_bounds, out_shape,
     resampling, nodata, strategy, transform_precision,
@@ -1860,11 +1795,12 @@ def _merge_block_adapter(
         placed = None
         if same_crs_list[i]:
             # Same-CRS path: direct pixel placement (no resampling).
-            # Mirrors the eager merge so dask matches numpy bit-for-bit.
-            # For dask sources, compute only the source window that maps
-            # to this output chunk; materializing the full source per
-            # output chunk would amplify driver-side data flow by O(N).
-            placed = _place_same_crs_lazy(
+            # Pass the dask array straight through -- _place_same_crs
+            # slices before np.asarray(), so np.asarray on the slice
+            # materializes only the source window for this output chunk.
+            # An eager .compute() here would materialize the full source
+            # per output chunk, amplifying driver-side data flow by O(N).
+            placed = _place_same_crs(
                 raster_data_list[i],
                 src_bounds_list[i], src_shape_list[i], y_desc_list[i],
                 cb, chunk_shape, r_nd,
