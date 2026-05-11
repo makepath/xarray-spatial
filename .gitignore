@@ -98,4 +98,5 @@ dmypy.json
 xrspatial-examples/
 *.zarr/
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 docs/superpowers/
