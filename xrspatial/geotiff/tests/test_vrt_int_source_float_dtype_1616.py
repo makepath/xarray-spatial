@@ -16,7 +16,6 @@ for a single-file integer raster with the same sentinel.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from xrspatial.geotiff import read_vrt
 from xrspatial.geotiff._writer import write
