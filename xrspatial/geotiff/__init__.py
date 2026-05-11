@@ -11,8 +11,8 @@ open_geotiff(source, ...)
 read_geotiff_gpu(source, ...)
     GPU-only read returning a CuPy-backed DataArray. ``open_geotiff(...,
     gpu=True)`` calls this internally; use the explicit name when you want
-    the strict-mode failure semantics (``gpu='strict'``) or want to bypass
-    auto-dispatch.
+    the strict-mode failure semantics (``on_gpu_failure='strict'``) or want
+    to bypass auto-dispatch.
 read_geotiff_dask(source, ...)
     Dask-only read returning a windowed lazy DataArray. ``open_geotiff(...,
     chunks=N)`` calls this internally.
@@ -658,6 +658,12 @@ _VALID_COMPRESSIONS = (
     'none', 'deflate', 'lzw', 'jpeg', 'packbits', 'zstd', 'lz4',
     'jpeg2000', 'j2k', 'lerc',
 )
+
+
+# Sentinel distinguishing "user passed gpu= explicitly" from "user passed
+# nothing". A plain default of None would not work because None is itself
+# a value a caller could supply.
+_GPU_DEPRECATED_SENTINEL = object()
 
 
 # TIFF type ids needed when synthesizing extra_tags entries from attrs.
@@ -1809,7 +1815,8 @@ def read_geotiff_gpu(source: str, *,
                      name: str | None = None,
                      chunks: int | tuple | None = None,
                      max_pixels: int | None = None,
-                     gpu: str = 'auto') -> xr.DataArray:
+                     on_gpu_failure: str = 'auto',
+                     gpu=_GPU_DEPRECATED_SENTINEL) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
 
     Decompresses all tiles in parallel on the GPU and returns a
@@ -1835,7 +1842,7 @@ def read_geotiff_gpu(source: str, *,
     max_pixels : int or None
         Maximum allowed pixel count (width * height * samples). None
         uses the default (~1 billion).
-    gpu : {'auto', 'strict'}, default 'auto'
+    on_gpu_failure : {'auto', 'strict'}, default 'auto'
         Behaviour when any GPU decode stage raises an exception.
 
         The GPU pipeline has two stages: first ``gpu_decode_tiles_from_file``
@@ -1855,18 +1862,43 @@ def read_geotiff_gpu(source: str, *,
           GPU fast path.
 
         Stripped layouts and sparse-tile files route directly to the CPU
-        reader before either GPU decode stage runs, so the ``gpu`` kwarg
-        does not affect them. A failure inside the subsequent
+        reader before either GPU decode stage runs, so the ``on_gpu_failure``
+        kwarg does not affect them. A failure inside the subsequent
         ``cupy.asarray(...)`` upload propagates unchanged in both modes.
+    gpu : str, optional
+        Deprecated alias for ``on_gpu_failure``. Emits ``DeprecationWarning``
+        when used. Passing both ``gpu`` and ``on_gpu_failure`` raises
+        ``TypeError``. The old name shipped with values ``'auto'`` /
+        ``'strict'`` and was easy to confuse with the boolean ``gpu=``
+        kwarg on ``open_geotiff`` / ``to_geotiff`` / ``read_vrt``.
 
     Returns
     -------
     xr.DataArray
         CuPy-backed DataArray on GPU device.
     """
+    if gpu is not _GPU_DEPRECATED_SENTINEL:
+        # Caller passed gpu= explicitly. Forward to on_gpu_failure unless
+        # both were supplied; in that case the intent is ambiguous and we
+        # refuse rather than silently picking one.
+        if on_gpu_failure != 'auto':
+            raise TypeError(
+                "read_geotiff_gpu: pass either 'on_gpu_failure' or the "
+                "deprecated 'gpu' alias, not both.")
+        warnings.warn(
+            "read_geotiff_gpu(..., gpu=...) is deprecated; use "
+            "on_gpu_failure=... instead. The kwarg was renamed because "
+            "'gpu' on open_geotiff/to_geotiff/read_vrt is a bool that "
+            "selects the GPU backend, while here it selects the failure "
+            "policy when the GPU path raises.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        on_gpu_failure = gpu
+    gpu = on_gpu_failure
     if gpu not in ('auto', 'strict'):
         raise ValueError(
-            f"gpu must be 'auto' or 'strict', got {gpu!r}")
+            f"on_gpu_failure must be 'auto' or 'strict', got {gpu!r}")
     try:
         import cupy
     except ImportError:
