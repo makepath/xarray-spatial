@@ -5,9 +5,27 @@ No GDAL dependency -- uses only numpy, numba, xarray, and the standard library.
 Public API
 ----------
 open_geotiff(source, ...)
-    Read a GeoTIFF file to an xarray.DataArray.
+    Read a GeoTIFF, COG, or VRT file to an xarray.DataArray. Auto-dispatches
+    to the GPU, dask, or numpy backend based on the ``gpu`` and ``chunks``
+    kwargs.
+read_geotiff_gpu(source, ...)
+    GPU-only read returning a CuPy-backed DataArray. ``open_geotiff(...,
+    gpu=True)`` calls this internally; use the explicit name when you want
+    the strict-mode failure semantics (``gpu='strict'``) or want to bypass
+    auto-dispatch.
+read_geotiff_dask(source, ...)
+    Dask-only read returning a windowed lazy DataArray. ``open_geotiff(...,
+    chunks=N)`` calls this internally.
+read_vrt(source, ...)
+    Read a GDAL Virtual Raster Table (.vrt). ``open_geotiff`` routes ``.vrt``
+    paths here automatically; the explicit entry point is useful for
+    callers that already know they have a VRT.
 to_geotiff(data, path, ...)
-    Write an xarray.DataArray as a GeoTIFF or COG.
+    Write an xarray.DataArray as a GeoTIFF or COG. Auto-dispatches to GPU
+    when the data is CuPy-backed.
+write_geotiff_gpu(data, path, ...)
+    GPU-only writer using nvCOMP. ``to_geotiff(..., gpu=True)`` calls this
+    internally.
 write_vrt(vrt_path, source_files, ...)
     Generate a VRT mosaic XML from a list of GeoTIFF files.
 """
@@ -23,7 +41,18 @@ from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 from ._reader import read_to_array
 from ._writer import write
 
-__all__ = ['open_geotiff', 'to_geotiff', 'write_vrt']
+# All names below are part of the supported public API. ``plot_geotiff``
+# is intentionally omitted: it is deprecated in favour of ``da.xrs.plot()``
+# and emits a ``DeprecationWarning`` when called.
+__all__ = [
+    'open_geotiff',
+    'read_geotiff_gpu',
+    'read_geotiff_dask',
+    'read_vrt',
+    'to_geotiff',
+    'write_geotiff_gpu',
+    'write_vrt',
+]
 
 
 def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
@@ -2246,6 +2275,15 @@ def write_vrt(vrt_path: str, source_files: list[str], **kwargs) -> str:
 def plot_geotiff(da: xr.DataArray, **kwargs):
     """Plot a DataArray using its embedded colormap if present.
 
-    Deprecated: use ``da.xrs.plot()`` instead.
+    .. deprecated:: 0.10.0
+        Use ``da.xrs.plot()`` instead. ``plot_geotiff`` is a thin wrapper
+        kept for backward compatibility and will be removed in a future
+        release.
     """
+    warnings.warn(
+        "plot_geotiff is deprecated and will be removed in a future "
+        "release. Use ``da.xrs.plot()`` instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return da.xrs.plot(**kwargs)
