@@ -11,6 +11,7 @@ preserve it.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import tempfile
 
@@ -26,6 +27,24 @@ from xrspatial.geotiff import (
 from xrspatial.geotiff._reader import (
     _int_nodata_in_range,
     _resolve_masked_fill,
+)
+
+
+def _gpu_available() -> bool:
+    """True if cupy is importable and CUDA is initialized."""
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+_HAS_GPU = _gpu_available()
+_gpu_only = pytest.mark.skipif(
+    not _HAS_GPU,
+    reason="cupy + CUDA required",
 )
 
 
@@ -118,14 +137,14 @@ def test_open_geotiff_uint16_in_range_nodata_still_masks():
         os.unlink(path)
 
 
+@_gpu_only
 def test_apply_nodata_mask_gpu_out_of_range_no_crash():
     """The GPU helper falls back gracefully for unrepresentable sentinels.
 
-    This test exercises ``_apply_nodata_mask_gpu`` directly so it runs
-    without a GPU when cupy is not installed -- skip when cupy is
-    missing.
+    This test exercises ``_apply_nodata_mask_gpu`` directly and requires
+    cupy with CUDA available.
     """
-    cupy = pytest.importorskip('cupy')
+    import cupy
     from xrspatial.geotiff import _apply_nodata_mask_gpu
 
     arr_gpu = cupy.array([[1, 2, 3], [4, 5, 6]], dtype=cupy.uint16)
