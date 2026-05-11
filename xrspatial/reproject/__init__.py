@@ -751,6 +751,16 @@ def reproject(
     # value. If `_FillValue` was absent, leave it absent.
     if '_FillValue' in raster.attrs:
         out_attrs['_FillValue'] = nd
+    # `nodatavals` (rasterio convention) is a tuple of per-band sentinels.
+    # Refresh it to the resolved nodata so it doesn't contradict
+    # ``out_attrs['nodata']`` after the resample.
+    if 'nodatavals' in raster.attrs:
+        old_nv = raster.attrs['nodatavals']
+        try:
+            n_entries = max(1, len(old_nv))
+        except TypeError:
+            n_entries = 1
+        out_attrs['nodatavals'] = tuple(nd for _ in range(n_entries))
     if tgt_vertical_crs is not None:
         # Align with xrspatial.geotiff: attrs['vertical_crs'] holds the
         # EPSG integer code. The friendly string token is preserved under
@@ -1670,6 +1680,14 @@ def merge(
     # otherwise.
     if '_FillValue' in rasters[0].attrs:
         out_attrs['_FillValue'] = nd
+    # Same treatment for `nodatavals` (rasterio convention).
+    if 'nodatavals' in rasters[0].attrs:
+        old_nv = rasters[0].attrs['nodatavals']
+        try:
+            n_entries = max(1, len(old_nv))
+        except TypeError:
+            n_entries = 1
+        out_attrs['nodatavals'] = tuple(nd for _ in range(n_entries))
 
     result = xr.DataArray(
         result_data,
