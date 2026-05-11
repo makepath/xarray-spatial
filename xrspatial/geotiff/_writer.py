@@ -1006,6 +1006,8 @@ def write(data: np.ndarray, path: str, *,
         Codec name. One of ``'none'``, ``'deflate'``, ``'lzw'``,
         ``'jpeg'``, ``'packbits'``, ``'zstd'``, ``'lz4'``,
         ``'jpeg2000'`` (alias ``'j2k'``), or ``'lerc'``.
+        ``'jpeg'`` is only valid for ``uint8`` data with 1 or 3 bands;
+        any other dtype or band count raises ``ValueError``.
     compression_level : int or None
         Effort level forwarded to the codec. None uses each codec's
         default. Valid ranges: deflate 1-9, zstd 1-22, lz4 0-16.
@@ -1022,8 +1024,12 @@ def write(data: np.ndarray, path: str, *,
     cog : bool
         Write as Cloud Optimized GeoTIFF.
     overview_levels : list of int or None
-        Overview decimation factors (e.g. [2, 4, 8]).
-        Only used if cog=True. If None and cog=True, auto-generate.
+        Number of overviews to generate, expressed as a list. Only the
+        list *length* is used: each overview halves the previous one,
+        regardless of the values supplied (``[2, 4, 8]`` and ``[1, 1, 1]``
+        both produce 2x / 4x / 8x decimations). Only used if
+        ``cog=True``. If None and ``cog=True``, levels auto-generate
+        until the next halving would fall below ``tile_size``.
     overview_resampling : str
         Resampling method for overviews: ``'mean'`` (default),
         ``'nearest'``, ``'min'``, ``'max'``, ``'median'``, ``'mode'``,
