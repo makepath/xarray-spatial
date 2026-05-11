@@ -1,2 +1,2 @@
 module,last_inspected,issue,severity_max,categories_found,notes
-geotiff,2026-05-09,1541,HIGH,1;2;3;4;5,"PR adds 4 prod fns to __all__, real DeprecationWarning on plot_geotiff. Other findings (gpu kwarg type drift, sibling param asymmetry, write/dask_data rename, chunks default drift, write docstring drift) listed in issue #1541 for follow-up."
+geotiff,2026-05-10,1560;1561;1562,HIGH,1;3;5,"Filed gpu kwarg type drift (1560 HIGH), backend signature parity gap (1561 HIGH), writer docstring drift (1562 MEDIUM). Prior orphan-__all__ HIGH fixed in PR 1544. Cat 1 MEDIUM (write/dask_data internal asymmetry) and Cat 4 MEDIUM (chunks default) reviewed and judged defensible per private-helper / different-semantics scope."
