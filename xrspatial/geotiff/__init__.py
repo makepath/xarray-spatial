@@ -660,14 +660,18 @@ def _resolve_nodata_attr(attrs: dict):
     so that key is checked first for a clean intra-library round-trip.
     Falls back to two ecosystem conventions on miss:
 
-    * ``attrs['nodatavals']`` -- rioxarray's per-band tuple. Uses the
-      first band's value; bands with mixed sentinels are uncommon and
-      would need an explicit ``nodata=`` argument anyway.
+    * ``attrs['nodatavals']`` -- rioxarray's per-band tuple. Returns
+      the first entry that is not None, not non-numeric, and not NaN.
+      In practice this is band 0 for almost every real file; the skip
+      logic only matters when band 0 is missing a sentinel (NaN /
+      None) while a later band declares one. Bands with mixed concrete
+      sentinels are uncommon and would need an explicit ``nodata=``
+      argument anyway.
     * ``attrs['_FillValue']`` -- CF-style xarray pipelines.
 
-    Returns ``None`` when none of the keys carry a usable value. NaN /
-    None entries in ``nodatavals`` are skipped rather than treated as
-    a sentinel (NaN means "the float NaN is the sentinel", which is
+    Returns ``None`` when none of the keys carry a usable value. NaN
+    entries in ``nodatavals`` are skipped rather than treated as a
+    sentinel (NaN means "the float NaN is the sentinel", which is
     already the default and doesn't need a GDAL_NODATA tag).
     """
     nodata = attrs.get('nodata')
