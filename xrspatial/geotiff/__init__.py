@@ -2919,9 +2919,25 @@ def write_geotiff_gpu(data, path: str, *,
                 if oh > 0 and ow > 0:
                     overview_levels.append(len(overview_levels) + 1)
 
+        # Pass ``nodata`` so the GPU reducer masks the sentinel back to
+        # NaN before averaging. Without this, the NaN->sentinel rewrite
+        # done above on ``arr`` leaks the sentinel into the overview
+        # reduction and poisons the pyramid (issue #1613). Rewrite any
+        # all-sentinel cell NaN back to the sentinel after each level
+        # so the on-disk overview tiles still carry the sentinel value
+        # external readers expect.
         current = arr
         for _ in overview_levels:
-            current = make_overview_gpu(current, method=overview_resampling)
+            current = make_overview_gpu(current, method=overview_resampling,
+                                        nodata=nodata)
+            if (nodata is not None
+                    and np.dtype(str(current.dtype)).kind == 'f'
+                    and not np.isnan(float(nodata))):
+                nan_mask = cupy.isnan(current)
+                if bool(nan_mask.any().item()):
+                    current = current.copy()
+                    current[nan_mask] = np.dtype(
+                        str(current.dtype)).type(nodata)
             oh, ow = current.shape[:2]
             parts.append(_gpu_compress_to_part(current, ow, oh, samples))
 
