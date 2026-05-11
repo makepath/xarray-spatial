@@ -1282,13 +1282,13 @@ def _try_nvjpeg_batch_decode(compressed_tiles, tile_width, tile_height,
                     )
                     if status != _NVJPEG_STATUS_SUCCESS:
                         return None
-                    # nvjpegDecode is asynchronous; the shared jpeg_state
-                    # must not be reused for the next tile until this
-                    # decode is complete.  Without this sync the next
-                    # iteration overwrites jpeg_state mid-decode and the
-                    # output is non-deterministic (tile contents drift
-                    # between runs even when tile_data is identical).
-                    cupy.cuda.Device().synchronize()
+                    # nvjpegDecode is asynchronous on the default stream
+                    # (we pass stream=0 above); the shared jpeg_state must
+                    # not be reused for the next tile until this decode is
+                    # complete.  Sync only the default stream so concurrent
+                    # work on other streams isn't blocked -- the data
+                    # dependency is on jpeg_state, not on the whole device.
+                    cupy.cuda.Stream.null.synchronize()
 
                 return d_all
 

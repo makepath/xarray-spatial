@@ -47,13 +47,36 @@ def _gpu_available() -> bool:
         return False
 
 
+def _nvjpeg_available() -> bool:
+    """True when libnvjpeg.so loads on this host.
+
+    Without nvJPEG the GPU pipeline silently falls back to CPU Pillow
+    decode, so the regression for issue #1549 (an out-of-bounds write
+    inside the nvJPEG kernel) would never be exercised. Skip rather
+    than test a path the bug never lived on.
+    """
+    if not _gpu_available():
+        return False
+    try:
+        from xrspatial.geotiff._gpu_decode import _get_nvjpeg
+        return _get_nvjpeg() is not None
+    except Exception:
+        return False
+
+
 _HAS_GPU = _gpu_available()
 _HAS_TIFFFILE = importlib.util.find_spec("tifffile") is not None
 _HAS_PIL = importlib.util.find_spec("PIL") is not None
+# tifffile.imwrite(compression='jpeg') delegates the codec to imagecodecs
+# (or libjpeg via Pillow on some installs); when neither is wired up the
+# write raises and the suite would error instead of skipping cleanly.
+_HAS_IMAGECODECS = importlib.util.find_spec("imagecodecs") is not None
+_HAS_NVJPEG = _nvjpeg_available()
 
 _gpu_only = pytest.mark.skipif(
-    not (_HAS_GPU and _HAS_TIFFFILE and _HAS_PIL),
-    reason="cupy + CUDA + tifffile + Pillow required",
+    not (_HAS_GPU and _HAS_TIFFFILE and _HAS_PIL
+         and _HAS_IMAGECODECS and _HAS_NVJPEG),
+    reason="cupy + CUDA + tifffile + Pillow + imagecodecs + nvJPEG required",
 )
 
 
@@ -99,7 +122,7 @@ def _write_jpeg_gray_tiff(path: str, seed: int = 42) -> np.ndarray:
 
 
 @_gpu_only
-def test_rgb_jpeg_gpu_no_crash(tmp_path):
+def test_rgb_jpeg_gpu_no_crash(tmp_path, monkeypatch):
     """3-band JPEG must not raise CUDARuntimeError on GPU read.
 
     Uses ``gpu='strict'`` so the original
@@ -108,9 +131,27 @@ def test_rgb_jpeg_gpu_no_crash(tmp_path):
     bug presented as a ``RuntimeWarning: GPU decode failed (...);
     falling back to CPU`` and the returned array was the CPU array, so
     the assertions below would still pass even with the bug present.
+
+    Also spies on ``_try_nvjpeg_batch_decode`` to fail loudly if the
+    decode took a CPU fallback path instead of nvJPEG.  Without this
+    guard the test would pass on a system whose nvJPEG returned None for
+    any reason, defeating the point of the regression test.
     """
     from xrspatial.geotiff import read_geotiff_gpu
+    from xrspatial.geotiff import _gpu_decode
     import cupy
+
+    spy = {"calls": 0, "successes": 0}
+    original = _gpu_decode._try_nvjpeg_batch_decode
+
+    def wrapped(*args, **kwargs):
+        spy["calls"] += 1
+        result = original(*args, **kwargs)
+        if result is not None:
+            spy["successes"] += 1
+        return result
+
+    monkeypatch.setattr(_gpu_decode, "_try_nvjpeg_batch_decode", wrapped)
 
     path = str(tmp_path / "rgb_jpeg_1549.tif")
     _write_jpeg_rgb_tiff(path)
@@ -122,6 +163,15 @@ def test_rgb_jpeg_gpu_no_crash(tmp_path):
     decoded = arr.data.get()
     assert decoded.shape == (256, 256, 3)
     assert decoded.dtype == np.uint8
+
+    assert spy["calls"] >= 1, (
+        "nvJPEG branch was never called — test did not exercise the "
+        "code path the #1549 fix lives on"
+    )
+    assert spy["successes"] >= 1, (
+        "nvJPEG returned None — CPU Pillow fallback ran and the fix was "
+        "not exercised"
+    )
 
 
 @_gpu_only
