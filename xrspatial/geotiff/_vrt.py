@@ -372,6 +372,35 @@ def read_vrt(vrt_path: str, *, window=None,
                 src_arr = src_arr.copy()
                 sentinel = src_arr.dtype.type(src_nodata)
                 src_arr[src_arr == sentinel] = np.nan
+            elif (src_nodata is not None
+                    and src_arr.dtype.kind in ('u', 'i')
+                    and result.dtype.kind == 'f'):
+                # Integer source feeding a float-dataType VRT.  Without
+                # this branch the source's sentinel value (e.g. 65535
+                # for uint16) flows through the int->float cast at the
+                # ``result[...] = src_arr[...]`` placement below as a
+                # literal float value, so downstream NaN-aware code
+                # sees the sentinel as valid data.  Gate the cast on
+                # the sentinel being representable in the source dtype
+                # so out-of-range sentinels (e.g. uint16 file paired
+                # with GDAL_NODATA="-9999") stay no-op rather than
+                # tripping OverflowError on ``dtype.type(int(...))``.
+                # See issue #1616.
+                try:
+                    nodata_f = float(src_nodata)
+                except (TypeError, ValueError):
+                    nodata_f = None
+                if (nodata_f is not None
+                        and np.isfinite(nodata_f)
+                        and nodata_f.is_integer()):
+                    info = np.iinfo(src_arr.dtype)
+                    nodata_int = int(nodata_f)
+                    if info.min <= nodata_int <= info.max:
+                        sentinel = src_arr.dtype.type(nodata_int)
+                        mask = src_arr == sentinel
+                        if mask.any():
+                            src_arr = src_arr.astype(result.dtype)
+                            src_arr[mask] = result.dtype.type('nan')
 
             # Apply ComplexSource scaling
             if src.scale is not None and src.scale != 1.0:
