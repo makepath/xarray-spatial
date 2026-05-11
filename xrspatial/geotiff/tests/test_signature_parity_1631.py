@@ -14,7 +14,9 @@ Three drifts were flagged by the api-consistency sweep on 2026-05-11:
 
 This module pins each of those three guarantees against future drift.
 """
+from __future__ import annotations
 
+import importlib.util
 import inspect
 import os
 import tempfile
@@ -28,6 +30,24 @@ from xrspatial.geotiff import (
     to_geotiff,
     write_geotiff_gpu,
     write_vrt,
+)
+
+
+def _gpu_available() -> bool:
+    """True when cupy imports and CUDA is initialised."""
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+_HAS_GPU = _gpu_available()
+_gpu_only = pytest.mark.skipif(
+    not _HAS_GPU, reason="cupy + CUDA required",
 )
 
 
@@ -106,21 +126,25 @@ def test_write_geotiff_gpu_docstring_lists_cubic():
 
 
 def test_write_geotiff_gpu_data_has_type_hint():
-    """``data`` parameter is annotated, matching ``to_geotiff(data, ...)``."""
+    """``data`` parameter is annotated, matching ``to_geotiff(data, ...)``.
+
+    The annotation also covers ``np.ndarray`` because the implementation
+    accepts numpy inputs (uploaded via ``cupy.asarray(np.asarray(data))``)
+    and the test suite exercises that path (e.g.
+    ``test_backend_kwarg_parity_1561.py`` passes a numpy ``dummy``).
+    """
     sig = inspect.signature(write_geotiff_gpu)
     data_param = sig.parameters['data']
     assert data_param.annotation is not inspect.Parameter.empty
     # The annotation is a forward reference under ``from __future__ import
     # annotations``; just confirm it mentions the documented types.
     ann_str = str(data_param.annotation)
-    assert 'DataArray' in ann_str or 'cupy' in ann_str
+    assert 'DataArray' in ann_str
+    assert 'cupy' in ann_str
+    assert 'ndarray' in ann_str  # numpy parity vs to_geotiff
 
 
-@pytest.mark.skipif(
-    not pytest.importorskip('cupy', reason='cupy required').is_available()
-    if False else False,
-    reason='guarded below',
-)
+@_gpu_only
 def test_write_geotiff_gpu_cubic_overview_round_trip():
     """``overview_resampling='cubic'`` works on the GPU writer.
 
@@ -128,11 +152,7 @@ def test_write_geotiff_gpu_cubic_overview_round_trip():
     unsupported codec. ``make_overview_gpu`` falls back to the CPU
     cubic implementation for parity with the CPU writer.
     """
-    cupy = pytest.importorskip('cupy')
-    try:
-        cupy.zeros(1)
-    except Exception:
-        pytest.skip('cupy import succeeded but no device available')
+    import cupy
 
     with tempfile.TemporaryDirectory() as td:
         arr_cpu = np.random.RandomState(0).rand(256, 256).astype(np.float32)

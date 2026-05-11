@@ -2663,7 +2663,8 @@ def read_geotiff_gpu(source: str, *,
     return result
 
 
-def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray, path: str, *,
+def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
+                      path: str, *,
                       crs: int | str | None = None,
                       nodata=None,
                       compression: str = 'zstd',
@@ -2692,8 +2693,10 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray, path: str, *,
 
     Parameters
     ----------
-    data : xr.DataArray (CuPy-backed) or cupy.ndarray
-        2D raster on GPU.
+    data : xr.DataArray (CuPy- or NumPy-backed), cupy.ndarray, or np.ndarray
+        2D or 3D raster. CuPy-backed inputs stay on device; NumPy/Dask
+        inputs are uploaded via ``cupy.asarray(np.asarray(data))``
+        before compression (matches ``to_geotiff`` parity).
     path : str
         Output file path.
     crs : int, str, or None
