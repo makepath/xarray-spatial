@@ -66,10 +66,10 @@ def _write_tiff_with_pass_through_tags(path):
 
 
 def _attrs_subset(attrs, keys):
-    """Slice attrs down to the keys we are comparing across backends.
+    """Return a dict containing only the requested attr keys.
 
-    ``cmap`` is a matplotlib object whose equality is brittle; ``transform``
-    is a tuple of floats so handle separately.
+    This helper performs a simple ``attrs.get`` lookup for each key and
+    does not special-case any values.
     """
     return {k: attrs.get(k) for k in keys}
 
