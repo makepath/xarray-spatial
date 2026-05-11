@@ -7,10 +7,33 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from xml.sax.saxutils import escape as _xml_escape, quoteattr as _xml_quoteattr
 
 import numpy as np
 
 from ._safe_xml import safe_fromstring
+
+
+def _xml_text(value) -> str:
+    """Escape *value* for safe inclusion as XML element text.
+
+    Handles the five XML predefined entities (``& < > " '``). Returns the
+    empty string when ``value`` is ``None``.
+    """
+    if value is None:
+        return ""
+    return _xml_escape(str(value), {'"': "&quot;", "'": "&apos;"})
+
+
+def _xml_attr(value) -> str:
+    """Quote *value* for use as an XML attribute value.
+
+    Wraps in matching quotes and escapes the predefined entities. Returns
+    ``'""'`` when ``value`` is ``None``.
+    """
+    if value is None:
+        return '""'
+    return _xml_quoteattr(str(value))
 
 # Lazy imports to avoid circular dependency
 _DTYPE_MAP = {
@@ -491,17 +514,25 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
     n_bands = first['bands']
 
-    # Build XML
-    lines = [f'<VRTDataset rasterXSize="{total_w}" rasterYSize="{total_h}">']
+    # Build XML.  Every interpolated text value is run through _xml_text
+    # (or _xml_attr for attribute slots) before concatenation so that a
+    # caller-supplied CRS WKT or a source filename containing XML
+    # special characters (``< > & " '``) cannot break the document or
+    # inject extra elements.  Numeric fields (offsets, sizes, pixel
+    # scales) are emitted from int / float literals and need no
+    # escaping.  See issue #1607.
+    lines = [f'<VRTDataset rasterXSize="{int(total_w)}" rasterYSize="{int(total_h)}">']
     if srs:
-        lines.append(f'  <SRS>{srs}</SRS>')
+        lines.append(f'  <SRS>{_xml_text(srs)}</SRS>')
     lines.append(f'  <GeoTransform>{mosaic_x0}, {res_x}, 0.0, '
                  f'{mosaic_y_top}, 0.0, {res_y}</GeoTransform>')
 
     for band_num in range(1, n_bands + 1):
-        lines.append(f'  <VRTRasterBand dataType="{vrt_dtype_name}" band="{band_num}">')
+        lines.append(
+            f'  <VRTRasterBand dataType={_xml_attr(vrt_dtype_name)} '
+            f'band="{int(band_num)}">')
         if nd is not None:
-            lines.append(f'    <NoDataValue>{nd}</NoDataValue>')
+            lines.append(f'    <NoDataValue>{_xml_text(nd)}</NoDataValue>')
 
         for m in sources_meta:
             t = m['transform']
@@ -521,13 +552,17 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
                     pass  # different drives on Windows
 
             lines.append('    <SimpleSource>')
-            lines.append(f'      <SourceFilename relativeToVRT="{rel_attr}">'
-                         f'{fname}</SourceFilename>')
-            lines.append(f'      <SourceBand>{band_num}</SourceBand>')
-            lines.append(f'      <SrcRect xOff="0" yOff="0" '
-                         f'xSize="{m["width"]}" ySize="{m["height"]}"/>')
-            lines.append(f'      <DstRect xOff="{dst_x_off}" yOff="{dst_y_off}" '
-                         f'xSize="{m["width"]}" ySize="{m["height"]}"/>')
+            lines.append(
+                f'      <SourceFilename relativeToVRT="{rel_attr}">'
+                f'{_xml_text(fname)}</SourceFilename>')
+            lines.append(f'      <SourceBand>{int(band_num)}</SourceBand>')
+            lines.append(
+                f'      <SrcRect xOff="0" yOff="0" '
+                f'xSize="{int(m["width"])}" ySize="{int(m["height"])}"/>')
+            lines.append(
+                f'      <DstRect xOff="{int(dst_x_off)}" '
+                f'yOff="{int(dst_y_off)}" '
+                f'xSize="{int(m["width"])}" ySize="{int(m["height"])}"/>')
             lines.append('    </SimpleSource>')
 
         lines.append('  </VRTRasterBand>')
