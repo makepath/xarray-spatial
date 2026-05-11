@@ -8,6 +8,18 @@ permissions:
   pull-requests: write
 
 jobs:
+  debug-event:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print gate inputs
+        run: |
+          echo "action=${{ github.event.action }}"
+          echo "draft=${{ github.event.pull_request.draft }}"
+          echo "assoc=${{ github.event.pull_request.author_association }}"
+          echo "user=${{ github.event.pull_request.user.login }}"
+          echo "head_repo=${{ github.event.pull_request.head.repo.full_name }}"
+          echo "base_repo=${{ github.event.pull_request.base.repo.full_name }}"
+
   request-copilot-review:
     if: >-
       github.event.pull_request.draft == false &&
