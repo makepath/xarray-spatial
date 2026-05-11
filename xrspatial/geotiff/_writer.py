@@ -145,11 +145,15 @@ def _block_reduce_2d(arr2d, method, nodata=None):
 
     When ``nodata`` is supplied and ``arr2d`` is a float dtype, cells that
     equal the sentinel are treated as NaN during the reduction so the
-    ``nan*`` aggregation routines correctly skip them. The reduced output
-    keeps NaN wherever every contributing input cell was the sentinel
-    (so callers can rewrite that NaN back to the sentinel after the
-    reduction). The sentinel is ignored entirely for integer dtypes and
-    for non-aggregation methods (``nearest``, ``mode``, ``cubic``).
+    ``nan*`` aggregation routines correctly skip them. For the nan-aware
+    aggregation methods, the reduced output keeps NaN wherever every
+    contributing input cell was the sentinel (so callers can rewrite
+    that NaN back to the sentinel after the reduction). The sentinel is
+    ignored entirely for integer dtypes and for ``nearest`` and ``mode``
+    methods. The ``cubic`` branch honours ``nodata`` by masking the
+    sentinel to NaN, running cubic with ``prefilter=False`` to keep the
+    kernel local, and rewriting any NaN in the output back to the
+    sentinel before returning (issue #1623).
     """
     h, w = arr2d.shape
     h2 = (h // 2) * 2
@@ -168,6 +172,42 @@ def _block_reduce_2d(arr2d, method, nodata=None):
             raise ImportError(
                 "scipy is required for cubic overview resampling. "
                 "Install it with: pip install scipy")
+        # When ``nodata`` is supplied on a float array, the writer has
+        # already rewritten NaN to the sentinel value upstream. Feeding
+        # that sentinel-poisoned array straight into ``zoom`` blends the
+        # sentinel into neighbouring cells and produces ringing
+        # artefacts near nodata borders (issue #1623, same root cause
+        # as #1613 but for the cubic branch).
+        #
+        # Mask the sentinel back to NaN before the spline so the
+        # interpolation does not treat it as signal, run cubic with
+        # ``prefilter=False`` so a single NaN does not poison the entire
+        # row/column (the default B-spline prefilter is global), then
+        # rewrite any NaN in the result back to the sentinel so the
+        # on-disk overview keeps the same convention as the
+        # full-resolution band. The ``prefilter=False`` switch only
+        # fires when a sentinel was actually found in the input, so the
+        # default cubic semantics still apply to inputs without nodata.
+        if (nodata is not None
+                and arr2d.dtype.kind == 'f'
+                and not np.isnan(nodata)):
+            try:
+                sentinel = arr2d.dtype.type(nodata)
+            except (OverflowError, ValueError):
+                sentinel = None
+            if sentinel is not None:
+                mask = arr2d == sentinel
+                if mask.any():
+                    masked = np.where(mask, np.float64('nan'), arr2d)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore', RuntimeWarning)
+                        result = zoom(masked, 0.5, order=3,
+                                      prefilter=False)
+                    nan_mask = np.isnan(result)
+                    if nan_mask.any():
+                        result = result.copy()
+                        result[nan_mask] = float(nodata)
+                    return result.astype(arr2d.dtype)
         return zoom(arr2d, 0.5, order=3).astype(arr2d.dtype)
 
     if method == 'mode':
@@ -253,8 +293,9 @@ def _make_overview(arr: np.ndarray, method: str = 'mean',
         When supplied and ``arr`` is a float dtype, cells equal to the
         sentinel are masked back to NaN before the reduction so the
         sentinel does not bias the result. Required for COG output that
-        sets ``nodata=...`` (issue #1613). Ignored for integer arrays
-        and for ``nearest`` / ``mode`` / ``cubic`` methods.
+        sets ``nodata=...`` (issue #1613, extended to ``cubic`` in
+        issue #1623). Ignored for integer arrays and for ``nearest`` /
+        ``mode`` methods.
 
     Returns
     -------
