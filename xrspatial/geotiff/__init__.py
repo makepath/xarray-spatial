@@ -1573,6 +1573,107 @@ def _gpu_decode_single_band_tiles(
     return arr_gpu
 
 
+def _apply_orientation_gpu(arr_gpu, orientation: int):
+    """cupy-side mirror of :func:`._reader._apply_orientation`.
+
+    The CPU reader applies the TIFF Orientation tag (274) post-decode so
+    pixel (0, 0) is always the visual top-left. The GPU read path used
+    to skip this remap, so reads of any file with orientation != 1
+    returned different pixel buffers than the CPU reader (#1540).
+
+    Same eight orientations the CPU helper handles. Operates on a cupy
+    ndarray and returns a cupy ndarray; ``cupy.ascontiguousarray`` is
+    applied so downstream views (DataArray.data) work without surprise
+    re-strides on the GPU.
+    """
+    import cupy
+    if orientation == 1:
+        return arr_gpu
+    if orientation == 2:
+        return cupy.ascontiguousarray(arr_gpu[:, ::-1])
+    if orientation == 3:
+        return cupy.ascontiguousarray(arr_gpu[::-1, ::-1])
+    if orientation == 4:
+        return cupy.ascontiguousarray(arr_gpu[::-1, :])
+    if arr_gpu.ndim == 3:
+        if orientation == 5:
+            return cupy.ascontiguousarray(arr_gpu.transpose(1, 0, 2))
+        if orientation == 6:
+            return cupy.ascontiguousarray(arr_gpu.transpose(1, 0, 2)[:, ::-1])
+        if orientation == 7:
+            return cupy.ascontiguousarray(
+                arr_gpu.transpose(1, 0, 2)[::-1, ::-1])
+        if orientation == 8:
+            return cupy.ascontiguousarray(arr_gpu.transpose(1, 0, 2)[::-1, :])
+    else:
+        if orientation == 5:
+            return cupy.ascontiguousarray(arr_gpu.T)
+        if orientation == 6:
+            return cupy.ascontiguousarray(arr_gpu.T[:, ::-1])
+        if orientation == 7:
+            return cupy.ascontiguousarray(arr_gpu.T[::-1, ::-1])
+        if orientation == 8:
+            return cupy.ascontiguousarray(arr_gpu.T[::-1, :])
+    raise ValueError(
+        f"Invalid TIFF Orientation tag value: {orientation} "
+        f"(must be 1-8 per TIFF 6.0)"
+    )
+
+
+def _apply_orientation_geo_info(geo_info, orientation: int,
+                                file_h: int, file_w: int):
+    """Mirror the transform updates `_reader.read_to_array` does post-flip.
+
+    Centralised so both ``read_to_array`` (CPU) and ``read_geotiff_gpu``
+    (this module) update the GeoTransform consistently. Operates only
+    on ``geo_info.transform``; the rest of the GeoInfo struct stays as
+    parsed.
+    """
+    if orientation == 1 or geo_info is None or geo_info.transform is None:
+        return geo_info
+    t = geo_info.transform
+    if orientation in (2, 3, 4):
+        if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
+            x_shift = file_w - 1
+            y_shift = file_h - 1
+        else:
+            x_shift = file_w
+            y_shift = file_h
+        new_origin_x = t.origin_x
+        new_origin_y = t.origin_y
+        new_px_w = t.pixel_width
+        new_px_h = t.pixel_height
+        if orientation in (2, 3):
+            new_origin_x = t.origin_x + x_shift * t.pixel_width
+            new_px_w = -t.pixel_width
+        if orientation in (3, 4):
+            new_origin_y = t.origin_y + y_shift * t.pixel_height
+            new_px_h = -t.pixel_height
+        geo_info.transform = GeoTransform(
+            origin_x=new_origin_x,
+            origin_y=new_origin_y,
+            pixel_width=new_px_w,
+            pixel_height=new_px_h,
+        )
+    elif orientation in (5, 6, 7, 8):
+        geo_info.transform = GeoTransform(
+            origin_x=t.origin_x,
+            origin_y=t.origin_y,
+            pixel_width=t.pixel_height,
+            pixel_height=t.pixel_width,
+        )
+        if (geo_info.crs_epsg is not None
+                or geo_info.crs_wkt is not None):
+            warnings.warn(
+                f"Orientation {orientation} swaps spatial axes on "
+                f"a georeferenced file; the returned coords are "
+                f"shape-correct but the geographic transform may "
+                f"need manual adjustment.",
+                stacklevel=3,
+            )
+    return geo_info
+
+
 def read_geotiff_gpu(source: str, *,
                      dtype=None,
                      overview_level: int | None = None,
@@ -1678,12 +1779,27 @@ def read_geotiff_gpu(source: str, *,
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         geo_info = extract_geo_info(ifd, data, header.byte_order)
+        # Capture the Orientation tag (274) once so the post-decode flip
+        # below picks it up for both the stripped fallback and the tiled
+        # GPU pipelines. CPU read_to_array applies the array remap +
+        # transform update for stripped reads, so for that branch we
+        # only need to copy the post-flip geo_info back here.
+        orientation = ifd.orientation
 
         if not ifd.is_tiled:
-            # Fall back to CPU for stripped files
+            # Fall back to CPU for stripped files. read_to_array remaps
+            # the array but only updates geo_info.transform for orientations
+            # 5-8 today (the 2/3/4 fix in #1539 is in a sibling PR). Discard
+            # its geo_info and apply our own transform update below so the
+            # result is correct regardless of merge order.
             src.close()
-            arr_cpu, _ = read_to_array(source, overview_level=overview_level)
+            arr_cpu, _ = read_to_array(
+                source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
+            if orientation != 1:
+                geo_info = _apply_orientation_geo_info(
+                    geo_info, orientation,
+                    file_h=ifd.height, file_w=ifd.width)
             coords = _geo_to_coords(geo_info, arr_gpu.shape[0], arr_gpu.shape[1])
             if name is None:
                 import os
@@ -1751,6 +1867,12 @@ def read_geotiff_gpu(source: str, *,
     masked_fill = (_resolve_masked_fill(ifd.nodata_str, file_dtype)
                    if compression == COMPRESSION_LERC else None)
 
+    # Track whether the array we end up with was already orientation-flipped
+    # by `read_to_array`. Any path that falls back to CPU decode picks up
+    # the orientation remap from PR #1521 + #1537 for free; the pure GPU
+    # paths still need the explicit remap added in #1540.
+    arr_was_cpu_decoded = False
+
     # PlanarConfiguration=2 (separate bands): each band has its own list
     # of tiles back-to-back in TileOffsets / TileByteCounts. The GPU
     # tile-assembly kernel assumes a single chunky tile sequence with
@@ -1813,8 +1935,13 @@ def read_geotiff_gpu(source: str, *,
                 break
             band_arrays.append(band_arr)
         if cpu_fallback_needed:
-            arr_cpu, _ = read_to_array(source, overview_level=overview_level)
+            # Drop read_to_array's geo_info: orientation transform handling
+            # below operates on our pre-extracted geo_info so the 2/3/4 case
+            # is covered regardless of #1539's merge state.
+            arr_cpu, _ = read_to_array(
+                source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
+            arr_was_cpu_decoded = True
         else:
             arr_gpu = cupy.stack(band_arrays, axis=2)
             if arr_gpu.shape != (height, width, samples):
@@ -1824,8 +1951,10 @@ def read_geotiff_gpu(source: str, *,
                     f"({height}, {width}, {samples})"
                 )
     elif has_sparse_tile:
-        arr_cpu, _ = read_to_array(source, overview_level=overview_level)
+        arr_cpu, _ = read_to_array(
+            source, overview_level=overview_level)
         arr_gpu = cupy.asarray(arr_cpu)
+        arr_was_cpu_decoded = True
     else:
         from ._gpu_decode import gpu_decode_tiles_from_file
         arr_gpu = None
@@ -1879,8 +2008,10 @@ def read_geotiff_gpu(source: str, *,
                 RuntimeWarning,
                 stacklevel=2,
             )
-            arr_cpu, _ = read_to_array(source, overview_level=overview_level)
+            arr_cpu, _ = read_to_array(
+                source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
+            arr_was_cpu_decoded = True
 
     # Multi-band tiled output must be (H, W, samples) regardless of planar
     # config -- catch any shape regression in the kernels before we attach
@@ -1895,6 +2026,19 @@ def read_geotiff_gpu(source: str, *,
                 f"({height}, {width}, {samples})"
             )
 
+    # Apply the TIFF Orientation tag (274). The pure GPU paths land here
+    # with a raw stored-order buffer; the CPU-fallback paths land here
+    # with arr_gpu already remapped (read_to_array does the data flip)
+    # but with their pre-orientation geo_info (we discarded the one
+    # read_to_array returned because it does not handle 2/3/4 today).
+    # Skip the GPU array remap on CPU-decoded paths to avoid a double
+    # flip, but always apply the geo_info update so coords match.
+    if orientation != 1:
+        if not arr_was_cpu_decoded:
+            arr_gpu = _apply_orientation_gpu(arr_gpu, orientation)
+        geo_info = _apply_orientation_geo_info(
+            geo_info, orientation, file_h=height, file_w=width)
+
     if dtype is not None:
         target = np.dtype(dtype)
         _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
@@ -1905,7 +2049,10 @@ def read_geotiff_gpu(source: str, *,
         import os
         name = os.path.splitext(os.path.basename(source))[0]
 
-    coords = _geo_to_coords(geo_info, height, width)
+    # Use the post-orientation array shape so coords match the array.
+    out_h = arr_gpu.shape[0]
+    out_w = arr_gpu.shape[1]
+    coords = _geo_to_coords(geo_info, out_h, out_w)
 
     attrs = {}
     if geo_info.crs_epsg is not None:
