@@ -1868,7 +1868,14 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                     if mask.any():
                         arr = arr.astype(np.float64)
                         arr[mask] = np.nan
-        if target_dtype is not None:
+        if target_dtype is not None and arr.dtype != target_dtype:
+            # Skip the cast when dtype already matches. ``numpy.astype``
+            # defaults to ``copy=True`` and would otherwise allocate a
+            # full chunk-sized buffer and memcpy on every read just to
+            # land in the same dtype the array already has. The int->
+            # float64 promotion above (sentinel-hit branch) keeps the
+            # contract that every chunk lands in the dask-declared
+            # dtype; this guard only elides no-op casts. See #1624.
             arr = arr.astype(target_dtype)
         return arr
     return _read(http_meta_key)
