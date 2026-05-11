@@ -2672,7 +2672,8 @@ def read_geotiff_gpu(source: str, *,
     return result
 
 
-def write_geotiff_gpu(data, path: str, *,
+def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
+                      path: str, *,
                       crs: int | str | None = None,
                       nodata=None,
                       compression: str = 'zstd',
@@ -2701,8 +2702,10 @@ def write_geotiff_gpu(data, path: str, *,
 
     Parameters
     ----------
-    data : xr.DataArray (CuPy-backed) or cupy.ndarray
-        2D raster on GPU.
+    data : xr.DataArray (CuPy- or NumPy-backed), cupy.ndarray, or np.ndarray
+        2D or 3D raster. CuPy-backed inputs stay on device; NumPy/Dask
+        inputs are uploaded via ``cupy.asarray(np.asarray(data))``
+        before compression (matches ``to_geotiff`` parity).
     path : str
         Output file path.
     crs : int, str, or None
@@ -2735,7 +2738,10 @@ def write_geotiff_gpu(data, path: str, *,
         halving until the smallest overview fits in a single tile.
     overview_resampling : str
         Resampling method for overviews: 'mean' (default), 'nearest',
-        'min', 'max', 'median', or 'mode'.
+        'min', 'max', 'median', 'mode', or 'cubic'. ``mode`` and
+        ``cubic`` fall back to the CPU implementation in
+        ``xrspatial.geotiff._writer`` so the GPU writer produces the
+        same overview bytes as the CPU writer.
     bigtiff : bool or None
         Force BigTIFF (64-bit offsets). None auto-promotes when the
         estimated file size would exceed the classic-TIFF 4 GB limit.
@@ -3196,7 +3202,10 @@ def read_vrt(source: str, *, dtype=None, window=None,
     return result
 
 
-def write_vrt(vrt_path: str, source_files: list[str], **kwargs) -> str:
+def write_vrt(vrt_path: str, source_files: list[str], *,
+              relative: bool = True,
+              crs_wkt: str | None = None,
+              nodata: float | None = None) -> str:
     """Generate a VRT file that mosaics multiple GeoTIFF tiles.
 
     Parameters
@@ -3217,14 +3226,18 @@ def write_vrt(vrt_path: str, source_files: list[str], **kwargs) -> str:
     -------
     str
         Path to the written VRT file.
-
-    Notes
-    -----
-    Only the keyword arguments listed above are accepted. Passing any
-    other keyword raises ``TypeError`` from the underlying writer.
     """
+    # Explicit signature (previously ``**kwargs``) so ``inspect.signature``,
+    # IDE autocomplete, and ``mypy --strict`` can see the accepted kwargs
+    # without parsing the docstring. Mirrors ``_vrt.write_vrt`` exactly; if
+    # that signature changes, this wrapper must be updated in lockstep.
     from ._vrt import write_vrt as _write_vrt_internal
-    return _write_vrt_internal(vrt_path, source_files, **kwargs)
+    return _write_vrt_internal(
+        vrt_path, source_files,
+        relative=relative,
+        crs_wkt=crs_wkt,
+        nodata=nodata,
+    )
 
 
 def plot_geotiff(da: xr.DataArray, **kwargs):
