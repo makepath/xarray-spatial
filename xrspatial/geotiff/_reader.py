@@ -21,7 +21,12 @@ from ._compression import (
     unpack_bits,
 )
 from ._dtypes import SUB_BYTE_BPS, resolve_bits_per_sample, tiff_dtype_to_numpy
-from ._geotags import GeoInfo, GeoTransform, extract_geo_info
+from ._geotags import (
+    GeoInfo,
+    GeoTransform,
+    RASTER_PIXEL_IS_POINT,
+    extract_geo_info,
+)
 from ._header import (
     IFD,
     TIFFHeader,
@@ -51,6 +56,28 @@ def _check_dimensions(width, height, samples, max_pixels):
             f"{max_pixels:,} pixels.  Pass a larger max_pixels value to "
             f"read_to_array() if this file is legitimate."
         )
+
+
+#: Default per-tile compressed-byte cap for HTTP COG reads. A crafted
+#: ``TileByteCounts`` entry can declare arbitrarily many bytes, and the
+#: HTTP path then tries to fetch and buffer that many bytes from the
+#: server before it ever decompresses. 256 MiB tolerates legitimate
+#: large tiles (RGB JPEG2000 at very high resolution can land in the
+#: tens of MB) while keeping the fetch bounded. Override via the
+#: ``XRSPATIAL_COG_MAX_TILE_BYTES`` environment variable.
+MAX_TILE_BYTES_DEFAULT = 256 << 20  # 256 MiB
+
+
+def _max_tile_bytes_from_env() -> int:
+    """Read the per-tile byte cap from the environment, or fall back to the default."""
+    raw = _os_module.environ.get('XRSPATIAL_COG_MAX_TILE_BYTES')
+    if raw is None:
+        return MAX_TILE_BYTES_DEFAULT
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return MAX_TILE_BYTES_DEFAULT
+    return max(1, val)
 
 
 # ---------------------------------------------------------------------------
@@ -1317,6 +1344,15 @@ def _fetch_decode_cog_http_tiles(
     # Empty tiles (byte_count == 0) and any tile_idx beyond the offsets
     # array are skipped here so the fetch list stays exactly aligned with
     # the placements list.
+    #
+    # Each tile's compressed size is checked against the cap returned by
+    # _max_tile_bytes_from_env() (default MAX_TILE_BYTES_DEFAULT, 256 MiB)
+    # before the fetch list is built. A crafted COG can claim arbitrarily
+    # large TileByteCounts; without this guard the HTTP layer would issue
+    # a Range request sized by the attacker's value (issue #1536). The cap
+    # is overridable via XRSPATIAL_COG_MAX_TILE_BYTES; the local-mmap path
+    # is naturally bounded by file size and does not need this check.
+    max_tile_bytes = _max_tile_bytes_from_env()
     fetch_ranges: list[tuple[int, int]] = []
     placements: list[tuple[int, int]] = []  # (tr, tc) per fetched tile
     for tr in range(tile_row_start, tile_row_end):
@@ -1328,6 +1364,15 @@ def _fetch_decode_cog_http_tiles(
             bc = byte_counts[tile_idx]
             if bc == 0:
                 continue
+            if bc > max_tile_bytes:
+                raise ValueError(
+                    f"TIFF tile {tile_idx} declares "
+                    f"TileByteCount={bc:,} bytes, which exceeds the HTTP "
+                    f"COG safety cap of {max_tile_bytes:,} bytes. The "
+                    f"file is malformed or attempting denial-of-service. "
+                    f"Override via XRSPATIAL_COG_MAX_TILE_BYTES if this "
+                    f"file is legitimate."
+                )
             fetch_ranges.append((off, bc))
             placements.append((tr, tc))
 
@@ -1541,23 +1586,70 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
             arr = arr[:, :, band]
 
         if orientation != 1:
+            # Use the *file* dimensions (before orientation) for the
+            # transform-flip math below. After ``_apply_orientation`` the
+            # array shape may swap (orientations 5-8), so capture them now.
+            file_h = arr.shape[0]
+            file_w = arr.shape[1]
             arr = _apply_orientation(arr, orientation)
-            # Orientations 5-8 swap rows and columns, so the file's stored
-            # pixel_width sits on the y-axis of the displayed array and
-            # vice versa. Swap the transform's pixel sizes so the coord
-            # arrays come out the right length. Signs are preserved
-            # rather than coerced to north-up, since some legitimate files
-            # use a non-standard sign convention (south-up, west-up).
+            # The pixel buffer was just remapped; the transform that maps
+            # display pixels back to geographic coordinates needs the
+            # matching remap or the y/x coords still describe the file's
+            # original layout.
             #
-            # For orientations 6/7/8 (rotations + flips, not a pure
-            # transpose) the swap is geometrically inexact for georef'd
-            # files: a strict implementation would also adjust origin
-            # and re-sign per axis. Such files are vanishingly rare in
-            # practice (TIFF Orientation 5-8 with a meaningful
-            # ModelTransformation), and getting it right requires a
-            # design pass; we warn instead so the user knows to verify.
-            if orientation in (5, 6, 7, 8):
-                t = geo_info.transform
+            # Orientations 2-4 are pure mirror flips: the array shape stays
+            # the same, but the displayed origin moves to the opposite
+            # edge along whichever axes were flipped. Update origin and
+            # sign of the affected pixel scale so xarray coords land on
+            # the right geographic positions.
+            #
+            # Orientations 5-8 swap rows and columns. Pixel sizes swap
+            # axes so coord array lengths match the new shape. Signs are
+            # preserved rather than coerced to north-up since some
+            # legitimate files use a non-standard sign convention
+            # (south-up, west-up). For 6/7/8 (rotations + flips, not a
+            # pure transpose) the swap is geometrically inexact for
+            # georef'd files: a strict implementation would also adjust
+            # origin and re-sign per axis. Those files are vanishingly
+            # rare in practice (TIFF Orientation 5-8 with a meaningful
+            # ModelTransformation); warn so the user knows to verify.
+            t = geo_info.transform
+            # Only georeferenced files have a meaningful transform to flip.
+            # Plain TIFFs with an Orientation tag but no GeoTIFF tags get
+            # their pixel buffer remapped above; their default transform
+            # is left untouched and the downstream consumer falls back to
+            # integer pixel coords.
+            if not geo_info.has_georef:
+                pass
+            elif orientation in (2, 3, 4):
+                # PixelIsPoint tiepoints are at pixel centers, so the
+                # opposite-edge pixel sits ``(N-1) * step`` away. PixelIsArea
+                # tiepoints are at pixel edges, so the opposite edge is
+                # ``N * step`` away. The two cases collapse to a single
+                # formula below by switching the offset.
+                if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
+                    x_shift = file_w - 1
+                    y_shift = file_h - 1
+                else:
+                    x_shift = file_w
+                    y_shift = file_h
+                new_origin_x = t.origin_x
+                new_origin_y = t.origin_y
+                new_px_w = t.pixel_width
+                new_px_h = t.pixel_height
+                if orientation in (2, 3):  # x flipped
+                    new_origin_x = t.origin_x + x_shift * t.pixel_width
+                    new_px_w = -t.pixel_width
+                if orientation in (3, 4):  # y flipped
+                    new_origin_y = t.origin_y + y_shift * t.pixel_height
+                    new_px_h = -t.pixel_height
+                geo_info.transform = GeoTransform(
+                    origin_x=new_origin_x,
+                    origin_y=new_origin_y,
+                    pixel_width=new_px_w,
+                    pixel_height=new_px_h,
+                )
+            elif orientation in (5, 6, 7, 8):
                 geo_info.transform = GeoTransform(
                     origin_x=t.origin_x,
                     origin_y=t.origin_y,

@@ -1,1 +1,2 @@
 module,last_inspected,issue,severity_max,categories_found,notes
+geotiff,2026-05-09,1541,HIGH,1;2;3;4;5,"PR adds 4 prod fns to __all__, real DeprecationWarning on plot_geotiff. Other findings (gpu kwarg type drift, sibling param asymmetry, write/dask_data rename, chunks default drift, write docstring drift) listed in issue #1541 for follow-up."

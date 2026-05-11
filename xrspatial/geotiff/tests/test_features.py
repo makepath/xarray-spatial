@@ -2463,7 +2463,7 @@ class TestPalette:
         plt.close('all')
 
     def test_plot_geotiff_deprecated(self, tmp_path):
-        """plot_geotiff still works as deprecated wrapper."""
+        """plot_geotiff still works but emits a DeprecationWarning."""
         import matplotlib
         matplotlib.use('Agg')
         import xrspatial.accessor
@@ -2477,7 +2477,8 @@ class TestPalette:
             f.write(tiff_data)
 
         da = open_geotiff(path)
-        artist = plot_geotiff(da)
+        with pytest.warns(DeprecationWarning, match='plot_geotiff is deprecated'):
+            artist = plot_geotiff(da)
         assert artist is not None
         import matplotlib.pyplot as plt
         plt.close('all')
@@ -2629,3 +2630,40 @@ class TestDaskReads:
         result = read_geotiff_dask(path, chunks=(5, 10))
         computed = result.compute()
         np.testing.assert_array_equal(computed.values, arr)
+
+
+class TestPublicAPI:
+    """`__all__` reflects every supported public function and `from
+    xrspatial.geotiff import *` does not silently drop production names."""
+
+    def test_all_lists_supported_functions(self):
+        import xrspatial.geotiff as g
+        # Frozen list of names that callers / tests treat as part of the
+        # public API. If any of these gets removed or renamed, that is a
+        # breaking change and should go through a deprecation cycle.
+        expected = {
+            'open_geotiff',
+            'read_geotiff_gpu',
+            'read_geotiff_dask',
+            'read_vrt',
+            'to_geotiff',
+            'write_geotiff_gpu',
+            'write_vrt',
+        }
+        assert set(g.__all__) == expected
+
+    def test_star_import_brings_in_all_public_names(self):
+        # ``from ... import *`` honours ``__all__``; verify every entry is
+        # importable that way (catches typos in __all__).
+        ns: dict = {}
+        exec('from xrspatial.geotiff import *', ns)
+        import xrspatial.geotiff as g
+        for name in g.__all__:
+            assert name in ns, f"{name} listed in __all__ but not exported"
+
+    def test_plot_geotiff_not_in_all_but_still_importable(self):
+        # plot_geotiff is intentionally omitted from __all__ (deprecated)
+        # but stays importable so existing user code keeps working.
+        import xrspatial.geotiff as g
+        assert 'plot_geotiff' not in g.__all__
+        assert hasattr(g, 'plot_geotiff')

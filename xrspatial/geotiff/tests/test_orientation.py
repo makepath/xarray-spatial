@@ -235,6 +235,198 @@ def test_orientation_5_to_8_warn_on_georef(tmp_path, orientation):
     )
 
 
+# ---------------------------------------------------------------------------
+# Geographic coordinate updates for mirror-flip orientations (issue #1537)
+# ---------------------------------------------------------------------------
+#
+# Orientations 2/3/4 flip the array horizontally, both axes, or vertically.
+# The reader used to apply the buffer flip but leave the y/x coord arrays
+# computed from the original transform, so xarray label-based lookups
+# returned the wrong pixel for georeferenced files.
+
+_GEOREF_EXTRA_AREA = [
+    (33550, 'd', 3, (1.0, 1.0, 0.0)),
+    (33922, 'd', 6, (0.0, 0.0, 0.0, 100.0, 50.0, 0.0)),
+    (34735, 'H', 12, (
+        1, 1, 0, 2,
+        1024, 0, 1, 2,
+        2048, 0, 1, 4326,
+    )),
+]
+_GEOREF_EXTRA_POINT = [
+    (33550, 'd', 3, (1.0, 1.0, 0.0)),
+    (33922, 'd', 6, (0.0, 0.0, 0.0, 100.0, 50.0, 0.0)),
+    (34735, 'H', 16, (
+        1, 1, 0, 3,
+        1024, 0, 1, 2,
+        1025, 0, 1, 2,    # PixelIsPoint
+        2048, 0, 1, 4326,
+    )),
+]
+
+
+def _write_with_orient_and_georef(path, arr, orientation, raster_type='area'):
+    """Write *arr* with Orientation tag + EPSG:4326 georef."""
+    extras = (_GEOREF_EXTRA_POINT if raster_type == 'point'
+              else _GEOREF_EXTRA_AREA)
+    tifffile.imwrite(
+        str(path), arr,
+        extratags=[(274, 'H', 1, orientation, True)] + [
+            (tag, dt, count, val, True) for (tag, dt, count, val) in extras
+        ],
+    )
+
+
+@pytest.mark.parametrize('orientation', [2, 3, 4])
+def test_orient_2_3_4_coords_track_pixel_flip_area(tmp_path, orientation):
+    """Mirror-flip orientations: a label-based lookup at a fixed (x, y)
+    must return the same pixel value regardless of the file's orientation.
+    """
+    arr = np.arange(24, dtype=np.uint8).reshape(4, 6)  # h=4, w=6
+
+    # Reference: orientation=1 (no transform) tells us the geographic
+    # coords for each file pixel under PixelIsArea. Pick three corners
+    # so x-flip, y-flip, and combined flips each have a target.
+    ref_path = tmp_path / 'orient_ref.tif'
+    _write_with_orient_and_georef(ref_path, arr, 1)
+    ref = open_geotiff(str(ref_path))
+    # Pixel (0, 0): top-left, value 0, at x=100.5, y=49.5
+    # Pixel (0, 5): top-right, value 5, at x=105.5, y=49.5
+    # Pixel (3, 0): bottom-left, value 18, at x=100.5, y=46.5
+    # Pixel (3, 5): bottom-right, value 23, at x=105.5, y=46.5
+    targets = [
+        (100.5, 49.5, 0),
+        (105.5, 49.5, 5),
+        (100.5, 46.5, 18),
+        (105.5, 46.5, 23),
+    ]
+    for x, y, expected in targets:
+        assert int(ref.sel(x=x, y=y).item()) == expected
+
+    # Now check the same coords under the flipped orientation.
+    path = tmp_path / f'orient_{orientation}.tif'
+    _write_with_orient_and_georef(path, arr, orientation)
+    da = open_geotiff(str(path))
+    for x, y, expected in targets:
+        got = int(da.sel(x=x, y=y).item())
+        assert got == expected, (
+            f'orientation={orientation}: sel(x={x}, y={y}) returned {got}, '
+            f'expected {expected} (mirror-flip lost the pixel-to-coord '
+            f'binding)'
+        )
+
+
+@pytest.mark.parametrize('orientation', [2, 3, 4])
+def test_orient_2_3_4_coords_track_pixel_flip_point(tmp_path, orientation):
+    """Same coord-fidelity check for PixelIsPoint files."""
+    arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
+
+    ref_path = tmp_path / 'orient_ref_pt.tif'
+    _write_with_orient_and_georef(ref_path, arr, 1, raster_type='point')
+    ref = open_geotiff(str(ref_path))
+    # PixelIsPoint: pixel (0, 0) center = (100, 50), pixel (0, 5) = (105, 50)
+    # pixel (3, 0) = (100, 47), pixel (3, 5) = (105, 47)
+    targets = [
+        (100.0, 50.0, 0),
+        (105.0, 50.0, 5),
+        (100.0, 47.0, 18),
+        (105.0, 47.0, 23),
+    ]
+    for x, y, expected in targets:
+        assert int(ref.sel(x=x, y=y).item()) == expected
+
+    path = tmp_path / f'orient_{orientation}_pt.tif'
+    _write_with_orient_and_georef(path, arr, orientation, raster_type='point')
+    da = open_geotiff(str(path))
+    for x, y, expected in targets:
+        got = int(da.sel(x=x, y=y).item())
+        assert got == expected, (
+            f'PixelIsPoint orient={orientation}: sel(x={x}, y={y})={got}, '
+            f'expected {expected}'
+        )
+
+
+@pytest.mark.parametrize(
+    'orientation,expected_first_x,expected_first_y',
+    [
+        # x_first=100.5 means the leftmost displayed column carries the
+        # original left-edge geographic coordinate; 105.5 means it carries
+        # the original right-edge coordinate (i.e. the coord array got
+        # flipped along x).
+        (2, 105.5, 49.5),  # x flipped, y unchanged
+        (3, 105.5, 46.5),  # both flipped
+        (4, 100.5, 46.5),  # x unchanged, y flipped
+    ],
+)
+def test_orient_2_3_4_coord_arrays(
+    tmp_path, orientation, expected_first_x, expected_first_y,
+):
+    """The first y/x coord lands on the right edge after a flip."""
+    arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
+    path = tmp_path / f'orient_arr_{orientation}.tif'
+    _write_with_orient_and_georef(path, arr, orientation)
+
+    da = open_geotiff(str(path))
+    np.testing.assert_allclose(da.x[0].item(), expected_first_x)
+    np.testing.assert_allclose(da.y[0].item(), expected_first_y)
+
+
+def test_orient_2_3_4_no_geo_still_uses_pixel_coords(tmp_path):
+    """Without georef, the legacy integer pixel coord behaviour is preserved.
+
+    A file without ModelPixelScale / ModelTiepoint stays on integer
+    coords regardless of orientation; the fix must not start fabricating
+    coordinates for un-georeferenced files.
+    """
+    arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
+    for orientation in (2, 3, 4):
+        path = tmp_path / f'orient_no_geo_{orientation}.tif'
+        tifffile.imwrite(
+            str(path), arr,
+            extratags=[(274, 'H', 1, orientation, True)],
+        )
+        da = open_geotiff(str(path))
+        # Coords default to 0..N-1 when has_georef is False; the
+        # orientation transform fix must not change that.
+        assert da.x.values.dtype.kind in ('i', 'u'), (
+            f'orient={orientation}: x coords drifted off integer '
+            f'(dtype={da.x.values.dtype})'
+        )
+
+
+def test_orient_2_3_4_no_geo_does_not_modify_transform(tmp_path):
+    """Non-georef file: transform attr stays at the default after orient 2/3/4.
+
+    Earlier draft fabricated origin/sign for the default GeoTransform on
+    un-georeferenced files because the gating only checked
+    ``transform is not None`` and the dataclass default is non-None.
+    Downstream consumers rightly fall back to integer pixel coords for
+    these files, but exposing a fake transform via attrs misleads any
+    direct attrs reader. Gate must be ``has_georef``.
+    """
+    arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
+    # Default GeoTransform on a fresh file the writer leaves untouched.
+    baseline_path = tmp_path / "orient_no_geo_baseline.tif"
+    tifffile.imwrite(
+        str(baseline_path), arr,
+        extratags=[(274, 'H', 1, 1, True)],
+    )
+    baseline_transform = open_geotiff(str(baseline_path)).attrs.get('transform')
+
+    for orientation in (2, 3, 4):
+        path = tmp_path / f"orient_no_geo_xform_{orientation}.tif"
+        tifffile.imwrite(
+            str(path), arr,
+            extratags=[(274, 'H', 1, orientation, True)],
+        )
+        da = open_geotiff(str(path))
+        assert da.attrs.get('transform') == baseline_transform, (
+            f"orient={orientation} on a non-georef file modified "
+            f"attrs['transform']: got {da.attrs.get('transform')}, "
+            f"expected baseline {baseline_transform}"
+        )
+
+
 def test_orientation_with_band_selection_returns_2d(tmp_path):
     """band= followed by an orientation transpose returns a 2D array.
 
