@@ -23,9 +23,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-tifffile = pytest.importorskip("tifffile")
-
 from xrspatial.geotiff import open_geotiff, to_geotiff
+
+tifffile = pytest.importorskip("tifffile")
 
 
 def _gpu_available() -> bool:
