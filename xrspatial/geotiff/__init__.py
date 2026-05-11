@@ -810,10 +810,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
     nodata : float, int, or None
         NoData value.
     compression : str
-        'none', 'deflate', 'lzw', 'jpeg', 'packbits', or 'zstd'.
-        JPEG is lossy and only supports uint8 data (1 or 3 bands).
-        With ``gpu=True``, JPEG uses nvJPEG for GPU-accelerated
-        encode/decode when available, falling back to Pillow on CPU.
+        Codec name. One of ``'none'``, ``'deflate'``, ``'lzw'``,
+        ``'jpeg'``, ``'packbits'``, ``'zstd'``, ``'lz4'``,
+        ``'jpeg2000'`` (alias ``'j2k'``), or ``'lerc'``.
+        ``'jpeg'`` is currently rejected on write because the encoder
+        omits the JPEGTables tag and produced files do not round-trip
+        through libtiff / GDAL / rasterio. Use ``'deflate'``, ``'zstd'``,
+        or ``'lzw'`` instead. ``'lerc'`` accepts ``max_z_error`` for
+        lossy compression with a bounded per-pixel error.
     compression_level : int or None
         Compression effort level. None uses each codec's default (6 for
         deflate/zstd). Valid ranges: deflate 1-9, zstd 1-22, lz4 0-16.
