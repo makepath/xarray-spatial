@@ -145,14 +145,15 @@ def _block_reduce_2d(arr2d, method, nodata=None):
 
     When ``nodata`` is supplied and ``arr2d`` is a float dtype, cells that
     equal the sentinel are treated as NaN during the reduction so the
-    ``nan*`` aggregation routines correctly skip them. The reduced output
-    keeps NaN wherever every contributing input cell was the sentinel
-    (so callers can rewrite that NaN back to the sentinel after the
-    reduction). The sentinel is ignored entirely for integer dtypes and
-    for ``nearest`` and ``mode`` methods. The ``cubic`` branch honours
-    ``nodata`` by masking the sentinel to NaN, running cubic with
-    ``prefilter=False`` to keep the kernel local, and rewriting any
-    NaN in the output back to the sentinel (issue #1623).
+    ``nan*`` aggregation routines correctly skip them. For the nan-aware
+    aggregation methods, the reduced output keeps NaN wherever every
+    contributing input cell was the sentinel (so callers can rewrite
+    that NaN back to the sentinel after the reduction). The sentinel is
+    ignored entirely for integer dtypes and for ``nearest`` and ``mode``
+    methods. The ``cubic`` branch honours ``nodata`` by masking the
+    sentinel to NaN, running cubic with ``prefilter=False`` to keep the
+    kernel local, and rewriting any NaN in the output back to the
+    sentinel before returning (issue #1623).
     """
     h, w = arr2d.shape
     h2 = (h // 2) * 2
