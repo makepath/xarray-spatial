@@ -59,6 +59,15 @@ __all__ = [
 _Y_NAMES = {'y', 'lat', 'latitude', 'Y', 'Lat', 'Latitude'}
 _X_NAMES = {'x', 'lon', 'longitude', 'X', 'Lon', 'Longitude'}
 
+# Map friendly vertical datum tokens to EPSG codes so attrs['vertical_crs']
+# from reproject output matches the convention used by xrspatial.geotiff,
+# which also writes EPSG ints to attrs['vertical_crs'].
+_VERTICAL_DATUM_EPSG = {
+    'EGM96': 5773,        # EGM96 height
+    'EGM2008': 3855,      # EGM2008 height
+    'ellipsoidal': 4979,  # WGS 84 (3D, ellipsoidal height)
+}
+
 
 def _find_spatial_dims(raster):
     """Find the y and x dimension names, handling multi-band rasters.
@@ -532,7 +541,10 @@ def reproject(
     xr.DataArray
         The output ``attrs['crs']`` is in WKT format.
         If vertical transformation was applied, ``attrs['vertical_crs']``
-        records the target vertical datum.
+        records the target vertical datum's EPSG code (5773 for EGM96,
+        3855 for EGM2008, 4979 for ellipsoidal WGS84) to match the
+        convention used by ``xrspatial.geotiff``. The friendly string
+        token (``'EGM96'`` etc.) is preserved under ``attrs['vertical_datum']``.
 
         The output y coordinate is always emitted in descending order
         (top-down, north-up) regardless of the input direction. This
@@ -726,7 +738,12 @@ def reproject(
     if '_FillValue' in raster.attrs:
         out_attrs['_FillValue'] = nd
     if tgt_vertical_crs is not None:
-        out_attrs['vertical_crs'] = tgt_vertical_crs
+        # Align with xrspatial.geotiff: attrs['vertical_crs'] holds the
+        # EPSG integer code. The friendly string token is preserved under
+        # attrs['vertical_datum'] so the human-readable name is not lost.
+        # See GH issue #1570.
+        out_attrs['vertical_crs'] = _VERTICAL_DATUM_EPSG.get(tgt_vertical_crs)
+        out_attrs['vertical_datum'] = tgt_vertical_crs
 
     # Handle multi-band output (3D result from multi-band source)
     if result_data.ndim == 3:
