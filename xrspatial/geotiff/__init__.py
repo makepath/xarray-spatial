@@ -2275,7 +2275,7 @@ def write_vrt(vrt_path: str, source_files: list[str], **kwargs) -> str:
 def plot_geotiff(da: xr.DataArray, **kwargs):
     """Plot a DataArray using its embedded colormap if present.
 
-    .. deprecated::
+    .. deprecated:: 0.10.0
         Use ``da.xrs.plot()`` instead. ``plot_geotiff`` is a thin wrapper
         kept for backward compatibility and will be removed in a future
         release.
