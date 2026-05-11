@@ -21,9 +21,8 @@ import importlib.util
 
 import numpy as np
 import pytest
-import xarray as xr
 
-from xrspatial.geotiff import open_geotiff, to_geotiff
+from xrspatial.geotiff import open_geotiff
 
 tifffile = pytest.importorskip("tifffile")
 
