@@ -243,6 +243,46 @@ def _epsg_to_wkt(epsg: int) -> str | None:
         return None
 
 
+# Top-level WKT 1 / WKT 2 keywords. GDAL stores user-defined CRSes
+# (GeoKey *CSTypeGeoKey == 32767) as WKT in the citation, so callers
+# of ``extract_geo_info`` need a cheap test to decide whether the
+# citation string round-trips as a CRS or is just a free-form name.
+# Listed in rough order of how often they appear in real-world files.
+_WKT_PREFIXES = (
+    'PROJCS[',
+    'GEOGCS[',
+    'PROJCRS[',
+    'GEOGCRS[',
+    'COMPD_CS[',
+    'COMPOUNDCRS[',
+    'BOUNDCRS[',
+    'VERT_CS[',
+    'VERTCRS[',
+    'LOCAL_CS[',
+    'ENGCRS[',
+    'PARAMETRICCRS[',
+    'TIMECRS[',
+    'DERIVEDPROJCRS[',
+)
+
+
+def _looks_like_wkt(text) -> bool:
+    """Return True iff ``text`` opens with a known WKT root keyword.
+
+    The check is intentionally surface-level: only the first
+    non-whitespace stretch is inspected, no parser is invoked. The
+    callers only need to distinguish "this citation is actually a WKT
+    string GDAL stuffed in here" from "this is a human-readable CRS
+    name" -- a deeper parse would be both slower and a different bug
+    surface. False positives on names that happen to start with a WKT
+    keyword followed by '[' are vanishingly rare in practice.
+    """
+    if not isinstance(text, str):
+        return False
+    head = text.lstrip().upper()
+    return any(head.startswith(p) for p in _WKT_PREFIXES)
+
+
 def _parse_geokeys(ifd: IFD, data: bytes | memoryview,
                    byte_order: str) -> dict[int, int | float | str]:
     """Parse the GeoKeyDirectory and resolve values from param tags.
@@ -586,6 +626,15 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
     crs_wkt = None
     if epsg is not None:
         crs_wkt = _epsg_to_wkt(epsg)
+    elif _looks_like_wkt(crs_name):
+        # User-defined CRS: GeoKey GEOKEY_*_CS_TYPE == 32767 and the WKT
+        # lives in the citation. Expose it as crs_wkt so the writer can
+        # round-trip it. The citation itself stays in crs_name for callers
+        # that expect that key. Without this branch a read -> write cycle
+        # silently drops the projection on user-defined CRS files because
+        # to_geotiff only consults attrs['crs'] / attrs['crs_wkt']. See
+        # issue #1632.
+        crs_wkt = crs_name
 
     return GeoInfo(
         transform=transform,
