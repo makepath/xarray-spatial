@@ -726,3 +726,137 @@ class TestHTTPTileByteCountCap:
         monkeypatch.setenv('XRSPATIAL_COG_MAX_TILE_BYTES', '1')
         result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, arr)
+
+
+# ---------------------------------------------------------------------------
+# XML entity expansion (billion-laughs) -- issue #1579
+#
+# VRT and GDALMetadata payloads go through xml.etree.ElementTree, which by
+# default expands internal entities. A crafted file can OOM the host via
+# exponential entity expansion. ``_safe_xml.safe_fromstring`` refuses any
+# input carrying a DOCTYPE declaration, which is where entity definitions
+# live.
+# ---------------------------------------------------------------------------
+
+
+_BILLION_LAUGHS_PROLOGUE = (
+    '<?xml version="1.0"?>\n'
+    '<!DOCTYPE lolz [\n'
+    '  <!ENTITY lol "lol">\n'
+    '  <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">\n'
+    '  <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">\n'
+    '  <!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;">\n'
+    ']>\n'
+)
+
+
+class TestVRTXMLEntityExpansion:
+    """Issue #1579: parse_vrt refuses XML entity (billion-laughs) payloads."""
+
+    def test_parse_vrt_rejects_doctype(self, tmp_path):
+        """A VRT that declares ``<!DOCTYPE ...>`` is rejected outright."""
+        from xrspatial.geotiff._vrt import parse_vrt
+
+        payload = _BILLION_LAUGHS_PROLOGUE + (
+            '<VRTDataset rasterXSize="4" rasterYSize="4">\n'
+            '  <VRTRasterBand dataType="Float32" band="1">\n'
+            '    <Description>&lol4;</Description>\n'
+            '  </VRTRasterBand>\n'
+            '</VRTDataset>\n'
+        )
+
+        with pytest.raises(ValueError, match="DOCTYPE"):
+            parse_vrt(payload, str(tmp_path))
+
+    def test_open_geotiff_vrt_rejects_doctype(self, tmp_path):
+        """Routing through the public open_geotiff entry still rejects DOCTYPEs."""
+        from xrspatial.geotiff import open_geotiff
+
+        payload = _BILLION_LAUGHS_PROLOGUE + (
+            '<VRTDataset rasterXSize="4" rasterYSize="4">\n'
+            '  <VRTRasterBand dataType="Float32" band="1">\n'
+            '    <Description>&lol4;</Description>\n'
+            '  </VRTRasterBand>\n'
+            '</VRTDataset>\n'
+        )
+        vrt_path = tmp_path / "bomb.vrt"
+        vrt_path.write_text(payload)
+
+        with pytest.raises(ValueError, match="DOCTYPE"):
+            open_geotiff(str(vrt_path))
+
+    def test_normal_vrt_still_parses(self, tmp_path):
+        """A VRT without a DOCTYPE parses normally."""
+        from xrspatial.geotiff._vrt import parse_vrt
+
+        payload = (
+            '<VRTDataset rasterXSize="4" rasterYSize="4">\n'
+            '  <VRTRasterBand dataType="Float32" band="1">\n'
+            '  </VRTRasterBand>\n'
+            '</VRTDataset>\n'
+        )
+        vrt = parse_vrt(payload, str(tmp_path))
+        assert vrt.width == 4
+        assert vrt.height == 4
+
+
+class TestGDALMetadataXMLEntityExpansion:
+    """Issue #1579: _parse_gdal_metadata refuses entity-expansion payloads."""
+
+    def test_parse_gdal_metadata_doctype_returns_empty(self):
+        """A DOCTYPE in GDALMetadata yields an empty dict, not expansion.
+
+        GDALMetadata is non-essential auxiliary metadata, so the parser
+        silently drops malformed payloads rather than failing the whole
+        TIFF read. Crucially it must NOT expand the entity.
+        """
+        from xrspatial.geotiff._geotags import _parse_gdal_metadata
+
+        payload = _BILLION_LAUGHS_PROLOGUE + (
+            '<GDALMetadata><Item name="x">&lol4;</Item></GDALMetadata>'
+        )
+        result = _parse_gdal_metadata(payload)
+        # The DOCTYPE branch falls through to an empty dict; the
+        # critical assertion is that the value is NOT the expanded
+        # entity (10000+ "lol" copies).
+        assert result == {} or 'lol' * 100 not in str(result.get('x', ''))
+
+    def test_parse_gdal_metadata_normal_still_works(self):
+        """A well-formed GDALMetadata XML parses into a flat dict."""
+        from xrspatial.geotiff._geotags import _parse_gdal_metadata
+
+        payload = (
+            '<GDALMetadata>'
+            '<Item name="STATISTICS_MINIMUM">0</Item>'
+            '<Item name="STATISTICS_MAXIMUM" sample="0">255</Item>'
+            '</GDALMetadata>'
+        )
+        result = _parse_gdal_metadata(payload)
+        assert result.get('STATISTICS_MINIMUM') == '0'
+        assert result.get(('STATISTICS_MAXIMUM', 0)) == '255'
+
+
+class TestSafeXMLHelper:
+    """Direct unit tests for ``_safe_xml.safe_fromstring``."""
+
+    def test_rejects_bytes_doctype(self):
+        from xrspatial.geotiff._safe_xml import safe_fromstring
+        with pytest.raises(ValueError, match="DOCTYPE"):
+            safe_fromstring(b'<!DOCTYPE x><x/>')
+
+    def test_rejects_str_doctype(self):
+        from xrspatial.geotiff._safe_xml import safe_fromstring
+        with pytest.raises(ValueError, match="DOCTYPE"):
+            safe_fromstring('<!DOCTYPE x><x/>')
+
+    def test_rejects_doctype_with_whitespace(self):
+        """Whitespace between ``<!`` and ``DOCTYPE`` is still rejected."""
+        from xrspatial.geotiff._safe_xml import safe_fromstring
+        with pytest.raises(ValueError, match="DOCTYPE"):
+            safe_fromstring('<!   DOCTYPE x><x/>')
+
+    def test_parses_normal_xml(self):
+        from xrspatial.geotiff._safe_xml import safe_fromstring
+        root = safe_fromstring('<root><child>hi</child></root>')
+        assert root.tag == 'root'
+        assert root.find('child').text == 'hi'
