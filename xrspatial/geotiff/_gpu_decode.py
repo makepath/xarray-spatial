@@ -2891,9 +2891,17 @@ def gpu_compress_tiles(d_image, tile_width, tile_height,
 GPU_OVERVIEW_METHODS = ('mean', 'nearest', 'min', 'max', 'median', 'mode')
 
 
-def _block_reduce_2d_gpu(arr2d, method):
-    """2x block-reduce a single 2D CuPy plane using *method*."""
+def _block_reduce_2d_gpu(arr2d, method, nodata=None):
+    """2x block-reduce a single 2D CuPy plane using *method*.
+
+    When ``nodata`` is supplied and ``arr2d`` is a float dtype, cells that
+    equal the sentinel are masked back to NaN before the reduction so the
+    ``cupy.nan*`` aggregation routines correctly skip them. Mirrors the
+    CPU helper :func:`xrspatial.geotiff._writer._block_reduce_2d` so the
+    two backends produce identical overviews when ``nodata`` is set.
+    """
     import cupy
+    import numpy as np
 
     h, w = arr2d.shape
     h2 = (h // 2) * 2
@@ -2908,12 +2916,26 @@ def _block_reduce_2d_gpu(arr2d, method):
         # Mode is expensive on GPU; fall back to CPU
         cpu_arr = arr2d.get()
         from ._writer import _block_reduce_2d
-        cpu_result = _block_reduce_2d(cpu_arr, 'mode')
+        cpu_result = _block_reduce_2d(cpu_arr, 'mode', nodata=nodata)
         return cupy.asarray(cpu_result)
 
     # Block reshape for mean/min/max/median
     if arr2d.dtype.kind == 'f':
         blocks = cropped.reshape(oh, 2, ow, 2)
+        # Mask the sentinel back to NaN so cupy.nanmean and friends
+        # honour it as missing-data (issue #1613).
+        if (nodata is not None
+                and not np.isnan(nodata)
+                and np.isfinite(nodata)):
+            try:
+                sentinel = np.dtype(str(arr2d.dtype)).type(nodata)
+            except (OverflowError, ValueError):
+                sentinel = None
+            if sentinel is not None:
+                mask = blocks == sentinel
+                if bool(mask.any().item()):
+                    blocks = cupy.where(
+                        mask, cupy.float64('nan'), blocks)
     else:
         blocks = cropped.astype(cupy.float64).reshape(oh, 2, ow, 2)
 
@@ -2936,7 +2958,7 @@ def _block_reduce_2d_gpu(arr2d, method):
     return result.astype(arr2d.dtype)
 
 
-def make_overview_gpu(arr, method='mean'):
+def make_overview_gpu(arr, method='mean', nodata=None):
     """Generate a 2x decimated overview on GPU.
 
     Parameters
@@ -2946,6 +2968,12 @@ def make_overview_gpu(arr, method='mean'):
     method : str
         Resampling method: 'mean', 'nearest', 'min', 'max', 'median',
         or 'mode'.
+    nodata : scalar or None
+        When supplied and ``arr`` is a float dtype, cells equal to the
+        sentinel are masked back to NaN before the reduction so the
+        sentinel does not bias the result. Required for COG output that
+        sets ``nodata=...`` (issue #1613). Ignored for integer arrays
+        and for ``nearest`` / ``mode``.
 
     Returns
     -------
@@ -2955,7 +2983,7 @@ def make_overview_gpu(arr, method='mean'):
     import cupy
 
     if arr.ndim == 3:
-        bands = [_block_reduce_2d_gpu(arr[:, :, b], method)
+        bands = [_block_reduce_2d_gpu(arr[:, :, b], method, nodata=nodata)
                  for b in range(arr.shape[2])]
         return cupy.stack(bands, axis=2)
-    return _block_reduce_2d_gpu(arr, method)
+    return _block_reduce_2d_gpu(arr, method, nodata=nodata)

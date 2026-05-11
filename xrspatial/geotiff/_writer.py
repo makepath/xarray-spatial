@@ -139,8 +139,17 @@ OVERVIEW_METHODS = ('mean', 'nearest', 'min', 'max', 'median', 'mode', 'cubic')
 _MAX_OVERVIEW_LEVELS = 8
 
 
-def _block_reduce_2d(arr2d, method):
-    """2x block-reduce a single 2D plane using *method*."""
+def _block_reduce_2d(arr2d, method, nodata=None):
+    """2x block-reduce a single 2D plane using *method*.
+
+    When ``nodata`` is supplied and ``arr2d`` is a float dtype, cells that
+    equal the sentinel are treated as NaN during the reduction so the
+    ``nan*`` aggregation routines correctly skip them. The reduced output
+    keeps NaN wherever every contributing input cell was the sentinel
+    (so callers can rewrite that NaN back to the sentinel after the
+    reduction). The sentinel is ignored entirely for integer dtypes and
+    for non-aggregation methods (``nearest``, ``mode``, ``cubic``).
+    """
     h, w = arr2d.shape
     h2 = (h // 2) * 2
     w2 = (w // 2) * 2
@@ -177,9 +186,35 @@ def _block_reduce_2d(arr2d, method):
     # Block reshape for mean/min/max/median
     if arr2d.dtype.kind == 'f':
         blocks = cropped.reshape(oh, 2, ow, 2)
+        # When a sentinel was used in place of NaN by an upstream
+        # NaN-to-sentinel rewrite, mask it back to NaN here so nanmean /
+        # nanmin / nanmax / nanmedian honour the missing-data semantic.
+        # Without this the sentinel value participates in the reduction
+        # and poisons the overview (issue #1613).
+        if (nodata is not None
+                and not np.isnan(nodata)
+                and np.isfinite(nodata)):
+            try:
+                sentinel = arr2d.dtype.type(nodata)
+            except (OverflowError, ValueError):
+                sentinel = None
+            if sentinel is not None:
+                mask = blocks == sentinel
+                if mask.any():
+                    # ``np.where(mask, nan, blocks)`` produces a fresh
+                    # array so the caller's input is not mutated.
+                    blocks = np.where(mask, np.float64('nan'), blocks)
     else:
         blocks = cropped.astype(np.float64).reshape(oh, 2, ow, 2)
+        # Integer rasters can also carry a sentinel that an upstream
+        # promotion already converted to NaN; cropped is integer so no
+        # masking is needed here. The blocks.astype(float64) cast above
+        # would lose any NaN anyway -- integer sentinels are handled at
+        # the call site by promoting to float64 before reduction.
 
+    # nanmean / nanmin / nanmax / nanmedian raise warnings on all-nan
+    # blocks; ``np.errstate`` would silence them but the resulting NaN is
+    # the desired output so we leave the warning visible.
     if method == 'mean':
         result = np.nanmean(blocks, axis=(1, 3))
     elif method == 'min':
@@ -199,7 +234,8 @@ def _block_reduce_2d(arr2d, method):
     return result.astype(arr2d.dtype)
 
 
-def _make_overview(arr: np.ndarray, method: str = 'mean') -> np.ndarray:
+def _make_overview(arr: np.ndarray, method: str = 'mean',
+                   nodata=None) -> np.ndarray:
     """Generate a 2x decimated overview.
 
     Parameters
@@ -209,6 +245,12 @@ def _make_overview(arr: np.ndarray, method: str = 'mean') -> np.ndarray:
     method : str
         Resampling method: 'mean' (default), 'nearest', 'min', 'max',
         'median', 'mode', or 'cubic'.
+    nodata : scalar or None
+        When supplied and ``arr`` is a float dtype, cells equal to the
+        sentinel are masked back to NaN before the reduction so the
+        sentinel does not bias the result. Required for COG output that
+        sets ``nodata=...`` (issue #1613). Ignored for integer arrays
+        and for ``nearest`` / ``mode`` / ``cubic`` methods.
 
     Returns
     -------
@@ -216,9 +258,10 @@ def _make_overview(arr: np.ndarray, method: str = 'mean') -> np.ndarray:
         Half-resolution array.
     """
     if arr.ndim == 3:
-        bands = [_block_reduce_2d(arr[:, :, b], method) for b in range(arr.shape[2])]
+        bands = [_block_reduce_2d(arr[:, :, b], method, nodata=nodata)
+                 for b in range(arr.shape[2])]
         return np.stack(bands, axis=2)
-    return _block_reduce_2d(arr, method)
+    return _block_reduce_2d(arr, method, nodata=nodata)
 
 
 # ---------------------------------------------------------------------------
@@ -1100,9 +1143,36 @@ def write(data: np.ndarray, path: str, *,
                 if oh > 0 and ow > 0:
                     overview_levels.append(len(overview_levels) + 1)
 
+        # Overview reductions need the *unmasked* float array so that
+        # ``np.nanmean`` / ``np.nanmin`` / ``np.nanmax`` / ``np.nanmedian``
+        # honour the sentinel as missing-data. The CPU writer's caller
+        # (``to_geotiff``) currently rewrites NaN to ``nodata`` before
+        # ``write()`` runs (so the on-disk full-resolution tile bytes
+        # match the sentinel-aware reader). We pass ``nodata`` into
+        # ``_make_overview`` here so the reducer masks the sentinel back
+        # to NaN before averaging; without this, the sentinel poisons
+        # the overview (issue #1613). After reduction any cell that was
+        # all-sentinel comes back as NaN; ``_write_tiled`` / ``_write_stripped``
+        # serialise that NaN to disk, where the eager reader will mask
+        # it (and a future writer pass could rewrite to ``nodata`` for
+        # external readers -- out of scope for this fix).
         current = data
         for _ in overview_levels:
-            current = _make_overview(current, method=overview_resampling)
+            current = _make_overview(current, method=overview_resampling,
+                                     nodata=nodata)
+            # Rewrite any NaN produced by the all-sentinel reduction
+            # back to the sentinel so the overview pyramid carries the
+            # same masking convention as the full-resolution band. The
+            # original ``data`` already underwent the NaN->sentinel
+            # rewrite upstream, so the only new NaNs here come from the
+            # reducer itself.
+            if (nodata is not None
+                    and current.dtype.kind == 'f'
+                    and not np.isnan(nodata)):
+                nan_mask = np.isnan(current)
+                if nan_mask.any():
+                    current = current.copy()
+                    current[nan_mask] = current.dtype.type(nodata)
             oh, ow = current.shape[:2]
             if tiled:
                 o_off, o_bc, o_data = _write_tiled(current, comp_tag, pred_int,
