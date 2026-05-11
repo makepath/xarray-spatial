@@ -2821,25 +2821,29 @@ def read_vrt(source: str, *, dtype=None, window=None,
 
     if arr.dtype.kind in ('u', 'i'):
         if arr.ndim == 3 and band is None and vrt.bands:
-            # Per-band masking: compute every band's mask against the
-            # original integer array first, then promote once and write
-            # NaN into the float64 view. Doing the compare phase before
-            # any mutation avoids issues with mixed dtype views.
-            int_dtype = arr.dtype
-            band_masks = []
+            # Per-band masking: walk ``vrt.bands`` once and stream each
+            # band's mask. The first band with a sentinel hit promotes
+            # ``arr`` to float64 in place; ``int_arr`` keeps the original
+            # integer view alive so subsequent bands still compare against
+            # the exact sentinel dtype (the post-promotion float64 view
+            # works too, but staying on the integer dtype avoids any
+            # rounding edge case on extreme sentinels). Peak boolean-mask
+            # memory is O(H * W), not O(bands * H * W) like the earlier
+            # collect-then-apply implementation.
+            int_arr = arr
+            int_dtype = int_arr.dtype
             for i, vrt_band in enumerate(vrt.bands):
-                if i >= arr.shape[-1]:
+                if i >= int_arr.shape[-1]:
                     break
                 sentinel = _sentinel_for_dtype(vrt_band.nodata, int_dtype)
                 if sentinel is None:
                     continue
-                mask = arr[..., i] == sentinel
-                if mask.any():
-                    band_masks.append((i, mask))
-            if band_masks:
-                arr = arr.astype(np.float64)
-                for i, mask in band_masks:
-                    arr[..., i][mask] = np.nan
+                mask = int_arr[..., i] == sentinel
+                if not mask.any():
+                    continue
+                if arr.dtype != np.float64:
+                    arr = arr.astype(np.float64)
+                arr[..., i][mask] = np.nan
         elif nodata is not None:
             sentinel = _sentinel_for_dtype(nodata, arr.dtype)
             if sentinel is not None:

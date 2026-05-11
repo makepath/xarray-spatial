@@ -18,7 +18,6 @@ This file mirrors test_vrt_band_nodata_1598.py for the multi-band
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from xrspatial.geotiff import read_vrt
 from xrspatial.geotiff._writer import write
