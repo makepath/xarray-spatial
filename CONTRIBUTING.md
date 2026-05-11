@@ -1,6 +1,6 @@
-# Contributing to Xarray-Spatial
+# Contributing to xarray-spatial
 
-As stated in [Xarray Spatial code of conduct](https://github.com/xarray-contrib/xarray-spatial/blob/main/CODE_OF_CONDUCT.md), a primary goal of Xarray Spatial is to be inclusive to the largest number of contributors. However, we do have some requests for how contributions should be made. Please read these guidelines before contributing to have a most positive experience with Xarray Spatial.
+As stated in the [xarray-spatial code of conduct](https://github.com/xarray-contrib/xarray-spatial/blob/main/CODE_OF_CONDUCT.md), a primary goal of xarray-spatial is to be inclusive to the largest number of contributors. However, we do have some requests for how contributions should be made. Please read these guidelines before contributing to have a most positive experience with xarray-spatial.
 
 ### Getting Started
 
@@ -28,7 +28,7 @@ In order to avoid duplication of effort, it's always a good idea to comment on a
 
 1. Make sure that there is a corresponding issue for your change first. If there isn't yet, create one.
 
-2. Create a fork of the Xarray Spatial repository on GitHub (this is only done before *first*) contribution.
+2. Create a fork of the xarray-spatial repository on GitHub (this is only done before *first*) contribution.
 
 3. Create a branch off the `main` branch with a meaningful name. Preferably include issue number and a few keywords, so that we will have a rough idea what the branch refers to, without looking up the issue. 
 
