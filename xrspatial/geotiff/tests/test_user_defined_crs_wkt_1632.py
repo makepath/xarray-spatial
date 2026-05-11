@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-import tifffile
+tifffile = pytest.importorskip("tifffile")
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._geotags import _looks_like_wkt
