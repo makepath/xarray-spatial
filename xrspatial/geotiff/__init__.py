@@ -498,6 +498,7 @@ def open_geotiff(source, *, dtype=None, window=None,
     if gpu:
         return read_geotiff_gpu(source, dtype=dtype,
                                 overview_level=overview_level,
+                                window=window, band=band,
                                 name=name, chunks=chunks,
                                 max_pixels=max_pixels)
 
@@ -1933,9 +1934,70 @@ def _apply_orientation_geo_info(geo_info, orientation: int,
     return geo_info
 
 
+def _gpu_apply_window_band(arr_gpu, geo_info, *, window, band):
+    """Slice a fully-decoded GPU array down to a window and/or band.
+
+    Used by ``read_geotiff_gpu`` to keep the public surface in line with
+    ``open_geotiff`` and ``read_geotiff_dask``: callers can pass ``window``
+    and ``band``, and the returned DataArray covers exactly that subset.
+
+    The current implementation slices on device after the full-image GPU
+    decode is complete. That preserves correctness but does no I/O
+    savings -- a future PR can short-circuit tile decode for partial
+    windows. For ``band`` selection, the savings are also post-decode
+    because the planar=1 (chunky) tile assembly returns all bands in a
+    single GPU buffer.
+
+    Returns ``(arr_gpu, coords)`` where ``coords`` is a dict with
+    ``y`` / ``x`` numpy arrays sized to the output array. The caller is
+    responsible for setting ``attrs['transform']`` to the windowed origin
+    via ``_populate_attrs_from_geo_info(..., window=window)`` so the array
+    and the transform agree.
+    """
+    if window is not None:
+        r0, c0, r1, c1 = window
+        arr_gpu = arr_gpu[r0:r1, c0:c1]
+        out_h = r1 - r0
+        out_w = c1 - c0
+        # Mirror the eager-numpy windowed coord computation in
+        # open_geotiff so the GPU-windowed coords carry the same
+        # absolute pixel-center values as the CPU path.
+        t = geo_info.transform
+        if t is None:
+            coords = {
+                'y': np.arange(out_h, dtype=np.int64),
+                'x': np.arange(out_w, dtype=np.int64),
+            }
+        else:
+            if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
+                full_x = (np.arange(c0, c1, dtype=np.float64)
+                          * t.pixel_width + t.origin_x)
+                full_y = (np.arange(r0, r1, dtype=np.float64)
+                          * t.pixel_height + t.origin_y)
+            else:
+                full_x = (np.arange(c0, c1, dtype=np.float64)
+                          * t.pixel_width + t.origin_x
+                          + t.pixel_width * 0.5)
+                full_y = (np.arange(r0, r1, dtype=np.float64)
+                          * t.pixel_height + t.origin_y
+                          + t.pixel_height * 0.5)
+            coords = {'y': full_y, 'x': full_x}
+    else:
+        out_h = arr_gpu.shape[0]
+        out_w = arr_gpu.shape[1]
+        coords = _geo_to_coords(geo_info, out_h, out_w)
+
+    if band is not None and arr_gpu.ndim == 3:
+        arr_gpu = arr_gpu[:, :, band]
+
+    return arr_gpu, coords
+
+
 def read_geotiff_gpu(source: str, *,
                      dtype=None,
                      overview_level: int | None = None,
+                     window: tuple | None = None,
+                     band: int | None = None,
                      name: str | None = None,
                      chunks: int | tuple | None = None,
                      max_pixels: int | None = None,
@@ -1958,6 +2020,18 @@ def read_geotiff_gpu(source: str, *,
         File path.
     overview_level : int or None
         Overview level (0 = full resolution).
+    window : tuple or None
+        ``(row_start, col_start, row_stop, col_stop)`` for windowed
+        reading. None reads the full raster. The GPU pipeline currently
+        decodes all tiles and slices on device after assembly, so the
+        kwarg restores API parity with ``open_geotiff`` and
+        ``read_geotiff_dask`` but does not yet skip I/O for partial
+        windows. The returned coords, ``attrs['transform']``, and
+        shape match the eager numpy path.
+    band : int or None
+        Zero-based band index. None returns all bands (3D output for
+        multi-band files, 2D for single-band). Selecting a single band
+        yields a 2D DataArray.
     chunks : int, tuple, or None
         If set, return a Dask-chunked CuPy DataArray. int for square
         chunks, (row, col) tuple for rectangular.
@@ -2051,6 +2125,19 @@ def read_geotiff_gpu(source: str, *,
     if max_pixels is None:
         max_pixels = MAX_PIXELS_DEFAULT
 
+    # Window basic shape check happens here; full bounds-vs-file validation
+    # runs after the IFD parse below so we can compare against the chosen
+    # overview level's actual height/width. ``band`` is similarly validated
+    # against ``ifd.samples_per_pixel`` after the header parse.
+    if window is not None:
+        if len(window) != 4:
+            raise ValueError(
+                f"window must be a 4-tuple (r0, c0, r1, c1), got {window!r}")
+        w_r0, w_c0, w_r1, w_c1 = window
+        if w_r0 >= w_r1 or w_c0 >= w_c1 or w_r0 < 0 or w_c0 < 0:
+            raise ValueError(
+                f"window={window} has non-positive size or negative origin.")
+
     # Parse metadata on CPU (fast, <1ms)
     src = _FileSource(source)
     data = src.read_all()
@@ -2075,6 +2162,45 @@ def read_geotiff_gpu(source: str, *,
         # only need to copy the post-flip geo_info back here.
         orientation = ifd.orientation
 
+        # Orientation tag (274): values 2-8 mean the stored pixel order
+        # differs from display order. A windowed read against a non-default
+        # orientation has ambiguous semantics (does the window refer to
+        # file pixels or display pixels?), so the CPU reader
+        # ``_reader.read_to_array`` rejects ``window=`` for orientation != 1.
+        # Mirror that here so the GPU path agrees with the CPU path and
+        # ``read_geotiff_dask``. Use the same error wording so the failure
+        # message is identical across backends.
+        if orientation != 1 and window is not None:
+            raise ValueError(
+                f"Orientation tag (274) is {orientation}; windowed reads "
+                f"(window=...) and dask-chunked reads (chunks=...) are not "
+                f"supported for non-default orientation. Read the full "
+                f"array first, then slice."
+            )
+
+        # Validate band against the selected IFD's sample count.
+        # ``samples_per_pixel`` is at least 1 for any valid TIFF; we treat
+        # ``band=0`` as "first band" for single-band files too so the
+        # behaviour mirrors ``read_geotiff_dask``.
+        ifd_samples = ifd.samples_per_pixel
+        if band is not None:
+            if ifd_samples <= 1:
+                if band != 0:
+                    raise IndexError(
+                        f"band={band} requested on a single-band file.")
+            elif not 0 <= band < ifd_samples:
+                raise IndexError(
+                    f"band={band} out of range for {ifd_samples}-band file.")
+
+        # Validate window upper bounds against the selected IFD's extent.
+        if window is not None:
+            w_r0, w_c0, w_r1, w_c1 = window
+            ifd_h, ifd_w = ifd.height, ifd.width
+            if w_r1 > ifd_h or w_c1 > ifd_w:
+                raise ValueError(
+                    f"window={window} is outside the source extent "
+                    f"({ifd_h}x{ifd_w}).")
+
         if not ifd.is_tiled:
             # Fall back to CPU for stripped files. read_to_array remaps
             # the array but only updates geo_info.transform for orientations
@@ -2089,12 +2215,11 @@ def read_geotiff_gpu(source: str, *,
                 geo_info = _apply_orientation_geo_info(
                     geo_info, orientation,
                     file_h=ifd.height, file_w=ifd.width)
-            coords = _geo_to_coords(geo_info, arr_gpu.shape[0], arr_gpu.shape[1])
             if name is None:
                 import os
                 name = os.path.splitext(os.path.basename(source))[0]
             attrs = {}
-            _populate_attrs_from_geo_info(attrs, geo_info)
+            _populate_attrs_from_geo_info(attrs, geo_info, window=window)
             # Apply nodata mask + record sentinel so the GPU read agrees
             # with the CPU eager path. Without this, integer rasters keep
             # the literal sentinel value and float rasters keep the
@@ -2107,6 +2232,12 @@ def read_geotiff_gpu(source: str, *,
                 target = np.dtype(dtype)
                 _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
                 arr_gpu = arr_gpu.astype(target)
+            # Apply window/band slicing post-decode. The stripped CPU
+            # fallback already produces the full-image array; slice on the
+            # GPU so the result matches ``open_geotiff`` /
+            # ``read_geotiff_dask`` semantics.
+            arr_gpu, coords = _gpu_apply_window_band(
+                arr_gpu, geo_info, window=window, band=band)
             # Multi-band stripped reads come back as (y, x, band); mirror
             # the tiled branch so dims line up with ndim. Single-band stays
             # 2-D ('y', 'x').
@@ -2115,8 +2246,20 @@ def read_geotiff_gpu(source: str, *,
                 coords['band'] = np.arange(arr_gpu.shape[2])
             else:
                 dims = ['y', 'x']
-            return xr.DataArray(arr_gpu, dims=dims,
-                                coords=coords, name=name, attrs=attrs)
+            result = xr.DataArray(arr_gpu, dims=dims,
+                                  coords=coords, name=name, attrs=attrs)
+            # ``chunks`` was previously honoured only on the tiled path,
+            # so stripped TIFFs returned an unchunked DataArray even when
+            # the caller asked for a Dask+CuPy result. Mirror the tiled
+            # branch's chunking step so behaviour is consistent across
+            # layouts.
+            if chunks is not None:
+                if isinstance(chunks, int):
+                    chunk_dict = {'y': chunks, 'x': chunks}
+                else:
+                    chunk_dict = {'y': chunks[0], 'x': chunks[1]}
+                result = result.chunk(chunk_dict)
+            return result
 
         offsets = ifd.tile_offsets
         byte_counts = ifd.tile_byte_counts
@@ -2352,15 +2495,20 @@ def read_geotiff_gpu(source: str, *,
         import os
         name = os.path.splitext(os.path.basename(source))[0]
 
-    # Use the post-orientation array shape so coords match the array.
-    out_h = arr_gpu.shape[0]
-    out_w = arr_gpu.shape[1]
-    coords = _geo_to_coords(geo_info, out_h, out_w)
-
     attrs = {}
-    _populate_attrs_from_geo_info(attrs, geo_info)
+    _populate_attrs_from_geo_info(attrs, geo_info, window=window)
     if nodata is not None:
         attrs['nodata'] = nodata
+
+    # Apply window/band slicing post-decode. Coords are derived from the
+    # sliced array so the (y, x) labels line up with the user's requested
+    # subrectangle. This mirrors the ``open_geotiff`` / ``read_geotiff_dask``
+    # contract: ``attrs['transform']`` always carries the full-source
+    # GeoTransform shifted to the window origin (via
+    # ``_populate_attrs_from_geo_info(..., window=window)``), while
+    # ``coords['y']`` / ``coords['x']`` cover only the windowed cells.
+    arr_gpu, coords = _gpu_apply_window_band(
+        arr_gpu, geo_info, window=window, band=band)
 
     if arr_gpu.ndim == 3:
         dims = ['y', 'x', 'band']
