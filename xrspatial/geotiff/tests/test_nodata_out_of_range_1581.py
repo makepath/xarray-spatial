@@ -12,8 +12,6 @@ preserve it.
 from __future__ import annotations
 
 import importlib.util
-import os
-import tempfile
 
 import numpy as np
 import pytest
@@ -49,14 +47,18 @@ _gpu_only = pytest.mark.skipif(
 
 
 @pytest.fixture
-def uint16_neg_nodata_tif():
+def uint16_neg_nodata_tif(tmp_path):
+    """Write a uint16 TIFF with an out-of-range negative nodata sentinel.
+
+    Uses pytest's ``tmp_path`` rather than ``tempfile.NamedTemporaryFile``
+    so the mmap cache in ``_reader.py`` does not block teardown on Windows
+    (open mmaps cannot be unlinked there).
+    """
     arr = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint16)
     da = xr.DataArray(arr, dims=['y', 'x'])
-    with tempfile.NamedTemporaryFile(suffix='.tif', delete=False) as f:
-        path = f.name
+    path = str(tmp_path / 'uint16_neg_nodata.tif')
     to_geotiff(da, path, crs=4326, nodata=-9999)
     yield path, arr
-    os.unlink(path)
 
 
 def test_int_nodata_in_range_helper():
@@ -118,23 +120,19 @@ def test_read_geotiff_dask_uint16_negative_nodata_compute(
     np.testing.assert_array_equal(result.values, expected)
 
 
-def test_open_geotiff_uint16_in_range_nodata_still_masks():
+def test_open_geotiff_uint16_in_range_nodata_still_masks(tmp_path):
     """The fix doesn't regress the in-range case: uint16 + nodata=65535
     still promotes to float64 and masks to NaN."""
     arr = np.array([[1, 2, 3], [4, 5, 65535]], dtype=np.uint16)
     da = xr.DataArray(arr, dims=['y', 'x'])
-    with tempfile.NamedTemporaryFile(suffix='.tif', delete=False) as f:
-        path = f.name
-    try:
-        to_geotiff(da, path, crs=4326, nodata=65535)
-        result = open_geotiff(path)
-        assert result.dtype == np.float64
-        # The 65535 pixel should be NaN; the rest unchanged.
-        assert np.isnan(result.values[1, 2])
-        assert result.values[0, 0] == 1
-        assert result.attrs.get('nodata') == 65535.0
-    finally:
-        os.unlink(path)
+    path = str(tmp_path / 'uint16_in_range_nodata.tif')
+    to_geotiff(da, path, crs=4326, nodata=65535)
+    result = open_geotiff(path)
+    assert result.dtype == np.float64
+    # The 65535 pixel should be NaN; the rest unchanged.
+    assert np.isnan(result.values[1, 2])
+    assert result.values[0, 0] == 1
+    assert result.attrs.get('nodata') == 65535.0
 
 
 @_gpu_only
