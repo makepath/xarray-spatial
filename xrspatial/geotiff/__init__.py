@@ -55,6 +55,20 @@ __all__ = [
 ]
 
 
+# Sentinels distinguishing "user passed this kwarg explicitly" from "user
+# passed nothing". A plain default of None does not work because None is
+# itself a value a caller could supply. ``read_geotiff_gpu`` needs both
+# sentinels so it can tell whether the deprecated ``gpu=`` and the new
+# ``on_gpu_failure=`` were *each* supplied, and refuse the ambiguous
+# both-supplied case regardless of which values were chosen.
+# ``open_geotiff`` also uses ``_ON_GPU_FAILURE_SENTINEL`` to distinguish
+# "caller never set on_gpu_failure" (default sentinel: skip forwarding so
+# the read_geotiff_gpu signature default applies) from "caller set
+# on_gpu_failure=<value>" (forward verbatim).
+_GPU_DEPRECATED_SENTINEL = object()
+_ON_GPU_FAILURE_SENTINEL = object()
+
+
 def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
     """Try to extract an EPSG code from a WKT or PROJ string.
 
@@ -404,7 +418,8 @@ def open_geotiff(source, *, dtype=None, window=None,
                  name: str | None = None,
                  chunks: int | tuple | None = None,
                  gpu: bool = False,
-                 max_pixels: int | None = None) -> xr.DataArray:
+                 max_pixels: int | None = None,
+                 on_gpu_failure=_ON_GPU_FAILURE_SENTINEL) -> xr.DataArray:
     """Read a GeoTIFF, COG, or VRT file into an xarray.DataArray.
 
     Automatically dispatches to the best backend:
@@ -442,6 +457,13 @@ def open_geotiff(source, *, dtype=None, window=None,
         Maximum allowed pixel count (width * height * samples). None
         uses the default (~1 billion). Raise to read legitimately
         large files.
+    on_gpu_failure : {'auto', 'strict'}, optional
+        Forwarded to ``read_geotiff_gpu`` when ``gpu=True``. Controls
+        whether GPU decode failures fall back to CPU (``'auto'``,
+        default) or re-raise the original exception (``'strict'``).
+        Passing this kwarg with ``gpu=False`` raises ``ValueError``
+        because the policy only applies to the GPU pipeline. See
+        ``read_geotiff_gpu`` for the full description.
 
     Returns
     -------
@@ -475,6 +497,18 @@ def open_geotiff(source, *, dtype=None, window=None,
 
     source = _coerce_path(source)
 
+    # ``on_gpu_failure`` is GPU-only. Reject it up front for CPU/dask paths
+    # rather than silently dropping it once dispatch is decided -- callers
+    # otherwise have no way to learn that the policy is being ignored.
+    # ``gpu=False`` (the default) on a ``.vrt`` source still routes through
+    # ``read_vrt`` below which has no GPU-failure concept, so the same
+    # rejection rule applies there.
+    if on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL and not gpu:
+        raise ValueError(
+            "on_gpu_failure only applies when gpu=True. "
+            "Pass gpu=True to enable the GPU pipeline, or drop "
+            "on_gpu_failure to keep the default CPU path.")
+
     # VRT files (string paths only -- VRT XML references other files on disk)
     if isinstance(source, str) and source.lower().endswith('.vrt'):
         return read_vrt(source, dtype=dtype, window=window, band=band,
@@ -496,11 +530,15 @@ def open_geotiff(source, *, dtype=None, window=None,
 
     # GPU path
     if gpu:
+        gpu_kwargs = {}
+        if on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL:
+            gpu_kwargs['on_gpu_failure'] = on_gpu_failure
         return read_geotiff_gpu(source, dtype=dtype,
                                 overview_level=overview_level,
                                 window=window, band=band,
                                 name=name, chunks=chunks,
-                                max_pixels=max_pixels)
+                                max_pixels=max_pixels,
+                                **gpu_kwargs)
 
     # Dask path (CPU)
     if chunks is not None:
@@ -663,16 +701,6 @@ _VALID_COMPRESSIONS = (
     'none', 'deflate', 'lzw', 'jpeg', 'packbits', 'zstd', 'lz4',
     'jpeg2000', 'j2k', 'lerc',
 )
-
-
-# Sentinels distinguishing "user passed this kwarg explicitly" from "user
-# passed nothing". A plain default of None would not work because None is
-# itself a value a caller could supply. ``read_geotiff_gpu`` needs both
-# sentinels so it can tell whether the deprecated ``gpu=`` and the new
-# ``on_gpu_failure=`` were *each* supplied, and refuse the ambiguous
-# both-supplied case regardless of which values were chosen.
-_GPU_DEPRECATED_SENTINEL = object()
-_ON_GPU_FAILURE_SENTINEL = object()
 
 
 # TIFF type ids needed when synthesizing extra_tags entries from attrs.
