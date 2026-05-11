@@ -2923,10 +2923,9 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
     if arr2d.dtype.kind == 'f':
         blocks = cropped.reshape(oh, 2, ow, 2)
         # Mask the sentinel back to NaN so cupy.nanmean and friends
-        # honour it as missing-data (issue #1613).
-        if (nodata is not None
-                and not np.isnan(nodata)
-                and np.isfinite(nodata)):
+        # honour it as missing-data (issue #1613). Match the upstream
+        # NaN->sentinel rewrite gate so ``nodata=+/-inf`` is masked here.
+        if nodata is not None and not np.isnan(nodata):
             try:
                 sentinel = np.dtype(str(arr2d.dtype)).type(nodata)
             except (OverflowError, ValueError):

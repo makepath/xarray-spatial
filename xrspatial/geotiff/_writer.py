@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import struct
+import warnings
 
 import numpy as np
 
@@ -190,10 +191,10 @@ def _block_reduce_2d(arr2d, method, nodata=None):
         # NaN-to-sentinel rewrite, mask it back to NaN here so nanmean /
         # nanmin / nanmax / nanmedian honour the missing-data semantic.
         # Without this the sentinel value participates in the reduction
-        # and poisons the overview (issue #1613).
-        if (nodata is not None
-                and not np.isnan(nodata)
-                and np.isfinite(nodata)):
+        # and poisons the overview (issue #1613). Match the upstream
+        # NaN->sentinel rewrite gate (``not np.isnan(nodata)``) so that
+        # ``nodata=+/-inf`` is masked here too.
+        if nodata is not None and not np.isnan(nodata):
             try:
                 sentinel = arr2d.dtype.type(nodata)
             except (OverflowError, ValueError):
@@ -212,22 +213,25 @@ def _block_reduce_2d(arr2d, method, nodata=None):
         # would lose any NaN anyway -- integer sentinels are handled at
         # the call site by promoting to float64 before reduction.
 
-    # nanmean / nanmin / nanmax / nanmedian raise warnings on all-nan
-    # blocks; ``np.errstate`` would silence them but the resulting NaN is
-    # the desired output so we leave the warning visible.
-    if method == 'mean':
-        result = np.nanmean(blocks, axis=(1, 3))
-    elif method == 'min':
-        result = np.nanmin(blocks, axis=(1, 3))
-    elif method == 'max':
-        result = np.nanmax(blocks, axis=(1, 3))
-    elif method == 'median':
-        flat = blocks.transpose(0, 2, 1, 3).reshape(oh, ow, 4)
-        result = np.nanmedian(flat, axis=2)
-    else:
-        raise ValueError(
-            f"Unknown overview resampling method: {method!r}. "
-            f"Use one of: {OVERVIEW_METHODS}")
+    # nanmean / nanmin / nanmax / nanmedian emit RuntimeWarning when a
+    # 2x2 block is all-NaN (typical at nodata borders). The all-NaN
+    # output is the desired signal that the caller rewrites to the
+    # sentinel, so suppress the warning locally to keep COG writes quiet.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        if method == 'mean':
+            result = np.nanmean(blocks, axis=(1, 3))
+        elif method == 'min':
+            result = np.nanmin(blocks, axis=(1, 3))
+        elif method == 'max':
+            result = np.nanmax(blocks, axis=(1, 3))
+        elif method == 'median':
+            flat = blocks.transpose(0, 2, 1, 3).reshape(oh, ow, 4)
+            result = np.nanmedian(flat, axis=2)
+        else:
+            raise ValueError(
+                f"Unknown overview resampling method: {method!r}. "
+                f"Use one of: {OVERVIEW_METHODS}")
 
     if arr2d.dtype.kind != 'f':
         return np.round(result).astype(arr2d.dtype)
@@ -1151,11 +1155,11 @@ def write(data: np.ndarray, path: str, *,
         # match the sentinel-aware reader). We pass ``nodata`` into
         # ``_make_overview`` here so the reducer masks the sentinel back
         # to NaN before averaging; without this, the sentinel poisons
-        # the overview (issue #1613). After reduction any cell that was
-        # all-sentinel comes back as NaN; ``_write_tiled`` / ``_write_stripped``
-        # serialise that NaN to disk, where the eager reader will mask
-        # it (and a future writer pass could rewrite to ``nodata`` for
-        # external readers -- out of scope for this fix).
+        # the overview (issue #1613). After reduction any block that was
+        # all-sentinel comes back as NaN; we rewrite those NaNs back to
+        # ``nodata`` below so the on-disk overview tiles use the same
+        # sentinel convention as the full-resolution band (external
+        # readers without NaN awareness still see a well-defined pixel).
         current = data
         for _ in overview_levels:
             current = _make_overview(current, method=overview_resampling,

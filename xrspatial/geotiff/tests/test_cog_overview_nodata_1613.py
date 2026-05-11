@@ -164,6 +164,46 @@ def test_block_reduce_2d_nodata_all_sentinel_block_yields_nan():
     assert np.isnan(out[0, 0])
 
 
+def test_block_reduce_2d_inf_nodata_is_masked():
+    """nodata=+/-inf must be masked back to NaN like a finite sentinel.
+
+    The upstream NaN->sentinel rewrite only gates on ``not np.isnan``,
+    so ``nodata=inf`` is a real (if uncommon) caller choice. The reducer
+    has to match that gate or it re-poisons the overview with inf.
+    """
+    from xrspatial.geotiff._writer import _block_reduce_2d
+
+    arr = np.array([
+        [1.0, 2.0, 3.0, 4.0],
+        [np.inf, np.inf, np.inf, np.inf],
+        [10.0, 20.0, 30.0, 40.0],
+        [10.0, 20.0, 30.0, 40.0],
+    ], dtype=np.float32)
+    out = _block_reduce_2d(arr, 'mean', nodata=float('inf'))
+    np.testing.assert_allclose(out[0, 0], 1.5)
+    np.testing.assert_allclose(out[0, 1], 3.5)
+
+
+def test_block_reduce_2d_all_nan_block_does_not_warn():
+    """All-NaN blocks must not surface RuntimeWarning to user logs."""
+    import warnings as _warnings
+
+    from xrspatial.geotiff._writer import _block_reduce_2d
+
+    arr = np.array([
+        [-9999.0, -9999.0, 3.0, 4.0],
+        [-9999.0, -9999.0, 7.0, 8.0],
+    ], dtype=np.float32)
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter('always')
+        out = _block_reduce_2d(arr, 'mean', nodata=-9999.0)
+
+    assert not [w for w in caught if issubclass(w.category, RuntimeWarning)]
+    assert np.isnan(out[0, 0])
+    np.testing.assert_allclose(out[0, 1], 5.5)
+
+
 @_gpu_only
 def test_gpu_cog_overview_mean_ignores_sentinel(tmp_path):
     """GPU writer: overview 'mean' must skip sentinel pixels (issue #1613)."""
@@ -200,6 +240,25 @@ def test_gpu_block_reduce_nodata_kwarg_directly():
     fixed = _block_reduce_2d_gpu(arr_gpu, 'mean', nodata=-9999.0)
     np.testing.assert_allclose(float(fixed[0, 0].get()), 1.5)
     np.testing.assert_allclose(float(fixed[0, 1].get()), 3.5)
+
+
+@_gpu_only
+def test_gpu_block_reduce_inf_nodata_is_masked():
+    """GPU helper mirrors the CPU isnan-only gate for nodata=inf."""
+    import cupy
+    from xrspatial.geotiff._gpu_decode import _block_reduce_2d_gpu
+
+    arr_cpu = np.array([
+        [1.0, 2.0, 3.0, 4.0],
+        [np.inf, np.inf, np.inf, np.inf],
+        [10.0, 20.0, 30.0, 40.0],
+        [10.0, 20.0, 30.0, 40.0],
+    ], dtype=np.float32)
+    arr_gpu = cupy.asarray(arr_cpu)
+
+    out = _block_reduce_2d_gpu(arr_gpu, 'mean', nodata=float('inf'))
+    np.testing.assert_allclose(float(out[0, 0].get()), 1.5)
+    np.testing.assert_allclose(float(out[0, 1].get()), 3.5)
 
 
 @_gpu_only
