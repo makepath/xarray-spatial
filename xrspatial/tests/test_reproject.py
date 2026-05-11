@@ -2664,6 +2664,61 @@ class TestMergeDaskParity:
                 eager[finite], dasked[finite], rtol=1e-10, atol=1e-10,
             )
 
+    def test_merge_dask_same_crs_bounded_materialization(self, monkeypatch):
+        """Same-CRS dask merge must not materialize full source per chunk.
+
+        Regression test for issue #1571: ``_merge_block_adapter`` used to
+        call ``.compute()`` on the full dask source array for every
+        output chunk, amplifying driver-side data flow by O(N_chunks).
+        The fix slices the source window first and computes only that
+        slice. Total pixels materialized should be bounded by the total
+        source size (within a small constant for the placement overlap).
+        """
+        from xrspatial.reproject import merge
+        orig_compute = da.Array.compute
+        records = []
+
+        def trace(self, *a, **kw):
+            records.append(int(np.prod(self.shape)))
+            return orig_compute(self, *a, **kw)
+
+        # Two 256x256 sources, 32x32 output chunks -> 8x8x2 = 128 chunks
+        t1 = xr.DataArray(
+            da.from_array(
+                np.arange(256 * 256, dtype=np.float64).reshape(256, 256),
+                chunks=(64, 64),
+            ),
+            dims=['y', 'x'],
+            coords={'y': np.linspace(40, 35, 256),
+                    'x': np.linspace(-10, -5, 256)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+        t2 = xr.DataArray(
+            da.from_array(
+                np.ones((256, 256), dtype=np.float64) * 2.0,
+                chunks=(64, 64),
+            ),
+            dims=['y', 'x'],
+            coords={'y': np.linspace(40, 35, 256),
+                    'x': np.linspace(-5, 0, 256)},
+            attrs={'crs': 'EPSG:4326'},
+        )
+
+        monkeypatch.setattr(da.Array, 'compute', trace)
+        merge([t1, t2], strategy='first', chunk_size=32).compute()
+
+        total_src_pixels = 2 * 256 * 256
+        # Pre-fix: ~68x amplification. Post-fix: ~1x.
+        # Allow a 3x ceiling to leave room for unrelated dask compute
+        # calls in the pipeline (output assembly etc.).
+        materialized = sum(records)
+        assert materialized < 3 * total_src_pixels, (
+            f"same-CRS dask merge materialized {materialized} pixels "
+            f"for {total_src_pixels} total source pixels "
+            f"(ratio {materialized / total_src_pixels:.1f}x); "
+            f"this indicates full-source materialization per chunk."
+        )
+
 
 @pytest.mark.skipif(not HAS_CUPY, reason="cupy required")
 class TestCupyReprojectParity:

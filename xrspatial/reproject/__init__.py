@@ -1844,12 +1844,13 @@ def _merge_block_adapter(
         placed = None
         if same_crs_list[i]:
             # Same-CRS path: direct pixel placement (no resampling).
-            # Mirrors the eager merge so dask matches numpy bit-for-bit.
-            src_data = raster_data_list[i]
-            if hasattr(src_data, 'compute'):
-                src_data = src_data.compute()
+            # Pass the dask array straight through -- _place_same_crs
+            # slices before np.asarray(), so np.asarray on the slice
+            # materializes only the source window for this output chunk.
+            # An eager .compute() here would materialize the full source
+            # per output chunk, amplifying driver-side data flow by O(N).
             placed = _place_same_crs(
-                np.asarray(src_data),
+                raster_data_list[i],
                 src_bounds_list[i], src_shape_list[i], y_desc_list[i],
                 cb, chunk_shape, r_nd,
             )
