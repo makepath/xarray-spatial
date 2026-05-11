@@ -9,9 +9,12 @@ permissions:
 
 jobs:
   request-copilot-review:
+    # Same-repo PRs only. author_association in the pull_request_target payload
+    # reports CONTRIBUTOR for org members on same-repo branches, so head==base
+    # is the reliable maintainer signal (it requires push access to the base repo).
     if: >-
       github.event.pull_request.draft == false &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
+      github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name
     runs-on: ubuntu-latest
     steps:
       - name: Request Copilot review
