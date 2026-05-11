@@ -552,12 +552,18 @@ def open_geotiff(source, *, dtype=None, window=None,
             if not np.isnan(nodata):
                 arr[arr == arr.dtype.type(nodata)] = np.nan
         elif arr.dtype.kind in ('u', 'i'):
-            # Integer arrays: convert to float to represent NaN
+            # Integer arrays: convert to float to represent NaN.
+            # An out-of-range sentinel (e.g. uint16 file with
+            # GDAL_NODATA="-9999") cannot match any decoded pixel, so the
+            # mask would be all-False -- skip the cast that would otherwise
+            # raise OverflowError and leave the array unchanged.
             nodata_int = int(nodata)
-            mask = arr == arr.dtype.type(nodata_int)
-            if mask.any():
-                arr = arr.astype(np.float64)
-                arr[mask] = np.nan
+            info = np.iinfo(arr.dtype)
+            if info.min <= nodata_int <= info.max:
+                mask = arr == arr.dtype.type(nodata_int)
+                if mask.any():
+                    arr = arr.astype(np.float64)
+                    arr[mask] = np.nan
 
     if dtype is not None:
         target = np.dtype(dtype)
@@ -623,6 +629,13 @@ def _apply_nodata_mask_gpu(arr_gpu, nodata):
         return arr_gpu
     if arr_dtype.kind in ('u', 'i'):
         nodata_int = int(nodata)
+        info = np.iinfo(arr_dtype)
+        # Out-of-range sentinels (e.g. uint16 + GDAL_NODATA="-9999") cannot
+        # match any decoded pixel; skip the cast that would otherwise raise
+        # OverflowError. attrs['nodata'] is still set by the caller so the
+        # original sentinel survives a write round-trip.
+        if not (info.min <= nodata_int <= info.max):
+            return arr_gpu
         sentinel = arr_dtype.type(nodata_int)
         mask = arr_gpu == sentinel
         if bool(mask.any().item()):
@@ -651,6 +664,61 @@ _VALID_COMPRESSIONS = (
 _TIFF_BYTE = 1
 _TIFF_ASCII = 2
 _TIFF_SHORT = 3
+
+
+def _resolve_nodata_attr(attrs: dict):
+    """Resolve a NoData sentinel from DataArray attrs.
+
+    xrspatial's own readers always emit ``attrs['nodata']`` (a scalar),
+    so that key is checked first for a clean intra-library round-trip.
+    Falls back to two ecosystem conventions on miss:
+
+    * ``attrs['nodatavals']`` -- rioxarray's per-band tuple. Returns
+      the first entry that is not None, not non-numeric, and not NaN.
+      In practice this is band 0 for almost every real file; the skip
+      logic only matters when band 0 is missing a sentinel (NaN /
+      None) while a later band declares one. Bands with mixed concrete
+      sentinels are uncommon and would need an explicit ``nodata=``
+      argument anyway.
+    * ``attrs['_FillValue']`` -- CF-style xarray pipelines.
+
+    Returns ``None`` when none of the keys carry a usable value. NaN
+    entries in ``nodatavals`` are skipped rather than treated as a
+    sentinel (NaN means "the float NaN is the sentinel", which is
+    already the default and doesn't need a GDAL_NODATA tag).
+    """
+    nodata = attrs.get('nodata')
+    if nodata is not None:
+        return nodata
+
+    vals = attrs.get('nodatavals')
+    if vals is not None:
+        try:
+            seq = list(vals)
+        except TypeError:
+            seq = [vals]
+        for v in seq:
+            if v is None:
+                continue
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                continue
+            if np.isnan(fv):
+                continue
+            return v
+
+    fill = attrs.get('_FillValue')
+    if fill is not None:
+        try:
+            ffv = float(fill)
+        except (TypeError, ValueError):
+            return fill  # non-numeric -- pass through verbatim
+        if np.isnan(ffv):
+            return None
+        return fill
+
+    return None
 
 
 def _merge_friendly_extra_tags(extra_tags_list, attrs: dict) -> list | None:
@@ -954,7 +1022,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
                     if epsg is None and wkt_fallback is None:
                         wkt_fallback = wkt
         if nodata is None:
-            nodata = data.attrs.get('nodata')
+            nodata = _resolve_nodata_attr(data.attrs)
         if data.attrs.get('raster_type') == 'point':
             raster_type = RASTER_PIXEL_IS_POINT
         gdal_meta_xml = data.attrs.get('gdal_metadata_xml')
@@ -1392,10 +1460,17 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
 
     # Nodata masking promotes integer arrays to float64 (for NaN).
     # Validate against the effective dtype, not the raw file dtype.
+    # An out-of-range sentinel (e.g. uint16 file + nodata=-9999) is a
+    # no-op for masking and leaves the file dtype unchanged.
+    effective_dtype = file_dtype
     if nodata is not None and file_dtype.kind in ('u', 'i'):
-        effective_dtype = np.dtype('float64')
-    else:
-        effective_dtype = file_dtype
+        try:
+            _nd_int = int(nodata)
+            _info = np.iinfo(file_dtype)
+            if _info.min <= _nd_int <= _info.max:
+                effective_dtype = np.dtype('float64')
+        except (TypeError, ValueError):
+            pass
 
     if dtype is not None:
         target_dtype = np.dtype(dtype)
@@ -1525,10 +1600,16 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             if arr.dtype.kind == 'f' and not np.isnan(nodata):
                 arr[arr == arr.dtype.type(nodata)] = np.nan
             elif arr.dtype.kind in ('u', 'i'):
-                mask = arr == arr.dtype.type(int(nodata))
-                if mask.any():
-                    arr = arr.astype(np.float64)
-                    arr[mask] = np.nan
+                nodata_int = int(nodata)
+                info = np.iinfo(arr.dtype)
+                # Out-of-range sentinels (e.g. uint16 + nodata=-9999)
+                # cannot match any pixel; skip the cast that would
+                # otherwise raise OverflowError and leave arr unchanged.
+                if info.min <= nodata_int <= info.max:
+                    mask = arr == arr.dtype.type(nodata_int)
+                    if mask.any():
+                        arr = arr.astype(np.float64)
+                        arr[mask] = np.nan
         if target_dtype is not None:
             arr = arr.astype(target_dtype)
         return arr
@@ -2237,6 +2318,14 @@ def write_geotiff_gpu(data, path: str, *,
         else:
             arr = cupy.asarray(np.asarray(arr))  # numpy -> GPU
 
+        # Handle band-first dimension order (band, y, x) -> (y, x, band).
+        # rioxarray and CF-style multi-band rasters land here; without
+        # this remap the writer treats arr.shape[2] as the band axis and
+        # produces a transposed file (issue #1580). The CPU writer does
+        # the same remap at the matching step in to_geotiff().
+        if arr.ndim == 3 and data.dims[0] in ('band', 'bands', 'channel'):
+            arr = cupy.ascontiguousarray(cupy.moveaxis(arr, 0, -1))
+
         # Prefer attrs['transform'] over the coord-derived transform: it
         # is bit-stable across round-trips, while _coords_to_transform
         # can drift on fractional pixel sizes (the same reasoning the
@@ -2264,7 +2353,7 @@ def write_geotiff_gpu(data, path: str, *,
                     if epsg is None and wkt_fallback is None:
                         wkt_fallback = wkt
         if nodata is None:
-            nodata = data.attrs.get('nodata')
+            nodata = _resolve_nodata_attr(data.attrs)
         if data.attrs.get('raster_type') == 'point':
             raster_type = RASTER_PIXEL_IS_POINT
         # Mirror the CPU writer's pass-through of GDAL metadata, the

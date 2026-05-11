@@ -6,10 +6,11 @@ more source GeoTIFF files using windowed reads.
 from __future__ import annotations
 
 import os
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
 import numpy as np
+
+from ._safe_xml import safe_fromstring
 
 # Lazy imports to avoid circular dependency
 _DTYPE_MAP = {
@@ -105,7 +106,10 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
     -------
     VRTDataset
     """
-    root = ET.fromstring(xml_str)
+    # ``safe_fromstring`` refuses DOCTYPE declarations so a crafted VRT
+    # cannot trigger XML entity expansion (billion-laughs) attacks
+    # against the reader. See issue #1579.
+    root = safe_fromstring(xml_str)
 
     width = int(root.get('rasterXSize', 0))
     height = int(root.get('rasterYSize', 0))

@@ -680,6 +680,23 @@ def _packed_byte_count(pixel_count: int, bps: int) -> int:
     return (pixel_count * bps + 7) // 8
 
 
+def _int_nodata_in_range(nodata_int: int, dtype: np.dtype) -> bool:
+    """Return True iff *nodata_int* is representable as *dtype*.
+
+    Used to gate ``dtype.type(int(...))`` casts that would otherwise raise
+    ``OverflowError`` on real-world files that pair an unsigned dtype with
+    a negative GDAL_NODATA sentinel (e.g. uint16 + ``-9999``). When the
+    sentinel cannot be represented, the file's pixels can never match it,
+    so the caller should treat the sentinel as a no-op for value matching
+    (still surfacing it via ``attrs['nodata']`` so write round-trips
+    preserve the original tag).
+    """
+    if dtype.kind not in ('u', 'i'):
+        return False
+    info = np.iinfo(dtype)
+    return info.min <= nodata_int <= info.max
+
+
 def _resolve_masked_fill(nodata_str: str | None, dtype: np.dtype):
     """Resolve the value to use when restoring LERC-masked pixels.
 
@@ -695,6 +712,12 @@ def _resolve_masked_fill(nodata_str: str | None, dtype: np.dtype):
     inventing an integer sentinel (e.g. iinfo.max) because doing so
     would silently change pixel values for files that never declared
     one, breaking downstream consumers that key off the original data.
+
+    Out-of-range integer sentinels (e.g. ``uint16`` paired with
+    ``GDAL_NODATA="-9999"``, common on legacy GDAL files) cannot be
+    represented in the file dtype and so cannot match any decoded
+    pixel; we fall back to ``0`` rather than raising ``OverflowError``
+    on the dtype cast.
     """
     if nodata_str is not None:
         try:
@@ -702,7 +725,9 @@ def _resolve_masked_fill(nodata_str: str | None, dtype: np.dtype):
             if dtype.kind == 'f':
                 return dtype.type(v)
             if not math.isnan(v) and not math.isinf(v):
-                return dtype.type(int(v))
+                nodata_int = int(v)
+                if _int_nodata_in_range(nodata_int, dtype):
+                    return dtype.type(nodata_int)
         except (TypeError, ValueError):
             pass
     if dtype.kind == 'f':
@@ -829,7 +854,9 @@ def _sparse_fill_value(ifd: IFD, dtype: np.dtype):
             if dtype.kind == 'f':
                 return dtype.type(v)
             if not math.isnan(v) and not math.isinf(v):
-                return dtype.type(int(v))
+                nodata_int = int(v)
+                if _int_nodata_in_range(nodata_int, dtype):
+                    return dtype.type(nodata_int)
         except (TypeError, ValueError):
             pass
     return dtype.type(0)
