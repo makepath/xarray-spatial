@@ -550,6 +550,13 @@ def open_geotiff(source, *, dtype=None, window=None,
     kwargs = {}
     if max_pixels is not None:
         kwargs['max_pixels'] = max_pixels
+
+    # ``read_to_array`` validates ``window`` against the selected IFD's
+    # extent and raises ``ValueError`` for out-of-bounds windows with
+    # the same message format as the dask path's pre-flight validator
+    # in :func:`read_geotiff_dask`. That keeps the two backends in sync
+    # on the contract without forcing a second metadata parse here. See
+    # issue #1634.
     arr, geo_info = read_to_array(
         source, window=window,
         overview_level=overview_level, band=band,
@@ -560,7 +567,9 @@ def open_geotiff(source, *, dtype=None, window=None,
     coords = _geo_to_coords(geo_info, height, width)
 
     if window is not None:
-        # Adjust coordinates for windowed read
+        # Adjust coordinates for windowed read. ``read_to_array`` rejected
+        # out-of-bounds windows above, so ``r0/c0/r1/c1`` are guaranteed
+        # in-range here (no clamp needed).
         r0, c0, r1, c1 = window
         t = geo_info.transform
         if geo_info.raster_type == RASTER_PIXEL_IS_POINT:

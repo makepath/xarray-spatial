@@ -1606,6 +1606,25 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
                 f"array first, then slice."
             )
 
+        # Validate ``window`` against the selected IFD's extent. Without
+        # this, ``_read_tiles`` / ``_read_strips`` silently clamp an
+        # out-of-bounds window and return a smaller array, which then
+        # mismatches caller-built coord arrays in ``open_geotiff`` and
+        # surfaces as an opaque ``CoordinateValidationError``. Raising
+        # here matches the dask path's pre-flight validator (see
+        # ``read_geotiff_dask`` in ``__init__.py``) so all backends
+        # agree on the contract. Reuses the IFD already parsed above,
+        # so callers pay no extra metadata-parse cost (file-like
+        # sources are read once instead of twice). See issue #1634.
+        if window is not None:
+            w_r0, w_c0, w_r1, w_c1 = window
+            if (w_r0 < 0 or w_c0 < 0
+                    or w_r1 > ifd.height or w_c1 > ifd.width
+                    or w_r0 >= w_r1 or w_c0 >= w_c1):
+                raise ValueError(
+                    f"window={window} is outside the source extent "
+                    f"({ifd.height}x{ifd.width}) or has non-positive size.")
+
         if ifd.is_tiled:
             arr = _read_tiles(data, ifd, header, dtype, window,
                               max_pixels=max_pixels)
