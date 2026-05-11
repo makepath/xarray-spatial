@@ -86,7 +86,13 @@ def test_image_description_round_trips_via_gpu_writer(tmp_path):
 
 
 @_gpu_only
-def test_extra_samples_round_trips_via_gpu_writer(tmp_path):
+def test_extra_samples_single_band_writer_compat(tmp_path):
+    """Single-band write with ``extra_samples`` set must not crash, even
+    though TIFF 6.0 only surfaces ExtraSamples on multi-sample images
+    (the reader drops it for 1-sample files). The multi-band case is
+    covered by ``test_extra_samples_round_trips_multiband_via_gpu_writer``
+    below.
+    """
     import cupy
     arr = np.zeros((8, 8), dtype=np.float32)
     da_gpu = xr.DataArray(
@@ -99,13 +105,133 @@ def test_extra_samples_round_trips_via_gpu_writer(tmp_path):
     write_geotiff_gpu(da_gpu, out, compression='none')
 
     rd = open_geotiff(out)
-    # Single-band rasters do not carry ExtraSamples on read (it only
-    # applies to multi-sample images per TIFF 6.0). For a 2-D input the
-    # writer-side merging still synthesises the tag, but the reader-side
-    # parser only surfaces it for multi-sample files. So we assert the
-    # writer didn't crash and the rest of attrs survived; the explicit
-    # ExtraSamples round-trip is covered by the multi-band branch below.
     assert rd.attrs.get('crs') == 4326
+
+
+@_gpu_only
+def test_extra_samples_round_trips_multiband_via_gpu_writer(tmp_path):
+    """Multi-band write: ExtraSamples surfaces on the reader because
+    SamplesPerPixel > 1. The assembler auto-synthesizes the tag for
+    multi-band minisblack (same behaviour as the CPU writer), so we
+    just assert the attr appears -- pinning that the GPU path reaches
+    the multi-band writer code without dropping ExtraSamples entirely.
+    """
+    import cupy
+    arr = np.zeros((4, 5, 2), dtype=np.uint8)
+    arr[..., 1] = 255
+    da_gpu = xr.DataArray(
+        cupy.asarray(arr),
+        dims=['y', 'x', 'band'],
+        coords={'y': np.arange(4.0), 'x': np.arange(5.0)},
+        attrs={'crs': 4326},
+    )
+    out = str(tmp_path / 'es_multi_1563.tif')
+    write_geotiff_gpu(da_gpu, out, compression='none')
+
+    rd = open_geotiff(out)
+    es = rd.attrs.get('extra_samples')
+    assert es is not None, (
+        f"extra_samples dropped on multi-band GPU write; "
+        f"attrs={sorted(rd.attrs.keys())}"
+    )
+
+
+@_gpu_only
+def test_colormap_round_trips_via_gpu_writer(tmp_path):
+    """A uint8 raster with a 768-entry colormap (3*256 uint16 values for
+    R/G/B) must surface ``attrs['colormap']`` after the GPU round-trip --
+    the synthesized tag 320 entry rides in ``extra_tags`` and the read
+    path projects it back onto the friendly attr."""
+    import cupy
+    palette = []
+    for ch_offset in (0, 1, 2):
+        for i in range(256):
+            palette.append((i * 257 + ch_offset) & 0xFFFF)
+    assert len(palette) == 768
+    pixels = np.array([[0, 1, 2, 254, 255],
+                       [10, 20, 30, 40, 50]], dtype=np.uint8)
+    da_gpu = xr.DataArray(
+        cupy.asarray(pixels),
+        dims=['y', 'x'],
+        coords={'y': np.arange(2.0), 'x': np.arange(5.0)},
+        attrs={'crs': 4326, 'colormap': palette},
+    )
+    out = str(tmp_path / 'cmap_1563.tif')
+    write_geotiff_gpu(da_gpu, out, compression='none')
+
+    rd = open_geotiff(out)
+    rd_cmap = rd.attrs.get('colormap')
+    assert rd_cmap is not None, (
+        f"colormap dropped on GPU write; attrs={sorted(rd.attrs.keys())}"
+    )
+    assert tuple(rd_cmap) == tuple(palette)
+
+
+@_gpu_only
+def test_extra_tags_custom_tag_round_trips_via_gpu_writer(tmp_path):
+    """A user-supplied ``extra_tags`` entry (here: Software, tag 305,
+    ASCII) must be forwarded to ``_assemble_tiff`` and reappear in
+    ``attrs['extra_tags']`` on read."""
+    import cupy
+    arr = np.zeros((8, 8), dtype=np.float32)
+    software = "xrspatial-1563-test"
+    da_gpu = xr.DataArray(
+        cupy.asarray(arr),
+        dims=['y', 'x'],
+        coords={'y': np.arange(8.0), 'x': np.arange(8.0)},
+        attrs={
+            'crs': 4326,
+            'extra_tags': [(305, 2, len(software) + 1, software)],
+        },
+    )
+    out = str(tmp_path / 'extra_tags_1563.tif')
+    write_geotiff_gpu(da_gpu, out, compression='none')
+
+    rd = open_geotiff(out)
+    et = rd.attrs.get('extra_tags') or []
+    by_id = {t[0]: t for t in et}
+    assert 305 in by_id, (
+        f"extra_tags Software (305) dropped on GPU write; got ids "
+        f"{sorted(by_id.keys())}"
+    )
+    value = by_id[305][3]
+    # ASCII values may be returned as bytes or str; strip NUL terminator.
+    if isinstance(value, bytes):
+        value = value.decode('ascii')
+    assert value.rstrip('\x00') == software
+
+
+@_gpu_only
+def test_resolution_tags_round_trip_via_gpu_writer(tmp_path):
+    """``x_resolution`` / ``y_resolution`` / ``resolution_unit`` must
+    survive a GPU write -> CPU read cycle. The writer maps the unit
+    string back to its TIFF id (1=none, 2=inch, 3=centimeter)."""
+    import cupy
+    arr = np.zeros((8, 8), dtype=np.float32)
+    da_gpu = xr.DataArray(
+        cupy.asarray(arr),
+        dims=['y', 'x'],
+        coords={'y': np.arange(8.0), 'x': np.arange(8.0)},
+        attrs={
+            'crs': 4326,
+            'x_resolution': 300.0,
+            'y_resolution': 300.0,
+            'resolution_unit': 'inch',
+        },
+    )
+    out = str(tmp_path / 'res_1563.tif')
+    write_geotiff_gpu(da_gpu, out, compression='none')
+
+    rd = open_geotiff(out)
+    assert rd.attrs.get('x_resolution') == pytest.approx(300.0, rel=0.01), (
+        f"x_resolution drift: got {rd.attrs.get('x_resolution')}"
+    )
+    assert rd.attrs.get('y_resolution') == pytest.approx(300.0, rel=0.01), (
+        f"y_resolution drift: got {rd.attrs.get('y_resolution')}"
+    )
+    assert rd.attrs.get('resolution_unit') == 'inch', (
+        f"resolution_unit drift: got {rd.attrs.get('resolution_unit')}"
+    )
 
 
 @_gpu_only
