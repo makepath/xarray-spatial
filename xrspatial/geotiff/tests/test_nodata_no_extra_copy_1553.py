@@ -171,9 +171,9 @@ def test_dask_chunked_uint16_sentinel_read(tmp_path):
 def test_writer_does_not_mutate_caller_input(tmp_path):
     """``to_geotiff`` must not mutate the caller's input array.
 
-    The defensive copies kept in ``to_geotiff`` and
-    ``_write_single_tile`` exist for this reason. This test guards
-    against accidentally dropping them in a future audit pass.
+    Covers the defensive copy at the ``to_geotiff`` entry; the sibling
+    test below covers the second kept copy in ``_write_single_tile``
+    (the .vrt tiled-output path).
     """
     src = np.array([
         [1.0, 2.0, np.nan],
@@ -189,6 +189,38 @@ def test_writer_does_not_mutate_caller_input(tmp_path):
     # Caller's buffer must still hold its original NaNs and finite
     # values; the writer must not have stamped the sentinel value into
     # the user's array in place.
+    np.testing.assert_array_equal(np.isnan(src), np.isnan(snapshot))
+    finite = ~np.isnan(snapshot)
+    np.testing.assert_array_equal(src[finite], snapshot[finite])
+
+
+def test_write_single_tile_does_not_mutate_caller_input(tmp_path):
+    """``_write_single_tile`` must not mutate the caller's array either.
+
+    The .vrt tiled-output path goes through ``_write_single_tile`` per
+    chunk. That helper has its own defensive copy at the
+    NaN -> sentinel rewrite. Direct invocation pins it: pass a numpy
+    buffer with NaNs, request an integer nodata sentinel, then assert
+    the source still has NaNs in the same places.
+    """
+    from xrspatial.geotiff import _write_single_tile
+
+    src = np.array([
+        [1.0, np.nan, 3.0],
+        [4.0, 5.0, np.nan],
+        [np.nan, 8.0, 9.0],
+    ], dtype=np.float32)
+    snapshot = src.copy()
+
+    out_path = str(tmp_path / 'issue_1553_single_tile_no_mutate.tif')
+    _write_single_tile(
+        src, out_path,
+        geo_transform=None, epsg=4326, wkt=None,
+        nodata=-9999.0, compression='deflate', compression_level=None,
+        tile_size=16, predictor=False, bigtiff=False,
+    )
+
+    # Source must still hold its original NaNs and finite values.
     np.testing.assert_array_equal(np.isnan(src), np.isnan(snapshot))
     finite = ~np.isnan(snapshot)
     np.testing.assert_array_equal(src[finite], snapshot[finite])
