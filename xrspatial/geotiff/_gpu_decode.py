@@ -1933,7 +1933,9 @@ def gpu_decode_tiles(
             for i, tile in enumerate(compressed_tiles):
                 start = i * tile_bytes
                 chunk = np.frombuffer(
-                    jpeg2000_decompress(tile, tile_width, tile_height, samples),
+                    jpeg2000_decompress(
+                        tile, tile_width, tile_height, samples,
+                        expected_size=tile_bytes),
                     dtype=np.uint8)
                 raw_host[start:start + min(len(chunk), tile_bytes)] = \
                     chunk[:tile_bytes] if len(chunk) >= tile_bytes else \
@@ -1953,7 +1955,8 @@ def gpu_decode_tiles(
         any_lerc_mask = False
         for i, tile in enumerate(compressed_tiles):
             start = i * tile_bytes
-            decoded_bytes, valid_mask = lerc_decompress_with_mask(tile)
+            decoded_bytes, valid_mask = lerc_decompress_with_mask(
+                tile, expected_size=tile_bytes)
             chunk = np.frombuffer(decoded_bytes, dtype=np.uint8)
             raw_host[start:start + min(len(chunk), tile_bytes)] = \
                 chunk[:tile_bytes] if len(chunk) >= tile_bytes else \

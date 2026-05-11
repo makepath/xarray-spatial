@@ -1112,12 +1112,22 @@ except ImportError:
 
 
 def jpeg2000_decompress(data: bytes, width: int = 0, height: int = 0,
-                        samples: int = 1) -> bytes:
-    """Decompress a JPEG 2000 codestream. Requires ``glymur``."""
+                        samples: int = 1, expected_size: int = 0) -> bytes:
+    """Decompress a JPEG 2000 codestream. Requires ``glymur``.
+
+    When ``expected_size`` > 0 the wrapper inspects the codestream's
+    declared ``shape`` and ``dtype`` via :class:`glymur.Jp2k` (which
+    parses only the SIZ marker and does not trigger pixel decoding)
+    and raises ``ValueError`` when ``prod(shape) * dtype_bytes`` exceeds
+    ``expected_size * 1.05 + 1`` bytes.  The cap fails closed: if the
+    SIZ marker is unreadable, the function raises rather than letting
+    ``glymur.Jp2k[:]`` materialise an attacker-controlled buffer.
+    """
     if not JPEG2000_AVAILABLE:
         raise ImportError(
             "glymur is required to read JPEG 2000-compressed TIFFs. "
             "Install it with: pip install glymur")
+    import math
     import tempfile
     import os
     # glymur reads from files, so write the codestream to a temp file
@@ -1126,6 +1136,41 @@ def jpeg2000_decompress(data: bytes, width: int = 0, height: int = 0,
         os.write(fd, data)
         os.close(fd)
         jp2 = _glymur.Jp2k(tmp)
+        if expected_size > 0:
+            # Fail-closed pre-decode cap. ``jp2.shape`` reads only the
+            # SIZ marker (sub-millisecond, no pixel decoding); if we
+            # cannot determine the declared shape and dtype, refuse to
+            # call ``jp2[:]`` rather than silently disabling the cap --
+            # an attacker who can produce a malformed-but-decodable
+            # codestream would otherwise bypass the guard.
+            try:
+                shape = jp2.shape
+            except Exception as exc:
+                raise ValueError(
+                    "jpeg2000 decode rejected: unable to read declared "
+                    "shape from SIZ marker"
+                ) from exc
+            try:
+                dtype = np.dtype(getattr(jp2, 'dtype', None))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "jpeg2000 decode rejected: unable to read declared "
+                    "dtype from codestream"
+                ) from exc
+            # ``math.prod`` uses arbitrary-precision Python ints, so it
+            # cannot overflow on attacker-declared dimensions (unlike
+            # ``np.prod`` which multiplies in fixed-width intp and can
+            # wrap to a small positive number, masking a bomb).
+            declared = math.prod(int(d) for d in shape) * dtype.itemsize
+            cap = _max_output_with_margin(expected_size)
+            if declared > cap:
+                raise ValueError(
+                    f"jpeg2000 decode would exceed expected size: "
+                    f"declared output is {declared} bytes (shape "
+                    f"{shape}, {dtype.itemsize} B/sample), cap is "
+                    f"{cap} (expected {expected_size}).  Likely a "
+                    f"decompression bomb."
+                )
         arr = jp2[:]
         return arr.tobytes()
     finally:
@@ -1174,8 +1219,62 @@ except ImportError:
     _lerc = None
 
 
+# LERC dataType code -> bytes/sample.  Mirrors the enum in the LERC C++
+# header: 0 int8, 1 uint8, 2 int16, 3 uint16, 4 int32, 5 uint32,
+# 6 float32, 7 float64.  Used by the decompression-bomb pre-check on
+# ``lerc.getLercBlobInfo`` so the blob's declared decoded byte count can
+# be validated before ``lerc.decode`` allocates the full buffer.
+_LERC_DTYPE_BYTES = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 8}
+
+
+def _check_lerc_bomb(data: bytes, expected_size: int) -> None:
+    """Reject LERC blobs whose declared output exceeds the bomb cap.
+
+    ``lerc.getLercBlobInfo`` parses the blob header without decoding,
+    returning ``(errCode, version, dataType, nDim, nCols, nRows,
+    nBands, ...)``. We compute ``nCols * nRows * nBands * dtype_bytes``
+    and raise ``ValueError`` when the projected output exceeds the
+    same margin cap (``expected_size * 1.05 + 1``) used by every other
+    codec wrapper. Skipping when ``expected_size <= 0`` matches the
+    existing convention: a zero (or unset) expected size disables the
+    cap so direct callers and round-trip tests still work.
+    """
+    if expected_size <= 0:
+        return
+    try:
+        info = _lerc.getLercBlobInfo(data)
+    except Exception:
+        # If the header itself is malformed, hand the blob to lerc.decode
+        # so it produces the canonical error rather than masking it here.
+        return
+    if len(info) < 7:
+        return
+    # ``info[0]`` is the LERC errCode; when non-zero the remaining
+    # fields may be uninitialised or garbage. Defer to ``lerc.decode``
+    # for the canonical error instead of computing a declared size
+    # from invalid header values.
+    if int(info[0]) != 0:
+        return
+    data_type = int(info[2])
+    n_cols = int(info[4])
+    n_rows = int(info[5])
+    n_bands = int(info[6])
+    bytes_per_sample = _LERC_DTYPE_BYTES.get(data_type)
+    if bytes_per_sample is None:
+        return
+    declared = n_cols * n_rows * n_bands * bytes_per_sample
+    cap = _max_output_with_margin(expected_size)
+    if declared > cap:
+        raise ValueError(
+            f"lerc decode would exceed expected size: declared output is "
+            f"{declared} bytes ({n_cols}x{n_rows}x{n_bands}, "
+            f"{bytes_per_sample} B/sample), cap is {cap} "
+            f"(expected {expected_size}).  Likely a decompression bomb."
+        )
+
+
 def lerc_decompress(data: bytes, width: int = 0, height: int = 0,
-                    samples: int = 1) -> bytes:
+                    samples: int = 1, expected_size: int = 0) -> bytes:
     """Decompress LERC data. Requires the ``lerc`` package.
 
     Returns the raw decoded pixel bytes.  Any LERC valid-mask is dropped
@@ -1183,12 +1282,18 @@ def lerc_decompress(data: bytes, width: int = 0, height: int = 0,
     format's default).  Callers that need to honour the file's nodata
     value should use :func:`lerc_decompress_with_mask` instead and apply
     nodata at the array level once dtype is known.
+
+    When ``expected_size`` > 0 the wrapper queries the blob's declared
+    output size via :func:`lerc.getLercBlobInfo` and raises
+    ``ValueError`` when it exceeds ``expected_size * 1.05 + 1`` bytes,
+    matching the bomb cap applied by every other codec wrapper.
     """
-    decoded_bytes, _mask = lerc_decompress_with_mask(data)
+    decoded_bytes, _mask = lerc_decompress_with_mask(
+        data, expected_size=expected_size)
     return decoded_bytes
 
 
-def lerc_decompress_with_mask(data: bytes):
+def lerc_decompress_with_mask(data: bytes, expected_size: int = 0):
     """Decompress LERC data and return ``(bytes, valid_mask_or_None)``.
 
     ``valid_mask`` is ``None`` when LERC reports the block is fully
@@ -1198,11 +1303,21 @@ def lerc_decompress_with_mask(data: bytes):
     pixels the encoder flagged as invalid.  LERC zero fills masked
     positions in the data array, so the returned mask is the only
     signal that lets a reader restore the file's nodata sentinel.
+
+    When ``expected_size`` > 0 the wrapper queries the blob's declared
+    output size via :func:`lerc.getLercBlobInfo` and raises
+    ``ValueError`` when it exceeds ``expected_size * 1.05 + 1`` bytes
+    (decompression-bomb guard).  A 94-byte LERC blob can otherwise
+    request 64 MiB of host memory because LERC compresses constant
+    blocks at >700,000:1; without this pre-check the post-decode size
+    check in :func:`_decode_strip_or_tile` fires only after the bomb
+    has already been materialised.
     """
     if not LERC_AVAILABLE:
         raise ImportError(
             "lerc is required to read LERC-compressed TIFFs. "
             "Install it with: pip install lerc")
+    _check_lerc_bomb(data, expected_size)
     result = _lerc.decode(data)
     # lerc.decode returns (result_code, data_array, valid_mask, ...)
     if result[0] != 0:
@@ -1355,13 +1470,17 @@ def decompress(data, compression: int, expected_size: int = 0,
             zstd_decompress(data, expected_size), dtype=np.uint8)
     elif compression == COMPRESSION_JPEG2000:
         return np.frombuffer(
-            jpeg2000_decompress(data, width, height, samples), dtype=np.uint8)
+            jpeg2000_decompress(data, width, height, samples,
+                                expected_size=expected_size),
+            dtype=np.uint8)
     elif compression == COMPRESSION_LZ4:
         return np.frombuffer(
             lz4_decompress(data, expected_size), dtype=np.uint8)
     elif compression == COMPRESSION_LERC:
         return np.frombuffer(
-            lerc_decompress(data, width, height, samples), dtype=np.uint8)
+            lerc_decompress(data, width, height, samples,
+                            expected_size=expected_size),
+            dtype=np.uint8)
     else:
         raise ValueError(f"Unsupported compression type: {compression}")
 

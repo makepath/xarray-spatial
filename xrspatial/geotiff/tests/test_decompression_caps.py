@@ -47,6 +47,8 @@ def _module_available(name: str) -> bool:
 
 _HAS_ZSTD = _module_available("zstandard")
 _HAS_LZ4 = _module_available("lz4.frame")
+_HAS_LERC = _module_available("lerc")
+_HAS_GLYMUR = _module_available("glymur")
 
 
 # ---------------------------------------------------------------------------
@@ -328,3 +330,146 @@ def test_cap_includes_metadata_margin():
     comp = zlib.compress(data, 9)
     out = deflate_decompress(comp, expected_size=expected)
     assert out == data
+
+
+# ---------------------------------------------------------------------------
+# LERC and JPEG 2000 codec-level bomb tests (issue #1625)
+# ---------------------------------------------------------------------------
+#
+# LERC and JPEG 2000 use external libraries (lerc / glymur) that materialise
+# the full decoded buffer before returning, so the existing post-decode
+# size check in ``_decode_strip_or_tile`` fires only after the bomb is
+# already in memory. The wrappers in ``_compression.py`` now query each
+# codestream's declared dimensions (LERC via ``getLercBlobInfo``, JPEG 2000
+# via ``Jp2k.shape``) and raise before invoking the underlying decoder.
+
+@pytest.mark.skipif(not _HAS_LERC, reason="lerc not installed")
+class TestLercDirect:
+    def test_lerc_bomb_raises(self):
+        """A LERC blob whose declared dimensions exceed the cap must raise.
+
+        Constant-value rasters compress at >700,000:1 in LERC, so a
+        4096x4096 float32 (64 MiB) encodes to ~94 bytes. The cap is set to
+        1 KiB, well below the declared 64 MiB, and the wrapper must reject
+        the blob before ``lerc.decode`` allocates the output buffer.
+        """
+        import lerc
+        arr = np.zeros((4096, 4096), dtype=np.float32)
+        encoded = lerc.encode(arr, 1, False, None, 0.0, 1)
+        blob = bytes(encoded[2])
+        assert len(blob) < 1024  # confirm this is a real high-ratio blob
+        from xrspatial.geotiff._compression import lerc_decompress
+        with pytest.raises(ValueError, match="exceed"):
+            lerc_decompress(blob, expected_size=1024)
+
+    def test_lerc_legitimate_passes(self):
+        """A LERC blob whose declared output matches expected_size passes."""
+        import lerc
+        arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+        encoded = lerc.encode(arr, 1, False, None, 0.0, 1)
+        blob = bytes(encoded[2])
+        from xrspatial.geotiff._compression import lerc_decompress
+        out = lerc_decompress(blob, expected_size=arr.nbytes)
+        decoded = np.frombuffer(out, dtype=np.float32).reshape(8, 8)
+        assert np.array_equal(decoded, arr)
+
+    def test_lerc_no_cap_when_expected_size_zero(self):
+        """Backward-compat: ``expected_size=0`` disables the cap."""
+        import lerc
+        arr = np.zeros((128, 128), dtype=np.float32)
+        encoded = lerc.encode(arr, 1, False, None, 0.0, 1)
+        blob = bytes(encoded[2])
+        from xrspatial.geotiff._compression import lerc_decompress
+        out = lerc_decompress(blob)  # no expected_size
+        decoded = np.frombuffer(out, dtype=np.float32).reshape(128, 128)
+        assert decoded.shape == arr.shape
+
+
+@pytest.mark.skipif(not _HAS_GLYMUR, reason="glymur not installed")
+class TestJpeg2000Direct:
+    def test_jpeg2000_bomb_raises(self, tmp_path):
+        """A JPEG 2000 codestream whose declared shape exceeds the cap raises.
+
+        Glymur reports ``Jp2k(file).shape`` from the SIZ marker without
+        triggering pixel decoding, so the wrapper validates the declared
+        ``H * W * dtype_bytes`` against the bomb cap before calling
+        ``jp2[:]``.
+        """
+        import glymur
+        # Build a real 2000x2000 uint8 codestream (~150 bytes for zeros).
+        arr = np.zeros((2000, 2000), dtype=np.uint8)
+        tmp = tmp_path / "src.j2k"
+        glymur.Jp2k(str(tmp), data=arr)
+        blob = tmp.read_bytes()
+        assert len(blob) < 10_000  # confirm high ratio
+        from xrspatial.geotiff._compression import jpeg2000_decompress
+        with pytest.raises(ValueError, match="exceed"):
+            # declared output 4 MiB, cap 1 KiB
+            jpeg2000_decompress(
+                blob, width=2000, height=2000, samples=1,
+                expected_size=1024)
+
+    def test_jpeg2000_legitimate_passes(self, tmp_path):
+        """A JPEG 2000 blob whose declared output matches expected_size passes."""
+        import glymur
+        # Use a 64x64 raster: large enough for the default 6-resolution
+        # OpenJPEG pyramid without tripping its min-tile-size check.
+        arr = (np.arange(64 * 64, dtype=np.uint8) % 200).reshape(64, 64)
+        tmp = tmp_path / "legit.j2k"
+        glymur.Jp2k(str(tmp), data=arr)
+        blob = tmp.read_bytes()
+        from xrspatial.geotiff._compression import jpeg2000_decompress
+        out = jpeg2000_decompress(
+            blob, width=64, height=64, samples=1,
+            expected_size=arr.nbytes)
+        decoded = np.frombuffer(out, dtype=np.uint8).reshape(64, 64)
+        assert np.array_equal(decoded, arr)
+
+    def test_jpeg2000_no_cap_when_expected_size_zero(self, tmp_path):
+        """Backward-compat: ``expected_size=0`` disables the cap."""
+        import glymur
+        arr = np.zeros((128, 128), dtype=np.uint8)
+        tmp = tmp_path / "nocap.j2k"
+        glymur.Jp2k(str(tmp), data=arr)
+        blob = tmp.read_bytes()
+        from xrspatial.geotiff._compression import jpeg2000_decompress
+        out = jpeg2000_decompress(blob, width=128, height=128, samples=1)
+        decoded = np.frombuffer(out, dtype=np.uint8).reshape(128, 128)
+        assert decoded.shape == arr.shape
+
+    def test_jpeg2000_unreadable_shape_fails_closed(
+            self, tmp_path, monkeypatch):
+        """If the SIZ marker is unreadable, refuse to call ``jp2[:]``.
+
+        Earlier the wrapper silently disabled the cap on
+        ``Jp2k.shape``/``dtype`` failure, which would let an attacker
+        bypass the bomb guard with a malformed-but-decodable
+        codestream.  The current behaviour is fail-closed: raise
+        ``ValueError`` before any pixel-decoding work runs.
+        """
+        import glymur
+        arr = np.zeros((64, 64), dtype=np.uint8)
+        tmp = tmp_path / "broken.j2k"
+        glymur.Jp2k(str(tmp), data=arr)
+        blob = tmp.read_bytes()
+
+        from xrspatial.geotiff import _compression
+
+        class _BrokenJp2k:
+            def __init__(self, *a, **kw):
+                pass
+
+            @property
+            def shape(self):
+                raise RuntimeError("simulated SIZ marker corruption")
+
+            def __getitem__(self, _):
+                raise AssertionError(
+                    "jp2[:] must not be called when shape is unreadable")
+
+        monkeypatch.setattr(_compression, "_glymur",
+                            type("M", (), {"Jp2k": _BrokenJp2k}))
+        with pytest.raises(ValueError, match="unable to read declared"):
+            _compression.jpeg2000_decompress(
+                blob, width=64, height=64, samples=1,
+                expected_size=arr.nbytes)

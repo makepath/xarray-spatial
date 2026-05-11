@@ -776,7 +776,11 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
         # valid-mask which the generic decompress() dispatcher discards.
         # We capture it here so masked pixels can be restored to nodata
         # below, instead of leaking LERC's zero fill into the output.
-        decoded_bytes, lerc_mask = lerc_decompress_with_mask(data_slice)
+        # Forward ``expected`` so the wrapper rejects bombs at the
+        # blob-header level rather than after the full buffer is
+        # materialised (issue #1625).
+        decoded_bytes, lerc_mask = lerc_decompress_with_mask(
+            data_slice, expected_size=expected)
         chunk = np.frombuffer(decoded_bytes, dtype=np.uint8)
     else:
         chunk = decompress(data_slice, compression, expected,
