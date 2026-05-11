@@ -1758,14 +1758,19 @@ def read_geotiff_gpu(source: str, *,
         orientation = ifd.orientation
 
         if not ifd.is_tiled:
-            # Fall back to CPU for stripped files. read_to_array already
-            # applies the orientation remap to both the array and the
-            # geo_info transform (#1537), so reuse its geo_info here
-            # rather than the pre-orientation one we just extracted.
+            # Fall back to CPU for stripped files. read_to_array remaps
+            # the array but only updates geo_info.transform for orientations
+            # 5-8 today (the 2/3/4 fix in #1539 is in a sibling PR). Discard
+            # its geo_info and apply our own transform update below so the
+            # result is correct regardless of merge order.
             src.close()
-            arr_cpu, geo_info = read_to_array(
+            arr_cpu, _ = read_to_array(
                 source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
+            if orientation != 1:
+                geo_info = _apply_orientation_geo_info(
+                    geo_info, orientation,
+                    file_h=ifd.height, file_w=ifd.width)
             coords = _geo_to_coords(geo_info, arr_gpu.shape[0], arr_gpu.shape[1])
             if name is None:
                 import os
@@ -1901,7 +1906,10 @@ def read_geotiff_gpu(source: str, *,
                 break
             band_arrays.append(band_arr)
         if cpu_fallback_needed:
-            arr_cpu, geo_info = read_to_array(
+            # Drop read_to_array's geo_info: orientation transform handling
+            # below operates on our pre-extracted geo_info so the 2/3/4 case
+            # is covered regardless of #1539's merge state.
+            arr_cpu, _ = read_to_array(
                 source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
             arr_was_cpu_decoded = True
@@ -1914,7 +1922,7 @@ def read_geotiff_gpu(source: str, *,
                     f"({height}, {width}, {samples})"
                 )
     elif has_sparse_tile:
-        arr_cpu, geo_info = read_to_array(
+        arr_cpu, _ = read_to_array(
             source, overview_level=overview_level)
         arr_gpu = cupy.asarray(arr_cpu)
         arr_was_cpu_decoded = True
@@ -1971,7 +1979,7 @@ def read_geotiff_gpu(source: str, *,
                 RuntimeWarning,
                 stacklevel=2,
             )
-            arr_cpu, geo_info = read_to_array(
+            arr_cpu, _ = read_to_array(
                 source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
             arr_was_cpu_decoded = True
@@ -1989,14 +1997,16 @@ def read_geotiff_gpu(source: str, *,
                 f"({height}, {width}, {samples})"
             )
 
-    # Apply the TIFF Orientation tag (274) to the GPU array. The CPU
-    # reader does this in `read_to_array` (#1521 + #1537), so any path
-    # that already went through the CPU fallback above is a no-op here.
-    # The pure GPU paths land at this point with a raw stored-order
-    # buffer, and without this remap they would silently disagree with
-    # the CPU reader (#1540).
-    if orientation != 1 and not arr_was_cpu_decoded:
-        arr_gpu = _apply_orientation_gpu(arr_gpu, orientation)
+    # Apply the TIFF Orientation tag (274). The pure GPU paths land here
+    # with a raw stored-order buffer; the CPU-fallback paths land here
+    # with arr_gpu already remapped (read_to_array does the data flip)
+    # but with their pre-orientation geo_info (we discarded the one
+    # read_to_array returned because it does not handle 2/3/4 today).
+    # Skip the GPU array remap on CPU-decoded paths to avoid a double
+    # flip, but always apply the geo_info update so coords match.
+    if orientation != 1:
+        if not arr_was_cpu_decoded:
+            arr_gpu = _apply_orientation_gpu(arr_gpu, orientation)
         geo_info = _apply_orientation_geo_info(
             geo_info, orientation, file_h=height, file_w=width)
 
