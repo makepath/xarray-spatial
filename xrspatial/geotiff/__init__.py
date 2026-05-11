@@ -778,6 +778,61 @@ def _merge_friendly_extra_tags(extra_tags_list, attrs: dict) -> list | None:
     return existing or None
 
 
+# String identifiers (used in xrspatial attrs) -> TIFF ResolutionUnit tag ids.
+_RESOLUTION_UNIT_IDS = {'none': 1, 'inch': 2, 'centimeter': 3}
+
+
+def _extract_rich_tags(attrs: dict) -> dict:
+    """Extract the rich-tag set forwarded by the writers to ``write(...)``.
+
+    Centralises the bookkeeping shared by :func:`to_geotiff`,
+    :func:`_write_vrt_tiled`, and :func:`write_geotiff_gpu`:
+
+    * ``raster_type`` -- mapped from ``attrs['raster_type']`` ('point'
+      becomes :data:`RASTER_PIXEL_IS_POINT`; everything else stays
+      :data:`RASTER_PIXEL_IS_AREA`).
+    * ``gdal_metadata_xml`` -- prefers ``attrs['gdal_metadata_xml']``;
+      falls back to building XML from ``attrs['gdal_metadata']`` when
+      it is a dict.
+    * ``extra_tags`` -- ``attrs['extra_tags']`` folded with the friendly
+      tag attrs (image_description / extra_samples / colormap) via
+      :func:`_merge_friendly_extra_tags`.
+    * ``x_resolution`` / ``y_resolution`` -- pass-through.
+    * ``resolution_unit`` -- string label mapped to the integer tag id.
+
+    Returns a kwargs dict ready to splat into ``write(...)``: every key
+    matches the corresponding parameter name on
+    :func:`xrspatial.geotiff._writer.write`.
+    """
+    raster_type = (RASTER_PIXEL_IS_POINT
+                   if attrs.get('raster_type') == 'point'
+                   else RASTER_PIXEL_IS_AREA)
+
+    gdal_meta_xml = attrs.get('gdal_metadata_xml')
+    if gdal_meta_xml is None:
+        gdal_meta_dict = attrs.get('gdal_metadata')
+        if isinstance(gdal_meta_dict, dict):
+            from ._geotags import _build_gdal_metadata_xml
+            gdal_meta_xml = _build_gdal_metadata_xml(gdal_meta_dict)
+
+    extra_tags_list = _merge_friendly_extra_tags(
+        attrs.get('extra_tags'), attrs)
+
+    res_unit = None
+    unit_str = attrs.get('resolution_unit')
+    if unit_str is not None:
+        res_unit = _RESOLUTION_UNIT_IDS.get(str(unit_str), None)
+
+    return {
+        'raster_type': raster_type,
+        'gdal_metadata_xml': gdal_meta_xml,
+        'extra_tags': extra_tags_list,
+        'x_resolution': attrs.get('x_resolution'),
+        'y_resolution': attrs.get('y_resolution'),
+        'resolution_unit': res_unit,
+    }
+
+
 def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
                crs: int | str | None = None,
                nodata=None,
@@ -1050,27 +1105,17 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
                         wkt_fallback = wkt
         if nodata is None:
             nodata = _resolve_nodata_attr(data.attrs)
-        if data.attrs.get('raster_type') == 'point':
-            raster_type = RASTER_PIXEL_IS_POINT
-        gdal_meta_xml = data.attrs.get('gdal_metadata_xml')
-        if gdal_meta_xml is None:
-            gdal_meta_dict = data.attrs.get('gdal_metadata')
-            if isinstance(gdal_meta_dict, dict):
-                from ._geotags import _build_gdal_metadata_xml
-                gdal_meta_xml = _build_gdal_metadata_xml(gdal_meta_dict)
-        extra_tags_list = data.attrs.get('extra_tags')
-        # Fold friendly attrs into extra_tags so a user-edited
-        # attrs['image_description'] / ['extra_samples'] / ['colormap']
-        # actually reaches the file. Existing entries with the same tag id
-        # win, which keeps verbatim round-trips byte-stable.
-        extra_tags_list = _merge_friendly_extra_tags(
-            extra_tags_list, data.attrs)
-        x_res = data.attrs.get('x_resolution')
-        y_res = data.attrs.get('y_resolution')
-        unit_str = data.attrs.get('resolution_unit')
-        if unit_str is not None:
-            _unit_ids = {'none': 1, 'inch': 2, 'centimeter': 3}
-            res_unit = _unit_ids.get(str(unit_str), None)
+        # Pull raster_type, gdal_metadata_xml, extra_tags (folded with
+        # the friendly image_description / extra_samples / colormap
+        # attrs), x/y_resolution, and resolution_unit via the shared
+        # helper so all three writers stay in lockstep.
+        _rich = _extract_rich_tags(data.attrs)
+        raster_type = _rich['raster_type']
+        gdal_meta_xml = _rich['gdal_metadata_xml']
+        extra_tags_list = _rich['extra_tags']
+        x_res = _rich['x_resolution']
+        y_res = _rich['y_resolution']
+        res_unit = _rich['resolution_unit']
 
         # Dask-backed: stream tiles to avoid materialising the full array.
         # COG requires overviews from the full array, so it falls through
@@ -1339,23 +1384,13 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
             geo_transform = _coords_to_transform(data)
         # Pull the same rich-tag set that to_geotiff forwards to
         # ``write`` so per-tile files under the VRT carry it too.
-        if data.attrs.get('raster_type') == 'point':
-            raster_type = RASTER_PIXEL_IS_POINT
-        gdal_meta_xml = data.attrs.get('gdal_metadata_xml')
-        if gdal_meta_xml is None:
-            gdal_meta_dict = data.attrs.get('gdal_metadata')
-            if isinstance(gdal_meta_dict, dict):
-                from ._geotags import _build_gdal_metadata_xml
-                gdal_meta_xml = _build_gdal_metadata_xml(gdal_meta_dict)
-        extra_tags_list = data.attrs.get('extra_tags')
-        extra_tags_list = _merge_friendly_extra_tags(
-            extra_tags_list, data.attrs)
-        x_res = data.attrs.get('x_resolution')
-        y_res = data.attrs.get('y_resolution')
-        unit_str = data.attrs.get('resolution_unit')
-        if unit_str is not None:
-            _unit_ids = {'none': 1, 'inch': 2, 'centimeter': 3}
-            res_unit = _unit_ids.get(str(unit_str), None)
+        _rich = _extract_rich_tags(data.attrs)
+        raster_type = _rich['raster_type']
+        gdal_meta_xml = _rich['gdal_metadata_xml']
+        extra_tags_list = _rich['extra_tags']
+        x_res = _rich['x_resolution']
+        y_res = _rich['y_resolution']
+        res_unit = _rich['resolution_unit']
     else:
         raw = data
 
@@ -2618,28 +2653,18 @@ def write_geotiff_gpu(data, path: str, *,
                         wkt_fallback = wkt
         if nodata is None:
             nodata = _resolve_nodata_attr(data.attrs)
-        if data.attrs.get('raster_type') == 'point':
-            raster_type = RASTER_PIXEL_IS_POINT
         # Mirror the CPU writer's pass-through of GDAL metadata, the
         # extra_tags list, the friendly image_description / extra_samples
         # / colormap synthesis, and the resolution tags. Without these,
         # a GPU write -> CPU read round-trip silently drops every rich
         # tag (#1563).
-        gdal_meta_xml = data.attrs.get('gdal_metadata_xml')
-        if gdal_meta_xml is None:
-            gdal_meta_dict = data.attrs.get('gdal_metadata')
-            if isinstance(gdal_meta_dict, dict):
-                from ._geotags import _build_gdal_metadata_xml
-                gdal_meta_xml = _build_gdal_metadata_xml(gdal_meta_dict)
-        extra_tags_list = data.attrs.get('extra_tags')
-        extra_tags_list = _merge_friendly_extra_tags(
-            extra_tags_list, data.attrs)
-        x_res = data.attrs.get('x_resolution')
-        y_res = data.attrs.get('y_resolution')
-        unit_str = data.attrs.get('resolution_unit')
-        if unit_str is not None:
-            _unit_ids = {'none': 1, 'inch': 2, 'centimeter': 3}
-            res_unit = _unit_ids.get(str(unit_str), None)
+        _rich = _extract_rich_tags(data.attrs)
+        raster_type = _rich['raster_type']
+        gdal_meta_xml = _rich['gdal_metadata_xml']
+        extra_tags_list = _rich['extra_tags']
+        x_res = _rich['x_resolution']
+        y_res = _rich['y_resolution']
+        res_unit = _rich['resolution_unit']
     else:
         if hasattr(data, 'compute'):
             data = data.compute()  # Dask -> CuPy or numpy
