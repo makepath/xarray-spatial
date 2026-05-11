@@ -867,6 +867,52 @@ def _assemble_tiles_kernel(
 # KvikIO GDS (GPUDirect Storage) -- read file directly to GPU
 # ---------------------------------------------------------------------------
 
+def _batched_d2h_to_bytes(d_tiles):
+    """Copy a list of cupy.uint8 1-D buffers to host as a list of ``bytes``.
+
+    Issues one concat + one D2H transfer instead of per-tile ``.get()``
+    calls, which serialise on the default stream and where the per-DMA
+    setup overhead dominates wall time when there are many tiles.
+
+    Mirrors the H2D batched-upload pattern in ``_try_nvcomp_decompress``
+    (see "Batch host->device upload" near the deflate/zstd batch
+    decompress branch). Same shape, opposite direction.
+
+    Parameters
+    ----------
+    d_tiles : list of cupy.ndarray
+        1-D ``cupy.uint8`` arrays. Sizes may differ between tiles.
+
+    Returns
+    -------
+    list of bytes
+        One ``bytes`` object per input tile, in the same order.
+    """
+    if len(d_tiles) == 0:
+        return []
+
+    import cupy
+
+    sizes = [int(t.size) for t in d_tiles]
+    offsets = np.empty(len(d_tiles) + 1, dtype=np.int64)
+    offsets[0] = 0
+    np.cumsum(sizes, out=offsets[1:])
+
+    # The concat allocates a fresh device buffer of sum(sizes) bytes --
+    # a peak-VRAM bump that the prior per-tile .get() loop avoided.
+    # Fail early with a clear message if there isn't headroom for it.
+    total_bytes = int(offsets[-1])
+    _check_gpu_memory(total_bytes, what="batched D2H staging buffer")
+
+    combined = cupy.concatenate(d_tiles)
+    host_buf = combined.get()  # one D2H DMA for the whole batch
+
+    return [
+        bytes(host_buf[offsets[i]:offsets[i + 1]])
+        for i in range(len(d_tiles))
+    ]
+
+
 def _try_kvikio_read_tiles(file_path, tile_offsets, tile_byte_counts, tile_bytes):
     """Read compressed tile bytes directly from SSD to GPU via GDS.
 
@@ -1502,7 +1548,7 @@ def gpu_decode_tiles_from_file(
 
         # GDS read succeeded but nvCOMP can't decompress on GPU,
         # or it's LZW/deflate. Copy tiles to host and use normal path.
-        compressed_tiles = [t.get().tobytes() for t in d_tiles]
+        compressed_tiles = _batched_d2h_to_bytes(d_tiles)
     else:
         # No GDS -- read tiles via CPU mmap (caller provides bytes)
         # This path is used when called from gpu_decode_tiles()
