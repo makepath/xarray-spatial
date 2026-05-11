@@ -2754,3 +2754,447 @@ def test_reproject_max_memory_int_arg():
     )
     out = reproject(raster, 'EPSG:32633', max_memory=512 * 1024 * 1024)
     assert out.ndim == 2
+
+
+# ---------------------------------------------------------------------------
+# 2026-05-10 test-coverage sweep additions
+# ---------------------------------------------------------------------------
+
+class TestLiteCRS:
+    """Direct coverage for the no-pyproj fallback CRS class.
+
+    ``_lite_crs.CRS`` ships as the fast path inside ``_resolve_crs`` and as
+    the only CRS implementation when pyproj is unavailable. Without these
+    tests a regression in the built-in EPSG table or the WKT generator
+    would only surface in an environment that drops pyproj.
+    """
+
+    def test_construct_from_int(self):
+        from xrspatial.reproject._lite_crs import CRS
+        c = CRS(4326)
+        assert c.to_epsg() == 4326
+        assert c.is_geographic is True
+
+    def test_construct_from_string(self):
+        from xrspatial.reproject._lite_crs import CRS
+        c = CRS('EPSG:3857')
+        assert c.to_epsg() == 3857
+        assert c.is_geographic is False
+
+    def test_construct_from_lowercase_epsg_string(self):
+        from xrspatial.reproject._lite_crs import CRS
+        c = CRS('epsg:4326')
+        assert c.to_epsg() == 4326
+
+    def test_unknown_epsg_rejected(self):
+        from xrspatial.reproject._lite_crs import CRS
+        with pytest.raises(ValueError, match="not in the built-in table"):
+            CRS(9_999_999)
+
+    def test_bad_string_rejected(self):
+        from xrspatial.reproject._lite_crs import CRS
+        with pytest.raises(ValueError, match="Cannot parse"):
+            CRS('not-a-crs')
+
+    def test_bad_type_rejected(self):
+        from xrspatial.reproject._lite_crs import CRS
+        with pytest.raises(TypeError):
+            CRS(4326.0)
+
+    def test_to_authority(self):
+        from xrspatial.reproject._lite_crs import CRS
+        assert CRS(4326).to_authority() == ('EPSG', '4326')
+
+    def test_to_dict_strips_internal_keys(self):
+        from xrspatial.reproject._lite_crs import CRS
+        d = CRS(4326).to_dict()
+        # Internal keys like _is_geographic must not leak into the dict
+        assert all(not k.startswith('_') for k in d)
+        assert d.get('proj') == 'longlat'
+
+    def test_equality_and_hash(self):
+        from xrspatial.reproject._lite_crs import CRS
+        assert CRS(4326) == CRS(4326)
+        assert CRS(4326) != CRS(3857)
+        # Hashable for use as dict key
+        s = {CRS(4326), CRS(4326), CRS(3857)}
+        assert len(s) == 2
+
+    def test_wkt_geographic(self):
+        from xrspatial.reproject._lite_crs import CRS
+        wkt = CRS(4326).to_wkt()
+        assert 'GEOGCS' in wkt
+        assert 'AUTHORITY["EPSG","4326"]' in wkt
+
+    def test_wkt_projected(self):
+        from xrspatial.reproject._lite_crs import CRS
+        wkt = CRS(3857).to_wkt()
+        assert 'PROJCS' in wkt
+        assert 'AUTHORITY["EPSG","3857"]' in wkt
+
+    def test_wkt_utm_zone_expanded(self):
+        from xrspatial.reproject._lite_crs import CRS
+        # UTM 33N: central_meridian = 33*6 - 183 = 15
+        wkt = CRS(32633).to_wkt()
+        assert 'central_meridian' in wkt
+        assert '15' in wkt  # the central meridian for UTM 33N
+
+    def test_wkt_roundtrip(self):
+        from xrspatial.reproject._lite_crs import CRS
+        for code in (4326, 3857, 32633, 5070):
+            recovered = CRS.from_wkt(CRS(code).to_wkt())
+            assert recovered.to_epsg() == code
+
+    def test_from_wkt_rejects_string_without_authority(self):
+        from xrspatial.reproject._lite_crs import CRS
+        with pytest.raises(ValueError, match="No AUTHORITY"):
+            CRS.from_wkt('PROJCS["no-authority-here"]')
+
+    def test_lite_crs_used_when_pyproj_missing(self, monkeypatch):
+        """_resolve_crs must succeed for table EPSG codes even without pyproj."""
+        from xrspatial.reproject import _crs_utils as cu
+        from xrspatial.reproject._lite_crs import CRS as LiteCRS
+
+        monkeypatch.setattr(cu, '_try_import_pyproj', lambda: None)
+        # Built-in code: should round-trip through LiteCRS only
+        resolved = cu._resolve_crs(4326)
+        assert isinstance(resolved, LiteCRS)
+        assert resolved.to_epsg() == 4326
+
+    def test_crs_from_wkt_uses_lite_first(self, monkeypatch):
+        """_crs_from_wkt extracts AUTHORITY tag without invoking pyproj."""
+        from xrspatial.reproject import _crs_utils as cu
+        from xrspatial.reproject._lite_crs import CRS as LiteCRS
+
+        def _no_pyproj():
+            raise ImportError("pyproj disabled for this test")
+
+        # If lite path works, _require_pyproj must not be reached.
+        monkeypatch.setattr(cu, '_require_pyproj', _no_pyproj)
+        wkt = LiteCRS(4326).to_wkt()
+        recovered = cu._crs_from_wkt(wkt)
+        assert recovered.to_epsg() == 4326
+
+
+class TestItrfBehaviour:
+    """Numerical behaviour of itrf_transform / itrf_frames.
+
+    Existing tests only cover error paths. These add a frame-listing
+    smoke check and a round-trip behavioural check so that a change to
+    the 14-parameter Helmert math would surface.
+    """
+
+    def test_itrf_frames_lists_known_frames(self):
+        from xrspatial.reproject import itrf_frames
+        frames = itrf_frames()
+        assert isinstance(frames, list)
+        # The four standard ITRF realizations should be present.
+        for f in ('ITRF2000', 'ITRF2008', 'ITRF2014', 'ITRF2020'):
+            assert f in frames, f"missing frame: {f}"
+
+    def test_itrf_transform_scalar_small_shift(self):
+        """ITRF2014 -> ITRF2020 shift is at the sub-mm/m level for short
+        epochs, so the output coordinates must be very close to the input."""
+        from xrspatial.reproject import itrf_transform
+        lon, lat, h = -74.0, 40.7, 10.0
+        out_lon, out_lat, out_h = itrf_transform(
+            lon, lat, h, src='ITRF2014', tgt='ITRF2020', epoch=2024.0,
+        )
+        # Sanity: a few-cm-level shift in geographic coords (~1e-7 deg)
+        # and a few-mm to cm shift in height.
+        assert abs(out_lon - lon) < 1e-5
+        assert abs(out_lat - lat) < 1e-5
+        assert abs(out_h - h) < 0.05
+
+    def test_itrf_transform_roundtrip(self):
+        """Forward then reverse should recover the input."""
+        from xrspatial.reproject import itrf_transform
+        lon, lat, h = -74.0, 40.7, 10.0
+        fwd = itrf_transform(lon, lat, h, src='ITRF2014', tgt='ITRF2020',
+                             epoch=2024.0)
+        back = itrf_transform(fwd[0], fwd[1], fwd[2],
+                              src='ITRF2020', tgt='ITRF2014',
+                              epoch=2024.0)
+        assert abs(back[0] - lon) < 1e-9
+        assert abs(back[1] - lat) < 1e-9
+        assert abs(back[2] - h) < 1e-6
+
+    def test_itrf_transform_array_input(self):
+        """Array inputs produce array outputs of matching shape."""
+        from xrspatial.reproject import itrf_transform
+        lons = np.array([-74.0, 0.0, 10.0])
+        lats = np.array([40.7, 0.0, 50.0])
+        hs = np.array([10.0, 0.0, 100.0])
+        out_lon, out_lat, out_h = itrf_transform(
+            lons, lats, hs, src='ITRF2014', tgt='ITRF2020', epoch=2024.0,
+        )
+        assert out_lon.shape == lons.shape
+        assert out_lat.shape == lats.shape
+        assert out_h.shape == hs.shape
+        # Each coordinate must shift by less than a few cm at this epoch.
+        assert np.all(np.abs(out_lon - lons) < 1e-5)
+        assert np.all(np.abs(out_lat - lats) < 1e-5)
+
+    def test_itrf_transform_unknown_frame_raises(self):
+        from xrspatial.reproject import itrf_transform
+        with pytest.raises(ValueError, match="No transform"):
+            itrf_transform(0.0, 0.0, 0.0,
+                           src='ITRF1900', tgt='ITRF2020', epoch=2024.0)
+
+
+class TestGeoidHeightBehaviour:
+    """Numerical correctness for the public geoid helpers.
+
+    Existing tests cover error paths and use these only as references.
+    Their direct numerical behaviour is not asserted anywhere, so a
+    silent regression in the EGM96 grid loader or the bilinear
+    interpolation would not be caught.
+    """
+
+    # Reference EGM96 undulation at known locations (metres). These were
+    # produced by the same code path under test so they pin the current
+    # behaviour rather than an external authority. A drift of more than
+    # a few metres in either direction would indicate a real change.
+    _REFERENCE_N = {
+        # (lon, lat): expected N in metres
+        (-74.0, 40.7): -33.0,    # New York
+        (0.0, 0.0): 17.2,        # null island
+        (139.7, 35.7): 38.7,     # Tokyo
+        (-150.0, 60.0): 13.3,    # central Alaska
+    }
+
+    def test_geoid_height_scalar(self):
+        from xrspatial.reproject import geoid_height
+        for (lon, lat), expected in self._REFERENCE_N.items():
+            N = geoid_height(lon, lat)
+            assert isinstance(N, float)
+            assert abs(N - expected) < 3.0, (
+                f"N({lon},{lat}) = {N}, expected ~{expected}"
+            )
+
+    def test_geoid_height_array_matches_scalar(self):
+        from xrspatial.reproject import geoid_height
+        coords = list(self._REFERENCE_N.keys())
+        lons = np.array([c[0] for c in coords])
+        lats = np.array([c[1] for c in coords])
+        batch = geoid_height(lons, lats)
+        assert batch.shape == lons.shape
+        for i, c in enumerate(coords):
+            scalar = geoid_height(c[0], c[1])
+            assert abs(batch[i] - scalar) < 1e-9
+
+    def test_geoid_height_longitude_wrap(self):
+        """Lon and lon+360 must give the same value (grid wraps globally)."""
+        from xrspatial.reproject import geoid_height
+        for lon in (-179.5, 0.0, 179.5):
+            for lat in (-45.0, 0.0, 45.0):
+                a = geoid_height(lon, lat)
+                b = geoid_height(lon + 360.0, lat)
+                assert abs(a - b) < 1e-9, (
+                    f"lon={lon} vs lon+360: {a} != {b}"
+                )
+
+    def test_geoid_height_near_poles_finite(self):
+        from xrspatial.reproject import geoid_height
+        N_north = geoid_height(0.0, 89.5)
+        N_south = geoid_height(0.0, -89.5)
+        assert np.isfinite(N_north)
+        assert np.isfinite(N_south)
+
+    def test_geoid_height_2d_array_input(self):
+        """A 2D coord grid produces a 2D output of the same shape."""
+        from xrspatial.reproject import geoid_height
+        lons2d, lats2d = np.meshgrid(
+            np.linspace(-10, 10, 5), np.linspace(40, 50, 4),
+        )
+        out = geoid_height(lons2d, lats2d)
+        assert out.shape == lons2d.shape
+        assert np.isfinite(out).all()
+
+    def test_geoid_height_raster_happy_path(self):
+        """``geoid_height_raster`` returns an N raster whose values agree
+        with point-wise ``geoid_height`` at each pixel."""
+        from xrspatial.reproject import geoid_height, geoid_height_raster
+
+        y = np.linspace(45.0, 35.0, 6)
+        x = np.linspace(-80.0, -70.0, 7)
+        raster = xr.DataArray(
+            np.zeros((y.size, x.size), dtype=np.float64),
+            dims=['y', 'x'],
+            coords={'y': y, 'x': x},
+        )
+        out = geoid_height_raster(raster)
+
+        assert out.shape == raster.shape
+        assert out.dims == ('y', 'x')
+        np.testing.assert_array_equal(out.coords['y'].values, y)
+        np.testing.assert_array_equal(out.coords['x'].values, x)
+        assert out.attrs.get('units') == 'metres'
+        assert out.attrs.get('model') == 'EGM96'
+
+        # Every pixel must match the scalar function.
+        for i, yi in enumerate(y):
+            for j, xj in enumerate(x):
+                expected = geoid_height(float(xj), float(yi))
+                assert abs(float(out.values[i, j]) - expected) < 1e-9
+
+    def test_geoid_height_raster_with_lat_lon_dims(self):
+        """``geoid_height_raster`` works on rasters with lat/lon dim names."""
+        from xrspatial.reproject import geoid_height_raster
+
+        lat = np.linspace(45.0, 35.0, 5)
+        lon = np.linspace(-80.0, -70.0, 5)
+        raster = xr.DataArray(
+            np.zeros((lat.size, lon.size), dtype=np.float64),
+            dims=['lat', 'lon'],
+            coords={'lat': lat, 'lon': lon},
+        )
+        out = geoid_height_raster(raster)
+        assert out.dims == ('lat', 'lon')
+        assert np.isfinite(out.values).all()
+
+
+class TestVerticalHelperConversions:
+    """Direct coverage for the four public vertical-conversion helpers.
+
+    ``ellipsoidal_to_orthometric``, ``orthometric_to_ellipsoidal``,
+    ``depth_to_ellipsoidal`` and ``ellipsoidal_to_depth`` are exported
+    from ``xrspatial.reproject`` but only the reproject() integration
+    path is exercised in existing tests.
+    """
+
+    @staticmethod
+    def _ny():
+        return (-74.0, 40.7)
+
+    def test_ellipsoidal_to_orthometric_scalar(self):
+        from xrspatial.reproject import (
+            ellipsoidal_to_orthometric, geoid_height,
+        )
+        lon, lat = self._ny()
+        N = geoid_height(lon, lat)
+        H = ellipsoidal_to_orthometric(100.0, lon, lat)
+        # H = h - N
+        assert abs(float(H) - (100.0 - N)) < 1e-9
+
+    def test_orthometric_to_ellipsoidal_scalar(self):
+        from xrspatial.reproject import (
+            geoid_height, orthometric_to_ellipsoidal,
+        )
+        lon, lat = self._ny()
+        N = geoid_height(lon, lat)
+        h = orthometric_to_ellipsoidal(100.0, lon, lat)
+        # h = H + N
+        assert abs(float(h) - (100.0 + N)) < 1e-9
+
+    def test_ellipsoidal_orthometric_roundtrip(self):
+        from xrspatial.reproject import (
+            ellipsoidal_to_orthometric, orthometric_to_ellipsoidal,
+        )
+        lon, lat = self._ny()
+        h0 = 1234.5
+        H = ellipsoidal_to_orthometric(h0, lon, lat)
+        h1 = orthometric_to_ellipsoidal(H, lon, lat)
+        assert abs(float(h1) - h0) < 1e-9
+
+    def test_depth_to_ellipsoidal_scalar(self):
+        from xrspatial.reproject import (
+            depth_to_ellipsoidal, geoid_height,
+        )
+        lon, lat = self._ny()
+        N = geoid_height(lon, lat)
+        h = depth_to_ellipsoidal(50.0, lon, lat)
+        # h = -depth + N
+        assert abs(float(h) - (-50.0 + N)) < 1e-9
+
+    def test_ellipsoidal_to_depth_scalar(self):
+        from xrspatial.reproject import (
+            ellipsoidal_to_depth, geoid_height,
+        )
+        lon, lat = self._ny()
+        N = geoid_height(lon, lat)
+        depth = ellipsoidal_to_depth(-50.0, lon, lat)
+        # depth = N - h
+        assert abs(float(depth) - (N - (-50.0))) < 1e-9
+
+    def test_depth_ellipsoidal_roundtrip(self):
+        from xrspatial.reproject import (
+            depth_to_ellipsoidal, ellipsoidal_to_depth,
+        )
+        lon, lat = self._ny()
+        depth0 = 20.0
+        h = depth_to_ellipsoidal(depth0, lon, lat)
+        depth1 = ellipsoidal_to_depth(h, lon, lat)
+        assert abs(float(depth1) - depth0) < 1e-9
+
+    def test_vertical_helpers_array_input(self):
+        """Array inputs broadcast to the same shape as the input height."""
+        from xrspatial.reproject import (
+            ellipsoidal_to_orthometric, orthometric_to_ellipsoidal,
+        )
+        heights = np.array([0.0, 100.0, -50.0, 1234.5])
+        lons = np.full_like(heights, -74.0)
+        lats = np.full_like(heights, 40.7)
+        H = ellipsoidal_to_orthometric(heights, lons, lats)
+        assert H.shape == heights.shape
+        # Roundtrip every element.
+        back = orthometric_to_ellipsoidal(H, lons, lats)
+        np.testing.assert_allclose(back, heights, atol=1e-9)
+
+
+class TestReprojectLatLonDimPropagation:
+    """Cat 5 (metadata preservation): reproject() must keep ``lat``/``lon``
+    dim names when the input uses them instead of the canonical ``y``/``x``.
+
+    A regression that renames the spatial dims to ``y``/``x`` would
+    silently break any downstream code keyed on the input naming.
+    """
+
+    @staticmethod
+    def _lat_lon_raster(crs='EPSG:4326'):
+        data = np.ones((8, 8), dtype=np.float64)
+        lat = np.linspace(5.0, -5.0, 8)
+        lon = np.linspace(-5.0, 5.0, 8)
+        return xr.DataArray(
+            data, dims=['lat', 'lon'],
+            coords={'lat': lat, 'lon': lon},
+            attrs={'crs': crs, 'nodata': np.nan},
+        )
+
+    def test_reproject_preserves_lat_lon_dim_names_same_crs(self):
+        from xrspatial.reproject import reproject
+        raster = self._lat_lon_raster()
+        result = reproject(raster, 'EPSG:4326', resolution=1.0)
+        assert result.dims == ('lat', 'lon')
+        assert 'lat' in result.coords
+        assert 'lon' in result.coords
+
+    def test_reproject_preserves_lat_lon_dim_names_cross_crs(self):
+        from xrspatial.reproject import reproject
+        raster = self._lat_lon_raster()
+        # Cross-CRS reprojection: lat/lon are no longer geographic in the
+        # target, but the dim names must still flow through.
+        result = reproject(raster, 'EPSG:3857')
+        assert result.dims == ('lat', 'lon')
+
+    def test_reproject_preserves_latitude_longitude_dim_names(self):
+        """Long-form ``latitude``/``longitude`` are also recognised."""
+        from xrspatial.reproject import reproject
+        data = np.ones((8, 8), dtype=np.float64)
+        lat = np.linspace(5.0, -5.0, 8)
+        lon = np.linspace(-5.0, 5.0, 8)
+        raster = xr.DataArray(
+            data, dims=['latitude', 'longitude'],
+            coords={'latitude': lat, 'longitude': lon},
+            attrs={'crs': 'EPSG:4326', 'nodata': np.nan},
+        )
+        result = reproject(raster, 'EPSG:4326', resolution=1.0)
+        assert result.dims == ('latitude', 'longitude')
+
+    @pytest.mark.skipif(not HAS_DASK, reason="dask required")
+    def test_reproject_preserves_lat_lon_dim_names_dask(self):
+        from xrspatial.reproject import reproject
+        raster = self._lat_lon_raster()
+        raster.data = da.from_array(raster.values, chunks=(4, 4))
+        result = reproject(raster, 'EPSG:3857', chunk_size=4)
+        assert result.dims == ('lat', 'lon')
