@@ -540,11 +540,15 @@ def reproject(
     -------
     xr.DataArray
         The output ``attrs['crs']`` is in WKT format.
-        If vertical transformation was applied, ``attrs['vertical_crs']``
+        Whenever *tgt_vertical_crs* is set, ``attrs['vertical_crs']``
         records the target vertical datum's EPSG code (5773 for EGM96,
         3855 for EGM2008, 4979 for ellipsoidal WGS84) to match the
         convention used by ``xrspatial.geotiff``. The friendly string
         token (``'EGM96'`` etc.) is preserved under ``attrs['vertical_datum']``.
+        Both attrs are written even when no shift is applied (e.g. when
+        *src_vertical_crs* equals *tgt_vertical_crs*, or when only the
+        target is given), so the output's vertical reference is always
+        explicit.
 
         The output y coordinate is always emitted in descending order
         (top-down, north-up) regardless of the input direction. This
@@ -586,6 +590,16 @@ def reproject(
     )
 
     _validate_resampling(resampling)
+
+    # Reject unknown vertical-datum tokens at the API boundary so we never
+    # write None into attrs['vertical_crs'] for typos / unsupported values.
+    for _name, _val in (('src_vertical_crs', src_vertical_crs),
+                        ('tgt_vertical_crs', tgt_vertical_crs)):
+        if _val is not None and _val not in _VERTICAL_DATUM_EPSG:
+            raise ValueError(
+                f"Unknown {_name}={_val!r}; expected one of "
+                f"{sorted(_VERTICAL_DATUM_EPSG)} or None."
+            )
 
     # Resolve CRS
     src_crs = _resolve_crs(source_crs)

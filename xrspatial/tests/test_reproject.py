@@ -2108,6 +2108,19 @@ class TestVerticalShift:
             assert isinstance(result.attrs.get('vertical_crs'), int)
             assert result.attrs.get('vertical_datum') == tgt
 
+    def test_unknown_vertical_crs_raises(self):
+        """Typos / unsupported tokens must raise rather than silently
+        write ``attrs['vertical_crs'] = None``."""
+        from xrspatial.reproject import reproject
+        raster = self._ny_raster(value=10.0)
+        with pytest.raises(ValueError, match="tgt_vertical_crs"):
+            reproject(raster, 'EPSG:4326',
+                      src_vertical_crs='EGM96', tgt_vertical_crs='NAVD88')
+        with pytest.raises(ValueError, match="src_vertical_crs"):
+            reproject(raster, 'EPSG:4326',
+                      src_vertical_crs='egm96',  # case-sensitive
+                      tgt_vertical_crs='ellipsoidal')
+
 
 class TestMetadataPreservation:
     """reproject() and merge() must carry input attrs forward."""
