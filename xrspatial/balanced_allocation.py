@@ -63,7 +63,7 @@ def _extract_sources(raster, target_values):
 
     data = raster.data
     if da is not None and isinstance(data, da.Array):
-        uniq = da.unique(data).compute()  # small result array
+        uniq = _as_numpy(da.unique(data).compute())  # small result array
         mask = np.isfinite(uniq) & (uniq != 0)
         return np.sort(uniq[mask])
     data_np = _to_numpy(data)
