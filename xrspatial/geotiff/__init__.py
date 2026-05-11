@@ -1641,13 +1641,23 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
             # Translate window-relative chunk coords back to file-relative
             # coords for ``read_to_array``. ``win_r0`` / ``win_c0`` are 0
             # when no window was requested.
+            # Always thread ``target_dtype`` so each delayed chunk lands
+            # in the same dtype that the dask array declared. Without
+            # this, an integer raster with an in-range nodata sentinel
+            # would have ``effective_dtype=float64`` declared on the
+            # dask graph but per-chunk arrays only promoted when a
+            # chunk happened to contain a sentinel pixel. Dask
+            # concatenation then preallocates from the first chunk's
+            # actual dtype (uint16), silently casting later float64
+            # chunks back to int and converting their NaNs to 0. See
+            # issue #1597.
             block = da.from_delayed(
                 _delayed_read_window(source,
                                      r0 + win_r0, c0 + win_c0,
                                      r1 + win_r0, c1 + win_c0,
                                      overview_level, nodata,
                                      band_arg,
-                                     target_dtype=target_dtype if dtype is not None else None,
+                                     target_dtype=target_dtype,
                                      http_meta_key=http_meta_key,
                                      max_pixels=max_pixels),
                 shape=block_shape,
