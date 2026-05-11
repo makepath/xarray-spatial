@@ -1,3 +1,4 @@
+# Probe PR: trigger debug-event job to capture author_association at event time.
 name: Request Copilot review
 
 on:
