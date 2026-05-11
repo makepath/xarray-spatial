@@ -666,6 +666,61 @@ _TIFF_ASCII = 2
 _TIFF_SHORT = 3
 
 
+def _resolve_nodata_attr(attrs: dict):
+    """Resolve a NoData sentinel from DataArray attrs.
+
+    xrspatial's own readers always emit ``attrs['nodata']`` (a scalar),
+    so that key is checked first for a clean intra-library round-trip.
+    Falls back to two ecosystem conventions on miss:
+
+    * ``attrs['nodatavals']`` -- rioxarray's per-band tuple. Returns
+      the first entry that is not None, not non-numeric, and not NaN.
+      In practice this is band 0 for almost every real file; the skip
+      logic only matters when band 0 is missing a sentinel (NaN /
+      None) while a later band declares one. Bands with mixed concrete
+      sentinels are uncommon and would need an explicit ``nodata=``
+      argument anyway.
+    * ``attrs['_FillValue']`` -- CF-style xarray pipelines.
+
+    Returns ``None`` when none of the keys carry a usable value. NaN
+    entries in ``nodatavals`` are skipped rather than treated as a
+    sentinel (NaN means "the float NaN is the sentinel", which is
+    already the default and doesn't need a GDAL_NODATA tag).
+    """
+    nodata = attrs.get('nodata')
+    if nodata is not None:
+        return nodata
+
+    vals = attrs.get('nodatavals')
+    if vals is not None:
+        try:
+            seq = list(vals)
+        except TypeError:
+            seq = [vals]
+        for v in seq:
+            if v is None:
+                continue
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                continue
+            if np.isnan(fv):
+                continue
+            return v
+
+    fill = attrs.get('_FillValue')
+    if fill is not None:
+        try:
+            ffv = float(fill)
+        except (TypeError, ValueError):
+            return fill  # non-numeric -- pass through verbatim
+        if np.isnan(ffv):
+            return None
+        return fill
+
+    return None
+
+
 def _merge_friendly_extra_tags(extra_tags_list, attrs: dict) -> list | None:
     """Combine ``attrs['extra_tags']`` with friendly tag attrs.
 
@@ -967,7 +1022,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
                     if epsg is None and wkt_fallback is None:
                         wkt_fallback = wkt
         if nodata is None:
-            nodata = data.attrs.get('nodata')
+            nodata = _resolve_nodata_attr(data.attrs)
         if data.attrs.get('raster_type') == 'point':
             raster_type = RASTER_PIXEL_IS_POINT
         gdal_meta_xml = data.attrs.get('gdal_metadata_xml')
@@ -2263,6 +2318,14 @@ def write_geotiff_gpu(data, path: str, *,
         else:
             arr = cupy.asarray(np.asarray(arr))  # numpy -> GPU
 
+        # Handle band-first dimension order (band, y, x) -> (y, x, band).
+        # rioxarray and CF-style multi-band rasters land here; without
+        # this remap the writer treats arr.shape[2] as the band axis and
+        # produces a transposed file (issue #1580). The CPU writer does
+        # the same remap at the matching step in to_geotiff().
+        if arr.ndim == 3 and data.dims[0] in ('band', 'bands', 'channel'):
+            arr = cupy.ascontiguousarray(cupy.moveaxis(arr, 0, -1))
+
         # Prefer attrs['transform'] over the coord-derived transform: it
         # is bit-stable across round-trips, while _coords_to_transform
         # can drift on fractional pixel sizes (the same reasoning the
@@ -2290,7 +2353,7 @@ def write_geotiff_gpu(data, path: str, *,
                     if epsg is None and wkt_fallback is None:
                         wkt_fallback = wkt
         if nodata is None:
-            nodata = data.attrs.get('nodata')
+            nodata = _resolve_nodata_attr(data.attrs)
         if data.attrs.get('raster_type') == 'point':
             raster_type = RASTER_PIXEL_IS_POINT
         # Mirror the CPU writer's pass-through of GDAL metadata, the
