@@ -298,6 +298,103 @@ def _extent_to_window(transform, file_height, file_width,
     return (row_start, col_start, row_stop, col_stop)
 
 
+def _populate_attrs_from_geo_info(attrs: dict, geo_info, *,
+                                   window=None) -> None:
+    """Populate ``attrs`` with all GeoTIFF metadata from ``geo_info``.
+
+    Centralised so the eager numpy, dask, and GPU read paths emit the
+    same attrs keys for the same input file. Mutates ``attrs`` in place.
+
+    The ``nodata`` attr is intentionally NOT set here because each caller
+    sets it next to its own nodata-masking step (the value's presence in
+    attrs signals "this array has been NaN-masked").
+
+    ``window`` is a ``(r0, c0, r1, c1)`` tuple for the eager windowed
+    read; when set, the emitted ``attrs['transform']`` shifts the origin
+    to the window's top-left. The dask and GPU paths do not use this --
+    their windows are per-chunk inside the graph, not on the outer
+    DataArray.
+    """
+    if geo_info.crs_epsg is not None:
+        attrs['crs'] = geo_info.crs_epsg
+    if geo_info.crs_wkt is not None:
+        attrs['crs_wkt'] = geo_info.crs_wkt
+    if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
+        attrs['raster_type'] = 'point'
+
+    src_t = geo_info.transform
+    if src_t is not None:
+        if window is not None:
+            r0, c0, _r1, _c1 = window
+            origin_x_w = float(src_t.origin_x) + c0 * float(src_t.pixel_width)
+            origin_y_w = float(src_t.origin_y) + r0 * float(src_t.pixel_height)
+            attrs['transform'] = (
+                float(src_t.pixel_width), 0.0, origin_x_w,
+                0.0, float(src_t.pixel_height), origin_y_w,
+            )
+        else:
+            t_tuple = _transform_tuple(geo_info)
+            if t_tuple is not None:
+                attrs['transform'] = t_tuple
+
+    if geo_info.crs_name is not None:
+        attrs['crs_name'] = geo_info.crs_name
+    if geo_info.geog_citation is not None:
+        attrs['geog_citation'] = geo_info.geog_citation
+    if geo_info.datum_code is not None:
+        attrs['datum_code'] = geo_info.datum_code
+    if geo_info.angular_units is not None:
+        attrs['angular_units'] = geo_info.angular_units
+    if geo_info.linear_units is not None:
+        attrs['linear_units'] = geo_info.linear_units
+    if geo_info.semi_major_axis is not None:
+        attrs['semi_major_axis'] = geo_info.semi_major_axis
+    if geo_info.inv_flattening is not None:
+        attrs['inv_flattening'] = geo_info.inv_flattening
+    if geo_info.projection_code is not None:
+        attrs['projection_code'] = geo_info.projection_code
+    if geo_info.vertical_epsg is not None:
+        attrs['vertical_crs'] = geo_info.vertical_epsg
+    if geo_info.vertical_citation is not None:
+        attrs['vertical_citation'] = geo_info.vertical_citation
+    if geo_info.vertical_units is not None:
+        attrs['vertical_units'] = geo_info.vertical_units
+
+    if geo_info.gdal_metadata is not None:
+        attrs['gdal_metadata'] = geo_info.gdal_metadata
+    if geo_info.gdal_metadata_xml is not None:
+        attrs['gdal_metadata_xml'] = geo_info.gdal_metadata_xml
+
+    if geo_info.extra_tags is not None:
+        attrs['extra_tags'] = geo_info.extra_tags
+    if geo_info.image_description is not None:
+        attrs['image_description'] = geo_info.image_description
+    if geo_info.extra_samples is not None:
+        attrs['extra_samples'] = geo_info.extra_samples
+
+    if geo_info.x_resolution is not None:
+        attrs['x_resolution'] = geo_info.x_resolution
+    if geo_info.y_resolution is not None:
+        attrs['y_resolution'] = geo_info.y_resolution
+    if geo_info.resolution_unit is not None:
+        _unit_names = {1: 'none', 2: 'inch', 3: 'centimeter'}
+        attrs['resolution_unit'] = _unit_names.get(
+            geo_info.resolution_unit, str(geo_info.resolution_unit))
+
+    if geo_info.colormap is not None:
+        try:
+            from matplotlib.colors import ListedColormap
+            attrs['cmap'] = ListedColormap(
+                geo_info.colormap, name='tiff_palette')
+            attrs['colormap_rgba'] = geo_info.colormap
+        except ImportError:
+            attrs['colormap_rgba'] = geo_info.colormap
+
+    if geo_info.extra_tags is not None:
+        for _tag_id, _tt, _tc, _tv in geo_info.extra_tags:
+            if _tag_id == 320:  # TAG_COLORMAP
+                attrs['colormap'] = _tv
+                break
 
 
 def open_geotiff(source, *, dtype=None, window=None,
@@ -440,103 +537,7 @@ def open_geotiff(source, *, dtype=None, window=None,
             name = os.path.splitext(os.path.basename(source))[0]
 
     attrs = {}
-    if geo_info.crs_epsg is not None:
-        attrs['crs'] = geo_info.crs_epsg
-    if geo_info.crs_wkt is not None:
-        attrs['crs_wkt'] = geo_info.crs_wkt
-    if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
-        attrs['raster_type'] = 'point'
-
-    # Preserve the source GeoTransform verbatim. For a windowed read the
-    # origin shifts to the window's top-left pixel so the transform stays
-    # consistent with the returned y/x coords.
-    src_t = geo_info.transform
-    if src_t is not None:
-        if window is not None:
-            r0, c0, _r1, _c1 = window
-            origin_x_w = float(src_t.origin_x) + c0 * float(src_t.pixel_width)
-            origin_y_w = float(src_t.origin_y) + r0 * float(src_t.pixel_height)
-            attrs['transform'] = (
-                float(src_t.pixel_width), 0.0, origin_x_w,
-                0.0, float(src_t.pixel_height), origin_y_w,
-            )
-        else:
-            attrs['transform'] = _transform_tuple(geo_info)
-
-    # CRS description fields
-    if geo_info.crs_name is not None:
-        attrs['crs_name'] = geo_info.crs_name
-    if geo_info.geog_citation is not None:
-        attrs['geog_citation'] = geo_info.geog_citation
-    if geo_info.datum_code is not None:
-        attrs['datum_code'] = geo_info.datum_code
-    if geo_info.angular_units is not None:
-        attrs['angular_units'] = geo_info.angular_units
-    if geo_info.linear_units is not None:
-        attrs['linear_units'] = geo_info.linear_units
-    if geo_info.semi_major_axis is not None:
-        attrs['semi_major_axis'] = geo_info.semi_major_axis
-    if geo_info.inv_flattening is not None:
-        attrs['inv_flattening'] = geo_info.inv_flattening
-    if geo_info.projection_code is not None:
-        attrs['projection_code'] = geo_info.projection_code
-    # Vertical CRS
-    if geo_info.vertical_epsg is not None:
-        attrs['vertical_crs'] = geo_info.vertical_epsg
-    if geo_info.vertical_citation is not None:
-        attrs['vertical_citation'] = geo_info.vertical_citation
-    if geo_info.vertical_units is not None:
-        attrs['vertical_units'] = geo_info.vertical_units
-
-    # GDAL metadata (tag 42112)
-    if geo_info.gdal_metadata is not None:
-        attrs['gdal_metadata'] = geo_info.gdal_metadata
-    if geo_info.gdal_metadata_xml is not None:
-        attrs['gdal_metadata_xml'] = geo_info.gdal_metadata_xml
-
-    # Extra (non-managed) TIFF tags for pass-through
-    if geo_info.extra_tags is not None:
-        attrs['extra_tags'] = geo_info.extra_tags
-
-    # Friendly accessors for a few common pass-through tags. The raw
-    # entry stays in attrs['extra_tags'] so the writer can re-emit the
-    # exact bytes; users who tweak these convenience attrs can rely on
-    # to_geotiff to fold the new value into extra_tags before write.
-    if geo_info.image_description is not None:
-        attrs['image_description'] = geo_info.image_description
-    if geo_info.extra_samples is not None:
-        attrs['extra_samples'] = geo_info.extra_samples
-
-    # Resolution / DPI metadata
-    if geo_info.x_resolution is not None:
-        attrs['x_resolution'] = geo_info.x_resolution
-    if geo_info.y_resolution is not None:
-        attrs['y_resolution'] = geo_info.y_resolution
-    if geo_info.resolution_unit is not None:
-        _unit_names = {1: 'none', 2: 'inch', 3: 'centimeter'}
-        attrs['resolution_unit'] = _unit_names.get(
-            geo_info.resolution_unit, str(geo_info.resolution_unit))
-
-    # Attach palette colormap for indexed-color TIFFs. The normalized
-    # RGBA triples drive matplotlib display; the raw uint16 ColorMap
-    # tag value lives in attrs['extra_tags'] for round-trip and is
-    # exposed here as attrs['colormap'] for convenience.
-    if geo_info.colormap is not None:
-        try:
-            from matplotlib.colors import ListedColormap
-            cmap = ListedColormap(geo_info.colormap, name='tiff_palette')
-            attrs['cmap'] = cmap
-            attrs['colormap_rgba'] = geo_info.colormap
-        except ImportError:
-            # matplotlib not available -- store raw RGBA tuples only
-            attrs['colormap_rgba'] = geo_info.colormap
-
-    # Raw uint16 ColorMap tag value (3 * 2**bps entries, R-then-G-then-B)
-    if geo_info.extra_tags is not None:
-        for _tag_id, _tt, _tc, _tv in geo_info.extra_tags:
-            if _tag_id == 320:  # TAG_COLORMAP
-                attrs['colormap'] = _tv
-                break
+    _populate_attrs_from_geo_info(attrs, geo_info, window=window)
 
     # Apply nodata mask: replace nodata sentinel values with NaN.
     # ``arr`` came from ``read_to_array``, which returns a freshly
@@ -1410,15 +1411,9 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
         name = os.path.splitext(os.path.basename(source))[0]
 
     attrs = {}
-    if geo_info.crs_epsg is not None:
-        attrs['crs'] = geo_info.crs_epsg
-    if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
-        attrs['raster_type'] = 'point'
+    _populate_attrs_from_geo_info(attrs, geo_info)
     if nodata is not None:
         attrs['nodata'] = nodata
-    transform_tuple = _transform_tuple(geo_info)
-    if transform_tuple is not None:
-        attrs['transform'] = transform_tuple
 
     if isinstance(chunks, int):
         ch_h = ch_w = chunks
@@ -1859,11 +1854,7 @@ def read_geotiff_gpu(source: str, *,
                 import os
                 name = os.path.splitext(os.path.basename(source))[0]
             attrs = {}
-            if geo_info.crs_epsg is not None:
-                attrs['crs'] = geo_info.crs_epsg
-            t_tuple = _transform_tuple(geo_info)
-            if t_tuple is not None:
-                attrs['transform'] = t_tuple
+            _populate_attrs_from_geo_info(attrs, geo_info)
             # Apply nodata mask + record sentinel so the GPU read agrees
             # with the CPU eager path. Without this, integer rasters keep
             # the literal sentinel value and float rasters keep the
@@ -2127,13 +2118,7 @@ def read_geotiff_gpu(source: str, *,
     coords = _geo_to_coords(geo_info, out_h, out_w)
 
     attrs = {}
-    if geo_info.crs_epsg is not None:
-        attrs['crs'] = geo_info.crs_epsg
-    if geo_info.crs_wkt is not None:
-        attrs['crs_wkt'] = geo_info.crs_wkt
-    t_tuple = _transform_tuple(geo_info)
-    if t_tuple is not None:
-        attrs['transform'] = t_tuple
+    _populate_attrs_from_geo_info(attrs, geo_info)
     if nodata is not None:
         attrs['nodata'] = nodata
 
