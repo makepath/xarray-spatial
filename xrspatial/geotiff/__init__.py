@@ -298,8 +298,7 @@ def _extent_to_window(transform, file_height, file_width,
     return (row_start, col_start, row_stop, col_stop)
 
 
-def _populate_attrs_from_geo_info(attrs: dict, geo_info, *,
-                                   window=None) -> None:
+def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None:
     """Populate ``attrs`` with all GeoTIFF metadata from ``geo_info``.
 
     Centralised so the eager numpy, dask, and GPU read paths emit the
