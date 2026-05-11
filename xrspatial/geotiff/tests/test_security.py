@@ -816,10 +816,9 @@ class TestGDALMetadataXMLEntityExpansion:
             '<GDALMetadata><Item name="x">&lol4;</Item></GDALMetadata>'
         )
         result = _parse_gdal_metadata(payload)
-        # The DOCTYPE branch falls through to an empty dict; the
-        # critical assertion is that the value is NOT the expanded
-        # entity (10000+ "lol" copies).
-        assert result == {} or 'lol' * 100 not in str(result.get('x', ''))
+        # safe_fromstring raises ValueError on DOCTYPE, which the
+        # parser catches and turns into an empty dict.
+        assert result == {}
 
     def test_parse_gdal_metadata_normal_still_works(self):
         """A well-formed GDALMetadata XML parses into a flat dict."""
@@ -854,6 +853,28 @@ class TestSafeXMLHelper:
         from xrspatial.geotiff._safe_xml import safe_fromstring
         with pytest.raises(ValueError, match="DOCTYPE"):
             safe_fromstring('<!   DOCTYPE x><x/>')
+
+    @pytest.mark.parametrize("encoding", [
+        "utf-16",       # with BOM
+        "utf-16-le",    # no BOM, alternating nulls
+        "utf-16-be",    # no BOM, leading null
+        "utf-32",       # with BOM
+        "utf-32-le",
+        "utf-32-be",
+        "utf-8-sig",    # UTF-8 BOM
+    ])
+    def test_rejects_doctype_in_wide_encodings(self, encoding):
+        """A DOCTYPE encoded in UTF-16 / UTF-32 still gets rejected.
+
+        The original ASCII byte-regex would miss these because the
+        DOCTYPE bytes interleave null bytes. The decoder normalizes
+        first so wide-encoded payloads cannot smuggle a DTD past
+        the scanner.
+        """
+        from xrspatial.geotiff._safe_xml import safe_fromstring
+        payload = '<!DOCTYPE x><x/>'.encode(encoding)
+        with pytest.raises(ValueError, match="DOCTYPE"):
+            safe_fromstring(payload)
 
     def test_parses_normal_xml(self):
         from xrspatial.geotiff._safe_xml import safe_fromstring

@@ -6,7 +6,6 @@ more source GeoTIFF files using windowed reads.
 from __future__ import annotations
 
 import os
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
 import numpy as np

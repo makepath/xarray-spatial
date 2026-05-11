@@ -15,10 +15,11 @@ This module exposes a single :func:`safe_fromstring` helper that:
   installed, layering a second, audited defence (defusedxml also
   blocks external entities, processing instructions on untrusted
   input, and a few other XML pitfalls).
-* Otherwise uses :class:`xml.etree.ElementTree.XMLParser` directly,
-  which is fine once DOCTYPEs are pre-rejected: the parser exposes no
-  external-entity fetch and refuses anything else that would expand
-  to more than the literal bytes.
+* Otherwise falls back to :func:`xml.etree.ElementTree.fromstring`,
+  which is fine once DOCTYPEs are pre-rejected: expat exposes no
+  external-entity fetch by default, and without a DTD there is no
+  way to declare an entity that would expand to more than the
+  literal bytes.
 
 VRT and GDALMetadata XML never contain DTDs in legitimate files, so
 the pre-rejection is loss-free for real-world inputs.
@@ -35,22 +36,51 @@ import xml.etree.ElementTree as _ET
 # inside comments / CDATA: those constructs cannot legally hold a
 # DOCTYPE declaration anyway, and trying to be clever about them is how
 # parser-confusion bugs get introduced.
-_DOCTYPE_RE = re.compile(rb'<!\s*DOCTYPE', re.IGNORECASE)
+_DOCTYPE_RE = re.compile(r'<!\s*DOCTYPE', re.IGNORECASE)
+
+
+def _decode_bytes(data: bytes) -> str:
+    """Decode XML bytes to text using BOM / XML-declaration detection.
+
+    Mirrors the encoding-detection precedence expat would apply, so a
+    UTF-16- or UTF-32-encoded payload cannot smuggle a DOCTYPE past
+    the ASCII-only scanner. Falls back to UTF-8 with replacement when
+    no BOM or leading null bytes hint at a wider encoding.
+    """
+    if data[:4] in (b'\x00\x00\xfe\xff', b'\xff\xfe\x00\x00'):
+        return data.decode('utf-32')
+    if data[:2] in (b'\xfe\xff', b'\xff\xfe'):
+        return data.decode('utf-16')
+    if data[:3] == b'\xef\xbb\xbf':
+        return data.decode('utf-8-sig')
+    # No BOM: a leading or alternating null byte gives away UTF-16/32.
+    if len(data) >= 4:
+        if data[:2] == b'\x00\x00':
+            return data.decode('utf-32-be', errors='replace')
+        if data[2:4] == b'\x00\x00':
+            return data.decode('utf-32-le', errors='replace')
+        if data[0] == 0:
+            return data.decode('utf-16-be', errors='replace')
+        if data[1] == 0:
+            return data.decode('utf-16-le', errors='replace')
+    return data.decode('utf-8', errors='replace')
 
 
 def _reject_doctype(data: bytes | str) -> None:
     """Raise ValueError if *data* declares a DOCTYPE.
 
     Accepts both ``bytes`` and ``str`` so callers don't have to encode
-    upstream. Empty / None inputs are passed through and handled by the
+    upstream. Bytes are decoded with BOM/encoding detection so that a
+    UTF-16 or UTF-32 encoded payload cannot evade the ASCII scanner.
+    Empty / None inputs are passed through and handled by the
     downstream parser.
     """
     if data is None:
         return
     if isinstance(data, str):
-        probe = data.encode('utf-8', errors='ignore')
+        probe = data
     else:
-        probe = bytes(data)
+        probe = _decode_bytes(bytes(data))
     if _DOCTYPE_RE.search(probe):
         raise ValueError(
             "XML input contains a DOCTYPE declaration; this is refused "
