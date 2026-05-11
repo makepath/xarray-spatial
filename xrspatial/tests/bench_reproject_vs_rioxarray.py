@@ -324,8 +324,8 @@ def _load_for_both(path):
     import os
     path = os.path.expanduser(path)
 
-    from xrspatial.geotiff import read_geotiff
-    da_xrs = read_geotiff(path)
+    from xrspatial.geotiff import open_geotiff
+    da_xrs = open_geotiff(path)
 
     da_rio = rioxarray.open_rasterio(path).squeeze(drop=True)
     return da_xrs, da_rio
