@@ -1,2 +1,2 @@
 module,last_inspected,issue,severity_max,categories_found,notes
-geotiff,2026-05-10,,HIGH,1;4,"Closed remaining HIGH gaps: dask + planar multiband, dask + overview_level, predictor=2 int8 (CPU+GPU), dask chunk-vs-tile misalignment"
+geotiff,2026-05-10,1565,HIGH,1;3;4,"PR #1565 closes deferred HIGH gaps: dask+planar multiband, dask+overview_level, predictor=2 int8 CPU+GPU, dask chunk-vs-tile misalignment"
