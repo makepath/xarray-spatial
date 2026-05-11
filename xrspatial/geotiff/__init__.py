@@ -2769,9 +2769,18 @@ def read_vrt(source: str, *, dtype=None, window=None,
         attrs['crs_wkt'] = vrt.crs_wkt
     if vrt.raster_type == 'point':
         attrs['raster_type'] = 'point'
+    # When a specific band is selected, source its nodata from that
+    # band's <NoDataValue> instead of band 0's. Otherwise multi-band
+    # VRTs with per-band sentinels would mis-mask the read: attrs would
+    # advertise band 0's sentinel, the integer-promotion block below
+    # would mask against band 0's sentinel, and band N's actual nodata
+    # pixels would survive as literal integers. See issue #1598.
+    # ``band`` has already been validated by ``_vrt.read_vrt`` as
+    # 0 <= band < len(vrt.bands), so a simple lookup is safe here.
     nodata = None
     if vrt.bands:
-        nodata = vrt.bands[0].nodata
+        band_idx_for_nodata = band if band is not None else 0
+        nodata = vrt.bands[band_idx_for_nodata].nodata
         if nodata is not None:
             attrs['nodata'] = nodata
 
