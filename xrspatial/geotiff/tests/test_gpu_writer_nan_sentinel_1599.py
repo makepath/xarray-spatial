@@ -171,8 +171,12 @@ def test_gpu_writer_external_reader_sees_correct_nodata_mask(tmp_path):
 
     p_cpu = str(tmp_path / "cpu.tif")
     p_gpu = str(tmp_path / "gpu.tif")
-    to_geotiff(da_cpu, p_cpu, crs=4326, nodata=-9999)
-    write_geotiff_gpu(da_gpu, p_gpu, crs=4326, nodata=-9999)
+    # Use deflate rather than the default zstd: some rasterio/GDAL builds
+    # ship without ZSTD codec support and would fail this round-trip
+    # for environment reasons unrelated to the nodata mask under test.
+    to_geotiff(da_cpu, p_cpu, crs=4326, nodata=-9999, compression='deflate')
+    write_geotiff_gpu(
+        da_gpu, p_gpu, crs=4326, nodata=-9999, compression='deflate')
 
     with rasterio.open(p_cpu) as src:
         cpu_masked = src.read(1, masked=True)
