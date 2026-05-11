@@ -242,6 +242,23 @@ def read_vrt(vrt_path: str, *, window=None,
     vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
     vrt = parse_vrt(xml_str, vrt_dir)
 
+    # Validate ``band`` against the parsed band count. Python list
+    # indexing would silently accept negative values (``vrt.bands[-1]``
+    # returns the last band) and raise an opaque ``IndexError`` for
+    # out-of-range positive values, neither of which is the contract the
+    # public API documents (``band`` is a 0-based positive index). Reject
+    # both up front with a clear ``ValueError`` so callers do not get
+    # band-N data paired with band-0's nodata sentinel or a downstream
+    # IndexError from deep in the read path.
+    if band is not None:
+        if not isinstance(band, (int, np.integer)) or isinstance(band, bool):
+            raise ValueError(
+                f"band must be a non-negative int, got {band!r}")
+        if band < 0 or band >= len(vrt.bands):
+            raise ValueError(
+                f"band index {band} out of range for VRT with "
+                f"{len(vrt.bands)} band(s)")
+
     if window is not None:
         r0, c0, r1, c1 = window
         r0 = max(0, r0)

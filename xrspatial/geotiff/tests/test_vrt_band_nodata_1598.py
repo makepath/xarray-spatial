@@ -15,6 +15,7 @@ The fix uses ``vrt.bands[band].nodata`` when a band is selected.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from xrspatial.geotiff import read_vrt
 from xrspatial.geotiff._writer import write
@@ -105,3 +106,36 @@ def test_read_vrt_no_band_keeps_band0_nodata_attr(tmp_path):
     vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
     r = read_vrt(vrt_path)
     assert r.attrs.get('nodata') == 65535.0
+
+
+def test_read_vrt_negative_band_raises(tmp_path):
+    """Negative band indices used to be silently accepted via Python
+    list indexing (``vrt.bands[-1]`` returned the last band) while the
+    public reader's nodata lookup rejected them, producing band-N data
+    with no nodata sentinel. They are now a clear ValueError up front.
+    """
+    vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
+    with pytest.raises(ValueError, match="band"):
+        read_vrt(vrt_path, band=-1)
+
+
+def test_read_vrt_out_of_range_band_raises(tmp_path):
+    """Out-of-range band indices used to raise IndexError from deep in
+    the read path. They are now a ValueError that names the available
+    band count.
+    """
+    vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
+    with pytest.raises(ValueError, match="out of range"):
+        read_vrt(vrt_path, band=5)
+
+
+def test_read_vrt_non_integer_band_raises(tmp_path):
+    """A non-int ``band`` would previously have raised TypeError on the
+    list index. ValueError here matches the rest of the input
+    validation surface.
+    """
+    vrt_path = _write_two_band_per_band_nodata_vrt(tmp_path)
+    with pytest.raises(ValueError, match="band"):
+        read_vrt(vrt_path, band="1")
+    with pytest.raises(ValueError, match="band"):
+        read_vrt(vrt_path, band=True)

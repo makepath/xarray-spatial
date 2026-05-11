@@ -2738,16 +2738,14 @@ def read_vrt(source: str, *, dtype=None, window=None,
     # advertise band 0's sentinel, the integer-promotion block below
     # would mask against band 0's sentinel, and band N's actual nodata
     # pixels would survive as literal integers. See issue #1598.
+    # ``band`` has already been validated by ``_vrt.read_vrt`` as
+    # 0 <= band < len(vrt.bands), so a simple lookup is safe here.
     nodata = None
     if vrt.bands:
         band_idx_for_nodata = band if band is not None else 0
-        # ``_vrt.read_vrt`` already validates ``band`` is in range; the
-        # extra guard keeps a clearer message if a future refactor
-        # widens the public range without updating the internal reader.
-        if 0 <= band_idx_for_nodata < len(vrt.bands):
-            nodata = vrt.bands[band_idx_for_nodata].nodata
-            if nodata is not None:
-                attrs['nodata'] = nodata
+        nodata = vrt.bands[band_idx_for_nodata].nodata
+        if nodata is not None:
+            attrs['nodata'] = nodata
 
     # Mirror the integer-with-nodata promotion that open_geotiff /
     # read_geotiff_dask / read_geotiff_gpu apply post-decode. The VRT
