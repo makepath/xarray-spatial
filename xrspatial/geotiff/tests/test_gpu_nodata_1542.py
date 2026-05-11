@@ -16,8 +16,6 @@ combinations the audit found broken.
 from __future__ import annotations
 
 import importlib.util
-import os
-import tempfile
 
 import numpy as np
 import pytest

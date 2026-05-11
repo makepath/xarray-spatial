@@ -88,8 +88,9 @@ def _read_cpu_gpu(path):
 
     The GPU reader (``read_geotiff_gpu``) applies the same nodata masking
     that ``open_geotiff`` does (PR #1542), so its output uses NaN where
-    the sentinel was. Callers that want a bit-for-bit comparison should
-    pass ``raw_gpu=True`` to skip the high-level masking on the GPU side.
+    the sentinel was. Callers that want a bit-for-bit comparison against
+    the low-level CPU read should run the GPU result through
+    ``_restore_sentinel`` below to put the sentinel back.
     """
     from xrspatial.geotiff import read_geotiff_gpu
     from xrspatial.geotiff._reader import read_to_array
