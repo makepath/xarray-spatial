@@ -9,6 +9,7 @@ path end-to-end.
 """
 from __future__ import annotations
 
+import os
 import struct
 
 import numpy as np
@@ -208,8 +209,11 @@ def test_predictor3_large_round_trip_value_exact(tmp_path):
 
     The encode path was refactored to dispatch the per-row kernel from
     inside an ``@ngjit`` wrapper instead of from a Python ``for`` loop.
-    This test guards against any silent corruption from the refactor by
-    asserting the output array is bit-for-bit equal to the input.
+    Guards against any silent corruption from the refactor by asserting
+    the output array is byte-for-byte identical to the input: dtype must
+    match, and a ``uint8`` view of the bytes must compare equal so the
+    check catches signed-zero drift, NaN payload changes, and any other
+    bit-level divergence that ``assert_array_equal`` would mask.
     """
     h, w = 1024, 1024
     arr = _smooth_float((h, w), np.float32)
@@ -219,17 +223,31 @@ def test_predictor3_large_round_trip_value_exact(tmp_path):
 
     assert _read_predictor_tag(str(path)) == 3
     out = open_geotiff(str(path))
-    np.testing.assert_array_equal(out.values, arr)
+    out_arr = np.ascontiguousarray(out.values)
+    assert out_arr.dtype == arr.dtype, (
+        f"dtype drift: in={arr.dtype}, out={out_arr.dtype}"
+    )
+    assert out_arr.shape == arr.shape
+    assert out_arr.tobytes() == arr.tobytes(), (
+        "predictor=3 round-trip diverged at the bit level "
+        "(signed zero, NaN payload, or actual corruption)"
+    )
 
 
-@pytest.mark.skip(reason='timing test; flaky in CI, run manually for regression checks')
 def test_predictor3_encode_within_2x_of_predictor2(tmp_path):
     """Loose regression check: predictor=3 encode is within 2x of predictor=2.
 
     Before the ngjit row-loop refactor, predictor=3 was ~2.5x slower than
-    predictor=2 because the row loop was in Python.  Skipped by default
-    so CI does not flake on shared-runner timing variance.
+    predictor=2 because the row loop was in Python.  Opt-in via
+    ``XRSPATIAL_RUN_PERF_TESTS=1`` -- shared CI runners, CPU throttling,
+    debug builds, and noisy filesystems all make absolute wall-clock
+    timings flaky, so the test stays off by default. Matches the
+    convention from ``test_streaming_write_parallel.py``.
     """
+    if os.environ.get('XRSPATIAL_RUN_PERF_TESTS') != '1':
+        pytest.skip(
+            "set XRSPATIAL_RUN_PERF_TESTS=1 to run wall-clock perf tests")
+
     import time
 
     arr = _smooth_float((1024, 1024), np.float32)
