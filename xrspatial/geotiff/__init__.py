@@ -3421,7 +3421,7 @@ def read_vrt(source: str, *, dtype=None,
 def write_vrt(vrt_path: str, source_files: list[str], *,
               relative: bool = True,
               crs_wkt: str | None = None,
-              nodata: float | None = None) -> str:
+              nodata: float | int | None = None) -> str:
     """Generate a VRT file that mosaics multiple GeoTIFF tiles.
 
     Parameters
@@ -3435,8 +3435,11 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     crs_wkt : str or None, optional
         CRS as a WKT string. If None, the CRS is taken from the first
         source GeoTIFF.
-    nodata : float or None, optional
+    nodata : float, int, or None, optional
         NoData value. If None, taken from the first source GeoTIFF.
+        Integer sentinels (e.g. ``65535`` for uint16, ``-9999`` for
+        int32) are accepted so the surface lines up with the
+        ``nodata`` kwarg on ``to_geotiff`` and ``write_geotiff_gpu``.
 
     Returns
     -------

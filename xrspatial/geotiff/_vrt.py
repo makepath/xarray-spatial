@@ -595,7 +595,7 @@ _NP_TO_VRT_DTYPE = {v: k for k, v in _DTYPE_MAP.items()}
 def write_vrt(vrt_path: str, source_files: list[str], *,
               relative: bool = True,
               crs_wkt: str | None = None,
-              nodata: float | None = None) -> str:
+              nodata: float | int | None = None) -> str:
     """Generate a VRT file that mosaics multiple GeoTIFF tiles.
 
     Each source file is placed in the virtual raster based on its
@@ -611,8 +611,11 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
         Store source paths relative to the VRT file.
     crs_wkt : str or None
         CRS as WKT string. If None, taken from the first source.
-    nodata : float or None
-        NoData value. If None, taken from the first source.
+    nodata : float, int, or None
+        NoData value. If None, taken from the first source. Integer
+        sentinels (e.g. ``65535`` for uint16, ``-9999`` for int32) are
+        accepted so the surface lines up with the ``nodata`` kwarg on
+        ``to_geotiff`` and ``write_geotiff_gpu``.
 
     Returns
     -------
