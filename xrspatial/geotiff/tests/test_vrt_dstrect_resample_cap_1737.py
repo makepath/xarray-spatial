@@ -87,42 +87,65 @@ def test_legitimate_upsample_still_works():
 
 
 def test_max_pixels_kwarg_raises_cap():
-    """When the caller bumps ``max_pixels``, a previously-rejected DstRect
-    is accepted (matches the contract for other read paths)."""
+    """A DstRect rejected under a tiny ``max_pixels`` must be accepted
+    when the caller bumps the cap. This exercises the override contract
+    (the same VRT goes from rejected to accepted across the two calls).
+
+    The output buffer is kept tiny (VRT raster 10x10) so the cap only
+    bites on the resample intermediate, not on the ``_check_dimensions``
+    pre-allocation guard.
+    """
     with tempfile.TemporaryDirectory() as td:
         _write_source(td)
-        vrt_path = _write_vrt(td, dst_x_size=2000, dst_y_size=2000)
-        # Default cap is 1e9, 2000*2000=4e6 well under.
-        arr, _ = read_vrt(vrt_path)
-        assert arr.shape == (100, 100)
+        # 2000x2000 = 4e6 intermediate pixels.  Output buffer is 10x10=100
+        # pixels, far below both caps below.  Upsample 10x10 -> 2000x2000
+        # so ``needs_resample`` is true and the cap branch runs.
+        vrt_path = _write_vrt(td, dst_x_size=2000, dst_y_size=2000,
+                              raster_x=10, raster_y=10)
+        # First, the cap is too small for the intermediate: rejected.
+        with pytest.raises(ValueError, match="resample intermediate"):
+            read_vrt(vrt_path, max_pixels=1_000_000)
+        # Bump the cap above 4e6: accepted.
+        arr, _ = read_vrt(vrt_path, max_pixels=4_000_000)
+        assert arr.shape == (10, 10)
 
 
 def test_dstrect_at_cap_succeeds():
-    """Exactly at ``max_pixels`` is accepted; the cap is inclusive."""
+    """Exactly at ``max_pixels`` is accepted; the cap is inclusive.
+    Together with :func:`test_max_pixels_kwarg_raises_cap`, this pins
+    down both sides of the override boundary."""
     with tempfile.TemporaryDirectory() as td:
         _write_source(td)
-        # max_pixels=10000 means dst 100x100 = 10000 is allowed.
-        vrt_path = _write_vrt(td, dst_x_size=100, dst_y_size=100)
+        # Upsample 10x10 -> 100x100 so ``needs_resample`` is true.  The
+        # VRT raster is 10x10 so the output buffer stays at 100 pixels,
+        # well below the ``_check_dimensions`` guard; the cap below
+        # therefore exercises the resample-intermediate branch only.
+        vrt_path = _write_vrt(td, dst_x_size=100, dst_y_size=100,
+                              raster_x=10, raster_y=10)
+        # Just below the cap rejects.
+        with pytest.raises(ValueError, match="resample intermediate"):
+            read_vrt(vrt_path, max_pixels=9_999)
+        # At the cap succeeds.
         arr, _ = read_vrt(vrt_path, max_pixels=10000)
-        assert arr.shape == (100, 100)
+        assert arr.shape == (10, 10)
 
 
 def test_negative_dstrect_rejected():
-    """Negative ``xSize`` / ``ySize`` must surface as ``ValueError`` rather
-    than degenerate into a negative-stride numpy slice."""
+    """Negative ``xSize`` / ``ySize`` must surface as ``ValueError``
+    rather than be silently skipped by the overlap check.  The error
+    message must call out the malformed negative size, not the pixel
+    budget."""
     with tempfile.TemporaryDirectory() as td:
         _write_source(td)
         vrt_path = _write_vrt(td, dst_x_size=-5, dst_y_size=100)
-        # The negative size makes ``needs_resample`` true because it differs
-        # from sr.x_size=10; the cap branch catches the negative value.
-        # If the source dstrect doesn't overlap the window the source is
-        # skipped silently (returns the empty fill array) and no resample
-        # runs - that's also OK; we accept either behaviour.
-        try:
-            arr, _ = read_vrt(vrt_path)
-            # If it did succeed, the array must still be the VRT extent.
-            assert arr.shape == (100, 100)
-        except ValueError as e:
-            # The cap message identifies the resample intermediate, which is
-            # what we want to surface here.
-            assert "resample intermediate" in str(e)
+        with pytest.raises(ValueError, match="negative size"):
+            read_vrt(vrt_path)
+
+
+def test_negative_dstrect_y_size_rejected():
+    """Negative ``ySize`` is also rejected with the same tailored error."""
+    with tempfile.TemporaryDirectory() as td:
+        _write_source(td)
+        vrt_path = _write_vrt(td, dst_x_size=100, dst_y_size=-5)
+        with pytest.raises(ValueError, match="negative size"):
+            read_vrt(vrt_path)

@@ -579,6 +579,19 @@ def read_vrt(vrt_path: str, *, window=None,
             dr = src.dst_rect
             sr = src.src_rect
 
+            # Reject malformed negative DstRect sizes up front, before the
+            # overlap math.  A negative ``xSize`` / ``ySize`` would otherwise
+            # produce ``dst_*1 < dst_*0`` and the source would be silently
+            # skipped by the overlap continue below; we'd rather surface the
+            # malformed VRT to the caller than treat it as a no-op tile.
+            # See issue #1737.
+            if dr.x_size < 0 or dr.y_size < 0:
+                raise ValueError(
+                    f"VRT SimpleSource DstRect has negative size "
+                    f"(xSize={dr.x_size}, ySize={dr.y_size}); "
+                    f"DstRect sizes must be non-negative."
+                )
+
             # Destination rect in virtual raster coordinates
             dst_r0 = dr.y_off
             dst_c0 = dr.x_off
@@ -631,9 +644,9 @@ def read_vrt(vrt_path: str, *, window=None,
                 # ``xSize`` / ``ySize`` are orders of magnitude larger than
                 # the VRT extent. Without this guard, a single source can
                 # demand multi-gigabyte intermediates on a tiny output
-                # raster. See issue #1737.
-                if (dr.x_size < 0 or dr.y_size < 0
-                        or dr.x_size > max_pixels
+                # raster. Negative sizes are already rejected above; here
+                # we just enforce the pixel-budget. See issue #1737.
+                if (dr.x_size > max_pixels
                         or dr.y_size > max_pixels
                         or dr.x_size * dr.y_size > max_pixels):
                     raise ValueError(
