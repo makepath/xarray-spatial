@@ -761,7 +761,7 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
                    x_resolution: float | None = None,
                    y_resolution: float | None = None,
                    resolution_unit: int | None = None,
-                   force_bigtiff: bool | None = None) -> bytes:
+                   force_bigtiff: bool | None = None) -> bytearray:
     """Assemble a complete TIFF file.
 
     Parameters
@@ -775,8 +775,13 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
 
     Returns
     -------
-    bytes
-        Complete TIFF file.
+    bytearray
+        Complete TIFF file. The bytearray is returned directly rather
+        than copied into an immutable ``bytes`` object so multi-GB
+        writes do not transiently double peak memory; downstream
+        consumers (``_write_bytes``, ``parse_header`` for the
+        post-write validation slice) accept the buffer protocol so the
+        type change is transparent. See issue #1756.
     """
     bits_per_sample, sample_format = numpy_to_tiff_dtype(dtype)
 
@@ -969,8 +974,15 @@ def _promote_offsets_to_long8(tags: list) -> list:
 def _assemble_standard_layout(header_size: int,
                               ifd_specs: list,
                               pixel_data_parts: list,
-                              bigtiff: bool = False) -> bytes:
-    """Assemble standard TIFF layout (one IFD at a time)."""
+                              bigtiff: bool = False) -> bytearray:
+    """Assemble standard TIFF layout (one IFD at a time).
+
+    Returns the assembled output as a ``bytearray``. The caller writes
+    it via ``_write_bytes`` (which accepts any buffer-protocol object)
+    and may slice it for header validation. Returning the bytearray
+    directly avoids the peak-memory doubling that ``bytes(output)``
+    would impose on multi-GB writes (issue #1756).
+    """
     output = bytearray()
     entry_size = 20 if bigtiff else 12
 
@@ -1032,14 +1044,18 @@ def _assemble_standard_layout(header_size: int,
             else:
                 struct.pack_into(f'{BO}I', output, next_ptr_pos, next_ifd_offset)
 
-    return bytes(output)
+    return output
 
 
 def _assemble_cog_layout(header_size: int,
                          ifd_specs: list,
                          pixel_data_parts: list,
-                         bigtiff: bool = False) -> bytes:
-    """Assemble COG layout: all IFDs first, then all pixel data."""
+                         bigtiff: bool = False) -> bytearray:
+    """Assemble COG layout: all IFDs first, then all pixel data.
+
+    Returns the assembled output as a ``bytearray``; see
+    :func:`_assemble_standard_layout` for the rationale (issue #1756).
+    """
     entry_size = 20 if bigtiff else 12
     count_size = 8 if bigtiff else 2
     next_size = 8 if bigtiff else 4
@@ -1115,7 +1131,7 @@ def _assemble_cog_layout(header_size: int,
         for chunk in comp_chunks:
             output.extend(chunk)
 
-    return bytes(output)
+    return output
 
 
 # ---------------------------------------------------------------------------
@@ -1803,9 +1819,15 @@ def _is_fsspec_uri(path) -> bool:
     return '://' in path
 
 
-def _write_bytes(file_bytes: bytes, path) -> None:
+def _write_bytes(file_bytes: bytes | bytearray, path) -> None:
     """Write bytes to a local file (atomic), cloud storage (via fsspec),
-    or any binary file-like object exposing ``write``."""
+    or any binary file-like object exposing ``write``.
+
+    Accepts either ``bytes`` or ``bytearray`` so the eager assembler
+    can hand its working buffer through without a copy (issue #1756);
+    ``file.write``, ``BytesIO.write``, and ``fsspec`` ``open(..., 'wb')``
+    all accept the buffer protocol.
+    """
     import os
 
     # File-like destination: match string-path "overwrite" semantics
