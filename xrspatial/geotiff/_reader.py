@@ -923,6 +923,12 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     if offsets is None or byte_counts is None:
         raise ValueError("Missing strip offsets or byte counts")
 
+    # A corrupt header can report RowsPerStrip=0, which would divide by zero
+    # below.  Reject it as a typed parse error rather than letting the
+    # ZeroDivisionError leak out to the caller.
+    if rps is None or rps <= 0:
+        raise ValueError(f"Invalid RowsPerStrip: {rps!r}")
+
     planar = ifd.planar_config  # 1=chunky (interleaved), 2=planar (separate)
 
     # Determine output region
@@ -939,6 +945,17 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     out_w = c1 - c0
 
     _check_dimensions(out_w, out_h, samples, max_pixels)
+
+    # StripByteCounts must have at least one entry per strip; a corrupt count
+    # field can shrink it.  Detect the mismatch after the dimension safety
+    # check so an oversized header raises the safety-limit error first, then
+    # raise a typed ValueError here instead of IndexError when the loop
+    # indexes past the end.
+    n_strips_expected = (height + rps - 1) // rps
+    if len(offsets) < n_strips_expected or len(byte_counts) < n_strips_expected:
+        raise ValueError(
+            f"Strip table truncated: expected {n_strips_expected} entries, "
+            f"got offsets={len(offsets)}, byte_counts={len(byte_counts)}")
 
     # Sparse strips (StripByteCounts == 0) must materialise as nodata or 0
     # rather than be decoded.  Pre-fill the result so any skipped strips
