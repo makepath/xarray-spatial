@@ -56,7 +56,7 @@ def _write_vrt(td: str, *, dst_x_size: int, dst_y_size: int,
 def test_huge_dstrect_rejected_before_intermediate_allocation():
     """A DstRect that would force a multi-billion-pixel resample intermediate
     must raise ``ValueError`` before ``_resample_nearest`` allocates."""
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         _write_source(td)
         # 50000 x 50000 = 2.5 billion pixels of intermediate; the output
         # buffer is only 100 x 100. With the cap in place this should
@@ -68,7 +68,7 @@ def test_huge_dstrect_rejected_before_intermediate_allocation():
 
 def test_huge_dstrect_y_axis_rejected():
     """Asymmetric blow-up: only one axis is huge. Still rejected."""
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         _write_source(td)
         vrt_path = _write_vrt(
             td, dst_x_size=10, dst_y_size=10_000_000_000)
@@ -78,7 +78,7 @@ def test_huge_dstrect_y_axis_rejected():
 
 def test_legitimate_upsample_still_works():
     """A legitimate upsample stays under the cap and must succeed."""
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         _write_source(td)
         # 100 x 100 destination, matches the VRT extent.
         vrt_path = _write_vrt(td, dst_x_size=100, dst_y_size=100)
@@ -95,7 +95,7 @@ def test_max_pixels_kwarg_raises_cap():
     bites on the resample intermediate, not on the ``_check_dimensions``
     pre-allocation guard.
     """
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         _write_source(td)
         # 2000x2000 = 4e6 intermediate pixels.  Output buffer is 10x10=100
         # pixels, far below both caps below.  Upsample 10x10 -> 2000x2000
@@ -114,7 +114,7 @@ def test_dstrect_at_cap_succeeds():
     """Exactly at ``max_pixels`` is accepted; the cap is inclusive.
     Together with :func:`test_max_pixels_kwarg_raises_cap`, this pins
     down both sides of the override boundary."""
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         _write_source(td)
         # Upsample 10x10 -> 100x100 so ``needs_resample`` is true.  The
         # VRT raster is 10x10 so the output buffer stays at 100 pixels,
@@ -135,7 +135,7 @@ def test_negative_dstrect_rejected():
     rather than be silently skipped by the overlap check.  The error
     message must call out the malformed negative size, not the pixel
     budget."""
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         _write_source(td)
         vrt_path = _write_vrt(td, dst_x_size=-5, dst_y_size=100)
         with pytest.raises(ValueError, match="negative size"):
@@ -144,7 +144,7 @@ def test_negative_dstrect_rejected():
 
 def test_negative_dstrect_y_size_rejected():
     """Negative ``ySize`` is also rejected with the same tailored error."""
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         _write_source(td)
         vrt_path = _write_vrt(td, dst_x_size=100, dst_y_size=-5)
         with pytest.raises(ValueError, match="negative size"):
