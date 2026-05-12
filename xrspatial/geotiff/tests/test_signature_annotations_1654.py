@@ -109,11 +109,12 @@ def test_read_geotiff_gpu_deprecated_gpu_alias_annotated():
 # --- Smoke: the new annotations do not break runtime call semantics ---
 
 
-def test_open_geotiff_window_and_failure_kwargs_runtime():
-    """The annotated kwargs still accept the documented values at runtime."""
-    import os
-    import tempfile
-
+def test_open_geotiff_window_kwarg_runtime(tmp_path):
+    """The annotated ``window`` kwarg still accepts a 4-tuple and returns
+    the requested sub-window. The test does not exercise ``on_gpu_failure``
+    because the runtime semantics are GPU-only; the annotation itself is
+    pinned by ``test_open_geotiff_on_gpu_failure_annotated``.
+    """
     import numpy as np
     import xarray as xr
 
@@ -124,13 +125,7 @@ def test_open_geotiff_window_and_failure_kwargs_runtime():
         attrs={'crs': 4326, 'transform': (1.0, 0, 0.0, 0, -1.0, 8.0)},
     )
 
-    with tempfile.NamedTemporaryFile(suffix='.tif', delete=False) as f:
-        path = f.name
-    try:
-        to_geotiff(da, path)
-        # window is a 4-tuple; on_gpu_failure must not be passed on
-        # gpu=False, so just verify window kwarg roundtrip
-        r = open_geotiff(path, window=(0, 0, 4, 4))
-        assert r.shape == (4, 4)
-    finally:
-        os.unlink(path)
+    path = str(tmp_path / 'window_kwarg.tif')
+    to_geotiff(da, path)
+    r = open_geotiff(path, window=(0, 0, 4, 4))
+    assert r.shape == (4, 4)
