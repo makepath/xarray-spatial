@@ -268,3 +268,50 @@ def test_is_file_like_requires_tell():
 
     assert _is_file_like(io.BytesIO(b'x')) is True
     assert _is_file_like(ReadSeekNoTell()) is False
+
+
+class TestWriteGeotiffGpuBytesIO:
+    """Regression coverage for ``write_geotiff_gpu`` file-like behaviour.
+
+    ``to_geotiff(gpu=True, ...)`` always rejects BytesIO destinations paired
+    with ``cog=True`` (the auto-dispatch path's existing guard). The explicit
+    GPU writer used to silently accept that combo and produce a COG into the
+    buffer, so the two entry points disagreed on what ``to_geotiff(gpu=True,
+    cog=True, path=BytesIO)`` does. These tests pin the mirrored gate added
+    by issue #1652 and confirm the non-cog file-like path still works.
+    """
+
+    def test_cog_with_bytesio_rejected_1652(self):
+        cupy = pytest.importorskip("cupy")
+        da = xr.DataArray(
+            cupy.asarray(np.random.rand(64, 64).astype(np.float32)),
+            dims=['y', 'x'],
+            coords={'y': np.arange(64.0), 'x': np.arange(64.0)},
+            attrs={'crs': 4326},
+        )
+        from xrspatial.geotiff import write_geotiff_gpu
+
+        buf = io.BytesIO()
+        with pytest.raises(ValueError, match='cog=True'):
+            write_geotiff_gpu(da, buf, cog=True)
+
+    def test_non_cog_bytesio_still_works_1652(self):
+        cupy = pytest.importorskip("cupy")
+        arr_cpu = np.random.rand(64, 64).astype(np.float32)
+        da = xr.DataArray(
+            cupy.asarray(arr_cpu),
+            dims=['y', 'x'],
+            coords={'y': np.arange(64.0), 'x': np.arange(64.0)},
+            attrs={'crs': 4326},
+        )
+        from xrspatial.geotiff import write_geotiff_gpu
+
+        buf = io.BytesIO()
+        # Non-cog file-like write is still supported on the explicit GPU
+        # writer; only cog=True is gated.
+        write_geotiff_gpu(da, buf)
+        assert len(buf.getvalue()) > 0
+
+        # Verify it round-trips through open_geotiff
+        rd = open_geotiff(io.BytesIO(buf.getvalue()))
+        np.testing.assert_allclose(np.asarray(rd.values), arr_cpu)

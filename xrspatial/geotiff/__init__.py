@@ -2714,7 +2714,7 @@ def read_geotiff_gpu(source: str, *,
 
 
 def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
-                      path: str, *,
+                      path, *,
                       crs: int | str | None = None,
                       nodata=None,
                       compression: str = 'zstd',
@@ -2747,8 +2747,12 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         2D or 3D raster. CuPy-backed inputs stay on device; NumPy/Dask
         inputs are uploaded via ``cupy.asarray(np.asarray(data))``
         before compression (matches ``to_geotiff`` parity).
-    path : str
-        Output file path.
+    path : str or binary file-like
+        Output file path or any object with a ``write`` method
+        (e.g. ``io.BytesIO``). ``cog=True`` requires a string path:
+        the auto-dispatch path through ``to_geotiff(gpu=True, cog=True)``
+        rejects file-like destinations, and the explicit GPU writer
+        mirrors that rule (issue #1652).
     crs : int, str, or None
         EPSG code or WKT string.
     nodata : float, int, or None
@@ -2837,6 +2841,17 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             "max_z_error is not supported on the GPU writer "
             "(nvCOMP has no LERC backend). Use to_geotiff(..., gpu=False) "
             "or omit max_z_error.")
+    # Mirror to_geotiff's file-like + cog=True rejection. The auto-dispatch
+    # path through ``to_geotiff(gpu=True, cog=True, path=BytesIO)`` raises
+    # before reaching here; the explicit GPU writer mirrors the gate so
+    # callers cannot bypass it (issue #1652). Non-cog file-like writes
+    # remain supported on this entry point.
+    _path_is_file_like = (
+        not isinstance(path, str)) and hasattr(path, 'write')
+    if _path_is_file_like and cog:
+        raise ValueError(
+            "cog=True is not supported for file-like destinations on the "
+            "GPU writer. Pass a string path or set cog=False.")
     # streaming_buffer_bytes is intentionally a no-op on the GPU path;
     # the kwarg exists for API parity with to_geotiff so callers can pass
     # the same kwargs to both entry points without filtering.
