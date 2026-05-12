@@ -46,7 +46,7 @@ def multiband_tiff_path(tmp_path):
 
 def test_read_to_array_negative_band_rejected(multiband_tiff_path):
     """``band=-1`` no longer silently selects the last channel."""
-    from xrspatial.geotiff import read_to_array
+    from xrspatial.geotiff._reader import read_to_array
 
     path, _ = multiband_tiff_path
     with pytest.raises(IndexError, match="band=-1 out of range"):
@@ -55,7 +55,7 @@ def test_read_to_array_negative_band_rejected(multiband_tiff_path):
 
 def test_read_to_array_band_equal_to_samples_rejected(multiband_tiff_path):
     """``band=samples_per_pixel`` (off-by-one) raises a typed error."""
-    from xrspatial.geotiff import read_to_array
+    from xrspatial.geotiff._reader import read_to_array
 
     path, _ = multiband_tiff_path
     # File has 3 bands; valid indices are 0, 1, 2.
@@ -65,7 +65,7 @@ def test_read_to_array_band_equal_to_samples_rejected(multiband_tiff_path):
 
 def test_read_to_array_band_far_above_samples_rejected(multiband_tiff_path):
     """A wildly out-of-range band index gives the same typed error."""
-    from xrspatial.geotiff import read_to_array
+    from xrspatial.geotiff._reader import read_to_array
 
     path, _ = multiband_tiff_path
     with pytest.raises(IndexError, match="band=103 out of range"):
@@ -74,7 +74,7 @@ def test_read_to_array_band_far_above_samples_rejected(multiband_tiff_path):
 
 def test_read_to_array_valid_band_still_works(multiband_tiff_path):
     """Valid band indices keep working after the validation guard."""
-    from xrspatial.geotiff import read_to_array
+    from xrspatial.geotiff._reader import read_to_array
 
     path, arr = multiband_tiff_path
     out, _ = read_to_array(path, band=1)
@@ -83,7 +83,7 @@ def test_read_to_array_valid_band_still_works(multiband_tiff_path):
 
 def test_read_to_array_band_none_still_returns_all_bands(multiband_tiff_path):
     """``band=None`` still returns the full multi-band array."""
-    from xrspatial.geotiff import read_to_array
+    from xrspatial.geotiff._reader import read_to_array
 
     path, arr = multiband_tiff_path
     out, _ = read_to_array(path)
@@ -92,7 +92,8 @@ def test_read_to_array_band_none_still_returns_all_bands(multiband_tiff_path):
 
 def test_backend_parity_negative_band(multiband_tiff_path):
     """Local eager and dask paths raise the same error for ``band=-1``."""
-    from xrspatial.geotiff import read_geotiff_dask, read_to_array
+    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff._reader import read_to_array
 
     path, _ = multiband_tiff_path
 
@@ -110,7 +111,8 @@ def test_backend_parity_negative_band(multiband_tiff_path):
 
 def test_backend_parity_band_equal_to_samples(multiband_tiff_path):
     """Local eager and dask paths agree on the off-by-one rejection."""
-    from xrspatial.geotiff import read_geotiff_dask, read_to_array
+    from xrspatial.geotiff import read_geotiff_dask
+    from xrspatial.geotiff._reader import read_to_array
 
     path, _ = multiband_tiff_path
 
