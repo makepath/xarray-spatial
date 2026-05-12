@@ -1052,6 +1052,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     overview_resampling : str
         Resampling method for overviews: 'mean' (default), 'nearest',
         'min', 'max', 'median', 'mode', or 'cubic'.
+    bigtiff : bool or None
+        Force BigTIFF (64-bit offsets). None (default) auto-promotes
+        when the estimated file size would exceed the classic-TIFF 4 GB
+        limit. Matches the same kwarg on ``write_geotiff_gpu``.
     gpu : bool or None
         Force GPU compression. None (default) auto-detects CuPy data.
     streaming_buffer_bytes : int
