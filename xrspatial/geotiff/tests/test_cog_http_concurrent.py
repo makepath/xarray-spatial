@@ -143,8 +143,15 @@ class _RangeHandler(http.server.BaseHTTPRequestHandler):
 
 
 @pytest.fixture
-def cog_http_server(tmp_path):
-    """Spin up a local http.server serving a tiled COG, yield (url, arr)."""
+def cog_http_server(tmp_path, monkeypatch):
+    """Spin up a local http.server serving a tiled COG, yield (url, arr).
+
+    Sets ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` for the duration of
+    the test because ``_HTTPSource`` blocks 127.0.0.1 by default after
+    issue #1664. The escape hatch is the documented way to keep loopback
+    test servers working.
+    """
+    monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
     arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
     path = str(tmp_path / 'tmp_1480_cog.tif')
     write(arr, path, compression='deflate', tiled=True, tile_size=16,

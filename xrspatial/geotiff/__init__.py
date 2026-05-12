@@ -38,13 +38,14 @@ import numpy as np
 import xarray as xr
 
 from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
-from ._reader import read_to_array
+from ._reader import UnsafeURLError, read_to_array
 from ._writer import write
 
 # All names below are part of the supported public API. ``plot_geotiff``
 # is intentionally omitted: it is deprecated in favour of ``da.xrs.plot()``
 # and emits a ``DeprecationWarning`` when called.
 __all__ = [
+    'UnsafeURLError',
     'open_geotiff',
     'read_geotiff_gpu',
     'read_geotiff_dask',
