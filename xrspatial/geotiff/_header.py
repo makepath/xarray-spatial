@@ -165,6 +165,13 @@ class IFD:
     def sample_format(self) -> int:
         v = self.get_value(TAG_SAMPLE_FORMAT, 1)
         if isinstance(v, tuple):
+            # A SampleFormat tag with count=0 has been seen in malformed
+            # TIFFs (single-byte corruption flips the count field). Fall back
+            # to the default rather than raising IndexError -- the caller can
+            # then either succeed with a sensible dtype or fail with a typed
+            # ValueError downstream.
+            if len(v) == 0:
+                return 1
             return v[0]
         return v
 
