@@ -1104,7 +1104,6 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # non-default size alongside strip mode (it would otherwise be silently
     # ignored).
     if not tiled and tile_size != 256:
-        import warnings
         warnings.warn(
             f"tile_size={tile_size} is ignored when tiled=False "
             "(strip layout). Pass tiled=True to use tile_size, or drop "
@@ -1171,8 +1170,42 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                               bigtiff=bigtiff,
                               streaming_buffer_bytes=streaming_buffer_bytes)
             return
-        except (ImportError, Exception):
-            pass  # fall through to CPU path
+        except ImportError as e:
+            # cupy or nvCOMP not installed. Fall back to the CPU writer
+            # with a typed warning so callers see that gpu=True (or
+            # auto-detected CuPy data) was not honoured. Strict mode
+            # re-raises so CI can fail loudly on missing GPU stacks.
+            if _geotiff_strict_mode():
+                raise
+            warnings.warn(
+                f"to_geotiff(gpu=True) fell back to CPU "
+                f"({type(e).__name__}: {e}).",
+                GeoTIFFFallbackWarning,
+                stacklevel=2,
+            )
+        except RuntimeError as e:
+            # Only fall back when the message names a GPU-availability
+            # problem; any other RuntimeError is a real bug in the GPU
+            # writer and the broad ``except (ImportError, Exception)``
+            # used to hide it from the user. Keep the keyword list
+            # tight: nvCOMP / CUDA / no device / no GPU / cuInit cover
+            # the realistic "no GPU present" failure modes without
+            # masking, e.g., a CRS or compression error that happens to
+            # raise RuntimeError. Strict mode re-raises in either case.
+            _gpu_unavail_tokens = (
+                'nvcomp', 'cuda', 'no device', 'no gpu', 'cuinit',
+            )
+            msg = str(e).lower()
+            if not any(tok in msg for tok in _gpu_unavail_tokens):
+                raise
+            if _geotiff_strict_mode():
+                raise
+            warnings.warn(
+                f"to_geotiff(gpu=True) fell back to CPU "
+                f"({type(e).__name__}: {e}).",
+                GeoTIFFFallbackWarning,
+                stacklevel=2,
+            )
 
     geo_transform = None
     epsg = None
