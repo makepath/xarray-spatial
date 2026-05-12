@@ -1561,7 +1561,19 @@ def gpu_decode_tiles_from_file(
 
 
 def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
-    """Run nvCOMP batch decompress on tiles already in GPU memory."""
+    """Run nvCOMP batch decompress on tiles already in GPU memory.
+
+    The decompressed output uses a single contiguous device buffer with
+    per-tile pointers derived as ``base_ptr + i * tile_bytes``. The previous
+    implementation allocated N separate ``cupy.empty(tile_bytes)`` buffers
+    and ran ``cupy.concatenate`` after the decompress kernel; that pattern
+    kept two copies of the decompressed data alive at once (the per-tile
+    buffers and the concatenated result) and ran a serial concat that the
+    rest of the GPU paths avoid. The other nvCOMP code paths in this module
+    (LZW at ~L1847, deflate at ~L1878, host-buffer at ~L1114) already use
+    the single-buffer pattern; this brings the GDS path in line with them.
+    See issue #1659.
+    """
     import ctypes
     import cupy
 
@@ -1574,10 +1586,20 @@ def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
 
     try:
         n = len(d_tiles)
-        d_decomp_bufs = [cupy.empty(tile_bytes, dtype=cupy.uint8) for _ in range(n)]
+        # Single contiguous output buffer. nvCOMP's batched decompress takes
+        # an array of per-tile device pointers; derive those from the base
+        # pointer + per-tile byte offsets so we never allocate N small
+        # buffers (one cupy.empty per tile is ~tens of microseconds each)
+        # and never run a trailing cupy.concatenate.
+        _check_gpu_memory(n * tile_bytes,
+                          what="GDS+nvCOMP decompressed buffer")
+        d_decomp = cupy.empty(n * tile_bytes, dtype=cupy.uint8)
+        base_decomp_ptr = int(d_decomp.data.ptr)
+        decomp_offsets = (np.arange(n, dtype=np.uint64)
+                          * np.uint64(tile_bytes))
+        d_decomp_ptrs = cupy.asarray(base_decomp_ptr + decomp_offsets)
 
         d_comp_ptrs = cupy.array([t.data.ptr for t in d_tiles], dtype=cupy.uint64)
-        d_decomp_ptrs = cupy.array([b.data.ptr for b in d_decomp_bufs], dtype=cupy.uint64)
         d_comp_sizes = cupy.array([t.size for t in d_tiles], dtype=cupy.uint64)
         d_buf_sizes = cupy.full(n, tile_bytes, dtype=cupy.uint64)
         d_actual = cupy.empty(n, dtype=cupy.uint64)
@@ -1621,7 +1643,7 @@ def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
         if int(cupy.any(d_statuses != 0)):
             return None
 
-        return cupy.concatenate(d_decomp_bufs)
+        return d_decomp
     except Exception:
         return None
 
