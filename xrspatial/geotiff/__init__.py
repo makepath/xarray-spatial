@@ -33,9 +33,13 @@ from __future__ import annotations
 
 import math
 import warnings
+from typing import TYPE_CHECKING
 
 import numpy as np
 import xarray as xr
+
+if TYPE_CHECKING:
+    from typing import BinaryIO
 
 from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 from ._reader import read_to_array
@@ -446,14 +450,16 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
                 break
 
 
-def open_geotiff(source, *, dtype=None, window=None,
+def open_geotiff(source, *, dtype=None,
+                 window: tuple | None = None,
                  overview_level: int | None = None,
                  band: int | None = None,
                  name: str | None = None,
                  chunks: int | tuple | None = None,
                  gpu: bool = False,
                  max_pixels: int | None = None,
-                 on_gpu_failure=_ON_GPU_FAILURE_SENTINEL) -> xr.DataArray:
+                 on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
+                 ) -> xr.DataArray:
     """Read a GeoTIFF, COG, or VRT file into an xarray.DataArray.
 
     Automatically dispatches to the best backend:
@@ -905,7 +911,8 @@ def _extract_rich_tags(attrs: dict) -> dict:
     }
 
 
-def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
+def to_geotiff(data: xr.DataArray | np.ndarray,
+               path: str | BinaryIO, *,
                crs: int | str | None = None,
                nodata=None,
                compression: str = 'zstd',
@@ -2178,8 +2185,9 @@ def read_geotiff_gpu(source: str, *,
                      name: str | None = None,
                      chunks: int | tuple | None = None,
                      max_pixels: int | None = None,
-                     on_gpu_failure=_ON_GPU_FAILURE_SENTINEL,
-                     gpu=_GPU_DEPRECATED_SENTINEL) -> xr.DataArray:
+                     on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
+                     gpu: str = _GPU_DEPRECATED_SENTINEL,
+                     ) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
 
     Decompresses all tiles in parallel on the GPU and returns a
@@ -2714,7 +2722,7 @@ def read_geotiff_gpu(source: str, *,
 
 
 def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
-                      path, *,
+                      path: str | BinaryIO, *,
                       crs: int | str | None = None,
                       nodata=None,
                       compression: str = 'zstd',
@@ -3069,7 +3077,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     _write_bytes(file_bytes, path)
 
 
-def read_vrt(source: str, *, dtype=None, window=None,
+def read_vrt(source: str, *, dtype=None,
+             window: tuple | None = None,
              band: int | None = None,
              name: str | None = None,
              chunks: int | tuple | None = None,
