@@ -1051,6 +1051,39 @@ class TestCloudStorage:
 
         fs.rm('/roundtrip.tif')
 
+    def test_dask_path_fsspec_uri_1749(self, tmp_path):
+        """read_geotiff_dask supports fsspec URIs (issue #1749).
+
+        The eager path already routed through _CloudSource via
+        _read_to_array. The dask path's _read_geo_info used plain
+        open(), which failed on memory://, s3://, etc.
+        """
+        pytest.importorskip('fsspec')
+        import fsspec
+
+        arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+
+        local_path = str(tmp_path / 'src.tif')
+        to_geotiff(arr, local_path, compression='none')
+        with open(local_path, 'rb') as f:
+            tiff_bytes = f.read()
+
+        fs = fsspec.filesystem('memory')
+        fs.pipe('/dask_1749.tif', tiff_bytes)
+
+        try:
+            eager = open_geotiff('memory:///dask_1749.tif')
+            lazy = open_geotiff('memory:///dask_1749.tif', chunks=4)
+
+            # Lazy path is dask-backed
+            import dask.array as da
+            assert isinstance(lazy.data, da.Array)
+
+            np.testing.assert_array_equal(lazy.values, eager.values)
+            np.testing.assert_array_equal(lazy.values, arr)
+        finally:
+            fs.rm('/dask_1749.tif')
+
     def test_writer_cloud_scheme_detection(self):
         """Writer detects cloud schemes."""
         from xrspatial.geotiff._writer import _is_fsspec_uri

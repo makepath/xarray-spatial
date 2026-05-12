@@ -460,7 +460,7 @@ def _read_geo_info(source, *, overview_level: int | None = None):
     from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
     from ._geotags import extract_geo_info_with_overview_inheritance
     from ._header import parse_all_ifds, parse_header, select_overview_ifd
-    from ._reader import _coerce_path, _is_file_like
+    from ._reader import _CloudSource, _coerce_path, _is_file_like, _is_fsspec_uri
 
     source = _coerce_path(source)
     if _is_file_like(source):
@@ -476,6 +476,17 @@ def _read_geo_info(source, *, overview_level: int | None = None):
             source.seek(cur)
         except (OSError, AttributeError):
             pass
+        close_data = False
+    elif isinstance(source, str) and _is_fsspec_uri(source):
+        # fsspec URI (s3://, gs://, az://, memory://, ...): pull the
+        # whole file via _CloudSource for metadata parsing. Per-chunk
+        # pixel reads in the dask graph go through _read_to_array
+        # which opens its own _CloudSource, so this fetch is metadata-only.
+        _src = _CloudSource(source)
+        try:
+            data = _src.read_all()
+        finally:
+            _src.close()
         close_data = False
     elif isinstance(source, str):
         with open(source, 'rb') as f:
