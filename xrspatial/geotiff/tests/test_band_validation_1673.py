@@ -5,7 +5,7 @@ decoded array via ``arr[:, :, band]`` without validating the index.
 Two failure modes follow:
 
 * ``band=-1`` silently selects the last channel via numpy negative
-  indexing. The public contract is "0-based positive index", so
+  indexing. The public contract is "0-based non-negative index", so
   this is a silent semantic shift, not an explicit selection.
 * ``band=N`` with ``N >= samples_per_pixel`` raises a raw numpy
   ``IndexError`` whose message ("index N is out of bounds for axis

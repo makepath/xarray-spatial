@@ -1956,7 +1956,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         # leaks a raw numpy ``IndexError`` with the internal slice
         # shape. Mirrors the dask path's pre-flight validator (see
         # ``read_geotiff_dask`` in ``__init__.py``) and the GPU path
-        # so all backends agree on the contract: 0-based positive
+        # so all backends agree on the contract: 0-based non-negative
         # index only. See issue #1673.
         #
         # NOTE: the HTTP branch (``_read_cog_http`` above) currently
