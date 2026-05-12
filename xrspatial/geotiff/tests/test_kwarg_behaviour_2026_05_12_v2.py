@@ -460,39 +460,34 @@ class TestReadVrtWindowEager:
 
         np.testing.assert_array_equal(windowed, full)
 
-    def test_window_clamps_to_raster_bounds(self, tmp_path):
-        """Window extending past raster bounds is clipped, not an error.
+    def test_window_outside_raster_bounds_rejected(self, tmp_path):
+        """Window extending past raster bounds raises ``ValueError``.
 
-        Mirrors the ``r1 = min(vrt.height, r1)`` / ``c1 = min(...)``
-        clamp in ``_vrt.read_vrt``. Without the clamp, the assembled
-        ``out_h``/``out_w`` would over-allocate and the result shape
-        would not match the VRT's intersection with the request.
+        ``read_vrt`` used to silently clamp out-of-bounds windows. That
+        masked caller bugs (typo'd coords, off-by-one extents) and made
+        the returned shape disagree with the caller's coord arrays. As
+        of #1697 / #1698 the validator rejects such windows up front
+        with a typed ``ValueError`` instead.
         """
         arr = np.arange(4 * 4, dtype=np.float32).reshape(4, 4)
         vrt = _make_single_tile_vrt(tmp_path, arr)
 
-        result = read_vrt(vrt, window=(0, 0, 100, 100))
+        with pytest.raises(ValueError, match="outside the VRT extent"):
+            read_vrt(vrt, window=(0, 0, 100, 100))
 
-        # Output clamps to the VRT's own (4, 4) extent
-        assert result.shape == (4, 4)
-        np.testing.assert_array_equal(result.values, arr)
+    def test_window_negative_offsets_rejected(self, tmp_path):
+        """Negative start offsets raise ``ValueError``.
 
-    def test_window_clamps_negative_offsets(self, tmp_path):
-        """Negative start offsets are clamped to 0.
-
-        Matches the ``r0 = max(0, r0)`` / ``c0 = max(0, c0)`` guard
-        inside ``_vrt.read_vrt``. Without this clamp, a caller passing
-        a negative offset would either index off the start of the
-        output buffer or hit an opaque shape error.
+        Per the post-#1697 contract, ``read_vrt`` validates the window
+        against the VRT extent. Negative offsets are rejected the same
+        way an over-large window is, rather than being silently clamped
+        to zero.
         """
         arr = np.arange(4 * 4, dtype=np.float32).reshape(4, 4)
         vrt = _make_single_tile_vrt(tmp_path, arr)
 
-        # (-1, -2, 3, 4) clamps to (0, 0, 3, 4)
-        result = read_vrt(vrt, window=(-1, -2, 3, 4))
-
-        assert result.shape == (3, 4)
-        np.testing.assert_array_equal(result.values, arr[0:3, 0:4])
+        with pytest.raises(ValueError, match="outside the VRT extent"):
+            read_vrt(vrt, window=(-1, -2, 3, 4))
 
     def test_window_across_mosaic_seam(self, tmp_path):
         """Window straddling a multi-source seam reads both sources.
