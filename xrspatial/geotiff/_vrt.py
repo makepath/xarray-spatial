@@ -410,12 +410,22 @@ def read_vrt(vrt_path: str, *, window=None,
                 f"band index {band} out of range for VRT with "
                 f"{len(vrt.bands)} band(s)")
 
+    # Validate ``window`` against the VRT's parsed extent before any
+    # source reads. Without this, the clamp below silently shrinks an
+    # out-of-bounds window and returns a smaller array, which then
+    # mismatches caller-built coord arrays in ``open_geotiff`` and
+    # surfaces as an opaque ``CoordinateValidationError``. Mirrors the
+    # local-path validator in ``read_to_array`` (#1634) and the HTTP
+    # path validator in ``_read_cog_http`` (#1669) so all backends
+    # agree on the contract. See issue #1697.
     if window is not None:
         r0, c0, r1, c1 = window
-        r0 = max(0, r0)
-        c0 = max(0, c0)
-        r1 = min(vrt.height, r1)
-        c1 = min(vrt.width, c1)
+        if (r0 < 0 or c0 < 0
+                or r1 > vrt.height or c1 > vrt.width
+                or r0 >= r1 or c0 >= c1):
+            raise ValueError(
+                f"window={window} is outside the VRT extent "
+                f"({vrt.height}x{vrt.width}) or has non-positive size.")
     else:
         r0, c0, r1, c1 = 0, 0, vrt.height, vrt.width
 
