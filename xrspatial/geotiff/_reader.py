@@ -1662,6 +1662,14 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     if arr.ndim == 3 and ifd.samples_per_pixel > 1 and band is not None:
         arr = arr[:, :, band]
 
+    # Apply Orientation tag (274) so HTTP reads return the same pixel
+    # order and transform as the local-file path. Only the full-read
+    # branch reaches here; the windowed-read branch is rejected above
+    # for non-default orientation. See issue #1717.
+    if ifd.orientation != 1:
+        arr, geo_info = _apply_orientation_with_geo(
+            arr, geo_info, ifd.orientation)
+
     return arr, geo_info
 
 
@@ -1948,6 +1956,69 @@ def _apply_orientation(arr: np.ndarray, orientation: int) -> np.ndarray:
     )
 
 
+def _apply_orientation_with_geo(
+    arr: np.ndarray, geo_info: GeoInfo, orientation: int,
+) -> tuple[np.ndarray, GeoInfo]:
+    """Apply Orientation tag to ``arr`` and update ``geo_info`` to match.
+
+    Shared helper used by the local-file and HTTP COG paths so both
+    return the same pixel order and transform for a given file. See
+    issue #1717 for the HTTP-path parity break this consolidates.
+    """
+    if orientation == 1:
+        return arr, geo_info
+    # Use the *file* dimensions (before orientation) for the transform
+    # math below. After ``_apply_orientation`` the array shape may swap
+    # (orientations 5-8), so capture them now.
+    file_h = arr.shape[0]
+    file_w = arr.shape[1]
+    arr = _apply_orientation(arr, orientation)
+    t = geo_info.transform
+    if not geo_info.has_georef:
+        pass
+    elif orientation in (2, 3, 4):
+        if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
+            x_shift = file_w - 1
+            y_shift = file_h - 1
+        else:
+            x_shift = file_w
+            y_shift = file_h
+        new_origin_x = t.origin_x
+        new_origin_y = t.origin_y
+        new_px_w = t.pixel_width
+        new_px_h = t.pixel_height
+        if orientation in (2, 3):  # x flipped
+            new_origin_x = t.origin_x + x_shift * t.pixel_width
+            new_px_w = -t.pixel_width
+        if orientation in (3, 4):  # y flipped
+            new_origin_y = t.origin_y + y_shift * t.pixel_height
+            new_px_h = -t.pixel_height
+        geo_info.transform = GeoTransform(
+            origin_x=new_origin_x,
+            origin_y=new_origin_y,
+            pixel_width=new_px_w,
+            pixel_height=new_px_h,
+        )
+    elif orientation in (5, 6, 7, 8):
+        geo_info.transform = GeoTransform(
+            origin_x=t.origin_x,
+            origin_y=t.origin_y,
+            pixel_width=t.pixel_height,
+            pixel_height=t.pixel_width,
+        )
+        if (geo_info.crs_epsg is not None
+                or geo_info.crs_wkt is not None):
+            import warnings
+            warnings.warn(
+                f"Orientation {orientation} swaps spatial axes on "
+                f"a georeferenced file; the returned coords are "
+                f"shape-correct but the geographic transform may "
+                f"need manual adjustment.",
+                stacklevel=2,
+            )
+    return arr, geo_info
+
+
 def read_to_array(source, *, window=None, overview_level: int | None = None,
                   band: int | None = None,
                   max_pixels: int = MAX_PIXELS_DEFAULT,
@@ -2076,86 +2147,8 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
             arr = arr[:, :, band]
 
         if orientation != 1:
-            # Use the *file* dimensions (before orientation) for the
-            # transform-flip math below. After ``_apply_orientation`` the
-            # array shape may swap (orientations 5-8), so capture them now.
-            file_h = arr.shape[0]
-            file_w = arr.shape[1]
-            arr = _apply_orientation(arr, orientation)
-            # The pixel buffer was just remapped; the transform that maps
-            # display pixels back to geographic coordinates needs the
-            # matching remap or the y/x coords still describe the file's
-            # original layout.
-            #
-            # Orientations 2-4 are pure mirror flips: the array shape stays
-            # the same, but the displayed origin moves to the opposite
-            # edge along whichever axes were flipped. Update origin and
-            # sign of the affected pixel scale so xarray coords land on
-            # the right geographic positions.
-            #
-            # Orientations 5-8 swap rows and columns. Pixel sizes swap
-            # axes so coord array lengths match the new shape. Signs are
-            # preserved rather than coerced to north-up since some
-            # legitimate files use a non-standard sign convention
-            # (south-up, west-up). For 6/7/8 (rotations + flips, not a
-            # pure transpose) the swap is geometrically inexact for
-            # georef'd files: a strict implementation would also adjust
-            # origin and re-sign per axis. Those files are vanishingly
-            # rare in practice (TIFF Orientation 5-8 with a meaningful
-            # ModelTransformation); warn so the user knows to verify.
-            t = geo_info.transform
-            # Only georeferenced files have a meaningful transform to flip.
-            # Plain TIFFs with an Orientation tag but no GeoTIFF tags get
-            # their pixel buffer remapped above; their default transform
-            # is left untouched and the downstream consumer falls back to
-            # integer pixel coords.
-            if not geo_info.has_georef:
-                pass
-            elif orientation in (2, 3, 4):
-                # PixelIsPoint tiepoints are at pixel centers, so the
-                # opposite-edge pixel sits ``(N-1) * step`` away. PixelIsArea
-                # tiepoints are at pixel edges, so the opposite edge is
-                # ``N * step`` away. The two cases collapse to a single
-                # formula below by switching the offset.
-                if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
-                    x_shift = file_w - 1
-                    y_shift = file_h - 1
-                else:
-                    x_shift = file_w
-                    y_shift = file_h
-                new_origin_x = t.origin_x
-                new_origin_y = t.origin_y
-                new_px_w = t.pixel_width
-                new_px_h = t.pixel_height
-                if orientation in (2, 3):  # x flipped
-                    new_origin_x = t.origin_x + x_shift * t.pixel_width
-                    new_px_w = -t.pixel_width
-                if orientation in (3, 4):  # y flipped
-                    new_origin_y = t.origin_y + y_shift * t.pixel_height
-                    new_px_h = -t.pixel_height
-                geo_info.transform = GeoTransform(
-                    origin_x=new_origin_x,
-                    origin_y=new_origin_y,
-                    pixel_width=new_px_w,
-                    pixel_height=new_px_h,
-                )
-            elif orientation in (5, 6, 7, 8):
-                geo_info.transform = GeoTransform(
-                    origin_x=t.origin_x,
-                    origin_y=t.origin_y,
-                    pixel_width=t.pixel_height,
-                    pixel_height=t.pixel_width,
-                )
-                if (geo_info.crs_epsg is not None
-                        or geo_info.crs_wkt is not None):
-                    import warnings
-                    warnings.warn(
-                        f"Orientation {orientation} swaps spatial axes on "
-                        f"a georeferenced file; the returned coords are "
-                        f"shape-correct but the geographic transform may "
-                        f"need manual adjustment.",
-                        stacklevel=2,
-                    )
+            arr, geo_info = _apply_orientation_with_geo(
+                arr, geo_info, orientation)
 
         # MinIsWhite (photometric=0): invert single-band grayscale values
         if ifd.photometric == 0 and ifd.samples_per_pixel == 1:
