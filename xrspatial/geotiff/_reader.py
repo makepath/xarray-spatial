@@ -680,19 +680,26 @@ class _HTTPSource:
         )
 
     def read_range(self, start: int, length: int) -> bytes:
+        # Match the ``b''``-for-non-positive-length convention used by
+        # other source implementations (e.g. ``_BytesIOSource``).
+        # Without this guard, ``Range: bytes=<start>-<start-1>`` goes on
+        # the wire, which is an invalid range and triggers a 416 from
+        # well-behaved servers (or worse, an arbitrarily large 200 body
+        # from misbehaving ones).
+        if length <= 0:
+            return b''
         end = start + length - 1
         headers = {'Range': f'bytes={start}-{end}'}
         if self._pool is not None:
             resp = self._request(headers=headers)
             data = resp.data
-            self._validate_range_response(
+            return self._validate_range_response(
                 status=resp.status,
                 content_range=resp.headers.get('Content-Range'),
                 data=data,
                 start=start,
                 length=length,
             )
-            return data
         # Fallback: stdlib. urlopen's ``timeout`` is a single value, so
         # use the more conservative read timeout; the connect timeout
         # isn't separately controllable on stdlib urllib. The opener
@@ -704,18 +711,17 @@ class _HTTPSource:
             # stdlib raises HTTPError for 4xx/5xx automatically; we still
             # need to catch the "server ignored Range and returned 200
             # with the whole object" case, plus any short body.
-            self._validate_range_response(
+            return self._validate_range_response(
                 status=getattr(resp, 'status', None) or resp.getcode(),
                 content_range=resp.headers.get('Content-Range'),
                 data=data,
                 start=start,
                 length=length,
             )
-            return data
 
     @staticmethod
     def _validate_range_response(*, status, content_range, data,
-                                 start: int, length: int) -> None:
+                                 start: int, length: int) -> bytes:
         """Reject HTTP responses that do not satisfy the Range request.
 
         Without this, three things can go wrong silently (issue #1735):
@@ -735,6 +741,11 @@ class _HTTPSource:
         0-(size-1)/size``. The validator accepts that as long as the
         Content-Range starts at the requested offset and the body
         length matches what Content-Range advertises.
+
+        Returns the validated bytes, sliced to at most ``length`` bytes
+        in the "server ignored Range and returned the whole object as
+        200" case (start == 0, no Content-Range). Other branches return
+        ``data`` unchanged.
         """
         if status is None or status not in (200, 206):
             raise OSError(
@@ -760,7 +771,13 @@ class _HTTPSource:
             if len(data) < min(length, 1):
                 # Empty body but caller wanted bytes.
                 raise OSError("HTTP 200 response body is empty.")
-            return
+            # Server ignored Range and returned the full object as 200.
+            # The implicit contract is "at most ``length`` bytes"; slice
+            # so a 16 KiB prefetch against a 2 GiB object doesn't drag
+            # the whole thing into memory.
+            if len(data) > length:
+                return data[:length]
+            return data
         # Parse ``bytes <start>-<end>/<total-or-*>``. Reject anything
         # that does not start at the requested offset; allow ``end`` to
         # be lower than requested when EOF was hit.
@@ -801,6 +818,7 @@ class _HTTPSource:
                 f"the {expected_len} bytes advertised by "
                 f"Content-Range {content_range!r}."
             )
+        return data
 
     def read_ranges(
         self,
