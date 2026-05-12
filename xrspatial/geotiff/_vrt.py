@@ -783,7 +783,10 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     """Generate a VRT file that mosaics multiple GeoTIFF tiles.
 
     Each source file is placed in the virtual raster based on its
-    geo transform. Files must share the same CRS and pixel size.
+    geo transform. All sources must share the same pixel size, dtype
+    (sample format + bits-per-sample), band count, and CRS. Mismatches
+    raise ``ValueError`` rather than producing a misplaced or mis-typed
+    mosaic.
 
     Parameters
     ----------
@@ -796,10 +799,12 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     crs_wkt : str or None
         CRS as WKT string. If None, taken from the first source.
     nodata : float, int, or None
-        NoData value. If None, taken from the first source. Integer
-        sentinels (e.g. ``65535`` for uint16, ``-9999`` for int32) are
-        accepted so the surface lines up with the ``nodata`` kwarg on
-        ``to_geotiff`` and ``write_geotiff_gpu``.
+        NoData value applied to every band of the mosaic. Caller-supplied
+        value takes precedence; when ``None``, the first source's
+        per-band nodata is used. Integer sentinels (e.g. ``65535`` for
+        uint16, ``-9999`` for int32) are accepted so the surface lines up
+        with the ``nodata`` kwarg on ``to_geotiff`` and
+        ``write_geotiff_gpu``.
 
     Returns
     -------
@@ -848,6 +853,65 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     first = sources_meta[0]
     res_x = first['transform'].pixel_width
     res_y = first['transform'].pixel_height
+
+    # Enforce the docstring contract: every source must agree with the
+    # first on pixel size, sample format + bits-per-sample (i.e. dtype),
+    # band count, and CRS WKT (when both sides set it). Without this,
+    # build_vrt would silently produce a syntactically valid VRT that
+    # misplaces or mis-types data downstream (issue #1733).
+    #
+    # Pixel size is compared with a small relative tolerance: TIFFs
+    # written by different tools occasionally round the GeoTransform
+    # slightly, and the existing mosaic-extent math rounds the final
+    # raster size anyway. Sample format + bps must match exactly because
+    # the VRT dtype is taken from ``first`` and applied to every band.
+    _PIXEL_SIZE_RTOL = 1e-6
+
+    def _pixel_size_mismatch(a: float, b: float) -> bool:
+        # Compare magnitudes; pixel_height is negative for the common
+        # north-up case so a direct equality test would mis-flag a
+        # source with the opposite sign.
+        if a == b:
+            return False
+        denom = max(abs(a), abs(b))
+        if denom == 0.0:
+            return abs(a - b) > 0.0
+        return abs(a - b) / denom > _PIXEL_SIZE_RTOL
+
+    first_crs = first.get('crs_wkt')
+    for m in sources_meta[1:]:
+        t = m['transform']
+        if _pixel_size_mismatch(t.pixel_width, res_x) \
+                or _pixel_size_mismatch(t.pixel_height, res_y):
+            raise ValueError(
+                f"VRT source {m['path']!r} has pixel size "
+                f"({t.pixel_width}, {t.pixel_height}) which does not "
+                f"match the first source ({res_x}, {res_y}). All sources "
+                f"in a VRT must share the same pixel size."
+            )
+        if m['sample_format'] != first['sample_format'] \
+                or m['bps'] != first['bps']:
+            raise ValueError(
+                f"VRT source {m['path']!r} has sample_format="
+                f"{m['sample_format']}, bps={m['bps']} which does not "
+                f"match the first source (sample_format="
+                f"{first['sample_format']}, bps={first['bps']}). All "
+                f"sources in a VRT must share the same dtype."
+            )
+        if m['bands'] != first['bands']:
+            raise ValueError(
+                f"VRT source {m['path']!r} has {m['bands']} band(s) "
+                f"which does not match the first source "
+                f"({first['bands']} band(s)). All sources in a VRT "
+                f"must share the same band count."
+            )
+        m_crs = m.get('crs_wkt')
+        if first_crs and m_crs and m_crs != first_crs:
+            raise ValueError(
+                f"VRT source {m['path']!r} has CRS WKT that does not "
+                f"match the first source. All sources in a VRT must "
+                f"share the same CRS."
+            )
 
     # Compute the bounding box of all sources
     all_x0, all_y0, all_x1, all_y1 = [], [], [], []
