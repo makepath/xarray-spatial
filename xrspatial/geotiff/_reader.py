@@ -1635,8 +1635,10 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     # below is gated on ``arr.ndim == 3 and samples_per_pixel > 1``.
     # Mirrors the local-path validator in ``read_to_array`` so all
     # backends agree on the contract: 0-based non-negative index only.
-    # ``source.close()`` runs before raising since the HTTP source
-    # holds a network handle. See issue #1695.
+    # ``source.close()`` is called for symmetry with the success-path
+    # teardown below; it is a no-op on ``_HTTPSource`` today (the
+    # urllib3 ``PoolManager`` is shared module-level, not per-source)
+    # but a future resource-holding source will need it. See issue #1695.
     if band is not None:
         if ifd.samples_per_pixel <= 1:
             if band != 0:
