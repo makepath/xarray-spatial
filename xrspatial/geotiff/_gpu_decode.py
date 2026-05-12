@@ -972,7 +972,7 @@ def _try_kvikio_read_tiles(file_path, tile_offsets, tile_byte_counts, tile_bytes
             cupy.cuda.Device().synchronize()
         except Exception:
             pass
-        _warn_or_raise_gpu_fallback("_gds_read_tiles", e)
+        _warn_or_raise_gpu_fallback("_try_kvikio_read_tiles", e)
         return None
 
 
