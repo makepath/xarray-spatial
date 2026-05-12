@@ -56,6 +56,44 @@ def _codec_decode_exceptions() -> tuple[type[BaseException], ...]:
 _CODEC_DECODE_EXCEPTIONS = _codec_decode_exceptions()
 
 
+# Environment variable name used to opt in to absolute source paths
+# outside the VRT directory.  ``os.pathsep``-separated list of
+# directory roots (``:`` on POSIX, ``;`` on Windows).  Empty entries
+# are ignored.  See ``parse_vrt`` for the containment policy.
+_ALLOWED_ROOTS_ENV = 'XRSPATIAL_VRT_ALLOWED_ROOTS'
+
+
+def _allowed_source_roots() -> list[str]:
+    """Return the operator-supplied allowlist of trusted source roots.
+
+    Returns the canonical ``realpath`` of each entry so the containment
+    check can compare against the resolved source path directly. Empty
+    entries (from stray ``os.pathsep`` separators) are dropped.
+    """
+    raw = os.environ.get(_ALLOWED_ROOTS_ENV, '')
+    roots = []
+    for entry in raw.split(os.pathsep):
+        entry = entry.strip()
+        if not entry:
+            continue
+        roots.append(os.path.realpath(entry))
+    return roots
+
+
+def _path_is_under(path: str, root: str) -> bool:
+    """Return True when ``path`` lives under ``root``.
+
+    Both inputs must already be canonical (``os.path.realpath`` applied).
+    Uses ``os.path.commonpath`` for robustness against prefix-collisions
+    (``/foo`` vs ``/foobar``) which a naive ``startswith`` check misses.
+    """
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        # Different drives on Windows, or one of the paths is empty.
+        return False
+
+
 def _xml_text(value) -> str:
     """Escape *value* for safe inclusion as XML element text.
 
@@ -170,11 +208,25 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
     Returns
     -------
     VRTDataset
+
+    Raises
+    ------
+    ValueError
+        When a ``SourceFilename`` resolves outside ``vrt_dir`` and
+        outside every entry in ``XRSPATIAL_VRT_ALLOWED_ROOTS``.  See
+        :func:`read_vrt` for the full containment policy.
     """
     # ``safe_fromstring`` refuses DOCTYPE declarations so a crafted VRT
     # cannot trigger XML entity expansion (billion-laughs) attacks
     # against the reader. See issue #1579.
     root = safe_fromstring(xml_str)
+
+    # Pre-compute the trusted roots once per parse.  ``vrt_dir`` is
+    # always trusted; the allowlist from ``XRSPATIAL_VRT_ALLOWED_ROOTS``
+    # is only consulted for absolute sources (``relativeToVRT='0'``).
+    # See issue #1671 for the path-traversal hardening.
+    vrt_root = os.path.realpath(vrt_dir)
+    allowed_roots = _allowed_source_roots()
 
     width = int(root.get('rasterXSize', 0))
     height = int(root.get('rasterYSize', 0))
@@ -225,8 +277,36 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
                            relative.get('relativeToVRT', '0') == '1')
             if is_relative and not os.path.isabs(filename):
                 filename = os.path.join(vrt_dir, filename)
-            # Canonicalize to prevent path traversal (e.g. ../)
+            # Canonicalize so ``..`` segments and symlinks both resolve
+            # to their target before the containment check below.
             filename = os.path.realpath(filename)
+
+            # Containment policy (issue #1671):
+            #
+            # * ``relativeToVRT='1'`` declares the source lives under the
+            #   VRT directory.  Honour that intent even when the allowlist
+            #   would otherwise cover the resolved path -- a relative
+            #   source that escapes ``vrt_dir`` is always an attack
+            #   primitive ('..' segments, symlink swap, etc.).
+            # * Absolute sources are accepted when they resolve under
+            #   ``vrt_dir`` (matches the writer's ``relative=False`` round
+            #   trip) or under any explicit ``XRSPATIAL_VRT_ALLOWED_ROOTS``
+            #   entry.
+            #
+            # In every other case raise ``ValueError`` so a crafted VRT
+            # cannot read arbitrary files the process has access to.
+            if is_relative:
+                trusted = [vrt_root]
+            else:
+                trusted = [vrt_root, *allowed_roots]
+            if not any(_path_is_under(filename, r) for r in trusted):
+                raise ValueError(
+                    f"VRT SourceFilename {filename!r} resolves outside "
+                    f"the VRT directory ({vrt_root!r}) and is not "
+                    f"covered by any {_ALLOWED_ROOTS_ENV} entry "
+                    f"({allowed_roots!r}). Refusing to read; see issue "
+                    f"#1671."
+                )
 
             src_band = int(_text(src_elem, 'SourceBand') or '1')
 

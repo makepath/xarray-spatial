@@ -796,10 +796,14 @@ class TestVRT:
         assert da.name == 'mosaic'
         np.testing.assert_array_equal(da.values, arr)
 
-    def test_vrt_parser(self):
+    def test_vrt_parser(self, tmp_path):
         """VRT XML parser extracts all fields correctly."""
         from xrspatial.geotiff._vrt import parse_vrt
 
+        # Use a path under tmp_path so the issue #1671 containment check
+        # accepts the source.  The test exercises field-extraction, not
+        # the on-disk readability of the source file.
+        src_path = str(tmp_path / 'tile.tif')
         xml = (
             '<VRTDataset rasterXSize="100" rasterYSize="200">\n'
             '  <SRS>EPSG:32610</SRS>\n'
@@ -807,7 +811,7 @@ class TestVRT:
             '  <VRTRasterBand dataType="UInt16" band="1">\n'
             '    <NoDataValue>0</NoDataValue>\n'
             '    <SimpleSource>\n'
-            '      <SourceFilename relativeToVRT="0">/data/tile.tif</SourceFilename>\n'
+            f'      <SourceFilename relativeToVRT="0">{src_path}</SourceFilename>\n'
             '      <SourceBand>1</SourceBand>\n'
             '      <SrcRect xOff="10" yOff="20" xSize="80" ySize="160"/>\n'
             '      <DstRect xOff="0" yOff="0" xSize="80" ySize="160"/>\n'
@@ -815,7 +819,7 @@ class TestVRT:
             '  </VRTRasterBand>\n'
             '</VRTDataset>\n'
         )
-        vrt = parse_vrt(xml)
+        vrt = parse_vrt(xml, str(tmp_path))
         assert vrt.width == 100
         assert vrt.height == 200
         assert vrt.crs_wkt == 'EPSG:32610'
@@ -825,7 +829,7 @@ class TestVRT:
         assert vrt.bands[0].nodata == 0.0
         assert len(vrt.bands[0].sources) == 1
         src = vrt.bands[0].sources[0]
-        assert src.filename == os.path.realpath('/data/tile.tif')
+        assert src.filename == os.path.realpath(src_path)
         assert src.src_rect.x_off == 10
 
     def test_vrt_float64_fractional_nodata_masked(self, tmp_path):

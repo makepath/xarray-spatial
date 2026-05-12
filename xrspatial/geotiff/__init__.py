@@ -3225,6 +3225,19 @@ def read_vrt(source: str, *, dtype=None,
     Otherwise ``attrs['crs']`` stays unset and ``attrs['crs_wkt']`` carries
     the original WKT. The source GeoTransform is preserved as a
     rasterio-style 6-tuple in ``attrs['transform']``.
+
+    Source-path containment (issue #1671): every ``<SourceFilename>`` in
+    the VRT must resolve (after canonicalising ``..`` segments and
+    symlinks) to a path under the VRT's own directory.  Absolute paths
+    pointing elsewhere are rejected with ``ValueError`` by default.
+    Operators that legitimately need to mosaic files from outside the
+    VRT directory can opt in by setting the
+    ``XRSPATIAL_VRT_ALLOWED_ROOTS`` environment variable to a
+    ``os.pathsep``-separated list of trusted directory roots; sources
+    resolving under any listed root are then accepted.  A
+    ``relativeToVRT='1'`` source that escapes the VRT directory (e.g.
+    ``../../etc/passwd`` or a symlink to a file outside the directory)
+    is rejected regardless of the allowlist.
     """
     from ._reader import _coerce_path
     from ._vrt import read_vrt as _read_vrt_internal
