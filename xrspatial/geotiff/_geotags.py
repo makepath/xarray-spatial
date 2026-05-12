@@ -703,24 +703,39 @@ def extract_geo_info_with_overview_inheritance(
     """Extract geo metadata, inheriting from level 0 when the IFD lacks it.
 
     Wraps :func:`extract_geo_info` for overview reads. GDAL-style COG
-    writers (including this package's :func:`to_geotiff`) put the
-    GeoKeyDirectory, ModelPixelScale and ModelTiepoint only on the
-    level-0 IFD. Calling ``extract_geo_info`` directly on an overview
-    IFD therefore returns a default :class:`GeoTransform` with
-    ``has_georef=False`` and no CRS, so overview reads silently lose
-    their georeferencing.
+    writers (including this package's :func:`to_geotiff`) put a handful
+    of tags only on the level-0 IFD:
+
+    * GeoKeyDirectory, ModelPixelScale, ModelTiepoint (georef)
+    * GDAL_NODATA, GDAL_METADATA (per-IFD pass-through tags)
+    * XResolution, YResolution, ResolutionUnit (resolution tags)
+    * ColorMap, ImageDescription, ExtraSamples (extra-tag pass-through)
+
+    Calling ``extract_geo_info`` directly on an overview IFD therefore
+    returns a default :class:`GeoTransform` with ``has_georef=False``,
+    no CRS, and a ``nodata=None`` field, so overview reads silently
+    lose their georeferencing and their nodata sentinel.
 
     When ``ifd`` is a reduced-resolution overview (NewSubfileType bit 0
-    set) that lacks its own georef, we re-run ``extract_geo_info`` on
-    the first full-resolution IFD (NewSubfileType bit 0 clear, bit 2
-    clear) and rescale the pixel size by ``width_full / width_overview``
-    so coords cover the same extent as level 0.
+    set), we re-run ``extract_geo_info`` on the first full-resolution
+    IFD (NewSubfileType bit 0 clear, bit 2 clear). Per-IFD pass-through
+    tags (nodata, GDAL metadata, resolution, colormap, extra tags,
+    image description, extra samples) are inherited when the overview
+    lacks its own value, regardless of whether the overview has its own
+    georef. The transform and CRS-side fields are additionally
+    inherited when the overview lacks its own georef, with the pixel
+    size rescaled by ``width_full / width_overview`` so coords cover
+    the same extent as level 0.
 
-    If the overview IFD already carries its own geokeys (some writers do
-    replicate them), this returns its own ``extract_geo_info`` output
-    unchanged. If no full-resolution sibling exists or the parent's geo
-    info is also missing, the overview's own (possibly empty) info is
-    returned -- callers get the same fallback behaviour they used to.
+    If the overview IFD already carries its own value for a given
+    field, that value wins -- inheritance is per-field and only fills
+    in missing entries. If no full-resolution sibling exists, the
+    overview's own (possibly empty) info is returned -- callers get the
+    same fallback behaviour they used to.
+
+    Inheriting nodata + the rich-tag set fixes #1739 (silent numerical
+    corruption when reading COG overview pixels because attrs['nodata']
+    was lost). The georef inheritance is the original fix from #1640.
 
     Parameters
     ----------
@@ -744,7 +759,7 @@ def extract_geo_info_with_overview_inheritance(
     # page IFDs (bit 1) are filtered out by ``select_overview_ifd``
     # before reaching here, so we never inherit a mask's geo info.
     is_overview = bool(ifd.subfile_type & 1)
-    if not is_overview or info.has_georef:
+    if not is_overview:
         return info
 
     # Find the level-0 IFD: NewSubfileType has bit 0 clear (not an
@@ -763,6 +778,51 @@ def extract_geo_info_with_overview_inheritance(
         return info
 
     base_info = extract_geo_info(base_ifd, data, byte_order)
+
+    # Inherit the per-IFD metadata that the COG writer emits only on the
+    # level-0 IFD: GDAL_NODATA, GDAL_METADATA, x/y resolution, colormap,
+    # extra tags, image description, extra samples. Without this block
+    # an overview read silently drops attrs['nodata'] (so the sentinel
+    # pixels the writer baked into the overview survive as ordinary data
+    # and poison downstream stats) and attrs['gdal_metadata'] (user
+    # metadata loss). See issue #1739.
+    #
+    # Each field is inherited only when the overview lacks its own
+    # value, so an overview IFD that does re-declare any of these keeps
+    # its own copy. Mirrors the gate the CRS-side inheritance applies
+    # below: prefer the overview's own value when present.
+    if info.nodata is None and base_info.nodata is not None:
+        info.nodata = base_info.nodata
+    if (info.gdal_metadata is None
+            and base_info.gdal_metadata is not None):
+        info.gdal_metadata = base_info.gdal_metadata
+    if (info.gdal_metadata_xml is None
+            and base_info.gdal_metadata_xml is not None):
+        info.gdal_metadata_xml = base_info.gdal_metadata_xml
+    if info.x_resolution is None and base_info.x_resolution is not None:
+        info.x_resolution = base_info.x_resolution
+    if info.y_resolution is None and base_info.y_resolution is not None:
+        info.y_resolution = base_info.y_resolution
+    if (info.resolution_unit is None
+            and base_info.resolution_unit is not None):
+        info.resolution_unit = base_info.resolution_unit
+    if info.colormap is None and base_info.colormap is not None:
+        info.colormap = base_info.colormap
+    if info.extra_tags is None and base_info.extra_tags is not None:
+        info.extra_tags = base_info.extra_tags
+    if (info.image_description is None
+            and base_info.image_description is not None):
+        info.image_description = base_info.image_description
+    if (info.extra_samples is None
+            and base_info.extra_samples is not None):
+        info.extra_samples = base_info.extra_samples
+
+    # If the overview already has its own georef, the rest of the
+    # inheritance (transform + CRS-side fields) is unnecessary -- return
+    # now with just the per-IFD-tag inheritance applied above.
+    if info.has_georef:
+        return info
+
     if not base_info.has_georef:
         return info
 
