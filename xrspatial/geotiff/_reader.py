@@ -1627,6 +1627,28 @@ def _read_cog_http(url: str, overview_level: int | None = None,
                 f"window={window} is outside the source extent "
                 f"({ifd.height}x{ifd.width}) or has non-positive size.")
 
+    # Validate ``band`` against the selected IFD's sample count before
+    # the tile fetch. Without this, ``band=-1`` silently picks the last
+    # channel via numpy negative indexing and ``band>=samples_per_pixel``
+    # leaks a raw numpy ``IndexError``; on a single-band file ``band=N``
+    # (N != 0) is dropped on the floor because the post-decode slice
+    # below is gated on ``arr.ndim == 3 and samples_per_pixel > 1``.
+    # Mirrors the local-path validator in ``read_to_array`` so all
+    # backends agree on the contract: 0-based non-negative index only.
+    # ``source.close()`` runs before raising since the HTTP source
+    # holds a network handle. See issue #1695.
+    if band is not None:
+        if ifd.samples_per_pixel <= 1:
+            if band != 0:
+                source.close()
+                raise IndexError(
+                    f"band={band} requested on a single-band file.")
+        elif not 0 <= band < ifd.samples_per_pixel:
+            source.close()
+            raise IndexError(
+                f"band={band} out of range for "
+                f"{ifd.samples_per_pixel}-band file.")
+
     arr = _fetch_decode_cog_http_tiles(
         source, header, ifd, max_pixels=max_pixels, window=window)
     source.close()
@@ -2024,14 +2046,10 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         # via numpy negative indexing and ``band>=samples_per_pixel``
         # leaks a raw numpy ``IndexError`` with the internal slice
         # shape. Mirrors the dask path's pre-flight validator (see
-        # ``read_geotiff_dask`` in ``__init__.py``) and the GPU path
+        # ``read_geotiff_dask`` in ``__init__.py``), the GPU path, and
+        # the HTTP path (``_read_cog_http`` above, as of issue #1695)
         # so all backends agree on the contract: 0-based non-negative
         # index only. See issue #1673.
-        #
-        # NOTE: the HTTP branch (``_read_cog_http`` above) currently
-        # accepts ``band`` but never slices on it; issue #1669 will
-        # add the slice. When that lands, mirror this same check
-        # there so HTTP rejects the same inputs.
         ifd_samples = ifd.samples_per_pixel
         if band is not None:
             if ifd_samples <= 1:
