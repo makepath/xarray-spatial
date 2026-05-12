@@ -191,9 +191,34 @@ def _coords_to_transform(da: xr.DataArray) -> GeoTransform | None:
     on raster_type:
     - PixelIsArea (default): origin = center - half_pixel  (edge of pixel 0)
     - PixelIsPoint: origin = center  (center of pixel 0)
+
+    For 3D arrays the spatial dims are the two non-band dims. The helper
+    skips any trailing/leading dim named ``band`` / ``bands`` / ``channel``
+    so a ``(y, x, band)`` or ``(band, y, x)`` DataArray returns the y/x
+    transform rather than picking up the band axis spacing as a pixel
+    size. ``to_geotiff`` itself remaps ``(band, y, x)`` arrays to
+    ``(y, x, band)`` before writing pixel bytes, but it calls
+    :func:`_coords_to_transform` against the original DataArray, so the
+    helper must handle both layouts to keep the geo-transform consistent
+    with the file's coord arrays. See issue #1643.
     """
-    ydim = da.dims[-2]
-    xdim = da.dims[-1]
+    _BAND_DIM_NAMES = ('band', 'bands', 'channel')
+    if da.ndim == 3:
+        # Drop the band-like dim and keep the two spatial dims in their
+        # original (y, x) order. Position-based fallback covers the case
+        # where none of the dims are named like a band axis.
+        spatial = tuple(d for d in da.dims if d not in _BAND_DIM_NAMES)
+        if len(spatial) == 2:
+            ydim, xdim = spatial[0], spatial[1]
+        else:
+            # No identifiable band dim; fall back to dims[-2:] so the
+            # original 2-D-style behaviour applies. This branch only
+            # triggers for unusual 3D layouts callers built by hand.
+            ydim = da.dims[-2]
+            xdim = da.dims[-1]
+    else:
+        ydim = da.dims[-2]
+        xdim = da.dims[-1]
 
     if xdim not in da.coords or ydim not in da.coords:
         return None
