@@ -41,7 +41,9 @@ def _make_dask_da(h: int = 32, w: int = 32, chunk: int = 8) -> xr.DataArray:
 def test_vrt_tiled_uses_threaded_scheduler():
     """_write_vrt_tiled passes ``scheduler='threads'`` to dask.compute."""
     da_arr = _make_dask_da()
-    with tempfile.TemporaryDirectory(prefix="vrt_sched_1714_") as td:
+    with tempfile.TemporaryDirectory(
+        prefix="vrt_sched_1714_", ignore_cleanup_errors=True
+    ) as td:
         vrt = os.path.join(td, "sched_check.vrt")
 
         # Wrap dask.compute so we can record the scheduler kwarg the
@@ -67,7 +69,9 @@ def test_vrt_tiled_uses_threaded_scheduler():
 def test_vrt_tiled_threaded_write_produces_all_tiles():
     """All expected tile files exist after the threaded write."""
     da_arr = _make_dask_da(h=32, w=32, chunk=8)  # 4x4 = 16 tiles
-    with tempfile.TemporaryDirectory(prefix="vrt_sched_1714_") as td:
+    with tempfile.TemporaryDirectory(
+        prefix="vrt_sched_1714_", ignore_cleanup_errors=True
+    ) as td:
         vrt = os.path.join(td, "tile_count.vrt")
         to_geotiff(da_arr, vrt)
         tiles_dir = os.path.join(td, "tile_count_tiles")
@@ -95,8 +99,12 @@ def test_vrt_tiled_threaded_write_is_deterministic():
             for p in sorted(glob.glob(os.path.join(tiles_dir, "*.tif")))
         }
 
-    with tempfile.TemporaryDirectory(prefix="vrt_sched_1714_") as td1:
-        with tempfile.TemporaryDirectory(prefix="vrt_sched_1714_") as td2:
+    with tempfile.TemporaryDirectory(
+        prefix="vrt_sched_1714_", ignore_cleanup_errors=True
+    ) as td1:
+        with tempfile.TemporaryDirectory(
+            prefix="vrt_sched_1714_", ignore_cleanup_errors=True
+        ) as td2:
             tiles1 = _write_and_collect(os.path.join(td1, "run1.vrt"))
             tiles2 = _write_and_collect(os.path.join(td2, "run2.vrt"))
 
