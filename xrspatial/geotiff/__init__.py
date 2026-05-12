@@ -74,6 +74,12 @@ __all__ = [
 # on_gpu_failure=<value>" (forward verbatim).
 _GPU_DEPRECATED_SENTINEL = object()
 _ON_GPU_FAILURE_SENTINEL = object()
+# ``write_vrt`` needs to distinguish "user passed crs_wkt= explicitly"
+# (deprecation path) from "user passed nothing" (no warning, pick CRS
+# from the first source). A plain default of None does not work because
+# None is itself a value a caller could supply alongside crs=. See
+# issue #1715.
+_CRS_WKT_DEPRECATED_SENTINEL = object()
 
 # Names of dims that ``to_geotiff`` / ``write_geotiff_gpu`` treat as the
 # non-spatial band axis. Used both to remap ``(band, y, x)`` inputs to
@@ -151,6 +157,91 @@ def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
             stacklevel=2,
         )
         return None
+
+
+def _resolve_crs_to_wkt(crs) -> str | None:
+    """Normalise a CRS argument to a WKT string for downstream writers.
+
+    Mirrors ``to_geotiff`` / ``write_geotiff_gpu``'s ``crs`` kwarg semantics
+    so callers can pass an int EPSG code, a WKT string, or a PROJ string
+    interchangeably. Returns the canonical WKT string (or ``None`` if
+    ``crs`` is ``None``) for forwarding to ``_vrt.write_vrt``, which only
+    speaks WKT.
+
+    Used by ``write_vrt`` (see issue #1715) to close the parameter-naming
+    drift versus the eager and GPU writer entry points.
+
+    Parameters
+    ----------
+    crs : int, str, or None
+        EPSG code (int), WKT string, or PROJ string. ``None`` returns
+        ``None`` (the downstream writer falls back to the first source
+        file's CRS).
+
+    Returns
+    -------
+    str or None
+        Canonical WKT string, or ``None`` if ``crs`` is ``None``.
+
+    Raises
+    ------
+    TypeError
+        If ``crs`` is not an int, str, or ``None``.
+    ValueError
+        If ``crs`` is an int that pyproj cannot resolve to a known CRS,
+        or a string that pyproj cannot parse.
+    ImportError
+        If pyproj is not installed and ``crs`` is supplied as something
+        other than a string. (A string is passed through verbatim so the
+        WKT-only path keeps working without pyproj.)
+    """
+    if crs is None:
+        return None
+    if not isinstance(crs, (int, str)):
+        raise TypeError(
+            f"crs must be int (EPSG code), str (WKT or PROJ), or None; "
+            f"got {type(crs).__name__}")
+    if isinstance(crs, str):
+        # Empty string is a common "no CRS" sentinel from upstream
+        # GeoTIFFs; preserve the existing _vrt.write_vrt semantics (it
+        # falls back to the first source's CRS for empty strings too).
+        if not crs:
+            return None
+        # If the caller already handed us a WKT, return it untouched.
+        # PROJCS/GEOGCS/PROJCRS/GEOGCRS are the standard WKT root
+        # keywords; anything else (EPSG:NNNN, +proj=...) gets normalised
+        # through pyproj so the downstream XML sees a canonical WKT.
+        if crs.lstrip().startswith(('PROJCS', 'GEOGCS', 'PROJCRS', 'GEOGCRS',
+                                     'COMPD_CS', 'COMPOUNDCRS')):
+            return crs
+        try:
+            from pyproj import CRS
+        except ImportError as exc:
+            raise ImportError(
+                "pyproj is required to convert non-WKT CRS strings (got "
+                f"{crs!r}). Pass a WKT string directly, or install pyproj."
+            ) from exc
+        try:
+            return CRS.from_user_input(crs).to_wkt()
+        except Exception as exc:
+            raise ValueError(
+                f"Could not parse crs={crs!r} as an EPSG/PROJ/WKT string: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+    # int branch: convert EPSG -> WKT via pyproj.
+    try:
+        from pyproj import CRS
+    except ImportError as exc:
+        raise ImportError(
+            f"pyproj is required to convert crs={crs} (EPSG int) to WKT. "
+            "Install pyproj, or pass crs as a WKT string."
+        ) from exc
+    try:
+        return CRS.from_epsg(crs).to_wkt()
+    except Exception as exc:
+        raise ValueError(
+            f"Could not resolve EPSG:{crs}: {type(exc).__name__}: {exc}"
+        ) from exc
 
 
 def _geo_to_coords(geo_info, height: int, width: int) -> dict:
@@ -3500,7 +3591,8 @@ def read_vrt(source: str, *, dtype=None,
 
 def write_vrt(vrt_path: str, source_files: list[str], *,
               relative: bool = True,
-              crs_wkt: str | None = None,
+              crs: int | str | None = None,
+              crs_wkt: str | None = _CRS_WKT_DEPRECATED_SENTINEL,
               nodata: float | int | None = None) -> str:
     """Generate a VRT file that mosaics multiple GeoTIFF tiles.
 
@@ -3512,9 +3604,21 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
         Paths to the source GeoTIFF files.
     relative : bool, optional
         Store source paths relative to the VRT file (default True).
+    crs : int, str, or None, optional
+        EPSG code (int), WKT string, or PROJ string. If None, the CRS
+        is taken from the first source GeoTIFF. Mirrors the ``crs``
+        kwarg on ``to_geotiff`` and ``write_geotiff_gpu`` so the same
+        value can be forwarded to whichever writer the caller picked
+        without per-writer special-casing (issue #1715).
     crs_wkt : str or None, optional
-        CRS as a WKT string. If None, the CRS is taken from the first
-        source GeoTIFF.
+        Deprecated alias for ``crs``. Emits ``DeprecationWarning`` when
+        supplied (including ``crs_wkt=None``); passing both ``crs`` and
+        ``crs_wkt`` raises ``TypeError``. The value is forwarded through
+        the same ``_resolve_crs_to_wkt`` path as ``crs``, so any string
+        the resolver accepts (WKT root keyword, PROJ string,
+        ``"EPSG:NNNN"``) and ``None`` work here. The historic
+        ``str | None`` surface is preserved; new code should use ``crs``
+        instead, which additionally accepts ``int`` EPSG codes.
     nodata : float, int, or None, optional
         NoData value. If None, taken from the first source GeoTIFF.
         Integer sentinels (e.g. ``65535`` for uint16, ``-9999`` for
@@ -3528,13 +3632,36 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     """
     # Explicit signature (previously ``**kwargs``) so ``inspect.signature``,
     # IDE autocomplete, and ``mypy --strict`` can see the accepted kwargs
-    # without parsing the docstring. Mirrors ``_vrt.write_vrt`` exactly; if
-    # that signature changes, this wrapper must be updated in lockstep.
+    # without parsing the docstring. Mirrors ``_vrt.write_vrt`` for the
+    # historic ``crs_wkt`` path; the new ``crs`` path normalises through
+    # ``_resolve_crs_to_wkt`` before forwarding because the internal
+    # writer still only speaks WKT.
+    crs_wkt_passed = crs_wkt is not _CRS_WKT_DEPRECATED_SENTINEL
+    if crs is not None and crs_wkt_passed:
+        # Both supplied is ambiguous regardless of whether the WKT happens
+        # to encode the same CRS as the int. Refuse rather than silently
+        # picking one.
+        raise TypeError(
+            "write_vrt: pass either 'crs' or the deprecated 'crs_wkt' "
+            "alias, not both.")
+    if crs_wkt_passed:
+        warnings.warn(
+            "write_vrt(..., crs_wkt=...) is deprecated; use crs=... "
+            "instead. The kwarg was renamed for parity with to_geotiff "
+            "and write_geotiff_gpu, which already accept 'crs' as either "
+            "an int EPSG code or a WKT string.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        crs = crs_wkt
+
+    resolved_wkt = _resolve_crs_to_wkt(crs)
+
     from ._vrt import write_vrt as _write_vrt_internal
     return _write_vrt_internal(
         vrt_path, source_files,
         relative=relative,
-        crs_wkt=crs_wkt,
+        crs_wkt=resolved_wkt,
         nodata=nodata,
     )
 

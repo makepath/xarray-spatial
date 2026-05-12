@@ -51,21 +51,34 @@ _gpu_only = pytest.mark.skipif(
 
 
 def test_write_vrt_signature_exposes_documented_kwargs():
-    """``inspect.signature(write_vrt)`` reports the three accepted kwargs.
+    """``inspect.signature(write_vrt)`` reports the four accepted kwargs.
 
     Prior to #1631 the public wrapper used ``**kwargs``, so
     ``inspect.signature`` only saw ``vrt_path`` and ``source_files``.
+    Issue #1715 added ``crs`` for parity with ``to_geotiff`` /
+    ``write_geotiff_gpu`` while keeping the historic ``crs_wkt`` as a
+    deprecated alias (sentinel default so the deprecation shim can
+    tell "user passed nothing" from "user passed crs_wkt=None").
     """
     sig = inspect.signature(write_vrt)
     params = sig.parameters
     assert 'relative' in params
-    assert 'crs_wkt' in params
+    assert 'crs' in params  # added in #1715
+    assert 'crs_wkt' in params  # deprecated alias
     assert 'nodata' in params
-    # Defaults must match _vrt.write_vrt
     assert params['relative'].default is True
-    assert params['crs_wkt'].default is None
+    # ``crs`` is the new canonical kwarg; default None means "pick from
+    # the first source", matching to_geotiff / write_geotiff_gpu.
+    assert params['crs'].default is None
+    # ``crs_wkt`` carries a sentinel default so the deprecation shim
+    # can distinguish "user passed nothing" (no warning) from "user
+    # passed crs_wkt=None" (deprecated-but-explicit, warn). The
+    # sentinel itself is private; check that it is NOT None so a
+    # future maintainer cannot accidentally drop the sentinel logic.
+    assert params['crs_wkt'].default is not None
+    assert params['crs_wkt'].default is not inspect.Parameter.empty
     assert params['nodata'].default is None
-    # No more catch-all VAR_KEYWORD
+    # No catch-all VAR_KEYWORD
     kinds = {p.kind for p in params.values()}
     assert inspect.Parameter.VAR_KEYWORD not in kinds
 
@@ -88,7 +101,12 @@ def test_write_vrt_unknown_kwarg_rejected_at_public_level(tmp_path):
 
 
 def test_write_vrt_accepts_documented_kwargs(tmp_path):
-    """Each documented kwarg round-trips through the explicit signature."""
+    """Each documented kwarg round-trips through the explicit signature.
+
+    Uses the new ``crs=None`` kwarg form (issue #1715). The deprecated
+    ``crs_wkt`` alias is exercised separately in
+    ``test_write_vrt_crs_1715.py``.
+    """
     arr = np.zeros((8, 8), dtype=np.float32)
     da = xr.DataArray(
         arr, dims=['y', 'x'],
@@ -101,7 +119,7 @@ def test_write_vrt_accepts_documented_kwargs(tmp_path):
     vrt_path = str(tmp_path / 't.vrt')
     out = write_vrt(
         vrt_path, [tif_path],
-        relative=False, crs_wkt=None, nodata=-9999.0,
+        relative=False, crs=None, nodata=-9999.0,
     )
     assert out == vrt_path
     assert os.path.exists(vrt_path)
