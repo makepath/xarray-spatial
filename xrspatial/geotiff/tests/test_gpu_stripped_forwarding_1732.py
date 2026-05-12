@@ -63,12 +63,32 @@ def test_stripped_max_pixels_cap_is_enforced():
 @_gpu_only
 def test_stripped_window_returns_only_window():
     """Windowed read on a stripped file returns the window-sized array
-    with coords that match the window origin."""
-    from xrspatial.geotiff import to_geotiff, read_geotiff_gpu
+    with coords and transform that match the window origin.
+
+    The post-decode ``_gpu_apply_window_band`` call was replaced with a
+    coord-only computation in #1732. Compare against the CPU eager path
+    (which is the parity reference for this exact fixture) so a
+    regression in the coord-only branch -- or a drift in the windowed
+    ``attrs['transform']`` -- shows up here.
+    """
+    from xrspatial.geotiff import to_geotiff, open_geotiff, read_geotiff_gpu
 
     rng = np.random.RandomState(20260512)
     data = rng.randint(0, 200, size=(64, 96)).astype(np.uint8)
-    da = xr.DataArray(data, dims=['y', 'x'])
+    # Explicit y/x coords give the file a real georef so the coord-only
+    # path computes a non-trivial windowed transform / origin -- a plain
+    # ``dims=['y','x']`` array writes a no-georef TIFF where the coord
+    # branch degenerates to integer arange and would not catch a
+    # transform-math regression.
+    da = xr.DataArray(
+        data,
+        dims=['y', 'x'],
+        coords={
+            'y': np.arange(64, dtype=np.float64) * 0.5 + 100.0,
+            'x': np.arange(96, dtype=np.float64) * 0.5 + 200.0,
+        },
+        attrs={'crs': 4326},
+    )
 
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, 'tmp_1732_win.tif')
@@ -77,6 +97,30 @@ def test_stripped_window_returns_only_window():
         out = read_geotiff_gpu(p, window=win)
         assert out.shape == (32, 64)
         np.testing.assert_array_equal(out.data.get(), data[8:40, 16:80])
+
+        # Coords + transform parity vs the CPU eager path. CPU runs
+        # through ``open_geotiff``'s own windowed-coord branch (line
+        # ~833), so any drift between the two coord computations is
+        # caught here.
+        cpu = open_geotiff(p, window=win)
+        np.testing.assert_array_equal(out.coords['y'].values,
+                                      cpu.coords['y'].values)
+        np.testing.assert_array_equal(out.coords['x'].values,
+                                      cpu.coords['x'].values)
+        # ``attrs['transform']`` carries the windowed origin (origin_x
+        # shifted by c0 * pixel_width, origin_y by r0 * pixel_height).
+        # Pin the exact tuple as well as parity with CPU so a regression
+        # in either ``_populate_attrs_from_geo_info`` or the coord-only
+        # branch is visible.
+        assert out.attrs['transform'] == cpu.attrs['transform']
+        # pixel_width=0.5, origin_x=200, c0=16  -> 200 + 16*0.5 = 208
+        # pixel_height=0.5, origin_y=100-0.5*0.5=99.75 (PixelIsArea),
+        # r0=8 -> 99.75 + 8*0.5 = 103.75
+        # to_geotiff writes the raw geo-transform (edge origin), so:
+        #   origin_x_raw = 200 - 0.25 = 199.75; +16*0.5 = 207.75
+        #   origin_y_raw = 100 - 0.25 =  99.75; +8*0.5  = 103.75
+        assert out.attrs['transform'] == (0.5, 0.0, 207.75,
+                                          0.0, 0.5, 103.75)
 
 
 @_gpu_only
