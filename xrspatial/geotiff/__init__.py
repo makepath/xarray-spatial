@@ -241,7 +241,7 @@ def _read_geo_info(source, *, overview_level: int | None = None):
         Overview IFD index (0 = full resolution).
     """
     from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
-    from ._geotags import extract_geo_info
+    from ._geotags import extract_geo_info_with_overview_inheritance
     from ._header import parse_all_ifds, parse_header, select_overview_ifd
     from ._reader import _coerce_path, _is_file_like
 
@@ -275,7 +275,10 @@ def _read_geo_info(source, *, overview_level: int | None = None):
         if not ifds:
             raise ValueError("No IFDs found in TIFF file")
         ifd = select_overview_ifd(ifds, overview_level)
-        geo_info = extract_geo_info(ifd, data, header.byte_order)
+        # Inherit georef from the level-0 IFD when the overview itself
+        # has no geokeys (issue #1640). Pass-through for level 0.
+        geo_info = extract_geo_info_with_overview_inheritance(
+            ifd, ifds, data, header.byte_order)
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         n_bands = ifd.samples_per_pixel if ifd.samples_per_pixel > 1 else 0
@@ -2260,7 +2263,7 @@ def read_geotiff_gpu(source: str, *,
         parse_header, parse_all_ifds, select_overview_ifd, validate_tile_layout,
     )
     from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
-    from ._geotags import extract_geo_info
+    from ._geotags import extract_geo_info_with_overview_inheritance
     from ._gpu_decode import gpu_decode_tiles
 
     source = _coerce_path(source)
@@ -2297,7 +2300,10 @@ def read_geotiff_gpu(source: str, *,
 
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
-        geo_info = extract_geo_info(ifd, data, header.byte_order)
+        # Inherit georef from the level-0 IFD when the overview itself
+        # has no geokeys (issue #1640); pass-through for level 0.
+        geo_info = extract_geo_info_with_overview_inheritance(
+            ifd, ifds, data, header.byte_order)
         # Capture the Orientation tag (274) once so the post-decode flip
         # below picks it up for both the stripped fallback and the tiled
         # GPU pipelines. CPU read_to_array applies the array remap +

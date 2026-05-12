@@ -672,6 +672,130 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
     )
 
 
+def extract_geo_info_with_overview_inheritance(
+    ifd: IFD,
+    ifds: list,
+    data: bytes | memoryview,
+    byte_order: str,
+) -> GeoInfo:
+    """Extract geo metadata, inheriting from level 0 when the IFD lacks it.
+
+    Wraps :func:`extract_geo_info` for overview reads. GDAL-style COG
+    writers (including this package's :func:`to_geotiff`) put the
+    GeoKeyDirectory, ModelPixelScale and ModelTiepoint only on the
+    level-0 IFD. Calling ``extract_geo_info`` directly on an overview
+    IFD therefore returns a default :class:`GeoTransform` with
+    ``has_georef=False`` and no CRS, so overview reads silently lose
+    their georeferencing.
+
+    When ``ifd`` is a reduced-resolution overview (NewSubfileType bit 0
+    set) that lacks its own georef, we re-run ``extract_geo_info`` on
+    the first full-resolution IFD (NewSubfileType bit 0 clear, bit 2
+    clear) and rescale the pixel size by ``width_full / width_overview``
+    so coords cover the same extent as level 0.
+
+    If the overview IFD already carries its own geokeys (some writers do
+    replicate them), this returns its own ``extract_geo_info`` output
+    unchanged. If no full-resolution sibling exists or the parent's geo
+    info is also missing, the overview's own (possibly empty) info is
+    returned -- callers get the same fallback behaviour they used to.
+
+    Parameters
+    ----------
+    ifd : IFD
+        The IFD selected by ``select_overview_ifd``.
+    ifds : list of IFD
+        All IFDs parsed from the file. Used to locate the level-0
+        sibling for georef inheritance.
+    data : bytes or memoryview
+        Full file bytes (forwarded to ``extract_geo_info``).
+    byte_order : str
+        ``'<'`` or ``'>'`` (forwarded to ``extract_geo_info``).
+
+    Returns
+    -------
+    GeoInfo
+    """
+    info = extract_geo_info(ifd, data, byte_order)
+
+    # Overview IFDs have NewSubfileType bit 0 set; mask IFDs (bit 2) and
+    # page IFDs (bit 1) are filtered out by ``select_overview_ifd``
+    # before reaching here, so we never inherit a mask's geo info.
+    is_overview = bool(ifd.subfile_type & 1)
+    if not is_overview or info.has_georef:
+        return info
+
+    # Find the level-0 IFD: NewSubfileType has bit 0 clear (not an
+    # overview) and bit 2 clear (not a transparency mask). This is the
+    # same criterion ``select_overview_ifd``'s filter uses to identify
+    # the full-resolution pyramid root.
+    base_ifd = None
+    for cand in ifds:
+        if cand is ifd:
+            continue
+        st = cand.subfile_type
+        if (st & 1) == 0 and (st & 4) == 0:
+            base_ifd = cand
+            break
+    if base_ifd is None:
+        return info
+
+    base_info = extract_geo_info(base_ifd, data, byte_order)
+    if not base_info.has_georef:
+        return info
+
+    # Rescale the pixel size by the integer reduction factor. Width and
+    # height ratios should match for power-of-two overview pyramids;
+    # average them so a slightly off-by-one edge size still produces a
+    # sensible transform.
+    base_w = base_ifd.width
+    base_h = base_ifd.height
+    ov_w = ifd.width
+    ov_h = ifd.height
+    if base_w <= 0 or base_h <= 0 or ov_w <= 0 or ov_h <= 0:
+        return info
+    scale_x = base_w / ov_w
+    scale_y = base_h / ov_h
+
+    base_t = base_info.transform
+    info.transform = GeoTransform(
+        origin_x=base_t.origin_x,
+        origin_y=base_t.origin_y,
+        pixel_width=base_t.pixel_width * scale_x,
+        pixel_height=base_t.pixel_height * scale_y,
+    )
+    info.has_georef = True
+
+    # Inherit CRS-side metadata from the parent. The overview IFD may
+    # carry its own raster_type (rare) -- prefer the overview's value
+    # when it differs from the default, otherwise inherit.
+    info.crs_epsg = base_info.crs_epsg
+    info.crs_wkt = base_info.crs_wkt
+    info.crs_name = base_info.crs_name
+    info.geog_citation = base_info.geog_citation
+    info.datum_code = base_info.datum_code
+    info.angular_units = base_info.angular_units
+    info.angular_units_code = base_info.angular_units_code
+    info.linear_units = base_info.linear_units
+    info.linear_units_code = base_info.linear_units_code
+    info.semi_major_axis = base_info.semi_major_axis
+    info.inv_flattening = base_info.inv_flattening
+    info.projection_code = base_info.projection_code
+    info.vertical_epsg = base_info.vertical_epsg
+    info.vertical_citation = base_info.vertical_citation
+    info.vertical_datum = base_info.vertical_datum
+    info.vertical_units = base_info.vertical_units
+    info.vertical_units_code = base_info.vertical_units_code
+    info.model_type = base_info.model_type
+    # Keep ``raster_type`` from the overview unless it was the default
+    # AREA, in which case prefer the parent's setting (PixelIsPoint is
+    # almost never re-declared on overview IFDs).
+    if info.raster_type == RASTER_PIXEL_IS_AREA:
+        info.raster_type = base_info.raster_type
+
+    return info
+
+
 def _model_type_from_wkt(wkt: str) -> int:
     """Guess ModelType from a WKT string prefix."""
     upper = wkt.strip().upper()

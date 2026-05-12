@@ -26,6 +26,7 @@ from ._geotags import (
     GeoTransform,
     RASTER_PIXEL_IS_POINT,
     extract_geo_info,
+    extract_geo_info_with_overview_inheritance,
 )
 from ._header import (
     IFD,
@@ -1236,7 +1237,13 @@ def _parse_cog_http_meta(
         raise ValueError("No IFDs found in COG")
 
     ifd = select_overview_ifd(ifds, overview_level)
-    geo_info = extract_geo_info(ifd, header_bytes, header.byte_order)
+    # When the requested IFD is an overview that lacks its own geokeys
+    # (the common case for COG writers, including this package's
+    # ``to_geotiff``), inherit and rescale the georef from the level-0
+    # IFD so overview reads do not silently lose CRS / transform.
+    # See issue #1640.
+    geo_info = extract_geo_info_with_overview_inheritance(
+        ifd, ifds, header_bytes, header.byte_order)
     return header, ifd, geo_info, header_bytes
 
 
@@ -1586,7 +1593,12 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
 
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
-        geo_info = extract_geo_info(ifd, data, header.byte_order)
+        # Inherit georef from level 0 when an overview IFD lacks its own
+        # geokeys (issue #1640). For overview_level=0 (or None) this is a
+        # no-op: the helper short-circuits when the IFD is not a
+        # NewSubfileType=overview entry.
+        geo_info = extract_geo_info_with_overview_inheritance(
+            ifd, ifds, data, header.byte_order)
 
         # Orientation tag (274): values 2-8 mean the stored pixel order
         # differs from display order. We need to remap the array post
