@@ -908,9 +908,21 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
 
         for m in sources_meta:
             t = m['transform']
+            # Top edge of this source in geo coords -- origin_y is the
+            # *top* only for north-up rasters (pixel_height < 0).  Sources
+            # with ascending y (pixel_height > 0) place origin_y at the
+            # bottom, so the top is origin_y + height * pixel_height.
+            src_top = max(
+                t.origin_y,
+                t.origin_y + m['height'] * t.pixel_height,
+            )
+            src_left = min(
+                t.origin_x,
+                t.origin_x + m['width'] * t.pixel_width,
+            )
             # Pixel offset in the virtual raster
-            dst_x_off = int(round((t.origin_x - mosaic_x0) / abs(res_x)))
-            dst_y_off = int(round((mosaic_y_top - t.origin_y) / abs(res_y)))
+            dst_x_off = int(round((src_left - mosaic_x0) / abs(res_x)))
+            dst_y_off = int(round((mosaic_y_top - src_top) / abs(res_y)))
 
             fname = m['path']
             rel_attr = '0'

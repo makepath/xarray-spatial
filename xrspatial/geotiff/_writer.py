@@ -40,6 +40,7 @@ from ._geotags import (
     TAG_GDAL_NODATA,
     TAG_MODEL_PIXEL_SCALE,
     TAG_MODEL_TIEPOINT,
+    TAG_MODEL_TRANSFORMATION,
 )
 from ._header import (
     TAG_NEW_SUBFILE_TYPE,
@@ -873,6 +874,8 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
                     tags.append((gtag, DOUBLE, 3, list(gval)))
                 elif gtag == TAG_MODEL_TIEPOINT:
                     tags.append((gtag, DOUBLE, 6, list(gval)))
+                elif gtag == TAG_MODEL_TRANSFORMATION:
+                    tags.append((gtag, DOUBLE, 16, list(gval)))
                 elif gtag == TAG_GEO_KEY_DIRECTORY:
                     tags.append((gtag, SHORT, len(gval), list(gval)))
                 elif gtag == TAG_GEO_ASCII_PARAMS:
@@ -1516,6 +1519,8 @@ def write_streaming(dask_data, path: str, *,
             tags.append((gtag, DOUBLE, 3, list(gval)))
         elif gtag == TAG_MODEL_TIEPOINT:
             tags.append((gtag, DOUBLE, 6, list(gval)))
+        elif gtag == TAG_MODEL_TRANSFORMATION:
+            tags.append((gtag, DOUBLE, 16, list(gval)))
         elif gtag == TAG_GEO_KEY_DIRECTORY:
             tags.append((gtag, SHORT, len(gval), list(gval)))
         elif gtag == TAG_GEO_ASCII_PARAMS:
