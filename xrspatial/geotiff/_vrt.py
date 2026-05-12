@@ -356,7 +356,22 @@ def read_vrt(vrt_path: str, *, window=None,
                     window=(src_r0, src_c0, src_r1, src_c1),
                     band=src.band - 1,  # convert 1-based to 0-based
                 )
-            except Exception:
+            except Exception as e:
+                # Under XRSPATIAL_GEOTIFF_STRICT=1, surface the read failure
+                # so partial mosaics are caught in CI. Default mode warns
+                # once per missing source then continues, preserving the
+                # historical behaviour. See issue #1662.
+                import warnings
+                from . import _geotiff_strict_mode, GeoTIFFFallbackWarning
+                if _geotiff_strict_mode():
+                    raise
+                warnings.warn(
+                    f"VRT source {src.filename!r} could not be read "
+                    f"({type(e).__name__}: {e}); skipping. The output "
+                    f"mosaic will have a hole at this tile.",
+                    GeoTIFFFallbackWarning,
+                    stacklevel=2,
+                )
                 continue  # skip missing/unreadable sources
 
             # Handle source nodata.  Cast the sentinel to the *source*

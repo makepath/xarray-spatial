@@ -244,11 +244,24 @@ def _epsg_to_wkt(epsg: int) -> str | None:
     """Resolve an EPSG code to a WKT string using pyproj.
 
     Returns None if pyproj is not installed or the code is unknown.
+
+    Under ``XRSPATIAL_GEOTIFF_STRICT=1`` the underlying exception is
+    re-raised instead of being swallowed. See issue #1662.
     """
     try:
         from pyproj import CRS
         return CRS.from_epsg(epsg).to_wkt()
-    except Exception:
+    except Exception as e:
+        import warnings
+        from . import _geotiff_strict_mode, GeoTIFFFallbackWarning
+        if _geotiff_strict_mode():
+            raise
+        warnings.warn(
+            f"_epsg_to_wkt({epsg!r}) failed "
+            f"({type(e).__name__}: {e}); returning None.",
+            GeoTIFFFallbackWarning,
+            stacklevel=2,
+        )
         return None
 
 
