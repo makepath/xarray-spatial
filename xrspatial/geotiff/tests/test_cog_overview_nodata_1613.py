@@ -86,11 +86,15 @@ def test_cpu_cog_overview_mean_partial_block(tmp_path):
 
     ov = open_geotiff(p, overview_level=1)
     # Top-left 2x2 was all-NaN -> reduces to NaN -> rewritten to -9999
+    #   on disk, then read back as NaN once the overview-nodata
+    #   inheritance fix (#1739) restores attrs['nodata'] and re-masks
+    #   the sentinel.
     # Top-right 2x2 [3,4,7,8] -> mean 5.5
     # Bottom-left [10,20,10,20] -> 15
     # Bottom-right [30,40,30,40] -> 35
     data = np.asarray(ov.data)
-    assert data[0, 0] == -9999.0
+    assert ov.attrs.get('nodata') == -9999.0
+    assert np.isnan(data[0, 0])
     np.testing.assert_allclose(data[0, 1], 5.5)
     np.testing.assert_allclose(data[1, 0], 15.0)
     np.testing.assert_allclose(data[1, 1], 35.0)
