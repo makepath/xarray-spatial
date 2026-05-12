@@ -3560,11 +3560,15 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
         kwarg on ``to_geotiff`` and ``write_geotiff_gpu`` so the same
         value can be forwarded to whichever writer the caller picked
         without per-writer special-casing (issue #1715).
-    crs_wkt : str, optional
+    crs_wkt : str or None, optional
         Deprecated alias for ``crs``. Emits ``DeprecationWarning`` when
-        used. Passing both ``crs`` and ``crs_wkt`` raises ``TypeError``.
-        Accepts a WKT string only (the historic surface); use ``crs``
-        for EPSG int or PROJ string input.
+        supplied (including ``crs_wkt=None``); passing both ``crs`` and
+        ``crs_wkt`` raises ``TypeError``. The value is forwarded through
+        the same ``_resolve_crs_to_wkt`` path as ``crs``, so any string
+        the resolver accepts (WKT root keyword, PROJ string,
+        ``"EPSG:NNNN"``) and ``None`` work here. The historic
+        ``str | None`` surface is preserved; new code should use ``crs``
+        instead, which additionally accepts ``int`` EPSG codes.
     nodata : float, int, or None, optional
         NoData value. If None, taken from the first source GeoTIFF.
         Integer sentinels (e.g. ``65535`` for uint16, ``-9999`` for

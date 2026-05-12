@@ -29,7 +29,6 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import (
-    open_geotiff,
     read_vrt,
     to_geotiff,
     write_vrt,

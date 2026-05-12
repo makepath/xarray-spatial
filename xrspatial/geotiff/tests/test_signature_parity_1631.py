@@ -105,7 +105,7 @@ def test_write_vrt_accepts_documented_kwargs(tmp_path):
 
     Uses the new ``crs=None`` kwarg form (issue #1715). The deprecated
     ``crs_wkt`` alias is exercised separately in
-    ``test_namespace_no_leak_1715.py``.
+    ``test_write_vrt_crs_1715.py``.
     """
     arr = np.zeros((8, 8), dtype=np.float32)
     da = xr.DataArray(
