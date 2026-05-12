@@ -1017,8 +1017,12 @@ def _try_kvikio_read_tiles(file_path, tile_offsets, tile_byte_counts, tile_bytes
             d_tiles.append(combined[dst_off:dst_off + bc])
         return d_tiles
     except MemoryError:
-        # Surface OOM unchanged. The caller can switch to the CPU-mmap
-        # path which does not pre-allocate the full compressed payload.
+        # Surface OOM unchanged so the caller can decide how to recover.
+        # The bytes-based ``gpu_decode_tiles`` fallback still allocates
+        # ``total_comp`` bytes on the device (``d_comp = cupy.asarray(
+        # comp_buf_host)``), so it does not necessarily avoid this OOM.
+        # It does skip the GDS-specific contiguous read buffer though,
+        # which can help if the failure was kvikio-side rather than VRAM.
         raise
     except Exception as e:
         # GDS not available, version mismatch, or CUDA error.

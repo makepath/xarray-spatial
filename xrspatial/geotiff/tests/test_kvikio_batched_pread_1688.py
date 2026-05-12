@@ -214,9 +214,15 @@ def test_all_preads_submitted_before_any_get(monkeypatch):
     serialised the IO in kvikio's worker pool. The new loop submits N
     preads then waits on them in order; observing all N submissions
     before any ``.get()`` is the structural signature of the fix.
+
+    The previous version of this test asserted on per-event lists
+    (``submission_log == [0,1,2,3]`` and ``get_log == [0,1,2,3]``)
+    which also passed under the legacy submit -> get -> submit -> get
+    loop. To actually catch a regression we record both events into a
+    single ordered timeline and assert every ``submit`` occurs before
+    the first ``get``.
     """
-    submission_log = []
-    get_log = []
+    events = []  # ('submit', tag) and ('get', tag) appended in real order
 
     class _LoggingFuture(_FakeIOFuture):
         def __init__(self, value, tag):
@@ -224,18 +230,16 @@ def test_all_preads_submitted_before_any_get(monkeypatch):
             self._tag = tag
 
         def get(self):
-            get_log.append(self._tag)
+            events.append(('get', self._tag))
             return super().get()
 
     class _LoggingCuFile(_RecordingCuFile):
         def pread(self, buf, file_offset=0, size=None, task_size=None):
             if size is None:
                 size = int(buf.size)
-            tag = len(submission_log)
-            submission_log.append(tag)
+            tag = sum(1 for e in events if e[0] == 'submit')
+            events.append(('submit', tag))
             super().pread(buf, file_offset=file_offset, size=size)
-            # Replace the last ``pread_order`` recording's future with one
-            # that logs into ``get_log``.
             return _LoggingFuture(size, tag)
 
     file_bytes = bytes(4096)
@@ -247,23 +251,25 @@ def test_all_preads_submitted_before_any_get(monkeypatch):
     _try_kvikio_read_tiles(
         "/fake/path.tif", tile_offsets, tile_byte_counts, 256)
 
-    # Each tile got submitted exactly once. Submissions monotonically
-    # precede waits: the first ``.get()`` may not run until every
-    # submission already happened.
-    assert submission_log == [0, 1, 2, 3]
-    assert get_log == [0, 1, 2, 3]
-    # Concretely: the index of the last submit must be < index of the
-    # first get when both are concatenated as a single timeline. The
-    # log lists themselves are append-only so checking ``len(submission_log)
-    # == 4`` before any get fires is the strict ordering check.
-    # Reconstruct timeline by counting: the legacy implementation would
-    # have produced submission_log == [0] before get_log == [0], then
-    # submission_log == [0, 1] before get_log == [0, 1], etc. The fix
-    # produces [0,1,2,3] in submission_log first and [0,1,2,3] in get_log
-    # after. The simplest equivalent check: at the time the test runs,
-    # every submission must have completed strictly before each get
-    # could have observed its peer submission.
-    # (The logs are observed at-end here, so the above equality is enough.)
+    n_tiles = len(tile_byte_counts)
+    submit_indices = [i for i, e in enumerate(events) if e[0] == 'submit']
+    get_indices = [i for i, e in enumerate(events) if e[0] == 'get']
+
+    # Sanity: every tile got submitted and waited on exactly once.
+    assert len(submit_indices) == n_tiles
+    assert len(get_indices) == n_tiles
+    assert [e[1] for e in events if e[0] == 'submit'] == list(range(n_tiles))
+    assert [e[1] for e in events if e[0] == 'get'] == list(range(n_tiles))
+
+    # The structural check that distinguishes batched from interleaved:
+    # every submission index must come before the first get index. The
+    # legacy submit -> get -> submit -> get loop interleaves these, so
+    # the first ``get`` lands at events[1] while the last ``submit``
+    # lands at events[6], failing this assertion.
+    assert max(submit_indices) < min(get_indices), (
+        "preads and gets are interleaved (legacy serial pattern); "
+        f"events timeline: {events}"
+    )
 
 
 @pytest.mark.skipif(not _gpu_available(), reason="cupy + CUDA required")
@@ -389,12 +395,8 @@ def test_all_zero_size_tiles_returns_zero_length_views(monkeypatch):
 
     # Note: this path does not hit kvikio at all (total_bytes == 0 short
     # circuits before the CuFile is opened), so the kvikio module being
-    # absent is fine.
-    import sys
-    fake_mod_obj = monkeypatch.setitem
-    fake_mod_obj  # silence unused
-    # Still install a fake to keep behaviour consistent if total_bytes
-    # path changes.
+    # absent is fine. Still install a fake to keep behaviour consistent
+    # if the total_bytes==0 short-circuit ever moves below the open().
     _install_fake_kvikio(
         monkeypatch, lambda path, mode='r': _RecordingCuFile(b""))
 
