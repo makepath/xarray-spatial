@@ -122,12 +122,13 @@ def test_import_error_falls_back_with_warning(
         tmp_path, cpu_data, clear_strict_env, monkeypatch):
     """``ImportError`` from the GPU writer triggers a CPU fallback.
 
-    The user asked for ``gpu=True`` on a system without cupy / nvCOMP.
-    A ``GeoTIFFFallbackWarning`` makes the substitution visible.
+    The user asked for ``gpu=True`` on a system without cupy. A
+    ``GeoTIFFFallbackWarning`` makes the substitution visible and the
+    text names the explicit request so users know which knob to tune.
     """
     from xrspatial.geotiff import to_geotiff
 
-    _patch_gpu_writer_to_raise(monkeypatch, ImportError("no nvCOMP"))
+    _patch_gpu_writer_to_raise(monkeypatch, ImportError("no cupy"))
 
     path = tmp_path / "fallback.tif"
     with warnings.catch_warnings(record=True) as records:
@@ -141,8 +142,11 @@ def test_import_error_falls_back_with_warning(
     ]
     assert len(fallback_warnings) == 1
     msg = str(fallback_warnings[0].message)
+    # Explicit gpu=True wording: blame the request, not the data.
+    assert 'to_geotiff(gpu=True)' in msg
+    assert 'Data is on the GPU' not in msg
     assert 'ImportError' in msg
-    assert 'no nvCOMP' in msg
+    assert 'no cupy' in msg
 
 
 def test_import_error_strict_mode_reraises(
@@ -195,7 +199,12 @@ def test_runtime_error_with_gpu_signal_falls_back(
         if issubclass(w.category, GeoTIFFFallbackWarning)
     ]
     assert len(fallback_warnings) == 1
-    assert 'RuntimeError' in str(fallback_warnings[0].message)
+    text = str(fallback_warnings[0].message)
+    assert 'RuntimeError' in text
+    # Explicit gpu=True branch shares the same template as ImportError;
+    # the auto-detected wording must never appear here.
+    assert 'to_geotiff(gpu=True)' in text
+    assert 'Data is on the GPU' not in text
 
 
 def test_runtime_error_with_gpu_signal_strict_reraises(
@@ -215,6 +224,21 @@ def test_runtime_error_with_gpu_signal_strict_reraises(
 # Auto-detected gpu (from CuPy data): same fallback semantics.
 # ---------------------------------------------------------------------------
 
+def _make_synthetic_gpu_data():
+    """Return a numpy-backed DataArray that ``_is_gpu_data`` will be
+    patched to treat as GPU-resident."""
+    arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+    return xr.DataArray(
+        arr,
+        dims=('y', 'x'),
+        coords={
+            'y': np.arange(8, dtype=np.float64),
+            'x': np.arange(8, dtype=np.float64),
+        },
+        attrs={'crs': 4326},
+    )
+
+
 def test_auto_detected_gpu_fallback_warns(
         tmp_path, clear_strict_env, monkeypatch):
     """When ``gpu`` is auto-detected from CuPy-backed data, the same
@@ -222,7 +246,9 @@ def test_auto_detected_gpu_fallback_warns(
 
     Users whose data was CuPy-backed deserve a warning every time the
     GPU writer failed so they know their array was copied to host
-    before the CPU writer wrote it.
+    before the CPU writer wrote it. The warning text must blame the
+    auto-detect path, not an ``gpu=True`` argument the caller never
+    passed.
     """
     from xrspatial.geotiff import to_geotiff
 
@@ -234,16 +260,7 @@ def test_auto_detected_gpu_fallback_warns(
 
     _patch_gpu_writer_to_raise(monkeypatch, ImportError("no cupy"))
 
-    arr = np.arange(64, dtype=np.float32).reshape(8, 8)
-    da = xr.DataArray(
-        arr,
-        dims=('y', 'x'),
-        coords={
-            'y': np.arange(8, dtype=np.float64),
-            'x': np.arange(8, dtype=np.float64),
-        },
-        attrs={'crs': 4326},
-    )
+    da = _make_synthetic_gpu_data()
 
     path = tmp_path / "auto.tif"
     with warnings.catch_warnings(record=True) as records:
@@ -257,3 +274,75 @@ def test_auto_detected_gpu_fallback_warns(
         if issubclass(w.category, GeoTIFFFallbackWarning)
     ]
     assert len(fallback_warnings) == 1
+    text = str(fallback_warnings[0].message)
+    # Auto-detected branch wording: blame the data, not gpu=True.
+    assert 'Data is on the GPU' in text
+    assert 'to_geotiff(gpu=True)' not in text
+    assert 'ImportError' in text
+    assert 'no cupy' in text
+
+
+def test_auto_detected_gpu_runtime_error_falls_back_with_warning(
+        tmp_path, clear_strict_env, monkeypatch):
+    """Same shape for the ``RuntimeError`` branch under auto-detect.
+
+    Both fallback branches (ImportError, RuntimeError-with-GPU-signal)
+    must use the same template so call sites do not diverge over time.
+    """
+    from xrspatial.geotiff import to_geotiff
+    from xrspatial import geotiff as g
+
+    monkeypatch.setattr(g, '_is_gpu_data', lambda data: True, raising=True)
+    _patch_gpu_writer_to_raise(
+        monkeypatch, RuntimeError("CUDA not available"))
+
+    da = _make_synthetic_gpu_data()
+
+    path = tmp_path / "auto_rt.tif"
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        to_geotiff(da, str(path))
+
+    assert path.exists()
+    fallback_warnings = [
+        w for w in records
+        if issubclass(w.category, GeoTIFFFallbackWarning)
+    ]
+    assert len(fallback_warnings) == 1
+    text = str(fallback_warnings[0].message)
+    assert 'Data is on the GPU' in text
+    assert 'to_geotiff(gpu=True)' not in text
+    assert 'RuntimeError' in text
+    assert 'CUDA not available' in text
+
+
+def test_explicit_gpu_false_then_true_uses_explicit_template(
+        tmp_path, cpu_data, clear_strict_env, monkeypatch):
+    """``gpu=True`` plus non-CuPy data must use the explicit template
+    even when ``_is_gpu_data`` would return False on its own.
+
+    This pins down that the template is selected from ``gpu is None``,
+    not from the resolved ``use_gpu`` value -- so passing ``gpu=True``
+    on numpy data still attributes the fallback to the explicit flag.
+    """
+    from xrspatial.geotiff import to_geotiff
+    from xrspatial import geotiff as g
+
+    # Even if auto-detect would say "not GPU", the explicit request
+    # should drive the wording.
+    monkeypatch.setattr(g, '_is_gpu_data', lambda data: False, raising=True)
+    _patch_gpu_writer_to_raise(monkeypatch, ImportError("no cupy"))
+
+    path = tmp_path / "explicit.tif"
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always")
+        to_geotiff(cpu_data, str(path), gpu=True)
+
+    fallback_warnings = [
+        w for w in records
+        if issubclass(w.category, GeoTIFFFallbackWarning)
+    ]
+    assert len(fallback_warnings) == 1
+    text = str(fallback_warnings[0].message)
+    assert 'to_geotiff(gpu=True)' in text
+    assert 'Data is on the GPU' not in text
