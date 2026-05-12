@@ -183,10 +183,27 @@ class TestLocalStripByteCap:
 
 
 def test_max_tile_bytes_env_negative_falls_back(monkeypatch):
-    """Negative env value parses to the minimum of 1 (not the default)."""
+    """Negative env value falls back to the default, not a 1-byte cap.
+
+    Earlier drafts clamped to ``max(1, val)`` which made a typo
+    (``XRSPATIAL_COG_MAX_TILE_BYTES=-1``) silently reject every tile.
+    The current policy matches ``_http_timeout_from_env``: any non-
+    positive integer is ignored.
+    """
     monkeypatch.setenv('XRSPATIAL_COG_MAX_TILE_BYTES', '-5')
-    # _max_tile_bytes_from_env clamps to max(1, val); a negative becomes 1.
-    assert _reader_mod._max_tile_bytes_from_env() == 1
+    assert (
+        _reader_mod._max_tile_bytes_from_env()
+        == _reader_mod.MAX_TILE_BYTES_DEFAULT
+    )
+
+
+def test_max_tile_bytes_env_zero_falls_back(monkeypatch):
+    """Zero env value falls back to the default for the same reason."""
+    monkeypatch.setenv('XRSPATIAL_COG_MAX_TILE_BYTES', '0')
+    assert (
+        _reader_mod._max_tile_bytes_from_env()
+        == _reader_mod.MAX_TILE_BYTES_DEFAULT
+    )
 
 
 def test_max_tile_bytes_env_garbage_falls_back(monkeypatch):

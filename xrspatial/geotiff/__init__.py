@@ -32,10 +32,15 @@ write_vrt(vrt_path, source_files, ...)
 from __future__ import annotations
 
 import math
+import os
 import warnings
+from typing import TYPE_CHECKING
 
 import numpy as np
 import xarray as xr
+
+if TYPE_CHECKING:
+    from typing import BinaryIO
 
 from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 from ._reader import UnsafeURLError, read_to_array
@@ -45,6 +50,7 @@ from ._writer import write
 # is intentionally omitted: it is deprecated in favour of ``da.xrs.plot()``
 # and emits a ``DeprecationWarning`` when called.
 __all__ = [
+    'GeoTIFFFallbackWarning',
     'UnsafeURLError',
     'open_geotiff',
     'read_geotiff_gpu',
@@ -76,17 +82,50 @@ _ON_GPU_FAILURE_SENTINEL = object()
 _BAND_DIM_NAMES = ('band', 'bands', 'channel')
 
 
+class GeoTIFFFallbackWarning(UserWarning):
+    """Warning emitted when a geotiff helper falls back to a slower path.
+
+    Raised in the same call sites that would silently return ``None`` under
+    the historic ``except Exception: return None`` pattern. See issue #1662
+    for the audit and the ``XRSPATIAL_GEOTIFF_STRICT=1`` env var that
+    promotes these warnings to exceptions.
+    """
+
+
+def _geotiff_strict_mode() -> bool:
+    """Return True when ``XRSPATIAL_GEOTIFF_STRICT`` is set to a truthy value.
+
+    Strict mode promotes the silent fallbacks audited in issue #1662 into
+    raised exceptions. Useful in CI to catch GPU-path or VRT regressions
+    that would otherwise hide behind a CPU fallback or a missing tile.
+    """
+    return os.environ.get(
+        'XRSPATIAL_GEOTIFF_STRICT', '').lower() in ('1', 'true', 'yes')
+
+
 def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
     """Try to extract an EPSG code from a WKT or PROJ string.
 
     Returns None if pyproj is not installed or the string can't be parsed.
+
+    Under ``XRSPATIAL_GEOTIFF_STRICT=1`` the underlying exception is
+    re-raised instead of being swallowed. In the default mode a
+    ``GeoTIFFFallbackWarning`` is emitted so callers can tell
+    pyproj-missing from pyproj-broken-input.
     """
     try:
         from pyproj import CRS
         crs = CRS.from_user_input(wkt_or_proj)
         epsg = crs.to_epsg()
         return epsg
-    except Exception:
+    except Exception as e:
+        if _geotiff_strict_mode():
+            raise
+        warnings.warn(
+            f"_wkt_to_epsg failed ({type(e).__name__}: {e}); returning None.",
+            GeoTIFFFallbackWarning,
+            stacklevel=2,
+        )
         return None
 
 
@@ -447,14 +486,16 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
                 break
 
 
-def open_geotiff(source, *, dtype=None, window=None,
+def open_geotiff(source, *, dtype=None,
+                 window: tuple | None = None,
                  overview_level: int | None = None,
                  band: int | None = None,
                  name: str | None = None,
                  chunks: int | tuple | None = None,
                  gpu: bool = False,
                  max_pixels: int | None = None,
-                 on_gpu_failure=_ON_GPU_FAILURE_SENTINEL) -> xr.DataArray:
+                 on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
+                 ) -> xr.DataArray:
     """Read a GeoTIFF, COG, or VRT file into an xarray.DataArray.
 
     Automatically dispatches to the best backend:
@@ -906,7 +947,8 @@ def _extract_rich_tags(attrs: dict) -> dict:
     }
 
 
-def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
+def to_geotiff(data: xr.DataArray | np.ndarray,
+               path: str | BinaryIO, *,
                crs: int | str | None = None,
                nodata=None,
                compression: str = 'zstd',
@@ -1969,7 +2011,7 @@ def _gpu_decode_single_band_tiles(
             byte_order=byte_order,
         )
     except Exception as e:
-        if gpu == 'strict':
+        if gpu == 'strict' or _geotiff_strict_mode():
             raise
         warnings.warn(
             f"read_geotiff_gpu: GPU decode failed "
@@ -1993,7 +2035,7 @@ def _gpu_decode_single_band_tiles(
                 byte_order=byte_order,
             )
         except Exception as e:
-            if gpu == 'strict':
+            if gpu == 'strict' or _geotiff_strict_mode():
                 raise
             warnings.warn(
                 f"read_geotiff_gpu: GPU decode failed "
@@ -2179,8 +2221,9 @@ def read_geotiff_gpu(source: str, *,
                      name: str | None = None,
                      chunks: int | tuple | None = None,
                      max_pixels: int | None = None,
-                     on_gpu_failure=_ON_GPU_FAILURE_SENTINEL,
-                     gpu=_GPU_DEPRECATED_SENTINEL) -> xr.DataArray:
+                     on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
+                     gpu: str = _GPU_DEPRECATED_SENTINEL,
+                     ) -> xr.DataArray:
     """Read a GeoTIFF with GPU-accelerated decompression via Numba CUDA.
 
     Decompresses all tiles in parallel on the GPU and returns a
@@ -2589,7 +2632,7 @@ def read_geotiff_gpu(source: str, *,
                 masked_fill=masked_fill,
             )
         except Exception as e:
-            if gpu == 'strict':
+            if gpu == 'strict' or _geotiff_strict_mode():
                 raise
             warnings.warn(
                 f"read_geotiff_gpu: GPU decode failed "
@@ -2621,7 +2664,7 @@ def read_geotiff_gpu(source: str, *,
                 masked_fill=masked_fill,
             )
         except Exception as e:
-            if gpu == 'strict':
+            if gpu == 'strict' or _geotiff_strict_mode():
                 raise
             warnings.warn(
                 f"read_geotiff_gpu: GPU decode failed "
@@ -2715,7 +2758,7 @@ def read_geotiff_gpu(source: str, *,
 
 
 def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
-                      path, *,
+                      path: str | BinaryIO, *,
                       crs: int | str | None = None,
                       nodata=None,
                       compression: str = 'zstd',
@@ -3070,7 +3113,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     _write_bytes(file_bytes, path)
 
 
-def read_vrt(source: str, *, dtype=None, window=None,
+def read_vrt(source: str, *, dtype=None,
+             window: tuple | None = None,
              band: int | None = None,
              name: str | None = None,
              chunks: int | tuple | None = None,

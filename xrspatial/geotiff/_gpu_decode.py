@@ -7,9 +7,34 @@ thread (LZW is sequential per-stream), but all tiles run in parallel.
 from __future__ import annotations
 
 import math
+import warnings
 
 import numpy as np
 from numba import cuda
+
+
+def _warn_or_raise_gpu_fallback(stage: str, exc: BaseException) -> bool:
+    """Report a GPU helper falling back to None (issue #1662).
+
+    Returns ``True`` when ``XRSPATIAL_GEOTIFF_STRICT=1`` is set; callers
+    should then re-raise the live exception with a bare ``raise`` so the
+    original traceback is preserved (re-raising ``exc`` here would reset
+    ``__traceback__`` to this helper's frame). Returns ``False`` in the
+    default mode after emitting a ``GeoTIFFFallbackWarning`` with the
+    exception type and message; the caller still returns ``None`` and
+    chooses its own next step (typically another decoder or CPU
+    fallback).
+    """
+    from . import _geotiff_strict_mode, GeoTIFFFallbackWarning
+    if _geotiff_strict_mode():
+        return True
+    warnings.warn(
+        f"{stage} fell back to None "
+        f"({type(exc).__name__}: {exc}).",
+        GeoTIFFFallbackWarning,
+        stacklevel=3,
+    )
+    return False
 
 #: Fraction of free GPU memory we're willing to allocate in a single call.
 #: Above this, raise MemoryError up-front so the caller gets an actionable
@@ -941,14 +966,18 @@ def _try_kvikio_read_tiles(file_path, tile_offsets, tile_byte_counts, tile_bytes
                 d_tiles.append(buf)
         cupy.cuda.Device().synchronize()
         return d_tiles
-    except Exception:
-        # GDS not available, version mismatch, or CUDA error
-        # Reset CUDA error state if possible
+    except Exception as e:
+        # GDS not available, version mismatch, or CUDA error.
+        # Reset CUDA error state if possible (the inner pass stays broad
+        # because a failed synchronize() during error recovery has no
+        # better recovery path; see issue #1662).
         try:
             import cupy
             cupy.cuda.Device().synchronize()
         except Exception:
             pass
+        if _warn_or_raise_gpu_fallback("_try_kvikio_read_tiles", e):
+            raise
         return None
 
 
@@ -1051,7 +1080,10 @@ def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
             ]
             d_decompressed = manager.decompress(d_compressed)
             return cupy.concatenate([d.ravel() for d in d_decompressed])
-        except Exception:
+        except Exception as e:
+            stage = "_try_nvcomp_batch_decompress (kvikio DeflateManager)"
+            if _warn_or_raise_gpu_fallback(stage, e):
+                raise
             return None
 
     # Direct ctypes nvCOMP C API
@@ -1170,7 +1202,10 @@ def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
 
         return d_decomp
 
-    except Exception:
+    except Exception as e:
+        stage = "_try_nvcomp_batch_decompress (ctypes nvCOMP C API)"
+        if _warn_or_raise_gpu_fallback(stage, e):
+            raise
         return None
 
 
@@ -1347,7 +1382,9 @@ def _try_nvjpeg_batch_decode(compressed_tiles, tile_width, tile_height,
             if destroy_fn is not None:
                 destroy_fn(nvjpeg_handle)
 
-    except Exception:
+    except Exception as e:
+        if _warn_or_raise_gpu_fallback("_try_nvjpeg_batch_decode", e):
+            raise
         return None
 
 
@@ -1491,7 +1528,9 @@ def _nvjpeg_batch_encode(d_tile_bufs, tile_width, tile_height, samples,
             if destroy_fn is not None:
                 destroy_fn(nvjpeg_handle)
 
-    except Exception:
+    except Exception as e:
+        if _warn_or_raise_gpu_fallback("_nvjpeg_batch_encode", e):
+            raise
         return None
 
 
@@ -1561,7 +1600,19 @@ def gpu_decode_tiles_from_file(
 
 
 def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
-    """Run nvCOMP batch decompress on tiles already in GPU memory."""
+    """Run nvCOMP batch decompress on tiles already in GPU memory.
+
+    The decompressed output uses a single contiguous device buffer with
+    per-tile pointers derived as ``base_ptr + i * tile_bytes``. The previous
+    implementation allocated N separate ``cupy.empty(tile_bytes)`` buffers
+    and ran ``cupy.concatenate`` after the decompress kernel; that pattern
+    kept two copies of the decompressed data alive at once (the per-tile
+    buffers and the concatenated result) and ran a serial concat that the
+    rest of the GPU paths avoid. The other nvCOMP code paths in this module
+    (LZW at ~L1847, deflate at ~L1878, host-buffer at ~L1114) already use
+    the single-buffer pattern; this brings the GDS path in line with them.
+    See issue #1659.
+    """
     import ctypes
     import cupy
 
@@ -1569,25 +1620,38 @@ def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
     if lib is None:
         return None
 
+    # Resolve the codec entry-point names before touching VRAM. An
+    # unsupported codec must return None without burning an allocation or
+    # running the memory guard.
+    fn_name = {50000: 'nvcompBatchedZstdDecompressGetTempSizeAsync'}.get(compression)
+    dec_name = {50000: 'nvcompBatchedZstdDecompressAsync'}.get(compression)
+    if fn_name is None:
+        return None
+
     class _NvcompDecompOpts(ctypes.Structure):
         _fields_ = [('backend', ctypes.c_int), ('reserved', ctypes.c_char * 60)]
 
     try:
         n = len(d_tiles)
-        d_decomp_bufs = [cupy.empty(tile_bytes, dtype=cupy.uint8) for _ in range(n)]
+        # Single contiguous output buffer. nvCOMP's batched decompress takes
+        # an array of per-tile device pointers; derive those from the base
+        # pointer + per-tile byte offsets so we never allocate N small
+        # buffers (one cupy.empty per tile is ~tens of microseconds each)
+        # and never run a trailing cupy.concatenate.
+        _check_gpu_memory(n * tile_bytes,
+                          what="GDS+nvCOMP decompressed buffer")
+        d_decomp = cupy.empty(n * tile_bytes, dtype=cupy.uint8)
+        base_decomp_ptr = int(d_decomp.data.ptr)
+        decomp_offsets = (np.arange(n, dtype=np.uint64)
+                          * np.uint64(tile_bytes))
+        d_decomp_ptrs = cupy.asarray(base_decomp_ptr + decomp_offsets)
 
         d_comp_ptrs = cupy.array([t.data.ptr for t in d_tiles], dtype=cupy.uint64)
-        d_decomp_ptrs = cupy.array([b.data.ptr for b in d_decomp_bufs], dtype=cupy.uint64)
         d_comp_sizes = cupy.array([t.size for t in d_tiles], dtype=cupy.uint64)
         d_buf_sizes = cupy.full(n, tile_bytes, dtype=cupy.uint64)
         d_actual = cupy.empty(n, dtype=cupy.uint64)
 
         opts = _NvcompDecompOpts(backend=0, reserved=b'\x00' * 60)
-
-        fn_name = {50000: 'nvcompBatchedZstdDecompressGetTempSizeAsync'}.get(compression)
-        dec_name = {50000: 'nvcompBatchedZstdDecompressAsync'}.get(compression)
-        if fn_name is None:
-            return None
 
         temp_fn = getattr(lib, fn_name)
         temp_fn.restype = ctypes.c_int
@@ -1621,8 +1685,12 @@ def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
         if int(cupy.any(d_statuses != 0)):
             return None
 
-        return cupy.concatenate(d_decomp_bufs)
-    except Exception:
+        return d_decomp
+    except MemoryError:
+        raise
+    except Exception as e:
+        if _warn_or_raise_gpu_fallback("_try_nvcomp_from_device_bufs", e):
+            raise
         return None
 
 
@@ -2408,7 +2476,9 @@ def _nvcomp_batch_compress(d_tile_bufs, tile_byte_counts, tile_bytes,
 
         return result
 
-    except Exception:
+    except Exception as e:
+        if _warn_or_raise_gpu_fallback("_nvcomp_batch_compress", e):
+            raise
         return None
 
 
@@ -2597,7 +2667,9 @@ def _try_nvjpeg2k_batch_decode(compressed_tiles, tile_width, tile_height,
 
         return d_all_tiles
 
-    except Exception:
+    except Exception as e:
+        if _warn_or_raise_gpu_fallback("_try_nvjpeg2k_batch_decode", e):
+            raise
         return None
 
 
@@ -2742,7 +2814,9 @@ def _nvjpeg2k_batch_encode(d_tile_bufs, tile_width, tile_height,
 
         return result
 
-    except Exception:
+    except Exception as e:
+        if _warn_or_raise_gpu_fallback("_nvjpeg2k_batch_encode", e):
+            raise
         return None
 
 

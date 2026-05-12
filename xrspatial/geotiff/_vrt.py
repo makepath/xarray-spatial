@@ -356,7 +356,22 @@ def read_vrt(vrt_path: str, *, window=None,
                     window=(src_r0, src_c0, src_r1, src_c1),
                     band=src.band - 1,  # convert 1-based to 0-based
                 )
-            except Exception:
+            except Exception as e:
+                # Under XRSPATIAL_GEOTIFF_STRICT=1, surface the read failure
+                # so partial mosaics are caught in CI. Default mode warns
+                # once per missing source then continues, preserving the
+                # historical behaviour. See issue #1662.
+                import warnings
+                from . import _geotiff_strict_mode, GeoTIFFFallbackWarning
+                if _geotiff_strict_mode():
+                    raise
+                warnings.warn(
+                    f"VRT source {src.filename!r} could not be read "
+                    f"({type(e).__name__}: {e}); skipping. The output "
+                    f"mosaic will have a hole at this tile.",
+                    GeoTIFFFallbackWarning,
+                    stacklevel=2,
+                )
                 continue  # skip missing/unreadable sources
 
             # Handle source nodata.  Cast the sentinel to the *source*
@@ -364,10 +379,12 @@ def read_vrt(vrt_path: str, *, window=None,
             # source with a fractional nodata (e.g. -9999.25) would
             # previously miss the mask because ``np.float32(-9999.25)``
             # rounds to the nearest float32 and then compares unequal
-            # to the float64 pixel value.  ``src.nodata or nodata`` is
-            # kept for backward compatibility but intentionally treats
-            # ``0.0`` as unset (a long-standing quirk of this reader).
-            src_nodata = src.nodata or nodata
+            # to the float64 pixel value.  Use an explicit ``is not None``
+            # check so a legitimate ``<NODATA>0</NODATA>`` survives the
+            # fallback: the earlier ``src.nodata or nodata`` shortcut treated
+            # ``0.0`` as falsy and silently replaced it with the band-level
+            # sentinel (issue #1655).
+            src_nodata = src.nodata if src.nodata is not None else nodata
             if src_nodata is not None and src_arr.dtype.kind == 'f':
                 src_arr = src_arr.copy()
                 sentinel = src_arr.dtype.type(src_nodata)

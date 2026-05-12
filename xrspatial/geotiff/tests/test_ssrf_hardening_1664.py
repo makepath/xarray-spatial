@@ -80,13 +80,21 @@ class TestSchemeAllowList:
         with pytest.raises(UnsafeURLError):
             _reader_mod._validate_http_url(None)  # type: ignore[arg-type]
 
-    def test_env_var_widens_allow_list(self, monkeypatch):
+    def test_env_var_does_not_widen_allow_list(self, monkeypatch):
+        """The scheme allow-list is fixed at http/https.
+
+        Earlier drafts of #1664 exposed ``XRSPATIAL_GEOTIFF_ALLOWED_SCHEMES``
+        as an escape hatch, but ``_HTTPSource`` is a urllib3 / urllib
+        Range-GET implementation that only speaks http(s); widening the
+        validator without widening the source just moves the failure to
+        connect time. fsspec handles every other ``scheme://``.
+        """
         monkeypatch.setenv(
             'XRSPATIAL_GEOTIFF_ALLOWED_SCHEMES', 'ftp,gopher')
         monkeypatch.setattr(
             socket, 'getaddrinfo', _fake_getaddrinfo('93.184.216.34'))
-        # Now ftp:// should be accepted (host still validated).
-        _reader_mod._validate_http_url('ftp://example.com/x.tif')
+        with pytest.raises(UnsafeURLError):
+            _reader_mod._validate_http_url('ftp://example.com/x.tif')
 
 
 # ---------------------------------------------------------------------------
@@ -213,8 +221,165 @@ class TestHTTPTimeouts:
 
 
 def test_redirect_cap_is_set():
-    """The module-level constant is what the urllib3 pool gets."""
+    """The module-level constant is what both transports honour."""
     assert _reader_mod._HTTP_MAX_REDIRECTS == 5
+
+
+# ---------------------------------------------------------------------------
+# Redirect re-validation -- the initial-URL allow-list is not enough on its
+# own because a public URL can 3xx-redirect to a private/loopback IP. Each
+# hop has to be re-validated. Issue #1664 review.
+# ---------------------------------------------------------------------------
+
+
+class _MockPoolResponse:
+    """Stand-in for ``urllib3.HTTPResponse`` -- only the bits we touch."""
+
+    def __init__(self, status: int, location: str | None = None,
+                 data: bytes = b''):
+        self.status = status
+        self.headers = {'Location': location} if location else {}
+        self.data = data
+
+
+class _MockPool:
+    """Records requests, returns scripted responses in order.
+
+    Each scripted response is a ``_MockPoolResponse``. After the script is
+    exhausted, returns a 200 with empty body so loops terminate.
+    """
+
+    def __init__(self, script: list[_MockPoolResponse]):
+        self.script = list(script)
+        self.calls: list[str] = []
+
+    def request(self, method, url, **kwargs):
+        self.calls.append(url)
+        # Caller must explicitly opt out of urllib3's built-in redirect
+        # follower; if it doesn't, our hop-by-hop validation is dead code.
+        assert kwargs.get('redirect') is False, (
+            f"_HTTPSource must request with redirect=False so each hop "
+            f"is validated by Python; got {kwargs.get('redirect')!r}"
+        )
+        if self.script:
+            return self.script.pop(0)
+        return _MockPoolResponse(200, data=b'OK')
+
+
+class TestRedirectRevalidation:
+    def test_urllib3_redirect_to_private_rejected(self, monkeypatch):
+        """Public host that 302-redirects to loopback must be rejected."""
+        # Initial validator pass: example.com resolves to a public IP.
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo('93.184.216.34'))
+        src = _reader_mod._HTTPSource('https://example.com/cog.tif')
+
+        # Now the redirect target resolves to loopback. The validator on
+        # the *Location* hop must catch this even though the initial URL
+        # was clean.
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo('127.0.0.1'))
+        src._pool = _MockPool([
+            _MockPoolResponse(302, location='http://attacker.test/inner.tif'),
+        ])
+
+        with pytest.raises(UnsafeURLError) as excinfo:
+            src.read_range(0, 100)
+        assert 'attacker.test' in str(excinfo.value) or \
+            '127.0.0.1' in str(excinfo.value)
+
+    def test_urllib3_redirect_to_public_followed(self, monkeypatch):
+        """Public -> public redirect is followed; validator passes each hop."""
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo('93.184.216.34'))
+        src = _reader_mod._HTTPSource('https://example.com/cog.tif')
+        src._pool = _MockPool([
+            _MockPoolResponse(302, location='https://cdn.example.com/x.tif'),
+            _MockPoolResponse(200, data=b'tiff-bytes'),
+        ])
+        data = src.read_range(0, 100)
+        assert data == b'tiff-bytes'
+        # Two GETs were issued: original + redirected target.
+        assert len(src._pool.calls) == 2
+        assert src._pool.calls[1] == 'https://cdn.example.com/x.tif'
+
+    def test_urllib3_redirect_chain_capped(self, monkeypatch):
+        """More than _HTTP_MAX_REDIRECTS hops raises rather than looping."""
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo('93.184.216.34'))
+        src = _reader_mod._HTTPSource('https://example.com/cog.tif')
+        # Script: every response is a redirect (one more than the cap).
+        n_redirects = _reader_mod._HTTP_MAX_REDIRECTS + 1
+        src._pool = _MockPool([
+            _MockPoolResponse(
+                302, location=f'https://example.com/hop{i}.tif')
+            for i in range(n_redirects)
+        ])
+        with pytest.raises(_reader_mod.UnsafeURLError) as excinfo:
+            src.read_range(0, 100)
+        msg = str(excinfo.value).lower()
+        assert 'redirect' in msg
+
+    def test_urllib3_relative_location_resolved(self, monkeypatch):
+        """Relative Location like ``/other.tif`` resolves against the source."""
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo('93.184.216.34'))
+        src = _reader_mod._HTTPSource('https://example.com/dir/cog.tif')
+        src._pool = _MockPool([
+            _MockPoolResponse(302, location='/other.tif'),
+            _MockPoolResponse(200, data=b'after-relative'),
+        ])
+        data = src.read_range(0, 100)
+        assert data == b'after-relative'
+        assert src._pool.calls[1] == 'https://example.com/other.tif'
+
+    def test_stdlib_redirect_handler_rejects_private(self):
+        """The stdlib redirect handler re-validates each ``Location``.
+
+        Direct test of :class:`_ValidatingRedirectHandler` -- we don't go
+        through a real HTTP request, we just confirm that
+        ``redirect_request`` runs the URL through ``_validate_http_url``
+        before allowing the follow-up. Loopback IP literal (``127.0.0.1``)
+        is rejected without needing DNS, so the test stays hermetic.
+        """
+        import http.client
+        import io
+        from urllib.request import Request
+
+        handler = _reader_mod._ValidatingRedirectHandler()
+        original = Request('https://example.com/cog.tif')
+        new_url = 'http://127.0.0.1:8000/inner.tif'
+        # ``http_error_30x`` is what urllib calls on a redirect; it
+        # delegates to ``redirect_request`` for policy. The new URL has
+        # to be re-validated *before* the next request is built.
+        headers = http.client.HTTPMessage()
+        with pytest.raises(UnsafeURLError):
+            handler.redirect_request(
+                original, io.BytesIO(b''), 302, 'Found', headers, new_url)
+
+    def test_stdlib_redirect_handler_allows_public(self, monkeypatch):
+        """Public redirect target passes through unchanged."""
+        import http.client
+        import io
+        from urllib.request import Request
+
+        monkeypatch.setattr(
+            socket, 'getaddrinfo', _fake_getaddrinfo('93.184.216.34'))
+
+        handler = _reader_mod._ValidatingRedirectHandler()
+        original = Request('https://example.com/cog.tif')
+        new_url = 'https://cdn.example.com/x.tif'
+        headers = http.client.HTTPMessage()
+        # Should not raise; returns a Request for the new URL (parent
+        # class behaviour) so urllib can follow it.
+        result = handler.redirect_request(
+            original, io.BytesIO(b''), 302, 'Found', headers, new_url)
+        assert result is None or result.full_url == new_url
+
+    def test_stdlib_redirect_handler_caps_chain(self):
+        """The handler's max_redirections matches _HTTP_MAX_REDIRECTS."""
+        handler = _reader_mod._ValidatingRedirectHandler()
+        assert handler.max_redirections == _reader_mod._HTTP_MAX_REDIRECTS
 
 
 # ---------------------------------------------------------------------------
@@ -269,14 +434,17 @@ class TestHTTPSourceConstructor:
 
 
 def test_read_to_array_rejects_file_url():
-    """The top-level dispatcher refuses file:// URLs via _HTTPSource."""
-    # ``file://`` does not match the http(s) prefix in _open_source, so
-    # it does NOT hit _HTTPSource at all -- it gets routed via the path
-    # branch which interprets the URL literally and fails to find the
-    # file. The relevant guarantee is just: arbitrary local file access
-    # via ``file://`` URL does not succeed quietly.
+    """The top-level dispatcher refuses ``file://`` URLs.
+
+    ``_open_source()`` routes any non-http(s) ``scheme://`` string to the
+    fsspec ``_CloudSource`` branch, so ``file://`` never reaches
+    ``_HTTPSource`` and the SSRF allow-list never sees it. The relevant
+    guarantee here is just: arbitrary local file access via a
+    ``file://`` URL does not silently succeed. fsspec raises (or
+    ``ImportError`` if fsspec isn't installed).
+    """
     from xrspatial.geotiff._reader import read_to_array
-    with pytest.raises((ValueError, FileNotFoundError, OSError)):
+    with pytest.raises((ValueError, FileNotFoundError, OSError, ImportError)):
         read_to_array('file:///etc/passwd')
 
 
