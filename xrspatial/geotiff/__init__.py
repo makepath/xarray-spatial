@@ -2723,18 +2723,38 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     nodata : float, int, or None
         NoData value.
     compression : str
-        Codec name. Accepts the same set as ``to_geotiff``: ``'none'``,
-        ``'deflate'``, ``'lzw'``, ``'jpeg'``, ``'packbits'``, ``'zstd'``,
-        ``'lz4'``, ``'jpeg2000'`` (alias ``'j2k'``), or ``'lerc'``.
+        Codec name. Accepts the same set ``to_geotiff`` lists in its
+        own signature: ``'none'``, ``'deflate'``, ``'lzw'``, ``'jpeg'``,
+        ``'packbits'``, ``'zstd'``, ``'lz4'``, ``'jpeg2000'`` (alias
+        ``'j2k'``), or ``'lerc'``.
 
         ``'zstd'`` (default) and ``'deflate'`` compress on the GPU via
         nvCOMP batch compression -- the fastest paths and the reason to
-        use this entry point. ``'jpeg'`` uses nvJPEG when available and
-        falls back to Pillow otherwise. ``'jpeg2000'`` / ``'j2k'`` and
-        ``'lerc'`` route to the CPU encoders so the output matches the
-        CPU writer byte-for-byte, but lose the GPU compression speedup.
-        ``'lzw'``, ``'packbits'``, and ``'lz4'`` likewise fall through
-        to the CPU encoder for parity with ``to_geotiff``.
+        use this entry point.
+
+        ``'jpeg'`` uses nvJPEG when libnvjpeg is loadable and falls
+        back to Pillow otherwise. Unlike ``to_geotiff`` (which rejects
+        ``compression='jpeg'`` at runtime because its CPU encoder omits
+        the required TIFF JPEGTables tag (347)), this GPU entry point
+        emits self-contained JFIF tiles. The two writers therefore
+        disagree about JPEG-in-TIFF interop: files produced here decode
+        fine through this library's own reader but may not round-trip
+        through GDAL/rasterio/libtiff readers that require the
+        JPEGTables tag. Treat ``write_geotiff_gpu(..., compression=
+        'jpeg')`` as "experimental, internal-reader only" until the
+        JPEGTables fix lands.
+
+        ``'jpeg2000'`` / ``'j2k'`` attempt an nvJPEG2K GPU encode first
+        and fall back to the CPU encoder (``glymur``) when libnvjpeg2k
+        is unavailable. The GPU and CPU paths are NOT byte-for-byte
+        identical (different libraries, different default parameters);
+        if you need exact CPU-writer parity, use ``to_geotiff`` instead.
+
+        ``'lerc'``, ``'lzw'``, ``'packbits'``, and ``'lz4'`` have no
+        nvCOMP/CUDA accelerator and fall through to the CPU encoder for
+        parity with ``to_geotiff`` (LERC is byte-stable across CPU/CPU
+        because there is only one encoder; the others are likewise
+        identical bytes).
     compression_level : int or None
         Compression effort level. Accepted for API compatibility but
         currently ignored -- nvCOMP does not expose level control.

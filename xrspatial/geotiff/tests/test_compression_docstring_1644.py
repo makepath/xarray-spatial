@@ -5,12 +5,30 @@ The api-consistency sweep on 2026-05-11 flagged that
 ``write_geotiff_gpu.__doc__`` listed only four codecs (``'zstd'``,
 ``'deflate'``, ``'jpeg'``, ``'none'``) under the ``compression``
 parameter, while the implementation actually accepts every codec
-``to_geotiff`` does. Codecs unsupported by nvCOMP fall through to the
-CPU encoders (``lzw``, ``packbits``, ``lz4``, ``lerc``, ``jpeg2000`` /
-``j2k``) so the output matches the CPU writer byte-for-byte. This
-module pins the full codec list against future drift and confirms the
-underlying entry point accepts the codec names that the docstring now
-advertises.
+``to_geotiff`` does.
+
+Routing for the additional codecs:
+
+* ``'lzw'``, ``'packbits'``, ``'lz4'``, ``'lerc'`` -- not nvCOMP-
+  accelerated and have no GPU library, so they fall through to the
+  CPU encoder. Byte-for-byte identical to ``to_geotiff``.
+* ``'jpeg2000'`` / ``'j2k'`` -- attempts an nvJPEG2K *GPU* encode
+  first via ``_nvjpeg2k_batch_encode`` and falls back to the CPU
+  ``glymur`` encoder only when libnvjpeg2k is unavailable. The two
+  paths are NOT byte-stable against each other; this module pins the
+  acceptance contract (the codec name is accepted and a file gets
+  written), not output-byte parity with the CPU writer.
+* ``'jpeg'`` -- accepted here even though ``to_geotiff`` rejects it
+  (the CPU writer omits the JPEGTables tag, so its output doesn't
+  round-trip through GDAL). The GPU path emits self-contained JFIF
+  tiles. Covered separately by
+  ``test_gpu_writer_compression_modes_2026_05_11.py``; this module
+  excludes it from the parametrized fallback list because the test
+  data needs to be uint8 with sensible pixel content.
+
+This module pins the full codec list against future drift and confirms
+the underlying entry point accepts the codec names that the docstring
+now advertises.
 """
 from __future__ import annotations
 
@@ -42,11 +60,13 @@ _gpu_only = pytest.mark.skipif(
 )
 
 
-# The full set ``to_geotiff`` accepts, mirrored to ``write_geotiff_gpu``
-# so both entry points stay in lockstep. Excludes ``jpeg`` because PR
-# #1633 already pins that name and the ``to_geotiff`` runtime rejects
-# it -- but it is still listed in the docstring as an accepted codec
-# name, matching ``to_geotiff``'s wording.
+# Codecs to exercise end-to-end through the GPU writer to confirm they
+# accept the docstring's advertised names. Excludes ``jpeg`` because
+# (a) ``to_geotiff`` rejects it at runtime and (b) the JPEG round-trip
+# is covered with appropriate uint8 RGB data in
+# ``test_gpu_writer_compression_modes_2026_05_11.py``; keeping it out of
+# this parametrize avoids exercising the JPEG path on dtype/shape
+# combinations that aren't representative.
 _GPU_FALLBACK_CODECS = (
     "lzw", "packbits", "lz4", "lerc", "jpeg2000", "j2k",
 )
@@ -83,11 +103,12 @@ def test_write_geotiff_gpu_accepts_cpu_fallback_codecs(tmp_path, codec):
 
     Confirms the docstring's promise that the GPU writer accepts the
     same codec set as ``to_geotiff``. ``jpeg`` is exercised separately
-    by ``test_features.py`` because the test data must be 8-bit
-    integer. ``jpeg2000`` / ``j2k`` go through ``glymur`` which only
-    accepts uint8/uint16 -- pick a uint16 source for those codecs so
-    the encode path is the one users actually hit, not a dtype-rejected
-    pre-check inside glymur.
+    by ``test_gpu_writer_compression_modes_2026_05_11.py`` because the
+    test data must be uint8 with sensible content. ``jpeg2000`` /
+    ``j2k`` will attempt nvJPEG2K if available and fall back to
+    ``glymur`` otherwise; either way the encoder needs uint8/uint16
+    input, so pick a uint16 source for those codecs so the encode path
+    is the one users actually hit, not a dtype-rejected pre-check.
     """
     import cupy
 
