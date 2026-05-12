@@ -32,6 +32,7 @@ write_vrt(vrt_path, source_files, ...)
 from __future__ import annotations
 
 import math
+import os
 import warnings
 from typing import TYPE_CHECKING
 
@@ -79,17 +80,50 @@ _ON_GPU_FAILURE_SENTINEL = object()
 _BAND_DIM_NAMES = ('band', 'bands', 'channel')
 
 
+class GeoTIFFFallbackWarning(UserWarning):
+    """Warning emitted when a geotiff helper falls back to a slower path.
+
+    Raised in the same call sites that would silently return ``None`` under
+    the historic ``except Exception: return None`` pattern. See issue #1662
+    for the audit and the ``XRSPATIAL_GEOTIFF_STRICT=1`` env var that
+    promotes these warnings to exceptions.
+    """
+
+
+def _geotiff_strict_mode() -> bool:
+    """Return True when ``XRSPATIAL_GEOTIFF_STRICT`` is set to a truthy value.
+
+    Strict mode promotes the silent fallbacks audited in issue #1662 into
+    raised exceptions. Useful in CI to catch GPU-path or VRT regressions
+    that would otherwise hide behind a CPU fallback or a missing tile.
+    """
+    return os.environ.get(
+        'XRSPATIAL_GEOTIFF_STRICT', '').lower() in ('1', 'true', 'yes')
+
+
 def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
     """Try to extract an EPSG code from a WKT or PROJ string.
 
     Returns None if pyproj is not installed or the string can't be parsed.
+
+    Under ``XRSPATIAL_GEOTIFF_STRICT=1`` the underlying exception is
+    re-raised instead of being swallowed. In the default mode a
+    ``GeoTIFFFallbackWarning`` is emitted so callers can tell
+    pyproj-missing from pyproj-broken-input.
     """
     try:
         from pyproj import CRS
         crs = CRS.from_user_input(wkt_or_proj)
         epsg = crs.to_epsg()
         return epsg
-    except Exception:
+    except Exception as e:
+        if _geotiff_strict_mode():
+            raise
+        warnings.warn(
+            f"_wkt_to_epsg failed ({type(e).__name__}: {e}); returning None.",
+            GeoTIFFFallbackWarning,
+            stacklevel=2,
+        )
         return None
 
 
@@ -1975,7 +2009,7 @@ def _gpu_decode_single_band_tiles(
             byte_order=byte_order,
         )
     except Exception as e:
-        if gpu == 'strict':
+        if gpu == 'strict' or _geotiff_strict_mode():
             raise
         warnings.warn(
             f"read_geotiff_gpu: GPU decode failed "
@@ -1999,7 +2033,7 @@ def _gpu_decode_single_band_tiles(
                 byte_order=byte_order,
             )
         except Exception as e:
-            if gpu == 'strict':
+            if gpu == 'strict' or _geotiff_strict_mode():
                 raise
             warnings.warn(
                 f"read_geotiff_gpu: GPU decode failed "
@@ -2596,7 +2630,7 @@ def read_geotiff_gpu(source: str, *,
                 masked_fill=masked_fill,
             )
         except Exception as e:
-            if gpu == 'strict':
+            if gpu == 'strict' or _geotiff_strict_mode():
                 raise
             warnings.warn(
                 f"read_geotiff_gpu: GPU decode failed "
@@ -2628,7 +2662,7 @@ def read_geotiff_gpu(source: str, *,
                 masked_fill=masked_fill,
             )
         except Exception as e:
-            if gpu == 'strict':
+            if gpu == 'strict' or _geotiff_strict_mode():
                 raise
             warnings.warn(
                 f"read_geotiff_gpu: GPU decode failed "
