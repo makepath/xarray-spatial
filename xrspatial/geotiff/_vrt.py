@@ -364,10 +364,12 @@ def read_vrt(vrt_path: str, *, window=None,
             # source with a fractional nodata (e.g. -9999.25) would
             # previously miss the mask because ``np.float32(-9999.25)``
             # rounds to the nearest float32 and then compares unequal
-            # to the float64 pixel value.  ``src.nodata or nodata`` is
-            # kept for backward compatibility but intentionally treats
-            # ``0.0`` as unset (a long-standing quirk of this reader).
-            src_nodata = src.nodata or nodata
+            # to the float64 pixel value.  Use an explicit ``is not None``
+            # check so a legitimate ``<NODATA>0</NODATA>`` survives the
+            # fallback: the earlier ``src.nodata or nodata`` shortcut treated
+            # ``0.0`` as falsy and silently replaced it with the band-level
+            # sentinel (issue #1655).
+            src_nodata = src.nodata if src.nodata is not None else nodata
             if src_nodata is not None and src_arr.dtype.kind == 'f':
                 src_arr = src_arr.copy()
                 sentinel = src_arr.dtype.type(src_nodata)
