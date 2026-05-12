@@ -758,9 +758,42 @@ def extract_geo_info_with_overview_inheritance(
     scale_y = base_h / ov_h
 
     base_t = base_info.transform
+
+    # Decide which raster_type the inherited info should carry, since the
+    # origin shift below depends on it. The overview IFD usually does not
+    # re-declare GeoKey 1025; when its own value is the default
+    # ``PixelIsArea`` (1), prefer the parent's setting (typically
+    # ``PixelIsPoint`` is only declared once at level 0). When the overview
+    # explicitly declared a different value, keep it.
+    if info.raster_type == RASTER_PIXEL_IS_AREA:
+        effective_raster_type = base_info.raster_type
+    else:
+        effective_raster_type = info.raster_type
+
+    # ``origin_x`` / ``origin_y`` semantics depend on raster_type
+    # (GeoKey 1025):
+    #
+    # * ``PixelIsArea`` (the default): origin is the upper-left corner
+    #   of pixel (0, 0). An overview pixel covering the first
+    #   ``scale_x`` columns of level 0 has its upper-left corner in
+    #   exactly the same place as level 0's, so we keep the origin
+    #   unchanged.
+    # * ``PixelIsPoint`` (common for DEMs, GeoKey 1025 = 2): origin is
+    #   the *center* of pixel (0, 0). The overview pixel-0 center sits
+    #   at the centroid of the ``scale_x`` x ``scale_y`` level-0 pixels
+    #   it covers, which is
+    #   ``origin + (scale - 1) * 0.5 * pixel_size_lvl0`` along each
+    #   axis (issue #1642).
+    if effective_raster_type == RASTER_PIXEL_IS_POINT:
+        origin_shift_x = (scale_x - 1.0) * 0.5 * base_t.pixel_width
+        origin_shift_y = (scale_y - 1.0) * 0.5 * base_t.pixel_height
+    else:
+        origin_shift_x = 0.0
+        origin_shift_y = 0.0
+
     info.transform = GeoTransform(
-        origin_x=base_t.origin_x,
-        origin_y=base_t.origin_y,
+        origin_x=base_t.origin_x + origin_shift_x,
+        origin_y=base_t.origin_y + origin_shift_y,
         pixel_width=base_t.pixel_width * scale_x,
         pixel_height=base_t.pixel_height * scale_y,
     )
@@ -787,11 +820,11 @@ def extract_geo_info_with_overview_inheritance(
     info.vertical_units = base_info.vertical_units
     info.vertical_units_code = base_info.vertical_units_code
     info.model_type = base_info.model_type
-    # Keep ``raster_type`` from the overview unless it was the default
-    # AREA, in which case prefer the parent's setting (PixelIsPoint is
-    # almost never re-declared on overview IFDs).
-    if info.raster_type == RASTER_PIXEL_IS_AREA:
-        info.raster_type = base_info.raster_type
+    # Use the raster_type we already chose above so the value we wrote
+    # into the transform stays consistent with the value attached to
+    # the GeoInfo (PixelIsPoint is almost never re-declared on overview
+    # IFDs, so this normally inherits from the parent).
+    info.raster_type = effective_raster_type
 
     return info
 
