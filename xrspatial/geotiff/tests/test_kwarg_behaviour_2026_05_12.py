@@ -226,22 +226,20 @@ class TestWriteVrtCrsWktBehaviour:
         assert parsed.crs_wkt == override
 
     def test_crs_wkt_none_falls_back_to_first_source(self, source_tif, tmp_path):
-        """No override means the first source's WKT is used. The source
-        was written with crs=4326, so the WKT must mention EPSG:4326's
-        marker text (any non-empty WKT is the contract; we check it is
-        not the override value to defend against silent default
-        substitution by the writer)."""
+        """No override means the first source's WKT is used. Pin the
+        contract: the default-VRT's parsed crs_wkt must be present,
+        non-empty, and match the source TIF's own crs_wkt (no silent
+        substitution, no None on the fall-back path)."""
         vrt_path = str(tmp_path / 'crs_wkt_default.vrt')
         write_vrt(vrt_path, [source_tif])
         parsed = self._read_parsed(vrt_path, tmp_path)
-        # The first source has crs=4326. The WKT will be something
-        # non-empty mentioning EPSG:4326 (precise WKT text depends on
-        # the EPSG database wired into the writer).
-        if parsed.crs_wkt is not None:
-            # When the WKT is present it must come from the source
-            # (mentions a geographic marker) rather than the override.
-            text = parsed.crs_wkt.lower()
-            assert 'unittest_override_sweep_2026_05_12' not in text
+
+        source_da = open_geotiff(source_tif)
+        source_wkt = source_da.attrs.get('crs_wkt')
+
+        assert parsed.crs_wkt is not None
+        assert parsed.crs_wkt != ''
+        assert parsed.crs_wkt == source_wkt
 
     def test_crs_wkt_override_distinct_from_default(self, source_tif, tmp_path):
         """The override and default WKT must produce *different* on-disk
