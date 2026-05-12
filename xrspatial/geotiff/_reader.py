@@ -1563,6 +1563,7 @@ def _parse_cog_http_meta(
 def _read_cog_http(url: str, overview_level: int | None = None,
                    band: int | None = None,
                    max_pixels: int = MAX_PIXELS_DEFAULT,
+                   window: tuple[int, int, int, int] | None = None,
                    ) -> tuple[np.ndarray, GeoInfo]:
     """Read a COG via HTTP range requests.
 
@@ -1581,6 +1582,10 @@ def _read_cog_http(url: str, overview_level: int | None = None,
         Band index (0-based, for multi-band files).
     max_pixels : int
         Maximum allowed pixel count (width * height * samples).
+    window : tuple or None
+        ``(row_start, col_start, row_stop, col_stop)``. Forwarded to
+        ``_fetch_decode_cog_http_tiles`` so HTTP reads honour the same
+        windowed contract as the local-file path. See issue #1669.
 
     Returns
     -------
@@ -1590,9 +1595,32 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     header, ifd, geo_info, header_bytes = _parse_cog_http_meta(
         source, overview_level=overview_level)
 
+    # Validate ``window`` against the selected IFD's extent before the
+    # tile fetch is built. Without this, the helper silently clamps an
+    # out-of-bounds window and returns a smaller array, mismatching
+    # ``open_geotiff``'s caller-built coord arrays. Mirrors the
+    # local-path validator in ``read_to_array`` (#1634).
+    if window is not None:
+        w_r0, w_c0, w_r1, w_c1 = window
+        if (w_r0 < 0 or w_c0 < 0
+                or w_r1 > ifd.height or w_c1 > ifd.width
+                or w_r0 >= w_r1 or w_c0 >= w_c1):
+            source.close()
+            raise ValueError(
+                f"window={window} is outside the source extent "
+                f"({ifd.height}x{ifd.width}) or has non-positive size.")
+
     arr = _fetch_decode_cog_http_tiles(
-        source, header, ifd, max_pixels=max_pixels, window=None)
+        source, header, ifd, max_pixels=max_pixels, window=window)
     source.close()
+
+    # Mirror the local-path band selection in ``read_to_array``: extract
+    # the requested band only after the array is materialised so the
+    # multi-band tile decode can populate every plane first. ``band``
+    # outside the valid range raises ``IndexError`` the same as numpy.
+    if arr.ndim == 3 and ifd.samples_per_pixel > 1 and band is not None:
+        arr = arr[:, :, band]
+
     return arr, geo_info
 
 
@@ -1630,6 +1658,7 @@ def _fetch_decode_cog_http_tiles(
     tw = ifd.tile_width
     th = ifd.tile_height
     samples = ifd.samples_per_pixel
+    planar = ifd.planar_config
     compression = ifd.compression
     pred = ifd.predictor
     bytes_per_sample = bps // 8
@@ -1674,6 +1703,17 @@ def _fetch_decode_cog_http_tiles(
     out_w = c1_out - c0_out
     _check_dimensions(out_w, out_h, samples, max_pixels)
 
+    # ``PlanarConfiguration=2`` stores one tile sequence per band,
+    # concatenated in TileOffsets. ``tiles_per_band`` selects the right
+    # slab when computing ``tile_idx``; ``band_count == 1`` for chunky
+    # files keeps the original single-loop fetch behaviour. Mirrors the
+    # local ``_read_tiles`` path (#1669).
+    band_count = samples if (planar == 2 and samples > 1) else 1
+    tiles_per_band = tiles_across * tiles_down
+    # Per-tile sample count: planar=2 tiles hold one band each, planar=1
+    # tiles interleave ``samples`` components per pixel.
+    tile_samples = 1 if band_count > 1 else samples
+
     # Sparse tiles (TileByteCounts == 0) need to land on the file's nodata
     # value (or 0 if unset) rather than uninitialised memory.  Detect them
     # up front so the result buffer is pre-filled before tile placement.
@@ -1708,27 +1748,33 @@ def _fetch_decode_cog_http_tiles(
     # applies the same cap in _read_tiles / _read_strips (issue #1664).
     max_tile_bytes = _max_tile_bytes_from_env()
     fetch_ranges: list[tuple[int, int]] = []
-    placements: list[tuple[int, int]] = []  # (tr, tc) per fetched tile
-    for tr in range(tile_row_start, tile_row_end):
-        for tc in range(tile_col_start, tile_col_end):
-            tile_idx = tr * tiles_across + tc
-            if tile_idx >= len(offsets):
-                continue
-            off = offsets[tile_idx]
-            bc = byte_counts[tile_idx]
-            if bc == 0:
-                continue
-            if bc > max_tile_bytes:
-                raise ValueError(
-                    f"TIFF tile {tile_idx} declares "
-                    f"TileByteCount={bc:,} bytes, which exceeds the HTTP "
-                    f"COG safety cap of {max_tile_bytes:,} bytes. The "
-                    f"file is malformed or attempting denial-of-service. "
-                    f"Override via XRSPATIAL_COG_MAX_TILE_BYTES if this "
-                    f"file is legitimate."
-                )
-            fetch_ranges.append((off, bc))
-            placements.append((tr, tc))
+    # Placement record: (band_idx, tr, tc). band_idx is 0 for chunky
+    # files; for planar=2 it indicates which sample axis slot the
+    # decoded tile fills.
+    placements: list[tuple[int, int, int]] = []
+    for band_idx in range(band_count):
+        band_tile_offset = (band_idx * tiles_per_band
+                            if band_count > 1 else 0)
+        for tr in range(tile_row_start, tile_row_end):
+            for tc in range(tile_col_start, tile_col_end):
+                tile_idx = band_tile_offset + tr * tiles_across + tc
+                if tile_idx >= len(offsets):
+                    continue
+                off = offsets[tile_idx]
+                bc = byte_counts[tile_idx]
+                if bc == 0:
+                    continue
+                if bc > max_tile_bytes:
+                    raise ValueError(
+                        f"TIFF tile {tile_idx} declares "
+                        f"TileByteCount={bc:,} bytes, which exceeds the HTTP "
+                        f"COG safety cap of {max_tile_bytes:,} bytes. The "
+                        f"file is malformed or attempting denial-of-service. "
+                        f"Override via XRSPATIAL_COG_MAX_TILE_BYTES if this "
+                        f"file is legitimate."
+                    )
+                fetch_ranges.append((off, bc))
+                placements.append((band_idx, tr, tc))
 
     # Pass 2: fetch all tile bytes in parallel. Worker pool size is tunable
     # via XRSPATIAL_COG_HTTP_WORKERS so users on very slow links can dial
@@ -1753,9 +1799,9 @@ def _fetch_decode_cog_http_tiles(
         fetch_ranges, max_workers=workers, gap_threshold=gap)
 
     # Pass 3: decode each tile and place it (clipped to the window).
-    for (tr, tc), tile_data in zip(placements, tile_bytes_list):
+    for (band_idx, tr, tc), tile_data in zip(placements, tile_bytes_list):
         tile_pixels = _decode_strip_or_tile(
-            tile_data, compression, tw, th, samples,
+            tile_data, compression, tw, th, tile_samples,
             bps, bytes_per_sample, is_sub_byte, dtype, pred,
             byte_order=header.byte_order,
             jpeg_tables=jpeg_tables,
@@ -1787,7 +1833,13 @@ def _fetch_decode_cog_http_tiles(
         dy1 = iy1 - r0_out
         dx1 = ix1 - c0_out
 
-        result[dy0:dy1, dx0:dx1] = tile_pixels[sy0:sy1, sx0:sx1]
+        if band_count > 1:
+            # Planar=2 tile holds one band; place into the per-band slot
+            # of the (out_h, out_w, samples) result. ``tile_pixels`` from
+            # ``_decode_strip_or_tile`` with ``samples=1`` is 2D.
+            result[dy0:dy1, dx0:dx1, band_idx] = tile_pixels[sy0:sy1, sx0:sx1]
+        else:
+            result[dy0:dy1, dx0:dx1] = tile_pixels[sy0:sy1, sx0:sx1]
 
     return result
 
@@ -1883,7 +1935,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
     source = _coerce_path(source)
     if isinstance(source, str) and source.startswith(('http://', 'https://')):
         return _read_cog_http(source, overview_level=overview_level, band=band,
-                              max_pixels=max_pixels)
+                              max_pixels=max_pixels, window=window)
 
     # Local file, cloud storage, or file-like buffer: read all bytes then parse
     if _is_file_like(source):
