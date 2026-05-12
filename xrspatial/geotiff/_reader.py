@@ -1595,6 +1595,23 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     header, ifd, geo_info, header_bytes = _parse_cog_http_meta(
         source, overview_level=overview_level)
 
+    # Mirror the local-path orientation guard in ``read_to_array``: a
+    # windowed read against a non-default Orientation tag (274) has
+    # ambiguous semantics (does the window refer to file pixels or to
+    # display pixels?) and the HTTP path does not yet implement
+    # ``_apply_orientation``. Reject the combination here so HTTP and
+    # local reads agree on the contract for oriented TIFFs instead of
+    # silently returning a different region or pixel order. See PR
+    # #1680 review feedback on issue #1669.
+    if ifd.orientation != 1 and window is not None:
+        source.close()
+        raise ValueError(
+            f"Orientation tag (274) is {ifd.orientation}; windowed reads "
+            f"(window=...) and dask-chunked reads (chunks=...) are not "
+            f"supported for non-default orientation. Read the full "
+            f"array first, then slice."
+        )
+
     # Validate ``window`` against the selected IFD's extent before the
     # tile fetch is built. Without this, the helper silently clamps an
     # out-of-bounds window and returns a smaller array, mismatching

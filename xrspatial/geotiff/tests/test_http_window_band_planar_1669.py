@@ -14,11 +14,20 @@ against the local read pixel-for-pixel for several combinations:
 * window + band combined
 * ``PlanarConfiguration=2`` tiled COG, full read
 * ``PlanarConfiguration=2`` tiled COG, windowed read
+
+Per PR #1680 review feedback, none of these fixtures rely on the
+optional ``tifffile`` dependency. The single-band and multi-band
+planar=1 fixtures use the project's own writer (``write``). The
+planar=2 fixture is built by hand from TIFF bytes (the xrspatial
+writer only emits planar=1) so the planar=2 HTTP logic is still
+exercised in the default test environment.
 """
 from __future__ import annotations
 
 import http.server
+import math
 import socketserver
+import struct
 import threading
 
 import numpy as np
@@ -92,6 +101,217 @@ def _stop(httpd):
 def _allow_loopback(monkeypatch):
     """The HTTP source blocks 127.0.0.1 by default after #1664."""
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
+
+
+# ---------------------------------------------------------------------------
+# Hand-rolled planar=2 tiled TIFF builder
+# ---------------------------------------------------------------------------
+#
+# The xrspatial writer emits PlanarConfiguration=1 only, so a planar=2
+# fixture has to be built from raw bytes. Mirrors the pattern already
+# used by ``_make_planar_tiff`` in ``test_features.py`` (uncompressed
+# tiles, little-endian classic TIFF, separate-plane tile sequence).
+# Kept self-contained so the test does not depend on ``tifffile``.
+
+def _make_planar2_tiled_tiff(width, height, bands, data, *, tile_size=16):
+    """Build an uncompressed PlanarConfiguration=2 tiled TIFF.
+
+    ``data`` is shaped ``(bands, height, width)`` in row-major layout.
+    Returns the file bytes. Used to assert the HTTP tile-fetch loop
+    handles separate-plane tile sequences correctly; the writer only
+    emits planar=1 so we have to lay out the TIFF by hand.
+    """
+    bo = '<'
+    assert data.shape == (bands, height, width)
+    dtype = data.dtype
+    bps = dtype.itemsize * 8
+    sf = 1  # unsigned int
+
+    tw = th = tile_size
+    tiles_across = math.ceil(width / tw)
+    tiles_down = math.ceil(height / th)
+
+    # planar=2: emit every tile for band 0, then every tile for band 1,
+    # then band 2. Each tile is the per-band slice padded to tile_size
+    # if the right or bottom edge is short. ``TileOffsets`` is the
+    # concatenated list of byte offsets, one per (band, tile_row,
+    # tile_col) tuple in row-major order across bands.
+    tile_blobs = []
+    for b in range(bands):
+        for tr in range(tiles_down):
+            for tc in range(tiles_across):
+                tile = np.zeros((th, tw), dtype=dtype)
+                r0, c0 = tr * th, tc * tw
+                r1 = min(r0 + th, height)
+                c1 = min(c0 + tw, width)
+                tile[:r1 - r0, :c1 - c0] = data[b, r0:r1, c0:c1]
+                tile_blobs.append(tile.tobytes())
+
+    pixel_bytes = b''.join(tile_blobs)
+    tile_byte_counts = [len(t) for t in tile_blobs]
+    num_offsets = len(tile_blobs)
+
+    tag_list = []
+
+    def add_short(tag, val):
+        tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+
+    def add_shorts(tag, vals):
+        tag_list.append(
+            (tag, 3, len(vals), struct.pack(f'{bo}{len(vals)}H', *vals))
+        )
+
+    def add_longs(tag, vals):
+        tag_list.append(
+            (tag, 4, len(vals), struct.pack(f'{bo}{len(vals)}I', *vals))
+        )
+
+    add_short(256, width)
+    add_short(257, height)
+    add_shorts(258, [bps] * bands)
+    add_short(259, 1)   # no compression
+    add_short(262, 2 if bands >= 3 else 1)  # RGB or BlackIsZero
+    add_short(277, bands)
+    add_short(284, 2)   # PlanarConfiguration = Separate
+    add_shorts(339, [sf] * bands)
+    add_short(322, tw)
+    add_short(323, th)
+    add_longs(324, [0] * num_offsets)   # placeholder, patched below
+    add_longs(325, tile_byte_counts)
+
+    tag_list.sort(key=lambda t: t[0])
+
+    num_entries = len(tag_list)
+    ifd_start = 8
+    ifd_size = 2 + 12 * num_entries + 4
+
+    # First pass: figure out where overflow + pixel data land.
+    overflow_buf = bytearray()
+    for _tag, _typ, _count, raw in tag_list:
+        if len(raw) > 4:
+            overflow_buf.extend(raw)
+            if len(overflow_buf) % 2:
+                overflow_buf.append(0)
+    overflow_start = ifd_start + ifd_size
+    pixel_data_start = overflow_start + len(overflow_buf)
+
+    # Patch TileOffsets (324) with real byte positions, then rebuild
+    # overflow buffer with the updated tag value.
+    offset_tag = 324
+    patched = []
+    for tag, typ, count, raw in tag_list:
+        if tag == offset_tag:
+            offs = []
+            pos = 0
+            for blob in tile_blobs:
+                offs.append(pixel_data_start + pos)
+                pos += len(blob)
+            new_raw = struct.pack(f'{bo}{num_offsets}I', *offs)
+            patched.append((tag, typ, count, new_raw))
+        else:
+            patched.append((tag, typ, count, raw))
+    tag_list = patched
+
+    overflow_buf = bytearray()
+    tag_offsets = {}
+    for tag, typ, count, raw in tag_list:
+        if len(raw) > 4:
+            tag_offsets[tag] = len(overflow_buf)
+            overflow_buf.extend(raw)
+            if len(overflow_buf) % 2:
+                overflow_buf.append(0)
+        else:
+            tag_offsets[tag] = None
+
+    out = bytearray()
+    out.extend(b'II')
+    out.extend(struct.pack(f'{bo}H', 42))
+    out.extend(struct.pack(f'{bo}I', ifd_start))
+    out.extend(struct.pack(f'{bo}H', num_entries))
+
+    for tag, typ, count, raw in tag_list:
+        out.extend(struct.pack(f'{bo}HHI', tag, typ, count))
+        if len(raw) <= 4:
+            out.extend(raw.ljust(4, b'\x00'))
+        else:
+            ptr = overflow_start + tag_offsets[tag]
+            out.extend(struct.pack(f'{bo}I', ptr))
+
+    out.extend(struct.pack(f'{bo}I', 0))  # next IFD
+    out.extend(overflow_buf)
+    out.extend(pixel_bytes)
+    return bytes(out)
+
+
+# ---------------------------------------------------------------------------
+# Hand-rolled oriented TIFF builder (for parity-with-local-path guard)
+# ---------------------------------------------------------------------------
+
+def _make_oriented_tiff(width, height, orientation, data):
+    """Build a minimal uncompressed stripped TIFF with the given
+    Orientation tag (274).
+
+    Mirrors the local-path orientation tests in ``test_orientation.py``
+    but does not depend on ``tifffile``. Used to assert the HTTP path
+    rejects ``window`` on non-default-orientation files the same way
+    the local path does.
+    """
+    bo = '<'
+    dtype = data.dtype
+    bps = dtype.itemsize * 8
+    assert data.shape == (height, width)
+
+    pixel_bytes = data.tobytes()
+
+    tag_list = []
+
+    def add_short(tag, val):
+        tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+
+    def add_long(tag, val):
+        tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
+
+    add_short(256, width)
+    add_short(257, height)
+    add_short(258, bps)
+    add_short(259, 1)         # no compression
+    add_short(262, 1)         # BlackIsZero
+    add_long(273, 0)          # StripOffsets placeholder
+    add_short(274, orientation)
+    add_short(277, 1)         # SamplesPerPixel
+    add_short(278, height)    # RowsPerStrip = full image
+    add_long(279, len(pixel_bytes))   # StripByteCounts
+    add_short(284, 1)         # PlanarConfiguration = Chunky
+    add_short(339, 1)         # SampleFormat = uint
+
+    tag_list.sort(key=lambda t: t[0])
+
+    num_entries = len(tag_list)
+    ifd_start = 8
+    ifd_size = 2 + 12 * num_entries + 4
+    pixel_data_start = ifd_start + ifd_size
+
+    # Patch StripOffsets
+    patched = []
+    for tag, typ, count, raw in tag_list:
+        if tag == 273:
+            new_raw = struct.pack(f'{bo}I', pixel_data_start)
+            patched.append((tag, typ, count, new_raw))
+        else:
+            patched.append((tag, typ, count, raw))
+    tag_list = patched
+
+    out = bytearray()
+    out.extend(b'II')
+    out.extend(struct.pack(f'{bo}H', 42))
+    out.extend(struct.pack(f'{bo}I', ifd_start))
+    out.extend(struct.pack(f'{bo}H', num_entries))
+    for tag, typ, count, raw in tag_list:
+        out.extend(struct.pack(f'{bo}HHI', tag, typ, count))
+        out.extend(raw.ljust(4, b'\x00'))
+    out.extend(struct.pack(f'{bo}I', 0))   # next IFD
+    out.extend(pixel_bytes)
+    return bytes(out)
 
 
 # ---------------------------------------------------------------------------
@@ -207,23 +427,15 @@ def test_http_window_out_of_bounds_rejected(single_band_cog):
 @pytest.fixture
 def multi_band_chunky_cog(tmp_path):
     """3-band tiled chunky (planar=1) COG. The xrspatial writer emits
-    planar=1 by default. Returns ``(path, expected_arr)`` with expected
-    shape ``(H, W, bands)``.
+    planar=1 by default for ``(H, W, bands)`` input. Returns
+    ``(path, expected_arr)`` with expected shape ``(H, W, bands)``.
     """
-    tifffile = pytest.importorskip('tifffile')
     h, w, bands = 32, 48, 3
     rng = np.random.RandomState(1669)
-    data = rng.randint(0, 200, size=(bands, h, w)).astype(np.uint8)
-    expected = np.transpose(data, (1, 2, 0))
+    expected = rng.randint(0, 200, size=(h, w, bands)).astype(np.uint8)
     path = str(tmp_path / 'tmp_1669_chunky.tif')
-    tifffile.imwrite(
-        path,
-        expected,
-        photometric='rgb',
-        planarconfig='contig',
-        tile=(16, 16),
-        compression='deflate',
-    )
+    write(expected, path, compression='deflate', tiled=True,
+          tile_size=16, cog=True)
     return path, expected
 
 
@@ -293,25 +505,22 @@ def test_http_window_and_band_combined(multi_band_chunky_cog):
 def planar_separate_tiled_cog(tmp_path):
     """3-band tiled planar=2 (separate planes) TIFF.
 
-    The xrspatial writer only emits planar=1. tifffile is the simplest
-    way to produce a planar=2 fixture with control over tiling. Note
-    that this is a tiled GeoTIFF rather than a strict COG (no
+    The xrspatial writer only emits planar=1 (PR #1680 review feedback:
+    keep the test self-contained without taking on ``tifffile`` as a
+    test dep). The fixture builds the planar=2 file from raw bytes so
+    the HTTP tile-fetch loop is still exercised for separate-plane
+    layouts. The result is a tiled GeoTIFF rather than a strict COG (no
     overviews), which is fine for the HTTP tile-fetch path.
     """
-    tifffile = pytest.importorskip('tifffile')
     h, w, bands = 32, 48, 3
     rng = np.random.RandomState(0x16692)
+    # planar=2 stores (bands, h, w); convert to expected display layout
+    # (h, w, bands) for the parity comparison.
     data = rng.randint(0, 200, size=(bands, h, w)).astype(np.uint8)
-    # tifffile with planarconfig='separate' expects (bands, H, W) input.
     path = str(tmp_path / 'tmp_1669_planar2.tif')
-    tifffile.imwrite(
-        path,
-        data,
-        photometric='rgb',
-        planarconfig='separate',
-        tile=(16, 16),
-        compression='deflate',
-    )
+    payload = _make_planar2_tiled_tiff(w, h, bands, data, tile_size=16)
+    with open(path, 'wb') as f:
+        f.write(payload)
     expected = np.transpose(data, (1, 2, 0))
     return path, expected
 
@@ -365,5 +574,46 @@ def test_http_planar2_band_selection(planar_separate_tiled_cog):
             remote = open_geotiff(url, band=b)
             assert remote.shape == local.shape
             np.testing.assert_array_equal(np.asarray(remote), np.asarray(local))
+    finally:
+        _stop(httpd)
+
+
+# ---------------------------------------------------------------------------
+# Orientation guard parity with the local path (PR #1680 review)
+# ---------------------------------------------------------------------------
+
+def test_http_window_on_oriented_tiff_rejected(tmp_path):
+    """An oriented TIFF (Orientation tag != 1) with a window= read over
+    HTTP must raise the same ``ValueError`` the local path raises.
+
+    Without the guard the HTTP path used to honour the window blindly
+    and silently return a region in stored pixel order, while the local
+    path rejected the same call. That asymmetry meant a caller could
+    swap a local read for an HTTP read on the same file and get
+    different bytes back.
+    """
+    arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
+    # Orientation 2 = horizontal flip. Any non-default value triggers
+    # the guard; pick 2 to mirror ``test_orientation_with_window_raises``
+    # in ``test_orientation.py``.
+    payload = _make_oriented_tiff(width=6, height=4, orientation=2, data=arr)
+
+    # Sanity check: the file decodes (without a window) and the local
+    # path rejects window= on it. If either of these break, the parity
+    # assertion below is meaningless.
+    path = str(tmp_path / 'orient2_no_window.tif')
+    with open(path, 'wb') as f:
+        f.write(payload)
+    local_full = open_geotiff(path)
+    np.testing.assert_array_equal(np.asarray(local_full), arr[:, ::-1])
+    with pytest.raises(ValueError, match='[Oo]rientation'):
+        read_to_array(path, window=(0, 0, 2, 2))
+
+    url, httpd, _ = _serve(payload)
+    try:
+        with pytest.raises(ValueError, match='[Oo]rientation'):
+            read_to_array(url, window=(0, 0, 2, 2))
+        with pytest.raises(ValueError, match='[Oo]rientation'):
+            _read_cog_http(url, window=(0, 0, 2, 2))
     finally:
         _stop(httpd)
