@@ -12,12 +12,12 @@ from __future__ import annotations
 import glob
 import os
 import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import dask
 import dask.array as da
 import numpy as np
-import pytest
 import xarray as xr
 
 from xrspatial.geotiff import to_geotiff
@@ -91,7 +91,7 @@ def test_vrt_tiled_threaded_write_is_deterministic():
         stem = os.path.splitext(os.path.basename(vrt_path))[0]
         tiles_dir = os.path.join(os.path.dirname(vrt_path), stem + "_tiles")
         return {
-            os.path.basename(p): open(p, "rb").read()
+            os.path.basename(p): Path(p).read_bytes()
             for p in sorted(glob.glob(os.path.join(tiles_dir, "*.tif")))
         }
 
