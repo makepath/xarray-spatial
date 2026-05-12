@@ -2723,8 +2723,18 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     nodata : float, int, or None
         NoData value.
     compression : str
-        'zstd' (default, fastest on GPU), 'deflate', 'jpeg', or 'none'.
-        JPEG uses nvJPEG when available, falling back to Pillow.
+        Codec name. Accepts the same set as ``to_geotiff``: ``'none'``,
+        ``'deflate'``, ``'lzw'``, ``'jpeg'``, ``'packbits'``, ``'zstd'``,
+        ``'lz4'``, ``'jpeg2000'`` (alias ``'j2k'``), or ``'lerc'``.
+
+        ``'zstd'`` (default) and ``'deflate'`` compress on the GPU via
+        nvCOMP batch compression -- the fastest paths and the reason to
+        use this entry point. ``'jpeg'`` uses nvJPEG when available and
+        falls back to Pillow otherwise. ``'jpeg2000'`` / ``'j2k'`` and
+        ``'lerc'`` route to the CPU encoders so the output matches the
+        CPU writer byte-for-byte, but lose the GPU compression speedup.
+        ``'lzw'``, ``'packbits'``, and ``'lz4'`` likewise fall through
+        to the CPU encoder for parity with ``to_geotiff``.
     compression_level : int or None
         Compression effort level. Accepted for API compatibility but
         currently ignored -- nvCOMP does not expose level control.
