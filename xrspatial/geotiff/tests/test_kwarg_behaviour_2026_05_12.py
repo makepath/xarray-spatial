@@ -204,9 +204,16 @@ class TestWriteVrtRelativeBehaviour:
 
 
 class TestWriteVrtCrsWktBehaviour:
-    """``crs_wkt=`` overrides the first source's CRS WKT. Without an
-    override, the first source's WKT is propagated. With an override,
-    the override wins."""
+    """``crs=`` overrides the first source's CRS. Without an override,
+    the first source's WKT is propagated. With an override, the
+    override wins.
+
+    Pre-#1715 the kwarg was named ``crs_wkt``. The new canonical name
+    is ``crs`` (parity with ``to_geotiff`` / ``write_geotiff_gpu``);
+    the old name is still accepted with ``DeprecationWarning``. These
+    tests exercise the new path; the deprecated path is covered by
+    ``test_write_vrt_crs_1715.py``.
+    """
 
     def _read_parsed(self, vrt_path, tmp_path):
         with open(vrt_path, 'r') as fh:
@@ -221,7 +228,7 @@ class TestWriteVrtCrsWktBehaviour:
             'PROJECTION["Transverse_Mercator"],UNIT["metre",1]]'
         )
         vrt_path = str(tmp_path / 'crs_wkt_override.vrt')
-        write_vrt(vrt_path, [source_tif], crs_wkt=override)
+        write_vrt(vrt_path, [source_tif], crs=override)
         parsed = self._read_parsed(vrt_path, tmp_path)
         assert parsed.crs_wkt == override
 
@@ -254,7 +261,7 @@ class TestWriteVrtCrsWktBehaviour:
         )
         # Override path
         vrt_override = str(tmp_path / 'override.vrt')
-        write_vrt(vrt_override, [source_tif], crs_wkt=override)
+        write_vrt(vrt_override, [source_tif], crs=override)
         # Default path
         vrt_default = str(tmp_path / 'default.vrt')
         write_vrt(vrt_default, [source_tif])

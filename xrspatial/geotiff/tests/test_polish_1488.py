@@ -89,8 +89,11 @@ class TestC5WriteVrtKwargs:
         a_path = str(tmp_path / 'a_c5_1488.tif')
         write(arr, a_path, compression='none')
         vrt_path = str(tmp_path / 'mosaic_c5_1488.vrt')
-        # All three documented kwargs should be accepted.
-        write_vrt(vrt_path, [a_path], relative=False, crs_wkt=None,
+        # All four documented kwargs should be accepted. ``crs`` is the
+        # canonical name as of #1715 (was ``crs_wkt`` pre-rename); pass
+        # ``crs=None`` instead of the deprecated alias to avoid the
+        # DeprecationWarning the alias now emits.
+        write_vrt(vrt_path, [a_path], relative=False, crs=None,
                   nodata=-9999.0)
         assert os.path.exists(vrt_path)
 
