@@ -1591,7 +1591,7 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
 
     source = _coerce_path(source)
 
-    # ``read_geotiff`` already routes ``.vrt`` to ``read_vrt`` before
+    # ``open_geotiff`` already routes ``.vrt`` to ``read_vrt`` before
     # reaching here, so this branch is only hit when ``read_geotiff_dask``
     # is called directly with a VRT path. Keep it as a defensive fallback
     # rather than letting the windowed-read path try to parse VRT XML as
@@ -2161,6 +2161,10 @@ def read_geotiff_gpu(source: str, *,
     ----------
     source : str
         File path.
+    dtype : str, numpy.dtype, or None
+        Cast the result to this dtype after reading. None keeps the
+        file's native dtype. Float-to-int casts raise ValueError, mirroring
+        ``open_geotiff`` / ``read_geotiff_dask``.
     overview_level : int or None
         Overview level (0 = full resolution).
     window : tuple or None
@@ -3009,6 +3013,11 @@ def read_vrt(source: str, *, dtype=None, window=None,
         (row, col) tuple for rectangular.
     gpu : bool
         If True, return a CuPy-backed DataArray on GPU.
+    max_pixels : int or None
+        Maximum allowed pixel count (width * height * samples) for the
+        assembled VRT region. None uses the reader default (~1 billion).
+        Matches ``open_geotiff`` / ``read_geotiff_dask`` /
+        ``read_geotiff_gpu``.
 
     Returns
     -------
