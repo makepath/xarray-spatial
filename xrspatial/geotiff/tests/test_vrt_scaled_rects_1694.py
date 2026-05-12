@@ -19,7 +19,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from xrspatial.geotiff._vrt import read_vrt
+from xrspatial.geotiff._vrt import _resample_nearest, read_vrt
 from xrspatial.geotiff._writer import write
 
 
@@ -314,3 +314,19 @@ def test_nodata_with_mixed_sentinel_and_valid_pixels(tmp_path):
     assert np.isnan(result[0, 1])
     assert result[1, 0] == 31.0
     assert np.isnan(result[1, 1])
+
+
+@pytest.mark.parametrize('shape', [(0, 5), (5, 0), (0, 0)])
+def test_resample_nearest_rejects_empty_source(shape):
+    """``_resample_nearest`` raises ValueError on an empty source array.
+
+    A SimpleSource with ``SrcRect xSize=0`` or ``ySize=0`` -- or a
+    windowed read that clamps to an empty slice -- would otherwise feed
+    a zero-dim array to the integer-ratio fast paths, which compute
+    ``out_h % src_h`` and divide by ``src_h``/``src_w`` and so would
+    raise an opaque ``ZeroDivisionError``.  Surface the bad input with
+    a clear ``ValueError`` instead.
+    """
+    src_arr = np.zeros(shape, dtype=np.float64)
+    with pytest.raises(ValueError, match='empty source array'):
+        _resample_nearest(src_arr, 2, 2)
