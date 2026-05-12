@@ -7,9 +7,11 @@ file is unreadable" fallback the catch was meant to cover.
 
 This module pins the narrowed contract:
 
-* I/O errors (``OSError`` and its subclasses) plus parse errors
-  (``ValueError``, ``struct.error``) warn-and-continue in default mode and
-  re-raise under ``XRSPATIAL_GEOTIFF_STRICT=1``.
+* I/O errors (``OSError`` and its subclasses), parse errors
+  (``ValueError``, ``struct.error``), and codec-library decode errors
+  (``zlib.error`` for deflate; ``zstandard.ZstdError`` when zstandard is
+  installed) warn-and-continue in default mode and re-raise under
+  ``XRSPATIAL_GEOTIFF_STRICT=1``.
 * Other exception types (``RuntimeError`` here as a stand-in for real bugs)
   propagate in both modes so callers and CI see them.
 """
@@ -17,6 +19,7 @@ from __future__ import annotations
 
 import struct
 import warnings
+import zlib
 
 import pytest
 
@@ -276,3 +279,89 @@ def test_memory_error_propagates_default_mode(
 
     with pytest.raises(MemoryError, match='OOM 1670'):
         read_vrt(str(vrt_path))
+
+
+def test_zlib_error_warns_and_continues(
+    clear_strict_env, monkeypatch, tmp_path,
+):
+    """A ``zlib.error`` from a corrupt deflate tile should warn-and-skip.
+
+    The narrowed catch in PR #1675 covered only ``(OSError, ValueError,
+    struct.error)``; ``zlib.error`` is a direct ``Exception`` subclass and
+    used to abort the whole mosaic when a deflate tile was corrupt. The
+    follow-up adds codec-library decode errors to the allowlist so the
+    historical warn-and-skip behaviour is restored for corrupt payloads.
+    """
+    from xrspatial.geotiff import read_vrt
+
+    src_path = tmp_path / 'src_1670_zlib.tif'
+    src_path.write_bytes(b'placeholder')
+    vrt_path = _write_simple_vrt(
+        tmp_path, str(src_path), name='mosaic_1670_zlib.vrt')
+
+    _patch_read_to_array(monkeypatch, zlib.error("synthetic deflate 1670"))
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        da = read_vrt(str(vrt_path))
+
+    assert da.shape == (4, 4)
+    fallback_warnings = [
+        x for x in w if issubclass(x.category, GeoTIFFFallbackWarning)
+    ]
+    assert len(fallback_warnings) >= 1
+    msgs = ' '.join(str(x.message) for x in fallback_warnings)
+    assert 'VRT source' in msgs
+    assert 'error' in msgs  # zlib.error type name is 'error'
+
+
+def test_zlib_error_strict_reraises(
+    set_strict_env, monkeypatch, tmp_path,
+):
+    """Under ``XRSPATIAL_GEOTIFF_STRICT=1`` a corrupt deflate tile re-raises."""
+    from xrspatial.geotiff import read_vrt
+
+    src_path = tmp_path / 'src_1670_zlib_strict.tif'
+    src_path.write_bytes(b'placeholder')
+    vrt_path = _write_simple_vrt(
+        tmp_path, str(src_path), name='mosaic_1670_zlib_strict.vrt')
+
+    _patch_read_to_array(
+        monkeypatch, zlib.error("synthetic deflate 1670 strict"))
+
+    with pytest.raises(zlib.error, match='synthetic deflate 1670 strict'):
+        read_vrt(str(vrt_path))
+
+
+def test_zstd_error_warns_and_continues_if_available(
+    clear_strict_env, monkeypatch, tmp_path,
+):
+    """``zstandard.ZstdError`` from a corrupt ZSTD tile should warn-and-skip.
+
+    Skipped when ``zstandard`` is not installed -- the wrapper path that
+    raises this exception is unreachable in that case and there's no class
+    to instantiate. See ``_CODEC_DECODE_EXCEPTIONS`` in ``_vrt.py``.
+    """
+    pytest.importorskip('zstandard')
+    from zstandard import ZstdError
+    from xrspatial.geotiff import read_vrt
+
+    src_path = tmp_path / 'src_1670_zstd.tif'
+    src_path.write_bytes(b'placeholder')
+    vrt_path = _write_simple_vrt(
+        tmp_path, str(src_path), name='mosaic_1670_zstd.vrt')
+
+    _patch_read_to_array(monkeypatch, ZstdError("synthetic zstd 1670"))
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        da = read_vrt(str(vrt_path))
+
+    assert da.shape == (4, 4)
+    fallback_warnings = [
+        x for x in w if issubclass(x.category, GeoTIFFFallbackWarning)
+    ]
+    assert len(fallback_warnings) >= 1
+    msgs = ' '.join(str(x.message) for x in fallback_warnings)
+    assert 'VRT source' in msgs
+    assert 'ZstdError' in msgs

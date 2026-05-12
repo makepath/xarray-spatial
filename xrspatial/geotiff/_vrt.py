@@ -7,12 +7,53 @@ from __future__ import annotations
 
 import os
 import struct
+import zlib
 from dataclasses import dataclass, field
 from xml.sax.saxutils import escape as _xml_escape, quoteattr as _xml_quoteattr
 
 import numpy as np
 
 from ._safe_xml import safe_fromstring
+
+
+def _codec_decode_exceptions() -> tuple[type[BaseException], ...]:
+    """Return the tuple of codec-specific decode exceptions worth swallowing.
+
+    ``read_to_array`` dispatches to per-codec wrappers in
+    :mod:`._compression`. Most of those wrappers raise ``ValueError`` on
+    malformed input (LZW, PackBits, LERC pre-decode bomb check, JPEG 2000
+    fail-closed shape check), but a few codecs leak their library's
+    native exception class through the wrapper:
+
+    * ``zlib.error`` from ``zlib.decompress`` for deflate / adobe-deflate
+      payloads.
+    * ``zstandard.ZstdError`` from ``zstandard.stream_reader.read`` when
+      a ZSTD frame is corrupt.
+
+    These are recoverable per-source failures -- they mean "this tile's
+    compressed payload is bad", not "the program is broken" -- so they
+    belong in the same warn-and-skip catch as ``OSError`` / ``ValueError``
+    / ``struct.error``. ``RuntimeError`` (raised by lz4 frame decoder,
+    LERC error-code translation, and glymur on malformed JP2) is
+    deliberately NOT included: it can come from real bugs as easily as
+    from corruption, so it stays in the propagate-and-fail bucket.
+
+    ``zstandard`` is an optional dependency; if it's not installed the
+    decoder path is unreachable and there's no exception class to catch.
+    """
+    excs: list[type[BaseException]] = [zlib.error]
+    try:  # pragma: no cover - depends on optional install
+        from zstandard import ZstdError
+        excs.append(ZstdError)
+    except ImportError:
+        pass
+    return tuple(excs)
+
+
+# Computed once at import: tuple of codec exception classes to catch in
+# the per-source read fallback below. Defined at module scope so the
+# import-time work doesn't repeat on every VRT source.
+_CODEC_DECODE_EXCEPTIONS = _codec_decode_exceptions()
 
 
 def _xml_text(value) -> str:
@@ -357,18 +398,24 @@ def read_vrt(vrt_path: str, *, window=None,
             # source: ``OSError`` (and subclasses ``FileNotFoundError`` /
             # ``PermissionError``) for I/O problems, ``ValueError`` for the
             # typed parse errors from ``parse_header`` / ``parse_ifd`` and
-            # friends, and ``struct.error`` which still leaks from a few
-            # parse paths until that work lands. ``RuntimeError``,
-            # ``MemoryError``, and other non-I/O bugs should NOT be
-            # absorbed by the "skip the tile" fallback -- they signal real
-            # failures and need to surface to the caller. See issue #1670.
+            # friends, ``struct.error`` which still leaks from a few parse
+            # paths until that work lands, and the codec-library decode
+            # exceptions enumerated in :data:`_CODEC_DECODE_EXCEPTIONS`
+            # (``zlib.error`` for corrupt deflate tiles, plus
+            # ``zstandard.ZstdError`` when zstandard is installed).
+            # ``RuntimeError``, ``MemoryError``, and other non-I/O bugs
+            # should NOT be absorbed by the "skip the tile" fallback --
+            # they signal real failures and need to surface to the
+            # caller. See issues #1670 and PR #1675.
             try:
                 src_arr, _ = read_to_array(
                     src.filename,
                     window=(src_r0, src_c0, src_r1, src_c1),
                     band=src.band - 1,  # convert 1-based to 0-based
                 )
-            except (OSError, ValueError, struct.error) as e:
+            except (
+                OSError, ValueError, struct.error,
+            ) + _CODEC_DECODE_EXCEPTIONS as e:
                 # Under XRSPATIAL_GEOTIFF_STRICT=1, surface the read failure
                 # so partial mosaics are caught in CI. Default mode warns
                 # once per missing source then continues, preserving the
