@@ -8,10 +8,11 @@ a ``Float32`` band 1 returned uint8 output, with band 1's fractional
 values truncated.
 
 The ``ComplexSource`` ``ScaleRatio`` / ``ScaleOffset`` path made this
-worse. The decoded source is explicitly promoted to ``float64`` at
-``_vrt.py`` L562-565 (``src_arr.astype(np.float64) * src.scale``), but
-the destination buffer stays uint8 if all VRT bands declare ``Byte``,
-so the post-scale fractional values are lost on assignment.
+worse. The decoded source is explicitly promoted to ``float64`` in the
+``# Apply ComplexSource scaling`` block of ``read_vrt`` in ``_vrt.py``
+(``src_arr.astype(np.float64) * src.scale``), but the destination
+buffer stays uint8 if all VRT bands declare ``Byte``, so the
+post-scale fractional values are lost on assignment.
 
 The fix computes the common result dtype across all selected bands,
 applying the same float64 promotion rule used for the scaled source
@@ -214,10 +215,11 @@ def test_complex_source_scale_and_offset_preserve_precision(tmp_path):
     the scaled-and-offset values (e.g. ``10 * 0.25 + 1.5 = 4.0``,
     ``11 * 0.25 + 1.5 = 4.25``) must survive without truncation.
 
-    Note: the VRT parser at ``_vrt.py`` L327-334 maps the XML
-    ``<ScaleRatio>`` to the dataclass ``scale`` attribute and
-    ``<ScaleOffset>`` to the ``offset`` attribute, then the reader
-    applies ``src_arr = src_arr * scale + offset``.
+    Note: the ``ComplexSource`` branch of ``parse_vrt`` in ``_vrt.py``
+    maps the XML ``<ScaleRatio>`` to the dataclass ``scale`` attribute
+    and ``<ScaleOffset>`` to the ``offset`` attribute, then the
+    ``# Apply ComplexSource scaling`` block in ``read_vrt`` applies
+    ``src_arr = src_arr * scale + offset``.
     """
     b = np.array([[10, 11], [12, 13]], dtype=np.uint8)
     p0 = tmp_path / 'b0.tif'
@@ -405,3 +407,25 @@ def test_all_float32_multiband_stays_float32(tmp_path):
     assert r.dtype == np.float32
     np.testing.assert_allclose(r.values[..., 0], b0)
     np.testing.assert_allclose(r.values[..., 1], b1)
+
+
+# ---------------------------------------------------------------------------
+# 9. VRT with zero <VRTRasterBand> elements raises a clear ValueError
+# ---------------------------------------------------------------------------
+
+def test_zero_band_vrt_raises_value_error(tmp_path):
+    """A malformed VRT with zero ``<VRTRasterBand>`` children must
+    surface a clear ``ValueError`` from ``read_vrt`` rather than the
+    generic ``"at least one array or dtype is required"`` message
+    raised by ``np.result_type`` when called with no arguments.
+    """
+    import pytest
+
+    vrt_xml = """<VRTDataset rasterXSize="2" rasterYSize="2">
+  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>
+</VRTDataset>"""
+    p = tmp_path / 'empty.vrt'
+    p.write_text(vrt_xml)
+
+    with pytest.raises(ValueError, match=r"no <VRTRasterBand>"):
+        read_vrt(str(p))

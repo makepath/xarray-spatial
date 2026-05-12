@@ -444,12 +444,28 @@ def read_vrt(vrt_path: str, *, window=None,
     #
     # * Heterogeneous declared dtypes across bands (e.g. ``Byte`` + ``Float32``).
     # * ``ComplexSource`` ``ScaleRatio`` / ``ScaleOffset`` promote source
-    #   values to ``float64`` before placement (see L562-565); the destination
-    #   has to be float-typed too, otherwise the fractional part is lost.
+    #   values to ``float64`` before placement (see the ``# Apply
+    #   ComplexSource scaling`` block later in this function); the
+    #   destination has to be float-typed too, otherwise the fractional
+    #   part is lost.
     #
-    # ``np.result_type`` produces the narrowest dtype that holds every
-    # contributing dtype, so an all-integer VRT stays integer and only mixes
-    # widen to float64. See issue #1696.
+    # ``np.result_type`` produces the common dtype that holds every
+    # contributing dtype without loss. For an all-integer VRT it stays
+    # integer; for mixes it widens to the common dtype (typically
+    # ``float64`` when integer and floating-point bands mix, but it can
+    # be a narrower float -- e.g. ``float32`` under NumPy 2.x for
+    # ``uint8`` + ``float32`` -- or ``complex128`` when complex bands
+    # are present). See issue #1696.
+    #
+    # Guard against a malformed VRT with zero ``<VRTRasterBand>``
+    # elements: ``np.result_type()`` with no args raises a generic
+    # "at least one array or dtype is required" message that gives the
+    # caller no hint about the underlying cause.
+    if not selected_bands:
+        raise ValueError(
+            "VRT has no <VRTRasterBand> elements; cannot determine "
+            "output dtype"
+        )
     effective_dtypes = []
     for vrt_band in selected_bands:
         eff = vrt_band.dtype
