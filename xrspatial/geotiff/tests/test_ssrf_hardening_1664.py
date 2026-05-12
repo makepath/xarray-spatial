@@ -267,6 +267,16 @@ class _MockPool:
 
 
 class TestRedirectRevalidation:
+    # The tests in this class exercise the urllib3 transport path: they mock
+    # urllib3.PoolManager and call read_range(), which internally builds a
+    # urllib3.Timeout via _urllib3_timeout(). urllib3 is an optional runtime
+    # dependency (_HTTPSource falls back to stdlib urllib.request when it's
+    # missing -- see _reader.py:615-617). Skip rather than fail when the
+    # package isn't installed; the stdlib fallback path is covered elsewhere.
+    @pytest.fixture(autouse=True)
+    def _require_urllib3(self):
+        pytest.importorskip("urllib3")
+
     def test_urllib3_redirect_to_private_rejected(self, monkeypatch):
         """Public host that 302-redirects to loopback must be rejected."""
         # Initial validator pass: example.com resolves to a public IP.
