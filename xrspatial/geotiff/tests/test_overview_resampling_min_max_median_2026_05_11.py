@@ -3,22 +3,23 @@
 
 The CPU writer (``xrspatial.geotiff._writer._block_reduce_2d``) and the
 GPU writer (``xrspatial.geotiff._gpu_decode._block_reduce_2d_gpu``) both
-implement six resampling reductions for COG overview generation:
+implement seven resampling reductions for COG overview generation:
 
 * ``mean`` -- covered by ``test_cog_overview_nodata_1613`` and
   ``test_features``.
 * ``nearest`` -- covered by ``test_features`` and the same suite.
 * ``mode`` -- covered by ``test_mode_overview_perf``.
 * ``cubic`` -- covered by ``test_cog_cubic_overview_nodata_1623``.
-* ``min`` -- NO coverage prior to this file.
-* ``max`` -- NO coverage prior to this file.
-* ``median`` -- NO coverage prior to this file.
+* ``min`` / ``max`` / ``median`` -- CPU end-to-end paths covered by
+  ``test_cog_overview_nodata_1613::test_cpu_cog_overview_aggregations_ignore_sentinel``,
+  but the GPU end-to-end paths and the direct CPU/GPU block-reducer
+  branches had no targeted tests prior to this file.
 
 Test coverage gap sweep 2026-05-11 (pass 6) closes a Cat 4 (parameter
-coverage) HIGH gap: three documented public modes of the
-``overview_resampling`` parameter on ``to_geotiff`` and
-``write_geotiff_gpu`` had implementations but no tests, so a regression
-in any of those reduction branches would ship undetected.
+coverage) HIGH gap: the GPU end-to-end paths and the direct CPU+GPU
+block-reducer branches for ``overview_resampling='min'/'max'/'median'``
+had no targeted tests, so a regression on those code paths would ship
+undetected.
 
 The tests cover:
 
