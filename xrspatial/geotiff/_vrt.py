@@ -148,6 +148,12 @@ class _Source:
     # ComplexSource extras
     scale: float | None = None
     offset: float | None = None
+    # GDAL ``<ComplexSource><ResampleAlg>`` values are ``NearestNeighbour``
+    # (default), ``Bilinear``, ``Cubic``, ``CubicSpline``, ``Lanczos``,
+    # ``Average``, ``Mode``.  We parse the value so we can advertise it,
+    # but only nearest-neighbour is implemented in the placement step
+    # (issue #1694).  Higher-quality resamplers are tracked for follow-up.
+    resample_alg: str | None = None
 
 
 @dataclass
@@ -330,6 +336,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
             # ComplexSource extras
             scale = None
             offset = None
+            resample_alg = None
             if tag == 'ComplexSource':
                 scale_str = _text(src_elem, 'ScaleOffset')
                 offset_str = _text(src_elem, 'ScaleRatio')
@@ -338,6 +345,11 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
                     scale = float(offset_str)
                 if scale_str:
                     offset = float(scale_str)
+                # ``<ResampleAlg>`` is informational for the placement
+                # step: read_vrt currently always nearest-neighbours, so
+                # we only record the value for later honouring.  See
+                # issue #1694.
+                resample_alg = _text(src_elem, 'ResampleAlg')
 
             sources.append(_Source(
                 filename=filename,
@@ -347,6 +359,7 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
                 nodata=src_nodata,
                 scale=scale,
                 offset=offset,
+                resample_alg=resample_alg,
             ))
 
         bands.append(_VRTBand(
@@ -365,6 +378,69 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
         bands=bands,
         raster_type=raster_type,
     )
+
+
+def _resample_nearest(src_arr: np.ndarray,
+                      out_h: int, out_w: int) -> np.ndarray:
+    """Nearest-neighbour resample ``src_arr`` to ``(out_h, out_w)``.
+
+    Mirrors GDAL's ``SimpleSource`` semantics: each output pixel samples
+    the source pixel whose centre is closest in the source grid. The
+    centre-of-pixel mapping is ``src_idx = (out_idx + 0.5) * src_size /
+    out_size``; ``floor`` of that, clamped into range, gives the index.
+
+    Used by :func:`read_vrt` to honour ``<SrcRect>``/``<DstRect>``
+    scaling.  See issue #1694 -- before this helper, a source array was
+    pasted directly into the destination with no resample step, which
+    raised a broadcast error for downsampled sources and left holes for
+    upsampled ones.
+
+    Integer-ratio cases short-circuit to ``np.repeat`` (integer
+    upsample) or strided slicing (integer downsample) to avoid building
+    an index array for the common GDAL ``SrcRect`` shapes.
+    """
+    src_h, src_w = src_arr.shape[:2]
+    # Reject an empty source up front: a SimpleSource with SrcRect
+    # ``xSize=0`` / ``ySize=0`` (or a windowed read that clamps to an
+    # empty slice) would otherwise reach the integer-ratio fast paths
+    # below and divide / modulo by zero on ``src_h`` or ``src_w``. Raise
+    # an explicit ValueError so the bad VRT surfaces with a clear cause
+    # instead of an opaque ZeroDivisionError.
+    if src_h == 0 or src_w == 0:
+        raise ValueError(
+            "_resample_nearest received an empty source array; "
+            "the VRT SourceFilename probably has SrcRect with zero size"
+        )
+    if src_h == out_h and src_w == out_w:
+        return src_arr
+    # Fast paths for integer ratios -- common when a VRT downsamples by
+    # 2x / 4x or upsamples by an integer factor.  ``np.repeat`` is a
+    # cheaper nearest-neighbour upsample than the gather below.
+    if (out_h % src_h == 0 and out_w % src_w == 0
+            and out_h >= src_h and out_w >= src_w):
+        ry = out_h // src_h
+        rx = out_w // src_w
+        return np.repeat(np.repeat(src_arr, ry, axis=0), rx, axis=1)
+    if (src_h % out_h == 0 and src_w % out_w == 0
+            and src_h >= out_h and src_w >= out_w):
+        sy = src_h // out_h
+        sx = src_w // out_w
+        # Sample the centre of each output pixel's source block (offset
+        # by half a block, floored) so the integer-ratio downsample
+        # agrees with the general non-integer path for the same shapes.
+        return src_arr[sy // 2::sy, sx // 2::sx][:out_h, :out_w]
+    # General case: build per-axis nearest indices and gather.  ``floor``
+    # plus a clamp matches GDAL's nearest-neighbour rounding for
+    # non-integer ratios.
+    y_idx = np.minimum(
+        np.floor((np.arange(out_h) + 0.5) * src_h / out_h).astype(np.intp),
+        src_h - 1,
+    )
+    x_idx = np.minimum(
+        np.floor((np.arange(out_w) + 0.5) * src_w / out_w).astype(np.intp),
+        src_w - 1,
+    )
+    return src_arr[y_idx[:, None], x_idx[None, :]]
 
 
 def read_vrt(vrt_path: str, *, window=None,
@@ -479,15 +555,38 @@ def read_vrt(vrt_path: str, *, window=None,
             if clip_r0 >= clip_r1 or clip_c0 >= clip_c1:
                 continue  # no overlap
 
-            # Map back to source coordinates
-            # Scale factor: source pixels per destination pixel
-            scale_y = sr.y_size / dr.y_size if dr.y_size > 0 else 1.0
-            scale_x = sr.x_size / dr.x_size if dr.x_size > 0 else 1.0
-
-            src_r0 = sr.y_off + int((clip_r0 - dst_r0) * scale_y)
-            src_c0 = sr.x_off + int((clip_c0 - dst_c0) * scale_x)
-            src_r1 = sr.y_off + int((clip_r1 - dst_r0) * scale_y)
-            src_c1 = sr.x_off + int((clip_c1 - dst_c0) * scale_x)
+            # SrcRect / DstRect scaling.  When sizes match (the common
+            # SimpleSource case GDAL writes for tile mosaics), the source
+            # rect maps 1:1 to the destination rect and we can issue a
+            # windowed read for only the overlap region -- cheaper than
+            # decoding the whole source rect.  When the sizes differ the
+            # source band is being upsampled or downsampled into its
+            # destination cell, so we read the full source rect, apply
+            # nodata masking, resample to ``(dr.y_size, dr.x_size)`` with
+            # nearest-neighbour (matching GDAL's SimpleSource semantics),
+            # and *then* take the clip subwindow.  Reading the whole
+            # source rect first keeps the resample math local to the
+            # source/destination shapes; trying to resample a windowed
+            # source slice independently introduces fence-post errors at
+            # the clip boundary and breaks the integer-ratio fast paths.
+            # See issue #1694.
+            needs_resample = (sr.y_size != dr.y_size
+                              or sr.x_size != dr.x_size)
+            if needs_resample:
+                # TODO(#1704): when the caller passes a small ``window=``
+                # this still reads the full SrcRect.  Computing the
+                # inverse of the nearest-neighbour mapping to read only
+                # the SrcRect subset that feeds ``window`` would cut the
+                # decode/memory cost for large SrcRects.
+                read_r0 = sr.y_off
+                read_c0 = sr.x_off
+                read_r1 = sr.y_off + sr.y_size
+                read_c1 = sr.x_off + sr.x_size
+            else:
+                read_r0 = sr.y_off + (clip_r0 - dst_r0)
+                read_c0 = sr.x_off + (clip_c0 - dst_c0)
+                read_r1 = sr.y_off + (clip_r1 - dst_r0)
+                read_c1 = sr.x_off + (clip_c1 - dst_c0)
 
             # Read from source file using windowed read.
             #
@@ -508,7 +607,7 @@ def read_vrt(vrt_path: str, *, window=None,
             try:
                 src_arr, _ = read_to_array(
                     src.filename,
-                    window=(src_r0, src_c0, src_r1, src_c1),
+                    window=(read_r0, read_c0, read_r1, read_c1),
                     band=src.band - 1,  # convert 1-based to 0-based
                 )
             except (
@@ -541,6 +640,16 @@ def read_vrt(vrt_path: str, *, window=None,
             # fallback: the earlier ``src.nodata or nodata`` shortcut treated
             # ``0.0`` as falsy and silently replaced it with the band-level
             # sentinel (issue #1655).
+            #
+            # Apply nodata masking *before* the resample.  Nearest-neighbour
+            # carries the sentinel value through unchanged, which is what
+            # we want -- the resampled pixel inherits the NaN (or integer
+            # sentinel) of whichever source pixel it sampled.  Resampling
+            # first and masking after would still work for the float case
+            # but would force the integer-into-float promotion to allocate
+            # the resampled-shape buffer before discovering the mask,
+            # which is a waste when the source rect is much larger than
+            # the destination rect.
             src_nodata = src.nodata if src.nodata is not None else nodata
             if src_nodata is not None and src_arr.dtype.kind == 'f':
                 src_arr = src_arr.copy()
@@ -581,6 +690,24 @@ def read_vrt(vrt_path: str, *, window=None,
                 src_arr = src_arr.astype(np.float64) * src.scale
             if src.offset is not None and src.offset != 0.0:
                 src_arr = src_arr.astype(np.float64) + src.offset
+
+            if needs_resample:
+                # Resample the full source rect to the destination rect
+                # shape, then clip to the window subregion.  Doing the
+                # resample on the full rect keeps the nearest-neighbour
+                # index math in one place; the post-resample slice is a
+                # plain numpy view.
+                src_arr = _resample_nearest(src_arr, dr.y_size, dr.x_size)
+                # Take the clip subwindow out of the resampled array.
+                # ``dst_r0`` / ``dst_c0`` anchor the resampled array in
+                # destination coordinates; the clip rect is in
+                # destination coordinates too, so the subtract gives the
+                # right offsets.
+                sub_r0 = clip_r0 - dst_r0
+                sub_c0 = clip_c0 - dst_c0
+                sub_r1 = clip_r1 - dst_r0
+                sub_c1 = clip_c1 - dst_c0
+                src_arr = src_arr[sub_r0:sub_r1, sub_c0:sub_c1]
 
             # Place into output
             out_r0 = clip_r0 - r0
