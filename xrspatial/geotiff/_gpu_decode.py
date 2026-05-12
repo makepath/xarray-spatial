@@ -3026,6 +3026,25 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
                         mask, cupy.float64('nan'), blocks)
     else:
         blocks = cropped.astype(cupy.float64).reshape(oh, 2, ow, 2)
+        # Integer GPU mirror of the CPU sentinel-mask: without it,
+        # cupy.nanmean / nanmin / nanmax / nanmedian average the sentinel
+        # value into surrounding valid cells and produce overview pixels
+        # that aren't masked on the read side because they don't equal
+        # the sentinel. Same root cause as the CPU bug fixed alongside
+        # this; the GPU writer needs byte parity with CPU (the contract
+        # from #1623).
+        if (nodata is not None
+                and np.isfinite(nodata)
+                and float(nodata).is_integer()):
+            nodata_int = int(nodata)
+            info = np.iinfo(arr2d.dtype)
+            if info.min <= nodata_int <= info.max:
+                sentinel = np.dtype(str(arr2d.dtype)).type(nodata_int)
+                int_blocks = cropped.reshape(oh, 2, ow, 2)
+                mask = int_blocks == sentinel
+                if bool(mask.any().item()):
+                    blocks = cupy.where(
+                        mask, cupy.float64('nan'), blocks)
 
     if method == 'mean':
         result = cupy.nanmean(blocks, axis=(1, 3))
@@ -3042,6 +3061,20 @@ def _block_reduce_2d_gpu(arr2d, method, nodata=None):
             f"Use one of: {GPU_OVERVIEW_METHODS}")
 
     if arr2d.dtype.kind != 'f':
+        # All-sentinel 2x2 blocks come back as NaN from cupy.nan*;
+        # casting NaN to integer is undefined on the GPU, so rewrite
+        # those back to the sentinel before the cast. Mirrors the CPU
+        # fallback for the same reason; matches the post-cast invariant
+        # the CPU writer's overview loop relies on.
+        if nodata is not None and np.isfinite(nodata):
+            nan_mask = cupy.isnan(result)
+            if bool(nan_mask.any().item()):
+                nodata_int = int(nodata) if float(nodata).is_integer() else None
+                if nodata_int is not None:
+                    info = np.iinfo(arr2d.dtype)
+                    if info.min <= nodata_int <= info.max:
+                        result = cupy.where(
+                            nan_mask, cupy.float64(nodata_int), result)
         return cupy.around(result).astype(arr2d.dtype)
     return result.astype(arr2d.dtype)
 
@@ -3059,11 +3092,13 @@ def make_overview_gpu(arr, method='mean', nodata=None):
         implementation in :mod:`xrspatial.geotiff._writer` so the GPU
         writer path produces the same overview bytes as the CPU writer.
     nodata : scalar or None
-        When supplied and ``arr`` is a float dtype, cells equal to the
-        sentinel are masked back to NaN before the reduction so the
-        sentinel does not bias the result. Required for COG output that
-        sets ``nodata=...`` (issue #1613, extended to ``cubic`` in
-        issue #1623). Ignored for integer arrays and for ``nearest``.
+        When supplied, cells equal to the sentinel are masked back to
+        NaN before the reduction so the sentinel does not bias the
+        result. Applies to float dtypes (issue #1613, extended to
+        ``cubic`` in #1623) and to integer dtypes (covers the
+        sentinel-poisoning case that mixed sentinel + valid pixels in
+        the nan-aware reduction). Ignored for ``nearest`` (no reduction
+        averaging occurs).
 
     Returns
     -------

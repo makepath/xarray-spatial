@@ -153,17 +153,24 @@ _MAX_OVERVIEW_LEVELS = 8
 def _block_reduce_2d(arr2d, method, nodata=None):
     """2x block-reduce a single 2D plane using *method*.
 
-    When ``nodata`` is supplied and ``arr2d`` is a float dtype, cells that
-    equal the sentinel are treated as NaN during the reduction so the
-    ``nan*`` aggregation routines correctly skip them. For the nan-aware
-    aggregation methods, the reduced output keeps NaN wherever every
-    contributing input cell was the sentinel (so callers can rewrite
-    that NaN back to the sentinel after the reduction). The sentinel is
-    ignored entirely for integer dtypes and for ``nearest`` and ``mode``
-    methods. The ``cubic`` branch honours ``nodata`` by masking the
-    sentinel to NaN, running cubic with ``prefilter=False`` to keep the
-    kernel local, and rewriting any NaN in the output back to the
-    sentinel before returning (issue #1623).
+    When ``nodata`` is supplied, cells that equal the sentinel are
+    treated as NaN during the reduction so the ``nan*`` aggregation
+    routines correctly skip them. The float branch keeps any all-
+    sentinel block as NaN so the caller's post-overview loop can
+    rewrite it back to the sentinel; the integer branch rewrites NaN
+    back to the sentinel before the dtype cast so the cast is
+    well-defined (the caller's post-overview loop only handles the
+    float case). The ``nearest`` and ``mode`` methods do NOT mask the
+    sentinel: ``nearest`` returns the top-left pixel of each 2x2 block
+    and ``mode`` returns the most-frequent value, so the sentinel can
+    be selected as the overview pixel if it occupies that position
+    (``nearest``) or is the most frequent value in the block
+    (``mode``). Mean / median / min / max / cubic all mask the
+    sentinel before reduction. The ``cubic`` branch honours ``nodata``
+    by masking the sentinel to NaN, running cubic with
+    ``prefilter=False`` to keep the kernel local, and rewriting any
+    NaN in the output back to the sentinel before returning (issue
+    #1623).
     """
     h, w = arr2d.shape
     h2 = (h // 2) * 2
@@ -257,11 +264,34 @@ def _block_reduce_2d(arr2d, method, nodata=None):
                     blocks = np.where(mask, np.float64('nan'), blocks)
     else:
         blocks = cropped.astype(np.float64).reshape(oh, 2, ow, 2)
-        # Integer rasters can also carry a sentinel that an upstream
-        # promotion already converted to NaN; cropped is integer so no
-        # masking is needed here. The blocks.astype(float64) cast above
-        # would lose any NaN anyway -- integer sentinels are handled at
-        # the call site by promoting to float64 before reduction.
+        # Integer rasters with a sentinel need the same NaN-mask the float
+        # branch above applies: without it, nanmean / nanmin / nanmax /
+        # nanmedian average the sentinel value into surrounding valid
+        # cells and produce overview pixels that are neither the sentinel
+        # nor any real measurement. The read-side int-to-NaN mask in
+        # ``open_geotiff`` only catches exact sentinel hits, so the
+        # poisoned values survive as silent garbage at every zoom level
+        # above 0. Gate on the sentinel being representable in the
+        # source integer dtype (mirrors ``_int_nodata_in_range`` in
+        # ``_reader.py``) so an out-of-range sentinel pair like
+        # ``uint16`` + ``GDAL_NODATA="-9999"`` stays a no-op rather than
+        # tripping ``OverflowError`` on the dtype cast.
+        if (nodata is not None
+                and np.isfinite(nodata)
+                and float(nodata).is_integer()):
+            nodata_int = int(nodata)
+            info = np.iinfo(arr2d.dtype)
+            if info.min <= nodata_int <= info.max:
+                sentinel = arr2d.dtype.type(nodata_int)
+                # Compare against the original integer block view so
+                # the equality runs at the integer's native width
+                # (avoids any float-cast rounding on adjacent values).
+                # The boolean mask broadcasts into the float64 block
+                # layout below.
+                int_blocks = cropped.reshape(oh, 2, ow, 2)
+                mask = int_blocks == sentinel
+                if mask.any():
+                    blocks = np.where(mask, np.float64('nan'), blocks)
 
     # nanmean / nanmin / nanmax / nanmedian emit RuntimeWarning when a
     # 2x2 block is all-NaN (typical at nodata borders). The all-NaN
@@ -284,6 +314,23 @@ def _block_reduce_2d(arr2d, method, nodata=None):
                 f"Use one of: {OVERVIEW_METHODS}")
 
     if arr2d.dtype.kind != 'f':
+        # All-sentinel 2x2 blocks come back as NaN from the nan-aware
+        # reduction; cast NaN to an integer dtype is undefined (varies
+        # between platforms / produces zero or INT_MIN). Rewrite those
+        # back to the sentinel before the cast so the integer overview
+        # pyramid carries the same masking convention as the
+        # full-resolution band. The float branch relies on the caller's
+        # post-overview rewrite in ``write()``; integer dtypes skip that
+        # branch because ``current.dtype.kind == 'f'`` is False, so we
+        # close the loop here.
+        if nodata is not None and np.isfinite(nodata):
+            nan_mask = np.isnan(result)
+            if nan_mask.any():
+                info = np.iinfo(arr2d.dtype)
+                nodata_int = int(nodata) if float(nodata).is_integer() else None
+                if (nodata_int is not None
+                        and info.min <= nodata_int <= info.max):
+                    result = np.where(nan_mask, float(nodata_int), result)
         return np.round(result).astype(arr2d.dtype)
     return result.astype(arr2d.dtype)
 
@@ -300,12 +347,14 @@ def _make_overview(arr: np.ndarray, method: str = 'mean',
         Resampling method: 'mean' (default), 'nearest', 'min', 'max',
         'median', 'mode', or 'cubic'.
     nodata : scalar or None
-        When supplied and ``arr`` is a float dtype, cells equal to the
-        sentinel are masked back to NaN before the reduction so the
-        sentinel does not bias the result. Required for COG output that
-        sets ``nodata=...`` (issue #1613, extended to ``cubic`` in
-        issue #1623). Ignored for integer arrays and for ``nearest`` /
-        ``mode`` methods.
+        When supplied, cells equal to the sentinel are masked back to
+        NaN before the reduction so the sentinel does not bias the
+        result. Applies to both float dtypes (issue #1613, extended to
+        ``cubic`` in #1623) and integer dtypes (the mean / min / max /
+        median reductions used to average the sentinel into surrounding
+        valid pixels and produce overview values that the reader could
+        not mask). Ignored for ``nearest`` / ``mode`` methods (no
+        averaging occurs).
 
     Returns
     -------
