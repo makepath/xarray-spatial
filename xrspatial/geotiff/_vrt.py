@@ -311,7 +311,7 @@ def read_vrt(vrt_path: str, *, window=None,
     # indexing would silently accept negative values (``vrt.bands[-1]``
     # returns the last band) and raise an opaque ``IndexError`` for
     # out-of-range positive values, neither of which is the contract the
-    # public API documents (``band`` is a 0-based positive index). Reject
+    # public API documents (``band`` is a 0-based non-negative index). Reject
     # both up front with a clear ``ValueError`` so callers do not get
     # band-N data paired with band-0's nodata sentinel or a downstream
     # IndexError from deep in the read path.
