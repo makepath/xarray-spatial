@@ -3508,6 +3508,16 @@ def read_vrt(source: str, *, dtype=None,
         attrs['crs_wkt'] = vrt.crs_wkt
     if vrt.raster_type == 'point':
         attrs['raster_type'] = 'point'
+    # Surface skipped-source records as ``attrs['vrt_holes']`` so
+    # callers can detect a partial mosaic by attribute lookup. Under
+    # lenient mode (the default), the underlying ``_vrt.read_vrt``
+    # already warned per skipped source but the warning is easy to
+    # miss in a pipeline; the attr lets downstream code branch on
+    # ``"vrt_holes" in da.attrs`` instead of monitoring the warnings
+    # stream. Empty list is omitted so the attr only appears when
+    # there is actually a hole. See issue #1734.
+    if vrt.holes:
+        attrs['vrt_holes'] = list(vrt.holes)
     # When a specific band is selected, source its nodata from that
     # band's <NoDataValue> instead of band 0's. Otherwise multi-band
     # VRTs with per-band sentinels would mis-mask the read: attrs would

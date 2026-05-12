@@ -181,6 +181,14 @@ class VRTDataset:
     # coords must be emitted without the shift.  Parsed from
     # ``<Metadata><MDI key="AREA_OR_POINT">Point</MDI></Metadata>``.
     raster_type: str = 'area'  # 'area' or 'point'
+    # Per-load record of sources skipped by ``read_vrt`` under the
+    # lenient default (not strict mode). Each entry is a dict with
+    # ``source``, ``band`` (1-based), ``dst_rect`` (xoff, yoff,
+    # xsize, ysize), and ``error`` keys. Empty when no sources failed
+    # to read. Populated by :func:`read_vrt` so callers can detect
+    # holes by attribute lookup instead of parsing a UserWarning
+    # message (issue #1734).
+    holes: list[dict] = field(default_factory=list)
 
 
 def _parse_rect(elem) -> _Rect:
@@ -656,6 +664,17 @@ def read_vrt(vrt_path: str, *, window=None,
                 # so partial mosaics are caught in CI. Default mode warns
                 # once per missing source then continues, preserving the
                 # historical behaviour. See issue #1662.
+                #
+                # The lenient default leaves zero-filled holes in
+                # integer VRTs that downstream code cannot tell from
+                # real data unless the band has a nodata sentinel set.
+                # Recording the skipped source on ``vrt.holes`` lets the
+                # public ``read_vrt`` surface a machine-readable
+                # ``attrs['vrt_holes']`` entry on the returned
+                # DataArray, alongside the warning. Callers that need
+                # to fail loudly can either inspect that attr or set
+                # ``XRSPATIAL_GEOTIFF_STRICT=1`` to raise here.
+                # See issue #1734.
                 import warnings
                 from . import _geotiff_strict_mode, GeoTIFFFallbackWarning
                 if _geotiff_strict_mode():
@@ -663,10 +682,19 @@ def read_vrt(vrt_path: str, *, window=None,
                 warnings.warn(
                     f"VRT source {src.filename!r} could not be read "
                     f"({type(e).__name__}: {e}); skipping. The output "
-                    f"mosaic will have a hole at this tile.",
+                    f"mosaic will have a hole at this tile. Inspect "
+                    f"``DataArray.attrs['vrt_holes']`` or set "
+                    f"XRSPATIAL_GEOTIFF_STRICT=1 to raise instead.",
                     GeoTIFFFallbackWarning,
                     stacklevel=2,
                 )
+                vrt.holes.append({
+                    'source': src.filename,
+                    'band': src.band,
+                    'dst_rect': (dr.x_off, dr.y_off,
+                                 dr.x_size, dr.y_size),
+                    'error': f"{type(e).__name__}: {e}",
+                })
                 continue  # skip missing/unreadable sources
 
             # Handle source nodata.  Cast the sentinel to the *source*
