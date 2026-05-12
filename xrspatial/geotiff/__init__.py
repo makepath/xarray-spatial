@@ -43,7 +43,14 @@ if TYPE_CHECKING:
     from typing import BinaryIO
 
 from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
-from ._reader import UnsafeURLError, read_to_array
+from ._reader import UnsafeURLError
+# ``read_to_array`` is internal: it is used by ``open_geotiff`` and the
+# GPU fallback below but is not in ``__all__`` or the module-level
+# Public API docstring. Bind it under a leading-underscore name so it
+# does not leak into ``xrspatial.geotiff``'s public namespace. Tests
+# and internal callers that genuinely need it can import directly from
+# ``xrspatial.geotiff._reader``. See issue #1708.
+from ._reader import read_to_array as _read_to_array
 from ._writer import write
 
 # All names below are part of the supported public API. ``plot_geotiff``
@@ -807,7 +814,7 @@ def open_geotiff(source, *, dtype=None,
     # in :func:`read_geotiff_dask`. That keeps the two backends in sync
     # on the contract without forcing a second metadata parse here. See
     # issue #1634.
-    arr, geo_info = read_to_array(
+    arr, geo_info = _read_to_array(
         source, window=window,
         overview_level=overview_level, band=band,
         **kwargs,
@@ -2171,9 +2178,9 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             _r2a_kwargs = {}
             if max_pixels is not None:
                 _r2a_kwargs['max_pixels'] = max_pixels
-            arr, _ = read_to_array(source, window=(r0, c0, r1, c1),
-                                   overview_level=overview_level,
-                                   band=band, **_r2a_kwargs)
+            arr, _ = _read_to_array(source, window=(r0, c0, r1, c1),
+                                    overview_level=overview_level,
+                                    band=band, **_r2a_kwargs)
         if nodata is not None:
             # ``arr`` was just decoded by ``_fetch_decode_cog_http_tiles``
             # or ``read_to_array``; both return freshly-allocated buffers
@@ -2677,7 +2684,7 @@ def read_geotiff_gpu(source: str, *,
             # its geo_info and apply our own transform update below so the
             # result is correct regardless of merge order.
             src.close()
-            arr_cpu, _ = read_to_array(
+            arr_cpu, _ = _read_to_array(
                 source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
             if orientation != 1:
@@ -2843,7 +2850,7 @@ def read_geotiff_gpu(source: str, *,
             # Drop read_to_array's geo_info: orientation transform handling
             # below operates on our pre-extracted geo_info so the 2/3/4 case
             # is covered regardless of #1539's merge state.
-            arr_cpu, _ = read_to_array(
+            arr_cpu, _ = _read_to_array(
                 source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
             arr_was_cpu_decoded = True
@@ -2856,7 +2863,7 @@ def read_geotiff_gpu(source: str, *,
                     f"({height}, {width}, {samples})"
                 )
     elif has_sparse_tile:
-        arr_cpu, _ = read_to_array(
+        arr_cpu, _ = _read_to_array(
             source, overview_level=overview_level)
         arr_gpu = cupy.asarray(arr_cpu)
         arr_was_cpu_decoded = True
@@ -2913,7 +2920,7 @@ def read_geotiff_gpu(source: str, *,
                 RuntimeWarning,
                 stacklevel=2,
             )
-            arr_cpu, _ = read_to_array(
+            arr_cpu, _ = _read_to_array(
                 source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
             arr_was_cpu_decoded = True

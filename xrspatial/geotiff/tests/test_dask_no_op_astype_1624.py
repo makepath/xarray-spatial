@@ -104,7 +104,12 @@ def test_astype_skipped_when_dtypes_match(float32_no_nodata_tif, monkeypatch):
         captured.append(tracked)
         return tracked, meta
 
-    monkeypatch.setattr(gt, 'read_to_array', wrapped_r2a)
+    # ``read_geotiff_dask``'s per-chunk worker calls the alias
+    # ``_read_to_array`` bound in ``xrspatial.geotiff``. Patch that
+    # binding; patching ``_reader.read_to_array`` would not affect the
+    # already-imported alias. See issue #1708 for why ``read_to_array``
+    # is internal.
+    monkeypatch.setattr(gt, '_read_to_array', wrapped_r2a)
 
     dk = read_geotiff_dask(path, chunks=4)
     dk.compute()
