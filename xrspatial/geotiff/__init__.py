@@ -1239,6 +1239,21 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
 
     path = _coerce_path(path)
 
+    # Reject non-positive tile_size up front. The tiled writer computes
+    # the tile grid as ``math.ceil(width / tile_size)``; tile_size=0 hits
+    # ZeroDivisionError deep inside the writer, and negative values
+    # produce a nonsensical tile grid. tiled=False ignores tile_size, so
+    # only validate when tiled output is actually requested.
+    if tiled:
+        if not isinstance(tile_size, (int, np.integer)) or isinstance(
+                tile_size, bool):
+            raise ValueError(
+                f"tile_size must be a positive int, got "
+                f"{tile_size!r} (type {type(tile_size).__name__}).")
+        if tile_size <= 0:
+            raise ValueError(
+                f"tile_size must be a positive int, got tile_size={tile_size}.")
+
     # Up-front validation: catch bad compression names before they reach
     # any of the deeper write paths (streaming, GPU, VRT, COG) where the
     # error surfaces from _compression_tag with a less obvious traceback.
@@ -1907,6 +1922,33 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
     from ._reader import _coerce_path
 
     source = _coerce_path(source)
+
+    # Reject non-positive chunk sizes up front. ``chunks=0`` and negative
+    # values otherwise propagate into dask chunk math (``range(0, N, 0)``
+    # ValueError, or empty chunk grids) with no indication that ``chunks``
+    # was the problem. ``chunks`` may be an int or a (row, col) tuple.
+    if isinstance(chunks, int) and not isinstance(chunks, bool):
+        if chunks <= 0:
+            raise ValueError(
+                f"chunks must be a positive int or (row, col) tuple of "
+                f"positive ints, got chunks={chunks}.")
+    elif isinstance(chunks, tuple):
+        if len(chunks) != 2:
+            raise ValueError(
+                f"chunks tuple must have length 2 (row, col), got "
+                f"chunks={chunks!r} with length {len(chunks)}.")
+        for _v in chunks:
+            if (not isinstance(_v, (int, np.integer))
+                    or isinstance(_v, bool)
+                    or _v <= 0):
+                raise ValueError(
+                    f"chunks must be a positive int or (row, col) tuple "
+                    f"of positive ints, got chunks={chunks!r}.")
+    else:
+        raise ValueError(
+            f"chunks must be a positive int or (row, col) tuple of "
+            f"positive ints, got chunks={chunks!r} "
+            f"(type {type(chunks).__name__}).")
 
     # ``open_geotiff`` already routes ``.vrt`` to ``read_vrt`` before
     # reaching here, so this branch is only hit when ``read_geotiff_dask``
