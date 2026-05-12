@@ -68,6 +68,12 @@ __all__ = [
 _GPU_DEPRECATED_SENTINEL = object()
 _ON_GPU_FAILURE_SENTINEL = object()
 
+# Names of dims that ``to_geotiff`` / ``write_geotiff_gpu`` treat as the
+# non-spatial band axis. Used both to remap ``(band, y, x)`` inputs to
+# ``(y, x, band)`` before writing and to skip the band axis when inferring
+# a GeoTransform from coords (see ``_coords_to_transform`` and issue #1643).
+_BAND_DIM_NAMES = ('band', 'bands', 'channel')
+
 
 def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
     """Try to extract an EPSG code from a WKT or PROJ string.
@@ -193,8 +199,9 @@ def _coords_to_transform(da: xr.DataArray) -> GeoTransform | None:
     - PixelIsPoint: origin = center  (center of pixel 0)
 
     For 3D arrays the spatial dims are the two non-band dims. The helper
-    skips any trailing/leading dim named ``band`` / ``bands`` / ``channel``
-    so a ``(y, x, band)`` or ``(band, y, x)`` DataArray returns the y/x
+    filters out any dim named ``band`` / ``bands`` / ``channel`` (see
+    ``_BAND_DIM_NAMES``) regardless of position, so a ``(y, x, band)``,
+    ``(band, y, x)``, or ``(y, band, x)`` DataArray returns the y/x
     transform rather than picking up the band axis spacing as a pixel
     size. ``to_geotiff`` itself remaps ``(band, y, x)`` arrays to
     ``(y, x, band)`` before writing pixel bytes, but it calls
@@ -202,7 +209,6 @@ def _coords_to_transform(da: xr.DataArray) -> GeoTransform | None:
     helper must handle both layouts to keep the geo-transform consistent
     with the file's coord arrays. See issue #1643.
     """
-    _BAND_DIM_NAMES = ('band', 'bands', 'channel')
     if da.ndim == 3:
         # Drop the band-like dim and keep the two spatial dims in their
         # original (y, x) order. Position-based fallback covers the case
@@ -1191,7 +1197,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
         if hasattr(raw, 'dask') and not cog and not _path_is_file_like:
             dask_arr = raw
             # Handle band-first dimension order (band, y, x) -> (y, x, band)
-            if raw.ndim == 3 and data.dims[0] in ('band', 'bands', 'channel'):
+            if raw.ndim == 3 and data.dims[0] in _BAND_DIM_NAMES:
                 import dask.array as da
                 dask_arr = da.moveaxis(raw, 0, -1)
             if dask_arr.ndim not in (2, 3):
@@ -1240,7 +1246,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray, path, *,
         else:
             arr = np.asarray(raw)
         # Handle band-first dimension order (band, y, x) -> (y, x, band)
-        if arr.ndim == 3 and data.dims[0] in ('band', 'bands', 'channel'):
+        if arr.ndim == 3 and data.dims[0] in _BAND_DIM_NAMES:
             arr = np.moveaxis(arr, 0, -1)
     else:
         if hasattr(data, 'get'):
@@ -2855,7 +2861,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         # this remap the writer treats arr.shape[2] as the band axis and
         # produces a transposed file (issue #1580). The CPU writer does
         # the same remap at the matching step in to_geotiff().
-        if arr.ndim == 3 and data.dims[0] in ('band', 'bands', 'channel'):
+        if arr.ndim == 3 and data.dims[0] in _BAND_DIM_NAMES:
             arr = cupy.ascontiguousarray(cupy.moveaxis(arr, 0, -1))
 
         # Prefer attrs['transform'] over the coord-derived transform: it

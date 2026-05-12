@@ -9,8 +9,7 @@ dims regardless of position.
 """
 from __future__ import annotations
 
-import os
-import tempfile
+import importlib.util
 
 import numpy as np
 import pytest
@@ -18,11 +17,18 @@ import xarray as xr
 
 from xrspatial.geotiff import _coords_to_transform, open_geotiff, to_geotiff
 
-try:
-    import cupy  # noqa: F401
-    HAS_CUPY = True
-except ImportError:
-    HAS_CUPY = False
+
+def _gpu_available() -> bool:
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+_HAS_GPU = _gpu_available()
 
 
 def _make_geo_da_3d(dims):
@@ -57,6 +63,26 @@ def test_coords_to_transform_yxband_returns_yx_spacing():
 def test_coords_to_transform_bandyx_returns_yx_spacing():
     """3D (band, y, x) also returns the y/x transform."""
     da = _make_geo_da_3d(('band', 'y', 'x'))
+    gt = _coords_to_transform(da)
+    assert gt is not None
+    np.testing.assert_allclose(gt.pixel_width, (700.0 - 500.0) / 19)
+    np.testing.assert_allclose(gt.pixel_height, (200.0 - 100.0) / 9)
+
+
+@pytest.mark.parametrize('band_name', ['band', 'bands', 'channel'])
+def test_coords_to_transform_3d_band_name_variants(band_name):
+    """All recognized band-dim names (band, bands, channel) are filtered
+    out when picking the y/x spatial dims."""
+    arr = np.zeros((10, 20, 3), dtype=np.uint8)
+    da = xr.DataArray(
+        arr,
+        dims=['y', 'x', band_name],
+        coords={
+            'y': np.linspace(100.0, 200.0, 10),
+            'x': np.linspace(500.0, 700.0, 20),
+            band_name: np.arange(3),
+        },
+    )
     gt = _coords_to_transform(da)
     assert gt is not None
     np.testing.assert_allclose(gt.pixel_width, (700.0 - 500.0) / 19)
@@ -154,7 +180,7 @@ def test_to_geotiff_3d_without_transform_attr_does_not_invent_unit_pixels(
         f"leaked into the GeoTransform; expected ~10.526")
 
 
-@pytest.mark.skipif(not HAS_CUPY, reason="cupy not available")
+@pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 def test_write_geotiff_gpu_roundtrip_3d_no_transform_attr(tmp_path):
     """GPU writer shares ``_coords_to_transform`` with the CPU writer.
 
