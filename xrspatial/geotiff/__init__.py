@@ -2754,8 +2754,35 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     nodata : float, int, or None
         NoData value.
     compression : str
-        'zstd' (default, fastest on GPU), 'deflate', 'jpeg', or 'none'.
-        JPEG uses nvJPEG when available, falling back to Pillow.
+        Codec name. Accepts the same set ``to_geotiff`` lists in its
+        own signature: ``'none'``, ``'deflate'``, ``'lzw'``, ``'jpeg'``,
+        ``'packbits'``, ``'zstd'``, ``'lz4'``, ``'jpeg2000'`` (alias
+        ``'j2k'``), or ``'lerc'``.
+
+        Routing per codec:
+
+        - ``'zstd'`` (default) and ``'deflate'``: nvCOMP batch
+          compression on the GPU -- the fastest paths and the reason to
+          use this entry point.
+        - ``'jpeg'``: nvJPEG when libnvjpeg is loadable, Pillow
+          otherwise. Note that ``to_geotiff`` rejects
+          ``compression='jpeg'`` at runtime because its CPU encoder
+          omits the required TIFF JPEGTables tag (347); this GPU entry
+          point instead emits self-contained JFIF tiles. The two
+          writers therefore disagree about JPEG-in-TIFF interop. Files
+          produced here decode through this library's own reader but
+          may not round-trip through GDAL, rasterio, or libtiff
+          readers that require the JPEGTables tag. Treat the JPEG path
+          as experimental and internal-reader-only until the
+          JPEGTables fix lands.
+        - ``'jpeg2000'`` and ``'j2k'``: nvJPEG2K GPU encode when
+          available, glymur CPU encode otherwise. The two paths are
+          not byte-for-byte identical (different libraries, different
+          default parameters); use ``to_geotiff`` if you need exact
+          CPU-writer parity.
+        - ``'lerc'``, ``'lzw'``, ``'packbits'``, and ``'lz4'``: no
+          nvCOMP/CUDA accelerator, so these fall through to the CPU
+          encoder for byte-stable parity with ``to_geotiff``.
     compression_level : int or None
         Compression effort level. Accepted for API compatibility but
         currently ignored -- nvCOMP does not expose level control.
