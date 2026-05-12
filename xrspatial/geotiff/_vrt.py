@@ -300,9 +300,15 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
             else:
                 trusted = [vrt_root, *allowed_roots]
             if not any(_path_is_under(filename, r) for r in trusted):
+                # Use direct interpolation (not !r) for ``filename`` and
+                # ``vrt_root`` so Windows paths render with single
+                # backslashes rather than the doubled escapes repr emits.
+                # The explicit quotes keep the boundary readable when the
+                # path has embedded spaces. ``allowed_roots`` stays as !r
+                # for its list-of-strings render.
                 raise ValueError(
-                    f"VRT SourceFilename {filename!r} resolves outside "
-                    f"the VRT directory ({vrt_root!r}) and is not "
+                    f"VRT SourceFilename '{filename}' resolves outside "
+                    f"the VRT directory ('{vrt_root}') and is not "
                     f"covered by any {_ALLOWED_ROOTS_ENV} entry "
                     f"({allowed_roots!r}). Refusing to read; see issue "
                     f"#1671."
