@@ -321,3 +321,92 @@ def test_regression_empty_sample_format_tuple_does_not_indexerror():
         assert isinstance(da, xr.DataArray)
     except ValueError:
         pass
+
+
+# --- Group 4: truncation fuzz on the IFD entry table (#1672) ---
+#
+# The byte-mutation fuzz in Group 3 flips one byte; it doesn't cover the
+# case where the file is truncated before `parse_ifd` has even finished
+# reading the entry table. The S2 typed-error work in #1661 fixed the
+# *value area* of each entry; the entry table itself (num_entries,
+# tag/type/count fields, next-IFD pointer) was still unguarded and
+# escaped with `struct.error` on truncation.
+
+from xrspatial.geotiff._header import parse_all_ifds, parse_header  # noqa: E402
+
+
+# Reuse the same corpus from Group 3; truncating each one covers
+# little- and big-endian, strip and tile, with and without geo tags.
+@pytest.mark.parametrize(
+    "label,base_tiff", _CORPUS, ids=[lab for lab, _ in _CORPUS]
+)
+@given(offset_frac=st.floats(min_value=0.0, max_value=1.0))
+@settings(
+    max_examples=80,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+)
+def test_truncation_typed_errors_only(label, base_tiff, offset_frac):
+    """Truncating a valid TIFF at any byte must raise a typed error.
+
+    For every truncation point the parser must either succeed (the cut
+    landed past the IFD chain), raise ValueError / TypeError, or raise
+    one of the documented memory/overflow refusals. `struct.error` from
+    `unpack_from` walking off the buffer is the failure mode we are
+    guarding against.
+    """
+    cut = int(offset_frac * len(base_tiff))
+    truncated = base_tiff[:cut]
+
+    try:
+        header = parse_header(truncated)
+        parse_all_ifds(truncated, header)
+    except ALLOWED_PARSE_EXCEPTIONS:
+        return
+    except (MemoryError, OverflowError):
+        return
+    except struct.error as exc:
+        pytest.fail(
+            f"[{label}] truncation to {cut} bytes (of {len(base_tiff)}) "
+            f"raised struct.error: {exc!r}"
+        )
+    except Exception as exc:
+        pytest.fail(
+            f"[{label}] truncation to {cut} bytes (of {len(base_tiff)}) "
+            f"raised non-typed {type(exc).__name__}: {exc!r}"
+        )
+
+
+# Targeted examples for each of the three #1672 bounds checks. These
+# pin the regression for the exact offsets the fuzz sweeps over and
+# give a fast-fail signal if any check is reverted.
+
+@example(byte_count=8)    # Cuts before num_entries.
+@example(byte_count=9)    # Splits the 2-byte num_entries field.
+@example(byte_count=20)   # Splits the first entry's tag/type/count.
+@given(byte_count=st.integers(min_value=0, max_value=400))
+@settings(
+    max_examples=40,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+)
+def test_truncation_in_entry_table_is_valueerror(byte_count):
+    """Every truncation inside the IFD entry table raises a typed error."""
+    base = make_minimal_tiff(4, 4, np.dtype('float32'))
+    truncated = base[:byte_count]
+    try:
+        header = parse_header(truncated)
+        parse_all_ifds(truncated, header)
+    except ALLOWED_PARSE_EXCEPTIONS:
+        return
+    except (MemoryError, OverflowError):
+        return
+    except struct.error as exc:
+        pytest.fail(
+            f"truncation to {byte_count} bytes raised struct.error: {exc!r}"
+        )
+    except Exception as exc:
+        pytest.fail(
+            f"truncation to {byte_count} bytes raised non-typed "
+            f"{type(exc).__name__}: {exc!r}"
+        )
