@@ -57,9 +57,9 @@ _CODEC_DECODE_EXCEPTIONS = _codec_decode_exceptions()
 
 
 # Environment variable name used to opt in to absolute source paths
-# outside the VRT directory.  Colon-separated (``os.pathsep``) list of
-# directory roots.  Empty entries are ignored.  See ``parse_vrt`` for
-# the containment policy.
+# outside the VRT directory.  ``os.pathsep``-separated list of
+# directory roots (``:`` on POSIX, ``;`` on Windows).  Empty entries
+# are ignored.  See ``parse_vrt`` for the containment policy.
 _ALLOWED_ROOTS_ENV = 'XRSPATIAL_VRT_ALLOWED_ROOTS'
 
 

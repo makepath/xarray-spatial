@@ -14,8 +14,8 @@ The new behaviour rejects:
   the VRT directory and any allowlisted root
 
 Operators that legitimately need cross-directory reads opt in via the
-``XRSPATIAL_VRT_ALLOWED_ROOTS`` environment variable (colon-separated
-list of directory paths).
+``XRSPATIAL_VRT_ALLOWED_ROOTS`` environment variable
+(``os.pathsep``-separated list of directory paths).
 """
 from __future__ import annotations
 
@@ -122,8 +122,14 @@ def test_relative_source_symlink_traversal_rejected(tmp_path):
     _write_minimal_tif(outside_target)
 
     # Plant a symlink inside vrt_dir that points to the outside file.
+    # ``os.symlink`` can fail on Windows CI (requires Developer Mode or
+    # admin privileges) and on some filesystems, so guard it and skip
+    # rather than fail the suite on those platforms.
     sym = os.path.join(vrt_dir, 'inside.tif')
-    os.symlink(outside_target, sym)
+    try:
+        os.symlink(outside_target, sym)
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"symlink not supported in this environment: {e}")
 
     vrt_path = os.path.join(vrt_dir, 'mosaic.vrt')
     _build_vrt(vrt_path, 'inside.tif', relative='1')
@@ -190,7 +196,7 @@ def test_absolute_source_allowlisted_root_passes(tmp_path, monkeypatch):
 
 
 def test_allowlist_supports_multiple_roots(tmp_path, monkeypatch):
-    """A colon-separated list permits sources under any listed root."""
+    """An ``os.pathsep``-separated list permits sources under any listed root."""
     vrt_dir = _unique_dir(tmp_path, "multi_vrt")
     dir_a = _unique_dir(tmp_path, "multi_a")
     dir_b = _unique_dir(tmp_path, "multi_b")
@@ -233,7 +239,7 @@ def test_allowlist_does_not_cover_traversal_via_relative_source(
 
 
 def test_allowlist_empty_entries_ignored(tmp_path, monkeypatch):
-    """Empty entries in the allowlist (from stray colons) are skipped."""
+    """Empty entries in the allowlist (from stray separators) are skipped."""
     vrt_dir = _unique_dir(tmp_path, "empty_entry_vrt")
     outside_dir = _unique_dir(tmp_path, "empty_entry_data")
     outside_tif = os.path.join(outside_dir, 'data.tif')
@@ -243,8 +249,11 @@ def test_allowlist_empty_entries_ignored(tmp_path, monkeypatch):
     _build_vrt(vrt_path, outside_tif, relative='0')
 
     # Leading/trailing/embedded empty entries should not crash the parser
-    # or accidentally grant access to ``/``.
-    value = f":{outside_dir}::"
+    # or accidentally grant access to ``/``.  Build the value with
+    # ``os.pathsep`` so the test stays cross-platform (``:`` on POSIX,
+    # ``;`` on Windows).
+    sep = os.pathsep
+    value = f"{sep}{outside_dir}{sep}{sep}"
     monkeypatch.setenv('XRSPATIAL_VRT_ALLOWED_ROOTS', value)
     arr, _ = _read_vrt_internal(vrt_path)
     assert arr.shape == (4, 4)
