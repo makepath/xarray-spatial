@@ -834,44 +834,89 @@ def unpack_bits(data: np.ndarray, bps: int, pixel_count: int) -> np.ndarray:
         out = np.unpackbits(data)[:pixel_count]
         return out.astype(np.uint8)
     elif bps == 2:
-        # 4 pixels per byte, MSB-first
+        # 4 pixels per byte, MSB-first. Vectorised across the packed
+        # byte array so a large tile decodes in one pass instead of N
+        # Python iterations (issue #1713). The strided assignments
+        # below mirror the original per-byte loop's write pattern,
+        # including the contract that positions beyond
+        # ``len(data) * 4`` are left as the ``np.empty`` initial
+        # garbage value -- matching the prior behaviour for short
+        # input buffers.
         out = np.empty(pixel_count, dtype=np.uint8)
-        for i in range(min(len(data), (pixel_count + 3) // 4)):
-            b = data[i]
-            base = i * 4
-            if base < pixel_count:
-                out[base] = (b >> 6) & 0x03
-            if base + 1 < pixel_count:
-                out[base + 1] = (b >> 4) & 0x03
-            if base + 2 < pixel_count:
-                out[base + 2] = (b >> 2) & 0x03
-            if base + 3 < pixel_count:
-                out[base + 3] = b & 0x03
+        n_full_bytes = min(len(data), (pixel_count + 3) // 4)
+        if n_full_bytes > 0:
+            raw = data[:n_full_bytes]
+            written = n_full_bytes * 4
+            limit = min(written, pixel_count)
+            # Compute each of the four bit-slots for every covered byte
+            # then write the prefix that fits into ``out``.
+            slot0 = (raw >> 6) & np.uint8(0x03)
+            slot1 = (raw >> 4) & np.uint8(0x03)
+            slot2 = (raw >> 2) & np.uint8(0x03)
+            slot3 = raw & np.uint8(0x03)
+            full_idx = limit - (limit % 4)
+            if full_idx > 0:
+                quart = full_idx // 4
+                out[0:full_idx:4] = slot0[:quart]
+                out[1:full_idx:4] = slot1[:quart]
+                out[2:full_idx:4] = slot2[:quart]
+                out[3:full_idx:4] = slot3[:quart]
+            # Handle the tail (1 to 3 elements past the last full quad)
+            tail = limit - full_idx
+            tail_byte = full_idx // 4
+            if tail >= 1:
+                out[full_idx] = slot0[tail_byte]
+            if tail >= 2:
+                out[full_idx + 1] = slot1[tail_byte]
+            if tail >= 3:
+                out[full_idx + 2] = slot2[tail_byte]
         return out
     elif bps == 4:
-        # 2 pixels per byte, high nibble first
+        # 2 pixels per byte, high nibble first. Vectorised across the
+        # packed byte array (issue #1713). Positions beyond
+        # ``len(data) * 2`` keep the ``np.empty`` initial value,
+        # matching the prior per-byte loop's contract for short
+        # input buffers.
         out = np.empty(pixel_count, dtype=np.uint8)
-        for i in range(min(len(data), (pixel_count + 1) // 2)):
-            b = data[i]
-            base = i * 2
-            if base < pixel_count:
-                out[base] = (b >> 4) & 0x0F
-            if base + 1 < pixel_count:
-                out[base + 1] = b & 0x0F
+        n_full_bytes = min(len(data), (pixel_count + 1) // 2)
+        if n_full_bytes > 0:
+            raw = data[:n_full_bytes]
+            written = n_full_bytes * 2
+            limit = min(written, pixel_count)
+            hi = (raw >> 4) & np.uint8(0x0F)
+            lo = raw & np.uint8(0x0F)
+            full_idx = limit - (limit % 2)
+            if full_idx > 0:
+                pairs = full_idx // 2
+                out[0:full_idx:2] = hi[:pairs]
+                out[1:full_idx:2] = lo[:pairs]
+            if limit - full_idx >= 1:
+                out[full_idx] = hi[full_idx // 2]
         return out
     elif bps == 12:
-        # 2 pixels per 3 bytes, MSB-first
+        # 2 pixels per 3 bytes, MSB-first. Vectorised across the
+        # packed byte array (issue #1713). Pairs whose third byte is
+        # past ``len(data)`` are skipped, preserving the prior
+        # ``np.empty`` semantics for short input buffers.
         out = np.empty(pixel_count, dtype=np.uint16)
         n_pairs = pixel_count // 2
         remainder = pixel_count % 2
-        for i in range(n_pairs):
-            off = i * 3
-            if off + 2 < len(data):
-                b0 = int(data[off])
-                b1 = int(data[off + 1])
-                b2 = int(data[off + 2])
-                out[i * 2] = (b0 << 4) | (b1 >> 4)
-                out[i * 2 + 1] = ((b1 & 0x0F) << 8) | b2
+        if n_pairs > 0:
+            # Only those triples that fit entirely within ``data`` get
+            # written. The prior code used ``off + 2 < len(data)``
+            # (strict less than), which is satisfied when ``3i + 2 <
+            # len(data)``. Solving for the largest valid ``i`` gives
+            # ``i_max = (len(data) - 3) // 3``, so the pair count cap
+            # is ``i_max + 1 = len(data) // 3``.
+            max_pairs = len(data) // 3
+            usable_pairs = min(n_pairs, max_pairs)
+            if usable_pairs > 0:
+                raw = data[:usable_pairs * 3].astype(np.uint16)
+                b0 = raw[0::3]
+                b1 = raw[1::3]
+                b2 = raw[2::3]
+                out[0:usable_pairs * 2:2] = (b0 << 4) | (b1 >> 4)
+                out[1:usable_pairs * 2:2] = ((b1 & 0x0F) << 8) | b2
         if remainder and n_pairs * 3 + 1 < len(data):
             off = n_pairs * 3
             out[pixel_count - 1] = (int(data[off]) << 4) | (int(data[off + 1]) >> 4)
