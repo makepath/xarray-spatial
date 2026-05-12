@@ -1581,6 +1581,14 @@ def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
     if lib is None:
         return None
 
+    # Resolve the codec entry-point names before touching VRAM. An
+    # unsupported codec must return None without burning an allocation or
+    # running the memory guard.
+    fn_name = {50000: 'nvcompBatchedZstdDecompressGetTempSizeAsync'}.get(compression)
+    dec_name = {50000: 'nvcompBatchedZstdDecompressAsync'}.get(compression)
+    if fn_name is None:
+        return None
+
     class _NvcompDecompOpts(ctypes.Structure):
         _fields_ = [('backend', ctypes.c_int), ('reserved', ctypes.c_char * 60)]
 
@@ -1605,11 +1613,6 @@ def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
         d_actual = cupy.empty(n, dtype=cupy.uint64)
 
         opts = _NvcompDecompOpts(backend=0, reserved=b'\x00' * 60)
-
-        fn_name = {50000: 'nvcompBatchedZstdDecompressGetTempSizeAsync'}.get(compression)
-        dec_name = {50000: 'nvcompBatchedZstdDecompressAsync'}.get(compression)
-        if fn_name is None:
-            return None
 
         temp_fn = getattr(lib, fn_name)
         temp_fn.restype = ctypes.c_int
@@ -1644,6 +1647,8 @@ def _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, compression):
             return None
 
         return d_decomp
+    except MemoryError:
+        raise
     except Exception:
         return None
 

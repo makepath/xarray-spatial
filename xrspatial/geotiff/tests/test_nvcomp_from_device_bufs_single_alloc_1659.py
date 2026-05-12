@@ -16,7 +16,6 @@ the unit-level checks (contract + memory guard) run regardless.
 from __future__ import annotations
 
 import importlib.util
-import tempfile
 
 import numpy as np
 import pytest
@@ -100,11 +99,8 @@ def test_memory_guard_runs_with_full_decomp_size(monkeypatch):
     tile_bytes = 65536
     d_tiles = [cupy.zeros(128, dtype=cupy.uint8) for _ in range(n_tiles)]
 
-    # The function catches ``Exception`` and returns None. ``MemoryError``
-    # is an ``Exception`` subclass, so the call returns None rather than
-    # re-raising; the assertion is on the side-effect counter.
-    result = _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, 50000)
-    assert result is None
+    with pytest.raises(MemoryError):
+        _try_nvcomp_from_device_bufs(d_tiles, tile_bytes, 50000)
 
     assert seen["called"], "_check_gpu_memory was not called"
     expected_bytes = n_tiles * tile_bytes
@@ -220,7 +216,6 @@ class _FakeNvcompLib:
 
 def _fake_temp_size_fn(n, tile_bytes, opts, p_temp_size, total):
     """Stub for nvcompBatchedZstdDecompressGetTempSizeAsync."""
-    import ctypes
     # Write a tiny temp-size value into the caller's c_size_t.
     p_temp_size._obj.value = 1
     return 0
