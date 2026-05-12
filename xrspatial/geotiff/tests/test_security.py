@@ -707,23 +707,21 @@ class TestHTTPTileByteCountCap:
         result, _ = _reader_mod._read_cog_http('http://mock/normal_env.tif')
         np.testing.assert_array_equal(result, arr)
 
-    def test_local_path_unaffected_by_cap(self, tmp_path, monkeypatch):
-        """The local-mmap reader bypasses the HTTP cap.
+    def test_local_path_respects_default_cap(self, tmp_path):
+        """Legitimate local reads stay well under the default cap.
 
-        A patched on-disk file with huge byte_counts decodes via mmap
-        slicing, which silently truncates at EOF. The cap is HTTP-only,
-        so a tight env cap should not break legitimate local reads.
+        Before #1664 the local path bypassed the cap entirely. Now the
+        cap is shared, so we just confirm the default (256 MiB) leaves
+        plenty of headroom for a normal small tiled COG.
         """
         from xrspatial.geotiff import open_geotiff, to_geotiff
         import xarray as xr
 
         arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
         da = xr.DataArray(arr, dims=['y', 'x'])
-        path = str(tmp_path / "local_normal_1536.tif")
+        path = str(tmp_path / "local_normal_1664.tif")
         to_geotiff(da, path, tile_size=32, compression='deflate')
 
-        # Set the HTTP cap to 1 byte; local reads must still succeed
-        monkeypatch.setenv('XRSPATIAL_COG_MAX_TILE_BYTES', '1')
         result = open_geotiff(path)
         np.testing.assert_array_equal(result.values, arr)
 

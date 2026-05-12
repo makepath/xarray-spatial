@@ -2643,6 +2643,7 @@ class TestPublicAPI:
         # breaking change and should go through a deprecation cycle.
         expected = {
             'GeoTIFFFallbackWarning',
+            'UnsafeURLError',
             'open_geotiff',
             'read_geotiff_gpu',
             'read_geotiff_dask',

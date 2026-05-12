@@ -59,18 +59,27 @@ def _check_dimensions(width, height, samples, max_pixels):
         )
 
 
-#: Default per-tile compressed-byte cap for HTTP COG reads. A crafted
-#: ``TileByteCounts`` entry can declare arbitrarily many bytes, and the
-#: HTTP path then tries to fetch and buffer that many bytes from the
-#: server before it ever decompresses. 256 MiB tolerates legitimate
-#: large tiles (RGB JPEG2000 at very high resolution can land in the
-#: tens of MB) while keeping the fetch bounded. Override via the
-#: ``XRSPATIAL_COG_MAX_TILE_BYTES`` environment variable.
+#: Default per-tile (or per-strip) compressed-byte cap. A crafted
+#: ``TileByteCounts`` / ``StripByteCounts`` entry can declare arbitrarily
+#: many bytes. On HTTP, the reader would issue a Range GET sized by the
+#: attacker's value; on local files, mmap slicing is bounded by the file
+#: size but a small compressed slice can still decompress (deflate/zstd/
+#: lzw) into hundreds of MiB. 256 MiB tolerates legitimate large tiles
+#: (RGB JPEG2000 at very high resolution can land in the tens of MB)
+#: while keeping the fetch / decode bounded. Override via the
+#: ``XRSPATIAL_COG_MAX_TILE_BYTES`` environment variable. Issues #1536
+#: (HTTP) and #1664 (local).
 MAX_TILE_BYTES_DEFAULT = 256 << 20  # 256 MiB
 
 
 def _max_tile_bytes_from_env() -> int:
-    """Read the per-tile byte cap from the environment, or fall back to the default."""
+    """Read the per-tile byte cap from the environment, or fall back to the default.
+
+    Non-integer, empty, zero, or negative values all fall back to
+    ``MAX_TILE_BYTES_DEFAULT``. Matches the policy used by the HTTP
+    timeout helpers so callers don't accidentally set an unreachable
+    1-byte cap with ``XRSPATIAL_COG_MAX_TILE_BYTES=-1``.
+    """
     raw = _os_module.environ.get('XRSPATIAL_COG_MAX_TILE_BYTES')
     if raw is None:
         return MAX_TILE_BYTES_DEFAULT
@@ -78,7 +87,7 @@ def _max_tile_bytes_from_env() -> int:
         val = int(raw)
     except (TypeError, ValueError):
         return MAX_TILE_BYTES_DEFAULT
-    return max(1, val)
+    return val if val > 0 else MAX_TILE_BYTES_DEFAULT
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +299,15 @@ def _get_http_pool():
         _http_pool = urllib3.PoolManager(
             num_pools=10,
             maxsize=10,
-            retries=urllib3.Retry(total=2, backoff_factor=0.1),
+            retries=urllib3.Retry(
+                total=2,
+                backoff_factor=0.1,
+                # Redirects are *not* delegated to urllib3 -- they're
+                # followed manually in ``_HTTPSource._request`` so each
+                # ``Location`` runs through ``_validate_http_url`` before
+                # the next GET. Issue #1664.
+                redirect=False,
+            ),
         )
         return _http_pool
     except ImportError:
@@ -298,6 +315,166 @@ def _get_http_pool():
 
 
 _http_pool = None
+
+
+# ---------------------------------------------------------------------------
+# SSRF defenses for _HTTPSource (issue #1664)
+# ---------------------------------------------------------------------------
+
+#: Maximum number of redirects to follow when fetching a TIFF over HTTP.
+_HTTP_MAX_REDIRECTS = 5
+
+#: Default connect / read timeouts (seconds) for HTTP TIFF fetches.
+_HTTP_CONNECT_TIMEOUT_DEFAULT = 10.0
+_HTTP_READ_TIMEOUT_DEFAULT = 30.0
+
+#: URL schemes that ``_HTTPSource`` accepts. The HTTP source is a Range
+#: GET implementation backed by urllib3 / urllib, both of which only speak
+#: ``http`` and ``https`` -- widening here would just push the failure to
+#: connect time. fsspec handles every other ``scheme://`` and is routed
+#: separately by :func:`_open_source`.
+_HTTP_ALLOWED_SCHEMES = ('http', 'https')
+
+
+def _http_allow_private_hosts() -> bool:
+    """Return True if loopback / link-local / private IPs are allowed."""
+    raw = _os_module.environ.get('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS')
+    if raw is None:
+        return False
+    return raw.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _http_timeout_from_env(var_name: str, default: float) -> float:
+    """Parse a positive-float timeout from the named env var, or fall back."""
+    raw = _os_module.environ.get(var_name)
+    if raw is None:
+        return default
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return val if val > 0 else default
+
+
+def _http_connect_timeout() -> float:
+    return _http_timeout_from_env(
+        'XRSPATIAL_GEOTIFF_HTTP_CONNECT_TIMEOUT',
+        _HTTP_CONNECT_TIMEOUT_DEFAULT,
+    )
+
+
+def _http_read_timeout() -> float:
+    return _http_timeout_from_env(
+        'XRSPATIAL_GEOTIFF_HTTP_READ_TIMEOUT',
+        _HTTP_READ_TIMEOUT_DEFAULT,
+    )
+
+
+class UnsafeURLError(ValueError):
+    """Raised when an HTTP URL fails the SSRF allow-list check.
+
+    Subclasses ``ValueError`` so existing callers that catch ``ValueError``
+    on bad input keep working. Carries the offending URL on ``.url`` for
+    structured logging.
+    """
+
+    def __init__(self, msg: str, url: str | None = None):
+        super().__init__(msg)
+        self.url = url
+
+
+def _ip_is_private(ip_str: str) -> bool:
+    """Return True if *ip_str* is a loopback, link-local, or private IP.
+
+    Covers both IPv4 and IPv6. Multicast and unspecified addresses are
+    treated as unsafe (no legitimate reason to GET a TIFF from them, and
+    cloud metadata sometimes lives behind link-local IPv6).
+    """
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        # Not a literal IP -- caller must resolve it first.
+        return False
+    # ``is_private`` is True for RFC1918 (10/8, 172.16/12, 192.168/16),
+    # the IPv6 ULAs (fc00::/7), and -- in stdlib >= 3.4 -- also for
+    # loopback / link-local. Stay explicit so we don't depend on subtle
+    # behaviour across Python versions.
+    return (
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_private
+        or ip.is_multicast
+        or ip.is_unspecified
+        or ip.is_reserved
+    )
+
+
+def _validate_http_url(url: str) -> None:
+    """Reject URLs that would let ``_HTTPSource`` reach unsafe destinations.
+
+    Enforces:
+
+    * scheme in ``_HTTP_ALLOWED_SCHEMES`` (http / https)
+    * hostname resolves to at least one non-loopback, non-link-local,
+      non-private IP (override via ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS``)
+    * hostname is non-empty
+
+    Raises :class:`UnsafeURLError` (a ``ValueError`` subclass) on any of
+    the above. Issue #1664.
+    """
+    import socket
+    from urllib.parse import urlparse
+
+    if not isinstance(url, str) or not url:
+        raise UnsafeURLError(
+            "HTTP source requires a non-empty URL string", url=url)
+
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or '').lower()
+    if scheme not in _HTTP_ALLOWED_SCHEMES:
+        raise UnsafeURLError(
+            f"URL scheme {scheme!r} is not in the allow-list "
+            f"{_HTTP_ALLOWED_SCHEMES}. Only HTTP(S) is supported; other "
+            f"schemes are dispatched via fsspec. URL: {url!r}",
+            url=url,
+        )
+
+    host = parsed.hostname
+    if not host:
+        raise UnsafeURLError(
+            f"URL {url!r} has no hostname", url=url)
+
+    if _http_allow_private_hosts():
+        return
+
+    # Resolve and reject if any resolved IP is in a private/loopback/link-
+    # local/multicast range. Rejecting on *any* match (rather than all)
+    # prevents DNS-rebind tricks that return both a public and a private
+    # IP for the same name. socket.getaddrinfo handles IPv4, IPv6, and
+    # literal IP strings uniformly.
+    try:
+        infos = socket.getaddrinfo(host, parsed.port, type=socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise UnsafeURLError(
+            f"could not resolve host {host!r}: {e}", url=url) from e
+
+    for info in infos:
+        sockaddr = info[4]
+        # sockaddr is (ip, port) for AF_INET and (ip, port, flow, scope)
+        # for AF_INET6 -- the IP is always index 0.
+        ip_str = sockaddr[0]
+        # IPv6 scoped addresses come back as 'fe80::1%eth0' -- strip the
+        # zone id before passing to ipaddress.
+        if '%' in ip_str:
+            ip_str = ip_str.split('%', 1)[0]
+        if _ip_is_private(ip_str):
+            raise UnsafeURLError(
+                f"host {host!r} resolves to {ip_str!r}, which is in a "
+                f"loopback / link-local / private range. Set "
+                f"XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1 to allow.",
+                url=url,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +580,35 @@ def split_coalesced_bytes(
     return out
 
 
+class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Stdlib redirect handler that re-validates each ``Location``.
+
+    The default ``HTTPRedirectHandler`` follows 3xx responses with no
+    awareness of the SSRF allow-list, so a public URL could 302 into a
+    loopback or private IP. This subclass calls :func:`_validate_http_url`
+    on every redirect target before building the follow-up request, and
+    caps the chain at :data:`_HTTP_MAX_REDIRECTS`. Issue #1664.
+    """
+
+    max_redirections = _HTTP_MAX_REDIRECTS
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_http_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_stdlib_opener = None
+
+
+def _get_stdlib_opener():
+    """Return a stdlib opener with the validating redirect handler installed."""
+    global _stdlib_opener
+    if _stdlib_opener is None:
+        _stdlib_opener = urllib.request.build_opener(
+            _ValidatingRedirectHandler())
+    return _stdlib_opener
+
+
 class _HTTPSource:
     """HTTP data source using range requests with connection reuse.
 
@@ -412,24 +618,79 @@ class _HTTPSource:
     """
 
     def __init__(self, url: str):
+        # SSRF defense (issue #1664): validate scheme / host *before*
+        # any network call. UnsafeURLError subclasses ValueError so
+        # callers that already catch ValueError keep working. The check
+        # is best-effort -- DNS results can change between validate
+        # time and connect time, but rejecting at construction blocks
+        # the vast majority of static SSRF payloads.
+        _validate_http_url(url)
         self._url = url
         self._size = None
         self._pool = _get_http_pool()
+        self._connect_timeout = _http_connect_timeout()
+        self._read_timeout = _http_read_timeout()
+
+    def _urllib3_timeout(self):
+        """Build a urllib3 Timeout object lazily.
+
+        Imported here so that the module-level import of urllib3 stays
+        optional (we fall back to stdlib if urllib3 is missing).
+        """
+        import urllib3
+        return urllib3.Timeout(
+            connect=self._connect_timeout, read=self._read_timeout)
+
+    def _request(self, headers: dict | None = None):
+        """Issue a GET with manual, validated redirect following.
+
+        urllib3's built-in redirect follower has no validation hook, so
+        we set ``redirect=False`` and walk the chain ourselves. Each
+        ``Location`` runs through :func:`_validate_http_url` before the
+        next GET, defeating a public-to-private 3xx bounce. Cap at
+        :data:`_HTTP_MAX_REDIRECTS` hops. Issue #1664.
+        """
+        from urllib.parse import urljoin
+        pool = self._pool
+        timeout = self._urllib3_timeout()
+        current_url = self._url
+        for _ in range(_HTTP_MAX_REDIRECTS + 1):
+            resp = pool.request(
+                'GET', current_url,
+                headers=headers,
+                timeout=timeout,
+                redirect=False,
+            )
+            if 300 <= resp.status < 400 and resp.status != 304:
+                location = resp.headers.get('Location')
+                if not location:
+                    return resp
+                # Resolve relative ``Location`` against the URL we just
+                # requested, not against ``self._url``: chained
+                # redirects can land us on a different origin.
+                next_url = urljoin(current_url, location)
+                _validate_http_url(next_url)
+                current_url = next_url
+                continue
+            return resp
+        raise UnsafeURLError(
+            f"More than {_HTTP_MAX_REDIRECTS} HTTP redirects "
+            f"starting from {self._url!r}",
+            url=self._url,
+        )
 
     def read_range(self, start: int, length: int) -> bytes:
         end = start + length - 1
+        headers = {'Range': f'bytes={start}-{end}'}
         if self._pool is not None:
-            resp = self._pool.request(
-                'GET', self._url,
-                headers={'Range': f'bytes={start}-{end}'},
-            )
-            return resp.data
-        # Fallback: stdlib
-        req = urllib.request.Request(
-            self._url,
-            headers={'Range': f'bytes={start}-{end}'},
-        )
-        with urllib.request.urlopen(req) as resp:
+            return self._request(headers=headers).data
+        # Fallback: stdlib. urlopen's ``timeout`` is a single value, so
+        # use the more conservative read timeout; the connect timeout
+        # isn't separately controllable on stdlib urllib. The opener
+        # carries ``_ValidatingRedirectHandler`` so 3xx hops are re-
+        # validated and capped at ``_HTTP_MAX_REDIRECTS``.
+        req = urllib.request.Request(self._url, headers=headers)
+        with _get_stdlib_opener().open(req, timeout=self._read_timeout) as resp:
             return resp.read()
 
     def read_ranges(
@@ -490,9 +751,9 @@ class _HTTPSource:
 
     def read_all(self) -> bytes:
         if self._pool is not None:
-            resp = self._pool.request('GET', self._url)
-            return resp.data
-        with urllib.request.urlopen(self._url) as resp:
+            return self._request().data
+        req = urllib.request.Request(self._url)
+        with _get_stdlib_opener().open(req, timeout=self._read_timeout) as resp:
             return resp.read()
 
     @property
@@ -923,6 +1184,25 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     if offsets is None or byte_counts is None:
         raise ValueError("Missing strip offsets or byte counts")
 
+    # Per-strip compressed-byte cap (issue #1664). Mirrors the HTTP path:
+    # a crafted ``StripByteCounts`` can declare a huge value and even
+    # though mmap slicing on the local path is bounded by the file size,
+    # the slice is still passed into the decompressor which can expand
+    # a few KiB of crafted deflate/zstd into gigabytes of decoded output.
+    # Override via ``XRSPATIAL_COG_MAX_TILE_BYTES`` (the env var is shared
+    # with the tile path because the budget is the same).
+    max_tile_bytes = _max_tile_bytes_from_env()
+    for _strip_idx, _bc in enumerate(byte_counts):
+        if _bc > max_tile_bytes:
+            raise ValueError(
+                f"TIFF strip {_strip_idx} declares "
+                f"StripByteCount={_bc:,} bytes, which exceeds the "
+                f"per-strip safety cap of {max_tile_bytes:,} bytes. "
+                f"The file is malformed or attempting denial-of-service. "
+                f"Override via XRSPATIAL_COG_MAX_TILE_BYTES if this file "
+                f"is legitimate."
+            )
+
     # A corrupt header can report RowsPerStrip=0, which would divide by zero
     # below.  Reject it as a typed parse error rather than letting the
     # ZeroDivisionError leak out to the caller.
@@ -1090,6 +1370,22 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     # Reject crafted tile dims that would force huge per-tile allocations.
     # A single tile's decoded bytes must also fit under the pixel budget.
     _check_dimensions(tw, th, samples, max_pixels)
+
+    # Per-tile compressed-byte cap (issue #1664). Same env var as the
+    # HTTP path. mmap slicing is bounded by the file size, but the slice
+    # gets handed to the decompressor, and a small slice can balloon
+    # into gigabytes through deflate / zstd / lzw / lerc.
+    max_tile_bytes = _max_tile_bytes_from_env()
+    for _tile_idx, _bc in enumerate(byte_counts):
+        if _bc > max_tile_bytes:
+            raise ValueError(
+                f"TIFF tile {_tile_idx} declares "
+                f"TileByteCount={_bc:,} bytes, which exceeds the "
+                f"per-tile safety cap of {max_tile_bytes:,} bytes. "
+                f"The file is malformed or attempting denial-of-service. "
+                f"Override via XRSPATIAL_COG_MAX_TILE_BYTES if this file "
+                f"is legitimate."
+            )
 
     planar = ifd.planar_config
     tiles_across = math.ceil(width / tw)
@@ -1408,8 +1704,8 @@ def _fetch_decode_cog_http_tiles(
     # before the fetch list is built. A crafted COG can claim arbitrarily
     # large TileByteCounts; without this guard the HTTP layer would issue
     # a Range request sized by the attacker's value (issue #1536). The cap
-    # is overridable via XRSPATIAL_COG_MAX_TILE_BYTES; the local-mmap path
-    # is naturally bounded by file size and does not need this check.
+    # is overridable via XRSPATIAL_COG_MAX_TILE_BYTES. The local-mmap path
+    # applies the same cap in _read_tiles / _read_strips (issue #1664).
     max_tile_bytes = _max_tile_bytes_from_env()
     fetch_ranges: list[tuple[int, int]] = []
     placements: list[tuple[int, int]] = []  # (tr, tc) per fetched tile

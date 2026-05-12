@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from typing import BinaryIO
 
 from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
-from ._reader import read_to_array
+from ._reader import UnsafeURLError, read_to_array
 from ._writer import write
 
 # All names below are part of the supported public API. ``plot_geotiff``
@@ -51,6 +51,7 @@ from ._writer import write
 # and emits a ``DeprecationWarning`` when called.
 __all__ = [
     'GeoTIFFFallbackWarning',
+    'UnsafeURLError',
     'open_geotiff',
     'read_geotiff_gpu',
     'read_geotiff_dask',
