@@ -97,8 +97,16 @@ def _read_predictor_tag(path: str) -> int | None:
     return None  # tag absent => predictor 1 (none)
 
 
-def _da_float32(arr: np.ndarray) -> xr.DataArray:
-    """Wrap a 2D array with float64 y/x coords."""
+def _da_with_float_coords(arr) -> xr.DataArray:
+    """Wrap a 2D or 3D array of any dtype with float64 y/x coords.
+
+    Accepts numpy or cupy arrays. For 2D inputs returns a (y, x)
+    DataArray; for 3D inputs returns a (y, x, band) DataArray with
+    an integer band index. The element dtype is preserved from the
+    input; only the y/x coordinate arrays are forced to float64 so
+    pixel-is-area transforms round-trip cleanly through the
+    geotiff/VRT writers.
+    """
     h, w = arr.shape[:2]
     coords = {
         'y': np.arange(h, dtype=np.float64),
@@ -129,7 +137,7 @@ class TestWriteGeotiffGpuPredictor2Uint8:
         import cupy
         rng = np.random.RandomState(0)
         arr = rng.randint(0, 256, size=(8, 16), dtype=np.uint8)
-        da = _da_float32(cupy.asarray(arr))
+        da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred2_u8_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=True,
@@ -146,7 +154,7 @@ class TestWriteGeotiffGpuPredictor2Uint8:
         import cupy
         rng = np.random.RandomState(1)
         arr = rng.randint(0, 256, size=(8, 16), dtype=np.uint8)
-        da = _da_float32(cupy.asarray(arr))
+        da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred2_int_u8_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=2,
@@ -168,7 +176,7 @@ class TestWriteGeotiffGpuPredictor2Uint8:
         import cupy
         rng = np.random.RandomState(2)
         arr = rng.randint(0, 256, size=(8, 16, 3), dtype=np.uint8)
-        da = _da_float32(cupy.asarray(arr))
+        da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred2_u8_3band_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=2,
@@ -187,7 +195,7 @@ class TestWriteGeotiffGpuPredictor2Uint8:
         """
         import cupy
         arr = np.arange(64, dtype=np.uint8).reshape(8, 8)
-        da = _da_float32(cupy.asarray(arr))
+        da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_no_pred_u8_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=False,
@@ -211,7 +219,7 @@ class TestWriteGeotiffGpuPredictor2Uint16:
         import cupy
         rng = np.random.RandomState(3)
         arr = rng.randint(0, 60000, size=(8, 16), dtype=np.uint16)
-        da = _da_float32(cupy.asarray(arr))
+        da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred2_u16_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=2,
@@ -238,7 +246,7 @@ class TestWriteGeotiffGpuPredictor2Int32:
         # differencing round-trips through the signed interpretation
         arr = rng.randint(-1_000_000, 1_000_000, size=(8, 16),
                           dtype=np.int32)
-        da = _da_float32(cupy.asarray(arr))
+        da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred2_i32_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=2,
@@ -266,7 +274,7 @@ class TestWriteGeotiffGpuPredictor3Float:
         # (round-trip semantics do not depend on smoothness, but a
         # mix of magnitudes exercises the byte-swizzle on all 4 lanes)
         arr = rng.uniform(-1000.0, 1000.0, size=(8, 16)).astype(np.float32)
-        da = _da_float32(cupy.asarray(arr))
+        da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred3_f32_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=3,
@@ -281,7 +289,7 @@ class TestWriteGeotiffGpuPredictor3Float:
         import cupy
         rng = np.random.RandomState(6)
         arr = rng.uniform(-1e9, 1e9, size=(8, 16)).astype(np.float64)
-        da = _da_float32(cupy.asarray(arr))
+        da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred3_f64_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=3,
@@ -295,7 +303,7 @@ class TestWriteGeotiffGpuPredictor3Float:
         """FP predictor refuses non-float dtypes (parity with CPU writer)."""
         import cupy
         arr = np.arange(64, dtype=np.int32).reshape(8, 8)
-        da = _da_float32(cupy.asarray(arr))
+        da = _da_with_float_coords(cupy.asarray(arr))
         path = str(tmp_path / 'gpu_pred3_reject_2026_05_12_v2.tif')
 
         with pytest.raises(ValueError,
@@ -324,9 +332,9 @@ class TestWriteGeotiffGpuPredictorCpuParity:
         cpu_path = str(tmp_path / 'cpu_pred2_u16_v2.tif')
         gpu_path = str(tmp_path / 'gpu_pred2_u16_v2.tif')
 
-        to_geotiff(_da_float32(arr), cpu_path,
+        to_geotiff(_da_with_float_coords(arr), cpu_path,
                    compression='deflate', predictor=2, tile_size=8)
-        write_geotiff_gpu(_da_float32(cupy.asarray(arr)), gpu_path,
+        write_geotiff_gpu(_da_with_float_coords(cupy.asarray(arr)), gpu_path,
                           compression='deflate', predictor=2, tile_size=8)
 
         cpu_out = open_geotiff(cpu_path).values
@@ -342,9 +350,9 @@ class TestWriteGeotiffGpuPredictorCpuParity:
         cpu_path = str(tmp_path / 'cpu_pred3_f32_v2.tif')
         gpu_path = str(tmp_path / 'gpu_pred3_f32_v2.tif')
 
-        to_geotiff(_da_float32(arr), cpu_path,
+        to_geotiff(_da_with_float_coords(arr), cpu_path,
                    compression='deflate', predictor=3, tile_size=8)
-        write_geotiff_gpu(_da_float32(cupy.asarray(arr)), gpu_path,
+        write_geotiff_gpu(_da_with_float_coords(cupy.asarray(arr)), gpu_path,
                           compression='deflate', predictor=3, tile_size=8)
 
         cpu_out = open_geotiff(cpu_path).values
@@ -490,18 +498,18 @@ class TestReadVrtWindowEager:
         """Window straddling a multi-source seam reads both sources.
 
         2x1 mosaic of two 4x4 tiles laid out side-by-side (total 4x8).
-        A window from col 2 to col 6 covers cols 2-3 of left and cols
-        0-1 of right. The src_rect coordinate mapping inside
-        ``_vrt.read_vrt`` must clip each source's source-coords
-        correctly; a regression to the dst-to-src translation would
-        return mis-aligned columns.
+        A window from col 0 to col 6 covers cols 0-3 of left and cols
+        0-1 of right (the seam sits at col 4). The src_rect coordinate
+        mapping inside ``_vrt.read_vrt`` must clip each source's
+        source-coords correctly; a regression to the dst-to-src
+        translation would return mis-aligned columns.
         """
         left = np.arange(16, dtype=np.float32).reshape(4, 4)
         right = (np.arange(16, dtype=np.float32) + 100).reshape(4, 4)
 
         vrt = _make_2x1_mosaic_vrt(tmp_path, left, right)
 
-        # Window rows 0..4, cols 2..6 (cuts across seam at col 4)
+        # Window rows 0..4, cols 0..6 (cuts across seam at col 4)
         result = read_vrt(vrt, window=(0, 0, 4, 6))
 
         assert result.shape == (4, 6)
@@ -584,7 +592,7 @@ class TestReadVrtWindowWithBand:
         full = np.stack([band0, band1], axis=-1)
 
         tile_path = str(tmp_path / 'multi.tif')
-        to_geotiff(_da_float32(full), tile_path, compression='none')
+        to_geotiff(_da_with_float_coords(full), tile_path, compression='none')
 
         vrt_path = str(tmp_path / 'multi_band.vrt')
         _write_vrt_internal(vrt_path, [tile_path])
