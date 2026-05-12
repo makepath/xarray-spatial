@@ -1,26 +1,44 @@
 """Regression test for issue #1736.
 
-The uncompressed tiled-write branch of ``_compress_tiles`` previously
-allocated a contiguous ``bytearray`` plus a memoryview ``(n_tiles *
-tw * th * bytes_per_sample * samples)`` bytes long at the top of the
-loop and never read either back. Tile bytes were still built via
-``tile_arr.tobytes()`` and appended to a list. The dead buffer roughly
-doubled peak memory for an uncompressed write.
+The uncompressed tiled branch of ``xrspatial.geotiff._writer._write_tiled``
+previously allocated a contiguous ``bytearray`` plus a memoryview
+``(n_tiles * tw * th * bytes_per_sample * samples)`` bytes long at the
+top of the loop and never read either back. Tile bytes were still
+built via ``tile_arr.tobytes()`` and appended to a list. The dead
+buffer roughly doubled peak memory for an uncompressed write.
 
-The fix is a pure deletion. This test pins the round-trip so a future
-refactor that re-introduces a real contiguous buffer keeps the same
-external behaviour: writing an uncompressed tiled GeoTIFF must still
-read back identically with no holes between tiles.
+The fix is a pure deletion. The tests below cover both behaviours
+worth pinning:
+
+* round-trip fidelity (writing an uncompressed tiled GeoTIFF must
+  still read back identically with no holes between tiles); and
+* peak-memory shape, by snapshotting ``tracemalloc`` peak across a
+  direct ``_write_tiled`` call. The current implementation lands at
+  roughly ``1.06x`` the raw raster size; the dead bytearray pushed it
+  to ``~2.07x``. The threshold below (``1.5x``) catches any
+  reintroduction of that allocation with comfortable headroom for
+  unrelated implementation changes.
 """
 from __future__ import annotations
 
 import os
+import tracemalloc
 import uuid
 
 import numpy as np
 import xarray as xr
 
 from xrspatial.geotiff import to_geotiff, open_geotiff
+from xrspatial.geotiff._compression import COMPRESSION_NONE
+from xrspatial.geotiff._writer import _write_tiled
+
+
+# Peak ``tracemalloc`` size, in multiples of the input raster size, that
+# the uncompressed branch of ``_write_tiled`` must stay under. The dead
+# bytearray drove peak to ~2.07x; the current implementation sits at
+# ~1.06-1.12x across the cases below. 1.5x leaves room for unrelated
+# refactors while still firmly catching the regression.
+_PEAK_RATIO_LIMIT = 1.5
 
 
 def test_uncompressed_tiled_round_trip_exact(tmp_path):
@@ -64,3 +82,54 @@ def test_uncompressed_tiled_round_trip_multiband(tmp_path):
 
     out = open_geotiff(p)
     np.testing.assert_array_equal(out.data, data)
+
+
+def _peak_ratio_for_write_tiled(data: np.ndarray, tile_size: int) -> float:
+    """Return ``tracemalloc`` peak / ``data.nbytes`` for one
+    ``_write_tiled`` call against the uncompressed branch.
+
+    Allocations made before this call are excluded from peak by the
+    ``reset_peak`` step, so the ratio reflects what ``_write_tiled``
+    itself adds.
+    """
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        _write_tiled(data, COMPRESSION_NONE, 1, tile_size=tile_size)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    return peak / data.nbytes
+
+
+def test_uncompressed_tiled_peak_memory_single_band():
+    """Peak memory for the uncompressed branch should stay below
+    ``_PEAK_RATIO_LIMIT * raster_bytes``.  Reintroducing the dead
+    ``bytearray(n_tiles * tile_bytes)`` would push the ratio to ~2x
+    and fail this check."""
+    h, w = 1024, 1024  # 1 MB raw, exact tile divisor -> no edge padding
+    data = np.random.RandomState(20260512).randint(
+        0, 255, size=(h, w), dtype=np.uint8,
+    )
+    ratio = _peak_ratio_for_write_tiled(data, tile_size=256)
+    assert ratio < _PEAK_RATIO_LIMIT, (
+        f"_write_tiled peak memory {ratio:.2f}x raster exceeds the "
+        f"{_PEAK_RATIO_LIMIT}x cap; the dead bytearray from #1736 may "
+        f"have been reintroduced."
+    )
+
+
+def test_uncompressed_tiled_peak_memory_multiband():
+    """3-band variant of the peak-memory check. ``samples == 3``
+    triples the would-be dead buffer, so this case is even more
+    sensitive to a regression."""
+    h, w = 1024, 1024
+    data = np.random.RandomState(20260513).randint(
+        0, 255, size=(h, w, 3), dtype=np.uint8,
+    )
+    ratio = _peak_ratio_for_write_tiled(data, tile_size=256)
+    assert ratio < _PEAK_RATIO_LIMIT, (
+        f"_write_tiled peak memory {ratio:.2f}x raster exceeds the "
+        f"{_PEAK_RATIO_LIMIT}x cap; the dead bytearray from #1736 may "
+        f"have been reintroduced."
+    )
