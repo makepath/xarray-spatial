@@ -945,27 +945,81 @@ def _try_kvikio_read_tiles(file_path, tile_offsets, tile_byte_counts, tile_bytes
     directly from the NVMe drive to GPU VRAM, bypassing CPU entirely.
     Falls back to None if kvikio is not installed or GDS is not available.
 
-    Returns list of cupy arrays (one per tile) on GPU, or None.
+    Allocates a single contiguous device buffer the size of all tiles,
+    submits every ``pread`` call before waiting on any of the resulting
+    futures, and returns per-tile views into the shared buffer. This
+    mirrors the single-allocation pattern the sibling nvCOMP paths use
+    (``_try_nvcomp_from_device_bufs`` at L1602, ``_try_nvcomp_batch_decompress``
+    at L1108) and lets kvikio's internal worker pool overlap the file
+    reads instead of serialising one ``IOFuture.get()`` per tile.
+
+    A ``_check_gpu_memory`` guard runs once against ``sum(tile_byte_counts)``
+    before the allocation so the GDS path fails fast under malformed
+    ``TileByteCounts`` rather than OOM'ing the device one tile at a time.
+
+    See issue #1688.
+
+    Returns list of cupy arrays (one per tile, views into a shared
+    buffer) on GPU, or None on partial read / setup failure.
     """
+    sizes = [int(bc) for bc in tile_byte_counts]
+    n = len(sizes)
+    if n == 0:
+        return []
+
     try:
         import kvikio
         import cupy
     except ImportError:
         return None
 
+    offsets = np.zeros(n, dtype=np.int64)
+    if n > 1:
+        np.cumsum(sizes[:-1], out=offsets[1:])
+    total_bytes = int(sum(sizes))
+
+    if total_bytes == 0:
+        # All tiles are sparse. Return per-tile zero-length views into a
+        # zero-size buffer so callers iterating ``d_tiles`` still get N
+        # entries in the original order.
+        empty = cupy.empty(0, dtype=cupy.uint8)
+        return [empty[0:0] for _ in range(n)]
+
     try:
-        d_tiles = []
+        _check_gpu_memory(total_bytes, what="kvikio tile read buffer")
+        combined = cupy.empty(total_bytes, dtype=cupy.uint8)
+
+        futures = []
         with kvikio.CuFile(file_path, 'r') as f:
-            for off, bc in zip(tile_offsets, tile_byte_counts):
-                buf = cupy.empty(bc, dtype=cupy.uint8)
-                nbytes = f.pread(buf, file_offset=off)
-                # Verify the read completed correctly
-                actual = nbytes.get() if hasattr(nbytes, 'get') else int(nbytes)
-                if actual != bc:
+            for src_off, dst_off, bc in zip(tile_offsets, offsets, sizes):
+                if bc == 0:
+                    futures.append(None)
+                    continue
+                view = combined[dst_off:dst_off + bc]
+                futures.append((f.pread(view, file_offset=int(src_off)), bc))
+
+            # Pass 2: wait on every submitted pread together so kvikio can
+            # overlap them in its internal thread pool. The historical
+            # loop called ``.get()`` between successive ``pread`` submits
+            # which forced one-at-a-time IO.
+            for fut in futures:
+                if fut is None:
+                    continue
+                future, expected_bc = fut
+                actual = future.get() if hasattr(future, 'get') else int(future)
+                if actual != expected_bc:
                     return None  # partial read, fall back
-                d_tiles.append(buf)
+
         cupy.cuda.Device().synchronize()
+
+        d_tiles = []
+        for dst_off, bc in zip(offsets, sizes):
+            d_tiles.append(combined[dst_off:dst_off + bc])
         return d_tiles
+    except MemoryError:
+        # Surface OOM unchanged. The caller can switch to the CPU-mmap
+        # path which does not pre-allocate the full compressed payload.
+        raise
     except Exception as e:
         # GDS not available, version mismatch, or CUDA error.
         # Reset CUDA error state if possible (the inner pass stays broad
