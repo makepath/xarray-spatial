@@ -522,15 +522,54 @@ def read_vrt(vrt_path: str, *, window=None,
     else:
         selected_bands = vrt.bands
 
-    # Allocate output
+    # Allocate output.
+    #
+    # The output buffer dtype must be wide enough to hold every selected
+    # band losslessly. A naive ``selected_bands[0].dtype`` would silently
+    # truncate any wider band's values when the per-band placement at the
+    # ``result[...] = src_arr[...]`` line below casts to the buffer dtype.
+    # Two sources of widening matter:
+    #
+    # * Heterogeneous declared dtypes across bands (e.g. ``Byte`` + ``Float32``).
+    # * ``ComplexSource`` ``ScaleRatio`` / ``ScaleOffset`` promote source
+    #   values to ``float64`` before placement (see the ``# Apply
+    #   ComplexSource scaling`` block later in this function); the
+    #   destination has to be float-typed too, otherwise the fractional
+    #   part is lost.
+    #
+    # ``np.result_type`` produces the common dtype that holds every
+    # contributing dtype without loss. For an all-integer VRT it stays
+    # integer; for mixes it widens to the common dtype (typically
+    # ``float64`` when integer and floating-point bands mix, but it can
+    # be a narrower float -- e.g. ``float32`` under NumPy 2.x for
+    # ``uint8`` + ``float32`` -- or ``complex128`` when complex bands
+    # are present). See issue #1696.
+    #
+    # Guard against a malformed VRT with zero ``<VRTRasterBand>``
+    # elements: ``np.result_type()`` with no args raises a generic
+    # "at least one array or dtype is required" message that gives the
+    # caller no hint about the underlying cause.
+    if not selected_bands:
+        raise ValueError(
+            "VRT has no <VRTRasterBand> elements; cannot determine "
+            "output dtype"
+        )
+    effective_dtypes = []
+    for vrt_band in selected_bands:
+        eff = vrt_band.dtype
+        for src in vrt_band.sources:
+            scaled = src.scale is not None and src.scale != 1.0
+            offset = src.offset is not None and src.offset != 0.0
+            if scaled or offset:
+                eff = np.dtype(np.float64)
+                break
+        effective_dtypes.append(eff)
+    dtype = np.result_type(*effective_dtypes)
+    fill = np.nan if dtype.kind in ('f', 'c') else 0
     if len(selected_bands) == 1:
-        dtype = selected_bands[0].dtype
-        result = np.full((out_h, out_w), np.nan if dtype.kind == 'f' else 0,
-                         dtype=dtype)
+        result = np.full((out_h, out_w), fill, dtype=dtype)
     else:
-        dtype = selected_bands[0].dtype
-        result = np.full((out_h, out_w, len(selected_bands)),
-                         np.nan if dtype.kind == 'f' else 0, dtype=dtype)
+        result = np.full((out_h, out_w, len(selected_bands)), fill, dtype=dtype)
 
     for band_idx, vrt_band in enumerate(selected_bands):
         nodata = vrt_band.nodata
