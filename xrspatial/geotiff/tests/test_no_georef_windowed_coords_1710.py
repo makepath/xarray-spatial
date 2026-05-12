@@ -119,6 +119,34 @@ class TestGpuWindowedCoords:
         assert da.y.dtype == np.int64
         np.testing.assert_array_equal(da.y.values, np.arange(4))
 
+    def test_offset_window_integer_coords(self, no_georef_path_1710):
+        """GPU windowed read at a non-zero origin: the stripped-GPU
+        fallback in ``read_geotiff_gpu`` checked ``t is None`` instead
+        of ``has_georef`` (issue #1753 / regression of #1710), so a
+        non-georef TIFF emitted ``[-0.5, -1.5, ...]`` via the unit
+        ``GeoTransform`` placeholder. Pin the contract that the offset
+        window produces file-relative integer coords identical to the
+        eager numpy path.
+        """
+        da = open_geotiff(no_georef_path_1710, gpu=True,
+                          window=(2, 3, 6, 7))
+        assert da.y.dtype == np.int64
+        assert da.x.dtype == np.int64
+        np.testing.assert_array_equal(da.y.values, np.arange(2, 6))
+        np.testing.assert_array_equal(da.x.values, np.arange(3, 7))
+
+    def test_offset_window_no_transform_attr(self, no_georef_path_1710):
+        """Non-georef GPU windowed read still must not advertise a
+        fabricated ``attrs['transform']`` -- ``_populate_attrs_from_geo_info``
+        gates on ``has_georef`` too, so flag the round-trip here.
+        """
+        da = open_geotiff(no_georef_path_1710, gpu=True,
+                          window=(2, 3, 6, 7))
+        assert 'transform' not in da.attrs, (
+            f"non-georef GPU windowed read should not carry a "
+            f"fabricated transform; got attrs={dict(da.attrs)}"
+        )
+
 
 class TestBackendParity:
     """Full read and windowed read must agree on coord dtype and values
