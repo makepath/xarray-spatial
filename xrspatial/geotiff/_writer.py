@@ -838,15 +838,15 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
 
             # Extra tags (pass-through from source file)
             if extra_tags is not None:
+                # Compute existing tag IDs once; update as we append to keep
+                # this loop O(len(extra_tags) + len(tags)) instead of O(N*M).
+                # See issue #1657 for the filter rationale.
+                existing_ids = {t[0] for t in tags}
                 for etag_id, etype_id, ecount, evalue in extra_tags:
-                    # Skip any tag we already wrote to avoid duplicates,
-                    # and skip dangerous tags (NewSubfileType, SubIFDs)
-                    # that would mis-mark the IFD or carry stale offsets.
-                    # See issue #1657.
-                    existing_ids = {t[0] for t in tags}
                     if (etag_id not in existing_ids
                             and etag_id not in _DANGEROUS_EXTRA_TAG_IDS):
                         tags.append((etag_id, etype_id, ecount, evalue))
+                        existing_ids.add(etag_id)
 
         ifd_specs.append(tags)
 
