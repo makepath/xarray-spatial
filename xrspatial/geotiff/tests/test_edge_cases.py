@@ -512,8 +512,11 @@ class TestPublicAPIEdgeCases:
 
     def test_pixel_is_point_round_trip(self, tmp_path):
         """PixelIsPoint raster_type preserves origin correctly."""
-        y = np.array([41.0, 40.999722, 40.999444, 40.999167])
-        x = np.array([-75.0, -74.999722, -74.999444, -74.999167])
+        # Use truly uniform coords; hand-typed fractional decimals had
+        # ~3.6e-3 relative deviation between steps and silently produced
+        # a wrong transform before issue #1720 enforced regularity.
+        y = np.linspace(41.0, 40.999167, 4)
+        x = np.linspace(-75.0, -74.999167, 4)
         da = xr.DataArray(
             np.arange(16, dtype=np.float32).reshape(4, 4),
             dims=['y', 'x'], coords={'y': y, 'x': x},
