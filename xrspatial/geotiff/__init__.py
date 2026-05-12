@@ -299,6 +299,30 @@ def _coords_to_transform(da: xr.DataArray) -> GeoTransform | None:
     if len(x) < 2 or len(y) < 2:
         return None
 
+    # GeoTIFF only supports an affine transform; non-uniform spacing
+    # cannot be expressed faithfully. Validate up-front instead of
+    # silently writing a transform that only matches the first step.
+    def _is_regular(coord, name):
+        diffs = np.diff(coord)
+        # Use median (not mean) so a single bad sample doesn't shift
+        # the reference step. The 1e-6 relative tolerance is forgiving
+        # for float artifacts in otherwise-uniform coords.
+        step = float(np.median(diffs))
+        if step == 0:
+            raise ValueError(
+                f"{name} coords are constant; cannot infer pixel size"
+            )
+        rel = float(np.max(np.abs(diffs - step)) / abs(step))
+        if rel > 1e-6:
+            raise ValueError(
+                f"{name} coords are not uniformly spaced "
+                f"(max relative deviation {rel:.3e} exceeds 1e-6); "
+                f"GeoTIFF requires an affine transform."
+            )
+
+    _is_regular(x, "x")
+    _is_regular(y, "y")
+
     pixel_width = float(x[1] - x[0])
     pixel_height = float(y[1] - y[0])
 
