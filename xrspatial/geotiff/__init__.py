@@ -436,7 +436,16 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
         attrs['raster_type'] = 'point'
 
     src_t = geo_info.transform
-    if src_t is not None:
+    # Skip the transform attr for files where no GeoTIFF transform tags
+    # (ModelTransformation, ModelPixelScale, or ModelTiepoint) are
+    # present, signalled by ``has_georef=False``. GeoKeys / CRS metadata
+    # can still be present in that case. The default unit
+    # ``GeoTransform`` is a struct placeholder, not real georef --
+    # emitting it leaks an identity transform into attrs and confuses
+    # downstream code that expects ``'transform' in attrs`` to mean
+    # "this raster has a georef transform" (#1710).
+    has_georef = getattr(geo_info, 'has_georef', True)
+    if src_t is not None and has_georef:
         if window is not None:
             r0, c0, _r1, _c1 = window
             origin_x_w = float(src_t.origin_x) + c0 * float(src_t.pixel_width)
@@ -695,15 +704,22 @@ def open_geotiff(source, *, dtype=None,
     if window is not None:
         # Adjust coordinates for windowed read. ``read_to_array`` rejected
         # out-of-bounds windows above, so ``r0/c0/r1/c1`` are guaranteed
-        # in-range here (no clamp needed).
+        # in-range here (no clamp needed). For files with no GeoTIFF
+        # tags (``has_georef=False``), the default unit transform is
+        # not real, so fall back to integer pixel coords matching the
+        # ``_geo_to_coords`` shortcut taken on full reads. See #1710.
         r0, c0, r1, c1 = window
-        t = geo_info.transform
-        if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
-            full_x = np.arange(c0, c1, dtype=np.float64) * t.pixel_width + t.origin_x
-            full_y = np.arange(r0, r1, dtype=np.float64) * t.pixel_height + t.origin_y
+        if not getattr(geo_info, 'has_georef', True):
+            full_x = np.arange(c0, c1, dtype=np.int64)
+            full_y = np.arange(r0, r1, dtype=np.int64)
         else:
-            full_x = np.arange(c0, c1, dtype=np.float64) * t.pixel_width + t.origin_x + t.pixel_width * 0.5
-            full_y = np.arange(r0, r1, dtype=np.float64) * t.pixel_height + t.origin_y + t.pixel_height * 0.5
+            t = geo_info.transform
+            if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
+                full_x = np.arange(c0, c1, dtype=np.float64) * t.pixel_width + t.origin_x
+                full_y = np.arange(r0, r1, dtype=np.float64) * t.pixel_height + t.origin_y
+            else:
+                full_x = np.arange(c0, c1, dtype=np.float64) * t.pixel_width + t.origin_x + t.pixel_width * 0.5
+                full_y = np.arange(r0, r1, dtype=np.float64) * t.pixel_height + t.origin_y + t.pixel_height * 0.5
         coords = {'y': full_y, 'x': full_x}
 
     if name is None:
@@ -1844,20 +1860,26 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
             raise ValueError(
                 f"window={window} is outside the source extent "
                 f"({full_h}x{full_w}) or has non-positive size.")
-        # Mirror the eager-path windowed coord computation in open_geotiff.
-        t = geo_info.transform
-        if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
-            win_x = (np.arange(win_c0, win_c1, dtype=np.float64)
-                     * t.pixel_width + t.origin_x)
-            win_y = (np.arange(win_r0, win_r1, dtype=np.float64)
-                     * t.pixel_height + t.origin_y)
+        # Mirror the eager-path windowed coord computation in open_geotiff,
+        # including the ``has_georef=False`` shortcut to integer pixel
+        # coords for non-georef files (#1710).
+        if not getattr(geo_info, 'has_georef', True):
+            win_x = np.arange(win_c0, win_c1, dtype=np.int64)
+            win_y = np.arange(win_r0, win_r1, dtype=np.int64)
         else:
-            win_x = (np.arange(win_c0, win_c1, dtype=np.float64)
-                     * t.pixel_width + t.origin_x
-                     + t.pixel_width * 0.5)
-            win_y = (np.arange(win_r0, win_r1, dtype=np.float64)
-                     * t.pixel_height + t.origin_y
-                     + t.pixel_height * 0.5)
+            t = geo_info.transform
+            if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
+                win_x = (np.arange(win_c0, win_c1, dtype=np.float64)
+                         * t.pixel_width + t.origin_x)
+                win_y = (np.arange(win_r0, win_r1, dtype=np.float64)
+                         * t.pixel_height + t.origin_y)
+            else:
+                win_x = (np.arange(win_c0, win_c1, dtype=np.float64)
+                         * t.pixel_width + t.origin_x
+                         + t.pixel_width * 0.5)
+                win_y = (np.arange(win_r0, win_r1, dtype=np.float64)
+                         * t.pixel_height + t.origin_y
+                         + t.pixel_height * 0.5)
         coords = {'y': win_y, 'x': win_x}
         full_h = win_r1 - win_r0
         full_w = win_c1 - win_c0
@@ -2275,12 +2297,14 @@ def _gpu_apply_window_band(arr_gpu, geo_info, *, window, band):
         out_w = c1 - c0
         # Mirror the eager-numpy windowed coord computation in
         # open_geotiff so the GPU-windowed coords carry the same
-        # absolute pixel-center values as the CPU path.
+        # absolute pixel-center values as the CPU path. For files
+        # with no GeoTIFF tags (``has_georef=False``), fall back to
+        # integer pixel coords matching ``_geo_to_coords`` (#1710).
         t = geo_info.transform
-        if t is None:
+        if t is None or not getattr(geo_info, 'has_georef', True):
             coords = {
-                'y': np.arange(out_h, dtype=np.int64),
-                'x': np.arange(out_w, dtype=np.int64),
+                'y': np.arange(r0, r1, dtype=np.int64),
+                'x': np.arange(c0, c1, dtype=np.int64),
             }
         else:
             if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
