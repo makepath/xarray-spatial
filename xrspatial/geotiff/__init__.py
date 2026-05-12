@@ -436,11 +436,14 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
         attrs['raster_type'] = 'point'
 
     src_t = geo_info.transform
-    # Skip the transform attr for files that lack any GeoTIFF tags. The
-    # default unit ``GeoTransform`` is a struct placeholder, not real
-    # georef -- emitting it leaks an identity transform into attrs and
-    # confuses downstream code that expects ``'transform' in attrs`` to
-    # mean "this raster has georef" (#1710).
+    # Skip the transform attr for files where no GeoTIFF transform tags
+    # (ModelTransformation, ModelPixelScale, or ModelTiepoint) are
+    # present, signalled by ``has_georef=False``. GeoKeys / CRS metadata
+    # can still be present in that case. The default unit
+    # ``GeoTransform`` is a struct placeholder, not real georef --
+    # emitting it leaks an identity transform into attrs and confuses
+    # downstream code that expects ``'transform' in attrs`` to mean
+    # "this raster has a georef transform" (#1710).
     has_georef = getattr(geo_info, 'has_georef', True)
     if src_t is not None and has_georef:
         if window is not None:
