@@ -856,9 +856,9 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
 
     # Enforce the docstring contract: every source must agree with the
     # first on pixel size, sample format + bits-per-sample (i.e. dtype),
-    # band count, and CRS WKT (when both sides set it). Without this,
-    # build_vrt would silently produce a syntactically valid VRT that
-    # misplaces or mis-types data downstream (issue #1733).
+    # band count, and CRS WKT. Without this, build_vrt would silently
+    # produce a syntactically valid VRT that misplaces or mis-types data
+    # downstream (issue #1733).
     #
     # Pixel size is compared with a small relative tolerance: TIFFs
     # written by different tools occasionally round the GeoTransform
@@ -868,9 +868,13 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     _PIXEL_SIZE_RTOL = 1e-6
 
     def _pixel_size_mismatch(a: float, b: float) -> bool:
-        # Compare magnitudes; pixel_height is negative for the common
-        # north-up case so a direct equality test would mis-flag a
-        # source with the opposite sign.
+        # Use a relative tolerance on the magnitude rather than a direct
+        # ``a == b`` check so that minor float rounding between tools is
+        # ignored. ``pixel_height`` is negative for the common north-up
+        # case; a flipped sign would change the magnitude ratio above
+        # the tolerance and so is correctly treated as a mismatch (which
+        # is the desired behavior, since opposite-sign sources do not
+        # stack into a valid VRT).
         if a == b:
             return False
         denom = max(abs(a), abs(b))
@@ -906,7 +910,12 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
                 f"must share the same band count."
             )
         m_crs = m.get('crs_wkt')
-        if first_crs and m_crs and m_crs != first_crs:
+        # Treat asymmetric CRS (one set, one missing/empty) as a
+        # mismatch too. If we only flagged when both were set, a source
+        # that lost its CRS during a re-write would silently inherit the
+        # first source's CRS in the VRT header and could end up tagged
+        # with the wrong projection.
+        if (first_crs or m_crs) and m_crs != first_crs:
             raise ValueError(
                 f"VRT source {m['path']!r} has CRS WKT that does not "
                 f"match the first source. All sources in a VRT must "

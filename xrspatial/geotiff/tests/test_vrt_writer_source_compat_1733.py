@@ -116,3 +116,73 @@ def test_single_source_still_works(tmp_path):
     vrt = os.path.join(d, "out.vrt")
     write_vrt(vrt, [a])
     assert os.path.exists(vrt)
+
+
+def test_mismatched_crs_raises(tmp_path):
+    # Two sources with different non-empty CRS values must be rejected,
+    # otherwise the VRT would inherit the first source's CRS and silently
+    # misproject the second.
+    d = _unique_dir(tmp_path, "crs_diff")
+    a = os.path.join(d, "a.tif")
+    b = os.path.join(d, "b.tif")
+    _write_tif(a, h=4, w=4, dtype=np.float32, crs=4326)
+    _write_tif(b, h=4, w=4, dtype=np.float32, origin_x=4.0, crs=3857)
+    vrt = os.path.join(d, "out.vrt")
+    with pytest.raises(ValueError, match="CRS"):
+        write_vrt(vrt, [a, b])
+
+
+def test_asymmetric_crs_raises_first_set_second_missing(tmp_path):
+    # First source has a CRS, second is written without one. The VRT
+    # would otherwise be tagged with the first source's CRS, which can
+    # misplace data when the second source actually came from a
+    # different (or unknown) projection.
+    d = _unique_dir(tmp_path, "crs_first")
+    a = os.path.join(d, "a.tif")
+    b = os.path.join(d, "b.tif")
+    _write_tif(a, h=4, w=4, dtype=np.float32, crs=4326)
+    _write_tif(b, h=4, w=4, dtype=np.float32, origin_x=4.0, crs=None)
+    vrt = os.path.join(d, "out.vrt")
+    with pytest.raises(ValueError, match="CRS"):
+        write_vrt(vrt, [a, b])
+
+
+def test_asymmetric_crs_raises_first_missing_second_set(tmp_path):
+    # Symmetric case: first source missing a CRS, second has one. The
+    # earlier guard only triggered when both sides were set, so this
+    # would have silently produced an untagged VRT despite one source
+    # carrying a known projection.
+    d = _unique_dir(tmp_path, "crs_second")
+    a = os.path.join(d, "a.tif")
+    b = os.path.join(d, "b.tif")
+    _write_tif(a, h=4, w=4, dtype=np.float32, crs=None)
+    _write_tif(b, h=4, w=4, dtype=np.float32, origin_x=4.0, crs=4326)
+    vrt = os.path.join(d, "out.vrt")
+    with pytest.raises(ValueError, match="CRS"):
+        write_vrt(vrt, [a, b])
+
+
+def test_matching_crs_succeeds(tmp_path):
+    # Sanity check: two sources with the same CRS should still be
+    # accepted (defends against an overly aggressive equality check).
+    d = _unique_dir(tmp_path, "crs_match")
+    a = os.path.join(d, "a.tif")
+    b = os.path.join(d, "b.tif")
+    _write_tif(a, h=4, w=4, dtype=np.float32, crs=4326)
+    _write_tif(b, h=4, w=4, dtype=np.float32, origin_x=4.0, crs=4326)
+    vrt = os.path.join(d, "out.vrt")
+    write_vrt(vrt, [a, b])
+    assert os.path.exists(vrt)
+
+
+def test_both_missing_crs_succeeds(tmp_path):
+    # If neither source has a CRS, the VRT just won't be tagged with one
+    # and there's nothing to mis-tag. This must not raise.
+    d = _unique_dir(tmp_path, "crs_both_missing")
+    a = os.path.join(d, "a.tif")
+    b = os.path.join(d, "b.tif")
+    _write_tif(a, h=4, w=4, dtype=np.float32, crs=None)
+    _write_tif(b, h=4, w=4, dtype=np.float32, origin_x=4.0, crs=None)
+    vrt = os.path.join(d, "out.vrt")
+    write_vrt(vrt, [a, b])
+    assert os.path.exists(vrt)
