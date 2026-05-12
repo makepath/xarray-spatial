@@ -13,13 +13,12 @@ This module pins the contract:
   silent fallback.
 
 The GPU helper sites in ``_gpu_decode.py`` are exercised indirectly
-through ``read_geotiff_gpu`` when CuPy is available; tests gated on
-``importlib.util.find_spec('cupy')`` are skipped otherwise.
+through ``read_geotiff_gpu`` when CuPy + CUDA are available; tests
+gated on ``_gpu_available()`` are skipped otherwise.
 """
 from __future__ import annotations
 
 import importlib.util
-import os
 import warnings
 
 import pytest
@@ -141,6 +140,7 @@ def test_vrt_missing_source_default_warns_then_continues(
     from xrspatial.geotiff import read_vrt
 
     vrt_path = tmp_path / 'mosaic_1662_missing.vrt'
+    missing_src = f'{tmp_path}/does_not_exist_1662.tif'
     vrt_path.write_text(
         '<VRTDataset rasterXSize="4" rasterYSize="4">\n'
         '  <SRS></SRS>\n'
@@ -148,7 +148,8 @@ def test_vrt_missing_source_default_warns_then_continues(
         '  <VRTRasterBand dataType="Float32" band="1">\n'
         '    <NoDataValue>-9999</NoDataValue>\n'
         '    <SimpleSource>\n'
-        f'      <SourceFilename relativeToVRT="0">{tmp_path}/does_not_exist_1662.tif</SourceFilename>\n'
+        f'      <SourceFilename relativeToVRT="0">{missing_src}'
+        '</SourceFilename>\n'
         '      <SourceBand>1</SourceBand>\n'
         '      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
         '      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
@@ -178,6 +179,7 @@ def test_vrt_missing_source_strict_raises(set_strict_env, tmp_path):
     from xrspatial.geotiff import read_vrt
 
     vrt_path = tmp_path / 'mosaic_1662_missing_strict.vrt'
+    missing_src = f'{tmp_path}/does_not_exist_1662_strict.tif'
     vrt_path.write_text(
         '<VRTDataset rasterXSize="4" rasterYSize="4">\n'
         '  <SRS></SRS>\n'
@@ -185,7 +187,8 @@ def test_vrt_missing_source_strict_raises(set_strict_env, tmp_path):
         '  <VRTRasterBand dataType="Float32" band="1">\n'
         '    <NoDataValue>-9999</NoDataValue>\n'
         '    <SimpleSource>\n'
-        f'      <SourceFilename relativeToVRT="0">{tmp_path}/does_not_exist_1662_strict.tif</SourceFilename>\n'
+        f'      <SourceFilename relativeToVRT="0">{missing_src}'
+        '</SourceFilename>\n'
         '      <SourceBand>1</SourceBand>\n'
         '      <SrcRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
         '      <DstRect xOff="0" yOff="0" xSize="4" ySize="4"/>\n'
@@ -204,8 +207,6 @@ def test_vrt_missing_source_strict_raises(set_strict_env, tmp_path):
 # not depend on having a working CUDA/GDS/nvCOMP stack.
 # ---------------------------------------------------------------------------
 
-CUPY_AVAILABLE = importlib.util.find_spec('cupy') is not None
-
 
 def test_warn_or_raise_gpu_fallback_default_warns(clear_strict_env):
     """Default mode emits one GeoTIFFFallbackWarning carrying type + msg."""
@@ -213,9 +214,11 @@ def test_warn_or_raise_gpu_fallback_default_warns(clear_strict_env):
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        _warn_or_raise_gpu_fallback(
+        result = _warn_or_raise_gpu_fallback(
             "_try_nvjpeg_batch_decode", RuntimeError("bogus 1662"))
 
+    # Default mode returns False so the caller falls back to None.
+    assert result is False
     fallback_warnings = [
         x for x in w if issubclass(x.category, GeoTIFFFallbackWarning)
     ]
@@ -226,30 +229,128 @@ def test_warn_or_raise_gpu_fallback_default_warns(clear_strict_env):
     assert 'bogus 1662' in msg
 
 
-def test_warn_or_raise_gpu_fallback_strict_reraises(set_strict_env):
-    """Strict mode re-raises the original exception."""
+def test_warn_or_raise_gpu_fallback_strict_returns_true(set_strict_env):
+    """Strict mode returns True so the caller can ``raise`` itself.
+
+    The helper deliberately does not raise here -- re-raising the
+    captured exception from inside this frame would clobber the
+    original traceback. Returning True lets each call site bubble the
+    live exception up via a bare ``raise`` from its own ``except``
+    block.
+    """
     from xrspatial.geotiff._gpu_decode import _warn_or_raise_gpu_fallback
 
-    with pytest.raises(RuntimeError, match='bogus 1662 strict'):
-        _warn_or_raise_gpu_fallback(
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        result = _warn_or_raise_gpu_fallback(
             "_try_nvjpeg_batch_decode", RuntimeError("bogus 1662 strict"))
+
+    assert result is True
+    # No warning should be emitted in strict mode.
+    fallback_warnings = [
+        x for x in w if issubclass(x.category, GeoTIFFFallbackWarning)
+    ]
+    assert fallback_warnings == []
+
+
+def test_warn_or_raise_gpu_fallback_preserves_traceback(set_strict_env):
+    """The call-site pattern preserves the original exception traceback.
+
+    The helper returns True in strict mode; the caller re-raises with a
+    bare ``raise``. The resulting traceback should point at the original
+    failure (``raise RuntimeError(...)`` below), not at the helper.
+    """
+    from xrspatial.geotiff._gpu_decode import _warn_or_raise_gpu_fallback
+
+    def site():
+        try:
+            raise RuntimeError("bogus 1662 traceback")
+        except Exception as e:
+            if _warn_or_raise_gpu_fallback("_dummy_stage", e):
+                raise
+            return None
+
+    with pytest.raises(RuntimeError, match='bogus 1662 traceback') as excinfo:
+        site()
+    # The deepest traceback frame should be ``site``'s ``raise
+    # RuntimeError`` line, not ``_warn_or_raise_gpu_fallback``.
+    tb = excinfo.tb
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+    assert tb.tb_frame.f_code.co_name == 'site'
 
 
 # ---------------------------------------------------------------------------
 # read_geotiff_gpu on_gpu_failure='auto' + env var integration
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(
-    not CUPY_AVAILABLE,
-    reason="cupy required for read_geotiff_gpu fallback test",
-)
-def test_read_geotiff_gpu_env_var_promotes_to_strict(set_strict_env, tmp_path):
-    """With on_gpu_failure='auto' but XRSPATIAL_GEOTIFF_STRICT=1, a GPU
-    decode failure surfaces instead of falling back to CPU."""
-    from xrspatial.geotiff import read_geotiff_gpu
+def _gpu_available() -> bool:
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
 
-    # A non-existent path triggers a failure before any decode runs;
-    # the env var should still bubble it up.
-    bogus = str(tmp_path / 'no_such_file_1662_promote.tif')
-    with pytest.raises(Exception):
-        read_geotiff_gpu(bogus)
+
+_HAS_GPU = _gpu_available()
+
+
+@pytest.mark.skipif(
+    not _HAS_GPU,
+    reason="cupy + CUDA required for read_geotiff_gpu fallback test",
+)
+def test_read_geotiff_gpu_env_var_promotes_to_strict(monkeypatch, tmp_path):
+    """With on_gpu_failure='auto' but XRSPATIAL_GEOTIFF_STRICT=1, a GPU
+    decode failure surfaces instead of falling back to CPU.
+
+    The seam: ``read_geotiff_gpu`` does a local
+    ``from ._gpu_decode import gpu_decode_tiles_from_file`` inside the
+    function body, so rebinding the attribute on the
+    ``xrspatial.geotiff._gpu_decode`` module is picked up on the next
+    call. Stubbing it to raise lets us exercise both branches against
+    a real on-disk TIF without needing a broken GPU stack.
+    """
+    import cupy as cp
+    import numpy as np
+    import xarray as xr
+
+    from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
+    from xrspatial.geotiff import _gpu_decode
+
+    # 1. Write a small valid TIF so the metadata parse succeeds and we
+    # reach the GPU decode stage.
+    h, w = 16, 16
+    arr = np.arange(h * w, dtype=np.float32).reshape(h, w)
+    y = np.arange(h, dtype=np.float64) * -1.0 + 100.0
+    x = np.arange(w, dtype=np.float64) * 1.0 + 0.0
+    da = xr.DataArray(arr, dims=['y', 'x'], coords={'y': y, 'x': x})
+    p = str(tmp_path / 'strict_promote_1662.tif')
+    to_geotiff(da, p, crs=4326)
+
+    sentinel = "bogus 1662 promote"
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError(sentinel)
+
+    monkeypatch.setattr(
+        _gpu_decode, 'gpu_decode_tiles_from_file', _boom)
+    monkeypatch.setattr(
+        _gpu_decode, 'gpu_decode_tiles', _boom)
+
+    # 2. Default mode: XRSPATIAL_GEOTIFF_STRICT unset, the failure
+    # should be absorbed and the CPU fallback should return a
+    # CuPy-backed DataArray.
+    monkeypatch.delenv('XRSPATIAL_GEOTIFF_STRICT', raising=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        result = read_geotiff_gpu(p)
+    assert isinstance(result, xr.DataArray)
+    assert isinstance(result.data, cp.ndarray)
+
+    # 3. With XRSPATIAL_GEOTIFF_STRICT=1, the same call should re-raise
+    # the patched RuntimeError instead of falling back.
+    monkeypatch.setenv('XRSPATIAL_GEOTIFF_STRICT', '1')
+    with pytest.raises(RuntimeError, match=sentinel):
+        read_geotiff_gpu(p)

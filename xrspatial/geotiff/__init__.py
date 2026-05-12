@@ -50,6 +50,7 @@ from ._writer import write
 # is intentionally omitted: it is deprecated in favour of ``da.xrs.plot()``
 # and emits a ``DeprecationWarning`` when called.
 __all__ = [
+    'GeoTIFFFallbackWarning',
     'open_geotiff',
     'read_geotiff_gpu',
     'read_geotiff_dask',
