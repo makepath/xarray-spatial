@@ -53,6 +53,7 @@ from ._header import (
     TAG_STRIP_OFFSETS,
     TAG_ROWS_PER_STRIP,
     TAG_STRIP_BYTE_COUNTS,
+    TAG_SUB_IFDS,
     TAG_X_RESOLUTION,
     TAG_Y_RESOLUTION,
     TAG_RESOLUTION_UNIT,
@@ -64,6 +65,15 @@ from ._header import (
     TAG_PREDICTOR,
     TAG_GDAL_METADATA,
 )
+
+# Tag IDs the writer must never accept from ``extra_tags``. NewSubfileType
+# (254) is a per-IFD status flag the writer emits on its own for overview
+# IFDs; copying a level-1 source value onto a level-0 destination would
+# mis-mark the primary IFD as a reduced-resolution overview. SubIFDs
+# (330) carries absolute byte offsets, which become garbage after a
+# rewrite. The read side now filters both via ``_MANAGED_TAGS``; this
+# constant is the writer-side belt-and-braces guard. See issue #1657.
+_DANGEROUS_EXTRA_TAG_IDS = frozenset({TAG_NEW_SUBFILE_TYPE, TAG_SUB_IFDS})
 
 # Byte order: always write little-endian
 BO = '<'
@@ -828,11 +838,15 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
 
             # Extra tags (pass-through from source file)
             if extra_tags is not None:
+                # Compute existing tag IDs once; update as we append to keep
+                # this loop O(len(extra_tags) + len(tags)) instead of O(N*M).
+                # See issue #1657 for the filter rationale.
+                existing_ids = {t[0] for t in tags}
                 for etag_id, etype_id, ecount, evalue in extra_tags:
-                    # Skip any tag we already wrote to avoid duplicates
-                    existing_ids = {t[0] for t in tags}
-                    if etag_id not in existing_ids:
+                    if (etag_id not in existing_ids
+                            and etag_id not in _DANGEROUS_EXTRA_TAG_IDS):
                         tags.append((etag_id, etype_id, ecount, evalue))
+                        existing_ids.add(etag_id)
 
         ifd_specs.append(tags)
 
@@ -1467,7 +1481,10 @@ def write_streaming(dask_data, path: str, *,
     if extra_tags is not None:
         existing_ids = {t[0] for t in tags}
         for etag_id, etype_id, ecount, evalue in extra_tags:
-            if etag_id not in existing_ids:
+            # Skip dangerous tags (NewSubfileType, SubIFDs) that would
+            # mis-mark the IFD or carry stale offsets. See issue #1657.
+            if (etag_id not in existing_ids
+                    and etag_id not in _DANGEROUS_EXTRA_TAG_IDS):
                 tags.append((etag_id, etype_id, ecount, evalue))
 
     # ---- Pre-compute IFD reservation size ----

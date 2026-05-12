@@ -6,13 +6,14 @@ from dataclasses import dataclass, field
 
 from ._header import (
     IFD,
+    TAG_NEW_SUBFILE_TYPE,
     TAG_IMAGE_WIDTH, TAG_IMAGE_LENGTH, TAG_BITS_PER_SAMPLE,
     TAG_COMPRESSION, TAG_PHOTOMETRIC,
     TAG_STRIP_OFFSETS, TAG_ORIENTATION, TAG_SAMPLES_PER_PIXEL,
     TAG_ROWS_PER_STRIP, TAG_STRIP_BYTE_COUNTS,
     TAG_X_RESOLUTION, TAG_Y_RESOLUTION,
     TAG_PLANAR_CONFIG, TAG_RESOLUTION_UNIT,
-    TAG_PREDICTOR, TAG_COLORMAP,
+    TAG_PREDICTOR, TAG_COLORMAP, TAG_SUB_IFDS,
     TAG_TILE_WIDTH, TAG_TILE_LENGTH,
     TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS,
     TAG_EXTRA_SAMPLES,
@@ -32,14 +33,22 @@ TAG_IMAGE_DESCRIPTION = 270
 # extra_tags pass-through. ColorMap (320), ExtraSamples (338, only emitted
 # automatically when samples > 1), and ImageDescription (270) intentionally
 # stay OUT of this set so they round-trip without dedicated writer plumbing.
+#
+# NewSubfileType (254) and SubIFDs (330) are also managed: NewSubfileType
+# is a per-IFD status flag (overview / mask marker) that the writer emits
+# on its own for level > 0 IFDs, so leaking the source value to extra_tags
+# would mis-mark a primary IFD as an overview after a read overview ->
+# write round-trip. SubIFDs holds absolute byte offsets into the source
+# file, which become garbage in the rewritten output. See issue #1657.
 _MANAGED_TAGS = frozenset({
+    TAG_NEW_SUBFILE_TYPE,
     TAG_IMAGE_WIDTH, TAG_IMAGE_LENGTH, TAG_BITS_PER_SAMPLE,
     TAG_COMPRESSION, TAG_PHOTOMETRIC,
     TAG_STRIP_OFFSETS, TAG_ORIENTATION, TAG_SAMPLES_PER_PIXEL,
     TAG_ROWS_PER_STRIP, TAG_STRIP_BYTE_COUNTS,
     TAG_X_RESOLUTION, TAG_Y_RESOLUTION,
     TAG_PLANAR_CONFIG, TAG_RESOLUTION_UNIT,
-    TAG_PREDICTOR,
+    TAG_PREDICTOR, TAG_SUB_IFDS,
     TAG_TILE_WIDTH, TAG_TILE_LENGTH,
     TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS,
     TAG_SAMPLE_FORMAT, TAG_GDAL_METADATA, TAG_GDAL_NODATA,
