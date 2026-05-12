@@ -888,16 +888,34 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
     """
     tags = {}
 
-    # ModelPixelScaleTag (33550): (ScaleX, ScaleY, ScaleZ)
-    sx = abs(transform.pixel_width)
-    sy = abs(transform.pixel_height)
-    tags[TAG_MODEL_PIXEL_SCALE] = (sx, sy, 0.0)
+    # Standard north-up rasters have pixel_width > 0 and pixel_height < 0.
+    # Anything else (descending x, ascending y) cannot be expressed via
+    # ModelPixelScale + ModelTiepoint because the spec requires the scales
+    # to be positive.
+    north_up = transform.pixel_width > 0 and transform.pixel_height < 0
 
-    # ModelTiepointTag (33922): (I, J, K, X, Y, Z)
-    tags[TAG_MODEL_TIEPOINT] = (
-        0.0, 0.0, 0.0,
-        transform.origin_x, transform.origin_y, 0.0,
-    )
+    if north_up:
+        # ModelPixelScaleTag (33550): (ScaleX, ScaleY, ScaleZ)
+        sx = transform.pixel_width
+        sy = -transform.pixel_height
+        tags[TAG_MODEL_PIXEL_SCALE] = (sx, sy, 0.0)
+
+        # ModelTiepointTag (33922): (I, J, K, X, Y, Z)
+        tags[TAG_MODEL_TIEPOINT] = (
+            0.0, 0.0, 0.0,
+            transform.origin_x, transform.origin_y, 0.0,
+        )
+    else:
+        # Why: GeoTIFF spec requires ModelPixelScale entries to be positive,
+        # so non-standard orientations (descending x, ascending y) must use
+        # ModelTransformationTag (34264) instead.  The 4x4 row-major matrix
+        # maps (col, row, 0, 1) -> (X, Y, 0, 1).
+        tags[TAG_MODEL_TRANSFORMATION] = (
+            transform.pixel_width, 0.0, 0.0, transform.origin_x,
+            0.0, transform.pixel_height, 0.0, transform.origin_y,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        )
 
     # GeoKeyDirectoryTag (34735)
     geokeys = []
