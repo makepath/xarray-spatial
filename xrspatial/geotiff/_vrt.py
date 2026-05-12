@@ -621,6 +621,30 @@ def read_vrt(vrt_path: str, *, window=None,
                 read_c0 = sr.x_off
                 read_r1 = sr.y_off + sr.y_size
                 read_c1 = sr.x_off + sr.x_size
+
+                # Cap the resample intermediate before the source read.
+                # ``_resample_nearest(src_arr, dr.y_size, dr.x_size)`` below
+                # allocates a ``(dr.y_size, dr.x_size)`` array irrespective
+                # of how much of it overlaps the window. The output buffer
+                # is already bounded by ``_check_dimensions`` above, but a
+                # crafted VRT can declare a SimpleSource ``DstRect`` whose
+                # ``xSize`` / ``ySize`` are orders of magnitude larger than
+                # the VRT extent. Without this guard, a single source can
+                # demand multi-gigabyte intermediates on a tiny output
+                # raster. See issue #1737.
+                if (dr.x_size < 0 or dr.y_size < 0
+                        or dr.x_size > max_pixels
+                        or dr.y_size > max_pixels
+                        or dr.x_size * dr.y_size > max_pixels):
+                    raise ValueError(
+                        f"VRT SimpleSource DstRect "
+                        f"(xSize={dr.x_size}, ySize={dr.y_size}) requires "
+                        f"a resample intermediate of "
+                        f"{dr.x_size * dr.y_size:,} pixels, which exceeds "
+                        f"the safety limit of {max_pixels:,} pixels. "
+                        f"Pass a larger max_pixels= to read_vrt() if this "
+                        f"file is legitimate."
+                    )
             else:
                 read_r0 = sr.y_off + (clip_r0 - dst_r0)
                 read_c0 = sr.x_off + (clip_c0 - dst_c0)
