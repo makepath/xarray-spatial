@@ -300,11 +300,18 @@ class TestVRTAllocationGuard:
 
 # ---------------------------------------------------------------------------
 # Cat 5: VRT path traversal
+#
+# Tightened in issue #1671: ``parse_vrt`` no longer accepts source paths
+# that resolve outside the VRT directory (or any explicit allowlist
+# entry). The realpath call by itself only normalised ``..`` segments;
+# it did not enforce containment, so a crafted VRT could still hand
+# ``read_to_array`` an arbitrary path.
 # ---------------------------------------------------------------------------
 
 class TestVRTPathTraversal:
-    def test_relative_path_canonicalized(self, tmp_path):
-        """Relative paths in VRT SourceFilename are canonicalized."""
+    def test_relative_path_traversal_rejected(self, tmp_path):
+        """Relative paths in VRT SourceFilename that escape the VRT
+        directory are rejected, not silently canonicalised."""
         from xrspatial.geotiff._vrt import parse_vrt
 
         vrt_xml = '''<VRTDataset rasterXSize="4" rasterYSize="4">
@@ -321,15 +328,8 @@ class TestVRTPathTraversal:
         vrt_dir = str(tmp_path / "subdir")
         os.makedirs(vrt_dir)
 
-        vrt = parse_vrt(vrt_xml, vrt_dir)
-        source_path = vrt.bands[0].sources[0].filename
-
-        # After canonicalization, the path should NOT contain ".."
-        assert ".." not in source_path
-        # It should be an absolute path
-        assert os.path.isabs(source_path)
-        # Verify it was resolved through realpath
-        assert source_path == os.path.realpath(source_path)
+        with pytest.raises(ValueError, match="outside the VRT directory"):
+            parse_vrt(vrt_xml, vrt_dir)
 
     def test_normal_relative_path_still_works(self, tmp_path):
         """Normal relative paths without traversal still resolve correctly."""
@@ -353,8 +353,9 @@ class TestVRTPathTraversal:
         expected = os.path.realpath(os.path.join(vrt_dir, "data", "tile.tif"))
         assert source_path == expected
 
-    def test_absolute_path_also_canonicalized(self, tmp_path):
-        """Absolute paths in VRT are also canonicalized."""
+    def test_absolute_path_outside_vrt_dir_rejected(self, tmp_path):
+        """Absolute paths pointing outside the VRT directory are rejected
+        by default (issue #1671)."""
         from xrspatial.geotiff._vrt import parse_vrt
 
         vrt_xml = '''<VRTDataset rasterXSize="4" rasterYSize="4">
@@ -368,11 +369,8 @@ class TestVRTPathTraversal:
   </VRTRasterBand>
 </VRTDataset>'''
 
-        vrt = parse_vrt(vrt_xml, str(tmp_path))
-        source_path = vrt.bands[0].sources[0].filename
-
-        assert ".." not in source_path
-        assert source_path == os.path.realpath("/tmp/../tmp/test.tif")
+        with pytest.raises(ValueError, match="outside the VRT directory"):
+            parse_vrt(vrt_xml, str(tmp_path))
 
 
 # ---------------------------------------------------------------------------
