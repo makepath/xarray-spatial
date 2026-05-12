@@ -6,6 +6,7 @@ more source GeoTIFF files using windowed reads.
 from __future__ import annotations
 
 import os
+import struct
 from dataclasses import dataclass, field
 from xml.sax.saxutils import escape as _xml_escape, quoteattr as _xml_quoteattr
 
@@ -349,14 +350,25 @@ def read_vrt(vrt_path: str, *, window=None,
             src_r1 = sr.y_off + int((clip_r1 - dst_r0) * scale_y)
             src_c1 = sr.x_off + int((clip_c1 - dst_c0) * scale_x)
 
-            # Read from source file using windowed read
+            # Read from source file using windowed read.
+            #
+            # Narrow the catch to the exception families ``read_to_array``
+            # actually documents/raises for an unreadable or malformed
+            # source: ``OSError`` (and subclasses ``FileNotFoundError`` /
+            # ``PermissionError``) for I/O problems, ``ValueError`` for the
+            # typed parse errors from ``parse_header`` / ``parse_ifd`` and
+            # friends, and ``struct.error`` which still leaks from a few
+            # parse paths until that work lands. ``RuntimeError``,
+            # ``MemoryError``, and other non-I/O bugs should NOT be
+            # absorbed by the "skip the tile" fallback -- they signal real
+            # failures and need to surface to the caller. See issue #1670.
             try:
                 src_arr, _ = read_to_array(
                     src.filename,
                     window=(src_r0, src_c0, src_r1, src_c1),
                     band=src.band - 1,  # convert 1-based to 0-based
                 )
-            except Exception as e:
+            except (OSError, ValueError, struct.error) as e:
                 # Under XRSPATIAL_GEOTIFF_STRICT=1, surface the read failure
                 # so partial mosaics are caught in CI. Default mode warns
                 # once per missing source then continues, preserving the
