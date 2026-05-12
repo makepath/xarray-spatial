@@ -641,7 +641,7 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
                 break
 
 
-def open_geotiff(source, *, dtype=None,
+def open_geotiff(source: str | BinaryIO, *, dtype=None,
                  window: tuple | None = None,
                  overview_level: int | None = None,
                  band: int | None = None,
