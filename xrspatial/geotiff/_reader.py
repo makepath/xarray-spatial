@@ -1950,6 +1950,29 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
                     f"window={window} is outside the source extent "
                     f"({ifd.height}x{ifd.width}) or has non-positive size.")
 
+        # Validate ``band`` against the selected IFD's sample count.
+        # Without this, ``band=-1`` silently selects the last channel
+        # via numpy negative indexing and ``band>=samples_per_pixel``
+        # leaks a raw numpy ``IndexError`` with the internal slice
+        # shape. Mirrors the dask path's pre-flight validator (see
+        # ``read_geotiff_dask`` in ``__init__.py``) and the GPU path
+        # so all backends agree on the contract: 0-based positive
+        # index only. See issue #1673.
+        #
+        # NOTE: the HTTP branch (``_read_cog_http`` above) currently
+        # accepts ``band`` but never slices on it; issue #1669 will
+        # add the slice. When that lands, mirror this same check
+        # there so HTTP rejects the same inputs.
+        ifd_samples = ifd.samples_per_pixel
+        if band is not None:
+            if ifd_samples <= 1:
+                if band != 0:
+                    raise IndexError(
+                        f"band={band} requested on a single-band file.")
+            elif not 0 <= band < ifd_samples:
+                raise IndexError(
+                    f"band={band} out of range for {ifd_samples}-band file.")
+
         if ifd.is_tiled:
             arr = _read_tiles(data, ifd, header, dtype, window,
                               max_pixels=max_pixels)
