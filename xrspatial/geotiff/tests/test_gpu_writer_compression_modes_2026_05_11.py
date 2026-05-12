@@ -35,6 +35,7 @@ from xrspatial.geotiff import (
     open_geotiff,
     write_geotiff_gpu,
 )
+from xrspatial.geotiff import _gpu_decode
 from xrspatial.geotiff._header import parse_header, parse_ifd
 
 
@@ -49,7 +50,36 @@ def _gpu_available() -> bool:
 
 
 _HAS_GPU = _gpu_available()
+
+
+def _nvjpeg_available() -> bool:
+    """True when libnvjpeg can be loaded; ``_nvjpeg_batch_encode`` will
+    actually fire instead of silently falling back to Pillow."""
+    if not _HAS_GPU:
+        return False
+    try:
+        return _gpu_decode._get_nvjpeg() is not None
+    except Exception:
+        return False
+
+
+_HAS_NVJPEG = _nvjpeg_available()
 _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
+_nvjpeg_only = pytest.mark.skipif(
+    not _HAS_NVJPEG, reason="libnvjpeg required for nvJPEG encode path",
+)
+
+
+class _CallSpy:
+    """Counts forwarded calls to a wrapped callable."""
+
+    def __init__(self, fn):
+        self._fn = fn
+        self.calls = 0
+
+    def __call__(self, *args, **kwargs):
+        self.calls += 1
+        return self._fn(*args, **kwargs)
 
 
 # Compression-tag IDs from the TIFF specification, mirroring the table
@@ -90,15 +120,40 @@ def _make_int_da(h=64, w=64, dtype=np.int32):
     ), arr
 
 
-def _make_rgb_uint8_da(h=64, w=64, seed=0):
-    """Build a CuPy-backed uint8 3-band DataArray for JPEG."""
+def _make_rgb_uint8_da(h=64, w=64):
+    """Build a CuPy-backed uint8 3-band DataArray with a smooth gradient.
+
+    JPEG is lossy; random noise is the worst case and makes round-trip
+    tests platform/library-sensitive. A deterministic smooth gradient
+    (mirroring ``test_jpeg.py``'s ``_gradient_rgb``) keeps the
+    quantisation error well below 10 absolute units per channel even at
+    default quality, so a tight tolerance is achievable.
+    """
     import cupy
-    rng = np.random.default_rng(seed)
-    arr = rng.integers(0, 256, size=(h, w, 3), dtype=np.uint8)
+    y = np.linspace(20, 240, h, dtype=np.uint8)
+    x = np.linspace(20, 240, w, dtype=np.uint8)
+    r = np.broadcast_to(y[:, None], (h, w)).astype(np.uint8)
+    g = np.broadcast_to(x[None, :], (h, w)).astype(np.uint8)
+    b = np.full((h, w), 128, dtype=np.uint8)
+    arr = np.stack([r, g, b], axis=-1)
     return xr.DataArray(
         cupy.asarray(arr),
         dims=('y', 'x', 'band'),
         coords={'y': np.arange(h), 'x': np.arange(w), 'band': [1, 2, 3]},
+    ), arr
+
+
+def _make_mono_uint8_da(h=64, w=64):
+    """Single-band uint8 smooth gradient."""
+    import cupy
+    y = np.linspace(20, 240, h, dtype=np.uint8)
+    x = np.linspace(20, 240, w, dtype=np.uint8)
+    arr = ((y[:, None].astype(np.int32) + x[None, :].astype(np.int32)) // 2
+           ).astype(np.uint8)
+    return xr.DataArray(
+        cupy.asarray(arr),
+        dims=('y', 'x'),
+        coords={'y': np.arange(h), 'x': np.arange(w)},
     ), arr
 
 
@@ -126,22 +181,34 @@ def test_write_geotiff_gpu_zstd_roundtrip(tmp_path):
 
 @_gpu_only
 def test_write_geotiff_gpu_zstd_default_matches_explicit(tmp_path):
-    """Omitting ``compression=`` defaults to zstd; bytes must match an
-    explicit ``compression='zstd'`` call.
+    """Omitting ``compression=`` selects the zstd codec.
 
     Pins the default so a silent change to the default codec (eg. to
-    'deflate') would fail this test.
+    'deflate') would fail this test. We assert that
+
+    (a) both files advertise the zstd compression tag in their IFD, and
+    (b) the decoded pixel arrays are identical.
+
+    We deliberately do not require byte-for-byte identity of the on-disk
+    files: the writer is free to vary tile ordering or padding between
+    runs, and the test would become brittle. The compression-tag pin
+    plus the decoded-array equality is enough to catch a default-codec
+    swap.
     """
-    da, _ = _make_int_da()
+    da, arr = _make_int_da()
     default_path = str(tmp_path / "default.tif")
     explicit_path = str(tmp_path / "explicit_zstd.tif")
 
     write_geotiff_gpu(da, default_path)
     write_geotiff_gpu(da, explicit_path, compression='zstd')
 
-    # Both files must advertise zstd in the TIFF header.
     assert _read_compression_tag(default_path) == _COMPRESSION_TAGS['zstd']
     assert _read_compression_tag(explicit_path) == _COMPRESSION_TAGS['zstd']
+
+    default_out = open_geotiff(default_path).values
+    explicit_out = open_geotiff(explicit_path).values
+    np.testing.assert_array_equal(default_out, arr)
+    np.testing.assert_array_equal(default_out, explicit_out)
 
 
 # ---------------------------------------------------------------------------
@@ -152,9 +219,11 @@ def test_write_geotiff_gpu_zstd_default_matches_explicit(tmp_path):
 def test_write_geotiff_gpu_jpeg_rgb_roundtrip(tmp_path):
     """``compression='jpeg'`` round-trips a 3-band uint8 RGB raster.
 
-    JPEG is lossy so we tolerate a moderate per-pixel error budget but
-    require the mean error to stay within typical JPEG quality bounds
-    (well under 50 for default-quality 8-bit).
+    Uses a deterministic smooth gradient (the worst-case-for-JPEG random
+    input was replaced per Copilot review on #1647). At default quality
+    plus 4:2:0 chroma subsampling a smooth RGB gradient round-trips with
+    mean-abs error well under 5 absolute units per channel; we allow 8
+    as a small platform-variance buffer.
     """
     da, arr = _make_rgb_uint8_da()
     path = str(tmp_path / "jpeg_rgb.tif")
@@ -165,10 +234,7 @@ def test_write_geotiff_gpu_jpeg_rgb_roundtrip(tmp_path):
     assert out.shape == arr.shape
     assert out.dtype == arr.dtype
     diff = np.abs(out.values.astype(np.int32) - arr.astype(np.int32))
-    # Random uint8 is the worst case for JPEG; we just want to catch a
-    # codec that emits all-zero or all-255 output rather than measure
-    # quality. Mean-abs-diff below 50 is comfortable for default quality.
-    assert diff.mean() < 50, (
+    assert diff.mean() < 8, (
         f"JPEG round-trip mean diff {diff.mean()} suggests encoder/decoder break"
     )
 
@@ -179,16 +245,10 @@ def test_write_geotiff_gpu_jpeg_uint8_single_band_roundtrip(tmp_path):
     raster.
 
     Single-band JPEG exercises a different nvJPEG path (luminance-only
-    vs. RGB) and the Pillow fallback's monochrome branch.
+    vs. RGB) and the Pillow fallback's monochrome branch. Smooth
+    gradient keeps the round-trip error tight.
     """
-    import cupy
-    rng = np.random.default_rng(0)
-    arr = rng.integers(0, 256, size=(64, 64), dtype=np.uint8)
-    da = xr.DataArray(
-        cupy.asarray(arr),
-        dims=('y', 'x'),
-        coords={'y': np.arange(64), 'x': np.arange(64)},
-    )
+    da, arr = _make_mono_uint8_da()
     path = str(tmp_path / "jpeg_mono.tif")
 
     write_geotiff_gpu(da, path, compression='jpeg')
@@ -197,7 +257,35 @@ def test_write_geotiff_gpu_jpeg_uint8_single_band_roundtrip(tmp_path):
     assert out.shape == arr.shape
     assert out.dtype == arr.dtype
     diff = np.abs(out.values.astype(np.int32) - arr.astype(np.int32))
-    assert diff.mean() < 50
+    assert diff.mean() < 5
+
+
+@_nvjpeg_only
+def test_write_geotiff_gpu_jpeg_uses_nvjpeg_when_available(tmp_path,
+                                                          monkeypatch):
+    """When libnvjpeg is present the writer must hit ``_nvjpeg_batch_encode``,
+    not silently fall back to Pillow.
+
+    The encode path inside ``gpu_compress_tiles`` tries nvJPEG first and
+    only falls back when it returns ``None``. A silent regression that
+    breaks nvJPEG would still produce a valid file via Pillow, so the
+    round-trip tests above can't catch it. Here we spy on the encoder
+    and assert the GPU path actually fired.
+    """
+    spy = _CallSpy(_gpu_decode._nvjpeg_batch_encode)
+    monkeypatch.setattr(_gpu_decode, "_nvjpeg_batch_encode", spy)
+
+    da, _ = _make_rgb_uint8_da()
+    path = str(tmp_path / "jpeg_nvjpeg_spy.tif")
+
+    write_geotiff_gpu(da, path, compression='jpeg')
+
+    assert spy.calls >= 1, (
+        "libnvjpeg is loadable but _nvjpeg_batch_encode was never called; "
+        "the JPEG path silently fell through to the Pillow fallback"
+    )
+    # Sanity: a file still got written.
+    assert _read_compression_tag(path) == _COMPRESSION_TAGS['jpeg']
 
 
 # ---------------------------------------------------------------------------
