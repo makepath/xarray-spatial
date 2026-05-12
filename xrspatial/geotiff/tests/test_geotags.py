@@ -253,3 +253,134 @@ class TestModelTransformationTag_1486:
         from xrspatial.geotiff._reader import read_to_array
         with pytest.raises(NotImplementedError):
             read_to_array(str(path))
+
+
+def _build_tiff_with_tiepoint_only(tiepoint_6: tuple) -> bytes:
+    """Build a tiny single-strip TIFF carrying ModelTiepointTag but
+    no ModelPixelScaleTag or ModelTransformationTag.
+
+    The GeoTIFF spec permits this configuration; the tiepoint encodes a
+    real-world (X, Y) origin for pixel (I, J) and the pixel scale defaults
+    to (1.0, 1.0).
+    """
+    import struct
+
+    bo = '<'
+    width, height = 2, 2
+    pixels = np.zeros((height, width), dtype=np.uint8)
+
+    tag_list = []
+
+    def add_short(tag, val):
+        tag_list.append((tag, 3, 1, struct.pack(f'{bo}H', val)))
+
+    def add_long(tag, val):
+        tag_list.append((tag, 4, 1, struct.pack(f'{bo}I', val)))
+
+    def add_doubles(tag, vals):
+        tag_list.append(
+            (tag, 12, len(vals), struct.pack(f'{bo}{len(vals)}d', *vals)))
+
+    add_short(256, width)            # ImageWidth
+    add_short(257, height)           # ImageLength
+    add_short(258, 8)                # BitsPerSample
+    add_short(259, 1)                # Compression: none
+    add_short(262, 1)                # PhotometricInterpretation
+    add_short(277, 1)                # SamplesPerPixel
+    add_short(278, height)           # RowsPerStrip
+    add_long(273, 0)                 # StripOffsets (placeholder)
+    add_long(279, len(pixels.tobytes()))  # StripByteCounts
+    add_short(339, 1)                # SampleFormat
+    # ModelTiepointTag (33922): 6 doubles (I, J, K, X, Y, Z).
+    # Deliberately no ModelPixelScaleTag (33550).
+    add_doubles(33922, list(tiepoint_6))
+
+    tag_list.sort(key=lambda t: t[0])
+
+    num_entries = len(tag_list)
+    ifd_start = 8
+    ifd_size = 2 + 12 * num_entries + 4
+
+    overflow = bytearray()
+    overflow_offsets = {}
+    for tag, _typ, _count, raw in tag_list:
+        if len(raw) > 4:
+            overflow_offsets[tag] = ifd_start + ifd_size + len(overflow)
+            overflow.extend(raw)
+            if len(overflow) % 2:
+                overflow.append(0)
+
+    pixel_start = ifd_start + ifd_size + len(overflow)
+
+    patched = []
+    for tag, typ, count, raw in tag_list:
+        if tag == 273:
+            patched.append((tag, typ, count, struct.pack(f'{bo}I', pixel_start)))
+        else:
+            patched.append((tag, typ, count, raw))
+    tag_list = patched
+
+    out = bytearray()
+    out.extend(b'II')
+    out.extend(struct.pack(f'{bo}H', 42))
+    out.extend(struct.pack(f'{bo}I', ifd_start))
+    out.extend(struct.pack(f'{bo}H', num_entries))
+    for tag, typ, count, raw in tag_list:
+        out.extend(struct.pack(f'{bo}HHI', tag, typ, count))
+        if len(raw) <= 4:
+            out.extend(raw.ljust(4, b'\x00'))
+        else:
+            out.extend(struct.pack(f'{bo}I', overflow_offsets[tag]))
+    out.extend(struct.pack(f'{bo}I', 0))
+    out.extend(overflow)
+    out.extend(pixels.tobytes())
+    return bytes(out)
+
+
+class TestTiepointWithoutScale_1750:
+    """Issue #1750: ModelTiepointTag present, ModelPixelScaleTag absent.
+
+    Previously the reader returned a default GeoTransform with origin (0, 0)
+    while still flagging the raster as georeferenced, silently relocating it.
+    The fix honours the tiepoint's X/Y and falls back to unit pixel scale
+    (the GeoTIFF spec convention when ModelPixelScale is absent).
+    """
+
+    def test_tiepoint_origin_preserved(self, tmp_path):
+        # I=0, J=0 maps to (X=500000, Y=4500000)
+        tiepoint = (0.0, 0.0, 0.0, 500000.0, 4500000.0, 0.0)
+        data = _build_tiff_with_tiepoint_only(tiepoint)
+        path = tmp_path / 'tiepoint_no_scale_1750.tif'
+        path.write_bytes(data)
+
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+        from xrspatial.geotiff._geotags import _extract_transform
+        transform, has_georef = _extract_transform(ifds[0])
+
+        assert has_georef is True
+        assert transform.origin_x == pytest.approx(500000.0)
+        assert transform.origin_y == pytest.approx(4500000.0)
+        # Unit pixel scale fallback per GeoTIFF spec
+        assert transform.pixel_width == pytest.approx(1.0)
+        assert transform.pixel_height == pytest.approx(-1.0)
+
+    def test_tiepoint_with_nonzero_ij(self, tmp_path):
+        # I=2, J=3 maps to (X=100, Y=200) -- origin shifts to (98, 203)
+        tiepoint = (2.0, 3.0, 0.0, 100.0, 200.0, 0.0)
+        data = _build_tiff_with_tiepoint_only(tiepoint)
+        path = tmp_path / 'tiepoint_no_scale_ij_1750.tif'
+        path.write_bytes(data)
+
+        header = parse_header(data)
+        ifds = parse_all_ifds(data, header)
+        from xrspatial.geotiff._geotags import _extract_transform
+        transform, has_georef = _extract_transform(ifds[0])
+
+        assert has_georef is True
+        # origin_x = tp_x - tp_i * 1.0 = 100 - 2 = 98
+        # origin_y = tp_y + tp_j * 1.0 = 200 + 3 = 203
+        assert transform.origin_x == pytest.approx(98.0)
+        assert transform.origin_y == pytest.approx(203.0)
+        assert transform.pixel_width == pytest.approx(1.0)
+        assert transform.pixel_height == pytest.approx(-1.0)
