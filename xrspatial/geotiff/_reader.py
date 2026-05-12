@@ -683,7 +683,16 @@ class _HTTPSource:
         end = start + length - 1
         headers = {'Range': f'bytes={start}-{end}'}
         if self._pool is not None:
-            return self._request(headers=headers).data
+            resp = self._request(headers=headers)
+            data = resp.data
+            self._validate_range_response(
+                status=resp.status,
+                content_range=resp.headers.get('Content-Range'),
+                data=data,
+                start=start,
+                length=length,
+            )
+            return data
         # Fallback: stdlib. urlopen's ``timeout`` is a single value, so
         # use the more conservative read timeout; the connect timeout
         # isn't separately controllable on stdlib urllib. The opener
@@ -691,7 +700,107 @@ class _HTTPSource:
         # validated and capped at ``_HTTP_MAX_REDIRECTS``.
         req = urllib.request.Request(self._url, headers=headers)
         with _get_stdlib_opener().open(req, timeout=self._read_timeout) as resp:
-            return resp.read()
+            data = resp.read()
+            # stdlib raises HTTPError for 4xx/5xx automatically; we still
+            # need to catch the "server ignored Range and returned 200
+            # with the whole object" case, plus any short body.
+            self._validate_range_response(
+                status=getattr(resp, 'status', None) or resp.getcode(),
+                content_range=resp.headers.get('Content-Range'),
+                data=data,
+                start=start,
+                length=length,
+            )
+            return data
+
+    @staticmethod
+    def _validate_range_response(*, status, content_range, data,
+                                 start: int, length: int) -> None:
+        """Reject HTTP responses that do not satisfy the Range request.
+
+        Without this, three things can go wrong silently (issue #1735):
+
+        - the server returns a 4xx/5xx body (urllib3 by default does not
+          raise on non-2xx, so the bytes would be handed to the caller);
+        - the server ignores ``Range`` for a non-zero start and returns
+          the whole object as a 200 with no ``Content-Range``, handing
+          the codec wrong-offset bytes;
+        - the body is shorter or longer than what the server advertised
+          via ``Content-Range``, which surfaces later inside a decoder
+          as an opaque error far from the real cause.
+
+        A short response near EOF is legitimate: a fixed-size header
+        prefetch (e.g. ``read_range(0, 16384)``) will hit the end of a
+        smaller file and the server returns ``Content-Range: bytes
+        0-(size-1)/size``. The validator accepts that as long as the
+        Content-Range starts at the requested offset and the body
+        length matches what Content-Range advertises.
+        """
+        if status is None or status not in (200, 206):
+            raise OSError(
+                f"HTTP range request returned status {status}; expected "
+                f"206 Partial Content (or 200 with full body)."
+            )
+        if content_range is None:
+            # No Content-Range. A 200 with no Content-Range is only safe
+            # when the caller asked for the beginning of the object; for
+            # any other ``start`` the bytes returned do not correspond
+            # to the requested offset.
+            if status == 206:
+                raise OSError(
+                    "HTTP 206 response missing Content-Range header."
+                )
+            if start != 0:
+                raise OSError(
+                    f"HTTP server returned status 200 with no "
+                    f"Content-Range for a range request starting at "
+                    f"byte {start}; refusing to use the body as a "
+                    f"range fetch."
+                )
+            if len(data) < min(length, 1):
+                # Empty body but caller wanted bytes.
+                raise OSError("HTTP 200 response body is empty.")
+            return
+        # Parse ``bytes <start>-<end>/<total-or-*>``. Reject anything
+        # that does not start at the requested offset; allow ``end`` to
+        # be lower than requested when EOF was hit.
+        try:
+            unit, _, spec = content_range.partition(' ')
+            rng, _, _total = spec.partition('/')
+            cr_start_s, _, cr_end_s = rng.partition('-')
+            cr_start = int(cr_start_s)
+            cr_end = int(cr_end_s)
+        except ValueError:
+            raise OSError(
+                f"HTTP Content-Range header {content_range!r} could "
+                f"not be parsed."
+            ) from None
+        if unit != 'bytes':
+            raise OSError(
+                f"HTTP Content-Range unit {unit!r} is not 'bytes'."
+            )
+        if cr_start != start:
+            raise OSError(
+                f"HTTP Content-Range {content_range!r} starts at byte "
+                f"{cr_start}, but the request started at byte {start}."
+            )
+        if cr_end < cr_start:
+            raise OSError(
+                f"HTTP Content-Range {content_range!r} has end "
+                f"({cr_end}) below start ({cr_start})."
+            )
+        if cr_end - cr_start + 1 > length:
+            raise OSError(
+                f"HTTP Content-Range {content_range!r} advertises more "
+                f"bytes than were requested (length={length})."
+            )
+        expected_len = cr_end - cr_start + 1
+        if len(data) != expected_len:
+            raise OSError(
+                f"HTTP range body length {len(data)} does not match "
+                f"the {expected_len} bytes advertised by "
+                f"Content-Range {content_range!r}."
+            )
 
     def read_ranges(
         self,
