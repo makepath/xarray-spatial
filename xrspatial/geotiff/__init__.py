@@ -2683,9 +2683,19 @@ def read_geotiff_gpu(source: str, *,
             # 5-8 today (the 2/3/4 fix in #1539 is in a sibling PR). Discard
             # its geo_info and apply our own transform update below so the
             # result is correct regardless of merge order.
+            #
+            # Forward ``max_pixels``, ``window``, and ``band`` so the
+            # caller's safety cap is honoured, windowed reads avoid
+            # decoding the full image, and single-band selection on a
+            # multi-band source skips the unused channels. Without this,
+            # the stripped GPU path bypassed all three (issue #1732).
+            # Orientation != 1 + window is already rejected at line 2495,
+            # so ``window`` is None whenever ``geo_info`` will be remapped
+            # below.
             src.close()
             arr_cpu, _ = _read_to_array(
-                source, overview_level=overview_level)
+                source, overview_level=overview_level,
+                window=window, band=band, max_pixels=max_pixels)
             arr_gpu = cupy.asarray(arr_cpu)
             if orientation != 1:
                 geo_info = _apply_orientation_geo_info(
@@ -2708,12 +2718,36 @@ def read_geotiff_gpu(source: str, *,
                 target = np.dtype(dtype)
                 _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
                 arr_gpu = arr_gpu.astype(target)
-            # Apply window/band slicing post-decode. The stripped CPU
-            # fallback already produces the full-image array; slice on the
-            # GPU so the result matches ``open_geotiff`` /
-            # ``read_geotiff_dask`` semantics.
-            arr_gpu, coords = _gpu_apply_window_band(
-                arr_gpu, geo_info, window=window, band=band)
+            # ``read_to_array`` already applied window + band slicing, so
+            # ``arr_gpu`` is at output shape. Compute coords for that
+            # shape without re-slicing.
+            if window is not None:
+                r0, c0, r1, c1 = window
+                t = geo_info.transform
+                if t is None:
+                    coords = {
+                        'y': np.arange(r1 - r0, dtype=np.int64),
+                        'x': np.arange(c1 - c0, dtype=np.int64),
+                    }
+                elif geo_info.raster_type == RASTER_PIXEL_IS_POINT:
+                    coords = {
+                        'x': (np.arange(c0, c1, dtype=np.float64)
+                              * t.pixel_width + t.origin_x),
+                        'y': (np.arange(r0, r1, dtype=np.float64)
+                              * t.pixel_height + t.origin_y),
+                    }
+                else:
+                    coords = {
+                        'x': (np.arange(c0, c1, dtype=np.float64)
+                              * t.pixel_width + t.origin_x
+                              + t.pixel_width * 0.5),
+                        'y': (np.arange(r0, r1, dtype=np.float64)
+                              * t.pixel_height + t.origin_y
+                              + t.pixel_height * 0.5),
+                    }
+            else:
+                coords = _geo_to_coords(
+                    geo_info, arr_gpu.shape[0], arr_gpu.shape[1])
             # Multi-band stripped reads come back as (y, x, band); mirror
             # the tiled branch so dims line up with ndim. Single-band stays
             # 2-D ('y', 'x').
