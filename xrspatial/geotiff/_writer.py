@@ -160,12 +160,17 @@ def _block_reduce_2d(arr2d, method, nodata=None):
     rewrite it back to the sentinel; the integer branch rewrites NaN
     back to the sentinel before the dtype cast so the cast is
     well-defined (the caller's post-overview loop only handles the
-    float case). The sentinel is ignored for ``nearest`` and ``mode``
-    methods (those pick existing values rather than synthesise new
-    averages). The ``cubic`` branch honours ``nodata`` by masking the
-    sentinel to NaN, running cubic with ``prefilter=False`` to keep the
-    kernel local, and rewriting any NaN in the output back to the
-    sentinel before returning (issue #1623).
+    float case). The ``nearest`` and ``mode`` methods do NOT mask the
+    sentinel: ``nearest`` returns the top-left pixel of each 2x2 block
+    and ``mode`` returns the most-frequent value, so the sentinel can
+    be selected as the overview pixel if it occupies that position
+    (``nearest``) or is the most frequent value in the block
+    (``mode``). Mean / median / min / max / cubic all mask the
+    sentinel before reduction. The ``cubic`` branch honours ``nodata``
+    by masking the sentinel to NaN, running cubic with
+    ``prefilter=False`` to keep the kernel local, and rewriting any
+    NaN in the output back to the sentinel before returning (issue
+    #1623).
     """
     h, w = arr2d.shape
     h2 = (h // 2) * 2
