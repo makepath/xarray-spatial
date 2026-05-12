@@ -652,11 +652,14 @@ def _write_tiled(data: np.ndarray, compression: int, predictor: int,
     n_tiles = tiles_across * tiles_down
 
     if compression == COMPRESSION_NONE:
-        # Uncompressed: pre-allocate a contiguous buffer for all tiles
-        # and copy tile data directly, avoiding per-tile Python overhead.
-        tile_bytes = tw * th * bytes_per_sample * samples
-        total_buf = bytearray(n_tiles * tile_bytes)
-        mv = memoryview(total_buf)
+        # Uncompressed: build tiles one at a time. An earlier version
+        # pre-allocated a contiguous ``bytearray(n_tiles * tile_bytes)``
+        # buffer here on the theory that we'd copy each tile into it
+        # directly, but the loop below ended up calling ``tobytes()``
+        # per tile anyway and never read the buffer. That left a dead
+        # allocation roughly the size of the full uncompressed raster
+        # alongside the actual tile list, doubling peak memory and
+        # turning OOM-marginal writes into OOM-failing ones (#1736).
         tiles = []
         rel_offsets = []
         byte_counts = []
