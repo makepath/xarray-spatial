@@ -2555,6 +2555,13 @@ def _nvcomp_batch_compress(d_tile_bufs, tile_byte_counts, tile_bytes,
         trimmed = [
             d_comp_bufs[i][:int(comp_sizes[i])] for i in range(n_tiles)
         ]
+        # The concat allocates a fresh device buffer of ``sum(comp_sizes)``
+        # bytes -- a peak-VRAM bump on top of the ``n_tiles * max_cs``
+        # pool above. Guard it explicitly so an OOM here surfaces with
+        # the same message style as ``_batched_d2h_to_bytes`` rather
+        # than silently triggering the broad except below.
+        _check_gpu_memory(int(sum(comp_sizes)),
+                          what="nvCOMP batch staging buffer")
         d_comp_concat = cupy.concatenate(trimmed)
         host_concat = bytes(d_comp_concat.get())
 

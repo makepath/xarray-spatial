@@ -13,6 +13,7 @@ paths still round-trip end-to-end.
 """
 from __future__ import annotations
 
+import importlib.util
 import inspect
 import os
 import tempfile
@@ -27,11 +28,31 @@ try:
 except Exception:
     _HAS_CUPY = False
 
+
+def _gpu_available() -> bool:
+    """Match the geotiff-test convention: cupy import AND working CUDA.
+
+    A host can have cupy installed without a usable CUDA runtime (no
+    driver, no device visible, container misconfig), and in that case
+    every test that calls into the GPU writer would fail rather than
+    skip. ``cupy.cuda.is_available()`` is the cheap probe.
+    """
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+_HAS_GPU = _gpu_available()
+
 # nvCOMP is the entry point that exercises this code path.
 from xrspatial.geotiff import _gpu_decode
 
 needs_cupy = pytest.mark.skipif(
-    not _HAS_CUPY, reason="CUDA / cupy unavailable on this host"
+    not _HAS_GPU, reason="cupy + CUDA required"
 )
 
 
