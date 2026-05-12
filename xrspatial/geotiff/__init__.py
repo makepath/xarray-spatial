@@ -611,6 +611,32 @@ def open_geotiff(source, *, dtype=None,
 
     # VRT files (string paths only -- VRT XML references other files on disk)
     if isinstance(source, str) and source.lower().endswith('.vrt'):
+        # ``read_vrt`` does not accept ``overview_level`` (the VRT XML
+        # references its own source files; overview selection would need
+        # to apply to each one). Silently dropping the kwarg was the same
+        # class of bug issue #1561 fixed for the dask and GPU dispatchers,
+        # so refuse the combination up front rather than handing the
+        # caller a full-resolution mosaic with no warning. See issue #1685.
+        # ``overview_level=0`` is documented as "full resolution" (the
+        # default), so treat it as a no-op the same as ``None`` rather
+        # than rejecting a kwarg value the caller could have omitted.
+        if overview_level not in (None, 0):
+            raise ValueError(
+                "overview_level is not supported for VRT sources. "
+                "VRT references its own source files; pass overview_level "
+                "to open_geotiff on a .tif source, or drop the kwarg.")
+        # ``on_gpu_failure`` only routes through ``read_geotiff_gpu``.
+        # ``read_vrt`` has no analogous failure policy, so any value the
+        # caller supplied alongside a VRT source would be silently lost.
+        # The ``gpu=False`` branch is already rejected above; this catches
+        # the ``gpu=True, source.endswith('.vrt')`` case the earlier check
+        # lets through.
+        if on_gpu_failure is not _ON_GPU_FAILURE_SENTINEL:
+            raise ValueError(
+                "on_gpu_failure is not supported for VRT sources. "
+                "VRT reads do not go through the GPU decoder pipeline; "
+                "drop the kwarg or call read_geotiff_gpu directly on a "
+                ".tif source.")
         return read_vrt(source, dtype=dtype, window=window, band=band,
                         name=name, chunks=chunks, gpu=gpu,
                         max_pixels=max_pixels)
