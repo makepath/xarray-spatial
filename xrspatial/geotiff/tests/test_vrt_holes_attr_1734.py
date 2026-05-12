@@ -31,12 +31,20 @@ def set_strict_env(monkeypatch):
 
 
 def _write_vrt_with_missing_source(vrt_path, missing_src) -> None:
+    """Write a VRT with an Int32 band whose only source is missing.
+
+    Integer ``dataType`` is the failure mode issue #1734 was about: the
+    pre-fix lenient path zero-fills the output buffer (``fill = 0`` for
+    integer dtypes) and the user cannot distinguish that hole from real
+    zero-valued data. ``NoDataValue`` is omitted on purpose -- having
+    one would let downstream code mask the hole and side-step the
+    regression. See the module docstring.
+    """
     vrt_path.write_text(
         '<VRTDataset rasterXSize="4" rasterYSize="4">\n'
         '  <SRS></SRS>\n'
         '  <GeoTransform>0, 1, 0, 0, 0, -1</GeoTransform>\n'
-        '  <VRTRasterBand dataType="Float32" band="1">\n'
-        '    <NoDataValue>-9999</NoDataValue>\n'
+        '  <VRTRasterBand dataType="Int32" band="1">\n'
         '    <SimpleSource>\n'
         f'      <SourceFilename relativeToVRT="0">{missing_src}'
         '</SourceFilename>\n'
@@ -54,7 +62,14 @@ def test_skipped_source_records_vrt_holes_attr(
 ):
     """A VRT with a missing source returns a DataArray whose attrs
     carry a ``vrt_holes`` entry naming the source, band, dst_rect,
-    and underlying error."""
+    and underlying error.
+
+    Uses an Int32 VRT so the hole is zero-filled (the exact failure
+    mode #1734 was about): without the attr there is no way to tell
+    the all-zeros tile from real data.
+    """
+    import numpy as np
+
     vrt_path = tmp_path / 'mosaic_1734_missing.vrt'
     missing_src = f'{tmp_path}/does_not_exist_1734.tif'
     _write_vrt_with_missing_source(vrt_path, missing_src)
@@ -62,6 +77,12 @@ def test_skipped_source_records_vrt_holes_attr(
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', GeoTIFFFallbackWarning)
         da = read_vrt(str(vrt_path))
+
+    # Confirm the integer-specific failure mode is in play: the hole is
+    # filled with zeros (not NaN), indistinguishable from real data
+    # without the attr.
+    assert np.issubdtype(da.dtype, np.integer)
+    assert (da.values == 0).all()
 
     assert 'vrt_holes' in da.attrs
     holes = da.attrs['vrt_holes']
@@ -119,13 +140,21 @@ def test_no_holes_attr_when_all_sources_read(clear_strict_env, tmp_path):
 
 
 def test_strict_mode_still_raises(set_strict_env, tmp_path):
-    """Strict mode is unchanged: the missing source raises and no
-    DataArray is returned."""
+    """Strict mode is unchanged: the missing source surfaces the
+    underlying ``FileNotFoundError`` (an ``OSError`` subclass) from
+    ``read_to_array`` instead of warning-and-skipping.
+
+    Asserting the concrete exception class -- not a bare ``Exception``
+    -- keeps the regression test honest: an unrelated bug somewhere in
+    the read path that happens to raise a different exception will
+    fail this test instead of silently satisfying it.
+    """
     vrt_path = tmp_path / 'mosaic_1734_strict.vrt'
     missing_src = f'{tmp_path}/does_not_exist_1734_strict.tif'
     _write_vrt_with_missing_source(vrt_path, missing_src)
 
-    with pytest.raises(Exception):
+    with pytest.raises(FileNotFoundError,
+                       match='does_not_exist_1734_strict.tif'):
         read_vrt(str(vrt_path))
 
 
