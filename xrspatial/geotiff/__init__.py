@@ -617,7 +617,10 @@ def open_geotiff(source, *, dtype=None,
         # class of bug issue #1561 fixed for the dask and GPU dispatchers,
         # so refuse the combination up front rather than handing the
         # caller a full-resolution mosaic with no warning. See issue #1685.
-        if overview_level is not None:
+        # ``overview_level=0`` is documented as "full resolution" (the
+        # default), so treat it as a no-op the same as ``None`` rather
+        # than rejecting a kwarg value the caller could have omitted.
+        if overview_level not in (None, 0):
             raise ValueError(
                 "overview_level is not supported for VRT sources. "
                 "VRT references its own source files; pass overview_level "

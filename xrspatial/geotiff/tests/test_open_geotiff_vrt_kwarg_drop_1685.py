@@ -58,6 +58,16 @@ def test_open_geotiff_vrt_rejects_overview_level(small_vrt):
         open_geotiff(small_vrt, overview_level=1)
 
 
+def test_open_geotiff_vrt_accepts_overview_level_zero(small_vrt):
+    """``overview_level=0`` is documented as full resolution (the default),
+    so passing it on a VRT is semantically equivalent to omitting the kwarg
+    and must not raise. Only non-zero overview levels are rejected.
+    """
+    da = open_geotiff(small_vrt, overview_level=0)
+    # Same shape as the no-kwarg case: two 4x4 tiles side-by-side.
+    assert da.shape == (4, 8)
+
+
 def test_open_geotiff_vrt_rejects_on_gpu_failure_with_gpu_true(small_vrt):
     """``on_gpu_failure='strict'`` plus ``.vrt`` (gpu=True) is refused."""
     # The check fires before any GPU code runs; no CUDA needed.
