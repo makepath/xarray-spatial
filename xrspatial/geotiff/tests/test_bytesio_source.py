@@ -6,6 +6,7 @@ TIFF bytes in memory or stream them through a non-filesystem destination.
 """
 from __future__ import annotations
 
+import importlib.util
 import io
 from concurrent.futures import ThreadPoolExecutor
 
@@ -15,6 +16,26 @@ import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._reader import _BytesIOSource, read_to_array
+
+
+def _gpu_available() -> bool:
+    """True when cupy imports AND a CUDA runtime is initialised.
+
+    Mirrors the helper used in other geotiff GPU tests so the BytesIO
+    GPU-writer tests skip cleanly on hosts where CuPy is installed but
+    CUDA is unavailable (Copilot review on #1653).
+    """
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+_HAS_GPU = _gpu_available()
+_gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 
 
 def _make_da(height=32, width=40, dtype=np.float32):
@@ -268,3 +289,99 @@ def test_is_file_like_requires_tell():
 
     assert _is_file_like(io.BytesIO(b'x')) is True
     assert _is_file_like(ReadSeekNoTell()) is False
+
+
+class TestWriteGeotiffGpuBytesIO:
+    """Regression coverage for ``write_geotiff_gpu`` file-like behaviour.
+
+    ``to_geotiff(gpu=True, ...)`` always rejects BytesIO destinations paired
+    with ``cog=True`` (the auto-dispatch path's existing guard). The explicit
+    GPU writer used to silently accept that combo and produce a COG into the
+    buffer, so the two entry points disagreed on what ``to_geotiff(gpu=True,
+    cog=True, path=BytesIO)`` does. These tests pin the mirrored gate added
+    by issue #1652 and confirm the non-cog file-like path still works.
+    """
+
+    @_gpu_only
+    def test_cog_with_bytesio_rejected_1652(self):
+        import cupy
+        da = xr.DataArray(
+            cupy.asarray(np.random.rand(64, 64).astype(np.float32)),
+            dims=['y', 'x'],
+            coords={'y': np.arange(64.0), 'x': np.arange(64.0)},
+            attrs={'crs': 4326},
+        )
+        from xrspatial.geotiff import write_geotiff_gpu
+
+        buf = io.BytesIO()
+        with pytest.raises(ValueError, match='cog=True'):
+            write_geotiff_gpu(da, buf, cog=True)
+
+    @_gpu_only
+    def test_cog_with_bytesio_error_matches_to_geotiff_1652(self):
+        """The error string must match ``to_geotiff``'s gate verbatim so
+        downstream callers can rely on a single message (Copilot review
+        on #1653)."""
+        import cupy
+        da = xr.DataArray(
+            cupy.asarray(np.random.rand(64, 64).astype(np.float32)),
+            dims=['y', 'x'],
+            coords={'y': np.arange(64.0), 'x': np.arange(64.0)},
+            attrs={'crs': 4326},
+        )
+        from xrspatial.geotiff import write_geotiff_gpu
+
+        # to_geotiff's canonical message; mirrored verbatim in
+        # write_geotiff_gpu's gate.
+        expected = (
+            "cog=True is not supported for file-like destinations. "
+            "Pass a string path or write to BytesIO without cog=True."
+        )
+
+        buf = io.BytesIO()
+        with pytest.raises(ValueError) as exc_info:
+            write_geotiff_gpu(da, buf, cog=True)
+        assert str(exc_info.value) == expected
+
+        # And the CPU writer raises the same string for parity.
+        with pytest.raises(ValueError) as exc_info_cpu:
+            to_geotiff(_make_da(), io.BytesIO(), cog=True)
+        assert str(exc_info_cpu.value) == expected
+
+    @_gpu_only
+    def test_invalid_path_type_raises_typeerror_1652(self):
+        """Mirror to_geotiff's TypeError for non-str, non-file-like paths
+        so callers see identical behaviour from both entry points."""
+        import cupy
+        da = xr.DataArray(
+            cupy.asarray(np.random.rand(64, 64).astype(np.float32)),
+            dims=['y', 'x'],
+            coords={'y': np.arange(64.0), 'x': np.arange(64.0)},
+            attrs={'crs': 4326},
+        )
+        from xrspatial.geotiff import write_geotiff_gpu
+
+        with pytest.raises(TypeError, match="path must be a str"):
+            write_geotiff_gpu(da, 42)  # int is neither str nor file-like
+
+    @_gpu_only
+    def test_non_cog_bytesio_still_works_1652(self):
+        import cupy
+        arr_cpu = np.random.rand(64, 64).astype(np.float32)
+        da = xr.DataArray(
+            cupy.asarray(arr_cpu),
+            dims=['y', 'x'],
+            coords={'y': np.arange(64.0), 'x': np.arange(64.0)},
+            attrs={'crs': 4326},
+        )
+        from xrspatial.geotiff import write_geotiff_gpu
+
+        buf = io.BytesIO()
+        # Non-cog file-like write is still supported on the explicit GPU
+        # writer; only cog=True is gated.
+        write_geotiff_gpu(da, buf)
+        assert len(buf.getvalue()) > 0
+
+        # Verify it round-trips through open_geotiff
+        rd = open_geotiff(io.BytesIO(buf.getvalue()))
+        np.testing.assert_allclose(np.asarray(rd.values), arr_cpu)
