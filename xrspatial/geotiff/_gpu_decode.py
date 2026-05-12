@@ -2453,12 +2453,31 @@ def _nvcomp_batch_compress(d_tile_bufs, tile_byte_counts, tile_bytes,
             return None
         max_cs = max_comp_size.value
 
-        # Allocate compressed output buffers on device
-        d_comp_bufs = [cupy.empty(max_cs, dtype=cupy.uint8) for _ in range(n_tiles)]
+        # Allocate one contiguous device buffer of size ``n_tiles *
+        # max_cs`` and view ``n_tiles`` per-tile slabs into it. This
+        # mirrors the single-buffer pattern already used by the decode
+        # path in ``_try_nvcomp_from_device_bufs`` (#1659) and the GDS
+        # fallback in ``gpu_decode_tiles_from_file`` (#1552). Per-tile
+        # ``cupy.empty`` calls each round-trip through the memory pool
+        # and add up to milliseconds of overhead for thousand-tile
+        # writes; one allocation + pointer arithmetic skips that
+        # bookkeeping. The slab views are non-overlapping so nvCOMP
+        # can write into them in parallel via the per-tile pointer
+        # array. See issue #1712.
+        _check_gpu_memory(n_tiles * max_cs,
+                          what="nvCOMP compressed-output buffer")
+        d_comp_pool = cupy.empty(n_tiles * max_cs, dtype=cupy.uint8)
+        comp_base_ptr = int(d_comp_pool.data.ptr)
+        d_comp_bufs = [
+            d_comp_pool[i * max_cs:(i + 1) * max_cs]
+            for i in range(n_tiles)
+        ]
+        comp_ptrs_host = np.arange(n_tiles, dtype=np.uint64) * np.uint64(max_cs)
+        comp_ptrs_host += np.uint64(comp_base_ptr)
 
         # Build pointer and size arrays
         d_uncomp_ptrs = cupy.array([b.data.ptr for b in d_tile_bufs], dtype=cupy.uint64)
-        d_comp_ptrs = cupy.array([b.data.ptr for b in d_comp_bufs], dtype=cupy.uint64)
+        d_comp_ptrs = cupy.asarray(comp_ptrs_host)
         d_uncomp_sizes = cupy.full(n_tiles, tile_bytes, dtype=cupy.uint64)
         d_comp_sizes = cupy.empty(n_tiles, dtype=cupy.uint64)
 
@@ -2518,18 +2537,40 @@ def _nvcomp_batch_compress(d_tile_bufs, tile_byte_counts, tile_bytes,
                     adler_checksums[i] = zlib.adler32(
                         host_view[i * tile_bytes:(i + 1) * tile_bytes])
 
-        # Read compressed sizes and data back to CPU
+        # Read compressed sizes and data back to CPU.
+        #
+        # Previously this loop ran one ``.get()`` per tile, which
+        # serialised on the default stream and burned a per-DMA setup
+        # cost (issue #1712, same pattern as the decode-side fix in
+        # #1552). Instead, hoist the variable-size slabs into a
+        # contiguous buffer with one ``cupy.concatenate``, do one D2H
+        # transfer, then slice the host buffer per tile.
         comp_sizes = d_comp_sizes.get().astype(int)
+        if n_tiles == 0:
+            return []
+        # Each tile's compressed payload lives in the first
+        # ``comp_sizes[i]`` bytes of its ``max_cs``-sized slab. Build a
+        # list of trimmed views and concatenate into one packed device
+        # buffer; the host then sees one DMA-sized region.
+        trimmed = [
+            d_comp_bufs[i][:int(comp_sizes[i])] for i in range(n_tiles)
+        ]
+        d_comp_concat = cupy.concatenate(trimmed)
+        host_concat = bytes(d_comp_concat.get())
+
+        # Walk host_concat by per-tile offsets to peel out each tile's
+        # compressed bytes. Cumulative-sum on the host avoids a second
+        # device round-trip.
+        offsets = np.zeros(n_tiles + 1, dtype=np.int64)
+        np.cumsum(comp_sizes, out=offsets[1:])
+
         result = []
         for i in range(n_tiles):
-            cs = int(comp_sizes[i])
-            raw = d_comp_bufs[i][:cs].get().tobytes()
-
+            raw = host_concat[offsets[i]:offsets[i + 1]]
             if adler_checksums is not None:
                 # Wrap raw deflate in zlib format: header + data + adler32
                 checksum = struct.pack('>I', adler_checksums[i] & 0xFFFFFFFF)
                 raw = b'\x78\x9c' + raw + checksum
-
             result.append(raw)
 
         return result
