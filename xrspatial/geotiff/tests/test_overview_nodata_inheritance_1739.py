@@ -268,11 +268,11 @@ def test_overview_with_own_nodata_keeps_own_value(tmp_path):
     This is exercised by reading the same COG with overview level 0
     twice: once directly and once after manipulating the level-0
     nodata. Since the writer always emits the same nodata on level 0,
-    we instead use a hand-built TIFF below would be overkill; the
-    simpler contract test in test_attrs_keysets_consistent_across_*
-    already pins the typical writer path. This test pins the
-    "overview already has its own value" branch by simulating it
-    directly against ``extract_geo_info_with_overview_inheritance``.
+    hand-building a TIFF here would be overkill; the simpler contract
+    test in test_attrs_keysets_consistent_across_* already pins the
+    typical writer path. This test pins the "overview already has its
+    own value" branch by simulating it directly against
+    ``extract_geo_info_with_overview_inheritance``.
     """
     from xrspatial.geotiff._geotags import (
         extract_geo_info_with_overview_inheritance,
