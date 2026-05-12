@@ -1000,7 +1000,7 @@ def _extract_rich_tags(attrs: dict) -> dict:
 def to_geotiff(data: xr.DataArray | np.ndarray,
                path: str | BinaryIO, *,
                crs: int | str | None = None,
-               nodata=None,
+               nodata: float | int | None = None,
                compression: str = 'zstd',
                compression_level: int | None = None,
                tiled: bool = True,
@@ -2854,7 +2854,7 @@ def read_geotiff_gpu(source: str, *,
 def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       path: str | BinaryIO, *,
                       crs: int | str | None = None,
-                      nodata=None,
+                      nodata: float | int | None = None,
                       compression: str = 'zstd',
                       compression_level: int | None = None,
                       tiled: bool = True,
@@ -2865,7 +2865,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       overview_resampling: str = 'mean',
                       bigtiff: bool | None = None,
                       max_z_error: float = 0.0,
-                      streaming_buffer_bytes: int | None = None) -> None:
+                      streaming_buffer_bytes: int = 256 * 1024 * 1024) -> None:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
 
     Tiles are extracted and compressed on the GPU via nvCOMP, then
@@ -2960,10 +2960,12 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         does not implement LERC (nvCOMP has no LERC backend), so any
         non-zero value raises ``ValueError``. Accepted at the signature
         level for API parity with ``to_geotiff``.
-    streaming_buffer_bytes : int or None
+    streaming_buffer_bytes : int
         Accepted for API parity with ``to_geotiff``. The GPU writer
         materialises the entire array on device and has no streaming
-        concept, so this kwarg is a no-op.
+        concept, so this kwarg is a no-op. Default matches
+        ``to_geotiff`` (256 MB) so callers passing the same kwargs to
+        either entry point see the same default and the same type.
     """
     if not tiled:
         raise ValueError(
