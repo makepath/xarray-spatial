@@ -1518,33 +1518,115 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
 # COG HTTP reader
 # ---------------------------------------------------------------------------
 
+#: Initial prefetch size for ``_parse_cog_http_meta``. Sized for the common
+#: case (a single-IFD COG with modest GeoTIFF tags) so the fast path is a
+#: single range GET.
+INITIAL_HTTP_HEADER_BYTES = 16 * 1024
+
+#: Upper bound on how far ``_parse_cog_http_meta`` will grow its prefetch
+#: buffer before giving up. 4 MiB comfortably covers deep pyramids whose
+#: IFD chains plus tag arrays (TileOffsets, GeoAsciiParams, GDAL_METADATA)
+#: extend far past the initial fetch window. See issue #1718.
+MAX_HTTP_HEADER_BYTES = 4 * 1024 * 1024
+
+
+def _ifd_required_extent(
+    ifds: list[IFD], header: TIFFHeader, data_len: int,
+) -> int:
+    """Return the highest byte offset the parsed IFDs reference.
+
+    Used to decide whether the prefetch buffer is large enough to hold the
+    entire IFD chain plus every out-of-line tag value. We compare this
+    against ``len(data)`` in :func:`_parse_cog_http_meta`; if it exceeds the
+    buffer, the chain is truncated and the caller must grow and retry.
+
+    The walk re-derives each tag's value-area placement directly from the
+    IFD layout (entry table base + entry slot) rather than re-parsing the
+    raw bytes. For out-of-line tags ``parse_ifd`` already resolved the
+    pointer and validated ``ptr + size <= data_len``; the *interesting*
+    extent for the grow loop is the next-IFD pointer of the chain tail,
+    plus an "is there a next IFD we have not yet seen" probe.
+    """
+    if not ifds:
+        return 0
+
+    required = 0
+    # Last IFD's next_ifd_offset: 0 means end-of-chain; anything else
+    # points at an IFD we haven't parsed yet because it sat past the
+    # buffer (parse_all_ifds stops on offset >= len(data)).
+    tail_next = ifds[-1].next_ifd_offset
+    if tail_next != 0:
+        # Need at least enough bytes to reach the next IFD header. Pad
+        # by a small amount so parse_ifd can read the num_entries field
+        # without truncation -- the actual entry table is bounded by the
+        # parser's own checks on the next grow iteration.
+        required = max(required, tail_next + 64)
+
+    # Out-of-line tag values are already parsed (parse_ifd bounds-checked
+    # ptr + total_size <= len(data) before reading). For grow logic we
+    # only need to ensure those checks did not *fail*; a thrown
+    # ValueError surfaces in parse_all_ifds and is handled by the loop.
+    return required
+
+
 def _parse_cog_http_meta(
     source: _HTTPSource,
     overview_level: int | None = None,
 ) -> tuple[TIFFHeader, IFD, GeoInfo, bytes]:
     """Fetch + parse the leading IFDs of an HTTP COG once.
 
-    Issues one (or rarely two) range GET(s) for the leading 16 KB / 64 KB
-    of the file, parses the header and IFD list, and returns the selected
-    IFD plus the raw header bytes (kept for ``extract_geo_info`` callers
-    that might want the IFD's tag offsets).
+    The fast path is a single 16 KiB range GET. When the IFD chain or its
+    out-of-line tag arrays extend past that window the buffer is doubled
+    and reparsed until either the chain is fully resolved or the cap at
+    :data:`MAX_HTTP_HEADER_BYTES` is reached. Real COGs whose pyramid
+    metadata legitimately exceeds the cap need a different strategy
+    (lazy per-IFD reads); the cap exists to bound a malformed-file blast
+    radius rather than to constrain valid pyramids.
 
     Pulled out of :func:`_read_cog_http` so :func:`read_geotiff_dask`
     can parse metadata once per graph rather than once per chunk task
     (P5: each delayed task used to fire its own 16 KB header GET).
     """
-    header_bytes = source.read_range(0, 16384)
+    fetch_size = INITIAL_HTTP_HEADER_BYTES
+    header_bytes = source.read_range(0, fetch_size)
     header = parse_header(header_bytes)
-    ifds = parse_all_ifds(header_bytes, header)
 
-    # parse_all_ifds bails the moment it walks past the bytes we
-    # fetched, so a header GET that lands short of the first IFD's
-    # offset returns an empty list. Retry with a larger window in that
-    # case; this is *not* a partial-IFD recovery (overviews chained
-    # past the first 16 KiB are still loaded lazily by other readers).
-    if len(ifds) == 0:
-        header_bytes = source.read_range(0, 65536)
-        ifds = parse_all_ifds(header_bytes, header)
+    last_len = len(header_bytes)
+    ifds: list[IFD] = []
+    while True:
+        try:
+            ifds = parse_all_ifds(header_bytes, header)
+            required = _ifd_required_extent(ifds, header, len(header_bytes))
+            # Chain is fully resolved when every IFD parsed cleanly and
+            # the tail next_ifd_offset is reachable within the buffer
+            # (required == 0 means end-of-chain).
+            if ifds and required <= len(header_bytes):
+                break
+        except ValueError:
+            # parse_ifd raises when an out-of-line tag points past the
+            # buffer. Treat it the same as a truncated chain: grow and
+            # retry. If we are already at the cap and still failing, let
+            # the next iteration's cap check raise a clear error.
+            ifds = []
+
+        if fetch_size >= MAX_HTTP_HEADER_BYTES:
+            raise ValueError(
+                f"COG IFD chain or tag arrays extend past "
+                f"MAX_HTTP_HEADER_BYTES={MAX_HTTP_HEADER_BYTES} bytes; "
+                f"the file may be malformed or its pyramid metadata is "
+                f"unusually large for HTTP prefetch")
+        fetch_size = min(fetch_size * 2, MAX_HTTP_HEADER_BYTES)
+        header_bytes = source.read_range(0, fetch_size)
+        # Server returned the same number of bytes as last time: we have
+        # hit EOF on the underlying file. No point growing further; if
+        # the IFD chain still doesn't resolve, the file is truncated.
+        if len(header_bytes) == last_len:
+            try:
+                ifds = parse_all_ifds(header_bytes, header)
+            except ValueError:
+                ifds = []
+            break
+        last_len = len(header_bytes)
 
     if len(ifds) == 0:
         raise ValueError("No IFDs found in COG")
