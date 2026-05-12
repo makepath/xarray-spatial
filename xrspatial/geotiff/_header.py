@@ -479,9 +479,11 @@ def parse_ifd(data: bytes | memoryview, offset: int,
 
     # Bounds-check the num_entries field before unpacking. A truncated
     # or crafted file used to escape as `struct.error` here, which is
-    # outside the documented ValueError contract.
+    # outside the documented ValueError contract. Negative offsets must
+    # also be rejected because `struct.unpack_from` interprets them with
+    # Python's negative-index semantics (reading from the buffer end).
     num_entries_size = 8 if is_big else 2
-    if offset + num_entries_size > data_len:
+    if offset < 0 or offset + num_entries_size > data_len:
         raise ValueError(
             f"IFD num_entries at offset {offset} needs "
             f"{num_entries_size} bytes but file length is {data_len}"
@@ -498,9 +500,11 @@ def parse_ifd(data: bytes | memoryview, offset: int,
 
     # Bounds-check the entry table itself. Each entry is `entry_size`
     # bytes; without this guard a short buffer would hit `struct.error`
-    # on the first unpack inside the loop below.
+    # on the first unpack inside the loop below. `entry_offset` is
+    # derived from `offset` and inherits its sign; reject negatives so
+    # `struct.unpack_from` cannot index from the buffer end.
     entry_table_end = entry_offset + num_entries * entry_size
-    if entry_table_end > data_len:
+    if entry_offset < 0 or entry_table_end > data_len:
         raise ValueError(
             f"IFD entry table [{entry_offset}, {entry_table_end}) for "
             f"num_entries={num_entries} exceeds file length {data_len}"
@@ -576,10 +580,12 @@ def parse_ifd(data: bytes | memoryview, offset: int,
         entries[tag] = IFDEntry(tag=tag, type_id=type_id, count=count, value=value)
 
     # Next IFD offset. Bounds-check before unpack so a truncated file
-    # raises ValueError rather than struct.error.
+    # raises ValueError rather than struct.error. `next_offset_pos`
+    # inherits sign from `offset` via `entry_table_end`, so reject any
+    # negative position before `struct.unpack_from` can wrap around.
     next_offset_pos = entry_table_end
     next_offset_size = 8 if is_big else 4
-    if next_offset_pos + next_offset_size > data_len:
+    if next_offset_pos < 0 or next_offset_pos + next_offset_size > data_len:
         raise ValueError(
             f"IFD next-IFD pointer at offset {next_offset_pos} needs "
             f"{next_offset_size} bytes but file length is {data_len}"
