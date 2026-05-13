@@ -368,12 +368,16 @@ class TestTagPassThrough:
         assert result.attrs.get('image_description') == 'synthetic test 1484'
 
     def test_extra_samples_attr_surfaces_on_read(self, tmp_path):
-        """A 4-band write produces ExtraSamples internally; reading it back
-        surfaces the codes as attrs['extra_samples']."""
+        """A 4-band RGBA write produces ExtraSamples internally; reading
+        it back surfaces the codes as ``attrs['extra_samples']``. Since
+        issue #1769 the RGBA interpretation is opt-in via
+        ``photometric='rgba'``; the default is now MinIsBlack and would
+        emit ExtraSamples=[0,0,0]."""
         rgba = np.zeros((4, 5, 4), dtype=np.uint8)
         rgba[..., 3] = 255
         path = str(tmp_path / 'rgba_es_1484.tif')
-        write(rgba, path, compression='none', tiled=False)
+        write(rgba, path, compression='none', tiled=False,
+              photometric='rgba')
         da = open_geotiff(path)
         assert da.attrs.get('extra_samples') is not None
         # Code 2 = unassociated alpha, per the writer

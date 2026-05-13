@@ -76,6 +76,81 @@ from ._header import (
 # constant is the writer-side belt-and-braces guard. See issue #1657.
 _DANGEROUS_EXTRA_TAG_IDS = frozenset({TAG_NEW_SUBFILE_TYPE, TAG_SUB_IFDS})
 
+# Tag IDs whose writer-auto value can be overridden by a user
+# ``extra_tags`` entry of the same id. Restricted to the photometric
+# interpretation tags so callers cannot accidentally clobber tags
+# carrying computed offsets, dimensions, or layout. See issue #1769.
+_OVERRIDABLE_AUTO_TAG_IDS = frozenset({TAG_PHOTOMETRIC, TAG_EXTRA_SAMPLES})
+
+# TIFF Photometric Interpretation values (TIFF 6 spec, tag 262).
+PHOTOMETRIC_MINISBLACK = 1
+PHOTOMETRIC_RGB = 2
+
+# Friendly names accepted by the ``photometric`` writer kwarg. ``'auto'``
+# defaults to MinIsBlack so scientific multispectral rasters (e.g.
+# R,G,B,NIR) round-trip without being silently tagged as RGB+alpha.
+# ``'rgba'`` is a convenience for "RGB plus an unassociated-alpha extra
+# sample".  See issue #1769.
+_PHOTOMETRIC_NAME_MAP = {
+    'auto': 'auto',
+    'minisblack': PHOTOMETRIC_MINISBLACK,
+    'miniswhite': 0,
+    'rgb': PHOTOMETRIC_RGB,
+    'rgba': 'rgba',
+}
+
+
+def _resolve_photometric(photometric, samples_per_pixel: int):
+    """Resolve the ``photometric`` writer kwarg to a TIFF photometric int
+    and the matching ExtraSamples list.
+
+    Returns ``(photometric_int, extra_samples_list)`` where
+    ``extra_samples_list`` has one entry per band beyond what the
+    photometric model accounts for (empty when no ExtraSamples tag is
+    needed).
+    """
+    if isinstance(photometric, str):
+        key = photometric.lower()
+        if key not in _PHOTOMETRIC_NAME_MAP:
+            valid = sorted(_PHOTOMETRIC_NAME_MAP)
+            raise ValueError(
+                f"photometric={photometric!r} is not a valid name; "
+                f"expected one of {valid} or an int.")
+        resolved = _PHOTOMETRIC_NAME_MAP[key]
+    elif isinstance(photometric, (int, np.integer)) and not isinstance(
+            photometric, bool):
+        resolved = int(photometric)
+    else:
+        raise TypeError(
+            f"photometric must be a str or int, got "
+            f"{type(photometric).__name__}")
+
+    if resolved == 'auto':
+        # MinIsBlack default for every band count. Scientific
+        # multispectral rasters fall through here; previous behaviour
+        # silently called any 4th band an alpha channel.
+        n_extra = max(0, samples_per_pixel - 1)
+        return PHOTOMETRIC_MINISBLACK, [0] * n_extra
+
+    if resolved == 'rgba':
+        if samples_per_pixel < 4:
+            raise ValueError(
+                f"photometric='rgba' requires at least 4 bands, got "
+                f"samples_per_pixel={samples_per_pixel}.")
+        n_extra = samples_per_pixel - 3
+        return PHOTOMETRIC_RGB, [2] + [0] * (n_extra - 1)
+
+    photo_int = int(resolved)
+    if photo_int == PHOTOMETRIC_RGB and samples_per_pixel < 3:
+        raise ValueError(
+            f"photometric=RGB requires at least 3 bands, got "
+            f"samples_per_pixel={samples_per_pixel}.")
+    consumed = 3 if photo_int == PHOTOMETRIC_RGB else 1
+    if samples_per_pixel > consumed:
+        return photo_int, [0] * (samples_per_pixel - consumed)
+    return photo_int, []
+
+
 # Byte order: always write little-endian
 BO = '<'
 
@@ -834,7 +909,8 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
                    x_resolution: float | None = None,
                    y_resolution: float | None = None,
                    resolution_unit: int | None = None,
-                   force_bigtiff: bool | None = None) -> bytearray:
+                   force_bigtiff: bool | None = None,
+                   photometric='auto') -> bytearray:
     """Assemble a complete TIFF file.
 
     Parameters
@@ -883,6 +959,24 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
     # Compression tag for predictor
     pred_val = predictor if compression != COMPRESSION_NONE else 1
 
+    # Resolve photometric interpretation once so primary IFD and any
+    # overviews carry the same values. A user-supplied ``extra_tags``
+    # entry of (TAG_PHOTOMETRIC, ...) or (TAG_EXTRA_SAMPLES, ...)
+    # overrides the writer's chosen value at every level. See issue
+    # #1769.
+    auto_photometric, auto_extras = _resolve_photometric(
+        photometric, samples_per_pixel)
+    user_photometric_override = None
+    user_extras_override = None
+    if extra_tags is not None:
+        for _et in extra_tags:
+            if _et[0] not in _OVERRIDABLE_AUTO_TAG_IDS:
+                continue
+            if _et[0] == TAG_PHOTOMETRIC:
+                user_photometric_override = _et
+            elif _et[0] == TAG_EXTRA_SAMPLES:
+                user_extras_override = _et
+
     # Build IFDs for each resolution level
     ifd_specs = []
     for level_idx, (arr, lw, lh, rel_offsets, byte_counts, comp_data) in enumerate(pixel_data_parts):
@@ -901,9 +995,13 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
         else:
             tags.append((TAG_BITS_PER_SAMPLE, SHORT, 1, bits_per_sample))
         tags.append((TAG_COMPRESSION, SHORT, 1, compression))
-        # Photometric: RGB for 3+ bands, BlackIsZero for single-band
-        photometric = 2 if samples_per_pixel >= 3 else 1
-        tags.append((TAG_PHOTOMETRIC, SHORT, 1, photometric))
+        # Photometric: caller-controlled via the ``photometric`` kwarg
+        # (default 'auto' = MinIsBlack for any band count, so a 4-band
+        # raster is not silently tagged as RGB+alpha). Issue #1769.
+        if user_photometric_override is not None:
+            tags.append(user_photometric_override)
+        else:
+            tags.append((TAG_PHOTOMETRIC, SHORT, 1, auto_photometric))
         tags.append((TAG_SAMPLES_PER_PIXEL, SHORT, 1, samples_per_pixel))
         if samples_per_pixel > 1:
             tags.append((TAG_SAMPLE_FORMAT, SHORT, samples_per_pixel,
@@ -911,17 +1009,13 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
         else:
             tags.append((TAG_SAMPLE_FORMAT, SHORT, 1, sample_format))
 
-        # ExtraSamples: for bands beyond what Photometric accounts for
-        # Photometric=2 (RGB) accounts for 3 bands; any extra are alpha/other
-        if photometric == 2 and samples_per_pixel > 3:
-            n_extra = samples_per_pixel - 3
-            # 2 = unassociated alpha for the first extra, 0 = unspecified for rest
-            extra_vals = [2] + [0] * (n_extra - 1)
-            tags.append((TAG_EXTRA_SAMPLES, SHORT, n_extra, extra_vals))
-        elif photometric == 1 and samples_per_pixel > 1:
-            n_extra = samples_per_pixel - 1
-            extra_vals = [0] * n_extra  # unspecified
-            tags.append((TAG_EXTRA_SAMPLES, SHORT, n_extra, extra_vals))
+        # ExtraSamples: count matches samples_per_pixel - bands consumed
+        # by Photometric. User override (from extra_tags) wins.
+        if user_extras_override is not None:
+            tags.append(user_extras_override)
+        elif auto_extras:
+            tags.append((TAG_EXTRA_SAMPLES, SHORT, len(auto_extras),
+                         list(auto_extras)))
 
         if pred_val != 1:
             tags.append((TAG_PREDICTOR, SHORT, 1, pred_val))
@@ -1231,7 +1325,8 @@ def write(data: np.ndarray, path: str, *,
           gdal_metadata_xml: str | None = None,
           extra_tags: list | None = None,
           bigtiff: bool | None = None,
-          max_z_error: float = 0.0) -> None:
+          max_z_error: float = 0.0,
+          photometric='auto') -> None:
     """Write a numpy array as a GeoTIFF or COG.
 
     Parameters
@@ -1420,6 +1515,7 @@ def write(data: np.ndarray, path: str, *,
         x_resolution=x_resolution, y_resolution=y_resolution,
         resolution_unit=resolution_unit,
         force_bigtiff=bigtiff,
+        photometric=photometric,
     )
 
     _write_bytes(file_bytes, path)
@@ -1484,7 +1580,8 @@ def write_streaming(dask_data, path: str, *,
                     extra_tags: list | None = None,
                     bigtiff: bool | None = None,
                     streaming_buffer_bytes: int = 256 * 1024 * 1024,
-                    max_z_error: float = 0.0) -> None:
+                    max_z_error: float = 0.0,
+                    photometric='auto') -> None:
     """Write a dask array as a GeoTIFF by streaming pixel data.
 
     For tiled output, each tile-row is computed in horizontal segments
@@ -1572,8 +1669,27 @@ def write_streaming(dask_data, path: str, *,
     else:
         tags.append((TAG_BITS_PER_SAMPLE, SHORT, 1, bits_per_sample))
     tags.append((TAG_COMPRESSION, SHORT, 1, comp_tag))
-    photometric = 2 if samples >= 3 else 1
-    tags.append((TAG_PHOTOMETRIC, SHORT, 1, photometric))
+    # Photometric: caller-controlled, default 'auto' -> MinIsBlack so a
+    # 4-band raster is not silently tagged as RGB+alpha. A user
+    # ``extra_tags`` entry of (TAG_PHOTOMETRIC, ...) or
+    # (TAG_EXTRA_SAMPLES, ...) overrides the writer's chosen value.
+    # See issue #1769.
+    auto_photometric, auto_extras = _resolve_photometric(
+        photometric, samples)
+    user_photometric_override = None
+    user_extras_override = None
+    if extra_tags is not None:
+        for _et in extra_tags:
+            if _et[0] not in _OVERRIDABLE_AUTO_TAG_IDS:
+                continue
+            if _et[0] == TAG_PHOTOMETRIC:
+                user_photometric_override = _et
+            elif _et[0] == TAG_EXTRA_SAMPLES:
+                user_extras_override = _et
+    if user_photometric_override is not None:
+        tags.append(user_photometric_override)
+    else:
+        tags.append((TAG_PHOTOMETRIC, SHORT, 1, auto_photometric))
     tags.append((TAG_SAMPLES_PER_PIXEL, SHORT, 1, samples))
     if samples > 1:
         tags.append((TAG_SAMPLE_FORMAT, SHORT, samples,
@@ -1581,14 +1697,11 @@ def write_streaming(dask_data, path: str, *,
     else:
         tags.append((TAG_SAMPLE_FORMAT, SHORT, 1, sample_format))
 
-    if photometric == 2 and samples > 3:
-        n_extra = samples - 3
-        extra_vals = [2] + [0] * (n_extra - 1)
-        tags.append((TAG_EXTRA_SAMPLES, SHORT, n_extra, extra_vals))
-    elif photometric == 1 and samples > 1:
-        n_extra = samples - 1
-        extra_vals = [0] * n_extra
-        tags.append((TAG_EXTRA_SAMPLES, SHORT, n_extra, extra_vals))
+    if user_extras_override is not None:
+        tags.append(user_extras_override)
+    elif auto_extras:
+        tags.append((TAG_EXTRA_SAMPLES, SHORT, len(auto_extras),
+                     list(auto_extras)))
 
     pred_val = pred_int if comp_tag != COMPRESSION_NONE else 1
     if pred_val != 1:

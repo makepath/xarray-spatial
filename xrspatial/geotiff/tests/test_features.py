@@ -532,11 +532,17 @@ class TestFixesBatch:
         assert result[0, 3] == 55
 
     def test_extra_samples_rgba(self, tmp_path):
-        """RGBA write includes ExtraSamples tag."""
+        """RGBA write includes ExtraSamples tag with the alpha marker.
+
+        Since issue #1769 RGBA is opt-in via ``photometric='rgba'``; the
+        old default of treating any 4-band array as RGB+alpha was
+        wrong for multispectral data and has been replaced with
+        MinIsBlack.
+        """
         from xrspatial.geotiff._header import parse_header, parse_all_ifds, TAG_EXTRA_SAMPLES
         arr = np.ones((4, 4, 4), dtype=np.uint8) * 128
         path = str(tmp_path / 'rgba.tif')
-        write(arr, path, compression='none', tiled=False)
+        write(arr, path, compression='none', tiled=False, photometric='rgba')
 
         with open(path, 'rb') as f:
             data = f.read()
