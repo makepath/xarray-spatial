@@ -65,7 +65,7 @@ def test_cpu_cog_overview_mean_ignores_sentinel(tmp_path):
     da = xr.DataArray(arr, dims=['y', 'x'])
     p = str(tmp_path / 'cog_mean_nodata.tif')
     to_geotiff(da, p, nodata=-9999.0, cog=True, compression='deflate',
-               tiled=True, tile_size=16, overview_levels=[1],
+               tiled=True, tile_size=16, overview_levels=[2],
                overview_resampling='mean')
 
     ov = open_geotiff(p, overview_level=1)
@@ -81,7 +81,7 @@ def test_cpu_cog_overview_mean_partial_block(tmp_path):
     da = xr.DataArray(arr, dims=['y', 'x'])
     p = str(tmp_path / 'cog_mean_nodata_full_block.tif')
     to_geotiff(da, p, nodata=-9999.0, cog=True, compression='deflate',
-               tiled=True, tile_size=16, overview_levels=[1],
+               tiled=True, tile_size=16, overview_levels=[2],
                overview_resampling='mean')
 
     ov = open_geotiff(p, overview_level=1)
@@ -114,7 +114,7 @@ def test_cpu_cog_overview_aggregations_ignore_sentinel(
     da = xr.DataArray(arr, dims=['y', 'x'])
     p = str(tmp_path / f'cog_{method}_nodata.tif')
     to_geotiff(da, p, nodata=-9999.0, cog=True, compression='deflate',
-               tiled=True, tile_size=16, overview_levels=[1],
+               tiled=True, tile_size=16, overview_levels=[2],
                overview_resampling=method)
 
     ov = open_geotiff(p, overview_level=1)
@@ -129,7 +129,7 @@ def test_cpu_cog_overview_mean_no_nodata_passes(tmp_path):
     da = xr.DataArray(arr, dims=['y', 'x'])
     p = str(tmp_path / 'cog_mean_no_nodata.tif')
     to_geotiff(da, p, cog=True, compression='deflate',
-               tiled=True, tile_size=16, overview_levels=[1],
+               tiled=True, tile_size=16, overview_levels=[2],
                overview_resampling='mean')
 
     ov = open_geotiff(p, overview_level=1)
@@ -220,7 +220,7 @@ def test_gpu_cog_overview_mean_ignores_sentinel(tmp_path):
 
     p = str(tmp_path / 'gpu_cog_mean_nodata.tif')
     to_geotiff(da, p, nodata=-9999.0, cog=True, compression='deflate',
-               tiled=True, tile_size=16, overview_levels=[1],
+               tiled=True, tile_size=16, overview_levels=[2],
                overview_resampling='mean', gpu=True)
 
     ov = open_geotiff(p, overview_level=1)
@@ -278,7 +278,7 @@ def test_gpu_cog_overview_matches_cpu(tmp_path):
     p_cpu = str(tmp_path / 'cpu_pyramid.tif')
     to_geotiff(da_cpu, p_cpu, nodata=-9999.0, cog=True,
                compression='deflate', tiled=True, tile_size=16,
-               overview_levels=[1], overview_resampling='mean')
+               overview_levels=[2], overview_resampling='mean')
     cpu_ov = np.asarray(open_geotiff(p_cpu, overview_level=1).data)
 
     # GPU
@@ -286,7 +286,7 @@ def test_gpu_cog_overview_matches_cpu(tmp_path):
     p_gpu = str(tmp_path / 'gpu_pyramid.tif')
     to_geotiff(da_gpu, p_gpu, nodata=-9999.0, cog=True,
                compression='deflate', tiled=True, tile_size=16,
-               overview_levels=[1], overview_resampling='mean', gpu=True)
+               overview_levels=[2], overview_resampling='mean', gpu=True)
     gpu_ov = np.asarray(open_geotiff(p_gpu, overview_level=1).data)
 
     np.testing.assert_allclose(cpu_ov, gpu_ov)

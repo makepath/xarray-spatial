@@ -94,7 +94,7 @@ class TestMultiBand:
             0, 256, (32, 32, 3), dtype=np.uint8)
         path = str(tmp_path / 'rgb_cog.tif')
         write(arr, path, compression='deflate', tiled=True, tile_size=16,
-              cog=True, overview_levels=[1])
+              cog=True, overview_levels=[2])
 
         result, _ = read_to_array(path)
         np.testing.assert_array_equal(result, arr)
@@ -1674,7 +1674,7 @@ class TestOverviewResampling:
         arr = np.arange(256, dtype=np.float32).reshape(16, 16)
         path = str(tmp_path / 'cog_nearest.tif')
         write(arr, path, compression='deflate', tiled=True, tile_size=8,
-              cog=True, overview_levels=[1], overview_resampling='nearest')
+              cog=True, overview_levels=[2], overview_resampling='nearest')
 
         result, _ = read_to_array(path)
         np.testing.assert_array_equal(result, arr)
@@ -1691,7 +1691,7 @@ class TestOverviewResampling:
                         [4, 4, 5, 5, 6, 6, 7, 7]], dtype=np.uint8)
         path = str(tmp_path / 'cog_mode.tif')
         write(arr, path, compression='deflate', tiled=True, tile_size=4,
-              cog=True, overview_levels=[1], overview_resampling='mode')
+              cog=True, overview_levels=[2], overview_resampling='mode')
 
         # Full res should be exact
         result, _ = read_to_array(path)

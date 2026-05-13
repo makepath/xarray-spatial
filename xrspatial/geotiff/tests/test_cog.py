@@ -17,7 +17,7 @@ class TestCOGWriter:
         arr = np.arange(256, dtype=np.float32).reshape(16, 16)
         path = str(tmp_path / 'cog.tif')
         write(arr, path, compression='deflate', tiled=True, tile_size=8,
-              cog=True, overview_levels=[1])
+              cog=True, overview_levels=[2])
 
         with open(path, 'rb') as f:
             data = f.read()
@@ -46,7 +46,7 @@ class TestCOGWriter:
         path = str(tmp_path / 'cog_rt.tif')
         write(arr, path, geo_transform=gt, crs_epsg=4326,
               compression='deflate', tiled=True, tile_size=8,
-              cog=True, overview_levels=[1])
+              cog=True, overview_levels=[2])
 
         result, geo = read_to_array_local(path)
         np.testing.assert_array_equal(result, arr)
@@ -141,7 +141,7 @@ class TestCOGOverviewResampling:
                         [10, 12, 14, 16]], dtype=np.float32)
         path = str(tmp_path / 'cog_1150_mean.tif')
         write(arr, path, compression='deflate', tiled=True, tile_size=4,
-              cog=True, overview_levels=[1], overview_resampling='mean')
+              cog=True, overview_levels=[2], overview_resampling='mean')
 
         with open(path, 'rb') as f:
             data = f.read()
@@ -157,7 +157,7 @@ class TestCOGOverviewResampling:
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         path = str(tmp_path / 'cog_1150_nearest.tif')
         write(arr, path, compression='deflate', tiled=True, tile_size=4,
-              cog=True, overview_levels=[1], overview_resampling='nearest')
+              cog=True, overview_levels=[2], overview_resampling='nearest')
 
         result, _ = read_to_array_local(path)
         np.testing.assert_array_equal(result, arr)
@@ -170,7 +170,7 @@ class TestCOGOverviewResampling:
                         [3, 3, 4, 4]], dtype=np.int32)
         path = str(tmp_path / 'cog_1150_mode.tif')
         write(arr, path, compression='deflate', tiled=True, tile_size=4,
-              cog=True, overview_levels=[1], overview_resampling='mode')
+              cog=True, overview_levels=[2], overview_resampling='mode')
 
         with open(path, 'rb') as f:
             data = f.read()
@@ -183,7 +183,7 @@ class TestCOGOverviewResampling:
         arr = np.arange(256, dtype=np.float32).reshape(16, 16)
         path = str(tmp_path / f'cog_1150_{method}.tif')
         write(arr, path, compression='deflate', tiled=True, tile_size=8,
-              cog=True, overview_levels=[1], overview_resampling=method)
+              cog=True, overview_levels=[2], overview_resampling=method)
 
         with open(path, 'rb') as f:
             data = f.read()
@@ -198,7 +198,7 @@ class TestCOGMultipleOverviews:
         arr = np.arange(4096, dtype=np.float32).reshape(64, 64)
         path = str(tmp_path / 'cog_1150_multi.tif')
         write(arr, path, compression='deflate', tiled=True, tile_size=8,
-              cog=True, overview_levels=[1, 2, 3])
+              cog=True, overview_levels=[2, 4, 8])
 
         with open(path, 'rb') as f:
             data = f.read()
@@ -228,7 +228,7 @@ class TestCOGMultipleOverviews:
         path = str(tmp_path / 'cog_1150_rt_values.tif')
         write(arr, path, geo_transform=gt, crs_epsg=4326,
               compression='deflate', tiled=True, tile_size=16,
-              cog=True, overview_levels=[1, 2])
+              cog=True, overview_levels=[2, 4])
 
         result, geo = read_to_array_local(path)
         np.testing.assert_array_equal(result, arr)
@@ -250,7 +250,7 @@ class TestCOGPublicAPIOverviews:
 
         path = str(tmp_path / 'cog_1150_api.tif')
         to_geotiff(da, path, compression='deflate', cog=True,
-                   tile_size=16, overview_levels=[1])
+                   tile_size=16, overview_levels=[2])
 
         result = open_geotiff(path)
         np.testing.assert_array_almost_equal(result.values, data, decimal=5)
@@ -296,7 +296,7 @@ class TestGPUCOGOverviews:
         path = str(tmp_path / 'cog_1150_gpu_rt.tif')
         from xrspatial.geotiff import write_geotiff_gpu
         write_geotiff_gpu(gpu_arr, path, crs=4326, compression='deflate',
-                          cog=True, overview_levels=[1])
+                          cog=True, overview_levels=[2])
 
         result = open_geotiff(path)
         np.testing.assert_array_almost_equal(result.values, arr, decimal=5)
@@ -331,7 +331,7 @@ class TestGPUCOGOverviews:
         path = str(tmp_path / 'cog_1150_gpu_nearest.tif')
         from xrspatial.geotiff import write_geotiff_gpu
         write_geotiff_gpu(gpu_arr, path, compression='deflate',
-                          cog=True, overview_levels=[1],
+                          cog=True, overview_levels=[2],
                           overview_resampling='nearest')
 
         result = open_geotiff(path)
@@ -361,7 +361,7 @@ class TestGPUCOGOverviews:
 
         path = str(tmp_path / 'cog_1150_gpu_dispatch.tif')
         to_geotiff(da, path, compression='deflate', cog=True,
-                   overview_levels=[1])
+                   overview_levels=[2])
 
         result = open_geotiff(path)
         np.testing.assert_array_almost_equal(result.values, arr, decimal=5)
