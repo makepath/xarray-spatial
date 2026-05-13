@@ -1898,11 +1898,12 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     # urllib3 ``PoolManager`` is shared module-level, not per-source)
     # but a future resource-holding source will need it. See issue #1695.
     if band is not None:
-        # Reject ``bool`` up front; ``isinstance(True, int)`` is True in
-        # Python so ``True < samples_per_pixel`` evaluates without raising
-        # and silently reads band 1. Matches the VRT path's rejection so
-        # all read paths agree on the contract. See #1786.
-        if isinstance(band, bool):
+        # Reject ``bool`` (and ``np.bool_``) up front; ``isinstance(True, int)``
+        # is True in Python so ``True < samples_per_pixel`` evaluates without
+        # raising and silently reads band 1. ``np.bool_`` is not a subclass of
+        # ``bool`` so it needs its own check to match the VRT path's
+        # rejection. See #1786.
+        if isinstance(band, (bool, np.bool_)):
             source.close()
             raise ValueError(
                 f"band must be a non-negative int, got {band!r}")
@@ -2391,12 +2392,14 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         # index only. See issue #1673.
         ifd_samples = ifd.samples_per_pixel
         if band is not None:
-            # Reject ``bool`` before the range check. ``isinstance(True, int)``
-            # is True in Python and ``True < ifd_samples`` evaluates as ``1``,
-            # so without this guard ``band=True`` silently reads band 1 and
-            # ``band=False`` reads band 0. Matches the VRT path's existing
-            # rejection so all read paths agree on the contract. See #1786.
-            if isinstance(band, bool):
+            # Reject ``bool`` and ``np.bool_`` before the range check.
+            # ``isinstance(True, int)`` is True in Python and
+            # ``True < ifd_samples`` evaluates as ``1``, so without this
+            # guard ``band=True`` silently reads band 1 and ``band=False``
+            # reads band 0. ``np.bool_`` is not a subclass of ``bool`` so it
+            # needs its own check to match the VRT path's existing
+            # rejection. See #1786.
+            if isinstance(band, (bool, np.bool_)):
                 raise ValueError(
                     f"band must be a non-negative int, got {band!r}")
             if ifd_samples <= 1:

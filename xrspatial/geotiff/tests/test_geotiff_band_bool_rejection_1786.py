@@ -16,7 +16,6 @@ a non-negative int, never a bool.
 from __future__ import annotations
 
 import importlib.util
-import os
 import uuid
 
 import numpy as np
@@ -235,3 +234,57 @@ def test_read_vrt_band_false_still_rejected(multiband_vrt_path):
 
     with pytest.raises(ValueError, match="band must be a non-negative int"):
         read_vrt(multiband_vrt_path, band=False)
+
+
+# ---------------------------------------------------------------------------
+# np.bool_ parity: ``isinstance(np.bool_(True), bool)`` is False so it
+# bypasses a plain ``isinstance(band, bool)`` guard and is then treated
+# as 1/0 by the range check. The VRT path's
+# ``not isinstance(band, (int, np.integer))`` clause already rejects it;
+# every other read path must too so the four backends agree.
+# ---------------------------------------------------------------------------
+
+
+def test_read_to_array_band_np_bool_rejected(multiband_tiff_path):
+    """Local file path rejects ``band=np.bool_(True)``."""
+    from xrspatial.geotiff._reader import read_to_array
+
+    path, _ = multiband_tiff_path
+    with pytest.raises(ValueError, match="band must be a non-negative int"):
+        read_to_array(path, band=np.bool_(True))
+
+
+def test_open_geotiff_band_np_bool_rejected(multiband_tiff_path):
+    """``open_geotiff`` rejects ``band=np.bool_(False)``."""
+    from xrspatial.geotiff import open_geotiff
+
+    path, _ = multiband_tiff_path
+    with pytest.raises(ValueError, match="band must be a non-negative int"):
+        open_geotiff(path, band=np.bool_(False))
+
+
+def test_read_geotiff_dask_band_np_bool_rejected(multiband_tiff_path):
+    """``read_geotiff_dask`` rejects ``band=np.bool_(True)``."""
+    from xrspatial.geotiff import read_geotiff_dask
+
+    path, _ = multiband_tiff_path
+    with pytest.raises(ValueError, match="band must be a non-negative int"):
+        read_geotiff_dask(path, band=np.bool_(True))
+
+
+@_gpu_only
+def test_read_geotiff_gpu_band_np_bool_rejected(multiband_tiff_path):
+    """``read_geotiff_gpu`` rejects ``band=np.bool_(True)``."""
+    from xrspatial.geotiff import read_geotiff_gpu
+
+    path, _ = multiband_tiff_path
+    with pytest.raises(ValueError, match="band must be a non-negative int"):
+        read_geotiff_gpu(path, band=np.bool_(True))
+
+
+def test_read_vrt_band_np_bool_still_rejected(multiband_vrt_path):
+    """VRT path already rejects ``np.bool_`` via its integer-type check."""
+    from xrspatial.geotiff import read_vrt
+
+    with pytest.raises(ValueError, match="band must be a non-negative int"):
+        read_vrt(multiband_vrt_path, band=np.bool_(True))
