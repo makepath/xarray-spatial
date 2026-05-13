@@ -3919,14 +3919,33 @@ def read_vrt(source: str, *,
         dtype, out-of-range, non-finite, or fractional). Mirrors the
         gating PR #1583 added to other read paths via
         ``_int_nodata_in_range``.
+
+        A plain Python ``int`` ``nodata_val`` is handled without going
+        through ``float`` first, so 64-bit sentinels such as
+        ``2**64 - 1`` (``UInt64`` max) and ``-2**63`` (``Int64`` min)
+        round-trip without the float64 rounding that pushes them just
+        past the dtype's representable range.  ``_parse_band_nodata``
+        in ``_vrt.py`` parses integer-band ``<NoDataValue>`` directly
+        as ``int`` to feed this path.  See issue #1783 follow-up.
         """
         if nodata_val is None or dtype.kind not in ('u', 'i'):
+            return None
+        info = np.iinfo(dtype)
+        # Fast/exact path: ``nodata_val`` is already an integer.  Avoids
+        # the float64 round-trip that loses precision near the int64 /
+        # uint64 extremes.  ``bool`` is a subclass of ``int`` -- treat
+        # True/False as a 1/0 sentinel rather than rejecting outright,
+        # matching the existing ``int(float(...))`` behaviour.
+        if isinstance(nodata_val, (int, np.integer)) and not isinstance(
+                nodata_val, bool):
+            nodata_int = int(nodata_val)
+            if info.min <= nodata_int <= info.max:
+                return dtype.type(nodata_int)
             return None
         try:
             nodata_f = float(nodata_val)
         except (TypeError, ValueError):
             return None
-        info = np.iinfo(dtype)
         if not (np.isfinite(nodata_f) and nodata_f.is_integer()
                 and info.min <= nodata_f <= info.max):
             return None
