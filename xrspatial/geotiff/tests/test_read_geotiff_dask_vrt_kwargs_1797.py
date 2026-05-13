@@ -1,4 +1,4 @@
-"""Direct read_geotiff_dask(.vrt) must forward VRT kwargs (#1797)."""
+"""Direct read_geotiff_dask(.vrt) must forward VRT kwargs (#1795)."""
 from __future__ import annotations
 
 import os
