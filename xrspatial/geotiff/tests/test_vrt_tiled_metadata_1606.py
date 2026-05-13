@@ -63,7 +63,7 @@ class TestVrtTiledMetadataParity:
     def test_nodatavals_alias_propagates_to_tiles(self, tmp_path):
         da = _make_rioxarray_style()
         vrt = str(tmp_path / 'nodatavals.vrt')
-        to_geotiff(da, vrt, tile_size=4)
+        to_geotiff(da, vrt, tile_size=16)
         tile_da = open_geotiff(_first_tile_path(vrt))
         # Before the fix this was None: _write_vrt_tiled read
         # attrs['nodata'] directly and ignored the nodatavals alias.
@@ -78,14 +78,14 @@ class TestVrtTiledMetadataParity:
             attrs={'_FillValue': -9999.0, 'crs': 4326},
         )
         vrt = str(tmp_path / 'fillvalue.vrt')
-        to_geotiff(da, vrt, tile_size=4)
+        to_geotiff(da, vrt, tile_size=16)
         tile_da = open_geotiff(_first_tile_path(vrt))
         assert tile_da.attrs.get('nodata') == -9999.0
 
     def test_gdal_metadata_propagates_to_tiles(self, tmp_path):
         da = _make_rioxarray_style()
         vrt = str(tmp_path / 'gdal_meta.vrt')
-        to_geotiff(da, vrt, tile_size=4)
+        to_geotiff(da, vrt, tile_size=16)
         tile_da = open_geotiff(_first_tile_path(vrt))
         gm = tile_da.attrs.get('gdal_metadata')
         assert gm == {'AREA_OR_POINT': 'Area', 'foo': 'bar'}
@@ -93,7 +93,7 @@ class TestVrtTiledMetadataParity:
     def test_resolution_tags_propagate_to_tiles(self, tmp_path):
         da = _make_rioxarray_style()
         vrt = str(tmp_path / 'resolution.vrt')
-        to_geotiff(da, vrt, tile_size=4)
+        to_geotiff(da, vrt, tile_size=16)
         tile_da = open_geotiff(_first_tile_path(vrt))
         assert tile_da.attrs.get('x_resolution') == 96.0
         assert tile_da.attrs.get('y_resolution') == 96.0
@@ -102,7 +102,7 @@ class TestVrtTiledMetadataParity:
     def test_raster_type_point_propagates_to_tiles(self, tmp_path):
         da = _make_rioxarray_style()
         vrt = str(tmp_path / 'point.vrt')
-        to_geotiff(da, vrt, tile_size=4)
+        to_geotiff(da, vrt, tile_size=16)
         tile_da = open_geotiff(_first_tile_path(vrt))
         assert tile_da.attrs.get('raster_type') == 'point'
 
@@ -111,8 +111,8 @@ class TestVrtTiledMetadataParity:
         da = _make_rioxarray_style()
         tif_path = str(tmp_path / 'parity.tif')
         vrt_path = str(tmp_path / 'parity.vrt')
-        to_geotiff(da, tif_path, tile_size=4)
-        to_geotiff(da, vrt_path, tile_size=4)
+        to_geotiff(da, tif_path, tile_size=16)
+        to_geotiff(da, vrt_path, tile_size=16)
 
         tif_da = open_geotiff(tif_path)
         tile_da = open_geotiff(_first_tile_path(vrt_path))
@@ -144,7 +144,7 @@ class TestVrtTiledRichTagCoverage:
             attrs={'crs': 4326, 'gdal_metadata_xml': xml},
         )
         vrt = str(tmp_path / 'gdal_xml.vrt')
-        to_geotiff(da, vrt, tile_size=4)
+        to_geotiff(da, vrt, tile_size=16)
         tile_da = open_geotiff(_first_tile_path(vrt))
         # On read, the XML is re-parsed into a dict under
         # attrs['gdal_metadata']; the raw XML lands under
@@ -175,7 +175,7 @@ class TestVrtTiledRichTagCoverage:
             },
         )
         vrt = str(tmp_path / 'extra_tags.vrt')
-        to_geotiff(da, vrt, tile_size=4)
+        to_geotiff(da, vrt, tile_size=16)
         tile_da = open_geotiff(_first_tile_path(vrt))
         et = tile_da.attrs.get('extra_tags') or []
         tag_ids = {entry[0] for entry in et}
@@ -197,7 +197,7 @@ class TestVrtTiledRichTagCoverage:
                    'image_description': 'vrt-tile-friendly-1606'},
         )
         vrt = str(tmp_path / 'image_desc.vrt')
-        to_geotiff(da, vrt, tile_size=4)
+        to_geotiff(da, vrt, tile_size=16)
         tile_da = open_geotiff(_first_tile_path(vrt))
         assert (tile_da.attrs.get('image_description')
                 == 'vrt-tile-friendly-1606')
@@ -221,7 +221,7 @@ class TestVrtTiledMetadataDask:
             dims=da_np.dims, coords=da_np.coords, attrs=da_np.attrs,
         )
         vrt = str(tmp_path / 'dask.vrt')
-        to_geotiff(da, vrt, tile_size=4)
+        to_geotiff(da, vrt, tile_size=16)
         tile_da = open_geotiff(_first_tile_path(vrt))
         assert tile_da.attrs.get('nodata') == -9999.0
         assert tile_da.attrs.get('gdal_metadata') == {'k': 'v'}

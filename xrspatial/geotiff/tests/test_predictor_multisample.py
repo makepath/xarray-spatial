@@ -67,7 +67,9 @@ def test_gpu_predictor2_multisample_matches_cpu(tmp_path, samples, dtype_str):
     ``d_decomp`` on the last tile.
     """
     dtype = np.dtype(dtype_str)
-    h, w = 16, 16
+    # Image is 32x32 with tile_size=16 (multiple of 16 per TIFF spec)
+    # to keep the >1-tile coverage that this test depends on.
+    h, w = 32, 32
     rng = np.random.RandomState(42)
     if dtype.kind == 'u' and dtype.itemsize == 1:
         data = rng.randint(0, 256, size=(h, w, samples), dtype=dtype)
@@ -79,7 +81,7 @@ def test_gpu_predictor2_multisample_matches_cpu(tmp_path, samples, dtype_str):
 
     path = str(tmp_path / f"rgb_pred_{samples}_{dtype_str}.tif")
     # tile_size smaller than image so we exercise more than one tile.
-    to_geotiff(da, path, compression='deflate', tile_size=8, predictor=True)
+    to_geotiff(da, path, compression='deflate', tile_size=16, predictor=True)
 
     cpu_arr = open_geotiff(path).values
     assert cpu_arr.shape == (h, w, samples)
@@ -103,13 +105,13 @@ def test_gpu_predictor2_multisample_uneven_tiles(tmp_path):
     Exercises partial edge tiles which share the same predictor decode
     path and are most likely to trip any lingering stride mismatch.
     """
-    h, w, samples = 20, 20, 3  # 20 is not a multiple of 8
+    h, w, samples = 40, 40, 3  # 40 is not a multiple of 16
     rng = np.random.RandomState(7)
     data = rng.randint(0, 256, size=(h, w, samples), dtype=np.uint8)
     da = xr.DataArray(data, dims=['y', 'x', 'band'])
 
     path = str(tmp_path / "rgb_pred_uneven.tif")
-    to_geotiff(da, path, compression='deflate', tile_size=8, predictor=True)
+    to_geotiff(da, path, compression='deflate', tile_size=16, predictor=True)
 
     cpu_arr = open_geotiff(path).values
     gpu_arr = _gpu_to_numpy(open_geotiff(path, gpu=True))

@@ -1870,7 +1870,7 @@ class TestBigTIFF:
         arr = np.arange(64, dtype=np.float32).reshape(8, 8)
         path = str(tmp_path / 'bigtiff_long8_eager_1247.tif')
         to_geotiff(arr, path, compression='none',
-                   tiled=True, tile_size=4, bigtiff=True)
+                   tiled=True, tile_size=16, bigtiff=True)
         self._assert_offset_tags_are_long8(path)
         # Data must still round-trip.
         np.testing.assert_array_equal(open_geotiff(path).values, arr)
@@ -1902,7 +1902,7 @@ class TestBigTIFF:
         )
         path = str(tmp_path / 'bigtiff_long8_stream_1247.tif')
         to_geotiff(dask_da, path, compression='none',
-                   tiled=True, tile_size=4, bigtiff=True)
+                   tiled=True, tile_size=16, bigtiff=True)
         self._assert_offset_tags_are_long8(path)
         np.testing.assert_array_equal(open_geotiff(path).values, arr)
 

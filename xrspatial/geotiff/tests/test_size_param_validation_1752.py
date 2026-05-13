@@ -63,12 +63,15 @@ def test_to_geotiff_tile_size_non_int_raises(tmp_path):
         to_geotiff(da, out, tiled=True, tile_size=256.0)
 
 
-def test_to_geotiff_tile_size_one_still_writes(tmp_path):
-    # tile_size=1 is silly but technically valid TIFF; do not reject it.
-    arr = np.arange(16, dtype=np.float32).reshape(4, 4)
+def test_to_geotiff_tile_size_16_writes(tmp_path):
+    # ``tile_size=16`` is the smallest TIFF-spec-legal tile size. The
+    # original 1752 regression checked ``tile_size=1`` here, but #1767
+    # now requires multiples of 16 (TIFF 6 spec), so ``tile_size=1`` is
+    # rejected. Keep a positive-path test at the new lower bound.
+    arr = np.arange(256, dtype=np.float32).reshape(16, 16)
     da = xr.DataArray(arr, dims=['y', 'x'])
     out = os.path.join(str(tmp_path), 'out.tif')
-    to_geotiff(da, out, tiled=True, tile_size=1)
+    to_geotiff(da, out, tiled=True, tile_size=16)
     assert os.path.exists(out)
 
 

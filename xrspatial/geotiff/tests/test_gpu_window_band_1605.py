@@ -59,7 +59,7 @@ def single_band_tiff(tmp_path):
         attrs={'crs': 4326},
     )
     p = tmp_path / 'window_band_1605_single.tif'
-    to_geotiff(da, str(p), tile_size=8)
+    to_geotiff(da, str(p), tile_size=16)
     return str(p), arr
 
 
@@ -80,7 +80,7 @@ def multi_band_tiff(tmp_path):
         attrs={'crs': 4326},
     )
     p = tmp_path / 'window_band_1605_multi.tif'
-    to_geotiff(da, str(p), tile_size=8)
+    to_geotiff(da, str(p), tile_size=16)
     return str(p), arr
 
 

@@ -1222,9 +1222,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     tiled : bool
         Use tiled layout (default True).
     tile_size : int
-        Tile size in pixels (default 256). Ignored when ``tiled=False``;
-        a warning is emitted if a non-default value is passed alongside
-        strip mode.
+        Tile size in pixels (default 256). Must be a positive multiple
+        of 16 when ``tiled=True``; this is a TIFF 6 spec requirement
+        on TileWidth and TileLength for broad reader compatibility.
+        Ignored when ``tiled=False``; a warning is emitted if a
+        non-default value is passed alongside strip mode.
     predictor : bool or int
         TIFF predictor. Accepted values:
 
@@ -1267,7 +1269,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # the tile grid as ``math.ceil(width / tile_size)``; tile_size=0 hits
     # ZeroDivisionError deep inside the writer, and negative values
     # produce a nonsensical tile grid. tiled=False ignores tile_size, so
-    # only validate when tiled output is actually requested.
+    # only validate when tiled output is actually requested. The TIFF 6
+    # spec also requires TileWidth and TileLength to be multiples of 16
+    # for broad interoperability with libtiff / GDAL strict readers; a
+    # value like 17 would otherwise round-trip through the in-repo
+    # reader but be rejected elsewhere.
     if tiled:
         if not isinstance(tile_size, (int, np.integer)) or isinstance(
                 tile_size, bool):
@@ -1277,6 +1283,19 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         if tile_size <= 0:
             raise ValueError(
                 f"tile_size must be a positive int, got tile_size={tile_size}.")
+        if tile_size % 16 != 0:
+            lower = (int(tile_size) // 16) * 16
+            upper = lower + 16
+            # ``lower`` is 0 for tile_size < 16; suppress it from the hint
+            # because 0 is not a valid tile size on its own.
+            if lower <= 0:
+                hint = f"try tile_size={upper}"
+            else:
+                hint = f"try tile_size={lower} or tile_size={upper}"
+            raise ValueError(
+                f"tile_size must be a positive multiple of 16 (TIFF 6 "
+                f"spec requirement for TileWidth/TileLength), got "
+                f"tile_size={tile_size}; {hint}.")
 
     # Up-front validation: catch bad compression names before they reach
     # any of the deeper write paths (streaming, GPU, VRT, COG) where the
@@ -3266,6 +3285,29 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             "compression is tile-based; the strip layout is not "
             "implemented on the GPU path. Use to_geotiff(..., gpu=False, "
             "tiled=False) for strip output on CPU.")
+    # Mirror to_geotiff's tile_size validation: the TIFF 6 spec requires
+    # TileWidth/TileLength to be positive multiples of 16 for broad
+    # reader interop. ``write_geotiff_gpu`` is always tiled, so the
+    # check fires unconditionally here.
+    if not isinstance(tile_size, (int, np.integer)) or isinstance(
+            tile_size, bool):
+        raise ValueError(
+            f"tile_size must be a positive int, got "
+            f"{tile_size!r} (type {type(tile_size).__name__}).")
+    if tile_size <= 0:
+        raise ValueError(
+            f"tile_size must be a positive int, got tile_size={tile_size}.")
+    if tile_size % 16 != 0:
+        lower = (int(tile_size) // 16) * 16
+        upper = lower + 16
+        if lower <= 0:
+            hint = f"try tile_size={upper}"
+        else:
+            hint = f"try tile_size={lower} or tile_size={upper}"
+        raise ValueError(
+            f"tile_size must be a positive multiple of 16 (TIFF 6 "
+            f"spec requirement for TileWidth/TileLength), got "
+            f"tile_size={tile_size}; {hint}.")
     if max_z_error < 0:
         raise ValueError(
             f"max_z_error must be >= 0, got {max_z_error}")

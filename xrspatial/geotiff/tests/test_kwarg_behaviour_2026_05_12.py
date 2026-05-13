@@ -456,7 +456,7 @@ class TestWriteGeotiffGpuBigtiff:
                     'x': np.arange(8, dtype=np.float64)},
         )
         path = str(tmp_path / 'gpu_bigtiff_true.tif')
-        write_geotiff_gpu(da, path, bigtiff=True, tile_size=4)
+        write_geotiff_gpu(da, path, bigtiff=True, tile_size=16)
         assert self._read_header_is_bigtiff(path), (
             "write_geotiff_gpu(bigtiff=True) should emit BigTIFF header "
             "(magic byte 43)."
@@ -474,7 +474,7 @@ class TestWriteGeotiffGpuBigtiff:
                     'x': np.arange(8, dtype=np.float64)},
         )
         path = str(tmp_path / 'gpu_bigtiff_false.tif')
-        write_geotiff_gpu(da, path, bigtiff=False, tile_size=4)
+        write_geotiff_gpu(da, path, bigtiff=False, tile_size=16)
         assert not self._read_header_is_bigtiff(path), (
             "write_geotiff_gpu(bigtiff=False) should emit classic TIFF."
         )
@@ -492,7 +492,7 @@ class TestWriteGeotiffGpuBigtiff:
                     'x': np.arange(8, dtype=np.float64)},
         )
         path = str(tmp_path / 'gpu_bigtiff_default.tif')
-        write_geotiff_gpu(da, path, tile_size=4)
+        write_geotiff_gpu(da, path, tile_size=16)
         assert not self._read_header_is_bigtiff(path), (
             "write_geotiff_gpu default should auto-pick classic TIFF for "
             "tiny outputs; a default switch to BigTIFF would break "
@@ -512,7 +512,7 @@ class TestWriteGeotiffGpuBigtiff:
                     'x': np.arange(8, dtype=np.float64)},
         )
         path = str(tmp_path / 'to_gpu_bigtiff_true.tif')
-        to_geotiff(da, path, gpu=True, bigtiff=True, tile_size=4)
+        to_geotiff(da, path, gpu=True, bigtiff=True, tile_size=16)
         assert self._read_header_is_bigtiff(path), (
             "to_geotiff(gpu=True, bigtiff=True) should reach the GPU "
             "writer with force_bigtiff=True propagated through."

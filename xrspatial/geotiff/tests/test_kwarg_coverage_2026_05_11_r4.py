@@ -58,7 +58,7 @@ _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 def small_tiff_path(tmp_path):
     arr = np.arange(64, dtype=np.float32).reshape(8, 8)
     p = tmp_path / "small.tif"
-    to_geotiff(arr, str(p), tile_size=4)
+    to_geotiff(arr, str(p), tile_size=16)
     return str(p), arr
 
 
@@ -117,8 +117,10 @@ def test_read_geotiff_gpu_chunks_name_kwarg_sets_name(small_tiff_path):
 @_gpu_only
 def test_read_geotiff_gpu_max_pixels_accepts_within_budget(small_tiff_path):
     path, arr = small_tiff_path
-    # 8 * 8 = 64 pixels. 100 leaves room.
-    da = read_geotiff_gpu(path, max_pixels=100)
+    # 8 * 8 = 64 pixels but per-tile dim safety check uses tile_size=16
+    # (256 pixels per tile); 300 leaves room. The fixture's tile_size
+    # was bumped to 16 to satisfy the TIFF 6 multiple-of-16 rule (#1767).
+    da = read_geotiff_gpu(path, max_pixels=300)
     np.testing.assert_array_equal(da.data.get(), arr)
 
 

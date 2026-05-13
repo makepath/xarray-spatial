@@ -168,7 +168,7 @@ def test_to_geotiff_cog_overview_resampling_cpu(tmp_path, method, expected):
     da = xr.DataArray(arr, dims=['y', 'x'])
     p = str(tmp_path / f'cog_{method}.tif')
     to_geotiff(da, p, cog=True, compression='deflate', tiled=True,
-               tile_size=2, overview_levels=[1],
+               tile_size=16, overview_levels=[1],
                overview_resampling=method)
 
     ov = open_geotiff(p, overview_level=1)
@@ -184,7 +184,7 @@ def test_to_geotiff_cog_overview_resampling_cpu_nodata(tmp_path, method):
     da = xr.DataArray(arr, dims=['y', 'x'])
     p = str(tmp_path / f'cog_{method}_nodata.tif')
     to_geotiff(da, p, nodata=-9999.0, cog=True, compression='deflate',
-               tiled=True, tile_size=2, overview_levels=[1],
+               tiled=True, tile_size=16, overview_levels=[1],
                overview_resampling=method)
 
     ov = open_geotiff(p, overview_level=1)
@@ -260,7 +260,7 @@ def test_write_geotiff_gpu_cog_overview_resampling(tmp_path, method, expected):
     da = xr.DataArray(arr_gpu, dims=['y', 'x'])
     p = str(tmp_path / f'cog_{method}_gpu.tif')
     write_geotiff_gpu(da, p, cog=True, compression='deflate', tiled=True,
-                      tile_size=2, overview_levels=[1],
+                      tile_size=16, overview_levels=[1],
                       overview_resampling=method)
 
     ov = open_geotiff(p, overview_level=1)
@@ -278,13 +278,13 @@ def test_to_geotiff_gpu_cog_overview_matches_cpu(tmp_path, method):
     da_cpu = xr.DataArray(arr, dims=['y', 'x'])
     p_cpu = str(tmp_path / f'cog_{method}_cpu.tif')
     to_geotiff(da_cpu, p_cpu, cog=True, compression='deflate', tiled=True,
-               tile_size=2, overview_levels=[1],
+               tile_size=16, overview_levels=[1],
                overview_resampling=method)
 
     da_gpu = xr.DataArray(cupy.asarray(arr), dims=['y', 'x'])
     p_gpu = str(tmp_path / f'cog_{method}_gpu_via_to_geotiff.tif')
     to_geotiff(da_gpu, p_gpu, gpu=True, cog=True, compression='deflate',
-               tiled=True, tile_size=2, overview_levels=[1],
+               tiled=True, tile_size=16, overview_levels=[1],
                overview_resampling=method)
 
     ov_cpu = np.asarray(open_geotiff(p_cpu, overview_level=1).data)

@@ -59,7 +59,7 @@ def small_tiff_path(tmp_path):
         attrs={'crs': 4326},
     )
     p = tmp_path / 'on_gpu_failure_1615.tif'
-    to_geotiff(da, str(p), tile_size=4)
+    to_geotiff(da, str(p), tile_size=16)
     return str(p), arr
 
 

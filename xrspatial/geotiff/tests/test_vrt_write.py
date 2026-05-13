@@ -39,10 +39,11 @@ class TestVrtOutputNumpy:
 
     def test_tile_naming_convention(self, sample_raster, tmp_path):
         vrt_path = str(tmp_path / 'named_1083.vrt')
-        to_geotiff(sample_raster, vrt_path, tile_size=100)
+        to_geotiff(sample_raster, vrt_path, tile_size=128)
         tiles_dir = str(tmp_path / 'named_1083_tiles')
         files = sorted(os.listdir(tiles_dir))
-        # 200x200 with tile_size=100 -> 2x2 grid
+        # 200x200 with tile_size=128 -> 2x2 grid (TIFF 6 spec requires
+        # tile_size be a multiple of 16; 100 was rejected post-#1767).
         assert files == [
             'tile_00_00.tif', 'tile_00_01.tif',
             'tile_01_00.tif', 'tile_01_01.tif',

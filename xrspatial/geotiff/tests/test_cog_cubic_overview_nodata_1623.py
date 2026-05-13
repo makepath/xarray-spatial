@@ -138,7 +138,7 @@ def test_to_geotiff_cog_cubic_nodata_round_trip(tmp_path):
     da = xr.DataArray(arr, dims=['y', 'x'])
     p = str(tmp_path / 'cog_cubic_nodata.tif')
     to_geotiff(da, p, nodata=-9999.0, cog=True, compression='deflate',
-               tiled=True, tile_size=8, overview_levels=[1],
+               tiled=True, tile_size=16, overview_levels=[1],
                overview_resampling='cubic')
 
     ov = open_geotiff(p, overview_level=1)
@@ -165,7 +165,7 @@ def test_to_geotiff_cog_cubic_no_nodata_round_trip(tmp_path):
     da = xr.DataArray(arr, dims=['y', 'x'])
     p = str(tmp_path / 'cog_cubic_no_nodata.tif')
     to_geotiff(da, p, cog=True, compression='deflate',
-               tiled=True, tile_size=8, overview_levels=[1],
+               tiled=True, tile_size=16, overview_levels=[1],
                overview_resampling='cubic')
 
     ov = open_geotiff(p, overview_level=1)
@@ -238,7 +238,7 @@ def test_to_geotiff_cog_cubic_nodata_gpu_round_trip(tmp_path):
     da = xr.DataArray(cupy.asarray(arr), dims=['y', 'x'])
     p = str(tmp_path / 'cog_cubic_nodata_gpu.tif')
     to_geotiff(da, p, nodata=-9999.0, cog=True, compression='deflate',
-               tiled=True, tile_size=8, overview_levels=[1],
+               tiled=True, tile_size=16, overview_levels=[1],
                overview_resampling='cubic')
 
     ov = open_geotiff(p, overview_level=1)
@@ -267,10 +267,10 @@ def test_gpu_cpu_cubic_overview_bytes_match(tmp_path):
     cpu_path = str(tmp_path / 'cpu_cubic.tif')
     gpu_path = str(tmp_path / 'gpu_cubic.tif')
     to_geotiff(cpu_da, cpu_path, nodata=-9999.0, cog=True,
-               compression='deflate', tiled=True, tile_size=8,
+               compression='deflate', tiled=True, tile_size=16,
                overview_levels=[1], overview_resampling='cubic')
     to_geotiff(gpu_da, gpu_path, nodata=-9999.0, cog=True,
-               compression='deflate', tiled=True, tile_size=8,
+               compression='deflate', tiled=True, tile_size=16,
                overview_levels=[1], overview_resampling='cubic')
 
     cpu_ov = np.asarray(open_geotiff(cpu_path, overview_level=1).data)

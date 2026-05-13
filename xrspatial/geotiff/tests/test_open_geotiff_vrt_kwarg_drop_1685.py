@@ -102,7 +102,7 @@ def test_open_geotiff_non_vrt_still_accepts_overview_level(tmp_path):
         attrs={"crs": 4326},
     )
     tif_path = tmp_path / "with_ovr.tif"
-    to_geotiff(da, str(tif_path), cog=True, tile_size=4, overview_levels=[2])
+    to_geotiff(da, str(tif_path), cog=True, tile_size=16, overview_levels=[2])
     # Either overview_level value must be accepted without raising.
     open_geotiff(str(tif_path), overview_level=0)
     open_geotiff(str(tif_path), overview_level=1)

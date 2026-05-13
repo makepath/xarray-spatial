@@ -51,7 +51,7 @@ def small_tiff_path(tmp_path):
         attrs={'crs': 4326},
     )
     p = tmp_path / 'parity_1561_small.tif'
-    to_geotiff(da, str(p), tile_size=4)
+    to_geotiff(da, str(p), tile_size=16)
     return str(p), arr
 
 
@@ -72,7 +72,7 @@ def small_multiband_tiff_path(tmp_path):
         attrs={'crs': 4326},
     )
     p = tmp_path / 'parity_1561_mb.tif'
-    to_geotiff(da, str(p), tile_size=4)
+    to_geotiff(da, str(p), tile_size=16)
     return str(p), arr
 
 
@@ -197,7 +197,7 @@ def test_write_geotiff_gpu_accepts_streaming_buffer_bytes_as_noop(tmp_path):
     p = tmp_path / 'parity_1561_streaming.tif'
     # Argument is accepted; result must round-trip identically to a
     # call without it.
-    write_geotiff_gpu(da, str(p), streaming_buffer_bytes=4096, tile_size=4)
+    write_geotiff_gpu(da, str(p), streaming_buffer_bytes=4096, tile_size=16)
     rd = open_geotiff(str(p))
     np.testing.assert_array_equal(rd.values, arr.get())
 
