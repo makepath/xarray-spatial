@@ -2154,7 +2154,10 @@ def read_geotiff_dask(source: str, *,
     # rather than letting the windowed-read path try to parse VRT XML as
     # TIFF bytes. ``read_vrt`` is the single source of truth for VRT.
     if isinstance(source, str) and source.lower().endswith('.vrt'):
-        return read_vrt(source, dtype=dtype, name=name, chunks=chunks)
+        return read_vrt(
+            source, dtype=dtype, window=window, band=band, name=name,
+            chunks=chunks, max_pixels=max_pixels,
+        )
 
     # P5: HTTP COG sources used to fire one IFD/header GET per chunk
     # task. Parse metadata once here so every delayed task can reuse it.
@@ -2186,6 +2189,13 @@ def read_geotiff_dask(source: str, *,
         finally:
             _src.close()
         http_meta = (http_header, http_ifd)
+        if http_ifd.orientation != 1:
+            raise ValueError(
+                f"Orientation tag (274) is {http_ifd.orientation}; "
+                f"dask-chunked reads (chunks=...) are not supported for "
+                f"non-default orientation on remote GeoTIFF sources. Read "
+                f"the full array first, then slice/chunk it."
+            )
         # Wrap the parsed metadata in a single dask Delayed so every
         # window task takes it as a graph input, not a Python closure.
         # Without this, the (TIFFHeader, IFD) pair -- which can carry
@@ -2282,6 +2292,14 @@ def read_geotiff_dask(source: str, *,
         coords = _geo_to_coords(geo_info, full_h, full_w)
 
     if band is not None:
+        # Reject ``bool`` and ``np.bool_`` up front; ``isinstance(True, int)``
+        # is True in Python so ``True < n_bands`` evaluates without raising
+        # and silently reads band 1. ``np.bool_`` is not a subclass of
+        # ``bool`` so it needs its own check to match the VRT path's
+        # rejection. See #1786.
+        if isinstance(band, (bool, np.bool_)):
+            raise ValueError(
+                f"band must be a non-negative int, got {band!r}")
         if n_bands == 0:
             if band != 0:
                 raise IndexError(
@@ -2435,6 +2453,7 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             from ._reader import (
                 _fetch_decode_cog_http_tiles,
                 MAX_PIXELS_DEFAULT,
+                _apply_photometric_miniswhite,
             )
             header, ifd = http_meta
             if _is_http_src:
@@ -2454,6 +2473,7 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             if (arr.ndim == 3 and ifd.samples_per_pixel > 1
                     and band is not None):
                 arr = arr[:, :, band]
+            arr = _apply_photometric_miniswhite(arr, ifd)
         else:
             _r2a_kwargs = {}
             if max_pixels is not None:
@@ -2967,6 +2987,15 @@ def read_geotiff_gpu(source: str, *,
         # behaviour mirrors ``read_geotiff_dask``.
         ifd_samples = ifd.samples_per_pixel
         if band is not None:
+            # Reject ``bool`` and ``np.bool_`` up front;
+            # ``isinstance(True, int)`` is True in Python so
+            # ``True < ifd_samples`` evaluates without raising and silently
+            # reads band 1. ``np.bool_`` is not a subclass of ``bool`` so it
+            # needs its own check to match the VRT path's rejection.
+            # See #1786.
+            if isinstance(band, (bool, np.bool_)):
+                raise ValueError(
+                    f"band must be a non-negative int, got {band!r}")
             if ifd_samples <= 1:
                 if band != 0:
                     raise IndexError(
@@ -3298,6 +3327,13 @@ def read_geotiff_gpu(source: str, *,
             arr_gpu = _apply_orientation_gpu(arr_gpu, orientation)
         geo_info = _apply_orientation_geo_info(
             geo_info, orientation, file_h=height, file_w=width)
+
+    if (ifd.photometric == 0 and samples == 1 and not arr_was_cpu_decoded):
+        gpu_dtype = np.dtype(str(arr_gpu.dtype))
+        if gpu_dtype.kind == 'u':
+            arr_gpu = np.iinfo(gpu_dtype).max - arr_gpu
+        elif gpu_dtype.kind == 'f':
+            arr_gpu = -arr_gpu
 
     # Apply nodata mask + record sentinel so the GPU read agrees with the
     # CPU eager path (issue #1542). Without this, integer rasters keep the
@@ -3788,7 +3824,8 @@ def _vrt_effective_dtype(vrt, band):
 
 
 def _read_vrt_dask(source: str, *, dtype=None, window=None, band=None,
-                   name=None, chunks=None, max_pixels=None):
+                   name=None, chunks=None, max_pixels=None,
+                   missing_sources='warn'):
     """Build a truly lazy dask-backed VRT DataArray from window tasks."""
     import os
     import dask
@@ -3863,6 +3900,7 @@ def _read_vrt_dask(source: str, *, dtype=None, window=None, band=None,
         chunk_da = read_vrt(
             source, dtype=dtype, window=chunk_window, band=band,
             chunks=None, gpu=False, max_pixels=max_pixels,
+            missing_sources=missing_sources,
         )
         arr = np.asarray(chunk_da.values)
         if arr.dtype != out_dtype:
@@ -3937,7 +3975,8 @@ def read_vrt(source: str, *,
              name: str | None = None,
              chunks: int | tuple | None = None,
              gpu: bool = False,
-             max_pixels: int | None = None) -> xr.DataArray:
+             max_pixels: int | None = None,
+             missing_sources: str = 'warn') -> xr.DataArray:
     """Read a GDAL Virtual Raster Table (.vrt) into an xarray.DataArray.
 
     The VRT's source GeoTIFFs are read via windowed reads and assembled
@@ -3966,6 +4005,12 @@ def read_vrt(source: str, *,
         assembled VRT region. None uses the reader default (~1 billion).
         Matches ``open_geotiff`` / ``read_geotiff_dask`` /
         ``read_geotiff_gpu``.
+    missing_sources : {'warn', 'raise'}, default 'warn'
+        Policy for unreadable source files referenced by the VRT. ``'warn'``
+        preserves the historical behavior: emit ``GeoTIFFFallbackWarning``,
+        record ``attrs['vrt_holes']``, and return a partial mosaic.
+        ``'raise'`` fails immediately. ``XRSPATIAL_GEOTIFF_STRICT=1`` also
+        raises, even when ``missing_sources='warn'``.
 
     Returns
     -------
@@ -4005,14 +4050,22 @@ def read_vrt(source: str, *,
     # default (eager read), so allow it through here.
     chunks = _validate_chunks_arg(chunks, allow_none=True)
 
+    if missing_sources not in ('warn', 'raise'):
+        raise ValueError(
+            f"missing_sources must be 'warn' or 'raise', got "
+            f"{missing_sources!r}")
+
     if chunks is not None and not gpu:
         return _read_vrt_dask(
             source, dtype=dtype, window=window, band=band, name=name,
             chunks=chunks, max_pixels=max_pixels,
+            missing_sources=missing_sources,
         )
 
-    arr, vrt = _read_vrt_internal(source, window=window, band=band,
-                                   max_pixels=max_pixels)
+    arr, vrt = _read_vrt_internal(
+        source, window=window, band=band, max_pixels=max_pixels,
+        missing_sources=missing_sources,
+    )
 
     if name is None:
         import os

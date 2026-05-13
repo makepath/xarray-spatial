@@ -47,11 +47,15 @@ from ._header import (
 MAX_PIXELS_DEFAULT = 1_000_000_000
 
 
+class PixelSafetyLimitError(ValueError):
+    """Raised when a requested TIFF allocation exceeds max_pixels."""
+
+
 def _check_dimensions(width, height, samples, max_pixels):
-    """Raise ValueError if the requested allocation exceeds *max_pixels*."""
+    """Raise PixelSafetyLimitError if the request exceeds *max_pixels*."""
     total = width * height * samples
     if total > max_pixels:
-        raise ValueError(
+        raise PixelSafetyLimitError(
             f"TIFF image dimensions ({width} x {height} x {samples} = "
             f"{total:,} pixels) exceed the safety limit of "
             f"{max_pixels:,} pixels.  Pass a larger max_pixels value to "
@@ -1911,6 +1915,15 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     # urllib3 ``PoolManager`` is shared module-level, not per-source)
     # but a future resource-holding source will need it. See issue #1695.
     if band is not None:
+        # Reject ``bool`` (and ``np.bool_``) up front; ``isinstance(True, int)``
+        # is True in Python so ``True < samples_per_pixel`` evaluates without
+        # raising and silently reads band 1. ``np.bool_`` is not a subclass of
+        # ``bool`` so it needs its own check to match the VRT path's
+        # rejection. See #1786.
+        if isinstance(band, (bool, np.bool_)):
+            source.close()
+            raise ValueError(
+                f"band must be a non-negative int, got {band!r}")
         if ifd.samples_per_pixel <= 1:
             if band != 0:
                 source.close()
@@ -1940,6 +1953,8 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     if ifd.orientation != 1:
         arr, geo_info = _apply_orientation_with_geo(
             arr, geo_info, ifd.orientation)
+
+    arr = _apply_photometric_miniswhite(arr, ifd)
 
     return arr, geo_info
 
@@ -2290,6 +2305,16 @@ def _apply_orientation_with_geo(
     return arr, geo_info
 
 
+def _apply_photometric_miniswhite(arr: np.ndarray, ifd: IFD) -> np.ndarray:
+    """Apply TIFF MinIsWhite inversion for single-band grayscale images."""
+    if ifd.photometric == 0 and ifd.samples_per_pixel == 1:
+        if arr.dtype.kind == 'u':
+            return np.iinfo(arr.dtype).max - arr
+        if arr.dtype.kind == 'f':
+            return -arr
+    return arr
+
+
 def read_to_array(source, *, window=None, overview_level: int | None = None,
                   band: int | None = None,
                   max_pixels: int = MAX_PIXELS_DEFAULT,
@@ -2396,6 +2421,16 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         # index only. See issue #1673.
         ifd_samples = ifd.samples_per_pixel
         if band is not None:
+            # Reject ``bool`` and ``np.bool_`` before the range check.
+            # ``isinstance(True, int)`` is True in Python and
+            # ``True < ifd_samples`` evaluates as ``1``, so without this
+            # guard ``band=True`` silently reads band 1 and ``band=False``
+            # reads band 0. ``np.bool_`` is not a subclass of ``bool`` so it
+            # needs its own check to match the VRT path's existing
+            # rejection. See #1786.
+            if isinstance(band, (bool, np.bool_)):
+                raise ValueError(
+                    f"band must be a non-negative int, got {band!r}")
             if ifd_samples <= 1:
                 if band != 0:
                     raise IndexError(
@@ -2421,12 +2456,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
             arr, geo_info = _apply_orientation_with_geo(
                 arr, geo_info, orientation)
 
-        # MinIsWhite (photometric=0): invert single-band grayscale values
-        if ifd.photometric == 0 and ifd.samples_per_pixel == 1:
-            if arr.dtype.kind == 'u':
-                arr = np.iinfo(arr.dtype).max - arr
-            elif arr.dtype.kind == 'f':
-                arr = -arr
+        arr = _apply_photometric_miniswhite(arr, ifd)
     finally:
         src.close()
 

@@ -225,6 +225,14 @@ OVERVIEW_METHODS = ('mean', 'nearest', 'min', 'max', 'median', 'mode', 'cubic')
 #: override.
 _MAX_OVERVIEW_LEVELS = 8
 
+#: Total uncompressed payload (bytes) below which the strip and tile
+#: writers stay sequential. The thread-pool startup cost dominates on
+#: small rasters; above this size the per-block compression cost more
+#: than pays for it. 4 MiB was chosen empirically on a 20-core box:
+#: parallel becomes a net win around ~2 MiB, and the 4 MiB margin keeps
+#: a few-tile / two-strip layout from incurring a slowdown.
+_PARALLEL_MIN_BYTES = 4 * 1024 * 1024
+
 
 def _validate_overview_levels(overview_levels, height=None, width=None):
     """Validate and normalise an explicit ``overview_levels`` list.
@@ -651,11 +659,49 @@ def _build_ifd(tags: list[tuple], overflow_base: int,
 # Strip writer
 # ---------------------------------------------------------------------------
 
+def _prepare_strip(data, i, rows_per_strip, height, width, samples, dtype,
+                   bytes_per_sample, predictor: int, compression,
+                   compression_level=None, max_z_error: float = 0.0):
+    """Extract and compress a single strip. Thread-safe."""
+    r0 = i * rows_per_strip
+    r1 = min(r0 + rows_per_strip, height)
+    strip_rows = r1 - r0
+
+    if compression == COMPRESSION_JPEG:
+        strip_data = np.ascontiguousarray(data[r0:r1]).tobytes()
+        return jpeg_compress(strip_data, width, strip_rows, samples)
+    if predictor != 1 and compression != COMPRESSION_NONE:
+        strip_arr = np.ascontiguousarray(data[r0:r1])
+        buf = strip_arr.view(np.uint8).ravel().copy()
+        buf = _apply_predictor_encode(
+            buf, predictor, width, strip_rows, bytes_per_sample, samples)
+        strip_data = buf.tobytes()
+    else:
+        strip_data = np.ascontiguousarray(data[r0:r1]).tobytes()
+
+    if compression == COMPRESSION_JPEG2000:
+        from ._compression import jpeg2000_compress
+        return jpeg2000_compress(
+            strip_data, width, strip_rows, samples=samples, dtype=dtype)
+    if compression == COMPRESSION_LERC:
+        from ._compression import lerc_compress
+        return lerc_compress(
+            strip_data, width, strip_rows, samples=samples, dtype=dtype,
+            max_z_error=max_z_error)
+    if compression_level is None:
+        return compress(strip_data, compression)
+    return compress(strip_data, compression, level=compression_level)
+
+
 def _write_stripped(data: np.ndarray, compression: int, predictor: int,
                     rows_per_strip: int = 256,
                     compression_level: int | None = None,
                     max_z_error: float = 0.0) -> tuple[list, list, list]:
     """Compress data as strips.
+
+    For compressed formats (deflate, lzw, zstd, lz4, ...) strips are
+    compressed in parallel using a thread pool: zlib, zstandard, lz4,
+    and the Numba LZW kernel all release the GIL during compression.
 
     Returns
     -------
@@ -668,53 +714,60 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: int,
     dtype = data.dtype
     bytes_per_sample = dtype.itemsize
 
-    strips = []
+    num_strips = math.ceil(height / rows_per_strip)
+
+    total_bytes = int(data.nbytes)
+
+    # Sequential path: uncompressed, few strips, or small payload.  The
+    # threshold mirrors the tile writer so we don't pay thread-pool
+    # overhead on tiny rasters.
+    use_parallel = (
+        compression != COMPRESSION_NONE
+        and num_strips > 2
+        and total_bytes > _PARALLEL_MIN_BYTES
+    )
+
+    if not use_parallel:
+        strips = []
+        rel_offsets = []
+        byte_counts = []
+        current_offset = 0
+        for i in range(num_strips):
+            compressed = _prepare_strip(
+                data, i, rows_per_strip, height, width, samples, dtype,
+                bytes_per_sample, predictor, compression,
+                compression_level, max_z_error,
+            )
+            rel_offsets.append(current_offset)
+            byte_counts.append(len(compressed))
+            strips.append(compressed)
+            current_offset += len(compressed)
+        return rel_offsets, byte_counts, strips
+
+    # Parallel strip compression -- zlib/zstd/lz4/LZW all release the GIL.
+    from concurrent.futures import ThreadPoolExecutor
+    import os
+
+    n_workers = min(num_strips, os.cpu_count() or 4)
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        compressed_strips = list(pool.map(
+            lambda i: _prepare_strip(
+                data, i, rows_per_strip, height, width, samples, dtype,
+                bytes_per_sample, predictor, compression,
+                compression_level, max_z_error,
+            ),
+            range(num_strips),
+        ))
+
     rel_offsets = []
     byte_counts = []
     current_offset = 0
-
-    num_strips = math.ceil(height / rows_per_strip)
-    for i in range(num_strips):
-        r0 = i * rows_per_strip
-        r1 = min(r0 + rows_per_strip, height)
-        strip_rows = r1 - r0
-
-        if compression == COMPRESSION_JPEG:
-            strip_data = np.ascontiguousarray(data[r0:r1]).tobytes()
-            compressed = jpeg_compress(strip_data, width, strip_rows, samples)
-        elif predictor != 1 and compression != COMPRESSION_NONE:
-            strip_arr = np.ascontiguousarray(data[r0:r1])
-            buf = strip_arr.view(np.uint8).ravel().copy()
-            buf = _apply_predictor_encode(
-                buf, predictor, width, strip_rows, bytes_per_sample, samples)
-            strip_data = buf.tobytes()
-            if compression_level is None:
-                compressed = compress(strip_data, compression)
-            else:
-                compressed = compress(strip_data, compression, level=compression_level)
-        else:
-            strip_data = np.ascontiguousarray(data[r0:r1]).tobytes()
-
-            if compression == COMPRESSION_JPEG2000:
-                from ._compression import jpeg2000_compress
-                compressed = jpeg2000_compress(
-                    strip_data, width, strip_rows, samples=samples, dtype=dtype)
-            elif compression == COMPRESSION_LERC:
-                from ._compression import lerc_compress
-                compressed = lerc_compress(
-                    strip_data, width, strip_rows, samples=samples, dtype=dtype,
-                    max_z_error=max_z_error)
-            elif compression_level is None:
-                compressed = compress(strip_data, compression)
-            else:
-                compressed = compress(strip_data, compression, level=compression_level)
-
+    for cs in compressed_strips:
         rel_offsets.append(current_offset)
-        byte_counts.append(len(compressed))
-        strips.append(compressed)
-        current_offset += len(compressed)
+        byte_counts.append(len(cs))
+        current_offset += len(cs)
 
-    return rel_offsets, byte_counts, strips
+    return rel_offsets, byte_counts, compressed_strips
 
 
 # ---------------------------------------------------------------------------
@@ -841,8 +894,13 @@ def _write_tiled(data: np.ndarray, compression: int, predictor: int,
 
         return rel_offsets, byte_counts, tiles
 
-    if n_tiles <= 4:
-        # Very few tiles: sequential (thread pool overhead not worth it)
+    # Sequential path: very few tiles, or small total payload. A previous
+    # ``n_tiles <= 4`` cutoff sent ``tile_size=1024`` writes on a 2048x2048
+    # image down the serial path (n_tiles=4) and made them ~8x slower than
+    # the parallel path. Switching to a bytes-based threshold lets
+    # large-tile writes parallelize while still skipping the pool on
+    # small rasters where its setup cost dominates.
+    if n_tiles <= 2 or int(data.nbytes) <= _PARALLEL_MIN_BYTES:
         tiles = []
         rel_offsets = []
         byte_counts = []
@@ -1562,6 +1620,77 @@ def _compress_block(arr, block_w, block_h, samples, dtype, bytes_per_sample,
 # Streaming writer (dask -> monolithic TIFF without full materialisation)
 # ---------------------------------------------------------------------------
 
+def _compute_classic_ifd_overhead(tags: list) -> int:
+    """Return the on-disk size of the classic-TIFF IFD for ``tags``.
+
+    Sums the fixed IFD block (entry count + 12 bytes per entry + next-IFD
+    pointer) and the variable overflow heap (values whose serialised size
+    exceeds the 4-byte inline limit, including ASCII strings such as
+    ``gdal_metadata`` and user-supplied ``extra_tags``).
+
+    The heap size is recovered by building the IFD with
+    ``_build_ifd(tags, overflow_base=0, bigtiff=False)`` and measuring the
+    returned overflow buffer; this matches the bytes the streaming writer
+    will actually emit, with no fudge constant.
+    """
+    num_tags = len(tags)
+    # classic IFD: 2-byte count + 12-byte entries + 4-byte next-IFD pointer
+    ifd_block_size = 2 + 12 * num_tags + 4
+    _, overflow_bytes = _build_ifd(tags, overflow_base=0, bigtiff=False)
+    return ifd_block_size + len(overflow_bytes)
+
+
+def _should_use_bigtiff_streaming(uncompressed_bytes: int,
+                                  n_entries: int,
+                                  ifd_overhead_bytes: int,
+                                  header_size_classic: int = 8) -> bool:
+    """Decide whether the streaming writer must emit BigTIFF.
+
+    Classic TIFF stores offsets as uint32, so the file size addressable
+    via classic offsets is at most ``UINT32_MAX`` bytes (offsets run
+    ``0..UINT32_MAX - 1``). The streaming writer appends pixel data after
+    the header and IFD, so the final file size is
+    ``header + ifd + overflow + strip_table + uncompressed_bytes``.
+
+    The comparison is ``> UINT32_MAX`` to match the eager
+    ``_assemble_tiff`` decision (``estimated_file_size > UINT32_MAX``):
+    a file that is exactly ``UINT32_MAX`` bytes still fits classic.
+
+    See issue #1785 and the Copilot review on PR #1787: the previous
+    helper applied a 200-byte fudge for IFD overhead, which silently
+    underestimated when ``gdal_metadata_xml`` or large ``extra_tags``
+    pushed the actual overflow heap well past that constant.
+
+    Parameters
+    ----------
+    uncompressed_bytes : int
+        Total pixel-data bytes that will be written after the IFD.
+    n_entries : int
+        Number of strip or tile entries; each contributes a LONG offset
+        (4 bytes) plus a LONG byte-count (4 bytes) to the overflow heap.
+        Pass ``0`` if ``ifd_overhead_bytes`` already covers the strip
+        table (the streaming-writer caller does this by passing the
+        actual tag list through ``_compute_classic_ifd_overhead``).
+    ifd_overhead_bytes : int
+        Classic-TIFF IFD size: fixed entry block plus variable overflow
+        heap (ASCII metadata, geo tags, strip/tile offset arrays, etc.).
+        Computed via ``_compute_classic_ifd_overhead(tags)``.
+    header_size_classic : int, optional
+        Classic-TIFF header size (8 bytes).
+    """
+    # strip/tile-table overhead is 8 bytes per entry (LONG offset + LONG
+    # byte count). If the caller already accounted for the offset arrays
+    # inside ``ifd_overhead_bytes`` they should pass n_entries=0.
+    strip_table_overhead = n_entries * 8
+    reserved_overhead = (
+        header_size_classic + ifd_overhead_bytes + strip_table_overhead
+    )
+    UINT32_MAX = 0xFFFFFFFF
+    # ``> UINT32_MAX`` matches the eager path's
+    # ``estimated_file_size > UINT32_MAX`` check in ``_assemble_tiff``.
+    return uncompressed_bytes + reserved_overhead > UINT32_MAX
+
+
 def write_streaming(dask_data, path: str, *,
                     geo_transform: 'GeoTransform | None' = None,
                     crs_epsg: int | None = None,
@@ -1649,17 +1778,18 @@ def write_streaming(dask_data, path: str, *,
         rows_per_strip = min(256, height)
         n_entries = math.ceil(height / rows_per_strip)
 
-    # BigTIFF detection (use uncompressed size as conservative estimate)
+    # BigTIFF detection has to wait until the full tag list is built so
+    # that variable-length payloads (gdal_metadata, geo tags, user
+    # extra_tags) feed into the IFD-overhead calculation. Build the tag
+    # list assuming classic offsets first, then decide BigTIFF, then
+    # promote the strip/tile offset arrays to LONG8 if needed. See
+    # issue #1785 and the Copilot review on PR #1787.
     uncompressed_bytes = height * width * bytes_per_sample * samples
-    UINT32_MAX = 0xFFFFFFFF
-    if bigtiff is not None:
-        use_bigtiff = bigtiff
-    else:
-        use_bigtiff = uncompressed_bytes > UINT32_MAX
-
-    header_size = 16 if use_bigtiff else 8
 
     # ---- Build tag list (mirrors _assemble_tiff for level 0) ----
+    # Start with classic offset types; the offset arrays are promoted to
+    # LONG8 below once BigTIFF is chosen.
+    use_bigtiff = bool(bigtiff) if bigtiff is not None else False
     tags = []
     tags.append((TAG_IMAGE_WIDTH, LONG, 1, width))
     tags.append((TAG_IMAGE_LENGTH, LONG, 1, height))
@@ -1714,10 +1844,11 @@ def write_streaming(dask_data, path: str, *,
     if resolution_unit is not None:
         tags.append((TAG_RESOLUTION_UNIT, SHORT, 1, resolution_unit))
 
-    # Layout tags with placeholder offsets / byte-counts.  BigTIFF
-    # needs 64-bit offsets (LONG8) since strip/tile positions can
-    # exceed 4 GB; classic TIFF uses LONG (uint32).
-    offset_type = LONG8 if use_bigtiff else LONG
+    # Layout tags with placeholder offsets / byte-counts. Use classic
+    # LONG (uint32) here; if the auto-BigTIFF decision below promotes
+    # the file, ``_promote_offsets_to_long8`` retypes these to LONG8.
+    # A caller-forced ``bigtiff=True`` is also resolved at that point.
+    offset_type = LONG
     placeholder = [0] * n_entries
     if tiled:
         tags.append((TAG_TILE_WIDTH, SHORT, 1, tile_size))
@@ -1768,6 +1899,31 @@ def write_streaming(dask_data, path: str, *,
             if (etag_id not in existing_ids
                     and etag_id not in _DANGEROUS_EXTRA_TAG_IDS):
                 tags.append((etag_id, etype_id, ecount, evalue))
+
+    # ---- BigTIFF decision (auto path) ----
+    # Compute the real classic-TIFF IFD overhead from the actual tag
+    # list, including overflow heap (gdal_metadata, geo ascii params,
+    # strip/tile offset arrays, user extra_tags). This replaces the
+    # 200-byte fudge constant the original PR used; with metadata-heavy
+    # writes that constant silently underestimated overhead and let
+    # sub-4 GiB rasters overflow classic offsets late in the write.
+    # See issue #1785 and the Copilot review on PR #1787.
+    if bigtiff is None:
+        ifd_overhead_bytes = _compute_classic_ifd_overhead(tags)
+        # n_entries=0 because the strip/tile offset arrays are already
+        # inside ``tags`` and therefore in ``ifd_overhead_bytes``.
+        use_bigtiff = _should_use_bigtiff_streaming(
+            uncompressed_bytes,
+            n_entries=0,
+            ifd_overhead_bytes=ifd_overhead_bytes,
+            header_size_classic=8,
+        )
+
+    header_size = 16 if use_bigtiff else 8
+
+    # Promote the strip/tile offset arrays to LONG8 once BigTIFF is set.
+    if use_bigtiff:
+        tags = _promote_offsets_to_long8(tags)
 
     # ---- Pre-compute IFD reservation size ----
     sorted_tags = sorted(tags, key=lambda t: t[0])
