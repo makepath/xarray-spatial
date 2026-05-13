@@ -2720,14 +2720,21 @@ def read_geotiff_gpu(source: str, *,
                 arr_gpu = arr_gpu.astype(target)
             # ``read_to_array`` already applied window + band slicing, so
             # ``arr_gpu`` is at output shape. Compute coords for that
-            # shape without re-slicing.
+            # shape without re-slicing. Mirror the eager-numpy /
+            # ``read_geotiff_dask`` / ``_gpu_apply_window_band`` checks
+            # against ``has_georef``: a non-georef TIFF carries a
+            # default ``GeoTransform()`` placeholder (``t is None`` is
+            # never true here) so a transform-based coord path would
+            # emit synthetic ``[-0.5, -1.5, ...]`` floats instead of
+            # the integer pixel coords every other backend produces
+            # (#1753 / regression of #1710).
             if window is not None:
                 r0, c0, r1, c1 = window
                 t = geo_info.transform
-                if t is None:
+                if t is None or not getattr(geo_info, 'has_georef', True):
                     coords = {
-                        'y': np.arange(r1 - r0, dtype=np.int64),
-                        'x': np.arange(c1 - c0, dtype=np.int64),
+                        'y': np.arange(r0, r1, dtype=np.int64),
+                        'x': np.arange(c0, c1, dtype=np.int64),
                     }
                 elif geo_info.raster_type == RASTER_PIXEL_IS_POINT:
                     coords = {
