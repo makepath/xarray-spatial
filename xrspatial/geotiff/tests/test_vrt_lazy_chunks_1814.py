@@ -269,3 +269,92 @@ def test_multiband_plus_chunks_preserves_band_dim(multiband_vrt):
 
     computed = result.compute()
     np.testing.assert_allclose(computed.values, src, rtol=0, atol=0)
+
+
+# ---------------------------------------------------------------------------
+# 7. Copilot review: ``attrs['vrt_holes']`` must propagate to the chunked
+#    path so users switching from eager to chunked keep the #1734 contract.
+# ---------------------------------------------------------------------------
+
+def test_chunked_propagates_vrt_holes_when_source_missing(two_by_two_vrt):
+    """When a source referenced by the VRT does not exist on disk the
+    chunked reader must populate ``attrs['vrt_holes']`` with the same
+    schema the eager reader uses, so callers can branch on
+    ``"vrt_holes" in da.attrs`` regardless of which code path produced
+    the DataArray.
+    """
+    import warnings
+    from xrspatial.geotiff import GeoTIFFFallbackWarning
+
+    vrt_path, _ = two_by_two_vrt
+    vrt_dir = os.path.dirname(vrt_path)
+    # Remove one of the four source tiles. ``to_geotiff(.vrt, tile_size=128)``
+    # writes tile files into a ``<stem>_tiles/`` subdirectory next to the
+    # .vrt; walk the tree for any .tif and unlink the first one.
+    tile_files = []
+    for root, _dirs, files in os.walk(vrt_dir):
+        for f in files:
+            if f.endswith('.tif'):
+                tile_files.append(os.path.join(root, f))
+    assert len(tile_files) >= 1
+    os.unlink(tile_files[0])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', GeoTIFFFallbackWarning)
+        result = read_vrt(vrt_path, chunks=(64, 64))
+
+    assert 'vrt_holes' in result.attrs, (
+        "chunked path dropped vrt_holes contract from #1734"
+    )
+    holes = result.attrs['vrt_holes']
+    assert isinstance(holes, list) and len(holes) >= 1
+    entry = holes[0]
+    # Schema parity with the eager path (see read_vrt at ~line 3963).
+    assert set(entry.keys()) >= {'source', 'band', 'dst_rect', 'error'}
+    assert isinstance(entry['dst_rect'], tuple)
+    assert len(entry['dst_rect']) == 4
+
+
+def test_chunked_no_vrt_holes_attr_when_complete(two_by_two_vrt):
+    """When every source is on disk the chunked reader must not set
+    ``attrs['vrt_holes']`` (eager parity: empty hole list is omitted).
+    """
+    vrt_path, _ = two_by_two_vrt
+    result = read_vrt(vrt_path, chunks=(64, 64))
+    assert 'vrt_holes' not in result.attrs
+
+
+# ---------------------------------------------------------------------------
+# 8. Copilot review: integer source with no declared nodata must keep its
+#    integer dtype through the chunked path (no spurious float64 promotion).
+# ---------------------------------------------------------------------------
+
+def test_chunked_integer_no_nodata_keeps_source_dtype():
+    """A uint16 source with no <NoDataValue> declared must produce a
+    uint16 chunked DataArray, not float64. The eager path stays integer
+    in this case because its runtime ``mask.any()`` is False; the
+    chunked path approximates with a static "any band declares nodata?"
+    check, which yields the same answer here.
+    """
+    arr = np.arange(128 * 128, dtype=np.uint16).reshape(128, 128)
+    y = np.linspace(41.0, 40.0, 128)
+    x = np.linspace(-106.0, -105.0, 128)
+    raster = xr.DataArray(arr, dims=['y', 'x'],
+                          coords={'y': y, 'x': x},
+                          attrs={'crs': 4326})
+    td = tempfile.mkdtemp(prefix='tmp_1814_uint16_nonodata_')
+    tile_path = os.path.join(td, 'tile.tif')
+    to_geotiff(raster, tile_path)
+    vrt_path = os.path.join(td, 'mosaic.vrt')
+    # No ``nodata=`` passed: the VRT will not declare <NoDataValue> for
+    # this band, exercising the no-promotion branch.
+    _write_vrt_internal(vrt_path, [tile_path])
+
+    result = read_vrt(vrt_path, chunks=(32, 32))
+    assert result.dtype == np.uint16, (
+        f"expected uint16 (source dtype), got {result.dtype}; "
+        f"chunked path promoted to float64 despite no declared nodata"
+    )
+    computed = result.compute()
+    assert computed.dtype == np.uint16
+    np.testing.assert_array_equal(computed.values, arr)

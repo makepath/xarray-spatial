@@ -4131,6 +4131,9 @@ def _vrt_chunk_read(source, r0, c0, r1, c1, *,
     """
     from ._vrt import read_vrt as _read_vrt_internal
 
+    # TODO(#1825): this re-parses the VRT XML and re-validates source
+    # paths once per chunk task. Plumb the parent's parsed VRT through
+    # the task graph to remove the N+1 parse cost.
     arr, vrt = _read_vrt_internal(
         source, window=(r0, c0, r1, c1), band=band,
         max_pixels=max_pixels, missing_sources=missing_sources,
@@ -4220,11 +4223,16 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     with its own ``window=`` so only the sources intersecting the
     chunk's destination rectangle are decoded.
 
-    The eager :func:`read_vrt` populates ``attrs['vrt_holes']`` from
-    skipped sources; the chunked path does not aggregate per-task hole
-    records, so that attribute is not set here. The underlying
-    ``GeoTIFFFallbackWarning`` still fires from each worker when a
-    source is missing.
+    ``attrs['vrt_holes']`` is populated from a parse-time
+    ``os.path.exists`` sweep over every source referenced by the parsed
+    VRT; this preserves the eager-path contract documented in #1734 so
+    callers switching from eager to chunked can still detect partial
+    mosaics by attribute lookup (rather than monitoring the
+    ``GeoTIFFFallbackWarning`` stream). The check is a static
+    approximation of the eager path's per-source decode-time exception
+    handling: it catches the dominant "missing file" case but does not
+    detect decode-time codec failures, which surface as per-task
+    ``GeoTIFFFallbackWarning`` from each worker.
     """
     import os as _os
     import dask
@@ -4319,11 +4327,25 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
 
     # Compute the declared dtype. Match the internal reader's
     # ``np.result_type`` over per-band effective dtypes, then widen to
-    # float64 if any selected band has an integer dtype with a
-    # representable nodata sentinel (the eager path promotes that case
-    # on mask hits; declaring float64 up front keeps every block's
-    # dtype consistent with the dask array's metadata regardless of
-    # whether the chunk actually contains sentinel pixels).
+    # float64 only when at least one selected band declares an integer
+    # nodata sentinel that round-trips through the band's dtype.
+    #
+    # The eager path (``read_vrt`` at lines ~4033-4064) defers the
+    # promotion to runtime: it scans every band's pixels and promotes
+    # only if at least one sentinel hits. The chunked path cannot
+    # afford that scan up front (it would require decoding the mosaic
+    # the dask graph was constructed to defer), so this is a
+    # parse-time approximation. The trade-off:
+    #   * if a band declares nodata and no chunk contains the
+    #     sentinel, the chunked output is float64 where the eager
+    #     output would have stayed integer (acceptable: the user
+    #     asked the source for nodata, so they expect NaN masking);
+    #   * if a band does not declare nodata, both paths keep the
+    #     source integer dtype (handled by the ``promotes is False``
+    #     fall-through below).
+    # See also Copilot review on PR #1822.
+    # TODO(#1825): share dtype + scale/offset/sentinel logic with
+    # the eager path instead of re-implementing it here.
     effective_dtypes = []
     for vrt_band in selected_bands:
         eff = vrt_band.dtype
@@ -4437,16 +4459,43 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     if vrt.raster_type == 'point':
         attrs['raster_type'] = 'point'
 
-    # Surface the nodata sentinel for the selected band. The chunked
-    # path does not aggregate ``vrt.holes`` across tasks (per-task holes
-    # would need to be reduced by an extra delayed; not done here, see
-    # issue #1814 note in the docstring).
+    # Surface the nodata sentinel for the selected band.
     nodata_meta = None
     if vrt.bands:
         band_idx_for_nodata = band if band is not None else 0
         nodata_meta = vrt.bands[band_idx_for_nodata].nodata
         if nodata_meta is not None:
             attrs['nodata'] = nodata_meta
+
+    # Static hole detection: mirror the eager-path ``attrs['vrt_holes']``
+    # contract (#1734) by scanning every source referenced in the parsed
+    # VRT and recording the ones whose backing file does not exist on
+    # disk. The eager path discovers holes at decode time (per-source
+    # OSError / codec error) and aggregates them onto ``vrt.holes``;
+    # under chunked dispatch each per-task decode catches its own
+    # missing source and warns, but those records cannot be reduced
+    # back onto the parent DataArray without an extra synchronisation
+    # pass. The parse-time existence sweep catches the dominant
+    # missing-file case before scheduling and lets callers branch on
+    # ``"vrt_holes" in da.attrs`` exactly as with the eager reader.
+    # Empty list is omitted so the attr only appears when a hole is
+    # actually present. Each entry mirrors the eager schema:
+    # ``{'source', 'band', 'dst_rect', 'error'}``.
+    # TODO(#1825): the per-task path independently re-parses and
+    # re-resolves source paths; refactor to share the parent's scan.
+    chunked_holes: list[dict] = []
+    for vrt_band in vrt.bands:
+        for src in vrt_band.sources:
+            if not _os.path.exists(src.filename):
+                chunked_holes.append({
+                    'source': src.filename,
+                    'band': vrt_band.band_num,
+                    'dst_rect': (src.dst_rect.x_off, src.dst_rect.y_off,
+                                 src.dst_rect.x_size, src.dst_rect.y_size),
+                    'error': 'FileNotFoundError: source file not found',
+                })
+    if chunked_holes:
+        attrs['vrt_holes'] = chunked_holes
 
     if out_has_band_axis:
         dims = ['y', 'x', 'band']
