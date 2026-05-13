@@ -1893,23 +1893,34 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     _write_vrt_fn(vrt_path, tile_paths, relative=True, nodata=nodata)
 
 
-def _validate_chunks_arg(chunks):
+def _validate_chunks_arg(chunks, *, allow_none=False):
     """Validate the ``chunks`` kwarg shared across the dask read entry points.
 
     Centralises the rejection rule that ``read_geotiff_dask`` already
     runs so ``read_geotiff_gpu`` and ``read_vrt`` can share the same
-    error format. ``chunks=None`` is accepted (caller decides default);
-    anything else must be a positive int or a 2-tuple of positive ints.
-    Booleans are rejected because ``True``/``False`` are int subclasses
-    that would otherwise sneak through the integer check. Returns the
-    coerced int when given an ``np.integer`` scalar so downstream
-    ``isinstance(chunks, int)`` checks stay accurate.
+    error format. With ``allow_none=True`` a ``None`` value passes
+    through unchanged (used by entry points whose default is
+    ``chunks=None``, e.g. ``read_geotiff_gpu`` and ``read_vrt``).
+    With ``allow_none=False`` (default, matches ``read_geotiff_dask``)
+    a ``None`` is rejected with the same ``ValueError`` format as any
+    other non-int / non-tuple value, so callers see a clear
+    parameter-named error instead of a downstream ``TypeError`` from
+    the chunk-unpacking math.
+    Otherwise ``chunks`` must be a positive int or a 2-tuple of
+    positive ints. Booleans are rejected because ``True``/``False``
+    are int subclasses that would otherwise sneak through the integer
+    check. Returns the coerced int when given an ``np.integer`` scalar
+    so downstream ``isinstance(chunks, int)`` checks stay accurate.
 
     Mirrors the chunks-validation #1752 added to ``read_geotiff_dask``;
     extends it to the GPU read and VRT read entry points per #1776.
     """
     if chunks is None:
-        return chunks
+        if allow_none:
+            return chunks
+        raise ValueError(
+            f"chunks must be a positive int or (row, col) tuple of "
+            f"positive ints, got chunks=None.")
     if (isinstance(chunks, (int, np.integer))
             and not isinstance(chunks, bool)):
         if chunks <= 0:
@@ -2012,7 +2023,10 @@ def read_geotiff_dask(source: str, *,
     # ValueError, or empty chunk grids) with no indication that ``chunks``
     # was the problem. Shared with ``read_geotiff_gpu`` / ``read_vrt`` via
     # ``_validate_chunks_arg`` so all three entry points emit the same
-    # error format (#1752 / #1776).
+    # error format (#1752 / #1776). ``allow_none=False`` (the default)
+    # rejects ``chunks=None`` with the same ValueError; this entry point
+    # requires a concrete chunk size since the chunk-unpacking math below
+    # would otherwise fail with a confusing TypeError.
     chunks = _validate_chunks_arg(chunks)
 
     # ``open_geotiff`` already routes ``.vrt`` to ``read_vrt`` before
@@ -2712,8 +2726,9 @@ def read_geotiff_gpu(source: str, *,
     # surfaces the same error as ``read_geotiff_dask`` (#1776). Previously
     # ``chunks=0`` raised ``ZeroDivisionError`` deep in cupy/dask, and
     # ``chunks=-1`` was silently accepted (negative chunks fall out of
-    # the dask chunk grid as a no-op).
-    chunks = _validate_chunks_arg(chunks)
+    # the dask chunk grid as a no-op). ``chunks=None`` is the default
+    # (eager read), so allow it through here.
+    chunks = _validate_chunks_arg(chunks, allow_none=True)
     try:
         import cupy
     except ImportError:
@@ -3621,8 +3636,9 @@ def read_vrt(source: str, *,
     # Reject non-positive chunk sizes up front so the VRT dask path
     # surfaces the same error as ``read_geotiff_dask`` (#1776). Without
     # this check ``chunks=0`` raised ``ZeroDivisionError`` deep in dask
-    # and ``chunks=-1`` was silently accepted.
-    chunks = _validate_chunks_arg(chunks)
+    # and ``chunks=-1`` was silently accepted. ``chunks=None`` is the
+    # default (eager read), so allow it through here.
+    chunks = _validate_chunks_arg(chunks, allow_none=True)
 
     arr, vrt = _read_vrt_internal(source, window=window, band=band,
                                    max_pixels=max_pixels)

@@ -26,6 +26,7 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import (
+    read_geotiff_dask,
     read_geotiff_gpu,
     read_vrt,
     to_geotiff,
@@ -325,3 +326,41 @@ class TestNoDoubleValidationSideEffects:
         out = r.data
         if hasattr(out, 'compute'):
             out.compute()
+
+
+# -- chunks=None handling across the three dask entry points --------------
+
+
+class TestChunksNoneAcrossEntryPoints:
+    """``read_geotiff_gpu`` and ``read_vrt`` both default to
+    ``chunks=None`` (eager read), so the factored ``_validate_chunks_arg``
+    must let ``None`` through for them. ``read_geotiff_dask`` does not
+    accept ``None`` -- its chunk-unpacking math (``ch_h, ch_w = chunks``)
+    would otherwise fail with a confusing ``TypeError`` instead of a
+    parameter-named ``ValueError``. The ``allow_none`` flag on the
+    validator pins both behaviours.
+    """
+
+    def test_read_geotiff_dask_chunks_none_raises_value_error(
+            self, tmp_path):
+        """Regression for the PR-1779 review: ``read_geotiff_dask(chunks=None)``
+        must surface a clear ``ValueError`` naming the parameter, not a
+        downstream ``TypeError`` from the chunk-unpacking math."""
+        path = _make_tif(tmp_path)
+        with pytest.raises(ValueError, match='chunks'):
+            read_geotiff_dask(path, chunks=None)
+
+    def test_read_vrt_chunks_none_returns_eager(self, tmp_path):
+        """``read_vrt`` defaults to ``chunks=None`` (eager numpy result);
+        the validator must let ``None`` through unchanged."""
+        vrt = _make_vrt(tmp_path)
+        r = read_vrt(vrt, chunks=None)
+        assert r.shape == (10, 10)
+
+    @_gpu_only
+    def test_read_geotiff_gpu_chunks_none_returns_eager(self, tmp_path):
+        """``read_geotiff_gpu`` defaults to ``chunks=None`` (eager cupy
+        result); the validator must let ``None`` through unchanged."""
+        path = _make_tif(tmp_path)
+        r = read_geotiff_gpu(path, chunks=None)
+        assert r.shape == (10, 10)
