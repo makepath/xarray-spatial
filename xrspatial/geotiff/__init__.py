@@ -897,14 +897,21 @@ def open_geotiff(source: str | BinaryIO, *,
             # An out-of-range sentinel (e.g. uint16 file with
             # GDAL_NODATA="-9999") cannot match any decoded pixel, so the
             # mask would be all-False -- skip the cast that would otherwise
-            # raise OverflowError and leave the array unchanged.
-            nodata_int = int(nodata)
-            info = np.iinfo(arr.dtype)
-            if info.min <= nodata_int <= info.max:
-                mask = arr == arr.dtype.type(nodata_int)
-                if mask.any():
-                    arr = arr.astype(np.float64)
-                    arr[mask] = np.nan
+            # raise OverflowError and leave the array unchanged. A
+            # non-finite sentinel ("NaN" / "Inf" GDAL_NODATA strings) also
+            # cannot match an integer pixel, so the ``int(nodata)`` cast
+            # below would raise ValueError; gate on ``np.isfinite`` first
+            # to mirror ``_resolve_masked_fill`` / ``_sparse_fill_value``
+            # in ``_reader.py`` (#1774). attrs['nodata'] still carries the
+            # raw sentinel so a write round-trip preserves the tag.
+            if np.isfinite(nodata):
+                nodata_int = int(nodata)
+                info = np.iinfo(arr.dtype)
+                if info.min <= nodata_int <= info.max:
+                    mask = arr == arr.dtype.type(nodata_int)
+                    if mask.any():
+                        arr = arr.astype(np.float64)
+                        arr[mask] = np.nan
 
     if dtype is not None:
         target = np.dtype(dtype)
@@ -969,12 +976,18 @@ def _apply_nodata_mask_gpu(arr_gpu, nodata):
                                  arr_dtype.type('nan'), arr_gpu)
         return arr_gpu
     if arr_dtype.kind in ('u', 'i'):
-        nodata_int = int(nodata)
-        info = np.iinfo(arr_dtype)
         # Out-of-range sentinels (e.g. uint16 + GDAL_NODATA="-9999") cannot
         # match any decoded pixel; skip the cast that would otherwise raise
-        # OverflowError. attrs['nodata'] is still set by the caller so the
-        # original sentinel survives a write round-trip.
+        # OverflowError. A non-finite sentinel ("NaN" / "Inf" GDAL_NODATA
+        # strings) also cannot match an integer pixel and would raise
+        # ValueError on ``int(nodata)``; gate on ``np.isfinite`` first to
+        # mirror ``_resolve_masked_fill`` in ``_reader.py`` (#1774).
+        # attrs['nodata'] is still set by the caller so the original
+        # sentinel survives a write round-trip.
+        if not np.isfinite(nodata):
+            return arr_gpu
+        nodata_int = int(nodata)
+        info = np.iinfo(arr_dtype)
         if not (info.min <= nodata_int <= info.max):
             return arr_gpu
         sentinel = arr_dtype.type(nodata_int)
@@ -2046,9 +2059,17 @@ def read_geotiff_dask(source: str, *,
     # Nodata masking promotes integer arrays to float64 (for NaN).
     # Validate against the effective dtype, not the raw file dtype.
     # An out-of-range sentinel (e.g. uint16 file + nodata=-9999) is a
-    # no-op for masking and leaves the file dtype unchanged.
+    # no-op for masking and leaves the file dtype unchanged. A
+    # non-finite sentinel ("NaN" / "Inf" GDAL_NODATA strings) cannot
+    # match an integer pixel either and is short-circuited via the
+    # ``np.isfinite`` gate so the ``int(...)`` cast never sees NaN
+    # (#1774). The try/except keeps callers that pass an exotic
+    # ``nodata`` type (e.g. complex) on the no-op path rather than
+    # surfacing an opaque error here.
     effective_dtype = file_dtype
-    if nodata is not None and file_dtype.kind in ('u', 'i'):
+    if (nodata is not None
+            and file_dtype.kind in ('u', 'i')
+            and np.isfinite(nodata)):
         try:
             _nd_int = int(nodata)
             _info = np.iinfo(file_dtype)
@@ -2290,12 +2311,17 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             # avoid a peak-memory doubler on every dask chunk.
             if arr.dtype.kind == 'f' and not np.isnan(nodata):
                 arr[arr == arr.dtype.type(nodata)] = np.nan
-            elif arr.dtype.kind in ('u', 'i'):
-                nodata_int = int(nodata)
-                info = np.iinfo(arr.dtype)
+            elif arr.dtype.kind in ('u', 'i') and np.isfinite(nodata):
                 # Out-of-range sentinels (e.g. uint16 + nodata=-9999)
                 # cannot match any pixel; skip the cast that would
                 # otherwise raise OverflowError and leave arr unchanged.
+                # Non-finite sentinels ("NaN" / "Inf" GDAL_NODATA strings)
+                # also cannot match an integer pixel and would raise
+                # ValueError on ``int(nodata)``; the ``np.isfinite`` gate
+                # mirrors ``_resolve_masked_fill`` in ``_reader.py``
+                # (#1774).
+                nodata_int = int(nodata)
+                info = np.iinfo(arr.dtype)
                 if info.min <= nodata_int <= info.max:
                     mask = arr == arr.dtype.type(nodata_int)
                     if mask.any():
