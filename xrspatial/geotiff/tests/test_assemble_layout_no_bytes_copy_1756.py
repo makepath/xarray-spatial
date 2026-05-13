@@ -156,16 +156,25 @@ def test_assemble_tiff_round_trips_through_disk(tmp_path):
     np.testing.assert_array_equal(da.values, arr.values)
 
 
-def test_no_bytes_copy_in_assemble_path():
-    """Confirm the assembler does NOT call ``bytes()`` on its working buffer.
+def test_assemble_tiff_output_is_mutable_buffer_with_valid_header():
+    """Verify the assembler returns a mutable ``bytearray`` whose buffer
+    slices behave correctly for downstream consumers.
 
-    A monkey-patched ``bytes`` lets us prove the assembler never round-trips
-    the buffer through ``bytes(bytearray)``. We patch ``builtins.bytes``
-    inside the writer module's namespace; the public ``write`` path uses
-    ``bytes(...)`` in other places (e.g. struct packing of small headers,
-    bytearray slicing) that must keep working, so we count calls instead
-    of forbidding them outright. The fix guarantees the assembler does
-    not perform a full-buffer copy via ``bytes(output)`` on its return.
+    A regression that re-introduced ``return bytes(output)`` in the
+    assembler would surface here in two ways:
+
+    1. ``isinstance(out, bytearray)`` would fail (the type would be
+       ``bytes``, immutable).
+    2. ``out[:16]`` would be ``bytes`` rather than ``bytearray``, and
+       the validation slice that feeds ``parse_header`` in ``write``
+       would carry the wrong type.
+
+    We do not try to monkey-patch the builtin ``bytes``: the writer
+    module looks ``bytes`` up via ``builtins``, so patching the
+    module namespace would not intercept calls without invasive
+    rebinding. The type and slice-type assertions below are sufficient
+    to catch a re-introduction of the full-buffer copy in the assembler
+    return statement, which was the specific regression fixed in #1756.
     """
     arr = np.arange(64, dtype=np.uint8).reshape(8, 8)
     parts = _build_parts(arr)
