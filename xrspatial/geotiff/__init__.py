@@ -1268,16 +1268,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # the tile grid as ``math.ceil(width / tile_size)``; tile_size=0 hits
     # ZeroDivisionError deep inside the writer, and negative values
     # produce a nonsensical tile grid. tiled=False ignores tile_size, so
-    # only validate when tiled output is actually requested.
+    # only validate when tiled output is actually requested. Shared with
+    # ``write_geotiff_gpu`` via ``_validate_tile_size_arg`` so both
+    # writers emit the same error format (#1752 / #1776).
     if tiled:
-        if not isinstance(tile_size, (int, np.integer)) or isinstance(
-                tile_size, bool):
-            raise ValueError(
-                f"tile_size must be a positive int, got "
-                f"{tile_size!r} (type {type(tile_size).__name__}).")
-        if tile_size <= 0:
-            raise ValueError(
-                f"tile_size must be a positive int, got tile_size={tile_size}.")
+        _validate_tile_size_arg(tile_size)
 
     # Up-front validation: catch bad compression names before they reach
     # any of the deeper write paths (streaming, GPU, VRT, COG) where the
@@ -1898,6 +1893,68 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     _write_vrt_fn(vrt_path, tile_paths, relative=True, nodata=nodata)
 
 
+def _validate_chunks_arg(chunks):
+    """Validate the ``chunks`` kwarg shared across the dask read entry points.
+
+    Centralises the rejection rule that ``read_geotiff_dask`` already
+    runs so ``read_geotiff_gpu`` and ``read_vrt`` can share the same
+    error format. ``chunks=None`` is accepted (caller decides default);
+    anything else must be a positive int or a 2-tuple of positive ints.
+    Booleans are rejected because ``True``/``False`` are int subclasses
+    that would otherwise sneak through the integer check. Returns the
+    coerced int when given an ``np.integer`` scalar so downstream
+    ``isinstance(chunks, int)`` checks stay accurate.
+
+    Mirrors the chunks-validation #1752 added to ``read_geotiff_dask``;
+    extends it to the GPU read and VRT read entry points per #1776.
+    """
+    if chunks is None:
+        return chunks
+    if (isinstance(chunks, (int, np.integer))
+            and not isinstance(chunks, bool)):
+        if chunks <= 0:
+            raise ValueError(
+                f"chunks must be a positive int or (row, col) tuple of "
+                f"positive ints, got chunks={chunks}.")
+        return int(chunks)
+    if isinstance(chunks, tuple):
+        if len(chunks) != 2:
+            raise ValueError(
+                f"chunks tuple must have length 2 (row, col), got "
+                f"chunks={chunks!r} with length {len(chunks)}.")
+        for _v in chunks:
+            if (not isinstance(_v, (int, np.integer))
+                    or isinstance(_v, bool)
+                    or _v <= 0):
+                raise ValueError(
+                    f"chunks must be a positive int or (row, col) tuple "
+                    f"of positive ints, got chunks={chunks!r}.")
+        return chunks
+    raise ValueError(
+        f"chunks must be a positive int or (row, col) tuple of "
+        f"positive ints, got chunks={chunks!r} "
+        f"(type {type(chunks).__name__}).")
+
+
+def _validate_tile_size_arg(tile_size):
+    """Validate the ``tile_size`` kwarg for the tiled writer entry points.
+
+    Centralises the rejection rule ``to_geotiff`` already runs so
+    ``write_geotiff_gpu`` can share the same error format. ``tile_size``
+    must be a positive int; booleans are rejected (``True == 1`` would
+    otherwise sneak through), floats are rejected because tile dimensions
+    are TIFF SHORT tags (#1776).
+    """
+    if not isinstance(tile_size, (int, np.integer)) or isinstance(
+            tile_size, bool):
+        raise ValueError(
+            f"tile_size must be a positive int, got "
+            f"{tile_size!r} (type {type(tile_size).__name__}).")
+    if tile_size <= 0:
+        raise ValueError(
+            f"tile_size must be a positive int, got tile_size={tile_size}.")
+
+
 def read_geotiff_dask(source: str, *,
                       dtype: str | np.dtype | None = None,
                       chunks: int | tuple = 512,
@@ -1953,34 +2010,10 @@ def read_geotiff_dask(source: str, *,
     # Reject non-positive chunk sizes up front. ``chunks=0`` and negative
     # values otherwise propagate into dask chunk math (``range(0, N, 0)``
     # ValueError, or empty chunk grids) with no indication that ``chunks``
-    # was the problem. ``chunks`` may be an int or a (row, col) tuple.
-    # Accept ``np.integer`` scalars (e.g. ``np.int64(256)``) the same way
-    # the tuple branch does, then coerce to plain ``int`` so downstream
-    # ``isinstance(chunks, int)`` checks keep working unchanged.
-    if (isinstance(chunks, (int, np.integer))
-            and not isinstance(chunks, bool)):
-        if chunks <= 0:
-            raise ValueError(
-                f"chunks must be a positive int or (row, col) tuple of "
-                f"positive ints, got chunks={chunks}.")
-        chunks = int(chunks)
-    elif isinstance(chunks, tuple):
-        if len(chunks) != 2:
-            raise ValueError(
-                f"chunks tuple must have length 2 (row, col), got "
-                f"chunks={chunks!r} with length {len(chunks)}.")
-        for _v in chunks:
-            if (not isinstance(_v, (int, np.integer))
-                    or isinstance(_v, bool)
-                    or _v <= 0):
-                raise ValueError(
-                    f"chunks must be a positive int or (row, col) tuple "
-                    f"of positive ints, got chunks={chunks!r}.")
-    else:
-        raise ValueError(
-            f"chunks must be a positive int or (row, col) tuple of "
-            f"positive ints, got chunks={chunks!r} "
-            f"(type {type(chunks).__name__}).")
+    # was the problem. Shared with ``read_geotiff_gpu`` / ``read_vrt`` via
+    # ``_validate_chunks_arg`` so all three entry points emit the same
+    # error format (#1752 / #1776).
+    chunks = _validate_chunks_arg(chunks)
 
     # ``open_geotiff`` already routes ``.vrt`` to ``read_vrt`` before
     # reaching here, so this branch is only hit when ``read_geotiff_dask``
@@ -2675,6 +2708,12 @@ def read_geotiff_gpu(source: str, *,
     if gpu not in ('auto', 'strict'):
         raise ValueError(
             f"on_gpu_failure must be 'auto' or 'strict', got {gpu!r}")
+    # Reject non-positive chunk sizes up front so the GPU dask+cupy path
+    # surfaces the same error as ``read_geotiff_dask`` (#1776). Previously
+    # ``chunks=0`` raised ``ZeroDivisionError`` deep in cupy/dask, and
+    # ``chunks=-1`` was silently accepted (negative chunks fall out of
+    # the dask chunk grid as a no-op).
+    chunks = _validate_chunks_arg(chunks)
     try:
         import cupy
     except ImportError:
@@ -3269,6 +3308,12 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             "compression is tile-based; the strip layout is not "
             "implemented on the GPU path. Use to_geotiff(..., gpu=False, "
             "tiled=False) for strip output on CPU.")
+    # Reject non-positive tile_size up front so the GPU writer surfaces
+    # the same error as ``to_geotiff`` (#1776). Previously ``tile_size=0``
+    # raised ``ZeroDivisionError`` from gpu_compress_tiles, ``tile_size=-1``
+    # surfaced as ``struct.error`` from the SHORT-tag encoder, and
+    # ``tile_size=256.0`` raised ``TypeError`` deep in the kernel.
+    _validate_tile_size_arg(tile_size)
     if max_z_error < 0:
         raise ValueError(
             f"max_z_error must be >= 0, got {max_z_error}")
@@ -3572,6 +3617,12 @@ def read_vrt(source: str, *,
     from ._vrt import read_vrt as _read_vrt_internal
 
     source = _coerce_path(source)
+
+    # Reject non-positive chunk sizes up front so the VRT dask path
+    # surfaces the same error as ``read_geotiff_dask`` (#1776). Without
+    # this check ``chunks=0`` raised ``ZeroDivisionError`` deep in dask
+    # and ``chunks=-1`` was silently accepted.
+    chunks = _validate_chunks_arg(chunks)
 
     arr, vrt = _read_vrt_internal(source, window=window, band=band,
                                    max_pixels=max_pixels)
