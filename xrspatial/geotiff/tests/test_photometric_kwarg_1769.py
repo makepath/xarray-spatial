@@ -23,9 +23,6 @@ These tests pin the new defaults and the override behaviour.
 """
 from __future__ import annotations
 
-import os
-import tempfile
-
 import numpy as np
 import pytest
 import xarray as xr
@@ -180,6 +177,22 @@ def test_rgba_requires_four_bands_1769(tmp_path):
     path = str(tmp_path / 'rgba_three_band_1769.tif')
     with pytest.raises(ValueError, match='at least 4 bands'):
         to_geotiff(_to_da(arr), path, photometric='rgba')
+
+
+def test_rgb_requires_three_bands_1769(tmp_path):
+    """photometric='rgb' on a 2-band raster surfaces a clear error."""
+    arr = np.zeros((16, 16, 2), dtype=np.uint8)
+    path = str(tmp_path / 'rgb_two_band_1769.tif')
+    with pytest.raises(ValueError, match='at least 3 bands'):
+        to_geotiff(_to_da(arr), path, photometric='rgb')
+
+
+def test_explicit_int_rgb_requires_three_bands_1769(tmp_path):
+    """photometric=2 (RGB by int) on a 1-band raster also raises."""
+    arr = np.zeros((16, 16), dtype=np.uint8)
+    path = str(tmp_path / 'rgb_int_one_band_1769.tif')
+    with pytest.raises(ValueError, match='at least 3 bands'):
+        to_geotiff(_to_da(arr), path, photometric=2)
 
 
 def test_dask_streaming_default_is_minisblack_1769(tmp_path):

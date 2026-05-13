@@ -141,6 +141,10 @@ def _resolve_photometric(photometric, samples_per_pixel: int):
         return PHOTOMETRIC_RGB, [2] + [0] * (n_extra - 1)
 
     photo_int = int(resolved)
+    if photo_int == PHOTOMETRIC_RGB and samples_per_pixel < 3:
+        raise ValueError(
+            f"photometric=RGB requires at least 3 bands, got "
+            f"samples_per_pixel={samples_per_pixel}.")
     consumed = 3 if photo_int == PHOTOMETRIC_RGB else 1
     if samples_per_pixel > consumed:
         return photo_int, [0] * (samples_per_pixel - consumed)
@@ -893,6 +897,8 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
     user_extras_override = None
     if extra_tags is not None:
         for _et in extra_tags:
+            if _et[0] not in _OVERRIDABLE_AUTO_TAG_IDS:
+                continue
             if _et[0] == TAG_PHOTOMETRIC:
                 user_photometric_override = _et
             elif _et[0] == TAG_EXTRA_SAMPLES:
@@ -1578,6 +1584,8 @@ def write_streaming(dask_data, path: str, *,
     user_extras_override = None
     if extra_tags is not None:
         for _et in extra_tags:
+            if _et[0] not in _OVERRIDABLE_AUTO_TAG_IDS:
+                continue
             if _et[0] == TAG_PHOTOMETRIC:
                 user_photometric_override = _et
             elif _et[0] == TAG_EXTRA_SAMPLES:

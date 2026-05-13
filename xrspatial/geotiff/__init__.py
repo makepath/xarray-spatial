@@ -1175,7 +1175,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                gpu: bool | None = None,
                streaming_buffer_bytes: int = 256 * 1024 * 1024,
                max_z_error: float = 0.0,
-               photometric='auto') -> None:
+               photometric: str | int = 'auto') -> None:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Dask-backed DataArrays are written in streaming mode: one tile-row
@@ -3187,7 +3187,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       bigtiff: bool | None = None,
                       max_z_error: float = 0.0,
                       streaming_buffer_bytes: int = 256 * 1024 * 1024,
-                      photometric='auto') -> None:
+                      photometric: str | int = 'auto') -> None:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
 
     Tiles are extracted and compressed on the GPU via nvCOMP, then
