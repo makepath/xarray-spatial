@@ -6,7 +6,9 @@ TileLength to be multiples of 16, so values like ``tile_size=17``
 produced files that the in-repo reader round-tripped but that strict
 TIFF tools (libtiff, GDAL) may reject. ``to_geotiff`` now refuses
 non-multiples of 16 when ``tiled=True`` and suggests the nearest
-valid value(s).
+valid value(s). ``write_geotiff_gpu`` is always tiled and applies the
+same check up front (before any cupy import), so the GPU validation
+is exercised on CPU-only runs too.
 """
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import to_geotiff
+from xrspatial.geotiff import to_geotiff, write_geotiff_gpu
 
 
 def _make_da(shape=(32, 32)):
@@ -111,3 +113,39 @@ def test_tile_size_8_message_suggests_16_only_1767(tmp_path):
     assert '16' in msg
     # 0 is not a valid tile size and should not appear as a suggestion.
     assert 'tile_size=0' not in msg
+
+
+def test_write_geotiff_gpu_tile_size_17_rejected_1767(tmp_path):
+    """``write_geotiff_gpu`` shares the multiple-of-16 check with
+    ``to_geotiff``. The validation runs before any cupy import, so the
+    bad-tile-size path can be exercised on CPU-only runs.
+    """
+    da = _make_da()
+    out = os.path.join(str(tmp_path), 'gpu_tile_size_17_1767.tif')
+    with pytest.raises(ValueError) as exc:
+        write_geotiff_gpu(da, out, tile_size=17)
+    msg = str(exc.value)
+    assert 'tile_size' in msg
+    assert '17' in msg
+    # Hint should suggest nearest valid choices (16 and 32).
+    assert '16' in msg and '32' in msg
+
+
+def test_write_geotiff_gpu_tile_size_zero_rejected_1767(tmp_path):
+    """``tile_size=0`` is rejected as non-positive before the
+    multiple-of-16 branch fires.
+    """
+    da = _make_da()
+    out = os.path.join(str(tmp_path), 'gpu_tile_size_0_1767.tif')
+    with pytest.raises(ValueError, match=r'tile_size.*positive'):
+        write_geotiff_gpu(da, out, tile_size=0)
+
+
+def test_write_geotiff_gpu_tile_size_float_rejected_1767(tmp_path):
+    """``tile_size`` must be an int; floats are rejected by the shared
+    helper before any GPU machinery is touched.
+    """
+    da = _make_da()
+    out = os.path.join(str(tmp_path), 'gpu_tile_size_float_1767.tif')
+    with pytest.raises(ValueError, match=r'tile_size.*positive int'):
+        write_geotiff_gpu(da, out, tile_size=256.0)
