@@ -3480,10 +3480,12 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                     factor *= 2
         else:
             # Validate explicit lists: power-of-two factors >= 2,
-            # strictly increasing. Previously the values were ignored
-            # and only the list length mattered (issue #1766).
+            # strictly increasing, feasible for the input shape.
+            # Previously the values were ignored and only the list
+            # length mattered (issue #1766).
             from ._writer import _validate_overview_levels
-            overview_levels = _validate_overview_levels(overview_levels)
+            overview_levels = _validate_overview_levels(
+                overview_levels, height=height, width=width)
 
         # Pass ``nodata`` so the GPU reducer masks the sentinel back to
         # NaN before averaging. Without this, the NaN->sentinel rewrite

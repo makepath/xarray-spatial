@@ -251,7 +251,7 @@ def test_overview_levels_rejects_bool(tmp_path):
 def test_overview_levels_rejects_non_list_type(tmp_path):
     arr = np.zeros((128, 128), dtype=np.uint8)
     path = str(tmp_path / f"{STEM}_reject_str.tif")
-    with pytest.raises(ValueError, match="list of ints"):
+    with pytest.raises(ValueError, match="list or tuple of ints"):
         write(arr, path, compression='none', tiled=True, tile_size=32,
               cog=True, overview_levels="2,4,8")
 
@@ -272,6 +272,40 @@ def test_overview_levels_empty_list(tmp_path):
     write(arr, path, compression='none', tiled=True, tile_size=32,
           cog=True, overview_levels=[])
     assert _ifd_dimensions(path) == [(128, 128)]
+
+
+def test_overview_levels_rejects_factor_too_large_for_shape(tmp_path):
+    """Factors that would shrink the raster below 1 pixel raise.
+
+    Without the up-front shape check, the writer would silently emit
+    a zero-sized overview IFD (``_block_reduce_2d`` returns shape
+    ``(0, 0)`` once the input dim is below 2 and stays there on
+    subsequent halvings).
+    """
+    arr = np.zeros((64, 64), dtype=np.uint8)
+    path = str(tmp_path / f"{STEM}_too_large.tif")
+    with pytest.raises(ValueError, match="too large for input shape"):
+        write(arr, path, compression='none', tiled=True, tile_size=8,
+              cog=True, overview_levels=[128])
+
+
+def test_overview_levels_factor_at_shape_floor_is_allowed(tmp_path):
+    """``factor == min(h, w)`` is feasible (decimates to 1x1)."""
+    arr = np.zeros((64, 64), dtype=np.uint8)
+    path = str(tmp_path / f"{STEM}_at_floor.tif")
+    write(arr, path, compression='none', tiled=True, tile_size=8,
+          cog=True, overview_levels=[64])
+    assert _ifd_dimensions(path) == [(64, 64), (1, 1)]
+
+
+def test_overview_levels_rejects_factor_too_large_non_square(tmp_path):
+    """Rectangular shape: the smaller dim sets the feasibility floor."""
+    arr = np.zeros((512, 16), dtype=np.uint8)
+    path = str(tmp_path / f"{STEM}_rect_too_large.tif")
+    # Height/16 = 32 OK, but width/32 = 0 -> reject.
+    with pytest.raises(ValueError, match="too large for input shape"):
+        write(arr, path, compression='none', tiled=True, tile_size=8,
+              cog=True, overview_levels=[32])
 
 
 # ---------------------------------------------------------------------------

@@ -151,7 +151,7 @@ OVERVIEW_METHODS = ('mean', 'nearest', 'min', 'max', 'median', 'mode', 'cubic')
 _MAX_OVERVIEW_LEVELS = 8
 
 
-def _validate_overview_levels(overview_levels):
+def _validate_overview_levels(overview_levels, height=None, width=None):
     """Validate and normalise an explicit ``overview_levels`` list.
 
     Each entry is a decimation factor relative to full resolution.
@@ -160,6 +160,13 @@ def _validate_overview_levels(overview_levels):
     2x decimation per step (issue #1766 — prior to that fix, the values
     were ignored and only the list length mattered).
 
+    When ``height`` and ``width`` are supplied, each factor is also
+    checked against the input shape: a factor F is feasible only if
+    ``height // F >= 1`` and ``width // F >= 1``. Asking for a factor
+    that would reduce the source below 1 pixel in either dimension
+    raises ``ValueError`` instead of silently writing a zero-sized
+    overview IFD.
+
     Returns the validated list of ints. ``None`` passes through so the
     caller can run its auto-generation path.
     """
@@ -167,7 +174,7 @@ def _validate_overview_levels(overview_levels):
         return None
     if not isinstance(overview_levels, (list, tuple)):
         raise ValueError(
-            f"overview_levels must be a list of ints, got "
+            f"overview_levels must be a list or tuple of ints, got "
             f"{type(overview_levels).__name__}.")
     if len(overview_levels) == 0:
         return []
@@ -200,6 +207,18 @@ def _validate_overview_levels(overview_levels):
                 f"overview_levels[{i}]={level} is not a power of two. "
                 f"Only power-of-two decimation factors are supported "
                 f"(2, 4, 8, 16, ...).")
+        # Shape feasibility: refuse factors that would shrink the
+        # raster below 1 pixel. ``_block_reduce_2d`` halves via
+        # ``(dim // 2) * 2`` which produces a zero-sized array once
+        # ``dim < 2``, and chaining further halvings keeps it at zero.
+        # Without this check the writer silently emits zero-sized
+        # overview IFDs.
+        if height is not None and width is not None:
+            if height // level < 1 or width // level < 1:
+                raise ValueError(
+                    f"overview_levels[{i}]={level} is too large for "
+                    f"input shape ({height}, {width}); decimation "
+                    f"would produce a zero-sized overview.")
         cleaned.append(level)
         prev = level
     return cleaned
@@ -1320,10 +1339,12 @@ def write(data: np.ndarray, path: str, *,
                     factor *= 2
         else:
             # Validate explicit lists. Each entry is a power-of-two
-            # decimation factor >= 2, strictly increasing. The previous
-            # behaviour silently ignored the values and used the list
-            # length as the halving count (issue #1766).
-            overview_levels = _validate_overview_levels(overview_levels)
+            # decimation factor >= 2, strictly increasing, and feasible
+            # for the input shape. The previous behaviour silently
+            # ignored the values and used the list length as the
+            # halving count (issue #1766).
+            overview_levels = _validate_overview_levels(
+                overview_levels, height=h, width=w)
 
         # Overview reductions need the *unmasked* float array so that
         # ``np.nanmean`` / ``np.nanmin`` / ``np.nanmax`` / ``np.nanmedian``
