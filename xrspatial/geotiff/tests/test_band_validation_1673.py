@@ -40,7 +40,7 @@ def multiband_tiff_path(tmp_path):
         attrs={'crs': 4326},
     )
     p = tmp_path / 'mb_1673.tif'
-    to_geotiff(da, str(p), tile_size=4)
+    to_geotiff(da, str(p), tile_size=16)
     return str(p), arr
 
 

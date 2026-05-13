@@ -141,7 +141,7 @@ class TestWriteGeotiffGpuPredictor2Uint8:
         path = str(tmp_path / 'gpu_pred2_u8_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=True,
-                          tile_size=8)
+                          tile_size=16)
 
         # Round-trip through the public reader
         out = open_geotiff(path)
@@ -158,7 +158,7 @@ class TestWriteGeotiffGpuPredictor2Uint8:
         path = str(tmp_path / 'gpu_pred2_int_u8_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=2,
-                          tile_size=8)
+                          tile_size=16)
 
         out = open_geotiff(path)
         np.testing.assert_array_equal(out.values, arr)
@@ -180,7 +180,7 @@ class TestWriteGeotiffGpuPredictor2Uint8:
         path = str(tmp_path / 'gpu_pred2_u8_3band_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=2,
-                          tile_size=8)
+                          tile_size=16)
 
         out = open_geotiff(path)
         np.testing.assert_array_equal(out.values, arr)
@@ -199,7 +199,7 @@ class TestWriteGeotiffGpuPredictor2Uint8:
         path = str(tmp_path / 'gpu_no_pred_u8_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=False,
-                          tile_size=8)
+                          tile_size=16)
 
         out = open_geotiff(path)
         np.testing.assert_array_equal(out.values, arr)
@@ -223,7 +223,7 @@ class TestWriteGeotiffGpuPredictor2Uint16:
         path = str(tmp_path / 'gpu_pred2_u16_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=2,
-                          tile_size=8)
+                          tile_size=16)
 
         out = open_geotiff(path)
         np.testing.assert_array_equal(out.values, arr)
@@ -250,7 +250,7 @@ class TestWriteGeotiffGpuPredictor2Int32:
         path = str(tmp_path / 'gpu_pred2_i32_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=2,
-                          tile_size=8)
+                          tile_size=16)
 
         out = open_geotiff(path)
         np.testing.assert_array_equal(out.values, arr)
@@ -278,7 +278,7 @@ class TestWriteGeotiffGpuPredictor3Float:
         path = str(tmp_path / 'gpu_pred3_f32_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=3,
-                          tile_size=8)
+                          tile_size=16)
 
         out = open_geotiff(path)
         # FP predictor is lossless: equality, not allclose
@@ -293,7 +293,7 @@ class TestWriteGeotiffGpuPredictor3Float:
         path = str(tmp_path / 'gpu_pred3_f64_2026_05_12_v2.tif')
 
         write_geotiff_gpu(da, path, compression='deflate', predictor=3,
-                          tile_size=8)
+                          tile_size=16)
 
         out = open_geotiff(path)
         np.testing.assert_array_equal(out.values, arr)
@@ -309,7 +309,7 @@ class TestWriteGeotiffGpuPredictor3Float:
         with pytest.raises(ValueError,
                            match=r"predictor=3.*requires float"):
             write_geotiff_gpu(da, path, compression='deflate', predictor=3,
-                              tile_size=8)
+                              tile_size=16)
 
 
 @_gpu_only
@@ -333,9 +333,9 @@ class TestWriteGeotiffGpuPredictorCpuParity:
         gpu_path = str(tmp_path / 'gpu_pred2_u16_v2.tif')
 
         to_geotiff(_da_with_float_coords(arr), cpu_path,
-                   compression='deflate', predictor=2, tile_size=8)
+                   compression='deflate', predictor=2, tile_size=16)
         write_geotiff_gpu(_da_with_float_coords(cupy.asarray(arr)), gpu_path,
-                          compression='deflate', predictor=2, tile_size=8)
+                          compression='deflate', predictor=2, tile_size=16)
 
         cpu_out = open_geotiff(cpu_path).values
         gpu_out = open_geotiff(gpu_path).values
@@ -351,9 +351,9 @@ class TestWriteGeotiffGpuPredictorCpuParity:
         gpu_path = str(tmp_path / 'gpu_pred3_f32_v2.tif')
 
         to_geotiff(_da_with_float_coords(arr), cpu_path,
-                   compression='deflate', predictor=3, tile_size=8)
+                   compression='deflate', predictor=3, tile_size=16)
         write_geotiff_gpu(_da_with_float_coords(cupy.asarray(arr)), gpu_path,
-                          compression='deflate', predictor=3, tile_size=8)
+                          compression='deflate', predictor=3, tile_size=16)
 
         cpu_out = open_geotiff(cpu_path).values
         gpu_out = open_geotiff(gpu_path).values

@@ -104,8 +104,7 @@ _MODE_4x4_EXPECTED = np.array([[1, 5], [2, 3]], dtype=np.uint8)
 
 
 def _mode_8x8_uint8() -> np.ndarray:
-    """8x8 uint8 raster -- big enough for two tiles at tile_size=4 with
-    a deterministic mode per 2x2 block on the level-1 overview."""
+    """8x8 uint8 raster with deterministic mode per 2x2 level-1 block."""
     rng = np.random.default_rng(seed=1740)
     # Use a small categorical range so ties are common; the GPU mode
     # branch falls back to the CPU implementation, so the result must
@@ -191,7 +190,7 @@ def test_write_geotiff_gpu_cog_overview_resampling_mode(tmp_path):
     p = str(tmp_path / 'cog_mode_gpu_1740.tif')
     write_geotiff_gpu(
         da, p, cog=True, compression='deflate', tiled=True,
-        tile_size=4, overview_levels=[2],
+        tile_size=16, overview_levels=[2],
         overview_resampling='mode',
     )
 
@@ -220,7 +219,7 @@ def test_to_geotiff_gpu_cog_overview_resampling_mode(tmp_path):
     p = str(tmp_path / 'cog_mode_to_geotiff_gpu_1740.tif')
     to_geotiff(
         da, p, gpu=True, cog=True, compression='deflate', tiled=True,
-        tile_size=4, overview_levels=[2],
+        tile_size=16, overview_levels=[2],
         overview_resampling='mode',
     )
 
@@ -250,7 +249,7 @@ def test_gpu_vs_cpu_mode_overview_pixel_parity(tmp_path):
     p_cpu = str(tmp_path / 'cog_mode_cpu_1740.tif')
     to_geotiff(
         da_cpu, p_cpu, cog=True, compression='deflate', tiled=True,
-        tile_size=4, overview_levels=[2],
+        tile_size=16, overview_levels=[2],
         overview_resampling='mode',
     )
 
@@ -261,7 +260,7 @@ def test_gpu_vs_cpu_mode_overview_pixel_parity(tmp_path):
     p_gpu = str(tmp_path / 'cog_mode_gpu_via_to_geotiff_1740.tif')
     to_geotiff(
         da_gpu, p_gpu, gpu=True, cog=True, compression='deflate', tiled=True,
-        tile_size=4, overview_levels=[2],
+        tile_size=16, overview_levels=[2],
         overview_resampling='mode',
     )
 

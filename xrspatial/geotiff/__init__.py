@@ -1201,6 +1201,44 @@ def _extract_rich_tags(attrs: dict) -> dict:
     }
 
 
+def _validate_tile_size(tile_size) -> None:
+    """Validate ``tile_size`` for the tiled GeoTIFF writers.
+
+    Shared by ``to_geotiff`` (when ``tiled=True``) and
+    ``write_geotiff_gpu`` (always tiled) so the accepted types, the
+    non-positive rejection, and the multiple-of-16 hint stay in lockstep.
+    The tiled writer computes the tile grid as
+    ``math.ceil(width / tile_size)``; ``tile_size=0`` hits
+    ``ZeroDivisionError`` deep inside the writer, and negative values
+    produce a nonsensical tile grid. The TIFF 6 spec also requires
+    ``TileWidth`` and ``TileLength`` to be positive multiples of 16
+    for broad interoperability with libtiff / GDAL strict readers; a
+    value like 17 would otherwise round-trip through the in-repo
+    reader but be rejected elsewhere.
+    """
+    if not isinstance(tile_size, (int, np.integer)) or isinstance(
+            tile_size, bool):
+        raise ValueError(
+            f"tile_size must be a positive int, got "
+            f"{tile_size!r} (type {type(tile_size).__name__}).")
+    if tile_size <= 0:
+        raise ValueError(
+            f"tile_size must be a positive int, got tile_size={tile_size}.")
+    if tile_size % 16 != 0:
+        lower = (int(tile_size) // 16) * 16
+        upper = lower + 16
+        # ``lower`` is 0 for tile_size < 16; suppress it from the hint
+        # because 0 is not a valid tile size on its own.
+        if lower <= 0:
+            hint = f"try tile_size={upper}"
+        else:
+            hint = f"try tile_size={lower} or tile_size={upper}"
+        raise ValueError(
+            f"tile_size must be a positive multiple of 16 (TIFF 6 "
+            f"spec requirement for TileWidth/TileLength), got "
+            f"tile_size={tile_size}; {hint}.")
+
+
 def to_geotiff(data: xr.DataArray | np.ndarray,
                path: str | BinaryIO, *,
                crs: int | str | None = None,
@@ -1273,9 +1311,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     tiled : bool
         Use tiled layout (default True).
     tile_size : int
-        Tile size in pixels (default 256). Ignored when ``tiled=False``;
-        a warning is emitted if a non-default value is passed alongside
-        strip mode.
+        Tile size in pixels (default 256). Must be a positive multiple
+        of 16 when ``tiled=True``; this is a TIFF 6 spec requirement
+        on TileWidth and TileLength for broad reader compatibility.
+        Ignored when ``tiled=False``; a warning is emitted if a
+        non-default value is passed alongside strip mode.
     predictor : bool or int
         TIFF predictor. Accepted values:
 
@@ -1353,13 +1393,9 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
 
     path = _coerce_path(path)
 
-    # Reject non-positive tile_size up front. The tiled writer computes
-    # the tile grid as ``math.ceil(width / tile_size)``; tile_size=0 hits
-    # ZeroDivisionError deep inside the writer, and negative values
-    # produce a nonsensical tile grid. tiled=False ignores tile_size, so
-    # only validate when tiled output is actually requested. Shared with
-    # ``write_geotiff_gpu`` via ``_validate_tile_size_arg`` so both
-    # writers emit the same error format (#1752 / #1776).
+    # tiled=False ignores tile_size, so only validate when tiled output
+    # is requested. Shared with write_geotiff_gpu via
+    # _validate_tile_size_arg so both writers keep identical validation.
     if tiled:
         _validate_tile_size_arg(tile_size)
 
@@ -2042,20 +2078,11 @@ def _validate_chunks_arg(chunks, *, allow_none=False):
 def _validate_tile_size_arg(tile_size):
     """Validate the ``tile_size`` kwarg for the tiled writer entry points.
 
-    Centralises the rejection rule ``to_geotiff`` already runs so
-    ``write_geotiff_gpu`` can share the same error format. ``tile_size``
-    must be a positive int; booleans are rejected (``True == 1`` would
-    otherwise sneak through), floats are rejected because tile dimensions
-    are TIFF SHORT tags (#1776).
+    Wrapper kept for backwards internal compatibility; delegates to
+    ``_validate_tile_size`` so to_geotiff/write_geotiff_gpu share one
+    validation path (positive int + multiple-of-16 for tiled output).
     """
-    if not isinstance(tile_size, (int, np.integer)) or isinstance(
-            tile_size, bool):
-        raise ValueError(
-            f"tile_size must be a positive int, got "
-            f"{tile_size!r} (type {type(tile_size).__name__}).")
-    if tile_size <= 0:
-        raise ValueError(
-            f"tile_size must be a positive int, got tile_size={tile_size}.")
+    _validate_tile_size(tile_size)
 
 
 def read_geotiff_dask(source: str, *,
@@ -3415,7 +3442,10 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         producing a tiled file. Accepted for API parity with
         ``to_geotiff``.
     tile_size : int
-        Tile size in pixels (default 256).
+        Tile size in pixels (default 256). Must be a positive multiple
+        of 16; this is a TIFF 6 spec requirement on TileWidth and
+        TileLength for broad reader compatibility. ``write_geotiff_gpu``
+        is always tiled, so the check fires for every call.
     predictor : bool or int
         TIFF predictor. ``False``/``0``/``1`` -> none, ``True``/``2`` ->
         horizontal differencing, ``3`` -> floating-point predictor
@@ -3463,11 +3493,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             "compression is tile-based; the strip layout is not "
             "implemented on the GPU path. Use to_geotiff(..., gpu=False, "
             "tiled=False) for strip output on CPU.")
-    # Reject non-positive tile_size up front so the GPU writer surfaces
-    # the same error as ``to_geotiff`` (#1776). Previously ``tile_size=0``
-    # raised ``ZeroDivisionError`` from gpu_compress_tiles, ``tile_size=-1``
-    # surfaced as ``struct.error`` from the SHORT-tag encoder, and
-    # ``tile_size=256.0`` raised ``TypeError`` deep in the kernel.
+    # write_geotiff_gpu is always tiled, so validate tile_size here and
+    # keep parity with the public to_geotiff entry point.
     _validate_tile_size_arg(tile_size)
     if max_z_error < 0:
         raise ValueError(

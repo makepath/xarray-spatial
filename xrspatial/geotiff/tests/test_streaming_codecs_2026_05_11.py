@@ -181,7 +181,7 @@ class TestCubicOverview:
         path = str(tmp_path / 'cubic_overview.tif')
         to_geotiff(arr, path,
                    compression='deflate',
-                   tile_size=8,
+                   tile_size=16,
                    tiled=True,
                    cog=True,
                    overview_levels=[2],
@@ -216,10 +216,10 @@ class TestCubicOverview:
 
         cubic_path = str(tmp_path / 'cubic_q.tif')
         mean_path = str(tmp_path / 'mean_q.tif')
-        to_geotiff(arr, cubic_path, compression='deflate', tile_size=8,
+        to_geotiff(arr, cubic_path, compression='deflate', tile_size=16,
                    tiled=True, cog=True, overview_levels=[2],
                    overview_resampling='cubic')
-        to_geotiff(arr, mean_path, compression='deflate', tile_size=8,
+        to_geotiff(arr, mean_path, compression='deflate', tile_size=16,
                    tiled=True, cog=True, overview_levels=[2],
                    overview_resampling='mean')
 
