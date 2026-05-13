@@ -2,14 +2,17 @@
 
 PR #1803 forwarded the caller's ``max_pixels`` to ``read_to_array`` inside
 the VRT source loop so that a tiny VRT output could not force a huge
-source decode (#1796). The output-window check enforces that. A separate
-per-tile dimension check was incorrectly using the same ``max_pixels``
-value, so a caller setting ``max_pixels`` as an output budget (e.g.
-10,000) would also fail the per-tile sanity check on every normal source
-whose default tile size is 256x256 (= 65,536 pixels).
+source decode (#1796). A separate per-tile dimension check was
+incorrectly using the same ``max_pixels`` value, so a caller setting
+``max_pixels`` as an output budget (e.g. 10,000) would also fail the
+per-tile sanity check on every normal source whose default tile size is
+256x256 (= 65,536 pixels).
 
-The #1796 protection remains: the output-window check still catches a
-tiny VRT output that asks for a large source window.
+After PR #1821 (#1704) the resample path reads only the minimal source
+sub-rect that feeds the clipped destination sub-window, so a tiny VRT
+output cannot force a huge source decode by construction. The
+output-extent check at the top of ``read_vrt`` still rejects requests
+whose output itself exceeds ``max_pixels``.
 """
 from __future__ import annotations
 
@@ -78,20 +81,27 @@ class TestPerTileCheckDoesNotUseCallerBudget:
 
 
 class TestOutputWindowCheckStillEnforced:
-    """The output-window check at the source read still rejects an
-    over-budget read; the #1796 protection is preserved."""
+    """The output-window check still rejects a read whose VRT extent
+    exceeds ``max_pixels``. After #1704 the source read is bounded by
+    the clipped destination sub-window, so the per-source guard now
+    rarely fires; the top-level ``_check_dimensions`` call against the
+    output extent catches over-budget requests up front. The #1796
+    protection (tiny VRT cannot force huge source decode) is preserved
+    structurally.
+    """
 
-    def test_output_window_exceeds_max_pixels_still_rejected(self):
+    def test_output_extent_exceeds_max_pixels_still_rejected(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
             src = os.path.join(td, 'src.tif')
-            to_geotiff(np.arange(16, dtype=np.uint8).reshape(4, 4),
-                       src, compression='none')
-            vrt = _write_vrt(td, dst_x_size=1, dst_y_size=1,
-                             raster_x=1, raster_y=1,
+            to_geotiff(np.arange(64, dtype=np.uint8).reshape(8, 8),
+                       src, compression='none', tiled=False)
+            # VRT output extent is 8x8 = 64 pixels; max_pixels=4 trips
+            # the dimensions check before any source read runs.
+            vrt = _write_vrt(td, dst_x_size=8, dst_y_size=8,
+                             raster_x=8, raster_y=8,
                              src_x_size=4, src_y_size=4)
-            # SrcRect 4x4 = 16 pixels > max_pixels=1 → output check fires.
-            with pytest.raises(ValueError, match="exceed"):
-                read_vrt(vrt, max_pixels=1)
+            with pytest.raises(ValueError, match="exceed|safety limit"):
+                read_vrt(vrt, max_pixels=4)
 
 
 class TestPerTileCheckStillRejectsCraftedHeader:
