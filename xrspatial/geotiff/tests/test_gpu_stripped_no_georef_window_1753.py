@@ -167,6 +167,13 @@ class TestStrippedGpuWindowedBackendParity:
                               chunks=4, window=win)
         assert eager.y.dtype == dask.y.dtype == gpu.y.dtype == gpu_dk.y.dtype
         assert eager.y.dtype == np.int64
+        # The #1753 regression affected both axes (float64 coords from
+        # the default unit GeoTransform on x as well as y); assert
+        # x-axis parity + int64 so a future change can't silently
+        # return int-valued float coords on x while passing the value
+        # equality check below.
+        assert eager.x.dtype == dask.x.dtype == gpu.x.dtype == gpu_dk.x.dtype
+        assert eager.x.dtype == np.int64
 
     @pytest.mark.parametrize("win", [
         (0, 0, 4, 4),
