@@ -2186,6 +2186,13 @@ def read_geotiff_dask(source: str, *,
         finally:
             _src.close()
         http_meta = (http_header, http_ifd)
+        if http_ifd.orientation != 1:
+            raise ValueError(
+                f"Orientation tag (274) is {http_ifd.orientation}; "
+                f"dask-chunked reads (chunks=...) are not supported for "
+                f"non-default orientation on remote GeoTIFF sources. Read "
+                f"the full array first, then slice/chunk it."
+            )
         # Wrap the parsed metadata in a single dask Delayed so every
         # window task takes it as a graph input, not a Python closure.
         # Without this, the (TIFFHeader, IFD) pair -- which can carry
