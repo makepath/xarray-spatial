@@ -647,6 +647,27 @@ def read_vrt(vrt_path: str, *, window=None,
                     f"DstRect sizes must be non-negative."
                 )
 
+            # Reject malformed SrcRect values up front, before the overlap
+            # math and before the lenient source-read try/except below. A
+            # negative ``xSize`` / ``ySize`` would otherwise reach
+            # ``read_to_array`` as a bad window and be silently swallowed by
+            # the missing-source fallback (which is meant for unreadable
+            # files, not malformed XML rectangles); a negative ``xOff`` /
+            # ``yOff`` likewise produces an out-of-range window that the
+            # fallback would turn into a zero-filled hole. See issue #1784.
+            if sr.x_size < 0 or sr.y_size < 0:
+                raise ValueError(
+                    f"VRT SimpleSource SrcRect has negative size "
+                    f"(xSize={sr.x_size}, ySize={sr.y_size}); "
+                    f"SrcRect sizes must be non-negative."
+                )
+            if sr.x_off < 0 or sr.y_off < 0:
+                raise ValueError(
+                    f"VRT SimpleSource SrcRect has negative offset "
+                    f"(xOff={sr.x_off}, yOff={sr.y_off}); "
+                    f"SrcRect offsets must be non-negative."
+                )
+
             # Destination rect in virtual raster coordinates
             dst_r0 = dr.y_off
             dst_c0 = dr.x_off
