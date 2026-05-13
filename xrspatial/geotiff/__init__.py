@@ -1174,7 +1174,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                bigtiff: bool | None = None,
                gpu: bool | None = None,
                streaming_buffer_bytes: int = 256 * 1024 * 1024,
-               max_z_error: float = 0.0) -> None:
+               max_z_error: float = 0.0,
+               photometric='auto') -> None:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Dask-backed DataArrays are written in streaming mode: one tile-row
@@ -1203,6 +1204,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         EPSG code (int), WKT string, or PROJ string. If None and data
         is a DataArray, tries to read from attrs ('crs' for EPSG,
         'crs_wkt' for WKT).
+
+        EPSG codes are strongly preferred for interop. The WKT-only
+        path writes ``ProjectedCSType`` / ``GeographicType`` = 32767
+        with the WKT stored in ``GTCitationGeoKey`` -- libgeotiff and
+        GDAL can round-trip this but many other GeoTIFF readers treat
+        the citation as a free-form name and lose the CRS. A
+        ``UserWarning`` is emitted when the WKT-only path is taken.
+        See issue #1768.
     nodata : float, int, or None
         NoData value.
     compression : str
@@ -1258,6 +1267,30 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         bounded by ``abs(decoded - original) <= max_z_error``. Only used
         when ``compression='lerc'``; passing a non-zero value with any
         other codec raises ``ValueError``.
+    photometric : str or int
+        Photometric interpretation for the TIFF Photometric tag (262).
+
+        * ``'auto'`` (default) -- MinIsBlack (1) for any band count.
+          ExtraSamples for every band beyond the first is tagged ``0``
+          (unspecified). Multispectral rasters (e.g. R, G, B, NIR)
+          round-trip through this default without being silently
+          labelled as RGB+alpha. Prior versions treated any 3+ band
+          array as RGB and the 4th band as unassociated alpha -- the
+          behaviour change is intentional (issue #1769).
+        * ``'rgb'`` -- RGB (Photometric=2). Three colour bands; any
+          additional bands are tagged ``0`` (unspecified).
+        * ``'rgba'`` -- RGB with the 4th band tagged as unassociated
+          alpha (TIFF ExtraSamples=2). Requires at least 4 bands.
+        * ``'minisblack'`` or ``'miniswhite'`` -- grayscale; multi-band
+          extras tagged ``0``.
+        * An ``int`` -- written verbatim into Photometric for advanced
+          callers (e.g. ``3`` for Palette, ``5`` for CMYK).
+
+        A user-supplied ``extra_tags`` entry of ``(TAG_PHOTOMETRIC,
+        ...)`` or ``(TAG_EXTRA_SAMPLES, ...)`` overrides the writer's
+        chosen value; only these two tag ids are overridable (other
+        auto-emitted tags such as ImageWidth or StripOffsets remain
+        protected).
     """
     from ._reader import _coerce_path
 
@@ -1403,7 +1436,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                               overview_levels=overview_levels,
                               overview_resampling=overview_resampling,
                               bigtiff=bigtiff,
-                              streaming_buffer_bytes=streaming_buffer_bytes)
+                              streaming_buffer_bytes=streaming_buffer_bytes,
+                              photometric=photometric)
             return
         except ImportError as e:
             # ``write_geotiff_gpu`` raises ImportError when cupy itself
@@ -1547,6 +1581,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 bigtiff=bigtiff,
                 streaming_buffer_bytes=streaming_buffer_bytes,
                 max_z_error=max_z_error,
+                photometric=photometric,
             )
             return
 
@@ -1622,6 +1657,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         extra_tags=extra_tags_list,
         bigtiff=bigtiff,
         max_z_error=max_z_error,
+        photometric=photometric,
     )
 
 
@@ -3185,7 +3221,11 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         rejects file-like destinations, and the explicit GPU writer
         mirrors that rule (issue #1652).
     crs : int, str, or None
-        EPSG code or WKT string.
+        EPSG code or WKT string. EPSG codes are strongly preferred for
+        interop; the WKT-only path emits a user-defined CRS (32767) with
+        the WKT stored in ``GTCitationGeoKey``, which many non-libgeotiff
+        readers ignore. A ``UserWarning`` is emitted when the WKT-only
+        path is taken. See issue #1768.
     nodata : float, int, or None
         NoData value.
     compression : str

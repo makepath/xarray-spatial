@@ -968,6 +968,21 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
         round-trips.  Stored in the GeoAsciiParamsTag and referenced
         from GTCitationGeoKey.
 
+    Notes
+    -----
+    When ``crs_wkt`` is supplied without ``crs_epsg``, the writer emits
+    a *user-defined* CRS: ``ProjectedCSType`` or ``GeographicType`` is
+    set to ``32767`` and the raw WKT is stored in ``GeoAsciiParams``,
+    referenced from ``GTCitationGeoKey``. No richer projection-parameter
+    GeoKeys (``ProjLinearUnitsGeoKey``, ``GeogAngularUnitsGeoKey``,
+    ellipsoid params, projection method, etc.) are written. libgeotiff
+    and GDAL recover the CRS by parsing the citation, but most other
+    GeoTIFF readers treat the citation as a free-form name and lose the
+    CRS. Prefer ``crs_epsg`` when the projection is registered with an
+    EPSG code -- the EPSG path emits the standard GeoKeys every reader
+    understands. A ``UserWarning`` is emitted on the WKT-only path so
+    the limitation is visible at call time. See issue #1768.
+
     Returns
     -------
     dict mapping tag ID to (type_id, count, value_bytes) tuples,
@@ -1039,7 +1054,28 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
             key_entries.append((GEOKEY_PROJECTED_CS_TYPE, 0, 1, crs_epsg))
         num_keys += 1
     elif crs_wkt is not None:
-        # User-defined CRS: store 32767 and write WKT to GeoAsciiParams
+        # User-defined CRS: store 32767 and write WKT to GeoAsciiParams.
+        #
+        # libgeotiff and GDAL recover the CRS by parsing the citation
+        # back out, but many other GeoTIFF readers treat the citation as
+        # a free-form name and silently drop the projection. Warn the
+        # caller so the interop limitation is visible at write time.
+        # Python's default warning filter dedupes per call site, so the
+        # warning fires once per location rather than once per pixel.
+        # See issue #1768.
+        import warnings as _warnings
+        _warnings.warn(
+            "Writing a user-defined CRS via WKT only "
+            "(ProjectedCSType / GeographicType = 32767 with the WKT "
+            "stored in GTCitationGeoKey). libgeotiff and GDAL can "
+            "round-trip this, but many other GeoTIFF readers treat the "
+            "citation as a free-form name and lose the CRS. Prefer "
+            "passing an EPSG code (e.g. attrs['crs'] = 4326) when the "
+            "projection is registered with EPSG -- the EPSG path emits "
+            "the standard GeoKeys every reader understands.",
+            UserWarning,
+            stacklevel=2,
+        )
         if model_type == MODEL_TYPE_GEOGRAPHIC:
             key_entries.append((GEOKEY_GEOGRAPHIC_TYPE, 0, 1, 32767))
         else:
