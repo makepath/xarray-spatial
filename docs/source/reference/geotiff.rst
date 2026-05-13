@@ -94,3 +94,13 @@ silently falls back to CPU.
     XRSPATIAL_GEOTIFF_STRICT=1 pytest xrspatial/geotiff/tests/
 
 See issue #1662 for the audit and the full list of affected call sites.
+
+VRT missing sources
+===================
+
+``read_vrt`` accepts ``missing_sources='warn'`` or ``'raise'``. The default
+``'warn'`` preserves the historical behavior: unreadable source files emit
+:class:`xrspatial.geotiff.GeoTIFFFallbackWarning`, the returned DataArray
+contains ``attrs['vrt_holes']``, and the mosaic is returned with holes.
+Use ``missing_sources='raise'`` when a partial mosaic should fail the
+pipeline immediately.

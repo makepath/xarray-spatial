@@ -610,7 +610,8 @@ def _resample_nearest(src_arr: np.ndarray,
 
 def read_vrt(vrt_path: str, *, window=None,
              band: int | None = None,
-             max_pixels: int | None = None) -> tuple[np.ndarray, VRTDataset]:
+             max_pixels: int | None = None,
+             missing_sources: str = 'warn') -> tuple[np.ndarray, VRTDataset]:
     """Read a VRT file by assembling pixel data from its source files.
 
     Parameters
@@ -633,6 +634,10 @@ def read_vrt(vrt_path: str, *, window=None,
 
     vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
     vrt = parse_vrt(xml_str, vrt_dir)
+    if missing_sources not in ('warn', 'raise'):
+        raise ValueError(
+            f"missing_sources must be 'warn' or 'raise', got "
+            f"{missing_sources!r}")
 
     # Validate ``band`` against the parsed band count. Python list
     # indexing would silently accept negative values (``vrt.bands[-1]``
@@ -892,7 +897,7 @@ def read_vrt(vrt_path: str, *, window=None,
                 # See issue #1734.
                 import warnings
                 from . import _geotiff_strict_mode, GeoTIFFFallbackWarning
-                if _geotiff_strict_mode():
+                if missing_sources == 'raise' or _geotiff_strict_mode():
                     raise
                 warnings.warn(
                     f"VRT source {src.filename!r} could not be read "
