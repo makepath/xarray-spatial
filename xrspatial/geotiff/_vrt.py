@@ -150,9 +150,13 @@ class _Source:
     offset: float | None = None
     # GDAL ``<ComplexSource><ResampleAlg>`` values are ``NearestNeighbour``
     # (default), ``Bilinear``, ``Cubic``, ``CubicSpline``, ``Lanczos``,
-    # ``Average``, ``Mode``.  We parse the value so we can advertise it,
-    # but only nearest-neighbour is implemented in the placement step
-    # (issue #1694).  Higher-quality resamplers are tracked for follow-up.
+    # ``Average``, ``Mode``.  Only nearest-neighbour is implemented in
+    # the placement step (issue #1694).  When ``SrcRect`` and ``DstRect``
+    # sizes differ (resampling actually required), the read raises
+    # ``NotImplementedError`` for any non-nearest algorithm rather than
+    # silently substituting nearest (issue #1751); a non-nearest alg with
+    # matching rect sizes is a no-op and passes through.  Higher-quality
+    # resamplers are tracked for follow-up.
     resample_alg: str | None = None
 
 
@@ -353,10 +357,15 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
                     scale = float(offset_str)
                 if scale_str:
                     offset = float(scale_str)
-                # ``<ResampleAlg>`` is informational for the placement
-                # step: read_vrt currently always nearest-neighbours, so
-                # we only record the value for later honouring.  See
-                # issue #1694.
+                # ``<ResampleAlg>`` records the requested resampler for
+                # the placement step.  ``read_vrt`` only implements
+                # nearest-neighbour today, so when ``SrcRect`` and
+                # ``DstRect`` sizes differ the resample site raises
+                # ``NotImplementedError`` for any non-nearest algorithm
+                # rather than returning silently-mislabelled pixels;
+                # sources with matching rect sizes do not resample and
+                # pass through regardless of this tag.  See issues
+                # #1694 and #1751.
                 resample_alg = _text(src_elem, 'ResampleAlg')
 
             sources.append(_Source(
@@ -385,6 +394,44 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
         geo_transform=geo_transform,
         bands=bands,
         raster_type=raster_type,
+    )
+
+
+# GDAL ``<ResampleAlg>`` values that are equivalent to nearest-neighbour
+# (or that explicitly request it).  Comparison is case-insensitive and
+# done on the stripped element text.  Empty / missing text is also
+# treated as nearest because the GDAL default for a SimpleSource with
+# no ``ResampleAlg`` child is nearest.  See issue #1751.
+_NEAREST_RESAMPLE_ALGS = frozenset({
+    '', 'nearest', 'nearestneighbour', 'nearestneighbor', 'near',
+})
+
+
+def _check_resample_alg_supported(resample_alg: str | None,
+                                  filename: str) -> None:
+    """Raise ``NotImplementedError`` for unsupported VRT resample algorithms.
+
+    ``ComplexSource`` may declare ``<ResampleAlg>`` values such as
+    ``Bilinear``, ``Cubic``, ``CubicSpline``, ``Lanczos``, ``Average``,
+    or ``Mode``.  ``read_vrt`` only implements nearest-neighbour
+    placement, so a VRT that asks for any of the higher-quality
+    resamplers would silently return nearest-sampled pixels mislabelled
+    as the requested algorithm.  Refuse the read instead of returning
+    quietly wrong numbers.  See issue #1751.
+    """
+    if resample_alg is None:
+        return
+    norm = resample_alg.strip().lower()
+    if norm in _NEAREST_RESAMPLE_ALGS:
+        return
+    raise NotImplementedError(
+        f"VRT ComplexSource for '{filename}' requests "
+        f"<ResampleAlg>{resample_alg}</ResampleAlg>, but read_vrt only "
+        f"implements nearest-neighbour resampling. Returning "
+        f"nearest-sampled pixels would silently mislabel them as "
+        f"'{resample_alg}'. Re-export the VRT with "
+        f"<ResampleAlg>Nearest</ResampleAlg> or matching SrcRect/DstRect "
+        f"sizes if nearest-neighbour is acceptable. See issue #1751."
     )
 
 
@@ -796,6 +843,13 @@ def read_vrt(vrt_path: str, *, window=None,
                 src_arr = src_arr.astype(np.float64) + src.offset
 
             if needs_resample:
+                # Refuse VRTs that request a non-nearest resample
+                # algorithm.  ``_resample_nearest`` below is the only
+                # implemented kernel; silently substituting it for
+                # ``Bilinear`` / ``Cubic`` / ``Average`` / ``Mode``
+                # would return wrong numbers under the user's
+                # configured algorithm name.  See issue #1751.
+                _check_resample_alg_supported(src.resample_alg, src.filename)
                 # Resample the full source rect to the destination rect
                 # shape, then clip to the window subregion.  Doing the
                 # resample on the full rect keeps the nearest-neighbour
