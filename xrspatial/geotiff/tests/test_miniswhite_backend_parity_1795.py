@@ -1,7 +1,8 @@
-"""MinIsWhite photometric handling must be backend-consistent (#1795)."""
+"""MinIsWhite photometric handling must be backend-consistent (#1797)."""
 from __future__ import annotations
 
 import http.server
+import importlib.util
 import socketserver
 import threading
 
@@ -11,6 +12,24 @@ import pytest
 from xrspatial.geotiff import open_geotiff
 
 tifffile = pytest.importorskip("tifffile")
+
+
+def _gpu_available() -> bool:
+    """True if cupy is importable and CUDA is initialised."""
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+_HAS_GPU = _gpu_available()
+_gpu_only = pytest.mark.skipif(
+    not _HAS_GPU,
+    reason="cupy + CUDA required",
+)
 
 
 class _RangeHandler(http.server.BaseHTTPRequestHandler):
@@ -46,7 +65,7 @@ class _RangeHandler(http.server.BaseHTTPRequestHandler):
 
 def _serve(payload: bytes):
     handler_cls = type(
-        'RangeHandler1795', (_RangeHandler,), {'payload': payload}
+        'RangeHandler1797', (_RangeHandler,), {'payload': payload}
     )
     httpd = socketserver.TCPServer(('127.0.0.1', 0), handler_cls)
     port = httpd.server_address[1]
@@ -59,11 +78,11 @@ def _serve(payload: bytes):
 def miniswhite_http_url(tmp_path, monkeypatch):
     monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
     stored = np.array([[0, 1, 2], [10, 128, 255]], dtype=np.uint8)
-    path = tmp_path / "tmp_1795_miniswhite.tif"
+    path = tmp_path / "tmp_1797_miniswhite.tif"
     tifffile.imwrite(str(path), stored, photometric='miniswhite')
     httpd, port = _serve(path.read_bytes())
     try:
-        yield f'http://127.0.0.1:{port}/tmp_1795_miniswhite.tif', stored
+        yield f'http://127.0.0.1:{port}/tmp_1797_miniswhite.tif', stored
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -84,3 +103,18 @@ def test_http_dask_miniswhite_matches_local_reader(miniswhite_http_url):
 
     np.testing.assert_array_equal(got.values, np.iinfo(stored.dtype).max - stored)
 
+
+@_gpu_only
+def test_gpu_miniswhite_matches_cpu_reader(tmp_path):
+    from xrspatial.geotiff._writer import write
+
+    stored = np.array([[0, 1, 2], [10, 128, 255]], dtype=np.uint8)
+    path = str(tmp_path / "tmp_1797_miniswhite_gpu.tif")
+    write(stored, path, compression='deflate', tiled=True, tile_size=16,
+          photometric='miniswhite')
+
+    cpu = open_geotiff(path)
+    gpu = open_geotiff(path, gpu=True)
+
+    np.testing.assert_array_equal(cpu.values, np.iinfo(stored.dtype).max - stored)
+    np.testing.assert_array_equal(gpu.data.get(), cpu.values)
