@@ -49,6 +49,7 @@ _HAS_ZSTD = _module_available("zstandard")
 _HAS_LZ4 = _module_available("lz4.frame")
 _HAS_LERC = _module_available("lerc")
 _HAS_GLYMUR = _module_available("glymur")
+_HAS_PILLOW = _module_available("PIL")
 
 
 # ---------------------------------------------------------------------------
@@ -473,3 +474,136 @@ class TestJpeg2000Direct:
             _compression.jpeg2000_decompress(
                 blob, width=64, height=64, samples=1,
                 expected_size=arr.nbytes)
+
+
+# ---------------------------------------------------------------------------
+# JPEG (issue #1792)
+# ---------------------------------------------------------------------------
+#
+# Pillow has its own DecompressionBombError, but it fires only at
+# ~178M pixels (~500 MB RGB). A malicious TIFF can declare a small tile
+# (e.g. 256x256 RGB, ~196 KiB expected) while shipping a JPEG payload
+# whose SOF marker declares a much larger image; that lets ~500 MB
+# allocate per tile before the downstream chunk.size != expected
+# reshape check fires. ``jpeg_decompress`` now parses the JPEG SOF
+# marker and raises before handing the blob to Pillow when the
+# declared output exceeds ``expected * 1.05 + 1`` bytes. See
+# https://github.com/xarray-contrib/xarray-spatial/issues/1792 .
+
+def _forge_jpeg_with_sof_dimensions(real_h: int, real_w: int,
+                                    real_c: int,
+                                    declared_h: int,
+                                    declared_w: int) -> bytes:
+    """Build a real JPEG and rewrite the SOF marker's H/W fields.
+
+    Pillow encodes a small valid image so the bytestream is a complete
+    JPEG; we then overwrite the height/width fields in the SOF segment
+    so the SOF claims a much larger image than the payload can decode.
+    The decoder never gets the chance to fail on the mismatch because
+    the pre-decode cap fires first -- which is the property under test.
+    """
+    from PIL import Image
+    import io
+    mode = 'RGB' if real_c == 3 else 'L'
+    img = Image.new(mode, (real_w, real_h), color=0)
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=75)
+    data = bytearray(buf.getvalue())
+    # Find SOF0..SOF3,SOF5..SOF7,SOF9..SOF11,SOF13..SOF15 marker.
+    sof_codes = {
+        0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+        0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF,
+    }
+    i = 2
+    n = len(data)
+    while i + 3 < n:
+        if data[i] != 0xFF:
+            raise AssertionError("forged JPEG lost marker alignment")
+        marker = data[i + 1]
+        if marker in sof_codes:
+            # SOF: 0xFF Cx | len(2) | precision(1) | H(2) | W(2) | components(1)
+            data[i + 5] = (declared_h >> 8) & 0xFF
+            data[i + 6] = declared_h & 0xFF
+            data[i + 7] = (declared_w >> 8) & 0xFF
+            data[i + 8] = declared_w & 0xFF
+            return bytes(data)
+        if marker == 0xD9 or 0xD0 <= marker <= 0xD7 or marker == 0x01:
+            i += 2
+            continue
+        seg_len = (data[i + 2] << 8) | data[i + 3]
+        i += 2 + seg_len
+    raise AssertionError("forged JPEG has no SOF marker")
+
+
+@pytest.mark.skipif(not _HAS_PILLOW, reason="Pillow not installed")
+class TestJpegDirect:
+    def test_jpeg_bomb_raises(self):
+        """A JPEG whose SOF dimensions exceed the per-tile cap must raise.
+
+        The forged JPEG payload itself is small (a real 16x16 image with
+        the SOF marker rewritten to declare 8000x8000x3). The wrapper
+        is given a per-tile expected size of 32x32x3 = 3072 bytes; the
+        declared output 8000*8000*3 = 192_000_000 bytes is well above
+        the ``3072 * 1.05 + 1`` cap and the decode must be refused.
+        """
+        blob = _forge_jpeg_with_sof_dimensions(
+            real_h=16, real_w=16, real_c=3,
+            declared_h=8000, declared_w=8000,
+        )
+        from xrspatial.geotiff._compression import jpeg_decompress
+        with pytest.raises(ValueError, match="exceed"):
+            jpeg_decompress(blob, width=32, height=32, samples=3)
+
+    def test_jpeg_legitimate_passes(self):
+        """A JPEG whose SOF dimensions match the expected tile size passes."""
+        from PIL import Image
+        import io
+        img = Image.new('RGB', (32, 32), color=(10, 20, 30))
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=90)
+        from xrspatial.geotiff._compression import jpeg_decompress
+        out = jpeg_decompress(buf.getvalue(), width=32, height=32, samples=3)
+        arr = np.frombuffer(out, dtype=np.uint8).reshape(32, 32, 3)
+        assert arr.shape == (32, 32, 3)
+
+    def test_jpeg_no_cap_when_size_kwargs_default(self):
+        """Backward-compat: omitting size kwargs falls back to Pillow's guard.
+
+        Direct callers and round-trip tests pass no dimensions; the
+        pre-check must be a no-op so those keep working.
+        """
+        blob = _forge_jpeg_with_sof_dimensions(
+            real_h=16, real_w=16, real_c=3,
+            declared_h=64, declared_w=64,
+        )
+        from xrspatial.geotiff._compression import jpeg_decompress
+        # With no dimension kwargs, the cap is disabled. The forged JPEG
+        # declares 64x64 but encodes only 16x16 of payload -- libjpeg
+        # raises on the truncation; the bomb cap is what we're checking
+        # is *not* the source of any exception here. Catch whatever
+        # Pillow raises and assert it isn't our bomb message.
+        from PIL import Image as _Img  # noqa: F401
+        try:
+            jpeg_decompress(blob)
+        except ValueError as exc:
+            assert "Likely a decompression bomb" not in str(exc)
+        except Exception:
+            # libjpeg/Pillow errors are acceptable -- we only care that
+            # the bomb cap did not fire.
+            pass
+
+    def test_jpeg_malformed_falls_through_to_pillow(self):
+        """A JPEG without a parseable SOF defers to Pillow's own guard.
+
+        We don't want the pre-check to misclassify weird-but-valid
+        streams; if the helper can't read the SOF it should return
+        ``None`` and let Pillow raise its own error.
+        """
+        # SOI followed by EOI -- a syntactically valid but empty stream
+        # with no SOF marker.
+        blob = bytes([0xFF, 0xD8, 0xFF, 0xD9])
+        from xrspatial.geotiff._compression import jpeg_decompress
+        # No SOF -> bomb cap returns None -> Pillow raises on the empty
+        # stream.
+        with pytest.raises(Exception):
+            jpeg_decompress(blob, width=32, height=32, samples=3)

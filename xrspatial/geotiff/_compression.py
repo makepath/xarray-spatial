@@ -1039,6 +1039,109 @@ def _splice_jpeg_tables(tile_data: bytes,
     return tile_data[:2] + tables_body + tile_data[2:]
 
 
+# JPEG Start-Of-Frame marker codes: 0xFFC0..0xFFCF *except* DHT (0xC4),
+# JPG (0xC8), and DAC (0xCC). The payload format is the same across every
+# SOF variant: 2-byte segment length, 1-byte sample precision, 2-byte
+# image height (big-endian), 2-byte image width (big-endian), 1-byte
+# component count.
+_JPEG_SOF_CODES = frozenset(
+    {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+     0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+)
+
+
+def _read_jpeg_sof(data: bytes) -> tuple[int, int, int] | None:
+    """Return ``(height, width, components)`` from the first JPEG SOF marker.
+
+    Scans *data* for the first Start-Of-Frame marker without decoding any
+    pixel data. Returns ``None`` when the buffer is too short, when the
+    SOI marker is missing, when a length-prefixed segment runs off the
+    end, or when no SOF is found before EOI/end-of-buffer. The caller
+    treats a ``None`` return as "could not determine declared size" and
+    falls back to Pillow's own guard.
+
+    Used by :func:`jpeg_decompress` to enforce a pre-decode bomb cap
+    analogous to the JP2K SIZ pre-check and the LERC ``getLercBlobInfo``
+    pre-check.
+    """
+    n = len(data)
+    if n < 4 or data[0] != 0xFF or data[1] != 0xD8:
+        return None
+    i = 2
+    while i + 3 < n:
+        if data[i] != 0xFF:
+            return None
+        # Skip JPEG fill bytes (0xFF padding).
+        marker = data[i + 1]
+        while marker == 0xFF and i + 2 < n:
+            i += 1
+            marker = data[i + 1]
+        # Standalone markers without payload: SOI, EOI, RSTm, TEM.
+        # Encountering EOI before SOF means the stream is malformed for
+        # this purpose; caller falls back to Pillow.
+        if marker == 0xD9:  # EOI
+            return None
+        if marker in (0xD8,) or 0xD0 <= marker <= 0xD7 or marker == 0x01:
+            i += 2
+            continue
+        if marker in _JPEG_SOF_CODES:
+            if i + 9 >= n:
+                return None
+            height = (data[i + 5] << 8) | data[i + 6]
+            width = (data[i + 7] << 8) | data[i + 8]
+            components = data[i + 9]
+            return height, width, components
+        # Length-prefixed segment: payload length includes the two length
+        # bytes themselves but not the marker.
+        if i + 3 >= n:
+            return None
+        seg_len = (data[i + 2] << 8) | data[i + 3]
+        if seg_len < 2:
+            return None
+        i += 2 + seg_len
+    return None
+
+
+def _check_jpeg_bomb(data: bytes, expected_width: int, expected_height: int,
+                     expected_samples: int) -> None:
+    """Reject JPEG blobs whose SOF dimensions exceed the expected tile size.
+
+    The caller passes the TIFF-declared tile width/height/samples; we
+    parse the JPEG SOF marker to discover the JPEG's own declared
+    dimensions and refuse to decode when the projected output exceeds
+    the same ``expected * 1.05 + 1`` margin used by every other codec
+    wrapper. Skipping when any expected value is non-positive matches
+    the convention from the other codecs: callers that don't supply a
+    size fall back to Pillow's built-in ``DecompressionBombError``
+    guard.
+
+    A return of ``None`` from :func:`_read_jpeg_sof` is treated as
+    "could not determine declared size"; in that case we defer to
+    Pillow rather than raising, so legitimate streams with unusual
+    framing still decode.
+    """
+    if expected_width <= 0 or expected_height <= 0 or expected_samples <= 0:
+        return
+    info = _read_jpeg_sof(data)
+    if info is None:
+        return
+    declared_h, declared_w, declared_components = info
+    # JPEG component count of 1 (grey) or 3 (YCbCr/RGB) is the common
+    # case; cap at the caller-declared sample count regardless. Most
+    # 4-component JPEGs in TIFFs ship CMYK, but the bomb check just
+    # needs an upper bound on bytes per pixel.
+    expected_pixels = expected_width * expected_height * expected_samples
+    declared_pixels = declared_w * declared_h * max(declared_components, 1)
+    cap = _max_output_with_margin(expected_pixels)
+    if declared_pixels > cap:
+        raise ValueError(
+            f"jpeg decode would exceed expected size: declared output is "
+            f"{declared_pixels} bytes ({declared_w}x{declared_h}x"
+            f"{declared_components}), cap is {cap} (expected "
+            f"{expected_pixels}). Likely a decompression bomb."
+        )
+
+
 def jpeg_decompress(data: bytes, width: int = 0, height: int = 0,
                     samples: int = 1, jpeg_tables: bytes | None = None) -> bytes:
     """Decompress JPEG tile/strip data. Requires Pillow.
@@ -1048,6 +1151,13 @@ def jpeg_decompress(data: bytes, width: int = 0, height: int = 0,
     data : bytes
         Raw JPEG bytes from one TIFF strip or tile. May be a fragment
         when ``jpeg_tables`` is supplied (GDAL tiled JPEG).
+    width, height, samples : int, optional
+        TIFF-declared tile dimensions. When all three are positive the
+        wrapper inspects the JPEG SOF marker before decoding and raises
+        ``ValueError`` when the JPEG's declared output exceeds
+        ``width * height * samples * 1.05 + 1`` bytes
+        (decompression-bomb guard). Defaults of 0/0/1 disable the cap
+        for direct callers and round-trip tests.
     jpeg_tables : bytes, optional
         Contents of TIFF tag 347 (JPEGTables). If supplied, the shared
         DQT/DHT segments are spliced into ``data`` before decoding so
@@ -1060,6 +1170,12 @@ def jpeg_decompress(data: bytes, width: int = 0, height: int = 0,
     import io
     if jpeg_tables:
         data = _splice_jpeg_tables(data, jpeg_tables)
+    # Pre-decode bomb cap (issue #1792). Pillow's built-in
+    # DecompressionBombError fires at ~178M pixels (~500 MB RGB) which
+    # is well above a typical tile's expected size; without this
+    # per-tile pre-check a single malicious tile can allocate hundreds
+    # of MB before the downstream chunk.size != expected check fires.
+    _check_jpeg_bomb(data, width, height, samples)
     img = Image.open(io.BytesIO(data))
     # libjpeg already converts YCbCr->RGB during decode, so rely on the
     # mode Pillow returns. Calling .convert() unnecessarily would copy.
