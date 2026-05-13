@@ -123,6 +123,28 @@ def test_read_vrt_source_str_only():
     assert _annotation(read_vrt, 'source') == 'str'
 
 
+# --- dtype: str | np.dtype | None on every reader entry point (#1775) ---
+
+
+def test_open_geotiff_dtype_annotated():
+    """``open_geotiff(dtype=...)`` accepts ``str | np.dtype | None``. The
+    docstring already documents the accepted-type set; the annotation
+    now matches. See issue #1775."""
+    assert _annotation(open_geotiff, 'dtype') == 'str | np.dtype | None'
+
+
+def test_read_geotiff_dask_dtype_annotated():
+    assert _annotation(read_geotiff_dask, 'dtype') == 'str | np.dtype | None'
+
+
+def test_read_geotiff_gpu_dtype_annotated():
+    assert _annotation(read_geotiff_gpu, 'dtype') == 'str | np.dtype | None'
+
+
+def test_read_vrt_dtype_annotated():
+    assert _annotation(read_vrt, 'dtype') == 'str | np.dtype | None'
+
+
 # --- on_gpu_failure: 'auto' | 'strict' (GPU failure policy) ---
 
 
@@ -190,3 +212,33 @@ def test_open_geotiff_bytesio_source_runtime(tmp_path):
     r = open_geotiff(buffer)
     assert r.shape == (8, 8)
     assert r.dtype == np.float32
+
+
+def test_open_geotiff_dtype_kwarg_runtime(tmp_path):
+    """``open_geotiff(dtype=...)`` still accepts both a ``str`` token and a
+    ``np.dtype`` instance after the annotation tightens to
+    ``str | np.dtype | None``. The annotation pins the contract at the
+    type level; this test pins it at the runtime level so the contract
+    cannot regress without failing CI. See issue #1775.
+    """
+    import numpy as np
+    import xarray as xr
+
+    arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+    da = xr.DataArray(
+        arr, dims=['y', 'x'],
+        coords={'y': np.arange(8.0, 0, -1), 'x': np.arange(8.0)},
+        attrs={'crs': 4326, 'transform': (1.0, 0, 0.0, 0, -1.0, 8.0)},
+    )
+
+    path = str(tmp_path / 'dtype_kwarg.tif')
+    to_geotiff(da, path)
+
+    r_str = open_geotiff(path, dtype='float64')
+    assert r_str.dtype == np.float64
+
+    r_dtype = open_geotiff(path, dtype=np.dtype('float64'))
+    assert r_dtype.dtype == np.float64
+
+    r_none = open_geotiff(path, dtype=None)
+    assert r_none.dtype == np.float32

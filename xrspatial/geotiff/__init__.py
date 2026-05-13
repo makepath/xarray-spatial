@@ -665,7 +665,8 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
                 break
 
 
-def open_geotiff(source: str | BinaryIO, *, dtype=None,
+def open_geotiff(source: str | BinaryIO, *,
+                 dtype: str | np.dtype | None = None,
                  window: tuple | None = None,
                  overview_level: int | None = None,
                  band: int | None = None,
@@ -1897,7 +1898,9 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     _write_vrt_fn(vrt_path, tile_paths, relative=True, nodata=nodata)
 
 
-def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
+def read_geotiff_dask(source: str, *,
+                      dtype: str | np.dtype | None = None,
+                      chunks: int | tuple = 512,
                       overview_level: int | None = None,
                       window: tuple | None = None,
                       band: int | None = None,
@@ -2560,7 +2563,7 @@ def _gpu_apply_window_band(arr_gpu, geo_info, *, window, band):
 
 
 def read_geotiff_gpu(source: str, *,
-                     dtype=None,
+                     dtype: str | np.dtype | None = None,
                      overview_level: int | None = None,
                      window: tuple | None = None,
                      band: int | None = None,
@@ -3502,7 +3505,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     _write_bytes(file_bytes, path)
 
 
-def read_vrt(source: str, *, dtype=None,
+def read_vrt(source: str, *,
+             dtype: str | np.dtype | None = None,
              window: tuple | None = None,
              band: int | None = None,
              name: str | None = None,
