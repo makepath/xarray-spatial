@@ -1,8 +1,6 @@
 """Round-trip and threshold tests for the parallel strip/tile writer (#1800)."""
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-
 import numpy as np
 import pytest
 
