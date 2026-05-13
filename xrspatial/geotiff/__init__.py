@@ -2480,21 +2480,30 @@ def _apply_orientation_geo_info(geo_info, orientation: int,
             pixel_height=new_px_h,
         )
     elif orientation in (5, 6, 7, 8):
+        # Match the CPU reader's #1765 refusal: a pixel-size swap alone
+        # cannot express the per-orientation origin shift plus rotation
+        # these orientations require, so the x/y coords would be wrong.
+        # ``has_georef`` is True for any file carrying ModelTransformation,
+        # ModelPixelScale, or ModelTiepoint, with or without a CRS tag, so
+        # gate on that flag rather than CRS presence.
+        if getattr(geo_info, 'has_georef', False):
+            raise NotImplementedError(
+                f"TIFF Orientation {orientation} on a georeferenced file "
+                f"requires a per-orientation origin shift plus a rotation "
+                f"that the axis-aligned GeoTransform used here cannot "
+                f"represent, so the returned x/y coords would be wrong. "
+                f"Reproject the file with another tool (e.g. GDAL) or "
+                f"strip the Orientation tag before reading. See issue "
+                f"#1765."
+            )
+        # Non-georeferenced file: swap pixel sizes to match the
+        # transposed array shape. No geographic claim to violate.
         geo_info.transform = GeoTransform(
             origin_x=t.origin_x,
             origin_y=t.origin_y,
             pixel_width=t.pixel_height,
             pixel_height=t.pixel_width,
         )
-        if (geo_info.crs_epsg is not None
-                or geo_info.crs_wkt is not None):
-            warnings.warn(
-                f"Orientation {orientation} swaps spatial axes on "
-                f"a georeferenced file; the returned coords are "
-                f"shape-correct but the geographic transform may "
-                f"need manual adjustment.",
-                stacklevel=3,
-            )
     return geo_info
 
 

@@ -2258,24 +2258,21 @@ def _apply_orientation_with_geo(
             pixel_height=new_px_h,
         )
     elif orientation in (5, 6, 7, 8):
-        if (geo_info.crs_epsg is not None
-                or geo_info.crs_wkt is not None):
-            raise NotImplementedError(
-                f"TIFF Orientation {orientation} on a georeferenced file "
-                f"requires a per-orientation origin shift plus a rotation "
-                f"that the axis-aligned GeoTransform used here cannot "
-                f"represent, so the returned x/y coords would be wrong. "
-                f"Reproject the file with another tool (e.g. GDAL) or "
-                f"strip the Orientation tag before reading. See issue "
-                f"#1765."
-            )
-        # Non-georeferenced file: swap the pixel sizes to match the
-        # transposed array shape. No geographic claim to violate.
-        geo_info.transform = GeoTransform(
-            origin_x=t.origin_x,
-            origin_y=t.origin_y,
-            pixel_width=t.pixel_height,
-            pixel_height=t.pixel_width,
+        # ``has_georef`` is True whenever ModelTransformation,
+        # ModelPixelScale, or ModelTiepoint is present, even without a
+        # CRS. The pixel-size swap below cannot express the
+        # per-orientation origin shift plus rotation these orientations
+        # require, so the x/y coords would be wrong whether or not a
+        # CRS tag accompanies the transform. Refuse the file in that
+        # case rather than warn and return silently wrong coords.
+        raise NotImplementedError(
+            f"TIFF Orientation {orientation} on a georeferenced file "
+            f"requires a per-orientation origin shift plus a rotation "
+            f"that the axis-aligned GeoTransform used here cannot "
+            f"represent, so the returned x/y coords would be wrong. "
+            f"Reproject the file with another tool (e.g. GDAL) or "
+            f"strip the Orientation tag before reading. See issue "
+            f"#1765."
         )
     return arr, geo_info
 

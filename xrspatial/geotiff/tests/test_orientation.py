@@ -225,6 +225,30 @@ def test_orientation_5_to_8_raise_on_georef(tmp_path, orientation):
 
 
 @pytest.mark.parametrize("orientation", [5, 6, 7, 8])
+def test_orientation_5_to_8_transform_only_raises(tmp_path, orientation):
+    """``has_georef`` without CRS still triggers the raise.
+
+    A TIFF carrying ModelPixelScale + ModelTiepoint but no
+    GeoKeyDirectory has ``has_georef=True`` and ``crs_epsg=None``. The
+    pixel-size swap alone misses the per-orientation origin shift, so
+    refusing is the honest contract regardless of CRS tagging.
+    """
+    arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
+    path = tmp_path / f"orient_transform_only_1765_{orientation}.tif"
+    tifffile.imwrite(
+        str(path), arr,
+        extratags=[
+            (274, 'H', 1, orientation, True),
+            (33550, 'd', 3, (1.0, 1.0, 0.0), True),
+            (33922, 'd', 6, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0), True),
+        ],
+    )
+
+    with pytest.raises(NotImplementedError, match=str(orientation)):
+        open_geotiff(str(path))
+
+
+@pytest.mark.parametrize("orientation", [5, 6, 7, 8])
 def test_orientation_5_to_8_no_geo_still_swaps(tmp_path, orientation):
     """Without georef, orientations 5-8 still do the axis swap.
 
