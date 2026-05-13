@@ -188,12 +188,14 @@ def test_deflate_compress_zlib_wire_compatible():
 
 
 def test_deflate_compress_fallback_when_libdeflate_missing(monkeypatch):
-    """When libdeflate is absent we route through stdlib zlib unchanged."""
+    """When the deflate package is absent we route through stdlib zlib unchanged."""
     import zlib
 
     import xrspatial.geotiff._compression as comp_mod
     monkeypatch.setattr(comp_mod, '_HAVE_LIBDEFLATE', False)
-    monkeypatch.setattr(comp_mod, '_libdeflate', None)
+    monkeypatch.setattr(comp_mod, '_deflate', None)
+    # Reset the one-shot warning latch so the test path is exercised cleanly.
+    monkeypatch.setattr(comp_mod, '_zlib_fallback_warned', True)
 
     raw = b'1800-deflate-fallback' * 4096
     blob = comp_mod.deflate_compress(raw, level=6)
@@ -204,51 +206,13 @@ def test_deflate_compress_fallback_when_libdeflate_missing(monkeypatch):
 
 
 @pytest.mark.skipif(not _HAVE_LIBDEFLATE,
-                    reason='libdeflate not installed')
+                    reason='deflate package not installed')
 def test_deflate_compress_uses_libdeflate_when_available():
-    """When libdeflate is installed, deflate output stays wire-compatible."""
+    """When the deflate package is installed, output stays wire-compatible."""
     import zlib
     raw = (np.arange(8192, dtype=np.uint8) % 251).tobytes() * 16
     blob = deflate_compress(raw, level=6)
     assert zlib.decompress(blob) == raw
-
-
-def test_libdeflate_compressor_cache_is_thread_local():
-    """The cache lives in threading.local, so two threads see distinct dicts.
-
-    Uses a ``threading.Barrier`` to force both tasks to occupy a worker
-    at the same time. Without that, ``ThreadPoolExecutor(max_workers=2)``
-    is free to run both submissions on the same thread (if the first
-    returns before the second is scheduled), and the test would
-    intermittently pass with only one observed cache id.
-    """
-    import threading
-
-    import xrspatial.geotiff._compression as comp_mod
-
-    if not comp_mod._HAVE_LIBDEFLATE:
-        pytest.skip('libdeflate not installed')
-
-    seen_caches: dict[int, int] = {}
-    barrier = threading.Barrier(2, timeout=10)
-
-    def grab(_tag):
-        # Both workers must reach the barrier before either proceeds, so
-        # the pool is forced to use both threads.
-        barrier.wait()
-        comp_mod._libdeflate_compressor(6)
-        tid = threading.get_ident()
-        seen_caches[tid] = id(comp_mod._libdeflate_thread_local.cache)
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        list(pool.map(grab, ['a', 'b']))
-
-    # Two distinct threads ran and each populated its own threading.local
-    # cache, so we should see two thread ids and two cache ids.
-    assert len(seen_caches) == 2, f'expected 2 threads, saw {len(seen_caches)}'
-    assert len(set(seen_caches.values())) == 2, (
-        f'expected 2 distinct caches, saw {seen_caches}'
-    )
 
 
 # -- End-to-end via write() ------------------------------------------------

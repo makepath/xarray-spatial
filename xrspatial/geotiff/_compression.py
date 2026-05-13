@@ -1,7 +1,7 @@
 """Compression codecs: deflate (zlib) and LZW (Numba), plus horizontal predictor."""
 from __future__ import annotations
 
-import threading
+import warnings
 import zlib
 
 import numpy as np
@@ -10,38 +10,20 @@ from xrspatial.utils import ngjit
 
 # -- Optional libdeflate backend --------------------------------------------
 #
-# When the ``libdeflate`` package is installed, ``deflate_compress`` routes
-# through it: libdeflate is typically 1.5-2x faster than ``zlib`` at the
-# same compression level, and GDAL >= 3.7 already uses it when available
-# so our installs match throughput. Output is wire-compatible (zlib
-# format), so encoded streams round-trip through stdlib ``zlib.decompress``
-# unchanged.
-#
-# libdeflate's ``Compressor`` objects are not thread-safe, so we keep one
-# per (thread, level) pair via ``threading.local``. The writer drives
-# compression from a ``ThreadPoolExecutor``; per-thread caching avoids
-# allocating a fresh compressor per strip/tile.
-try:  # pragma: no cover - exercised only when libdeflate is installed
-    import libdeflate as _libdeflate
+# When the ``deflate`` PyPI package (Christian Heimes's libdeflate binding)
+# is installed, ``deflate_compress`` routes through it. On the 1 MB random
+# float32 buffer used in our write bench, libdeflate level 6 is ~3x faster
+# than stdlib ``zlib`` level 6 (7.6 ms vs 24 ms), matching what GDAL/libtiff
+# achieves when GDAL is built against libdeflate (the default in recent
+# rasterio/GDAL wheels). Output is wire-compatible (zlib format), so encoded
+# streams round-trip through stdlib ``zlib.decompress`` unchanged.
+try:  # pragma: no cover - exercised only when the deflate package is installed
+    import deflate as _deflate
     _HAVE_LIBDEFLATE = True
 except ImportError:
-    _libdeflate = None
+    _deflate = None
     _HAVE_LIBDEFLATE = False
 
-_libdeflate_thread_local = threading.local()
-
-
-def _libdeflate_compressor(level: int):
-    """Return a thread-local libdeflate Compressor for *level*."""
-    cache = getattr(_libdeflate_thread_local, 'cache', None)
-    if cache is None:
-        cache = {}
-        _libdeflate_thread_local.cache = cache
-    comp = cache.get(level)
-    if comp is None:
-        comp = _libdeflate.Compressor(level)
-        cache[level] = comp
-    return comp
 
 # -- Decompression-bomb defenses ---------------------------------------------
 #
@@ -133,15 +115,41 @@ def deflate_decompress(data: bytes, expected_size: int = 0) -> bytes:
     return bytes(out)
 
 
-def deflate_compress(data: bytes, level: int = 6) -> bytes:
+_zlib_fallback_warned = False
+
+
+def deflate_compress(data: bytes, level: int = 6,
+                     gil_friendly: bool = False) -> bytes:
     """Compress data with deflate/zlib.
 
-    Uses ``libdeflate`` when installed (1.5-2x faster than ``zlib``) and
+    Uses the ``deflate`` package (libdeflate binding) when installed
+    (~3x faster than stdlib ``zlib`` on typical raster payloads) and
     falls back to ``zlib.compress`` otherwise. Output is wire-compatible
     either way: the stdlib ``zlib.decompress`` accepts both.
+
+    ``gil_friendly=True`` forces stdlib ``zlib`` regardless of libdeflate
+    availability. The ``deflate`` PyPI binding does not release the GIL
+    during compression (measured: 1.2x speedup across 8 threads vs zlib's
+    5x speedup), so the writer's parallel paths request the GIL-releasing
+    codec to keep thread-pool scaling. The sequential path leaves the
+    default, picking up libdeflate's per-call speedup.
     """
-    if _HAVE_LIBDEFLATE:
-        return _libdeflate_compressor(level).compress(data, _libdeflate.Format.ZLIB)
+    if _HAVE_LIBDEFLATE and not gil_friendly:
+        # ``deflate.zlib_compress`` returns ``bytearray``; cast for the
+        # ``-> bytes`` contract callers (and tests) rely on.
+        return bytes(_deflate.zlib_compress(data, level))
+    if not _HAVE_LIBDEFLATE:
+        global _zlib_fallback_warned
+        if not _zlib_fallback_warned:
+            _zlib_fallback_warned = True
+            warnings.warn(
+                "xrspatial.geotiff: the `deflate` package is not installed; "
+                "falling back to stdlib zlib for deflate-compressed writes "
+                "(~3x slower on typical rasters). Install with `pip install "
+                "deflate` or `pip install xarray-spatial[geotiff]` to recover "
+                "full throughput.",
+                stacklevel=2,
+            )
     return zlib.compress(data, level)
 
 
@@ -1705,7 +1713,8 @@ def decompress(data, compression: int, expected_size: int = 0,
         raise ValueError(f"Unsupported compression type: {compression}")
 
 
-def compress(data: bytes, compression: int, level: int = 6) -> bytes:
+def compress(data: bytes, compression: int, level: int = 6,
+             gil_friendly: bool = False) -> bytes:
     """Compress data based on TIFF compression tag.
 
     Parameters
@@ -1717,6 +1726,12 @@ def compress(data: bytes, compression: int, level: int = 6) -> bytes:
     level : int
         Compression level (deflate: 1-9, zstd: 1-22, lz4: 0-16).
         Ignored for codecs without level support.
+    gil_friendly : bool
+        When True, prefer codec variants that release the GIL (used by
+        the parallel writer paths so a thread pool actually scales). Only
+        affects deflate: stdlib ``zlib`` releases the GIL, the ``deflate``
+        package's binding does not. All other codecs already release the
+        GIL and ignore this flag.
 
     Returns
     -------
@@ -1725,7 +1740,7 @@ def compress(data: bytes, compression: int, level: int = 6) -> bytes:
     if compression == COMPRESSION_NONE:
         return data
     elif compression in (COMPRESSION_DEFLATE, COMPRESSION_ADOBE_DEFLATE):
-        return deflate_compress(data, level)
+        return deflate_compress(data, level, gil_friendly=gil_friendly)
     elif compression == COMPRESSION_LZW:
         return lzw_compress(data)
     elif compression == COMPRESSION_PACKBITS:

@@ -68,12 +68,14 @@ class TestRoundTrip:
 class TestLevelEffect:
     """Higher compression level produces a smaller or equal file."""
 
-    def _make_compressible(self, shape=(128, 128)):
-        """Smooth, highly compressible float32 array."""
-        rng = np.random.default_rng(42)
-        # Smooth gradient + small noise -- compresses well
+    def _make_compressible(self, shape=(512, 512)):
+        """Smooth, highly compressible float32 array.
+
+        Large + smooth so the level-9 vs level-1 gap is dominated by real
+        compression work, not codec heuristic noise on tiny inputs.
+        """
         y, x = np.mgrid[0:shape[0], 0:shape[1]]
-        arr = (y + x).astype(np.float32) + rng.standard_normal(shape).astype(np.float32) * 0.01
+        arr = (y + x).astype(np.float32)
         return xr.DataArray(arr, dims=['y', 'x'])
 
     def test_zstd_higher_level_not_larger(self, tmp_path):

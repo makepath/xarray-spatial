@@ -661,7 +661,8 @@ def _build_ifd(tags: list[tuple], overflow_base: int,
 
 def _prepare_strip(data, i, rows_per_strip, height, width, samples, dtype,
                    bytes_per_sample, predictor: int, compression,
-                   compression_level=None, max_z_error: float = 0.0):
+                   compression_level=None, max_z_error: float = 0.0,
+                   gil_friendly: bool = False):
     """Extract and compress a single strip. Thread-safe."""
     r0 = i * rows_per_strip
     r1 = min(r0 + rows_per_strip, height)
@@ -689,8 +690,9 @@ def _prepare_strip(data, i, rows_per_strip, height, width, samples, dtype,
             strip_data, width, strip_rows, samples=samples, dtype=dtype,
             max_z_error=max_z_error)
     if compression_level is None:
-        return compress(strip_data, compression)
-    return compress(strip_data, compression, level=compression_level)
+        return compress(strip_data, compression, gil_friendly=gil_friendly)
+    return compress(strip_data, compression, level=compression_level,
+                    gil_friendly=gil_friendly)
 
 
 def _write_stripped(data: np.ndarray, compression: int, predictor: int,
@@ -745,6 +747,10 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: int,
         return rel_offsets, byte_counts, strips
 
     # Parallel strip compression -- zlib/zstd/lz4/LZW all release the GIL.
+    # ``gil_friendly=True`` keeps deflate on stdlib zlib here: the
+    # ``deflate`` (libdeflate) binding holds the GIL during compress, so
+    # 8 threads run effectively serially through it. Sequential callers
+    # still get libdeflate's per-call speedup (~3x).
     from concurrent.futures import ThreadPoolExecutor
     import os
 
@@ -755,6 +761,7 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: int,
                 data, i, rows_per_strip, height, width, samples, dtype,
                 bytes_per_sample, predictor, compression,
                 compression_level, max_z_error,
+                gil_friendly=True,
             ),
             range(num_strips),
         ))
@@ -776,7 +783,8 @@ def _write_stripped(data: np.ndarray, compression: int, predictor: int,
 
 def _prepare_tile(data, tr, tc, th, tw, height, width, samples, dtype,
                   bytes_per_sample, predictor: int, compression,
-                  compression_level=None, max_z_error: float = 0.0):
+                  compression_level=None, max_z_error: float = 0.0,
+                  gil_friendly: bool = False):
     """Extract, pad, and compress a single tile.  Thread-safe."""
     r0 = tr * th
     c0 = tc * tw
@@ -822,8 +830,9 @@ def _prepare_tile(data, tr, tc, th, tw, height, width, samples, dtype,
             tile_data, tw, th, samples=samples, dtype=dtype,
             max_z_error=max_z_error)
     if compression_level is None:
-        return compress(tile_data, compression)
-    return compress(tile_data, compression, level=compression_level)
+        return compress(tile_data, compression, gil_friendly=gil_friendly)
+    return compress(tile_data, compression, level=compression_level,
+                    gil_friendly=gil_friendly)
 
 
 def _write_tiled(data: np.ndarray, compression: int, predictor: int,
@@ -931,7 +940,7 @@ def _write_tiled(data: np.ndarray, compression: int, predictor: int,
             pool.submit(
                 _prepare_tile, data, tr, tc, th, tw, height, width,
                 samples, dtype, bytes_per_sample, predictor, compression,
-                compression_level, max_z_error,
+                compression_level, max_z_error, True,
             )
             for tr, tc in tile_indices
         ]
@@ -1589,7 +1598,7 @@ def write(data: np.ndarray, path: str, *,
 
 def _compress_block(arr, block_w, block_h, samples, dtype, bytes_per_sample,
                     predictor: int, compression, compression_level=None,
-                    max_z_error: float = 0.0):
+                    max_z_error: float = 0.0, gil_friendly: bool = False):
     """Compress a tile or strip.  *arr* must be contiguous and correctly sized."""
     if compression == COMPRESSION_JPEG:
         return jpeg_compress(arr.tobytes(), block_w, block_h, samples)
@@ -1612,8 +1621,9 @@ def _compress_block(arr, block_w, block_h, samples, dtype, bytes_per_sample,
                              samples=samples, dtype=dtype,
                              max_z_error=max_z_error)
     if compression_level is None:
-        return compress(raw_data, compression)
-    return compress(raw_data, compression, level=compression_level)
+        return compress(raw_data, compression, gil_friendly=gil_friendly)
+    return compress(raw_data, compression, level=compression_level,
+                    gil_friendly=gil_friendly)
 
 
 # ---------------------------------------------------------------------------
@@ -2081,7 +2091,8 @@ def write_streaming(dask_data, path: str, *,
                                     _compress_block,
                                     ta, tw, th, samples, out_dtype,
                                     bytes_per_sample, pred_int, comp_tag,
-                                    compression_level, max_z_error)
+                                    compression_level, max_z_error,
+                                    True)
                                 for ta in seg_tile_arrs
                             ]
                             seg_compressed = [
