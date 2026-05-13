@@ -463,9 +463,36 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
 
         return GeoTransform(pixel_width=sx, pixel_height=-sy), True
 
-    # Tiepoint without scale: still flag as georeferenced (origin known)
+    # Tiepoint without scale: honour the tiepoint origin and fall back to
+    # unit pixel size.  Per the GeoTIFF spec a ModelTiepointTag encodes a
+    # real-world (X, Y) for pixel (I, J); dropping it would silently relocate
+    # the raster to (0, 0).
+    #
+    # Sign convention note: ModelPixelScaleTag stores sy as a positive
+    # magnitude (the spec does not encode sign because rows are always
+    # ordered top-to-bottom in raster space).  The GeoTransform used in
+    # this code stores pixel_height as -sy to reflect that y decreases as
+    # row index increases.  When ModelPixelScaleTag is absent, the
+    # documented unit-scale fallback is sy = 1.0 in spec terms, which
+    # becomes pixel_height = -1.0 here.
     if tiepoint is not None:
-        return GeoTransform(), True
+        if not isinstance(tiepoint, tuple):
+            tiepoint = (tiepoint,)
+        tp_i = tiepoint[0] if len(tiepoint) > 0 else 0.0
+        tp_j = tiepoint[1] if len(tiepoint) > 1 else 0.0
+        tp_x = tiepoint[3] if len(tiepoint) > 3 else 0.0
+        tp_y = tiepoint[4] if len(tiepoint) > 4 else 0.0
+
+        # Unit scale: pixel_width = 1.0, pixel_height = -1.0
+        origin_x = tp_x - tp_i * 1.0
+        origin_y = tp_y + tp_j * 1.0
+
+        return GeoTransform(
+            origin_x=origin_x,
+            origin_y=origin_y,
+            pixel_width=1.0,
+            pixel_height=-1.0,
+        ), True
 
     return GeoTransform(), False
 
