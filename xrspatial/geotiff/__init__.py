@@ -3203,6 +3203,12 @@ def read_geotiff_gpu(source: str, *,
     # the orientation remap from PR #1521 + #1537 for free; the pure GPU
     # paths still need the explicit remap added in #1540.
     arr_was_cpu_decoded = False
+    # When a CPU fallback runs, ``read_to_array`` has already applied the
+    # MinIsWhite inversion and stashed the post-inversion sentinel on
+    # ``_mask_nodata``. Keep that geo_info alongside the pre-extracted one
+    # so the downstream nodata mask compares against the correct value
+    # (Copilot review of #1817).
+    _cpu_fallback_geo = None
 
     # PlanarConfiguration=2 (separate bands): each band has its own list
     # of tiles back-to-back in TileOffsets / TileByteCounts. The GPU
@@ -3266,10 +3272,12 @@ def read_geotiff_gpu(source: str, *,
                 break
             band_arrays.append(band_arr)
         if cpu_fallback_needed:
-            # Drop read_to_array's geo_info: orientation transform handling
-            # below operates on our pre-extracted geo_info so the 2/3/4 case
-            # is covered regardless of #1539's merge state.
-            arr_cpu, _ = _read_to_array(
+            # Drop read_to_array's geo_info for orientation transform
+            # handling (below operates on our pre-extracted geo_info so the
+            # 2/3/4 case is covered regardless of #1539's merge state), but
+            # keep it on ``_cpu_fallback_geo`` so the MinIsWhite-aware nodata
+            # mask below sees ``_mask_nodata``.
+            arr_cpu, _cpu_fallback_geo = _read_to_array(
                 source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
             arr_was_cpu_decoded = True
@@ -3282,7 +3290,7 @@ def read_geotiff_gpu(source: str, *,
                     f"({height}, {width}, {samples})"
                 )
     elif has_sparse_tile:
-        arr_cpu, _ = _read_to_array(
+        arr_cpu, _cpu_fallback_geo = _read_to_array(
             source, overview_level=overview_level)
         arr_gpu = cupy.asarray(arr_cpu)
         arr_was_cpu_decoded = True
@@ -3339,7 +3347,7 @@ def read_geotiff_gpu(source: str, *,
                 RuntimeWarning,
                 stacklevel=2,
             )
-            arr_cpu, _ = _read_to_array(
+            arr_cpu, _cpu_fallback_geo = _read_to_array(
                 source, overview_level=overview_level)
             arr_gpu = cupy.asarray(arr_cpu)
             arr_was_cpu_decoded = True
@@ -3392,9 +3400,18 @@ def read_geotiff_gpu(source: str, *,
     nodata = geo_info.nodata
     if nodata is not None:
         # When MinIsWhite was applied, the mask must use the inverted
-        # sentinel; otherwise the original sentinel.
-        _gpu_mask_value = (_mw_mask_nodata if _mw_mask_nodata is not None
-                           else nodata)
+        # sentinel; otherwise the original sentinel. The pure GPU path
+        # records the inverted sentinel in ``_mw_mask_nodata`` above; the
+        # CPU-fallback paths (sparse-tile, planar=2 auto-fallback, and
+        # post-decode CPU fallback) get it from ``read_to_array`` via
+        # ``_cpu_fallback_geo._mask_nodata`` (Copilot review of #1817).
+        if _mw_mask_nodata is not None:
+            _gpu_mask_value = _mw_mask_nodata
+        elif _cpu_fallback_geo is not None:
+            _gpu_mask_value = getattr(
+                _cpu_fallback_geo, '_mask_nodata', nodata)
+        else:
+            _gpu_mask_value = nodata
         arr_gpu = _apply_nodata_mask_gpu(arr_gpu, _gpu_mask_value)
 
     if dtype is not None:

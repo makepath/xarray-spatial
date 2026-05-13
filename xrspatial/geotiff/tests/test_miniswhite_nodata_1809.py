@@ -19,8 +19,6 @@ write.
 from __future__ import annotations
 
 import importlib.util
-import os
-import tempfile
 
 import numpy as np
 import pytest
@@ -46,7 +44,7 @@ _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 
 
 def _write_miniswhite_tiff(path: str, stored: np.ndarray, nodata_str: str,
-                          tiled: bool = False) -> None:
+                           tiled: bool = False) -> None:
     extratags = [("GDAL_NODATA", "s", 0, f"{nodata_str}\0", True)]
     kwargs = {"photometric": "miniswhite", "extratags": extratags}
     if tiled:
@@ -197,6 +195,102 @@ def test_eager_numpy_no_nodata_stays_integer(tmp_path):
 # ---------------------------------------------------------------------------
 # Backend parity — every available backend agrees on the same input.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# GPU CPU-fallback path: sparse-tile MinIsWhite TIFF (#1817 Copilot review).
+#
+# The GPU tiled read routes sparse-tile, planar=2 auto-fallback, and final
+# CPU-fallback branches through ``read_to_array``. Before the fix those
+# branches discarded ``_mask_nodata`` and masked against the original
+# sentinel, so a MinIsWhite raster decoded via CPU fallback still produced
+# wrong NaN placement.
+# ---------------------------------------------------------------------------
+
+
+def _patch_first_tile_sparse(path: str) -> None:
+    """Zero TileOffsets[0] and TileByteCounts[0] in-place to mark tile 0 sparse.
+
+    Mirrors the rewrite pattern used in test_security.py but targets a
+    single entry (tile index 0) rather than every entry. Handles SHORT or
+    LONG type encodings for both tags.
+    """
+    import struct
+
+    from xrspatial.geotiff._header import parse_header
+
+    with open(path, "rb") as fh:
+        data = bytearray(fh.read())
+    header = parse_header(bytes(data))
+    bo = header.byte_order
+    ifd_offset = header.first_ifd_offset
+    num_entries = struct.unpack_from(f"{bo}H", data, ifd_offset)[0]
+    entry_offset = ifd_offset + 2
+
+    targets = {324, 325}  # TileOffsets, TileByteCounts
+    for i in range(num_entries):
+        eo = entry_offset + i * 12
+        tag = struct.unpack_from(f"{bo}H", data, eo)[0]
+        if tag not in targets:
+            continue
+        type_id = struct.unpack_from(f"{bo}H", data, eo + 2)[0]
+        count = struct.unpack_from(f"{bo}I", data, eo + 4)[0]
+        if type_id == 4:  # LONG
+            total = count * 4
+            if total <= 4:
+                struct.pack_into(f"{bo}I", data, eo + 8, 0)
+            else:
+                ptr = struct.unpack_from(f"{bo}I", data, eo + 8)[0]
+                struct.pack_into(f"{bo}I", data, ptr, 0)
+        elif type_id == 3:  # SHORT
+            total = count * 2
+            if total <= 4:
+                struct.pack_into(f"{bo}H", data, eo + 8, 0)
+            else:
+                ptr = struct.unpack_from(f"{bo}I", data, eo + 8)[0]
+                struct.pack_into(f"{bo}H", data, ptr, 0)
+
+    with open(path, "wb") as fh:
+        fh.write(data)
+
+
+@_gpu_only
+def test_gpu_sparse_tile_miniswhite_nodata_zero(tmp_path):
+    """GPU CPU-fallback path must use the post-MinIsWhite sentinel for masking.
+
+    Build a tiled MinIsWhite uint8 raster with ``GDAL_NODATA=0``, then patch
+    the first tile's TileOffsets/TileByteCounts to 0 so the read routes
+    through the sparse-tile CPU-fallback branch of ``read_geotiff_gpu``.
+    """
+    # 32x32 raster, 16x16 tiles -> 4 tiles. Tile 0 becomes sparse.
+    stored = np.zeros((32, 32), dtype=np.uint8)
+    # Distinct values per tile so we can verify each region independently.
+    stored[:16, :16] = 0  # tile 0 (will be made sparse) -- value irrelevant
+    stored[:16, 16:] = 100  # tile 1
+    stored[16:, :16] = 200  # tile 2
+    stored[16:, 16:] = 255  # tile 3 collides with inverted nodata sentinel
+
+    path = str(tmp_path / "mw_sparse_gpu.tif")
+    _write_miniswhite_tiff(path, stored, "0", tiled=True)
+    _patch_first_tile_sparse(path)
+
+    arr = open_geotiff(path, gpu=True)
+    out = arr.data.get()
+
+    # Sparse tile materialises as the file's nodata sentinel (0), which is
+    # then inverted by MinIsWhite to 255 -- and 255 is the post-inversion
+    # mask sentinel, so those pixels must become NaN.
+    assert np.all(np.isnan(out[:16, :16]))
+    # Tile 1: 100 -> 155 after inversion, not the mask sentinel.
+    assert np.all(out[:16, 16:] == 155.0)
+    # Tile 2: 200 -> 55 after inversion.
+    assert np.all(out[16:, :16] == 55.0)
+    # Tile 3 stored 255 -> 0 after inversion. Before the fix, this entire
+    # tile was incorrectly masked to NaN because the mask compared against
+    # the original sentinel (0). After the fix, the mask sees the inverted
+    # sentinel (255) and these pixels survive as 0.
+    assert np.all(out[16:, 16:] == 0.0)
+    assert arr.attrs["nodata"] == 0
 
 
 def test_backend_parity_uint8_nodata_zero(tmp_path):
