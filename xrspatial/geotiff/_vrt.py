@@ -626,7 +626,7 @@ def read_vrt(vrt_path: str, *, window=None,
     -------
     (np.ndarray, VRTDataset) tuple
     """
-    from ._reader import read_to_array
+    from ._reader import PixelSafetyLimitError, read_to_array
 
     with open(vrt_path, 'r') as f:
         xml_str = f.read()
@@ -876,9 +876,7 @@ def read_vrt(vrt_path: str, *, window=None,
             except (
                 OSError, ValueError, struct.error,
             ) + _CODEC_DECODE_EXCEPTIONS as e:
-                if (isinstance(e, ValueError)
-                        and 'exceed' in str(e)
-                        and 'safety limit' in str(e)):
+                if isinstance(e, PixelSafetyLimitError):
                     raise
                 # Under XRSPATIAL_GEOTIFF_STRICT=1, surface the read failure
                 # so partial mosaics are caught in CI. Default mode warns

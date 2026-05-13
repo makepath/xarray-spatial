@@ -47,11 +47,15 @@ from ._header import (
 MAX_PIXELS_DEFAULT = 1_000_000_000
 
 
+class PixelSafetyLimitError(ValueError):
+    """Raised when a requested TIFF allocation exceeds max_pixels."""
+
+
 def _check_dimensions(width, height, samples, max_pixels):
-    """Raise ValueError if the requested allocation exceeds *max_pixels*."""
+    """Raise PixelSafetyLimitError if the request exceeds *max_pixels*."""
     total = width * height * samples
     if total > max_pixels:
-        raise ValueError(
+        raise PixelSafetyLimitError(
             f"TIFF image dimensions ({width} x {height} x {samples} = "
             f"{total:,} pixels) exceed the safety limit of "
             f"{max_pixels:,} pixels.  Pass a larger max_pixels value to "
