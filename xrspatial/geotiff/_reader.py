@@ -1560,9 +1560,14 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
         raise ValueError(
             f"Invalid tile dimensions: TileWidth={tw}, TileLength={th}")
 
-    # Reject crafted tile dims that would force huge per-tile allocations.
-    # A single tile's decoded bytes must also fit under the pixel budget.
-    _check_dimensions(tw, th, samples, max_pixels)
+    # Reject crafted tile dims (e.g. TileWidth = 2**31). This guards the
+    # TIFF header against malformed values; it is not the caller's output
+    # budget. The output-window check below uses ``max_pixels`` and is
+    # what enforces the user's per-call memory cap. The source-read path
+    # under ``read_vrt`` (#1796) relies on that output check to honour a
+    # small caller ``max_pixels`` against a normal-tile source; see
+    # #1823.
+    _check_dimensions(tw, th, samples, MAX_PIXELS_DEFAULT)
 
     # Per-tile compressed-byte cap (issue #1664). Same env var as the
     # HTTP path. mmap slicing is bounded by the file size, but the slice
@@ -2025,10 +2030,14 @@ def _fetch_decode_cog_http_tiles(
     # A windowed HTTP read of a multi-billion-pixel COG only allocates
     # the window, so capping the full image would reject legitimate
     # tiled reads. The full-image cap still applies for whole-file
-    # reads (window is None). The single-tile budget always applies.
+    # reads (window is None). The per-tile dim check below guards the
+    # TIFF header against absurd ``TileWidth`` / ``TileLength`` values
+    # (e.g. 2**31) and uses ``MAX_PIXELS_DEFAULT`` so a caller's small
+    # ``max_pixels`` -- intended as an output-window budget -- does not
+    # reject normal 256x256 tiles. See #1823.
     if window is None:
         _check_dimensions(width, height, samples, max_pixels)
-    _check_dimensions(tw, th, samples, max_pixels)
+    _check_dimensions(tw, th, samples, MAX_PIXELS_DEFAULT)
 
     # Reject malformed TIFFs whose declared tile grid exceeds the supplied
     # TileOffsets length. See issue #1219.
