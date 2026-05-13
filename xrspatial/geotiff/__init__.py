@@ -3836,6 +3836,24 @@ def _read_vrt_dask(source: str, *, dtype=None, window=None, band=None,
     else:
         ch_h, ch_w = chunks
 
+    # Match read_geotiff_dask's graph-size guard. Each VRT chunk becomes a
+    # delayed task, so tiny chunks over very large VRT extents can OOM the
+    # driver during graph construction before any source read executes.
+    _MAX_DASK_CHUNKS = 50_000
+    n_chunks = ((height + ch_h - 1) // ch_h) * ((width + ch_w - 1) // ch_w)
+    if n_chunks > _MAX_DASK_CHUNKS:
+        import math
+        scale = math.sqrt(n_chunks / _MAX_DASK_CHUNKS)
+        suggested_h = int(math.ceil(ch_h * scale))
+        suggested_w = int(math.ceil(ch_w * scale))
+        raise ValueError(
+            f"read_vrt: chunks=({ch_h}, {ch_w}) on a {height}x{width} "
+            f"VRT window would produce {n_chunks:,} dask tasks, exceeding "
+            f"the {_MAX_DASK_CHUNKS:,}-task cap. Pass a larger chunks=... "
+            f"value explicitly (e.g. chunks=({suggested_h}, "
+            f"{suggested_w}) keeps the task count under the cap)."
+        )
+
     rows = list(range(0, height, ch_h))
     cols = list(range(0, width, ch_w))
     out_has_band_axis = band is None and n_bands > 1

@@ -5,6 +5,7 @@ import os
 import warnings
 
 import numpy as np
+import pytest
 
 from xrspatial.geotiff import to_geotiff, read_vrt
 
@@ -49,3 +50,14 @@ def test_read_vrt_chunks_does_not_read_sources_during_construction(tmp_path):
     assert caught == []
     assert hasattr(lazy.data, 'compute')
 
+
+def test_read_vrt_chunks_rejects_excessive_task_count(tmp_path):
+    vrt = tmp_path / "tmp_1798_huge_extent.vrt"
+    vrt.write_text(
+        '<VRTDataset rasterXSize="100000" rasterYSize="100000">\n'
+        '  <VRTRasterBand dataType="Byte" band="1"/>\n'
+        '</VRTDataset>\n'
+    )
+
+    with pytest.raises(ValueError, match="task cap"):
+        read_vrt(str(vrt), chunks=1, max_pixels=20_000_000_000)
