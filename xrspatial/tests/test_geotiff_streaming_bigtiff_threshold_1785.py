@@ -141,17 +141,18 @@ class TestShouldUseBigTIFFStreaming:
     def test_large_strip_table_alone_can_promote(self):
         """Even a small pixel payload can need BigTIFF if n_entries is huge.
 
-        This documents the strip-table contribution: ~536 M entries puts
-        the table itself near 4 GiB. Not realistic in practice, but it
-        proves the overhead is wired through.
+        Documents the strip-table contribution: ~536 M entries puts the
+        table itself near 4 GiB and forces BigTIFF with no pixel data.
+        Driven through the ``n_entries`` parameter (8 bytes per entry)
+        to avoid allocating a 536 M-element Python list at test time;
+        the ``ifd_overhead_bytes`` path is exercised by
+        ``test_overhead_pushes_just_under_threshold_over``.
         """
         n_entries = (UINT32_MAX // 8) + 1
-        tags = _minimal_tag_list(n_entries=n_entries)
-        overhead = _compute_classic_ifd_overhead(tags)
         assert _should_use_bigtiff_streaming(
             uncompressed_bytes=0,
-            n_entries=0,
-            ifd_overhead_bytes=overhead,
+            n_entries=n_entries,
+            ifd_overhead_bytes=0,
         ) is True
 
     def test_overhead_pushes_just_under_threshold_over(self):
