@@ -2154,7 +2154,10 @@ def read_geotiff_dask(source: str, *,
     # rather than letting the windowed-read path try to parse VRT XML as
     # TIFF bytes. ``read_vrt`` is the single source of truth for VRT.
     if isinstance(source, str) and source.lower().endswith('.vrt'):
-        return read_vrt(source, dtype=dtype, name=name, chunks=chunks)
+        return read_vrt(
+            source, dtype=dtype, window=window, band=band, name=name,
+            chunks=chunks, max_pixels=max_pixels,
+        )
 
     # P5: HTTP COG sources used to fire one IFD/header GET per chunk
     # task. Parse metadata once here so every delayed task can reuse it.
