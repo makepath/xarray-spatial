@@ -2282,6 +2282,13 @@ def read_geotiff_dask(source: str, *,
         coords = _geo_to_coords(geo_info, full_h, full_w)
 
     if band is not None:
+        # Reject ``bool`` up front; ``isinstance(True, int)`` is True in
+        # Python so ``True < n_bands`` evaluates without raising and
+        # silently reads band 1. Matches the VRT path's rejection so
+        # all read paths agree on the contract. See #1786.
+        if isinstance(band, bool):
+            raise ValueError(
+                f"band must be a non-negative int, got {band!r}")
         if n_bands == 0:
             if band != 0:
                 raise IndexError(
@@ -2967,6 +2974,13 @@ def read_geotiff_gpu(source: str, *,
         # behaviour mirrors ``read_geotiff_dask``.
         ifd_samples = ifd.samples_per_pixel
         if band is not None:
+            # Reject ``bool`` up front; ``isinstance(True, int)`` is True
+            # in Python so ``True < ifd_samples`` evaluates without raising
+            # and silently reads band 1. Matches the VRT path's rejection
+            # so all read paths agree on the contract. See #1786.
+            if isinstance(band, bool):
+                raise ValueError(
+                    f"band must be a non-negative int, got {band!r}")
             if ifd_samples <= 1:
                 if band != 0:
                     raise IndexError(
