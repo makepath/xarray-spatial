@@ -94,6 +94,58 @@ _CRS_WKT_DEPRECATED_SENTINEL = object()
 # a GeoTransform from coords (see ``_coords_to_transform`` and issue #1643).
 _BAND_DIM_NAMES = ('band', 'bands', 'channel')
 
+# Spatial dim names recognised on 3D writer inputs. ``y``/``x`` are the
+# canonical TIFF axes; aliases are accepted so a user who happens to use
+# ``lat``/``lon`` or ``row``/``col`` is not bounced by the validator below.
+_Y_DIM_NAMES = ('y', 'lat', 'latitude', 'row')
+_X_DIM_NAMES = ('x', 'lon', 'longitude', 'col')
+
+
+def _validate_3d_writer_dims(dims) -> None:
+    """Reject ambiguous 3D writer inputs (issue #1812).
+
+    The writer interprets a 3D DataArray as either ``(band, y, x)`` or
+    ``(y, x, band)``. ``data.dims[0] in _BAND_DIM_NAMES`` decides which
+    branch fires the ``moveaxis``. Anything else (e.g. ``('time', 'y', 'x')``)
+    used to fall through silently: the writer kept the leading axis as
+    the spatial ``y`` axis and the result was a TIFF with the leading
+    axis values laid out along ``y`` (silent data corruption -- on
+    read-back the array round-tripped with a swapped shape).
+
+    Refuse the ambiguous case at the entry point. The message tells the
+    caller exactly how to fix the input (rename to one of
+    ``_BAND_DIM_NAMES`` or transpose to ``(y, x, band)``).
+    """
+    if len(dims) != 3:
+        return
+    d0, d1, d2 = dims
+    band_layout = (d0 in _BAND_DIM_NAMES
+                   and d1 in _Y_DIM_NAMES
+                   and d2 in _X_DIM_NAMES)
+    yxb_layout = (d0 in _Y_DIM_NAMES
+                  and d1 in _X_DIM_NAMES
+                  and d2 in _BAND_DIM_NAMES)
+    if band_layout or yxb_layout:
+        return
+    # Bare (y, x, *) or (*, y, x) where the third dim is unnamed but
+    # spatial -- the writer's old behaviour treats the non-spatial axis
+    # as bands. Accept that only when the unknown dim is in the band
+    # position (last), which matches how raw numpy callers typically
+    # build a band-last array.
+    if d0 in _Y_DIM_NAMES and d1 in _X_DIM_NAMES:
+        return
+    raise ValueError(
+        f"3D writer input has ambiguous dims {dims!r}. Expected "
+        f"(band, y, x) or (y, x, band); accepted band-dim aliases are "
+        f"{_BAND_DIM_NAMES} and spatial aliases are y={_Y_DIM_NAMES} / "
+        f"x={_X_DIM_NAMES}. Rename the non-spatial dim to 'band' or "
+        f"transpose the array so spatial dims come first (e.g. "
+        f"``da.transpose('y', 'x', {dims[0]!r})``). The writer cannot "
+        f"infer which axis is the band axis from arbitrary dim names "
+        f"and would otherwise silently treat the leading axis as the "
+        f"spatial y axis (issue #1812)."
+    )
+
 
 class GeoTIFFFallbackWarning(UserWarning):
     """Warning emitted when a geotiff helper falls back to a slower path.
@@ -1388,6 +1440,15 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         (``b != 0`` or ``d != 0`` in rasterio ``Affine`` ordering). The
         on-disk GeoTIFF is axis-aligned; reproject onto an axis-aligned
         grid first.
+    ValueError
+        If ``data`` is a 3D DataArray whose ``dims`` is not
+        ``(band, y, x)`` or ``(y, x, band)`` (accepting the band-name
+        aliases ``bands`` / ``channel`` and spatial-name aliases
+        ``lat`` / ``lon`` / ``latitude`` / ``longitude`` / ``row`` /
+        ``col``). A leading non-band dim such as ``time`` is rejected
+        because the writer cannot infer the band axis from arbitrary
+        names and used to silently treat the leading axis as ``y``
+        (issue #1812).
     """
     from ._reader import _coerce_path
 
@@ -1632,6 +1693,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         # destinations we materialise eagerly and assemble in-memory.
         if hasattr(raw, 'dask') and not cog and not _path_is_file_like:
             dask_arr = raw
+            # Reject ambiguous 3D layouts at the entry point so a leading
+            # non-band dim like ``('time', 'y', 'x')`` cannot silently
+            # round-trip as a TIFF whose ``y`` axis carries the time
+            # values (issue #1812).
+            if raw.ndim == 3:
+                _validate_3d_writer_dims(data.dims)
             # Handle band-first dimension order (band, y, x) -> (y, x, band)
             if raw.ndim == 3 and data.dims[0] in _BAND_DIM_NAMES:
                 import dask.array as da
@@ -1682,6 +1749,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 arr = arr.get()  # Dask+CuPy -> numpy
         else:
             arr = np.asarray(raw)
+        # Reject ambiguous 3D layouts (issue #1812). The validator runs
+        # on ``data.dims`` (the original DataArray's dim names) rather
+        # than on ``arr`` so the error fires before the move-axis even
+        # for COG and file-like destinations that fall through here.
+        if arr.ndim == 3:
+            _validate_3d_writer_dims(data.dims)
         # Handle band-first dimension order (band, y, x) -> (y, x, band)
         if arr.ndim == 3 and data.dims[0] in _BAND_DIM_NAMES:
             arr = np.moveaxis(arr, 0, -1)
@@ -3522,6 +3595,16 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         GPU writer forwards this kwarg unchanged. Default ``'auto'``
         writes MinIsBlack for any band count, so a 4-band raster is
         not silently tagged as RGB+alpha (issue #1769).
+
+    Raises
+    ------
+    ValueError
+        If ``data`` is a 3D DataArray whose ``dims`` is not
+        ``(band, y, x)`` or ``(y, x, band)`` (accepting band-name
+        aliases ``bands`` / ``channel`` and spatial-name aliases
+        ``lat`` / ``lon`` / ``row`` / ``col``). A leading non-band
+        dim such as ``time`` would otherwise silently round-trip with
+        the leading axis treated as ``y`` (issue #1812).
     """
     if not tiled:
         raise ValueError(
@@ -3603,6 +3686,12 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         else:
             arr = cupy.asarray(np.asarray(arr))  # numpy -> GPU
 
+        # Reject ambiguous 3D layouts (issue #1812). Mirrors the gate
+        # in ``to_geotiff``: a leading non-band dim like ``time`` would
+        # otherwise round-trip with the leading axis silently treated
+        # as ``y``.
+        if arr.ndim == 3:
+            _validate_3d_writer_dims(data.dims)
         # Handle band-first dimension order (band, y, x) -> (y, x, band).
         # rioxarray and CF-style multi-band rasters land here; without
         # this remap the writer treats arr.shape[2] as the band axis and
