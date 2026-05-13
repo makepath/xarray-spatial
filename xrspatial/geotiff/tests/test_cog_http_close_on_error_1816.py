@@ -169,7 +169,8 @@ def test_http_source_closed_on_success(single_band_cog, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_http_source_closed_when_tile_fetch_raises(
-        single_band_cog, monkeypatch):
+    single_band_cog, monkeypatch,
+):
     """When ``_fetch_decode_cog_http_tiles`` raises, ``_read_cog_http``
     still closes the source. Before the fix, ``source.close()`` ran
     only on the success path, so any exception in the fetch/decode
@@ -202,7 +203,8 @@ def test_http_source_closed_when_tile_fetch_raises(
 # ---------------------------------------------------------------------------
 
 def test_http_source_closed_when_post_processing_raises(
-        single_band_cog, monkeypatch):
+    single_band_cog, monkeypatch,
+):
     """An exception from the orientation/photometric step also runs
     through ``finally``. Guards against a future regression that moves
     ``source.close()`` back between the fetch and the post-processing.

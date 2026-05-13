@@ -1867,81 +1867,82 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     (array, geo_info) tuple
     """
     source = _HTTPSource(url)
-    header, ifd, geo_info, header_bytes = _parse_cog_http_meta(
-        source, overview_level=overview_level)
+    # Issue #1816: wrap everything after the ``_HTTPSource`` construction
+    # in try/finally so ``source.close()`` runs even when header parsing,
+    # validation, fetch/decode, or orientation/photometric post-processing
+    # raises. ``_HTTPSource.close()`` is a no-op today, but a future
+    # resource-holding source would leak on the error path without this.
+    # ``close()`` is idempotent, so the explicit pre-raise ``source.close()``
+    # calls in the validation blocks below stay as-is.
+    try:
+        header, ifd, geo_info, header_bytes = _parse_cog_http_meta(
+            source, overview_level=overview_level)
 
-    # Mirror the local-path orientation guard in ``read_to_array``: a
-    # windowed read against a non-default Orientation tag (274) has
-    # ambiguous semantics (does the window refer to file pixels or to
-    # display pixels?) and the HTTP path does not yet implement
-    # ``_apply_orientation``. Reject the combination here so HTTP and
-    # local reads agree on the contract for oriented TIFFs instead of
-    # silently returning a different region or pixel order. See PR
-    # #1680 review feedback on issue #1669.
-    if ifd.orientation != 1 and window is not None:
-        source.close()
-        raise ValueError(
-            f"Orientation tag (274) is {ifd.orientation}; windowed reads "
-            f"(window=...) and dask-chunked reads (chunks=...) are not "
-            f"supported for non-default orientation. Read the full "
-            f"array first, then slice."
-        )
-
-    # Validate ``window`` against the selected IFD's extent before the
-    # tile fetch is built. Without this, the helper silently clamps an
-    # out-of-bounds window and returns a smaller array, mismatching
-    # ``open_geotiff``'s caller-built coord arrays. Mirrors the
-    # local-path validator in ``read_to_array`` (#1634).
-    if window is not None:
-        w_r0, w_c0, w_r1, w_c1 = window
-        if (w_r0 < 0 or w_c0 < 0
-                or w_r1 > ifd.height or w_c1 > ifd.width
-                or w_r0 >= w_r1 or w_c0 >= w_c1):
+        # Mirror the local-path orientation guard in ``read_to_array``: a
+        # windowed read against a non-default Orientation tag (274) has
+        # ambiguous semantics (does the window refer to file pixels or to
+        # display pixels?) and the HTTP path does not yet implement
+        # ``_apply_orientation``. Reject the combination here so HTTP and
+        # local reads agree on the contract for oriented TIFFs instead of
+        # silently returning a different region or pixel order. See PR
+        # #1680 review feedback on issue #1669.
+        if ifd.orientation != 1 and window is not None:
             source.close()
             raise ValueError(
-                f"window={window} is outside the source extent "
-                f"({ifd.height}x{ifd.width}) or has non-positive size.")
+                f"Orientation tag (274) is {ifd.orientation}; windowed reads "
+                f"(window=...) and dask-chunked reads (chunks=...) are not "
+                f"supported for non-default orientation. Read the full "
+                f"array first, then slice."
+            )
 
-    # Validate ``band`` against the selected IFD's sample count before
-    # the tile fetch. Without this, ``band=-1`` silently picks the last
-    # channel via numpy negative indexing and ``band>=samples_per_pixel``
-    # leaks a raw numpy ``IndexError``; on a single-band file ``band=N``
-    # (N != 0) is dropped on the floor because the post-decode slice
-    # below is gated on ``arr.ndim == 3 and samples_per_pixel > 1``.
-    # Mirrors the local-path validator in ``read_to_array`` so all
-    # backends agree on the contract: 0-based non-negative index only.
-    # ``source.close()`` is called for symmetry with the success-path
-    # teardown below; it is a no-op on ``_HTTPSource`` today (the
-    # urllib3 ``PoolManager`` is shared module-level, not per-source)
-    # but a future resource-holding source will need it. See issue #1695.
-    if band is not None:
-        # Reject ``bool`` (and ``np.bool_``) up front; ``isinstance(True, int)``
-        # is True in Python so ``True < samples_per_pixel`` evaluates without
-        # raising and silently reads band 1. ``np.bool_`` is not a subclass of
-        # ``bool`` so it needs its own check to match the VRT path's
-        # rejection. See #1786.
-        if isinstance(band, (bool, np.bool_)):
-            source.close()
-            raise ValueError(
-                f"band must be a non-negative int, got {band!r}")
-        if ifd.samples_per_pixel <= 1:
-            if band != 0:
+        # Validate ``window`` against the selected IFD's extent before the
+        # tile fetch is built. Without this, the helper silently clamps an
+        # out-of-bounds window and returns a smaller array, mismatching
+        # ``open_geotiff``'s caller-built coord arrays. Mirrors the
+        # local-path validator in ``read_to_array`` (#1634).
+        if window is not None:
+            w_r0, w_c0, w_r1, w_c1 = window
+            if (w_r0 < 0 or w_c0 < 0
+                    or w_r1 > ifd.height or w_c1 > ifd.width
+                    or w_r0 >= w_r1 or w_c0 >= w_c1):
+                source.close()
+                raise ValueError(
+                    f"window={window} is outside the source extent "
+                    f"({ifd.height}x{ifd.width}) or has non-positive size.")
+
+        # Validate ``band`` against the selected IFD's sample count before
+        # the tile fetch. Without this, ``band=-1`` silently picks the last
+        # channel via numpy negative indexing and ``band>=samples_per_pixel``
+        # leaks a raw numpy ``IndexError``; on a single-band file ``band=N``
+        # (N != 0) is dropped on the floor because the post-decode slice
+        # below is gated on ``arr.ndim == 3 and samples_per_pixel > 1``.
+        # Mirrors the local-path validator in ``read_to_array`` so all
+        # backends agree on the contract: 0-based non-negative index only.
+        # ``source.close()`` is called for symmetry with the success-path
+        # teardown below; it is a no-op on ``_HTTPSource`` today (the
+        # urllib3 ``PoolManager`` is shared module-level, not per-source)
+        # but a future resource-holding source will need it. See issue #1695.
+        if band is not None:
+            # Reject ``bool`` (and ``np.bool_``) up front; ``isinstance(True, int)``
+            # is True in Python so ``True < samples_per_pixel`` evaluates without
+            # raising and silently reads band 1. ``np.bool_`` is not a subclass of
+            # ``bool`` so it needs its own check to match the VRT path's
+            # rejection. See #1786.
+            if isinstance(band, (bool, np.bool_)):
+                source.close()
+                raise ValueError(
+                    f"band must be a non-negative int, got {band!r}")
+            if ifd.samples_per_pixel <= 1:
+                if band != 0:
+                    source.close()
+                    raise IndexError(
+                        f"band={band} requested on a single-band file.")
+            elif not 0 <= band < ifd.samples_per_pixel:
                 source.close()
                 raise IndexError(
-                    f"band={band} requested on a single-band file.")
-        elif not 0 <= band < ifd.samples_per_pixel:
-            source.close()
-            raise IndexError(
-                f"band={band} out of range for "
-                f"{ifd.samples_per_pixel}-band file.")
+                    f"band={band} out of range for "
+                    f"{ifd.samples_per_pixel}-band file.")
 
-    # Issue #1816: wrap the tile fetch and post-processing in try/finally
-    # so ``source.close()`` runs even when the fetch/decode or the
-    # orientation/photometric step raises. ``_HTTPSource.close()`` is a
-    # no-op today, but a future resource-holding source would leak on
-    # the error path without this. The explicit ``source.close()`` calls
-    # in the validation block above stay as-is; ``close()`` is idempotent.
-    try:
         arr = _fetch_decode_cog_http_tiles(
             source, header, ifd, max_pixels=max_pixels, window=window)
 
