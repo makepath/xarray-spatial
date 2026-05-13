@@ -25,8 +25,6 @@ import numpy as np
 import pytest
 import xarray as xr
 
-tifffile = pytest.importorskip("tifffile")
-
 from xrspatial.geotiff import open_geotiff, to_geotiff
 from xrspatial.geotiff._geotags import GeoTransform, build_geo_tags
 
@@ -151,6 +149,7 @@ def test_wkt_only_citation_bytes_unchanged_after_fix(tmp_path):
     """The existing citation-WKT bytes must keep round-tripping. This
     regression-guards the contract from issue #1632: libgeotiff readers
     can still recover the CRS by parsing the citation."""
+    tifffile = pytest.importorskip("tifffile")
     da = _wkt_only_da()
     p = str(tmp_path / "wkt_only_bytes_1768.tif")
 
@@ -163,7 +162,37 @@ def test_wkt_only_citation_bytes_unchanged_after_fix(tmp_path):
     with tifffile.TiffFile(p) as tif:
         keys = tif.pages[0].tags.get(34735)  # GeoKeyDirectory
         ascii_tag = tif.pages[0].tags.get(34737)  # GeoAsciiParams
+        # GeoKeyDirectory must contain at least the header (4 shorts) plus
+        # KeyEntries for: model type, raster type, user-defined CRS
+        # (ProjectedCSType or GeographicType = 32767), and the
+        # GTCitationGeoKey pointer into GeoAsciiParams. Each entry is 4
+        # shorts, so 4 + 4*4 = 20 shorts is the floor for the WKT-only
+        # path.
         assert keys is not None
-        assert len(keys.value) > 4  # header + at least one real key entry
+        assert len(keys.value) >= 20
+
+        # Pin the user-defined CRS marker explicitly: one of
+        # ProjectedCSType (3072) or GeographicType (2048) must be set to
+        # 32767. The KeyEntries layout is [key_id, location, count,
+        # value_or_offset] repeated; iterate as 4-tuples.
+        entries = list(keys.value[4:])
+        user_defined_crs_marker = False
+        for i in range(0, len(entries), 4):
+            key_id = entries[i]
+            location = entries[i + 1]
+            value = entries[i + 3]
+            # location == 0 means the value is inline in the entry.
+            if key_id in (2048, 3072) and location == 0 and value == 32767:
+                user_defined_crs_marker = True
+                break
+        assert user_defined_crs_marker, (
+            "GeoKeyDirectory must mark the CRS as user-defined (32767) "
+            "via ProjectedCSType (3072) or GeographicType (2048)"
+        )
+
+        # Pin the citation payload: the full WKT must round-trip through
+        # GeoAsciiParams, not just the leading ``PROJCS[``.
         assert ascii_tag is not None
-        assert "PROJCS[" in ascii_tag.value
+        # tifffile strips the GeoTIFF terminator (``|`` or ``\x00``);
+        # match the WKT body inclusive of the trailing closing bracket.
+        assert _USER_DEFINED_WKT in ascii_tag.value

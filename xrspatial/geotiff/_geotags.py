@@ -1054,7 +1054,11 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
             key_entries.append((GEOKEY_PROJECTED_CS_TYPE, 0, 1, crs_epsg))
         num_keys += 1
     elif crs_wkt is not None:
-        # User-defined CRS: store 32767 and write WKT to GeoAsciiParams.
+        # User-defined CRS: store 32767 and write the citation string to
+        # GeoAsciiParams. The ``crs_wkt`` parameter holds whatever string
+        # the caller supplied (typically WKT, but also accepts PROJ
+        # strings that ``_wkt_to_epsg`` could not resolve to an EPSG
+        # code); the bytes are written verbatim.
         #
         # libgeotiff and GDAL recover the CRS by parsing the citation
         # back out, but many other GeoTIFF readers treat the citation as
@@ -1066,13 +1070,14 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
         import warnings as _warnings
         _warnings.warn(
             "Writing a user-defined CRS via WKT only "
-            "(ProjectedCSType / GeographicType = 32767 with the WKT "
-            "stored in GTCitationGeoKey). libgeotiff and GDAL can "
-            "round-trip this, but many other GeoTIFF readers treat the "
-            "citation as a free-form name and lose the CRS. Prefer "
-            "passing an EPSG code (e.g. attrs['crs'] = 4326) when the "
-            "projection is registered with EPSG -- the EPSG path emits "
-            "the standard GeoKeys every reader understands.",
+            "(ProjectedCSType / GeographicType = 32767 with the supplied "
+            "CRS string -- WKT or unresolved PROJ -- stored in "
+            "GTCitationGeoKey). libgeotiff and GDAL can round-trip this, "
+            "but many other GeoTIFF readers treat the citation as a "
+            "free-form name and lose the CRS. Prefer passing an EPSG "
+            "code (e.g. attrs['crs'] = 4326) when the projection is "
+            "registered with EPSG -- the EPSG path emits the standard "
+            "GeoKeys every reader understands.",
             UserWarning,
             stacklevel=2,
         )
