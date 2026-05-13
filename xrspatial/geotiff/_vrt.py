@@ -115,16 +115,26 @@ def _xml_attr(value) -> str:
         return '""'
     return _xml_quoteattr(str(value))
 
-# Lazy imports to avoid circular dependency
+# Lazy imports to avoid circular dependency.
+#
+# ``Int8`` is the GDAL 3.7+ signed-byte name.  ``UInt64`` / ``Int64`` are
+# the GDAL 3.5+ 64-bit integer names; both round-trip losslessly through
+# numpy's native ``uint64`` / ``int64``.  Complex types (``CInt16``,
+# ``CInt32``, ``CFloat32``, ``CFloat64``) are deliberately absent: the
+# reader has no complex-data code path, so an unknown ``dataType`` raises
+# in :func:`parse_vrt` rather than silently dropping the imaginary
+# component by falling back to ``Float32``.  See issue #1783.
 _DTYPE_MAP = {
     'Byte': np.uint8,
+    'Int8': np.int8,
     'UInt16': np.uint16,
     'Int16': np.int16,
     'UInt32': np.uint32,
     'Int32': np.int32,
+    'UInt64': np.uint64,
+    'Int64': np.int64,
     'Float32': np.float32,
     'Float64': np.float64,
-    'Int8': np.int8,
 }
 
 
@@ -277,8 +287,27 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
     bands = []
     for band_elem in root.findall('VRTRasterBand'):
         band_num = int(band_elem.get('band', 1))
-        dtype_name = band_elem.get('dataType', 'Float32')
-        dtype = np.dtype(_DTYPE_MAP.get(dtype_name, np.float32))
+        # Distinguish "attribute missing" (GDAL default: Float32) from
+        # "attribute present but unsupported".  The previous
+        # ``_DTYPE_MAP.get(dtype_name, np.float32)`` collapsed both cases
+        # to ``Float32``, so a VRT declaring ``CFloat32`` silently lost
+        # its imaginary component and one declaring a typo (``Flaot32``)
+        # silently produced wrong values.  See issue #1783.
+        dtype_name = band_elem.get('dataType')
+        if dtype_name is None:
+            dtype_name = 'Float32'
+        if dtype_name not in _DTYPE_MAP:
+            supported = ', '.join(sorted(_DTYPE_MAP))
+            raise ValueError(
+                f"VRTRasterBand band={band_num} declares "
+                f"dataType={dtype_name!r}, which is not supported by "
+                f"read_vrt. Supported dataType values: {supported}. "
+                f"Complex dataType values (CInt16, CInt32, CFloat32, "
+                f"CFloat64) are not supported because the reader has no "
+                f"complex-data code path; falling back to Float32 would "
+                f"silently drop the imaginary component."
+            )
+        dtype = np.dtype(_DTYPE_MAP[dtype_name])
         nodata_str = _text(band_elem, 'NoDataValue')
         nodata = float(nodata_str) if nodata_str else None
         color_interp = _text(band_elem, 'ColorInterp')
