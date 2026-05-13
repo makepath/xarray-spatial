@@ -871,10 +871,15 @@ def read_vrt(vrt_path: str, *, window=None,
                     src.filename,
                     window=(read_r0, read_c0, read_r1, read_c1),
                     band=src.band - 1,  # convert 1-based to 0-based
+                    max_pixels=max_pixels,
                 )
             except (
                 OSError, ValueError, struct.error,
             ) + _CODEC_DECODE_EXCEPTIONS as e:
+                if (isinstance(e, ValueError)
+                        and 'exceed' in str(e)
+                        and 'safety limit' in str(e)):
+                    raise
                 # Under XRSPATIAL_GEOTIFF_STRICT=1, surface the read failure
                 # so partial mosaics are caught in CI. Default mode warns
                 # once per missing source then continues, preserving the
