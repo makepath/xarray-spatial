@@ -260,8 +260,12 @@ def _build_tiff_with_tiepoint_only(tiepoint_6: tuple) -> bytes:
     no ModelPixelScaleTag or ModelTransformationTag.
 
     The GeoTIFF spec permits this configuration; the tiepoint encodes a
-    real-world (X, Y) origin for pixel (I, J) and the pixel scale defaults
-    to (1.0, 1.0).
+    real-world (X, Y) origin for pixel (I, J).  When ModelPixelScaleTag
+    is absent the spec-level unit pixel scale is (sx, sy) = (1.0, 1.0)
+    (sy is a positive magnitude in spec terms).  The reader translates
+    that into the GeoTransform sign convention used in this repo, where
+    pixel_height is stored as -sy, so the resulting transform has
+    pixel_width == 1.0 and pixel_height == -1.0.
     """
     import struct
 
