@@ -65,6 +65,53 @@ _CODEC_DECODE_EXCEPTIONS = _codec_decode_exceptions()
 _ALLOWED_ROOTS_ENV = 'XRSPATIAL_VRT_ALLOWED_ROOTS'
 
 
+# Cap on the VRT XML file read. VRTs are XML metadata only (pixel data lives
+# in source TIFFs); a 50k-source VRT is around 25 MB, so 64 MiB is a safe
+# default that still rejects pathological inputs without scanning the whole
+# file into memory.
+_MAX_XML_BYTES_ENV = 'XRSPATIAL_VRT_MAX_XML_BYTES'
+_DEFAULT_MAX_XML_BYTES = 64 * 1024 * 1024
+
+
+def _get_vrt_max_xml_bytes() -> int:
+    """Return the cap on VRT XML file size, in bytes."""
+    raw = os.environ.get(_MAX_XML_BYTES_ENV)
+    if raw is None or raw == '':
+        return _DEFAULT_MAX_XML_BYTES
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"{_MAX_XML_BYTES_ENV} must be a positive integer, got "
+            f"{raw!r}")
+    if value <= 0:
+        raise ValueError(
+            f"{_MAX_XML_BYTES_ENV} must be a positive integer, got "
+            f"{value}")
+    return value
+
+
+def _read_vrt_xml(vrt_path: str) -> str:
+    """Read a VRT XML file with a bounded total size."""
+    cap = _get_vrt_max_xml_bytes()
+    chunks = []
+    total = 0
+    with open(vrt_path, 'rb') as f:
+        while True:
+            remaining = cap + 1 - total
+            chunk = f.read(min(65536, remaining))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > cap:
+                raise ValueError(
+                    f"VRT XML at {vrt_path!r} exceeds the "
+                    f"{cap:,}-byte cap. Raise the cap by setting "
+                    f"{_MAX_XML_BYTES_ENV} if this file is legitimate.")
+            chunks.append(chunk)
+    return b''.join(chunks).decode('utf-8')
+
+
 def _allowed_source_roots() -> list[str]:
     """Return the operator-supplied allowlist of trusted source roots.
 
@@ -608,6 +655,72 @@ def _resample_nearest(src_arr: np.ndarray,
     return src_arr[y_idx[:, None], x_idx[None, :]]
 
 
+def _nn_src_index(out_idx: int, src_size: int, out_size: int) -> int:
+    """Return the source pixel index a single output pixel samples.
+
+    Implements the same ``floor((out_idx + 0.5) * src_size / out_size)``
+    rule as :func:`_resample_nearest`, with the same clamp into
+    ``[0, src_size - 1]``. Used to compute the inverse mapping from a
+    clipped destination sub-window back to the minimal source rect that
+    feeds it. See issue #1704.
+    """
+    idx = int(math.floor((out_idx + 0.5) * src_size / out_size))
+    if idx < 0:
+        return 0
+    if idx > src_size - 1:
+        return src_size - 1
+    return idx
+
+
+def _resample_nearest_window(src_sub: np.ndarray,
+                             src_origin_y: int, src_origin_x: int,
+                             full_src_h: int, full_src_w: int,
+                             full_dst_h: int, full_dst_w: int,
+                             dst_r0: int, dst_c0: int,
+                             dst_r1: int, dst_c1: int) -> np.ndarray:
+    """Nearest-neighbour resample a source sub-rect into a destination
+    sub-window, using the same per-pixel mapping as
+    :func:`_resample_nearest` applied to the full source rect.
+
+    ``src_sub`` is the slice of the full source rect starting at
+    ``(src_origin_y, src_origin_x)`` in full-source coordinates. The
+    output covers destination rows ``[dst_r0, dst_r1)`` and columns
+    ``[dst_c0, dst_c1)`` in full-destination coordinates. Mapping each
+    output pixel back through ``floor((out + 0.5) * src_size /
+    out_size)`` reproduces the index ``_resample_nearest`` would compute
+    on the full source array; subtracting the origin then indexes into
+    ``src_sub``. This yields the same numbers as resampling the full
+    source rect and slicing ``[dst_r0:dst_r1, dst_c0:dst_c1]`` afterward.
+    See issue #1704.
+    """
+    out_h = dst_r1 - dst_r0
+    out_w = dst_c1 - dst_c0
+    # ``floor((dst_* + 0.5) * src_size / dst_size)`` with the same clamp
+    # to ``src_size - 1`` as ``_resample_nearest`` uses on the full rect.
+    y_full = np.minimum(
+        np.floor((np.arange(dst_r0, dst_r1) + 0.5)
+                 * full_src_h / full_dst_h).astype(np.intp),
+        full_src_h - 1,
+    )
+    x_full = np.minimum(
+        np.floor((np.arange(dst_c0, dst_c1) + 0.5)
+                 * full_src_w / full_dst_w).astype(np.intp),
+        full_src_w - 1,
+    )
+    y_idx = y_full - src_origin_y
+    x_idx = x_full - src_origin_x
+    sub_h, sub_w = src_sub.shape[:2]
+    # Defensive clamp: callers compute the sub-window via the same
+    # mapping so y_idx / x_idx already lie in ``[0, sub_h)`` /
+    # ``[0, sub_w)``, but a rounding edge with very large sizes could
+    # nudge an index by one. Clip to keep the gather inside the buffer.
+    np.clip(y_idx, 0, sub_h - 1, out=y_idx)
+    np.clip(x_idx, 0, sub_w - 1, out=x_idx)
+    if out_h == 0 or out_w == 0:
+        return src_sub[:0, :0]
+    return src_sub[y_idx[:, None], x_idx[None, :]]
+
+
 def read_vrt(vrt_path: str, *, window=None,
              band: int | None = None,
              max_pixels: int | None = None,
@@ -637,8 +750,7 @@ def read_vrt(vrt_path: str, *, window=None,
     """
     from ._reader import PixelSafetyLimitError, read_to_array
 
-    with open(vrt_path, 'r') as f:
-        xml_str = f.read()
+    xml_str = _read_vrt_xml(vrt_path)
 
     vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
     vrt = parse_vrt(xml_str, vrt_dir)
@@ -824,38 +936,61 @@ def read_vrt(vrt_path: str, *, window=None,
             needs_resample = (sr.y_size != dr.y_size
                               or sr.x_size != dr.x_size)
             if needs_resample:
-                # TODO(#1704): when the caller passes a small ``window=``
-                # this still reads the full SrcRect.  Computing the
-                # inverse of the nearest-neighbour mapping to read only
-                # the SrcRect subset that feeds ``window`` would cut the
-                # decode/memory cost for large SrcRects.
-                read_r0 = sr.y_off
-                read_c0 = sr.x_off
-                read_r1 = sr.y_off + sr.y_size
-                read_c1 = sr.x_off + sr.x_size
+                # Clip-relative destination sub-window, in full-DstRect
+                # coordinates.  These are the destination rows / cols
+                # the caller actually wants out of this source.
+                sub_r0 = clip_r0 - dst_r0
+                sub_c0 = clip_c0 - dst_c0
+                sub_r1 = clip_r1 - dst_r0
+                sub_c1 = clip_c1 - dst_c0
+
+                # Invert the nearest-neighbour mapping: find the smallest
+                # SrcRect-relative range of rows / cols that
+                # ``_resample_nearest`` would gather from when producing
+                # destination rows ``[sub_r0, sub_r1)`` and columns
+                # ``[sub_c0, sub_c1)``.  Each destination pixel ``d``
+                # samples source pixel ``floor((d + 0.5) * src / dst)``
+                # clamped to ``src - 1``; taking that mapping at the two
+                # endpoints bounds the source range we have to read.
+                # ``+ 1`` on the stop makes the range half-open, matching
+                # the read_to_array window convention. See issue #1704.
+                src_row_min = _nn_src_index(
+                    sub_r0, sr.y_size, dr.y_size)
+                src_row_max = _nn_src_index(
+                    sub_r1 - 1, sr.y_size, dr.y_size)
+                src_col_min = _nn_src_index(
+                    sub_c0, sr.x_size, dr.x_size)
+                src_col_max = _nn_src_index(
+                    sub_c1 - 1, sr.x_size, dr.x_size)
+                read_r0 = sr.y_off + src_row_min
+                read_c0 = sr.x_off + src_col_min
+                read_r1 = sr.y_off + src_row_max + 1
+                read_c1 = sr.x_off + src_col_max + 1
 
                 # Cap the resample intermediate before the source read.
-                # ``_resample_nearest(src_arr, dr.y_size, dr.x_size)`` below
-                # allocates a ``(dr.y_size, dr.x_size)`` array irrespective
-                # of how much of it overlaps the window. The output buffer
-                # is already bounded by ``_check_dimensions`` above, but a
-                # crafted VRT can declare a SimpleSource ``DstRect`` whose
-                # ``xSize`` / ``ySize`` are orders of magnitude larger than
-                # the VRT extent. Without this guard, a single source can
-                # demand multi-gigabyte intermediates on a tiny output
-                # raster. Negative sizes are already rejected above; here
-                # we just enforce the pixel-budget. See issue #1737.
-                if (dr.x_size > max_pixels
-                        or dr.y_size > max_pixels
-                        or dr.x_size * dr.y_size > max_pixels):
+                # ``_resample_nearest_window`` below allocates an output
+                # of ``(sub_r1 - sub_r0, sub_c1 - sub_c0)`` pixels, which
+                # is bounded by the user's window.  The cap previously
+                # protected against a crafted VRT declaring a huge
+                # DstRect even on a tiny output; with the windowed read
+                # the intermediate is now bounded by the window, so the
+                # pixel-budget check applies to the clipped sub-window
+                # rather than the full DstRect.  See issues #1737 and
+                # #1704.
+                sub_dst_h = sub_r1 - sub_r0
+                sub_dst_w = sub_c1 - sub_c0
+                if (sub_dst_w > max_pixels
+                        or sub_dst_h > max_pixels
+                        or sub_dst_w * sub_dst_h > max_pixels):
                     raise ValueError(
                         f"VRT SimpleSource DstRect "
                         f"(xSize={dr.x_size}, ySize={dr.y_size}) requires "
                         f"a resample intermediate of "
-                        f"{dr.x_size * dr.y_size:,} pixels, which exceeds "
-                        f"the safety limit of {max_pixels:,} pixels. "
-                        f"Pass a larger max_pixels= to read_vrt() if this "
-                        f"file is legitimate."
+                        f"{sub_dst_w * sub_dst_h:,} pixels for the "
+                        f"requested window, which exceeds the safety "
+                        f"limit of {max_pixels:,} pixels. Pass a larger "
+                        f"max_pixels= to read_vrt() if this file is "
+                        f"legitimate."
                     )
             else:
                 read_r0 = sr.y_off + (clip_r0 - dst_r0)
@@ -1003,28 +1138,29 @@ def read_vrt(vrt_path: str, *, window=None,
 
             if needs_resample:
                 # Refuse VRTs that request a non-nearest resample
-                # algorithm.  ``_resample_nearest`` below is the only
-                # implemented kernel; silently substituting it for
+                # algorithm.  ``_resample_nearest_window`` below is the
+                # only implemented kernel; silently substituting it for
                 # ``Bilinear`` / ``Cubic`` / ``Average`` / ``Mode``
                 # would return wrong numbers under the user's
                 # configured algorithm name.  See issue #1751.
                 _check_resample_alg_supported(src.resample_alg, src.filename)
-                # Resample the full source rect to the destination rect
-                # shape, then clip to the window subregion.  Doing the
-                # resample on the full rect keeps the nearest-neighbour
-                # index math in one place; the post-resample slice is a
-                # plain numpy view.
-                src_arr = _resample_nearest(src_arr, dr.y_size, dr.x_size)
-                # Take the clip subwindow out of the resampled array.
-                # ``dst_r0`` / ``dst_c0`` anchor the resampled array in
-                # destination coordinates; the clip rect is in
-                # destination coordinates too, so the subtract gives the
-                # right offsets.
-                sub_r0 = clip_r0 - dst_r0
-                sub_c0 = clip_c0 - dst_c0
-                sub_r1 = clip_r1 - dst_r0
-                sub_c1 = clip_c1 - dst_c0
-                src_arr = src_arr[sub_r0:sub_r1, sub_c0:sub_c1]
+                # Resample only the destination sub-window the caller
+                # asked for.  ``_resample_nearest_window`` walks each
+                # destination pixel in ``[sub_*0, sub_*1)`` through the
+                # same ``floor((d + 0.5) * src / dst)`` mapping as
+                # ``_resample_nearest`` would use on the full rect, then
+                # subtracts the sub-source origin to index into
+                # ``src_arr`` (which is the minimal sub-rect read above).
+                # The output is byte-identical to resampling the full
+                # rect and slicing ``[sub_r0:sub_r1, sub_c0:sub_c1]``
+                # afterwards. See issue #1704.
+                src_arr = _resample_nearest_window(
+                    src_arr,
+                    src_row_min, src_col_min,
+                    sr.y_size, sr.x_size,
+                    dr.y_size, dr.x_size,
+                    sub_r0, sub_c0, sub_r1, sub_c1,
+                )
 
             # Place into output
             out_r0 = clip_r0 - r0
