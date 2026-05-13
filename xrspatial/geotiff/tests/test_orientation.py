@@ -193,46 +193,81 @@ def test_orientation_round_trip_does_not_double_apply(tmp_path):
 
 
 @pytest.mark.parametrize("orientation", [5, 6, 7, 8])
-def test_orientation_5_to_8_warn_on_georef(tmp_path, orientation):
-    """Axis-swap orientations on georef'd files emit a warning.
+def test_orientation_5_to_8_raise_on_georef(tmp_path, orientation):
+    """Axis-swap orientations on georef'd files raise NotImplementedError.
 
-    The transform swap is shape-correct but geometrically approximate
-    for orientations 6/7/8; the user should be told.
+    Orientations 5-8 require a per-orientation origin shift plus a
+    rotation that the axis-aligned GeoTransform cannot represent.
+    The reader used to swap pixel_width/pixel_height and warn; that
+    produced silently wrong coords on georef'd files (issue #1765).
+    The reader now refuses the file instead.
     """
-    import warnings as _warnings
-
     arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
-    path = tmp_path / f"orient_georef_{orientation}.tif"
-    # tifffile lets us tag a CRS via the resolution + metadata; the
-    # simplest path that triggers our georef branch is to embed a
-    # ModelPixelScale + GeoKeyDirectory pair pointing at EPSG:4326.
+    path = tmp_path / f"orient_georef_raise_1765_{orientation}.tif"
+    # ModelPixelScale + GeoKeyDirectory pair pointing at EPSG:4326
+    # makes the reader treat this as a georeferenced file.
     tifffile.imwrite(
         str(path), arr,
         extratags=[
             (274, 'H', 1, orientation, True),
-            # ModelPixelScaleTag (33550): scale_x, scale_y, scale_z
             (33550, 'd', 3, (1.0, 1.0, 0.0), True),
-            # ModelTiepointTag (33922): I, J, K, X, Y, Z
             (33922, 'd', 6, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0), True),
-            # GeoKeyDirectoryTag (34735): version 1.1.0, 1 key,
-            # GTModelType=2 (Geographic), GeographicType=4326
             (34735, 'H', 12, (
                 1, 1, 0, 2,
-                1024, 0, 1, 2,   # GTModelTypeGeoKey = 2
-                2048, 0, 1, 4326,  # GeographicTypeGeoKey = 4326
+                1024, 0, 1, 2,
+                2048, 0, 1, 4326,
             ), True),
         ],
     )
 
-    with _warnings.catch_warnings(record=True) as caught:
-        _warnings.simplefilter('always')
-        da = open_geotiff(str(path))
+    with pytest.raises(NotImplementedError, match=str(orientation)):
+        open_geotiff(str(path))
 
-    assert da is not None
-    msgs = [str(w.message) for w in caught if 'Orientation' in str(w.message)]
-    assert msgs, (
-        f"orientation={orientation}: no warning emitted on georef file"
+
+@pytest.mark.parametrize("orientation", [5, 6, 7, 8])
+def test_orientation_5_to_8_no_geo_still_swaps(tmp_path, orientation):
+    """Without georef, orientations 5-8 still do the axis swap.
+
+    No geographic claim to violate, so the existing transpose path is
+    preserved (regression guard for the #1765 fix not over-reaching).
+    """
+    arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
+    path = tmp_path / f"orient_no_geo_1765_{orientation}.tif"
+    tifffile.imwrite(
+        str(path), arr,
+        extratags=[(274, 'H', 1, orientation, True)],
     )
+
+    da = open_geotiff(str(path))
+    expected = _expected_for_orientation(arr, orientation)
+    assert da.values.shape == expected.shape
+    np.testing.assert_array_equal(da.values, expected)
+
+
+def test_orientation_1_georef_unchanged_1765(tmp_path):
+    """orientation=1 on a georef'd file still reads normally.
+
+    Regression guard: the #1765 raise must be scoped to 5-8, not fire
+    on any georeferenced file.
+    """
+    arr = np.arange(24, dtype=np.uint8).reshape(4, 6)
+    path = tmp_path / "orient_georef_1_1765.tif"
+    tifffile.imwrite(
+        str(path), arr,
+        extratags=[
+            (274, 'H', 1, 1, True),
+            (33550, 'd', 3, (1.0, 1.0, 0.0), True),
+            (33922, 'd', 6, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0), True),
+            (34735, 'H', 12, (
+                1, 1, 0, 2,
+                1024, 0, 1, 2,
+                2048, 0, 1, 4326,
+            ), True),
+        ],
+    )
+
+    da = open_geotiff(str(path))
+    np.testing.assert_array_equal(da.values, arr)
 
 
 # ---------------------------------------------------------------------------
