@@ -343,10 +343,10 @@ def _transform_from_attr(attr_val) -> 'GeoTransform | None':
         raise ValueError(
             f"attrs['transform'] has non-zero rotation/shear "
             f"(b={b!r}, d={d!r}); rotated or skewed affines are not "
-            f"supported by to_geotiff because the on-disk GeoTIFF is "
-            f"axis-aligned and would be written at the wrong location. "
-            f"Reproject the raster to an axis-aligned grid before "
-            f"writing."
+            f"supported by the GeoTIFF writers in this module because "
+            f"the on-disk GeoTIFF representation is axis-aligned and "
+            f"would be written at the wrong location. Reproject the "
+            f"raster to an axis-aligned grid before writing."
         )
     return GeoTransform(
         origin_x=c, origin_y=f, pixel_width=a, pixel_height=e,

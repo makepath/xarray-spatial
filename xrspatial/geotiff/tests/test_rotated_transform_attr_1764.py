@@ -16,8 +16,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from xrspatial.geotiff import to_geotiff, open_geotiff
-from xrspatial.geotiff import _transform_from_attr
+from xrspatial.geotiff import _transform_from_attr, open_geotiff, to_geotiff
 from xrspatial.geotiff._geotags import GeoTransform
 
 
