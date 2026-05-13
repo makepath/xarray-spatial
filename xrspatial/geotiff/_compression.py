@@ -1,11 +1,47 @@
 """Compression codecs: deflate (zlib) and LZW (Numba), plus horizontal predictor."""
 from __future__ import annotations
 
+import threading
 import zlib
 
 import numpy as np
 
 from xrspatial.utils import ngjit
+
+# -- Optional libdeflate backend --------------------------------------------
+#
+# When the ``libdeflate`` package is installed, ``deflate_compress`` routes
+# through it: libdeflate is typically 1.5-2x faster than ``zlib`` at the
+# same compression level, and GDAL >= 3.7 already uses it when available
+# so our installs match throughput. Output is wire-compatible (zlib
+# format), so encoded streams round-trip through stdlib ``zlib.decompress``
+# unchanged.
+#
+# libdeflate's ``Compressor`` objects are not thread-safe, so we keep one
+# per (thread, level) pair via ``threading.local``. The writer drives
+# compression from a ``ThreadPoolExecutor``; per-thread caching avoids
+# allocating a fresh compressor per strip/tile.
+try:  # pragma: no cover - exercised only when libdeflate is installed
+    import libdeflate as _libdeflate
+    _HAVE_LIBDEFLATE = True
+except ImportError:
+    _libdeflate = None
+    _HAVE_LIBDEFLATE = False
+
+_libdeflate_thread_local = threading.local()
+
+
+def _libdeflate_compressor(level: int):
+    """Return a thread-local libdeflate Compressor for *level*."""
+    cache = getattr(_libdeflate_thread_local, 'cache', None)
+    if cache is None:
+        cache = {}
+        _libdeflate_thread_local.cache = cache
+    comp = cache.get(level)
+    if comp is None:
+        comp = _libdeflate.Compressor(level)
+        cache[level] = comp
+    return comp
 
 # -- Decompression-bomb defenses ---------------------------------------------
 #
@@ -98,7 +134,14 @@ def deflate_decompress(data: bytes, expected_size: int = 0) -> bytes:
 
 
 def deflate_compress(data: bytes, level: int = 6) -> bytes:
-    """Compress data with deflate/zlib."""
+    """Compress data with deflate/zlib.
+
+    Uses ``libdeflate`` when installed (1.5-2x faster than ``zlib``) and
+    falls back to ``zlib.compress`` otherwise. Output is wire-compatible
+    either way: the stdlib ``zlib.decompress`` accepts both.
+    """
+    if _HAVE_LIBDEFLATE:
+        return _libdeflate_compressor(level).compress(data, _libdeflate.Format.ZLIB)
     return zlib.compress(data, level)
 
 
