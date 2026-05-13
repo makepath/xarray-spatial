@@ -1927,11 +1927,16 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
     # values otherwise propagate into dask chunk math (``range(0, N, 0)``
     # ValueError, or empty chunk grids) with no indication that ``chunks``
     # was the problem. ``chunks`` may be an int or a (row, col) tuple.
-    if isinstance(chunks, int) and not isinstance(chunks, bool):
+    # Accept ``np.integer`` scalars (e.g. ``np.int64(256)``) the same way
+    # the tuple branch does, then coerce to plain ``int`` so downstream
+    # ``isinstance(chunks, int)`` checks keep working unchanged.
+    if (isinstance(chunks, (int, np.integer))
+            and not isinstance(chunks, bool)):
         if chunks <= 0:
             raise ValueError(
                 f"chunks must be a positive int or (row, col) tuple of "
                 f"positive ints, got chunks={chunks}.")
+        chunks = int(chunks)
     elif isinstance(chunks, tuple):
         if len(chunks) != 2:
             raise ValueError(

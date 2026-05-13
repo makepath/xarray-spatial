@@ -118,3 +118,20 @@ def test_read_geotiff_dask_positive_tuple_chunks_works(tmp_path):
     arr = read_geotiff_dask(path, chunks=(4, 8))
     assert arr.shape == (10, 10)
     np.asarray(arr)
+
+
+def test_read_geotiff_dask_numpy_int_scalar_chunks_works(tmp_path):
+    # Numpy integer scalars (e.g. np.int64) should behave like plain
+    # ``int`` for the scalar ``chunks`` form. The tuple branch already
+    # accepts np.integer elements; the scalar branch was the gap.
+    path = _make_raster(str(tmp_path))
+    arr = read_geotiff_dask(path, chunks=np.int64(256))
+    assert arr.shape == (10, 10)
+    np.asarray(arr)
+
+
+def test_read_geotiff_dask_numpy_int_tuple_chunks_works(tmp_path):
+    path = _make_raster(str(tmp_path))
+    arr = read_geotiff_dask(path, chunks=(np.int64(256), 256))
+    assert arr.shape == (10, 10)
+    np.asarray(arr)
