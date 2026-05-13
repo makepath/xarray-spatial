@@ -155,7 +155,7 @@ def cog_http_server(tmp_path, monkeypatch):
     arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
     path = str(tmp_path / 'tmp_1480_cog.tif')
     write(arr, path, compression='deflate', tiled=True, tile_size=16,
-          cog=True, overview_levels=[1])
+          cog=True, overview_levels=[2])
 
     with open(path, 'rb') as f:
         payload = f.read()

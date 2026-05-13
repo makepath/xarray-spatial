@@ -466,7 +466,7 @@ class TestP9OverviewCap:
         arr = np.zeros((1024, 1024), dtype=np.uint8)
         path = str(tmp_path / 'p9b_1488.tif')
         write(arr, path, compression='none', tiled=True, tile_size=64,
-              cog=True, overview_levels=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+              cog=True, overview_levels=[2, 4, 8, 16, 32, 64, 128, 256, 512, 1024])
 
         from xrspatial.geotiff._header import parse_header, parse_all_ifds
         from xrspatial.geotiff._reader import _FileSource

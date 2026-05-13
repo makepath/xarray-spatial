@@ -116,7 +116,7 @@ def test_small_cog_uses_single_initial_read(tmp_path):
     arr = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
     path = str(tmp_path / 'small_1718_cog.tif')
     write(arr, path, compression='deflate', tiled=True, tile_size=32,
-          cog=True, overview_levels=[1])
+          cog=True, overview_levels=[2])
 
     with open(path, 'rb') as f:
         payload = f.read()
@@ -217,7 +217,7 @@ def test_cap_raises_clear_error_on_excessive_chain(monkeypatch):
     with tempfile.NamedTemporaryFile(suffix='_cap_1718.tif', delete=False) as f:
         path = f.name
     write(arr, path, compression='deflate', tiled=True, tile_size=16,
-          cog=True, overview_levels=[1])
+          cog=True, overview_levels=[2])
     with open(path, 'rb') as f:
         payload = bytearray(f.read())
 
