@@ -1407,11 +1407,27 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     # check so an oversized header raises the safety-limit error first, then
     # raise a typed ValueError here instead of IndexError when the loop
     # indexes past the end.
-    n_strips_expected = (height + rps - 1) // rps
-    if len(offsets) < n_strips_expected or len(byte_counts) < n_strips_expected:
-        raise ValueError(
-            f"Strip table truncated: expected {n_strips_expected} entries, "
-            f"got offsets={len(offsets)}, byte_counts={len(byte_counts)}")
+    #
+    # For PlanarConfiguration=2 (separate / planar) each sample plane has its
+    # own run of strips, so the table must hold strips_per_band * samples
+    # entries.  PlanarConfiguration=1 (chunky) interleaves samples within a
+    # single run of strips_per_band entries.
+    strips_per_band = (height + rps - 1) // rps
+    if planar == 2 and samples > 1:
+        n_strips_expected = strips_per_band * samples
+        if len(offsets) < n_strips_expected or len(byte_counts) < n_strips_expected:
+            raise ValueError(
+                f"Strip table truncated for planar layout "
+                f"(PlanarConfiguration=2): expected "
+                f"{n_strips_expected} entries "
+                f"({strips_per_band} strips x {samples} samples), got "
+                f"offsets={len(offsets)}, byte_counts={len(byte_counts)}")
+    else:
+        n_strips_expected = strips_per_band
+        if len(offsets) < n_strips_expected or len(byte_counts) < n_strips_expected:
+            raise ValueError(
+                f"Strip table truncated: expected {n_strips_expected} entries, "
+                f"got offsets={len(offsets)}, byte_counts={len(byte_counts)}")
 
     # Sparse strips (StripByteCounts == 0) must materialise as nodata or 0
     # rather than be decoded.  Pre-fill the result so any skipped strips
@@ -1429,7 +1445,6 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
         result = np.empty((out_h, out_w), dtype=dtype)
 
     if planar == 2 and samples > 1:
-        strips_per_band = math.ceil(height / rps)
         first_strip = r0 // rps
         last_strip = min((r1 - 1) // rps, strips_per_band - 1)
 
@@ -1437,8 +1452,6 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
             band_offset = band_idx * strips_per_band
             for strip_idx in range(first_strip, last_strip + 1):
                 global_idx = band_offset + strip_idx
-                if global_idx >= len(offsets):
-                    continue
                 if byte_counts[global_idx] == 0:
                     # Sparse strip: result is already pre-filled.
                     continue
