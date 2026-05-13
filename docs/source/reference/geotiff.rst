@@ -103,4 +103,5 @@ VRT missing sources
 :class:`xrspatial.geotiff.GeoTIFFFallbackWarning`, the returned DataArray
 contains ``attrs['vrt_holes']``, and the mosaic is returned with holes.
 Use ``missing_sources='raise'`` when a partial mosaic should fail the
-pipeline immediately.
+pipeline immediately. ``XRSPATIAL_GEOTIFF_STRICT=1`` still raises in
+``'warn'`` mode so CI environments can enforce fail-fast behavior globally.

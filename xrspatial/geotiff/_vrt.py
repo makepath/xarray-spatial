@@ -622,6 +622,14 @@ def read_vrt(vrt_path: str, *, window=None,
         (row_start, col_start, row_stop, col_stop) for windowed read.
     band : int or None
         Band index (0-based). None returns all bands.
+    max_pixels : int or None
+        Maximum allowed pixel count (width * height * samples) for the
+        assembled VRT region. None uses the reader default.
+    missing_sources : {'warn', 'raise'}
+        Policy for unreadable source files referenced by the VRT.
+        ``'warn'`` emits ``GeoTIFFFallbackWarning`` and records
+        ``vrt.holes`` unless ``XRSPATIAL_GEOTIFF_STRICT=1`` is set.
+        ``'raise'`` fails immediately.
 
     Returns
     -------
@@ -904,6 +912,7 @@ def read_vrt(vrt_path: str, *, window=None,
                     f"({type(e).__name__}: {e}); skipping. The output "
                     f"mosaic will have a hole at this tile. Inspect "
                     f"``DataArray.attrs['vrt_holes']`` or set "
+                    f"missing_sources='raise' or "
                     f"XRSPATIAL_GEOTIFF_STRICT=1 to raise instead.",
                     GeoTIFFFallbackWarning,
                     stacklevel=2,

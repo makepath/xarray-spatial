@@ -3794,7 +3794,8 @@ def read_vrt(source: str, *,
         Policy for unreadable source files referenced by the VRT. ``'warn'``
         preserves the historical behavior: emit ``GeoTIFFFallbackWarning``,
         record ``attrs['vrt_holes']``, and return a partial mosaic.
-        ``'raise'`` fails immediately.
+        ``'raise'`` fails immediately. ``XRSPATIAL_GEOTIFF_STRICT=1`` also
+        raises, even when ``missing_sources='warn'``.
 
     Returns
     -------
