@@ -3796,7 +3796,8 @@ def read_vrt(source: str, *,
              name: str | None = None,
              chunks: int | tuple | None = None,
              gpu: bool = False,
-             max_pixels: int | None = None) -> xr.DataArray:
+             max_pixels: int | None = None,
+             missing_sources: str = 'warn') -> xr.DataArray:
     """Read a GDAL Virtual Raster Table (.vrt) into an xarray.DataArray.
 
     The VRT's source GeoTIFFs are read via windowed reads and assembled
@@ -3825,6 +3826,12 @@ def read_vrt(source: str, *,
         assembled VRT region. None uses the reader default (~1 billion).
         Matches ``open_geotiff`` / ``read_geotiff_dask`` /
         ``read_geotiff_gpu``.
+    missing_sources : {'warn', 'raise'}, default 'warn'
+        Policy for unreadable source files referenced by the VRT. ``'warn'``
+        preserves the historical behavior: emit ``GeoTIFFFallbackWarning``,
+        record ``attrs['vrt_holes']``, and return a partial mosaic.
+        ``'raise'`` fails immediately. ``XRSPATIAL_GEOTIFF_STRICT=1`` also
+        raises, even when ``missing_sources='warn'``.
 
     Returns
     -------
@@ -3864,8 +3871,15 @@ def read_vrt(source: str, *,
     # default (eager read), so allow it through here.
     chunks = _validate_chunks_arg(chunks, allow_none=True)
 
-    arr, vrt = _read_vrt_internal(source, window=window, band=band,
-                                   max_pixels=max_pixels)
+    if missing_sources not in ('warn', 'raise'):
+        raise ValueError(
+            f"missing_sources must be 'warn' or 'raise', got "
+            f"{missing_sources!r}")
+
+    arr, vrt = _read_vrt_internal(
+        source, window=window, band=band, max_pixels=max_pixels,
+        missing_sources=missing_sources,
+    )
 
     if name is None:
         import os
