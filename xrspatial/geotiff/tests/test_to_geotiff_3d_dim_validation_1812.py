@@ -39,16 +39,6 @@ _HAS_GPU = _gpu_available()
 _gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 
 
-# Inputs that *must* raise. Each tuple is (dims, shape).
-_AMBIGUOUS_3D_INPUTS = [
-    pytest.param(("time", "y", "x"), (2, 4, 5), id="time-y-x"),
-    pytest.param(("z", "y", "x"), (2, 4, 5), id="z-y-x"),
-    pytest.param(("band", "lat", "lon"), (2, 4, 5), id="band-lat-lon"),  # ok via alias
-    pytest.param(("y", "x", "depth"), (4, 5, 2), id="y-x-depth"),  # accepted: spatial-first
-    pytest.param(("foo", "bar", "baz"), (2, 4, 5), id="foo-bar-baz"),
-]
-
-
 # Inputs that must be accepted (round-trip cleanly).
 _HAPPY_3D_INPUTS = [
     pytest.param(("band", "y", "x"), (3, 4, 5), id="band-y-x"),
