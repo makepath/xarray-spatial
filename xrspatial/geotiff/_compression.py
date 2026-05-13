@@ -1085,7 +1085,19 @@ def _read_jpeg_sof(data: bytes) -> tuple[int, int, int] | None:
             i += 2
             continue
         if marker in _JPEG_SOF_CODES:
-            if i + 9 >= n:
+            # SOF is a length-prefixed segment; validate the declared
+            # segment length before reading the fixed fields so a
+            # truncated/malformed segment header is rejected as "unknown
+            # size" rather than silently reading past the segment into
+            # later bytes. The fields we need are at offsets 5..9 in the
+            # segment, which sits inside the declared seg_len bytes.
+            if i + 3 >= n:
+                return None
+            seg_len = (data[i + 2] << 8) | data[i + 3]
+            # SOF requires at least: 2 (length) + 1 (precision) + 2 (h)
+            # + 2 (w) + 1 (components) = 8 bytes; the segment must also
+            # fit inside the buffer.
+            if seg_len < 8 or i + 2 + seg_len > n:
                 return None
             height = (data[i + 5] << 8) | data[i + 6]
             width = (data[i + 7] << 8) | data[i + 8]
@@ -1126,19 +1138,23 @@ def _check_jpeg_bomb(data: bytes, expected_width: int, expected_height: int,
     if info is None:
         return
     declared_h, declared_w, declared_components = info
-    # JPEG component count of 1 (grey) or 3 (YCbCr/RGB) is the common
-    # case; cap at the caller-declared sample count regardless. Most
-    # 4-component JPEGs in TIFFs ship CMYK, but the bomb check just
-    # needs an upper bound on bytes per pixel.
-    expected_pixels = expected_width * expected_height * expected_samples
-    declared_pixels = declared_w * declared_h * max(declared_components, 1)
-    cap = _max_output_with_margin(expected_pixels)
-    if declared_pixels > cap:
+    # JPEG components ship as 8-bit samples in every TIFF JPEG we
+    # support, so ``width * height * components`` equals the post-decode
+    # byte count exactly. JPEG-12 (12-bit precision) would round up to
+    # 2 bytes per sample, but tifffile/Pillow doesn't surface those on
+    # the read path so we treat samples as bytes here. The expected
+    # side uses what the *caller* declared (TIFF tile size and
+    # samples-per-pixel), so a JPEG claiming extra components is
+    # rejected as a bomb.
+    expected_bytes = expected_width * expected_height * expected_samples
+    declared_bytes = declared_w * declared_h * max(declared_components, 1)
+    cap = _max_output_with_margin(expected_bytes)
+    if declared_bytes > cap:
         raise ValueError(
             f"jpeg decode would exceed expected size: declared output is "
-            f"{declared_pixels} bytes ({declared_w}x{declared_h}x"
+            f"{declared_bytes} bytes ({declared_w}x{declared_h}x"
             f"{declared_components}), cap is {cap} (expected "
-            f"{expected_pixels}). Likely a decompression bomb."
+            f"{expected_bytes}). Likely a decompression bomb."
         )
 
 

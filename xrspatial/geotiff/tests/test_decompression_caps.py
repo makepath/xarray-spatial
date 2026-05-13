@@ -551,7 +551,14 @@ class TestJpegDirect:
             declared_h=8000, declared_w=8000,
         )
         from xrspatial.geotiff._compression import jpeg_decompress
-        with pytest.raises(ValueError, match="exceed"):
+        # Match the full diagnostic so a regression that swaps in a
+        # different error path (e.g. Pillow's own DecompressionBombError
+        # with a different wording, or a numeric overflow before the
+        # explicit guard) fails the test instead of silently passing.
+        with pytest.raises(
+            ValueError,
+            match=r"jpeg decode would exceed.*Likely a decompression bomb",
+        ):
             jpeg_decompress(blob, width=32, height=32, samples=3)
 
     def test_jpeg_legitimate_passes(self):
@@ -607,3 +614,44 @@ class TestJpegDirect:
         # stream.
         with pytest.raises(Exception):
             jpeg_decompress(blob, width=32, height=32, samples=3)
+
+    def test_jpeg_sof_with_truncated_segment_length_returns_none(self):
+        """A SOF segment whose declared length runs past EOF returns None.
+
+        Without segment-length validation, ``_read_jpeg_sof`` would happily
+        read height/width/components at fixed offsets even when those
+        offsets pointed past the segment. The pre-check now demands
+        ``seg_len >= 8`` and ``i + 2 + seg_len <= n`` before reading;
+        truncated SOFs are treated as "unknown size" and the bomb cap
+        defers to Pillow.
+        """
+        from xrspatial.geotiff._compression import _read_jpeg_sof
+
+        # SOI | SOF0 | seg_len=64 (advertises 64 bytes of segment, but
+        # the buffer ends after only 10 bytes of segment payload).
+        # Truncation -> _read_jpeg_sof must return None.
+        truncated = bytes([
+            0xFF, 0xD8,                  # SOI
+            0xFF, 0xC0,                  # SOF0
+            0x00, 0x40,                  # seg_len = 64 (lies; buf is short)
+            0x08,                        # precision = 8
+            0x10, 0x00,                  # height = 4096
+            0x10, 0x00,                  # width  = 4096
+            0x03,                        # components = 3
+        ])
+        assert _read_jpeg_sof(truncated) is None
+
+    def test_jpeg_sof_with_segment_length_below_minimum_returns_none(self):
+        """A SOF segment whose declared length is < 8 returns None."""
+        from xrspatial.geotiff._compression import _read_jpeg_sof
+
+        too_small = bytes([
+            0xFF, 0xD8,                  # SOI
+            0xFF, 0xC0,                  # SOF0
+            0x00, 0x04,                  # seg_len = 4 (too small for SOF)
+            0x08,
+            0x10, 0x00,
+            0x10, 0x00,
+            0x03,
+        ])
+        assert _read_jpeg_sof(too_small) is None
