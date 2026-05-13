@@ -460,9 +460,33 @@ def _read_geo_info(source, *, overview_level: int | None = None):
     from ._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
     from ._geotags import extract_geo_info_with_overview_inheritance
     from ._header import parse_all_ifds, parse_header, select_overview_ifd
-    from ._reader import _coerce_path, _is_file_like
+    from ._reader import (
+        _CloudSource, _coerce_path, _is_file_like, _is_fsspec_uri,
+        _parse_cog_http_meta,
+    )
 
     source = _coerce_path(source)
+    if isinstance(source, str) and _is_fsspec_uri(source):
+        # fsspec URI (s3://, gs://, az://, memory://, ...): use the
+        # bounded-prefetch metadata parser instead of downloading the
+        # full remote object. ``_parse_cog_http_meta`` only needs
+        # ``read_range`` on the source, which ``_CloudSource`` provides;
+        # it grows a small range buffer until the IFD chain resolves
+        # (capped by ``MAX_HTTP_HEADER_BYTES``). Avoids the
+        # whole-file fetch that would otherwise happen on every
+        # ``open_geotiff(..., chunks=...)`` graph build for a large COG.
+        _src = _CloudSource(source)
+        try:
+            _header, _ifd, geo_info, _ = _parse_cog_http_meta(
+                _src, overview_level=overview_level)
+        finally:
+            _src.close()
+        bps = resolve_bits_per_sample(_ifd.bits_per_sample)
+        file_dtype = tiff_dtype_to_numpy(bps, _ifd.sample_format)
+        n_bands = (
+            _ifd.samples_per_pixel if _ifd.samples_per_pixel > 1 else 0
+        )
+        return geo_info, _ifd.height, _ifd.width, file_dtype, n_bands
     if _is_file_like(source):
         # File-like: read its full bytes; we don't try to mmap arbitrary
         # buffers because they may not back a real file descriptor.
@@ -1918,16 +1942,28 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
 
     # P5: HTTP COG sources used to fire one IFD/header GET per chunk
     # task. Parse metadata once here so every delayed task can reuse it.
+    # The same prefetch path also covers fsspec URIs (s3://, gs://, ...);
+    # ``_parse_cog_http_meta`` only needs a ``read_range``-having source,
+    # and ``_CloudSource`` satisfies that contract. Going through it
+    # bounds metadata reads to ``MAX_HTTP_HEADER_BYTES`` instead of
+    # fetching the whole remote object up front. See PR #1755 review.
     is_http = (
         isinstance(source, str)
         and source.startswith(('http://', 'https://'))
     )
+    from ._reader import _is_fsspec_uri
+    is_fsspec = isinstance(source, str) and _is_fsspec_uri(source)
     http_meta = None
     http_meta_key = None
-    if is_http:
+    if is_http or is_fsspec:
         import dask
-        from ._reader import _HTTPSource, _parse_cog_http_meta
-        _src = _HTTPSource(source)
+        from ._reader import _parse_cog_http_meta
+        if is_http:
+            from ._reader import _HTTPSource
+            _src = _HTTPSource(source)
+        else:
+            from ._reader import _CloudSource
+            _src = _CloudSource(source)
         try:
             http_header, http_ifd, http_geo, _ = _parse_cog_http_meta(
                 _src, overview_level=overview_level)
@@ -2155,14 +2191,29 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
 
     @dask.delayed
     def _read(http_meta):
+        # The prefetched-metadata fast path covers both HTTP COGs and
+        # fsspec-addressable remotes (s3://, gs://, az://, memory://, ...).
+        # Both source classes expose ``read_range``, which is all
+        # ``_fetch_decode_cog_http_tiles`` needs.
+        _is_http_src = isinstance(source, str) and source.startswith(
+            ('http://', 'https://'))
+        _is_fsspec_src = False
         if http_meta is not None and isinstance(source, str) and \
-                source.startswith(('http://', 'https://')):
+                not _is_http_src:
+            from ._reader import _is_fsspec_uri as _ifs
+            _is_fsspec_src = _ifs(source)
+        if http_meta is not None and (_is_http_src or _is_fsspec_src):
             from ._reader import (
-                _HTTPSource, _fetch_decode_cog_http_tiles,
+                _fetch_decode_cog_http_tiles,
                 MAX_PIXELS_DEFAULT,
             )
             header, ifd = http_meta
-            src = _HTTPSource(source)
+            if _is_http_src:
+                from ._reader import _HTTPSource
+                src = _HTTPSource(source)
+            else:
+                from ._reader import _CloudSource
+                src = _CloudSource(source)
             try:
                 arr = _fetch_decode_cog_http_tiles(
                     src, header, ifd,

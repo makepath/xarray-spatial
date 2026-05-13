@@ -1051,6 +1051,80 @@ class TestCloudStorage:
 
         fs.rm('/roundtrip.tif')
 
+    def test_dask_path_fsspec_uri_1749(self, tmp_path):
+        """read_geotiff_dask supports fsspec URIs (issue #1749).
+
+        The eager path already routed through _CloudSource via
+        _read_to_array. The dask path's _read_geo_info used plain
+        open(), which failed on memory://, s3://, etc.
+        """
+        pytest.importorskip('fsspec')
+        import fsspec
+
+        arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+
+        local_path = str(tmp_path / 'src.tif')
+        to_geotiff(arr, local_path, compression='none')
+        with open(local_path, 'rb') as f:
+            tiff_bytes = f.read()
+
+        fs = fsspec.filesystem('memory')
+        fs.pipe('/dask_1749_full.tif', tiff_bytes)
+
+        try:
+            eager = open_geotiff('memory:///dask_1749_full.tif')
+            lazy = open_geotiff('memory:///dask_1749_full.tif', chunks=4)
+
+            # Lazy path is dask-backed
+            import dask.array as da
+            assert isinstance(lazy.data, da.Array)
+
+            np.testing.assert_array_equal(lazy.values, eager.values)
+            np.testing.assert_array_equal(lazy.values, arr)
+        finally:
+            fs.rm('/dask_1749_full.tif')
+
+    def test_dask_path_fsspec_uri_no_full_download_1749(self, tmp_path,
+                                                       monkeypatch):
+        """Dask graph build for fsspec URIs must not pull the whole file.
+
+        ``_read_geo_info`` previously called ``_CloudSource.read_all`` to
+        parse metadata. For a large COG on S3 that downloads the whole
+        object just to learn its shape/transform. The fix routes fsspec
+        sources through ``_parse_cog_http_meta``, which only uses
+        ``read_range``. Guard against regression by failing the test if
+        ``read_all`` runs during ``open_geotiff(..., chunks=...)``. See
+        PR #1755 review.
+        """
+        pytest.importorskip('fsspec')
+        import fsspec
+
+        arr = np.arange(64, dtype=np.float32).reshape(8, 8)
+
+        local_path = str(tmp_path / 'src.tif')
+        to_geotiff(arr, local_path, compression='none')
+        with open(local_path, 'rb') as f:
+            tiff_bytes = f.read()
+
+        fs = fsspec.filesystem('memory')
+        fs.pipe('/dask_1749_nofull.tif', tiff_bytes)
+
+        from xrspatial.geotiff import _reader as _reader_mod
+
+        def _no_read_all(self):
+            raise AssertionError(
+                "_CloudSource.read_all called during dask graph build")
+
+        monkeypatch.setattr(
+            _reader_mod._CloudSource, 'read_all', _no_read_all)
+
+        try:
+            lazy = open_geotiff('memory:///dask_1749_nofull.tif', chunks=4)
+            # Materialise to confirm the chunk tasks also avoid read_all.
+            np.testing.assert_array_equal(lazy.values, arr)
+        finally:
+            fs.rm('/dask_1749_nofull.tif')
+
     def test_writer_cloud_scheme_detection(self):
         """Writer detects cloud schemes."""
         from xrspatial.geotiff._writer import _is_fsspec_uri
