@@ -1935,26 +1935,34 @@ def _read_cog_http(url: str, overview_level: int | None = None,
                 f"band={band} out of range for "
                 f"{ifd.samples_per_pixel}-band file.")
 
-    arr = _fetch_decode_cog_http_tiles(
-        source, header, ifd, max_pixels=max_pixels, window=window)
-    source.close()
+    # Issue #1816: wrap the tile fetch and post-processing in try/finally
+    # so ``source.close()`` runs even when the fetch/decode or the
+    # orientation/photometric step raises. ``_HTTPSource.close()`` is a
+    # no-op today, but a future resource-holding source would leak on
+    # the error path without this. The explicit ``source.close()`` calls
+    # in the validation block above stay as-is; ``close()`` is idempotent.
+    try:
+        arr = _fetch_decode_cog_http_tiles(
+            source, header, ifd, max_pixels=max_pixels, window=window)
 
-    # Mirror the local-path band selection in ``read_to_array``: extract
-    # the requested band only after the array is materialised so the
-    # multi-band tile decode can populate every plane first. ``band``
-    # outside the valid range raises ``IndexError`` the same as numpy.
-    if arr.ndim == 3 and ifd.samples_per_pixel > 1 and band is not None:
-        arr = arr[:, :, band]
+        # Mirror the local-path band selection in ``read_to_array``: extract
+        # the requested band only after the array is materialised so the
+        # multi-band tile decode can populate every plane first. ``band``
+        # outside the valid range raises ``IndexError`` the same as numpy.
+        if arr.ndim == 3 and ifd.samples_per_pixel > 1 and band is not None:
+            arr = arr[:, :, band]
 
-    # Apply Orientation tag (274) so HTTP reads return the same pixel
-    # order and transform as the local-file path. Only the full-read
-    # branch reaches here; the windowed-read branch is rejected above
-    # for non-default orientation. See issue #1717.
-    if ifd.orientation != 1:
-        arr, geo_info = _apply_orientation_with_geo(
-            arr, geo_info, ifd.orientation)
+        # Apply Orientation tag (274) so HTTP reads return the same pixel
+        # order and transform as the local-file path. Only the full-read
+        # branch reaches here; the windowed-read branch is rejected above
+        # for non-default orientation. See issue #1717.
+        if ifd.orientation != 1:
+            arr, geo_info = _apply_orientation_with_geo(
+                arr, geo_info, ifd.orientation)
 
-    arr = _apply_photometric_miniswhite(arr, ifd)
+        arr = _apply_photometric_miniswhite(arr, ifd)
+    finally:
+        source.close()
 
     return arr, geo_info
 
