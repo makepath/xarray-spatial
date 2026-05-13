@@ -1221,6 +1221,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         EPSG code (int), WKT string, or PROJ string. If None and data
         is a DataArray, tries to read from attrs ('crs' for EPSG,
         'crs_wkt' for WKT).
+
+        EPSG codes are strongly preferred for interop. The WKT-only
+        path writes ``ProjectedCSType`` / ``GeographicType`` = 32767
+        with the WKT stored in ``GTCitationGeoKey`` -- libgeotiff and
+        GDAL can round-trip this but many other GeoTIFF readers treat
+        the citation as a free-form name and lose the CRS. A
+        ``UserWarning`` is emitted when the WKT-only path is taken.
+        See issue #1768.
     nodata : float, int, or None
         NoData value.
     compression : str
@@ -3222,7 +3230,11 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         rejects file-like destinations, and the explicit GPU writer
         mirrors that rule (issue #1652).
     crs : int, str, or None
-        EPSG code or WKT string.
+        EPSG code or WKT string. EPSG codes are strongly preferred for
+        interop; the WKT-only path emits a user-defined CRS (32767) with
+        the WKT stored in ``GTCitationGeoKey``, which many non-libgeotiff
+        readers ignore. A ``UserWarning`` is emitted when the WKT-only
+        path is taken. See issue #1768.
     nodata : float, int, or None
         NoData value.
     compression : str
