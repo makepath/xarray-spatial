@@ -94,6 +94,58 @@ _CRS_WKT_DEPRECATED_SENTINEL = object()
 # a GeoTransform from coords (see ``_coords_to_transform`` and issue #1643).
 _BAND_DIM_NAMES = ('band', 'bands', 'channel')
 
+# Spatial dim names recognised on 3D writer inputs. ``y``/``x`` are the
+# canonical TIFF axes; aliases are accepted so a user who happens to use
+# ``lat``/``lon`` or ``row``/``col`` is not bounced by the validator below.
+_Y_DIM_NAMES = ('y', 'lat', 'latitude', 'row')
+_X_DIM_NAMES = ('x', 'lon', 'longitude', 'col')
+
+
+def _validate_3d_writer_dims(dims) -> None:
+    """Reject ambiguous 3D writer inputs (issue #1812).
+
+    The writer interprets a 3D DataArray as either ``(band, y, x)`` or
+    ``(y, x, band)``. ``data.dims[0] in _BAND_DIM_NAMES`` decides which
+    branch fires the ``moveaxis``. Anything else (e.g. ``('time', 'y', 'x')``)
+    used to fall through silently: the writer kept the leading axis as
+    the spatial ``y`` axis and the result was a TIFF with the leading
+    axis values laid out along ``y`` (silent data corruption -- on
+    read-back the array round-tripped with a swapped shape).
+
+    Refuse the ambiguous case at the entry point. The message tells the
+    caller exactly how to fix the input (rename to one of
+    ``_BAND_DIM_NAMES`` or transpose to ``(y, x, band)``).
+    """
+    if len(dims) != 3:
+        return
+    d0, d1, d2 = dims
+    band_layout = (d0 in _BAND_DIM_NAMES
+                   and d1 in _Y_DIM_NAMES
+                   and d2 in _X_DIM_NAMES)
+    yxb_layout = (d0 in _Y_DIM_NAMES
+                  and d1 in _X_DIM_NAMES
+                  and d2 in _BAND_DIM_NAMES)
+    if band_layout or yxb_layout:
+        return
+    # Bare (y, x, *) or (*, y, x) where the third dim is unnamed but
+    # spatial -- the writer's old behaviour treats the non-spatial axis
+    # as bands. Accept that only when the unknown dim is in the band
+    # position (last), which matches how raw numpy callers typically
+    # build a band-last array.
+    if d0 in _Y_DIM_NAMES and d1 in _X_DIM_NAMES:
+        return
+    raise ValueError(
+        f"3D writer input has ambiguous dims {dims!r}. Expected "
+        f"(band, y, x) or (y, x, band); accepted band-dim aliases are "
+        f"{_BAND_DIM_NAMES} and spatial aliases are y={_Y_DIM_NAMES} / "
+        f"x={_X_DIM_NAMES}. Rename the non-spatial dim to 'band' or "
+        f"transpose the array so spatial dims come first (e.g. "
+        f"``da.transpose('y', 'x', {dims[0]!r})``). The writer cannot "
+        f"infer which axis is the band axis from arbitrary dim names "
+        f"and would otherwise silently treat the leading axis as the "
+        f"spatial y axis (issue #1812)."
+    )
+
 
 class GeoTIFFFallbackWarning(UserWarning):
     """Warning emitted when a geotiff helper falls back to a slower path.
@@ -1388,6 +1440,15 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         (``b != 0`` or ``d != 0`` in rasterio ``Affine`` ordering). The
         on-disk GeoTIFF is axis-aligned; reproject onto an axis-aligned
         grid first.
+    ValueError
+        If ``data`` is a 3D DataArray whose ``dims`` is not
+        ``(band, y, x)`` or ``(y, x, band)`` (accepting the band-name
+        aliases ``bands`` / ``channel`` and spatial-name aliases
+        ``lat`` / ``lon`` / ``latitude`` / ``longitude`` / ``row`` /
+        ``col``). A leading non-band dim such as ``time`` is rejected
+        because the writer cannot infer the band axis from arbitrary
+        names and used to silently treat the leading axis as ``y``
+        (issue #1812).
     """
     from ._reader import _coerce_path
 
@@ -1632,6 +1693,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         # destinations we materialise eagerly and assemble in-memory.
         if hasattr(raw, 'dask') and not cog and not _path_is_file_like:
             dask_arr = raw
+            # Reject ambiguous 3D layouts at the entry point so a leading
+            # non-band dim like ``('time', 'y', 'x')`` cannot silently
+            # round-trip as a TIFF whose ``y`` axis carries the time
+            # values (issue #1812).
+            if raw.ndim == 3:
+                _validate_3d_writer_dims(data.dims)
             # Handle band-first dimension order (band, y, x) -> (y, x, band)
             if raw.ndim == 3 and data.dims[0] in _BAND_DIM_NAMES:
                 import dask.array as da
@@ -1682,6 +1749,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 arr = arr.get()  # Dask+CuPy -> numpy
         else:
             arr = np.asarray(raw)
+        # Reject ambiguous 3D layouts (issue #1812). The validator runs
+        # on ``data.dims`` (the original DataArray's dim names) rather
+        # than on ``arr`` so the error fires before the move-axis even
+        # for COG and file-like destinations that fall through here.
+        if arr.ndim == 3:
+            _validate_3d_writer_dims(data.dims)
         # Handle band-first dimension order (band, y, x) -> (y, x, band)
         if arr.ndim == 3 and data.dims[0] in _BAND_DIM_NAMES:
             arr = np.moveaxis(arr, 0, -1)
@@ -3522,6 +3595,16 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         GPU writer forwards this kwarg unchanged. Default ``'auto'``
         writes MinIsBlack for any band count, so a 4-band raster is
         not silently tagged as RGB+alpha (issue #1769).
+
+    Raises
+    ------
+    ValueError
+        If ``data`` is a 3D DataArray whose ``dims`` is not
+        ``(band, y, x)`` or ``(y, x, band)`` (accepting band-name
+        aliases ``bands`` / ``channel`` and spatial-name aliases
+        ``lat`` / ``lon`` / ``row`` / ``col``). A leading non-band
+        dim such as ``time`` would otherwise silently round-trip with
+        the leading axis treated as ``y`` (issue #1812).
     """
     if not tiled:
         raise ValueError(
@@ -3603,6 +3686,12 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         else:
             arr = cupy.asarray(np.asarray(arr))  # numpy -> GPU
 
+        # Reject ambiguous 3D layouts (issue #1812). Mirrors the gate
+        # in ``to_geotiff``: a leading non-band dim like ``time`` would
+        # otherwise round-trip with the leading axis silently treated
+        # as ``y``.
+        if arr.ndim == 3:
+            _validate_3d_writer_dims(data.dims)
         # Handle band-first dimension order (band, y, x) -> (y, x, band).
         # rioxarray and CF-style multi-band rasters land here; without
         # this remap the writer treats arr.shape[2] as the band axis and
@@ -3789,6 +3878,185 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     _write_bytes(file_bytes, path)
 
 
+def _vrt_effective_dtype(vrt, band):
+    """Return the dtype a VRT read is expected to materialize."""
+    selected = [vrt.bands[band]] if band is not None else vrt.bands
+    if not selected:
+        raise ValueError(
+            "VRT has no <VRTRasterBand> elements; cannot determine "
+            "output dtype"
+        )
+    effective = []
+    for vrt_band in selected:
+        dt = vrt_band.dtype
+        for src in vrt_band.sources:
+            scaled = src.scale is not None and src.scale != 1.0
+            offset = src.offset is not None and src.offset != 0.0
+            if scaled or offset:
+                dt = np.dtype(np.float64)
+                break
+        if dt.kind in ('u', 'i') and vrt_band.nodata is not None:
+            try:
+                if isinstance(vrt_band.nodata, (int, np.integer)):
+                    nd = int(vrt_band.nodata)
+                else:
+                    nf = float(vrt_band.nodata)
+                    nd = int(nf) if np.isfinite(nf) and nf.is_integer() else None
+                if nd is not None:
+                    info = np.iinfo(dt)
+                    if info.min <= nd <= info.max:
+                        dt = np.dtype(np.float64)
+            except (TypeError, ValueError):
+                pass
+        effective.append(dt)
+    return np.result_type(*effective)
+
+
+def _read_vrt_dask(source: str, *, dtype=None, window=None, band=None,
+                   name=None, chunks=None, max_pixels=None,
+                   missing_sources='warn'):
+    """Build a truly lazy dask-backed VRT DataArray from window tasks."""
+    import os
+    import dask
+    import dask.array as da
+    from ._reader import _check_dimensions, MAX_PIXELS_DEFAULT
+    from ._vrt import parse_vrt
+
+    with open(source, 'r') as f:
+        xml_str = f.read()
+    vrt_dir = os.path.dirname(os.path.abspath(source))
+    vrt = parse_vrt(xml_str, vrt_dir)
+
+    if band is not None:
+        if not isinstance(band, (int, np.integer)) or isinstance(band, bool):
+            raise ValueError(f"band must be a non-negative int, got {band!r}")
+        if band < 0 or band >= len(vrt.bands):
+            raise ValueError(
+                f"band index {band} out of range for VRT with "
+                f"{len(vrt.bands)} band(s)")
+
+    if window is not None:
+        win_r0, win_c0, win_r1, win_c1 = window
+        if (win_r0 < 0 or win_c0 < 0
+                or win_r1 > vrt.height or win_c1 > vrt.width
+                or win_r0 >= win_r1 or win_c0 >= win_c1):
+            raise ValueError(
+                f"window={window} is outside the VRT extent "
+                f"({vrt.height}x{vrt.width}) or has non-positive size.")
+    else:
+        win_r0, win_c0, win_r1, win_c1 = 0, 0, vrt.height, vrt.width
+
+    height = win_r1 - win_r0
+    width = win_c1 - win_c0
+    n_bands = len([vrt.bands[band]] if band is not None else vrt.bands)
+    if max_pixels is None:
+        max_pixels = MAX_PIXELS_DEFAULT
+    _check_dimensions(width, height, n_bands, max_pixels)
+
+    out_dtype = np.dtype(dtype) if dtype is not None else _vrt_effective_dtype(vrt, band)
+    if dtype is not None:
+        _validate_dtype_cast(_vrt_effective_dtype(vrt, band), out_dtype)
+
+    if isinstance(chunks, int):
+        ch_h = ch_w = chunks
+    else:
+        ch_h, ch_w = chunks
+
+    # Match read_geotiff_dask's graph-size guard. Each VRT chunk becomes a
+    # delayed task, so tiny chunks over very large VRT extents can OOM the
+    # driver during graph construction before any source read executes.
+    _MAX_DASK_CHUNKS = 50_000
+    n_chunks = ((height + ch_h - 1) // ch_h) * ((width + ch_w - 1) // ch_w)
+    if n_chunks > _MAX_DASK_CHUNKS:
+        import math
+        scale = math.sqrt(n_chunks / _MAX_DASK_CHUNKS)
+        suggested_h = int(math.ceil(ch_h * scale))
+        suggested_w = int(math.ceil(ch_w * scale))
+        raise ValueError(
+            f"read_vrt: chunks=({ch_h}, {ch_w}) on a {height}x{width} "
+            f"VRT window would produce {n_chunks:,} dask tasks, exceeding "
+            f"the {_MAX_DASK_CHUNKS:,}-task cap. Pass a larger chunks=... "
+            f"value explicitly (e.g. chunks=({suggested_h}, "
+            f"{suggested_w}) keeps the task count under the cap)."
+        )
+
+    rows = list(range(0, height, ch_h))
+    cols = list(range(0, width, ch_w))
+    out_has_band_axis = band is None and n_bands > 1
+
+    @dask.delayed
+    def _read_chunk(chunk_window):
+        chunk_da = read_vrt(
+            source, dtype=dtype, window=chunk_window, band=band,
+            chunks=None, gpu=False, max_pixels=max_pixels,
+            missing_sources=missing_sources,
+        )
+        arr = np.asarray(chunk_da.values)
+        if arr.dtype != out_dtype:
+            arr = arr.astype(out_dtype)
+        return arr
+
+    dask_rows = []
+    for r0 in rows:
+        r1 = min(r0 + ch_h, height)
+        dask_cols = []
+        for c0 in cols:
+            c1 = min(c0 + ch_w, width)
+            chunk_window = (r0 + win_r0, c0 + win_c0,
+                            r1 + win_r0, c1 + win_c0)
+            shape = ((r1 - r0, c1 - c0, n_bands)
+                     if out_has_band_axis else (r1 - r0, c1 - c0))
+            dask_cols.append(da.from_delayed(
+                _read_chunk(chunk_window), shape=shape, dtype=out_dtype))
+        dask_rows.append(da.concatenate(dask_cols, axis=1))
+    dask_arr = da.concatenate(dask_rows, axis=0)
+
+    coords = {}
+    gt = vrt.geo_transform
+    if gt is not None:
+        origin_x, res_x, _, origin_y, _, res_y = gt
+        if vrt.raster_type == 'point':
+            x_shift = win_c0 * res_x
+            y_shift = win_r0 * res_y
+        else:
+            x_shift = (win_c0 + 0.5) * res_x
+            y_shift = (win_r0 + 0.5) * res_y
+        coords = {
+            'x': np.arange(width, dtype=np.float64) * res_x + origin_x + x_shift,
+            'y': np.arange(height, dtype=np.float64) * res_y + origin_y + y_shift,
+        }
+
+    attrs = {}
+    if vrt.crs_wkt:
+        epsg = _wkt_to_epsg(vrt.crs_wkt)
+        if epsg is not None:
+            attrs['crs'] = epsg
+        attrs['crs_wkt'] = vrt.crs_wkt
+    if vrt.raster_type == 'point':
+        attrs['raster_type'] = 'point'
+    if vrt.bands:
+        band_idx_for_nodata = band if band is not None else 0
+        nodata = vrt.bands[band_idx_for_nodata].nodata
+        if nodata is not None:
+            attrs['nodata'] = nodata
+    if gt is not None:
+        origin_x, res_x, _, origin_y, _, res_y = gt
+        attrs['transform'] = (
+            float(res_x), 0.0, float(origin_x) + win_c0 * float(res_x),
+            0.0, float(res_y), float(origin_y) + win_r0 * float(res_y),
+        )
+
+    if name is None:
+        name = os.path.splitext(os.path.basename(source))[0]
+    if out_has_band_axis:
+        dims = ['y', 'x', 'band']
+        coords['band'] = np.arange(n_bands)
+    else:
+        dims = ['y', 'x']
+    return xr.DataArray(dask_arr, dims=dims, coords=coords,
+                        name=name, attrs=attrs)
+
+
 def read_vrt(source: str, *,
              dtype: str | np.dtype | None = None,
              window: tuple | None = None,
@@ -3875,6 +4143,13 @@ def read_vrt(source: str, *,
         raise ValueError(
             f"missing_sources must be 'warn' or 'raise', got "
             f"{missing_sources!r}")
+
+    if chunks is not None and not gpu:
+        return _read_vrt_dask(
+            source, dtype=dtype, window=window, band=band, name=name,
+            chunks=chunks, max_pixels=max_pixels,
+            missing_sources=missing_sources,
+        )
 
     arr, vrt = _read_vrt_internal(
         source, window=window, band=band, max_pixels=max_pixels,
