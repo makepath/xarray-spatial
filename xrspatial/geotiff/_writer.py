@@ -1562,6 +1562,33 @@ def _compress_block(arr, block_w, block_h, samples, dtype, bytes_per_sample,
 # Streaming writer (dask -> monolithic TIFF without full materialisation)
 # ---------------------------------------------------------------------------
 
+def _should_use_bigtiff_streaming(uncompressed_bytes: int,
+                                  n_entries: int,
+                                  header_size_classic: int = 8,
+                                  ifd_overhead_estimate: int = 200) -> bool:
+    """Decide whether the streaming writer must emit BigTIFF.
+
+    Classic TIFF stores offsets as uint32, so any offset referenced from
+    the IFD must satisfy ``offset < UINT32_MAX``. The streaming writer
+    appends pixel data after the header and IFD, so the last byte of
+    pixel data sits at approximately
+    ``header + ifd + strip_table + uncompressed_bytes``. This helper
+    promotes to BigTIFF if that total reaches ``UINT32_MAX``.
+
+    See issue #1785: the previous check only compared ``uncompressed_bytes``
+    against ``UINT32_MAX`` and missed the IFD/strip-table overhead, which
+    pushed sub-4 GiB rasters over the classic-TIFF limit late in the write.
+    """
+    # 8 bytes per strip/tile entry: 4 for offset (LONG) + 4 for byte count.
+    strip_table_overhead = n_entries * 8
+    reserved_overhead = (
+        header_size_classic + ifd_overhead_estimate + strip_table_overhead
+    )
+    UINT32_MAX = 0xFFFFFFFF
+    # Use >= because UINT32_MAX itself is not a referenceable offset.
+    return uncompressed_bytes + reserved_overhead >= UINT32_MAX
+
+
 def write_streaming(dask_data, path: str, *,
                     geo_transform: 'GeoTransform | None' = None,
                     crs_epsg: int | None = None,
@@ -1649,13 +1676,15 @@ def write_streaming(dask_data, path: str, *,
         rows_per_strip = min(256, height)
         n_entries = math.ceil(height / rows_per_strip)
 
-    # BigTIFF detection (use uncompressed size as conservative estimate)
+    # BigTIFF detection. Account for IFD + strip/tile-table overhead so
+    # rasters just under 4 GiB do not silently overflow classic-TIFF
+    # uint32 offsets late in the write. See issue #1785.
     uncompressed_bytes = height * width * bytes_per_sample * samples
-    UINT32_MAX = 0xFFFFFFFF
     if bigtiff is not None:
         use_bigtiff = bigtiff
     else:
-        use_bigtiff = uncompressed_bytes > UINT32_MAX
+        use_bigtiff = _should_use_bigtiff_streaming(
+            uncompressed_bytes, n_entries, header_size_classic=8)
 
     header_size = 16 if use_bigtiff else 8
 
