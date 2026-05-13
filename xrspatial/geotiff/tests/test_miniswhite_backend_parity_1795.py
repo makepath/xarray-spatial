@@ -1,0 +1,86 @@
+"""MinIsWhite photometric handling must be backend-consistent (#1795)."""
+from __future__ import annotations
+
+import http.server
+import socketserver
+import threading
+
+import numpy as np
+import pytest
+
+from xrspatial.geotiff import open_geotiff
+
+tifffile = pytest.importorskip("tifffile")
+
+
+class _RangeHandler(http.server.BaseHTTPRequestHandler):
+    payload: bytes = b''
+
+    def do_GET(self):  # noqa: N802
+        rng = self.headers.get('Range')
+        if rng and rng.startswith('bytes='):
+            spec = rng[len('bytes='):]
+            start_s, _, end_s = spec.partition('-')
+            start = int(start_s)
+            end = int(end_s) if end_s else len(self.payload) - 1
+            chunk = self.payload[start:end + 1]
+            self.send_response(206)
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header(
+                'Content-Range',
+                f'bytes {start}-{start + len(chunk) - 1}/{len(self.payload)}',
+            )
+            self.send_header('Content-Length', str(len(chunk)))
+            self.end_headers()
+            self.wfile.write(chunk)
+            return
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/octet-stream')
+        self.send_header('Content-Length', str(len(self.payload)))
+        self.end_headers()
+        self.wfile.write(self.payload)
+
+    def log_message(self, *_args, **_kwargs):
+        pass
+
+
+def _serve(payload: bytes):
+    handler_cls = type(
+        'RangeHandler1795', (_RangeHandler,), {'payload': payload}
+    )
+    httpd = socketserver.TCPServer(('127.0.0.1', 0), handler_cls)
+    port = httpd.server_address[1]
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    return httpd, port
+
+
+@pytest.fixture
+def miniswhite_http_url(tmp_path, monkeypatch):
+    monkeypatch.setenv('XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS', '1')
+    stored = np.array([[0, 1, 2], [10, 128, 255]], dtype=np.uint8)
+    path = tmp_path / "tmp_1795_miniswhite.tif"
+    tifffile.imwrite(str(path), stored, photometric='miniswhite')
+    httpd, port = _serve(path.read_bytes())
+    try:
+        yield f'http://127.0.0.1:{port}/tmp_1795_miniswhite.tif', stored
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_http_miniswhite_matches_local_reader(miniswhite_http_url):
+    url, stored = miniswhite_http_url
+
+    got = open_geotiff(url)
+
+    np.testing.assert_array_equal(got.values, np.iinfo(stored.dtype).max - stored)
+
+
+def test_http_dask_miniswhite_matches_local_reader(miniswhite_http_url):
+    url, stored = miniswhite_http_url
+
+    got = open_geotiff(url, chunks=2).compute()
+
+    np.testing.assert_array_equal(got.values, np.iinfo(stored.dtype).max - stored)
+

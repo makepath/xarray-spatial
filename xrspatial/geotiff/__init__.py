@@ -2435,6 +2435,7 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             from ._reader import (
                 _fetch_decode_cog_http_tiles,
                 MAX_PIXELS_DEFAULT,
+                _apply_photometric_miniswhite,
             )
             header, ifd = http_meta
             if _is_http_src:
@@ -2454,6 +2455,7 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             if (arr.ndim == 3 and ifd.samples_per_pixel > 1
                     and band is not None):
                 arr = arr[:, :, band]
+            arr = _apply_photometric_miniswhite(arr, ifd)
         else:
             _r2a_kwargs = {}
             if max_pixels is not None:
@@ -3298,6 +3300,13 @@ def read_geotiff_gpu(source: str, *,
             arr_gpu = _apply_orientation_gpu(arr_gpu, orientation)
         geo_info = _apply_orientation_geo_info(
             geo_info, orientation, file_h=height, file_w=width)
+
+    if (ifd.photometric == 0 and samples == 1 and not arr_was_cpu_decoded):
+        gpu_dtype = np.dtype(str(arr_gpu.dtype))
+        if gpu_dtype.kind == 'u':
+            arr_gpu = np.iinfo(gpu_dtype).max - arr_gpu
+        elif gpu_dtype.kind == 'f':
+            arr_gpu = -arr_gpu
 
     # Apply nodata mask + record sentinel so the GPU read agrees with the
     # CPU eager path (issue #1542). Without this, integer rasters keep the
