@@ -52,7 +52,7 @@ def _make_cog_with_overviews(path: str) -> xr.DataArray:
     da = xr.DataArray(arr, dims=['y', 'x'],
                       coords={'y': y, 'x': x},
                       attrs={'crs': 4326})
-    to_geotiff(da, path, cog=True, overview_levels=[1, 2, 3])
+    to_geotiff(da, path, cog=True, overview_levels=[2, 4, 8])
     return da
 
 

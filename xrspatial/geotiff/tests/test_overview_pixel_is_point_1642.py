@@ -59,7 +59,7 @@ def _make_pp_cog(path: str, size: int = 1024, pixel: float = 10.0) -> xr.DataArr
                       coords={'y': y, 'x': x},
                       attrs={'crs': 'EPSG:32610',
                              'raster_type': 'point'})
-    to_geotiff(da, path, cog=True, overview_levels=[1, 2, 3])
+    to_geotiff(da, path, cog=True, overview_levels=[2, 4, 8])
     return da
 
 
@@ -71,7 +71,7 @@ def _make_pa_cog(path: str, size: int = 1024, pixel: float = 10.0) -> xr.DataArr
     da = xr.DataArray(arr, dims=['y', 'x'],
                       coords={'y': y, 'x': x},
                       attrs={'crs': 'EPSG:32610'})
-    to_geotiff(da, path, cog=True, overview_levels=[1, 2, 3])
+    to_geotiff(da, path, cog=True, overview_levels=[2, 4, 8])
     return da
 
 

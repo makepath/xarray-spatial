@@ -1236,7 +1236,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     cog : bool
         Write as Cloud Optimized GeoTIFF.
     overview_levels : list[int] or None
-        Overview decimation factors. Only used when cog=True.
+        Overview decimation factors relative to full resolution.
+        Each entry must be a power-of-two integer >= 2, and the list
+        must be strictly increasing (e.g. ``[2, 4, 8]`` writes
+        overviews at 1/2, 1/4 and 1/8 of the full resolution).
+        Invalid values raise ``ValueError``. Only used when ``cog=True``.
+        If None and ``cog=True``, levels auto-generate as
+        ``[2, 4, 8, ...]`` until the next halving would fall below
+        ``tile_size`` (capped at 8 levels).
     overview_resampling : str
         Resampling method for overviews: 'mean' (default), 'nearest',
         'min', 'max', 'median', 'mode', or 'cubic'.
@@ -3236,8 +3243,12 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     cog : bool
         Write as Cloud Optimized GeoTIFF with overviews.
     overview_levels : list[int] or None
-        Overview decimation factors (e.g. [2, 4, 8]). Only used when
-        cog=True. If None and cog=True, auto-generates levels by
+        Overview decimation factors relative to full resolution.
+        Each entry must be a power-of-two integer >= 2, and the list
+        must be strictly increasing (e.g. ``[2, 4, 8]`` writes
+        overviews at 1/2, 1/4 and 1/8 of the full resolution).
+        Invalid values raise ``ValueError``. Only used when ``cog=True``.
+        If None and ``cog=True``, auto-generates ``[2, 4, 8, ...]`` by
         halving until the smallest overview fits in a single tile.
     overview_resampling : str
         Resampling method for overviews: 'mean' (default), 'nearest',
@@ -3454,14 +3465,25 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     if cog:
         if overview_levels is None:
             from ._writer import _MAX_OVERVIEW_LEVELS
+            # Auto-generated lists hold actual decimation factors (2,
+            # 4, 8, ...) so the loop below treats auto-generated and
+            # user-supplied lists identically (issue #1766).
             overview_levels = []
             oh, ow = height, width
+            factor = 2
             while (oh > tile_size and ow > tile_size and
                    len(overview_levels) < _MAX_OVERVIEW_LEVELS):
                 oh //= 2
                 ow //= 2
                 if oh > 0 and ow > 0:
-                    overview_levels.append(len(overview_levels) + 1)
+                    overview_levels.append(factor)
+                    factor *= 2
+        else:
+            # Validate explicit lists: power-of-two factors >= 2,
+            # strictly increasing. Previously the values were ignored
+            # and only the list length mattered (issue #1766).
+            from ._writer import _validate_overview_levels
+            overview_levels = _validate_overview_levels(overview_levels)
 
         # Pass ``nodata`` so the GPU reducer masks the sentinel back to
         # NaN before averaging. Without this, the NaN->sentinel rewrite
@@ -3471,17 +3493,24 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         # so the on-disk overview tiles still carry the sentinel value
         # external readers expect.
         current = arr
-        for _ in overview_levels:
-            current = make_overview_gpu(current, method=overview_resampling,
-                                        nodata=nodata)
-            if (nodata is not None
-                    and np.dtype(str(current.dtype)).kind == 'f'
-                    and not np.isnan(float(nodata))):
-                nan_mask = cupy.isnan(current)
-                if bool(nan_mask.any().item()):
-                    current = current.copy()
-                    current[nan_mask] = np.dtype(
-                        str(current.dtype)).type(nodata)
+        cumulative_factor = 1
+        for target_factor in overview_levels:
+            # Halve repeatedly until the cumulative decimation matches
+            # the requested factor. Validation has already established
+            # that ``target_factor`` is a power of two and strictly
+            # greater than ``cumulative_factor``.
+            while cumulative_factor < target_factor:
+                current = make_overview_gpu(current, method=overview_resampling,
+                                            nodata=nodata)
+                cumulative_factor *= 2
+                if (nodata is not None
+                        and np.dtype(str(current.dtype)).kind == 'f'
+                        and not np.isnan(float(nodata))):
+                    nan_mask = cupy.isnan(current)
+                    if bool(nan_mask.any().item()):
+                        current = current.copy()
+                        current[nan_mask] = np.dtype(
+                            str(current.dtype)).type(nodata)
             oh, ow = current.shape[:2]
             parts.append(_gpu_compress_to_part(current, ow, oh, samples))
 

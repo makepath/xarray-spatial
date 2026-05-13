@@ -197,7 +197,7 @@ def test_cpu_int_cog_overview_not_poisoned(_int_cog_inputs, method):
     da, tmp_path = _int_cog_inputs
     path = str(tmp_path / f'int_overview_{method}_2026_05_12.tif')
     to_geotiff(da, path, nodata=65535, cog=True,
-               overview_levels=[1], overview_resampling=method)
+               overview_levels=[2], overview_resampling=method)
 
     ov = open_geotiff(path, overview_level=1)
     arr = np.asarray(ov.data)
@@ -226,7 +226,7 @@ def test_cpu_int_cog_overview_3band_not_poisoned(tmp_path):
 
     path = str(tmp_path / 'int_overview_3band_2026_05_12.tif')
     to_geotiff(da, path, nodata=65535, cog=True,
-               overview_levels=[1], overview_resampling='mean')
+               overview_levels=[2], overview_resampling='mean')
 
     ov = open_geotiff(path, overview_level=1)
     arr = np.asarray(ov.data)
@@ -254,7 +254,7 @@ def test_cpu_int_cog_no_nodata_unchanged(tmp_path):
 
     path = str(tmp_path / 'int_overview_no_nodata_2026_05_12.tif')
     to_geotiff(da, path, cog=True,
-               overview_levels=[1], overview_resampling='mean')
+               overview_levels=[2], overview_resampling='mean')
 
     ov = open_geotiff(path, overview_level=1)
     arr = np.asarray(ov.data)

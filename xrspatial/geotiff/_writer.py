@@ -151,6 +151,60 @@ OVERVIEW_METHODS = ('mean', 'nearest', 'min', 'max', 'median', 'mode', 'cubic')
 _MAX_OVERVIEW_LEVELS = 8
 
 
+def _validate_overview_levels(overview_levels):
+    """Validate and normalise an explicit ``overview_levels`` list.
+
+    Each entry is a decimation factor relative to full resolution.
+    Factors must be strictly increasing integers >= 2, and each must
+    be a power of two because the underlying block reducer only does
+    2x decimation per step (issue #1766 — prior to that fix, the values
+    were ignored and only the list length mattered).
+
+    Returns the validated list of ints. ``None`` passes through so the
+    caller can run its auto-generation path.
+    """
+    if overview_levels is None:
+        return None
+    if not isinstance(overview_levels, (list, tuple)):
+        raise ValueError(
+            f"overview_levels must be a list of ints, got "
+            f"{type(overview_levels).__name__}.")
+    if len(overview_levels) == 0:
+        return []
+    cleaned = []
+    prev = 1
+    for i, level in enumerate(overview_levels):
+        # Reject bools explicitly; ``bool`` is an ``int`` subclass and
+        # ``True``/``False`` would otherwise sneak through the integer
+        # check below.
+        if isinstance(level, bool) or not isinstance(level, (int, np.integer)):
+            raise ValueError(
+                f"overview_levels[{i}] must be an int >= 2, got "
+                f"{level!r} (type {type(level).__name__}).")
+        level = int(level)
+        if level < 2:
+            raise ValueError(
+                f"overview_levels[{i}] must be >= 2 (1 is the original "
+                f"full-resolution band), got {level}.")
+        if level <= prev:
+            raise ValueError(
+                f"overview_levels must be strictly increasing, got "
+                f"{list(overview_levels)} (entry at index {i} is "
+                f"{level}, previous was {prev}).")
+        # Power-of-two check: the underlying ``_make_overview`` only
+        # halves, so reaching factor N takes log2(N) halvings and N
+        # must be a power of two for the cumulative factor to land on
+        # the requested value exactly.
+        if (level & (level - 1)) != 0:
+            raise ValueError(
+                f"overview_levels[{i}]={level} is not a power of two. "
+                f"Only power-of-two decimation factors are supported "
+                f"(2, 4, 8, 16, ...).")
+        cleaned.append(level)
+        prev = level
+    return cleaned
+
+
 def _block_reduce_2d(arr2d, method, nodata=None):
     """2x block-reduce a single 2D plane using *method*.
 
@@ -1181,12 +1235,15 @@ def write(data: np.ndarray, path: str, *,
     cog : bool
         Write as Cloud Optimized GeoTIFF.
     overview_levels : list of int or None
-        Number of overviews to generate, expressed as a list. Only the
-        list *length* is used: each overview halves the previous one,
-        regardless of the values supplied (``[2, 4, 8]`` and ``[1, 1, 1]``
-        both produce 2x / 4x / 8x decimations). Only used if
+        Decimation factors for the overview pyramid, expressed as a
+        list of power-of-two integers strictly greater than 1
+        (``[2, 4, 8]`` writes overviews at 1/2, 1/4 and 1/8 of the
+        full resolution). The list must be strictly increasing.
+        Non-power-of-two values raise ``ValueError`` because the
+        underlying block reducer only halves per step. Only used if
         ``cog=True``. If None and ``cog=True``, levels auto-generate
-        until the next halving would fall below ``tile_size``.
+        as ``[2, 4, 8, ...]`` until the next halving would fall below
+        ``tile_size`` (capped at 8 levels).
     overview_resampling : str
         Resampling method for overviews: ``'mean'`` (default),
         ``'nearest'``, ``'min'``, ``'max'``, ``'median'``, ``'mode'``,
@@ -1248,14 +1305,25 @@ def write(data: np.ndarray, path: str, *,
             # Auto-generate: keep halving until < tile_size, capped at 8 levels.
             # 8 halvings = 1/256 resolution, which is more than enough for
             # interactive zoom on any realistic raster. Past that, overview
-            # write cost dominates without benefiting consumers.
+            # write cost dominates without benefiting consumers. The list
+            # holds actual decimation factors (2, 4, 8, ...) so the loop
+            # below treats auto-generated and user-supplied lists
+            # identically (issue #1766).
             overview_levels = []
             oh, ow = h, w
+            factor = 2
             while oh > tile_size and ow > tile_size and len(overview_levels) < _MAX_OVERVIEW_LEVELS:
                 oh //= 2
                 ow //= 2
                 if oh > 0 and ow > 0:
-                    overview_levels.append(len(overview_levels) + 1)
+                    overview_levels.append(factor)
+                    factor *= 2
+        else:
+            # Validate explicit lists. Each entry is a power-of-two
+            # decimation factor >= 2, strictly increasing. The previous
+            # behaviour silently ignored the values and used the list
+            # length as the halving count (issue #1766).
+            overview_levels = _validate_overview_levels(overview_levels)
 
         # Overview reductions need the *unmasked* float array so that
         # ``np.nanmean`` / ``np.nanmin`` / ``np.nanmax`` / ``np.nanmedian``
@@ -1271,22 +1339,29 @@ def write(data: np.ndarray, path: str, *,
         # sentinel convention as the full-resolution band (external
         # readers without NaN awareness still see a well-defined pixel).
         current = data
-        for _ in overview_levels:
-            current = _make_overview(current, method=overview_resampling,
-                                     nodata=nodata)
-            # Rewrite any NaN produced by the all-sentinel reduction
-            # back to the sentinel so the overview pyramid carries the
-            # same masking convention as the full-resolution band. The
-            # original ``data`` already underwent the NaN->sentinel
-            # rewrite upstream, so the only new NaNs here come from the
-            # reducer itself.
-            if (nodata is not None
-                    and current.dtype.kind == 'f'
-                    and not np.isnan(nodata)):
-                nan_mask = np.isnan(current)
-                if nan_mask.any():
-                    current = current.copy()
-                    current[nan_mask] = current.dtype.type(nodata)
+        cumulative_factor = 1
+        for target_factor in overview_levels:
+            # Halve repeatedly until the cumulative decimation matches
+            # the requested factor. Validation has already established
+            # that ``target_factor`` is a power of two and strictly
+            # greater than ``cumulative_factor``.
+            while cumulative_factor < target_factor:
+                current = _make_overview(current, method=overview_resampling,
+                                         nodata=nodata)
+                cumulative_factor *= 2
+                # Rewrite any NaN produced by the all-sentinel reduction
+                # back to the sentinel so the overview pyramid carries the
+                # same masking convention as the full-resolution band. The
+                # original ``data`` already underwent the NaN->sentinel
+                # rewrite upstream, so the only new NaNs here come from the
+                # reducer itself.
+                if (nodata is not None
+                        and current.dtype.kind == 'f'
+                        and not np.isnan(nodata)):
+                    nan_mask = np.isnan(current)
+                    if nan_mask.any():
+                        current = current.copy()
+                        current[nan_mask] = current.dtype.type(nodata)
             oh, ow = current.shape[:2]
             if tiled:
                 o_off, o_bc, o_data = _write_tiled(current, comp_tag, pred_int,
