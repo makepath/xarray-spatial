@@ -503,6 +503,11 @@ def _read_geo_info(source, *, overview_level: int | None = None):
         n_bands = (
             _ifd.samples_per_pixel if _ifd.samples_per_pixel > 1 else 0
         )
+        # Stash photometric + samples_per_pixel so the dask graph builder
+        # can detect MinIsWhite and invert ``geo_info.nodata`` before
+        # binding it into the chunk closure (#1809).
+        geo_info._ifd_photometric = _ifd.photometric
+        geo_info._ifd_samples_per_pixel = _ifd.samples_per_pixel
         return geo_info, _ifd.height, _ifd.width, file_dtype, n_bands
     if _is_file_like(source):
         # File-like: read its full bytes; we don't try to mmap arbitrary
@@ -540,6 +545,11 @@ def _read_geo_info(source, *, overview_level: int | None = None):
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
         n_bands = ifd.samples_per_pixel if ifd.samples_per_pixel > 1 else 0
+        # Stash photometric + samples_per_pixel so the dask graph builder
+        # can detect MinIsWhite and invert ``geo_info.nodata`` before
+        # binding it into the chunk closure (#1809).
+        geo_info._ifd_photometric = ifd.photometric
+        geo_info._ifd_samples_per_pixel = ifd.samples_per_pixel
         return geo_info, ifd.height, ifd.width, file_dtype, n_bands
     finally:
         if close_data:
@@ -906,9 +916,15 @@ def open_geotiff(source: str | BinaryIO, *,
     nodata = geo_info.nodata
     if nodata is not None:
         attrs['nodata'] = nodata
+        # When the reader applied MinIsWhite, the sentinel-equality mask
+        # must compare against the inverted sentinel value (issue #1809).
+        # ``read_to_array`` / ``_read_cog_http`` stash that value on
+        # ``geo_info._mask_nodata``; fall back to the original sentinel
+        # on non-MinIsWhite files.
+        mask_nodata = getattr(geo_info, '_mask_nodata', nodata)
         if arr.dtype.kind == 'f':
-            if not np.isnan(nodata):
-                arr[arr == arr.dtype.type(nodata)] = np.nan
+            if mask_nodata is not None and not np.isnan(mask_nodata):
+                arr[arr == arr.dtype.type(mask_nodata)] = np.nan
         elif arr.dtype.kind in ('u', 'i'):
             # Integer arrays: convert to float to represent NaN.
             # An out-of-range sentinel (e.g. uint16 file with
@@ -927,8 +943,10 @@ def open_geotiff(source: str | BinaryIO, *,
             # ``_writer.py`` / ``_vrt.py`` pattern used for #1564 / #1616).
             # attrs['nodata'] still carries the raw sentinel so a write
             # round-trip preserves the tag.
-            if np.isfinite(nodata) and float(nodata).is_integer():
-                nodata_int = int(nodata)
+            if (mask_nodata is not None
+                    and np.isfinite(mask_nodata)
+                    and float(mask_nodata).is_integer()):
+                nodata_int = int(mask_nodata)
                 info = np.iinfo(arr.dtype)
                 if info.min <= nodata_int <= info.max:
                     mask = arr == arr.dtype.type(nodata_int)
@@ -2213,11 +2231,31 @@ def read_geotiff_dask(source: str, *,
             http_ifd.samples_per_pixel
             if http_ifd.samples_per_pixel > 1 else 0
         )
+        # Stash IFD photometric for the MinIsWhite nodata-inversion check below.
+        geo_info._ifd_photometric = http_ifd.photometric
+        geo_info._ifd_samples_per_pixel = http_ifd.samples_per_pixel
     else:
         # Metadata-only read: O(1) memory via mmap, no pixel decompression
         geo_info, full_h, full_w, file_dtype, n_bands = _read_geo_info(
             source, overview_level=overview_level)
     nodata = geo_info.nodata
+    nodata_attr = nodata  # original sentinel preserved for attrs['nodata']
+    # When the source is MinIsWhite (photometric == 0, samples_per_pixel == 1),
+    # the per-chunk reader inverts pixel values before this closure's nodata
+    # mask runs. Track the inverted sentinel so the mask compares against the
+    # post-inversion value, not the original (#1809).
+    if nodata is not None:
+        _phm = getattr(geo_info, '_ifd_photometric', None)
+        _spp = getattr(geo_info, '_ifd_samples_per_pixel', None)
+        if _phm == 0 and _spp == 1:
+            if file_dtype.kind == 'u' and np.isfinite(nodata) and \
+                    float(nodata).is_integer():
+                vi = int(nodata)
+                info = np.iinfo(file_dtype)
+                if info.min <= vi <= info.max:
+                    nodata = info.max - vi
+            elif file_dtype.kind == 'f' and not np.isnan(nodata):
+                nodata = -float(nodata)
 
     # Nodata masking promotes integer arrays to float64 (for NaN).
     # Validate against the effective dtype, not the raw file dtype.
@@ -2328,8 +2366,8 @@ def read_geotiff_dask(source: str, *,
 
     attrs = {}
     _populate_attrs_from_geo_info(attrs, geo_info, window=window)
-    if nodata is not None:
-        attrs['nodata'] = nodata
+    if nodata_attr is not None:
+        attrs['nodata'] = nodata_attr
 
     if isinstance(chunks, int):
         ch_h = ch_w = chunks
@@ -3029,7 +3067,7 @@ def read_geotiff_gpu(source: str, *,
             # so ``window`` is None whenever ``geo_info`` will be remapped
             # below.
             src.close()
-            arr_cpu, _ = _read_to_array(
+            arr_cpu, _stripped_geo = _read_to_array(
                 source, overview_level=overview_level,
                 window=window, band=band, max_pixels=max_pixels)
             arr_gpu = cupy.asarray(arr_cpu)
@@ -3046,10 +3084,14 @@ def read_geotiff_gpu(source: str, *,
             # with the CPU eager path. Without this, integer rasters keep
             # the literal sentinel value and float rasters keep the
             # sentinel rather than NaN -- a silent backend divergence.
+            # ``read_to_array`` stashes the post-MinIsWhite sentinel on
+            # ``_mask_nodata`` when applicable; fall back to the original
+            # sentinel otherwise (#1809).
             nodata = geo_info.nodata
             if nodata is not None:
                 attrs['nodata'] = nodata
-                arr_gpu = _apply_nodata_mask_gpu(arr_gpu, nodata)
+                mask_value = getattr(_stripped_geo, '_mask_nodata', nodata)
+                arr_gpu = _apply_nodata_mask_gpu(arr_gpu, mask_value)
             if dtype is not None:
                 target = np.dtype(dtype)
                 _validate_dtype_cast(np.dtype(str(arr_gpu.dtype)), target)
@@ -3328,8 +3370,14 @@ def read_geotiff_gpu(source: str, *,
         geo_info = _apply_orientation_geo_info(
             geo_info, orientation, file_h=height, file_w=width)
 
+    _mw_mask_nodata = None
     if (ifd.photometric == 0 and samples == 1 and not arr_was_cpu_decoded):
+        from ._reader import _miniswhite_inverted_nodata as _miw_inv_nd
         gpu_dtype = np.dtype(str(arr_gpu.dtype))
+        # Compute the post-MinIsWhite sentinel BEFORE inverting the array,
+        # so the downstream ``_apply_nodata_mask_gpu`` call compares
+        # against the right value (#1809).
+        _mw_mask_nodata = _miw_inv_nd(geo_info.nodata, ifd, gpu_dtype)
         if gpu_dtype.kind == 'u':
             arr_gpu = np.iinfo(gpu_dtype).max - arr_gpu
         elif gpu_dtype.kind == 'f':
@@ -3343,7 +3391,11 @@ def read_geotiff_gpu(source: str, *,
     # surprise a user-supplied dtype.
     nodata = geo_info.nodata
     if nodata is not None:
-        arr_gpu = _apply_nodata_mask_gpu(arr_gpu, nodata)
+        # When MinIsWhite was applied, the mask must use the inverted
+        # sentinel; otherwise the original sentinel.
+        _gpu_mask_value = (_mw_mask_nodata if _mw_mask_nodata is not None
+                           else nodata)
+        arr_gpu = _apply_nodata_mask_gpu(arr_gpu, _gpu_mask_value)
 
     if dtype is not None:
         target = np.dtype(dtype)

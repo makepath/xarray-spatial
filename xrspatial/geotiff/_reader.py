@@ -1954,7 +1954,15 @@ def _read_cog_http(url: str, overview_level: int | None = None,
         arr, geo_info = _apply_orientation_with_geo(
             arr, geo_info, ifd.orientation)
 
-    arr = _apply_photometric_miniswhite(arr, ifd)
+    if ifd.photometric == 0 and ifd.samples_per_pixel == 1:
+        # Stash the inverted sentinel on geo_info so the caller's
+        # sentinel-to-NaN mask runs against the post-MinIsWhite value
+        # while ``attrs['nodata']`` keeps the original sentinel for
+        # round-trip on write (issue #1809).
+        inverted_nodata = _miniswhite_inverted_nodata(
+            geo_info.nodata, ifd, arr.dtype)
+        arr = _apply_photometric_miniswhite(arr, ifd)
+        geo_info._mask_nodata = inverted_nodata
 
     return arr, geo_info
 
@@ -2307,12 +2315,51 @@ def _apply_orientation_with_geo(
 
 def _apply_photometric_miniswhite(arr: np.ndarray, ifd: IFD) -> np.ndarray:
     """Apply TIFF MinIsWhite inversion for single-band grayscale images."""
-    if ifd.photometric == 0 and ifd.samples_per_pixel == 1:
-        if arr.dtype.kind == 'u':
-            return np.iinfo(arr.dtype).max - arr
-        if arr.dtype.kind == 'f':
-            return -arr
+    if ifd.photometric != 0 or ifd.samples_per_pixel != 1:
+        return arr
+    if arr.dtype.kind == 'u':
+        return np.iinfo(arr.dtype).max - arr
+    if arr.dtype.kind == 'f':
+        return -arr
     return arr
+
+
+def _miniswhite_inverted_nodata(nodata, ifd: IFD, dtype: np.dtype):
+    """Return the nodata sentinel value after MinIsWhite inversion.
+
+    When the reader applied MinIsWhite (``photometric == 0``,
+    ``samples_per_pixel == 1``), the original integer sentinel ``s`` is
+    rewritten to ``iinfo(dtype).max - s`` and the float sentinel ``s`` to
+    ``-s``.  Downstream nodata-to-NaN masks must compare against the
+    inverted sentinel rather than the original, otherwise they flag the
+    wrong pixels: inverted real data colliding with the original
+    sentinel value is incorrectly masked while the real nodata cells
+    keep their inverted-sentinel value (issue #1809).
+
+    Returns the inverted nodata sentinel, or the original ``nodata``
+    when MinIsWhite was not applied / not applicable.  Non-finite or
+    out-of-range nodata is returned unchanged so callers' downstream
+    skip-the-mask logic stays unchanged.
+    """
+    if nodata is None:
+        return nodata
+    if ifd.photometric != 0 or ifd.samples_per_pixel != 1:
+        return nodata
+    if dtype.kind == 'u':
+        if not np.isfinite(nodata):
+            return nodata
+        if not float(nodata).is_integer():
+            return nodata
+        vi = int(nodata)
+        info = np.iinfo(dtype)
+        if not (info.min <= vi <= info.max):
+            return nodata
+        return info.max - vi
+    if dtype.kind == 'f':
+        if np.isnan(nodata):
+            return nodata
+        return -float(nodata)
+    return nodata
 
 
 def read_to_array(source, *, window=None, overview_level: int | None = None,
@@ -2456,7 +2503,18 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
             arr, geo_info = _apply_orientation_with_geo(
                 arr, geo_info, orientation)
 
-        arr = _apply_photometric_miniswhite(arr, ifd)
+        if ifd.photometric == 0 and ifd.samples_per_pixel == 1:
+            # The MinIsWhite inversion rewrites the original sentinel
+            # value, so any downstream nodata-to-NaN mask must compare
+            # against the inverted sentinel instead.  Stash the inverted
+            # sentinel on geo_info as a private attribute so callers can
+            # apply the mask post-inversion while keeping the original
+            # sentinel on ``geo_info.nodata`` for the attrs round-trip
+            # (issue #1809).
+            inverted_nodata = _miniswhite_inverted_nodata(
+                geo_info.nodata, ifd, arr.dtype)
+            arr = _apply_photometric_miniswhite(arr, ifd)
+            geo_info._mask_nodata = inverted_nodata
     finally:
         src.close()
 
