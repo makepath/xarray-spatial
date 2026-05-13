@@ -3858,6 +3858,15 @@ def read_vrt(source: str, *,
     ``relativeToVRT='1'`` source that escapes the VRT directory (e.g.
     ``../../etc/passwd`` or a symlink to a file outside the directory)
     is rejected regardless of the allowlist.
+
+    Lazy chunked reads (issue #1814): when ``chunks=`` is set, the
+    returned DataArray wraps a dask graph that decodes one chunk
+    window per task.  Construction does not materialise any pixels;
+    only the VRT XML is parsed.  The eager read populates
+    ``attrs['vrt_holes']`` from skipped sources; the chunked path does
+    not aggregate per-task hole records, so that attribute is not set
+    when ``chunks=`` is used.  Each worker still emits
+    ``GeoTIFFFallbackWarning`` for missing sources.
     """
     from ._reader import _coerce_path
     from ._vrt import read_vrt as _read_vrt_internal
@@ -3875,6 +3884,26 @@ def read_vrt(source: str, *,
         raise ValueError(
             f"missing_sources must be 'warn' or 'raise', got "
             f"{missing_sources!r}")
+
+    # Lazy chunked path (issue #1814). The eager call below materialises
+    # the full mosaic on host RAM and then wraps the array via
+    # ``.chunk()``, so chunks= gave no memory protection and gpu=True +
+    # chunks= still assembled the full mosaic on the CPU before moving to
+    # the device. When chunks= is set, dispatch to a delayed-per-window
+    # builder so each task decodes only the sources intersecting its
+    # destination window.
+    if chunks is not None:
+        return _read_vrt_chunked(
+            source,
+            window=window,
+            band=band,
+            name=name,
+            chunks=chunks,
+            gpu=gpu,
+            dtype=dtype,
+            max_pixels=max_pixels,
+            missing_sources=missing_sources,
+        )
 
     arr, vrt = _read_vrt_internal(
         source, window=window, band=band, max_pixels=max_pixels,
@@ -4070,14 +4099,371 @@ def read_vrt(source: str, *,
 
     result = xr.DataArray(arr, dims=dims, coords=coords, name=name, attrs=attrs)
 
-    # Chunk for Dask (or Dask+CuPy if gpu=True)
-    if chunks is not None:
-        if isinstance(chunks, int):
-            chunk_dict = {'y': chunks, 'x': chunks}
-        else:
-            chunk_dict = {'y': chunks[0], 'x': chunks[1]}
-        result = result.chunk(chunk_dict)
+    # ``chunks is not None`` is handled by ``_read_vrt_chunked`` higher up
+    # in this function (issue #1814); reaching this point implies the
+    # eager path, so no post-decode chunking is needed.
+    return result
 
+
+# Hard cap on the per-VRT chunk task count. Matches the
+# ``_MAX_DASK_CHUNKS`` value used by ``read_geotiff_dask`` so the two
+# entry points refuse the same scheduler-busting chunk grids. See
+# issue #1814.
+_MAX_VRT_DASK_CHUNKS = 50_000
+
+
+def _vrt_chunk_read(source, r0, c0, r1, c1, *,
+                    band, max_pixels, missing_sources,
+                    declared_dtype, gpu):
+    """Decode a single chunk window from a VRT.
+
+    Called by ``dask.delayed`` from :func:`_read_vrt_chunked`. The
+    function reads only the destination window via the existing VRT
+    internal reader, applies the same integer-sentinel masking the
+    eager :func:`read_vrt` does post-decode, casts to the dtype the
+    dask graph declared up front, and optionally moves the block to
+    the GPU.
+
+    Returning a ``numpy.ndarray`` (or ``cupy.ndarray`` when ``gpu`` is
+    set) whose shape and dtype match the ``shape=`` / ``dtype=`` kwargs
+    of the surrounding ``dask.array.from_delayed`` is the contract; a
+    mismatch would silently produce a wrong-shape dask array.
+    """
+    from ._vrt import read_vrt as _read_vrt_internal
+
+    arr, vrt = _read_vrt_internal(
+        source, window=(r0, c0, r1, c1), band=band,
+        max_pixels=max_pixels, missing_sources=missing_sources,
+    )
+
+    # Mirror the eager post-decode integer-sentinel masking in
+    # ``read_vrt``. The internal reader NaN-masks float source arrays
+    # inline but leaves integer sentinels untouched, so the eager path
+    # promotes to float64 when sentinels hit. Apply the same logic per
+    # chunk; the surrounding dask graph already declared float64 when
+    # any band has a representable integer sentinel, so any chunk that
+    # actually fires the mask returns a buffer whose dtype matches the
+    # declared one.
+    if arr.dtype.kind in ('u', 'i'):
+        if arr.ndim == 3 and band is None and vrt.bands:
+            int_arr = arr
+            int_dtype = int_arr.dtype
+            for i, vrt_band in enumerate(vrt.bands):
+                if i >= int_arr.shape[-1]:
+                    break
+                sentinel = _vrt_sentinel_for_dtype(vrt_band.nodata, int_dtype)
+                if sentinel is None:
+                    continue
+                mask = int_arr[..., i] == sentinel
+                if not mask.any():
+                    continue
+                if arr.dtype != np.float64:
+                    arr = arr.astype(np.float64)
+                arr[..., i][mask] = np.nan
+        else:
+            band_idx = band if band is not None else 0
+            nodata = None
+            if vrt.bands and 0 <= band_idx < len(vrt.bands):
+                nodata = vrt.bands[band_idx].nodata
+            if nodata is not None:
+                sentinel = _vrt_sentinel_for_dtype(nodata, arr.dtype)
+                if sentinel is not None:
+                    mask = arr == sentinel
+                    if mask.any():
+                        arr = arr.astype(np.float64)
+                        arr[mask] = np.nan
+
+    if declared_dtype is not None and arr.dtype != declared_dtype:
+        arr = arr.astype(declared_dtype)
+
+    if gpu:
+        import cupy
+        arr = cupy.asarray(arr)
+
+    return arr
+
+
+def _vrt_sentinel_for_dtype(nodata_val, dtype):
+    """Return ``dtype``-cast sentinel for ``nodata_val`` or None.
+
+    Module-level twin of the closure ``_sentinel_for_dtype`` defined
+    inside :func:`read_vrt`. Lifted to module scope so the per-chunk
+    helper :func:`_vrt_chunk_read` can call it without paying the cost
+    of re-binding the closure on every block.
+    """
+    if nodata_val is None or dtype.kind not in ('u', 'i'):
+        return None
+    info = np.iinfo(dtype)
+    if isinstance(nodata_val, (int, np.integer)) and not isinstance(
+            nodata_val, bool):
+        nodata_int = int(nodata_val)
+        if info.min <= nodata_int <= info.max:
+            return dtype.type(nodata_int)
+        return None
+    try:
+        nodata_f = float(nodata_val)
+    except (TypeError, ValueError):
+        return None
+    if not (np.isfinite(nodata_f) and nodata_f.is_integer()
+            and info.min <= nodata_f <= info.max):
+        return None
+    return dtype.type(int(nodata_f))
+
+
+def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
+                      max_pixels, missing_sources):
+    """Lazy ``read_vrt`` dispatch when ``chunks=`` is set (issue #1814).
+
+    Parses the VRT XML once to recover the extent, CRS, GeoTransform,
+    and per-band metadata, then builds a dask graph with one task per
+    chunk window. Each task calls into the existing VRT internal reader
+    with its own ``window=`` so only the sources intersecting the
+    chunk's destination rectangle are decoded.
+
+    The eager :func:`read_vrt` populates ``attrs['vrt_holes']`` from
+    skipped sources; the chunked path does not aggregate per-task hole
+    records, so that attribute is not set here. The underlying
+    ``GeoTIFFFallbackWarning`` still fires from each worker when a
+    source is missing.
+    """
+    import os as _os
+    import dask
+    import dask.array as da
+
+    from ._reader import MAX_PIXELS_DEFAULT
+    from ._vrt import parse_vrt
+
+    # Parse the VRT XML up-front (cheap; no pixel decode).
+    with open(source, 'r') as f:
+        xml_str = f.read()
+    vrt_dir = _os.path.dirname(_os.path.abspath(source))
+    vrt = parse_vrt(xml_str, vrt_dir)
+
+    # Validate ``band`` against the parsed band count, matching the
+    # internal reader's contract so the failure mode is the same whether
+    # the user reads eagerly or chunked.
+    if band is not None:
+        if not isinstance(band, (int, np.integer)) or isinstance(band, bool):
+            raise ValueError(
+                f"band must be a non-negative int, got {band!r}")
+        if band < 0 or band >= len(vrt.bands):
+            raise ValueError(
+                f"band index {band} out of range for VRT with "
+                f"{len(vrt.bands)} band(s)")
+
+    # Resolve the windowed extent against the VRT.
+    if window is not None:
+        r0, c0, r1, c1 = window
+        if (r0 < 0 or c0 < 0
+                or r1 > vrt.height or c1 > vrt.width
+                or r0 >= r1 or c0 >= c1):
+            raise ValueError(
+                f"window={window} is outside the VRT extent "
+                f"({vrt.height}x{vrt.width}) or has non-positive size.")
+        win_r0, win_c0 = r0, c0
+        full_h, full_w = r1 - r0, c1 - c0
+    else:
+        win_r0, win_c0 = 0, 0
+        full_h, full_w = vrt.height, vrt.width
+
+    max_pixels_effective = (
+        max_pixels if max_pixels is not None else MAX_PIXELS_DEFAULT
+    )
+
+    # Up-front pixel-count guard against the windowed extent. Mirrors
+    # the eager ``_vrt.read_vrt`` (which calls ``_check_dimensions`` on
+    # the full output shape) and ``read_geotiff_dask`` (which guards
+    # ``full_h * full_w * eff_bands`` before scheduling any task). Each
+    # chunk task additionally re-checks via ``max_pixels`` through the
+    # internal reader, but catching an oversized request up front saves
+    # the caller from a misleading per-chunk error.
+    eff_bands = 1 if band is not None else max(1, len(vrt.bands))
+    if full_h * full_w * eff_bands > max_pixels_effective:
+        raise ValueError(
+            f"Requested region {full_h}x{full_w}x{eff_bands} exceeds "
+            f"max_pixels={max_pixels_effective:,}.")
+
+    if isinstance(chunks, int):
+        ch_h = ch_w = chunks
+    else:
+        ch_h, ch_w = chunks
+
+    # Refuse chunk grids that would build more tasks than the scheduler
+    # can hold without OOMing the driver. ``read_geotiff_dask`` uses the
+    # same cap with the same suggestion logic (see issue #1814 and the
+    # ``_MAX_DASK_CHUNKS`` guard upstream).
+    n_chunks = ((full_h + ch_h - 1) // ch_h) * ((full_w + ch_w - 1) // ch_w)
+    if n_chunks > _MAX_VRT_DASK_CHUNKS:
+        scale = math.sqrt(n_chunks / _MAX_VRT_DASK_CHUNKS)
+        suggested_h = int(math.ceil(ch_h * scale))
+        suggested_w = int(math.ceil(ch_w * scale))
+        raise ValueError(
+            f"read_vrt: chunks=({ch_h}, {ch_w}) on a "
+            f"{full_h}x{full_w} VRT region would produce {n_chunks:,} "
+            f"dask tasks, exceeding the {_MAX_VRT_DASK_CHUNKS:,}-task "
+            f"cap. Pass a larger chunks=... value explicitly (e.g. "
+            f"chunks=({suggested_h}, {suggested_w}) keeps the task "
+            f"count under the cap)."
+        )
+
+    # Select bands for shape/dtype declaration.
+    if band is not None:
+        selected_bands = [vrt.bands[band]]
+    else:
+        selected_bands = vrt.bands
+
+    if not selected_bands:
+        raise ValueError(
+            "VRT has no <VRTRasterBand> elements; cannot determine "
+            "output dtype")
+
+    # Compute the declared dtype. Match the internal reader's
+    # ``np.result_type`` over per-band effective dtypes, then widen to
+    # float64 if any selected band has an integer dtype with a
+    # representable nodata sentinel (the eager path promotes that case
+    # on mask hits; declaring float64 up front keeps every block's
+    # dtype consistent with the dask array's metadata regardless of
+    # whether the chunk actually contains sentinel pixels).
+    effective_dtypes = []
+    for vrt_band in selected_bands:
+        eff = vrt_band.dtype
+        for src in vrt_band.sources:
+            scaled = src.scale is not None and src.scale != 1.0
+            offset = src.offset is not None and src.offset != 0.0
+            if scaled or offset:
+                eff = np.dtype(np.float64)
+                break
+        effective_dtypes.append(eff)
+    declared_dtype = np.result_type(*effective_dtypes)
+
+    if declared_dtype.kind in ('u', 'i'):
+        promotes = False
+        for vrt_band in selected_bands:
+            if _vrt_sentinel_for_dtype(vrt_band.nodata,
+                                       declared_dtype) is not None:
+                promotes = True
+                break
+        if promotes:
+            declared_dtype = np.dtype(np.float64)
+
+    out_has_band_axis = band is None and len(vrt.bands) > 1
+    n_out_bands = len(selected_bands)
+
+    # Build the dask graph: one ``from_delayed`` per chunk window. The
+    # destination coordinate space is the VRT's full extent (or the
+    # windowed extent), so chunk windows are computed relative to that
+    # space and translated to absolute VRT coords before being passed
+    # into the per-chunk reader.
+    rows = list(range(0, full_h, ch_h))
+    cols = list(range(0, full_w, ch_w))
+
+    delayed_read = dask.delayed(_vrt_chunk_read)
+
+    if gpu:
+        import cupy
+        meta = cupy.empty((0,) * (3 if out_has_band_axis else 2),
+                          dtype=declared_dtype)
+    else:
+        meta = np.empty((0,) * (3 if out_has_band_axis else 2),
+                        dtype=declared_dtype)
+
+    dask_rows = []
+    for r0c in rows:
+        r1c = min(r0c + ch_h, full_h)
+        dask_cols = []
+        for c0c in cols:
+            c1c = min(c0c + ch_w, full_w)
+            if out_has_band_axis:
+                block_shape = (r1c - r0c, c1c - c0c, n_out_bands)
+            else:
+                block_shape = (r1c - r0c, c1c - c0c)
+            d = delayed_read(
+                source,
+                r0c + win_r0, c0c + win_c0,
+                r1c + win_r0, c1c + win_c0,
+                band=band,
+                max_pixels=max_pixels_effective,
+                missing_sources=missing_sources,
+                declared_dtype=declared_dtype,
+                gpu=gpu,
+            )
+            block = da.from_delayed(d, shape=block_shape,
+                                    dtype=declared_dtype, meta=meta)
+            dask_cols.append(block)
+        dask_rows.append(da.concatenate(dask_cols, axis=1))
+
+    dask_arr = da.concatenate(dask_rows, axis=0)
+
+    # Optional user-requested dtype cast happens lazily on the dask
+    # array so the per-chunk decode dtype stays predictable.
+    if dtype is not None:
+        target = np.dtype(dtype)
+        _validate_dtype_cast(declared_dtype, target)
+        dask_arr = dask_arr.astype(target)
+        final_dtype = target
+    else:
+        final_dtype = declared_dtype
+
+    # Coordinates: derive from the VRT GeoTransform and the windowed
+    # extent. Mirrors the eager branch in ``read_vrt`` so chunked and
+    # eager reads share the same x/y arrays.
+    gt = vrt.geo_transform
+    coords = {}
+    attrs = {}
+    if gt is not None:
+        origin_x, res_x, _, origin_y, _, res_y = gt
+        if vrt.raster_type == 'point':
+            x_shift = win_c0 * res_x
+            y_shift = win_r0 * res_y
+        else:
+            x_shift = (win_c0 + 0.5) * res_x
+            y_shift = (win_r0 + 0.5) * res_y
+        x = np.arange(full_w, dtype=np.float64) * res_x + origin_x + x_shift
+        y = np.arange(full_h, dtype=np.float64) * res_y + origin_y + y_shift
+        coords['y'] = y
+        coords['x'] = x
+        origin_x_out = float(origin_x) + win_c0 * float(res_x)
+        origin_y_out = float(origin_y) + win_r0 * float(res_y)
+        attrs['transform'] = (
+            float(res_x), 0.0, origin_x_out,
+            0.0, float(res_y), origin_y_out,
+        )
+
+    if vrt.crs_wkt:
+        epsg = _wkt_to_epsg(vrt.crs_wkt)
+        if epsg is not None:
+            attrs['crs'] = epsg
+        attrs['crs_wkt'] = vrt.crs_wkt
+    if vrt.raster_type == 'point':
+        attrs['raster_type'] = 'point'
+
+    # Surface the nodata sentinel for the selected band. The chunked
+    # path does not aggregate ``vrt.holes`` across tasks (per-task holes
+    # would need to be reduced by an extra delayed; not done here, see
+    # issue #1814 note in the docstring).
+    nodata_meta = None
+    if vrt.bands:
+        band_idx_for_nodata = band if band is not None else 0
+        nodata_meta = vrt.bands[band_idx_for_nodata].nodata
+        if nodata_meta is not None:
+            attrs['nodata'] = nodata_meta
+
+    if out_has_band_axis:
+        dims = ['y', 'x', 'band']
+        coords['band'] = np.arange(n_out_bands)
+    else:
+        dims = ['y', 'x']
+
+    if name is None:
+        name = _os.path.splitext(_os.path.basename(source))[0]
+
+    result = xr.DataArray(
+        dask_arr, dims=dims, coords=coords, name=name, attrs=attrs,
+    )
+    # Sanity: the declared dtype on the dask array is what we return.
+    assert result.dtype == final_dtype, (
+        f"internal: result dtype {result.dtype} != declared {final_dtype}"
+    )
     return result
 
 
