@@ -15,6 +15,12 @@ the ``_resolve_masked_fill`` / ``_sparse_fill_value`` helpers in
 pixel value, so the mask is a no-op and the file dtype is preserved.
 ``attrs['nodata']`` still carries the raw sentinel so a write round-trip
 keeps the original GDAL_NODATA tag.
+
+The same gate is paired with ``float(nodata).is_integer()`` so that a
+fractional ``GDAL_NODATA`` string (e.g. ``"3.5"`` on a ``uint16`` file)
+also stays a no-op rather than truncating to ``int(3.5) == 3`` and
+silently masking real pixel value 3. This mirrors the
+``_writer.py`` / ``_vrt.py`` pattern used for #1564 / #1616.
 """
 from __future__ import annotations
 
@@ -223,3 +229,64 @@ def test_apply_nodata_mask_gpu_int_finite_still_masks():
     arr = out.get()
     assert np.isnan(arr[1, 0])
     assert arr[0, 0] == 1.0
+
+
+# ----------------------------------------------------------------------
+# Fractional GDAL_NODATA on integer files (Copilot follow-up review)
+# ----------------------------------------------------------------------
+# A fractional sentinel like ``"3.5"`` on a ``uint16`` file is similarly
+# nonsensical: ``int(3.5) == 3`` would silently flag a real pixel value
+# as nodata. The four masking sites must treat fractional sentinels the
+# same as non-finite ones (no-op, preserve dtype, preserve raw attr).
+
+
+@pytest.mark.parametrize('nodata_str', ['3.5', '29.5', '0.5'])
+def test_open_geotiff_eager_int_nodata_fractional_noop(tmp_path, nodata_str):
+    """Eager numpy path: fractional nodata on uint16 is a no-op."""
+    path = _build_uint16_tiff(nodata_str, tmp_path)
+    da = open_geotiff(path)
+    assert da.dtype == np.uint16
+    np.testing.assert_array_equal(da.values, [[10, 20], [30, 40]])
+    assert da.attrs['nodata'] == float(nodata_str)
+
+
+def test_open_geotiff_eager_int_nodata_fractional_does_not_alias_truncation(
+    tmp_path,
+):
+    """A ``"30.5"`` sentinel must not mask the real pixel value 30
+    (which is in the test image). ``int(30.5)`` would truncate to 30
+    without the integerness gate.
+    """
+    path = _build_uint16_tiff('30.5', tmp_path)
+    da = open_geotiff(path)
+    assert da.dtype == np.uint16
+    # pixel @[1,0] is 30; the fractional sentinel must NOT have masked it
+    assert da.values[1, 0] == 30
+    np.testing.assert_array_equal(da.values, [[10, 20], [30, 40]])
+
+
+def test_read_geotiff_dask_int_nodata_fractional_noop(tmp_path):
+    """Dask path: fractional nodata on uint16 is a no-op."""
+    path = _build_uint16_tiff('30.5', tmp_path)
+    da = read_geotiff_dask(path, chunks=2)
+    # effective_dtype stays uint16 because the sentinel is fractional
+    assert da.dtype == np.uint16
+    computed = da.compute().values
+    assert computed[1, 0] == 30
+    np.testing.assert_array_equal(computed, [[10, 20], [30, 40]])
+    assert da.attrs['nodata'] == 30.5
+
+
+@_gpu_only
+def test_apply_nodata_mask_gpu_int_fractional_noop():
+    """GPU helper: fractional nodata on uint16 is a no-op."""
+    import cupy
+
+    from xrspatial.geotiff import _apply_nodata_mask_gpu
+
+    arr_gpu = cupy.asarray(np.array([[1, 2], [3, 4]], dtype=np.uint16))
+    out = _apply_nodata_mask_gpu(arr_gpu, 3.5)
+    # 3.5 cannot match any uint16 pixel; ``int(3.5) == 3`` would have
+    # truncated and masked the real pixel value 3.
+    assert out.dtype == cupy.uint16
+    np.testing.assert_array_equal(out.get(), [[1, 2], [3, 4]])

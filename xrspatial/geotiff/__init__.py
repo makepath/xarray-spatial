@@ -902,9 +902,15 @@ def open_geotiff(source: str | BinaryIO, *,
             # cannot match an integer pixel, so the ``int(nodata)`` cast
             # below would raise ValueError; gate on ``np.isfinite`` first
             # to mirror ``_resolve_masked_fill`` / ``_sparse_fill_value``
-            # in ``_reader.py`` (#1774). attrs['nodata'] still carries the
-            # raw sentinel so a write round-trip preserves the tag.
-            if np.isfinite(nodata):
+            # in ``_reader.py`` (#1774). A fractional sentinel (e.g.
+            # ``GDAL_NODATA="3.5"`` on a ``uint16`` file) also cannot match
+            # an integer pixel; ``int(3.5)`` would truncate to 3 and
+            # silently mask a real pixel value, so gate on
+            # ``float(nodata).is_integer()`` as well (mirrors the
+            # ``_writer.py`` / ``_vrt.py`` pattern used for #1564 / #1616).
+            # attrs['nodata'] still carries the raw sentinel so a write
+            # round-trip preserves the tag.
+            if np.isfinite(nodata) and float(nodata).is_integer():
                 nodata_int = int(nodata)
                 info = np.iinfo(arr.dtype)
                 if info.min <= nodata_int <= info.max:
@@ -981,10 +987,15 @@ def _apply_nodata_mask_gpu(arr_gpu, nodata):
         # OverflowError. A non-finite sentinel ("NaN" / "Inf" GDAL_NODATA
         # strings) also cannot match an integer pixel and would raise
         # ValueError on ``int(nodata)``; gate on ``np.isfinite`` first to
-        # mirror ``_resolve_masked_fill`` in ``_reader.py`` (#1774).
+        # mirror ``_resolve_masked_fill`` in ``_reader.py`` (#1774). A
+        # fractional sentinel (e.g. ``"3.5"`` on a ``uint16`` file) also
+        # cannot match an integer pixel and ``int(3.5)`` would truncate
+        # to 3, silently masking a real pixel value; gate on
+        # ``float(nodata).is_integer()`` as well (mirrors the
+        # ``_writer.py`` / ``_vrt.py`` pattern used for #1564 / #1616).
         # attrs['nodata'] is still set by the caller so the original
         # sentinel survives a write round-trip.
-        if not np.isfinite(nodata):
+        if not (np.isfinite(nodata) and float(nodata).is_integer()):
             return arr_gpu
         nodata_int = int(nodata)
         info = np.iinfo(arr_dtype)
@@ -2063,13 +2074,18 @@ def read_geotiff_dask(source: str, *,
     # non-finite sentinel ("NaN" / "Inf" GDAL_NODATA strings) cannot
     # match an integer pixel either and is short-circuited via the
     # ``np.isfinite`` gate so the ``int(...)`` cast never sees NaN
-    # (#1774). The try/except keeps callers that pass an exotic
-    # ``nodata`` type (e.g. complex) on the no-op path rather than
-    # surfacing an opaque error here.
+    # (#1774). A fractional sentinel (e.g. ``"3.5"`` on a ``uint16``
+    # file) also cannot match an integer pixel and ``int(3.5)`` would
+    # truncate to 3, silently flagging a real pixel value as nodata;
+    # gate on ``float(nodata).is_integer()`` as well so fractional
+    # tags stay on the no-op path. The try/except keeps callers that
+    # pass an exotic ``nodata`` type (e.g. complex) on the no-op path
+    # rather than surfacing an opaque error here.
     effective_dtype = file_dtype
     if (nodata is not None
             and file_dtype.kind in ('u', 'i')
-            and np.isfinite(nodata)):
+            and np.isfinite(nodata)
+            and float(nodata).is_integer()):
         try:
             _nd_int = int(nodata)
             _info = np.iinfo(file_dtype)
@@ -2311,7 +2327,9 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             # avoid a peak-memory doubler on every dask chunk.
             if arr.dtype.kind == 'f' and not np.isnan(nodata):
                 arr[arr == arr.dtype.type(nodata)] = np.nan
-            elif arr.dtype.kind in ('u', 'i') and np.isfinite(nodata):
+            elif (arr.dtype.kind in ('u', 'i')
+                  and np.isfinite(nodata)
+                  and float(nodata).is_integer()):
                 # Out-of-range sentinels (e.g. uint16 + nodata=-9999)
                 # cannot match any pixel; skip the cast that would
                 # otherwise raise OverflowError and leave arr unchanged.
@@ -2319,7 +2337,11 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
                 # also cannot match an integer pixel and would raise
                 # ValueError on ``int(nodata)``; the ``np.isfinite`` gate
                 # mirrors ``_resolve_masked_fill`` in ``_reader.py``
-                # (#1774).
+                # (#1774). Fractional sentinels (e.g. ``"3.5"`` on a
+                # ``uint16`` file) also cannot match an integer pixel and
+                # ``int(3.5)`` would truncate to 3 and silently mask
+                # pixel value 3; the ``float(nodata).is_integer()`` gate
+                # short-circuits them too.
                 nodata_int = int(nodata)
                 info = np.iinfo(arr.dtype)
                 if info.min <= nodata_int <= info.max:
