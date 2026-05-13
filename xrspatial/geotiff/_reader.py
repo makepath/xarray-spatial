@@ -1002,6 +1002,55 @@ class _CloudSource:
             f.seek(start)
             return f.read(length)
 
+    def read_ranges(
+        self,
+        ranges: list[tuple[int, int]],
+        max_workers: int = 8,
+    ) -> list[bytes]:
+        """Fetch multiple ranges concurrently using a thread pool.
+
+        Mirrors :meth:`_HTTPSource.read_ranges` so that
+        :func:`_fetch_decode_cog_http_tiles` can drive a cloud source
+        the same way it drives an HTTP source. See PR #1755.
+        """
+        if not ranges:
+            return []
+        if len(ranges) == 1:
+            start, length = ranges[0]
+            return [self.read_range(start, length)]
+
+        workers = min(max_workers, len(ranges))
+        results: list[bytes | None] = [None] * len(ranges)
+
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            future_to_idx = {
+                ex.submit(self.read_range, start, length): i
+                for i, (start, length) in enumerate(ranges)
+            }
+            for fut in future_to_idx:
+                idx = future_to_idx[fut]
+                results[idx] = fut.result()
+
+        return results  # type: ignore[return-value]
+
+    def read_ranges_coalesced(
+        self,
+        ranges: list[tuple[int, int]],
+        max_workers: int = 8,
+        gap_threshold: int = COALESCE_GAP_THRESHOLD_DEFAULT,
+    ) -> list[bytes]:
+        """Fetch *ranges* using merged GETs where adjacent ranges allow it.
+
+        Mirrors :meth:`_HTTPSource.read_ranges_coalesced` so the tiled
+        COG decode path can coalesce neighbouring tiles when reading
+        from object storage.
+        """
+        if not ranges:
+            return []
+        merged, mapping = coalesce_ranges(ranges, gap_threshold=gap_threshold)
+        merged_bytes = self.read_ranges(merged, max_workers=max_workers)
+        return split_coalesced_bytes(merged_bytes, mapping)
+
     def read_all(self) -> bytes:
         with self._fs.open(self._path, 'rb') as f:
             return f.read()
