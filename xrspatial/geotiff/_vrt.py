@@ -151,9 +151,11 @@ class _Source:
     # GDAL ``<ComplexSource><ResampleAlg>`` values are ``NearestNeighbour``
     # (default), ``Bilinear``, ``Cubic``, ``CubicSpline``, ``Lanczos``,
     # ``Average``, ``Mode``.  Only nearest-neighbour is implemented in
-    # the placement step (issue #1694); the resample site raises
-    # ``NotImplementedError`` for any other declared algorithm rather
-    # than silently substituting nearest (issue #1751).  Higher-quality
+    # the placement step (issue #1694).  When ``SrcRect`` and ``DstRect``
+    # sizes differ (resampling actually required), the read raises
+    # ``NotImplementedError`` for any non-nearest algorithm rather than
+    # silently substituting nearest (issue #1751); a non-nearest alg with
+    # matching rect sizes is a no-op and passes through.  Higher-quality
     # resamplers are tracked for follow-up.
     resample_alg: str | None = None
 
@@ -357,9 +359,12 @@ def parse_vrt(xml_str: str, vrt_dir: str = '.') -> VRTDataset:
                     offset = float(scale_str)
                 # ``<ResampleAlg>`` records the requested resampler for
                 # the placement step.  ``read_vrt`` only implements
-                # nearest-neighbour today, so the resample site refuses
-                # the read for any other declared algorithm rather than
-                # returning silently-mislabelled pixels.  See issues
+                # nearest-neighbour today, so when ``SrcRect`` and
+                # ``DstRect`` sizes differ the resample site raises
+                # ``NotImplementedError`` for any non-nearest algorithm
+                # rather than returning silently-mislabelled pixels;
+                # sources with matching rect sizes do not resample and
+                # pass through regardless of this tag.  See issues
                 # #1694 and #1751.
                 resample_alg = _text(src_elem, 'ResampleAlg')
 
