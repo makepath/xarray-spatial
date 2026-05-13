@@ -65,6 +65,53 @@ _CODEC_DECODE_EXCEPTIONS = _codec_decode_exceptions()
 _ALLOWED_ROOTS_ENV = 'XRSPATIAL_VRT_ALLOWED_ROOTS'
 
 
+# Cap on the VRT XML file read. VRTs are XML metadata only (pixel data lives
+# in source TIFFs); a 50k-source VRT is around 25 MB, so 64 MiB is a safe
+# default that still rejects pathological inputs without scanning the whole
+# file into memory.
+_MAX_XML_BYTES_ENV = 'XRSPATIAL_VRT_MAX_XML_BYTES'
+_DEFAULT_MAX_XML_BYTES = 64 * 1024 * 1024
+
+
+def _get_vrt_max_xml_bytes() -> int:
+    """Return the cap on VRT XML file size, in bytes."""
+    raw = os.environ.get(_MAX_XML_BYTES_ENV)
+    if raw is None or raw == '':
+        return _DEFAULT_MAX_XML_BYTES
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"{_MAX_XML_BYTES_ENV} must be a positive integer, got "
+            f"{raw!r}")
+    if value <= 0:
+        raise ValueError(
+            f"{_MAX_XML_BYTES_ENV} must be a positive integer, got "
+            f"{value}")
+    return value
+
+
+def _read_vrt_xml(vrt_path: str) -> str:
+    """Read a VRT XML file with a bounded total size."""
+    cap = _get_vrt_max_xml_bytes()
+    chunks = []
+    total = 0
+    with open(vrt_path, 'rb') as f:
+        while True:
+            remaining = cap + 1 - total
+            chunk = f.read(min(65536, remaining))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > cap:
+                raise ValueError(
+                    f"VRT XML at {vrt_path!r} exceeds the "
+                    f"{cap:,}-byte cap. Raise the cap by setting "
+                    f"{_MAX_XML_BYTES_ENV} if this file is legitimate.")
+            chunks.append(chunk)
+    return b''.join(chunks).decode('utf-8')
+
+
 def _allowed_source_roots() -> list[str]:
     """Return the operator-supplied allowlist of trusted source roots.
 
@@ -703,8 +750,7 @@ def read_vrt(vrt_path: str, *, window=None,
     """
     from ._reader import PixelSafetyLimitError, read_to_array
 
-    with open(vrt_path, 'r') as f:
-        xml_str = f.read()
+    xml_str = _read_vrt_xml(vrt_path)
 
     vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
     vrt = parse_vrt(xml_str, vrt_dir)
