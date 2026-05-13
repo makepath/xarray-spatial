@@ -1954,6 +1954,8 @@ def _read_cog_http(url: str, overview_level: int | None = None,
         arr, geo_info = _apply_orientation_with_geo(
             arr, geo_info, ifd.orientation)
 
+    arr = _apply_photometric_miniswhite(arr, ifd)
+
     return arr, geo_info
 
 
@@ -2303,6 +2305,16 @@ def _apply_orientation_with_geo(
     return arr, geo_info
 
 
+def _apply_photometric_miniswhite(arr: np.ndarray, ifd: IFD) -> np.ndarray:
+    """Apply TIFF MinIsWhite inversion for single-band grayscale images."""
+    if ifd.photometric == 0 and ifd.samples_per_pixel == 1:
+        if arr.dtype.kind == 'u':
+            return np.iinfo(arr.dtype).max - arr
+        if arr.dtype.kind == 'f':
+            return -arr
+    return arr
+
+
 def read_to_array(source, *, window=None, overview_level: int | None = None,
                   band: int | None = None,
                   max_pixels: int = MAX_PIXELS_DEFAULT,
@@ -2444,12 +2456,7 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
             arr, geo_info = _apply_orientation_with_geo(
                 arr, geo_info, orientation)
 
-        # MinIsWhite (photometric=0): invert single-band grayscale values
-        if ifd.photometric == 0 and ifd.samples_per_pixel == 1:
-            if arr.dtype.kind == 'u':
-                arr = np.iinfo(arr.dtype).max - arr
-            elif arr.dtype.kind == 'f':
-                arr = -arr
+        arr = _apply_photometric_miniswhite(arr, ifd)
     finally:
         src.close()
 
