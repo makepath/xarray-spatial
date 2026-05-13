@@ -312,10 +312,17 @@ def _transform_tuple(geo_info) -> tuple | None:
 def _transform_from_attr(attr_val) -> 'GeoTransform | None':
     """Build a GeoTransform from an ``attrs['transform']`` value.
 
-    Accepts a 6-tuple ``(a, b, c, d, e, f)`` (rasterio Affine ordering;
-    ``b`` and ``d`` are ignored, only axis-aligned affines round-trip),
-    a 6-tuple GDAL ordering ``(c, a, b, f, d, e)`` is NOT accepted, or
-    a ``GeoTransform`` instance. Returns None for anything else.
+    Accepts a 6-tuple ``(a, b, c, d, e, f)`` in rasterio ``Affine``
+    ordering, or a ``GeoTransform`` instance. Returns None for anything
+    that isn't a recognisable 6-tuple. GDAL ordering
+    ``(c, a, b, f, d, e)`` is NOT accepted.
+
+    Rotated or skewed affines (``b != 0`` or ``d != 0``, beyond a
+    1e-12 tolerance for float noise) are rejected with ``ValueError``.
+    The on-disk GeoTIFF representation written by this package is
+    axis-aligned, so silently dropping ``b`` and ``d`` would place the
+    raster at the wrong location. Reproject onto an axis-aligned grid
+    before writing.
     """
     if attr_val is None:
         return None
@@ -328,9 +335,19 @@ def _transform_from_attr(attr_val) -> 'GeoTransform | None':
     if len(seq) != 6:
         return None
     try:
-        a, _b, c, _d, e, f = (float(x) for x in seq)
+        a, b, c, d, e, f = (float(x) for x in seq)
     except (TypeError, ValueError):
         return None
+    _ROT_TOL = 1e-12
+    if abs(b) > _ROT_TOL or abs(d) > _ROT_TOL:
+        raise ValueError(
+            f"attrs['transform'] has non-zero rotation/shear "
+            f"(b={b!r}, d={d!r}); rotated or skewed affines are not "
+            f"supported by the GeoTIFF writers in this module because "
+            f"the on-disk GeoTIFF representation is axis-aligned and "
+            f"would be written at the wrong location. Reproject the "
+            f"raster to an axis-aligned grid before writing."
+        )
     return GeoTransform(
         origin_x=c, origin_y=f, pixel_width=a, pixel_height=e,
     )
@@ -1259,6 +1276,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         bounded by ``abs(decoded - original) <= max_z_error``. Only used
         when ``compression='lerc'``; passing a non-zero value with any
         other codec raises ``ValueError``.
+
+    Raises
+    ------
+    ValueError
+        If ``data.attrs['transform']`` is a rotated or skewed affine
+        (``b != 0`` or ``d != 0`` in rasterio ``Affine`` ordering). The
+        on-disk GeoTIFF is axis-aligned; reproject onto an axis-aligned
+        grid first.
     """
     from ._reader import _coerce_path
 
