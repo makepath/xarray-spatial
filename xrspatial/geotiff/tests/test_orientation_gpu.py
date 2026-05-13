@@ -180,3 +180,78 @@ def test_gpu_default_orientation_unchanged(tmp_path):
 
     da = read_geotiff_gpu(str(path))
     np.testing.assert_array_equal(da.data.get(), arr)
+
+
+@_gpu_only
+@pytest.mark.parametrize("orientation", [5, 6, 7, 8])
+def test_gpu_orientation_5_to_8_raise_on_georef(tmp_path, orientation):
+    """GPU reader refuses georef'd files with axis-swap orientations.
+
+    Mirrors the CPU behaviour added for issue #1765. ``read_geotiff_gpu``
+    used to warn and return silently wrong x/y coords for these cases.
+    """
+    from xrspatial.geotiff import read_geotiff_gpu
+
+    arr = np.arange(256, dtype=np.uint8).reshape(16, 16)
+    path = tmp_path / f"gpu_orient_georef_raise_1765_{orientation}.tif"
+    _write_tiled(
+        path, arr, orientation,
+        extra=[
+            (33550, 'd', 3, (1.0, 1.0, 0.0), True),
+            (33922, 'd', 6, (0.0, 0.0, 0.0, 100.0, 50.0, 0.0), True),
+            (34735, 'H', 12, (
+                1, 1, 0, 2,
+                1024, 0, 1, 2,
+                2048, 0, 1, 4326,
+            ), True),
+        ],
+    )
+
+    with pytest.raises(NotImplementedError, match=str(orientation)):
+        read_geotiff_gpu(str(path))
+
+
+@_gpu_only
+@pytest.mark.parametrize("orientation", [5, 6, 7, 8])
+def test_gpu_orientation_5_to_8_transform_only_raises(tmp_path, orientation):
+    """``has_georef`` without CRS still triggers the raise on GPU.
+
+    Files carrying ModelPixelScale + ModelTiepoint but no
+    GeoKeyDirectory have ``has_georef=True``/``crs_epsg=None``. The
+    pixel-size swap alone misses the per-orientation origin shift, so
+    refusing is the honest contract regardless of CRS tagging.
+    """
+    from xrspatial.geotiff import read_geotiff_gpu
+
+    arr = np.arange(256, dtype=np.uint8).reshape(16, 16)
+    path = tmp_path / f"gpu_orient_transform_only_1765_{orientation}.tif"
+    _write_tiled(
+        path, arr, orientation,
+        extra=[
+            (33550, 'd', 3, (1.0, 1.0, 0.0), True),
+            (33922, 'd', 6, (0.0, 0.0, 0.0, 100.0, 50.0, 0.0), True),
+        ],
+    )
+
+    with pytest.raises(NotImplementedError, match=str(orientation)):
+        read_geotiff_gpu(str(path))
+
+
+@_gpu_only
+@pytest.mark.parametrize("orientation", [5, 6, 7, 8])
+def test_gpu_orientation_5_to_8_no_georef_still_swaps(tmp_path, orientation):
+    """Without any geo tags, GPU orientation 5-8 still swaps axes.
+
+    Regression guard for the #1765 GPU fix: refusing must be scoped to
+    georeferenced files, not every Orientation 5-8 read.
+    """
+    from xrspatial.geotiff import read_geotiff_gpu
+
+    arr = np.arange(256, dtype=np.uint8).reshape(16, 16)
+    path = tmp_path / f"gpu_orient_no_geo_1765_{orientation}.tif"
+    _write_tiled(path, arr, orientation)
+
+    da = read_geotiff_gpu(str(path))
+    expected = _expected_for_orientation(arr, orientation)
+    assert da.data.shape == expected.shape
+    np.testing.assert_array_equal(da.data.get(), expected)

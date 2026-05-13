@@ -312,10 +312,17 @@ def _transform_tuple(geo_info) -> tuple | None:
 def _transform_from_attr(attr_val) -> 'GeoTransform | None':
     """Build a GeoTransform from an ``attrs['transform']`` value.
 
-    Accepts a 6-tuple ``(a, b, c, d, e, f)`` (rasterio Affine ordering;
-    ``b`` and ``d`` are ignored, only axis-aligned affines round-trip),
-    a 6-tuple GDAL ordering ``(c, a, b, f, d, e)`` is NOT accepted, or
-    a ``GeoTransform`` instance. Returns None for anything else.
+    Accepts a 6-tuple ``(a, b, c, d, e, f)`` in rasterio ``Affine``
+    ordering, or a ``GeoTransform`` instance. Returns None for anything
+    that isn't a recognisable 6-tuple. GDAL ordering
+    ``(c, a, b, f, d, e)`` is NOT accepted.
+
+    Rotated or skewed affines (``b != 0`` or ``d != 0``, beyond a
+    1e-12 tolerance for float noise) are rejected with ``ValueError``.
+    The on-disk GeoTIFF representation written by this package is
+    axis-aligned, so silently dropping ``b`` and ``d`` would place the
+    raster at the wrong location. Reproject onto an axis-aligned grid
+    before writing.
     """
     if attr_val is None:
         return None
@@ -328,9 +335,19 @@ def _transform_from_attr(attr_val) -> 'GeoTransform | None':
     if len(seq) != 6:
         return None
     try:
-        a, _b, c, _d, e, f = (float(x) for x in seq)
+        a, b, c, d, e, f = (float(x) for x in seq)
     except (TypeError, ValueError):
         return None
+    _ROT_TOL = 1e-12
+    if abs(b) > _ROT_TOL or abs(d) > _ROT_TOL:
+        raise ValueError(
+            f"attrs['transform'] has non-zero rotation/shear "
+            f"(b={b!r}, d={d!r}); rotated or skewed affines are not "
+            f"supported by the GeoTIFF writers in this module because "
+            f"the on-disk GeoTIFF representation is axis-aligned and "
+            f"would be written at the wrong location. Reproject the "
+            f"raster to an axis-aligned grid before writing."
+        )
     return GeoTransform(
         origin_x=c, origin_y=f, pixel_width=a, pixel_height=e,
     )
@@ -665,7 +682,8 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
                 break
 
 
-def open_geotiff(source: str | BinaryIO, *, dtype=None,
+def open_geotiff(source: str | BinaryIO, *,
+                 dtype: str | np.dtype | None = None,
                  window: tuple | None = None,
                  overview_level: int | None = None,
                  band: int | None = None,
@@ -896,14 +914,27 @@ def open_geotiff(source: str | BinaryIO, *, dtype=None,
             # An out-of-range sentinel (e.g. uint16 file with
             # GDAL_NODATA="-9999") cannot match any decoded pixel, so the
             # mask would be all-False -- skip the cast that would otherwise
-            # raise OverflowError and leave the array unchanged.
-            nodata_int = int(nodata)
-            info = np.iinfo(arr.dtype)
-            if info.min <= nodata_int <= info.max:
-                mask = arr == arr.dtype.type(nodata_int)
-                if mask.any():
-                    arr = arr.astype(np.float64)
-                    arr[mask] = np.nan
+            # raise OverflowError and leave the array unchanged. A
+            # non-finite sentinel ("NaN" / "Inf" GDAL_NODATA strings) also
+            # cannot match an integer pixel, so the ``int(nodata)`` cast
+            # below would raise ValueError; gate on ``np.isfinite`` first
+            # to mirror ``_resolve_masked_fill`` / ``_sparse_fill_value``
+            # in ``_reader.py`` (#1774). A fractional sentinel (e.g.
+            # ``GDAL_NODATA="3.5"`` on a ``uint16`` file) also cannot match
+            # an integer pixel; ``int(3.5)`` would truncate to 3 and
+            # silently mask a real pixel value, so gate on
+            # ``float(nodata).is_integer()`` as well (mirrors the
+            # ``_writer.py`` / ``_vrt.py`` pattern used for #1564 / #1616).
+            # attrs['nodata'] still carries the raw sentinel so a write
+            # round-trip preserves the tag.
+            if np.isfinite(nodata) and float(nodata).is_integer():
+                nodata_int = int(nodata)
+                info = np.iinfo(arr.dtype)
+                if info.min <= nodata_int <= info.max:
+                    mask = arr == arr.dtype.type(nodata_int)
+                    if mask.any():
+                        arr = arr.astype(np.float64)
+                        arr[mask] = np.nan
 
     if dtype is not None:
         target = np.dtype(dtype)
@@ -968,12 +999,23 @@ def _apply_nodata_mask_gpu(arr_gpu, nodata):
                                  arr_dtype.type('nan'), arr_gpu)
         return arr_gpu
     if arr_dtype.kind in ('u', 'i'):
-        nodata_int = int(nodata)
-        info = np.iinfo(arr_dtype)
         # Out-of-range sentinels (e.g. uint16 + GDAL_NODATA="-9999") cannot
         # match any decoded pixel; skip the cast that would otherwise raise
-        # OverflowError. attrs['nodata'] is still set by the caller so the
-        # original sentinel survives a write round-trip.
+        # OverflowError. A non-finite sentinel ("NaN" / "Inf" GDAL_NODATA
+        # strings) also cannot match an integer pixel and would raise
+        # ValueError on ``int(nodata)``; gate on ``np.isfinite`` first to
+        # mirror ``_resolve_masked_fill`` in ``_reader.py`` (#1774). A
+        # fractional sentinel (e.g. ``"3.5"`` on a ``uint16`` file) also
+        # cannot match an integer pixel and ``int(3.5)`` would truncate
+        # to 3, silently masking a real pixel value; gate on
+        # ``float(nodata).is_integer()`` as well (mirrors the
+        # ``_writer.py`` / ``_vrt.py`` pattern used for #1564 / #1616).
+        # attrs['nodata'] is still set by the caller so the original
+        # sentinel survives a write round-trip.
+        if not (np.isfinite(nodata) and float(nodata).is_integer()):
+            return arr_gpu
+        nodata_int = int(nodata)
+        info = np.iinfo(arr_dtype)
         if not (info.min <= nodata_int <= info.max):
             return arr_gpu
         sentinel = arr_dtype.type(nodata_int)
@@ -1204,6 +1246,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         EPSG code (int), WKT string, or PROJ string. If None and data
         is a DataArray, tries to read from attrs ('crs' for EPSG,
         'crs_wkt' for WKT).
+
+        EPSG codes are strongly preferred for interop. The WKT-only
+        path writes ``ProjectedCSType`` / ``GeographicType`` = 32767
+        with the WKT stored in ``GTCitationGeoKey`` -- libgeotiff and
+        GDAL can round-trip this but many other GeoTIFF readers treat
+        the citation as a free-form name and lose the CRS. A
+        ``UserWarning`` is emitted when the WKT-only path is taken.
+        See issue #1768.
     nodata : float, int, or None
         NoData value.
     compression : str
@@ -1237,7 +1287,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     cog : bool
         Write as Cloud Optimized GeoTIFF.
     overview_levels : list[int] or None
-        Overview decimation factors. Only used when cog=True.
+        Overview decimation factors relative to full resolution.
+        Each entry must be a power-of-two integer >= 2, and the list
+        must be strictly increasing (e.g. ``[2, 4, 8]`` writes
+        overviews at 1/2, 1/4 and 1/8 of the full resolution).
+        Invalid values raise ``ValueError``. Only used when ``cog=True``.
+        If None and ``cog=True``, levels auto-generate as
+        ``[2, 4, 8, ...]`` until the next halving would fall below
+        ``tile_size`` (capped at 8 levels).
     overview_resampling : str
         Resampling method for overviews: 'mean' (default), 'nearest',
         'min', 'max', 'median', 'mode', or 'cubic'.
@@ -1283,6 +1340,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         chosen value; only these two tag ids are overridable so other
         auto-emitted tags such as ``ImageWidth`` or ``StripOffsets``
         remain protected.
+
+    Raises
+    ------
+    ValueError
+        If ``data.attrs['transform']`` is a rotated or skewed affine
+        (``b != 0`` or ``d != 0`` in rasterio ``Affine`` ordering). The
+        on-disk GeoTIFF is axis-aligned; reproject onto an axis-aligned
+        grid first.
     """
     from ._reader import _coerce_path
 
@@ -1292,16 +1357,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # the tile grid as ``math.ceil(width / tile_size)``; tile_size=0 hits
     # ZeroDivisionError deep inside the writer, and negative values
     # produce a nonsensical tile grid. tiled=False ignores tile_size, so
-    # only validate when tiled output is actually requested.
+    # only validate when tiled output is actually requested. Shared with
+    # ``write_geotiff_gpu`` via ``_validate_tile_size_arg`` so both
+    # writers emit the same error format (#1752 / #1776).
     if tiled:
-        if not isinstance(tile_size, (int, np.integer)) or isinstance(
-                tile_size, bool):
-            raise ValueError(
-                f"tile_size must be a positive int, got "
-                f"{tile_size!r} (type {type(tile_size).__name__}).")
-        if tile_size <= 0:
-            raise ValueError(
-                f"tile_size must be a positive int, got tile_size={tile_size}.")
+        _validate_tile_size_arg(tile_size)
 
     # Up-front validation: catch bad compression names before they reach
     # any of the deeper write paths (streaming, GPU, VRT, COG) where the
@@ -1925,7 +1985,82 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     _write_vrt_fn(vrt_path, tile_paths, relative=True, nodata=nodata)
 
 
-def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
+def _validate_chunks_arg(chunks, *, allow_none=False):
+    """Validate the ``chunks`` kwarg shared across the dask read entry points.
+
+    Centralises the rejection rule that ``read_geotiff_dask`` already
+    runs so ``read_geotiff_gpu`` and ``read_vrt`` can share the same
+    error format. With ``allow_none=True`` a ``None`` value passes
+    through unchanged (used by entry points whose default is
+    ``chunks=None``, e.g. ``read_geotiff_gpu`` and ``read_vrt``).
+    With ``allow_none=False`` (default, matches ``read_geotiff_dask``)
+    a ``None`` is rejected with the same ``ValueError`` format as any
+    other non-int / non-tuple value, so callers see a clear
+    parameter-named error instead of a downstream ``TypeError`` from
+    the chunk-unpacking math.
+    Otherwise ``chunks`` must be a positive int or a 2-tuple of
+    positive ints. Booleans are rejected because ``True``/``False``
+    are int subclasses that would otherwise sneak through the integer
+    check. Returns the coerced int when given an ``np.integer`` scalar
+    so downstream ``isinstance(chunks, int)`` checks stay accurate.
+
+    Mirrors the chunks-validation #1752 added to ``read_geotiff_dask``;
+    extends it to the GPU read and VRT read entry points per #1776.
+    """
+    if chunks is None:
+        if allow_none:
+            return chunks
+        raise ValueError(
+            f"chunks must be a positive int or (row, col) tuple of "
+            f"positive ints, got chunks=None.")
+    if (isinstance(chunks, (int, np.integer))
+            and not isinstance(chunks, bool)):
+        if chunks <= 0:
+            raise ValueError(
+                f"chunks must be a positive int or (row, col) tuple of "
+                f"positive ints, got chunks={chunks}.")
+        return int(chunks)
+    if isinstance(chunks, tuple):
+        if len(chunks) != 2:
+            raise ValueError(
+                f"chunks tuple must have length 2 (row, col), got "
+                f"chunks={chunks!r} with length {len(chunks)}.")
+        for _v in chunks:
+            if (not isinstance(_v, (int, np.integer))
+                    or isinstance(_v, bool)
+                    or _v <= 0):
+                raise ValueError(
+                    f"chunks must be a positive int or (row, col) tuple "
+                    f"of positive ints, got chunks={chunks!r}.")
+        return chunks
+    raise ValueError(
+        f"chunks must be a positive int or (row, col) tuple of "
+        f"positive ints, got chunks={chunks!r} "
+        f"(type {type(chunks).__name__}).")
+
+
+def _validate_tile_size_arg(tile_size):
+    """Validate the ``tile_size`` kwarg for the tiled writer entry points.
+
+    Centralises the rejection rule ``to_geotiff`` already runs so
+    ``write_geotiff_gpu`` can share the same error format. ``tile_size``
+    must be a positive int; booleans are rejected (``True == 1`` would
+    otherwise sneak through), floats are rejected because tile dimensions
+    are TIFF SHORT tags (#1776).
+    """
+    if not isinstance(tile_size, (int, np.integer)) or isinstance(
+            tile_size, bool):
+        raise ValueError(
+            f"tile_size must be a positive int, got "
+            f"{tile_size!r} (type {type(tile_size).__name__}).")
+    if tile_size <= 0:
+        raise ValueError(
+            f"tile_size must be a positive int, got tile_size={tile_size}.")
+
+
+def read_geotiff_dask(source: str, *,
+                      dtype: str | np.dtype | None = None,
+                      chunks: int | tuple = 512,
                       overview_level: int | None = None,
                       window: tuple | None = None,
                       band: int | None = None,
@@ -1978,34 +2113,13 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
     # Reject non-positive chunk sizes up front. ``chunks=0`` and negative
     # values otherwise propagate into dask chunk math (``range(0, N, 0)``
     # ValueError, or empty chunk grids) with no indication that ``chunks``
-    # was the problem. ``chunks`` may be an int or a (row, col) tuple.
-    # Accept ``np.integer`` scalars (e.g. ``np.int64(256)``) the same way
-    # the tuple branch does, then coerce to plain ``int`` so downstream
-    # ``isinstance(chunks, int)`` checks keep working unchanged.
-    if (isinstance(chunks, (int, np.integer))
-            and not isinstance(chunks, bool)):
-        if chunks <= 0:
-            raise ValueError(
-                f"chunks must be a positive int or (row, col) tuple of "
-                f"positive ints, got chunks={chunks}.")
-        chunks = int(chunks)
-    elif isinstance(chunks, tuple):
-        if len(chunks) != 2:
-            raise ValueError(
-                f"chunks tuple must have length 2 (row, col), got "
-                f"chunks={chunks!r} with length {len(chunks)}.")
-        for _v in chunks:
-            if (not isinstance(_v, (int, np.integer))
-                    or isinstance(_v, bool)
-                    or _v <= 0):
-                raise ValueError(
-                    f"chunks must be a positive int or (row, col) tuple "
-                    f"of positive ints, got chunks={chunks!r}.")
-    else:
-        raise ValueError(
-            f"chunks must be a positive int or (row, col) tuple of "
-            f"positive ints, got chunks={chunks!r} "
-            f"(type {type(chunks).__name__}).")
+    # was the problem. Shared with ``read_geotiff_gpu`` / ``read_vrt`` via
+    # ``_validate_chunks_arg`` so all three entry points emit the same
+    # error format (#1752 / #1776). ``allow_none=False`` (the default)
+    # rejects ``chunks=None`` with the same ValueError; this entry point
+    # requires a concrete chunk size since the chunk-unpacking math below
+    # would otherwise fail with a confusing TypeError.
+    chunks = _validate_chunks_arg(chunks)
 
     # ``open_geotiff`` already routes ``.vrt`` to ``read_vrt`` before
     # reaching here, so this branch is only hit when ``read_geotiff_dask``
@@ -2071,9 +2185,22 @@ def read_geotiff_dask(source: str, *, dtype=None, chunks: int | tuple = 512,
     # Nodata masking promotes integer arrays to float64 (for NaN).
     # Validate against the effective dtype, not the raw file dtype.
     # An out-of-range sentinel (e.g. uint16 file + nodata=-9999) is a
-    # no-op for masking and leaves the file dtype unchanged.
+    # no-op for masking and leaves the file dtype unchanged. A
+    # non-finite sentinel ("NaN" / "Inf" GDAL_NODATA strings) cannot
+    # match an integer pixel either and is short-circuited via the
+    # ``np.isfinite`` gate so the ``int(...)`` cast never sees NaN
+    # (#1774). A fractional sentinel (e.g. ``"3.5"`` on a ``uint16``
+    # file) also cannot match an integer pixel and ``int(3.5)`` would
+    # truncate to 3, silently flagging a real pixel value as nodata;
+    # gate on ``float(nodata).is_integer()`` as well so fractional
+    # tags stay on the no-op path. The try/except keeps callers that
+    # pass an exotic ``nodata`` type (e.g. complex) on the no-op path
+    # rather than surfacing an opaque error here.
     effective_dtype = file_dtype
-    if nodata is not None and file_dtype.kind in ('u', 'i'):
+    if (nodata is not None
+            and file_dtype.kind in ('u', 'i')
+            and np.isfinite(nodata)
+            and float(nodata).is_integer()):
         try:
             _nd_int = int(nodata)
             _info = np.iinfo(file_dtype)
@@ -2315,12 +2442,23 @@ def _delayed_read_window(source, r0, c0, r1, c1, overview_level, nodata,
             # avoid a peak-memory doubler on every dask chunk.
             if arr.dtype.kind == 'f' and not np.isnan(nodata):
                 arr[arr == arr.dtype.type(nodata)] = np.nan
-            elif arr.dtype.kind in ('u', 'i'):
-                nodata_int = int(nodata)
-                info = np.iinfo(arr.dtype)
+            elif (arr.dtype.kind in ('u', 'i')
+                  and np.isfinite(nodata)
+                  and float(nodata).is_integer()):
                 # Out-of-range sentinels (e.g. uint16 + nodata=-9999)
                 # cannot match any pixel; skip the cast that would
                 # otherwise raise OverflowError and leave arr unchanged.
+                # Non-finite sentinels ("NaN" / "Inf" GDAL_NODATA strings)
+                # also cannot match an integer pixel and would raise
+                # ValueError on ``int(nodata)``; the ``np.isfinite`` gate
+                # mirrors ``_resolve_masked_fill`` in ``_reader.py``
+                # (#1774). Fractional sentinels (e.g. ``"3.5"`` on a
+                # ``uint16`` file) also cannot match an integer pixel and
+                # ``int(3.5)`` would truncate to 3 and silently mask
+                # pixel value 3; the ``float(nodata).is_integer()`` gate
+                # short-circuits them too.
+                nodata_int = int(nodata)
+                info = np.iinfo(arr.dtype)
                 if info.min <= nodata_int <= info.max:
                     mask = arr == arr.dtype.type(nodata_int)
                     if mask.any():
@@ -2508,21 +2646,30 @@ def _apply_orientation_geo_info(geo_info, orientation: int,
             pixel_height=new_px_h,
         )
     elif orientation in (5, 6, 7, 8):
+        # Match the CPU reader's #1765 refusal: a pixel-size swap alone
+        # cannot express the per-orientation origin shift plus rotation
+        # these orientations require, so the x/y coords would be wrong.
+        # ``has_georef`` is True for any file carrying ModelTransformation,
+        # ModelPixelScale, or ModelTiepoint, with or without a CRS tag, so
+        # gate on that flag rather than CRS presence.
+        if getattr(geo_info, 'has_georef', False):
+            raise NotImplementedError(
+                f"TIFF Orientation {orientation} on a georeferenced file "
+                f"requires a per-orientation origin shift plus a rotation "
+                f"that the axis-aligned GeoTransform used here cannot "
+                f"represent, so the returned x/y coords would be wrong. "
+                f"Reproject the file with another tool (e.g. GDAL) or "
+                f"strip the Orientation tag before reading. See issue "
+                f"#1765."
+            )
+        # Non-georeferenced file: swap pixel sizes to match the
+        # transposed array shape. No geographic claim to violate.
         geo_info.transform = GeoTransform(
             origin_x=t.origin_x,
             origin_y=t.origin_y,
             pixel_width=t.pixel_height,
             pixel_height=t.pixel_width,
         )
-        if (geo_info.crs_epsg is not None
-                or geo_info.crs_wkt is not None):
-            warnings.warn(
-                f"Orientation {orientation} swaps spatial axes on "
-                f"a georeferenced file; the returned coords are "
-                f"shape-correct but the geographic transform may "
-                f"need manual adjustment.",
-                stacklevel=3,
-            )
     return geo_info
 
 
@@ -2588,7 +2735,7 @@ def _gpu_apply_window_band(arr_gpu, geo_info, *, window, band):
 
 
 def read_geotiff_gpu(source: str, *,
-                     dtype=None,
+                     dtype: str | np.dtype | None = None,
                      overview_level: int | None = None,
                      window: tuple | None = None,
                      band: int | None = None,
@@ -2700,6 +2847,13 @@ def read_geotiff_gpu(source: str, *,
     if gpu not in ('auto', 'strict'):
         raise ValueError(
             f"on_gpu_failure must be 'auto' or 'strict', got {gpu!r}")
+    # Reject non-positive chunk sizes up front so the GPU dask+cupy path
+    # surfaces the same error as ``read_geotiff_dask`` (#1776). Previously
+    # ``chunks=0`` raised ``ZeroDivisionError`` deep in cupy/dask, and
+    # ``chunks=-1`` was silently accepted (negative chunks fall out of
+    # the dask chunk grid as a no-op). ``chunks=None`` is the default
+    # (eager read), so allow it through here.
+    chunks = _validate_chunks_arg(chunks, allow_none=True)
     try:
         import cupy
     except ImportError:
@@ -3214,7 +3368,11 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         rejects file-like destinations, and the explicit GPU writer
         mirrors that rule (issue #1652).
     crs : int, str, or None
-        EPSG code or WKT string.
+        EPSG code or WKT string. EPSG codes are strongly preferred for
+        interop; the WKT-only path emits a user-defined CRS (32767) with
+        the WKT stored in ``GTCitationGeoKey``, which many non-libgeotiff
+        readers ignore. A ``UserWarning`` is emitted when the WKT-only
+        path is taken. See issue #1768.
     nodata : float, int, or None
         NoData value.
     compression : str
@@ -3265,8 +3423,12 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     cog : bool
         Write as Cloud Optimized GeoTIFF with overviews.
     overview_levels : list[int] or None
-        Overview decimation factors (e.g. [2, 4, 8]). Only used when
-        cog=True. If None and cog=True, auto-generates levels by
+        Overview decimation factors relative to full resolution.
+        Each entry must be a power-of-two integer >= 2, and the list
+        must be strictly increasing (e.g. ``[2, 4, 8]`` writes
+        overviews at 1/2, 1/4 and 1/8 of the full resolution).
+        Invalid values raise ``ValueError``. Only used when ``cog=True``.
+        If None and ``cog=True``, auto-generates ``[2, 4, 8, ...]`` by
         halving until the smallest overview fits in a single tile.
     overview_resampling : str
         Resampling method for overviews: 'mean' (default), 'nearest',
@@ -3301,6 +3463,12 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             "compression is tile-based; the strip layout is not "
             "implemented on the GPU path. Use to_geotiff(..., gpu=False, "
             "tiled=False) for strip output on CPU.")
+    # Reject non-positive tile_size up front so the GPU writer surfaces
+    # the same error as ``to_geotiff`` (#1776). Previously ``tile_size=0``
+    # raised ``ZeroDivisionError`` from gpu_compress_tiles, ``tile_size=-1``
+    # surfaced as ``struct.error`` from the SHORT-tag encoder, and
+    # ``tile_size=256.0`` raised ``TypeError`` deep in the kernel.
+    _validate_tile_size_arg(tile_size)
     if max_z_error < 0:
         raise ValueError(
             f"max_z_error must be >= 0, got {max_z_error}")
@@ -3489,14 +3657,27 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     if cog:
         if overview_levels is None:
             from ._writer import _MAX_OVERVIEW_LEVELS
+            # Auto-generated lists hold actual decimation factors (2,
+            # 4, 8, ...) so the loop below treats auto-generated and
+            # user-supplied lists identically (issue #1766).
             overview_levels = []
             oh, ow = height, width
+            factor = 2
             while (oh > tile_size and ow > tile_size and
                    len(overview_levels) < _MAX_OVERVIEW_LEVELS):
                 oh //= 2
                 ow //= 2
                 if oh > 0 and ow > 0:
-                    overview_levels.append(len(overview_levels) + 1)
+                    overview_levels.append(factor)
+                    factor *= 2
+        else:
+            # Validate explicit lists: power-of-two factors >= 2,
+            # strictly increasing, feasible for the input shape.
+            # Previously the values were ignored and only the list
+            # length mattered (issue #1766).
+            from ._writer import _validate_overview_levels
+            overview_levels = _validate_overview_levels(
+                overview_levels, height=height, width=width)
 
         # Pass ``nodata`` so the GPU reducer masks the sentinel back to
         # NaN before averaging. Without this, the NaN->sentinel rewrite
@@ -3506,17 +3687,24 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         # so the on-disk overview tiles still carry the sentinel value
         # external readers expect.
         current = arr
-        for _ in overview_levels:
-            current = make_overview_gpu(current, method=overview_resampling,
-                                        nodata=nodata)
-            if (nodata is not None
-                    and np.dtype(str(current.dtype)).kind == 'f'
-                    and not np.isnan(float(nodata))):
-                nan_mask = cupy.isnan(current)
-                if bool(nan_mask.any().item()):
-                    current = current.copy()
-                    current[nan_mask] = np.dtype(
-                        str(current.dtype)).type(nodata)
+        cumulative_factor = 1
+        for target_factor in overview_levels:
+            # Halve repeatedly until the cumulative decimation matches
+            # the requested factor. Validation has already established
+            # that ``target_factor`` is a power of two and strictly
+            # greater than ``cumulative_factor``.
+            while cumulative_factor < target_factor:
+                current = make_overview_gpu(current, method=overview_resampling,
+                                            nodata=nodata)
+                cumulative_factor *= 2
+                if (nodata is not None
+                        and np.dtype(str(current.dtype)).kind == 'f'
+                        and not np.isnan(float(nodata))):
+                    nan_mask = cupy.isnan(current)
+                    if bool(nan_mask.any().item()):
+                        current = current.copy()
+                        current[nan_mask] = np.dtype(
+                            str(current.dtype)).type(nodata)
             oh, ow = current.shape[:2]
             parts.append(_gpu_compress_to_part(current, ow, oh, samples))
 
@@ -3538,7 +3726,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     _write_bytes(file_bytes, path)
 
 
-def read_vrt(source: str, *, dtype=None,
+def read_vrt(source: str, *,
+             dtype: str | np.dtype | None = None,
              window: tuple | None = None,
              band: int | None = None,
              name: str | None = None,
@@ -3604,6 +3793,13 @@ def read_vrt(source: str, *, dtype=None,
     from ._vrt import read_vrt as _read_vrt_internal
 
     source = _coerce_path(source)
+
+    # Reject non-positive chunk sizes up front so the VRT dask path
+    # surfaces the same error as ``read_geotiff_dask`` (#1776). Without
+    # this check ``chunks=0`` raised ``ZeroDivisionError`` deep in dask
+    # and ``chunks=-1`` was silently accepted. ``chunks=None`` is the
+    # default (eager read), so allow it through here.
+    chunks = _validate_chunks_arg(chunks, allow_none=True)
 
     arr, vrt = _read_vrt_internal(source, window=window, band=band,
                                    max_pixels=max_pixels)
