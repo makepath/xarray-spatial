@@ -2029,27 +2029,21 @@ def _fetch_decode_cog_http_strips(
     if rps is None or rps <= 0:
         raise ValueError(f"Invalid RowsPerStrip: {rps!r}")
 
-    # Per-strip compressed-byte cap (#1664). Mirrors the local strip path
-    # and the tiled HTTP path: a crafted ``StripByteCounts`` entry can
-    # request an unbounded HTTP Range GET or decompress a few KiB into
-    # gigabytes. Apply the cap before any fetch list is built.
+    # Per-strip compressed-byte cap (#1664). A crafted ``StripByteCounts``
+    # entry can request an unbounded HTTP Range GET or decompress a few
+    # KiB into gigabytes. The cap applies to strips we actually fetch:
+    # - Full-image path: validated inside ``_read_strips`` over every
+    #   strip (full file is materialised regardless).
+    # - Windowed path: validated inside the fetch-range loop below so a
+    #   small window only fails on strips it intersects -- mirrors the
+    #   tiled HTTP path's per-tile check (#1851).
     max_tile_bytes = _max_tile_bytes_from_env()
-    for _strip_idx, _bc in enumerate(byte_counts):
-        if _bc > max_tile_bytes:
-            raise ValueError(
-                f"TIFF strip {_strip_idx} declares "
-                f"StripByteCount={_bc:,} bytes, which exceeds the "
-                f"per-strip safety cap of {max_tile_bytes:,} bytes. "
-                f"The file is malformed or attempting denial-of-service. "
-                f"Override via XRSPATIAL_COG_MAX_TILE_BYTES if this file "
-                f"is legitimate."
-            )
 
     # Full-image read: keep the legacy ``read_all`` + ``_read_strips``
     # path so anything _read_strips already validates (sparse strips,
-    # strip-table truncation, LERC masked_fill, etc.) stays in one
-    # place. Just thread the caller's ``max_pixels`` through so the
-    # dim check uses their cap instead of the default 1B.
+    # strip-table truncation, LERC masked_fill, per-strip byte cap, etc.)
+    # stays in one place. Just thread the caller's ``max_pixels`` through
+    # so the dim check uses their cap instead of the default 1B.
     if window is None:
         _check_dimensions(width, height, samples, max_pixels)
         all_data = source.read_all()
@@ -2121,6 +2115,20 @@ def _fetch_decode_cog_http_strips(
             if bc == 0:
                 # Sparse strip: result is already pre-filled above.
                 continue
+            # Per-strip byte cap, scoped to strips the window actually
+            # fetches (#1851). Mirrors the per-tile check in
+            # ``_fetch_decode_cog_http_tiles`` so a window over a benign
+            # strip is not rejected because some unrelated strip in the
+            # file exceeds the cap.
+            if bc > max_tile_bytes:
+                raise ValueError(
+                    f"TIFF strip {global_idx} declares "
+                    f"StripByteCount={bc:,} bytes, which exceeds the "
+                    f"per-strip safety cap of {max_tile_bytes:,} bytes. "
+                    f"The file is malformed or attempting denial-of-service. "
+                    f"Override via XRSPATIAL_COG_MAX_TILE_BYTES if this file "
+                    f"is legitimate."
+                )
             fetch_ranges.append((offsets[global_idx], bc))
             placements.append((band_idx, strip_idx))
 
@@ -2149,6 +2157,17 @@ def _fetch_decode_cog_http_strips(
         strip_rows = min(rps, height - strip_row)
         if strip_rows <= 0:
             continue
+
+        # Per-strip decoded-dimension cap (#1851). Mirrors the per-tile
+        # ``_check_dimensions(tw, th, samples, MAX_PIXELS_DEFAULT)`` in
+        # the tiled HTTP path: a tiny window intersecting an oversized
+        # strip would otherwise force ``_decode_strip_or_tile`` to
+        # allocate ``width * strip_rows * strip_samples`` bytes before
+        # the window clip. Use ``MAX_PIXELS_DEFAULT`` rather than the
+        # caller's ``max_pixels`` so a small output-window budget does
+        # not reject normal strip sizes.
+        _check_dimensions(width, strip_rows, strip_samples,
+                          MAX_PIXELS_DEFAULT)
 
         strip_pixels = _decode_strip_or_tile(
             strip_data, compression, width, strip_rows, strip_samples,

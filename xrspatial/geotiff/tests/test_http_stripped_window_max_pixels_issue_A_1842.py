@@ -218,3 +218,129 @@ def test_windowed_stripped_http_matches_full_read(
     arr, _ = _read_cog_http('http://mock/stripped.tif', window=window)
     r0, c0, r1, c1 = window
     np.testing.assert_array_equal(arr, expected[r0:r1, c0:c1])
+
+
+# ---------------------------------------------------------------------------
+# Test 5: per-strip byte cap applies only to strips inside the window (#1851)
+# ---------------------------------------------------------------------------
+#
+# Before #1851 the windowed stripped HTTP path validated every strip's
+# StripByteCount before deciding which strips intersected the window. A
+# window that only touched a small benign strip would still fail if some
+# unrelated strip elsewhere in the file exceeded the per-strip cap. The
+# tiled HTTP path already applied the cap only when adding intersecting
+# tiles; the fix mirrors that.
+
+def _poison_strip_byte_count(ifd, strip_idx, value):
+    """Replace StripByteCounts[strip_idx] in the parsed IFD.
+
+    Mutates the IFD entry in place so downstream ``ifd.strip_byte_counts``
+    reads see ``value`` for that strip. Returns the original tuple so the
+    test can confirm only one entry changed.
+    """
+    from xrspatial.geotiff._header import TAG_STRIP_BYTE_COUNTS
+    entry = ifd.entries[TAG_STRIP_BYTE_COUNTS]
+    original = entry.value
+    if not isinstance(original, tuple):
+        original = (original,)
+    poisoned = list(original)
+    poisoned[strip_idx] = value
+    entry.value = tuple(poisoned)
+    entry.count = len(poisoned)
+    return original
+
+
+def test_windowed_strip_byte_cap_skips_unrelated_oversized_strip(
+        tmp_path, monkeypatch):
+    """Window touching only strip 1 must succeed even if strip 3 is over-cap."""
+    buf, expected, _ = _make_stripped_cog(tmp_path)
+
+    # Patch ``_parse_cog_http_meta`` so the returned IFD reports an
+    # over-cap byte count for a strip the window does not intersect.
+    from xrspatial.geotiff import _reader as _r
+    real_meta = _r._parse_cog_http_meta
+    max_tile_bytes = _r._max_tile_bytes_from_env()
+    poison_target = {'idx': None, 'cap': max_tile_bytes}
+
+    def fake_meta(source, *args, **kwargs):
+        header, ifd, geo_info, header_bytes = real_meta(
+            source, *args, **kwargs)
+        n_strips = len(ifd.strip_offsets)
+        assert n_strips >= 3, "test needs >=3 strips"
+        # Poison the *last* strip with a count larger than the cap. The
+        # actual on-disk bytes are untouched; the windowed path never
+        # reads them, so the test only exercises the metadata guard.
+        poison_idx = n_strips - 1
+        _poison_strip_byte_count(ifd, poison_idx, max_tile_bytes * 4)
+        poison_target['idx'] = poison_idx
+        return header, ifd, geo_info, header_bytes
+
+    monkeypatch.setattr(_r, '_parse_cog_http_meta', fake_meta)
+    src = _RecordingHTTPSource(buf)
+    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+
+    # Aim at strip 1 only.
+    peek_src = _RecordingHTTPSource(buf)
+    _, peek_ifd, _, _ = real_meta(peek_src)
+    rps = peek_ifd.rows_per_strip
+    r0 = 1 * rps
+    r1 = r0 + 1
+    arr, _ = _read_cog_http(
+        'http://mock/stripped.tif', window=(r0, 0, r1, peek_ifd.width))
+    np.testing.assert_array_equal(arr, expected[r0:r1, :])
+
+    # And confirm we still raise when the window *does* touch the
+    # poisoned strip, so the cap has not been disabled outright.
+    poison_idx = poison_target['idx']
+    bad_r0 = poison_idx * rps
+    bad_r1 = bad_r0 + 1
+    with pytest.raises(ValueError, match='exceeds the per-strip safety cap'):
+        _read_cog_http(
+            'http://mock/stripped.tif',
+            window=(bad_r0, 0, bad_r1, peek_ifd.width),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 6: per-strip decoded-dimension guard (#1851)
+# ---------------------------------------------------------------------------
+#
+# A tiny window intersecting a strip whose decoded geometry
+# (width * strip_rows * strip_samples) would blow past the absolute
+# safety budget must be rejected before ``_decode_strip_or_tile`` is
+# invoked, even if the caller's ``max_pixels`` is generous. Mirrors the
+# per-tile ``_check_dimensions(tw, th, samples, MAX_PIXELS_DEFAULT)``
+# guard in the tiled HTTP path.
+
+def test_windowed_strip_decoded_dim_guard_rejects_oversized_strip(
+        tmp_path, monkeypatch):
+    """Tiny window into a strip with absurd decoded dims must raise."""
+    buf, _expected, _ = _make_stripped_cog(tmp_path)
+
+    from xrspatial.geotiff import _reader as _r
+    from xrspatial.geotiff._header import TAG_IMAGE_WIDTH
+    real_meta = _r._parse_cog_http_meta
+
+    def fake_meta(source, *args, **kwargs):
+        header, ifd, geo_info, header_bytes = real_meta(
+            source, *args, **kwargs)
+        # Claim a width that, multiplied by rows-per-strip and samples,
+        # blows past ``MAX_PIXELS_DEFAULT`` (1e9). 1024x1024 sample TIFF
+        # with 256 rps -> set width to 5_000_000 so each strip would
+        # decode 5_000_000 * 256 = 1.28e9 pixels, above the cap.
+        ifd.entries[TAG_IMAGE_WIDTH].value = 5_000_000
+        return header, ifd, geo_info, header_bytes
+
+    monkeypatch.setattr(_r, '_parse_cog_http_meta', fake_meta)
+    src = _RecordingHTTPSource(buf)
+    monkeypatch.setattr(reader_mod, '_HTTPSource', lambda url: src)
+
+    # Tiny window inside the (fake) huge image. Caller's max_pixels is
+    # comfortably large so the output-budget check passes; only the
+    # per-strip absolute guard should reject this.
+    with pytest.raises(PixelSafetyLimitError):
+        _read_cog_http(
+            'http://mock/stripped.tif',
+            max_pixels=10_000,
+            window=(0, 0, 50, 50),
+        )
