@@ -236,7 +236,19 @@ class IFD:
 
     @property
     def planar_config(self) -> int:
-        return self.get_value(TAG_PLANAR_CONFIG, 1)
+        # TIFF 6.0 defines only 1 (Chunky) and 2 (Planar). Treating any
+        # other value as chunky would silently decode a malformed file
+        # under an assumed layout. Missing tag defaults to 1 per spec.
+        v = self.get_value(TAG_PLANAR_CONFIG, 1)
+        if isinstance(v, tuple):
+            v = v[0] if v else 1
+        v = int(v)
+        if v not in (1, 2):
+            raise ValueError(
+                f"Invalid PlanarConfiguration: {v}. TIFF 6.0 allows only "
+                f"1 (Chunky) or 2 (Planar)."
+            )
+        return v
 
     @property
     def jpeg_tables(self) -> bytes | None:

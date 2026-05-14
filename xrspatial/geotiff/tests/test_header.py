@@ -125,6 +125,53 @@ class TestIFDProperties:
         assert not ifd.is_tiled
 
 
+class TestPlanarConfigValidation:
+    """PlanarConfiguration must be 1 (Chunky) or 2 (Planar) per TIFF 6.0.
+
+    Issue #1870: ``planar_config`` previously returned the raw tag value
+    unchecked, so a malformed file with e.g. ``PlanarConfiguration=0``
+    decoded under an assumed chunky layout instead of being rejected.
+    """
+
+    def _ifd_with_planar(self, value) -> IFD:
+        from xrspatial.geotiff._header import IFDEntry, TAG_PLANAR_CONFIG
+        ifd = IFD()
+        ifd.entries[TAG_PLANAR_CONFIG] = IFDEntry(
+            tag=TAG_PLANAR_CONFIG, type_id=3, count=1, value=value,
+        )
+        return ifd
+
+    def test_chunky_accepted(self):
+        assert self._ifd_with_planar(1).planar_config == 1
+
+    def test_planar_accepted(self):
+        assert self._ifd_with_planar(2).planar_config == 2
+
+    def test_zero_rejected(self):
+        with pytest.raises(ValueError, match=r"Invalid PlanarConfiguration"):
+            _ = self._ifd_with_planar(0).planar_config
+
+    def test_three_rejected(self):
+        with pytest.raises(ValueError, match=r"Invalid PlanarConfiguration"):
+            _ = self._ifd_with_planar(3).planar_config
+
+    def test_large_value_rejected(self):
+        with pytest.raises(ValueError, match=r"Invalid PlanarConfiguration"):
+            _ = self._ifd_with_planar(255).planar_config
+
+    def test_missing_tag_defaults_to_one(self):
+        # No TAG_PLANAR_CONFIG entry => default 1 (chunky) per spec.
+        assert IFD().planar_config == 1
+
+    def test_tuple_value_uniform_one_accepted(self):
+        # Some encoders write count>1 even though the tag is scalar.
+        assert self._ifd_with_planar((1,)).planar_config == 1
+
+    def test_tuple_value_invalid_rejected(self):
+        with pytest.raises(ValueError, match=r"Invalid PlanarConfiguration"):
+            _ = self._ifd_with_planar((7,)).planar_config
+
+
 class TestIFDChainLoop:
     """Verify parse_all_ifds bails out on a malicious IFD chain cycle.
 
