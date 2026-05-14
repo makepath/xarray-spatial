@@ -1981,6 +1981,199 @@ def _read_cog_http(url: str, overview_level: int | None = None,
     return arr, geo_info
 
 
+def _fetch_decode_cog_http_strips(
+    source: _HTTPSource,
+    header: TIFFHeader,
+    ifd: IFD,
+    dtype: np.dtype,
+    bps: int,
+    *,
+    max_pixels: int = MAX_PIXELS_DEFAULT,
+    window: tuple[int, int, int, int] | None = None,
+) -> np.ndarray:
+    """Fetch and decode the strips of a stripped TIFF over HTTP.
+
+    Stripped HTTP companion to :func:`_fetch_decode_cog_http_tiles`. When
+    *window* is given, only the strip byte-ranges that intersect the
+    window are fetched + decoded; the result is sized to the (clamped)
+    window rather than the full image, so a small window read of a
+    multi-billion-pixel stripped file does not download the whole
+    raster. Adjacent strip ranges are coalesced via
+    :meth:`_HTTPSource.read_ranges_coalesced` the same way the tiled
+    path does. ``max_pixels`` is applied to the *materialised* pixel
+    count (window for windowed reads, full image otherwise) so a small
+    caller cap on a tiny window passes a large source the same way the
+    tiled branch does (#1823). When *window* is None, the function
+    falls back to ``source.read_all()`` and dispatches to
+    :func:`_read_strips`; the caller's ``max_pixels`` is threaded
+    through so the full-image dim check honours the user's cap.
+    See issues #1664 and #1823 for the safety contract this restores.
+    """
+    width = ifd.width
+    height = ifd.height
+    samples = ifd.samples_per_pixel
+    compression = ifd.compression
+    rps = ifd.rows_per_strip
+    offsets = ifd.strip_offsets
+    byte_counts = ifd.strip_byte_counts
+    pred = ifd.predictor
+    bytes_per_sample = bps // 8
+    is_sub_byte = bps in SUB_BYTE_BPS
+    jpeg_tables = ifd.jpeg_tables
+    masked_fill = (_resolve_masked_fill(ifd.nodata_str, dtype)
+                   if compression == COMPRESSION_LERC else None)
+    planar = ifd.planar_config
+
+    if offsets is None or byte_counts is None:
+        raise ValueError("Missing strip offsets or byte counts")
+    if rps is None or rps <= 0:
+        raise ValueError(f"Invalid RowsPerStrip: {rps!r}")
+
+    # Per-strip compressed-byte cap (#1664). Mirrors the local strip path
+    # and the tiled HTTP path: a crafted ``StripByteCounts`` entry can
+    # request an unbounded HTTP Range GET or decompress a few KiB into
+    # gigabytes. Apply the cap before any fetch list is built.
+    max_tile_bytes = _max_tile_bytes_from_env()
+    for _strip_idx, _bc in enumerate(byte_counts):
+        if _bc > max_tile_bytes:
+            raise ValueError(
+                f"TIFF strip {_strip_idx} declares "
+                f"StripByteCount={_bc:,} bytes, which exceeds the "
+                f"per-strip safety cap of {max_tile_bytes:,} bytes. "
+                f"The file is malformed or attempting denial-of-service. "
+                f"Override via XRSPATIAL_COG_MAX_TILE_BYTES if this file "
+                f"is legitimate."
+            )
+
+    # Full-image read: keep the legacy ``read_all`` + ``_read_strips``
+    # path so anything _read_strips already validates (sparse strips,
+    # strip-table truncation, LERC masked_fill, etc.) stays in one
+    # place. Just thread the caller's ``max_pixels`` through so the
+    # dim check uses their cap instead of the default 1B.
+    if window is None:
+        _check_dimensions(width, height, samples, max_pixels)
+        all_data = source.read_all()
+        return _read_strips(all_data, ifd, header, dtype,
+                            max_pixels=max_pixels)
+
+    # Windowed read: fetch only the strips that intersect the window.
+    r0, c0, r1, c1 = window
+    r0 = max(0, r0)
+    c0 = max(0, c0)
+    r1 = min(height, r1)
+    c1 = min(width, c1)
+    out_h = r1 - r0
+    out_w = c1 - c0
+    _check_dimensions(out_w, out_h, samples, max_pixels)
+
+    strips_per_band = (height + rps - 1) // rps
+    if planar == 2 and samples > 1:
+        n_strips_expected = strips_per_band * samples
+        if (len(offsets) < n_strips_expected
+                or len(byte_counts) < n_strips_expected):
+            raise ValueError(
+                f"Strip table truncated for planar layout "
+                f"(PlanarConfiguration=2): expected "
+                f"{n_strips_expected} entries "
+                f"({strips_per_band} strips x {samples} samples), got "
+                f"offsets={len(offsets)}, byte_counts={len(byte_counts)}")
+    else:
+        n_strips_expected = strips_per_band
+        if (len(offsets) < n_strips_expected
+                or len(byte_counts) < n_strips_expected):
+            raise ValueError(
+                f"Strip table truncated: expected "
+                f"{n_strips_expected} entries, got "
+                f"offsets={len(offsets)}, byte_counts={len(byte_counts)}")
+
+    first_strip = r0 // rps
+    last_strip = min((r1 - 1) // rps, strips_per_band - 1)
+
+    # Sparse strips (StripByteCounts == 0) must materialise as nodata or 0,
+    # mirroring the local strip path. Detect sparsity over the *whole*
+    # strip table so an empty strip outside the window does not change
+    # the windowed allocation contract.
+    sparse = _has_sparse(byte_counts)
+    if sparse:
+        fill = _sparse_fill_value(ifd, dtype)
+        if samples > 1:
+            result = np.full((out_h, out_w, samples), fill, dtype=dtype)
+        else:
+            result = np.full((out_h, out_w), fill, dtype=dtype)
+    elif samples > 1:
+        result = np.empty((out_h, out_w, samples), dtype=dtype)
+    else:
+        result = np.empty((out_h, out_w), dtype=dtype)
+
+    # Pass 1: build the list of byte ranges + placements. Skip sparse
+    # strips and any strips whose intersected row range is empty.
+    band_count = samples if (planar == 2 and samples > 1) else 1
+    strip_samples = 1 if band_count > 1 else samples
+    fetch_ranges: list[tuple[int, int]] = []
+    placements: list[tuple[int, int]] = []
+    for band_idx in range(band_count):
+        band_offset = band_idx * strips_per_band if band_count > 1 else 0
+        for strip_idx in range(first_strip, last_strip + 1):
+            global_idx = band_offset + strip_idx
+            if global_idx >= len(offsets):
+                continue
+            bc = byte_counts[global_idx]
+            if bc == 0:
+                # Sparse strip: result is already pre-filled above.
+                continue
+            fetch_ranges.append((offsets[global_idx], bc))
+            placements.append((band_idx, strip_idx))
+
+    # Pass 2: fetch the strip bytes, coalescing adjacent ranges (mirrors
+    # the tiled HTTP path; see #1823 / coalescing rationale on line ~2145).
+    try:
+        workers = max(1, int(
+            _os_module.environ.get('XRSPATIAL_COG_HTTP_WORKERS', '8')))
+    except ValueError:
+        workers = 8
+    try:
+        gap = int(_os_module.environ.get(
+            'XRSPATIAL_COG_COALESCE_GAP',
+            str(COALESCE_GAP_THRESHOLD_DEFAULT)))
+    except ValueError:
+        gap = COALESCE_GAP_THRESHOLD_DEFAULT
+    if fetch_ranges:
+        strip_bytes_list = source.read_ranges_coalesced(
+            fetch_ranges, max_workers=workers, gap_threshold=gap)
+    else:
+        strip_bytes_list = []
+
+    # Pass 3: decode each strip and place its intersection with the window.
+    for (band_idx, strip_idx), strip_data in zip(placements, strip_bytes_list):
+        strip_row = strip_idx * rps
+        strip_rows = min(rps, height - strip_row)
+        if strip_rows <= 0:
+            continue
+
+        strip_pixels = _decode_strip_or_tile(
+            strip_data, compression, width, strip_rows, strip_samples,
+            bps, bytes_per_sample, is_sub_byte, dtype, pred,
+            byte_order=header.byte_order,
+            jpeg_tables=jpeg_tables,
+            masked_fill=masked_fill)
+
+        src_r0 = max(r0 - strip_row, 0)
+        src_r1 = min(r1 - strip_row, strip_rows)
+        dst_r0 = max(strip_row - r0, 0)
+        dst_r1 = dst_r0 + (src_r1 - src_r0)
+        if dst_r1 <= dst_r0:
+            continue
+
+        if band_count > 1:
+            # Planar=2 strip holds one band; place into the per-band slot.
+            result[dst_r0:dst_r1, :, band_idx] = (
+                strip_pixels[src_r0:src_r1, c0:c1])
+        else:
+            result[dst_r0:dst_r1] = strip_pixels[src_r0:src_r1, c0:c1]
+
+    return result
+
+
 def _fetch_decode_cog_http_tiles(
     source: _HTTPSource,
     header: TIFFHeader,
@@ -2001,14 +2194,10 @@ def _fetch_decode_cog_http_tiles(
     bps = resolve_bits_per_sample(ifd.bits_per_sample)
     dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
     if not ifd.is_tiled:
-        # Stripped HTTP COG: fall back to a full read. Window is honoured
-        # by slicing the decoded array.
-        all_data = source.read_all()
-        arr = _read_strips(all_data, ifd, header, dtype)
-        if window is not None:
-            r0, c0, r1, c1 = window
-            return arr[r0:r1, c0:c1]
-        return arr
+        return _fetch_decode_cog_http_strips(
+            source, header, ifd, dtype, bps,
+            max_pixels=max_pixels, window=window,
+        )
 
     width = ifd.width
     height = ifd.height
