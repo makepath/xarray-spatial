@@ -160,7 +160,10 @@ def test_vrt_missing_source_default_warns_then_continues(
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        da = read_vrt(str(vrt_path))
+        # Public ``read_vrt`` defaults to ``missing_sources='raise'``
+        # since #1860. Opt back into the lenient warn-then-continue
+        # behaviour to keep exercising the warning path.
+        da = read_vrt(str(vrt_path), missing_sources='warn')
 
     # The mosaic should still load (with a hole) and one warning should
     # describe the skipped source.

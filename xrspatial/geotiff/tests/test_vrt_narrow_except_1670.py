@@ -129,7 +129,10 @@ def test_file_not_found_warns_and_continues(
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        da = read_vrt(str(vrt_path))
+        # The public ``read_vrt`` defaults to ``missing_sources='raise'``
+        # since #1860; this test pins the warn-and-continue path, which
+        # is now an explicit opt-in.
+        da = read_vrt(str(vrt_path), missing_sources='warn')
 
     # Mosaic still loads (with a hole) and the skipped source is reported.
     assert da.shape == (4, 4)
@@ -176,7 +179,9 @@ def test_value_error_warns_and_continues(
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        da = read_vrt(str(vrt_path))
+        # Opt into the lenient path: the public default is now
+        # ``missing_sources='raise'`` since #1860.
+        da = read_vrt(str(vrt_path), missing_sources='warn')
 
     assert da.shape == (4, 4)
     fallback_warnings = [
@@ -227,7 +232,9 @@ def test_struct_error_warns_and_continues(
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        da = read_vrt(str(vrt_path))
+        # Opt into the lenient path: the public default is now
+        # ``missing_sources='raise'`` since #1860.
+        da = read_vrt(str(vrt_path), missing_sources='warn')
 
     assert da.shape == (4, 4)
     fallback_warnings = [
@@ -255,7 +262,9 @@ def test_permission_error_warns_and_continues(
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        da = read_vrt(str(vrt_path))
+        # Opt into the lenient path: the public default is now
+        # ``missing_sources='raise'`` since #1860.
+        da = read_vrt(str(vrt_path), missing_sources='warn')
 
     assert da.shape == (4, 4)
     fallback_warnings = [
@@ -303,7 +312,9 @@ def test_zlib_error_warns_and_continues(
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        da = read_vrt(str(vrt_path))
+        # Opt into the lenient path: the public default is now
+        # ``missing_sources='raise'`` since #1860.
+        da = read_vrt(str(vrt_path), missing_sources='warn')
 
     assert da.shape == (4, 4)
     fallback_warnings = [
@@ -355,7 +366,9 @@ def test_zstd_error_warns_and_continues_if_available(
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        da = read_vrt(str(vrt_path))
+        # Opt into the lenient path: the public default is now
+        # ``missing_sources='raise'`` since #1860.
+        da = read_vrt(str(vrt_path), missing_sources='warn')
 
     assert da.shape == (4, 4)
     fallback_warnings = [
