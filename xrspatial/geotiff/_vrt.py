@@ -1363,9 +1363,13 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     if sf == 3:
         vrt_dtype_name = 'Float64' if bps == 64 else 'Float32'
     elif sf == 2:
-        vrt_dtype_name = {8: 'Int8', 16: 'Int16', 32: 'Int32'}.get(bps, 'Int32')
+        vrt_dtype_name = {
+            8: 'Int8', 16: 'Int16', 32: 'Int32', 64: 'Int64',
+        }.get(bps, 'Int32')
     else:
-        vrt_dtype_name = {8: 'Byte', 16: 'UInt16', 32: 'UInt32'}.get(bps, 'Byte')
+        vrt_dtype_name = {
+            8: 'Byte', 16: 'UInt16', 32: 'UInt32', 64: 'UInt64',
+        }.get(bps, 'Byte')
 
     srs = crs_wkt or first.get('crs_wkt') or ''
     nd = nodata if nodata is not None else first.get('nodata')
