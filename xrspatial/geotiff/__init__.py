@@ -3326,7 +3326,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       bigtiff: bool | None = None,
                       max_z_error: float = 0.0,
                       streaming_buffer_bytes: int = 256 * 1024 * 1024,
-                      photometric: str | int = 'auto') -> None:
+                      photometric: str | int = 'auto',
+                      allow_internal_only_jpeg: bool = False) -> None:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
 
     Tiles are extracted and compressed on the GPU via nvCOMP, then
@@ -3371,17 +3372,16 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         - ``'zstd'`` (default) and ``'deflate'``: nvCOMP batch
           compression on the GPU -- the fastest paths and the reason to
           use this entry point.
-        - ``'jpeg'``: nvJPEG when libnvjpeg is loadable, Pillow
-          otherwise. Note that ``to_geotiff`` rejects
-          ``compression='jpeg'`` at runtime because its CPU encoder
-          omits the required TIFF JPEGTables tag (347); this GPU entry
-          point instead emits self-contained JFIF tiles. The two
-          writers therefore disagree about JPEG-in-TIFF interop. Files
-          produced here decode through this library's own reader but
-          may not round-trip through GDAL, rasterio, or libtiff
-          readers that require the JPEGTables tag. Treat the JPEG path
-          as experimental and internal-reader-only until the
-          JPEGTables fix lands.
+        - ``'jpeg'``: rejected by default for parity with
+          ``to_geotiff``. Both writers emit self-contained JFIF tiles
+          and skip the required TIFF JPEGTables tag (347), so the
+          resulting files are unreadable by libtiff, GDAL, and
+          rasterio. Pass ``allow_internal_only_jpeg=True`` to opt in
+          to the experimental encode path; the writer then routes to
+          nvJPEG when libnvjpeg is loadable and falls back to Pillow
+          otherwise, and emits a ``GeoTIFFFallbackWarning`` so the
+          caller knows the output will not round-trip through external
+          readers. See issue #1845.
         - ``'jpeg2000'`` and ``'j2k'``: nvJPEG2K GPU encode when
           available, glymur CPU encode otherwise. The two paths are
           not byte-for-byte identical (different libraries, different
@@ -3444,6 +3444,15 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         GPU writer forwards this kwarg unchanged. Default ``'auto'``
         writes MinIsBlack for any band count, so a 4-band raster is
         not silently tagged as RGB+alpha (issue #1769).
+    allow_internal_only_jpeg : bool
+        Opt in to the experimental ``compression='jpeg'`` encode path
+        (default ``False``). The encoder emits self-contained JFIF
+        tiles without the TIFF JPEGTables tag (347); the file decodes
+        through this library's reader but not through libtiff, GDAL,
+        or rasterio. With the flag set, the write proceeds and a
+        ``GeoTIFFFallbackWarning`` is emitted at call time. Without
+        the flag, ``compression='jpeg'`` raises ``ValueError`` for
+        parity with ``to_geotiff``. See issue #1845.
 
     Raises
     ------
@@ -3461,6 +3470,37 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             "compression is tile-based; the strip layout is not "
             "implemented on the GPU path. Use to_geotiff(..., gpu=False, "
             "tiled=False) for strip output on CPU.")
+    # JPEG-in-TIFF parity with to_geotiff (issue #1845). The GPU encode
+    # path writes self-contained JFIF tiles without the TIFF JPEGTables
+    # tag (347), matching the broken CPU encoder. ``to_geotiff`` refuses
+    # the codec outright; this writer offered no rejection at all, so
+    # callers could produce GeoTIFFs that decoded through xrspatial but
+    # broke in libtiff/GDAL/rasterio. Reject by default with the same
+    # wording so both entry points agree, and surface an opt-in flag for
+    # users who explicitly want the internal-only path.
+    if (isinstance(compression, str)
+            and compression.lower() == 'jpeg'
+            and not allow_internal_only_jpeg):
+        raise ValueError(
+            "compression='jpeg' is not supported: the encoder writes "
+            "self-contained JFIF streams without the required "
+            "JPEGTables tag (347), so other readers (libtiff, GDAL, "
+            "rasterio) reject the file. Use 'deflate', 'zstd', or "
+            "'lzw' instead. Pass allow_internal_only_jpeg=True to opt "
+            "in to the experimental internal-reader-only path (issue "
+            "#1845).")
+    if (isinstance(compression, str)
+            and compression.lower() == 'jpeg'
+            and allow_internal_only_jpeg):
+        warnings.warn(
+            "write_geotiff_gpu(compression='jpeg', "
+            "allow_internal_only_jpeg=True) writes JFIF tiles without "
+            "the TIFF JPEGTables tag (347); the file decodes through "
+            "xrspatial but may fail in libtiff, GDAL, or rasterio. "
+            "See issue #1845.",
+            GeoTIFFFallbackWarning,
+            stacklevel=2,
+        )
     # MinIsWhite pre-inversion (issue #1836) runs in the eager CPU writer.
     # The GPU writer assembles tile bytes directly on device; threading
     # the pixel + nodata-sentinel transform through that pipeline is out
