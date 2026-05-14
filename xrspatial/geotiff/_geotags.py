@@ -497,6 +497,38 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
     return GeoTransform(), False
 
 
+def _parse_nodata_str(text: str) -> int | float | None:
+    """Parse a GDAL_NODATA tag string at full integer precision when possible.
+
+    Returns a Python ``int`` for plain integer literals (so 64-bit
+    sentinels survive without the float64 round-trip that pushes them one
+    ULP past the dtype max), a ``float`` for NaN / Inf / scientific
+    notation / fractional values, and ``None`` when the string is not a
+    valid number.
+
+    Mirrors :func:`xrspatial.geotiff._vrt._parse_band_nodata` (issue
+    #1833) which addressed the same problem on the VRT XML path. See
+    issue #1847.
+    """
+    if text is None:
+        return None
+    s = text.strip()
+    if not s:
+        return None
+    # Try integer literal first so ``2**64 - 1`` / ``2**63 - 1`` /
+    # ``-2**63`` round-trip exactly.  ``int()`` rejects floats like
+    # ``"1.5e10"`` or ``"3.5"`` -- those fall through to the float
+    # branch below.
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
 def extract_geo_info(ifd: IFD, data: bytes | memoryview,
                      byte_order: str) -> GeoInfo:
     """Extract full geographic metadata from a parsed IFD.
@@ -611,14 +643,23 @@ def extract_geo_info(ifd: IFD, data: bytes | memoryview,
     else:
         vert_units_code = None
 
-    # Extract nodata from GDAL_NODATA tag
+    # Extract nodata from GDAL_NODATA tag.
+    #
+    # Try ``int()`` first so 64-bit sentinels (``2**64 - 1`` for uint64,
+    # ``2**63 - 1`` for int64) round-trip at full precision.  ``float()``
+    # rounds those to the nearest representable float64, which sits one
+    # ULP above the dtype's max and is then rejected by the downstream
+    # ``info.min <= int(nodata) <= info.max`` gate -- the sentinel pixel
+    # survives as a literal value rather than being masked to NaN.
+    # Float parsing covers everything else: NaN / Inf / scientific
+    # notation / fractional values.  Mirrors
+    # :func:`xrspatial.geotiff._vrt._parse_band_nodata` (issue #1833)
+    # which fixed the same class of bug on the VRT XML path.
+    # See issue #1847.
     nodata = None
     nodata_str = ifd.nodata_str
     if nodata_str is not None:
-        try:
-            nodata = float(nodata_str)
-        except (ValueError, TypeError):
-            pass
+        nodata = _parse_nodata_str(nodata_str)
 
     # Parse GDALMetadata XML (tag 42112)
     gdal_metadata = None
