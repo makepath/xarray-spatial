@@ -15,7 +15,6 @@ inverts a photometric, or reorders an attrs-population step.
 from __future__ import annotations
 
 import importlib.util
-import struct
 from pathlib import Path
 
 import numpy as np
@@ -30,7 +29,6 @@ from xrspatial.geotiff import (
     to_geotiff,
     write_vrt,
 )
-from xrspatial.geotiff.tests.conftest import make_minimal_tiff
 
 
 # ---------------------------------------------------------------------------
@@ -48,9 +46,11 @@ def _gpu_available() -> bool:
 
 
 _HAS_GPU = _gpu_available()
-_skip_no_gpu = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
+_HAS_TIFFFILE = importlib.util.find_spec("tifffile") is not None
 
-tifffile = pytest.importorskip("tifffile")
+_skip_no_gpu = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
+_skip_no_tifffile = pytest.mark.skipif(
+    not _HAS_TIFFFILE, reason="tifffile required for MinIsWhite fixture")
 
 
 _BACKENDS = [
@@ -142,6 +142,7 @@ def _write_bigtiff(path: Path) -> None:
 
 def _write_miniswhite(path: Path) -> None:
     """Write a MinIsWhite (photometric=0) uint8 stripped TIFF via tifffile."""
+    import tifffile  # local import: only the miniswhite cell needs this
     arr = _make_reference_data(np.dtype("uint8")).astype(np.uint8)
     tifffile.imwrite(
         str(path), arr, photometric="miniswhite",
@@ -175,15 +176,37 @@ def _write_vrt_mosaic(dir_path: Path) -> Path:
     return vrt_path
 
 
+@pytest.fixture(scope="session")
+def _parity_fixture_dir(tmp_path_factory):
+    """Session-scoped directory holding every parity fixture file.
+
+    Sharing one dir + caching by id keeps fixture build cost flat at one
+    write per fixture instead of one write per test cell (192 in this
+    matrix), which was a real IO hit on Windows runners.
+    """
+    return tmp_path_factory.mktemp("parity_1813")
+
+
 @pytest.fixture
-def fixture_factory(tmp_path):
-    """Build a fixture file from its id. Returns the resolved path."""
+def fixture_factory(_parity_fixture_dir):
+    """Return a builder that resolves a fix_id to its on-disk path.
+
+    Files are cached across the test session: a fixture already present
+    on disk is returned without rewriting.
+    """
+    dir_path = _parity_fixture_dir
+
     def _build(fix_id: str) -> Path:
         if fix_id == "vrt":
-            return _write_vrt_mosaic(tmp_path)
+            vrt_path = dir_path / "mosaic_1813.vrt"
+            if vrt_path.exists():
+                return vrt_path
+            return _write_vrt_mosaic(dir_path)
 
         safe_id = fix_id.replace("/", "-")
-        path = tmp_path / f"parity_{safe_id}_1813.tif"
+        path = dir_path / f"parity_{safe_id}_1813.tif"
+        if path.exists():
+            return path
         if fix_id.startswith("stripped/"):
             _, dtype_name, comp = fix_id.split("/")
             _write_stripped(path, np.dtype(dtype_name), comp)
@@ -205,7 +228,9 @@ def fixture_factory(tmp_path):
 # Representative matrix: five dtypes, three compressions, both layouts, plus
 # COG/BigTIFF/MinIsWhite/VRT. Kept compact to keep CI cost bounded; entry-point
 # parity (numpy ↔ dask ↔ gpu) is the same regardless of dtype, so a few
-# representatives per axis catches drift.
+# representatives per axis catches drift. The miniswhite cell needs tifffile;
+# it skips cleanly when tifffile is unavailable instead of taking down the
+# whole matrix.
 _TIFF_FIXTURES = [
     pytest.param("stripped/uint8/none", id="stripped-uint8-none"),
     pytest.param("stripped/uint16/deflate", id="stripped-uint16-deflate"),
@@ -218,7 +243,8 @@ _TIFF_FIXTURES = [
     pytest.param("tiled/float64/deflate", id="tiled-float64-deflate"),
     pytest.param("cog", id="cog-float32-deflate"),
     pytest.param("bigtiff", id="bigtiff-float32-deflate"),
-    pytest.param("miniswhite", id="miniswhite-uint8-none"),
+    pytest.param("miniswhite", id="miniswhite-uint8-none",
+                 marks=_skip_no_tifffile),
 ]
 
 
@@ -231,15 +257,12 @@ _TIFF_FIXTURES = [
 def test_open_geotiff_pixel_bytes_match(fixture_factory, fix_id, backend_kwargs):
     """Pixels are byte-identical across backends for the same file."""
     path = fixture_factory(fix_id)
-    ref = open_geotiff(str(path))
-    actual = open_geotiff(str(path), **backend_kwargs)
+    ref_arr = _materialise(open_geotiff(str(path)))
+    actual_arr = _materialise(open_geotiff(str(path), **backend_kwargs))
 
-    ref_bytes = _materialise(ref).tobytes()
-    actual_bytes = _materialise(actual).tobytes()
-    assert ref_bytes == actual_bytes, (
+    assert ref_arr.tobytes() == actual_arr.tobytes(), (
         f"fixture={fix_id} backend={backend_kwargs}: pixel bytes differ "
-        f"(ref_dtype={_materialise(ref).dtype}, "
-        f"actual_dtype={_materialise(actual).dtype})"
+        f"(ref_dtype={ref_arr.dtype}, actual_dtype={actual_arr.dtype})"
     )
 
 
@@ -347,10 +370,15 @@ def test_read_vrt_coords_match(fixture_factory, backend_kwargs):
     ref = read_vrt(str(path))
     actual = read_vrt(str(path), **backend_kwargs)
     for axis in ("y", "x"):
-        assert _coord_view(ref, axis).tobytes() == \
-            _coord_view(actual, axis).tobytes(), (
-                f"read_vrt backend={backend_kwargs}: {axis} coord bytes differ"
-            )
+        ref_c = _coord_view(ref, axis)
+        actual_c = _coord_view(actual, axis)
+        assert ref_c.dtype == actual_c.dtype, (
+            f"read_vrt backend={backend_kwargs}: {axis} coord dtype "
+            f"differs: ref={ref_c.dtype} actual={actual_c.dtype}"
+        )
+        assert ref_c.tobytes() == actual_c.tobytes(), (
+            f"read_vrt backend={backend_kwargs}: {axis} coord bytes differ"
+        )
 
 
 @pytest.mark.parametrize("backend_kwargs", _BACKENDS)
