@@ -60,10 +60,16 @@ class XrsSpatialDataArrayAccessor:
             kwargs.setdefault('norm', BoundaryNorm(boundaries, n_colors))
             kwargs.setdefault('add_colorbar', True)
 
-        # Create a figure with sensible size if none provided.
+        # Create a figure with sensible size if none provided. Use
+        # ``constrained`` layout so palette colorbars and titles get sized
+        # correctly without calling ``tight_layout``; the tight-layout
+        # solver triggers a deepcopy of internal MarkerStyle objects on
+        # matplotlib 3.10 that recurses past Python's stack limit when a
+        # BoundaryNorm colorbar is attached (issue #1874).
         if 'ax' not in kwargs:
             fig, ax = plt.subplots(
                 figsize=kwargs.get('figsize', (8, 6)),
+                layout='constrained',
             )
             kwargs.pop('figsize', None)
             kwargs['ax'] = ax
@@ -71,7 +77,6 @@ class XrsSpatialDataArrayAccessor:
         result = da.plot(**kwargs)
 
         kwargs['ax'].set_aspect('equal')
-        plt.tight_layout()
         return result
 
     # ---- Surface ----
