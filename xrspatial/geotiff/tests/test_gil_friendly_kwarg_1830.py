@@ -41,6 +41,7 @@ from xrspatial.geotiff._compression import (
 from xrspatial.geotiff._reader import read_to_array
 from xrspatial.geotiff._writer import (
     _PARALLEL_MIN_BYTES,
+    _compress_block,
     _prepare_strip,
     _prepare_tile,
     _write_stripped,
@@ -513,6 +514,90 @@ def test_write_tiled_parallel_passes_gil_friendly_positionally(monkeypatch):
                 f'_write_tiled parallel branch must set gil_friendly=True; '
                 f'call args={call["args"]!r} kwargs={call["kwargs"]!r}'
             )
+
+
+# ---------------------------------------------------------------------------
+# write_streaming / _compress_block coverage (Copilot review on PR #1834).
+# The streaming dask writer routes per-tile compression through
+# ``_compress_block``; parallel segments pass ``gil_friendly=True``
+# positionally and serial segments rely on the default ``False``.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(not _HAVE_LIBDEFLATE,
+                    reason='deflate package not installed')
+def test_compress_block_forwards_gil_friendly_true(monkeypatch):
+    """``_compress_block(gil_friendly=True)`` must reach deflate_compress
+    with the flag set, so the streaming writer's parallel tile path can
+    route every per-tile compress through stdlib zlib.
+    """
+    spy = _DeflateCallSpy(monkeypatch)
+    arr = np.arange(64 * 64, dtype=np.uint8).reshape(64, 64)
+    _compress_block(
+        np.ascontiguousarray(arr), 64, 64, 1, np.uint8, 1,
+        predictor=1, compression=COMPRESSION_DEFLATE,
+        gil_friendly=True,
+    )
+    assert spy.calls == [True], (
+        f'_compress_block(gil_friendly=True) must forward to '
+        f'deflate_compress; observed flags: {spy.calls}'
+    )
+
+
+@pytest.mark.skipif(not _HAVE_LIBDEFLATE,
+                    reason='deflate package not installed')
+def test_compress_block_default_gil_friendly_is_false(monkeypatch):
+    """Without an explicit kwarg ``_compress_block`` must keep the
+    default ``False`` so the serial streaming segment stays on
+    libdeflate, matching the eager writer's sequential path.
+    """
+    spy = _DeflateCallSpy(monkeypatch)
+    arr = np.arange(64 * 64, dtype=np.uint8).reshape(64, 64)
+    _compress_block(
+        np.ascontiguousarray(arr), 64, 64, 1, np.uint8, 1,
+        predictor=1, compression=COMPRESSION_DEFLATE,
+    )
+    assert spy.calls == [False], (
+        f'_compress_block default must use gil_friendly=False; '
+        f'observed flags: {spy.calls}'
+    )
+
+
+@pytest.mark.skipif(not _HAVE_LIBDEFLATE,
+                    reason='deflate package not installed')
+def test_write_streaming_parallel_segment_uses_gil_friendly(
+    tmp_path, monkeypatch,
+):
+    """End-to-end pin: ``write_streaming`` on a dask array large enough
+    to trigger the parallel tile-segment branch must drive
+    ``deflate_compress`` with ``gil_friendly=True`` on every parallel
+    call.
+    """
+    dask_array = pytest.importorskip("dask.array")
+    from xrspatial.geotiff._writer import write_streaming
+
+    rng = np.random.RandomState(1830)
+    # Two tile rows so the segment loop's parallel branch (n_seg_tiles
+    # > 1) actually fires for the first row before the writer drains.
+    arr_np = rng.rand(1024, 1024).astype(np.float32)
+    dask_arr = dask_array.from_array(arr_np, chunks=(512, 512))
+
+    spy = _DeflateCallSpy(monkeypatch)
+    path = str(tmp_path / 'streaming_gil_friendly_1834.tif')
+    write_streaming(
+        dask_arr, path, compression='deflate', tiled=True, tile_size=512,
+    )
+
+    assert spy.calls, 'write_streaming must call deflate_compress'
+    # The parallel branch passes gil_friendly=True; the serial branch
+    # uses the default False. At this size the parallel branch fires
+    # for at least one segment, so True must appear in the observed
+    # flags. A regression dropping the kwarg would leave the parallel
+    # branch on libdeflate and ``True`` would never appear.
+    assert any(spy.calls), (
+        f'write_streaming parallel tile-segment branch must call '
+        f'deflate_compress with gil_friendly=True; observed flags: '
+        f'{spy.calls}'
+    )
 
 
 # ---------------------------------------------------------------------------
