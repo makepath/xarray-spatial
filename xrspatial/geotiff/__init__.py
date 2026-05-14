@@ -1360,10 +1360,15 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             f"path must be a str or a binary file-like with a write() "
             f"method, got {type(path).__name__}")
 
+    _is_vrt_path = (
+        isinstance(path, str) and path.lower().endswith('.vrt'))
+
     # tile_size only applies to tiled output; warn if the caller passed a
     # non-default size alongside strip mode (it would otherwise be silently
-    # ignored).
-    if not tiled and tile_size != 256:
+    # ignored). The VRT path always tiles, so the warning would be
+    # misleading there -- the VRT branch below rejects tiled=False up front
+    # instead.
+    if not tiled and tile_size != 256 and not _is_vrt_path:
         warnings.warn(
             f"tile_size={tile_size} is ignored when tiled=False "
             "(strip layout). Pass tiled=True to use tile_size, or drop "
@@ -1373,7 +1378,18 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
 
     # VRT tiled output (string paths only -- VRT writes a real .vrt file
     # plus per-tile GeoTIFFs to a directory)
-    if isinstance(path, str) and path.lower().endswith('.vrt'):
+    if _is_vrt_path:
+        if not tiled:
+            raise ValueError(
+                "tiled=False is not compatible with VRT output. "
+                "VRT writes a directory of tiled GeoTIFFs; pass "
+                "tiled=True or omit it.")
+        # The early ``if tiled: _validate_tile_size_arg(tile_size)`` check
+        # above already validates tile_size when tiled=True, but call it
+        # here as well so the VRT path stays self-contained against future
+        # changes to the early-validation gate (no-op on re-entry; either
+        # raises or returns).
+        _validate_tile_size_arg(tile_size)
         if cog:
             raise ValueError(
                 "cog=True is not compatible with VRT output. "
