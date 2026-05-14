@@ -1693,14 +1693,6 @@ def write(data: np.ndarray, path: str, *,
 
     _write_bytes(file_bytes, path)
 
-    # Post-write validation: verify the header is parseable
-    from ._header import parse_header as _ph
-    try:
-        _ph(file_bytes[:16])
-    except Exception as e:
-        import warnings
-        warnings.warn(f"Written file may be corrupt: {e}", stacklevel=2)
-
 
 def _compress_block(arr, block_w, block_h, samples, dtype, bytes_per_sample,
                     predictor: int, compression, compression_level=None,
@@ -2289,16 +2281,6 @@ def write_streaming(dask_data, path: str, *,
                 patched_tags, overflow_base, bigtiff=use_bigtiff)
             f.write(ifd_bytes)
             f.write(overflow_bytes)
-
-        # Post-write validation
-        from ._header import parse_header as _ph
-        with open(tmp_path, 'rb') as f:
-            try:
-                _ph(f.read(16))
-            except Exception as e:
-                import warnings
-                warnings.warn(
-                    f"Written file may be corrupt: {e}", stacklevel=2)
 
         os.replace(tmp_path, path)
     except BaseException:
