@@ -9,7 +9,7 @@ import math
 import os
 import struct
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as _dc_replace
 from typing import Union
 from xml.sax.saxutils import escape as _xml_escape, quoteattr as _xml_quoteattr
 
@@ -721,10 +721,140 @@ def _resample_nearest_window(src_sub: np.ndarray,
     return src_sub[y_idx[:, None], x_idx[None, :]]
 
 
+# ---------------------------------------------------------------------------
+# Shared helpers used by both the eager VRT read path (this module) and the
+# chunked dask path in ``xrspatial.geotiff.__init__._read_vrt_chunked``.
+# Centralised here so both call sites agree on dtype promotion, sentinel
+# masking, and effective-dtype computation. See issue #1825.
+# ---------------------------------------------------------------------------
+
+
+def _sentinel_for_dtype(nodata_val, dtype):
+    """Return ``dtype``-cast sentinel for ``nodata_val`` or ``None``.
+
+    ``None`` is returned when the value cannot be represented in ``dtype``
+    (non-integer dtype, out-of-range, non-finite, or fractional). Mirrors
+    the gating used by other read paths via ``_int_nodata_in_range``.
+
+    A plain Python ``int`` ``nodata_val`` is handled without going through
+    ``float`` first, so 64-bit sentinels such as ``2**64 - 1`` (``UInt64``
+    max) and ``-2**63`` (``Int64`` min) round-trip without the float64
+    rounding that pushes them past the dtype's representable range.
+    ``_parse_band_nodata`` parses integer-band ``<NoDataValue>`` directly
+    as ``int`` to feed this path. See issue #1783 follow-up.
+
+    This is the single shared implementation used by both the eager path
+    in :func:`read_vrt` and the chunked path in
+    :func:`xrspatial.geotiff._read_vrt_chunked`; previously a closure in
+    the eager path and a module-level twin in the chunked path duplicated
+    the logic (issue #1825).
+    """
+    if nodata_val is None or dtype.kind not in ('u', 'i'):
+        return None
+    info = np.iinfo(dtype)
+    # Fast/exact path: ``nodata_val`` is already an integer. Avoids the
+    # float64 round-trip that loses precision near the int64 / uint64
+    # extremes. ``bool`` is a subclass of ``int`` -- treat True/False as
+    # a 1/0 sentinel rather than rejecting outright, matching the
+    # existing ``int(float(...))`` behaviour.
+    if isinstance(nodata_val, (int, np.integer)) and not isinstance(
+            nodata_val, bool):
+        nodata_int = int(nodata_val)
+        if info.min <= nodata_int <= info.max:
+            return dtype.type(nodata_int)
+        return None
+    try:
+        nodata_f = float(nodata_val)
+    except (TypeError, ValueError):
+        return None
+    if not (np.isfinite(nodata_f) and nodata_f.is_integer()
+            and info.min <= nodata_f <= info.max):
+        return None
+    return dtype.type(int(nodata_f))
+
+
+def _effective_dtype_for_bands(selected_bands) -> np.dtype:
+    """Return the output buffer dtype that holds every selected band losslessly.
+
+    Computes ``np.result_type`` over each band's effective dtype, where
+    each band's effective dtype is widened to ``float64`` if any of its
+    ``ComplexSource`` declarations apply a non-identity ``ScaleRatio``
+    (``scale``) or ``ScaleOffset`` (``offset``). Mirrors the historic
+    inline computation in :func:`read_vrt` and matches the parse-time
+    declared dtype the chunked path emits up front. Issue #1825.
+    """
+    if not selected_bands:
+        raise ValueError(
+            "VRT has no <VRTRasterBand> elements; cannot determine "
+            "output dtype"
+        )
+    effective_dtypes = []
+    for vrt_band in selected_bands:
+        eff = vrt_band.dtype
+        for src in vrt_band.sources:
+            scaled = src.scale is not None and src.scale != 1.0
+            offset = src.offset is not None and src.offset != 0.0
+            if scaled or offset:
+                eff = np.dtype(np.float64)
+                break
+        effective_dtypes.append(eff)
+    return np.result_type(*effective_dtypes)
+
+
+def _apply_integer_sentinel_mask(arr, vrt, band):
+    """NaN-mask integer sentinels in a freshly decoded VRT buffer.
+
+    Mirrors the post-decode integer-promotion branch the eager path
+    applies after :func:`read_vrt` and the chunked path applies inside
+    each per-chunk task. Walks the relevant ``vrt.bands`` entry / entries,
+    promotes ``arr`` to ``float64`` on the first sentinel hit, and rewrites
+    matching pixels to ``NaN`` in place on the promoted view.
+
+    Returns the (possibly promoted) ``arr``. The internal reader already
+    NaN-masks float source arrays inline; this helper only fires for
+    integer-dtype outputs paired with an integer ``<NoDataValue>``.
+    Issue #1825.
+    """
+    if arr.dtype.kind not in ('u', 'i'):
+        return arr
+    if arr.ndim == 3 and band is None and vrt.bands:
+        int_arr = arr
+        int_dtype = int_arr.dtype
+        for i, vrt_band in enumerate(vrt.bands):
+            if i >= int_arr.shape[-1]:
+                break
+            sentinel = _sentinel_for_dtype(vrt_band.nodata, int_dtype)
+            if sentinel is None:
+                continue
+            mask = int_arr[..., i] == sentinel
+            if not mask.any():
+                continue
+            if arr.dtype != np.float64:
+                arr = arr.astype(np.float64)
+            arr[..., i][mask] = np.nan
+        return arr
+    band_idx = band if band is not None else 0
+    nodata = None
+    if vrt.bands and 0 <= band_idx < len(vrt.bands):
+        nodata = vrt.bands[band_idx].nodata
+    if nodata is None:
+        return arr
+    sentinel = _sentinel_for_dtype(nodata, arr.dtype)
+    if sentinel is None:
+        return arr
+    mask = arr == sentinel
+    if mask.any():
+        arr = arr.astype(np.float64)
+        arr[mask] = np.nan
+    return arr
+
+
 def read_vrt(vrt_path: str, *, window=None,
              band: int | None = None,
              max_pixels: int | None = None,
-             missing_sources: str = 'warn') -> tuple[np.ndarray, VRTDataset]:
+             missing_sources: str = 'warn',
+             parsed: VRTDataset | None = None,
+             ) -> tuple[np.ndarray, VRTDataset]:
     """Read a VRT file by assembling pixel data from its source files.
 
     Parameters
@@ -743,6 +873,13 @@ def read_vrt(vrt_path: str, *, window=None,
         ``'warn'`` emits ``GeoTIFFFallbackWarning`` and records
         ``vrt.holes`` unless ``XRSPATIAL_GEOTIFF_STRICT=1`` is set.
         ``'raise'`` fails immediately.
+    parsed : VRTDataset or None
+        Pre-parsed VRT structure. When supplied, ``vrt_path`` is not
+        re-read or re-parsed and the source-path containment check is
+        skipped (the supplied ``VRTDataset`` is assumed to have been
+        produced by :func:`parse_vrt` already, which performs the check).
+        Used by the chunked dask path (issue #1825) so each per-chunk
+        task can skip the redundant XML parse and allowlist validation.
 
     Returns
     -------
@@ -750,10 +887,21 @@ def read_vrt(vrt_path: str, *, window=None,
     """
     from ._reader import PixelSafetyLimitError, read_to_array
 
-    xml_str = _read_vrt_xml(vrt_path)
-
-    vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
-    vrt = parse_vrt(xml_str, vrt_dir)
+    if parsed is not None:
+        # Shallow-copy with a fresh ``holes`` list. ``read_vrt`` appends
+        # to ``vrt.holes`` on missing/unreadable sources, and under
+        # chunked dispatch (issue #1825) the same ``parsed`` instance is
+        # threaded into every per-chunk task. Mutating the shared list
+        # would leak skipped-source records across tasks (racy growth
+        # under the threaded scheduler, and cumulative duplication
+        # across calls if a caller ever reused the parsed object). The
+        # dataclass replace is O(1) over a handful of fields; the bands
+        # / sources / dtypes references are intentionally shared.
+        vrt = _dc_replace(parsed, holes=[])
+    else:
+        xml_str = _read_vrt_xml(vrt_path)
+        vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
+        vrt = parse_vrt(xml_str, vrt_dir)
     if missing_sources not in ('warn', 'raise'):
         raise ValueError(
             f"missing_sources must be 'warn' or 'raise', got "
@@ -838,23 +986,9 @@ def read_vrt(vrt_path: str, *, window=None,
     # Guard against a malformed VRT with zero ``<VRTRasterBand>``
     # elements: ``np.result_type()`` with no args raises a generic
     # "at least one array or dtype is required" message that gives the
-    # caller no hint about the underlying cause.
-    if not selected_bands:
-        raise ValueError(
-            "VRT has no <VRTRasterBand> elements; cannot determine "
-            "output dtype"
-        )
-    effective_dtypes = []
-    for vrt_band in selected_bands:
-        eff = vrt_band.dtype
-        for src in vrt_band.sources:
-            scaled = src.scale is not None and src.scale != 1.0
-            offset = src.offset is not None and src.offset != 0.0
-            if scaled or offset:
-                eff = np.dtype(np.float64)
-                break
-        effective_dtypes.append(eff)
-    dtype = np.result_type(*effective_dtypes)
+    # caller no hint about the underlying cause. The helper raises
+    # ``ValueError`` for the empty case with that explicit message.
+    dtype = _effective_dtype_for_bands(selected_bands)
     fill = np.nan if dtype.kind in ('f', 'c') else 0
     if len(selected_bands) == 1:
         result = np.full((out_h, out_w), fill, dtype=dtype)
