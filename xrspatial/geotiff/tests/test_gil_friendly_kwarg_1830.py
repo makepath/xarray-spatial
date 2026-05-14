@@ -34,6 +34,7 @@ from xrspatial.geotiff._compression import (
     COMPRESSION_PACKBITS,
     COMPRESSION_ZSTD,
     _HAVE_LIBDEFLATE,
+    LZ4_AVAILABLE,
     compress,
     deflate_compress,
 )
@@ -270,8 +271,12 @@ def test_compress_gil_friendly_ignored_for_non_deflate_codecs():
         (COMPRESSION_PACKBITS, raw),
         (COMPRESSION_LZW, raw),
         (COMPRESSION_ZSTD, raw),
-        (COMPRESSION_LZ4, raw),
     ]
+    # ``lz4`` is an optional dependency. On CI runners that ship without it
+    # (some macOS images) the codec dispatch path raises ImportError; skip
+    # that row rather than fail the whole non-deflate-codec coverage test.
+    if LZ4_AVAILABLE:
+        matrix.append((COMPRESSION_LZ4, raw))
     for tag, payload in matrix:
         out_false = compress(payload, tag, gil_friendly=False)
         out_true = compress(payload, tag, gil_friendly=True)
