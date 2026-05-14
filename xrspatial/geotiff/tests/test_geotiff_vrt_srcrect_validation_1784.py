@@ -117,14 +117,19 @@ def test_negative_srcrect_message_names_bad_values():
 def test_missing_source_still_takes_lenient_warning_path():
     """A *valid* SrcRect with a missing source file must still hit the
     lenient warning path -- the new SrcRect check must not swallow the
-    missing-file case that PR #1675 narrowed."""
+    missing-file case that PR #1675 narrowed.
+
+    Issue #1843 flipped the default to ``missing_sources='raise'`` so
+    this test now passes ``'warn'`` explicitly to exercise the opt-in
+    lenient branch.
+    """
     from xrspatial.geotiff import GeoTIFFFallbackWarning
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         # No source file written; SrcRect itself is well-formed.
         vrt_path = _write_vrt(td, src_filename='does_not_exist.tif')
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')
-            arr, _ = read_vrt(vrt_path)
+            arr, _ = read_vrt(vrt_path, missing_sources='warn')
         # The lenient path must produce a fallback warning and a result
         # array (zero-filled at the hole), not raise.
         fallback = [w for w in caught

@@ -252,13 +252,14 @@ class VRTDataset:
     # coords must be emitted without the shift.  Parsed from
     # ``<Metadata><MDI key="AREA_OR_POINT">Point</MDI></Metadata>``.
     raster_type: str = 'area'  # 'area' or 'point'
-    # Per-load record of sources skipped by ``read_vrt`` under the
-    # lenient default (not strict mode). Each entry is a dict with
-    # ``source``, ``band`` (1-based), ``dst_rect`` (xoff, yoff,
-    # xsize, ysize), and ``error`` keys. Empty when no sources failed
-    # to read. Populated by :func:`read_vrt` so callers can detect
-    # holes by attribute lookup instead of parsing a UserWarning
-    # message (issue #1734).
+    # Per-load record of sources skipped by ``read_vrt`` when called
+    # with ``missing_sources='warn'`` (the lenient opt-in; the default
+    # since #1843 is ``'raise'``, and strict mode always raises). Each
+    # entry is a dict with ``source``, ``band`` (1-based), ``dst_rect``
+    # (xoff, yoff, xsize, ysize), and ``error`` keys. Empty when no
+    # sources failed to read. Populated by :func:`read_vrt` so callers
+    # on the warn path can detect holes by attribute lookup instead of
+    # parsing the ``GeoTIFFFallbackWarning`` message (issue #1734).
     holes: list[dict] = field(default_factory=list)
 
 
@@ -852,7 +853,7 @@ def _apply_integer_sentinel_mask(arr, vrt, band):
 def read_vrt(vrt_path: str, *, window=None,
              band: int | None = None,
              max_pixels: int | None = None,
-             missing_sources: str = 'warn',
+             missing_sources: str = 'raise',
              parsed: VRTDataset | None = None,
              ) -> tuple[np.ndarray, VRTDataset]:
     """Read a VRT file by assembling pixel data from its source files.
@@ -868,11 +869,22 @@ def read_vrt(vrt_path: str, *, window=None,
     max_pixels : int or None
         Maximum allowed pixel count (width * height * samples) for the
         assembled VRT region. None uses the reader default.
-    missing_sources : {'warn', 'raise'}
+    missing_sources : {'raise', 'warn'}, default 'raise'
         Policy for unreadable source files referenced by the VRT.
-        ``'warn'`` emits ``GeoTIFFFallbackWarning`` and records
-        ``vrt.holes`` unless ``XRSPATIAL_GEOTIFF_STRICT=1`` is set.
-        ``'raise'`` fails immediately.
+        ``'raise'`` (the default) fails immediately on an unreadable
+        source so a partial mosaic never surfaces silently. This matches
+        the rest of the geotiff module's up-front rejection of malformed
+        input and avoids the ambiguity of a zero-fill hole on an integer
+        raster without a nodata sentinel (see issue #1843). Prior to
+        #1843 the default was ``'warn'``; callers that relied on the
+        lenient behaviour should pass ``missing_sources='warn'``
+        explicitly.
+        ``'warn'`` is the opt-in escape hatch for partial mosaics: it
+        emits ``GeoTIFFFallbackWarning`` and records the skipped source
+        on ``vrt.holes`` (surfaced as ``attrs['vrt_holes']`` on the
+        public DataArray).
+        ``XRSPATIAL_GEOTIFF_STRICT=1`` forces a raise across the whole
+        module regardless of this kwarg (see issue #1662).
     parsed : VRTDataset or None
         Pre-parsed VRT structure. When supplied, ``vrt_path`` is not
         re-read or re-parsed and the source-path containment check is
@@ -1160,21 +1172,22 @@ def read_vrt(vrt_path: str, *, window=None,
             ) + _CODEC_DECODE_EXCEPTIONS as e:
                 if isinstance(e, PixelSafetyLimitError):
                     raise
-                # Under XRSPATIAL_GEOTIFF_STRICT=1, surface the read failure
-                # so partial mosaics are caught in CI. Default mode warns
-                # once per missing source then continues, preserving the
-                # historical behaviour. See issue #1662.
+                # Default (``missing_sources='raise'``) surfaces the read
+                # failure immediately so a partial mosaic never ships
+                # silently. ``XRSPATIAL_GEOTIFF_STRICT=1`` forces the same
+                # raise module-wide regardless of the kwarg (#1662).
                 #
-                # The lenient default leaves zero-filled holes in
-                # integer VRTs that downstream code cannot tell from
-                # real data unless the band has a nodata sentinel set.
-                # Recording the skipped source on ``vrt.holes`` lets the
-                # public ``read_vrt`` surface a machine-readable
-                # ``attrs['vrt_holes']`` entry on the returned
-                # DataArray, alongside the warning. Callers that need
-                # to fail loudly can either inspect that attr or set
-                # ``XRSPATIAL_GEOTIFF_STRICT=1`` to raise here.
-                # See issue #1734.
+                # The ``missing_sources='warn'`` opt-in keeps the legacy
+                # lenient path: emit ``GeoTIFFFallbackWarning`` once per
+                # unreadable source and record the skip on ``vrt.holes``,
+                # which the public ``read_vrt`` surfaces as
+                # ``attrs['vrt_holes']`` on the returned DataArray. That
+                # path is for callers that explicitly want a holey mosaic
+                # plus a machine-readable list of which sources failed --
+                # zero-filled holes in an integer VRT are otherwise
+                # indistinguishable from real data without a nodata
+                # sentinel, which is why the default was flipped to raise
+                # in #1843. See also issues #1734 and #1843.
                 import warnings
                 from . import _geotiff_strict_mode, GeoTIFFFallbackWarning
                 if missing_sources == 'raise' or _geotiff_strict_mode():
