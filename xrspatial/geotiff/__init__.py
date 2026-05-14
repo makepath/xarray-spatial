@@ -3346,7 +3346,6 @@ def read_geotiff_gpu(source: str, *,
         cy = chunk_dict['y'] if chunk_dict['y'] != -1 else ny
         cx = chunk_dict['x'] if chunk_dict['x'] != -1 else nx
         if cy < ny or cx < nx:
-            import warnings
             warnings.warn(
                 "read_geotiff_gpu(chunks=...) wraps an already fully "
                 "decoded CuPy array in a Dask graph; peak GPU memory is "
