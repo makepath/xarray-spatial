@@ -109,9 +109,11 @@ def _invert_nodata_for_miniswhite(nodata, dtype: np.dtype):
     pixels. After the writer pre-inversion, the on-disk sentinel byte
     matches the on-disk pixel byte that represents "missing", and the
     reader inverts both back to the user domain to drive the NaN mask.
-    Returns ``nodata`` unchanged for signed integer / out-of-range /
-    non-finite / fractional sentinels, mirroring the reader exactly.
-    See issue #1836.
+    Returns ``nodata`` unchanged for signed integer pixels, NaN
+    sentinels, and unsigned sentinels that are out-of-range or
+    fractional or non-finite -- matching the reader exactly. ``+/-inf``
+    on a float sentinel is negated (the reader does the same). See
+    issue #1836.
     """
     if nodata is None:
         return nodata
@@ -1546,6 +1548,30 @@ def write(data: np.ndarray, path: str, *,
     # them to NaN. Issue #1836.
     _samples = data.shape[2] if data.ndim == 3 else 1
     _resolved_photo, _ = _resolve_photometric(photometric, _samples)
+    # An ``extra_tags`` entry with TAG_PHOTOMETRIC silently overrides the
+    # kwarg-resolved value when the IFD is written (issue #1769). The
+    # pre-inversion decision below would otherwise transform pixels for
+    # one photometric value while the on-disk tag advertises a different
+    # one. Refuse the combination so callers do not end up with corrupt
+    # round-trips through the override path.
+    _extra_tags_photo = None
+    if extra_tags is not None:
+        for _et in extra_tags:
+            if _et[0] == TAG_PHOTOMETRIC:
+                _extra_tags_photo = int(_et[3])
+                break
+    if (_extra_tags_photo is not None
+            and _extra_tags_photo != _resolved_photo
+            and (_extra_tags_photo == 0 or _resolved_photo == 0)
+            and _samples == 1):
+        raise ValueError(
+            f"extra_tags TAG_PHOTOMETRIC override ({_extra_tags_photo}) "
+            f"disagrees with photometric={photometric!r} for a "
+            f"single-band raster where MinIsWhite (photometric=0) "
+            f"requires writer-side pixel inversion. The override would "
+            f"either pre-invert pixels for a non-MinIsWhite tag or skip "
+            f"inversion for a MinIsWhite tag. Pass photometric= directly "
+            f"instead, or drop the override.")
     if _resolved_photo == 0 and _samples == 1:
         if cog or overview_levels is not None:
             raise NotImplementedError(
@@ -1837,6 +1863,23 @@ def write_streaming(dask_data, path: str, *,
     height, width = dask_data.shape[:2]
     samples = dask_data.shape[2] if dask_data.ndim == 3 else 1
     dtype = dask_data.dtype
+
+    # MinIsWhite pre-inversion (issue #1836) runs per-array in the eager
+    # ``write`` path. The streaming dask path materialises one tile-row
+    # at a time, so applying the inversion correctly would require
+    # threading the transform through every per-tile segment. That
+    # plumbing is out of scope for the round-trip fix; refuse the
+    # combination so callers do not silently get inverted on-disk values.
+    # Callers can ``.compute()`` first and use the eager ``write`` path.
+    _resolved_photo_ds, _ = _resolve_photometric(photometric, samples)
+    if _resolved_photo_ds == 0 and samples == 1:
+        raise NotImplementedError(
+            "photometric='miniswhite' on a dask-backed array is not "
+            "supported: the streaming writer would have to thread the "
+            "writer-side pixel inversion through every tile segment to "
+            "match the reader's unconditional MinIsWhite inversion "
+            "(issue #1836). Call ``.compute()`` first to use the eager "
+            "writer, or write with photometric='minisblack' / 'auto'.")
 
     # Match the eager path's dtype promotion
     out_dtype = dtype

@@ -3715,6 +3715,26 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             "compression is tile-based; the strip layout is not "
             "implemented on the GPU path. Use to_geotiff(..., gpu=False, "
             "tiled=False) for strip output on CPU.")
+    # MinIsWhite pre-inversion (issue #1836) runs in the eager CPU writer.
+    # The GPU writer assembles tile bytes directly on device; threading
+    # the pixel + nodata-sentinel transform through that pipeline is out
+    # of scope for the round-trip fix. Refuse the combination so callers
+    # do not silently get inverted on-disk values. Move the array to the
+    # CPU and call the eager ``write`` path for MinIsWhite output.
+    from ._writer import _resolve_photometric as _resolve_photo_gpu
+    _gpu_samples_hint = (data.shape[2] if hasattr(data, 'shape')
+                         and data.ndim == 3 else 1)
+    _gpu_resolved_photo, _ = _resolve_photo_gpu(
+        photometric, _gpu_samples_hint)
+    if _gpu_resolved_photo == 0 and _gpu_samples_hint == 1:
+        raise NotImplementedError(
+            "photometric='miniswhite' on the GPU writer is not "
+            "supported: the writer-side pixel inversion that mirrors "
+            "the reader's unconditional MinIsWhite inversion (issue "
+            "#1836) is only wired into the eager CPU ``write`` path. "
+            "Move the array to host memory and call to_geotiff with "
+            "gpu=False, or write with photometric='minisblack' / "
+            "'auto'.")
     # write_geotiff_gpu is always tiled, so validate tile_size here and
     # keep parity with the public to_geotiff entry point.
     _validate_tile_size_arg(tile_size)
