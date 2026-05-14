@@ -236,7 +236,18 @@ class IFD:
 
     @property
     def planar_config(self) -> int:
-        return self.get_value(TAG_PLANAR_CONFIG, 1)
+        v = self.get_value(TAG_PLANAR_CONFIG, 1)
+        if isinstance(v, tuple):
+            v = v[0] if v else 1
+        v = int(v)
+        if v not in (1, 2):
+            raise ValueError(
+                f"Invalid PlanarConfiguration tag value {v!r}. "
+                "TIFF 6.0 only defines 1 (Chunky/Interleaved) and 2 "
+                "(Planar/Separated); a file with an explicit unsupported value "
+                "cannot be decoded safely."
+            )
+        return v
 
     @property
     def jpeg_tables(self) -> bytes | None:
