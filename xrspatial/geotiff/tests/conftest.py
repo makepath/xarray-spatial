@@ -1,11 +1,113 @@
 """Shared fixtures for geotiff tests."""
 from __future__ import annotations
 
+import importlib.util
 import math
+import socket
 import struct
 
 import numpy as np
 import pytest
+
+
+def gpu_available() -> bool:
+    """True iff cupy imports AND a CUDA device is actually usable.
+
+    Some sandboxes ship cupy without a working CUDA runtime. A bare
+    ``import cupy`` succeeds there but every device call fails, so test
+    files that gate on the import alone show false failures.
+    """
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+def loopback_available() -> bool:
+    """True iff a loopback TCP bind succeeds on this host.
+
+    Some sandboxed environments deny ``bind(('127.0.0.1', 0))``. HTTP
+    tests that stand up a loopback server should skip rather than error
+    in that case.
+    """
+    try:
+        s = socket.socket()
+        try:
+            s.bind(('127.0.0.1', 0))
+        finally:
+            s.close()
+    except OSError:
+        return False
+    return True
+
+
+_HAS_GPU = gpu_available()
+_HAS_LOOPBACK = loopback_available()
+
+requires_gpu = pytest.mark.skipif(
+    not _HAS_GPU, reason="cupy + CUDA required"
+)
+requires_loopback = pytest.mark.skipif(
+    not _HAS_LOOPBACK, reason="loopback bind unavailable in this environment"
+)
+
+
+def pytest_collection_modifyitems(config, items):
+    """Auto-skip tests that stand up a loopback HTTP server when the
+    sandbox denies socket bind.
+
+    A test needs loopback iff its function body or any fixture in its
+    closure references ``socketserver.TCPServer(`` or invokes the
+    file-local ``_serve(`` helper. This is finer-grained than skipping
+    every test in a module that imports ``socketserver``: mixed files
+    (e.g. ``test_miniswhite_backend_parity_1797.py`` has both HTTP and
+    a local-file GPU test) keep their non-HTTP coverage in restricted
+    sandboxes.
+    """
+    if _HAS_LOOPBACK:
+        return
+
+    import inspect
+
+    def _source_of(obj) -> str:
+        try:
+            return inspect.getsource(obj)
+        except (OSError, TypeError):
+            return ''
+
+    def _references_loopback(src: str) -> bool:
+        return 'socketserver.TCPServer(' in src or '_serve(' in src
+
+    skip_marker = pytest.mark.skip(
+        reason="loopback bind unavailable in this environment"
+    )
+    for item in items:
+        needs_skip = False
+
+        func = getattr(item, 'function', None)
+        if func is not None and _references_loopback(_source_of(func)):
+            needs_skip = True
+
+        if not needs_skip:
+            fixtureinfo = getattr(item, '_fixtureinfo', None)
+            if fixtureinfo is not None:
+                name2defs = getattr(fixtureinfo, 'name2fixturedefs', {})
+                for fname in getattr(fixtureinfo, 'names_closure', ()):
+                    for fdef in name2defs.get(fname, ()):
+                        ffunc = getattr(fdef, 'func', None)
+                        if ffunc is not None and _references_loopback(
+                            _source_of(ffunc)
+                        ):
+                            needs_skip = True
+                            break
+                    if needs_skip:
+                        break
+
+        if needs_skip:
+            item.add_marker(skip_marker)
 
 
 def make_minimal_tiff(

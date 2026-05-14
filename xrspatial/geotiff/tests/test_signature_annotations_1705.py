@@ -114,12 +114,12 @@ def test_write_geotiff_gpu_streaming_buffer_bytes_runtime_noop(tmp_path):
     """Passing an explicit ``streaming_buffer_bytes`` to the GPU writer
     must remain a no-op. The body still does ``del streaming_buffer_bytes``
     so the value has no effect on the produced file."""
-    import importlib.util
+    import pytest
 
-    if importlib.util.find_spec("cupy") is None:
-        import pytest
+    from .conftest import gpu_available
 
-        pytest.skip("cupy required for write_geotiff_gpu")
+    if not gpu_available():
+        pytest.skip("cupy + CUDA required for write_geotiff_gpu")
 
     import cupy
     import numpy as np
