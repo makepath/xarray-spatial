@@ -414,7 +414,7 @@ def _ip_is_private(ip_str: str) -> bool:
     )
 
 
-def _validate_http_url(url: str) -> None:
+def _validate_http_url(url: str) -> str | None:
     """Reject URLs that would let ``_HTTPSource`` reach unsafe destinations.
 
     Enforces:
@@ -426,6 +426,15 @@ def _validate_http_url(url: str) -> None:
 
     Raises :class:`UnsafeURLError` (a ``ValueError`` subclass) on any of
     the above. Issue #1664.
+
+    Returns the first resolved IP literal so the caller can pin the
+    actual TCP connection to that exact address. Without pinning, the
+    HTTP source resolves the hostname a second time at connect-time,
+    leaving a DNS-rebind window: a hostile resolver can return a public
+    IP here and a private IP at connect. Returns ``None`` when the
+    escape hatch ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` is set, in
+    which case the caller falls back to urllib3's default DNS path.
+    Issues #1664 (validation) and #1846 (pinning).
     """
     import socket
     from urllib.parse import urlparse
@@ -450,7 +459,12 @@ def _validate_http_url(url: str) -> None:
             f"URL {url!r} has no hostname", url=url)
 
     if _http_allow_private_hosts():
-        return
+        # Escape hatch: skip resolution and skip pinning. Callers that
+        # opt into private hosts knowingly trade the DNS-rebind defence
+        # for the ability to hit localhost/dev services without having
+        # to pre-resolve. ``None`` tells the caller to use the default
+        # urllib3 DNS path.
+        return None
 
     # Resolve and reject if any resolved IP is in a private/loopback/link-
     # local/multicast range. Rejecting on *any* match (rather than all)
@@ -463,6 +477,7 @@ def _validate_http_url(url: str) -> None:
         raise UnsafeURLError(
             f"could not resolve host {host!r}: {e}", url=url) from e
 
+    first_safe_ip: str | None = None
     for info in infos:
         sockaddr = info[4]
         # sockaddr is (ip, port) for AF_INET and (ip, port, flow, scope)
@@ -479,6 +494,15 @@ def _validate_http_url(url: str) -> None:
                 f"XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1 to allow.",
                 url=url,
             )
+        if first_safe_ip is None:
+            first_safe_ip = ip_str
+
+    # Defensive: ``getaddrinfo`` returning an empty list would be
+    # unusual, but if it did we have nothing to pin to.
+    if first_safe_ip is None:
+        raise UnsafeURLError(
+            f"host {host!r} produced no usable IP addresses", url=url)
+    return first_safe_ip
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +625,198 @@ class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+# ---------------------------------------------------------------------------
+# Pinned-IP urllib3 connection (issue #1846)
+# ---------------------------------------------------------------------------
+#
+# Security: ``_validate_http_url`` resolves the hostname and rejects any URL
+# that lands on a private / loopback / link-local IP. Without the pinning
+# below, urllib3 would resolve the hostname *again* at connect time. A
+# hostile DNS server can return a public IP at validation time and a
+# private IP at connect time, bypassing the guard (DNS rebinding, TOCTOU).
+#
+# To close that gap we build a custom urllib3 connection that:
+#
+# 1. Opens the TCP socket to the validated IP literal (via
+#    ``socket.create_connection`` directly, so we never re-consult DNS).
+# 2. Leaves ``self.host`` set to the original hostname, which is what
+#    urllib3 writes into the HTTP ``Host`` header (needed for virtual
+#    hosting on shared hosts).
+# 3. Leaves ``self.server_hostname`` set to the original hostname, which
+#    is what urllib3 feeds into TLS SNI and into certificate hostname
+#    verification (so HTTPS cert validation still checks the cert was
+#    issued for the hostname the caller asked for, not for the IP).
+#
+# Residual scope:
+# - Each redirect hop is freshly resolved and freshly pinned. The pin
+#   does not persist across hostname changes; each hop gets its own
+#   validate-and-pin pair.
+# - An attacker who legitimately controls multiple public IPs on a
+#   hostname can still influence which one we pick (we take the first).
+#   They cannot make us connect to a private IP.
+
+
+def _build_pinned_connection_classes():
+    """Build pinned ``HTTPConnection`` / ``HTTPSConnection`` subclasses.
+
+    Done lazily so urllib3 stays an optional import. The subclasses
+    override ``_new_conn`` to dial the validated IP directly.
+    """
+    import socket as _socket
+    from urllib3.connection import HTTPConnection, HTTPSConnection
+    from urllib3.exceptions import (
+        ConnectTimeoutError,
+        NameResolutionError,
+        NewConnectionError,
+    )
+
+    class _PinnedHTTPConnection(HTTPConnection):
+        """``HTTPConnection`` that dials a fixed IP, ignoring DNS.
+
+        ``pinned_ip`` is set after construction (urllib3 builds the
+        connection through ``ConnectionCls(host=..., port=..., ...)``
+        without passing custom kwargs, so we attach the pin via a
+        per-pool factory rather than via __init__).
+        """
+
+        pinned_ip: str | None = None
+
+        def _new_conn(self) -> _socket.socket:
+            ip = self.pinned_ip
+            if ip is None:
+                # Should never happen for pools we build, but fall
+                # back to default behaviour rather than crash.
+                return super()._new_conn()
+            try:
+                sock = _socket.create_connection(
+                    (ip, self.port),
+                    self.timeout,
+                    source_address=self.source_address,
+                )
+            except _socket.gaierror as e:
+                # Pinning to a literal IP shouldn't trigger DNS, but
+                # IPv6 literals can still fail to resolve into a
+                # sockaddr on misconfigured stacks.
+                raise NameResolutionError(self.host, self, e) from e
+            except _socket.timeout as e:
+                raise ConnectTimeoutError(
+                    self,
+                    f"Connection to {self.host} ({ip}) timed out. "
+                    f"(connect timeout={self.timeout})",
+                ) from e
+            except OSError as e:
+                raise NewConnectionError(
+                    self,
+                    f"Failed to establish a new connection to "
+                    f"{self.host} ({ip}): {e}",
+                ) from e
+            # Apply the socket options urllib3 normally sets (nodelay
+            # etc.). Mirrors HTTPConnection._new_conn behaviour.
+            for opt in self.socket_options or []:
+                sock.setsockopt(*opt)
+            return sock
+
+    class _PinnedHTTPSConnection(HTTPSConnection):
+        """HTTPS version: dial the pinned IP, keep SNI on the hostname."""
+
+        pinned_ip: str | None = None
+
+        def _new_conn(self) -> _socket.socket:
+            ip = self.pinned_ip
+            if ip is None:
+                return super()._new_conn()
+            try:
+                sock = _socket.create_connection(
+                    (ip, self.port),
+                    self.timeout,
+                    source_address=self.source_address,
+                )
+            except _socket.gaierror as e:
+                raise NameResolutionError(self.host, self, e) from e
+            except _socket.timeout as e:
+                raise ConnectTimeoutError(
+                    self,
+                    f"Connection to {self.host} ({ip}) timed out. "
+                    f"(connect timeout={self.timeout})",
+                ) from e
+            except OSError as e:
+                raise NewConnectionError(
+                    self,
+                    f"Failed to establish a new connection to "
+                    f"{self.host} ({ip}): {e}",
+                ) from e
+            for opt in self.socket_options or []:
+                sock.setsockopt(*opt)
+            return sock
+
+    return _PinnedHTTPConnection, _PinnedHTTPSConnection
+
+
+_pinned_conn_classes = None
+
+
+def _get_pinned_conn_classes():
+    """Return cached (PinnedHTTPConn, PinnedHTTPSConn) tuple."""
+    global _pinned_conn_classes
+    if _pinned_conn_classes is None:
+        _pinned_conn_classes = _build_pinned_connection_classes()
+    return _pinned_conn_classes
+
+
+def _make_pinned_pool(scheme: str, host: str, port: int, pinned_ip: str,
+                     connect_timeout: float, read_timeout: float):
+    """Build a urllib3 ConnectionPool whose connections dial *pinned_ip*.
+
+    The pool's ``host`` stays the original hostname so the HTTP ``Host``
+    header and TLS SNI / cert verification use the name, not the IP.
+    """
+    import urllib3
+
+    HTTPConn, HTTPSConn = _get_pinned_conn_classes()
+
+    if scheme == 'https':
+        # Subclass the connection so we can stamp ``pinned_ip`` on the
+        # class -- urllib3 instantiates it via ``ConnectionCls(host=...,
+        # port=..., ...)`` and there's no straightforward kwarg to pass
+        # extra attributes. A per-pool subclass is the cleanest hook.
+        class _Conn(HTTPSConn):
+            pass
+        _Conn.pinned_ip = pinned_ip
+        pool = urllib3.HTTPSConnectionPool(
+            host=host,
+            port=port,
+            timeout=urllib3.Timeout(
+                connect=connect_timeout, read=read_timeout),
+            maxsize=10,
+            block=False,
+            retries=urllib3.Retry(
+                total=2, backoff_factor=0.1, redirect=False),
+            # ``server_hostname`` is what becomes the TLS SNI string
+            # and the name urllib3 verifies the cert against. We keep
+            # it set to the original hostname so cert validation still
+            # checks the name, not the IP literal.
+            server_hostname=host,
+        )
+        pool.ConnectionCls = _Conn
+        return pool
+
+    class _Conn(HTTPConn):
+        pass
+    _Conn.pinned_ip = pinned_ip
+    pool = urllib3.HTTPConnectionPool(
+        host=host,
+        port=port,
+        timeout=urllib3.Timeout(
+            connect=connect_timeout, read=read_timeout),
+        maxsize=10,
+        block=False,
+        retries=urllib3.Retry(
+            total=2, backoff_factor=0.1, redirect=False),
+    )
+    pool.ConnectionCls = _Conn
+    return pool
+
+
 _stdlib_opener = None
 
 
@@ -622,16 +838,27 @@ class _HTTPSource:
     """
 
     def __init__(self, url: str):
-        # SSRF defense (issue #1664): validate scheme / host *before*
-        # any network call. UnsafeURLError subclasses ValueError so
-        # callers that already catch ValueError keep working. The check
-        # is best-effort -- DNS results can change between validate
-        # time and connect time, but rejecting at construction blocks
-        # the vast majority of static SSRF payloads.
-        _validate_http_url(url)
+        # Security: ``_validate_http_url`` runs the SSRF allow-list
+        # (scheme + host) and returns the validated IP literal so we
+        # can pin the actual TCP connection to that exact address.
+        # Without pinning there is a DNS-rebind TOCTOU: urllib3 would
+        # resolve the hostname a second time at connect-time, and a
+        # hostile resolver can flip from public to private IP between
+        # the two lookups. The escape hatch
+        # ``XRSPATIAL_GEOTIFF_ALLOW_PRIVATE_HOSTS=1`` returns ``None``
+        # here -- we then fall back to urllib3's default DNS path.
+        # UnsafeURLError subclasses ValueError so callers that already
+        # catch ValueError keep working. Issues #1664, #1846.
+        self._pinned_ip = _validate_http_url(url)
         self._url = url
         self._size = None
+        # Connection-pool manager is still shared across instances for
+        # the unpinned escape-hatch path. The pinned path builds its
+        # own ``HTTP[S]ConnectionPool`` per (scheme, host, port, ip)
+        # tuple and caches it on ``self`` so subsequent range requests
+        # to the same hop reuse TCP/TLS state.
         self._pool = _get_http_pool()
+        self._pinned_pools: dict[tuple, object] = {}
         self._connect_timeout = _http_connect_timeout()
         self._read_timeout = _http_read_timeout()
 
@@ -645,6 +872,26 @@ class _HTTPSource:
         return urllib3.Timeout(
             connect=self._connect_timeout, read=self._read_timeout)
 
+    def _get_pinned_pool(self, scheme: str, host: str, port: int | None,
+                         pinned_ip: str):
+        """Return (creating if needed) a pinned pool for this hop.
+
+        Pools are cached per (scheme, host, port, ip) tuple so range
+        requests against the same URL reuse the TCP/TLS connection.
+        Redirect hops to a different hostname get their own pool with
+        their own pin.
+        """
+        if port is None:
+            port = 443 if scheme == 'https' else 80
+        key = (scheme, host, port, pinned_ip)
+        pool = self._pinned_pools.get(key)
+        if pool is None:
+            pool = _make_pinned_pool(
+                scheme, host, port, pinned_ip,
+                self._connect_timeout, self._read_timeout)
+            self._pinned_pools[key] = pool
+        return pool
+
     def _request(self, headers: dict | None = None):
         """Issue a GET with manual, validated redirect following.
 
@@ -653,12 +900,19 @@ class _HTTPSource:
         ``Location`` runs through :func:`_validate_http_url` before the
         next GET, defeating a public-to-private 3xx bounce. Cap at
         :data:`_HTTP_MAX_REDIRECTS` hops. Issue #1664.
+
+        Security: each hop also gets the resolved IP pinned into the
+        connection's TCP target. The pin closes the DNS-rebind window
+        that exists between ``getaddrinfo`` in the validator and the
+        second ``getaddrinfo`` urllib3 would otherwise do at connect
+        time. Issue #1846.
         """
         from urllib.parse import urljoin
-        pool = self._pool
         timeout = self._urllib3_timeout()
         current_url = self._url
+        current_pin = self._pinned_ip
         for _ in range(_HTTP_MAX_REDIRECTS + 1):
+            pool = self._pool_for_request(current_url, current_pin)
             resp = pool.request(
                 'GET', current_url,
                 headers=headers,
@@ -673,7 +927,11 @@ class _HTTPSource:
                 # requested, not against ``self._url``: chained
                 # redirects can land us on a different origin.
                 next_url = urljoin(current_url, location)
-                _validate_http_url(next_url)
+                # Re-validate and re-pin for the new hop. If the new
+                # hop is a different hostname, this gives us a fresh
+                # IP to pin to; if the escape hatch is set, this
+                # returns ``None`` and we fall back to unpinned.
+                current_pin = _validate_http_url(next_url)
                 current_url = next_url
                 continue
             return resp
@@ -682,6 +940,29 @@ class _HTTPSource:
             f"starting from {self._url!r}",
             url=self._url,
         )
+
+    def _pool_for_request(self, url: str, pinned_ip: str | None):
+        """Pick the right pool for *url*: pinned if we have an IP,
+        otherwise the shared default ``PoolManager``.
+
+        Tests that monkeypatch ``self._pool`` to a mock keep working
+        because we still consult ``self._pool`` when no pin is set.
+        """
+        if pinned_ip is None:
+            return self._pool
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or '').lower()
+        host = parsed.hostname or ''
+        # If a test has swapped ``self._pool`` for a mock, honour that
+        # mock for hops where the test wants to script responses. We
+        # detect the mock by checking whether ``self._pool`` is the
+        # module-level urllib3 PoolManager. Anything else (e.g. the
+        # ``_MockPool`` in the SSRF tests) wins so existing tests stay
+        # decoupled from this change.
+        if self._pool is not _http_pool:
+            return self._pool
+        return self._get_pinned_pool(scheme, host, parsed.port, pinned_ip)
 
     def read_range(self, start: int, length: int) -> bytes:
         # Match the ``b''``-for-non-positive-length convention used by
