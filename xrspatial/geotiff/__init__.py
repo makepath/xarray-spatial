@@ -611,14 +611,16 @@ def open_geotiff(source: str | BinaryIO, *,
         Passing this kwarg with ``gpu=False`` raises ``ValueError``
         because the policy only applies to the GPU pipeline. See
         ``read_geotiff_gpu`` for the full description.
-    missing_sources : {'warn', 'raise'}, optional
+    missing_sources : {'raise', 'warn'}, optional
         Forwarded to ``read_vrt`` when the source is a ``.vrt`` file.
-        ``'warn'`` preserves the historical behavior: emit
+        When the caller does not pass this kwarg, the public
+        ``read_vrt`` default applies (``'raise'`` since #1860).
+        ``'raise'`` fails immediately on an unreadable backing source.
+        ``'warn'`` is the opt-in lenient mode: emit
         ``GeoTIFFFallbackWarning``, record ``attrs['vrt_holes']``, and
-        return a partial mosaic. ``'raise'`` fails immediately. Passing
-        this kwarg with a non-VRT source raises ``ValueError`` because
-        the policy only applies to the VRT pipeline. See ``read_vrt``
-        for the full description.
+        return a partial mosaic. Passing this kwarg with a non-VRT
+        source raises ``ValueError`` because the policy only applies to
+        the VRT pipeline. See ``read_vrt`` for the full description.
 
     Returns
     -------
@@ -3795,7 +3797,7 @@ def read_vrt(source: str, *,
              chunks: int | tuple | None = None,
              gpu: bool = False,
              max_pixels: int | None = None,
-             missing_sources: str = 'warn') -> xr.DataArray:
+             missing_sources: str = 'raise') -> xr.DataArray:
     """Read a GDAL Virtual Raster Table (.vrt) into an xarray.DataArray.
 
     The VRT's source GeoTIFFs are read via windowed reads and assembled
@@ -3824,12 +3826,21 @@ def read_vrt(source: str, *,
         assembled VRT region. None uses the reader default (~1 billion).
         Matches ``open_geotiff`` / ``read_geotiff_dask`` /
         ``read_geotiff_gpu``.
-    missing_sources : {'warn', 'raise'}, default 'warn'
-        Policy for unreadable source files referenced by the VRT. ``'warn'``
-        preserves the historical behavior: emit ``GeoTIFFFallbackWarning``,
-        record ``attrs['vrt_holes']``, and return a partial mosaic.
-        ``'raise'`` fails immediately. ``XRSPATIAL_GEOTIFF_STRICT=1`` also
-        raises, even when ``missing_sources='warn'``.
+    missing_sources : {'raise', 'warn'}, default 'raise'
+        Policy for unreadable source files referenced by the VRT.
+        ``'raise'`` (the default since #1860) fails immediately on an
+        unreadable backing source so a partial mosaic never surfaces
+        silently. This matches the internal ``_vrt.read_vrt`` default
+        and the rest of the geotiff module's up-front rejection of
+        malformed input. Prior to #1860 the public default was
+        ``'warn'``; callers that relied on the lenient behaviour pass
+        ``missing_sources='warn'`` explicitly.
+        ``'warn'`` is the opt-in escape hatch for partial mosaics: it
+        emits ``GeoTIFFFallbackWarning``, records ``attrs['vrt_holes']``,
+        and returns the mosaic with holes left as the band's nodata
+        sentinel (or zero on integer bands without a sentinel).
+        ``XRSPATIAL_GEOTIFF_STRICT=1`` forces a raise across the whole
+        module regardless of this kwarg.
 
     Returns
     -------

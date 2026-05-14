@@ -76,7 +76,10 @@ def test_skipped_source_records_vrt_holes_attr(
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', GeoTIFFFallbackWarning)
-        da = read_vrt(str(vrt_path))
+        # Public ``read_vrt`` defaults to ``missing_sources='raise'``
+        # since #1860; the lenient path that populates ``vrt_holes`` is
+        # now an explicit opt-in.
+        da = read_vrt(str(vrt_path), missing_sources='warn')
 
     # Confirm the integer-specific failure mode is in play: the hole is
     # filled with zeros (not NaN), indistinguishable from real data
@@ -168,7 +171,10 @@ def test_warning_mentions_how_to_detect_holes(clear_strict_env, tmp_path):
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        read_vrt(str(vrt_path))
+        # The lenient path is now an explicit opt-in (#1860); the
+        # warning content this test pins is still emitted under
+        # ``missing_sources='warn'``.
+        read_vrt(str(vrt_path), missing_sources='warn')
 
     fallback = [
         x for x in w if issubclass(x.category, GeoTIFFFallbackWarning)
