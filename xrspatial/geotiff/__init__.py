@@ -2737,8 +2737,14 @@ def read_geotiff_gpu(source: str, *,
     CuPy-backed DataArray that stays on device memory. No CPU->GPU
     transfer needed for downstream xrspatial GPU operations.
 
-    With ``chunks=``, returns a Dask+CuPy DataArray for out-of-core
-    GPU pipelines.
+    .. note::
+
+        ``chunks=`` wraps the fully decoded CuPy array in a Dask graph
+        after the fact. Peak GPU memory is the full raster size, not
+        the chunk size; this is **not** an out-of-core pipeline. Lazy
+        per-chunk GPU decoding is tracked in issue #1876. For a raster
+        that does not fit in GPU memory, decode on CPU and upload the
+        chunks you need.
 
     Requires: cupy, numba with CUDA support.
 
@@ -2766,7 +2772,9 @@ def read_geotiff_gpu(source: str, *,
         yields a 2D DataArray.
     chunks : int, tuple, or None
         If set, return a Dask-chunked CuPy DataArray. int for square
-        chunks, (row, col) tuple for rectangular.
+        chunks, (row, col) tuple for rectangular. The full array is
+        decoded into GPU memory first and then wrapped in a Dask graph;
+        this is **not** out-of-core. See the note above.
     name : str or None
         Name for the DataArray.
     max_pixels : int or None
@@ -3330,6 +3338,24 @@ def read_geotiff_gpu(source: str, *,
             chunk_dict = {'y': chunks, 'x': chunks}
         else:
             chunk_dict = {'y': chunks[0], 'x': chunks[1]}
+        # Chunking happens after the full raster has already been decoded
+        # into a single CuPy array. Warn so users do not assume an
+        # out-of-core pipeline; for large rasters this can OOM the GPU
+        # before any chunk is ever touched. Tracked by issue #1876.
+        ny, nx = arr_gpu.shape[:2]
+        cy = chunk_dict['y'] if chunk_dict['y'] != -1 else ny
+        cx = chunk_dict['x'] if chunk_dict['x'] != -1 else nx
+        if cy < ny or cx < nx:
+            import warnings
+            warnings.warn(
+                "read_geotiff_gpu(chunks=...) wraps an already fully "
+                "decoded CuPy array in a Dask graph; peak GPU memory is "
+                "the full raster size, not the chunk size. For rasters "
+                "that do not fit in GPU memory, decode on CPU and upload "
+                "the chunks you need (issue #1876).",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         result = result.chunk(chunk_dict)
 
     return result
