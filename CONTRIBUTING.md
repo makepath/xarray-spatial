@@ -45,6 +45,8 @@ In order to avoid duplication of effort, it's always a good idea to comment on a
 
 ### AI-Assisted Contribution and Review
 
+See [AI_POLICY.md](AI_POLICY.md) for the full AI-assisted contribution policy. The summary below covers the essentials.
+
 xarray-spatial welcomes responsible AI-assisted development and review when it helps contributors move faster, improve quality, and reduce maintainer burden. The project has limited dedicated development capacity, so contributors are encouraged to use AI tools for testing, debugging, feature work, documentation, deployment, and release preparation.
 
 Attribution and responsibility belong to human contributors. Do not add AI tools, coding agents, or AI companies as commit authors, co-authors, reviewers, or attribution lines in commits, pull requests, changelogs, or release notes.
