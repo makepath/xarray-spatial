@@ -9,7 +9,7 @@ import math
 import os
 import struct
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as _dc_replace
 from typing import Union
 from xml.sax.saxutils import escape as _xml_escape, quoteattr as _xml_quoteattr
 
@@ -888,7 +888,16 @@ def read_vrt(vrt_path: str, *, window=None,
     from ._reader import PixelSafetyLimitError, read_to_array
 
     if parsed is not None:
-        vrt = parsed
+        # Shallow-copy with a fresh ``holes`` list. ``read_vrt`` appends
+        # to ``vrt.holes`` on missing/unreadable sources, and under
+        # chunked dispatch (issue #1825) the same ``parsed`` instance is
+        # threaded into every per-chunk task. Mutating the shared list
+        # would leak skipped-source records across tasks (racy growth
+        # under the threaded scheduler, and cumulative duplication
+        # across calls if a caller ever reused the parsed object). The
+        # dataclass replace is O(1) over a handful of fields; the bands
+        # / sources / dtypes references are intentionally shared.
+        vrt = _dc_replace(parsed, holes=[])
     else:
         xml_str = _read_vrt_xml(vrt_path)
         vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
@@ -1488,9 +1497,13 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     if sf == 3:
         vrt_dtype_name = 'Float64' if bps == 64 else 'Float32'
     elif sf == 2:
-        vrt_dtype_name = {8: 'Int8', 16: 'Int16', 32: 'Int32'}.get(bps, 'Int32')
+        vrt_dtype_name = {
+            8: 'Int8', 16: 'Int16', 32: 'Int32', 64: 'Int64',
+        }.get(bps, 'Int32')
     else:
-        vrt_dtype_name = {8: 'Byte', 16: 'UInt16', 32: 'UInt32'}.get(bps, 'Byte')
+        vrt_dtype_name = {
+            8: 'Byte', 16: 'UInt16', 32: 'UInt32', 64: 'UInt64',
+        }.get(bps, 'Byte')
 
     srs = crs_wkt or first.get('crs_wkt') or ''
     nd = nodata if nodata is not None else first.get('nodata')

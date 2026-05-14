@@ -215,3 +215,52 @@ def test_no_path_containment_revalidation_per_chunk(monkeypatch,
         f"per-block compute triggered extra parses "
         f"({parse_calls['n']} vs {parses_after_construction})"
     )
+
+
+def test_parsed_kwarg_does_not_mutate_caller_holes(single_tile_vrt_1825):
+    """``read_vrt(parsed=...)`` must not mutate the caller's ``holes``.
+
+    The chunked dispatcher threads a single parsed ``VRTDataset`` into
+    every per-chunk task. ``read_vrt`` appends skipped-source records to
+    ``vrt.holes`` when a backing file is missing; without a defensive
+    copy the appends would land on the dispatcher's shared object and
+    leak across tasks (racy under the threaded scheduler, and
+    cumulatively across calls if a caller ever reused the parsed
+    object). Pin that ``parsed.holes`` stays untouched.
+    """
+    vrt_path, _ = single_tile_vrt_1825
+    from xrspatial.geotiff._vrt import (
+        _read_vrt_xml,
+        parse_vrt,
+        read_vrt as _read_vrt_internal,
+    )
+
+    xml_str = _read_vrt_xml(vrt_path)
+    vrt_dir = os.path.dirname(os.path.abspath(vrt_path))
+    parsed = parse_vrt(xml_str, vrt_dir)
+
+    # Point the only source at a path that does not exist so the
+    # lenient ``missing_sources='warn'`` branch fires and would append
+    # a record onto ``holes``.
+    parsed.bands[0].sources[0].filename = os.path.join(vrt_dir, 'gone.tif')
+    holes_id_before = id(parsed.holes)
+
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        arr, returned = _read_vrt_internal(
+            vrt_path, parsed=parsed, missing_sources='warn',
+        )
+
+    assert parsed.holes == [], (
+        f"parsed.holes was mutated across the read; got {parsed.holes!r}"
+    )
+    assert id(parsed.holes) == holes_id_before, (
+        "parsed.holes list object was replaced -- the caller's reference "
+        "is now stale"
+    )
+    # The returned VRTDataset is the per-call working copy and DID
+    # collect the skipped-source record.
+    assert len(returned.holes) == 1
+    assert returned.holes[0]['source'].endswith('gone.tif')
+    assert arr.shape == (64, 64)
