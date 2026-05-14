@@ -2459,13 +2459,20 @@ def read_geotiff_dask(source: str, *,
     # oversized request before any task is scheduled saves the caller
     # from a misleading "tile size exceeds max_pixels" error in a
     # chunk that happens to align with the file's tile grid.
-    if max_pixels is not None:
-        eff_bands = (1 if band is not None
-                     else (n_bands if n_bands > 0 else 1))
-        if full_h * full_w * eff_bands > max_pixels:
-            raise ValueError(
-                f"Requested region {full_h}x{full_w}x{eff_bands} "
-                f"exceeds max_pixels={max_pixels:,}.")
+    # ``max_pixels=None`` substitutes the module default to match the
+    # eager (``read_to_array``) and VRT chunked paths. Without the
+    # substitution the guard would skip entirely on ``None`` and a
+    # caller could build a lazy graph over a region far larger than the
+    # documented safety cap. See issue #1838.
+    from ._reader import MAX_PIXELS_DEFAULT as _MAX_PIXELS_DEFAULT
+    effective_max_pixels = (max_pixels if max_pixels is not None
+                            else _MAX_PIXELS_DEFAULT)
+    eff_bands = (1 if band is not None
+                 else (n_bands if n_bands > 0 else 1))
+    if full_h * full_w * eff_bands > effective_max_pixels:
+        raise ValueError(
+            f"Requested region {full_h}x{full_w}x{eff_bands} "
+            f"exceeds max_pixels={effective_max_pixels:,}.")
 
     if name is None:
         import os
