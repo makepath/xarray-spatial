@@ -4431,11 +4431,14 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     import dask.array as da
 
     from ._reader import MAX_PIXELS_DEFAULT
-    from ._vrt import parse_vrt
+    from ._vrt import _read_vrt_xml, parse_vrt
 
-    # Parse the VRT XML up-front (cheap; no pixel decode).
-    with open(source, 'r') as f:
-        xml_str = f.read()
+    # Parse the VRT XML up-front (cheap; no pixel decode). Route through
+    # ``_read_vrt_xml`` so the 64 MiB ``XRSPATIAL_VRT_MAX_XML_BYTES`` cap
+    # added in #1818 applies to the chunked dispatcher too; a raw
+    # ``open().read()`` here would let a multi-GB attacker-supplied VRT
+    # exhaust memory before any parser-side guard fires (issue #1831).
+    xml_str = _read_vrt_xml(source)
     vrt_dir = _os.path.dirname(_os.path.abspath(source))
     vrt = parse_vrt(xml_str, vrt_dir)
 
