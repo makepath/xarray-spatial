@@ -132,7 +132,10 @@ class GeoInfo:
     crs_epsg: int | None = None
     model_type: int = 0
     raster_type: int = RASTER_PIXEL_IS_AREA
-    nodata: float | None = None
+    # int when GDAL_NODATA is a plain integer literal (so 64-bit sentinels
+    # round-trip exactly), float for NaN / Inf / scientific notation /
+    # fractional values, None when the tag is absent.  See issue #1847.
+    nodata: int | float | None = None
     colormap: list | None = None  # list of (R, G, B, A) float tuples, or None
     x_resolution: float | None = None
     y_resolution: float | None = None
@@ -497,7 +500,7 @@ def _extract_transform(ifd: IFD) -> tuple[GeoTransform, bool]:
     return GeoTransform(), False
 
 
-def _parse_nodata_str(text: str) -> int | float | None:
+def _parse_nodata_str(text: str | None) -> int | float | None:
     """Parse a GDAL_NODATA tag string at full integer precision when possible.
 
     Returns a Python ``int`` for plain integer literals (so 64-bit

@@ -18,8 +18,8 @@ See issue #1847.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
-import tempfile
 
 import numpy as np
 import pytest
@@ -268,19 +268,27 @@ class TestVrtRoundTrip:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def cupy_or_skip():
+def _gpu_available() -> bool:
+    """True if cupy is importable and CUDA is initialised."""
+    if importlib.util.find_spec("cupy") is None:
+        return False
     try:
-        import cupy  # noqa: F401
-        from numba import cuda
-        if not cuda.is_available():
-            pytest.skip("CUDA not available")
-    except ImportError:
-        pytest.skip("cupy not installed")
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+_HAS_GPU = _gpu_available()
+_gpu_only = pytest.mark.skipif(
+    not _HAS_GPU,
+    reason="cupy + CUDA required",
+)
 
 
 class TestGpuPathParity:
-    def test_uint64_max_masked_via_gpu(self, tmp_path, cupy_or_skip):
+    @_gpu_only
+    def test_uint64_max_masked_via_gpu(self, tmp_path):
         from xrspatial.geotiff import read_geotiff_gpu
 
         arr = np.full((16, 16), 100, dtype=np.uint64)
