@@ -1,11 +1,77 @@
 """Shared fixtures for geotiff tests."""
 from __future__ import annotations
 
+import importlib.util
 import math
+import socket
 import struct
 
 import numpy as np
 import pytest
+
+
+def gpu_available() -> bool:
+    """True iff cupy imports AND a CUDA device is actually usable.
+
+    Some sandboxes ship cupy without a working CUDA runtime. A bare
+    ``import cupy`` succeeds there but every device call fails, so test
+    files that gate on the import alone show false failures.
+    """
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+def loopback_available() -> bool:
+    """True iff a loopback TCP bind succeeds on this host.
+
+    Some sandboxed environments deny ``bind(('127.0.0.1', 0))``. HTTP
+    tests that stand up a loopback server should skip rather than error
+    in that case.
+    """
+    try:
+        s = socket.socket()
+        try:
+            s.bind(('127.0.0.1', 0))
+        finally:
+            s.close()
+    except OSError:
+        return False
+    return True
+
+
+_HAS_GPU = gpu_available()
+_HAS_LOOPBACK = loopback_available()
+
+requires_gpu = pytest.mark.skipif(
+    not _HAS_GPU, reason="cupy + CUDA required"
+)
+requires_loopback = pytest.mark.skipif(
+    not _HAS_LOOPBACK, reason="loopback bind unavailable in this environment"
+)
+
+
+def pytest_collection_modifyitems(config, items):
+    """Auto-skip tests that stand up a loopback HTTP server when the
+    sandbox denies socket bind. A test opts in implicitly by importing
+    ``socketserver`` in its module; every HTTP test in this directory
+    does so to host a tiny in-process server.
+    """
+    if _HAS_LOOPBACK:
+        return
+    skip_marker = pytest.mark.skip(
+        reason="loopback bind unavailable in this environment"
+    )
+    for item in items:
+        module = getattr(item, 'module', None)
+        if module is None:
+            continue
+        if 'socketserver' in vars(module):
+            item.add_marker(skip_marker)
 
 
 def make_minimal_tiff(

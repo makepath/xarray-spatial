@@ -277,14 +277,12 @@ class TestCOGPublicAPIOverviews:
         assert len(ifds) >= 2
 
 
-try:
-    import cupy
-    _HAS_CUPY = True
-except ImportError:
-    _HAS_CUPY = False
+from .conftest import gpu_available
+
+_HAS_GPU = gpu_available()
 
 
-@pytest.mark.skipif(not _HAS_CUPY, reason="CuPy not installed")
+@pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 class TestGPUCOGOverviews:
     """GPU-specific COG overview tests (require CuPy + CUDA)."""
 
