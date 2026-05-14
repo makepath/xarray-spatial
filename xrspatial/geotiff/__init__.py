@@ -87,6 +87,12 @@ _ON_GPU_FAILURE_SENTINEL = object()
 # None is itself a value a caller could supply alongside crs=. See
 # issue #1715.
 _CRS_WKT_DEPRECATED_SENTINEL = object()
+# ``open_geotiff`` needs to tell "caller never set missing_sources" (default
+# sentinel: skip forwarding so the read_vrt default applies, and reject the
+# kwarg up front for non-VRT sources) from "caller set missing_sources=<value>"
+# (forward verbatim to read_vrt). Mirrors the on_gpu_failure pattern. See
+# issue #1810.
+_MISSING_SOURCES_SENTINEL = object()
 
 # Names of dims that ``to_geotiff`` / ``write_geotiff_gpu`` treat as the
 # non-spatial band axis. Used both to remap ``(band, y, x)`` inputs to
@@ -754,6 +760,7 @@ def open_geotiff(source: str | BinaryIO, *,
                  gpu: bool = False,
                  max_pixels: int | None = None,
                  on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
+                 missing_sources: str = _MISSING_SOURCES_SENTINEL,
                  ) -> xr.DataArray:
     """Read a GeoTIFF, COG, or VRT file into an xarray.DataArray.
 
@@ -799,6 +806,14 @@ def open_geotiff(source: str | BinaryIO, *,
         Passing this kwarg with ``gpu=False`` raises ``ValueError``
         because the policy only applies to the GPU pipeline. See
         ``read_geotiff_gpu`` for the full description.
+    missing_sources : {'warn', 'raise'}, optional
+        Forwarded to ``read_vrt`` when the source is a ``.vrt`` file.
+        ``'warn'`` preserves the historical behavior: emit
+        ``GeoTIFFFallbackWarning``, record ``attrs['vrt_holes']``, and
+        return a partial mosaic. ``'raise'`` fails immediately. Passing
+        this kwarg with a non-VRT source raises ``ValueError`` because
+        the policy only applies to the VRT pipeline. See ``read_vrt``
+        for the full description.
 
     Returns
     -------
@@ -844,8 +859,24 @@ def open_geotiff(source: str | BinaryIO, *,
             "Pass gpu=True to enable the GPU pipeline, or drop "
             "on_gpu_failure to keep the default CPU path.")
 
+    # ``missing_sources`` is VRT-only. Reject it up front when the source
+    # is not a ``.vrt`` file so callers learn the policy is being ignored
+    # instead of getting a silent drop -- same pattern ``on_gpu_failure``
+    # uses above for the GPU-only kwarg, and the same class of dispatcher
+    # silently-drops-backend-kwarg bug #1561 / #1605 / #1685 / #1795 fixed
+    # for the other VRT/GPU kwargs. See issue #1810.
+    missing_sources_passed = (
+        missing_sources is not _MISSING_SOURCES_SENTINEL)
+    _is_vrt_source = (
+        isinstance(source, str) and source.lower().endswith('.vrt'))
+    if missing_sources_passed and not _is_vrt_source:
+        raise ValueError(
+            "missing_sources only applies to VRT sources. "
+            "Pass a .vrt path to enable the VRT pipeline, or drop "
+            "missing_sources to keep the default GeoTIFF path.")
+
     # VRT files (string paths only -- VRT XML references other files on disk)
-    if isinstance(source, str) and source.lower().endswith('.vrt'):
+    if _is_vrt_source:
         # ``read_vrt`` does not accept ``overview_level`` (the VRT XML
         # references its own source files; overview selection would need
         # to apply to each one). Silently dropping the kwarg was the same
@@ -872,9 +903,12 @@ def open_geotiff(source: str | BinaryIO, *,
                 "VRT reads do not go through the GPU decoder pipeline; "
                 "drop the kwarg or call read_geotiff_gpu directly on a "
                 ".tif source.")
+        vrt_kwargs = {}
+        if missing_sources_passed:
+            vrt_kwargs['missing_sources'] = missing_sources
         return read_vrt(source, dtype=dtype, window=window, band=band,
                         name=name, chunks=chunks, gpu=gpu,
-                        max_pixels=max_pixels)
+                        max_pixels=max_pixels, **vrt_kwargs)
 
     # File-like buffers don't support the GPU or dask code paths because
     # those re-open the source by path from worker tasks or device-side
