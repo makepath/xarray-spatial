@@ -281,19 +281,22 @@ class TestClassicTIFFLargeOffset:
     """T-8: classic TIFF stores 32-bit offsets; offsets > 4 GB don't fit.
 
     There's no way to actually express an offset > 4 GB in a classic
-    TIFF (the field is uint32).  What we want to verify is that pointing
-    a classic-TIFF first-IFD at an offset beyond the buffer terminates
-    cleanly via ``parse_all_ifds`` rather than reading garbage.
+    TIFF (the field is uint32). What we want to verify is that pointing
+    a classic-TIFF first-IFD at an offset beyond the buffer is rejected
+    by ``parse_all_ifds`` with a clear error rather than silently
+    yielding an empty list (which used to mask truncated files).
+    See issue #1863.
     """
 
     def test_first_ifd_offset_past_buffer(self):
         bo = '<'
-        # Header points to offset 0xFFFFFF00 -- well past any plausible
-        # buffer.  parse_all_ifds short-circuits when offset >= len(data).
+        # Header points to offset 0xFFFFFF00, well past any plausible
+        # buffer. parse_all_ifds raises ValueError on chain offsets
+        # beyond EOF (matching the MAX_IFDS convention).
         out = bytearray()
         out.extend(b'II')
         out.extend(struct.pack(f'{bo}H', 42))
         out.extend(struct.pack(f'{bo}I', 0xFFFFFF00))
         header = parse_header(bytes(out))
-        ifds = parse_all_ifds(bytes(out), header)
-        assert ifds == []  # no IFDs, no crash
+        with pytest.raises(ValueError, match="malformed"):
+            parse_all_ifds(bytes(out), header)

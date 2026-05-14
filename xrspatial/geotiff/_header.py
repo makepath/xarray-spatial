@@ -696,7 +696,10 @@ def parse_all_ifds(data: bytes | memoryview,
     while offset != 0 and offset not in seen:
         seen.add(offset)
         if offset >= len(data):
-            break
+            raise ValueError(
+                f"TIFF IFD chain offset {offset} points past end of file "
+                f"({len(data)} bytes); file is malformed"
+            )
         ifd = parse_ifd(data, offset, header)
         ifds.append(ifd)
         # The `seen` set catches cycles, but a crafted file can chain a
