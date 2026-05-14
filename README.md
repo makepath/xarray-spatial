@@ -3,6 +3,9 @@
 > **xarray-spatial uses AI assistance more aggressively than most open-source projects.** Before opening a PR, read the [AI-Assisted Contribution Policy](AI_POLICY.md) and run your changes through the project's approved AI review workflow (see the slash-command suite in [`.claude/commands/`](.claude/commands)). PRs that ignore the workflow are likely to be rejected.
 >
 > **Feature freeze in effect.** The project is working toward its first major release (1.0.0). Until 1.0.0 ships, only bug fixes, test coverage, performance work, and documentation PRs will be considered. New feature proposals will be triaged but not implemented until after the release.
+> 
+> **Contributors Wanted!.** xarray-spatial is currently looking for contributors to help run pre-defined AI-assisted workflows as we approach v1.0.0.  If you are interested, please add an issue and flag @brendancol and we can chat.
+>
 
 <img src="img/Xarray-Spatial-logo.svg"/>
 
