@@ -228,7 +228,13 @@ def test_write_geotiff_gpu_jpeg_rgb_roundtrip(tmp_path):
     da, arr = _make_rgb_uint8_da()
     path = str(tmp_path / "jpeg_rgb.tif")
 
-    write_geotiff_gpu(da, path, compression='jpeg')
+    # Issue #1845: the JPEG encode path is opt-in. The writer also
+    # emits a GeoTIFFFallbackWarning, which is the documented contract.
+    with pytest.warns(Warning):
+        write_geotiff_gpu(
+            da, path, compression='jpeg',
+            allow_internal_only_jpeg=True,
+        )
 
     out = open_geotiff(path)
     assert out.shape == arr.shape
@@ -251,7 +257,12 @@ def test_write_geotiff_gpu_jpeg_uint8_single_band_roundtrip(tmp_path):
     da, arr = _make_mono_uint8_da()
     path = str(tmp_path / "jpeg_mono.tif")
 
-    write_geotiff_gpu(da, path, compression='jpeg')
+    # Issue #1845: opt-in flag required; warning fires.
+    with pytest.warns(Warning):
+        write_geotiff_gpu(
+            da, path, compression='jpeg',
+            allow_internal_only_jpeg=True,
+        )
 
     out = open_geotiff(path)
     assert out.shape == arr.shape
@@ -278,7 +289,12 @@ def test_write_geotiff_gpu_jpeg_uses_nvjpeg_when_available(tmp_path,
     da, _ = _make_rgb_uint8_da()
     path = str(tmp_path / "jpeg_nvjpeg_spy.tif")
 
-    write_geotiff_gpu(da, path, compression='jpeg')
+    # Issue #1845: opt-in flag required; warning fires.
+    with pytest.warns(Warning):
+        write_geotiff_gpu(
+            da, path, compression='jpeg',
+            allow_internal_only_jpeg=True,
+        )
 
     assert spy.calls >= 1, (
         "libnvjpeg is loadable but _nvjpeg_batch_encode was never called; "
@@ -317,7 +333,12 @@ def test_write_geotiff_gpu_jpeg_compression_tag(tmp_path):
     da, _ = _make_rgb_uint8_da()
     path = str(tmp_path / "jpeg_tag.tif")
 
-    write_geotiff_gpu(da, path, compression='jpeg')
+    # Issue #1845: opt-in flag required; warning fires.
+    with pytest.warns(Warning):
+        write_geotiff_gpu(
+            da, path, compression='jpeg',
+            allow_internal_only_jpeg=True,
+        )
 
     assert _read_compression_tag(path) == _COMPRESSION_TAGS['jpeg']
 
