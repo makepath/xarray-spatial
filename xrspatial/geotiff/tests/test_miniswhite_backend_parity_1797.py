@@ -116,5 +116,8 @@ def test_gpu_miniswhite_matches_cpu_reader(tmp_path):
     cpu = open_geotiff(path)
     gpu = open_geotiff(path, gpu=True)
 
-    np.testing.assert_array_equal(cpu.values, np.iinfo(stored.dtype).max - stored)
+    # After #1836 the writer pre-inverts MinIsWhite pixels so the reader's
+    # unconditional inversion restores the user-domain values -- the
+    # round-trip is the identity for both backends.
+    np.testing.assert_array_equal(cpu.values, stored)
     np.testing.assert_array_equal(gpu.data.get(), cpu.values)
