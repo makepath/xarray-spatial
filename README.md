@@ -406,6 +406,8 @@ Same-CRS tiles skip reprojection entirely and are placed by direct coordinate al
 | [Structure Insensitive Pigment Index (SIPI)](xrspatial/multispectral.py) | Estimates carotenoid-to-chlorophyll ratio for plant stress detection | Penuelas et al. 1995 | ✅️ |✅️ | ✅️ |✅️ |
 | [True Color](xrspatial/multispectral.py) | Composites red, green, and blue bands into a natural color image | Standard | ✅️ | ✅️ | ✅️ | ✅️ |
 
+For a broader catalog of spectral indices and sensor-specific band combinations, see [awesome-spectral-indices](https://github.com/awesome-spectral-indices/awesome-spectral-indices) and its companion xarray library [spyndex](https://github.com/awesome-spectral-indices/spyndex).
+
 -------
 
 
