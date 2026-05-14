@@ -1389,7 +1389,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                          tile_size=tile_size,
                          predictor=predictor,
                          bigtiff=bigtiff,
-                         max_z_error=max_z_error)
+                         max_z_error=max_z_error,
+                         photometric=photometric)
         return
 
     # Auto-detect GPU data and dispatch to write_geotiff_gpu. ``gpu is
@@ -1678,7 +1679,8 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
                        y_resolution=None,
                        resolution_unit=None,
                        gdal_metadata_xml=None,
-                       extra_tags=None):
+                       extra_tags=None,
+                       photometric: str | int = 'auto'):
     """Write a single tile GeoTIFF. Used by _write_vrt_tiled.
 
     Forwards the same rich-tag set that ``to_geotiff`` passes through to
@@ -1730,13 +1732,15 @@ def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
           gdal_metadata_xml=gdal_metadata_xml,
           extra_tags=extra_tags,
           bigtiff=bigtiff,
-          max_z_error=max_z_error)
+          max_z_error=max_z_error,
+          photometric=photometric)
 
 
 def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                      compression='zstd', compression_level=None,
                      tile_size=256, predictor: bool | int = False,
-                     bigtiff=None, max_z_error: float = 0.0):
+                     bigtiff=None, max_z_error: float = 0.0,
+                     photometric: str | int = 'auto'):
     """Write a DataArray as a directory of tiled GeoTIFFs with a VRT index.
 
     This enables streaming dask arrays to disk without materializing the
@@ -1903,7 +1907,8 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                     y_resolution=y_res,
                     resolution_unit=res_unit,
                     gdal_metadata_xml=gdal_meta_xml,
-                    extra_tags=extra_tags_list)
+                    extra_tags=extra_tags_list,
+                    photometric=photometric)
                 delayed_tasks.append(task)
             else:
                 # Numpy: slice and write directly
@@ -1918,7 +1923,8 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                     y_resolution=y_res,
                     resolution_unit=res_unit,
                     gdal_metadata_xml=gdal_meta_xml,
-                    extra_tags=extra_tags_list)
+                    extra_tags=extra_tags_list,
+                    photometric=photometric)
 
             col_offset += chunk_w
         row_offset += chunk_h
