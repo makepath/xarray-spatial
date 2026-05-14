@@ -285,6 +285,7 @@ def test_chunked_propagates_vrt_holes_when_source_missing(two_by_two_vrt):
     """
     import warnings
     from xrspatial.geotiff import GeoTIFFFallbackWarning
+    from xrspatial.geotiff._reader import _mmap_cache
 
     vrt_path, _ = two_by_two_vrt
     vrt_dir = os.path.dirname(vrt_path)
@@ -297,6 +298,10 @@ def test_chunked_propagates_vrt_holes_when_source_missing(two_by_two_vrt):
             if f.endswith('.tif'):
                 tile_files.append(os.path.join(root, f))
     assert len(tile_files) >= 1
+    # write_vrt() opens each tile via _FileSource to read its header;
+    # _FileSource.close() decrements the refcount but the mmap stays
+    # cached. On Windows an active mmap blocks os.unlink (WinError 32).
+    _mmap_cache.clear()
     os.unlink(tile_files[0])
 
     with warnings.catch_warnings():
