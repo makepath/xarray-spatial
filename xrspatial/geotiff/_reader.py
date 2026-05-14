@@ -1443,16 +1443,22 @@ def _resolve_masked_fill(nodata_str: str | None, dtype: np.dtype):
     on the dtype cast.
     """
     if nodata_str is not None:
-        try:
-            v = float(nodata_str)
+        # Try ``int`` first so 64-bit sentinels survive without the
+        # float64 round-trip; fall back to ``float`` for NaN / Inf /
+        # scientific notation / fractional values.  See issue #1847.
+        from ._geotags import _parse_nodata_str as _parse_nd
+        parsed = _parse_nd(nodata_str)
+        if parsed is not None:
             if dtype.kind == 'f':
-                return dtype.type(v)
-            if not math.isnan(v) and not math.isinf(v):
-                nodata_int = int(v)
-                if _int_nodata_in_range(nodata_int, dtype):
-                    return dtype.type(nodata_int)
-        except (TypeError, ValueError):
-            pass
+                return dtype.type(parsed)
+            if isinstance(parsed, int):
+                if _int_nodata_in_range(parsed, dtype):
+                    return dtype.type(parsed)
+            elif not math.isnan(parsed) and not math.isinf(parsed):
+                if float(parsed).is_integer():
+                    nodata_int = int(parsed)
+                    if _int_nodata_in_range(nodata_int, dtype):
+                        return dtype.type(nodata_int)
     if dtype.kind == 'f':
         return dtype.type(np.nan)
     return dtype.type(0)
@@ -1576,16 +1582,22 @@ def _sparse_fill_value(ifd: IFD, dtype: np.dtype):
     """
     nodata_str = ifd.nodata_str
     if nodata_str is not None:
-        try:
-            v = float(nodata_str)
+        # Try ``int`` first so 64-bit sentinels survive without the
+        # float64 round-trip; fall back to ``float`` for NaN / Inf /
+        # scientific notation / fractional values.  See issue #1847.
+        from ._geotags import _parse_nodata_str as _parse_nd
+        parsed = _parse_nd(nodata_str)
+        if parsed is not None:
             if dtype.kind == 'f':
-                return dtype.type(v)
-            if not math.isnan(v) and not math.isinf(v):
-                nodata_int = int(v)
-                if _int_nodata_in_range(nodata_int, dtype):
-                    return dtype.type(nodata_int)
-        except (TypeError, ValueError):
-            pass
+                return dtype.type(parsed)
+            if isinstance(parsed, int):
+                if _int_nodata_in_range(parsed, dtype):
+                    return dtype.type(parsed)
+            elif not math.isnan(parsed) and not math.isinf(parsed):
+                if float(parsed).is_integer():
+                    nodata_int = int(parsed)
+                    if _int_nodata_in_range(nodata_int, dtype):
+                        return dtype.type(nodata_int)
     return dtype.type(0)
 
 
