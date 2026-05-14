@@ -57,20 +57,56 @@ requires_loopback = pytest.mark.skipif(
 
 def pytest_collection_modifyitems(config, items):
     """Auto-skip tests that stand up a loopback HTTP server when the
-    sandbox denies socket bind. A test opts in implicitly by importing
-    ``socketserver`` in its module; every HTTP test in this directory
-    does so to host a tiny in-process server.
+    sandbox denies socket bind.
+
+    A test needs loopback iff its function body or any fixture in its
+    closure references ``socketserver.TCPServer(`` or invokes the
+    file-local ``_serve(`` helper. This is finer-grained than skipping
+    every test in a module that imports ``socketserver``: mixed files
+    (e.g. ``test_miniswhite_backend_parity_1797.py`` has both HTTP and
+    a local-file GPU test) keep their non-HTTP coverage in restricted
+    sandboxes.
     """
     if _HAS_LOOPBACK:
         return
+
+    import inspect
+
+    def _source_of(obj) -> str:
+        try:
+            return inspect.getsource(obj)
+        except (OSError, TypeError):
+            return ''
+
+    def _references_loopback(src: str) -> bool:
+        return 'socketserver.TCPServer(' in src or '_serve(' in src
+
     skip_marker = pytest.mark.skip(
         reason="loopback bind unavailable in this environment"
     )
     for item in items:
-        module = getattr(item, 'module', None)
-        if module is None:
-            continue
-        if 'socketserver' in vars(module):
+        needs_skip = False
+
+        func = getattr(item, 'function', None)
+        if func is not None and _references_loopback(_source_of(func)):
+            needs_skip = True
+
+        if not needs_skip:
+            fixtureinfo = getattr(item, '_fixtureinfo', None)
+            if fixtureinfo is not None:
+                name2defs = getattr(fixtureinfo, 'name2fixturedefs', {})
+                for fname in getattr(fixtureinfo, 'names_closure', ()):
+                    for fdef in name2defs.get(fname, ()):
+                        ffunc = getattr(fdef, 'func', None)
+                        if ffunc is not None and _references_loopback(
+                            _source_of(ffunc)
+                        ):
+                            needs_skip = True
+                            break
+                    if needs_skip:
+                        break
+
+        if needs_skip:
             item.add_marker(skip_marker)
 
 
