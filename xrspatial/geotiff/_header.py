@@ -239,14 +239,17 @@ class IFD:
         # TIFF 6.0 defines only 1 (Chunky) and 2 (Planar). Treating any
         # other value as chunky would silently decode a malformed file
         # under an assumed layout. Missing tag defaults to 1 per spec.
+        # PlanarConfiguration is type SHORT (uint16) in well-formed
+        # TIFFs; rejecting non-integer values up front catches malformed
+        # files that declare it as FLOAT/RATIONAL, where a naive int()
+        # cast would round (e.g. 1.5 -> 1) and accept the file as chunky.
         v = self.get_value(TAG_PLANAR_CONFIG, 1)
         if isinstance(v, tuple):
             v = v[0] if v else 1
-        v = int(v)
-        if v not in (1, 2):
+        if isinstance(v, bool) or not isinstance(v, int) or v not in (1, 2):
             raise ValueError(
-                f"Invalid PlanarConfiguration: {v}. TIFF 6.0 allows only "
-                f"1 (Chunky) or 2 (Planar)."
+                f"Invalid PlanarConfiguration: {v!r}. TIFF 6.0 allows "
+                f"only 1 (Chunky) or 2 (Planar)."
             )
         return v
 

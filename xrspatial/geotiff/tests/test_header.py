@@ -171,6 +171,19 @@ class TestPlanarConfigValidation:
         with pytest.raises(ValueError, match=r"Invalid PlanarConfiguration"):
             _ = self._ifd_with_planar((7,)).planar_config
 
+    def test_float_value_rejected(self):
+        # A malformed TIFF declaring tag 284 as FLOAT/DOUBLE would resolve
+        # to a Python float. A naive int() cast would round 1.5 down to 1
+        # and silently accept the file as Chunky.
+        with pytest.raises(ValueError, match=r"Invalid PlanarConfiguration"):
+            _ = self._ifd_with_planar(1.5).planar_config
+
+    def test_bool_value_rejected(self):
+        # Bools are int subclasses but a TIFF tag is never legitimately
+        # a bool; rejecting them keeps the predicate honest.
+        with pytest.raises(ValueError, match=r"Invalid PlanarConfiguration"):
+            _ = self._ifd_with_planar(True).planar_config
+
 
 class TestIFDChainLoop:
     """Verify parse_all_ifds bails out on a malicious IFD chain cycle.
