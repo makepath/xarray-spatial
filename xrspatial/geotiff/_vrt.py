@@ -852,7 +852,7 @@ def _apply_integer_sentinel_mask(arr, vrt, band):
 def read_vrt(vrt_path: str, *, window=None,
              band: int | None = None,
              max_pixels: int | None = None,
-             missing_sources: str = 'warn',
+             missing_sources: str = 'raise',
              parsed: VRTDataset | None = None,
              ) -> tuple[np.ndarray, VRTDataset]:
     """Read a VRT file by assembling pixel data from its source files.
@@ -868,11 +868,22 @@ def read_vrt(vrt_path: str, *, window=None,
     max_pixels : int or None
         Maximum allowed pixel count (width * height * samples) for the
         assembled VRT region. None uses the reader default.
-    missing_sources : {'warn', 'raise'}
+    missing_sources : {'raise', 'warn'}, default 'raise'
         Policy for unreadable source files referenced by the VRT.
-        ``'warn'`` emits ``GeoTIFFFallbackWarning`` and records
-        ``vrt.holes`` unless ``XRSPATIAL_GEOTIFF_STRICT=1`` is set.
-        ``'raise'`` fails immediately.
+        ``'raise'`` (the default) fails immediately on an unreadable
+        source so a partial mosaic never surfaces silently. This matches
+        the rest of the geotiff module's up-front rejection of malformed
+        input and avoids the ambiguity of a zero-fill hole on an integer
+        raster without a nodata sentinel (see issue #1843). Prior to
+        #1843 the default was ``'warn'``; callers that relied on the
+        lenient behaviour should pass ``missing_sources='warn'``
+        explicitly.
+        ``'warn'`` is the opt-in escape hatch for partial mosaics: it
+        emits ``GeoTIFFFallbackWarning`` and records the skipped source
+        on ``vrt.holes`` (surfaced as ``attrs['vrt_holes']`` on the
+        public DataArray).
+        ``XRSPATIAL_GEOTIFF_STRICT=1`` forces a raise across the whole
+        module regardless of this kwarg (see issue #1662).
     parsed : VRTDataset or None
         Pre-parsed VRT structure. When supplied, ``vrt_path`` is not
         re-read or re-parsed and the source-path containment check is
