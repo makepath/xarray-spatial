@@ -42,6 +42,16 @@ import xarray as xr
 if TYPE_CHECKING:
     from typing import BinaryIO
 
+from ._coords import (
+    _BAND_DIM_NAMES,
+    coords_from_geo_info as _coords_from_geo_info,
+    coords_from_pixel_geometry as _coords_from_pixel_geometry,
+    transform_tuple_from_pixel_geometry as _transform_tuple_from_pixel_geometry,
+    geo_to_coords as _geo_to_coords,
+    transform_tuple as _transform_tuple,
+    transform_from_attr as _transform_from_attr,
+    coords_to_transform as _coords_to_transform,
+)
 from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 from ._reader import UnsafeURLError
 # ``read_to_array`` is internal: it is used by ``open_geotiff`` and the
@@ -93,12 +103,6 @@ _CRS_WKT_DEPRECATED_SENTINEL = object()
 # (forward verbatim to read_vrt). Mirrors the on_gpu_failure pattern. See
 # issue #1810.
 _MISSING_SOURCES_SENTINEL = object()
-
-# Names of dims that ``to_geotiff`` / ``write_geotiff_gpu`` treat as the
-# non-spatial band axis. Used both to remap ``(band, y, x)`` inputs to
-# ``(y, x, band)`` before writing and to skip the band axis when inferring
-# a GeoTransform from coords (see ``_coords_to_transform`` and issue #1643).
-_BAND_DIM_NAMES = ('band', 'bands', 'channel')
 
 # Spatial dim names recognised on 3D writer inputs. ``y``/``x`` are the
 # canonical TIFF axes; aliases are accepted so a user who happens to use
@@ -309,108 +313,6 @@ def _resolve_crs_to_wkt(crs) -> str | None:
         ) from exc
 
 
-def _geo_to_coords(geo_info, height: int, width: int) -> dict:
-    """Build y/x coordinate arrays from GeoInfo.
-
-    For PixelIsArea (default): origin is the edge of pixel (0,0), so pixel
-    centers are at origin + 0.5*pixel_size.
-    For PixelIsPoint: origin (tiepoint) is already the center of pixel (0,0),
-    so no half-pixel offset is needed.
-
-    Returned coords are pixel-center values in either raster type, matching
-    xarray convention. The raw GeoTransform (origin and pixel size) is
-    preserved separately on the DataArray as a rasterio-style 6-tuple in
-    ``attrs['transform']``: ``(pixel_width, 0, origin_x, 0, pixel_height,
-    origin_y)``. ``to_geotiff`` prefers that attr over recomputing the
-    transform from the coord arrays, which avoids float drift on
-    fractional-precision rasters.
-
-    When the file carries no GeoTIFF tags (``has_georef=False``), fall back
-    to integer pixel coordinates 0..N-1 instead of inventing fractional
-    values from the default unit transform.
-    """
-    if not getattr(geo_info, 'has_georef', True):
-        return {
-            'y': np.arange(height, dtype=np.int64),
-            'x': np.arange(width, dtype=np.int64),
-        }
-    t = geo_info.transform
-    if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
-        # Tiepoint is pixel center -- no offset needed
-        x = np.arange(width, dtype=np.float64) * t.pixel_width + t.origin_x
-        y = np.arange(height, dtype=np.float64) * t.pixel_height + t.origin_y
-    else:
-        # Tiepoint is pixel edge -- shift to center
-        x = np.arange(width, dtype=np.float64) * t.pixel_width + t.origin_x + t.pixel_width * 0.5
-        y = np.arange(height, dtype=np.float64) * t.pixel_height + t.origin_y + t.pixel_height * 0.5
-    return {'y': y, 'x': x}
-
-
-def _transform_tuple(geo_info) -> tuple | None:
-    """Return the rasterio-style 6-tuple for a GeoInfo's transform.
-
-    Format: ``(pixel_width, 0.0, origin_x, 0.0, pixel_height, origin_y)``.
-
-    This matches ``rasterio.Affine.to_gdal()``-adjacent ordering used by
-    rioxarray's ``rio.transform()`` output. Storing the tuple on the
-    DataArray lets ``to_geotiff`` reproduce the source GeoTransform
-    byte-for-byte, side-stepping float drift in the y/x coord arrays.
-    """
-    if geo_info is None:
-        return None
-    t = geo_info.transform
-    if t is None:
-        return None
-    return (
-        float(t.pixel_width), 0.0, float(t.origin_x),
-        0.0, float(t.pixel_height), float(t.origin_y),
-    )
-
-
-def _transform_from_attr(attr_val) -> 'GeoTransform | None':
-    """Build a GeoTransform from an ``attrs['transform']`` value.
-
-    Accepts a 6-tuple ``(a, b, c, d, e, f)`` in rasterio ``Affine``
-    ordering, or a ``GeoTransform`` instance. Returns None for anything
-    that isn't a recognisable 6-tuple. GDAL ordering
-    ``(c, a, b, f, d, e)`` is NOT accepted.
-
-    Rotated or skewed affines (``b != 0`` or ``d != 0``, beyond a
-    1e-12 tolerance for float noise) are rejected with ``ValueError``.
-    The on-disk GeoTIFF representation written by this package is
-    axis-aligned, so silently dropping ``b`` and ``d`` would place the
-    raster at the wrong location. Reproject onto an axis-aligned grid
-    before writing.
-    """
-    if attr_val is None:
-        return None
-    if isinstance(attr_val, GeoTransform):
-        return attr_val
-    try:
-        seq = tuple(attr_val)
-    except TypeError:
-        return None
-    if len(seq) != 6:
-        return None
-    try:
-        a, b, c, d, e, f = (float(x) for x in seq)
-    except (TypeError, ValueError):
-        return None
-    _ROT_TOL = 1e-12
-    if abs(b) > _ROT_TOL or abs(d) > _ROT_TOL:
-        raise ValueError(
-            f"attrs['transform'] has non-zero rotation/shear "
-            f"(b={b!r}, d={d!r}); rotated or skewed affines are not "
-            f"supported by the GeoTIFF writers in this module because "
-            f"the on-disk GeoTIFF representation is axis-aligned and "
-            f"would be written at the wrong location. Reproject the "
-            f"raster to an axis-aligned grid before writing."
-        )
-    return GeoTransform(
-        origin_x=c, origin_y=f, pixel_width=a, pixel_height=e,
-    )
-
-
 def _validate_dtype_cast(source_dtype, target_dtype):
     """Validate that casting source_dtype to target_dtype is allowed.
 
@@ -425,96 +327,6 @@ def _validate_dtype_cast(source_dtype, target_dtype):
             f"Cannot cast float ({src}) to int ({tgt}). "
             f"This loses fractional data and is usually unintentional. "
             f"Cast explicitly after reading if you really want this.")
-
-
-def _coords_to_transform(da: xr.DataArray) -> GeoTransform | None:
-    """Infer GeoTransform from DataArray coordinates.
-
-    Coordinates are always pixel-center values. The transform origin depends
-    on raster_type:
-    - PixelIsArea (default): origin = center - half_pixel  (edge of pixel 0)
-    - PixelIsPoint: origin = center  (center of pixel 0)
-
-    For 3D arrays the spatial dims are the two non-band dims. The helper
-    filters out any dim named ``band`` / ``bands`` / ``channel`` (see
-    ``_BAND_DIM_NAMES``) regardless of position, so a ``(y, x, band)``,
-    ``(band, y, x)``, or ``(y, band, x)`` DataArray returns the y/x
-    transform rather than picking up the band axis spacing as a pixel
-    size. ``to_geotiff`` itself remaps ``(band, y, x)`` arrays to
-    ``(y, x, band)`` before writing pixel bytes, but it calls
-    :func:`_coords_to_transform` against the original DataArray, so the
-    helper must handle both layouts to keep the geo-transform consistent
-    with the file's coord arrays. See issue #1643.
-    """
-    if da.ndim == 3:
-        # Drop the band-like dim and keep the two spatial dims in their
-        # original (y, x) order. Position-based fallback covers the case
-        # where none of the dims are named like a band axis.
-        spatial = tuple(d for d in da.dims if d not in _BAND_DIM_NAMES)
-        if len(spatial) == 2:
-            ydim, xdim = spatial[0], spatial[1]
-        else:
-            # No identifiable band dim; fall back to dims[-2:] so the
-            # original 2-D-style behaviour applies. This branch only
-            # triggers for unusual 3D layouts callers built by hand.
-            ydim = da.dims[-2]
-            xdim = da.dims[-1]
-    else:
-        ydim = da.dims[-2]
-        xdim = da.dims[-1]
-
-    if xdim not in da.coords or ydim not in da.coords:
-        return None
-
-    x = da.coords[xdim].values
-    y = da.coords[ydim].values
-
-    if len(x) < 2 or len(y) < 2:
-        return None
-
-    # GeoTIFF only supports an affine transform; non-uniform spacing
-    # cannot be expressed faithfully. Validate up-front instead of
-    # silently writing a transform that only matches the first step.
-    def _is_regular(coord, name):
-        diffs = np.diff(coord)
-        # Use median (not mean) so a single bad sample doesn't shift
-        # the reference step. The 1e-6 relative tolerance is forgiving
-        # for float artifacts in otherwise-uniform coords.
-        step = float(np.median(diffs))
-        if step == 0:
-            raise ValueError(
-                f"{name} coords are constant; cannot infer pixel size"
-            )
-        rel = float(np.max(np.abs(diffs - step)) / abs(step))
-        if rel > 1e-6:
-            raise ValueError(
-                f"{name} coords are not uniformly spaced "
-                f"(max relative deviation {rel:.3e} exceeds 1e-6); "
-                f"GeoTIFF requires an affine transform."
-            )
-
-    _is_regular(x, "x")
-    _is_regular(y, "y")
-
-    pixel_width = float(x[1] - x[0])
-    pixel_height = float(y[1] - y[0])
-
-    is_point = da.attrs.get('raster_type') == 'point'
-    if is_point:
-        # PixelIsPoint: tiepoint is at the pixel center
-        origin_x = float(x[0])
-        origin_y = float(y[0])
-    else:
-        # PixelIsArea: tiepoint is at the edge (center - half pixel)
-        origin_x = float(x[0]) - pixel_width * 0.5
-        origin_y = float(y[0]) - pixel_height * 0.5
-
-    return GeoTransform(
-        origin_x=origin_x,
-        origin_y=origin_y,
-        pixel_width=pixel_width,
-        pixel_height=pixel_height,
-    )
 
 
 def _read_geo_info(source, *, overview_level: int | None = None):
@@ -677,18 +489,11 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     # "this raster has a georef transform" (#1710).
     has_georef = getattr(geo_info, 'has_georef', True)
     if src_t is not None and has_georef:
-        if window is not None:
-            r0, c0, _r1, _c1 = window
-            origin_x_w = float(src_t.origin_x) + c0 * float(src_t.pixel_width)
-            origin_y_w = float(src_t.origin_y) + r0 * float(src_t.pixel_height)
-            attrs['transform'] = (
-                float(src_t.pixel_width), 0.0, origin_x_w,
-                0.0, float(src_t.pixel_height), origin_y_w,
-            )
-        else:
-            t_tuple = _transform_tuple(geo_info)
-            if t_tuple is not None:
-                attrs['transform'] = t_tuple
+        attrs['transform'] = _transform_tuple_from_pixel_geometry(
+            src_t.origin_x, src_t.origin_y,
+            src_t.pixel_width, src_t.pixel_height,
+            window=window,
+        )
 
     if geo_info.crs_name is not None:
         attrs['crs_name'] = geo_info.crs_name
@@ -968,19 +773,9 @@ def open_geotiff(source: str | BinaryIO, *,
         # tags (``has_georef=False``), the default unit transform is
         # not real, so fall back to integer pixel coords matching the
         # ``_geo_to_coords`` shortcut taken on full reads. See #1710.
-        r0, c0, r1, c1 = window
-        if not getattr(geo_info, 'has_georef', True):
-            full_x = np.arange(c0, c1, dtype=np.int64)
-            full_y = np.arange(r0, r1, dtype=np.int64)
-        else:
-            t = geo_info.transform
-            if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
-                full_x = np.arange(c0, c1, dtype=np.float64) * t.pixel_width + t.origin_x
-                full_y = np.arange(r0, r1, dtype=np.float64) * t.pixel_height + t.origin_y
-            else:
-                full_x = np.arange(c0, c1, dtype=np.float64) * t.pixel_width + t.origin_x + t.pixel_width * 0.5
-                full_y = np.arange(r0, r1, dtype=np.float64) * t.pixel_height + t.origin_y + t.pixel_height * 0.5
-        coords = {'y': full_y, 'x': full_x}
+        coords = _coords_from_geo_info(
+            geo_info, height, width, window=window,
+        )
 
     if name is None:
         # Derive from source path. File-like buffers don't have a path,
@@ -2413,24 +2208,9 @@ def read_geotiff_dask(source: str, *,
         # Mirror the eager-path windowed coord computation in open_geotiff,
         # including the ``has_georef=False`` shortcut to integer pixel
         # coords for non-georef files (#1710).
-        if not getattr(geo_info, 'has_georef', True):
-            win_x = np.arange(win_c0, win_c1, dtype=np.int64)
-            win_y = np.arange(win_r0, win_r1, dtype=np.int64)
-        else:
-            t = geo_info.transform
-            if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
-                win_x = (np.arange(win_c0, win_c1, dtype=np.float64)
-                         * t.pixel_width + t.origin_x)
-                win_y = (np.arange(win_r0, win_r1, dtype=np.float64)
-                         * t.pixel_height + t.origin_y)
-            else:
-                win_x = (np.arange(win_c0, win_c1, dtype=np.float64)
-                         * t.pixel_width + t.origin_x
-                         + t.pixel_width * 0.5)
-                win_y = (np.arange(win_r0, win_r1, dtype=np.float64)
-                         * t.pixel_height + t.origin_y
-                         + t.pixel_height * 0.5)
-        coords = {'y': win_y, 'x': win_x}
+        coords = _coords_from_geo_info(
+            geo_info, win_r1 - win_r0, win_c1 - win_c0, window=window,
+        )
         full_h = win_r1 - win_r0
         full_w = win_c1 - win_c0
     else:
@@ -2895,26 +2675,9 @@ def _gpu_apply_window_band(arr_gpu, geo_info, *, window, band):
         # absolute pixel-center values as the CPU path. For files
         # with no GeoTIFF tags (``has_georef=False``), fall back to
         # integer pixel coords matching ``_geo_to_coords`` (#1710).
-        t = geo_info.transform
-        if t is None or not getattr(geo_info, 'has_georef', True):
-            coords = {
-                'y': np.arange(r0, r1, dtype=np.int64),
-                'x': np.arange(c0, c1, dtype=np.int64),
-            }
-        else:
-            if geo_info.raster_type == RASTER_PIXEL_IS_POINT:
-                full_x = (np.arange(c0, c1, dtype=np.float64)
-                          * t.pixel_width + t.origin_x)
-                full_y = (np.arange(r0, r1, dtype=np.float64)
-                          * t.pixel_height + t.origin_y)
-            else:
-                full_x = (np.arange(c0, c1, dtype=np.float64)
-                          * t.pixel_width + t.origin_x
-                          + t.pixel_width * 0.5)
-                full_y = (np.arange(r0, r1, dtype=np.float64)
-                          * t.pixel_height + t.origin_y
-                          + t.pixel_height * 0.5)
-            coords = {'y': full_y, 'x': full_x}
+        coords = _coords_from_geo_info(
+            geo_info, out_h, out_w, window=window,
+        )
     else:
         out_h = arr_gpu.shape[0]
         out_w = arr_gpu.shape[1]
@@ -3213,33 +2976,9 @@ def read_geotiff_gpu(source: str, *,
             # emit synthetic ``[-0.5, -1.5, ...]`` floats instead of
             # the integer pixel coords every other backend produces
             # (#1753 / regression of #1710).
-            if window is not None:
-                r0, c0, r1, c1 = window
-                t = geo_info.transform
-                if t is None or not getattr(geo_info, 'has_georef', True):
-                    coords = {
-                        'y': np.arange(r0, r1, dtype=np.int64),
-                        'x': np.arange(c0, c1, dtype=np.int64),
-                    }
-                elif geo_info.raster_type == RASTER_PIXEL_IS_POINT:
-                    coords = {
-                        'x': (np.arange(c0, c1, dtype=np.float64)
-                              * t.pixel_width + t.origin_x),
-                        'y': (np.arange(r0, r1, dtype=np.float64)
-                              * t.pixel_height + t.origin_y),
-                    }
-                else:
-                    coords = {
-                        'x': (np.arange(c0, c1, dtype=np.float64)
-                              * t.pixel_width + t.origin_x
-                              + t.pixel_width * 0.5),
-                        'y': (np.arange(r0, r1, dtype=np.float64)
-                              * t.pixel_height + t.origin_y
-                              + t.pixel_height * 0.5),
-                    }
-            else:
-                coords = _geo_to_coords(
-                    geo_info, arr_gpu.shape[0], arr_gpu.shape[1])
+            coords = _coords_from_geo_info(
+                geo_info, arr_gpu.shape[0], arr_gpu.shape[1], window=window,
+            )
             # Multi-band stripped reads come back as (y, x, band); mirror
             # the tiled branch so dims line up with ndim. Single-band stays
             # 2-D ('y', 'x').
@@ -4116,22 +3855,18 @@ def read_vrt(source: str, *,
     gt = vrt.geo_transform
     if gt is not None:
         origin_x, res_x, _, origin_y, _, res_y = gt
-        if window is not None:
-            r0, c0, r1, c1 = window
-            r0 = max(0, r0)
-            c0 = max(0, c0)
-        else:
-            r0, c0 = 0, 0
         height, width = arr.shape[:2]
-        if vrt.raster_type == 'point':
-            x_shift = c0 * res_x
-            y_shift = r0 * res_y
+        if window is not None:
+            r0 = max(0, window[0])
+            c0 = max(0, window[1])
+            coord_window = (r0, c0, r0 + height, c0 + width)
         else:
-            x_shift = (c0 + 0.5) * res_x
-            y_shift = (r0 + 0.5) * res_y
-        x = np.arange(width, dtype=np.float64) * res_x + origin_x + x_shift
-        y = np.arange(height, dtype=np.float64) * res_y + origin_y + y_shift
-        coords = {'y': y, 'x': x}
+            coord_window = None
+        coords = _coords_from_pixel_geometry(
+            origin_x, origin_y, res_x, res_y, height, width,
+            is_point=vrt.raster_type == 'point',
+            window=coord_window,
+        )
     else:
         coords = {}
 
@@ -4261,16 +3996,11 @@ def read_vrt(source: str, *,
     # the origin shifts by (col_offset * res_x, row_offset * res_y).
     if gt is not None:
         if window is not None:
-            r0w, c0w, _r1w, _c1w = window
-            r0w = max(0, r0w)
-            c0w = max(0, c0w)
+            tt_window = (max(0, window[0]), max(0, window[1]), 0, 0)
         else:
-            r0w = c0w = 0
-        origin_x_out = float(origin_x) + c0w * float(res_x)
-        origin_y_out = float(origin_y) + r0w * float(res_y)
-        attrs['transform'] = (
-            float(res_x), 0.0, origin_x_out,
-            0.0, float(res_y), origin_y_out,
+            tt_window = None
+        attrs['transform'] = _transform_tuple_from_pixel_geometry(
+            origin_x, origin_y, res_x, res_y, window=tt_window,
         )
 
     # Transfer to GPU if requested
@@ -4626,21 +4356,15 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
     attrs = {}
     if gt is not None:
         origin_x, res_x, _, origin_y, _, res_y = gt
-        if vrt.raster_type == 'point':
-            x_shift = win_c0 * res_x
-            y_shift = win_r0 * res_y
-        else:
-            x_shift = (win_c0 + 0.5) * res_x
-            y_shift = (win_r0 + 0.5) * res_y
-        x = np.arange(full_w, dtype=np.float64) * res_x + origin_x + x_shift
-        y = np.arange(full_h, dtype=np.float64) * res_y + origin_y + y_shift
-        coords['y'] = y
-        coords['x'] = x
-        origin_x_out = float(origin_x) + win_c0 * float(res_x)
-        origin_y_out = float(origin_y) + win_r0 * float(res_y)
-        attrs['transform'] = (
-            float(res_x), 0.0, origin_x_out,
-            0.0, float(res_y), origin_y_out,
+        coord_window = (win_r0, win_c0, win_r0 + full_h, win_c0 + full_w)
+        coords = _coords_from_pixel_geometry(
+            origin_x, origin_y, res_x, res_y, full_h, full_w,
+            is_point=vrt.raster_type == 'point',
+            window=coord_window,
+        )
+        attrs['transform'] = _transform_tuple_from_pixel_geometry(
+            origin_x, origin_y, res_x, res_y,
+            window=(win_r0, win_c0, 0, 0),
         )
 
     if vrt.crs_wkt:
