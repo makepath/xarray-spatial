@@ -192,6 +192,50 @@ def resolve_bits_per_sample(bps, sample_format=None) -> int:
     return int(bps)
 
 
+def resolve_sample_format(sf) -> int:
+    """Resolve a TIFF ``SampleFormat`` tag value to a single integer.
+
+    The TIFF spec allows ``SampleFormat`` to be a scalar or a sequence
+    with one entry per sample. xarray-spatial decodes a whole IFD with
+    one numpy dtype, so per-band sample formats must agree. A file that
+    mixes signed/unsigned/float bands at the same bit depth would
+    otherwise decode every band as the first band's type and silently
+    corrupt the others.
+
+    Parameters
+    ----------
+    sf : int or sequence of int
+        Raw value from ``IFD.sample_format``. Accepts ``int``, ``tuple``,
+        or ``list``. An empty sequence is treated as missing and falls
+        back to ``1`` (uint), matching the spec default.
+
+    Returns
+    -------
+    int
+        The shared SampleFormat value.
+
+    Raises
+    ------
+    ValueError
+        If ``sf`` is a sequence whose entries are not all equal.
+    """
+    if isinstance(sf, (tuple, list)):
+        if len(sf) == 0:
+            return 1
+        first = sf[0]
+        for v in sf[1:]:
+            if v != first:
+                raise ValueError(
+                    f"Mixed SampleFormat per band is not supported: "
+                    f"{tuple(sf)}. xarray-spatial decodes all bands with "
+                    f"a single dtype. Convert the file to a uniform "
+                    f"sample format first with gdal_translate or "
+                    f"rasterio."
+                )
+        return int(first)
+    return int(sf)
+
+
 def numpy_to_tiff_dtype(dt: np.dtype) -> tuple[int, int]:
     """Convert a numpy dtype to (bits_per_sample, sample_format).
 
