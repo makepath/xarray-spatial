@@ -39,6 +39,14 @@ _CRS_WKT_DEPRECATED_SENTINEL = object()
 # (forward verbatim to read_vrt). Mirrors the on_gpu_failure pattern. See
 # issue #1810.
 _MISSING_SOURCES_SENTINEL = object()
+# ``write_vrt`` historically named its first positional kwarg ``vrt_path``
+# while ``to_geotiff`` / ``write_geotiff_gpu`` use ``path``. The deprecation
+# shim adds ``path`` as the new name and accepts ``vrt_path`` with a
+# DeprecationWarning. The sentinel pattern distinguishes "user passed
+# vrt_path= explicitly" from "user passed nothing", which is the same
+# rationale ``_CRS_WKT_DEPRECATED_SENTINEL`` documents above. See
+# issue #1946.
+_VRT_PATH_DEPRECATED_SENTINEL = object()
 
 
 # Spatial dim names recognised on 3D writer inputs. ``y``/``x`` are the
