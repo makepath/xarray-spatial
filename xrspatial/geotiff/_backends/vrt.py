@@ -499,6 +499,18 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
 
     delayed_read = dask.delayed(_vrt_chunk_read)
 
+    # Wrap the parsed VRTDataset in a single dask Delayed so every
+    # chunk task takes it as one graph input rather than a per-task
+    # closure copy. Without this, dask embeds the full source list
+    # (filenames, src/dst rects, per-source nodata) into every task's
+    # pickled graph entry; a 1000-source VRT split into 1000 chunks
+    # would build a ~57 MB driver graph and re-serialise the same
+    # metadata 1000 times under distributed/process schedulers. The
+    # sibling COG-HTTP and GDS chunked paths use the same single-
+    # delayed-input pattern (see ``http_meta_key`` in ``dask.py`` and
+    # ``meta_key`` in ``gpu.py``). See issue #1923.
+    parsed_vrt_key = dask.delayed(vrt, pure=True)
+
     if gpu:
         import cupy
         meta = cupy.empty((0,) * (3 if out_has_band_axis else 2),
@@ -526,7 +538,7 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
                 missing_sources=missing_sources,
                 declared_dtype=declared_dtype,
                 gpu=gpu,
-                parsed_vrt=vrt,
+                parsed_vrt=parsed_vrt_key,
             )
             block = da.from_delayed(d, shape=block_shape,
                                     dtype=declared_dtype, meta=meta)
