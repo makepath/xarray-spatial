@@ -677,6 +677,11 @@ Check out the user guide [here](/examples/user_guide/).
 - `kvikio` — GPUDirect Storage (SSD → GPU)
 - `fsspec` + `s3fs`/`gcsfs`/`adlfs` — cloud storage
 
+> `libnvcomp` and `kvikio` are not pulled in by the `gpu` extra. They are runtime
+> dependencies of the GeoTIFF GPU read path and must be installed separately
+> (typically via conda from the `rapidsai`/`nvidia` channels), since `libnvcomp`
+> ships as a system library and `kvikio` requires a matching CUDA toolkit.
+
 ![title](img/dependencies.svg)
 
 #### Notes on GDAL
