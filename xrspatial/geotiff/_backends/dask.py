@@ -20,6 +20,7 @@ from .._coords import (
 )
 from .._reader import read_to_array as _read_to_array
 from .._validation import _validate_chunks_arg, _validate_dtype_cast
+from .vrt import read_vrt
 
 
 def read_geotiff_dask(source: str, *,
@@ -91,11 +92,6 @@ def read_geotiff_dask(source: str, *,
     # rather than letting the windowed-read path try to parse VRT XML as
     # TIFF bytes. ``read_vrt`` is the single source of truth for VRT.
     if isinstance(source, str) and source.lower().endswith('.vrt'):
-        # Lazy import: ``read_vrt`` still lives in ``xrspatial.geotiff``
-        # (extracted in a later step of #1813). The package re-exports
-        # this function so a static ``from .. import read_vrt`` would
-        # create a circular import at module load time.
-        from .. import read_vrt
         return read_vrt(
             source, dtype=dtype, window=window, band=band, name=name,
             chunks=chunks, max_pixels=max_pixels,
