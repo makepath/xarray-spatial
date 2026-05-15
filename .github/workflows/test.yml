@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         os: ['ubuntu-latest', 'macos-latest', 'windows-latest']
-        python: [3.12, 3.13, 3.14]
+        python: ${{ github.event_name == 'pull_request' && fromJson('["3.14"]') || fromJson('["3.12", "3.13", "3.14"]') }}
     env:
       OS: ${{ matrix.os }}
       PYTHON: ${{ matrix.python }}
