@@ -83,10 +83,24 @@ def test_write_geotiff_gpu_path_annotated():
     assert 'BinaryIO' in ann
 
 
+def test_write_vrt_path_annotated():
+    """``write_vrt(path, ...)`` is str-only (VRT writes are path-only by
+    design; no file-like buffer support). After #1946 the canonical name
+    is ``path`` (parity with ``to_geotiff`` / ``write_geotiff_gpu``).
+    The annotation is plain ``str``: the default value is a private
+    sentinel (not ``None``) so the deprecation shim can distinguish
+    ``write_vrt(path=None, ...)`` (rejected with TypeError) from a
+    caller who omitted ``path`` entirely (routed through the ``vrt_path``
+    alias). See PR #1962 review."""
+    assert _annotation(write_vrt, 'path') == 'str'
+
+
 def test_write_vrt_vrt_path_annotated():
-    """``write_vrt(vrt_path, ...)`` stays str-only (VRT writes are
-    path-only by design; no file-like buffer support)."""
-    assert _annotation(write_vrt, 'vrt_path') == 'str'
+    """The deprecated ``vrt_path`` alias keeps the same ``str | None``
+    annotation as ``path`` (str-only at the type level; ``None`` only
+    appears because the sentinel default lets the shim detect omission).
+    Pinned so a future re-rename does not silently widen the alias."""
+    assert _annotation(write_vrt, 'vrt_path') == 'str | None'
 
 
 # --- source: str or BinaryIO (open_geotiff is the public dispatch) ---

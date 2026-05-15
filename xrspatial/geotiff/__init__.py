@@ -26,8 +26,10 @@ to_geotiff(data, path, ...)
 write_geotiff_gpu(data, path, ...)
     GPU-only writer using nvCOMP. ``to_geotiff(..., gpu=True)`` calls this
     internally.
-write_vrt(vrt_path, source_files, ...)
-    Generate a VRT mosaic XML from a list of GeoTIFF files.
+write_vrt(path, source_files, ...)
+    Generate a VRT mosaic XML from a list of GeoTIFF files. ``vrt_path``
+    is kept as a deprecated alias for ``path``; passing both ``path`` and
+    ``vrt_path`` raises ``TypeError`` (#1946).
 """
 from __future__ import annotations
 

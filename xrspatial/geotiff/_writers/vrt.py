@@ -1,19 +1,25 @@
 """VRT writer entry point.
 
 Wraps ``_vrt.write_vrt`` with the public ``write_vrt`` surface:
-deprecation handling for ``crs_wkt`` (#1715), normalisation of the
-``crs`` kwarg to WKT via ``_resolve_crs_to_wkt``, and the parity
-docstring vs ``to_geotiff`` / ``write_geotiff_gpu``.
+deprecation handling for ``crs_wkt`` (#1715) and ``vrt_path`` (#1946),
+normalisation of the ``crs`` kwarg to WKT via ``_resolve_crs_to_wkt``,
+and the parity docstring vs ``to_geotiff`` / ``write_geotiff_gpu``.
 """
 from __future__ import annotations
 
 import warnings
 
 from .._crs import _resolve_crs_to_wkt
-from .._runtime import _CRS_WKT_DEPRECATED_SENTINEL
+from .._runtime import (
+    _CRS_WKT_DEPRECATED_SENTINEL,
+    _VRT_PATH_DEPRECATED_SENTINEL,
+    _VRT_PATH_MISSING_SENTINEL,
+)
 
 
-def write_vrt(vrt_path: str, source_files: list[str], *,
+def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
+              source_files: list[str] | None = None, *,
+              vrt_path: str | None = _VRT_PATH_DEPRECATED_SENTINEL,
               relative: bool = True,
               crs: int | str | None = None,
               crs_wkt: str | None = _CRS_WKT_DEPRECATED_SENTINEL,
@@ -22,10 +28,19 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
 
     Parameters
     ----------
-    vrt_path : str
-        Output .vrt file path.
+    path : str
+        Output .vrt file path. Mirrors the ``path`` kwarg on
+        ``to_geotiff`` and ``write_geotiff_gpu`` so the writer trio
+        shares a single destination-arg name (issue #1946).
     source_files : list of str
         Paths to the source GeoTIFF files.
+    vrt_path : str, optional
+        Deprecated alias for ``path``. Emits ``DeprecationWarning`` when
+        supplied; passing both ``path`` and ``vrt_path`` raises
+        ``TypeError``. Kept so existing callers (``write_vrt(vrt_path,
+        sources)`` positional or ``write_vrt(vrt_path=...)`` keyword)
+        keep working through the deprecation window. New code should
+        use ``path``. See issue #1946.
     relative : bool, optional
         Store source paths relative to the VRT file (default True).
     crs : int, str, or None, optional
@@ -60,6 +75,53 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     # historic ``crs_wkt`` path; the new ``crs`` path normalises through
     # ``_resolve_crs_to_wkt`` before forwarding because the internal
     # writer still only speaks WKT.
+    #
+    # The ``path`` / ``vrt_path`` shim resolves the destination kwarg
+    # before any other processing so the rest of the function works
+    # uniformly against a single ``vrt_path`` local. ``path`` is the
+    # new name (parity with to_geotiff / write_geotiff_gpu); ``vrt_path``
+    # is kept as a deprecated alias to preserve back-compat for callers
+    # using either positional ``write_vrt(vrt_path, sources)`` or
+    # keyword ``write_vrt(vrt_path=...)``.
+    path_passed = path is not _VRT_PATH_MISSING_SENTINEL
+    vrt_path_passed = vrt_path is not _VRT_PATH_DEPRECATED_SENTINEL
+    if path_passed and vrt_path_passed:
+        # Both supplied is ambiguous regardless of whether the two values
+        # happen to be the same string. Refuse rather than silently
+        # picking one. Mirrors the same rule the ``crs`` / ``crs_wkt``
+        # shim below applies.
+        raise TypeError(
+            "write_vrt: pass either 'path' or the deprecated 'vrt_path' "
+            "alias, not both.")
+    if vrt_path_passed:
+        warnings.warn(
+            "write_vrt(..., vrt_path=...) is deprecated; use path=... "
+            "instead. The kwarg was renamed for parity with to_geotiff "
+            "and write_geotiff_gpu, which already accept 'path' as the "
+            "destination kwarg.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        path = vrt_path
+    elif not path_passed:
+        # Neither name supplied. Match the previous ``TypeError: missing
+        # required positional argument`` semantics by raising rather than
+        # forwarding the sentinel into ``_write_vrt_internal``.
+        raise TypeError(
+            "write_vrt: missing required argument 'path'")
+    if path is None:
+        # Explicit ``path=None`` (including positional ``write_vrt(None,
+        # sources)``) is rejected up front so the error message names the
+        # offending kwarg instead of crashing deep in
+        # ``os.path.dirname(os.path.abspath(None))``. The sentinel default
+        # on ``path`` is what lets us distinguish this case from "caller
+        # passed nothing" above.
+        raise TypeError(
+            "write_vrt: 'path' must be a str, got None")
+    if source_files is None:
+        raise TypeError(
+            "write_vrt: missing required argument 'source_files'")
+
     crs_wkt_passed = crs_wkt is not _CRS_WKT_DEPRECATED_SENTINEL
     if crs is not None and crs_wkt_passed:
         # Both supplied is ambiguous regardless of whether the WKT happens
@@ -83,7 +145,7 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
 
     from .._vrt import write_vrt as _write_vrt_internal
     return _write_vrt_internal(
-        vrt_path, source_files,
+        path, source_files,
         relative=relative,
         crs_wkt=resolved_wkt,
         nodata=nodata,
