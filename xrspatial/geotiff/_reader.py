@@ -2230,6 +2230,17 @@ def _read_cog_http(url: str, overview_level: int | None = None,
                 source.close()
                 raise ValueError(
                     f"band must be a non-negative int, got {band!r}")
+            # Reject non-integer numeric types and anything else that
+            # would slip past the bool guard. ``band=0.0`` passes
+            # ``0 <= 0.0 < n_bands`` and silently selects band 0 on a
+            # single-band file or raises a raw numpy ``IndexError`` from
+            # deep in the read path on multi-band files; ``band="0"``
+            # fails the comparison with an opaque ``TypeError``. The VRT
+            # paths already enforce this; mirror them here. See #1910.
+            if not isinstance(band, (int, np.integer)):
+                source.close()
+                raise TypeError(
+                    f"band must be a non-negative int, got {band!r}")
             if ifd.samples_per_pixel <= 1:
                 if band != 0:
                     source.close()
@@ -2996,6 +3007,15 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
             # rejection. See #1786.
             if isinstance(band, (bool, np.bool_)):
                 raise ValueError(
+                    f"band must be a non-negative int, got {band!r}")
+            # Reject non-integer numeric types and anything else that
+            # would slip past the bool guard. ``band=0.0`` passes
+            # ``0 <= 0.0 < n_bands`` and silently selects band 0 on a
+            # single-band file or raises a raw numpy ``IndexError`` from
+            # deep in the read path on multi-band files. The VRT paths
+            # already enforce this; mirror them here. See #1910.
+            if not isinstance(band, (int, np.integer)):
+                raise TypeError(
                     f"band must be a non-negative int, got {band!r}")
             if ifd_samples <= 1:
                 if band != 0:

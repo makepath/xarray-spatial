@@ -319,6 +319,14 @@ def read_geotiff_gpu(source: str, *,
             if isinstance(band, (bool, np.bool_)):
                 raise ValueError(
                     f"band must be a non-negative int, got {band!r}")
+            # Reject non-integer numeric types and anything else that
+            # slips past the bool guard. ``band=0.0`` passes the range
+            # check below and either silently reads band 0 or fails with
+            # a raw numpy/cupy ``IndexError`` on multi-band files. The
+            # VRT paths already enforce this. See #1910.
+            if not isinstance(band, (int, np.integer)):
+                raise TypeError(
+                    f"band must be a non-negative int, got {band!r}")
             if ifd_samples <= 1:
                 if band != 0:
                     raise IndexError(
@@ -1005,6 +1013,13 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
         # (#1896).
         if isinstance(band, (bool, np.bool_)):
             raise ValueError(
+                f"band must be a non-negative int, got {band!r}")
+        # Reject non-integer numeric types and anything else that slips
+        # past the bool guard. ``band=0.0`` passes the range check below
+        # and either silently reads band 0 or fails with a raw IndexError
+        # from deep in the GDS read path on multi-band files. See #1910.
+        if not isinstance(band, (int, np.integer)):
+            raise TypeError(
                 f"band must be a non-negative int, got {band!r}")
         if n_bands_out == 0:
             if band != 0:
