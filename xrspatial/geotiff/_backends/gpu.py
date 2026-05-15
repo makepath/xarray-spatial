@@ -34,6 +34,7 @@ from ._gpu_helpers import (
     _gpu_apply_window_band,
     _gpu_decode_single_band_tiles,
 )
+from .dask import read_geotiff_dask
 
 
 def read_geotiff_gpu(source: str, *,
@@ -860,11 +861,6 @@ def _read_geotiff_gpu_chunked(source, *, dtype, chunks, overview_level,
         # error would otherwise be unrelated to what the user asked
         # for (the CPU path re-parses metadata anyway).
         pass
-
-    # Lazy import to avoid a circular dependency with ``__init__.py``,
-    # which re-exports ``read_geotiff_gpu`` from this module. By the
-    # time this line executes both modules are fully loaded.
-    from .. import read_geotiff_dask
 
     cpu_da = read_geotiff_dask(
         source, dtype=dtype, chunks=chunks,

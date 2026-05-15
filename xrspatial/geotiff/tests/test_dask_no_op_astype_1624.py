@@ -73,7 +73,7 @@ def test_astype_skipped_when_dtypes_match(float32_no_nodata_tif, monkeypatch):
     chunk triggers one same-dtype astype. With the fix, none do.
     """
     from xrspatial.geotiff import _reader as reader_mod
-    import xrspatial.geotiff as gt
+    from xrspatial.geotiff._backends import dask as gt
 
     path, _ = float32_no_nodata_tif
 
@@ -105,10 +105,10 @@ def test_astype_skipped_when_dtypes_match(float32_no_nodata_tif, monkeypatch):
         return tracked, meta
 
     # ``read_geotiff_dask``'s per-chunk worker calls the alias
-    # ``_read_to_array`` bound in ``xrspatial.geotiff``. Patch that
-    # binding; patching ``_reader.read_to_array`` would not affect the
-    # already-imported alias. See issue #1708 for why ``read_to_array``
-    # is internal.
+    # ``_read_to_array`` bound in ``xrspatial.geotiff._backends.dask``
+    # (since #1886). Patch that binding; patching
+    # ``_reader.read_to_array`` would not affect the already-imported
+    # alias. See issue #1708 for why ``read_to_array`` is internal.
     monkeypatch.setattr(gt, '_read_to_array', wrapped_r2a)
 
     dk = read_geotiff_dask(path, chunks=4)
