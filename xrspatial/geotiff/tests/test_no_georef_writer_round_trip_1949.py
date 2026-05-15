@@ -20,15 +20,14 @@ every writer path.
 from __future__ import annotations
 
 import importlib.util
-import os
-import tempfile
 
 import numpy as np
 import pytest
-import tifffile
 import xarray as xr
 
-from xrspatial.geotiff import _coords_to_transform, open_geotiff, to_geotiff
+tifffile = pytest.importorskip("tifffile")
+
+from xrspatial.geotiff import _coords_to_transform, open_geotiff, to_geotiff  # noqa: E402
 
 
 def _gpu_available() -> bool:
