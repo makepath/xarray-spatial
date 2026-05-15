@@ -1,0 +1,506 @@
+"""GPU writer entry point.
+
+Step 10 of issue #1813. Holds ``write_geotiff_gpu``, which compresses
+tiles on the device via nvCOMP (when available) and falls back to the
+eager CPU writer when nvCOMP is missing or the device path raises
+under ``on_gpu_failure='auto'``.
+"""
+from __future__ import annotations
+
+import warnings
+from typing import TYPE_CHECKING
+
+import numpy as np
+import xarray as xr
+
+if TYPE_CHECKING:
+    from typing import BinaryIO
+
+from .._attrs import _extract_rich_tags, _resolve_nodata_attr
+from .._coords import (
+    _BAND_DIM_NAMES,
+    coords_to_transform as _coords_to_transform,
+    transform_from_attr as _transform_from_attr,
+)
+from .._crs import _wkt_to_epsg
+from .._runtime import GeoTIFFFallbackWarning
+from .._validation import (
+    _validate_3d_writer_dims,
+    _validate_tile_size_arg,
+)
+
+
+def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
+                      path: str | BinaryIO, *,
+                      crs: int | str | None = None,
+                      nodata: float | int | None = None,
+                      compression: str = 'zstd',
+                      compression_level: int | None = None,
+                      tiled: bool = True,
+                      tile_size: int = 256,
+                      predictor: bool | int = False,
+                      cog: bool = False,
+                      overview_levels: list[int] | None = None,
+                      overview_resampling: str = 'mean',
+                      bigtiff: bool | None = None,
+                      max_z_error: float = 0.0,
+                      streaming_buffer_bytes: int = 256 * 1024 * 1024,
+                      photometric: str | int = 'auto',
+                      allow_internal_only_jpeg: bool = False) -> None:
+    """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
+
+    Tiles are extracted and compressed on the GPU via nvCOMP, then
+    assembled into a TIFF file on CPU. The CuPy array stays on device
+    throughout compression -- only the compressed bytes transfer to CPU
+    for file writing.
+
+    When ``cog=True``, generates overview pyramids on GPU and writes a
+    Cloud Optimized GeoTIFF with all IFDs at the file start for
+    efficient range-request access.
+
+    Falls back to CPU compression if nvCOMP is not available.
+
+    Parameters
+    ----------
+    data : xr.DataArray (CuPy- or NumPy-backed), cupy.ndarray, or np.ndarray
+        2D or 3D raster. CuPy-backed inputs stay on device; NumPy/Dask
+        inputs are uploaded via ``cupy.asarray(np.asarray(data))``
+        before compression (matches ``to_geotiff`` parity).
+    path : str or binary file-like
+        Output file path or any object with a ``write`` method
+        (e.g. ``io.BytesIO``). ``cog=True`` requires a string path:
+        the auto-dispatch path through ``to_geotiff(gpu=True, cog=True)``
+        rejects file-like destinations, and the explicit GPU writer
+        mirrors that rule (issue #1652).
+    crs : int, str, or None
+        EPSG code or WKT string. EPSG codes are strongly preferred for
+        interop; the WKT-only path emits a user-defined CRS (32767) with
+        the WKT stored in ``GTCitationGeoKey``, which many non-libgeotiff
+        readers ignore. A ``UserWarning`` is emitted when the WKT-only
+        path is taken. See issue #1768.
+    nodata : float, int, or None
+        NoData value.
+    compression : str
+        Codec name. Accepts the same set ``to_geotiff`` lists in its
+        own signature: ``'none'``, ``'deflate'``, ``'lzw'``, ``'jpeg'``,
+        ``'packbits'``, ``'zstd'``, ``'lz4'``, ``'jpeg2000'`` (alias
+        ``'j2k'``), or ``'lerc'``.
+
+        Routing per codec:
+
+        - ``'zstd'`` (default) and ``'deflate'``: nvCOMP batch
+          compression on the GPU -- the fastest paths and the reason to
+          use this entry point.
+        - ``'jpeg'``: rejected by default for parity with
+          ``to_geotiff``. Both writers emit self-contained JFIF tiles
+          and skip the required TIFF JPEGTables tag (347), so the
+          resulting files are unreadable by libtiff, GDAL, and
+          rasterio. Pass ``allow_internal_only_jpeg=True`` to opt in
+          to the experimental encode path; the writer then routes to
+          nvJPEG when libnvjpeg is loadable and falls back to Pillow
+          otherwise, and emits a ``GeoTIFFFallbackWarning`` so the
+          caller knows the output will not round-trip through external
+          readers. See issue #1845.
+        - ``'jpeg2000'`` and ``'j2k'``: nvJPEG2K GPU encode when
+          available, glymur CPU encode otherwise. The two paths are
+          not byte-for-byte identical (different libraries, different
+          default parameters); use ``to_geotiff`` if you need exact
+          CPU-writer parity.
+        - ``'lerc'``, ``'lzw'``, ``'packbits'``, and ``'lz4'``: no
+          nvCOMP/CUDA accelerator, so these fall through to the CPU
+          encoder for byte-stable parity with ``to_geotiff``.
+    compression_level : int or None
+        Compression effort level. Accepted for API compatibility but
+        currently ignored -- nvCOMP does not expose level control.
+    tiled : bool
+        Must be True (default). The GPU writer is tiled-only because
+        nvCOMP batch compression operates on per-tile streams; passing
+        ``tiled=False`` raises ``ValueError`` rather than silently
+        producing a tiled file. Accepted for API parity with
+        ``to_geotiff``.
+    tile_size : int
+        Tile size in pixels (default 256). Must be a positive multiple
+        of 16; this is a TIFF 6 spec requirement on TileWidth and
+        TileLength for broad reader compatibility. ``write_geotiff_gpu``
+        is always tiled, so the check fires for every call.
+    predictor : bool or int
+        TIFF predictor. ``False``/``0``/``1`` -> none, ``True``/``2`` ->
+        horizontal differencing, ``3`` -> floating-point predictor
+        (float dtypes only).
+    cog : bool
+        Write as Cloud Optimized GeoTIFF with overviews.
+    overview_levels : list[int] or None
+        Overview decimation factors relative to full resolution.
+        Each entry must be a power-of-two integer >= 2, and the list
+        must be strictly increasing (e.g. ``[2, 4, 8]`` writes
+        overviews at 1/2, 1/4 and 1/8 of the full resolution).
+        Invalid values raise ``ValueError``. Only used when ``cog=True``.
+        If None and ``cog=True``, auto-generates ``[2, 4, 8, ...]`` by
+        halving until the smallest overview fits in a single tile.
+    overview_resampling : str
+        Resampling method for overviews: 'mean' (default), 'nearest',
+        'min', 'max', 'median', 'mode', or 'cubic'. ``mode`` and
+        ``cubic`` fall back to the CPU implementation in
+        ``xrspatial.geotiff._writer`` so the GPU writer produces the
+        same overview bytes as the CPU writer.
+    bigtiff : bool or None
+        Force BigTIFF (64-bit offsets). None auto-promotes when the
+        estimated file size would exceed the classic-TIFF 4 GB limit.
+    max_z_error : float
+        Per-pixel error budget for LERC compression. The GPU writer
+        does not implement LERC (nvCOMP has no LERC backend), so any
+        non-zero value raises ``ValueError``. Accepted at the signature
+        level for API parity with ``to_geotiff``.
+    streaming_buffer_bytes : int
+        Accepted for API parity with ``to_geotiff``. The GPU writer
+        materialises the entire array on device and has no streaming
+        concept, so this kwarg is a no-op. Default matches
+        ``to_geotiff`` (256 MB) so callers passing the same kwargs to
+        either entry point see the same default and the same type.
+    photometric : str or int
+        Photometric interpretation for the TIFF Photometric tag (262).
+        See :func:`to_geotiff` for the full set of accepted values; the
+        GPU writer forwards this kwarg unchanged. Default ``'auto'``
+        writes MinIsBlack for any band count, so a 4-band raster is
+        not silently tagged as RGB+alpha (issue #1769).
+    allow_internal_only_jpeg : bool
+        Opt in to the experimental ``compression='jpeg'`` encode path
+        (default ``False``). The encoder emits self-contained JFIF
+        tiles without the TIFF JPEGTables tag (347); the file decodes
+        through this library's reader but not through libtiff, GDAL,
+        or rasterio. With the flag set, the write proceeds and a
+        ``GeoTIFFFallbackWarning`` is emitted at call time. Without
+        the flag, ``compression='jpeg'`` raises ``ValueError`` for
+        parity with ``to_geotiff``. See issue #1845.
+
+    Raises
+    ------
+    ValueError
+        If ``data`` is a 3D DataArray whose ``dims`` is not
+        ``(band, y, x)`` or ``(y, x, band)`` (accepting band-name
+        aliases ``bands`` / ``channel`` and spatial-name aliases
+        ``lat`` / ``lon`` / ``row`` / ``col``). A leading non-band
+        dim such as ``time`` would otherwise silently round-trip with
+        the leading axis treated as ``y`` (issue #1812).
+    """
+    if not tiled:
+        raise ValueError(
+            "write_geotiff_gpu requires tiled=True. nvCOMP batch "
+            "compression is tile-based; the strip layout is not "
+            "implemented on the GPU path. Use to_geotiff(..., gpu=False, "
+            "tiled=False) for strip output on CPU.")
+    # JPEG-in-TIFF parity with to_geotiff (issue #1845). The GPU encode
+    # path writes self-contained JFIF tiles without the TIFF JPEGTables
+    # tag (347), matching the broken CPU encoder. ``to_geotiff`` refuses
+    # the codec outright; this writer offered no rejection at all, so
+    # callers could produce GeoTIFFs that decoded through xrspatial but
+    # broke in libtiff/GDAL/rasterio. Reject by default with the same
+    # wording so both entry points agree, and surface an opt-in flag for
+    # users who explicitly want the internal-only path.
+    if (isinstance(compression, str)
+            and compression.lower() == 'jpeg'
+            and not allow_internal_only_jpeg):
+        raise ValueError(
+            "compression='jpeg' is not supported: the encoder writes "
+            "self-contained JFIF streams without the required "
+            "JPEGTables tag (347), so other readers (libtiff, GDAL, "
+            "rasterio) reject the file. Use 'deflate', 'zstd', or "
+            "'lzw' instead. Pass allow_internal_only_jpeg=True to opt "
+            "in to the experimental internal-reader-only path (issue "
+            "#1845).")
+    if (isinstance(compression, str)
+            and compression.lower() == 'jpeg'
+            and allow_internal_only_jpeg):
+        warnings.warn(
+            "write_geotiff_gpu(compression='jpeg', "
+            "allow_internal_only_jpeg=True) writes JFIF tiles without "
+            "the TIFF JPEGTables tag (347); the file decodes through "
+            "xrspatial but may fail in libtiff, GDAL, or rasterio. "
+            "See issue #1845.",
+            GeoTIFFFallbackWarning,
+            stacklevel=2,
+        )
+    # MinIsWhite pre-inversion (issue #1836) runs in the eager CPU writer.
+    # The GPU writer assembles tile bytes directly on device; threading
+    # the pixel + nodata-sentinel transform through that pipeline is out
+    # of scope for the round-trip fix. Refuse the combination so callers
+    # do not silently get inverted on-disk values. Move the array to the
+    # CPU and call the eager ``write`` path for MinIsWhite output.
+    from .._writer import _resolve_photometric as _resolve_photo_gpu
+    _gpu_samples_hint = (data.shape[2] if hasattr(data, 'shape')
+                         and data.ndim == 3 else 1)
+    _gpu_resolved_photo, _ = _resolve_photo_gpu(
+        photometric, _gpu_samples_hint)
+    if _gpu_resolved_photo == 0 and _gpu_samples_hint == 1:
+        raise NotImplementedError(
+            "photometric='miniswhite' on the GPU writer is not "
+            "supported: the writer-side pixel inversion that mirrors "
+            "the reader's unconditional MinIsWhite inversion (issue "
+            "#1836) is only wired into the eager CPU ``write`` path. "
+            "Move the array to host memory and call to_geotiff with "
+            "gpu=False, or write with photometric='minisblack' / "
+            "'auto'.")
+    # write_geotiff_gpu is always tiled, so validate tile_size here and
+    # keep parity with the public to_geotiff entry point.
+    _validate_tile_size_arg(tile_size)
+    if max_z_error < 0:
+        raise ValueError(
+            f"max_z_error must be >= 0, got {max_z_error}")
+    if max_z_error != 0:
+        raise ValueError(
+            "max_z_error is not supported on the GPU writer "
+            "(nvCOMP has no LERC backend). Use to_geotiff(..., gpu=False) "
+            "or omit max_z_error.")
+    # Mirror to_geotiff's path-type + cog=True gating verbatim so callers
+    # see identical errors from the two entry points. The auto-dispatch
+    # path through ``to_geotiff(gpu=True, cog=True, path=BytesIO)`` raises
+    # before reaching here; the explicit GPU writer mirrors the same gate
+    # so callers cannot bypass it (issue #1652). Non-cog file-like writes
+    # remain supported on this entry point.
+    _path_is_file_like = (
+        not isinstance(path, str)) and hasattr(path, 'write')
+    if _path_is_file_like:
+        if cog:
+            raise ValueError(
+                "cog=True is not supported for file-like destinations. "
+                "Pass a string path or write to BytesIO without cog=True.")
+    elif not isinstance(path, str):
+        raise TypeError(
+            f"path must be a str or a binary file-like with a write() "
+            f"method, got {type(path).__name__}")
+    # streaming_buffer_bytes is intentionally a no-op on the GPU path;
+    # the kwarg exists for API parity with to_geotiff so callers can pass
+    # the same kwargs to both entry points without filtering.
+    del streaming_buffer_bytes
+    try:
+        import cupy
+    except ImportError:
+        raise ImportError("cupy is required for GPU writes")
+
+    from .._gpu_decode import gpu_compress_tiles, make_overview_gpu
+    from .._writer import (
+        _compression_tag, _assemble_tiff, _write_bytes,
+        normalize_predictor,
+    )
+
+    # Extract array and metadata
+    geo_transform = None
+    epsg = None
+    wkt_fallback = None  # WKT string when EPSG is not available
+    raster_type = 1
+    gdal_meta_xml = None
+    extra_tags_list = None
+    x_res = None
+    y_res = None
+    res_unit = None
+
+    if isinstance(crs, int):
+        epsg = crs
+    elif isinstance(crs, str):
+        epsg = _wkt_to_epsg(crs)
+        if epsg is None:
+            wkt_fallback = crs
+
+    if isinstance(data, xr.DataArray):
+        arr = data.data
+        # Handle Dask arrays: compute to materialize
+        if hasattr(arr, 'compute'):
+            arr = arr.compute()
+        # Now arr should be CuPy or numpy
+        if hasattr(arr, 'get'):
+            pass  # CuPy array, already on GPU
+        else:
+            arr = cupy.asarray(np.asarray(arr))  # numpy -> GPU
+
+        # Reject ambiguous 3D layouts (issue #1812). Mirrors the gate
+        # in ``to_geotiff``: a leading non-band dim like ``time`` would
+        # otherwise round-trip with the leading axis silently treated
+        # as ``y``.
+        if arr.ndim == 3:
+            _validate_3d_writer_dims(data.dims)
+        # Handle band-first dimension order (band, y, x) -> (y, x, band).
+        # rioxarray and CF-style multi-band rasters land here; without
+        # this remap the writer treats arr.shape[2] as the band axis and
+        # produces a transposed file (issue #1580). The CPU writer does
+        # the same remap at the matching step in to_geotiff().
+        if arr.ndim == 3 and data.dims[0] in _BAND_DIM_NAMES:
+            arr = cupy.ascontiguousarray(cupy.moveaxis(arr, 0, -1))
+
+        # Prefer attrs['transform'] over the coord-derived transform: it
+        # is bit-stable across round-trips, while _coords_to_transform
+        # can drift on fractional pixel sizes (the same reasoning the
+        # CPU to_geotiff path applies for issue #1484).
+        geo_transform = _transform_from_attr(data.attrs.get('transform'))
+        if geo_transform is None:
+            geo_transform = _coords_to_transform(data)
+        # Resolve CRS the same way the CPU writer does. attrs['crs'] may
+        # be an int EPSG or a WKT string; attrs['crs_wkt'] only carries
+        # WKT. Without the WKT branch the GPU writer silently drops CRS
+        # on files whose original CRS only resolves to WKT (no recognized
+        # EPSG).
+        if epsg is None and crs is None:
+            crs_attr = data.attrs.get('crs')
+            if isinstance(crs_attr, str):
+                epsg = _wkt_to_epsg(crs_attr)
+                if epsg is None and wkt_fallback is None:
+                    wkt_fallback = crs_attr
+            elif crs_attr is not None:
+                epsg = int(crs_attr)
+            if epsg is None:
+                wkt = data.attrs.get('crs_wkt')
+                if isinstance(wkt, str):
+                    epsg = _wkt_to_epsg(wkt)
+                    if epsg is None and wkt_fallback is None:
+                        wkt_fallback = wkt
+        if nodata is None:
+            nodata = _resolve_nodata_attr(data.attrs)
+        # Mirror the CPU writer's pass-through of GDAL metadata, the
+        # extra_tags list, the friendly image_description / extra_samples
+        # / colormap synthesis, and the resolution tags. Without these,
+        # a GPU write -> CPU read round-trip silently drops every rich
+        # tag (#1563).
+        _rich = _extract_rich_tags(data.attrs)
+        raster_type = _rich['raster_type']
+        gdal_meta_xml = _rich['gdal_metadata_xml']
+        extra_tags_list = _rich['extra_tags']
+        x_res = _rich['x_resolution']
+        y_res = _rich['y_resolution']
+        res_unit = _rich['resolution_unit']
+    else:
+        if hasattr(data, 'compute'):
+            data = data.compute()  # Dask -> CuPy or numpy
+        if hasattr(data, 'device'):
+            arr = data  # already CuPy
+        elif hasattr(data, 'get'):
+            arr = data  # CuPy
+        else:
+            arr = cupy.asarray(np.asarray(data))  # numpy/list -> GPU
+
+    if arr.ndim not in (2, 3):
+        raise ValueError(f"Expected 2D or 3D array, got {arr.ndim}D")
+
+    height, width = arr.shape[:2]
+    samples = arr.shape[2] if arr.ndim == 3 else 1
+    np_dtype = np.dtype(str(arr.dtype))  # cupy dtype -> numpy dtype
+
+    # Mirror the CPU writer's NaN-to-sentinel substitution (issue #1599).
+    # Without this step the GPU writer emits raw NaN bytes interleaved
+    # with valid data even when ``nodata=<finite>`` is supplied; the
+    # GDAL_NODATA tag still advertises the sentinel but external readers
+    # (rasterio / GDAL / QGIS) mask only on the sentinel value and
+    # therefore see the NaN pixels as valid data. The CPU writer does
+    # the equivalent rewrite at ``to_geotiff`` (lines around
+    # ``arr.copy(); arr[nan_mask] = arr.dtype.type(nodata)``); both
+    # paths must produce byte-equivalent files for the same input.
+    # We always copy before the in-place sentinel write. Some upstream
+    # branches above already produce a fresh buffer (``cupy.asarray``
+    # from numpy/dask, ``ascontiguousarray`` from the band-first
+    # moveaxis); others (a CuPy-backed DataArray taking the no-moveaxis
+    # path, or a plain CuPy positional ``data``) hand ``arr`` back as
+    # the caller's buffer. Rather than tracking provenance across that
+    # branch tree, copy unconditionally when we are about to mutate --
+    # the cost is one GPU array allocation, only on the NaN-present
+    # path, and it guarantees the CPU writer's defensive-copy semantics
+    # in every case.
+    if (nodata is not None
+            and np_dtype.kind == 'f'
+            and not np.isnan(float(nodata))):
+        nan_mask = cupy.isnan(arr)
+        if bool(nan_mask.any()):
+            arr = arr.copy()
+            arr[nan_mask] = np_dtype.type(nodata)
+
+    comp_tag = _compression_tag(compression)
+    pred_val = normalize_predictor(predictor, np_dtype, comp_tag)
+
+    def _gpu_compress_to_part(gpu_arr, w, h, spp):
+        """Compress a GPU array into a (stub, w, h, offsets, counts, tiles) tuple."""
+        compressed = gpu_compress_tiles(
+            gpu_arr, tile_size, tile_size, w, h,
+            comp_tag, pred_val, np_dtype, spp)
+        rel_off = []
+        bc = []
+        off = 0
+        for tile in compressed:
+            rel_off.append(off)
+            bc.append(len(tile))
+            off += len(tile)
+        stub = np.empty((1, 1, spp) if spp > 1 else (1, 1), dtype=np_dtype)
+        return (stub, w, h, rel_off, bc, compressed)
+
+    # Full resolution
+    parts = [_gpu_compress_to_part(arr, width, height, samples)]
+
+    # Overview generation -- mirrors the CPU writer's 8-level cap.
+    if cog:
+        if overview_levels is None:
+            from .._writer import _MAX_OVERVIEW_LEVELS
+            # Auto-generated lists hold actual decimation factors (2,
+            # 4, 8, ...) so the loop below treats auto-generated and
+            # user-supplied lists identically (issue #1766).
+            overview_levels = []
+            oh, ow = height, width
+            factor = 2
+            while (oh > tile_size and ow > tile_size and
+                   len(overview_levels) < _MAX_OVERVIEW_LEVELS):
+                oh //= 2
+                ow //= 2
+                if oh > 0 and ow > 0:
+                    overview_levels.append(factor)
+                    factor *= 2
+        else:
+            # Validate explicit lists: power-of-two factors >= 2,
+            # strictly increasing, feasible for the input shape.
+            # Previously the values were ignored and only the list
+            # length mattered (issue #1766).
+            from .._writer import _validate_overview_levels
+            overview_levels = _validate_overview_levels(
+                overview_levels, height=height, width=width)
+
+        # Pass ``nodata`` so the GPU reducer masks the sentinel back to
+        # NaN before averaging. Without this, the NaN->sentinel rewrite
+        # done above on ``arr`` leaks the sentinel into the overview
+        # reduction and poisons the pyramid (issue #1613). Rewrite any
+        # all-sentinel cell NaN back to the sentinel after each level
+        # so the on-disk overview tiles still carry the sentinel value
+        # external readers expect.
+        current = arr
+        cumulative_factor = 1
+        for target_factor in overview_levels:
+            # Halve repeatedly until the cumulative decimation matches
+            # the requested factor. Validation has already established
+            # that ``target_factor`` is a power of two and strictly
+            # greater than ``cumulative_factor``.
+            while cumulative_factor < target_factor:
+                current = make_overview_gpu(current, method=overview_resampling,
+                                            nodata=nodata)
+                cumulative_factor *= 2
+                if (nodata is not None
+                        and np.dtype(str(current.dtype)).kind == 'f'
+                        and not np.isnan(float(nodata))):
+                    nan_mask = cupy.isnan(current)
+                    if bool(nan_mask.any().item()):
+                        current = current.copy()
+                        current[nan_mask] = np.dtype(
+                            str(current.dtype)).type(nodata)
+            oh, ow = current.shape[:2]
+            parts.append(_gpu_compress_to_part(current, ow, oh, samples))
+
+    file_bytes = _assemble_tiff(
+        width, height, np_dtype, comp_tag, pred_val, True, tile_size,
+        parts, geo_transform, epsg, nodata,
+        is_cog=(cog and len(parts) > 1),
+        raster_type=raster_type,
+        crs_wkt=wkt_fallback if epsg is None else None,
+        gdal_metadata_xml=gdal_meta_xml,
+        extra_tags=extra_tags_list,
+        x_resolution=x_res,
+        y_resolution=y_res,
+        resolution_unit=res_unit,
+        force_bigtiff=bigtiff,
+        photometric=photometric,
+    )
+
+    _write_bytes(file_bytes, path)
+
+
