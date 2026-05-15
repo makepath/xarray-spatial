@@ -22,7 +22,6 @@ import importlib.util
 import inspect
 import io
 import os
-import tempfile
 
 import numpy as np
 import pytest
@@ -169,14 +168,23 @@ def test_writer_signatures_declare_path_return():
         )
 
 
-def test_writer_returns_are_not_none():
+def test_writer_returns_are_not_none(tmp_path):
     """None of the public writers may go back to returning ``None``."""
+    # Use the ``tmp_path`` fixture (not ``tempfile.TemporaryDirectory``)
+    # because ``write_vrt`` reads each source through the module-level
+    # ``_MmapCache`` in ``_reader.py``, which keeps the file handle and
+    # mmap of ``src.tif`` open after ``_FileSource.close()`` so repeated
+    # reads of the same file stay cheap. On Windows that cached handle
+    # blocks ``os.unlink`` (WinError 32), so a synchronous
+    # ``TemporaryDirectory`` teardown raises before the test returns.
+    # ``tmp_path`` defers cleanup to pytest's session-end sweep, which
+    # tolerates the still-open handle the same way the other tests in
+    # this file already do.
     da = _small_da()
-    with tempfile.TemporaryDirectory() as td:
-        out = os.path.join(td, "out.tif")
-        rv = to_geotiff(da, out)
-        assert rv is not None
-        src = os.path.join(td, "src.tif")
-        to_geotiff(da, src)
-        vrt_rv = write_vrt(os.path.join(td, "m.vrt"), [src])
-        assert vrt_rv is not None
+    out = str(tmp_path / "out.tif")
+    rv = to_geotiff(da, out)
+    assert rv is not None
+    src = str(tmp_path / "src.tif")
+    to_geotiff(da, src)
+    vrt_rv = write_vrt(str(tmp_path / "m.vrt"), [src])
+    assert vrt_rv is not None
