@@ -16,7 +16,7 @@ existing test and only surface when a user files a bug.
 Each input file covers a case that has drifted before:
 
 - single-band float32 with a non-NaN nodata sentinel
-- multi-band uint16 with per-band nodata
+- multi-band uint16 with a single dataset-level nodata sentinel
 - north-up and south-up rasters (negative vs positive ``pixel_height``)
 - 1xN / Nx1 stripe (#1945)
 - tiled COG, no overviews
@@ -30,8 +30,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-rasterio = pytest.importorskip('rasterio')
-zarr = pytest.importorskip('zarr')
+rasterio = pytest.importorskip('rasterio', exc_type=ImportError)
+zarr = pytest.importorskip('zarr', exc_type=ImportError)
 
 from rasterio.transform import Affine, from_origin  # noqa: E402
 
@@ -289,14 +289,28 @@ class TestSingleBandFloat32NodataSentinel:
         )
 
 
-class TestMultibandUint16PerBandNodata:
+class TestMultibandUint16SharedNodata:
+    """Multi-band uint16 with one dataset-level nodata sentinel.
+
+    The TIFF / GDAL convention stores a single ``GDAL_NODATA`` tag per
+    file, so a multi-band raster shares one sentinel across every band.
+    rasterio exposes a ``nodatavals`` tuple for compatibility, but writing
+    distinct per-band values through the GTiff driver collapses to the
+    last value written (rasterio's ``_set_nodatavals`` private API
+    overwrites the single GDAL_NODATA tag). xrspatial mirrors that model
+    on the read side and surfaces a scalar on ``attrs['nodata']``. A test
+    that pretends to write distinct values per band would silently round
+    trip the wrong sentinel, so this case fixes one value and exercises
+    masking across both bands.
+    """
+
     def test_round_trip(self, tmp_path):
         path = tmp_path / 'tmp_1961_uint16_multiband.tif'
         store = tmp_path / 'tmp_1961_uint16_multiband.zarr'
         band1 = np.arange(12, dtype=np.uint16).reshape(3, 4)
         band1[0, 0] = 0  # nodata cell on band 1
         band2 = np.full((3, 4), 7, dtype=np.uint16)
-        band2[2, 3] = 0
+        band2[2, 3] = 0  # nodata cell on band 2 (same sentinel value)
         data = np.stack([band1, band2])  # (2, 3, 4) for rasterio
 
         with rasterio.open(
