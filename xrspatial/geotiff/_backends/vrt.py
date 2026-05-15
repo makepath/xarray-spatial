@@ -111,10 +111,13 @@ def read_vrt(source: str, *,
     returned DataArray wraps a dask graph that decodes one chunk
     window per task.  Construction does not materialise any pixels;
     only the VRT XML is parsed.  The eager read populates
-    ``attrs['vrt_holes']`` from skipped sources; the chunked path does
-    not aggregate per-task hole records, so that attribute is not set
-    when ``chunks=`` is used.  Each worker still emits
-    ``GeoTIFFFallbackWarning`` for missing sources.
+    ``attrs['vrt_holes']`` from skipped sources at decode time. The
+    chunked path approximates the same contract via a parse-time
+    ``os.path.exists`` sweep over every source; that catches the
+    dominant missing-file case but does not detect decode-time codec
+    failures, which surface as per-task ``GeoTIFFFallbackWarning``
+    instead. Each worker still emits ``GeoTIFFFallbackWarning`` for
+    missing sources at execution time as well.
     """
     from .._reader import _coerce_path
     from .._vrt import (

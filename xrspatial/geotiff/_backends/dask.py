@@ -2,11 +2,15 @@
 
 Step 8 of issue #1813. With validators (#1882), attrs helpers (#1883),
 and runtime sentinels (#1880) already extracted, the dask entry-point
-body and its delayed-read helper move cleanly into this module. The
-``read_vrt`` and ``_read_geo_info`` calls inside ``read_geotiff_dask``
-still target ``__init__.py``; both are lazy-imported inside the
-function body to avoid a circular import (``__init__.py`` re-exports
-``read_geotiff_dask`` from here).
+body and its delayed-read helper move cleanly into this module.
+
+``read_vrt`` is statically imported from the sibling ``.vrt`` module
+since #1898 promoted it from a lazy import once the target moved out
+of ``__init__.py``. ``_read_geo_info`` still lives in ``__init__.py``
+and is lazy-imported inside ``read_geotiff_dask``'s body to avoid a
+circular import (``__init__.py`` re-exports ``read_geotiff_dask`` from
+here); a later step of #1813 will move it out and the lazy import can
+become static.
 """
 from __future__ import annotations
 
