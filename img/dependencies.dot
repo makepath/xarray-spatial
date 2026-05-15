@@ -5,7 +5,7 @@ node [fontname = "helvetica"];
 edge [fontname = "helvetica"];
 
 
-subgraph required {
+subgraph cluster_required {
 	xarray_spatial -> numpy;
 	xarray_spatial -> xarray;
 	xarray_spatial -> numba;
@@ -18,7 +18,7 @@ subgraph required {
 	matplotlib -> numpy;
 };
 
-subgraph optional {
+subgraph cluster_optional {
 	xarray_spatial -> cupy [style=dashed];
 	xarray_spatial -> cuspatial [style=dashed];
 	xarray_spatial -> rtxpy [style=dashed];
