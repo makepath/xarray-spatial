@@ -27,7 +27,6 @@ Every test ships through ``read_geotiff_gpu`` directly or through
 from __future__ import annotations
 
 import importlib.util
-import os
 
 import numpy as np
 import pytest
@@ -75,15 +74,17 @@ def float16_stripped_tif(tmp_path):
 
 @pytest.fixture
 def float16_tiled_tif(tmp_path):
-    """Tiled float16 GeoTIFF: triggers the bps_mismatch tiled CPU fallback.
+    """Multi-tile float16 GeoTIFF: 32x32 image, 16x16 tiles (2x2 grid).
 
-    Tiled with a tile size matching the image, deflate-compressed.
-    ``bps_mismatch`` short-circuits the tiled GPU decode path and routes
-    through the CPU decoder; the GDS path is also gated off via
-    ``_gds_chunk_path_available`` returning False for (bps=16, sf=3).
+    Tiled and deflate-compressed. The 2x2 tile grid exercises inter-tile
+    reassembly in the decoder path so a regression that mis-stitched
+    adjacent tiles would surface here. ``bps_mismatch`` short-circuits
+    the tiled GPU decode path and routes through the CPU decoder; the
+    GDS path is also gated off via ``_gds_chunk_path_available``
+    returning False for (bps=16, sf=3).
     """
     tifffile = pytest.importorskip("tifffile")
-    arr = np.arange(256, dtype=np.float16).reshape(16, 16)
+    arr = np.arange(1024, dtype=np.float16).reshape(32, 32)
     path = tmp_path / "f16_tiled.tif"
     tifffile.imwrite(
         str(path), arr, compression="deflate", tile=(16, 16))
@@ -218,6 +219,8 @@ class TestGDSPathGatedOffForFloat16:
     """
 
     def test_gds_path_gated_off_for_float16(self, float16_tiled_tif):
+        pytest.importorskip("kvikio", exc_type=ImportError)
+
         from xrspatial.geotiff._backends.gpu import _gds_chunk_path_available
         from xrspatial.geotiff._header import parse_all_ifds, parse_header
 
@@ -231,9 +234,14 @@ class TestGDSPathGatedOffForFloat16:
         # Sanity-check fixture: tiled, bps=16, sample_format=3 (float)
         from xrspatial.geotiff._dtypes import SAMPLE_FORMAT_FLOAT
         assert ifd.is_tiled, "fixture sanity: tiled layout expected"
-        bps = ifd.bits_per_sample
-        if isinstance(bps, tuple):
-            bps = bps[0]
+        # Mirror the production unpacking pattern at gpu.py:791
+        # (bps_first[0] if bps_first else 0) so an empty BitsPerSample
+        # tuple would not raise IndexError here.
+        bps_first = ifd.bits_per_sample
+        if isinstance(bps_first, tuple):
+            bps = bps_first[0] if bps_first else 0
+        else:
+            bps = bps_first
         assert bps == 16, "fixture sanity: bps=16 expected"
         assert ifd.sample_format == SAMPLE_FORMAT_FLOAT
 
@@ -254,7 +262,7 @@ class TestGDSPathGatedOffForFloat16:
         GDS path on every float32 tiled COG.
         """
         tifffile = pytest.importorskip("tifffile")
-        pytest.importorskip("kvikio")
+        pytest.importorskip("kvikio", exc_type=ImportError)
 
         arr = np.arange(256, dtype=np.float32).reshape(16, 16)
         path = tmp_path / "f32_tiled.tif"
