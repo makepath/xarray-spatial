@@ -729,7 +729,7 @@ def _gds_chunk_path_available(source, ifd, has_sparse_tile, orientation):
 def _decode_window_gpu_direct(file_path, all_offsets, all_byte_counts,
                               tw, th, full_w, compression, predictor,
                               file_dtype, samples, byte_order,
-                              r0, c0, r1, c1):
+                              r0, c0, r1, c1, masked_fill=None):
     """Decode a window's tile subset disk->GPU.
 
     Picks just the tiles overlapping ``(r0..r1, c0..c1)`` from the full
@@ -741,6 +741,11 @@ def _decode_window_gpu_direct(file_path, all_offsets, all_byte_counts,
 
     Called from inside a ``dask.delayed`` per-chunk task, so it runs
     once per chunk and only pulls the tiles that chunk needs from disk.
+
+    ``masked_fill`` is forwarded to both GPU decoders for LERC files
+    with a per-pixel valid mask, matching the eager-GPU path (#1896).
+    Without it, masked pixels read back as LERC's zero fill instead of
+    the file's nodata sentinel.
     """
     from .._gpu_decode import gpu_decode_tiles, gpu_decode_tiles_from_file
 
@@ -767,6 +772,7 @@ def _decode_window_gpu_direct(file_path, all_offsets, all_byte_counts,
         tw, th, sub_w, sub_h,
         compression, predictor, file_dtype, samples,
         byte_order=byte_order,
+        masked_fill=masked_fill,
     )
 
     if arr_gpu is None:
@@ -787,6 +793,7 @@ def _decode_window_gpu_direct(file_path, all_offsets, all_byte_counts,
             compressed_tiles, tw, th, sub_w, sub_h,
             compression, predictor, file_dtype, samples,
             byte_order=byte_order,
+            masked_fill=masked_fill,
         )
 
     crop_r0 = r0 - ty_start * th
@@ -903,7 +910,10 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     import dask
     import dask.array as da_mod
 
-    from .._reader import _check_dimensions, MAX_PIXELS_DEFAULT
+    from .._reader import (
+        _check_dimensions, MAX_PIXELS_DEFAULT, _resolve_masked_fill,
+    )
+    from .._compression import COMPRESSION_LERC
     from .._header import validate_tile_layout
     from .._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
 
@@ -952,6 +962,14 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     # Validate band kwarg against the file's band count.
     n_bands_out = samples if samples > 1 else 0
     if band is not None:
+        # Reject ``bool`` / ``np.bool_`` up front; ``isinstance(True, int)``
+        # is True in Python so ``True < n_bands_out`` would silently read
+        # band 1. The eager GPU path and the dask path already reject
+        # bools here (#1786); mirror them so the GDS chunked path agrees
+        # (#1896).
+        if isinstance(band, (bool, np.bool_)):
+            raise ValueError(
+                f"band must be a non-negative int, got {band!r}")
         if n_bands_out == 0:
             if band != 0:
                 raise IndexError(
@@ -969,6 +987,15 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
 
     nodata = geo_info.nodata
 
+    # LERC tiles can carry a per-pixel valid mask that GDAL writes
+    # zero-filled in the data array. Resolve the nodata fill the same way
+    # the eager GPU path does so each chunk task restores it inside the
+    # GPU decode kernels (#1896). Without this, masked pixels read back
+    # at LERC's zero fill on the chunked path while the eager path
+    # restores the sentinel.
+    masked_fill = (_resolve_masked_fill(ifd.nodata_str, file_dtype)
+                   if compression == COMPRESSION_LERC else None)
+
     @dask.delayed
     def _chunk_task(meta, r0, c0, r1, c1):
         all_offsets, all_byte_counts = meta
@@ -977,6 +1004,7 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
             tw, th, full_w, compression, predictor,
             file_dtype, samples, byte_order,
             r0, c0, r1, c1,
+            masked_fill=masked_fill,
         )
         if nodata is not None:
             arr = _apply_nodata_mask_gpu(arr, nodata)
