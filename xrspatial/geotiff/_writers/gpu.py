@@ -479,6 +479,18 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         # all-sentinel cell NaN back to the sentinel after each level
         # so the on-disk overview tiles still carry the sentinel value
         # external readers expect.
+        #
+        # The sentinel rewrite uses ``cupy.putmask`` rather than
+        # ``current.copy(); current[nan_mask] = sentinel`` because
+        # ``make_overview_gpu`` always returns a freshly allocated
+        # buffer (``_block_reduce_2d_gpu`` ends in ``cupy.nan*`` /
+        # ``cupy.around(...).astype(...)`` / ``cropped[::2, ::2].copy()``,
+        # and the 3-D path ends in ``cupy.stack``) so nothing else
+        # aliases the buffer between the return and the rewrite.
+        # Dropping the redundant ``copy()`` skips one chunk-sized GPU
+        # allocation per overview level. Mirrors the in-place sentinel
+        # rewrite ``_apply_nodata_mask_gpu`` adopted in #1934. See
+        # issue #1948.
         current = arr
         cumulative_factor = 1
         for target_factor in overview_levels:
@@ -495,9 +507,9 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                         and not np.isnan(float(nodata))):
                     nan_mask = cupy.isnan(current)
                     if bool(nan_mask.any().item()):
-                        current = current.copy()
-                        current[nan_mask] = np.dtype(
-                            str(current.dtype)).type(nodata)
+                        cupy.putmask(
+                            current, nan_mask,
+                            np.dtype(str(current.dtype)).type(nodata))
             oh, ow = current.shape[:2]
             parts.append(_gpu_compress_to_part(current, ow, oh, samples))
 
