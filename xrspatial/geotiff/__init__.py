@@ -68,8 +68,6 @@ from ._runtime import (
     _GPU_DEPRECATED_SENTINEL,
     _MISSING_SOURCES_SENTINEL,
     _ON_GPU_FAILURE_SENTINEL,
-    _X_DIM_NAMES,
-    _Y_DIM_NAMES,
     _geotiff_strict_mode,
     _gpu_fallback_warning_message,
 )
@@ -77,7 +75,6 @@ from ._validation import (
     _validate_3d_writer_dims,
     _validate_chunks_arg,
     _validate_dtype_cast,
-    _validate_tile_size,
     _validate_tile_size_arg,
 )
 from ._writer import write
