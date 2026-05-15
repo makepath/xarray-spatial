@@ -107,11 +107,14 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         Codec name. One of ``'none'``, ``'deflate'``, ``'lzw'``,
         ``'jpeg'``, ``'packbits'``, ``'zstd'``, ``'lz4'``,
         ``'jpeg2000'`` (alias ``'j2k'``), or ``'lerc'``.
-        ``'jpeg'`` is currently rejected on write because the encoder
+        ``'jpeg'`` is rejected on write by default because the encoder
         omits the JPEGTables tag and produced files do not round-trip
-        through libtiff / GDAL / rasterio. Use ``'deflate'``, ``'zstd'``,
-        or ``'lzw'`` instead. ``'lerc'`` accepts ``max_z_error`` for
-        lossy compression with a bounded per-pixel error.
+        through libtiff / GDAL / rasterio. Pass
+        ``allow_internal_only_jpeg=True`` to opt in to the experimental
+        internal-reader-only path (see that parameter for details), or
+        use ``'deflate'``, ``'zstd'``, or ``'lzw'`` instead. ``'lerc'``
+        accepts ``max_z_error`` for lossy compression with a bounded
+        per-pixel error.
     compression_level : int or None
         Compression effort level. None uses each codec's default (6 for
         deflate/zstd). Valid ranges: deflate 1-9, zstd 1-22, lz4 0-16.
@@ -258,16 +261,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 "'lzw' instead. Pass allow_internal_only_jpeg=True to "
                 "opt in to the experimental internal-reader-only path "
                 "(issue #1845).")
-        if compression.lower() == 'jpeg' and allow_internal_only_jpeg:
-            warnings.warn(
-                "to_geotiff(compression='jpeg', "
-                "allow_internal_only_jpeg=True) writes JFIF tiles "
-                "without the TIFF JPEGTables tag (347); the file decodes "
-                "through xrspatial but may fail in libtiff, GDAL, or "
-                "rasterio. See issue #1845.",
-                GeoTIFFFallbackWarning,
-                stacklevel=2,
-            )
+        # The JPEG opt-in warning is emitted below once we know the
+        # dispatch decision: ``write_geotiff_gpu`` emits its own warning
+        # on the GPU path, so emitting here would double-warn callers
+        # of ``to_geotiff(gpu=True, compression='jpeg',
+        # allow_internal_only_jpeg=True)``.
 
     # max_z_error only applies to LERC; reject negative values and reject
     # non-zero values paired with any other codec so the caller learns the
@@ -298,6 +296,29 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
 
     _is_vrt_path = (
         isinstance(path, str) and path.lower().endswith('.vrt'))
+
+    # Resolve GPU dispatch up front so the JPEG opt-in warning fires
+    # exactly once. ``write_geotiff_gpu`` emits its own warning on the
+    # GPU path; emitting here as well would double-warn callers of
+    # ``to_geotiff(gpu=True, compression='jpeg',
+    # allow_internal_only_jpeg=True)``. VRT and CPU paths receive the
+    # warning here. On GPU-to-CPU fallback the GPU writer has already
+    # warned before raising, so the CPU fallback does not warn twice.
+    auto_detected_gpu = gpu is None
+    use_gpu = gpu if gpu is not None else _is_gpu_data(data)
+    if (isinstance(compression, str)
+            and compression.lower() == 'jpeg'
+            and allow_internal_only_jpeg
+            and not use_gpu):
+        warnings.warn(
+            "to_geotiff(compression='jpeg', "
+            "allow_internal_only_jpeg=True) writes JFIF tiles "
+            "without the TIFF JPEGTables tag (347); the file decodes "
+            "through xrspatial but may fail in libtiff, GDAL, or "
+            "rasterio. See issue #1845.",
+            GeoTIFFFallbackWarning,
+            stacklevel=2,
+        )
 
     # tile_size only applies to tiled output; warn if the caller passed a
     # non-default size alongside strip mode (it would otherwise be silently
@@ -345,12 +366,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                          photometric=photometric)
         return
 
-    # Auto-detect GPU data and dispatch to write_geotiff_gpu. ``gpu is
-    # None`` is the implicit "use whatever fits the data" path; preserve
-    # that distinction in the fallback warning below so users who never
-    # set ``gpu=True`` are not told their explicit request was dropped.
-    auto_detected_gpu = gpu is None
-    use_gpu = gpu if gpu is not None else _is_gpu_data(data)
+    # Dispatch to write_geotiff_gpu when GPU was selected (explicit
+    # ``gpu=True`` or auto-detected CuPy data). ``auto_detected_gpu``
+    # and ``use_gpu`` were computed above to gate the JPEG opt-in
+    # warning; reuse them so the call sites stay in sync.
     if use_gpu and _path_is_file_like:
         # write_geotiff_gpu's nvCOMP path materialises tile parts and then
         # calls _write_bytes(path), which would write at the buffer's

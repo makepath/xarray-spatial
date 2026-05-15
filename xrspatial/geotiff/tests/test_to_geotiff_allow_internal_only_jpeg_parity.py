@@ -151,3 +151,95 @@ def test_to_geotiff_and_gpu_writer_share_kwarg_default():
     gpu_default = inspect.signature(
         write_geotiff_gpu).parameters["allow_internal_only_jpeg"].default
     assert eager_default == gpu_default == False  # noqa: E712
+
+
+def test_to_geotiff_gpu_dispatch_forwards_allow_internal_only_jpeg(
+        tmp_path, monkeypatch):
+    """``to_geotiff(gpu=True, allow_internal_only_jpeg=True)`` must
+    forward the kwarg into ``write_geotiff_gpu``. Without this, the
+    auto-dispatch path silently swallows the opt-in and the GPU writer
+    would refuse the encode after the CPU dispatcher accepted the
+    request -- the exact divergence #1845 fixed.
+
+    Stubbed because most CI hosts lack a CUDA stack; the test still
+    pins the dispatcher contract regardless of whether the data is on
+    a real GPU.
+    """
+    captured: dict = {}
+
+    def _fake_write_geotiff_gpu(data, path, **kwargs):
+        captured['data'] = data
+        captured['path'] = path
+        captured['kwargs'] = kwargs
+        # Touch the file so any caller-side existence asserts pass.
+        with open(path, 'wb') as f:
+            f.write(b'')
+
+    monkeypatch.setattr(
+        'xrspatial.geotiff._writers.eager.write_geotiff_gpu',
+        _fake_write_geotiff_gpu,
+    )
+
+    da = _make_rgb_uint8_da()
+    path = str(tmp_path / 'gpu_forward.tif')
+    to_geotiff(
+        da, path,
+        gpu=True,
+        compression='jpeg',
+        allow_internal_only_jpeg=True,
+    )
+
+    assert 'kwargs' in captured, "to_geotiff must dispatch to write_geotiff_gpu when gpu=True"
+    assert captured['kwargs'].get('allow_internal_only_jpeg') is True, (
+        "to_geotiff must forward allow_internal_only_jpeg unchanged "
+        "into write_geotiff_gpu (issue #1845)."
+    )
+    assert captured['kwargs'].get('compression') == 'jpeg'
+
+
+def test_to_geotiff_gpu_dispatch_emits_single_jpeg_opt_in_warning(
+        tmp_path, monkeypatch, recwarn):
+    """The CPU dispatcher must not emit its own JPEG opt-in warning
+    when the call is delegated to ``write_geotiff_gpu``. The GPU writer
+    emits its own ``GeoTIFFFallbackWarning``; emitting from both would
+    surface the opt-in disclosure twice for the same encode.
+
+    Stubs the GPU writer to emit the warning the real implementation
+    emits, then asserts exactly one ``GeoTIFFFallbackWarning`` reached
+    the caller.
+    """
+    import warnings as _warnings
+
+    def _fake_write_geotiff_gpu(data, path, **kwargs):
+        if kwargs.get('compression') == 'jpeg' and kwargs.get(
+                'allow_internal_only_jpeg'):
+            _warnings.warn(
+                "write_geotiff_gpu jpeg opt-in (stub).",
+                GeoTIFFFallbackWarning,
+                stacklevel=2,
+            )
+        with open(path, 'wb') as f:
+            f.write(b'')
+
+    monkeypatch.setattr(
+        'xrspatial.geotiff._writers.eager.write_geotiff_gpu',
+        _fake_write_geotiff_gpu,
+    )
+
+    da = _make_rgb_uint8_da()
+    path = str(tmp_path / 'gpu_single_warn.tif')
+    to_geotiff(
+        da, path,
+        gpu=True,
+        compression='jpeg',
+        allow_internal_only_jpeg=True,
+    )
+
+    jpeg_warns = [w for w in recwarn.list
+                  if issubclass(w.category, GeoTIFFFallbackWarning)]
+    assert len(jpeg_warns) == 1, (
+        "to_geotiff(gpu=True, compression='jpeg', "
+        "allow_internal_only_jpeg=True) must emit exactly one "
+        "GeoTIFFFallbackWarning; got "
+        f"{[str(w.message) for w in jpeg_warns]}"
+    )
