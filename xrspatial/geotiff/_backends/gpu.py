@@ -1047,6 +1047,17 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     masked_fill = (_resolve_masked_fill(ifd.nodata_str, file_dtype)
                    if compression == COMPRESSION_LERC else None)
 
+    # Determine declared dtype for the dask graph. Nodata masking
+    # promotes integer rasters to float64; mirror the CPU dask path.
+    declared_dtype = file_dtype
+    if nodata is not None and file_dtype.kind in ('u', 'i'):
+        if np.isfinite(nodata) and float(nodata).is_integer():
+            info = np.iinfo(file_dtype)
+            if info.min <= int(nodata) <= info.max:
+                declared_dtype = np.dtype('float64')
+    if dtype is not None:
+        declared_dtype = np.dtype(dtype)
+
     @dask.delayed
     def _chunk_task(meta, r0, c0, r1, c1):
         all_offsets, all_byte_counts = meta
@@ -1065,18 +1076,22 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
             arr = arr.astype(target)
         if band is not None and arr.ndim == 3:
             arr = arr[:, :, band]
+        # Cast to the declared graph dtype so every chunk matches the
+        # dask array's promised dtype. ``_apply_nodata_mask_gpu`` only
+        # promotes integer arrays to float64 when at least one sentinel
+        # pixel hits, mirroring the eager GPU semantics; the dask graph
+        # always-promotes (matching the CPU dask path's #1597 contract),
+        # so chunks with no sentinel hit need an explicit cast here.
+        # Without this, a uint16 file + declared nodata sentinel
+        # produces a graph that advertises float64 but emits uint16
+        # buffers from any chunk that didn't hit the sentinel -- a
+        # silent declared/actual dtype mismatch (issue #1909). Skip
+        # the cast when the dtype already matches to avoid the
+        # ``astype(copy=True)`` per-chunk allocation that #1624 fixed
+        # for the CPU dask path.
+        if arr.dtype != declared_dtype:
+            arr = arr.astype(declared_dtype)
         return arr
-
-    # Determine declared dtype for the dask graph. Nodata masking
-    # promotes integer rasters to float64; mirror the CPU dask path.
-    declared_dtype = file_dtype
-    if nodata is not None and file_dtype.kind in ('u', 'i'):
-        if np.isfinite(nodata) and float(nodata).is_integer():
-            info = np.iinfo(file_dtype)
-            if info.min <= int(nodata) <= info.max:
-                declared_dtype = np.dtype('float64')
-    if dtype is not None:
-        declared_dtype = np.dtype(dtype)
 
     out_has_band_axis = band is None and n_bands_out > 0
 
