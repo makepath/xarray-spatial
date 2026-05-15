@@ -20,8 +20,6 @@ size back over the cap.
 from __future__ import annotations
 
 import os
-import pickle
-import tempfile
 
 import numpy as np
 import pytest
@@ -101,13 +99,12 @@ def test_vrt_chunked_dataset_is_shared_graph_input(tmp_path):
     ``TaskRef``-style placeholder pointing into a single shared
     ``from-value`` layer) rather than a literal embedded dataset.
 
-    Under the in-process scheduler an embedded copy still works
-    correctly because Python's pickle memo deduplicates references to
-    the same in-memory object. The bug surfaces under the distributed
-    / multi-process scheduler where each task pickle is serialised
-    independently and the full dataset is shipped once per task -- so
-    the structural shape, not the in-process pickle size, is what
-    matters.
+    Under the synchronous / threaded scheduler tasks are not pickled
+    at all, so an embedded copy is harmless in that path. The bug
+    surfaces under the distributed / multi-process scheduler where
+    each task is serialised independently and the full dataset is
+    shipped once per task -- so the structural shape of the graph,
+    not in-process behaviour, is what matters.
     """
     from xrspatial.geotiff._vrt import VRTDataset
 
