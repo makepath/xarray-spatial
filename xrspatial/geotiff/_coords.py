@@ -262,6 +262,17 @@ def require_transform_for_georeferenced(
         ydim = da.dims[-2]
         xdim = da.dims[-1]
     if xdim in da.coords and ydim in da.coords:
+        # Integer-dtype coords are the read-side no-georef sentinel
+        # (see #1949 + ``coords_to_transform``): the reader emits
+        # ``np.arange(N, dtype=np.int64)`` for files without GeoTIFF
+        # tags. Those callers are explicitly *not* requesting a
+        # georeferenced output, so the fail-closed guard must not fire
+        # on them. Mirrors the same short-circuit in
+        # ``coords_to_transform``.
+        x = da.coords[xdim].values
+        y = da.coords[ydim].values
+        if x.dtype.kind in ('i', 'u') or y.dtype.kind in ('i', 'u'):
+            return
         raise ValueError(
             f"Cannot infer GeoTIFF transform from a "
             f"{tuple(da.sizes.values())} array with spatial coords on "
