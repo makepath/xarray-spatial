@@ -2996,9 +2996,9 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
                 raise CloudSizeLimitError(
                     f"Cloud source {source!r} reports unknown size; "
                     f"refusing to download to avoid an unbounded read. "
-                    f"Pass max_cloud_bytes=None to override, or raise "
-                    f"the limit via the XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES "
-                    f"environment variable.")
+                    f"Pass max_cloud_bytes=None to disable the size "
+                    f"check for this source. Raising the byte limit "
+                    f"does not help when the source size is unknown.")
             if size > cloud_budget:
                 src.close()
                 raise CloudSizeLimitError(

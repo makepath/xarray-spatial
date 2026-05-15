@@ -13,9 +13,6 @@ fetches the size from fsspec at construction, so the check is free.
 """
 from __future__ import annotations
 
-import importlib.util
-import os
-
 import numpy as np
 import pytest
 
