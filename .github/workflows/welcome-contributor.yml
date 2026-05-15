@@ -1,0 +1,50 @@
+name: Welcome new contributor
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+  issues: read
+
+jobs:
+  welcome:
+    # Skip drafts and same-repo PRs (the latter sidesteps the author_association
+    # quirk where same-repo authors report as CONTRIBUTOR, per the note in
+    # copilot-review.yml). Also skip maintainers explicitly - across-fork PRs
+    # report author_association reliably.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name &&
+      github.event.pull_request.author_association != 'MEMBER' &&
+      github.event.pull_request.author_association != 'OWNER' &&
+      github.event.pull_request.author_association != 'COLLABORATOR'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment if no intro issue exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          REPO: ${{ github.repository }}
+        run: |
+          count=$(gh issue list \
+            --repo "$REPO" \
+            --author "$PR_AUTHOR" \
+            --state all \
+            --search 'in:title "Contributor intro:"' \
+            --json number --jq 'length')
+
+          echo "Intro-issue count for $PR_AUTHOR: $count"
+
+          if [ "$count" -gt 0 ]; then
+            echo "Author already filed an intro issue; skipping."
+            exit 0
+          fi
+
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "Hi @${PR_AUTHOR}, thanks for the PR!
+
+          Would you mind filing a quick [New contributor introduction](https://github.com/${REPO}/issues/new?template=new-contributor.md) issue when you get a chance? It helps us point you at issues that fit what you'd like to work on. Most fields are optional.
+
+          Reviewing your PR doesn't depend on it, just a friendly nudge."
