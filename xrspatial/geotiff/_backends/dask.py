@@ -29,12 +29,12 @@ from .vrt import read_vrt
 
 def read_geotiff_dask(source: str, *,
                       dtype: str | np.dtype | None = None,
-                      chunks: int | tuple = 512,
-                      overview_level: int | None = None,
                       window: tuple | None = None,
+                      overview_level: int | None = None,
                       band: int | None = None,
-                      max_pixels: int | None = None,
-                      name: str | None = None) -> xr.DataArray:
+                      name: str | None = None,
+                      chunks: int | tuple = 512,
+                      max_pixels: int | None = None) -> xr.DataArray:
     """Read a GeoTIFF as a dask-backed DataArray for out-of-core processing.
 
     Each chunk is loaded lazily via windowed reads.

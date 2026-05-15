@@ -69,8 +69,8 @@ def _preflight_cuda_runtime(cupy) -> None:
 
 def read_geotiff_gpu(source: str, *,
                      dtype: str | np.dtype | None = None,
-                     overview_level: int | None = None,
                      window: tuple | None = None,
+                     overview_level: int | None = None,
                      band: int | None = None,
                      name: str | None = None,
                      chunks: int | tuple | None = None,
