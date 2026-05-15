@@ -186,12 +186,13 @@ class TestPlanarConfigValidation:
 
 
 class TestIFDChainLoop:
-    """Verify parse_all_ifds bails out on a malicious IFD chain cycle.
+    """Verify parse_all_ifds rejects a malicious IFD chain cycle.
 
-    Issue #1482 (T-2): the parser keeps a ``seen`` set of offsets and
-    breaks the loop when an IFD's next-pointer points back to an offset
-    already visited.  Without that guard, a crafted file with IFD2
-    pointing back at IFD1 would loop forever.
+    Issue #1482 (T-2) added a ``seen`` set so the parser would not loop
+    forever on a cyclic chain. Issue #1913 tightened that further: a
+    cycle is now treated as a malformed file (``ValueError``) for
+    consistency with the past-EOF and ``MAX_IFDS`` branches. Returning
+    a truncated chain silently let callers act on a half-parsed file.
     """
 
     def _build_two_ifd_loop(self) -> bytes:
@@ -221,29 +222,25 @@ class TestIFDChainLoop:
 
         return bytes(out)
 
-    def test_cycle_does_not_infinite_loop(self):
+    def test_cycle_raises_value_error(self):
+        """IFD chain cycle now raises rather than truncating silently (#1913)."""
         data = self._build_two_ifd_loop()
         header = parse_header(data)
-        ifds = parse_all_ifds(data, header)
-
-        # Each unique offset is parsed exactly once.  Cycle detection
-        # must stop us at IFD #2 even though its next-pointer is non-zero.
-        assert len(ifds) == 2
-        # Values should match what we wrote, in order.
-        assert ifds[0].width == 1
-        assert ifds[1].width == 2
+        with pytest.raises(ValueError, match="cycle"):
+            parse_all_ifds(data, header)
 
     def test_cycle_completes_quickly(self):
         """Parsing must terminate without exhausting the buffer."""
         data = self._build_two_ifd_loop()
         header = parse_header(data)
-        # If the seen-set guard regresses this would hang; pytest-timeout
-        # would catch it but the bounded len() check below is enough.
-        ifds = parse_all_ifds(data, header)
-        assert len(ifds) <= 4  # generous upper bound -- we expect 2
+        # If the seen-set guard regresses this would hang. The current
+        # contract raises; pre-fix it returned a truncated list. Either
+        # way, we should not hang.
+        with pytest.raises(ValueError):
+            parse_all_ifds(data, header)
 
-    def test_self_loop(self):
-        """An IFD whose next-pointer is its own offset terminates."""
+    def test_self_loop_raises(self):
+        """An IFD whose next-pointer is its own offset is also a cycle."""
         bo = '<'
         out = bytearray()
         out.extend(b'II')
@@ -254,9 +251,9 @@ class TestIFDChainLoop:
         out.extend(struct.pack(f'{bo}HHI', TAG_IMAGE_WIDTH, 3, 1))
         out.extend(struct.pack(f'{bo}I', 7))
         out.extend(struct.pack(f'{bo}I', ifd_offset))  # points to self
-        ifds = parse_all_ifds(bytes(out), parse_header(bytes(out)))
-        assert len(ifds) == 1
-        assert ifds[0].width == 7
+        data = bytes(out)
+        with pytest.raises(ValueError, match="cycle"):
+            parse_all_ifds(data, parse_header(data))
 
 
 class TestReadValueRationals:
