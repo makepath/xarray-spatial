@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 
 from ._coords import _BAND_DIM_NAMES
-from ._runtime import _X_DIM_NAMES, _Y_DIM_NAMES
+from ._runtime import _TIME_DIM_NAMES, _X_DIM_NAMES, _Y_DIM_NAMES
 
 
 def _validate_3d_writer_dims(dims) -> None:
@@ -43,12 +43,26 @@ def _validate_3d_writer_dims(dims) -> None:
                   and d2 in _BAND_DIM_NAMES)
     if band_layout or yxb_layout:
         return
-    # Bare (y, x, *) or (*, y, x) where the third dim is unnamed but
-    # spatial -- the writer's old behaviour treats the non-spatial axis
-    # as bands. Accept that only when the unknown dim is in the band
-    # position (last), which matches how raw numpy callers typically
-    # build a band-last array.
+    # Bare (y, x, *) where the third dim is unnamed but spatial -- the
+    # writer's old behaviour treats the non-spatial axis as bands.
+    # Accept that only when the unknown dim is in the band position
+    # (last), which matches how raw numpy callers typically build a
+    # band-last array. Refuse known *temporal* dim names so a
+    # ``(y, x, time)`` stack is rejected with a clear error instead of
+    # silently being written as a 3-band TIFF (issue #1972). The
+    # mirror case ``(time, y, x)`` was already caught -- this closes
+    # the asymmetry.
     if d0 in _Y_DIM_NAMES and d1 in _X_DIM_NAMES:
+        if d2 in _TIME_DIM_NAMES:
+            raise ValueError(
+                f"3D writer input has temporal trailing dim {d2!r} in dims "
+                f"{dims!r}. The writer would otherwise treat the time axis "
+                f"as bands and silently write a multiband TIFF. Select a "
+                f"single time slice (e.g. ``data.isel({d2}=0)``), reduce "
+                f"with a stat (``data.mean({d2!r})``), or rename to one of "
+                f"{_BAND_DIM_NAMES} if you really intend the temporal "
+                f"axis to round-trip as TIFF bands (issue #1972)."
+            )
         return
     raise ValueError(
         f"3D writer input has ambiguous dims {dims!r}. Expected "
