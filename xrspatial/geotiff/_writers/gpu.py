@@ -20,6 +20,7 @@ from .._attrs import _extract_rich_tags, _resolve_nodata_attr
 from .._coords import (
     _BAND_DIM_NAMES,
     coords_to_transform as _coords_to_transform,
+    require_transform_for_georeferenced as _require_transform_for_georeferenced,
     transform_from_attr as _transform_from_attr,
 )
 from .._crs import _validate_crs_fallback, _wkt_to_epsg
@@ -348,6 +349,11 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         geo_transform = _transform_from_attr(data.attrs.get('transform'))
         if geo_transform is None:
             geo_transform = _coords_to_transform(data)
+        # Match the CPU writer's fail-closed guard: an array with spatial
+        # coords but no derivable transform (e.g. 1x1 without
+        # ``attrs['transform']``) must not silently round-trip as a
+        # non-georeferenced TIFF (#1945).
+        _require_transform_for_georeferenced(data, geo_transform)
         # Resolve CRS the same way the CPU writer does. attrs['crs'] may
         # be an int EPSG or a WKT string; attrs['crs_wkt'] only carries
         # WKT. Without the WKT branch the GPU writer silently drops CRS

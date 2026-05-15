@@ -30,6 +30,7 @@ from .._backends._gpu_helpers import _is_gpu_data
 from .._coords import (
     _BAND_DIM_NAMES,
     coords_to_transform as _coords_to_transform,
+    require_transform_for_georeferenced as _require_transform_for_georeferenced,
     transform_from_attr as _transform_from_attr,
 )
 from .._crs import _validate_crs_fallback, _wkt_to_epsg
@@ -517,6 +518,11 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
             geo_transform = _transform_from_attr(data.attrs.get('transform'))
         if geo_transform is None:
             geo_transform = _coords_to_transform(data)
+        # Fail closed when coords are present but no transform could be
+        # derived (e.g. 1x1 without ``attrs['transform']``) instead of
+        # silently writing a non-georeferenced TIFF that round-trips back
+        # with integer pixel coords (#1945).
+        _require_transform_for_georeferenced(data, geo_transform)
         if epsg is None and crs is None:
             crs_attr = data.attrs.get('crs')
             if isinstance(crs_attr, str):
@@ -837,6 +843,9 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
         geo_transform = _transform_from_attr(data.attrs.get('transform'))
         if geo_transform is None:
             geo_transform = _coords_to_transform(data)
+        # Match the to_geotiff fail-closed guard so VRT writes don't
+        # silently produce non-georeferenced tiles either (#1945).
+        _require_transform_for_georeferenced(data, geo_transform)
         # Pull the same rich-tag set that to_geotiff forwards to
         # ``write`` so per-tile files under the VRT carry it too.
         _rich = _extract_rich_tags(data.attrs)

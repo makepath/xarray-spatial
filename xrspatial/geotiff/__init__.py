@@ -51,6 +51,7 @@ from ._coords import (
     transform_tuple as _transform_tuple,
     transform_from_attr as _transform_from_attr,
     coords_to_transform as _coords_to_transform,
+    require_transform_for_georeferenced as _require_transform_for_georeferenced,
 )
 from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 from ._reader import UnsafeURLError

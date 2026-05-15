@@ -232,6 +232,49 @@ def transform_from_attr(attr_val) -> 'GeoTransform | None':
     )
 
 
+def require_transform_for_georeferenced(
+    da: xr.DataArray, geo_transform
+) -> None:
+    """Raise if ``da`` carries spatial coords but no transform was derived.
+
+    Used by the writer entry points (#1945). A DataArray whose spatial
+    dim names appear in ``da.coords`` is an explicit caller request for a
+    georeferenced output. Silently falling through to a non-georeferenced
+    TIFF -- which is what the old code did for 1x1 inputs and inputs with
+    a degenerate axis -- corrupted round-trips. If the writer cannot
+    recover a transform from coords *and* the caller did not supply
+    ``attrs['transform']``, fail closed instead.
+
+    ``geo_transform`` is the value the writer has already resolved (from
+    ``attrs['transform']`` first, then from coord arrays). If it's not
+    ``None`` we have a transform and there's nothing to check.
+    """
+    if geo_transform is not None:
+        return
+    if da.ndim == 3:
+        spatial = tuple(d for d in da.dims if d not in _BAND_DIM_NAMES)
+        if len(spatial) == 2:
+            ydim, xdim = spatial[0], spatial[1]
+        else:
+            ydim = da.dims[-2]
+            xdim = da.dims[-1]
+    else:
+        ydim = da.dims[-2]
+        xdim = da.dims[-1]
+    if xdim in da.coords and ydim in da.coords:
+        raise ValueError(
+            f"Cannot infer GeoTIFF transform from a "
+            f"{tuple(da.sizes.values())} array with spatial coords on "
+            f"both axes: both axes are degenerate (1x1), so neither "
+            f"coord array carries a pixel size step. 1xN and Nx1 inputs "
+            f"recover the pixel size from the non-degenerate axis, but "
+            f"a 1x1 cannot. Supply the affine transform explicitly via "
+            f"``attrs['transform']`` (rasterio 6-tuple "
+            f"``(px, 0, ox, 0, py, oy)``) or drop the coords if a "
+            f"non-georeferenced TIFF is desired."
+        )
+
+
 def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
     """Infer GeoTransform from DataArray coordinates.
 
@@ -274,7 +317,11 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
     x = da.coords[xdim].values
     y = da.coords[ydim].values
 
-    if len(x) < 2 or len(y) < 2:
+    # 1x1 has no pixel-size signal on either axis. The caller must supply
+    # ``attrs['transform']`` (handled by the writer before calling us).
+    # Returning ``None`` lets the writer detect this and raise rather than
+    # silently writing a non-georeferenced TIFF (#1945).
+    if len(x) < 2 and len(y) < 2:
         return None
 
     # GeoTIFF only supports an affine transform; non-uniform spacing
@@ -298,11 +345,32 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
                 f"GeoTIFF requires an affine transform."
             )
 
-    _is_regular(x, "x")
-    _is_regular(y, "y")
+    # Degenerate-axis fallback (#1945). When one axis has length 1, we
+    # can't read a step off it (``coord[1] - coord[0]`` is undefined),
+    # so we recover the per-axis pixel size from the non-degenerate
+    # axis and assume square pixels for the degenerate one. That matches
+    # how every other geospatial reader handles 1xN / Nx1 strips. The
+    # earlier behaviour — bailing out and silently writing a
+    # non-georeferenced TIFF — broke round-trips for legitimate
+    # single-scanline / single-profile rasters.
+    if len(x) >= 2:
+        _is_regular(x, "x")
+        pixel_width = float(x[1] - x[0])
+    else:
+        pixel_width = None
+    if len(y) >= 2:
+        _is_regular(y, "y")
+        pixel_height = float(y[1] - y[0])
+    else:
+        pixel_height = None
 
-    pixel_width = float(x[1] - x[0])
-    pixel_height = float(y[1] - y[0])
+    if pixel_width is None:
+        # Borrow magnitude from y; x increases left-to-right by convention.
+        pixel_width = abs(pixel_height)
+    if pixel_height is None:
+        # Borrow magnitude from x; y decreases top-to-bottom by convention,
+        # so flip sign.
+        pixel_height = -abs(pixel_width)
 
     is_point = da.attrs.get('raster_type') == 'point'
     if is_point:
