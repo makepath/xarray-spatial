@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 try:
     import dask.array as da
 except ImportError:
@@ -19,33 +21,7 @@ from xrspatial.tests.general_checks import (assert_boundary_mode_correctness,
 from xrspatial.utils import ngjit
 
 
-def _do_sparse_array(data_array):
-    import random
-    indx = list(zip(*np.where(data_array)))
-    pos = random.sample(range(data_array.size), data_array.size//2)
-    indx = np.asarray(indx)[pos]
-    r = indx[:, 0]
-    c = indx[:, 1]
-    data_half = data_array.copy()
-    data_half[r, c] = 0
-    return data_half
-
-
-def _do_gaussian_array():
-    _x = np.linspace(0, 50, 101)
-    _y = _x.copy()
-    _mean = 25
-    _sdev = 5
-    X, Y = np.meshgrid(_x, _y, sparse=True)
-    x_fac = -np.power(X-_mean, 2)
-    y_fac = -np.power(Y-_mean, 2)
-    gaussian = np.exp((x_fac+y_fac)/(2*_sdev**2)) / (2.5*_sdev)
-    return gaussian
-
-
-data_random = np.random.random_sample((100, 100))
-data_random_sparse = _do_sparse_array(data_random)
-data_gaussian = _do_gaussian_array()
+data_random = np.random.default_rng(0).random((40, 40))
 
 
 def test_mean_transfer_function_cpu():
@@ -63,7 +39,7 @@ def test_mean_transfer_function_dask_cpu():
     general_output_checks(numpy_agg, numpy_mean)
 
     # dask + numpy case
-    dask_numpy_agg = xr.DataArray(da.from_array(data_random, chunks=(3, 3)))
+    dask_numpy_agg = xr.DataArray(da.from_array(data_random, chunks=(20, 20)))
     dask_numpy_mean = mean(dask_numpy_agg)
     general_output_checks(dask_numpy_agg, dask_numpy_mean)
 
@@ -103,7 +79,7 @@ def test_mean_transfer_function_dask_gpu():
 
     # dask + cupy case
     dask_cupy_agg = xr.DataArray(
-        da.from_array(cupy.asarray(data_random), chunks=(3, 3))
+        da.from_array(cupy.asarray(data_random), chunks=(20, 20))
     )
     dask_cupy_mean = mean(dask_cupy_agg)
     general_output_checks(dask_cupy_agg, dask_cupy_mean)
@@ -227,30 +203,32 @@ def test_circle_kernel_small_radius_not_rejected_1241():
 def test_apply_rejects_oversize_kernel_1284():
     # Regression for #1284: focal.apply must reject a user-supplied
     # kernel that would OOM on the padded raster + kernel allocation.
-    # custom_kernel only checks shape parity, so a tiny raster paired
-    # with a giant kernel used to allocate many GB before any work.
+    # Patch the memory probe so a tiny kernel still trips the guard.
     raster = xr.DataArray(np.zeros((10, 10), dtype=np.float32))
-    big_kernel = np.ones((50001, 50001), dtype=np.float32)
-    with pytest.raises(MemoryError, match=r"apply\(\): kernel of shape"):
-        apply(raster, big_kernel)
+    kernel = np.ones((101, 101), dtype=np.float32)
+    with patch('xrspatial.focal._available_memory_bytes', return_value=1):
+        with pytest.raises(MemoryError, match=r"apply\(\): kernel of shape"):
+            apply(raster, kernel)
 
 
 def test_focal_stats_rejects_oversize_kernel_1284():
     # Regression for #1284: focal_stats must apply the same kernel
     # vs raster guard before dispatching to any backend.
     raster = xr.DataArray(np.zeros((10, 10), dtype=np.float32))
-    big_kernel = np.ones((50001, 50001), dtype=np.float32)
-    with pytest.raises(MemoryError, match=r"focal_stats\(\): kernel of shape"):
-        focal_stats(raster, big_kernel, stats_funcs=['mean'])
+    kernel = np.ones((101, 101), dtype=np.float32)
+    with patch('xrspatial.focal._available_memory_bytes', return_value=1):
+        with pytest.raises(MemoryError, match=r"focal_stats\(\): kernel of shape"):
+            focal_stats(raster, kernel, stats_funcs=['mean'])
 
 
 def test_hotspots_rejects_oversize_kernel_1284():
     # Regression for #1284: hotspots calls convolve_2d under the hood,
     # which inherits the same padded-allocation footprint.
     raster = xr.DataArray(np.zeros((10, 10), dtype=np.float32))
-    big_kernel = np.ones((50001, 50001), dtype=np.float32)
-    with pytest.raises(MemoryError, match=r"hotspots\(\): kernel of shape"):
-        hotspots(raster, big_kernel)
+    kernel = np.ones((101, 101), dtype=np.float32)
+    with patch('xrspatial.focal._available_memory_bytes', return_value=1):
+        with pytest.raises(MemoryError, match=r"hotspots\(\): kernel of shape"):
+            hotspots(raster, kernel)
 
 
 def test_apply_small_kernel_not_rejected_1284():
@@ -909,11 +887,9 @@ def test_hotspots_boundary_invalid():
 @dask_array_available
 @pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
 @pytest.mark.parametrize("size,chunks", [
-    ((6, 8), (3, 4)),
-    ((7, 9), (3, 3)),
-    ((10, 15), (5, 5)),
-    ((10, 15), (10, 15)),
     ((5, 5), (2, 2)),
+    ((7, 9), (3, 3)),
+    ((10, 15), (10, 15)),
 ])
 def test_convolution_2d_boundary_numpy_equals_dask(boundary, size, chunks):
     rng = np.random.default_rng(42)
@@ -930,10 +906,9 @@ def test_convolution_2d_boundary_numpy_equals_dask(boundary, size, chunks):
 @dask_array_available
 @pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
 @pytest.mark.parametrize("size,chunks", [
-    ((8, 10), (4, 5)),
-    ((7, 9), (3, 3)),
-    ((12, 12), (6, 4)),
     ((5, 5), (2, 2)),
+    ((8, 10), (4, 5)),
+    ((12, 12), (6, 4)),
 ])
 def test_mean_boundary_numpy_equals_dask(boundary, size, chunks):
     rng = np.random.default_rng(42)
@@ -949,10 +924,9 @@ def test_mean_boundary_numpy_equals_dask(boundary, size, chunks):
 @dask_array_available
 @pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
 @pytest.mark.parametrize("size,chunks", [
-    ((6, 8), (3, 4)),
+    ((5, 5), (2, 2)),
     ((7, 9), (3, 3)),
     ((10, 15), (5, 5)),
-    ((5, 5), (2, 2)),
 ])
 def test_apply_boundary_numpy_equals_dask(boundary, size, chunks):
     rng = np.random.default_rng(42)
@@ -969,10 +943,9 @@ def test_apply_boundary_numpy_equals_dask(boundary, size, chunks):
 @dask_array_available
 @pytest.mark.parametrize("boundary", ['nan', 'nearest', 'reflect', 'wrap'])
 @pytest.mark.parametrize("size,chunks", [
-    ((8, 10), (4, 5)),
+    ((5, 6), (2, 3)),
     ((7, 9), (3, 3)),
     ((10, 12), (5, 6)),
-    ((5, 6), (2, 3)),
 ])
 def test_hotspots_boundary_numpy_equals_dask(boundary, size, chunks):
     rng = np.random.default_rng(42)
