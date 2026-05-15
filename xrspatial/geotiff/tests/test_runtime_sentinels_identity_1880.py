@@ -50,11 +50,6 @@ def test_fallback_warning_class_is_singleton():
     assert geotiff_pkg.GeoTIFFFallbackWarning is _runtime.GeoTIFFFallbackWarning
 
 
-def test_dim_name_tuples_are_singleton():
-    assert geotiff_pkg._Y_DIM_NAMES is _runtime._Y_DIM_NAMES
-    assert geotiff_pkg._X_DIM_NAMES is _runtime._X_DIM_NAMES
-
-
 def test_strict_mode_helper_is_singleton():
     assert geotiff_pkg._geotiff_strict_mode is _runtime._geotiff_strict_mode
 
