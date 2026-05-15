@@ -1154,6 +1154,15 @@ def build_geo_tags(transform: GeoTransform, crs_epsg: int | None = None,
 
     # GDAL_NODATA
     if nodata is not None:
+        # Belt-and-braces guard against bool / np.bool_ sentinels. The
+        # writer entry point (``to_geotiff``) already rejects these, but
+        # ``build_geo_tags`` is called from a few other code paths and
+        # ``str(True) == 'True'`` produces a non-numeric GDAL_NODATA tag
+        # that readers silently drop. See issue #1911.
+        import numpy as _np
+        if isinstance(nodata, (bool, _np.bool_)):
+            raise TypeError(
+                f"nodata must be numeric (int or float), got {nodata!r}")
         tags[TAG_GDAL_NODATA] = str(nodata)
 
     return tags

@@ -210,6 +210,18 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
 
     path = _coerce_path(path)
 
+    # Reject bool / np.bool_ nodata up front. ``bool`` is a subclass of
+    # ``int`` in Python, so a typo like ``nodata=True`` slips past every
+    # downstream ``isinstance(nodata, (int, float))`` guard. The geotag
+    # builder then writes ``str(True)`` -> ``"True"`` into GDAL_NODATA,
+    # which no reader parses as numeric, so the round-trip drops the
+    # sentinel without warning. Refuse rather than coerce ``True`` to 1:
+    # the caller almost certainly meant a real numeric sentinel. See
+    # issue #1911.
+    if isinstance(nodata, (bool, np.bool_)):
+        raise TypeError(
+            f"nodata must be numeric (int or float), got {nodata!r}")
+
     # tiled=False ignores tile_size, so only validate when tiled output
     # is requested. Shared with write_geotiff_gpu via
     # _validate_tile_size_arg so both writers keep identical validation.
