@@ -19,7 +19,7 @@
 <!-- numpy -->
 <g id="node2" class="node">
 <title>numpy</title>
-<ellipse fill="aquamarine" stroke="black" cx="395.23" cy="-25.46" rx="57.98" ry="25.46"/>
+<ellipse fill="palegreen" stroke="black" cx="395.23" cy="-25.46" rx="57.98" ry="25.46"/>
 <text text-anchor="start" x="367.48" y="-27.16" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00">NumPy</text>
 <text text-anchor="start" x="362.23" y="-13.16" font-family="Helvetica,sans-Serif" font-size="14.00">(Ndarray)</text>
 </g>
@@ -32,7 +32,7 @@
 <!-- xarray -->
 <g id="node3" class="node">
 <title>xarray</title>
-<ellipse fill="aquamarine" stroke="black" cx="395.23" cy="-112.37" rx="99.88" ry="25.46"/>
+<ellipse fill="palegreen" stroke="black" cx="395.23" cy="-112.37" rx="99.88" ry="25.46"/>
 <text text-anchor="start" x="369.36" y="-114.07" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00">Xarray</text>
 <text text-anchor="start" x="332.61" y="-100.07" font-family="Helvetica,sans-Serif" font-size="14.00">(Labeled&#45;Ndarray)</text>
 </g>
@@ -45,7 +45,7 @@
 <!-- numba -->
 <g id="node4" class="node">
 <title>numba</title>
-<ellipse fill="aquamarine" stroke="black" cx="129.23" cy="-112.37" rx="78.14" ry="25.46"/>
+<ellipse fill="palegreen" stroke="black" cx="129.23" cy="-112.37" rx="78.14" ry="25.46"/>
 <text text-anchor="start" x="101.48" y="-114.07" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00">Numba</text>
 <text text-anchor="start" x="81.98" y="-100.07" font-family="Helvetica,sans-Serif" font-size="14.00">(JIT Compiler)</text>
 </g>
@@ -58,7 +58,7 @@
 <!-- scipy -->
 <g id="node5" class="node">
 <title>scipy</title>
-<ellipse fill="aquamarine" stroke="black" cx="633.23" cy="-112.37" rx="120.56" ry="25.46"/>
+<ellipse fill="palegreen" stroke="black" cx="633.23" cy="-112.37" rx="120.56" ry="25.46"/>
 <text text-anchor="start" x="612.23" y="-114.07" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00">SciPy</text>
 <text text-anchor="start" x="555.98" y="-100.07" font-family="Helvetica,sans-Serif" font-size="14.00">(Scientific Computing)</text>
 </g>
@@ -71,7 +71,7 @@
 <!-- matplotlib -->
 <g id="node6" class="node">
 <title>matplotlib</title>
-<ellipse fill="aquamarine" stroke="black" cx="1440.23" cy="-112.37" rx="68.06" ry="25.46"/>
+<ellipse fill="palegreen" stroke="black" cx="1440.23" cy="-112.37" rx="68.06" ry="25.46"/>
 <text text-anchor="start" x="1400.11" y="-114.07" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00">Matplotlib</text>
 <text text-anchor="start" x="1408.73" y="-100.07" font-family="Helvetica,sans-Serif" font-size="14.00">(Plotting)</text>
 </g>
@@ -84,7 +84,7 @@
 <!-- zstandard -->
 <g id="node7" class="node">
 <title>zstandard</title>
-<ellipse fill="aquamarine" stroke="black" cx="487.23" cy="-199.28" rx="115.79" ry="25.46"/>
+<ellipse fill="palegreen" stroke="black" cx="487.23" cy="-199.28" rx="115.79" ry="25.46"/>
 <text text-anchor="start" x="446.73" y="-200.98" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00">Zstandard</text>
 <text text-anchor="start" x="413.36" y="-186.98" font-family="Helvetica,sans-Serif" font-size="14.00">(Compression Codec)</text>
 </g>
@@ -158,19 +158,19 @@
 <path fill="none" stroke="black" stroke-dasharray="5,2" d="M1154.77,-345.42C1051.1,-308.41 905.56,-256.45 819.66,-225.78"/>
 <polygon fill="black" stroke="black" points="820.99,-222.54 810.4,-222.47 818.64,-229.13 820.99,-222.54"/>
 </g>
-<!-- nvcomp -->
+<!-- libnvcomp -->
 <g id="node12" class="node">
-<title>nvcomp</title>
-<g id="a_node12"><a xlink:href="https://developer.nvidia.com/nvcomp" xlink:title="&lt;b&gt;nvCOMP&lt;/b&gt;&lt;br /&gt;(GPU Decompression)">
+<title>libnvcomp</title>
+<g id="a_node12"><a xlink:href="https://developer.nvidia.com/nvcomp" xlink:title="&lt;b&gt;libnvcomp.so&lt;/b&gt;&lt;br /&gt;(GPU Decompression)">
 <ellipse fill="lemonchiffon" stroke="black" cx="1011.23" cy="-199.28" rx="117.91" ry="25.46"/>
-<text text-anchor="start" x="978.23" y="-200.98" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00">nvCOMP</text>
+<text text-anchor="start" x="959.86" y="-200.98" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00">libnvcomp.so</text>
 <text text-anchor="start" x="935.86" y="-186.98" font-family="Helvetica,sans-Serif" font-size="14.00">(GPU Decompression)</text>
 </a>
 </g>
 </g>
-<!-- xarray_spatial&#45;&gt;nvcomp -->
+<!-- xarray_spatial&#45;&gt;libnvcomp -->
 <g id="edge15" class="edge">
-<title>xarray_spatial&#45;&gt;nvcomp</title>
+<title>xarray_spatial&#45;&gt;libnvcomp</title>
 <path fill="none" stroke="black" stroke-dasharray="5,2" d="M1171.5,-314.28C1130.28,-284.96 1085.32,-252.98 1053.53,-230.37"/>
 <polygon fill="black" stroke="black" points="1055.93,-227.78 1045.76,-224.84 1051.88,-233.49 1055.93,-227.78"/>
 </g>
@@ -332,9 +332,9 @@
 <path fill="none" stroke="black" stroke-dasharray="5,2" d="M834.97,-180.27C907.2,-165.28 1009.16,-144.11 1078.93,-129.62"/>
 <polygon fill="black" stroke="black" points="1079.28,-133.13 1088.36,-127.67 1077.86,-126.27 1079.28,-133.13"/>
 </g>
-<!-- nvcomp&#45;&gt;cupy -->
+<!-- libnvcomp&#45;&gt;cupy -->
 <g id="edge27" class="edge">
-<title>nvcomp&#45;&gt;cupy</title>
+<title>libnvcomp&#45;&gt;cupy</title>
 <path fill="none" stroke="black" stroke-dasharray="5,2" d="M1051.13,-175.08C1069.16,-164.59 1090.62,-152.11 1109.5,-141.13"/>
 <polygon fill="black" stroke="black" points="1111.2,-144.19 1118.09,-136.13 1107.68,-138.14 1111.2,-144.19"/>
 </g>

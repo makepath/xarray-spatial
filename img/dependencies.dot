@@ -23,7 +23,7 @@ subgraph optional {
 	xarray_spatial -> cuspatial [style=dashed];
 	xarray_spatial -> rtxpy [style=dashed];
 	xarray_spatial -> kvikio [style=dashed];
-	xarray_spatial -> nvcomp [style=dashed];
+	xarray_spatial -> libnvcomp [style=dashed];
 	xarray_spatial -> dask [style=dashed];
 	xarray_spatial -> dask_geopandas [style=dashed];
 	xarray_spatial -> shapely [style=dashed];
@@ -35,7 +35,7 @@ subgraph optional {
 	cuspatial -> cupy [style=dashed];
 	rtxpy -> cupy [style=dashed];
 	kvikio -> cupy [style=dashed];
-	nvcomp -> cupy [style=dashed];
+	libnvcomp -> cupy [style=dashed];
 	dask_geopandas -> dask [style=dashed];
 	dask_geopandas -> geopandas [style=dashed];
 	geopandas -> shapely [style=dashed];
@@ -45,18 +45,18 @@ subgraph optional {
 
  xarray_spatial [label=<<b>Xarray-Spatial</b><br />(Raster Analysis)> fillcolor=palegreen2 fontsize=20 width=0.5 shape=circle style=filled];
 
- numpy [label=<<b>NumPy</b><br />(Ndarray)> fillcolor=aquamarine style=filled];
- xarray [label=<<b>Xarray</b><br/>(Labeled-Ndarray)> fillcolor=aquamarine style=filled];
- numba [label=<<b>Numba</b><br />(JIT Compiler)> fillcolor=aquamarine style=filled];
- scipy [label=<<b>SciPy</b><br />(Scientific Computing)> fillcolor=aquamarine style=filled];
- matplotlib [label=<<b>Matplotlib</b><br />(Plotting)> fillcolor=aquamarine style=filled];
- zstandard [label=<<b>Zstandard</b><br />(Compression Codec)> fillcolor=aquamarine style=filled];
+ numpy [label=<<b>NumPy</b><br />(Ndarray)> fillcolor=palegreen style=filled];
+ xarray [label=<<b>Xarray</b><br/>(Labeled-Ndarray)> fillcolor=palegreen style=filled];
+ numba [label=<<b>Numba</b><br />(JIT Compiler)> fillcolor=palegreen style=filled];
+ scipy [label=<<b>SciPy</b><br />(Scientific Computing)> fillcolor=palegreen style=filled];
+ matplotlib [label=<<b>Matplotlib</b><br />(Plotting)> fillcolor=palegreen style=filled];
+ zstandard [label=<<b>Zstandard</b><br />(Compression Codec)> fillcolor=palegreen style=filled];
 
  cupy [label=<<b>CuPy</b><br />(GPU-Ndarray)> fillcolor=lemonchiffon style=filled href="https://github.com/cupy/cupy"];
  cuspatial [label=<<b>cuSpatial</b><br />(GPU Geometry)> fillcolor=lemonchiffon style=filled href="https://github.com/rapidsai/cuspatial"];
  rtxpy [label=<<b>rtxpy</b><br />(GPU Ray Tracing)> fillcolor=lemonchiffon style=filled href="https://github.com/makepath/rtxpy"];
  kvikio [label=<<b>KvikIO</b><br />(GPUDirect Storage I/O)> fillcolor=lemonchiffon style=filled href="https://github.com/rapidsai/kvikio"];
- nvcomp [label=<<b>nvCOMP</b><br />(GPU Decompression)> fillcolor=lemonchiffon style=filled href="https://developer.nvidia.com/nvcomp"];
+ libnvcomp [label=<<b>libnvcomp.so</b><br />(GPU Decompression)> fillcolor=lemonchiffon style=filled href="https://developer.nvidia.com/nvcomp"];
  dask [label=<<b>Dask</b><br />(Distributed-Ndarray)> fillcolor=lemonchiffon style=filled href="https://dask.org"];
  dask_geopandas [label=<<b>dask-geopandas</b><br />(Distributed GeoDataFrame)> fillcolor=lemonchiffon style=filled href="https://github.com/geopandas/dask-geopandas"];
  shapely [label=<<b>Shapely</b><br />(Python Geometry)> fillcolor=lemonchiffon style=filled];
