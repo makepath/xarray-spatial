@@ -16,11 +16,14 @@ import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
 
+from .conftest import requires_integration
+
 
 def _tmp_path(name):
     return os.path.join(tempfile.gettempdir(), name)
 
 
+@requires_integration
 class TestIntCoordRoundTripHotfix1962:
     def test_int_coords_2d_round_trip(self):
         pixels = np.arange(20, dtype=np.float32).reshape(4, 5)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
 import socket
 import struct
 
@@ -52,6 +53,14 @@ requires_gpu = pytest.mark.skipif(
 )
 requires_loopback = pytest.mark.skipif(
     not _HAS_LOOPBACK, reason="loopback bind unavailable in this environment"
+)
+
+_RUN_INTEGRATION = os.environ.get("XRSPATIAL_RUN_INTEGRATION", "") not in (
+    "", "0", "false", "False"
+)
+requires_integration = pytest.mark.skipif(
+    not _RUN_INTEGRATION,
+    reason="integration test; set XRSPATIAL_RUN_INTEGRATION=1 to run locally",
 )
 
 
