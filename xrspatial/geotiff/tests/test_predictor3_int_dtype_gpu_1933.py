@@ -209,15 +209,18 @@ class TestGPUChunkedRejectsMalformedFile:
             read_geotiff_gpu(str(path), chunks=4)
 
     def test_read_geotiff_gpu_chunked_tiled_raises(self, tmp_path):
-        """Tiled chunked path: routes through ``_read_geotiff_gpu_chunked``.
+        """Tiled chunked path with KvikIO available exercises gpu.py:999.
 
-        With KvikIO usable, qualification calls
-        ``_read_geotiff_gpu_chunked_gds`` which invokes the validator at
-        gpu.py:999 during graph construction; without KvikIO, the CPU
-        dask fallback raises with the same message. Either way the
-        caller sees the malformed-file rejection. The test pins the
-        contract rather than the dispatch detail.
+        Gated on ``kvikio`` so the GDS qualification path
+        (``_read_geotiff_gpu_chunked_gds``) is the branch actually
+        taken. Without KvikIO the dispatcher falls back to the CPU
+        dask path and the line-999 validator is never reached, which
+        leaves the targeted call site untested. The CPU fallback
+        rejection is already covered by the eager/dask tests in
+        ``test_predictor3_int_dtype_1933``.
         """
+        pytest.importorskip("kvikio")
+
         from xrspatial.geotiff import read_geotiff_gpu
 
         arr = np.arange(256, dtype=np.uint32).reshape(16, 16)
@@ -241,32 +244,28 @@ class TestValidPredictor3StillWorksOnGPU:
     """A legitimate predictor=3 + float32 tiled file still decodes on GPU."""
 
     def test_predictor3_float32_gpu_round_trip(self, tmp_path):
-        tifffile = pytest.importorskip("tifffile")
-        pytest.importorskip("imagecodecs")
-
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
 
         arr = np.linspace(-1.0, 1.0, 256, dtype=np.float32).reshape(16, 16)
         path = tmp_path / "pred3_float32_tiled.tif"
-        tifffile.imwrite(
-            str(path), arr, predictor=3, compression="deflate",
-            tile=(16, 16))
+        to_geotiff(
+            arr, str(path), compression="deflate", predictor=3,
+            tiled=True, tile_size=16,
+        )
 
         result = read_geotiff_gpu(str(path))
         assert result.dtype == np.float32
         np.testing.assert_array_equal(result.data.get(), arr)
 
     def test_predictor3_float32_dask_gpu_round_trip(self, tmp_path):
-        tifffile = pytest.importorskip("tifffile")
-        pytest.importorskip("imagecodecs")
-
-        from xrspatial.geotiff import read_geotiff_gpu
+        from xrspatial.geotiff import read_geotiff_gpu, to_geotiff
 
         arr = np.linspace(-1.0, 1.0, 256, dtype=np.float32).reshape(16, 16)
         path = tmp_path / "pred3_float32_dask.tif"
-        tifffile.imwrite(
-            str(path), arr, predictor=3, compression="deflate",
-            tile=(16, 16))
+        to_geotiff(
+            arr, str(path), compression="deflate", predictor=3,
+            tiled=True, tile_size=16,
+        )
 
         result = read_geotiff_gpu(str(path), chunks=8)
         assert result.dtype == np.float32
