@@ -43,8 +43,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       overview_levels: list[int] | None = None,
                       overview_resampling: str = 'mean',
                       bigtiff: bool | None = None,
-                      max_z_error: float = 0.0,
                       streaming_buffer_bytes: int = 256 * 1024 * 1024,
+                      max_z_error: float = 0.0,
                       photometric: str | int = 'auto',
                       allow_internal_only_jpeg: bool = False) -> None:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
@@ -146,17 +146,17 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     bigtiff : bool or None
         Force BigTIFF (64-bit offsets). None auto-promotes when the
         estimated file size would exceed the classic-TIFF 4 GB limit.
-    max_z_error : float
-        Per-pixel error budget for LERC compression. The GPU writer
-        does not implement LERC (nvCOMP has no LERC backend), so any
-        non-zero value raises ``ValueError``. Accepted at the signature
-        level for API parity with ``to_geotiff``.
     streaming_buffer_bytes : int
         Accepted for API parity with ``to_geotiff``. The GPU writer
         materialises the entire array on device and has no streaming
         concept, so this kwarg is a no-op. Default matches
         ``to_geotiff`` (256 MB) so callers passing the same kwargs to
         either entry point see the same default and the same type.
+    max_z_error : float
+        Per-pixel error budget for LERC compression. The GPU writer
+        does not implement LERC (nvCOMP has no LERC backend), so any
+        non-zero value raises ``ValueError``. Accepted at the signature
+        level for API parity with ``to_geotiff``.
     photometric : str or int
         Photometric interpretation for the TIFF Photometric tag (262).
         See :func:`to_geotiff` for the full set of accepted values; the
