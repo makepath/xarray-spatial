@@ -262,16 +262,23 @@ def require_transform_for_georeferenced(
         ydim = da.dims[-2]
         xdim = da.dims[-1]
     if xdim in da.coords and ydim in da.coords:
+        x = da.coords[xdim].values
+        y = da.coords[ydim].values
+        # Integer coord dtype is the read-side no-georef sentinel
+        # (#1710, #1753, #1949). ``coords_to_transform`` returns ``None``
+        # for these so int-coord arrays round-trip cleanly without a
+        # synthetic unit transform; mirror that here so the writer does
+        # not fail-close on a legitimate no-georef write.
+        if x.dtype.kind in ('i', 'u') or y.dtype.kind in ('i', 'u'):
+            return
         raise ValueError(
             f"Cannot infer GeoTIFF transform from a "
             f"{tuple(da.sizes.values())} array with spatial coords on "
-            f"both axes: both axes are degenerate (1x1), so neither "
-            f"coord array carries a pixel size step. 1xN and Nx1 inputs "
-            f"recover the pixel size from the non-degenerate axis, but "
-            f"a 1x1 cannot. Supply the affine transform explicitly via "
-            f"``attrs['transform']`` (rasterio 6-tuple "
-            f"``(px, 0, ox, 0, py, oy)``) or drop the coords if a "
-            f"non-georeferenced TIFF is desired."
+            f"both axes: neither coord array could yield a pixel size "
+            f"(1x1 inputs, or coords spaced non-uniformly). Supply the "
+            f"affine transform explicitly via ``attrs['transform']`` "
+            f"(rasterio 6-tuple ``(px, 0, ox, 0, py, oy)``) or drop the "
+            f"coords if a non-georeferenced TIFF is desired."
         )
 
 
