@@ -33,7 +33,7 @@ from .._coords import (
     require_transform_for_georeferenced as _require_transform_for_georeferenced,
     transform_from_attr as _transform_from_attr,
 )
-from .._crs import _validate_crs_fallback, _wkt_to_epsg
+from .._crs import _validate_crs_arg, _validate_crs_fallback, _wkt_to_epsg
 from .._geotags import GeoTransform, RASTER_PIXEL_IS_AREA
 from .._runtime import (
     GeoTIFFFallbackWarning,
@@ -499,6 +499,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     extra_tags_list = None
 
     # Resolve crs argument: can be int (EPSG) or str (WKT/PROJ)
+    _validate_crs_arg(crs)
     if isinstance(crs, int):
         epsg = crs
     elif isinstance(crs, str):
@@ -798,6 +799,7 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     os.makedirs(tiles_dir, exist_ok=True)
 
     # Resolve CRS
+    _validate_crs_arg(crs)
     epsg = None
     wkt_fallback = None
     if isinstance(crs, int):

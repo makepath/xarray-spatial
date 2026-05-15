@@ -23,7 +23,7 @@ from .._coords import (
     require_transform_for_georeferenced as _require_transform_for_georeferenced,
     transform_from_attr as _transform_from_attr,
 )
-from .._crs import _validate_crs_fallback, _wkt_to_epsg
+from .._crs import _validate_crs_arg, _validate_crs_fallback, _wkt_to_epsg
 from .._runtime import GeoTIFFFallbackWarning
 from .._validation import (
     _validate_3d_writer_dims,
@@ -310,6 +310,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     y_res = None
     res_unit = None
 
+    _validate_crs_arg(crs)
     if isinstance(crs, int):
         epsg = crs
     elif isinstance(crs, str):
