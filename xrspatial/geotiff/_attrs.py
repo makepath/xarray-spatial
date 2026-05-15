@@ -206,6 +206,18 @@ def _resolve_nodata_attr(attrs: dict):
     """
     nodata = attrs.get('nodata')
     if nodata is not None:
+        try:
+            float(nodata)
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"attrs['nodata']={nodata!r} is not numeric "
+                f"({type(nodata).__name__}). The writer needs a numeric "
+                f"sentinel to compare against pixel values; passing a "
+                f"non-numeric value would otherwise crash inside "
+                f"``np.isnan`` with an opaque ufunc error. Drop the "
+                f"attr, replace it with a numeric sentinel, or pass "
+                f"``nodata=`` explicitly (issue #1973)."
+            ) from e
         return nodata
 
     vals = attrs.get('nodatavals')
@@ -229,8 +241,16 @@ def _resolve_nodata_attr(attrs: dict):
     if fill is not None:
         try:
             ffv = float(fill)
-        except (TypeError, ValueError):
-            return fill  # non-numeric -- pass through verbatim
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"attrs['_FillValue']={fill!r} is not numeric "
+                f"({type(fill).__name__}). The writer needs a numeric "
+                f"sentinel to compare against pixel values; passing a "
+                f"non-numeric value would otherwise crash inside "
+                f"``np.isnan`` with an opaque ufunc error. Drop the "
+                f"attr, replace it with a numeric sentinel, or pass "
+                f"``nodata=`` explicitly (issue #1973)."
+            ) from e
         if np.isnan(ffv):
             return None
         return fill

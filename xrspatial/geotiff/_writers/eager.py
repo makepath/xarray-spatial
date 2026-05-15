@@ -42,6 +42,7 @@ from .._runtime import (
 )
 from .._validation import (
     _validate_3d_writer_dims,
+    _validate_nodata_arg,
     _validate_tile_size_arg,
 )
 from .._writer import write
@@ -266,6 +267,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
     # _validate_tile_size_arg so both writers keep identical validation.
     if tiled:
         _validate_tile_size_arg(tile_size)
+
+    _validate_nodata_arg(nodata)
 
     # Up-front validation: catch bad compression names before they reach
     # any of the deeper write paths (streaming, GPU, VRT, COG) where the
@@ -775,6 +778,7 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     This enables streaming dask arrays to disk without materializing the
     full array in RAM.
     """
+    _validate_nodata_arg(nodata)
     # Validate compression_level against codec-specific range
     if compression_level is not None:
         level_range = _LEVEL_RANGES.get(compression.lower())

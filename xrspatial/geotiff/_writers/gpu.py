@@ -27,6 +27,7 @@ from .._crs import _validate_crs_fallback, _wkt_to_epsg
 from .._runtime import GeoTIFFFallbackWarning
 from .._validation import (
     _validate_3d_writer_dims,
+    _validate_nodata_arg,
     _validate_tile_size_arg,
 )
 
@@ -259,6 +260,7 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     # write_geotiff_gpu is always tiled, so validate tile_size here and
     # keep parity with the public to_geotiff entry point.
     _validate_tile_size_arg(tile_size)
+    _validate_nodata_arg(nodata)
     if max_z_error < 0:
         raise ValueError(
             f"max_z_error must be >= 0, got {max_z_error}")

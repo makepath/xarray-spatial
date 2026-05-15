@@ -230,3 +230,29 @@ def _validate_predictor_sample_format(predictor, sample_format) -> None:
             f"pair, e.g. `gdal_translate -co PREDICTOR=2` for integers or "
             f"`-co PREDICTOR=1` to drop the predictor."
         )
+
+
+def _validate_nodata_arg(nodata) -> None:
+    """Reject non-numeric ``nodata=`` at the writer entry point (#1973).
+
+    ``None`` (no sentinel) and ``bool`` (kept for backwards compat;
+    rejected at the dtype layer if it does not match) are passed
+    through. Anything else is run through ``float()``: success means
+    the writer's downstream ``np.isnan(nodata)`` and integer-cast
+    paths will not blow up. Failure raises ``ValueError`` with the
+    offending repr, so users see ``nodata='missing'`` flagged at the
+    boundary instead of an opaque ``ufunc 'isnan' not supported``
+    TypeError from inside the writer.
+    """
+    if nodata is None:
+        return
+    try:
+        float(nodata)
+    except (TypeError, ValueError) as e:
+        raise ValueError(
+            f"nodata must be numeric or None, got {nodata!r} "
+            f"(type {type(nodata).__name__}). The writer compares it "
+            f"against pixel values via ``np.isnan`` and casts it to "
+            f"the array dtype; a non-numeric value would otherwise "
+            f"crash inside NumPy with a ufunc TypeError."
+        ) from e
