@@ -250,6 +250,14 @@ def read_geotiff_dask(source: str, *,
         if isinstance(band, (bool, np.bool_)):
             raise ValueError(
                 f"band must be a non-negative int, got {band!r}")
+        # Reject non-integer numeric types and anything else that would
+        # slip past the bool guard. ``band=0.0`` passes the range check
+        # below and either silently reads band 0 (single-band) or fails
+        # with a raw numpy ``IndexError`` (multi-band). The VRT paths
+        # already enforce this; mirror them here. See #1910.
+        if not isinstance(band, (int, np.integer)):
+            raise TypeError(
+                f"band must be a non-negative int, got {band!r}")
         if n_bands == 0:
             if band != 0:
                 raise IndexError(
