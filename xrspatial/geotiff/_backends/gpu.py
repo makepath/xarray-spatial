@@ -4,9 +4,13 @@ Step 7 of issue #1813. With the leaf helpers in ``_backends/_gpu_helpers``
 already extracted (#1884), validators in ``_validation`` (#1882), attrs
 helpers in ``_attrs`` (#1883), and sentinels in ``_runtime`` (#1880),
 moving the entry-point body is a near-mechanical lift; the body stays
-unchanged except for adjusted relative imports and a lazy
-``read_geotiff_dask`` import that avoids a circular import with
-``__init__.py``.
+unchanged except for adjusted relative imports.
+
+``_read_geotiff_gpu_chunked`` calls into ``read_geotiff_dask`` for its
+CPU-decode fallback path. That import was originally lazy because
+``read_geotiff_dask`` still lived in ``__init__.py``; once it moved
+to a sibling module in #1886, the import was promoted to a static
+top-of-module ``from .dask import read_geotiff_dask``.
 """
 from __future__ import annotations
 

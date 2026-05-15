@@ -68,10 +68,9 @@ from ._attrs import (
     _populate_attrs_from_geo_info,
     _resolve_nodata_attr,
 )
-from ._backends._gpu_helpers import (  # noqa: F401 -- _apply_nodata_mask_gpu re-export
-    _apply_nodata_mask_gpu,
-    _is_gpu_data,
-)
+from ._backends._gpu_helpers import _is_gpu_data
+# Re-export only; called by xrspatial/geotiff/tests/test_nodata_*.py.
+from ._backends._gpu_helpers import _apply_nodata_mask_gpu  # noqa: F401
 from ._backends.dask import read_geotiff_dask
 from ._backends.gpu import read_geotiff_gpu
 from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg
