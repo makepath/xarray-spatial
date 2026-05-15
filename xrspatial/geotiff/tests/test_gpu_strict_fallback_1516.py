@@ -36,6 +36,7 @@ from .conftest import make_minimal_tiff
 _CUPY_ORIG_SENTINEL = object()
 _cupy_saved = _CUPY_ORIG_SENTINEL
 _cupy_cuda_saved = _CUPY_ORIG_SENTINEL
+_cupy_cuda_runtime_saved = _CUPY_ORIG_SENTINEL
 
 
 def _cuda_actually_available() -> bool:
@@ -63,13 +64,15 @@ def _ensure_cupy_stub() -> bool:
     installed but CUDA isn't available. The original module (if any) is
     saved so :func:`_restore_cupy` can put it back.
     """
-    global _cupy_saved, _cupy_cuda_saved
+    global _cupy_saved, _cupy_cuda_saved, _cupy_cuda_runtime_saved
 
     if _cuda_actually_available():
         return False
 
     _cupy_saved = sys.modules.get('cupy', _CUPY_ORIG_SENTINEL)
     _cupy_cuda_saved = sys.modules.get('cupy.cuda', _CUPY_ORIG_SENTINEL)
+    _cupy_cuda_runtime_saved = sys.modules.get(
+        'cupy.cuda.runtime', _CUPY_ORIG_SENTINEL)
 
     stub = types.ModuleType('cupy')
     stub.ndarray = np.ndarray
@@ -77,19 +80,32 @@ def _ensure_cupy_stub() -> bool:
 
     cuda_mod = types.ModuleType('cupy.cuda')
     cuda_mod.is_available = lambda: False
+
+    # Pre-flight check in ``read_geotiff_gpu`` (added in #1903) calls
+    # ``cupy.cuda.runtime.getDeviceCount()`` to surface a clean
+    # ``RuntimeError`` for broken-driver setups. Tests in this file want
+    # to exercise the downstream simulated-failure paths, so the stubbed
+    # runtime reports one device and the preflight lets execution
+    # through. The real preflight tests live in
+    # ``test_gpu_cuda_preflight_1903.py``.
+    runtime_mod = types.ModuleType('cupy.cuda.runtime')
+    runtime_mod.getDeviceCount = lambda: 1
+    cuda_mod.runtime = runtime_mod
     stub.cuda = cuda_mod
 
     sys.modules['cupy'] = stub
     sys.modules['cupy.cuda'] = cuda_mod
+    sys.modules['cupy.cuda.runtime'] = runtime_mod
     return True
 
 
 def _restore_cupy() -> None:
     """Undo :func:`_ensure_cupy_stub`."""
-    global _cupy_saved, _cupy_cuda_saved
+    global _cupy_saved, _cupy_cuda_saved, _cupy_cuda_runtime_saved
     for name, saved in (
         ('cupy', _cupy_saved),
         ('cupy.cuda', _cupy_cuda_saved),
+        ('cupy.cuda.runtime', _cupy_cuda_runtime_saved),
     ):
         if saved is _CUPY_ORIG_SENTINEL:
             sys.modules.pop(name, None)
@@ -97,6 +113,7 @@ def _restore_cupy() -> None:
             sys.modules[name] = saved
     _cupy_saved = _CUPY_ORIG_SENTINEL
     _cupy_cuda_saved = _CUPY_ORIG_SENTINEL
+    _cupy_cuda_runtime_saved = _CUPY_ORIG_SENTINEL
     importlib.invalidate_caches()
 
 

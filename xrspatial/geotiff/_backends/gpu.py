@@ -41,6 +41,32 @@ from ._gpu_helpers import (
 from .dask import read_geotiff_dask
 
 
+def _preflight_cuda_runtime(cupy) -> None:
+    """Verify the CUDA runtime is usable before the GPU pipeline runs.
+
+    ``cupy`` can import successfully on a machine whose driver is older
+    than the build expects, was uninstalled, or belongs to a suspended
+    VM. Without this check the failure surfaces as a
+    ``cudaErrorInsufficientDriver`` from a deep ``cupy.asarray(...)``
+    call in the CPU-fallback path (issue #1903). Raises a clean
+    ``RuntimeError`` that names the underlying CUDA error so the user
+    can fix the driver, switch CuPy builds, or pass ``gpu=False``.
+    """
+    try:
+        device_count = cupy.cuda.runtime.getDeviceCount()
+    except Exception as e:
+        raise RuntimeError(
+            f"read_geotiff_gpu: CUDA runtime is not usable "
+            f"({type(e).__name__}: {e}). Check the GPU driver matches "
+            f"the installed cupy build, or pass gpu=False."
+        ) from e
+    if device_count == 0:
+        raise RuntimeError(
+            "read_geotiff_gpu: cupy reports 0 CUDA devices. Check "
+            "the GPU driver and CUDA_VISIBLE_DEVICES, or pass gpu=False."
+        )
+
+
 def read_geotiff_gpu(source: str, *,
                      dtype: str | np.dtype | None = None,
                      overview_level: int | None = None,
@@ -123,8 +149,12 @@ def read_geotiff_gpu(source: str, *,
 
         Stripped layouts and sparse-tile files route directly to the CPU
         reader before either GPU decode stage runs, so the ``on_gpu_failure``
-        kwarg does not affect them. A failure inside the subsequent
-        ``cupy.asarray(...)`` upload propagates unchanged in both modes.
+        kwarg does not affect them. The function preflights the CUDA
+        runtime via ``cupy.cuda.runtime.getDeviceCount()`` immediately
+        after importing cupy and raises ``RuntimeError`` if the driver
+        is unusable (#1903); transient errors inside a later
+        ``cupy.asarray(...)`` upload (e.g. device OOM) still propagate
+        unchanged in both modes.
     gpu : str, optional
         Deprecated alias for ``on_gpu_failure``. Emits ``DeprecationWarning``
         when used. Passing both ``gpu`` and ``on_gpu_failure`` raises
@@ -176,6 +206,12 @@ def read_geotiff_gpu(source: str, *,
         raise ImportError(
             "cupy is required for GPU reads. "
             "Install it with: pip install cupy-cuda12x")
+
+    # Preflight CUDA. ``cupy`` can import on machines whose driver is
+    # older than the build expects or whose GPU is offline; the error
+    # otherwise surfaces as a low-level CUDA failure from
+    # ``cupy.asarray(...)`` deep in the CPU-fallback path (#1903).
+    _preflight_cuda_runtime(cupy)
 
     # When ``chunks=`` is set, bound peak GPU memory to chunk size by
     # building a Dask+CuPy graph that decodes one chunk at a time. The
