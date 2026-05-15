@@ -30,7 +30,11 @@ from .._runtime import (
     _ON_GPU_FAILURE_SENTINEL,
     _geotiff_strict_mode,
 )
-from .._validation import _validate_chunks_arg, _validate_dtype_cast
+from .._validation import (
+    _validate_chunks_arg,
+    _validate_dtype_cast,
+    _validate_predictor_sample_format,
+)
 from ._gpu_helpers import (
     _apply_nodata_mask_gpu,
     _apply_orientation_geo_info,
@@ -69,8 +73,8 @@ def _preflight_cuda_runtime(cupy) -> None:
 
 def read_geotiff_gpu(source: str, *,
                      dtype: str | np.dtype | None = None,
-                     overview_level: int | None = None,
                      window: tuple | None = None,
+                     overview_level: int | None = None,
                      band: int | None = None,
                      name: str | None = None,
                      chunks: int | tuple | None = None,
@@ -344,7 +348,14 @@ def read_geotiff_gpu(source: str, *,
                     f"window={window} is outside the source extent "
                     f"({ifd_h}x{ifd_w}).")
 
-        if not ifd.is_tiled:
+        # float16 on disk (bps=16 + SampleFormat=3) is exposed as float32
+        # by the reader (#1941). The CPU decode path views the raw 2-byte
+        # samples as numpy float16 and upcasts; the GPU tile-assembly
+        # kernels assume bps == file_dtype.itemsize * 8 and would
+        # mis-stride the buffer. Route the rare half-precision read to
+        # the CPU path, matching the stripped-layout fallback below.
+        bps_mismatch = (file_dtype.itemsize * 8 != bps)
+        if not ifd.is_tiled or bps_mismatch:
             # Fall back to CPU for stripped files. read_to_array remaps
             # the array but only updates geo_info.transform for orientations
             # 5-8 today (the 2/3/4 fix in #1539 is in a sibling PR). Discard
@@ -429,6 +440,7 @@ def read_geotiff_gpu(source: str, *,
         byte_counts = ifd.tile_byte_counts
         compression = ifd.compression
         predictor = ifd.predictor
+        _validate_predictor_sample_format(predictor, ifd.sample_format)
         samples = ifd.samples_per_pixel
         planar = ifd.planar_config
         tw = ifd.tile_width
@@ -767,6 +779,17 @@ def _gds_chunk_path_available(source, ifd, has_sparse_tile, orientation):
         return False
     if ifd.photometric == 0:
         return False
+    # float16 on disk (bps=16 + SampleFormat=3) is auto-promoted to
+    # float32 by the CPU decoder (#1941). The GDS path uses the raw
+    # on-disk bps for byte striding and would mis-decode the
+    # half-precision samples; route those rare reads to the CPU
+    # decode path.
+    from .._dtypes import SAMPLE_FORMAT_FLOAT
+    bps_first = ifd.bits_per_sample
+    if isinstance(bps_first, tuple):
+        bps_first = bps_first[0] if bps_first else 0
+    if bps_first == 16 and ifd.sample_format == SAMPLE_FORMAT_FLOAT:
+        return False
     return True
 
 
@@ -973,6 +996,7 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     th = ifd.tile_height
     compression = ifd.compression
     predictor = ifd.predictor
+    _validate_predictor_sample_format(predictor, ifd.sample_format)
     byte_order = header.byte_order
     offsets = list(ifd.tile_offsets)
     byte_counts = list(ifd.tile_byte_counts)

@@ -399,10 +399,16 @@ class TestDtypeEdgeCases:
         with pytest.raises(ValueError, match="Unsupported numpy dtype"):
             numpy_to_tiff_dtype(np.dtype('complex128'))
 
-    def test_float16_not_supported(self):
-        """float16 has no TIFF equivalent."""
-        with pytest.raises(ValueError, match="Unsupported BitsPerSample"):
-            tiff_dtype_to_numpy(16, 3)  # 16-bit float
+    def test_float16_auto_promoted_to_float32(self):
+        """float16 on disk (bps=16 + SampleFormat=3) is exposed as float32.
+
+        The writer auto-promotes float16 inputs to float32 before
+        encoding, and the reader matches that contract: a file with
+        bps=16 + SampleFormat=3 (an externally produced half-precision
+        TIFF) returns float32 to the user. See issue #1941 for the
+        original read-side asymmetry.
+        """
+        assert tiff_dtype_to_numpy(16, 3) == np.float32
 
 
 # -----------------------------------------------------------------------

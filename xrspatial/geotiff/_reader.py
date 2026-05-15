@@ -36,6 +36,7 @@ from ._header import (
     select_overview_ifd,
     validate_tile_layout,
 )
+from ._validation import _validate_predictor_sample_format
 
 # ---------------------------------------------------------------------------
 # Allocation guard: reject TIFF dimensions that would exhaust memory
@@ -46,9 +47,56 @@ from ._header import (
 #: Override per-call via the ``max_pixels`` keyword argument.
 MAX_PIXELS_DEFAULT = 1_000_000_000
 
+#: Default byte ceiling for eager reads from fsspec cloud sources
+#: (``s3://``, ``gs://``, ``az://``, ``abfs://``, ``memory://``, ...).
+#: ``_CloudSource`` knows the object size up front via ``fsspec.size()``,
+#: so checking against this budget runs before any data is downloaded.
+#: 256 MiB is comfortable for typical demo COGs while bounding the blast
+#: radius of a crafted or oversized remote object. Override per call
+#: with the ``max_cloud_bytes`` kwarg, or env-wide with
+#: ``XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES``. Pass ``max_cloud_bytes=None``
+#: to skip the check entirely (the pre-#1928 behaviour). See issue #1928.
+MAX_CLOUD_BYTES_DEFAULT = 256 * 1024 * 1024
+
+#: Sentinel for "caller did not pass ``max_cloud_bytes``". Distinguishes
+#: that case from ``max_cloud_bytes=None`` (caller explicitly disabling
+#: the check) so the env-var override has somewhere to land.
+_MAX_CLOUD_BYTES_SENTINEL = object()
+
+
+def _resolve_max_cloud_bytes(max_cloud_bytes):
+    """Return the effective cloud byte budget.
+
+    Precedence:
+    1. Explicit kwarg (including ``None`` to disable) wins.
+    2. ``XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES`` env var, if set to a
+       positive int.
+    3. :data:`MAX_CLOUD_BYTES_DEFAULT`.
+    """
+    if max_cloud_bytes is not _MAX_CLOUD_BYTES_SENTINEL:
+        return max_cloud_bytes
+    env = _os_module.environ.get('XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES')
+    if env:
+        try:
+            v = int(env)
+        except ValueError:
+            return MAX_CLOUD_BYTES_DEFAULT
+        if v > 0:
+            return v
+    return MAX_CLOUD_BYTES_DEFAULT
+
 
 class PixelSafetyLimitError(ValueError):
     """Raised when a requested TIFF allocation exceeds max_pixels."""
+
+
+class CloudSizeLimitError(ValueError):
+    """Raised when an eager fsspec read would exceed ``max_cloud_bytes``.
+
+    Distinct from :class:`PixelSafetyLimitError` because the cloud check
+    runs against the compressed object size before any TIFF header parse,
+    so the pixel-count message would be misleading.
+    """
 
 
 def _check_dimensions(width, height, samples, max_pixels):
@@ -1541,11 +1589,21 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
     if is_sub_byte:
         pixels = unpack_bits(chunk, bps, pixel_count)
     else:
-        # Use the file's byte order for the view, then convert to native
-        file_dtype = dtype.newbyteorder(byte_order)
-        pixels = chunk.view(file_dtype)
-        if file_dtype.byteorder not in ('=', '|', _NATIVE_ORDER):
-            pixels = pixels.astype(dtype)
+        # Use the file's byte order for the view, then convert to native.
+        # The view dtype must match the on-disk sample width: float16
+        # files (bps=16 + SampleFormat=3) are auto-promoted to float32
+        # for the user-visible array, but the raw bytes have to be
+        # viewed as float16 first then cast (#1941). Detect the
+        # promotion via the bps-vs-dtype.itemsize mismatch so the
+        # surrounding pipeline stays unchanged for byte-equal cases.
+        if dtype.itemsize * 8 != bps and bps == 16 and dtype.kind == 'f':
+            storage_dtype = np.dtype('float16').newbyteorder(byte_order)
+            pixels = chunk.view(storage_dtype).astype(dtype)
+        else:
+            file_dtype = dtype.newbyteorder(byte_order)
+            pixels = chunk.view(file_dtype)
+            if file_dtype.byteorder not in ('=', '|', _NATIVE_ORDER):
+                pixels = pixels.astype(dtype)
 
     if samples > 1:
         out = pixels.reshape(height, width, samples)
@@ -1647,6 +1705,7 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     offsets = ifd.strip_offsets
     byte_counts = ifd.strip_byte_counts
     pred = ifd.predictor
+    _validate_predictor_sample_format(pred, ifd.sample_format)
     bps = resolve_bits_per_sample(ifd.bits_per_sample)
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
@@ -1837,6 +1896,7 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     samples = ifd.samples_per_pixel
     compression = ifd.compression
     pred = ifd.predictor
+    _validate_predictor_sample_format(pred, ifd.sample_format)
     bps = resolve_bits_per_sample(ifd.bits_per_sample)
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
@@ -2321,6 +2381,7 @@ def _fetch_decode_cog_http_strips(
     offsets = ifd.strip_offsets
     byte_counts = ifd.strip_byte_counts
     pred = ifd.predictor
+    _validate_predictor_sample_format(pred, ifd.sample_format)
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
     jpeg_tables = ifd.jpeg_tables
@@ -2530,6 +2591,7 @@ def _fetch_decode_cog_http_tiles(
     planar = ifd.planar_config
     compression = ifd.compression
     pred = ifd.predictor
+    _validate_predictor_sample_format(pred, ifd.sample_format)
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
     jpeg_tables = ifd.jpeg_tables
@@ -2895,6 +2957,7 @@ def _miniswhite_inverted_nodata(nodata, ifd: IFD, dtype: np.dtype):
 def read_to_array(source, *, window=None, overview_level: int | None = None,
                   band: int | None = None,
                   max_pixels: int = MAX_PIXELS_DEFAULT,
+                  max_cloud_bytes=_MAX_CLOUD_BYTES_SENTINEL,
                   ) -> tuple[np.ndarray, GeoInfo]:
     """Read a GeoTIFF/COG to a numpy array.
 
@@ -2912,6 +2975,16 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         Maximum allowed total pixel count (width * height * samples).
         Prevents memory exhaustion from crafted TIFF headers.
         Default is 1 billion (~4 GB for float32 single-band).
+    max_cloud_bytes : int or None, optional
+        Byte ceiling for eager reads from fsspec sources (``s3://``,
+        ``gs://``, ``az://``, ``abfs://``, ``memory://``, ...). The
+        compressed object size is checked against this budget before any
+        bytes are downloaded. Default is :data:`MAX_CLOUD_BYTES_DEFAULT`
+        (256 MiB), overridable via the
+        ``XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES`` env var. Pass ``None`` to
+        skip the check entirely (pre-#1928 behaviour). The HTTP path
+        already reads only what it needs via range requests and is not
+        subject to this limit. See issue #1928.
 
     Returns
     -------
@@ -2927,6 +3000,31 @@ def read_to_array(source, *, window=None, overview_level: int | None = None,
         src = _BytesIOSource(source)
     elif _is_fsspec_uri(source):
         src = _CloudSource(source)
+        # Check the compressed object size before any bytes are
+        # downloaded. ``_CloudSource.__init__`` already fetched the size
+        # via ``fsspec.size()``, so this is free. See issue #1928.
+        cloud_budget = _resolve_max_cloud_bytes(max_cloud_bytes)
+        if cloud_budget is not None:
+            size = src.size
+            if size is None:
+                src.close()
+                raise CloudSizeLimitError(
+                    f"Cloud source {source!r} reports unknown size; "
+                    f"refusing to download to avoid an unbounded read. "
+                    f"Pass max_cloud_bytes=None to disable the size "
+                    f"check for this source. Raising the byte limit "
+                    f"does not help when the source size is unknown.")
+            if size > cloud_budget:
+                src.close()
+                raise CloudSizeLimitError(
+                    f"Cloud source {source!r} is {size:,} bytes, which "
+                    f"exceeds max_cloud_bytes={cloud_budget:,}. Eager "
+                    f"reads pull the full object before any TIFF header "
+                    f"parse; raise max_cloud_bytes (or set "
+                    f"XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES) if the file is "
+                    f"legitimate, pass max_cloud_bytes=None to disable "
+                    f"the check, or use chunks=... for a windowed dask "
+                    f"read.")
     else:
         src = _FileSource(source)
     data = src.read_all()

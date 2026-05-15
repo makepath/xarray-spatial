@@ -75,7 +75,10 @@ from ._backends.dask import read_geotiff_dask
 from ._backends.gpu import read_geotiff_gpu
 from ._backends.vrt import read_vrt
 from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg
-from ._reader import read_to_array as _read_to_array
+from ._reader import (
+    _MAX_CLOUD_BYTES_SENTINEL,
+    read_to_array as _read_to_array,
+)
 from ._runtime import (
     GeoTIFFFallbackWarning,
     _CRS_WKT_DEPRECATED_SENTINEL,
@@ -136,6 +139,7 @@ def _read_geo_info(source, *, overview_level: int | None = None):
         _CloudSource, _coerce_path, _is_file_like, _is_fsspec_uri,
         _parse_cog_http_meta,
     )
+    from ._validation import _validate_predictor_sample_format
 
     source = _coerce_path(source)
     if isinstance(source, str) and _is_fsspec_uri(source):
@@ -155,6 +159,7 @@ def _read_geo_info(source, *, overview_level: int | None = None):
             _src.close()
         bps = resolve_bits_per_sample(_ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, _ifd.sample_format)
+        _validate_predictor_sample_format(_ifd.predictor, _ifd.sample_format)
         n_bands = (
             _ifd.samples_per_pixel if _ifd.samples_per_pixel > 1 else 0
         )
@@ -199,6 +204,7 @@ def _read_geo_info(source, *, overview_level: int | None = None):
             ifd, ifds, data, header.byte_order)
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
+        _validate_predictor_sample_format(ifd.predictor, ifd.sample_format)
         n_bands = ifd.samples_per_pixel if ifd.samples_per_pixel > 1 else 0
         # Stash photometric + samples_per_pixel so the dask graph builder
         # can detect MinIsWhite and invert ``geo_info.nodata`` before
@@ -220,6 +226,7 @@ def open_geotiff(source: str | BinaryIO, *,
                  chunks: int | tuple | None = None,
                  gpu: bool = False,
                  max_pixels: int | None = None,
+                 max_cloud_bytes=_MAX_CLOUD_BYTES_SENTINEL,
                  on_gpu_failure: str = _ON_GPU_FAILURE_SENTINEL,
                  missing_sources: str = _MISSING_SOURCES_SENTINEL,
                  ) -> xr.DataArray:
@@ -260,6 +267,16 @@ def open_geotiff(source: str | BinaryIO, *,
         Maximum allowed pixel count (width * height * samples). None
         uses the default (~1 billion). Raise to read legitimately
         large files.
+    max_cloud_bytes : int or None, optional
+        Byte ceiling for eager reads from fsspec sources (``s3://``,
+        ``gs://``, ``az://``, ``abfs://``, ``memory://``, ...). The
+        compressed object size is checked against this budget before
+        any bytes are downloaded. Default is 256 MiB, overridable via
+        the ``XRSPATIAL_GEOTIFF_MAX_CLOUD_BYTES`` env var. Pass
+        ``None`` to skip the check entirely. The HTTP path already
+        reads only what it needs via range requests and is not subject
+        to this limit. Has no effect on local file or file-like
+        sources. See issue #1928.
     on_gpu_failure : {'auto', 'strict'}, optional
         Forwarded to ``read_geotiff_gpu`` when ``gpu=True``. Controls
         whether GPU decode failures fall back to CPU (``'auto'``,
@@ -408,6 +425,8 @@ def open_geotiff(source: str | BinaryIO, *,
     kwargs = {}
     if max_pixels is not None:
         kwargs['max_pixels'] = max_pixels
+    if max_cloud_bytes is not _MAX_CLOUD_BYTES_SENTINEL:
+        kwargs['max_cloud_bytes'] = max_cloud_bytes
 
     # ``read_to_array`` validates ``window`` against the selected IFD's
     # extent and raises ``ValueError`` for out-of-bounds windows with

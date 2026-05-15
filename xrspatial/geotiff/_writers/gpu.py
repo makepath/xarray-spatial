@@ -22,7 +22,7 @@ from .._coords import (
     coords_to_transform as _coords_to_transform,
     transform_from_attr as _transform_from_attr,
 )
-from .._crs import _wkt_to_epsg
+from .._crs import _validate_crs_fallback, _wkt_to_epsg
 from .._runtime import GeoTIFFFallbackWarning
 from .._validation import (
     _validate_3d_writer_dims,
@@ -43,10 +43,12 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       overview_levels: list[int] | None = None,
                       overview_resampling: str = 'mean',
                       bigtiff: bool | None = None,
-                      max_z_error: float = 0.0,
                       streaming_buffer_bytes: int = 256 * 1024 * 1024,
+                      max_z_error: float = 0.0,
                       photometric: str | int = 'auto',
-                      allow_internal_only_jpeg: bool = False) -> None:
+                      allow_internal_only_jpeg: bool = False,
+                      allow_unparseable_crs: bool = False
+                      ) -> str | BinaryIO:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
 
     Tiles are extracted and compressed on the GPU via nvCOMP, then
@@ -146,17 +148,17 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     bigtiff : bool or None
         Force BigTIFF (64-bit offsets). None auto-promotes when the
         estimated file size would exceed the classic-TIFF 4 GB limit.
-    max_z_error : float
-        Per-pixel error budget for LERC compression. The GPU writer
-        does not implement LERC (nvCOMP has no LERC backend), so any
-        non-zero value raises ``ValueError``. Accepted at the signature
-        level for API parity with ``to_geotiff``.
     streaming_buffer_bytes : int
         Accepted for API parity with ``to_geotiff``. The GPU writer
         materialises the entire array on device and has no streaming
         concept, so this kwarg is a no-op. Default matches
         ``to_geotiff`` (256 MB) so callers passing the same kwargs to
         either entry point see the same default and the same type.
+    max_z_error : float
+        Per-pixel error budget for LERC compression. The GPU writer
+        does not implement LERC (nvCOMP has no LERC backend), so any
+        non-zero value raises ``ValueError``. Accepted at the signature
+        level for API parity with ``to_geotiff``.
     photometric : str or int
         Photometric interpretation for the TIFF Photometric tag (262).
         See :func:`to_geotiff` for the full set of accepted values; the
@@ -172,6 +174,19 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         ``GeoTIFFFallbackWarning`` is emitted at call time. Without
         the flag, ``compression='jpeg'`` raises ``ValueError`` for
         parity with ``to_geotiff``. See issue #1845.
+    allow_unparseable_crs : bool
+        Opt in to writing an unvalidatable CRS string into
+        ``GTCitationGeoKey`` (default ``False``). See
+        :func:`to_geotiff` for the full description; the GPU writer
+        applies the same fail-closed default. See issue #1929.
+
+    Returns
+    -------
+    str or binary file-like
+        The ``path`` argument (a string for filesystem paths, the
+        file-like object for BytesIO destinations). Returning the path
+        mirrors ``to_geotiff`` and ``write_vrt`` so callers can handle
+        the three writers uniformly. See issue #1938.
 
     Raises
     ------
@@ -486,6 +501,10 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             oh, ow = current.shape[:2]
             parts.append(_gpu_compress_to_part(current, ow, oh, samples))
 
+    # Issue #1929: refuse to write an unvalidatable CRS string into
+    # GTCitationGeoKey unless the caller opts in.
+    if epsg is None:
+        _validate_crs_fallback(wkt_fallback, allow_unparseable_crs)
     file_bytes = _assemble_tiff(
         width, height, np_dtype, comp_tag, pred_val, True, tile_size,
         parts, geo_transform, epsg, nodata,
@@ -502,5 +521,6 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     )
 
     _write_bytes(file_bytes, path)
+    return path
 
 
