@@ -68,14 +68,7 @@ from ._attrs import (
     _populate_attrs_from_geo_info,
     _resolve_nodata_attr,
 )
-from ._backends._gpu_helpers import (
-    _apply_nodata_mask_gpu,
-    _apply_orientation_geo_info,
-    _apply_orientation_gpu,
-    _gpu_apply_window_band,
-    _gpu_decode_single_band_tiles,
-    _is_gpu_data,
-)
+from ._backends._gpu_helpers import _is_gpu_data
 from ._backends.gpu import read_geotiff_gpu
 from ._crs import _resolve_crs_to_wkt, _wkt_to_epsg
 from ._reader import read_to_array as _read_to_array
