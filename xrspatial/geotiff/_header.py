@@ -827,7 +827,16 @@ def parse_all_ifds(data: bytes | memoryview,
     offset = header.first_ifd_offset
     seen = set()
 
-    while offset != 0 and offset not in seen:
+    while offset != 0:
+        # Cycles in the IFD chain mean a file is malformed: a downstream
+        # caller silently receiving a truncated overview/mask chain is
+        # worse than a clear error. Raise to stay consistent with the
+        # past-EOF and MAX_IFDS branches below.
+        if offset in seen:
+            raise ValueError(
+                f"TIFF IFD chain has a cycle at offset {offset}; "
+                f"file is malformed"
+            )
         seen.add(offset)
         if offset >= len(data):
             raise ValueError(
