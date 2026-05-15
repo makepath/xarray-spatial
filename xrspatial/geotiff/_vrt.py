@@ -1337,6 +1337,42 @@ def read_vrt(vrt_path: str, *, window=None,
 _NP_TO_VRT_DTYPE = {v: k for k, v in _DTYPE_MAP.items()}
 
 
+def _vrt_dtype_name_for(bps, sample_format):
+    """Map TIFF ``BitsPerSample`` + ``SampleFormat`` to a GDAL VRT dtype.
+
+    Routes through ``_dtypes.tiff_dtype_to_numpy`` so the VRT header
+    matches what the reader actually decodes (including ``bps=12, sf=1``
+    -> ``uint16``). Raises ``ValueError`` when the resolved numpy dtype
+    has no GDAL VRT name rather than silently falling back to ``Byte``.
+
+    Parameters
+    ----------
+    bps : int
+        Raw ``BitsPerSample`` (already resolved to a scalar; pass through
+        ``resolve_bits_per_sample`` first if you have a sequence).
+    sample_format : int or sequence of int
+        Raw ``SampleFormat`` tag value. Sequences are normalised through
+        ``resolve_sample_format``.
+
+    Returns
+    -------
+    str
+        A GDAL ``dataType`` name (``Byte``, ``UInt16``, ``Float32`` ...).
+    """
+    from ._dtypes import resolve_sample_format, tiff_dtype_to_numpy
+
+    sf = resolve_sample_format(sample_format)
+    np_dtype = tiff_dtype_to_numpy(bps, sf)
+    try:
+        return _NP_TO_VRT_DTYPE[np_dtype.type]
+    except KeyError:
+        raise ValueError(
+            f"Cannot map numpy dtype {np_dtype} (from bps={bps}, "
+            f"sample_format={sf}) to a GDAL VRT dataType. Supported "
+            f"VRT dtypes are: {sorted(_NP_TO_VRT_DTYPE.values())}."
+        )
+
+
 def write_vrt(vrt_path: str, source_files: list[str], *,
               relative: bool = True,
               crs_wkt: str | None = None,
@@ -1504,19 +1540,14 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     total_w = int(round((mosaic_x1 - mosaic_x0) / abs(res_x)))
     total_h = int(round((mosaic_y_top - mosaic_y_bottom) / abs(res_y)))
 
-    # Determine VRT dtype
-    sf = first['sample_format']
-    bps = first['bps']
-    if sf == 3:
-        vrt_dtype_name = 'Float64' if bps == 64 else 'Float32'
-    elif sf == 2:
-        vrt_dtype_name = {
-            8: 'Int8', 16: 'Int16', 32: 'Int32', 64: 'Int64',
-        }.get(bps, 'Int32')
-    else:
-        vrt_dtype_name = {
-            8: 'Byte', 16: 'UInt16', 32: 'UInt32', 64: 'UInt64',
-        }.get(bps, 'Byte')
+    # Determine VRT dtype via the central TIFF-to-numpy resolver so the
+    # VRT header agrees with what the reader will actually decode. The
+    # previous local if/elif/else ladder had no entry for sub-byte or
+    # 12-bit unsigned samples (reader promotes ``bps=12, sf=1`` to
+    # ``uint16``), so a VRT over a valid 12-bit source got tagged
+    # ``Byte`` and could be truncated by downstream GDAL readers. Issue
+    # #1914.
+    vrt_dtype_name = _vrt_dtype_name_for(first['bps'], first['sample_format'])
 
     srs = crs_wkt or first.get('crs_wkt') or ''
     nd = nodata if nodata is not None else first.get('nodata')
