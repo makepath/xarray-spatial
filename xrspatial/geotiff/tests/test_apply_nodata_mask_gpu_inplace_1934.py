@@ -20,27 +20,9 @@ Two guards here:
 """
 from __future__ import annotations
 
-import importlib.util
-
 import numpy as np
-import pytest
 
-
-def _gpu_available() -> bool:
-    if importlib.util.find_spec("cupy") is None:
-        return False
-    try:
-        import cupy
-        return bool(cupy.cuda.is_available())
-    except Exception:
-        return False
-
-
-_HAS_GPU = _gpu_available()
-_gpu_only = pytest.mark.skipif(
-    not _HAS_GPU,
-    reason="cupy + CUDA required",
-)
+from xrspatial.geotiff.tests.conftest import requires_gpu as _gpu_only
 
 
 @_gpu_only
@@ -86,40 +68,47 @@ def test_apply_nodata_mask_gpu_float_in_place_no_copy_1934():
 def test_apply_nodata_mask_gpu_float_alloc_count_unchanged_1934():
     """Float path does not pull a fresh chunk-sized buffer from the pool.
 
-    The default memory pool exposes ``n_free_blocks`` / ``used_bytes`` and
-    ``total_bytes``. The pre-fix ``cupy.where`` path allocated one extra
-    chunk-sized buffer; the in-place fix should not grow ``used_bytes``
-    once the input is already on device.
+    Uses an isolated ``MemoryPool`` and measures ``total_bytes`` (which
+    counts free blocks too) after a ``free_all_blocks`` so the pre-fix
+    ``cupy.where`` allocation cannot be masked by the input buffer being
+    refcount-freed back to the pool before the assertion.
     """
     import cupy
 
     from xrspatial.geotiff import _apply_nodata_mask_gpu
 
-    # Large enough that an extra allocation would be visible.
-    arr_gpu = cupy.full((512, 512), -9999.0, dtype=cupy.float32)
-    # Plant a non-sentinel pixel so the mask is not empty.
-    arr_gpu[0, 0] = 1.0
+    isolated_pool = cupy.cuda.MemoryPool()
+    prev_allocator = cupy.cuda.get_allocator()
+    cupy.cuda.set_allocator(isolated_pool.malloc)
+    try:
+        # Large enough that an extra allocation would be visible.
+        arr_gpu = cupy.full((512, 512), -9999.0, dtype=cupy.float32)
+        arr_gpu[0, 0] = 1.0  # plant a non-sentinel pixel
 
-    pool = cupy.get_default_memory_pool()
-    cupy.cuda.Stream.null.synchronize()
-    used_before = pool.used_bytes()
+        cupy.cuda.Stream.null.synchronize()
+        isolated_pool.free_all_blocks()
+        total_before = isolated_pool.total_bytes()
 
-    out = _apply_nodata_mask_gpu(arr_gpu, -9999.0)
-    cupy.cuda.Stream.null.synchronize()
-    used_after = pool.used_bytes()
+        out = _apply_nodata_mask_gpu(arr_gpu, -9999.0)
+        cupy.cuda.Stream.null.synchronize()
+        isolated_pool.free_all_blocks()
+        total_after = isolated_pool.total_bytes()
 
-    # The mask is a transient bool array (1/4 the byte count of float32),
-    # so used_bytes can rise by the mask size but must not rise by the
-    # array's full byte count. Pre-fix would add at least one float32
-    # buffer of the same shape (512*512*4 = 1 MiB).
-    array_bytes = arr_gpu.nbytes
-    growth = used_after - used_before
-    assert growth < array_bytes, (
-        f"unexpected allocation growth {growth} bytes >= "
-        f"array_bytes {array_bytes}; in-place mutation regressed"
-    )
-    # And the returned buffer is the same one we passed in.
-    assert out.data.ptr == arr_gpu.data.ptr
+        # The mask is a transient bool array (1/4 the byte count of float32),
+        # so total_bytes can rise by the mask size but must not rise by the
+        # array's full byte count. Pre-fix would add at least one float32
+        # buffer of the same shape (512*512*4 = 1 MiB).
+        array_bytes = arr_gpu.nbytes
+        growth = total_after - total_before
+        assert growth < array_bytes, (
+            f"unexpected allocation growth {growth} bytes >= "
+            f"array_bytes {array_bytes}; in-place mutation regressed"
+        )
+        # And the returned buffer is the same one we passed in.
+        assert out.data.ptr == arr_gpu.data.ptr
+    finally:
+        cupy.cuda.set_allocator(prev_allocator)
+        isolated_pool.free_all_blocks()
 
 
 @_gpu_only
@@ -153,28 +142,36 @@ def test_apply_nodata_mask_gpu_int_no_extra_buffer_after_astype_1934():
 
     from xrspatial.geotiff import _apply_nodata_mask_gpu
 
-    arr_gpu = cupy.full((512, 512), 3, dtype=cupy.uint16)
-    arr_gpu[0, 0] = 1  # ensure non-sentinel pixel exists
+    isolated_pool = cupy.cuda.MemoryPool()
+    prev_allocator = cupy.cuda.get_allocator()
+    cupy.cuda.set_allocator(isolated_pool.malloc)
+    try:
+        arr_gpu = cupy.full((512, 512), 3, dtype=cupy.uint16)
+        arr_gpu[0, 0] = 1  # ensure non-sentinel pixel exists
 
-    pool = cupy.get_default_memory_pool()
-    cupy.cuda.Stream.null.synchronize()
-    used_before = pool.used_bytes()
+        cupy.cuda.Stream.null.synchronize()
+        isolated_pool.free_all_blocks()
+        total_before = isolated_pool.total_bytes()
 
-    out = _apply_nodata_mask_gpu(arr_gpu, 3)
-    cupy.cuda.Stream.null.synchronize()
-    used_after = pool.used_bytes()
+        out = _apply_nodata_mask_gpu(arr_gpu, 3)
+        cupy.cuda.Stream.null.synchronize()
+        isolated_pool.free_all_blocks()
+        total_after = isolated_pool.total_bytes()
 
-    # Required: one float64 buffer (512*512*8 = 2 MiB) from astype.
-    # Pre-fix would have allocated a second float64 buffer for cupy.where
-    # (another 2 MiB) on top of that.
-    float64_bytes = out.nbytes
-    growth = used_after - used_before
-    # Allow some slack for the bool mask + .any() scalar (well under
-    # one float64 buffer of slack).
-    assert growth < 2 * float64_bytes, (
-        f"unexpected allocation growth {growth} bytes >= "
-        f"2 * float64_bytes {2 * float64_bytes}; pre-fix double-alloc"
-    )
+        # Required: one float64 buffer (512*512*8 = 2 MiB) from astype.
+        # Pre-fix would have allocated a second float64 buffer for
+        # cupy.where (another 2 MiB) on top of that.
+        float64_bytes = out.nbytes
+        growth = total_after - total_before
+        # Allow some slack for the bool mask + .any() scalar (well under
+        # one float64 buffer of slack).
+        assert growth < 2 * float64_bytes, (
+            f"unexpected allocation growth {growth} bytes >= "
+            f"2 * float64_bytes {2 * float64_bytes}; pre-fix double-alloc"
+        )
+    finally:
+        cupy.cuda.set_allocator(prev_allocator)
+        isolated_pool.free_all_blocks()
 
 
 @_gpu_only
