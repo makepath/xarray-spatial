@@ -10,7 +10,6 @@ output or a ``.vrt`` path.
 """
 from __future__ import annotations
 
-import math
 import os
 import warnings
 from typing import TYPE_CHECKING
@@ -34,7 +33,7 @@ from .._coords import (
     transform_from_attr as _transform_from_attr,
 )
 from .._crs import _wkt_to_epsg
-from .._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
+from .._geotags import GeoTransform, RASTER_PIXEL_IS_AREA
 from .._runtime import (
     GeoTIFFFallbackWarning,
     _geotiff_strict_mode,
@@ -42,12 +41,10 @@ from .._runtime import (
 )
 from .._validation import (
     _validate_3d_writer_dims,
-    _validate_dtype_cast,
     _validate_tile_size_arg,
 )
 from .._writer import write
 from .gpu import write_geotiff_gpu
-from .vrt import write_vrt
 
 
 def to_geotiff(data: xr.DataArray | np.ndarray,
@@ -674,8 +671,6 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
     This enables streaming dask arrays to disk without materializing the
     full array in RAM.
     """
-    import os
-
     # Validate compression_level against codec-specific range
     if compression_level is not None:
         level_range = _LEVEL_RANGES.get(compression.lower())
