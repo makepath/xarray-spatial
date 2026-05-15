@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import tempfile
 
 import numpy as np
@@ -47,22 +48,27 @@ def test_nvcomp_decompress_uses_cumsum_for_offsets_1950():
     src_path = pathlib.Path(__file__).parent.parent / "_gpu_decode.py"
     src = src_path.read_text()
 
-    # Locate the decompress prefix-sum site. It sits inside
-    # ``_try_nvcomp_batch_decompress`` and is anchored by the
-    # ``Batch host->device upload`` comment that documents the rationale.
-    anchor = "Batch host->device upload: concatenate all compressed tiles"
-    idx = src.find(anchor)
-    assert idx != -1, "could not locate the decompress upload block"
-    # Take a 1500-char window after the anchor; the prefix-sum lives
-    # within the first ~30 lines of that block.
-    block = src[idx:idx + 1500]
-
-    assert "np.cumsum(" in block, (
-        "decompress upload block should use np.cumsum for prefix-sum "
-        "offsets, aligning with _batched_d2h_to_bytes (issue #1950)."
+    # Anchor on the exact decompress-side prefix-sum call. Regex is
+    # tighter than a fixed character window and survives surrounding
+    # code edits.
+    cumsum_call = re.compile(
+        r"np\.cumsum\(\s*comp_sizes_arr\[:-1\]\s*,\s*"
+        r"out\s*=\s*comp_offsets_h\[1:\]\s*\)"
     )
-    # The legacy Python loop would have ``for i in range(1, n_tiles):``.
-    assert "for i in range(1, n_tiles)" not in block, (
+    assert cumsum_call.search(src), (
+        "decompress upload block should use "
+        "``np.cumsum(comp_sizes_arr[:-1], out=comp_offsets_h[1:])`` for "
+        "prefix-sum offsets, aligning with _batched_d2h_to_bytes "
+        "(issue #1950)."
+    )
+    # The legacy Python loop would have written
+    # ``comp_offsets_h[i] = comp_offsets_h[i - 1] + ...`` inside a
+    # ``for i in range(1, n_tiles):`` block.
+    legacy_loop = re.compile(
+        r"for\s+i\s+in\s+range\(\s*1\s*,\s*n_tiles\s*\)\s*:\s*\n"
+        r"\s*comp_offsets_h\[i\]"
+    )
+    assert not legacy_loop.search(src), (
         "decompress upload block should no longer compute prefix-sum "
         "offsets with a Python for loop (issue #1950)."
     )
@@ -104,12 +110,18 @@ def test_nvcomp_batch_decompress_roundtrip_1950():
     refactor mis-stages a tile, the decoded buffer would not match
     the source, surfacing as a numerical regression here.
 
-    The test is gated on cupy availability rather than the nvCOMP lib
-    explicitly because the GPU read path falls back to a CPU codec when
-    nvCOMP is missing; in that case the test still exercises the GPU
-    upload + tile assembly but bypasses the prefix-sum site directly.
-    Setting ``XRSPATIAL_GEOTIFF_STRICT_GPU=1`` would gate harder.
+    Gated on ``XRSPATIAL_GEOTIFF_STRICT_GPU=1`` so the run-time check
+    only fires in environments that actually carry nvCOMP. Without the
+    flag the GPU read path silently falls back to a CPU codec when
+    nvCOMP is missing, which bypasses the prefix-sum site entirely; a
+    pass under that fallback would be misleading, so we skip instead.
     """
+    if os.environ.get("XRSPATIAL_GEOTIFF_STRICT_GPU") != "1":
+        pytest.skip(
+            "set XRSPATIAL_GEOTIFF_STRICT_GPU=1 to exercise the nvCOMP "
+            "prefix-sum site; without it the GPU path may fall back to "
+            "a CPU codec and bypass this regression."
+        )
     try:
         import cupy
     except ImportError:

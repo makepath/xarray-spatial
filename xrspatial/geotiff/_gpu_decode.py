@@ -1197,11 +1197,14 @@ def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
         # ``_nvcomp_batch_compress`` post-decompress prefix sum (~L2572).
         # Microbench (1024 tiles): 84us Python loop -> 21us cumsum
         # (~3.9x). See issue #1950.
+        # Allocate as uint64 up front: nvcomp consumes uint64 pointer/size
+        # arrays, so skipping the intermediate int64 -> uint64 .astype copies
+        # at the cupy.asarray sites avoids a redundant host-side allocation.
         comp_sizes_arr = np.fromiter(
             (len(t) for t in raw_tiles),
-            dtype=np.int64, count=n_tiles,
+            dtype=np.uint64, count=n_tiles,
         )
-        comp_offsets_h = np.zeros(n_tiles, dtype=np.int64)
+        comp_offsets_h = np.zeros(n_tiles, dtype=np.uint64)
         if n_tiles > 1:
             np.cumsum(comp_sizes_arr[:-1], out=comp_offsets_h[1:])
         total_comp = int(comp_sizes_arr.sum())
@@ -1216,12 +1219,11 @@ def _try_nvcomp_batch_decompress(compressed_tiles, tile_bytes, compression):
 
         base_comp_ptr = int(d_comp.data.ptr)
         base_decomp_ptr = int(d_decomp.data.ptr)
-        d_comp_ptrs = cupy.asarray(
-            base_comp_ptr + comp_offsets_h.astype(np.uint64))
+        d_comp_ptrs = cupy.asarray(base_comp_ptr + comp_offsets_h)
         decomp_offsets_h = (np.arange(n_tiles, dtype=np.uint64)
                             * np.uint64(tile_bytes))
         d_decomp_ptrs = cupy.asarray(base_decomp_ptr + decomp_offsets_h)
-        d_comp_sizes = cupy.asarray(comp_sizes_arr.astype(np.uint64))
+        d_comp_sizes = cupy.asarray(comp_sizes_arr)
         d_buf_sizes = cupy.full(n_tiles, tile_bytes, dtype=cupy.uint64)
         d_actual = cupy.empty(n_tiles, dtype=cupy.uint64)
 
