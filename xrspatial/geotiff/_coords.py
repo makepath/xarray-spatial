@@ -250,6 +250,11 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
     :func:`coords_to_transform` against the original DataArray, so the
     helper must handle both layouts to keep the geo-transform consistent
     with the file's coord arrays. See issue #1643.
+
+    Integer-dtype x/y coords are treated as a no-georef sentinel and
+    return ``None`` before the uniformity check runs; this is
+    intentional so the read-side ``np.arange`` placeholder round-trips
+    without inventing a fake unit transform (see issue #1949).
     """
     if da.ndim == 3:
         # Drop the band-like dim and keep the two spatial dims in their

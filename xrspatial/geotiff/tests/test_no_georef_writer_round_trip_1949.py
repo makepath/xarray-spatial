@@ -78,20 +78,20 @@ def test_coords_to_transform_returns_none_for_int64_x_coords():
     assert _coords_to_transform(da) is None
 
 
-def test_coords_to_transform_returns_none_for_int32_coords():
+@pytest.mark.parametrize("kind", [np.int32, np.int16, np.uint32])
+def test_coords_to_transform_returns_none_for_int32_coords(kind):
     """int32 / int16 / uint also short-circuit -- the integer-dtype
     signal is "no georef", regardless of width."""
-    for kind in (np.int32, np.int16, np.uint32):
-        da = xr.DataArray(
-            np.zeros((4, 5), dtype=np.float32),
-            dims=['y', 'x'],
-            coords={
-                'y': np.arange(4, dtype=kind),
-                'x': np.arange(5, dtype=kind),
-            },
-        )
-        assert _coords_to_transform(da) is None, (
-            f"expected None for {kind.__name__} coords")
+    da = xr.DataArray(
+        np.zeros((4, 5), dtype=np.float32),
+        dims=['y', 'x'],
+        coords={
+            'y': np.arange(4, dtype=kind),
+            'x': np.arange(5, dtype=kind),
+        },
+    )
+    assert _coords_to_transform(da) is None, (
+        f"expected None for {kind.__name__} coords")
 
 
 def test_coords_to_transform_float_coords_unchanged():
