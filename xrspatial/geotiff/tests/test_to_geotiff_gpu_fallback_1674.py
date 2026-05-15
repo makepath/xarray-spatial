@@ -69,9 +69,12 @@ def _patch_gpu_writer_to_raise(monkeypatch, exc):
     stub that raises ``exc``.
 
     ``to_geotiff`` calls ``write_geotiff_gpu`` directly inside its own
-    module, so the patch targets the module-level name there.
+    defining module (``_writers.eager`` since #1888), so the patch
+    targets the module-level name there. Patching ``xrspatial.geotiff``
+    would only update the package re-export and would not intercept the
+    actual call site.
     """
-    from xrspatial import geotiff as g
+    from xrspatial.geotiff._writers import eager as g
 
     def _boom(*args, **kwargs):
         raise exc
@@ -253,9 +256,11 @@ def test_auto_detected_gpu_fallback_warns(
     from xrspatial.geotiff import to_geotiff
 
     # Synthesise a "CuPy-looking" DataArray via _is_gpu_data's hook.
-    # Easiest: patch _is_gpu_data to True. The CPU fallback then
-    # operates on the numpy buffer underneath.
-    from xrspatial import geotiff as g
+    # Easiest: patch _is_gpu_data to True in the writer module that
+    # actually calls it (the to_geotiff body lives in _writers.eager
+    # since #1888). The CPU fallback then operates on the numpy buffer
+    # underneath.
+    from xrspatial.geotiff._writers import eager as g
     monkeypatch.setattr(g, '_is_gpu_data', lambda data: True, raising=True)
 
     _patch_gpu_writer_to_raise(monkeypatch, ImportError("no cupy"))
@@ -290,7 +295,7 @@ def test_auto_detected_gpu_runtime_error_falls_back_with_warning(
     must use the same template so call sites do not diverge over time.
     """
     from xrspatial.geotiff import to_geotiff
-    from xrspatial import geotiff as g
+    from xrspatial.geotiff._writers import eager as g
 
     monkeypatch.setattr(g, '_is_gpu_data', lambda data: True, raising=True)
     _patch_gpu_writer_to_raise(
