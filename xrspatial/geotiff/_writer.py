@@ -1203,15 +1203,20 @@ def _assemble_tiff(width: int, height: int, dtype: np.dtype,
         ifd_specs.append(tags)
 
     # --- Determine if BigTIFF is needed ---
-    # Classic TIFF uses 32-bit offsets (max ~4.29 GB). Estimate total file
-    # size including headers, IFDs, overflow data, and all pixel data.
-    # Switch to BigTIFF if any offset could exceed 2^32.
+    # Classic TIFF uses 32-bit offsets (max ~4.29 GB). Estimate total
+    # file size including headers, IFDs, overflow heap, and all pixel
+    # data; switch to BigTIFF if any offset could exceed 2^32. The IFD
+    # overhead is the exact bytes ``_build_ifd`` would emit, summed
+    # across all IFDs. The earlier fixed 1 KB-per-IFD fudge
+    # under-promoted near the 4 GiB boundary when ``gdal_metadata_xml``
+    # or ``extra_tags`` pushed the overflow heap past that constant
+    # (#1905). Shares ``_compute_classic_ifd_overhead`` with the
+    # streaming writer's BigTIFF decision (#1785, #1787).
     total_pixel_data = sum(sum(len(c) for c in chunks)
                            for _, _, _, _, _, chunks in pixel_data_parts)
-    # Conservative overhead estimate: header + IFDs + overflow + geo tags
-    num_levels = len(ifd_specs)
-    max_tags_per_ifd = max(len(tags) for tags in ifd_specs) if ifd_specs else 20
-    ifd_overhead = num_levels * (2 + 12 * max_tags_per_ifd + 4 + 1024)  # ~1KB overflow per IFD
+    ifd_overhead = sum(
+        _compute_classic_ifd_overhead(tags) for tags in ifd_specs
+    )
     estimated_file_size = 8 + ifd_overhead + total_pixel_data
 
     UINT32_MAX = 0xFFFFFFFF  # 4,294,967,295
