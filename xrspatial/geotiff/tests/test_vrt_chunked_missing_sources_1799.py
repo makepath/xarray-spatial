@@ -97,7 +97,13 @@ class TestChunkedMissingSourcesWarn:
         )
         holes = result.attrs["vrt_holes"]
         assert len(holes) == 1
+        # Pin the full record schema (see ``_backends/vrt.py:608``) so a
+        # regression in either path that drops or renames a key is
+        # caught here.
+        assert set(holes[0].keys()) == {"source", "band", "dst_rect", "error"}
         assert holes[0]["source"].endswith("missing.tif")
+        assert holes[0]["band"] == 1
+        assert holes[0]["dst_rect"] == (4, 0, 4, 4)
 
     def test_compute_emits_per_task_warning(self, tmp_path):
         vrt_path, _ = _make_partial_vrt(str(tmp_path))
@@ -112,13 +118,14 @@ class TestChunkedMissingSourcesWarn:
             f"source after compute, got messages: {messages!r}"
         )
         # Present-source chunk decodes its 7.0 fill; missing-source
-        # chunk decodes to the source dtype's default fill (typically
-        # zero for float32). Pin the present-side decode value so a
-        # regression in the lenient path that wiped both halves would
+        # chunk decodes to NaN under the lenient policy on float32.
+        # Pin both halves so a regression in the lenient path that
+        # wiped the present side or changed the missing-side fill would
         # surface.
         np.testing.assert_array_equal(
             np.asarray(computed)[:, :4], np.full((4, 4), 7.0, dtype=np.float32),
         )
+        assert np.all(np.isnan(np.asarray(computed)[:, 4:]))
 
     def test_chunks_tuple_form(self, tmp_path):
         """Tuple ``chunks=(h, w)`` threads through identically."""
@@ -150,7 +157,7 @@ class TestChunkedMissingSourcesRaise:
         result = read_vrt(vrt_path, chunks=4, missing_sources="raise")
         # Build does not raise (the graph is lazy).
         # Computing a chunk that intersects the missing source raises.
-        with pytest.raises((OSError, FileNotFoundError, ValueError)):
+        with pytest.raises((OSError, ValueError)):
             result.compute()
 
     def test_compute_present_only_chunk_succeeds(self, tmp_path):
@@ -187,7 +194,7 @@ class TestChunkedMissingSourcesDefault:
     def test_chunked_default_raises_on_compute(self, tmp_path):
         vrt_path, _ = _make_partial_vrt(str(tmp_path))
         result = read_vrt(vrt_path, chunks=4)
-        with pytest.raises((OSError, FileNotFoundError, ValueError)):
+        with pytest.raises((OSError, ValueError)):
             result.compute()
 
 
