@@ -6,6 +6,7 @@ edge [fontname = "helvetica"];
 
 
 subgraph cluster_required {
+	edge [color=darkgreen];
 	xarray_spatial -> numpy;
 	xarray_spatial -> xarray;
 	xarray_spatial -> numba;

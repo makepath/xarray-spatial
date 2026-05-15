@@ -34,8 +34,8 @@
 <!-- xarray_spatial&#45;&gt;numpy -->
 <g id="edge1" class="edge">
 <title>xarray_spatial&#45;&gt;numpy</title>
-<path fill="none" stroke="black" d="M928.7,-277.17C922.48,-234.99 915.09,-196.92 908,-189.82 868.33,-150.12 710.93,-136.41 618.24,-131.73"/>
-<polygon fill="black" stroke="black" points="618.66,-128.25 608.5,-131.27 618.32,-135.24 618.66,-128.25"/>
+<path fill="none" stroke="darkgreen" d="M928.7,-277.17C922.48,-234.99 915.09,-196.92 908,-189.82 868.33,-150.12 710.93,-136.41 618.24,-131.73"/>
+<polygon fill="darkgreen" stroke="darkgreen" points="618.66,-128.25 608.5,-131.27 618.32,-135.24 618.66,-128.25"/>
 </g>
 <!-- xarray -->
 <g id="node3" class="node">
@@ -47,8 +47,8 @@
 <!-- xarray_spatial&#45;&gt;xarray -->
 <g id="edge2" class="edge">
 <title>xarray_spatial&#45;&gt;xarray</title>
-<path fill="none" stroke="black" d="M827.62,-349.24C754.36,-314.28 663.06,-270.71 605.38,-243.18"/>
-<polygon fill="black" stroke="black" points="606.91,-240.04 596.38,-238.89 603.9,-246.35 606.91,-240.04"/>
+<path fill="none" stroke="darkgreen" d="M827.62,-349.24C754.36,-314.28 663.06,-270.71 605.38,-243.18"/>
+<polygon fill="darkgreen" stroke="darkgreen" points="606.91,-240.04 596.38,-238.89 603.9,-246.35 606.91,-240.04"/>
 </g>
 <!-- numba -->
 <g id="node4" class="node">
@@ -60,8 +60,8 @@
 <!-- xarray_spatial&#45;&gt;numba -->
 <g id="edge3" class="edge">
 <title>xarray_spatial&#45;&gt;numba</title>
-<path fill="none" stroke="black" d="M816.31,-384.91C663.58,-359.71 400.96,-311.84 181,-248.74 171.66,-246.05 161.89,-242.84 152.41,-239.48"/>
-<polygon fill="black" stroke="black" points="153.89,-236.29 143.3,-236.17 151.5,-242.87 153.89,-236.29"/>
+<path fill="none" stroke="darkgreen" d="M816.31,-384.91C663.58,-359.71 400.96,-311.84 181,-248.74 171.66,-246.05 161.89,-242.84 152.41,-239.48"/>
+<polygon fill="darkgreen" stroke="darkgreen" points="153.89,-236.29 143.3,-236.17 151.5,-242.87 153.89,-236.29"/>
 </g>
 <!-- scipy -->
 <g id="node5" class="node">
@@ -73,8 +73,8 @@
 <!-- xarray_spatial&#45;&gt;scipy -->
 <g id="edge4" class="edge">
 <title>xarray_spatial&#45;&gt;scipy</title>
-<path fill="none" stroke="black" d="M820.45,-367.99C692.96,-330.02 497.94,-271.95 389.91,-239.78"/>
-<polygon fill="black" stroke="black" points="391.13,-236.49 380.55,-236.99 389.13,-243.2 391.13,-236.49"/>
+<path fill="none" stroke="darkgreen" d="M820.45,-367.99C692.96,-330.02 497.94,-271.95 389.91,-239.78"/>
+<polygon fill="darkgreen" stroke="darkgreen" points="391.13,-236.49 380.55,-236.99 389.13,-243.2 391.13,-236.49"/>
 </g>
 <!-- matplotlib -->
 <g id="node6" class="node">
@@ -86,8 +86,8 @@
 <!-- xarray_spatial&#45;&gt;matplotlib -->
 <g id="edge5" class="edge">
 <title>xarray_spatial&#45;&gt;matplotlib</title>
-<path fill="none" stroke="black" d="M983.58,-282.47C987.14,-271.46 990.52,-261.01 993.5,-251.8"/>
-<polygon fill="black" stroke="black" points="996.83,-252.89 996.58,-242.3 990.17,-250.73 996.83,-252.89"/>
+<path fill="none" stroke="darkgreen" d="M983.58,-282.47C987.14,-271.46 990.52,-261.01 993.5,-251.8"/>
+<polygon fill="darkgreen" stroke="darkgreen" points="996.83,-252.89 996.58,-242.3 990.17,-250.73 996.83,-252.89"/>
 </g>
 <!-- zstandard -->
 <g id="node7" class="node">
@@ -99,8 +99,8 @@
 <!-- xarray_spatial&#45;&gt;zstandard -->
 <g id="edge6" class="edge">
 <title>xarray_spatial&#45;&gt;zstandard</title>
-<path fill="none" stroke="black" d="M860.43,-306.94C842.6,-286.07 824.97,-265.42 811.05,-249.12"/>
-<polygon fill="black" stroke="black" points="813.86,-247.02 804.7,-241.69 808.54,-251.57 813.86,-247.02"/>
+<path fill="none" stroke="darkgreen" d="M860.43,-306.94C842.6,-286.07 824.97,-265.42 811.05,-249.12"/>
+<polygon fill="darkgreen" stroke="darkgreen" points="813.86,-247.02 804.7,-241.69 808.54,-251.57 813.86,-247.02"/>
 </g>
 <!-- cupy -->
 <g id="node8" class="node">
@@ -301,26 +301,26 @@
 <!-- xarray&#45;&gt;numpy -->
 <g id="edge7" class="edge">
 <title>xarray&#45;&gt;numpy</title>
-<path fill="none" stroke="black" d="M549,-189.72C549,-182.13 549,-173.6 549,-165.41"/>
-<polygon fill="black" stroke="black" points="552.5,-165.68 549,-155.68 545.5,-165.68 552.5,-165.68"/>
+<path fill="none" stroke="darkgreen" d="M549,-189.72C549,-182.13 549,-173.6 549,-165.41"/>
+<polygon fill="darkgreen" stroke="darkgreen" points="552.5,-165.68 549,-155.68 545.5,-165.68 552.5,-165.68"/>
 </g>
 <!-- numba&#45;&gt;numpy -->
 <g id="edge8" class="edge">
 <title>numba&#45;&gt;numpy</title>
-<path fill="none" stroke="black" d="M150.4,-197.44C160.54,-194.7 171.04,-192.03 181,-189.82 285.61,-166.6 408.77,-148.14 482.77,-137.99"/>
-<polygon fill="black" stroke="black" points="482.83,-141.51 492.27,-136.69 481.89,-134.57 482.83,-141.51"/>
+<path fill="none" stroke="darkgreen" d="M150.4,-197.44C160.54,-194.7 171.04,-192.03 181,-189.82 285.61,-166.6 408.77,-148.14 482.77,-137.99"/>
+<polygon fill="darkgreen" stroke="darkgreen" points="482.83,-141.51 492.27,-136.69 481.89,-134.57 482.83,-141.51"/>
 </g>
 <!-- scipy&#45;&gt;numpy -->
 <g id="edge9" class="edge">
 <title>scipy&#45;&gt;numpy</title>
-<path fill="none" stroke="black" d="M371.06,-192.85C408.91,-179.35 457.4,-162.05 494.2,-148.92"/>
-<polygon fill="black" stroke="black" points="495.07,-152.32 503.31,-145.67 492.72,-145.73 495.07,-152.32"/>
+<path fill="none" stroke="darkgreen" d="M371.06,-192.85C408.91,-179.35 457.4,-162.05 494.2,-148.92"/>
+<polygon fill="darkgreen" stroke="darkgreen" points="495.07,-152.32 503.31,-145.67 492.72,-145.73 495.07,-152.32"/>
 </g>
 <!-- matplotlib&#45;&gt;numpy -->
 <g id="edge10" class="edge">
 <title>matplotlib&#45;&gt;numpy</title>
-<path fill="none" stroke="black" d="M954.09,-197.98C943.86,-195.02 933.14,-192.14 923,-189.82 816.58,-165.46 690.94,-147.28 615.74,-137.5"/>
-<polygon fill="black" stroke="black" points="616.43,-134.06 606.07,-136.25 615.54,-141 616.43,-134.06"/>
+<path fill="none" stroke="darkgreen" d="M954.09,-197.98C943.86,-195.02 933.14,-192.14 923,-189.82 816.58,-165.46 690.94,-147.28 615.74,-137.5"/>
+<polygon fill="darkgreen" stroke="darkgreen" points="616.43,-134.06 606.07,-136.25 615.54,-141 616.43,-134.06"/>
 </g>
 <!-- cuspatial&#45;&gt;cupy -->
 <g id="edge24" class="edge">
