@@ -265,11 +265,13 @@ def require_transform_for_georeferenced(
         raise ValueError(
             f"Cannot infer GeoTIFF transform from a "
             f"{tuple(da.sizes.values())} array with spatial coords on "
-            f"both axes: at least one axis has length 1, so the pixel "
-            f"size cannot be recovered from coord differences. Supply "
-            f"the affine transform explicitly via ``attrs['transform']`` "
-            f"(rasterio 6-tuple ``(px, 0, ox, 0, py, oy)``) or drop the "
-            f"coords if a non-georeferenced TIFF is desired."
+            f"both axes: both axes are degenerate (1x1), so neither "
+            f"coord array carries a pixel size step. 1xN and Nx1 inputs "
+            f"recover the pixel size from the non-degenerate axis, but "
+            f"a 1x1 cannot. Supply the affine transform explicitly via "
+            f"``attrs['transform']`` (rasterio 6-tuple "
+            f"``(px, 0, ox, 0, py, oy)``) or drop the coords if a "
+            f"non-georeferenced TIFF is desired."
         )
 
 

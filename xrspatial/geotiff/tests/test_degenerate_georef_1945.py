@@ -54,7 +54,10 @@ X0 = -120.0
 Y0 = 45.0
 
 
-def _strip_1xN() -> xr.DataArray:
+def _strip_1xN(raster_type: str = "area") -> xr.DataArray:
+    attrs = {"crs": 4326}
+    if raster_type == "point":
+        attrs["raster_type"] = "point"
     return xr.DataArray(
         np.arange(8, dtype="float32").reshape(1, 8),
         dims=("y", "x"),
@@ -62,11 +65,14 @@ def _strip_1xN() -> xr.DataArray:
             "x": X0 + np.arange(8, dtype="float64") * PIXEL,
             "y": np.array([Y0], dtype="float64"),
         },
-        attrs={"crs": 4326},
+        attrs=attrs,
     )
 
 
-def _strip_Nx1() -> xr.DataArray:
+def _strip_Nx1(raster_type: str = "area") -> xr.DataArray:
+    attrs = {"crs": 4326}
+    if raster_type == "point":
+        attrs["raster_type"] = "point"
     return xr.DataArray(
         np.arange(8, dtype="float32").reshape(8, 1),
         dims=("y", "x"),
@@ -74,7 +80,7 @@ def _strip_Nx1() -> xr.DataArray:
             "x": np.array([X0], dtype="float64"),
             "y": Y0 - np.arange(8, dtype="float64") * PIXEL,
         },
-        attrs={"crs": 4326},
+        attrs=attrs,
     )
 
 
@@ -272,3 +278,79 @@ class TestVrtTiledWriterDegenerateGeoref:
         p = str(tmp_path / "georef_1x1_no_tx_1945.vrt")
         with pytest.raises(ValueError, match="(?i)pixel size|transform"):
             to_geotiff(da, p)
+
+
+# ===========================================================================
+# raster_type='point' round trip
+#
+# Pins the no-half-pixel-shift path on 1xN / Nx1 degenerate writes. With
+# PixelIsPoint the tiepoint already sits at the pixel center, so the
+# writer must not add a 0.5*pixel offset when synthesising the transform
+# from coords.
+# ===========================================================================
+
+class TestEagerWriterPointRasterDegenerate:
+
+    @pytest.mark.parametrize(
+        "factory, name",
+        [(_strip_1xN, "1xN"), (_strip_Nx1, "Nx1")],
+    )
+    def test_point_raster_round_trip(self, tmp_path, factory, name):
+        da = factory(raster_type="point")
+        p = str(tmp_path / f"georef_{name}_point_eager_1945.tif")
+        to_geotiff(da, p)
+        _assert_round_trip(p, da)
+
+
+# ===========================================================================
+# Sign pinning on borrowed axis (#1953 review)
+#
+# When one axis is degenerate, ``coords_to_transform`` borrows the pixel
+# size magnitude from the non-degenerate axis and applies a convention
+# for the borrowed axis: pixel_width defaults positive (x increases
+# left-to-right), pixel_height defaults negative (y decreases top-to-
+# bottom). This strips the sign of the *source* axis if it doesn't match
+# convention. These tests pin that behaviour so a future refactor does
+# not silently change it.
+# ===========================================================================
+
+class TestCoordsToTransformBorrowSignPinning:
+    """Pin the sign convention of the borrowed (degenerate) axis."""
+
+    def test_y_ascending_Nx1_borrows_positive_pixel_width(self):
+        from xrspatial.geotiff._coords import coords_to_transform
+
+        da = xr.DataArray(
+            np.arange(8, dtype="float32").reshape(8, 1),
+            dims=("y", "x"),
+            coords={
+                "x": np.array([X0], dtype="float64"),
+                # y ascending: 38, 39, 40, ... so pixel_height = +1.0
+                "y": 38.0 + np.arange(8, dtype="float64") * PIXEL,
+            },
+        )
+        t = coords_to_transform(da)
+        # Non-degenerate axis (y) keeps its sign.
+        assert t.pixel_height == pytest.approx(1.0)
+        # Borrowed pixel_width takes ``abs(pixel_height)``: always positive,
+        # regardless of y's sign. This pins the current convention.
+        assert t.pixel_width == pytest.approx(1.0)
+
+    def test_x_descending_1xN_borrows_negative_pixel_height(self):
+        from xrspatial.geotiff._coords import coords_to_transform
+
+        da = xr.DataArray(
+            np.arange(8, dtype="float32").reshape(1, 8),
+            dims=("y", "x"),
+            coords={
+                # x descending: pixel_width = -1.0
+                "x": -113.0 - np.arange(8, dtype="float64") * PIXEL,
+                "y": np.array([Y0], dtype="float64"),
+            },
+        )
+        t = coords_to_transform(da)
+        # Non-degenerate axis (x) keeps its sign.
+        assert t.pixel_width == pytest.approx(-1.0)
+        # Borrowed pixel_height takes ``-abs(pixel_width)``: always negative,
+        # regardless of x's sign. This pins the current convention.
+        assert t.pixel_height == pytest.approx(-1.0)
