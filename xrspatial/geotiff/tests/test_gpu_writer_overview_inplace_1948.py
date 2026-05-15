@@ -83,8 +83,16 @@ def test_gpu_writer_overview_loop_uses_putmask_1948():
     )
     # The legacy two-line pattern would have ``current = current.copy()``
     # right before the indexed write. Ensure the overview branch no
-    # longer contains that exact line.
-    overview_branch = src[idx_overview:idx_overview + 1500]
+    # longer contains that exact line. Anchor the slice on the next
+    # statement after the inner ``while`` (``parts.append(...)``) so
+    # the window tracks the real loop body instead of a fixed
+    # character count that drifts as surrounding code changes.
+    idx_parts_append = src.find("parts.append(", idx_overview)
+    assert idx_parts_append != -1, (
+        "could not locate the ``parts.append(`` sentinel that closes "
+        "the overview-loop body"
+    )
+    overview_branch = src[idx_overview:idx_parts_append]
     assert "current = current.copy()" not in overview_branch, (
         "overview loop should no longer copy the cupy buffer before "
         "the in-place sentinel rewrite (issue #1948)."

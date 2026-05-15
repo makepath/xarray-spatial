@@ -493,6 +493,17 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         # issue #1948.
         current = arr
         cumulative_factor = 1
+        # ``make_overview_gpu`` preserves dtype, so the sentinel cast is
+        # loop-invariant. Hoist it (and the float/finite gate) out of the
+        # inner ``while`` to skip redundant per-level scalar work.
+        rewrite_nodata = (
+            nodata is not None
+            and np_dtype.kind == 'f'
+            and not np.isnan(float(nodata))
+        )
+        sentinel_scalar = (
+            np_dtype.type(nodata) if rewrite_nodata else None
+        )
         for target_factor in overview_levels:
             # Halve repeatedly until the cumulative decimation matches
             # the requested factor. Validation has already established
@@ -502,14 +513,10 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                 current = make_overview_gpu(current, method=overview_resampling,
                                             nodata=nodata)
                 cumulative_factor *= 2
-                if (nodata is not None
-                        and np.dtype(str(current.dtype)).kind == 'f'
-                        and not np.isnan(float(nodata))):
+                if rewrite_nodata:
                     nan_mask = cupy.isnan(current)
                     if bool(nan_mask.any().item()):
-                        cupy.putmask(
-                            current, nan_mask,
-                            np.dtype(str(current.dtype)).type(nodata))
+                        cupy.putmask(current, nan_mask, sentinel_scalar)
             oh, ow = current.shape[:2]
             parts.append(_gpu_compress_to_part(current, ow, oh, samples))
 
