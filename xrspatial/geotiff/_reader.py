@@ -2734,14 +2734,46 @@ def _fetch_decode_cog_http_tiles(
         fetch_ranges, max_workers=workers, gap_threshold=gap)
 
     # Pass 3: decode each tile and place it (clipped to the window).
-    for (band_idx, tr, tc), tile_data in zip(placements, tile_bytes_list):
-        tile_pixels = _decode_strip_or_tile(
-            tile_data, compression, tw, th, tile_samples,
-            bps, bytes_per_sample, is_sub_byte, dtype, pred,
-            byte_order=header.byte_order,
-            jpeg_tables=jpeg_tables,
-            masked_fill=masked_fill)
+    #
+    # Codec decode (deflate, zstd, LZW, ...) releases the GIL inside the
+    # C extension, so a thread pool over the per-tile decode actually
+    # overlaps codec work across cores. The local-file path in
+    # ``_read_tiles`` uses the same pattern with a 64K-pixel threshold to
+    # skip the pool-startup cost on small tiles; mirror that gate here so
+    # HTTP COG reads of wide windows benefit from the same parallelism
+    # rather than serialising the decode after a parallel fetch. The
+    # placement loop that copies pixels into ``result`` stays serial to
+    # avoid contending writes to the output buffer.
+    tile_pixel_threshold = 64 * 1024
+    n_decode_tiles = len(placements)
+    decode_in_parallel = (
+        n_decode_tiles > 1 and tw * th >= tile_pixel_threshold)
+    if decode_in_parallel:
+        from concurrent.futures import ThreadPoolExecutor as _Pool
+        n_decode_workers = min(n_decode_tiles, _os_module.cpu_count() or 4)
 
+        def _decode_one(tile_data):
+            return _decode_strip_or_tile(
+                tile_data, compression, tw, th, tile_samples,
+                bps, bytes_per_sample, is_sub_byte, dtype, pred,
+                byte_order=header.byte_order,
+                jpeg_tables=jpeg_tables,
+                masked_fill=masked_fill)
+
+        with _Pool(max_workers=n_decode_workers) as _decode_pool:
+            decoded_tiles = list(_decode_pool.map(_decode_one, tile_bytes_list))
+    else:
+        decoded_tiles = [
+            _decode_strip_or_tile(
+                tile_data, compression, tw, th, tile_samples,
+                bps, bytes_per_sample, is_sub_byte, dtype, pred,
+                byte_order=header.byte_order,
+                jpeg_tables=jpeg_tables,
+                masked_fill=masked_fill)
+            for tile_data in tile_bytes_list
+        ]
+
+    for (band_idx, tr, tc), tile_pixels in zip(placements, decoded_tiles):
         # Tile position in image coordinates.
         ty0 = tr * th
         tx0 = tc * tw
