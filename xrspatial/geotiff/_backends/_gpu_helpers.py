@@ -54,6 +54,12 @@ def _apply_nodata_mask_gpu(arr_gpu, nodata):
     Returns the (possibly promoted, possibly nodata-masked) CuPy array.
     The caller is responsible for setting ``attrs['nodata']`` so the
     sentinel is still discoverable downstream.
+
+    The sentinel-replacement step writes NaN into the existing buffer with
+    ``cupy.putmask`` rather than allocating a fresh output via
+    ``cupy.where``; every call site passes a freshly decoded GPU buffer
+    that no caller-visible state aliases, so the mutation is safe and
+    drops one chunk-sized device allocation per call (#1934).
     """
     import cupy
 
@@ -63,8 +69,8 @@ def _apply_nodata_mask_gpu(arr_gpu, nodata):
     if arr_dtype.kind == 'f':
         if not np.isnan(nodata):
             sentinel = arr_dtype.type(nodata)
-            arr_gpu = cupy.where(arr_gpu == sentinel,
-                                 arr_dtype.type('nan'), arr_gpu)
+            cupy.putmask(arr_gpu, arr_gpu == sentinel,
+                         arr_dtype.type('nan'))
         return arr_gpu
     if arr_dtype.kind in ('u', 'i'):
         # Out-of-range sentinels (e.g. uint16 + GDAL_NODATA="-9999") cannot
@@ -89,8 +95,11 @@ def _apply_nodata_mask_gpu(arr_gpu, nodata):
         sentinel = arr_dtype.type(nodata_int)
         mask = arr_gpu == sentinel
         if bool(mask.any().item()):
+            # ``astype`` allocates the float64 buffer; write NaN into it
+            # in place instead of running it through another ``cupy.where``
+            # that would allocate again (#1934).
             arr_gpu = arr_gpu.astype(cupy.float64)
-            arr_gpu = cupy.where(mask, cupy.float64('nan'), arr_gpu)
+            cupy.putmask(arr_gpu, mask, cupy.float64('nan'))
         return arr_gpu
     return arr_gpu
 
