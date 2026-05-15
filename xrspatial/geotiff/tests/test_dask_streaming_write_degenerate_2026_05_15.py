@@ -59,7 +59,7 @@ def _read_raw_pixels(path: str) -> np.ndarray:
     correctly. ``tifffile`` decodes the pixels but does not consult
     ``GDAL_NODATA``, so a raw read surfaces what is actually on disk.
     """
-    import tifffile
+    tifffile = pytest.importorskip("tifffile")
 
     with tifffile.TiffFile(path) as tif:
         return tif.asarray()
