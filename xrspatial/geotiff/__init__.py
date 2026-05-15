@@ -28,7 +28,8 @@ write_geotiff_gpu(data, path, ...)
     internally.
 write_vrt(path, source_files, ...)
     Generate a VRT mosaic XML from a list of GeoTIFF files. ``vrt_path``
-    is kept as a deprecated alias for ``path`` (#1946).
+    is kept as a deprecated alias for ``path``; passing both ``path`` and
+    ``vrt_path`` raises ``TypeError`` (#1946).
 """
 from __future__ import annotations
 

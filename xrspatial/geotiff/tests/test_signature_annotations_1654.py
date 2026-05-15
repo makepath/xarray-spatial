@@ -86,11 +86,13 @@ def test_write_geotiff_gpu_path_annotated():
 def test_write_vrt_path_annotated():
     """``write_vrt(path, ...)`` is str-only (VRT writes are path-only by
     design; no file-like buffer support). After #1946 the canonical name
-    is ``path`` (parity with ``to_geotiff`` / ``write_geotiff_gpu``); the
-    annotation is ``str | None`` because the parameter carries a default
-    of ``None`` so the deprecation shim can detect omission and route
-    callers using the legacy ``vrt_path=`` alias."""
-    assert _annotation(write_vrt, 'path') == 'str | None'
+    is ``path`` (parity with ``to_geotiff`` / ``write_geotiff_gpu``).
+    The annotation is plain ``str``: the default value is a private
+    sentinel (not ``None``) so the deprecation shim can distinguish
+    ``write_vrt(path=None, ...)`` (rejected with TypeError) from a
+    caller who omitted ``path`` entirely (routed through the ``vrt_path``
+    alias). See PR #1962 review."""
+    assert _annotation(write_vrt, 'path') == 'str'
 
 
 def test_write_vrt_vrt_path_annotated():

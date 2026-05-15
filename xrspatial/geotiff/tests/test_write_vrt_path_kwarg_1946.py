@@ -139,13 +139,41 @@ def test_write_vrt_no_path_raises(tmp_path):
 
     Before the shim, omitting the first positional argument raised
     ``TypeError: missing 1 required positional argument`` from CPython.
-    The shim adds a default of ``None`` so the kwarg-only positional
-    no longer triggers that automatic check; the explicit raise inside
+    The shim adds a sentinel default so the kwarg-only positional no
+    longer triggers that automatic check; the explicit raise inside
     the shim preserves the pre-#1946 error semantics.
     """
     src = _build_source_tif(tmp_path)
     with pytest.raises(TypeError, match='path'):
         write_vrt(source_files=[src])
+
+
+def test_write_vrt_explicit_path_none_raises(tmp_path):
+    """``write_vrt(path=None, ...)`` is rejected with TypeError.
+
+    The sentinel-default pattern (#1962 review) distinguishes "caller
+    passed nothing" (sentinel) from "caller passed None explicitly".
+    Explicit ``None`` is a bug in the caller's code, not a request to
+    fall through to the deprecated ``vrt_path`` alias, so the shim
+    raises with a clear message that names the offending kwarg.
+    """
+    src = _build_source_tif(tmp_path)
+    with pytest.raises(TypeError, match="'path'.*None"):
+        write_vrt(path=None, source_files=[src])
+
+
+def test_write_vrt_positional_none_raises(tmp_path):
+    """Positional ``write_vrt(None, sources)`` is rejected with TypeError.
+
+    Same rationale as the keyword case: an explicit positional ``None``
+    is rejected up front instead of crashing deep in
+    ``os.path.dirname(os.path.abspath(None))``. Pinned because the
+    pre-#1962 code accepted positional ``None`` and raised the wrong
+    "missing required argument" error.
+    """
+    src = _build_source_tif(tmp_path)
+    with pytest.raises(TypeError, match="'path'.*None"):
+        write_vrt(None, [src])
 
 
 def test_write_vrt_first_arg_name_matches_writer_trio():

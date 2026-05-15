@@ -13,10 +13,11 @@ from .._crs import _resolve_crs_to_wkt
 from .._runtime import (
     _CRS_WKT_DEPRECATED_SENTINEL,
     _VRT_PATH_DEPRECATED_SENTINEL,
+    _VRT_PATH_MISSING_SENTINEL,
 )
 
 
-def write_vrt(path: str | None = None,
+def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
               source_files: list[str] | None = None, *,
               vrt_path: str | None = _VRT_PATH_DEPRECATED_SENTINEL,
               relative: bool = True,
@@ -82,8 +83,9 @@ def write_vrt(path: str | None = None,
     # is kept as a deprecated alias to preserve back-compat for callers
     # using either positional ``write_vrt(vrt_path, sources)`` or
     # keyword ``write_vrt(vrt_path=...)``.
+    path_passed = path is not _VRT_PATH_MISSING_SENTINEL
     vrt_path_passed = vrt_path is not _VRT_PATH_DEPRECATED_SENTINEL
-    if path is not None and vrt_path_passed:
+    if path_passed and vrt_path_passed:
         # Both supplied is ambiguous regardless of whether the two values
         # happen to be the same string. Refuse rather than silently
         # picking one. Mirrors the same rule the ``crs`` / ``crs_wkt``
@@ -101,13 +103,21 @@ def write_vrt(path: str | None = None,
             stacklevel=2,
         )
         path = vrt_path
-    if path is None:
+    elif not path_passed:
         # Neither name supplied. Match the previous ``TypeError: missing
         # required positional argument`` semantics by raising rather than
-        # forwarding a ``None`` into ``_write_vrt_internal`` (which would
-        # otherwise crash deep in ``os.path.dirname(os.path.abspath(None))``).
+        # forwarding the sentinel into ``_write_vrt_internal``.
         raise TypeError(
             "write_vrt: missing required argument 'path'")
+    if path is None:
+        # Explicit ``path=None`` (including positional ``write_vrt(None,
+        # sources)``) is rejected up front so the error message names the
+        # offending kwarg instead of crashing deep in
+        # ``os.path.dirname(os.path.abspath(None))``. The sentinel default
+        # on ``path`` is what lets us distinguish this case from "caller
+        # passed nothing" above.
+        raise TypeError(
+            "write_vrt: 'path' must be a str, got None")
     if source_files is None:
         raise TypeError(
             "write_vrt: missing required argument 'source_files'")

@@ -47,6 +47,13 @@ _MISSING_SOURCES_SENTINEL = object()
 # rationale ``_CRS_WKT_DEPRECATED_SENTINEL`` documents above. See
 # issue #1946.
 _VRT_PATH_DEPRECATED_SENTINEL = object()
+# ``write_vrt`` also needs to distinguish "user passed path= explicitly"
+# (including an explicit ``path=None``, which is an error) from "user
+# passed nothing" (fall through to the ``vrt_path`` shim). Without this
+# sentinel, ``write_vrt(None, sources)`` silently fell through to the
+# ``path is None`` branch and raised a "missing required argument"
+# TypeError for the wrong reason. See PR #1962 review.
+_VRT_PATH_MISSING_SENTINEL = object()
 
 
 # Spatial dim names recognised on 3D writer inputs. ``y``/``x`` are the
