@@ -32,7 +32,7 @@ from .._coords import (
     coords_to_transform as _coords_to_transform,
     transform_from_attr as _transform_from_attr,
 )
-from .._crs import _wkt_to_epsg
+from .._crs import _validate_crs_fallback, _wkt_to_epsg
 from .._geotags import GeoTransform, RASTER_PIXEL_IS_AREA
 from .._runtime import (
     GeoTIFFFallbackWarning,
@@ -64,7 +64,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                streaming_buffer_bytes: int = 256 * 1024 * 1024,
                max_z_error: float = 0.0,
                photometric: str | int = 'auto',
-               allow_internal_only_jpeg: bool = False) -> None:
+               allow_internal_only_jpeg: bool = False,
+               allow_unparseable_crs: bool = False) -> None:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Dask-backed DataArrays are written in streaming mode: one tile-row
@@ -203,6 +204,18 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         kwarg is forwarded unchanged to ``write_geotiff_gpu`` on the
         GPU dispatch path so callers can reach the same experimental
         encode via ``to_geotiff(..., gpu=True)``. See issue #1845.
+    allow_unparseable_crs : bool
+        Opt in to writing an unvalidatable CRS string into
+        ``GTCitationGeoKey`` (default ``False``). When ``False`` (the
+        default since #1929), a ``crs=`` value that is neither an EPSG
+        int nor a string that pyproj can resolve and is not
+        structurally WKT (no ``PROJCS`` / ``GEOGCS`` / ``PROJCRS`` /
+        ``GEOGCRS`` root) raises ``ValueError`` instead of landing
+        verbatim in the citation field. Set to ``True`` to keep the
+        pre-#1929 permissive behaviour. The fail-closed default
+        protects against files where a typo'd PROJ string or an
+        ``"EPSG:4326"`` token on a host without pyproj produces a
+        citation that most readers cannot interpret. See issue #1929.
 
     Raises
     ------
@@ -375,7 +388,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                          predictor=predictor,
                          bigtiff=bigtiff,
                          max_z_error=max_z_error,
-                         photometric=photometric)
+                         photometric=photometric,
+                         allow_unparseable_crs=allow_unparseable_crs)
         return
 
     # Dispatch to write_geotiff_gpu when GPU was selected (explicit
@@ -420,6 +434,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 streaming_buffer_bytes=streaming_buffer_bytes,
                 photometric=photometric,
                 allow_internal_only_jpeg=allow_internal_only_jpeg,
+                allow_unparseable_crs=allow_unparseable_crs,
             )
             return
         except ImportError as e:
@@ -550,6 +565,12 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                             f"compression_level={compression_level} out of "
                             f"range for {compression} (valid: {lo}-{hi})")
             from .._writer import write_streaming
+            # Issue #1929: refuse to write an unvalidatable CRS string
+            # into GTCitationGeoKey unless the caller opts in. ``epsg``
+            # is set when ``_wkt_to_epsg`` succeeded; only the fallback
+            # branch needs the guard.
+            if epsg is None:
+                _validate_crs_fallback(wkt_fallback, allow_unparseable_crs)
             write_streaming(
                 dask_arr, path,
                 geo_transform=geo_transform,
@@ -630,6 +651,10 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                     f"compression_level={compression_level} out of range "
                     f"for {compression} (valid: {lo}-{hi})")
 
+    # Issue #1929: refuse to write an unvalidatable CRS string into
+    # GTCitationGeoKey unless the caller opts in.
+    if epsg is None:
+        _validate_crs_fallback(wkt_fallback, allow_unparseable_crs)
     write(
         arr, path,
         geo_transform=geo_transform,
@@ -726,7 +751,8 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
                      compression='zstd', compression_level=None,
                      tile_size=256, predictor: bool | int = False,
                      bigtiff=None, max_z_error: float = 0.0,
-                     photometric: str | int = 'auto'):
+                     photometric: str | int = 'auto',
+                     allow_unparseable_crs: bool = False):
     """Write a DataArray as a directory of tiled GeoTIFFs with a VRT index.
 
     This enables streaming dask arrays to disk without materializing the
@@ -811,6 +837,14 @@ def _write_vrt_tiled(data, vrt_path, *, crs=None, nodata=None,
         res_unit = _rich['resolution_unit']
     else:
         raw = data
+
+    # Issue #1929: refuse to write an unvalidatable CRS string into the
+    # per-tile GTCitationGeoKey fields unless the caller opts in.
+    # ``_write_single_tile`` forwards ``wkt_fallback`` to the geokey
+    # builder once per tile, so validate once up front rather than
+    # per-tile.
+    if epsg is None:
+        _validate_crs_fallback(wkt_fallback, allow_unparseable_crs)
 
     # Check for dask backing
     is_dask = hasattr(raw, 'dask')
