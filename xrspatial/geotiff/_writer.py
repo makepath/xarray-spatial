@@ -420,6 +420,11 @@ def _block_reduce_2d(arr2d, method, nodata=None):
         # full-resolution band. The ``prefilter=False`` switch only
         # fires when a sentinel was actually found in the input, so the
         # default cubic semantics still apply to inputs without nodata.
+        #
+        # Integer rasters take the same path via a float64 promotion so
+        # NaN can carry through the spline; the result is rewritten
+        # back to the sentinel and rounded before casting to the source
+        # integer dtype (issue #1975, integer mirror of #1623).
         if (nodata is not None
                 and arr2d.dtype.kind == 'f'
                 and not np.isnan(nodata)):
@@ -440,6 +445,27 @@ def _block_reduce_2d(arr2d, method, nodata=None):
                         result = result.copy()
                         result[nan_mask] = float(nodata)
                     return result.astype(arr2d.dtype)
+        if (nodata is not None
+                and arr2d.dtype.kind in ('i', 'u')
+                and np.isfinite(nodata)
+                and float(nodata).is_integer()):
+            nodata_int = int(nodata)
+            info = np.iinfo(arr2d.dtype)
+            if info.min <= nodata_int <= info.max:
+                sentinel = arr2d.dtype.type(nodata_int)
+                mask = arr2d == sentinel
+                if mask.any():
+                    masked = np.where(mask, np.float64('nan'),
+                                      arr2d.astype(np.float64))
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore', RuntimeWarning)
+                        result = zoom(masked, 0.5, order=3,
+                                      prefilter=False)
+                    nan_mask = np.isnan(result)
+                    if nan_mask.any():
+                        result = np.where(nan_mask, float(nodata_int),
+                                          result)
+                    return np.round(result).astype(arr2d.dtype)
         return zoom(arr2d, 0.5, order=3).astype(arr2d.dtype)
 
     if method == 'mode':
