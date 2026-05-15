@@ -161,7 +161,7 @@ def test_read_geotiff_gpu_chunks_uses_gds_path_when_available(
     task must call the direct disk->GPU decoder rather than detouring
     through ``read_geotiff_dask``."""
     from xrspatial.geotiff import read_geotiff_gpu
-    from xrspatial import geotiff as gtmod
+    from xrspatial.geotiff._backends import gpu as gtmod
 
     direct_calls = {'n': 0}
     real_direct = gtmod._decode_window_gpu_direct
@@ -245,7 +245,7 @@ def test_read_geotiff_gpu_chunks_fallback_when_kvikio_absent(
     import importlib.util as _ilu
 
     from xrspatial.geotiff import read_geotiff_gpu
-    from xrspatial import geotiff as gtmod
+    from xrspatial.geotiff._backends import gpu as gtmod
 
     original_find_spec = _ilu.find_spec
 
