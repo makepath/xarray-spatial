@@ -293,6 +293,11 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
     :func:`coords_to_transform` against the original DataArray, so the
     helper must handle both layouts to keep the geo-transform consistent
     with the file's coord arrays. See issue #1643.
+
+    Integer-dtype x/y coords are treated as a no-georef sentinel and
+    return ``None`` before the uniformity check runs; this is
+    intentional so the read-side ``np.arange`` placeholder round-trips
+    without inventing a fake unit transform (see issue #1949).
     """
     if da.ndim == 3:
         # Drop the band-like dim and keep the two spatial dims in their
@@ -322,6 +327,23 @@ def coords_to_transform(da: xr.DataArray) -> 'GeoTransform | None':
     # Returning ``None`` lets the writer detect this and raise rather than
     # silently writing a non-georeferenced TIFF (#1945).
     if len(x) < 2 and len(y) < 2:
+        return None
+
+    # Integer coord dtype is the read-side no-georef signal: the
+    # ``has_georef=False`` branch in ``coords_from_pixel_geometry``
+    # emits ``np.arange(N, dtype=np.int64)`` for files without GeoTIFF
+    # transform tags (#1710, #1753). Synthesising a GeoTransform from
+    # those ``[0, 1, 2, ...]`` arrays would inject a fake unit transform
+    # (``origin=-0.5, pixel_width=1.0``) into the written file's
+    # ModelPixelScale / ModelTiepoint tags. The next read then takes
+    # the georef branch and the coord dtype silently flips to
+    # ``float64`` with ``attrs['transform']`` present, breaking the
+    # no-georef contract that downstream code branches on. See issue
+    # #1949. Float coord arrays still produce a GeoTransform (the
+    # canonical georef path), and an explicit ``attrs['transform']``
+    # bypasses this helper entirely so callers can still write a
+    # transform alongside int coords by setting the attr.
+    if x.dtype.kind in ('i', 'u') or y.dtype.kind in ('i', 'u'):
         return None
 
     # GeoTIFF only supports an affine transform; non-uniform spacing
