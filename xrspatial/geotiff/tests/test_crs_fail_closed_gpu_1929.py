@@ -153,31 +153,65 @@ class TestToGeotiffGpuDispatcherFailClosed:
     dropping the forward (e.g. an accidental kwarg-rename or a missed
     keyword in a refactor) would silently bypass the validator while
     looking like everything still works.
+
+    The dispatcher also catches ``ImportError`` from ``write_geotiff_gpu``
+    at ``_writers/eager.py:450`` and falls back to the CPU writer with a
+    ``GeoTIFFFallbackWarning``. ``pytest.warns(Warning)`` swallows that
+    fallback warning, so a silent CPU fallback would let these tests pass
+    while never executing the GPU path under audit. Each test installs a
+    spy on the module-level ``write_geotiff_gpu`` symbol that the
+    dispatcher calls, and asserts the spy fired.
     """
 
-    def test_dispatcher_garbage_raises_with_cupy_input(self, tmp_path):
+    @staticmethod
+    def _install_gpu_spy(monkeypatch):
+        """Wrap ``write_geotiff_gpu`` so the dispatcher entry is recorded."""
+        from xrspatial.geotiff._writers import eager as _eager
+
+        real = _eager.write_geotiff_gpu
+        calls = []
+
+        def _spy(*args, **kwargs):
+            calls.append((args, kwargs))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(_eager, "write_geotiff_gpu", _spy)
+        return calls
+
+    def test_dispatcher_garbage_raises_with_cupy_input(
+            self, tmp_path, monkeypatch):
         """CuPy-backed input auto-routes to the GPU writer."""
         from xrspatial.geotiff import to_geotiff
 
+        calls = self._install_gpu_spy(monkeypatch)
         out = str(tmp_path / "dispatcher_garbage_gpu_1929.tif")
         with pytest.warns(Warning):
             with pytest.raises(ValueError, match="GTCitationGeoKey"):
                 to_geotiff(_make_gpu_da(), out, crs="absolute-garbage")
+        assert calls, (
+            "dispatcher silently fell back to CPU; GPU path never entered"
+        )
 
-    def test_dispatcher_gpu_kwarg_garbage_raises(self, tmp_path):
+    def test_dispatcher_gpu_kwarg_garbage_raises(
+            self, tmp_path, monkeypatch):
         """Explicit ``gpu=True`` on numpy data also threads through."""
         from xrspatial.geotiff import to_geotiff
 
+        calls = self._install_gpu_spy(monkeypatch)
         out = str(tmp_path / "dispatcher_gpu_kwarg_1929.tif")
         with pytest.warns(Warning):
             with pytest.raises(ValueError, match="GTCitationGeoKey"):
                 to_geotiff(
                     _make_cpu_da(), out, gpu=True, crs="absolute-garbage")
+        assert calls, (
+            "dispatcher silently fell back to CPU; GPU path never entered"
+        )
 
-    def test_dispatcher_opt_in_forwarded(self, tmp_path):
+    def test_dispatcher_opt_in_forwarded(self, tmp_path, monkeypatch):
         """``allow_unparseable_crs=True`` is forwarded into the GPU writer."""
         from xrspatial.geotiff import to_geotiff
 
+        calls = self._install_gpu_spy(monkeypatch)
         out = str(tmp_path / "dispatcher_optin_gpu_1929.tif")
         with pytest.warns(Warning):
             to_geotiff(
@@ -187,11 +221,17 @@ class TestToGeotiffGpuDispatcherFailClosed:
                 allow_unparseable_crs=True,
             )
         assert os.path.exists(out)
+        assert calls, (
+            "dispatcher silently fell back to CPU; GPU path never entered"
+        )
+        # Confirm the kwarg actually reached the GPU writer.
+        assert calls[0][1].get("allow_unparseable_crs") is True
 
-    def test_dispatcher_opt_in_explicit_gpu(self, tmp_path):
+    def test_dispatcher_opt_in_explicit_gpu(self, tmp_path, monkeypatch):
         """``to_geotiff(gpu=True, allow_unparseable_crs=True)`` also works."""
         from xrspatial.geotiff import to_geotiff
 
+        calls = self._install_gpu_spy(monkeypatch)
         out = str(tmp_path / "dispatcher_optin_gpu_explicit_1929.tif")
         with pytest.warns(Warning):
             to_geotiff(
@@ -202,14 +242,23 @@ class TestToGeotiffGpuDispatcherFailClosed:
                 allow_unparseable_crs=True,
             )
         assert os.path.exists(out)
+        assert calls, (
+            "dispatcher silently fell back to CPU; GPU path never entered"
+        )
+        assert calls[0][1].get("allow_unparseable_crs") is True
 
 
 class TestErrorMessageParity:
-    """The GPU and eager error messages match for the same input.
+    """The GPU and eager error messages share the recovery hints.
 
     A user catching ``ValueError`` from ``to_geotiff`` should see the
-    same message whether the backend is CPU or GPU. A cross-backend
-    drift would force callers to special-case the error string.
+    same recovery guidance whether the backend is CPU or GPU. A
+    cross-backend drift would force callers to special-case the error
+    string. Asserting equality on the full message is too brittle though
+    (e.g. either backend may eventually prepend or append backend-specific
+    context like the destination path or the offending kwarg name); pin
+    the shared recovery substrings instead so the assertion fails for
+    real drift but tolerates additive backend-specific context.
     """
 
     def test_gpu_vs_cpu_message_matches(self, tmp_path):
@@ -225,7 +274,29 @@ class TestErrorMessageParity:
             with pytest.raises(ValueError) as exc_gpu:
                 write_geotiff_gpu(
                     _make_gpu_da(), out_gpu, crs="absolute-garbage")
-        assert str(exc_cpu.value) == str(exc_gpu.value)
+
+        msg_cpu = str(exc_cpu.value)
+        msg_gpu = str(exc_gpu.value)
+        # Recovery hints emitted by ``_validate_crs_fallback`` for #1929.
+        # Both backends route through the same helper, so each keyword
+        # must appear in both messages.
+        recovery_keywords = (
+            "GTCitationGeoKey",
+            "EPSG",
+            "WKT",
+            "pyproj",
+            "allow_unparseable_crs",
+            "absolute-garbage",
+        )
+        for token in recovery_keywords:
+            assert token in msg_cpu, (
+                f"CPU error message missing recovery keyword {token!r}: "
+                f"{msg_cpu!r}"
+            )
+            assert token in msg_gpu, (
+                f"GPU error message missing recovery keyword {token!r}: "
+                f"{msg_gpu!r}"
+            )
 
 
 class TestKwargDefaultParity:
@@ -240,8 +311,14 @@ class TestKwargDefaultParity:
         import inspect
 
         from xrspatial.geotiff import to_geotiff, write_geotiff_gpu
+        # ``_write_vrt_tiled`` is the third writer that consumes
+        # ``allow_unparseable_crs`` and routes through
+        # ``_validate_crs_fallback`` (eager.py:858). It is module-private
+        # so import it directly from the writers module rather than from
+        # the public ``xrspatial.geotiff`` namespace.
+        from xrspatial.geotiff._writers.eager import _write_vrt_tiled
 
-        for fn in (to_geotiff, write_geotiff_gpu):
+        for fn in (to_geotiff, write_geotiff_gpu, _write_vrt_tiled):
             sig = inspect.signature(fn)
             param = sig.parameters.get("allow_unparseable_crs")
             assert param is not None, (
