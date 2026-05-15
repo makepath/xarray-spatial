@@ -17,6 +17,33 @@ import warnings
 from ._runtime import GeoTIFFFallbackWarning, _geotiff_strict_mode
 
 
+#: WKT root keywords. A string that starts with one of these (after
+#: stripping leading whitespace) is structurally a WKT and is allowed
+#: to land in ``GTCitationGeoKey`` even when pyproj is not available
+#: to validate it. Anything else (``"EPSG:4326"`` minus pyproj,
+#: ``"+proj=..."`` minus pyproj, free-form garbage) is rejected by
+#: :func:`_validate_crs_fallback` unless the caller opts in. See
+#: issue #1929.
+_WKT_ROOT_KEYWORDS = (
+    'PROJCS', 'GEOGCS', 'PROJCRS', 'GEOGCRS',
+    'COMPD_CS', 'COMPOUNDCRS', 'BOUNDCRS', 'LOCAL_CS', 'ENGCRS',
+    'VERT_CS', 'VERTCRS', 'PARAMETRICCRS', 'TIMECRS', 'DERIVEDPROJCRS',
+)
+
+
+def _looks_like_wkt(s: str) -> bool:
+    """Cheap structural check: does ``s`` start with a WKT root keyword?
+
+    Used by :func:`_validate_crs_fallback` to decide whether a string
+    that pyproj could not (or was not asked to) validate is at least
+    *shaped* like WKT. WKT-shaped strings land in ``GTCitationGeoKey``
+    verbatim; everything else is refused by default.
+    """
+    if not isinstance(s, str):
+        return False
+    return s.lstrip().upper().startswith(_WKT_ROOT_KEYWORDS)
+
+
 def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
     """Try to extract an EPSG code from a WKT or PROJ string.
 
@@ -41,6 +68,49 @@ def _wkt_to_epsg(wkt_or_proj: str) -> int | None:
             stacklevel=2,
         )
         return None
+
+
+def _validate_crs_fallback(
+    wkt_fallback: str | None,
+    allow_unparseable_crs: bool,
+) -> None:
+    """Refuse to land an unvalidatable string in ``GTCitationGeoKey``.
+
+    Issue #1929: when ``_wkt_to_epsg`` cannot resolve the caller's CRS
+    to an EPSG code, the writer stores the original string as
+    ``wkt_fallback`` and emits it into ``GTCitationGeoKey``. If the
+    string is a malformed PROJ / EPSG token (e.g. ``"EPSG:4326"`` on a
+    host without pyproj, or a typo'd PROJ string), the file ends up
+    with garbage in the citation field. For a foundational I/O module
+    the default has to be fail-closed.
+
+    Raises ``ValueError`` when ``wkt_fallback`` is non-None, the string
+    does not structurally look like WKT (:func:`_looks_like_wkt`), and
+    the caller has not opted in via ``allow_unparseable_crs=True``.
+
+    Pyproj-validatable strings never reach the fallback because
+    ``_wkt_to_epsg`` returns an EPSG (or, under
+    ``XRSPATIAL_GEOTIFF_STRICT=1``, raises). The remaining failure
+    modes -- pyproj missing, or pyproj installed and parse-fails --
+    both leave a non-None ``wkt_fallback``, and this helper is what
+    closes the gap.
+    """
+    if wkt_fallback is None:
+        return
+    if _looks_like_wkt(wkt_fallback):
+        return
+    if allow_unparseable_crs:
+        return
+    raise ValueError(
+        "crs is not an EPSG code, is not a WKT string "
+        "(no PROJCS / GEOGCS / PROJCRS / GEOGCRS root), and could not "
+        f"be parsed: got {wkt_fallback!r}. Writing it verbatim to "
+        "GTCitationGeoKey would produce a file most GeoTIFF readers "
+        "cannot interpret. Pass an EPSG int (recommended), a real "
+        "WKT string, install pyproj so EPSG / PROJ tokens can be "
+        "resolved, or pass allow_unparseable_crs=True to keep the "
+        "pre-#1929 citation-only behaviour."
+    )
 
 
 def _resolve_crs_to_wkt(crs) -> str | None:

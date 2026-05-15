@@ -22,7 +22,7 @@ from .._coords import (
     coords_to_transform as _coords_to_transform,
     transform_from_attr as _transform_from_attr,
 )
-from .._crs import _wkt_to_epsg
+from .._crs import _validate_crs_fallback, _wkt_to_epsg
 from .._runtime import GeoTIFFFallbackWarning
 from .._validation import (
     _validate_3d_writer_dims,
@@ -46,7 +46,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       streaming_buffer_bytes: int = 256 * 1024 * 1024,
                       max_z_error: float = 0.0,
                       photometric: str | int = 'auto',
-                      allow_internal_only_jpeg: bool = False) -> None:
+                      allow_internal_only_jpeg: bool = False,
+                      allow_unparseable_crs: bool = False) -> None:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
 
     Tiles are extracted and compressed on the GPU via nvCOMP, then
@@ -172,6 +173,11 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         ``GeoTIFFFallbackWarning`` is emitted at call time. Without
         the flag, ``compression='jpeg'`` raises ``ValueError`` for
         parity with ``to_geotiff``. See issue #1845.
+    allow_unparseable_crs : bool
+        Opt in to writing an unvalidatable CRS string into
+        ``GTCitationGeoKey`` (default ``False``). See
+        :func:`to_geotiff` for the full description; the GPU writer
+        applies the same fail-closed default. See issue #1929.
 
     Raises
     ------
@@ -486,6 +492,10 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
             oh, ow = current.shape[:2]
             parts.append(_gpu_compress_to_part(current, ow, oh, samples))
 
+    # Issue #1929: refuse to write an unvalidatable CRS string into
+    # GTCitationGeoKey unless the caller opts in.
+    if epsg is None:
+        _validate_crs_fallback(wkt_fallback, allow_unparseable_crs)
     file_bytes = _assemble_tiff(
         width, height, np_dtype, comp_tag, pred_val, True, tile_size,
         parts, geo_transform, epsg, nodata,
