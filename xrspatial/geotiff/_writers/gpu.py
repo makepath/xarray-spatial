@@ -47,7 +47,8 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                       max_z_error: float = 0.0,
                       photometric: str | int = 'auto',
                       allow_internal_only_jpeg: bool = False,
-                      allow_unparseable_crs: bool = False) -> None:
+                      allow_unparseable_crs: bool = False
+                      ) -> str | BinaryIO:
     """Write a CuPy-backed DataArray as a GeoTIFF with GPU compression.
 
     Tiles are extracted and compressed on the GPU via nvCOMP, then
@@ -178,6 +179,14 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
         ``GTCitationGeoKey`` (default ``False``). See
         :func:`to_geotiff` for the full description; the GPU writer
         applies the same fail-closed default. See issue #1929.
+
+    Returns
+    -------
+    str or binary file-like
+        The ``path`` argument (a string for filesystem paths, the
+        file-like object for BytesIO destinations). Returning the path
+        mirrors ``to_geotiff`` and ``write_vrt`` so callers can handle
+        the three writers uniformly. See issue #1938.
 
     Raises
     ------
@@ -512,5 +521,6 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
     )
 
     _write_bytes(file_bytes, path)
+    return path
 
 

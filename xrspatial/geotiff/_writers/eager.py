@@ -65,7 +65,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                max_z_error: float = 0.0,
                photometric: str | int = 'auto',
                allow_internal_only_jpeg: bool = False,
-               allow_unparseable_crs: bool = False) -> None:
+               allow_unparseable_crs: bool = False) -> str | BinaryIO:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Dask-backed DataArrays are written in streaming mode: one tile-row
@@ -216,6 +216,16 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         protects against files where a typo'd PROJ string or an
         ``"EPSG:4326"`` token on a host without pyproj produces a
         citation that most readers cannot interpret. See issue #1929.
+
+    Returns
+    -------
+    str or binary file-like
+        The ``path`` argument (a string for filesystem paths, the
+        file-like object for BytesIO destinations). Returning the path
+        lines up with ``write_vrt`` and lets callers chain a write into
+        a read without round-tripping through a variable; existing
+        callers that discarded the previous ``None`` return are
+        unaffected. See issue #1938.
 
     Raises
     ------
@@ -390,7 +400,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                          max_z_error=max_z_error,
                          photometric=photometric,
                          allow_unparseable_crs=allow_unparseable_crs)
-        return
+        return path
 
     # Dispatch to write_geotiff_gpu when GPU was selected (explicit
     # ``gpu=True`` or auto-detected CuPy data). ``auto_detected_gpu``
@@ -436,7 +446,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 allow_internal_only_jpeg=allow_internal_only_jpeg,
                 allow_unparseable_crs=allow_unparseable_crs,
             )
-            return
+            return path
         except ImportError as e:
             # ``write_geotiff_gpu`` raises ImportError when cupy itself
             # can't be imported. nvCOMP absence doesn't surface here:
@@ -593,7 +603,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 max_z_error=max_z_error,
                 photometric=photometric,
             )
-            return
+            return path
 
         # Eager compute (numpy, CuPy, or dask+COG)
         if hasattr(raw, 'get'):
@@ -679,6 +689,7 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         max_z_error=max_z_error,
         photometric=photometric,
     )
+    return path
 
 
 def _write_single_tile(chunk_data, path, geo_transform, epsg, wkt,
