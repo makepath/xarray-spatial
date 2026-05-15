@@ -197,8 +197,11 @@ def _validate_predictor_sample_format(predictor, sample_format) -> None:
 
     Parameters
     ----------
-    predictor : int
+    predictor : int or tuple
         The IFD ``Predictor`` tag value (1=none, 2=horizontal, 3=float).
+        Accepts a single-element tuple (the resolved value of a malformed
+        ``count > 1`` tag) and normalizes to its first element; the TIFF
+        spec defines ``Predictor`` as a single SHORT.
     sample_format : int
         The IFD ``SampleFormat`` tag value (1=uint, 2=int, 3=float,
         4=undefined).
@@ -208,6 +211,12 @@ def _validate_predictor_sample_format(predictor, sample_format) -> None:
     ValueError
         If ``predictor == 3`` and ``sample_format != 3``.
     """
+    # IFD.predictor delegates to IFD.get_value, which can return a tuple
+    # for a malformed Predictor tag with count > 1. tuple == 3 is always
+    # False, so a tuple-valued predictor would bypass the guard. Normalize
+    # to int first so the (3, non-3) case still fires.
+    if isinstance(predictor, tuple):
+        predictor = predictor[0] if predictor else 1
     # Only the float-predictor case is asymmetric; predictor=1 (none) and
     # predictor=2 (horizontal) are sample-format-agnostic by design.
     if predictor == 3 and sample_format != 3:

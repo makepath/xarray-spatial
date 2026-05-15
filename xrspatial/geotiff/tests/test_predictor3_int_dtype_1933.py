@@ -55,7 +55,7 @@ def _build_predictor3_uint32_tiff(arr: np.ndarray) -> bytes:
         (TAG_IMAGE_WIDTH, LONG, 1, arr.shape[1]),
         (TAG_IMAGE_LENGTH, LONG, 1, arr.shape[0]),
         (TAG_BITS_PER_SAMPLE, SHORT, 1, bits_per_sample),
-        (TAG_COMPRESSION, SHORT, 1, 1),
+        (TAG_COMPRESSION, SHORT, 1, COMPRESSION_NONE),
         (TAG_PHOTOMETRIC, SHORT, 1, 1),
         (TAG_SAMPLES_PER_PIXEL, SHORT, 1, 1),
         (TAG_SAMPLE_FORMAT, SHORT, 1, 1),  # UINT
@@ -100,6 +100,17 @@ class TestPredictor3IntegerSampleFormatRejected:
         _validate_predictor_sample_format(2, 1)
         _validate_predictor_sample_format(2, 2)
         _validate_predictor_sample_format(2, 3)
+
+    def test_helper_normalizes_tuple_predictor(self):
+        # IFD.predictor delegates to get_value, which returns a tuple for
+        # a malformed Predictor tag with count > 1. The validator must
+        # still fire on the (3,) + non-float pair.
+        with pytest.raises(ValueError, match="Predictor=3"):
+            _validate_predictor_sample_format((3,), 1)
+        # Empty tuple falls back to predictor=1 (none) -> no-op.
+        _validate_predictor_sample_format((), 1)
+        # Non-3 tuple predictor + non-float sample_format -> no-op.
+        _validate_predictor_sample_format((2,), 1)
 
 
 class TestEagerReadRejectsMalformedFile:
