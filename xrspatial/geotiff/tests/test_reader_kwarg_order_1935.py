@@ -39,6 +39,7 @@ _CANONICAL_ORDER = (
     "chunks",
     "gpu",
     "max_pixels",
+    "max_cloud_bytes",
     "on_gpu_failure",
     "missing_sources",
 )
