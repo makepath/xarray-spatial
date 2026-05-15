@@ -21,19 +21,13 @@ Found by ``/sweep-test-coverage`` (pass 15 / 2026-05-15).
 from __future__ import annotations
 
 import os
-import tempfile
 
 import numpy as np
 import pytest
 import xarray as xr
 
 from xrspatial.geotiff import to_geotiff, write_vrt
-
-try:
-    import cupy  # noqa: F401
-    _HAS_CUPY = True
-except Exception:
-    _HAS_CUPY = False
+from xrspatial.geotiff.tests.conftest import requires_gpu
 
 
 @pytest.fixture
@@ -123,7 +117,7 @@ def test_write_vrt_accepts_none_nodata(src_geotiff, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not _HAS_CUPY, reason="cupy not available")
+@requires_gpu
 @pytest.mark.parametrize(
     "bad",
     [True, False, np.bool_(True), np.bool_(False)],
@@ -141,7 +135,7 @@ def test_write_geotiff_gpu_rejects_bool_nodata(uint8_da, tmp_path, bad):
         write_geotiff_gpu(uint8_da, path, nodata=bad)
 
 
-@pytest.mark.skipif(not _HAS_CUPY, reason="cupy not available")
+@requires_gpu
 def test_to_geotiff_gpu_dispatch_rejects_bool_nodata(uint8_da, tmp_path):
     """Auto-dispatch path: ``to_geotiff(gpu=True, nodata=True)``.
 
