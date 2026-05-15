@@ -1541,11 +1541,21 @@ def _decode_strip_or_tile(data_slice, compression, width, height, samples,
     if is_sub_byte:
         pixels = unpack_bits(chunk, bps, pixel_count)
     else:
-        # Use the file's byte order for the view, then convert to native
-        file_dtype = dtype.newbyteorder(byte_order)
-        pixels = chunk.view(file_dtype)
-        if file_dtype.byteorder not in ('=', '|', _NATIVE_ORDER):
-            pixels = pixels.astype(dtype)
+        # Use the file's byte order for the view, then convert to native.
+        # The view dtype must match the on-disk sample width: float16
+        # files (bps=16 + SampleFormat=3) are auto-promoted to float32
+        # for the user-visible array, but the raw bytes have to be
+        # viewed as float16 first then cast (#1941). Detect the
+        # promotion via the bps-vs-dtype.itemsize mismatch so the
+        # surrounding pipeline stays unchanged for byte-equal cases.
+        if dtype.itemsize * 8 != bps and bps == 16 and dtype.kind == 'f':
+            storage_dtype = np.dtype('float16').newbyteorder(byte_order)
+            pixels = chunk.view(storage_dtype).astype(dtype)
+        else:
+            file_dtype = dtype.newbyteorder(byte_order)
+            pixels = chunk.view(file_dtype)
+            if file_dtype.byteorder not in ('=', '|', _NATIVE_ORDER):
+                pixels = pixels.astype(dtype)
 
     if samples > 1:
         out = pixels.reshape(height, width, samples)

@@ -83,6 +83,13 @@ def tiff_dtype_to_numpy(bits_per_sample: int, sample_format: int = 1) -> np.dtyp
         (8, SAMPLE_FORMAT_INT): np.dtype('int8'),
         (16, SAMPLE_FORMAT_UINT): np.dtype('uint16'),
         (16, SAMPLE_FORMAT_INT): np.dtype('int16'),
+        # IEEE half-precision floats stored on disk. The reader
+        # auto-promotes to float32 because xrspatial's CPU JIT and
+        # CUDA kernels don't carry float16 dispatch paths. The
+        # promotion is symmetric with the writer's float16 path,
+        # which auto-promotes float16 inputs to float32 before
+        # encoding (#1941).
+        (16, SAMPLE_FORMAT_FLOAT): np.dtype('float32'),
         (32, SAMPLE_FORMAT_UINT): np.dtype('uint32'),
         (32, SAMPLE_FORMAT_INT): np.dtype('int32'),
         (32, SAMPLE_FORMAT_FLOAT): np.dtype('float32'),
@@ -116,6 +123,24 @@ def tiff_dtype_to_numpy(bits_per_sample: int, sample_format: int = 1) -> np.dtyp
 
 # Set of BitsPerSample values that require bit-level unpacking
 SUB_BYTE_BPS = {1, 2, 4, 12}
+
+
+def tiff_storage_dtype(bits_per_sample: int, sample_format: int = 1) -> np.dtype:
+    """Return the on-disk numpy dtype for ``BitsPerSample + SampleFormat``.
+
+    Differs from :func:`tiff_dtype_to_numpy` only for the auto-promoted
+    case ``(16, FLOAT)`` where the on-disk samples are IEEE half-precision
+    but the reader exposes them as float32. Callers that need to view
+    the raw decompressed bytes (e.g. ``ndarray.view(dtype)``) must use
+    this function; callers that only need the user-visible dtype use
+    :func:`tiff_dtype_to_numpy`.
+
+    Falls back to :func:`tiff_dtype_to_numpy` for every other key, so
+    the two helpers agree on the standard cases.
+    """
+    if bits_per_sample == 16 and sample_format == SAMPLE_FORMAT_FLOAT:
+        return np.dtype('float16')
+    return tiff_dtype_to_numpy(bits_per_sample, sample_format)
 
 
 _GDAL_OT_FOR_BPS = {
