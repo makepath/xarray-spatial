@@ -63,7 +63,8 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                gpu: bool | None = None,
                streaming_buffer_bytes: int = 256 * 1024 * 1024,
                max_z_error: float = 0.0,
-               photometric: str | int = 'auto') -> None:
+               photometric: str | int = 'auto',
+               allow_internal_only_jpeg: bool = False) -> None:
     """Write data as a GeoTIFF or Cloud Optimized GeoTIFF.
 
     Dask-backed DataArrays are written in streaming mode: one tile-row
@@ -188,6 +189,17 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         chosen value; only these two tag ids are overridable so other
         auto-emitted tags such as ``ImageWidth`` or ``StripOffsets``
         remain protected.
+    allow_internal_only_jpeg : bool
+        Opt in to the experimental ``compression='jpeg'`` encode path
+        (default ``False``). The encoder writes self-contained JFIF
+        tiles without the TIFF JPEGTables tag (347); the file decodes
+        through this library's reader but not through libtiff, GDAL,
+        or rasterio. With the flag set, the write proceeds and a
+        ``GeoTIFFFallbackWarning`` is emitted at call time. Without
+        the flag, ``compression='jpeg'`` raises ``ValueError``. The
+        kwarg is forwarded unchanged to ``write_geotiff_gpu`` on the
+        GPU dispatch path so callers can reach the same experimental
+        encode via ``to_geotiff(..., gpu=True)``. See issue #1845.
 
     Raises
     ------
@@ -231,16 +243,31 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
         # files unreadable by libtiff / GDAL / rasterio: they reject the
         # tile data with "TIFFReadEncodedStrip() failed". The internal
         # reader round-trips because Pillow re-decodes the JFIF stream
-        # directly, masking the interop break. Refuse the write rather
-        # than emit files no other tool can decode. See issue tracking
-        # the proper JPEGTables fix for re-enabling this codec.
-        if compression.lower() == 'jpeg':
+        # directly, masking the interop break. Refuse the write by
+        # default and surface the same ``allow_internal_only_jpeg=True``
+        # opt-in that ``write_geotiff_gpu`` already accepts, so the
+        # auto-dispatch entry point can reach the experimental
+        # internal-reader-only path the explicit GPU entry point
+        # exposes (issue #1845).
+        if compression.lower() == 'jpeg' and not allow_internal_only_jpeg:
             raise ValueError(
                 "compression='jpeg' is not supported: the encoder writes "
                 "self-contained JFIF streams without the required "
                 "JPEGTables tag (347), so other readers (libtiff, GDAL, "
                 "rasterio) reject the file. Use 'deflate', 'zstd', or "
-                "'lzw' instead.")
+                "'lzw' instead. Pass allow_internal_only_jpeg=True to "
+                "opt in to the experimental internal-reader-only path "
+                "(issue #1845).")
+        if compression.lower() == 'jpeg' and allow_internal_only_jpeg:
+            warnings.warn(
+                "to_geotiff(compression='jpeg', "
+                "allow_internal_only_jpeg=True) writes JFIF tiles "
+                "without the TIFF JPEGTables tag (347); the file decodes "
+                "through xrspatial but may fail in libtiff, GDAL, or "
+                "rasterio. See issue #1845.",
+                GeoTIFFFallbackWarning,
+                stacklevel=2,
+            )
 
     # max_z_error only applies to LERC; reject negative values and reject
     # non-zero values paired with any other codec so the caller learns the
@@ -348,18 +375,21 @@ def to_geotiff(data: xr.DataArray | np.ndarray,
                 "tiled=False is not supported on the GPU writer. "
                 "Pass gpu=False or omit tiled=False.")
         try:
-            write_geotiff_gpu(data, path, crs=crs, nodata=nodata,
-                              compression=compression,
-                              compression_level=compression_level,
-                              tiled=tiled,
-                              tile_size=tile_size,
-                              predictor=predictor,
-                              cog=cog,
-                              overview_levels=overview_levels,
-                              overview_resampling=overview_resampling,
-                              bigtiff=bigtiff,
-                              streaming_buffer_bytes=streaming_buffer_bytes,
-                              photometric=photometric)
+            write_geotiff_gpu(
+                data, path, crs=crs, nodata=nodata,
+                compression=compression,
+                compression_level=compression_level,
+                tiled=tiled,
+                tile_size=tile_size,
+                predictor=predictor,
+                cog=cog,
+                overview_levels=overview_levels,
+                overview_resampling=overview_resampling,
+                bigtiff=bigtiff,
+                streaming_buffer_bytes=streaming_buffer_bytes,
+                photometric=photometric,
+                allow_internal_only_jpeg=allow_internal_only_jpeg,
+            )
             return
         except ImportError as e:
             # ``write_geotiff_gpu`` raises ImportError when cupy itself
