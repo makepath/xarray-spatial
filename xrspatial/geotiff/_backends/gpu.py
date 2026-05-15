@@ -30,7 +30,11 @@ from .._runtime import (
     _ON_GPU_FAILURE_SENTINEL,
     _geotiff_strict_mode,
 )
-from .._validation import _validate_chunks_arg, _validate_dtype_cast
+from .._validation import (
+    _validate_chunks_arg,
+    _validate_dtype_cast,
+    _validate_predictor_sample_format,
+)
 from ._gpu_helpers import (
     _apply_nodata_mask_gpu,
     _apply_orientation_geo_info,
@@ -436,6 +440,7 @@ def read_geotiff_gpu(source: str, *,
         byte_counts = ifd.tile_byte_counts
         compression = ifd.compression
         predictor = ifd.predictor
+        _validate_predictor_sample_format(predictor, ifd.sample_format)
         samples = ifd.samples_per_pixel
         planar = ifd.planar_config
         tw = ifd.tile_width
@@ -991,6 +996,7 @@ def _read_geotiff_gpu_chunked_gds(source, ifd, geo_info, header, *,
     th = ifd.tile_height
     compression = ifd.compression
     predictor = ifd.predictor
+    _validate_predictor_sample_format(predictor, ifd.sample_format)
     byte_order = header.byte_order
     offsets = list(ifd.tile_offsets)
     byte_counts = list(ifd.tile_byte_counts)

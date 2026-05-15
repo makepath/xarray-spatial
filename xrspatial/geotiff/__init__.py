@@ -139,6 +139,7 @@ def _read_geo_info(source, *, overview_level: int | None = None):
         _CloudSource, _coerce_path, _is_file_like, _is_fsspec_uri,
         _parse_cog_http_meta,
     )
+    from ._validation import _validate_predictor_sample_format
 
     source = _coerce_path(source)
     if isinstance(source, str) and _is_fsspec_uri(source):
@@ -158,6 +159,7 @@ def _read_geo_info(source, *, overview_level: int | None = None):
             _src.close()
         bps = resolve_bits_per_sample(_ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, _ifd.sample_format)
+        _validate_predictor_sample_format(_ifd.predictor, _ifd.sample_format)
         n_bands = (
             _ifd.samples_per_pixel if _ifd.samples_per_pixel > 1 else 0
         )
@@ -202,6 +204,7 @@ def _read_geo_info(source, *, overview_level: int | None = None):
             ifd, ifds, data, header.byte_order)
         bps = resolve_bits_per_sample(ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, ifd.sample_format)
+        _validate_predictor_sample_format(ifd.predictor, ifd.sample_format)
         n_bands = ifd.samples_per_pixel if ifd.samples_per_pixel > 1 else 0
         # Stash photometric + samples_per_pixel so the dask graph builder
         # can detect MinIsWhite and invert ``geo_info.nodata`` before
