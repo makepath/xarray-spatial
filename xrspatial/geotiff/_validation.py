@@ -179,3 +179,45 @@ def _validate_tile_size_arg(tile_size):
     validation path (positive int + multiple-of-16 for tiled output).
     """
     _validate_tile_size(tile_size)
+
+
+def _validate_predictor_sample_format(predictor, sample_format) -> None:
+    """Reject ``Predictor=3`` paired with a non-float ``SampleFormat`` (issue #1933).
+
+    TIFF Technical Note 3 defines the floating-point predictor for IEEE
+    float samples only. A reader-side input file (malformed, hand-crafted,
+    or adversarial) that claims ``Predictor=3`` with an integer
+    ``SampleFormat`` (1=uint, 2=int) used to be accepted silently: the
+    byte-swizzle unshuffle ran on integer bytes and produced garbage
+    pixel values that look like valid integers, with no warning.
+
+    The writer side already enforces this contract in
+    ``_writer._resolve_predictor`` (raises ``ValueError`` on non-float
+    dtypes), so this validator gives the reader symmetric behaviour.
+
+    Parameters
+    ----------
+    predictor : int
+        The IFD ``Predictor`` tag value (1=none, 2=horizontal, 3=float).
+    sample_format : int
+        The IFD ``SampleFormat`` tag value (1=uint, 2=int, 3=float,
+        4=undefined).
+
+    Raises
+    ------
+    ValueError
+        If ``predictor == 3`` and ``sample_format != 3``.
+    """
+    # Only the float-predictor case is asymmetric; predictor=1 (none) and
+    # predictor=2 (horizontal) are sample-format-agnostic by design.
+    if predictor == 3 and sample_format != 3:
+        raise ValueError(
+            f"Predictor=3 (floating-point) requires SampleFormat=3 "
+            f"(IEEE float), got SampleFormat={sample_format}. The TIFF "
+            f"file is malformed: the floating-point horizontal predictor "
+            f"(TIFF Technical Note 3) is only defined for float samples. "
+            f"Decoding integer data through it would produce garbage. "
+            f"Re-encode the file with a matching predictor/sample-format "
+            f"pair, e.g. `gdal_translate -co PREDICTOR=2` for integers or "
+            f"`-co PREDICTOR=1` to drop the predictor."
+        )

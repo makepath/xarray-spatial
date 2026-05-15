@@ -36,6 +36,7 @@ from ._header import (
     select_overview_ifd,
     validate_tile_layout,
 )
+from ._validation import _validate_predictor_sample_format
 
 # ---------------------------------------------------------------------------
 # Allocation guard: reject TIFF dimensions that would exhaust memory
@@ -1647,6 +1648,7 @@ def _read_strips(data: bytes, ifd: IFD, header: TIFFHeader,
     offsets = ifd.strip_offsets
     byte_counts = ifd.strip_byte_counts
     pred = ifd.predictor
+    _validate_predictor_sample_format(pred, ifd.sample_format)
     bps = resolve_bits_per_sample(ifd.bits_per_sample)
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
@@ -1837,6 +1839,7 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     samples = ifd.samples_per_pixel
     compression = ifd.compression
     pred = ifd.predictor
+    _validate_predictor_sample_format(pred, ifd.sample_format)
     bps = resolve_bits_per_sample(ifd.bits_per_sample)
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
@@ -2321,6 +2324,7 @@ def _fetch_decode_cog_http_strips(
     offsets = ifd.strip_offsets
     byte_counts = ifd.strip_byte_counts
     pred = ifd.predictor
+    _validate_predictor_sample_format(pred, ifd.sample_format)
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
     jpeg_tables = ifd.jpeg_tables
@@ -2530,6 +2534,7 @@ def _fetch_decode_cog_http_tiles(
     planar = ifd.planar_config
     compression = ifd.compression
     pred = ifd.predictor
+    _validate_predictor_sample_format(pred, ifd.sample_format)
     bytes_per_sample = bps // 8
     is_sub_byte = bps in SUB_BYTE_BPS
     jpeg_tables = ifd.jpeg_tables

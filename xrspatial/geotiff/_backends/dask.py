@@ -149,8 +149,11 @@ def read_geotiff_dask(source: str, *,
         full_h = http_ifd.height
         full_w = http_ifd.width
         from .._dtypes import resolve_bits_per_sample, tiff_dtype_to_numpy
+        from .._validation import _validate_predictor_sample_format
         bps = resolve_bits_per_sample(http_ifd.bits_per_sample)
         file_dtype = tiff_dtype_to_numpy(bps, http_ifd.sample_format)
+        _validate_predictor_sample_format(
+            http_ifd.predictor, http_ifd.sample_format)
         n_bands = (
             http_ifd.samples_per_pixel
             if http_ifd.samples_per_pixel > 1 else 0
