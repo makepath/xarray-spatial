@@ -238,7 +238,14 @@ class TestTileDimensionGuard:
         with open(forged_path, 'wb') as f:
             f.write(bytes(patched))
 
-        with pytest.raises(ValueError, match="exceed the safety limit"):
+        # Two valid rejection points: parse_ifd catches the mismatch
+        # between forged tile dims and the actual TileOffsets count
+        # (issue #1901), or validate_tile_layout's safety-limit check
+        # fires later if pre-IFD validation is ever relaxed.
+        with pytest.raises(
+            ValueError,
+            match=r"exceed the safety limit|exceeds expected value",
+        ):
             open_geotiff(forged_path, max_pixels=1_000_000)
 
 

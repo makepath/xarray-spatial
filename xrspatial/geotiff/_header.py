@@ -34,6 +34,15 @@ from ._dtypes import (
 MAX_IFD_ENTRY_COUNT = 100_000
 MAX_IFD_ENTRY_BYTES = 1 << 18  # 256 KiB
 
+# Absolute ceiling for pixel-array tag (StripOffsets, StripByteCounts,
+# TileOffsets, TileByteCounts, ColorMap) `count` values. These tags scale
+# with image size and aren't subject to MAX_IFD_ENTRY_COUNT, but `count`
+# still drives a Python tuple allocation of `count` PyLong objects in
+# `_read_value`. Each PyLong is ~28 bytes, so 100M elements is ~3 GiB of
+# heap before any layout validation runs. Real-world COGs sit well below
+# this: a 1M x 1M image at 256-pixel tiles has ~16M tile entries.
+MAX_PIXEL_ARRAY_COUNT = 100_000_000
+
 # Maximum number of IFDs we walk in `parse_all_ifds` before giving up.
 # Real-world COGs carry the full-resolution IFD plus a handful of overview
 # levels and (optionally) per-band masks, so they sit comfortably below 64
@@ -466,6 +475,86 @@ def _read_value(data: bytes | memoryview, offset: int, type_id: int,
     return struct.unpack_from(f'{bo}{count}{fmt_char}', data, offset)
 
 
+# Tags that pre-scan reads so pixel-array counts can be validated against
+# the IFD's declared geometry. Keep this in sync with
+# _expected_pixel_array_count below.
+_DIMENSION_TAGS = frozenset({
+    TAG_IMAGE_WIDTH,
+    TAG_IMAGE_LENGTH,
+    TAG_TILE_WIDTH,
+    TAG_TILE_LENGTH,
+    TAG_ROWS_PER_STRIP,
+    TAG_SAMPLES_PER_PIXEL,
+    TAG_PLANAR_CONFIG,
+    TAG_BITS_PER_SAMPLE,
+})
+
+# Pixel-array tags exempt from MAX_IFD_ENTRY_COUNT; each gets its own
+# count cap derived from the IFD's dimensions.
+_PIXEL_ARRAY_TAGS = frozenset({
+    TAG_STRIP_OFFSETS,
+    TAG_STRIP_BYTE_COUNTS,
+    TAG_TILE_OFFSETS,
+    TAG_TILE_BYTE_COUNTS,
+    TAG_COLORMAP,
+})
+
+
+def _scalar(v: Any) -> Any:
+    """Unwrap a single-element tuple, leave everything else alone."""
+    if isinstance(v, tuple):
+        return v[0] if v else None
+    return v
+
+
+def _expected_pixel_array_count(tag: int, dims: dict[int, Any]) -> int | None:
+    """Maximum legitimate count for a pixel-array tag given the IFD's
+    declared dimensions. Returns None when the geometry tags needed for
+    the calculation are missing or unusable; callers must still apply
+    the absolute MAX_PIXEL_ARRAY_COUNT cap in that case."""
+    width = _scalar(dims.get(TAG_IMAGE_WIDTH))
+    height = _scalar(dims.get(TAG_IMAGE_LENGTH))
+    samples = _scalar(dims.get(TAG_SAMPLES_PER_PIXEL)) or 1
+    planar = _scalar(dims.get(TAG_PLANAR_CONFIG)) or 1
+    if not isinstance(samples, int) or samples < 1:
+        samples = 1
+    if planar not in (1, 2):
+        planar = 1
+
+    if tag == TAG_COLORMAP:
+        bps = _scalar(dims.get(TAG_BITS_PER_SAMPLE))
+        if not isinstance(bps, int) or bps <= 0 or bps > 16:
+            # TIFF 6.0 caps palette BitsPerSample at 8 (officially); 16
+            # is the widest reasonable upper bound we'll accept.
+            bps = 16
+        return 3 * (1 << bps)
+
+    if tag in (TAG_TILE_OFFSETS, TAG_TILE_BYTE_COUNTS):
+        tw = _scalar(dims.get(TAG_TILE_WIDTH))
+        th = _scalar(dims.get(TAG_TILE_LENGTH))
+        if not (isinstance(tw, int) and isinstance(th, int)
+                and isinstance(width, int) and isinstance(height, int)
+                and tw > 0 and th > 0 and width > 0 and height > 0):
+            return None
+        tiles = math.ceil(width / tw) * math.ceil(height / th)
+        if planar == 2:
+            tiles *= samples
+        return tiles
+
+    if tag in (TAG_STRIP_OFFSETS, TAG_STRIP_BYTE_COUNTS):
+        if not (isinstance(height, int) and height > 0):
+            return None
+        rps = _scalar(dims.get(TAG_ROWS_PER_STRIP))
+        if not isinstance(rps, int) or rps <= 0:
+            rps = height
+        strips = math.ceil(height / rps)
+        if planar == 2:
+            strips *= samples
+        return strips
+
+    return None
+
+
 def parse_ifd(data: bytes | memoryview, offset: int,
               header: TIFFHeader) -> IFD:
     """Parse a single IFD at the given offset.
@@ -523,15 +612,37 @@ def parse_ifd(data: bytes | memoryview, offset: int,
     inline_max = 8 if is_big else 4
     entries = {}
 
-    # Tags whose `count` legitimately scales with image size (one entry per
-    # strip / tile / colormap slot). These are exempt from MAX_IFD_ENTRY_COUNT.
-    pixel_array_tags = {
-        TAG_STRIP_OFFSETS,
-        TAG_STRIP_BYTE_COUNTS,
-        TAG_TILE_OFFSETS,
-        TAG_TILE_BYTE_COUNTS,
-        TAG_COLORMAP,
-    }
+    # Pre-scan: walk the entry table and read inline values for the
+    # geometry tags we need to validate pixel-array counts. This pass
+    # only touches the fixed-size entry table; no pointer follows. A
+    # malformed file with a huge `count` on a pixel-array tag is caught
+    # by _expected_pixel_array_count below before the main loop reaches
+    # the actual unpack.
+    dims: dict[int, Any] = {}
+    for i in range(num_entries):
+        eo = entry_offset + i * entry_size
+        if is_big:
+            tag = struct.unpack_from(f'{bo}H', data, eo)[0]
+            type_id = struct.unpack_from(f'{bo}H', data, eo + 2)[0]
+            count = struct.unpack_from(f'{bo}Q', data, eo + 4)[0]
+            value_area_offset = eo + 12
+        else:
+            tag = struct.unpack_from(f'{bo}H', data, eo)[0]
+            type_id = struct.unpack_from(f'{bo}H', data, eo + 2)[0]
+            count = struct.unpack_from(f'{bo}I', data, eo + 4)[0]
+            value_area_offset = eo + 8
+        if tag not in _DIMENSION_TAGS:
+            continue
+        type_size = TIFF_TYPE_SIZES.get(type_id, 1)
+        if count == 0 or count * type_size > inline_max:
+            # Out-of-line dimension values would require following a
+            # pointer we haven't validated. Skip; the absolute pixel
+            # cap still fires.
+            continue
+        try:
+            dims[tag] = _read_value(data, value_area_offset, type_id, count, bo)
+        except (struct.error, ValueError):
+            continue
 
     for i in range(num_entries):
         eo = entry_offset + i * entry_size
@@ -551,10 +662,23 @@ def parse_ifd(data: bytes | memoryview, offset: int,
         total_size = count * type_size
 
         # Reject absurd counts/sizes on non-pixel tags before any
-        # allocation. Pixel-data offset/byte-count arrays may legitimately
-        # be very large for high-resolution tiled images, so they're
-        # exempt. Both element-count and byte-range caps fire here.
-        if tag not in pixel_array_tags:
+        # allocation. Pixel-data offset/byte-count and colormap arrays
+        # are bounded separately against the IFD's geometry below.
+        if tag in _PIXEL_ARRAY_TAGS:
+            if count > MAX_PIXEL_ARRAY_COUNT:
+                raise ValueError(
+                    f"IFD entry tag={tag} count={count} exceeds "
+                    f"MAX_PIXEL_ARRAY_COUNT={MAX_PIXEL_ARRAY_COUNT}; refusing "
+                    f"to parse possibly malformed TIFF"
+                )
+            expected = _expected_pixel_array_count(tag, dims)
+            if expected is not None and count > expected:
+                raise ValueError(
+                    f"IFD entry tag={tag} count={count} exceeds expected "
+                    f"value {expected} derived from IFD dimensions; refusing "
+                    f"to parse possibly malformed TIFF"
+                )
+        else:
             if count > MAX_IFD_ENTRY_COUNT:
                 raise ValueError(
                     f"IFD entry tag={tag} count={count} exceeds "
