@@ -31,11 +31,14 @@ Pass 14 (2026-05-15) closes the gap:
   bit-exactly through the streaming pipeline. Only NaN is treated as
   nodata.
 * Cat 2 MEDIUM -- all-Inf and all -Inf dask streaming writes.
-* Cat 4 MEDIUM -- ``predictor=3`` (floating-point predictor) on a
-  small dask raster: the streaming write path threads ``predictor=``
-  through to each tile-row encode, and the float predictor branch had
-  no direct streaming-write coverage (``test_streaming_write.py``
-  covers ``predictor=True`` only).
+* Cat 4 MEDIUM -- ``predictor=3`` (floating-point predictor) on
+  degenerate / small dask rasters. The float-predictor + dask
+  streaming combination is already covered by
+  ``test_predictor_fp_write_1313.test_predictor3_streaming_dask`` on a
+  128x192 raster with a Predictor-tag assertion; the tests below
+  exercise the same branch on smaller chunks and pin the
+  int-input rejection so the streaming-side dtype guard cannot
+  regress silently.
 """
 from __future__ import annotations
 
@@ -44,6 +47,22 @@ import pytest
 import xarray as xr
 
 from xrspatial.geotiff import open_geotiff, to_geotiff
+
+
+def _read_raw_pixels(path: str) -> np.ndarray:
+    """Read the raw pixel array off disk without xrspatial's NaN-mask
+    pass.
+
+    ``open_geotiff`` maps the GDAL_NODATA sentinel back to NaN on
+    read, so asserting on its output cannot distinguish (a) a writer
+    that left NaNs as floats and (b) a writer that wrote the sentinel
+    correctly. ``tifffile`` decodes the pixels but does not consult
+    ``GDAL_NODATA``, so a raw read surfaces what is actually on disk.
+    """
+    import tifffile
+
+    with tifffile.TiffFile(path) as tif:
+        return tif.asarray()
 
 
 # ---------------------------------------------------------------------------
@@ -152,10 +171,19 @@ class TestStreamingWriteAllNan:
                           attrs={'nodata': -9999.0}).chunk({'y': 4, 'x': 4})
         path = str(tmp_path / 'allnan.tif')
         to_geotiff(da, path)
+        # Raw decode (no NaN-mask pass): every pixel must be the
+        # sentinel on disk. Asserting against ``open_geotiff``'s output
+        # alone would also pass if the writer left NaNs as floats,
+        # because the reader maps both NaN and the sentinel back to NaN.
+        raw = _read_raw_pixels(path)
+        assert (raw == -9999.0).all(), (
+            "writer must replace NaN with the GDAL_NODATA sentinel on "
+            "disk; raw read shows non-sentinel pixels"
+        )
+        assert not np.isnan(raw).any()
+        # Public read still maps the sentinel back to NaN.
         result = open_geotiff(path)
-        # Every pixel must round-trip back to NaN (sentinel -> NaN on read).
         assert np.isnan(result.values).all()
-        # Sentinel must be preserved in attrs.
         assert result.attrs.get('nodata') == pytest.approx(-9999.0)
 
     def test_all_nan_default_nodata(self, tmp_path):
@@ -166,6 +194,12 @@ class TestStreamingWriteAllNan:
         da = xr.DataArray(arr, dims=['y', 'x']).chunk({'y': 2, 'x': 2})
         path = str(tmp_path / 'allnan_nosen.tif')
         to_geotiff(da, path)
+        # No sentinel declared, so the file must carry raw NaN floats
+        # on disk -- a regression coercing NaN to some default sentinel
+        # would silently change the file's contents and would not be
+        # visible through ``open_geotiff`` alone.
+        raw = _read_raw_pixels(path)
+        assert np.isnan(raw).all()
         result = open_geotiff(path)
         assert np.isnan(result.values).all()
 
@@ -188,16 +222,30 @@ class TestStreamingWriteMixedNanInf:
                           attrs={'nodata': -9999.0}).chunk({'y': 2, 'x': 2})
         path = str(tmp_path / 'mixed.tif')
         to_geotiff(da, path)
+        # Raw decode pins the on-disk encoding: NaN cells were
+        # coerced to the sentinel, Inf cells were left as IEEE-754
+        # Inf. A regression that stopped the NaN-to-sentinel coercion
+        # would still pass an ``open_geotiff``-only assertion because
+        # the reader maps both NaN and the sentinel back to NaN.
+        raw = _read_raw_pixels(path)
+        assert raw[0, 1] == -9999.0
+        assert raw[2, 2] == -9999.0
+        assert raw[1, 0] == np.inf
+        assert raw[3, 1] == np.inf
+        assert raw[1, 2] == -np.inf
+        assert raw[3, 3] == -np.inf
+        assert not np.isnan(raw).any(), (
+            "writer must coerce every NaN to the sentinel; raw read "
+            "found surviving NaN floats"
+        )
+        # Public read maps the sentinel back to NaN, keeps Inf as-is.
         result = open_geotiff(path)
-        # NaN positions round-trip to NaN.
         assert np.isnan(result.values[0, 1])
         assert np.isnan(result.values[2, 2])
-        # +Inf and -Inf round-trip verbatim.
         assert result.values[1, 0] == np.inf
         assert result.values[3, 1] == np.inf
         assert result.values[1, 2] == -np.inf
         assert result.values[3, 3] == -np.inf
-        # Finite values stay finite.
         assert result.values[0, 0] == pytest.approx(1.0)
         assert result.values[2, 0] == pytest.approx(9.0)
 
@@ -233,13 +281,14 @@ class TestStreamingWriteAllInf:
 
 
 class TestStreamingWriteFloatPredictor:
-    """``predictor=3`` (TIFF float predictor) on a small dask raster.
+    """``predictor=3`` (TIFF float predictor) on small dask rasters.
 
-    The streaming writer threads ``predictor=`` through to every tile-row
-    encode. ``test_streaming_write.py`` covers ``predictor=True`` (=2)
-    only; the float predictor 3 branch lacked direct streaming
-    coverage. Verify lossless float32 round-trip plus the dtype-guard
-    on int input.
+    ``test_predictor_fp_write_1313.test_predictor3_streaming_dask``
+    already covers a dask-backed streaming write with ``predictor=3``
+    on a 128x192 raster and pins the Predictor tag. The tests below
+    extend coverage with smaller chunk geometries (16x16) and lock the
+    int-dtype ValueError on the streaming path so the dtype guard
+    cannot regress silently.
     """
 
     def test_predictor3_float32_round_trip(self, tmp_path):
