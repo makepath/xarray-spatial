@@ -17,6 +17,17 @@ from ._coords import _BAND_DIM_NAMES
 from ._runtime import _TIME_DIM_NAMES, _X_DIM_NAMES, _Y_DIM_NAMES
 
 
+def _is_temporal_dim_name(name) -> bool:
+    """Return True if ``name`` is a known temporal dim alias.
+
+    Compared case-insensitively against ``_TIME_DIM_NAMES`` so that
+    CF-style ``'TIME'`` / ``'Time'`` reach the friendly temporal error
+    in the 3D writer validator instead of slipping through the
+    ``(y, x, *)`` band-position fallback (#1972).
+    """
+    return isinstance(name, str) and name.lower() in _TIME_DIM_NAMES
+
+
 def _validate_3d_writer_dims(dims) -> None:
     """Reject ambiguous 3D writer inputs (issue #1812).
 
@@ -53,7 +64,7 @@ def _validate_3d_writer_dims(dims) -> None:
     # mirror case ``(time, y, x)`` was already caught -- this closes
     # the asymmetry.
     if d0 in _Y_DIM_NAMES and d1 in _X_DIM_NAMES:
-        if d2 in _TIME_DIM_NAMES:
+        if _is_temporal_dim_name(d2):
             raise ValueError(
                 f"3D writer input has temporal trailing dim {d2!r} in dims "
                 f"{dims!r}. The writer would otherwise treat the time axis "
@@ -64,6 +75,20 @@ def _validate_3d_writer_dims(dims) -> None:
                 f"axis to round-trip as TIFF bands (issue #1972)."
             )
         return
+    # Symmetrise the friendly temporal message for the leading-dim case
+    # ``(time, y, x)``. The generic ``ambiguous dims`` error below
+    # already rejects this layout, but the temporal-specific message
+    # tells the caller exactly how to fix it (#1972).
+    if _is_temporal_dim_name(d0) and d1 in _Y_DIM_NAMES and d2 in _X_DIM_NAMES:
+        raise ValueError(
+            f"3D writer input has temporal leading dim {d0!r} in dims "
+            f"{dims!r}. The writer would otherwise treat the time axis "
+            f"as bands and silently write a multiband TIFF. Select a "
+            f"single time slice (e.g. ``data.isel({d0}=0)``), reduce "
+            f"with a stat (``data.mean({d0!r})``), or rename to one of "
+            f"{_BAND_DIM_NAMES} if you really intend the temporal "
+            f"axis to round-trip as TIFF bands (issue #1972)."
+        )
     raise ValueError(
         f"3D writer input has ambiguous dims {dims!r}. Expected "
         f"(band, y, x) or (y, x, band); accepted band-dim aliases are "

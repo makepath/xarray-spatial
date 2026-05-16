@@ -29,6 +29,19 @@ def test_validate_3d_rejects_yx_temporal(temporal):
 
 
 @pytest.mark.parametrize(
+    "temporal",
+    ['TIME', 'Time', 'TiMe', 'DATE', 'Datetime', 'DATES', 'T'],
+)
+def test_validate_3d_rejects_yx_temporal_case_insensitive(temporal):
+    # CF allows ``'TIME'`` / ``'Time'``; the lowercase _TIME_DIM_NAMES
+    # tuple must still match via case-insensitive comparison so the
+    # mixed-case stack does not slip through the (y, x, *) fallback and
+    # silently write a 3-band TIFF (#1972 self-review).
+    with pytest.raises(ValueError, match="temporal trailing dim"):
+        _validate_3d_writer_dims(('y', 'x', temporal))
+
+
+@pytest.mark.parametrize(
     "yx",
     [('y', 'x'), ('lat', 'lon'), ('latitude', 'longitude'), ('row', 'col')],
 )
@@ -50,10 +63,35 @@ def test_validate_3d_still_accepts_unknown_trailing_dim():
 
 
 def test_validate_3d_still_rejects_time_y_x():
-    # Leading temporal dim was already rejected (asymmetry that #1972
-    # closes); keep the regression test for it.
-    with pytest.raises(ValueError, match="ambiguous dims"):
+    # Leading temporal dim was already rejected; the symmetrised path
+    # now emits the dedicated temporal message (#1972 self-review nit 2)
+    # instead of the generic "ambiguous dims" wording.
+    with pytest.raises(ValueError, match="temporal leading dim"):
         _validate_3d_writer_dims(('time', 'y', 'x'))
+
+
+@pytest.mark.parametrize(
+    "temporal",
+    ['time', 'TIME', 'Time', 't', 'T', 'date', 'datetime', 'dates'],
+)
+def test_validate_3d_rejects_temporal_y_x_case_insensitive(temporal):
+    # Mirror the trailing-dim case-insensitive coverage for the leading
+    # temporal axis (#1972 self-review nit 2).
+    with pytest.raises(ValueError, match="temporal leading dim"):
+        _validate_3d_writer_dims((temporal, 'y', 'x'))
+
+
+def test_validate_3d_rejects_temporal_yx_alias_leading():
+    # Leading-dim friendly message should fire for y/x aliases too.
+    with pytest.raises(ValueError, match="temporal leading dim"):
+        _validate_3d_writer_dims(('time', 'lat', 'lon'))
+
+
+def test_validate_3d_still_rejects_other_ambiguous_leading():
+    # The symmetric temporal message must not swallow the generic
+    # ambiguous-dims path for non-temporal, non-band leading names.
+    with pytest.raises(ValueError, match="ambiguous dims"):
+        _validate_3d_writer_dims(('foo', 'y', 'x'))
 
 
 def test_to_geotiff_rejects_yxtime_stack():
