@@ -164,6 +164,11 @@ fixtures:
       "":
         UNITS: meters
         AREA_OR_POINT: Area
+      # IMAGE_STRUCTURE is a GDAL-managed domain. GDAL overwrites
+      # COMPRESSION and INTERLEAVE on write based on the real codec /
+      # planar config, so the values below are placeholders. The point
+      # of listing them is to make the domain non-empty so the reader
+      # has to enumerate it.
       IMAGE_STRUCTURE:
         COMPRESSION: NONE
         INTERLEAVE: PIXEL

@@ -60,7 +60,7 @@ def _read_as_dataarray(path: Path) -> xr.DataArray:
         transform = src.transform
         crs = src.crs
         nodata = src.nodata
-        height, width = src.height, src.width
+        width, height = src.width, src.height
 
     pw, ph = float(transform.a), float(transform.e)
     ox, oy = float(transform.c), float(transform.f)
@@ -231,3 +231,43 @@ def test_gdal_metadata_namespaced_size_under_4kb() -> None:
         f"gdal_metadata_namespaced_uint16.tif grew past the 4 KB budget: "
         f"{size} bytes"
     )
+
+
+# ---------------------------------------------------------------------------
+# Validator guard rails
+# ---------------------------------------------------------------------------
+
+def _minimal_entry(defaults: dict) -> dict:
+    """Build a manifest entry minus extra_tags / gdal_metadata for guard tests."""
+    base = dict(defaults)
+    base.update(
+        id="validator_smoke",
+        description="validator smoke",
+        width=16,
+        height=16,
+        dtype="uint16",
+        blocksize=16,
+    )
+    return base
+
+
+def test_validator_rejects_bool_extra_tags_key() -> None:
+    """`bool` subclasses `int` so the isinstance check has to filter it out."""
+    manifest = _generate.load_manifest()
+    defaults = manifest.get("defaults") or {}
+    entry = _minimal_entry(defaults)
+    entry["extra_tags"] = {True: "boom"}
+    bad = {"version": 1, "defaults": {}, "fixtures": [entry]}
+    with pytest.raises(_generate.ManifestError, match="strings or ints"):
+        _generate.validate(bad)
+
+
+def test_validator_rejects_non_string_gdal_metadata_domain() -> None:
+    """Domain keys must be strings; the YAML loader can produce ints."""
+    manifest = _generate.load_manifest()
+    defaults = manifest.get("defaults") or {}
+    entry = _minimal_entry(defaults)
+    entry["gdal_metadata"] = {123: {"k": "v"}}
+    bad = {"version": 1, "defaults": {}, "fixtures": [entry]}
+    with pytest.raises(_generate.ManifestError, match="domain keys must be strings"):
+        _generate.validate(bad)

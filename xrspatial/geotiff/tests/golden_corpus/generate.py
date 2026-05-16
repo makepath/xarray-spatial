@@ -268,7 +268,9 @@ def _validate_one(entry: dict[str, Any], seen_ids: set[str]) -> None:
                 f"{fid}: extra_tags must be a mapping, got {extra_tags!r}"
             )
         for k in extra_tags:
-            if not isinstance(k, (str, int)):
+            # bool is a subclass of int in Python, so the (str, int) check
+            # would otherwise let `True` / `False` through as tag code 1/0.
+            if isinstance(k, bool) or not isinstance(k, (str, int)):
                 raise ManifestError(
                     f"{fid}: extra_tags keys must be strings or ints, "
                     f"got {k!r}"
@@ -448,10 +450,15 @@ _WELL_KNOWN_TIFF_TAGS = {
     "hostcomputer": 316,
 }
 
-# GeoTIFF tag codes the post-pass must preserve when rewriting a file with
-# tifffile to attach extra TIFF tags. These are the tags rasterio emits to
-# encode the CRS / transform; everything else in the IFD gets rebuilt by
-# tifffile from the pixel data and writer kwargs.
+# Tag codes the tifffile post-pass must preserve when rewriting a file to
+# attach extra TIFF tags. These cover:
+# * GeoTIFF georeferencing tags (33550, 33922, 34735, 34736, 34737) -- rasterio
+#   emits these to encode CRS / transform.
+# * 42112 GDAL_METADATA -- holds any cross-domain GDAL metadata rasterio
+#   wrote via update_tags(ns=...). Preserved so a fixture can carry both
+#   gdal_metadata and extra_tags without losing the GDAL XML.
+# tifffile re-derives SampleFormat / ExtraSamples from the pixel dtype on
+# write, so those are intentionally not in this list.
 _GEOTIFF_TAG_CODES = (33550, 33922, 34735, 34736, 34737, 42112)
 
 
@@ -488,6 +495,13 @@ def _apply_extra_tags_with_tifffile(
     (so the GeoTIFF tags are correct) and then this helper rewrites the
     file in place via tifffile, preserving the GeoTIFF tags and adding the
     requested extras.
+
+    Only the codes listed in ``_GEOTIFF_TAG_CODES`` survive the rewrite.
+    That set covers the GeoTIFF georeferencing tags, GDAL_METADATA, and
+    the SampleFormat / ExtraSamples tags rasterio writes for non-uint8
+    dtypes. Other tags rasterio may emit (nodata sentinel, ResolutionUnit,
+    etc.) are not currently forwarded; extend the list if a future fixture
+    needs them.
     """
     import tifffile
 
@@ -508,9 +522,13 @@ def _apply_extra_tags_with_tifffile(
     description: str | None = None
     software: str | None = None
     extratags = list(preserved)
-    for key, value in sorted(extra_tags.items(), key=lambda kv: _normalize_extra_tag_key(kv[0])[0]):
-        code, _ = _normalize_extra_tag_key(key)
-        sval = str(value)
+    # Resolve every key once, sort by numeric code so the on-disk order
+    # is deterministic across runs.
+    resolved = sorted(
+        ((_normalize_extra_tag_key(k)[0], str(v)) for k, v in extra_tags.items()),
+        key=lambda item: item[0],
+    )
+    for code, sval in resolved:
         if code == 270:
             description = sval
         elif code == 305:
