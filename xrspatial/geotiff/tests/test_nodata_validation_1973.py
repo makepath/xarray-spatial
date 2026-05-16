@@ -10,6 +10,7 @@ error.
 """
 from __future__ import annotations
 
+import importlib.util
 import io
 
 import numpy as np
@@ -19,6 +20,20 @@ import xarray as xr
 from xrspatial.geotiff import to_geotiff
 from xrspatial.geotiff._attrs import _resolve_nodata_attr
 from xrspatial.geotiff._validation import _validate_nodata_arg
+
+
+def _gpu_available() -> bool:
+    if importlib.util.find_spec("cupy") is None:
+        return False
+    try:
+        import cupy
+        return bool(cupy.cuda.is_available())
+    except Exception:
+        return False
+
+
+_HAS_GPU = _gpu_available()
+_gpu_only = pytest.mark.skipif(not _HAS_GPU, reason="cupy + CUDA required")
 
 
 def _nan_square():
@@ -89,3 +104,80 @@ def test_to_geotiff_accepts_numeric_nodata_kwarg():
     buf = io.BytesIO()
     to_geotiff(_nan_square(), buf, nodata=-9999)
     assert buf.getbuffer().nbytes > 0
+
+
+# ---------------------------------------------------------------------------
+# Bool rejection: ``nodata=True`` / ``nodata=False`` must raise TypeError at
+# all three writer entry points (eager, GPU, VRT). The eager path already
+# rejected bools for #1911 but the GPU/VRT validators previously routed bool
+# through ``float(True) == 1.0`` and silently coerced. The shared validator
+# now refuses bools so all three paths behave the same.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", [True, False])
+def test_validate_nodata_arg_rejects_bool(bad):
+    with pytest.raises(TypeError, match="nodata must be numeric"):
+        _validate_nodata_arg(bad)
+
+
+def test_validate_nodata_arg_rejects_numpy_bool():
+    with pytest.raises(TypeError, match="nodata must be numeric"):
+        _validate_nodata_arg(np.bool_(True))
+
+
+def test_to_geotiff_eager_rejects_bool_nodata():
+    buf = io.BytesIO()
+    with pytest.raises(TypeError, match="nodata must be numeric"):
+        to_geotiff(_nan_square(), buf, nodata=True)
+
+
+def test_to_geotiff_vrt_rejects_bool_nodata(tmp_path):
+    vrt_path = str(tmp_path / "tmp_1973_bool_vrt.vrt")
+    with pytest.raises(TypeError, match="nodata must be numeric"):
+        to_geotiff(_nan_square(), vrt_path, nodata=True)
+
+
+@_gpu_only
+def test_write_geotiff_gpu_rejects_bool_nodata(tmp_path):
+    import cupy
+
+    from xrspatial.geotiff import write_geotiff_gpu
+
+    da_cpu = _nan_square()
+    da_gpu = da_cpu.copy(data=cupy.asarray(da_cpu.values))
+    out = str(tmp_path / "tmp_1973_bool_gpu.tif")
+    with pytest.raises(TypeError, match="nodata must be numeric"):
+        write_geotiff_gpu(da_gpu, out, nodata=True)
+
+
+# ---------------------------------------------------------------------------
+# All-non-numeric ``attrs['nodatavals']``: warn but still return None and
+# fall through. A tuple where every entry is non-numeric is almost certainly
+# a user error rather than a legitimate "no sentinel" signal.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_nodata_attr_warns_when_nodatavals_all_non_numeric():
+    with pytest.warns(UserWarning, match="nodatavals"):
+        result = _resolve_nodata_attr({'nodatavals': ('foo', 'bar')})
+    assert result is None
+
+
+def test_resolve_nodata_attr_no_warning_when_nodatavals_has_usable_entry():
+    # First entry is non-numeric, second is a real sentinel. The loop
+    # returns -9999.0 before reaching the warn site, so no warning fires.
+    import warnings as _warnings
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error")
+        assert _resolve_nodata_attr({'nodatavals': ('foo', -9999.0)}) == -9999.0
+
+
+def test_resolve_nodata_attr_no_warning_when_nodatavals_all_nan():
+    # NaN entries are skipped (they signal "the float NaN is the sentinel",
+    # which doesn't need a GDAL_NODATA tag) but they ARE numeric, so the
+    # all-non-numeric warning must not fire for an all-NaN tuple.
+    import warnings as _warnings
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error")
+        assert _resolve_nodata_attr({'nodatavals': (float('nan'),)}) is None
