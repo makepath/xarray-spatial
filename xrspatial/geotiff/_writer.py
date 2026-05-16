@@ -365,6 +365,28 @@ def _validate_overview_levels(overview_levels, height=None, width=None):
     return cleaned
 
 
+def _resolve_int_nodata(dtype, nodata):
+    """Return ``int(nodata)`` if it is representable as *dtype*, else None.
+
+    Folds the three checks that gate the integer sentinel-to-NaN mask in
+    :func:`_block_reduce_2d` into one call: ``dtype`` is integer, the
+    sentinel is finite and integer-valued, and the integer fits the
+    dtype range. Out-of-range pairs like ``uint16`` + ``GDAL_NODATA=-9999``
+    return None so the caller stays a no-op rather than tripping
+    ``OverflowError`` on the dtype cast. Mirrors
+    ``_int_nodata_in_range`` in ``_reader.py``.
+    """
+    if nodata is None or dtype.kind not in ('i', 'u'):
+        return None
+    if not np.isfinite(nodata) or not float(nodata).is_integer():
+        return None
+    nodata_int = int(nodata)
+    info = np.iinfo(dtype)
+    if info.min <= nodata_int <= info.max:
+        return nodata_int
+    return None
+
+
 def _block_reduce_2d(arr2d, method, nodata=None):
     """2x block-reduce a single 2D plane using *method*.
 
@@ -385,7 +407,10 @@ def _block_reduce_2d(arr2d, method, nodata=None):
     by masking the sentinel to NaN, running cubic with
     ``prefilter=False`` to keep the kernel local, and rewriting any
     NaN in the output back to the sentinel before returning (issue
-    #1623).
+    #1623). Cubic on integer dtypes follows the same path via a
+    float64 promotion so NaN can carry through the spline, with a
+    ``np.round(...).astype(arr2d.dtype)`` at the end to keep the cast
+    well-defined (issue #1975).
     """
     h, w = arr2d.shape
     h2 = (h // 2) * 2
@@ -420,6 +445,11 @@ def _block_reduce_2d(arr2d, method, nodata=None):
         # full-resolution band. The ``prefilter=False`` switch only
         # fires when a sentinel was actually found in the input, so the
         # default cubic semantics still apply to inputs without nodata.
+        #
+        # Integer rasters take the same path via a float64 promotion so
+        # NaN can carry through the spline; the result is rewritten
+        # back to the sentinel and rounded before casting to the source
+        # integer dtype (issue #1975, integer mirror of #1623).
         if (nodata is not None
                 and arr2d.dtype.kind == 'f'
                 and not np.isnan(nodata)):
@@ -440,6 +470,22 @@ def _block_reduce_2d(arr2d, method, nodata=None):
                         result = result.copy()
                         result[nan_mask] = float(nodata)
                     return result.astype(arr2d.dtype)
+        nodata_int = _resolve_int_nodata(arr2d.dtype, nodata)
+        if nodata_int is not None:
+            sentinel = arr2d.dtype.type(nodata_int)
+            mask = arr2d == sentinel
+            if mask.any():
+                masked = np.where(mask, np.float64('nan'),
+                                  arr2d.astype(np.float64))
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore', RuntimeWarning)
+                    result = zoom(masked, 0.5, order=3,
+                                  prefilter=False)
+                nan_mask = np.isnan(result)
+                if nan_mask.any():
+                    result = np.where(nan_mask, float(nodata_int),
+                                      result)
+                return np.round(result).astype(arr2d.dtype)
         return zoom(arr2d, 0.5, order=3).astype(arr2d.dtype)
 
     if method == 'mode':
@@ -491,22 +537,17 @@ def _block_reduce_2d(arr2d, method, nodata=None):
         # ``_reader.py``) so an out-of-range sentinel pair like
         # ``uint16`` + ``GDAL_NODATA="-9999"`` stays a no-op rather than
         # tripping ``OverflowError`` on the dtype cast.
-        if (nodata is not None
-                and np.isfinite(nodata)
-                and float(nodata).is_integer()):
-            nodata_int = int(nodata)
-            info = np.iinfo(arr2d.dtype)
-            if info.min <= nodata_int <= info.max:
-                sentinel = arr2d.dtype.type(nodata_int)
-                # Compare against the original integer block view so
-                # the equality runs at the integer's native width
-                # (avoids any float-cast rounding on adjacent values).
-                # The boolean mask broadcasts into the float64 block
-                # layout below.
-                int_blocks = cropped.reshape(oh, 2, ow, 2)
-                mask = int_blocks == sentinel
-                if mask.any():
-                    blocks = np.where(mask, np.float64('nan'), blocks)
+        nodata_int = _resolve_int_nodata(arr2d.dtype, nodata)
+        if nodata_int is not None:
+            sentinel = arr2d.dtype.type(nodata_int)
+            # Compare against the original integer block view so the
+            # equality runs at the integer's native width (avoids any
+            # float-cast rounding on adjacent values). The boolean
+            # mask broadcasts into the float64 block layout below.
+            int_blocks = cropped.reshape(oh, 2, ow, 2)
+            mask = int_blocks == sentinel
+            if mask.any():
+                blocks = np.where(mask, np.float64('nan'), blocks)
 
     # nanmean / nanmin / nanmax / nanmedian emit RuntimeWarning when a
     # 2x2 block is all-NaN (typical at nodata borders). The all-NaN
@@ -538,14 +579,11 @@ def _block_reduce_2d(arr2d, method, nodata=None):
         # post-overview rewrite in ``write()``; integer dtypes skip that
         # branch because ``current.dtype.kind == 'f'`` is False, so we
         # close the loop here.
-        if nodata is not None and np.isfinite(nodata):
-            nan_mask = np.isnan(result)
-            if nan_mask.any():
-                info = np.iinfo(arr2d.dtype)
-                nodata_int = int(nodata) if float(nodata).is_integer() else None
-                if (nodata_int is not None
-                        and info.min <= nodata_int <= info.max):
-                    result = np.where(nan_mask, float(nodata_int), result)
+        nan_mask = np.isnan(result)
+        if nan_mask.any():
+            nodata_int = _resolve_int_nodata(arr2d.dtype, nodata)
+            if nodata_int is not None:
+                result = np.where(nan_mask, float(nodata_int), result)
         return np.round(result).astype(arr2d.dtype)
     return result.astype(arr2d.dtype)
 
