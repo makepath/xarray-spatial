@@ -279,7 +279,10 @@ def open_geotiff(source: str | BinaryIO, *,
         ``None`` to skip the check entirely. The HTTP path already
         reads only what it needs via range requests and is not subject
         to this limit. Has no effect on local file or file-like
-        sources. See issue #1928.
+        sources. Passing this kwarg with ``gpu=True``, ``chunks=...``,
+        or a ``.vrt`` source raises ``ValueError`` because those
+        backends do not apply the cloud-byte budget. See issue #1928
+        (eager path) and issue #1974 (rejection guard).
     on_gpu_failure : {'auto', 'strict'}, optional
         Forwarded to ``read_geotiff_gpu`` when ``gpu=True``. Controls
         whether GPU decode failures fall back to CPU (``'auto'``,
@@ -357,6 +360,34 @@ def open_geotiff(source: str | BinaryIO, *,
             "missing_sources only applies to VRT sources. "
             "Pass a .vrt path to enable the VRT pipeline, or drop "
             "missing_sources to keep the default GeoTIFF path.")
+
+    # ``max_cloud_bytes`` is the eager fsspec-read budget. Only
+    # ``_read_to_array`` on the eager non-VRT, non-GPU, non-dask branch
+    # consumes it; the GPU (``read_geotiff_gpu``), dask
+    # (``read_geotiff_dask``), and VRT (``read_vrt``) branches all ignore
+    # the kwarg silently. Reject it up front on those paths so callers
+    # learn the budget is being dropped, matching the
+    # ``on_gpu_failure`` / ``missing_sources`` guards above and the
+    # silently-drops-backend-kwarg fixes in #1561 / #1605 / #1685 / #1810.
+    # See issue #1974.
+    if max_cloud_bytes is not _MAX_CLOUD_BYTES_SENTINEL:
+        if _is_vrt_source:
+            raise ValueError(
+                "max_cloud_bytes is not supported for VRT sources. "
+                "The VRT reader does not apply the cloud-byte budget; "
+                "drop the kwarg, or call open_geotiff on the underlying "
+                ".tif source.")
+        if gpu:
+            raise ValueError(
+                "max_cloud_bytes is not supported when gpu=True. "
+                "The GPU reader does not apply the cloud-byte budget; "
+                "drop the kwarg, or pass gpu=False to use the eager "
+                "CPU path.")
+        if chunks is not None:
+            raise ValueError(
+                "max_cloud_bytes is not supported when chunks=... (dask). "
+                "The dask reader does not apply the cloud-byte budget; "
+                "drop the kwarg, or drop chunks to use the eager path.")
 
     # VRT files (string paths only -- VRT XML references other files on disk)
     if _is_vrt_source:

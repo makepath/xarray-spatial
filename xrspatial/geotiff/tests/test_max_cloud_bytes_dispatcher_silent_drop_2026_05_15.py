@@ -10,36 +10,19 @@ The dispatcher in ``open_geotiff`` (``xrspatial/geotiff/__init__.py``)
 forwards the value to ``_read_to_array`` only on the eager non-VRT
 branch. The GPU branch (``read_geotiff_gpu``), the dask branch
 (``read_geotiff_dask``), and the VRT branch (``read_vrt``) all ignore
-the kwarg silently -- the value is accepted at the signature but never
-consumed downstream.
+the kwarg.
 
-That is the same class of dispatcher silently-drops-backend-kwarg bug
+That was the same class of dispatcher silently-drops-backend-kwarg bug
 that issues #1561 (``overview_level`` to dask), #1605 (``band`` to GPU),
 #1685 (``overview_level`` to VRT), and #1810 (``missing_sources`` to
-non-VRT) fixed for the other backend-only kwargs. Pass 14 + 15 of the
-test-coverage sweep closed several adjacent parameter gaps but did not
-pin this one.
+non-VRT) fixed for the other backend-only kwargs. Issue #1974 closed
+this last gap: the dispatcher now raises ``ValueError`` when
+``max_cloud_bytes`` is supplied alongside ``gpu=True``, ``chunks=...``,
+or a ``.vrt`` source.
 
 The two sibling kwargs ``on_gpu_failure`` and ``missing_sources``
-already raise ``ValueError`` when used on a path where they do not
-apply (the dispatcher gates them on sentinel defaults at
-``__init__.py:339`` and ``:355``). ``max_cloud_bytes`` defaults to the
-``_MAX_CLOUD_BYTES_SENTINEL`` and would slot into the same pattern,
-but the rejection guard is missing.
-
-This module pins the current silent-drop behaviour. The fix surface is
-expected to be either:
-
-* Add ValueError guards mirroring ``on_gpu_failure`` /
-  ``missing_sources`` (refuses the kwarg on gpu / chunks / VRT paths).
-* Or thread ``max_cloud_bytes`` through every backend so it has effect
-  everywhere (broader change because the GPU + dask paths would need
-  to plumb the budget into their respective fsspec entry points).
-
-Either fix would flip the four ``xfail(strict=True)`` tests below from
-xpass to pass after the source change. The fifth class (positive
-``test_eager_*`` pins) stays green either way so the canonical eager
-path keeps its current contract.
+follow the same rejection pattern (see ``__init__.py:339`` and
+``:355``).
 
 Filed as issue #1974 (test-coverage sweep is test-only; the fix lives
 in a separate PR). See test-coverage-state.csv pass 16.
@@ -47,7 +30,6 @@ in a separate PR). See test-coverage-state.csv pass 16.
 from __future__ import annotations
 
 import io
-import os
 
 import numpy as np
 import pytest
@@ -100,8 +82,6 @@ def _build_vrt(tmp_path):
 
 # ---------------------------------------------------------------------
 # Positive pins: the kwarg is forwarded through the eager path.
-# These stay green whether the dispatcher fix raises ValueError or
-# threads the budget into every backend.
 # ---------------------------------------------------------------------
 
 class TestEagerLocalPathAcceptsMaxCloudBytes:
@@ -142,126 +122,124 @@ class TestEagerFileLikeAcceptsMaxCloudBytes:
 
 
 # ---------------------------------------------------------------------
-# Silent-drop pins.  These mark the current buggy behaviour with
-# ``xfail(strict=True)``: when the dispatcher fix lands (whichever
-# direction), these flip from xpass to pass.  ``strict=True`` makes
-# the xpass a test failure so the diff is visible at fix time.
+# Rejection pins. After the #1974 dispatcher fix, supplying
+# ``max_cloud_bytes`` alongside ``gpu=True``, ``chunks=...``, or a
+# ``.vrt`` source raises ``ValueError`` rather than silently dropping
+# the kwarg. Mirrors the ``on_gpu_failure`` / ``missing_sources``
+# guards established by #1810.
 # ---------------------------------------------------------------------
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "open_geotiff silently drops max_cloud_bytes when gpu=True. "
-        "Should raise ValueError mirroring on_gpu_failure (#1810 pattern), "
-        "or thread the budget into the GPU fsspec entry point. "
-        "See test-coverage sweep pass 16."
-    ),
-)
 def test_dispatcher_gpu_path_rejects_max_cloud_bytes(tmp_path):
-    """``gpu=True`` with ``max_cloud_bytes=...`` should not silently drop.
+    """``gpu=True`` with ``max_cloud_bytes=...`` raises ValueError.
 
     The kwarg is only consumed on the eager non-VRT path; the GPU
-    branch at ``__init__.py:410`` never references it. Caller has no
-    way to learn the budget is being ignored.
+    branch never references it, so silently dropping the budget would
+    leave callers without feedback. The dispatcher rejects up front
+    before the GPU stack is even probed -- no cupy/CUDA is required.
     """
     path = _build_local_tif(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
         open_geotiff(path, max_cloud_bytes=8, gpu=True)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "open_geotiff silently drops max_cloud_bytes when chunks=N. "
-        "Should raise ValueError mirroring on_gpu_failure (#1810 pattern), "
-        "or thread the budget into read_geotiff_dask. "
-        "See test-coverage sweep pass 16."
-    ),
-)
 def test_dispatcher_dask_path_rejects_max_cloud_bytes(tmp_path):
-    """``chunks=N`` with ``max_cloud_bytes=...`` should not silently drop.
+    """``chunks=N`` with ``max_cloud_bytes=...`` raises ValueError.
 
     The kwarg is only consumed on the eager non-VRT path; the dask
-    branch at ``__init__.py:422`` never references it.
+    branch (``read_geotiff_dask``) never references it.
     """
     path = _build_local_tif(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
         open_geotiff(path, max_cloud_bytes=8, chunks=4)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "open_geotiff silently drops max_cloud_bytes for .vrt sources. "
-        "Should raise ValueError mirroring missing_sources (#1810 "
-        "pattern), or thread the budget into read_vrt. "
-        "See test-coverage sweep pass 16."
-    ),
-)
 def test_dispatcher_vrt_path_rejects_max_cloud_bytes(tmp_path):
-    """``.vrt`` source with ``max_cloud_bytes=...`` should not silently drop.
+    """``.vrt`` source with ``max_cloud_bytes=...`` raises ValueError.
 
-    The kwarg is only consumed on the eager non-VRT path; the VRT
-    branch at ``__init__.py:362`` never references it.
+    The kwarg is only consumed on the eager non-VRT path; ``read_vrt``
+    never references it.
     """
     vrt, _src = _build_vrt(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
         open_geotiff(vrt, max_cloud_bytes=8)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "open_geotiff silently drops max_cloud_bytes when "
-        "gpu=True + chunks=N (dask+cupy dispatch). "
-        "Should raise ValueError mirroring on_gpu_failure (#1810 pattern). "
-        "See test-coverage sweep pass 16."
-    ),
-)
 def test_dispatcher_dask_gpu_path_rejects_max_cloud_bytes(tmp_path):
-    """``gpu=True + chunks=N`` should not silently drop max_cloud_bytes."""
-    _skip_if_no_cupy_cuda()
+    """``gpu=True + chunks=N`` rejects max_cloud_bytes.
+
+    The GPU rejection fires first (it is checked before chunks), so
+    cupy / CUDA need not be installed for this assertion.
+    """
     path = _build_local_tif(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
         open_geotiff(path, max_cloud_bytes=8, gpu=True, chunks=4)
 
 
 # ---------------------------------------------------------------------
-# Pinning the buggy CURRENT behaviour so the fix diff is observable.
-# These tests pass today (the kwarg is silently dropped). When the
-# dispatcher fix lands they will fail and must be replaced by the
-# xfail tests above flipping green. They live alongside the xfails so
-# the fix author sees both the "before" and "after" expectations.
+# Sentinel-default regression pins. The default value of
+# ``max_cloud_bytes`` must remain the module sentinel, otherwise the
+# guard above would fire on every call that omits the kwarg.
 # ---------------------------------------------------------------------
 
-# remove with #1974
-class TestCurrentSilentDropPins:
-    """Pin the current silent-drop behaviour.
+def test_default_kwarg_does_not_trigger_guard_on_gpu_path(tmp_path):
+    """Omitting ``max_cloud_bytes`` does not raise on the GPU branch.
 
-    These tests assert that the kwarg is silently accepted today on the
-    non-eager paths. They are the "before" half of the fix-visibility
-    contract documented at module top. After the dispatcher fix the
-    xfail siblings above flip to pass; remove this class at that time.
+    The dispatcher only rejects when the caller passed an explicit
+    value; the sentinel default must pass through.
     """
+    _skip_if_no_cupy_cuda()
+    path = _build_local_tif(tmp_path)
+    # No max_cloud_bytes -- should reach the GPU reader, not raise.
+    out = open_geotiff(path, gpu=True)
+    assert out.shape == (8, 8)
 
-    def test_gpu_path_silently_accepts_today(self, tmp_path):
-        _skip_if_no_cupy_cuda()
-        path = _build_local_tif(tmp_path)
-        # No raise today; the kwarg is silently dropped.
-        out = open_geotiff(path, max_cloud_bytes=8, gpu=True)
-        assert out.shape == (8, 8)
 
-    def test_dask_path_silently_accepts_today(self, tmp_path):
-        path = _build_local_tif(tmp_path)
-        # No raise today; the kwarg is silently dropped.
-        out = open_geotiff(path, max_cloud_bytes=8, chunks=4)
-        assert out.shape == (8, 8)
-        # Lazy result; confirm it computes.
-        arr = out.values
-        assert arr.shape == (8, 8)
+def test_default_kwarg_does_not_trigger_guard_on_dask_path(tmp_path):
+    """Omitting ``max_cloud_bytes`` does not raise on the dask branch."""
+    path = _build_local_tif(tmp_path)
+    out = open_geotiff(path, chunks=4)
+    assert out.shape == (8, 8)
 
-    def test_vrt_path_silently_accepts_today(self, tmp_path):
-        vrt, _src = _build_vrt(tmp_path)
-        # No raise today; the kwarg is silently dropped.
-        out = open_geotiff(vrt, max_cloud_bytes=8)
-        assert out.shape == (8, 8)
+
+def test_default_kwarg_does_not_trigger_guard_on_vrt_path(tmp_path):
+    """Omitting ``max_cloud_bytes`` does not raise on the VRT branch."""
+    vrt, _src = _build_vrt(tmp_path)
+    out = open_geotiff(vrt)
+    assert out.shape == (8, 8)
+
+
+# ---------------------------------------------------------------------
+# Explicit-``None`` pins. ``max_cloud_bytes=None`` is the documented
+# "skip the check entirely" sentinel on the eager path (#1928). The
+# rejection guard is sentinel-based, so an explicit ``None`` is treated
+# as "caller supplied a value" and rejected on the non-eager branches
+# -- consistent with how ``on_gpu_failure`` and ``missing_sources``
+# treat explicit values. These tests pin that semantics.
+# ---------------------------------------------------------------------
+
+def test_explicit_none_max_cloud_bytes_rejected_on_gpu_path(tmp_path):
+    """``gpu=True, max_cloud_bytes=None`` raises ValueError.
+
+    ``None`` is the documented "disable the budget" value on the eager
+    path. On the GPU path the budget is not consumed at all, so an
+    explicit ``None`` still indicates the caller expected the kwarg to
+    have an effect -- reject it for the same reason an explicit byte
+    count is rejected.
+    """
+    path = _build_local_tif(tmp_path)
+    with pytest.raises(ValueError, match=r"max_cloud_bytes"):
+        open_geotiff(path, max_cloud_bytes=None, gpu=True)
+
+
+def test_explicit_none_max_cloud_bytes_rejected_on_dask_path(tmp_path):
+    """``chunks=N, max_cloud_bytes=None`` raises ValueError."""
+    path = _build_local_tif(tmp_path)
+    with pytest.raises(ValueError, match=r"max_cloud_bytes"):
+        open_geotiff(path, max_cloud_bytes=None, chunks=4)
+
+
+def test_explicit_none_max_cloud_bytes_rejected_on_vrt_path(tmp_path):
+    """``.vrt`` source + ``max_cloud_bytes=None`` raises ValueError."""
+    vrt, _src = _build_vrt(tmp_path)
+    with pytest.raises(ValueError, match=r"max_cloud_bytes"):
+        open_geotiff(vrt, max_cloud_bytes=None)
