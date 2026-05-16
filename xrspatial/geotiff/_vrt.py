@@ -1414,6 +1414,17 @@ def write_vrt(vrt_path: str, source_files: list[str], *,
     from ._reader import _FileSource
     from ._dtypes import resolve_bits_per_sample
 
+    # Defense-in-depth: the public ``write_vrt`` wrapper in
+    # ``_writers/vrt.py`` already rejects bool / non-numeric ``nodata`` via
+    # ``_validate_nodata_arg`` so callers see the parity error from the
+    # entry point. Repeat the check here so direct callers of the
+    # internal symbol (and any future refactor that splits the public
+    # wrapper) cannot regress to ``<NoDataValue>True</NoDataValue>``. See
+    # issue #1921.
+    if isinstance(nodata, (bool, np.bool_)):
+        raise TypeError(
+            f"nodata must be numeric (int or float), got {nodata!r}")
+
     if not source_files:
         raise ValueError("source_files must not be empty")
 
