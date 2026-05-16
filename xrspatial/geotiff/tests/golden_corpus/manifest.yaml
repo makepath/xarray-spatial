@@ -141,3 +141,66 @@ fixtures:
       atol: 0.0
       rtol: 0.0
       lossy: false
+
+  # Phase 2 PR 3 (#1930): layout x byte_order cross product on a single
+  # small uint16 raster. Same shape, same nodata, same compression-free
+  # encoding across all four; the only variation is tiled-vs-stripped and
+  # little-vs-big endian. uint16 is the smallest dtype where byte order
+  # is observable on disk.
+  - id: stripped_le_uint16
+    description: >-
+      32x32 uint16 raster, stripped layout, little-endian. Baseline for
+      the layout x byte_order matrix.
+    width: 32
+    height: 32
+    dtype: uint16
+    byte_order: little
+    layout: stripped
+    blocksize: 16
+    nodata: 0
+    pixel_pattern: noise
+    pixel_seed: 1930
+    tags: [fast, stripped, little_endian, layout_endian_matrix]
+
+  - id: tiled_le_uint16
+    description: >-
+      32x32 uint16 raster, tiled layout (16-pixel tiles), little-endian.
+    width: 32
+    height: 32
+    dtype: uint16
+    byte_order: little
+    layout: tiled
+    tile_size: 16
+    nodata: 0
+    pixel_pattern: noise
+    pixel_seed: 1930
+    tags: [fast, tiled, little_endian, layout_endian_matrix]
+
+  - id: stripped_be_uint16
+    description: >-
+      32x32 uint16 raster, stripped layout, big-endian. Exercises byte
+      swap on read against the little-endian sibling.
+    width: 32
+    height: 32
+    dtype: uint16
+    byte_order: big
+    layout: stripped
+    blocksize: 16
+    nodata: 0
+    pixel_pattern: noise
+    pixel_seed: 1930
+    tags: [fast, stripped, big_endian, layout_endian_matrix]
+
+  - id: tiled_be_uint16
+    description: >-
+      32x32 uint16 raster, tiled layout (16-pixel tiles), big-endian.
+    width: 32
+    height: 32
+    dtype: uint16
+    byte_order: big
+    layout: tiled
+    tile_size: 16
+    nodata: 0
+    pixel_pattern: noise
+    pixel_seed: 1930
+    tags: [fast, tiled, big_endian, layout_endian_matrix]
