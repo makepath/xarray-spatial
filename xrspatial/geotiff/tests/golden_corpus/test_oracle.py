@@ -457,3 +457,48 @@ def test_crs_citation_only_fixture_rejects_unrelated_crs() -> None:
     cand = _build_candidate(data, transform=transform, crs=4326)
     with pytest.raises(AssertionError, match='CRS mismatch'):
         compare_to_oracle(path, cand)
+
+
+def test_crs_wkt_utm10n_fixture_accepts_wkt_attr() -> None:
+    """``crs_wkt_utm10n`` also accepts a candidate that carries crs_wkt.
+
+    Complements the EPSG-int test by exercising the WKT branch of
+    ``_candidate_crs`` (``attrs['crs_wkt']`` -> ``from_user_input``).
+    Both paths must reach the same verdict.
+    """
+    path, ref_crs, transform, data = _read_crs_fixture('crs_wkt_utm10n')
+    cand = _build_candidate(
+        data, transform=transform, crs=None, crs_wkt=ref_crs.to_wkt(),
+    )
+    compare_to_oracle(path, cand)
+
+
+def test_crs_equal_rejects_empty_proj_dict() -> None:
+    """``_crs_equal`` must refuse to declare two LOCAL_CS-style CRSes equal.
+
+    Regression pin for the PROJ-dict fallback added in this PR. PROJ
+    returns ``{}`` from ``to_dict()`` for LOCAL_CS WKTs; an unguarded
+    fallback would treat any two such CRSes as equal, which is a
+    silent-false-positive in the oracle. The fallback must short-circuit
+    on empty dicts.
+    """
+    from xrspatial.geotiff.tests.golden_corpus._oracle import _crs_equal
+
+    # Two LOCAL_CS WKTs with different UNIT blocks so rasterio's own
+    # ``CRS.__eq__`` reports them as unequal (otherwise the early-return
+    # in _crs_equal would short-circuit before the fallback runs).
+    a = rasterio.crs.CRS.from_wkt(
+        'LOCAL_CS["a",UNIT["metre",1,AUTHORITY["EPSG","9001"]],'
+        'AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+    )
+    b = rasterio.crs.CRS.from_wkt(
+        'LOCAL_CS["b",UNIT["foot",0.3048],'
+        'AXIS["Easting",EAST],AXIS["Northing",NORTH]]'
+    )
+    # Sanity: structurally unequal, neither has EPSG, both have empty
+    # PROJ-dict. Without the guard, the fallback would return True.
+    assert a != b
+    assert a.to_epsg() is None
+    assert b.to_epsg() is None
+    assert a.to_dict() == {} == b.to_dict()
+    assert _crs_equal(a, b) is False

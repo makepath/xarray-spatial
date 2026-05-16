@@ -159,7 +159,18 @@ def _crs_equal(ref, cand) -> bool:
     them onto a small set of canonical fields (proj kind, ellipsoid
     radius, units), which is stable across the libgeotiff round-trip
     that mutates WKT axis order and adds AUTHORITY["EPSG","9122"] to the
-    UNIT block. Use that as a last resort.
+    UNIT block. Use that as a last resort, but only when both sides
+    produce a non-empty dict (``CRS.to_dict()`` returns ``{}`` for
+    LOCAL_CS-style WKTs, which would otherwise let any two unrecognised
+    CRSes compare equal).
+
+    Known limit: ``CRS.to_dict()`` drops the GEOGCS / PROJCS name, so two
+    citation-only CRSes with the same shape but different names compare
+    equal here. The current corpus only has one citation fixture so this
+    is theoretical; if it becomes load-bearing, switch to a name-aware
+    comparison via ``to_dict(projjson=True)`` (which preserves the name
+    but mutates axis order on round-trip and would need its own
+    normaliser).
     """
     if ref is None and cand is None:
         return True
@@ -177,9 +188,16 @@ def _crs_equal(ref, cand) -> bool:
         return ref_epsg == cand_epsg
     if ref_epsg is None and cand_epsg is None:
         try:
-            return ref.to_dict() == cand.to_dict()
+            ref_dict = ref.to_dict()
+            cand_dict = cand.to_dict()
         except Exception:
             return False
+        # Empty dict means "PROJ has no canonical form for this CRS"
+        # (e.g. LOCAL_CS). Refuse to declare equality in that case
+        # rather than match any other empty-dict CRS.
+        if not ref_dict or not cand_dict:
+            return False
+        return ref_dict == cand_dict
     return False
 
 
