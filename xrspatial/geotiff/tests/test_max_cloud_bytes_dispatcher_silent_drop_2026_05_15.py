@@ -60,6 +60,19 @@ from xrspatial.geotiff import (
 )
 
 
+def _skip_if_no_cupy_cuda():
+    """Skip the calling test if cupy is unavailable or CUDA is offline."""
+    import importlib.util
+    if importlib.util.find_spec("cupy") is None:
+        pytest.skip("cupy not available")
+    try:
+        import cupy
+        if not cupy.cuda.is_available():
+            pytest.skip("CUDA unavailable on host")
+    except Exception:
+        pytest.skip("cupy import failed")
+
+
 def _build_local_tif(tmp_path, name='src.tif'):
     """Write a small valid GeoTIFF used as the dispatcher's source."""
     arr = np.arange(8 * 8, dtype=np.float32).reshape(8, 8)
@@ -101,6 +114,7 @@ class TestEagerLocalPathAcceptsMaxCloudBytes:
 
     def test_local_file_max_cloud_bytes_small_is_noop(self, tmp_path):
         path = _build_local_tif(tmp_path)
+        # 8 bytes is far below the file size; local files skip the budget.
         out = open_geotiff(path, max_cloud_bytes=8)
         assert out.shape == (8, 8)
         assert out.dtype == np.float32
@@ -206,15 +220,7 @@ def test_dispatcher_vrt_path_rejects_max_cloud_bytes(tmp_path):
 )
 def test_dispatcher_dask_gpu_path_rejects_max_cloud_bytes(tmp_path):
     """``gpu=True + chunks=N`` should not silently drop max_cloud_bytes."""
-    import importlib.util
-    if importlib.util.find_spec("cupy") is None:
-        pytest.skip("cupy not available")
-    try:
-        import cupy
-        if not cupy.cuda.is_available():
-            pytest.skip("CUDA unavailable on host")
-    except Exception:
-        pytest.skip("cupy import failed")
+    _skip_if_no_cupy_cuda()
     path = _build_local_tif(tmp_path)
     with pytest.raises(ValueError, match=r"max_cloud_bytes"):
         open_geotiff(path, max_cloud_bytes=8, gpu=True, chunks=4)
@@ -228,6 +234,7 @@ def test_dispatcher_dask_gpu_path_rejects_max_cloud_bytes(tmp_path):
 # the fix author sees both the "before" and "after" expectations.
 # ---------------------------------------------------------------------
 
+# remove with #1974
 class TestCurrentSilentDropPins:
     """Pin the current silent-drop behaviour.
 
@@ -238,15 +245,7 @@ class TestCurrentSilentDropPins:
     """
 
     def test_gpu_path_silently_accepts_today(self, tmp_path):
-        import importlib.util
-        if importlib.util.find_spec("cupy") is None:
-            pytest.skip("cupy not available")
-        try:
-            import cupy
-            if not cupy.cuda.is_available():
-                pytest.skip("CUDA unavailable on host")
-        except Exception:
-            pytest.skip("cupy import failed")
+        _skip_if_no_cupy_cuda()
         path = _build_local_tif(tmp_path)
         # No raise today; the kwarg is silently dropped.
         out = open_geotiff(path, max_cloud_bytes=8, gpu=True)
