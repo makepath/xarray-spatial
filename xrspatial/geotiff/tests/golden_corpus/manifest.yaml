@@ -151,7 +151,7 @@ fixtures:
     description: >-
       uint16 raster with an explicit integer nodata sentinel (0). A
       handful of pixels are forced to 0 so the masked-data path is
-      reachable through the read backend.
+      reachable once a read backend lands in Phase 3.
     width: 16
     height: 16
     dtype: uint16

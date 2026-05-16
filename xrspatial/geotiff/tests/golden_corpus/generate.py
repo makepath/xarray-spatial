@@ -337,6 +337,11 @@ def _stamp_nodata_pixels(arr: np.ndarray, entry: dict[str, Any]) -> None:
     if nd is None:
         return
     dtype = arr.dtype
+    # ``bool`` is a subclass of ``int``; reject it explicitly so a
+    # ``nodata: true`` manifest entry can't slip a 1 into the raster.
+    # The write-side gate is #1990; this is the matching read-side gate.
+    if isinstance(nd, bool):
+        return
     if isinstance(nd, (int, float)):
         sentinel: Any = nd
     elif nd == "nan":

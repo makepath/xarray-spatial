@@ -86,19 +86,26 @@ def _candidate_from_source(src) -> xr.DataArray:
 # Per-fixture parametrised TIFF validity check
 # ---------------------------------------------------------------------------
 
+# Tight budget chosen from the largest fixture today (1402 bytes for the
+# float32 NaN file). The plan caps fixtures at 4 KB; tightening to 2 KB
+# here catches silent bloat (accidental overviews, predictor changes)
+# before it drifts toward the documented limit.
+_FIXTURE_SIZE_BUDGET = 2048
+
+
 @pytest.mark.parametrize('path', ALL_FIXTURES, ids=lambda p: p.name)
 def test_fixture_is_a_valid_tiff(path: Path) -> None:
     """Each fixture exists, opens cleanly, and is small enough for git."""
     assert path.exists(), f'corpus fixture missing on disk: {path}'
-    # The plan budgets each fixture at well under 4 KB; if a future
-    # change blows the budget the regression should fail loudly.
-    assert path.stat().st_size < 4096, (
-        f'{path.name} exceeded 4 KB budget: {path.stat().st_size} bytes')
+    size = path.stat().st_size
+    assert size < _FIXTURE_SIZE_BUDGET, (
+        f'{path.name} exceeded {_FIXTURE_SIZE_BUDGET} byte budget: '
+        f'{size} bytes')
     with rasterio.open(path) as src:
         assert src.count == 1
         assert src.width == 16
         assert src.height == 16
-        _ = src.read(1)  # raises if the file is unreadable
+        src.read(1)  # raises if the file is unreadable
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +116,9 @@ def test_int_sentinel_round_trips_through_rasterio() -> None:
     """rasterio reads back the integer sentinel and the planted pixels."""
     with rasterio.open(FIXTURE_INT) as src:
         assert src.dtypes[0] == 'uint16'
-        # Stored as float on the rasterio side but represents the int 0.
+        # rasterio reports nodata as a float, but it represents int 0.
+        assert src.nodata is not None
+        assert not math.isnan(src.nodata)
         assert src.nodata == 0
         arr = src.read(1)
         # The generator stamps three deterministic positions on the sentinel.
