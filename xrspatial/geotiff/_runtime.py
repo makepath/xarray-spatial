@@ -62,6 +62,12 @@ _VRT_PATH_MISSING_SENTINEL = object()
 _Y_DIM_NAMES = ('y', 'lat', 'latitude', 'row')
 _X_DIM_NAMES = ('x', 'lon', 'longitude', 'col')
 
+# Temporal dim names. Used by the 3D writer validator (#1972) to refuse
+# ``(y, x, <temporal>)`` inputs that would otherwise be silently treated
+# as multiband rasters. CF / xarray conventions cover ``time`` and ``t``;
+# the rest match common upstream-pipeline aliases.
+_TIME_DIM_NAMES = ('time', 't', 'date', 'datetime', 'times', 'dates')
+
 
 class GeoTIFFFallbackWarning(UserWarning):
     """Warning emitted when a geotiff helper falls back to a slower path.

@@ -68,14 +68,19 @@ def _make_da(dims, shape, dtype=np.uint8, backend="numpy"):
 
 
 def test_repro_silent_corruption_now_raises(tmp_path):
-    """The original repro now raises a clear ValueError."""
+    """The original repro now raises a clear ValueError.
+
+    Post-#1972 the ``(time, y, x)`` layout produces the dedicated
+    temporal-leading-dim message rather than the generic ambiguous-dims
+    one, so accept either wording.
+    """
     arr = np.zeros((2, 4, 5), dtype=np.uint8)
     arr[0] = 1
     arr[1] = 2
     da = xr.DataArray(arr, dims=("time", "y", "x"),
                       attrs={"crs": "EPSG:4326"})
     out_path = tmp_path / "tmp_1812_time_y_x.tif"
-    with pytest.raises(ValueError, match="ambiguous dims"):
+    with pytest.raises(ValueError, match="ambiguous dims|temporal leading dim"):
         to_geotiff(da, str(out_path), crs=4326)
 
 
@@ -88,7 +93,7 @@ def test_eager_rejects_ambiguous_3d(tmp_path, dims, shape):
     """Eager numpy path raises ValueError on ambiguous 3D dim names."""
     da = _make_da(dims, shape, backend="numpy")
     out_path = tmp_path / f"tmp_1812_eager_{'_'.join(dims)}.tif"
-    with pytest.raises(ValueError, match="ambiguous dims"):
+    with pytest.raises(ValueError, match="ambiguous dims|temporal leading dim"):
         to_geotiff(da, str(out_path), crs=4326)
 
 
@@ -101,7 +106,7 @@ def test_dask_streaming_rejects_ambiguous_3d(tmp_path, dims, shape):
     """Dask-streaming branch raises ValueError on ambiguous 3D dim names."""
     da = _make_da(dims, shape, backend="dask")
     out_path = tmp_path / f"tmp_1812_dask_{'_'.join(dims)}.tif"
-    with pytest.raises(ValueError, match="ambiguous dims"):
+    with pytest.raises(ValueError, match="ambiguous dims|temporal leading dim"):
         to_geotiff(da, str(out_path), crs=4326)
 
 
@@ -116,7 +121,7 @@ def test_gpu_writer_rejects_ambiguous_3d(tmp_path, dims, shape):
 
     da = _make_da(dims, shape, backend="cupy")
     out_path = tmp_path / f"tmp_1812_gpu_{'_'.join(dims)}.tif"
-    with pytest.raises(ValueError, match="ambiguous dims"):
+    with pytest.raises(ValueError, match="ambiguous dims|temporal leading dim"):
         write_geotiff_gpu(da, str(out_path), crs=4326)
 
 
@@ -179,16 +184,21 @@ def test_2d_still_works(tmp_path):
 
 
 def test_error_message_actionable(tmp_path):
-    """The ValueError message tells the caller how to fix the input."""
+    """The generic ValueError message tells the caller how to fix the input.
+
+    Uses a non-temporal leading dim so the dedicated #1972 temporal path
+    does not short-circuit, keeping the assertions on the generic
+    "(band, y, x)" / "(y, x, band)" / "#1812" wording intact.
+    """
     arr = np.zeros((2, 4, 5), dtype=np.uint8)
-    da = xr.DataArray(arr, dims=("time", "y", "x"),
+    da = xr.DataArray(arr, dims=("z", "y", "x"),
                       attrs={"crs": "EPSG:4326"})
     p = tmp_path / "tmp_1812_msg.tif"
     with pytest.raises(ValueError) as excinfo:
         to_geotiff(da, str(p), crs=4326)
     msg = str(excinfo.value)
     # Mentions the offending dim layout
-    assert "('time', 'y', 'x')" in msg
+    assert "('z', 'y', 'x')" in msg
     # Mentions the accepted alternatives
     assert "(band, y, x)" in msg
     assert "(y, x, band)" in msg
