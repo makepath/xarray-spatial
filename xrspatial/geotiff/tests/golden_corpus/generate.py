@@ -164,6 +164,16 @@ def _validate_one(entry: dict[str, Any], seen_ids: set[str]) -> None:
             f"{fid}: pixel_pattern must be one of {sorted(ALLOWED_PATTERN)}"
         )
 
+    # noise_with_corners needs at least 2x2 so the four corners are
+    # distinct pixels; otherwise the corner stamping silently collapses.
+    if entry["pixel_pattern"] == "noise_with_corners":
+        if entry.get("width", 0) < 2 or entry.get("height", 0) < 2:
+            raise ManifestError(
+                f"{fid}: pixel_pattern 'noise_with_corners' requires "
+                f"width >= 2 and height >= 2, got "
+                f"{entry.get('width')}x{entry.get('height')}"
+            )
+
     # dtype must be a recognised numpy dtype.
     try:
         np.dtype(entry["dtype"])

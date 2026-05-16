@@ -156,6 +156,28 @@ def test_int_dtype_fixture_has_corner_sentinels(
     assert pixels[-1, -1] == info.min, fixture_id
 
 
+def test_noise_with_corners_rejects_tiny_rasters() -> None:
+    """``noise_with_corners`` needs >=2x2 so the four corners are distinct.
+
+    The validator should refuse a 1x1 fixture with that pattern instead of
+    silently collapsing all four corner stamps into the same pixel.
+    """
+    manifest = generate.load_manifest()
+    defaults = manifest.get("defaults") or {}
+    entry = dict(defaults)
+    entry.update({
+        "id": "tiny_corner_bad",
+        "description": "1x1 noise_with_corners must be rejected.",
+        "width": 1,
+        "height": 1,
+        "dtype": "uint8",
+        "pixel_pattern": "noise_with_corners",
+    })
+    bad = {"version": 1, "defaults": {}, "fixtures": [entry]}
+    with pytest.raises(generate.ManifestError, match="noise_with_corners"):
+        generate.validate(bad)
+
+
 def test_all_eight_dtype_fixtures_in_manifest() -> None:
     """The eight ids are present in the manifest with the expected dtypes."""
     manifest = generate.load_manifest()

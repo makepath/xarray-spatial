@@ -71,7 +71,8 @@
 #                                             min/max sentinels. Integer-only
 #                                             corner stamping; floats keep
 #                                             noise as-is.
-#   pixel_seed:       int    Seed for "noise" patterns. Default 0.
+#   pixel_seed:       int    Seed for "noise" and "noise_with_corners"
+#                            patterns. Default 0.
 #   pixel_value:      number Constant for "uniform" patterns.
 #
 #   tags:             list   Optional. Free-form tags used to filter the
