@@ -565,6 +565,13 @@ def _validate_http_url(url: str) -> str | None:
 #: O(num_tiles) bytes plus at most one threshold of slack between tiles.
 COALESCE_GAP_THRESHOLD_DEFAULT = 1 << 20  # 1 MB
 
+#: Per-tile pixel count at and above which the local and HTTP tile-read paths
+#: spread codec decode across a ``ThreadPoolExecutor``. Below this, pool
+#: startup costs outweigh the parallelism win (issue #1551). Bound is inclusive
+#: so the default ``tile_size=256`` (256*256 == 64*1024) lands on the parallel
+#: path. Used by both ``_read_tiles`` and ``_fetch_decode_cog_http_tiles``.
+_PARALLEL_DECODE_PIXEL_THRESHOLD = 64 * 1024
+
 
 def coalesce_ranges(
     ranges: list[tuple[int, int]],
@@ -2007,14 +2014,11 @@ def _read_tiles(data: bytes, ifd: IFD, header: TIFFHeader,
     # Decode tiles in parallel when the work per tile is large enough to
     # outweigh the thread-pool overhead. Uncompressed multi-tile reads also
     # benefit because numpy frombuffer + slice copies aren't free at large
-    # tile sizes. Threshold (~64K decoded pixels per tile) was picked to
-    # avoid pool overhead on small 64x64 / 128x128 tile reads. The bound
-    # is inclusive so the default tile_size=256 (256*256 == 64*1024) lands
-    # on the parallel path -- a strict `>` excluded the most common tile
-    # size in practice (issue #1551).
+    # tile sizes. Threshold is shared with the HTTP COG path below
+    # (issue #1551).
     n_tiles = len(tile_jobs)
     tile_pixels = tw * th
-    use_parallel = (n_tiles > 1 and tile_pixels >= 64 * 1024)
+    use_parallel = (n_tiles > 1 and tile_pixels >= _PARALLEL_DECODE_PIXEL_THRESHOLD)
 
     def _decode_one(job):
         band_idx, tr, tc, tile_idx, tile_samples = job
@@ -2734,14 +2738,37 @@ def _fetch_decode_cog_http_tiles(
         fetch_ranges, max_workers=workers, gap_threshold=gap)
 
     # Pass 3: decode each tile and place it (clipped to the window).
-    for (band_idx, tr, tc), tile_data in zip(placements, tile_bytes_list):
-        tile_pixels = _decode_strip_or_tile(
+    #
+    # Codec decode (deflate, zstd, LZW, ...) releases the GIL inside the
+    # C extension, so a thread pool over the per-tile decode actually
+    # overlaps codec work across cores. The local-file path in
+    # ``_read_tiles`` uses the same pattern with a 64K-pixel threshold to
+    # skip the pool-startup cost on small tiles; mirror that gate here so
+    # HTTP COG reads of wide windows benefit from the same parallelism
+    # rather than serialising the decode after a parallel fetch. The
+    # placement loop that copies pixels into ``result`` stays serial to
+    # avoid contending writes to the output buffer.
+    n_decode_tiles = len(placements)
+    decode_in_parallel = (
+        n_decode_tiles > 1 and tw * th >= _PARALLEL_DECODE_PIXEL_THRESHOLD)
+
+    def _decode_one(tile_data):
+        return _decode_strip_or_tile(
             tile_data, compression, tw, th, tile_samples,
             bps, bytes_per_sample, is_sub_byte, dtype, pred,
             byte_order=header.byte_order,
             jpeg_tables=jpeg_tables,
             masked_fill=masked_fill)
 
+    if decode_in_parallel:
+        from concurrent.futures import ThreadPoolExecutor
+        n_decode_workers = min(n_decode_tiles, _os_module.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=n_decode_workers) as pool:
+            decoded_tiles = list(pool.map(_decode_one, tile_bytes_list))
+    else:
+        decoded_tiles = [_decode_one(tile_data) for tile_data in tile_bytes_list]
+
+    for (band_idx, tr, tc), tile_pixels in zip(placements, decoded_tiles):
         # Tile position in image coordinates.
         ty0 = tr * th
         tx0 = tc * tw
