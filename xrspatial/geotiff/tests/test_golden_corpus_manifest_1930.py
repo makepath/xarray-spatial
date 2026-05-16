@@ -105,6 +105,21 @@ def test_unknown_only_id_errors():
         ),
         # Bad nodata
         (lambda e: e.update(nodata="bananas"), "nodata must be"),
+        # Predictor 3 on integer dtype
+        (
+            lambda e: e.update(predictor=3, dtype="uint16"),
+            r"predictor 3 \(floating-point\) requires a float dtype",
+        ),
+        # Predictor 2 on float dtype
+        (
+            lambda e: e.update(predictor=2, dtype="float32"),
+            r"predictor 2 \(horizontal\) requires an integer dtype",
+        ),
+        # Non-bool external_overview
+        (
+            lambda e: e.update(external_overview="yes"),
+            "external_overview must be a bool",
+        ),
     ],
 )
 def test_validator_rejects_bad_entries(mutate, match):

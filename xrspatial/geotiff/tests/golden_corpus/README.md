@@ -11,7 +11,7 @@ are wired (Phase 3).
 golden_corpus/
   manifest.yaml   # the contract: every dimension a fixture can have
   generate.py     # deterministic generator that rebuilds .tif files
-  fixtures/       # output dir (populated by Phase 2 PRs, gitignored)
+  fixtures/       # output dir; populated and committed by Phase 2 PRs
   README.md       # this file
 ```
 

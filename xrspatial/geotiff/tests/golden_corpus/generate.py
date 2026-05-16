@@ -30,7 +30,8 @@ import argparse
 import os
 import pathlib
 import sys
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 # rasterio and pyyaml are not part of the package's install_requires.
 # They are pulled in by the test extra and by typical dev environments.
@@ -216,6 +217,31 @@ def _validate_one(entry: dict[str, Any], seen_ids: set[str]) -> None:
                 f"{fid}: overviews must be a list of ints > 1, got {overviews!r}"
             )
 
+    # predictor 3 is the floating-point predictor; predictor 2 is the
+    # horizontal differencing predictor for integer data. Catching the
+    # wrong pairing here gives a clear error instead of a confusing one
+    # from rasterio at write time.
+    pred = entry["predictor"]
+    dtype_kind = np.dtype(entry["dtype"]).kind
+    if pred == 3 and dtype_kind != "f":
+        raise ManifestError(
+            f"{fid}: predictor 3 (floating-point) requires a float dtype, "
+            f"got dtype {entry['dtype']!r}"
+        )
+    if pred == 2 and dtype_kind == "f":
+        raise ManifestError(
+            f"{fid}: predictor 2 (horizontal) requires an integer dtype, "
+            f"got dtype {entry['dtype']!r}"
+        )
+
+    if "external_overview" in entry and not isinstance(
+        entry["external_overview"], bool
+    ):
+        raise ManifestError(
+            f"{fid}: external_overview must be a bool, "
+            f"got {entry['external_overview']!r}"
+        )
+
 
 def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     """Validate the parsed manifest and return resolved fixture entries.
@@ -340,6 +366,20 @@ def _rasterio_kwargs(entry: dict[str, Any]) -> dict[str, Any]:
             "deflate", "lzw", "zstd",
         ):
             kwargs["predictor"] = entry["predictor"]
+        # Codec level (deflate / zstd / lerc). GDAL accepts -1 / None to
+        # mean "default", which we represent by simply not forwarding.
+        level = entry.get("compression_level")
+        if isinstance(level, int) and level >= 0:
+            if entry["compression"] == "deflate":
+                kwargs["zlevel"] = level
+            elif entry["compression"] == "zstd":
+                kwargs["zstd_level"] = level
+            elif entry["compression"] == "jpeg":
+                kwargs["jpeg_quality"] = level
+        if entry["compression"] == "lerc":
+            max_z = entry.get("max_z_error")
+            if max_z is not None:
+                kwargs["max_z_error"] = float(max_z)
 
     if entry["byte_order"] == "big":
         # GDAL endian creation option.
@@ -402,13 +442,14 @@ def generate(
     only: Iterable[str] | None = None,
     output_dir: pathlib.Path = DEFAULT_OUTPUT_DIR,
     dry_run: bool = False,
+    manifest_path: pathlib.Path = MANIFEST_PATH,
 ) -> list[pathlib.Path]:
     """Validate the manifest and (unless dry_run) write every fixture.
 
     Returns the list of paths that were (or would be) written, in
     sorted-id order.
     """
-    manifest = load_manifest()
+    manifest = load_manifest(manifest_path)
     entries = validate(manifest)
 
     if only is not None:
