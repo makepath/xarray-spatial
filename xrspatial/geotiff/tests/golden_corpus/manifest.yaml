@@ -55,10 +55,19 @@
 #   gdal_metadata:    map    Optional. Written into the GDAL_METADATA tag as
 #                            {<domain>: {<item>: <str>}}. Domain "" is the
 #                            default. Used to exercise XML escaping and the
-#                            extra_tags safe-filter path.
-#   extra_tags:       map    Optional. Raw TIFF tag overrides written via
-#                            rasterio's `extra_tags=` kwarg. Tag name to
-#                            value, e.g. {Software: "xrspatial-corpus"}.
+#                            extra_tags safe-filter path. Recognised GDAL
+#                            domains include "", "IMAGE_STRUCTURE",
+#                            "SUBDATASETS", and any custom user domain.
+#   extra_tags:       map    Optional. Real TIFF tag overrides written as
+#                            actual IFD entries (not GDAL_METADATA XML).
+#                            Keys may be string names ("ImageDescription",
+#                            "Software", "Artist") or integers (private
+#                            tag codes like 65000). Values are strings.
+#                            The generator writes the raster with rasterio
+#                            first (for the GeoTIFF tags) and then rewrites
+#                            with tifffile to inject these as concrete TIFF
+#                            tags, since rasterio cannot emit private
+#                            numeric tags directly.
 #   pixel_pattern:    str    How the generator fills pixel data. One of:
 #                              "ramp"         deterministic linear ramp
 #                              "checker"      block checker for compression
@@ -137,6 +146,57 @@ fixtures:
       Software: xrspatial-golden-corpus
     pixel_pattern: ramp
     tags: [fast, tiled, deflate, predictor2, nodata, overviews]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: gdal_metadata_namespaced_uint16
+    description: >-
+      Stripped uint16 with GDAL_METADATA entries across multiple domains
+      (default, IMAGE_STRUCTURE, SUBDATASETS, and a custom user domain).
+      Exercises the reader's cross-domain key handling.
+    width: 16
+    height: 16
+    dtype: uint16
+    blocksize: 16
+    gdal_metadata:
+      "":
+        UNITS: meters
+        AREA_OR_POINT: Area
+      IMAGE_STRUCTURE:
+        COMPRESSION: NONE
+        INTERLEAVE: PIXEL
+      SUBDATASETS:
+        SUBDATASET_1_NAME: "fixture:band1"
+        SUBDATASET_1_DESC: "single-band view"
+      CUSTOM_DOMAIN:
+        owner: xrspatial-corpus
+        purpose: cross-domain metadata smoke
+    pixel_pattern: ramp
+    tags: [fast, metadata, gdal_metadata]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: extra_tags_uint16
+    description: >-
+      Stripped uint16 with arbitrary TIFF tags (ImageDescription, Artist,
+      Software, and a private numeric tag 65000) written as real IFD
+      entries via a tifffile post-pass. Exercises attribute round-tripping
+      of pass-through tags across backends.
+    width: 16
+    height: 16
+    dtype: uint16
+    blocksize: 16
+    extra_tags:
+      ImageDescription: "xrspatial golden corpus fixture"
+      Software: "xrspatial-golden-corpus"
+      Artist: "xarray-contrib"
+      65000: "private-tag-payload"
+    pixel_pattern: ramp
+    tags: [fast, metadata, extra_tags]
     tolerance:
       atol: 0.0
       rtol: 0.0
