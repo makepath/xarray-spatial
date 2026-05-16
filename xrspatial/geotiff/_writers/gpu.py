@@ -367,6 +367,11 @@ def write_geotiff_gpu(data: xr.DataArray | cupy.ndarray | np.ndarray,
                 if epsg is None and wkt_fallback is None:
                     wkt_fallback = crs_attr
             elif crs_attr is not None:
+                # Same gate as the kwarg path: reject bool / non-int
+                # types and confirm the EPSG resolves before writing it
+                # to disk. Without this, ``attrs={'crs': True}`` round-
+                # trips as EPSG=1 (issue #1971 follow-up).
+                _validate_crs_arg(crs_attr)
                 epsg = int(crs_attr)
             if epsg is None:
                 wkt = data.attrs.get('crs_wkt')

@@ -12,6 +12,7 @@ import one canonical version.
 """
 from __future__ import annotations
 
+import numbers
 import warnings
 
 from ._runtime import GeoTIFFFallbackWarning, _geotiff_strict_mode
@@ -76,13 +77,20 @@ def _validate_crs_arg(crs) -> None:
             f"passing True/False would otherwise be written as EPSG=1 / "
             f"EPSG=0 -- neither resolves with any CRS database."
         )
-    if isinstance(crs, int):
+    # ``numbers.Integral`` covers plain ``int`` and numpy integer scalars
+    # (``np.int32``, ``np.int64``, ...). Without this branch the type
+    # check below rejects numpy-typed CRS values that callers previously
+    # got away with (pre-PR they silently fell through to "no EPSG
+    # written"; the post-PR ``isinstance(crs, int)`` check would raise
+    # ``TypeError`` on the same input).
+    if isinstance(crs, numbers.Integral):
+        crs_int = int(crs)
         try:
             from pyproj import CRS
         except ImportError:
             return
         try:
-            CRS.from_epsg(crs)
+            CRS.from_epsg(crs_int)
         except Exception as e:
             if _geotiff_strict_mode():
                 raise
@@ -208,6 +216,11 @@ def _resolve_crs_to_wkt(crs) -> str | None:
     _validate_crs_arg(crs)
     if crs is None:
         return None
+    # ``_validate_crs_arg`` already accepts ``numbers.Integral`` (incl.
+    # numpy integer scalars); coerce here so the pyproj path and the
+    # str-only branch below see a plain ``int``.
+    if isinstance(crs, numbers.Integral) and not isinstance(crs, bool):
+        crs = int(crs)
     if not isinstance(crs, (int, str)):
         raise TypeError(
             f"crs must be int (EPSG code), str (WKT or PROJ), or None; "
