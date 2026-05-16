@@ -382,8 +382,11 @@ def _rasterio_kwargs(entry: dict[str, Any]) -> dict[str, Any]:
                 kwargs["max_z_error"] = float(max_z)
 
     if entry["byte_order"] == "big":
-        # GDAL endian creation option.
-        kwargs["endian"] = "big"
+        # GDAL GTiff driver ENDIANNESS creation option. rasterio forwards
+        # unknown uppercase kwargs to GDAL as creation options verbatim;
+        # the lowercase ``endian`` kwarg is intercepted by rasterio and
+        # silently dropped, so we route through the GDAL name directly.
+        kwargs["ENDIANNESS"] = "BIG"
 
     nd = entry.get("nodata")
     if isinstance(nd, (int, float)):
