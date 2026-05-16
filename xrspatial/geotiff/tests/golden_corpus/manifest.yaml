@@ -51,7 +51,15 @@
 #   overview_resampling: str Optional. "nearest", "average", "cubic", etc.
 #                            Default "nearest".
 #   external_overview: bool  Optional. If true, write a sidecar `.ovr` file
-#                            instead of internal overviews.
+#                            instead of internal overviews. The sidecar
+#                            file ships next to the `.tif` and must be
+#                            committed alongside it.
+#   cog:              bool   Optional. If true, write with GDAL's COG
+#                            driver (tiled, IFD-ordered, internal
+#                            overviews per https://www.cogeo.org/spec/).
+#                            Implies layout=tiled and overviews built by
+#                            the driver. The `compression` / `predictor`
+#                            entries are forwarded to the COG driver.
 #   gdal_metadata:    map    Optional. Written into the GDAL_METADATA tag as
 #                            {<domain>: {<item>: <str>}}. Domain "" is the
 #                            default. Used to exercise XML escaping and the
@@ -141,3 +149,54 @@ fixtures:
       atol: 0.0
       rtol: 0.0
       lossy: false
+
+  # ---------------------------------------------------------------------
+  # Phase 2 PR 7: overview / COG variants.
+  #
+  # These three fixtures cover the overview-storage axis:
+  #   * internal overviews living inside the .tif IFD chain
+  #   * external overviews living in a sidecar .tif.ovr file
+  #   * a Cloud-Optimised GeoTIFF layout (tiled + IFD-ordered overviews)
+  # ---------------------------------------------------------------------
+  - id: overview_internal_uint16
+    description: >-
+      Stripped uint16 with internal overviews built at decimation [2, 4].
+      Exercises the in-file overview IFD chain.
+    width: 64
+    height: 64
+    dtype: uint16
+    compression: deflate
+    overviews: [2, 4]
+    overview_resampling: nearest
+    pixel_pattern: ramp
+    tags: [fast, overviews, internal-overview]
+
+  - id: overview_external_ovr_uint16
+    description: >-
+      Stripped uint16 whose overviews live in a sidecar `.ovr` file.
+      Exercises the external-overview lookup path.
+    width: 64
+    height: 64
+    dtype: uint16
+    compression: deflate
+    overviews: [2, 4]
+    overview_resampling: nearest
+    external_overview: true
+    pixel_pattern: ramp
+    tags: [fast, overviews, external-overview]
+
+  - id: cog_internal_overview_uint16
+    description: >-
+      Cloud-Optimised GeoTIFF: tiled, internal overviews, IFD ordering
+      per https://www.cogeo.org/spec/. Written via GDAL's COG driver.
+    width: 64
+    height: 64
+    dtype: uint16
+    layout: tiled
+    tile_size: 16
+    compression: deflate
+    overviews: [2, 4]
+    overview_resampling: nearest
+    cog: true
+    pixel_pattern: ramp
+    tags: [fast, tiled, overviews, cog]
