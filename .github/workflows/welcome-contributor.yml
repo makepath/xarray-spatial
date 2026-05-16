@@ -7,19 +7,19 @@ on:
 permissions:
   pull-requests: write
   issues: read
+  contents: read
 
 jobs:
   welcome:
-    # Skip drafts and same-repo PRs (the latter sidesteps the author_association
-    # quirk where same-repo authors report as CONTRIBUTOR, per the note in
-    # copilot-review.yml). Also skip maintainers explicitly - across-fork PRs
-    # report author_association reliably.
+    # Skip drafts and same-repo PRs. The event-payload ``author_association``
+    # is unreliable across both same-repo PRs (reports CONTRIBUTOR for actual
+    # MEMBERs, per the copilot-review.yml note) and cross-fork PRs from
+    # maintainers' personal forks (also seen reporting non-MEMBER). The
+    # maintainer-skip is enforced inside the step via the collaborator
+    # permission API instead.
     if: >-
       github.event.pull_request.draft == false &&
-      github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name &&
-      github.event.pull_request.author_association != 'MEMBER' &&
-      github.event.pull_request.author_association != 'OWNER' &&
-      github.event.pull_request.author_association != 'COLLABORATOR'
+      github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
     runs-on: ubuntu-latest
     steps:
       - name: Comment if no intro issue exists
@@ -29,6 +29,20 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           REPO: ${{ github.repository }}
         run: |
+          # Skip maintainers. Query the live collaborator permission API
+          # rather than trusting the event payload's author_association, which
+          # has been observed to misreport MEMBERs as plain CONTRIBUTOR on
+          # cross-fork PRs (PR #1968 welcomed an admin maintainer).
+          perm=$(gh api "repos/$REPO/collaborators/$PR_AUTHOR/permission" \
+            --jq '.permission' 2>/dev/null || echo "none")
+          echo "Collaborator permission for $PR_AUTHOR: $perm"
+          case "$perm" in
+            admin|maintain|write)
+              echo "Author is a maintainer; skipping welcome comment."
+              exit 0
+              ;;
+          esac
+
           count=$(gh issue list \
             --repo "$REPO" \
             --author "$PR_AUTHOR" \
