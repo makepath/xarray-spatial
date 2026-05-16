@@ -80,7 +80,7 @@ ALLOWED_COMPRESSION = {
     "none", "deflate", "lzw", "lerc", "jpeg", "packbits", "zstd",
 }
 ALLOWED_PHOTOMETRIC = {"minisblack", "miniswhite", "rgb", "ycbcr"}
-ALLOWED_PATTERN = {"ramp", "checker", "noise", "uniform"}
+ALLOWED_PATTERN = {"ramp", "checker", "noise", "uniform", "noise_with_corners"}
 ALLOWED_PREDICTOR = {1, 2, 3}
 
 
@@ -291,7 +291,7 @@ def _make_pixels(entry: dict[str, Any]) -> np.ndarray:
         cols = np.arange(w)[None, :]
         single = ((rows // 8 + cols // 8) % 2).astype(np.float64)
         flat = np.broadcast_to(single, (bands, h, w)).reshape(-1).astype(np.float64)
-    elif pattern == "noise":
+    elif pattern in ("noise", "noise_with_corners"):
         rng = np.random.default_rng(int(entry.get("pixel_seed", 0)))
         flat = rng.random(n)
     elif pattern == "uniform":
@@ -304,13 +304,28 @@ def _make_pixels(entry: dict[str, Any]) -> np.ndarray:
         # Map [0, 1) for noise / [0, n) for ramp into the dtype range.
         if pattern in ("ramp", "checker", "uniform"):
             arr = flat % (info.max - info.min + 1) + info.min
-        else:  # noise
+        else:  # noise / noise_with_corners
             arr = flat * (info.max - info.min) + info.min
         arr = arr.astype(dtype)
     else:
         arr = flat.astype(dtype)
 
-    return arr.reshape(bands, h, w)
+    arr = arr.reshape(bands, h, w)
+
+    # ``noise_with_corners`` plants the dtype's min and max sentinels in the
+    # four corner pixels of every band so dtype-edge handling gets exercised
+    # by the corpus. Floats keep noise as-is; a NaN sentinel is a separate
+    # property tracked by Phase 2 PR 6 (nodata).
+    if pattern == "noise_with_corners" and dtype.kind in ("i", "u"):
+        info = np.iinfo(dtype)
+        lo = dtype.type(info.min)
+        hi = dtype.type(info.max)
+        arr[:, 0, 0] = lo
+        arr[:, 0, -1] = hi
+        arr[:, -1, 0] = hi
+        arr[:, -1, -1] = lo
+
+    return arr
 
 
 def _resolve_crs(crs_spec: dict[str, Any] | None):
