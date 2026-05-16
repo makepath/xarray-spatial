@@ -15,6 +15,7 @@ from .._runtime import (
     _VRT_PATH_DEPRECATED_SENTINEL,
     _VRT_PATH_MISSING_SENTINEL,
 )
+from .._validation import _validate_nodata_arg
 
 
 def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
@@ -140,6 +141,15 @@ def write_vrt(path: str = _VRT_PATH_MISSING_SENTINEL,
             stacklevel=2,
         )
         crs = crs_wkt
+
+    # Reject bool / non-numeric nodata at the entry point so write_vrt
+    # matches the to_geotiff / write_geotiff_gpu surface. ``bool`` is a
+    # subclass of ``int`` in Python, so a typo like ``nodata=True`` would
+    # slip past every downstream ``isinstance(nodata, (int, float))``
+    # guard and the VRT XML emitter would write ``<NoDataValue>True
+    # </NoDataValue>``. No reader parses ``"True"`` as numeric, so the
+    # round-trip would silently drop the sentinel. See issue #1921.
+    _validate_nodata_arg(nodata)
 
     resolved_wkt = _resolve_crs_to_wkt(crs)
 

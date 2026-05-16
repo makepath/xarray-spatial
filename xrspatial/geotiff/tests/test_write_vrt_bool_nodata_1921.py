@@ -2,19 +2,18 @@
 
 Issue #1911 added the ``isinstance(nodata, (bool, np.bool_)) -> TypeError``
 guard at the ``to_geotiff`` entry point, with a belt-and-braces copy in
-``_geotags.build_geo_tags``. The same parity check was not added to the
+``_geotags.build_geo_tags``. Issue #1921 extended the same parity to the
 sibling writers:
 
-* ``write_vrt`` -- currently writes ``<NoDataValue>True</NoDataValue>``
-  into the VRT XML. No reader parses ``"True"`` as numeric, so the
-  round-trip silently drops the sentinel (bug, see issue #1921).
-* ``write_geotiff_gpu`` (direct call) -- currently raises ``TypeError``,
-  but only because the deeper ``build_geo_tags`` guard fires; there is
-  no explicit top-of-function check. A future refactor moving the
-  ``build_geo_tags`` guard could regress this without anyone noticing.
-
-This file pins both behaviours so the next refactor that touches either
-writer surfaces the parity gap.
+* ``write_vrt`` -- now rejects bool nodata at the public wrapper via
+  ``_validate_nodata_arg`` and again inside ``_vrt.write_vrt`` as
+  defense-in-depth. Previously wrote ``<NoDataValue>True</NoDataValue>``
+  into the VRT XML, which no reader parses as numeric, so the
+  round-trip silently dropped the sentinel.
+* ``write_geotiff_gpu`` (direct call) -- already routes through
+  ``_validate_nodata_arg`` near the top of the function. Pinning the
+  behaviour here so a refactor that drops that call surfaces the
+  regression at the parity boundary, not inside ``build_geo_tags``.
 
 Found by ``/sweep-test-coverage`` (pass 15 / 2026-05-15).
 """
@@ -54,39 +53,37 @@ def src_geotiff(uint8_da, tmp_path):
     "bad",
     [True, False, np.bool_(True), np.bool_(False)],
 )
-@pytest.mark.xfail(
-    reason="issue #1921: write_vrt currently writes str(bool) into "
-           "<NoDataValue>; the fix should raise TypeError up front.",
-    strict=True,
-)
 def test_write_vrt_rejects_bool_nodata(src_geotiff, tmp_path, bad):
-    """``write_vrt`` should raise ``TypeError`` for any bool nodata.
+    """``write_vrt`` raises ``TypeError`` for any bool nodata.
 
-    Will start passing once issue #1921 is fixed; flip the xfail to a
-    plain assertion at that point.
+    Fixed in issue #1921 by routing the public ``write_vrt`` wrapper
+    through ``_validate_nodata_arg`` and adding a defense-in-depth check
+    inside the internal ``_vrt.write_vrt``.
     """
     vrt_path = str(tmp_path / "out_1921_bad.vrt")
     with pytest.raises(TypeError, match="nodata must be numeric"):
         write_vrt(vrt_path, [src_geotiff], nodata=bad)
 
 
-def test_write_vrt_with_bool_nodata_currently_emits_string(
-        src_geotiff, tmp_path):
-    """Pins the current (buggy) behaviour so the fix is visible as a diff.
+@pytest.mark.parametrize(
+    "bad",
+    [True, False, np.bool_(True), np.bool_(False)],
+)
+def test_write_vrt_internal_rejects_bool_nodata(src_geotiff, tmp_path, bad):
+    """Direct call to the internal ``_vrt.write_vrt`` also rejects bool.
 
-    Today the VRT XML contains ``<NoDataValue>True</NoDataValue>``. Once
-    issue #1921 is fixed, ``write_vrt`` will raise ``TypeError`` instead;
-    this test is then expected to fail and gets removed in the same PR.
+    Defense-in-depth: the public wrapper's ``_validate_nodata_arg`` is
+    skipped when callers reach the internal symbol directly (e.g. the
+    multi-tile dask write path in ``_writers/eager.py`` that calls
+    ``_vrt.write_vrt`` after writing per-tile GeoTIFFs, or a future
+    split of the wrapper). Parametrize over both ``bool`` and
+    ``np.bool_`` polarities so a refactor that narrows the internal
+    guard to just ``bool`` surfaces here, not in user code. See #1921.
     """
-    vrt_path = str(tmp_path / "out_1921_pin.vrt")
-    try:
-        write_vrt(vrt_path, [src_geotiff], nodata=True)
-    except TypeError:
-        pytest.skip("issue #1921 fixed: write_vrt now rejects bool nodata.")
-    with open(vrt_path) as f:
-        content = f.read()
-    assert "<NoDataValue>True</NoDataValue>" in content, (
-        "expected the current buggy str(True) emission")
+    from xrspatial.geotiff._vrt import write_vrt as _internal_write_vrt
+    vrt_path = str(tmp_path / "out_1921_internal.vrt")
+    with pytest.raises(TypeError, match="nodata must be numeric"):
+        _internal_write_vrt(vrt_path, [src_geotiff], nodata=bad)
 
 
 @pytest.mark.parametrize(
@@ -125,9 +122,11 @@ def test_write_vrt_accepts_none_nodata(src_geotiff, tmp_path):
 def test_write_geotiff_gpu_rejects_bool_nodata(uint8_da, tmp_path, bad):
     """Direct ``write_geotiff_gpu`` call rejects bool nodata.
 
-    Currently raises ``TypeError`` only because the deeper
-    ``build_geo_tags`` guard fires. Pinning the behaviour so a refactor
-    that drops the deeper guard surfaces here, not in user code.
+    The top-of-function ``_validate_nodata_arg`` call (added by #1973)
+    fires first; the deeper ``build_geo_tags`` guard is a second line
+    of defense. Pinning the behaviour so a refactor that drops the
+    top-of-function call surfaces here, not deep inside the geotag
+    builder.
     """
     from xrspatial.geotiff import write_geotiff_gpu
     path = str(tmp_path / "gpu_1921_bad.tif")
