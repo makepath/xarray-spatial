@@ -141,3 +141,126 @@ fixtures:
       atol: 0.0
       rtol: 0.0
       lossy: false
+
+  # ---------------------------------------------------------------------
+  # Phase 2 PR 5 -- compression coverage.
+  #
+  # Five major codecs across six entries: uncompressed (none), deflate
+  # (with predictor 2 over int and predictor 3 over float), lzw (with
+  # predictor 2 over int), lerc on float, and jpeg in YCbCr on uint8.
+  # The jpeg entry is intrinsically lossy; the oracle is called with
+  # lossy=True for that one.
+  #
+  # Source data uses the "checker" pattern so compression has structure
+  # to exploit; arrays are kept tiny (under 8 KB target file size).
+  # LERC and JPEG availability depends on the GDAL build; the smoke
+  # test skips those cells when the codec is unavailable.
+  # ---------------------------------------------------------------------
+
+  - id: compression_none_uint8
+    description: >-
+      Baseline uncompressed uint8. Establishes the size floor and exercises
+      the no-codec write path for parity with the compressed cells.
+    width: 64
+    height: 64
+    dtype: uint8
+    compression: none
+    predictor: 1
+    pixel_pattern: checker
+    tags: [compression, none]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: compression_deflate_predictor2_uint16
+    description: >-
+      Deflate with predictor 2 (horizontal differencing) on uint16.
+      Predictor 2 is the standard integer predictor; this is the most
+      common deflate configuration in the wild.
+    width: 64
+    height: 64
+    dtype: uint16
+    compression: deflate
+    predictor: 2
+    compression_level: 6
+    pixel_pattern: checker
+    tags: [compression, deflate, predictor2]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: compression_deflate_predictor3_float32
+    description: >-
+      Deflate with predictor 3 (floating-point predictor) on float32.
+      Predictor 3 is float-only and exercises the byte-shuffled write
+      path that hit issue #1313.
+    width: 64
+    height: 64
+    dtype: float32
+    compression: deflate
+    predictor: 3
+    compression_level: 6
+    pixel_pattern: checker
+    tags: [compression, deflate, predictor3, float]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: compression_lzw_predictor2_int16
+    description: >-
+      LZW with predictor 2 on signed int16. Covers the LZW codec branch
+      and the signed-integer predictor combination.
+    width: 64
+    height: 64
+    dtype: int16
+    compression: lzw
+    predictor: 2
+    pixel_pattern: checker
+    tags: [compression, lzw, predictor2]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: compression_lerc_float32
+    description: >-
+      LERC on float32 with a small max_z_error. LERC is bit-exact only
+      when max_z_error is 0; this fixture asserts the lossless setting
+      (max_z_error 0) so it is comparable to the other codecs.
+    width: 64
+    height: 64
+    dtype: float32
+    compression: lerc
+    predictor: 1
+    max_z_error: 0.0
+    pixel_pattern: checker
+    tags: [compression, lerc, float]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: compression_jpeg_uint8_ycbcr
+    description: >-
+      JPEG in YCbCr photometric on 3-band uint8 tiled raster. JPEG is
+      intrinsically lossy; the oracle is invoked with lossy=True for
+      this cell. Strict bit-exact comparison is expected to fail.
+    width: 64
+    height: 64
+    bands: 3
+    dtype: uint8
+    layout: tiled
+    tile_size: 32
+    compression: jpeg
+    predictor: 1
+    compression_level: 75
+    photometric: ycbcr
+    pixel_pattern: checker
+    tags: [compression, jpeg, lossy, ycbcr]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: true
