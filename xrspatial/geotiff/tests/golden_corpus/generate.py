@@ -286,6 +286,16 @@ def _validate_one(entry: dict[str, Any], seen_ids: set[str]) -> None:
                     f"got {k!r}"
                 )
 
+    if "cog" in entry and not isinstance(entry["cog"], bool):
+        raise ManifestError(
+            f"{fid}: cog must be a bool, got {entry['cog']!r}"
+        )
+    if entry.get("cog") and entry.get("external_overview"):
+        raise ManifestError(
+            f"{fid}: cog=true is incompatible with external_overview=true; "
+            f"the COG spec requires internal overviews"
+        )
+
 
 def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     """Validate the parsed manifest and return resolved fixture entries.
@@ -629,16 +639,81 @@ def _apply_extra_tags_with_tifffile(
     tifffile.imwrite(str(path), pixels, **write_kwargs)
 
 
+def _write_cog_fixture(
+    entry: dict[str, Any], out_path: pathlib.Path, pixels: np.ndarray
+) -> None:
+    """Materialise a COG fixture by staging a plain GTiff then copying
+    through GDAL's ``COG`` driver.
+
+    The COG driver enforces tiling and IFD ordering per
+    https://www.cogeo.org/spec/. Going through ``rasterio.shutil.copy``
+    is the supported way to invoke it from rasterio.
+    """
+    import tempfile
+
+    import rasterio
+    from rasterio.shutil import copy as rio_copy
+
+    base_kwargs = _rasterio_kwargs(entry)
+    # The COG driver owns these settings; passing them through the source
+    # GTiff is fine, but we strip the codec/predictor from the staging
+    # write so the source is cheap and let the COG copy apply compression.
+    staging_kwargs = dict(base_kwargs)
+    for k in ("compress", "predictor", "zlevel", "zstd_level", "jpeg_quality"):
+        staging_kwargs.pop(k, None)
+    staging_kwargs["tiled"] = True
+    staging_kwargs.setdefault("blockxsize", entry.get("tile_size", 16))
+    staging_kwargs.setdefault("blockysize", entry.get("tile_size", 16))
+
+    with tempfile.TemporaryDirectory() as td:
+        staging = pathlib.Path(td) / f"{entry['id']}.staging.tif"
+        with rasterio.open(str(staging), "w", **staging_kwargs) as dst:
+            for b in range(entry["bands"]):
+                dst.write(pixels[b], b + 1)
+            gdal_md = entry.get("gdal_metadata") or {}
+            for domain, items in sorted(gdal_md.items()):
+                dst.update_tags(
+                    ns=domain,
+                    **{str(k): str(v) for k, v in sorted(items.items())},
+                )
+            extra_tags = entry.get("extra_tags") or {}
+            if extra_tags:
+                dst.update_tags(
+                    **{str(k): str(v) for k, v in sorted(extra_tags.items())}
+                )
+
+        cog_kwargs: dict[str, Any] = {
+            "driver": "COG",
+            "blocksize": entry.get("tile_size", 16),
+            "overview_resampling": entry.get("overview_resampling", "nearest"),
+        }
+        if entry["compression"] != "none":
+            cog_kwargs["compress"] = entry["compression"]
+            level = entry.get("compression_level")
+            if isinstance(level, int) and level >= 0:
+                if entry["compression"] == "deflate":
+                    cog_kwargs["level"] = level
+        rio_copy(str(staging), str(out_path), **cog_kwargs)
+
+
 def write_fixture(entry: dict[str, Any], output_dir: pathlib.Path) -> pathlib.Path:
-    """Materialise one fixture. Returns the written path.
+    """Materialise one fixture. Returns the written `.tif` path.
 
     Real writes only run when called by the non-dry-run code path.
+    Fixtures with ``external_overview: true`` also emit a sidecar
+    ``<id>.tif.ovr`` next to the returned path.
     """
     import rasterio
 
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f"{entry['id']}.tif"
     pixels = _make_pixels(entry)
+
+    if entry.get("cog"):
+        _write_cog_fixture(entry, out_path, pixels)
+        os.utime(out_path, (DETERMINISTIC_EPOCH, DETERMINISTIC_EPOCH))
+        return out_path
+
     kwargs = _rasterio_kwargs(entry)
     extra_tags = entry.get("extra_tags") or {}
 
@@ -657,6 +732,24 @@ def write_fixture(entry: dict[str, Any], output_dir: pathlib.Path) -> pathlib.Pa
                 Resampling, entry.get("overview_resampling", "nearest")
             )
             dst.build_overviews(sorted(overviews), resamp)
+
+    # External overviews are built by re-opening the file in `r+` with
+    # the TIFF_USE_OVR=YES env hint so GDAL writes a `<path>.ovr` sidecar
+    # instead of appending an internal overview IFD. The sidecar is
+    # committed alongside the .tif.
+    overviews = entry.get("overviews") or []
+    if overviews and entry.get("external_overview"):
+        from rasterio.enums import Resampling
+        resamp = getattr(
+            Resampling, entry.get("overview_resampling", "nearest")
+        )
+        with rasterio.Env(TIFF_USE_OVR="YES", COMPRESS_OVERVIEW="DEFLATE"):
+            with rasterio.open(str(out_path), "r+") as dst:
+                dst.build_overviews(sorted(overviews), resamp)
+        os.utime(
+            out_path.with_suffix(out_path.suffix + ".ovr"),
+            (DETERMINISTIC_EPOCH, DETERMINISTIC_EPOCH),
+        )
 
     if extra_tags:
         _apply_extra_tags_with_tifffile(out_path, extra_tags)
