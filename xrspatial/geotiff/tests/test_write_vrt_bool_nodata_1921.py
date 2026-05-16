@@ -65,19 +65,25 @@ def test_write_vrt_rejects_bool_nodata(src_geotiff, tmp_path, bad):
         write_vrt(vrt_path, [src_geotiff], nodata=bad)
 
 
-def test_write_vrt_internal_rejects_bool_nodata(src_geotiff, tmp_path):
+@pytest.mark.parametrize(
+    "bad",
+    [True, False, np.bool_(True), np.bool_(False)],
+)
+def test_write_vrt_internal_rejects_bool_nodata(src_geotiff, tmp_path, bad):
     """Direct call to the internal ``_vrt.write_vrt`` also rejects bool.
 
     Defense-in-depth: the public wrapper's ``_validate_nodata_arg`` is
     skipped when callers reach the internal symbol directly (e.g. the
-    auto-dispatch ``to_geotiff`` path that builds a sibling VRT, or a
-    future split of the wrapper). Pinning the duplicate check so a
-    refactor that drops the wrapper guard surfaces here. See #1921.
+    multi-tile dask write path in ``_writers/eager.py`` that calls
+    ``_vrt.write_vrt`` after writing per-tile GeoTIFFs, or a future
+    split of the wrapper). Parametrize over both ``bool`` and
+    ``np.bool_`` polarities so a refactor that narrows the internal
+    guard to just ``bool`` surfaces here, not in user code. See #1921.
     """
     from xrspatial.geotiff._vrt import write_vrt as _internal_write_vrt
     vrt_path = str(tmp_path / "out_1921_internal.vrt")
     with pytest.raises(TypeError, match="nodata must be numeric"):
-        _internal_write_vrt(vrt_path, [src_geotiff], nodata=True)
+        _internal_write_vrt(vrt_path, [src_geotiff], nodata=bad)
 
 
 @pytest.mark.parametrize(
@@ -116,9 +122,11 @@ def test_write_vrt_accepts_none_nodata(src_geotiff, tmp_path):
 def test_write_geotiff_gpu_rejects_bool_nodata(uint8_da, tmp_path, bad):
     """Direct ``write_geotiff_gpu`` call rejects bool nodata.
 
-    Currently raises ``TypeError`` only because the deeper
-    ``build_geo_tags`` guard fires. Pinning the behaviour so a refactor
-    that drops the deeper guard surfaces here, not in user code.
+    The top-of-function ``_validate_nodata_arg`` call (added by #1973)
+    fires first; the deeper ``build_geo_tags`` guard is a second line
+    of defense. Pinning the behaviour so a refactor that drops the
+    top-of-function call surfaces here, not deep inside the geotag
+    builder.
     """
     from xrspatial.geotiff import write_geotiff_gpu
     path = str(tmp_path / "gpu_1921_bad.tif")
