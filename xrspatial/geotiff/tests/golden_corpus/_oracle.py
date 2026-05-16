@@ -231,25 +231,26 @@ _CANONICAL_ATTR_KEYS_PROVISIONAL: tuple[str, ...] = (
 
 
 def _assert_canonical_attrs(
-    ref_attrs: dict[str, Any],
-    candidate_da: xr.DataArray,
+    _ref_attrs: dict[str, Any],
+    _candidate_da: xr.DataArray,
 ) -> None:
     """Assert the canonical-attrs subset.
 
-    TODO(#1984): Expand this to the full canonical attrs contract once it
-    settles. Today it only covers the obvious subset (crs/transform/nodata/
-    dtype). Those four are already checked structurally by the dedicated
-    helpers in this module; this hook exists so a later PR can layer on
-    canonical-tier checks (e.g. ``raster_type``, resolution keys, GDAL
-    metadata canonicalisation) without touching the call sites.
+    No-op today on purpose. The four sibling helpers
+    (``_assert_dtype`` / ``_assert_transform`` / ``_assert_crs`` /
+    ``_assert_nodata``) cover the provisional contract; this stub exists
+    so test code references stay stable when issue #1984 lands.
+
+    TODO(#1984): Expand to the full canonical-attrs contract once it
+    settles. The provisional key set is in
+    ``_CANONICAL_ATTR_KEYS_PROVISIONAL``. Likely additions when #1984
+    lands: ``raster_type`` (PixelIsArea vs PixelIsPoint), resolution
+    keys, and a canonicalised view of GDAL metadata. Pass-through tags
+    (``gdal_metadata``, ``extra_tags``) stay out of scope.
+
+    Parameters are prefixed with ``_`` because they are deliberately
+    unused today; rename them when this function gains a body.
     """
-    # No-op today on purpose. The four checks below
-    # (_assert_dtype/_assert_transform/_assert_crs/_assert_nodata)
-    # implement the provisional contract. Keep this function so test code
-    # references stay stable when #1984 lands.
-    _ = _CANONICAL_ATTR_KEYS_PROVISIONAL  # silence unused warning
-    _ = ref_attrs
-    _ = candidate_da
 
 
 # ---------------------------------------------------------------------------
@@ -263,20 +264,47 @@ def _assert_dtype(ref_dtype: np.dtype, candidate_da: xr.DataArray) -> None:
         f'dtype mismatch: rasterio={ref_dtype}, xrspatial={cand_dtype}')
 
 
-def _assert_transform(ref_transform, candidate_da: xr.DataArray) -> None:
+def _assert_transform(
+    ref_transform,
+    candidate_da: xr.DataArray,
+    *,
+    ref_has_georef: bool,
+) -> None:
+    """Compare transforms.
+
+    ``ref_has_georef`` is True when the rasterio source carried real
+    GeoTIFF tags (i.e. a CRS *or* a non-identity transform). When it is
+    False the file is bare -- rasterio returns ``Affine.identity()`` for
+    such files regardless of pixel size -- and xrspatial may legitimately
+    drop the transform attr (#1710). Identity-equal transforms alone are
+    NOT enough to declare "no georef": a real raster written at origin
+    (0, 0) with 1.0 pixel size also matches identity.
+    """
     cand_t = _candidate_transform(candidate_da)
-    if ref_transform is None or _is_default_transform(ref_transform):
-        # The fixture has no real georef. xrspatial may legitimately
-        # carry no transform attr at all (#1710); skip the comparison.
+    if not ref_has_georef:
+        # Bare file. The candidate may legitimately:
+        # * carry no transform attr at all (xrspatial's no-georef path,
+        #   #1710),
+        # * carry an identity transform attr,
+        # * carry a transform derived from integer-pixel-center coords
+        #   (origin -0.5, pixel size 1.0 -- what xrspatial's
+        #   ``coords_from_pixel_geometry`` emits with ``has_georef=False``).
+        # We require only that the candidate also disclaims a real georef
+        # via one of those routes; we do not compare the transform tuple
+        # itself, because rasterio synthesises ``Affine.identity()`` here
+        # while xrspatial may produce any of the three forms above.
         if cand_t is None:
+            return
+        if candidate_da.attrs.get('transform') is None:
+            # Came from coord derivation only -- treat as no transform.
             return
         if _is_default_transform(cand_t):
             return
         raise AssertionError(
             'fixture has no georef but candidate carries a non-identity '
-            f'transform: {tuple(cand_t)}')
+            f'transform attr: {tuple(cand_t)}')
     assert cand_t is not None, (
-        'rasterio transform is non-default but candidate has no transform '
+        'rasterio transform is set but candidate has no transform '
         f'attr/coords. ref={tuple(ref_transform)}')
     assert _affine_close(ref_transform, cand_t), (
         f'transform mismatch:\n  rasterio:  {tuple(ref_transform)[:6]}\n'
@@ -286,6 +314,20 @@ def _assert_transform(ref_transform, candidate_da: xr.DataArray) -> None:
 def _is_default_transform(t) -> bool:
     rasterio = _require_rasterio()
     return tuple(t)[:6] == tuple(rasterio.transform.Affine.identity())[:6]
+
+
+def _ref_has_georef(src) -> bool:
+    """Has the rasterio source got any georef at all?
+
+    True if it has a CRS *or* a non-identity transform. rasterio returns
+    ``Affine.identity()`` for files with no georef, but a fully-real
+    raster can also have an identity transform (origin 0, 1.0 pixels),
+    so identity alone is not a "no georef" signal -- pair it with the
+    absence of a CRS.
+    """
+    has_crs = src.crs is not None
+    has_non_id_transform = not _is_default_transform(src.transform)
+    return has_crs or has_non_id_transform
 
 
 def _assert_crs(ref_crs, candidate_da: xr.DataArray) -> None:
@@ -378,6 +420,7 @@ def compare_to_oracle(
         ref_transform = src.transform
         ref_crs = src.crs
         ref_nodata = src.nodata
+        ref_has_georef = _ref_has_georef(src)
         ref_attrs = {
             'crs': ref_crs,
             'transform': ref_transform,
@@ -386,7 +429,7 @@ def compare_to_oracle(
         }
 
     _assert_dtype(ref_dtype, candidate_da)
-    _assert_transform(ref_transform, candidate_da)
+    _assert_transform(ref_transform, candidate_da, ref_has_georef=ref_has_georef)
     _assert_crs(ref_crs, candidate_da)
     _assert_nodata(ref_nodata, candidate_da)
     if lossy:

@@ -282,7 +282,12 @@ def test_lossy_still_rejects_transform_mismatch(tmp_path: Path) -> None:
 
 
 def test_lossy_rejects_shape_mismatch(tmp_path: Path) -> None:
-    """In lossy mode, the shape check still trips when sizes disagree."""
+    """In lossy mode, the shape check still trips when sizes disagree.
+
+    This is the only test that exercises ``_assert_shape_only``; strict
+    mode goes through ``_assert_pixels`` instead, which catches shape
+    mismatches as part of the bit-exact comparison.
+    """
     # Same pixel size + CRS + origin on both sides, but the fixture is 4x4
     # while the candidate is 5x5 -- only shape disagrees.
     transform = from_origin(0.0, 4.0, 1.0, 1.0)
@@ -300,6 +305,57 @@ def test_lossy_rejects_shape_mismatch(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Missing-file handling
 # ---------------------------------------------------------------------------
+
+def test_identity_transform_with_crs_still_compared(tmp_path: Path) -> None:
+    """Regression: an identity-shaped transform on a real raster (CRS set)
+    must still go through the transform comparison.
+
+    Earlier the oracle treated any identity-equal ref transform as
+    "no georef" and short-circuited. That hid bugs where the candidate
+    drifted from the fixture's identity transform on real rasters
+    written at origin (0, 0) with pixel size 1.0. The fix keys "no
+    georef" off ``src.crs is None and src.transform.is_identity``
+    together, not transform alone.
+    """
+    from rasterio.transform import Affine
+    data = np.arange(4, dtype=np.int16).reshape(2, 2)
+    fixture = _write_tiff(
+        tmp_path / 'id_with_crs.tif',
+        data,
+        transform=Affine.identity(),
+        crs='EPSG:4326',
+    )
+    # Candidate carries a SHIFTED transform; oracle must catch it.
+    shifted = from_origin(99.0, 2.0, 1.0, 1.0)
+    cand = _build_candidate(data, transform=shifted)
+    with pytest.raises(AssertionError, match='transform mismatch'):
+        compare_to_oracle(fixture, cand)
+
+
+def test_no_georef_fixture_tolerates_missing_candidate_transform(
+    tmp_path: Path,
+) -> None:
+    """A fixture with no CRS *and* identity transform may match a candidate
+    that drops the transform attr entirely (xrspatial #1710 behaviour).
+    """
+    from rasterio.transform import Affine
+    data = np.zeros((2, 2), dtype=np.int16)
+    fixture = _write_tiff(
+        tmp_path / 'no_georef.tif',
+        data,
+        transform=Affine.identity(),
+        crs=None,
+    )
+    # Build a candidate by hand with no transform attr, no CRS attr,
+    # integer-pixel coords.
+    cand = xr.DataArray(
+        data,
+        dims=('y', 'x'),
+        coords={'y': np.arange(2), 'x': np.arange(2)},
+        attrs={},
+    )
+    compare_to_oracle(fixture, cand)
+
 
 def test_missing_fixture_raises_filenotfounderror(tmp_path: Path) -> None:
     cand = _build_candidate(
