@@ -67,9 +67,12 @@ COMPRESSION_FIXTURES: tuple[tuple[str, bool], ...] = (
 def _fixture_path(fid: str) -> pathlib.Path:
     """Return the on-disk path for a fixture id, skipping if absent.
 
-    A missing file usually means the GDAL build lacks the codec (LERC or
-    JPEG most commonly). The generator silently skips writing in that
-    case, so we treat absence as a clean skip rather than a hard fail.
+    A missing file usually means the maintainer who regenerated the
+    corpus had a GDAL build without the relevant codec (LERC or JPEG
+    are the common offenders). The committed fixtures in this PR were
+    built with both codecs available; this guard exists so a contributor
+    rebuilding locally without those drivers does not see a hard fail
+    for a file they could not produce.
     """
     p = FIXTURES_DIR / f"{fid}.tif"
     if not p.exists():
@@ -176,13 +179,12 @@ def test_jpeg_lossy_mode_required() -> None:
     # Strict mode: the rasterio-decoded pixels match themselves trivially.
     # To prove the lossy contract we need to perturb the candidate so
     # strict comparison fails while shape/dtype/transform/CRS all match.
-    perturbed_data = cand.data.copy()
-    # Bump every pixel by 1 -- still in uint8 range for the checker
-    # pattern (values are 0 or 255 in YCbCr-encoded form, but the rasterio
-    # decoded pixels are in [0, 255]; +1 wraps 255 to 0 for one block
-    # which is fine for the assertion).
+    # Bump every pixel by 1 (clipped to uint8 range). The decoded YCbCr
+    # checker pattern lands well below 255 so clipping is a no-op in
+    # practice; the assertion is that the perturbed array is no longer
+    # bit-equal to the rasterio read.
     perturbed_data = (
-        perturbed_data.astype(np.int32) + 1
+        cand.data.astype(np.int32) + 1
     ).clip(0, 255).astype(np.uint8)
     perturbed = xr.DataArray(
         perturbed_data,
