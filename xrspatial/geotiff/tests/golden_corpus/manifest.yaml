@@ -1,0 +1,143 @@
+# Golden corpus manifest for geotiff backend parity tests.
+#
+# This file is the contract for what a fixture is. The generator
+# script `generate.py` reads it and rebuilds the TIFFs deterministically.
+# Adding a new fixture is a manifest edit plus a re-run of the generator.
+#
+# Schema (see generate.py for the authoritative validator):
+#
+# version: integer. Bumped when the schema shape changes.
+# defaults: optional map applied to every fixture before its own keys.
+# fixtures: list of fixture entries. Each entry has these keys:
+#
+#   id:               str    Stable identifier, also used as the file stem.
+#   description:      str    One-line human summary.
+#   width:            int    Pixel width.
+#   height:           int    Pixel height.
+#   bands:            int    Number of bands (>= 1).
+#   dtype:            str    numpy dtype string, e.g. "uint8", "int16",
+#                            "float32", "float64".
+#   byte_order:       str    "little" or "big". Native is "little".
+#   layout:           str    "stripped" or "tiled".
+#   tile_size:        int    Tile edge in pixels. Required when layout=tiled.
+#                            Must be a multiple of 16 per the TIFF spec.
+#   blocksize:        int    Rows per strip. Required when layout=stripped.
+#   planar_config:    str    "contig" (chunky) or "separate" (planar).
+#   compression:      str    one of:
+#                              none, deflate, lzw, lerc, jpeg, packbits
+#   predictor:        int    1 (none), 2 (horizontal), or 3 (floating point).
+#                            Only meaningful for deflate / lzw / zstd.
+#   compression_level: int   Codec-specific level. Optional. -1 means default.
+#   max_z_error:      float  LERC max_z_error. Optional, LERC only.
+#   photometric:      str    "minisblack", "miniswhite", "rgb", "ycbcr".
+#                            "miniswhite" exercises the inverted-mask path.
+#   nodata:           any    Nodata sentinel value. Allowed forms:
+#                              null              no nodata tag at all
+#                              <number>          integer or float sentinel
+#                              "nan"             float NaN (string-encoded so
+#                                                YAML stays portable)
+#                              "miniswhite"      no nodata tag, photometric
+#                                                miniswhite acts as the mask
+#   crs:              map    CRS spec. Exactly one of:
+#                              {epsg: <int>}                    EPSG code
+#                              {wkt: <str>}                     full WKT 2
+#                              {citation: <str>}                citation-only,
+#                                                               no projection
+#                              null                             no CRS
+#   transform:        list   Affine as [a, b, c, d, e, f]. c, f are origin.
+#                            Optional; defaults applied per-fixture.
+#   overviews:        list   Optional. Decimation factors, e.g. [2, 4].
+#                            Empty list or omitted means no overviews.
+#   overview_resampling: str Optional. "nearest", "average", "cubic", etc.
+#                            Default "nearest".
+#   external_overview: bool  Optional. If true, write a sidecar `.ovr` file
+#                            instead of internal overviews.
+#   gdal_metadata:    map    Optional. Written into the GDAL_METADATA tag as
+#                            {<domain>: {<item>: <str>}}. Domain "" is the
+#                            default. Used to exercise XML escaping and the
+#                            extra_tags safe-filter path.
+#   extra_tags:       map    Optional. Raw TIFF tag overrides written via
+#                            rasterio's `extra_tags=` kwarg. Tag name to
+#                            value, e.g. {Software: "xrspatial-corpus"}.
+#   pixel_pattern:    str    How the generator fills pixel data. One of:
+#                              "ramp"         deterministic linear ramp
+#                              "checker"      block checker for compression
+#                              "noise"        seeded numpy.random (seed below)
+#                              "uniform"      single constant value
+#   pixel_seed:       int    Seed for "noise" patterns. Default 0.
+#   pixel_value:      number Constant for "uniform" patterns.
+#
+#   tags:             list   Optional. Free-form tags used to filter the
+#                            corpus from CLI / pytest selectors, e.g.
+#                            ["fast", "compression", "predictor"].
+#   tolerance:        map    Optional. Per-fixture comparison tolerance.
+#                            Keys: {atol: float, rtol: float, lossy: bool}.
+#                            "lossy: true" means bit-equality is not
+#                            expected (used for jpeg). The oracle (Phase 1
+#                            PR 2, not in this PR) is responsible for
+#                            interpreting these.
+#
+# Determinism rules:
+#   - No timestamps.
+#   - All randomness goes through pixel_seed.
+#   - The generator iterates `fixtures` in declared order and emits files
+#     in sorted-id order.
+
+version: 1
+
+defaults:
+  bands: 1
+  byte_order: little
+  layout: stripped
+  blocksize: 64
+  planar_config: contig
+  compression: none
+  predictor: 1
+  photometric: minisblack
+  nodata: null
+  crs:
+    epsg: 4326
+  transform: [0.001, 0.0, -120.0, 0.0, -0.001, 45.0]
+  pixel_pattern: ramp
+  pixel_seed: 0
+  tags: []
+
+# One canonical example. Phase 2 PRs (3-9 in the plan) populate the rest.
+# Schema-only example; not yet wired to any backend.
+fixtures:
+  - id: example_tiled_uint16_deflate_pred2
+    description: >-
+      Canonical example showing every schema field. Tiled uint16 with
+      deflate + predictor 2, an integer nodata sentinel, internal
+      overviews, EPSG CRS, and a GDAL_METADATA entry.
+    width: 128
+    height: 128
+    bands: 1
+    dtype: uint16
+    byte_order: little
+    layout: tiled
+    tile_size: 64
+    planar_config: contig
+    compression: deflate
+    predictor: 2
+    compression_level: 6
+    photometric: minisblack
+    nodata: 0
+    crs:
+      epsg: 32613
+    transform: [10.0, 0.0, 500000.0, 0.0, -10.0, 4500000.0]
+    overviews: [2]
+    overview_resampling: nearest
+    external_overview: false
+    gdal_metadata:
+      "":
+        UNITS: meters
+        AREA_OR_POINT: Area
+    extra_tags:
+      Software: xrspatial-golden-corpus
+    pixel_pattern: ramp
+    tags: [fast, tiled, deflate, predictor2, nodata, overviews]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
