@@ -17,6 +17,8 @@ Extracted in step 5 of issue #1813.
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
 from ._coords import (
@@ -206,6 +208,10 @@ def _resolve_nodata_attr(attrs: dict):
     """
     nodata = attrs.get('nodata')
     if nodata is not None:
+        try:
+            float(nodata)
+        except (TypeError, ValueError) as e:
+            raise ValueError(_nodata_attr_non_numeric_msg('nodata', nodata)) from e
         return nodata
 
     vals = attrs.get('nodatavals')
@@ -214,28 +220,57 @@ def _resolve_nodata_attr(attrs: dict):
             seq = list(vals)
         except TypeError:
             seq = [vals]
+        saw_non_numeric = False
         for v in seq:
             if v is None:
                 continue
             try:
                 fv = float(v)
             except (TypeError, ValueError):
+                saw_non_numeric = True
                 continue
             if np.isnan(fv):
                 continue
             return v
+        # A tuple where every entry is non-numeric is almost certainly a
+        # user error (typo, stringified sentinel) rather than a legitimate
+        # "no sentinel" signal. Warn so the caller sees it, but still fall
+        # through to the rest of the resolution chain rather than raising:
+        # the rest of the function's contract is "skip non-numeric entries".
+        if saw_non_numeric:
+            warnings.warn(
+                f"attrs['nodatavals']={vals!r} contained only non-numeric "
+                f"entries; no usable sentinel could be resolved from it. "
+                f"Pass ``nodata=`` explicitly or fix the attr.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     fill = attrs.get('_FillValue')
     if fill is not None:
         try:
             ffv = float(fill)
-        except (TypeError, ValueError):
-            return fill  # non-numeric -- pass through verbatim
+        except (TypeError, ValueError) as e:
+            raise ValueError(_nodata_attr_non_numeric_msg('_FillValue', fill)) from e
         if np.isnan(ffv):
             return None
         return fill
 
     return None
+
+
+def _nodata_attr_non_numeric_msg(attr_name: str, value) -> str:
+    """Error string shared by the ``attrs['nodata']`` and ``attrs['_FillValue']``
+    non-numeric branches in ``_resolve_nodata_attr`` (#1973)."""
+    return (
+        f"attrs[{attr_name!r}]={value!r} is not numeric "
+        f"({type(value).__name__}). The writer needs a numeric "
+        f"sentinel to compare against pixel values; passing a "
+        f"non-numeric value would otherwise crash inside "
+        f"``np.isnan`` with an opaque ufunc error. Drop the "
+        f"attr, replace it with a numeric sentinel, or pass "
+        f"``nodata=`` explicitly (issue #1973)."
+    )
 
 
 def _merge_friendly_extra_tags(extra_tags_list, attrs: dict) -> list | None:

@@ -269,3 +269,36 @@ def _validate_predictor_sample_format(predictor, sample_format) -> None:
             f"pair, e.g. `gdal_translate -co PREDICTOR=2` for integers or "
             f"`-co PREDICTOR=1` to drop the predictor."
         )
+
+
+def _validate_nodata_arg(nodata) -> None:
+    """Reject non-numeric ``nodata=`` at the writer entry point (#1973).
+
+    ``None`` (no sentinel) passes through. ``bool`` is rejected with
+    ``TypeError`` so all three writer entry points (eager, GPU, VRT)
+    refuse ``nodata=True`` / ``nodata=False`` the same way the eager
+    path already does for issue #1911 -- ``float(True) == 1.0`` would
+    otherwise slip a bool past the numeric branch on the GPU/VRT paths
+    that do not have their own bool guard. Anything else is run
+    through ``float()``: success means the writer's downstream
+    ``np.isnan(nodata)`` and integer-cast paths will not blow up.
+    Failure raises ``ValueError`` with the offending repr, so users
+    see ``nodata='missing'`` flagged at the boundary instead of an
+    opaque ``ufunc 'isnan' not supported`` TypeError from inside the
+    writer.
+    """
+    if nodata is None:
+        return
+    if isinstance(nodata, (bool, np.bool_)):
+        raise TypeError(
+            f"nodata must be numeric (int or float), got {nodata!r}")
+    try:
+        float(nodata)
+    except (TypeError, ValueError) as e:
+        raise ValueError(
+            f"nodata must be numeric or None, got {nodata!r} "
+            f"(type {type(nodata).__name__}). The writer compares it "
+            f"against pixel values via ``np.isnan`` and casts it to "
+            f"the array dtype; a non-numeric value would otherwise "
+            f"crash inside NumPy with a ufunc TypeError."
+        ) from e
