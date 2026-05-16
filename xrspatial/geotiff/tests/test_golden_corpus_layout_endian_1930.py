@@ -50,8 +50,33 @@ def test_fixture_exists_and_is_tiff(fid, expected_tiled, expected_magic):
     with rasterio.open(path) as src:
         assert src.dtypes[0] == "uint16"
         assert src.shape == (32, 32)
-        assert src.is_tiled is expected_tiled, (
+        # ``src.is_tiled`` is pending deprecation in rasterio 1.4+; the
+        # profile carries the same information without the warning.
+        assert src.profile.get("tiled", False) is expected_tiled, (
             f"{fid}: on-disk tiled flag mismatch"
+        )
+
+
+def test_le_and_be_pixels_match():
+    """The little-endian and big-endian siblings carry identical logical pixels.
+
+    Locks in the matrix invariant that the only axis varying between LE
+    and BE is on-disk byte order. If a future generator change starts
+    seeding the two endianness siblings differently, this test catches it
+    before Phase 3 backends start comparing decoded values.
+    """
+    pairs = [
+        ("stripped_le_uint16", "stripped_be_uint16"),
+        ("tiled_le_uint16", "tiled_be_uint16"),
+    ]
+    for le_id, be_id in pairs:
+        with rasterio.open(FIXTURES_DIR / f"{le_id}.tif") as src:
+            le_pixels = src.read(1)
+        with rasterio.open(FIXTURES_DIR / f"{be_id}.tif") as src:
+            be_pixels = src.read(1)
+        assert np.array_equal(le_pixels, be_pixels), (
+            f"{le_id} vs {be_id}: logical pixels differ; byte_order axis "
+            "should be the only difference"
         )
 
 
