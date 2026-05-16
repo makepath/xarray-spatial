@@ -146,12 +146,20 @@ def _candidate_crs(candidate_da: xr.DataArray):
 
 
 def _crs_equal(ref, cand) -> bool:
-    """EPSG-aware CRS equality.
+    """EPSG-aware CRS equality with a PROJ-dict fallback.
 
     rasterio's ``CRS.__eq__`` compares WKT structurally, which makes
     EPSG-equivalent WKTs (one from PROJ, one from libgeotiff) compare
     unequal even when they describe the same coordinate system. Fall back
     to EPSG-code comparison when both sides resolve to an EPSG code.
+
+    Citation-only CRSes (a user-supplied name with no AUTHORITY tag, e.g.
+    the Phase 2 PR 8 ``crs_citation_only`` fixture) cannot be compared by
+    EPSG code because neither side has one. PROJ's ``to_dict()`` projects
+    them onto a small set of canonical fields (proj kind, ellipsoid
+    radius, units), which is stable across the libgeotiff round-trip
+    that mutates WKT axis order and adds AUTHORITY["EPSG","9122"] to the
+    UNIT block. Use that as a last resort.
     """
     if ref is None and cand is None:
         return True
@@ -167,6 +175,11 @@ def _crs_equal(ref, cand) -> bool:
         cand_epsg = None
     if ref_epsg is not None and cand_epsg is not None:
         return ref_epsg == cand_epsg
+    if ref_epsg is None and cand_epsg is None:
+        try:
+            return ref.to_dict() == cand.to_dict()
+        except Exception:
+            return False
     return False
 
 

@@ -364,3 +364,96 @@ def test_missing_fixture_raises_filenotfounderror(tmp_path: Path) -> None:
     )
     with pytest.raises(FileNotFoundError):
         compare_to_oracle(tmp_path / 'does_not_exist.tif', cand)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 PR 8 CRS-variant fixtures
+#
+# Smoke tests for the three CRS-representation fixtures added in PR 8 of
+# issue #1930. Each test reads the on-disk fixture with rasterio to pin
+# the bytes-on-disk behaviour, then drives the oracle with a hand-built
+# candidate to verify the comparison path the fixture is meant to
+# exercise. Phase 3 will wire real backends to these same files.
+# ---------------------------------------------------------------------------
+
+_CRS_FIXTURE_DIR = Path(__file__).resolve().parent / 'fixtures'
+
+
+def _read_crs_fixture(name: str):
+    """Open a fixture and return its rasterio metadata plus pixel data."""
+    path = _CRS_FIXTURE_DIR / f'{name}.tif'
+    with rasterio.open(path) as src:
+        return (
+            path,
+            src.crs,
+            src.transform,
+            src.read(1),  # single-band uint8
+        )
+
+
+def test_crs_epsg_3857_fixture_reports_epsg() -> None:
+    """``crs_epsg_3857`` fixture: rasterio reports CRS.from_epsg(3857).
+
+    The straight-EPSG path. Oracle accepts a candidate that carries the
+    EPSG int under ``attrs['crs']``.
+    """
+    path, ref_crs, transform, data = _read_crs_fixture('crs_epsg_3857')
+    assert ref_crs == rasterio.crs.CRS.from_epsg(3857)
+    assert ref_crs.to_epsg() == 3857
+
+    cand = _build_candidate(data, transform=transform, crs=3857)
+    compare_to_oracle(path, cand)
+
+
+def test_crs_wkt_utm10n_fixture_resolves_to_epsg_via_fallback() -> None:
+    """``crs_wkt_utm10n``: WKT-only on disk, but resolves to EPSG:32610.
+
+    The fixture's WKT has no AUTHORITY tags, so it is not byte-identical
+    to what ``CRS.from_epsg(32610).to_wkt()`` emits. PROJ still recognises
+    it as UTM 10N and assigns it EPSG:32610 on read, which is the
+    fallback path ``_crs_equal`` was built for. A candidate that carries
+    the bare EPSG int must compare equal to the rasterio-read WKT CRS.
+    """
+    path, ref_crs, transform, data = _read_crs_fixture('crs_wkt_utm10n')
+    assert ref_crs.to_epsg() == 32610
+
+    # Candidate carries only the EPSG int. The oracle reaches the
+    # EPSG-fallback branch of _crs_equal because ref's WKT and the
+    # canonical EPSG:32610 WKT are not structurally equal.
+    cand = _build_candidate(data, transform=transform, crs=32610)
+    compare_to_oracle(path, cand)
+
+
+def test_crs_citation_only_fixture_oracle_accepts_via_proj_dict() -> None:
+    """``crs_citation_only``: GeoKey citation, no AUTHORITY.
+
+    Neither side has an EPSG code, and libgeotiff mutates the WKT on
+    round-trip (axis order, UNIT AUTHORITY) so structural ``CRS.__eq__``
+    fails. The oracle falls back to comparing ``to_dict()`` (PROJ form),
+    which is stable across that round-trip. Pinned here so any future
+    refactor of ``_crs_equal`` that drops the PROJ-dict branch trips a
+    test instead of silently regressing.
+    """
+    path, ref_crs, transform, data = _read_crs_fixture('crs_citation_only')
+    assert ref_crs is not None
+    assert ref_crs.to_epsg() is None
+
+    # Candidate carries the WKT under crs_wkt; oracle's _candidate_crs
+    # picks it up via from_user_input.
+    cand = _build_candidate(
+        data, transform=transform, crs=None, crs_wkt=ref_crs.to_wkt(),
+    )
+    compare_to_oracle(path, cand)
+
+
+def test_crs_citation_only_fixture_rejects_unrelated_crs() -> None:
+    """Negative pin: the PROJ-dict fallback must still reject mismatches.
+
+    EPSG:4326 has the same coarse ``proj=longlat`` family as the
+    citation-only CRS but a different ellipsoid (WGS84 vs the fixture's
+    unknown sphere). ``to_dict()`` differs, so the oracle must raise.
+    """
+    path, _ref_crs, transform, data = _read_crs_fixture('crs_citation_only')
+    cand = _build_candidate(data, transform=transform, crs=4326)
+    with pytest.raises(AssertionError, match='CRS mismatch'):
+        compare_to_oracle(path, cand)
