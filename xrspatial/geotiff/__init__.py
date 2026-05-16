@@ -279,7 +279,10 @@ def open_geotiff(source: str | BinaryIO, *,
         ``None`` to skip the check entirely. The HTTP path already
         reads only what it needs via range requests and is not subject
         to this limit. Has no effect on local file or file-like
-        sources. See issue #1928.
+        sources. Passing this kwarg with ``gpu=True``, ``chunks=...``,
+        or a ``.vrt`` source raises ``ValueError`` because those
+        backends do not apply the cloud-byte budget. See issue #1928
+        (eager path) and issue #1974 (rejection guard).
     on_gpu_failure : {'auto', 'strict'}, optional
         Forwarded to ``read_geotiff_gpu`` when ``gpu=True``. Controls
         whether GPU decode failures fall back to CPU (``'auto'``,

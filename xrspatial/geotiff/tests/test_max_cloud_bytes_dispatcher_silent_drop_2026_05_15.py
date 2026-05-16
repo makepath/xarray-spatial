@@ -206,3 +206,40 @@ def test_default_kwarg_does_not_trigger_guard_on_vrt_path(tmp_path):
     vrt, _src = _build_vrt(tmp_path)
     out = open_geotiff(vrt)
     assert out.shape == (8, 8)
+
+
+# ---------------------------------------------------------------------
+# Explicit-``None`` pins. ``max_cloud_bytes=None`` is the documented
+# "skip the check entirely" sentinel on the eager path (#1928). The
+# rejection guard is sentinel-based, so an explicit ``None`` is treated
+# as "caller supplied a value" and rejected on the non-eager branches
+# -- consistent with how ``on_gpu_failure`` and ``missing_sources``
+# treat explicit values. These tests pin that semantics.
+# ---------------------------------------------------------------------
+
+def test_explicit_none_max_cloud_bytes_rejected_on_gpu_path(tmp_path):
+    """``gpu=True, max_cloud_bytes=None`` raises ValueError.
+
+    ``None`` is the documented "disable the budget" value on the eager
+    path. On the GPU path the budget is not consumed at all, so an
+    explicit ``None`` still indicates the caller expected the kwarg to
+    have an effect -- reject it for the same reason an explicit byte
+    count is rejected.
+    """
+    path = _build_local_tif(tmp_path)
+    with pytest.raises(ValueError, match=r"max_cloud_bytes"):
+        open_geotiff(path, max_cloud_bytes=None, gpu=True)
+
+
+def test_explicit_none_max_cloud_bytes_rejected_on_dask_path(tmp_path):
+    """``chunks=N, max_cloud_bytes=None`` raises ValueError."""
+    path = _build_local_tif(tmp_path)
+    with pytest.raises(ValueError, match=r"max_cloud_bytes"):
+        open_geotiff(path, max_cloud_bytes=None, chunks=4)
+
+
+def test_explicit_none_max_cloud_bytes_rejected_on_vrt_path(tmp_path):
+    """``.vrt`` source + ``max_cloud_bytes=None`` raises ValueError."""
+    vrt, _src = _build_vrt(tmp_path)
+    with pytest.raises(ValueError, match=r"max_cloud_bytes"):
+        open_geotiff(vrt, max_cloud_bytes=None)
