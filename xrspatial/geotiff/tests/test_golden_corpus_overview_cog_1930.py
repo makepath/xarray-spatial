@@ -9,8 +9,14 @@ The three fixtures land here:
 Each fixture is rebuilt by the deterministic generator and shipped in
 ``golden_corpus/fixtures``. These tests assert the shape of what is on
 disk and run the Phase 1 oracle against the base (level-0) image.
-Overview-level comparison is out of scope for the Phase 1 oracle (see
-``_oracle.py``).
+
+Oracle gap (intentional, tracked separately): the Phase 1 oracle in
+``_oracle.compare_to_oracle`` reads only the base IFD via
+``rasterio.open(...).read()``. It does not inspect overview IFDs or the
+sidecar `.ovr`. A future PR (post Phase 1 PR 2) will add an
+overview-aware comparison; until then, the smoke tests below pin the
+on-disk shape and the base-image parity check is what runs through the
+oracle.
 """
 from __future__ import annotations
 
@@ -98,7 +104,9 @@ def test_internal_overview_fixture_has_overviews():
         assert src.overviews(1) == [2, 4]
         assert src.count == 1
         assert src.dtypes[0] == "uint16"
-        assert (path.with_suffix(path.suffix + ".ovr")).exists() is False
+    assert not path.with_suffix(path.suffix + ".ovr").exists(), (
+        "internal-overview fixture must not ship a sidecar"
+    )
 
 
 def test_internal_overview_fixture_matches_oracle():
@@ -166,25 +174,26 @@ def test_cog_fixture_is_tiled_with_overviews():
             f"COG fixture must be tiled with square blocks, got {block}"
         )
         assert src.overviews(1) == [2, 4]
-        # No external sidecar should accompany the COG.
-        assert (path.with_suffix(path.suffix + ".ovr")).exists() is False
+    # No external sidecar should accompany the COG.
+    assert not path.with_suffix(path.suffix + ".ovr").exists(), (
+        "COG fixture must not ship an external .ovr sidecar"
+    )
 
 
-def test_cog_fixture_ifd_order_base_first():
-    """The full-resolution IFD is the first IFD in the file (COG spec).
+def test_cog_fixture_carries_cog_layout_marker():
+    """The COG driver writes a ``LAYOUT=COG`` marker into IMAGE_STRUCTURE.
 
-    GDAL exposes this through the ``IFD_OFFSET`` tag on each subdataset
-    (the base IFD has the smallest offset, with overview IFDs at larger
-    offsets). We probe with the public rasterio API by reading subdatasets
-    and confirming the base image is reachable as the default open.
+    The COG spec mandates IFD ordering (base image before overviews) and a
+    leading ghost-IFD layout block. Rather than re-parse the TIFF header,
+    we trust GDAL's own marker, which is the public artefact rasterio
+    exposes. Phase 3 backends do the equivalent check before claiming a
+    file is COG-shaped.
     """
     path = _fixture_path(COG_ID)
     with rasterio.open(path) as src:
         # rasterio reports the base image dimensions on open, not an overview.
         assert src.width == 64 and src.height == 64
-        # The COG driver writes the GDAL layout sentinel into the file.
         tags = src.tags(ns="IMAGE_STRUCTURE")
-        # ``LAYOUT=COG`` is the rasterio-surfaced marker for a COG-layout file.
         assert tags.get("LAYOUT") == "COG", (
             f"expected IMAGE_STRUCTURE LAYOUT=COG, got tags={tags!r}"
         )
