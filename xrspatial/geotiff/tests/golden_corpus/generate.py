@@ -335,7 +335,55 @@ def _make_pixels(entry: dict[str, Any]) -> np.ndarray:
         arr[:, -1, 0] = hi
         arr[:, -1, -1] = lo
 
+    _stamp_nodata_pixels(arr, entry)
     return arr
+
+
+def _stamp_nodata_pixels(arr: np.ndarray, entry: dict[str, Any]) -> None:
+    """Plant a few sentinel pixels at deterministic positions.
+
+    The corpus nodata fixtures (#1930, Phase 2 PR 6) need the oracle to
+    exercise nodata-masking semantics, not just the tag round-trip.
+    Noise / ramp / uniform patterns are vanishingly unlikely to hit the
+    sentinel value on their own for wide integer dtypes (a 16x16 uint16
+    raster sees each value with probability 1/65536 per cell), so we
+    stamp a small set of cells in-place after pattern generation.
+
+    The cells (top-left, centre, bottom-right) are fixed so re-runs stay
+    byte-stable. We stamp only when ``nodata`` resolves to an actual
+    sentinel value:
+
+    * a numeric sentinel for integer / float rasters
+    * NaN for float rasters with ``nodata: "nan"``
+    * the dtype max for ``nodata: "miniswhite"`` (white-as-min)
+    """
+    nd = entry.get("nodata")
+    if nd is None:
+        return
+    dtype = arr.dtype
+    # ``bool`` is a subclass of ``int``; reject it explicitly so a
+    # ``nodata: true`` manifest entry can't slip a 1 into the raster.
+    # The write-side gate is #1990; this is the matching read-side gate.
+    if isinstance(nd, bool):
+        return
+    if isinstance(nd, (int, float)):
+        sentinel: Any = nd
+    elif nd == "nan":
+        if dtype.kind != "f":
+            return
+        sentinel = np.nan
+    elif nd == "miniswhite":
+        if dtype.kind not in ("i", "u"):
+            return
+        sentinel = np.iinfo(dtype).max
+    else:  # pragma: no cover - validate() rejects other shapes
+        return
+    h = arr.shape[-2]
+    w = arr.shape[-1]
+    positions = ((0, 0), (h // 2, w // 2), (h - 1, w - 1))
+    for b in range(arr.shape[0]):
+        for r, c in positions:
+            arr[b, r, c] = sentinel
 
 
 def _resolve_crs(crs_spec: dict[str, Any] | None):

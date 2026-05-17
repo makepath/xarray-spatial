@@ -431,3 +431,62 @@ fixtures:
       atol: 0.0
       rtol: 0.0
       lossy: true
+
+  # ----- Phase 2 PR 6: nodata sentinels (issue #1930) -----
+  # Three fixtures, one per nodata convention. Each one places at least
+  # one pixel on the sentinel so the oracle's nodata-masking semantics
+  # are exercised, not just the tag round-trip. Per-fixture pixel_seed
+  # keeps the noise pattern stable across regenerations.
+  - id: nodata_int_sentinel_uint16
+    description: >-
+      uint16 raster with an explicit integer nodata sentinel (0). A
+      handful of pixels are forced to 0 so the masked-data path is
+      reachable once a read backend lands in Phase 3.
+    width: 16
+    height: 16
+    dtype: uint16
+    nodata: 0
+    pixel_pattern: noise
+    pixel_seed: 1930006
+    tags: [fast, nodata, int_sentinel]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: nodata_nan_float32
+    description: >-
+      float32 raster with NaN nodata. A few cells are written as NaN so
+      the oracle's NaN-aware equality (equal_nan=True) is the only path
+      that can pass.
+    width: 16
+    height: 16
+    dtype: float32
+    nodata: "nan"
+    pixel_pattern: noise
+    pixel_seed: 1930007
+    tags: [fast, nodata, nan]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
+
+  - id: nodata_miniswhite_uint8
+    description: >-
+      uint8 raster with photometric=miniswhite and no explicit nodata
+      tag. Per the TIFF spec, white-as-min means the dtype max value
+      (255 for uint8) acts as the "background" sentinel. The fixture
+      seeds a few pixels at 255 so backends that honour the photometric
+      tag have something to invert.
+    width: 16
+    height: 16
+    dtype: uint8
+    photometric: miniswhite
+    nodata: miniswhite
+    pixel_pattern: noise
+    pixel_seed: 1930008
+    tags: [fast, nodata, miniswhite, photometric]
+    tolerance:
+      atol: 0.0
+      rtol: 0.0
+      lossy: false
