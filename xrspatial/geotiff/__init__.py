@@ -55,6 +55,16 @@ from ._coords import (
     coords_to_transform as _coords_to_transform,
     require_transform_for_georeferenced as _require_transform_for_georeferenced,
 )
+from ._errors import (
+    ConflictingCRSError,
+    ConflictingNodataError,
+    GeoTIFFAmbiguousMetadataError,
+    InvalidCRSCodeError,
+    MixedBandMetadataError,
+    NonUniformCoordsError,
+    RotatedTransformError,
+    UnparseableCRSError,
+)
 from ._geotags import GeoTransform, RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT
 from ._reader import UnsafeURLError
 # ``read_to_array`` is internal: it is used by ``open_geotiff`` and the
@@ -108,7 +118,15 @@ from ._writers.vrt import write_vrt
 # is intentionally omitted: it is deprecated in favour of ``da.xrs.plot()``
 # and emits a ``DeprecationWarning`` when called.
 __all__ = [
+    'ConflictingCRSError',
+    'ConflictingNodataError',
+    'GeoTIFFAmbiguousMetadataError',
     'GeoTIFFFallbackWarning',
+    'InvalidCRSCodeError',
+    'MixedBandMetadataError',
+    'NonUniformCoordsError',
+    'RotatedTransformError',
+    'UnparseableCRSError',
     'UnsafeURLError',
     'open_geotiff',
     'read_geotiff_gpu',

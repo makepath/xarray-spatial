@@ -2726,6 +2726,17 @@ class TestPublicAPI:
         # public API. If any of these gets removed or renamed, that is a
         # breaking change and should go through a deprecation cycle.
         expected = {
+            # Ambiguous-metadata error hierarchy (#1987). Re-exported in
+            # PR 0 so callers can ``except`` the family or a specific
+            # case without importing from the private ``_errors`` module.
+            'ConflictingCRSError',
+            'ConflictingNodataError',
+            'GeoTIFFAmbiguousMetadataError',
+            'InvalidCRSCodeError',
+            'MixedBandMetadataError',
+            'NonUniformCoordsError',
+            'RotatedTransformError',
+            'UnparseableCRSError',
             'GeoTIFFFallbackWarning',
             'UnsafeURLError',
             'open_geotiff',

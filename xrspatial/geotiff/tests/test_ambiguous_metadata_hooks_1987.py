@@ -88,6 +88,35 @@ def test_base_is_value_error_subclass():
     assert issubclass(GeoTIFFAmbiguousMetadataError, ValueError)
 
 
+def test_error_classes_reexported_from_public_namespace():
+    """User-facing ambiguity errors must be importable from ``xrspatial.geotiff``.
+
+    ``UnsafeURLError`` and ``GeoTIFFFallbackWarning`` follow the same
+    convention. Without the re-export, callers would have to dig into
+    the private ``_errors`` module to write ``except`` clauses, which
+    couples them to an implementation-detail import path.
+    """
+    import xrspatial.geotiff as geotiff_pkg
+
+    for name in (
+        "GeoTIFFAmbiguousMetadataError",
+        "InvalidCRSCodeError",
+        "UnparseableCRSError",
+        "RotatedTransformError",
+        "NonUniformCoordsError",
+        "MixedBandMetadataError",
+        "ConflictingCRSError",
+        "ConflictingNodataError",
+    ):
+        assert hasattr(geotiff_pkg, name), (
+            f"{name} not exposed on xrspatial.geotiff")
+        assert name in geotiff_pkg.__all__, (
+            f"{name} not listed in xrspatial.geotiff.__all__")
+    # The re-exported class is the same object as the one in ``_errors``.
+    assert (geotiff_pkg.GeoTIFFAmbiguousMetadataError
+            is GeoTIFFAmbiguousMetadataError)
+
+
 def test_subclass_catch_does_not_catch_siblings():
     """``except UnparseableCRSError`` must not catch ``RotatedTransformError``."""
     with pytest.raises(RotatedTransformError):
