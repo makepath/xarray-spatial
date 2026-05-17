@@ -14,6 +14,62 @@ used by ``to_geotiff`` for friendly up-front validation, and the
 entries.
 
 Extracted in step 5 of issue #1813.
+
+Attrs contract (issue #1984)
+----------------------------
+
+The keys written into ``DataArray.attrs`` by the read paths fall into
+three tiers. Writers honour the same split: canonical keys are emitted,
+compatibility aliases are read but never written when the canonical key
+is present, and pass-through keys are kept when the writer can
+reconstruct them from canonical state.
+
+The contract version is recorded in ``attrs['_xrspatial_geotiff_contract']``
+(currently ``1``). Consumers can branch on this integer if the tier
+split changes in a future release.
+
+Canonical (xrspatial owns these; round-trip stable):
+
+- ``crs``: EPSG integer code for the horizontal CRS.
+- ``crs_wkt``: PROJ WKT string for the horizontal CRS. Always emitted.
+- ``transform``: tuple of ``(origin_x, origin_y, pixel_width, pixel_height)``.
+- ``nodata``: declared file sentinel as stored in the GDAL_NODATA tag. The
+  declared-vs-masked split is tracked in issue #1988; the canonical
+  semantics here describe the intended behaviour once #1988 lands.
+- ``raster_type``: ``'area'`` (implicit / RasterPixelIsArea) or ``'point'``
+  (explicit / RasterPixelIsPoint).
+- ``extra_tags``: list of ``(tag_id, type_id, count, value)`` tuples for
+  TIFF tags outside the structured set.
+- ``gdal_metadata``: dict parsed from the GDAL_METADATA XML tag.
+- ``gdal_metadata_xml``: raw GDAL_METADATA XML string.
+- ``x_resolution``, ``y_resolution``, ``resolution_unit``: TIFF
+  XResolution / YResolution / ResolutionUnit values.
+- ``_xrspatial_geotiff_contract``: integer version of this contract.
+
+Compatibility alias (read for ecosystem interop; writers must not emit
+when the canonical key is present):
+
+- ``nodatavals``: rioxarray per-band tuple form of ``nodata``.
+- ``_FillValue``: CF-convention name for ``nodata``.
+
+Best-effort pass-through (preserved when the writer can reconstruct
+from canonical state, otherwise dropped on round-trip):
+
+- ``crs_name``: human-readable CRS name from the GeoKey directory.
+- ``geog_citation``: GeographicTypeGeoKey citation string.
+- ``datum_code``: GeogGeodeticDatumGeoKey value.
+- ``angular_units``: GeogAngularUnitsGeoKey value.
+- ``linear_units``: ProjLinearUnitsGeoKey value.
+- ``semi_major_axis``: GeogSemiMajorAxisGeoKey value.
+- ``inv_flattening``: GeogInvFlatteningGeoKey value.
+- ``projection_code``: ProjectedCSTypeGeoKey value.
+- ``vertical_crs``: VerticalCSTypeGeoKey value.
+- ``vertical_citation``: VerticalCitationGeoKey value.
+- ``vertical_units``: VerticalUnitsGeoKey value.
+- ``image_description``: TIFF ImageDescription tag.
+- ``extra_samples``: TIFF ExtraSamples tag.
+- ``colormap``, ``colormap_rgba``, ``cmap``: palette data attached to
+  single-band paletted images.
 """
 from __future__ import annotations
 
