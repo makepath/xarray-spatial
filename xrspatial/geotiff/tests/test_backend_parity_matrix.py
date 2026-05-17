@@ -58,6 +58,7 @@ from xrspatial.geotiff import open_geotiff, to_geotiff
 # backend means appending one row, not editing every test.
 _BACKENDS = [
     pytest.param({}, id="numpy"),
+    pytest.param({"chunks": 16}, id="dask+numpy"),
 ]
 
 
@@ -89,9 +90,12 @@ class _FixtureSpec:
         means "do not assert" -- used for fixtures without nodata or
         until the masking-state attr is wired up.
     builder
-        Callable receiving a directory ``Path`` and returning the full
-        on-disk path. The builder is responsible for writing the file
-        and any sidecars (e.g. a ``.vrt`` over auxiliary tiles).
+        Callable receiving a directory ``Path`` and the resolved target
+        ``Path`` (cache-key filename). Writes the file at ``target`` and
+        returns the final on-disk path. Most builders just return
+        ``target`` unchanged; sidecar-producing builders (e.g. a
+        ``.vrt`` over auxiliary tiles) may write multiple files and
+        return the entry path.
     """
 
     fix_id: str
@@ -100,15 +104,17 @@ class _FixtureSpec:
     expected_crs_epsg: int | None
     expected_nodata: object
     expected_masked: bool | None
-    builder: Callable[[Path], Path]
+    builder: Callable[[Path, Path], Path]
 
 
 def _wrap_2d(arr: np.ndarray, *, crs: int | None) -> xr.DataArray:
     """Wrap a 2-D numpy array as a writer-ready DataArray.
 
-    The y/x coords are unit pixels, which keeps the read-back transform
-    tuple bit-exact (``(1.0, 0.0, 0.0, 0.0, -1.0, height)`` for the
-    descending-y convention used elsewhere in the test suite).
+    Uses unit-pixel descending-y coords (``y = height-1 .. 0``,
+    ``x = 0 .. width-1``). The read-back transform tuple for a height-H
+    fixture is ``(1.0, 0.0, -0.5, 0.0, -1.0, H - 0.5)`` -- the half-pixel
+    offsets come from the PixelIsArea convention (origin is the pixel
+    edge, coords are pixel centres) that the writer round-trips.
     """
     height, width = arr.shape
     da = xr.DataArray(
@@ -124,20 +130,20 @@ def _wrap_2d(arr: np.ndarray, *, crs: int | None) -> xr.DataArray:
     return da
 
 
-def _build_int16_single_band(dir_path: Path) -> Path:
+def _build_int16_single_band(dir_path: Path, target: Path) -> Path:
     """High-risk fixture: int16 single-band stripped TIFF, EPSG:4326, no nodata.
 
     Integer dtype catches sign-extension and predictor bugs that float
     fixtures hide. Seeded so the byte-equal pixel assertion is reproducible.
     """
+    del dir_path  # builder writes directly to the resolved target path
     rng = np.random.default_rng(seed=19850)
     arr = rng.integers(-30000, 30000, size=(32, 32), dtype=np.int16)
-    path = dir_path / "parity_1985_int16_single_band.tif"
     to_geotiff(
-        _wrap_2d(arr, crs=4326), str(path),
+        _wrap_2d(arr, crs=4326), str(target),
         compression="none", tiled=False,
     )
-    return path
+    return target
 
 
 _FIXTURES: list[_FixtureSpec] = [
@@ -173,16 +179,15 @@ def parity_fixture(_parity_matrix_dir):
     dir_path = _parity_matrix_dir
 
     def _resolve(spec: _FixtureSpec) -> Path:
-        path = dir_path / f"parity_1985_{spec.fix_id}.tif"
+        # ``fix_id`` may contain ``/`` once dtype/compression-keyed
+        # fixtures land (cf. ``test_backend_pixel_parity_matrix_1813.py``
+        # ids like ``stripped/int16/none``). Flatten to a single
+        # filename so the resolver never creates subdirectories.
+        safe_id = spec.fix_id.replace("/", "-")
+        path = dir_path / f"parity_1985_{safe_id}.tif"
         if path.exists():
             return path
-        built = spec.builder(dir_path)
-        # Builders that emit non-tiff suffixes (vrt) return their own
-        # path; rename only when the builder used a different name.
-        if built != path and built.suffix == ".tif":
-            built.rename(path)
-            return path
-        return built
+        return spec.builder(dir_path, path)
     return _resolve
 
 
