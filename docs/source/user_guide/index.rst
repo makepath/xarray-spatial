@@ -17,4 +17,5 @@ User Guide
    proximity
    surface
    zonal
+   attrs_contract
    local-migration
