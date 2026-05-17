@@ -198,6 +198,23 @@ class TestDaskNumpy:
         assert da.dtype.kind == "f"
         assert da.attrs["masked_nodata"] is True
 
+    def test_int_source_with_out_of_range_sentinel(self, tmp_path):
+        """Dask + out-of-range int sentinel -> graph stays int, masked_nodata=False.
+
+        Mirrors the eager-path ``test_int_source_with_out_of_range_sentinel``
+        free function. The dask ``effective_dtype`` branch only promotes
+        to float64 when the sentinel fits the source dtype range; an
+        out-of-range sentinel (e.g. uint16 file with
+        ``GDAL_NODATA="-9999"``) cannot match any pixel, so the declared
+        graph dtype stays uint16 and ``masked_nodata`` must be False.
+        """
+        path = str(tmp_path / "tnss1988_dask_int_oor.tif")
+        _build_uint16_with_out_of_range_nodata(path)
+        da = read_geotiff_dask(path, chunks=2)
+        assert da.attrs["nodata"] == -9999
+        assert da.dtype.kind == "u"
+        assert da.attrs["masked_nodata"] is False
+
 
 # ----------------------------------------------------------------------------
 # Cross-cutting: integer sentinel that is out-of-range

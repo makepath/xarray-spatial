@@ -596,10 +596,11 @@ def _read_vrt_chunked(source, *, window, band, name, chunks, gpu, dtype,
 
     # Surface the nodata sentinel for the selected band. The chunked
     # path declares ``float64`` up front whenever any selected band has
-    # a representable integer sentinel (see ``declared_dtype`` block
-    # below), so the dask graph dtype drives ``masked_nodata`` (issue
-    # #1988). The call to ``_set_nodata_attrs`` happens after
-    # ``declared_dtype`` is computed.
+    # a representable integer sentinel (see the ``declared_dtype`` block
+    # earlier in this function), so the dask graph dtype drives
+    # ``masked_nodata`` (issue #1988). ``final_dtype`` is the post-cast
+    # dtype the dask array was reshaped to above, which is what the
+    # caller will see on the returned DataArray.
     nodata_meta = None
     if vrt.bands:
         band_idx_for_nodata = band if band is not None else 0
