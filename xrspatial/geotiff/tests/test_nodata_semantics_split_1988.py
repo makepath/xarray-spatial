@@ -26,10 +26,9 @@ import struct
 import numpy as np
 import pytest
 import rasterio
-import xarray as xr
 from rasterio.transform import from_origin
 
-from xrspatial.geotiff import open_geotiff, read_geotiff_dask
+from xrspatial.geotiff import open_geotiff, read_geotiff_dask, read_vrt
 
 
 _SENTINEL = -9999.0
@@ -305,6 +304,166 @@ def _build_uint16_with_out_of_range_nodata(path: str) -> None:
         for b in overflow_buffers:
             f.write(b)
         f.write(pixels_bytes)
+
+
+# ----------------------------------------------------------------------------
+# VRT backend (eager + chunked)
+# ----------------------------------------------------------------------------
+
+
+def _write_uint16_vrt_source(tmp_path, *, sentinel_hit: bool, filename: str):
+    """Write a 2x2 uint16 source raster with declared sentinel 65535."""
+    from xrspatial.geotiff._writer import write
+    if sentinel_hit:
+        band = np.array([[1, 2], [3, 65535]], dtype=np.uint16)
+    else:
+        band = np.array([[1, 2], [3, 4]], dtype=np.uint16)
+    p = str(tmp_path / filename)
+    write(band, p, nodata=65535, compression="none", tiled=False)
+    return p
+
+
+def _build_vrt(tmp_path, source_path, vrt_dtype, nodata_value,
+               filename="tnss1988.vrt"):
+    """Hand-roll a 2x2 VRT pointing at ``source_path``."""
+    vrt_xml = f"""<VRTDataset rasterXSize="2" rasterYSize="2">
+  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>
+  <VRTRasterBand dataType="{vrt_dtype}" band="1">
+    <NoDataValue>{nodata_value}</NoDataValue>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="0">{source_path}</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+    </SimpleSource>
+  </VRTRasterBand>
+</VRTDataset>"""
+    p = str(tmp_path / filename)
+    with open(p, "w") as f:
+        f.write(vrt_xml)
+    return p
+
+
+class TestVRTEager:
+    """``read_vrt`` (eager path) honours the split-attrs contract."""
+
+    def test_float32_vrt_int_source_with_hit(self, tmp_path):
+        """Float-typed VRT over int source with sentinel hit -> masked_nodata=True."""
+        src = _write_uint16_vrt_source(
+            tmp_path, sentinel_hit=True, filename="tnss1988_vrt_src_hit.tif",
+        )
+        vrt = _build_vrt(tmp_path, src, "Float32", 65535,
+                         filename="tnss1988_vrt_hit.vrt")
+        r = read_vrt(vrt)
+        assert r.attrs["nodata"] == 65535.0
+        assert r.dtype.kind == "f"
+        assert r.attrs["masked_nodata"] is True
+
+    def test_uint16_vrt_int_source_no_hit(self, tmp_path):
+        """Int-typed VRT over int source, no sentinel pixel -> masked_nodata=False.
+
+        A ``dataType="UInt16"`` VRT with no scale/offset keeps the
+        source integer dtype. With no sentinel pixel in the source, the
+        eager path produces a uint16 array carrying the literal
+        sentinel value space, so ``masked_nodata`` must be False.
+        """
+        src = _write_uint16_vrt_source(
+            tmp_path, sentinel_hit=False,
+            filename="tnss1988_vrt_src_nohit.tif",
+        )
+        vrt = _build_vrt(tmp_path, src, "UInt16", 65535,
+                         filename="tnss1988_vrt_nohit.vrt")
+        r = read_vrt(vrt)
+        assert r.attrs["nodata"] == 65535.0
+        assert r.dtype.kind in ("u", "i")
+        assert r.attrs["masked_nodata"] is False
+
+    def test_vrt_no_nodata_emits_neither_attr(self, tmp_path):
+        """VRT band with no ``<NoDataValue>`` -> neither attr set."""
+        src = _write_uint16_vrt_source(
+            tmp_path, sentinel_hit=False,
+            filename="tnss1988_vrt_src_no_nd.tif",
+        )
+        # Build a VRT without a NoDataValue element.
+        vrt_xml = """<VRTDataset rasterXSize="2" rasterYSize="2">
+  <GeoTransform>0.0, 1.0, 0.0, 0.0, 0.0, -1.0</GeoTransform>
+  <VRTRasterBand dataType="UInt16" band="1">
+    <SimpleSource>
+      <SourceFilename relativeToVRT="0">""" + src + """</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SrcRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+      <DstRect xOff="0" yOff="0" xSize="2" ySize="2"/>
+    </SimpleSource>
+  </VRTRasterBand>
+</VRTDataset>"""
+        vrt = str(tmp_path / "tnss1988_vrt_no_nd.vrt")
+        with open(vrt, "w") as f:
+            f.write(vrt_xml)
+        r = read_vrt(vrt)
+        assert "nodata" not in r.attrs
+        assert "masked_nodata" not in r.attrs
+
+
+class TestVRTChunked:
+    """``read_vrt(..., chunks=N)`` honours the split-attrs contract."""
+
+    def test_chunked_int_source_in_range_sentinel(self, tmp_path):
+        """Chunked VRT declares float64 for in-range int sentinel -> masked_nodata=True."""
+        src = _write_uint16_vrt_source(
+            tmp_path, sentinel_hit=False,
+            filename="tnss1988_vrt_chunked_src.tif",
+        )
+        vrt = _build_vrt(tmp_path, src, "UInt16", 65535,
+                         filename="tnss1988_vrt_chunked.vrt")
+        r = read_vrt(vrt, chunks=2)
+        assert r.attrs["nodata"] == 65535.0
+        # Chunked path promotes to float64 declared dtype.
+        assert r.dtype == np.float64
+        assert r.attrs["masked_nodata"] is True
+
+
+# ----------------------------------------------------------------------------
+# GPU backend
+# ----------------------------------------------------------------------------
+
+
+@_gpu_only
+class TestGPU:
+    """``read_geotiff_gpu`` honours the split-attrs contract."""
+
+    def test_int_source_with_hit(self, tmp_path):
+        """Int source + sentinel hit on GPU -> masked_nodata=True (float)."""
+        from xrspatial.geotiff import read_geotiff_gpu
+        path = str(tmp_path / "tnss1988_gpu_int_hit.tif")
+        _write_int_tiff(path, with_sentinel_hit=True)
+        da = read_geotiff_gpu(path)
+        assert da.attrs["nodata"] == 65535
+        assert np.dtype(str(da.dtype)).kind == "f"
+        assert da.attrs["masked_nodata"] is True
+
+    def test_int_source_no_hit_keeps_sentinel(self, tmp_path):
+        """Int source + sentinel no hit on GPU -> masked_nodata=False.
+
+        Mirrors the eager-numpy contract: GPU masking only promotes int
+        to float64 when at least one sentinel pixel is found.
+        """
+        from xrspatial.geotiff import read_geotiff_gpu
+        path = str(tmp_path / "tnss1988_gpu_int_nohit.tif")
+        _write_int_tiff(path, with_sentinel_hit=False)
+        da = read_geotiff_gpu(path)
+        assert da.attrs["nodata"] == 65535
+        assert np.dtype(str(da.dtype)).kind in ("u", "i")
+        assert da.attrs["masked_nodata"] is False
+
+    def test_dask_gpu_in_range_sentinel(self, tmp_path):
+        """Dask+GPU declares float64 graph for in-range int sentinel."""
+        from xrspatial.geotiff import read_geotiff_gpu
+        path = str(tmp_path / "tnss1988_gpu_dask_int.tif")
+        _write_int_tiff(path, with_sentinel_hit=False)
+        da = read_geotiff_gpu(path, chunks=2)
+        assert da.attrs["nodata"] == 65535
+        assert np.dtype(str(da.dtype)).kind == "f"
+        assert da.attrs["masked_nodata"] is True
 
 
 def test_int_source_with_out_of_range_sentinel(tmp_path):
