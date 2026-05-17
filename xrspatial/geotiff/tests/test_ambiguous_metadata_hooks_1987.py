@@ -28,6 +28,7 @@ from xrspatial.geotiff._errors import (
     RotatedTransformError,
     UnparseableCRSError,
 )
+from xrspatial.geotiff import _validation as _validation_mod
 from xrspatial.geotiff._validation import (
     _registered_read_metadata_checks,
     _registered_write_metadata_checks,
@@ -38,6 +39,26 @@ from xrspatial.geotiff._validation import (
     validate_read_metadata,
     validate_write_metadata,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_metadata_check_registries():
+    """Snapshot and restore the process-global check registries (#1987).
+
+    The registries are module-global lists. A test that registers a
+    check and crashes before its ``try/finally unregister`` would
+    leave a stale callable in place and pollute later tests. This
+    autouse fixture snapshots both registries before the test and
+    restores them after, regardless of whether the test passed,
+    failed, or raised, so the file is robust to per-test mistakes.
+    """
+    read_snapshot = list(_validation_mod._READ_METADATA_CHECKS)
+    write_snapshot = list(_validation_mod._WRITE_METADATA_CHECKS)
+    try:
+        yield
+    finally:
+        _validation_mod._READ_METADATA_CHECKS[:] = read_snapshot
+        _validation_mod._WRITE_METADATA_CHECKS[:] = write_snapshot
 
 
 # ----------------------------------------------------------------------
@@ -171,6 +192,73 @@ def test_dispatch_preserves_registration_order():
     finally:
         unregister_read_metadata_check(first)
         unregister_read_metadata_check(second)
+
+
+def test_write_dispatch_preserves_registration_order():
+    """Symmetry: write-side has its own registry, must order the same."""
+    order: list[str] = []
+
+    def first(ctx):
+        order.append("first")
+
+    def second(ctx):
+        order.append("second")
+
+    register_write_metadata_check(first)
+    register_write_metadata_check(second)
+    try:
+        validate_write_metadata({})
+        assert order == ["first", "second"]
+    finally:
+        unregister_write_metadata_check(first)
+        unregister_write_metadata_check(second)
+
+
+def test_write_first_raising_check_short_circuits():
+    """Symmetry: write-side short-circuits on first raise like read-side."""
+    later_called = {"flag": False}
+
+    def deny(ctx):
+        raise ConflictingCRSError("crs mismatch")
+
+    def later(ctx):
+        later_called["flag"] = True
+
+    register_write_metadata_check(deny)
+    register_write_metadata_check(later)
+    try:
+        with pytest.raises(ConflictingCRSError):
+            validate_write_metadata({})
+        assert later_called["flag"] is False
+    finally:
+        unregister_write_metadata_check(deny)
+        unregister_write_metadata_check(later)
+
+
+def test_read_and_write_registries_are_independent():
+    """A read-side check must not fire from the write hook (and vice versa)."""
+    read_calls = {"count": 0}
+    write_calls = {"count": 0}
+
+    def read_check(ctx):
+        read_calls["count"] += 1
+
+    def write_check(ctx):
+        write_calls["count"] += 1
+
+    register_read_metadata_check(read_check)
+    register_write_metadata_check(write_check)
+    try:
+        validate_read_metadata({})
+        assert read_calls["count"] == 1
+        assert write_calls["count"] == 0
+
+        validate_write_metadata({})
+        assert read_calls["count"] == 1
+        assert write_calls["count"] == 1
+    finally:
+        unregister_read_metadata_check(read_check)
+        unregister_write_metadata_check(write_check)
 
 
 def test_unregister_unknown_check_is_safe():
