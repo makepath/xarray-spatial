@@ -1,0 +1,261 @@
+"""Locking test for the best-effort pass-through tier of the attrs contract.
+
+Issue #1984, PR 6 of 7.
+
+The attrs contract has three tiers:
+
+1. Canonical: writers consume the attr; round-trip is guaranteed.
+2. Pass-through: writers do not consume the attr. The reader rebuilds
+   the value from the GeoKey directory (or another TIFF tag) on read.
+   Round-trip is best-effort: it works only when the writer happens to
+   emit a tag the reader can rebuild the attr from.
+3. Ignored: writer never touches; attr is dropped silently.
+
+This file pins the *current* behaviour of every key in the pass-through
+tier so future writer changes have to decide whether to promote a key to
+canonical or to keep it dropping. The split between "reconstructible"
+and "dropped on round-trip" is captured in the parametrisation below and
+mirrored in PR 6's body so the next PR (canonical promotion) has a
+shopping list.
+
+Current state of every pass-through key, as locked here:
+
+* Reconstructible (writer puts a TIFF tag the reader rebuilds from):
+  - ``image_description``  -> tag 270 (ImageDescription)
+  - ``extra_samples``      -> tag 338 (ExtraSamples)
+  - ``colormap``           -> tag 320 (ColorMap, raw uint16 triples)
+
+* Dropped on round-trip (writer never emits the GeoKey, reader has
+  nothing to rebuild from):
+  - ``crs_name``           (GTCitationGeoKey / ProjCitationGeoKey)
+  - ``geog_citation``      (GeogCitationGeoKey)
+  - ``datum_code``         (GeogGeodeticDatumGeoKey)
+  - ``angular_units``      (GeogAngularUnitsGeoKey)
+  - ``linear_units``       (ProjLinearUnitsGeoKey)
+  - ``semi_major_axis``    (GeogSemiMajorAxisGeoKey)
+  - ``inv_flattening``     (GeogInvFlatteningGeoKey)
+  - ``projection_code``    (ProjectionGeoKey)
+  - ``vertical_crs``       (VerticalCSTypeGeoKey)
+  - ``vertical_citation``  (VerticalCitationGeoKey)
+  - ``vertical_units``     (VerticalUnitsGeoKey)
+  - ``colormap_rgba``      (only set on read when Photometric == 3)
+  - ``cmap``               (matplotlib ListedColormap; same gate)
+"""
+from __future__ import annotations
+
+import warnings
+
+import numpy as np
+import pytest
+import xarray as xr
+
+from xrspatial.geotiff import open_geotiff, to_geotiff
+
+
+# Full set of pass-through keys defined by the contract.
+_ALL_PASSTHROUGH_KEYS = (
+    'crs_name',
+    'geog_citation',
+    'datum_code',
+    'angular_units',
+    'linear_units',
+    'semi_major_axis',
+    'inv_flattening',
+    'projection_code',
+    'vertical_crs',
+    'vertical_citation',
+    'vertical_units',
+    'image_description',
+    'extra_samples',
+    'colormap',
+    'colormap_rgba',
+    'cmap',
+)
+
+
+def _make_da(crs=None, attrs=None, shape=(4, 4), dtype=np.float32):
+    """Build a minimal georeferenced DataArray with optional CRS and attrs."""
+    data = np.ones(shape, dtype=dtype)
+    h, w = shape
+    coords = {
+        'y': np.arange(h, 0, -1, dtype=np.float64),
+        'x': np.arange(w, dtype=np.float64),
+    }
+    a = dict(attrs) if attrs else {}
+    if crs is not None:
+        a['crs'] = crs
+    return xr.DataArray(data, dims=('y', 'x'), coords=coords, attrs=a)
+
+
+def _roundtrip(tmp_path, da, name='roundtrip.tif'):
+    """Write ``da`` to ``tmp_path/name`` and read it back."""
+    path = str(tmp_path / name)
+    to_geotiff(da, path)
+    return open_geotiff(path)
+
+
+# (key, crs_to_use, value_set_on_write_or_None, expected_outcome)
+#
+# ``crs_to_use``: 4326 for geographic GeoKey-derived keys, 32633 for
+# projected ones. The CRS pins which GeoKeys the writer would emit if it
+# emitted any; today it emits only the EPSG code, but the test brackets
+# both branches anyway.
+#
+# ``value_set_on_write``: the value the test sets on ``da.attrs`` before
+# write. ``None`` means "do not set this key" (the test only needs the
+# CRS to be present so any reconstruction would have a path to fire).
+#
+# ``expected``: one of ``'reconstructible'`` or ``'dropped'``.
+#   - reconstructible: key must be present in read-back attrs AND, when a
+#     value was supplied, must equal that value.
+#   - dropped: key must be absent from read-back attrs.
+_PASSTHROUGH_CASES = [
+    # GeoKey-derived geographic CRS attrs -- writer emits only EPSG, so
+    # the reader has no GeoKey to reconstruct these from.
+    ('crs_name',          4326,  'WGS 84',           'dropped'),
+    ('geog_citation',     4326,  'WGS 84',           'dropped'),
+    ('datum_code',        4326,  6326,               'dropped'),
+    ('angular_units',     4326,  'degree',           'dropped'),
+    ('semi_major_axis',   4326,  6378137.0,          'dropped'),
+    ('inv_flattening',    4326,  298.257223563,      'dropped'),
+    # GeoKey-derived projected CRS attrs.
+    ('linear_units',      32633, 'metre',            'dropped'),
+    ('projection_code',   32633, 16033,              'dropped'),
+    # Vertical CRS attrs -- writer never emits the vertical GeoKey block.
+    ('vertical_crs',      4326,  5703,               'dropped'),
+    ('vertical_citation', 4326,  'NAVD88',           'dropped'),
+    ('vertical_units',    4326,  'metre',            'dropped'),
+    # Non-GeoKey tag passthroughs. The writer folds these into extra_tags
+    # via _merge_friendly_extra_tags, so the reader can rebuild them.
+    ('image_description', 4326,  'pr1984 fixture',   'reconstructible'),
+    ('extra_samples',     4326,  (1,),               'reconstructible'),
+    # ``colormap`` round-trips as the raw uint16 triple list; the
+    # derived ``colormap_rgba`` / ``cmap`` attrs are only emitted when
+    # Photometric == 3 on read, which the writer does not set just
+    # because attrs carries a colormap.
+    # The TIFF ColorMap tag (320) stores RGB triples as uint16 values in
+    # the 0-65535 range. Values below are written as-is and compared
+    # by-equality after the round-trip; if the writer ever rescales 8-bit
+    # input to 16-bit (or vice versa), update this fixture rather than
+    # the contract.
+    ('colormap',          4326,  tuple([0] * 256 + [128] * 256 + [255] * 256),
+                                                    'reconstructible'),
+    ('colormap_rgba',     4326,  None,               'dropped'),
+    ('cmap',              4326,  None,               'dropped'),
+]
+
+
+def test_passthrough_cases_cover_all_keys():
+    """``_PASSTHROUGH_CASES`` and ``_ALL_PASSTHROUGH_KEYS`` carry the
+    same set in two forms. Pin them so a key added to one list and
+    forgotten on the other fails here rather than silently skipping
+    coverage in ``test_passthrough_dropped_when_no_crs``."""
+    case_keys = {c[0] for c in _PASSTHROUGH_CASES}
+    assert case_keys == set(_ALL_PASSTHROUGH_KEYS), (
+        f"_PASSTHROUGH_CASES and _ALL_PASSTHROUGH_KEYS diverge.\n"
+        f"  only in cases: {sorted(case_keys - set(_ALL_PASSTHROUGH_KEYS))}\n"
+        f"  only in keys : {sorted(set(_ALL_PASSTHROUGH_KEYS) - case_keys)}"
+    )
+
+
+@pytest.mark.parametrize(
+    'key,crs,value,expected',
+    _PASSTHROUGH_CASES,
+    ids=[c[0] for c in _PASSTHROUGH_CASES],
+)
+def test_passthrough_key_roundtrip(tmp_path, key, crs, value, expected):
+    """Lock per-key round-trip outcome for the pass-through attr tier."""
+    attrs = {}
+    if value is not None:
+        attrs[key] = value
+    # For colormap-derived keys we still need an attrs payload that
+    # actually puts a colormap tag on disk; setting ``colormap`` itself
+    # does that, so probe ``colormap_rgba`` / ``cmap`` via a separate
+    # write that does NOT include a colormap. The contract for those two
+    # keys is "absent on round-trip unless Photometric=3", and the
+    # writer never selects Photometric=3 from attrs alone.
+    da = _make_da(crs=crs, attrs=attrs)
+    # Single-band uint8 needed for the colormap tag to be valid in TIFF.
+    if key == 'colormap':
+        da = _make_da(crs=crs, attrs=attrs, dtype=np.uint8)
+
+    rd = _roundtrip(tmp_path, da, name=f'{key}.tif')
+
+    if expected == 'reconstructible':
+        assert key in rd.attrs, (
+            f"pass-through key {key!r} was expected to round-trip but is "
+            f"absent. attrs keys present: {sorted(rd.attrs.keys())}"
+        )
+        if value is not None:
+            got = rd.attrs[key]
+            if isinstance(value, tuple):
+                assert tuple(got) == value, (
+                    f"{key!r}: value mismatch on round-trip\n"
+                    f"  written: {value}\n"
+                    f"  read   : {got}"
+                )
+            else:
+                assert got == value, (
+                    f"{key!r}: value mismatch on round-trip\n"
+                    f"  written: {value!r}\n"
+                    f"  read   : {got!r}"
+                )
+    else:  # 'dropped'
+        assert key not in rd.attrs, (
+            f"pass-through key {key!r} was expected to drop on round-trip "
+            f"(writer does not emit a tag the reader can rebuild it from) "
+            f"but it is present with value {rd.attrs[key]!r}. If a writer "
+            f"change started emitting this key, decide whether to promote "
+            f"the key to canonical (issue #1984) and update this test."
+        )
+
+
+def test_passthrough_dropped_when_no_crs(tmp_path):
+    """Files without a CRS do not surface any pass-through attrs."""
+    da = _make_da(crs=None)
+    rd = _roundtrip(tmp_path, da, name='no_crs.tif')
+
+    present = sorted(k for k in _ALL_PASSTHROUGH_KEYS if k in rd.attrs)
+    assert present == [], (
+        f"pass-through keys leaked into a no-CRS round-trip: {present}. "
+        f"All keys present: {sorted(rd.attrs.keys())}"
+    )
+    # Sanity: no CRS attrs either.
+    assert 'crs' not in rd.attrs
+    assert 'crs_wkt' not in rd.attrs
+
+
+def test_passthrough_does_not_promote_to_canonical(tmp_path):
+    """Setting pass-through attrs without a CRS must not inject a CRS."""
+    # Mix of GeoKey-derived and tag-derived pass-through keys, but no
+    # ``crs`` / ``crs_wkt``. If the writer ever started inferring a CRS
+    # from these (e.g. picking 4326 because angular_units == 'degree')
+    # this test would fail.
+    attrs = {
+        'crs_name': 'WGS 84',
+        'geog_citation': 'WGS 84',
+        'angular_units': 'degree',
+        'linear_units': 'metre',
+        'semi_major_axis': 6378137.0,
+        'inv_flattening': 298.257223563,
+        'datum_code': 6326,
+    }
+    da = _make_da(crs=None, attrs=attrs)
+
+    with warnings.catch_warnings():
+        # The writer warns on user-defined-CRS WKT writes; we are not on
+        # that path here, but suppress generously so a future warning
+        # tweak does not turn this test into a warning regression test.
+        warnings.simplefilter('ignore')
+        rd = _roundtrip(tmp_path, da, name='no_crs_with_attrs.tif')
+
+    assert 'crs' not in rd.attrs, (
+        f"pass-through attrs caused the writer to synthesise a CRS: "
+        f"crs={rd.attrs.get('crs')!r}. The contract says pass-through "
+        f"attrs are advisory only; the writer must rely on attrs['crs'] "
+        f"or attrs['crs_wkt'] to emit georeferencing."
+    )
+    assert 'crs_wkt' not in rd.attrs, (
+        f"pass-through attrs caused the writer to synthesise a CRS WKT: "
+        f"crs_wkt={rd.attrs.get('crs_wkt')!r}."
+    )
