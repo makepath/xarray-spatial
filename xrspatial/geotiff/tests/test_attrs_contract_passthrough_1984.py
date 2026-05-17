@@ -133,11 +133,29 @@ _PASSTHROUGH_CASES = [
     # derived ``colormap_rgba`` / ``cmap`` attrs are only emitted when
     # Photometric == 3 on read, which the writer does not set just
     # because attrs carries a colormap.
+    # The TIFF ColorMap tag (320) stores RGB triples as uint16 values in
+    # the 0-65535 range. Values below are written as-is and compared
+    # by-equality after the round-trip; if the writer ever rescales 8-bit
+    # input to 16-bit (or vice versa), update this fixture rather than
+    # the contract.
     ('colormap',          4326,  tuple([0] * 256 + [128] * 256 + [255] * 256),
                                                     'reconstructible'),
     ('colormap_rgba',     4326,  None,               'dropped'),
     ('cmap',              4326,  None,               'dropped'),
 ]
+
+
+def test_passthrough_cases_cover_all_keys():
+    """``_PASSTHROUGH_CASES`` and ``_ALL_PASSTHROUGH_KEYS`` carry the
+    same set in two forms. Pin them so a key added to one list and
+    forgotten on the other fails here rather than silently skipping
+    coverage in ``test_passthrough_dropped_when_no_crs``."""
+    case_keys = {c[0] for c in _PASSTHROUGH_CASES}
+    assert case_keys == set(_ALL_PASSTHROUGH_KEYS), (
+        f"_PASSTHROUGH_CASES and _ALL_PASSTHROUGH_KEYS diverge.\n"
+        f"  only in cases: {sorted(case_keys - set(_ALL_PASSTHROUGH_KEYS))}\n"
+        f"  only in keys : {sorted(set(_ALL_PASSTHROUGH_KEYS) - case_keys)}"
+    )
 
 
 @pytest.mark.parametrize(
