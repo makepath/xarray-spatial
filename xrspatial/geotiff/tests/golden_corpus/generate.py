@@ -252,6 +252,40 @@ def _validate_one(entry: dict[str, Any], seen_ids: set[str]) -> None:
             f"got {entry['external_overview']!r}"
         )
 
+    gdal_md = entry.get("gdal_metadata")
+    if gdal_md is not None:
+        if not isinstance(gdal_md, dict):
+            raise ManifestError(
+                f"{fid}: gdal_metadata must be a mapping of "
+                f"{{domain: {{item: value}}}}, got {gdal_md!r}"
+            )
+        for domain, items in gdal_md.items():
+            if not isinstance(domain, str):
+                raise ManifestError(
+                    f"{fid}: gdal_metadata domain keys must be strings, "
+                    f"got {domain!r}"
+                )
+            if not isinstance(items, dict):
+                raise ManifestError(
+                    f"{fid}: gdal_metadata[{domain!r}] must be a mapping, "
+                    f"got {items!r}"
+                )
+
+    extra_tags = entry.get("extra_tags")
+    if extra_tags is not None:
+        if not isinstance(extra_tags, dict):
+            raise ManifestError(
+                f"{fid}: extra_tags must be a mapping, got {extra_tags!r}"
+            )
+        for k in extra_tags:
+            # bool is a subclass of int in Python, so the (str, int) check
+            # would otherwise let `True` / `False` through as tag code 1/0.
+            if isinstance(k, bool) or not isinstance(k, (str, int)):
+                raise ManifestError(
+                    f"{fid}: extra_tags keys must be strings or ints, "
+                    f"got {k!r}"
+                )
+
 
 def validate(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     """Validate the parsed manifest and return resolved fixture entries.
@@ -481,6 +515,120 @@ def _rasterio_kwargs(entry: dict[str, Any]) -> dict[str, Any]:
     return kwargs
 
 
+# Well-known TIFF tag codes for the string keys we accept in extra_tags.
+# Keys are stored in lower-case for case-insensitive lookup. The values are
+# the TIFF tag numbers from the baseline TIFF 6.0 spec.
+_WELL_KNOWN_TIFF_TAGS = {
+    "imagedescription": 270,
+    "software": 305,
+    "artist": 315,
+    "copyright": 33432,
+    "datetime": 306,
+    "documentname": 269,
+    "hostcomputer": 316,
+}
+
+# Tag codes the tifffile post-pass must preserve when rewriting a file to
+# attach extra TIFF tags. These cover:
+# * GeoTIFF georeferencing tags (33550, 33922, 34735, 34736, 34737) -- rasterio
+#   emits these to encode CRS / transform.
+# * 42112 GDAL_METADATA -- holds any cross-domain GDAL metadata rasterio
+#   wrote via update_tags(ns=...). Preserved so a fixture can carry both
+#   gdal_metadata and extra_tags without losing the GDAL XML.
+# tifffile re-derives SampleFormat / ExtraSamples from the pixel dtype on
+# write, so those are intentionally not in this list.
+_GEOTIFF_TAG_CODES = (33550, 33922, 34735, 34736, 34737, 42112)
+
+
+def _normalize_extra_tag_key(key: Any) -> tuple[int, str]:
+    """Resolve an extra_tags key to a (numeric_code, display_name).
+
+    String keys are matched against `_WELL_KNOWN_TIFF_TAGS` case-insensitively;
+    int keys pass through as private tag codes. Unknown string keys raise so
+    typos surface at generation time rather than producing a silently
+    different file.
+    """
+    if isinstance(key, int):
+        return key, str(key)
+    if isinstance(key, str):
+        code = _WELL_KNOWN_TIFF_TAGS.get(key.lower())
+        if code is None:
+            raise ManifestError(
+                f"unknown extra_tags name: {key!r}. Use an integer tag code "
+                f"or one of {sorted(_WELL_KNOWN_TIFF_TAGS)}."
+            )
+        return code, key
+    raise ManifestError(f"extra_tags key must be str or int, got {key!r}")
+
+
+def _apply_extra_tags_with_tifffile(
+    path: pathlib.Path, extra_tags: dict[Any, Any]
+) -> None:
+    """Rewrite ``path`` so each entry in ``extra_tags`` lands as a real TIFF tag.
+
+    rasterio cannot emit private numeric TIFF tags via its writer, and its
+    `update_tags` API stores well-known names like ``Software`` inside the
+    ``GDAL_METADATA`` XML rather than in the actual TIFF tag code. To get a
+    real IFD entry, the generator writes the raster with rasterio first
+    (so the GeoTIFF tags are correct) and then this helper rewrites the
+    file in place via tifffile, preserving the GeoTIFF tags and adding the
+    requested extras.
+
+    Only the codes listed in ``_GEOTIFF_TAG_CODES`` survive the rewrite.
+    That set covers the GeoTIFF georeferencing tags, GDAL_METADATA, and
+    the SampleFormat / ExtraSamples tags rasterio writes for non-uint8
+    dtypes. Other tags rasterio may emit (nodata sentinel, ResolutionUnit,
+    etc.) are not currently forwarded; extend the list if a future fixture
+    needs them.
+    """
+    import tifffile
+
+    with tifffile.TiffFile(str(path)) as t:
+        page = t.pages[0]
+        pixels = page.asarray()
+        photometric = page.photometric
+        planarconfig = page.planarconfig
+        preserved: list[tuple[int, int, int, Any, bool]] = []
+        for tag in page.tags:
+            if tag.code in _GEOTIFF_TAG_CODES:
+                dcode = tag.dtype.value if hasattr(tag.dtype, "value") else int(tag.dtype)
+                preserved.append((tag.code, dcode, tag.count, tag.value, True))
+
+    # tifffile reserves the `description` and `software` writer kwargs for
+    # tag codes 270 and 305 respectively; routing those through `extratags`
+    # produces a warning and a silently-dropped tag. Pull them out.
+    description: str | None = None
+    software: str | None = None
+    extratags = list(preserved)
+    # Resolve every key once, sort by numeric code so the on-disk order
+    # is deterministic across runs.
+    resolved = sorted(
+        ((_normalize_extra_tag_key(k)[0], str(v)) for k, v in extra_tags.items()),
+        key=lambda item: item[0],
+    )
+    for code, sval in resolved:
+        if code == 270:
+            description = sval
+        elif code == 305:
+            software = sval
+        else:
+            # Type 's' = ASCII string. count=0 lets tifffile size it.
+            extratags.append((code, "s", 0, sval, True))
+
+    write_kwargs: dict[str, Any] = {
+        "photometric": photometric,
+        "planarconfig": planarconfig,
+        "metadata": None,  # do not emit tifffile's JSON header into tag 270
+        "extratags": extratags,
+    }
+    if description is not None:
+        write_kwargs["description"] = description
+    if software is not None:
+        write_kwargs["software"] = software
+
+    tifffile.imwrite(str(path), pixels, **write_kwargs)
+
+
 def write_fixture(entry: dict[str, Any], output_dir: pathlib.Path) -> pathlib.Path:
     """Materialise one fixture. Returns the written path.
 
@@ -499,9 +647,9 @@ def write_fixture(entry: dict[str, Any], output_dir: pathlib.Path) -> pathlib.Pa
             dst.write(pixels[b], b + 1)
         gdal_md = entry.get("gdal_metadata") or {}
         for domain, items in sorted(gdal_md.items()):
-            dst.update_tags(ns=domain, **{str(k): str(v) for k, v in sorted(items.items())})
-        if extra_tags:
-            dst.update_tags(**{str(k): str(v) for k, v in sorted(extra_tags.items())})
+            dst.update_tags(
+                ns=domain, **{str(k): str(v) for k, v in sorted(items.items())}
+            )
         overviews = entry.get("overviews") or []
         if overviews and not entry.get("external_overview"):
             from rasterio.enums import Resampling
@@ -509,6 +657,9 @@ def write_fixture(entry: dict[str, Any], output_dir: pathlib.Path) -> pathlib.Pa
                 Resampling, entry.get("overview_resampling", "nearest")
             )
             dst.build_overviews(sorted(overviews), resamp)
+
+    if extra_tags:
+        _apply_extra_tags_with_tifffile(out_path, extra_tags)
 
     # Normalise mtime so re-runs are byte-stable on filesystems that
     # encode timestamps in sidecar files.
