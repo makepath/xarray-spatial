@@ -59,10 +59,17 @@ def _read_write_read(da: xr.DataArray, tmp_path, tag: str) -> xr.DataArray:
     return open_geotiff(path)
 
 
+# Canonical attrs whose values must lock across a write -> read cycle
+# whenever both reads have the key.
+_LOCKED_ATTRS = ('crs', 'transform', 'nodata', 'raster_type')
+
+
 def _assert_fixed_point(da1: xr.DataArray, da2: xr.DataArray) -> None:
     """``da1`` and ``da2`` come from two consecutive write -> read cycles.
 
-    They must agree exactly on pixels, dtype, dims, and attrs keys.
+    They must agree on pixels, dtype, dims, the attrs key set, and the
+    values of the canonical attrs listed in ``_LOCKED_ATTRS``. Other
+    attrs (best-effort pass-through) are only checked for presence.
     """
     assert da1.dtype == da2.dtype, (
         f"dtype drift: {da1.dtype} -> {da2.dtype}")
@@ -78,6 +85,20 @@ def _assert_fixed_point(da1: xr.DataArray, da2: xr.DataArray) -> None:
         np.testing.assert_array_equal(da1.values, da2.values)
     assert set(da1.attrs) == set(da2.attrs), (
         f"attrs key drift: {set(da1.attrs) ^ set(da2.attrs)}")
+    for key in _LOCKED_ATTRS:
+        if key in da1.attrs:
+            v1, v2 = da1.attrs[key], da2.attrs[key]
+            if key == 'transform':
+                # Transform is a tuple of floats; compare up to float
+                # precision rather than bit-equal.
+                assert len(v1) == len(v2), (
+                    f"transform length drift: {len(v1)} -> {len(v2)}")
+                for a, b in zip(v1, v2):
+                    assert a == pytest.approx(b, abs=1e-15, rel=1e-12), (
+                        f"transform value drift: {v1} -> {v2}")
+            else:
+                assert v1 == v2, (
+                    f"attrs[{key!r}] drift: {v1!r} -> {v2!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -99,10 +120,13 @@ class TestIntSingleBandNoNodata:
         da1 = open_geotiff(path)
         assert da1.dtype == dtype
         np.testing.assert_array_equal(da1.values, arr)
+        assert 'nodata' not in da1.attrs, (
+            "int raster without declared nodata must not gain a sentinel")
 
         da2 = _read_write_read(da1, tmp_path, f"int_nond_{np.dtype(dtype).name}")
         np.testing.assert_array_equal(da2.values, arr)
         assert da2.dtype == dtype
+        assert 'nodata' not in da2.attrs
 
         _assert_fixed_point(da1, da2)
 
@@ -186,7 +210,7 @@ class TestIntWithDeclaredNodata:
         valid = ~np.isnan(da1.values)
         np.testing.assert_array_equal(
             da1.values[valid].astype(np.int32),
-            arr[arr != -9999].ravel(),
+            arr[arr != -9999],
         )
         # Sentinel value preserved in attrs.
         assert da1.attrs.get('nodata') == -9999
@@ -233,9 +257,11 @@ class TestMultibandChunky:
         assert da1.dtype == np.uint8
         assert da1.dims == ('y', 'x', 'band')
         np.testing.assert_array_equal(np.asarray(da1.values), arr)
+        assert 'nodata' not in da1.attrs
 
         da2 = _read_write_read(da1, tmp_path, f"mb_chunky_{nbands}")
         np.testing.assert_array_equal(np.asarray(da2.values), arr)
+        assert 'nodata' not in da2.attrs
         _assert_fixed_point(da1, da2)
 
 
@@ -263,6 +289,7 @@ class TestNoGeorefSemantic:
                          planarconfig='contig', metadata=None)
 
         da1 = open_geotiff(src)
+        assert da1.dtype == np.float32
         assert 'transform' not in da1.attrs
         assert 'crs' not in da1.attrs
         np.testing.assert_array_equal(da1.values, arr)
