@@ -52,6 +52,13 @@ _TIFF_ASCII = 2
 _TIFF_SHORT = 3
 
 
+# Contract version emitted on every read; bumped when the attrs contract
+# changes. Downstream code reads ``attrs['_xrspatial_geotiff_contract']``
+# to learn which attrs-contract revision produced the array. See issue
+# #1984 and ``docs/source/user_guide/attrs_contract.rst``.
+_ATTRS_CONTRACT_VERSION = 1
+
+
 # String identifiers (used in xrspatial attrs) -> TIFF ResolutionUnit tag ids.
 _RESOLUTION_UNIT_IDS = {'none': 1, 'inch': 2, 'centimeter': 3}
 
@@ -101,6 +108,13 @@ def _populate_attrs_from_geo_info(attrs: dict, geo_info, *, window=None) -> None
     advertises the windowed transform. The GPU path does not currently
     expose a windowed read, so it passes ``window=None``.
     """
+    # Stamp the contract version first so every read path that funnels
+    # through this helper carries the marker. The VRT backends build
+    # their attrs dict directly and stamp the version there (see
+    # ``_backends/vrt.py``); keep both sites in sync via the constant
+    # rather than the bare literal.
+    attrs['_xrspatial_geotiff_contract'] = _ATTRS_CONTRACT_VERSION
+
     if geo_info.crs_epsg is not None:
         attrs['crs'] = geo_info.crs_epsg
     if geo_info.crs_wkt is not None:
