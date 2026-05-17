@@ -31,17 +31,23 @@ split changes in a future release.
 Canonical (xrspatial owns these; round-trip stable):
 
 - ``crs``: EPSG integer code for the horizontal CRS.
-- ``crs_wkt``: PROJ WKT string for the horizontal CRS. Always emitted.
-- ``transform``: tuple of ``(origin_x, origin_y, pixel_width, pixel_height)``.
+- ``crs_wkt``: WKT string for the horizontal CRS. Present on read whenever
+  any CRS information is available.
+- ``transform``: rasterio-style 6-tuple
+  ``(pixel_width, 0.0, origin_x, 0.0, pixel_height, origin_y)``. Omitted
+  for files with no GeoTIFF transform tags (ModelTransformation,
+  ModelPixelScale, or ModelTiepoint).
 - ``nodata``: declared file sentinel as stored in the GDAL_NODATA tag. The
   declared-vs-masked split is tracked in issue #1988; the canonical
   semantics here describe the intended behaviour once #1988 lands.
 - ``raster_type``: ``'area'`` (implicit / RasterPixelIsArea) or ``'point'``
   (explicit / RasterPixelIsPoint).
 - ``extra_tags``: list of ``(tag_id, type_id, count, value)`` tuples for
-  TIFF tags outside the structured set.
+  TIFF tags outside the structured set. Omitted when no out-of-band
+  tags are present.
 - ``gdal_metadata``: dict parsed from the GDAL_METADATA XML tag.
-- ``gdal_metadata_xml``: raw GDAL_METADATA XML string.
+- ``gdal_metadata_xml``: raw GDAL_METADATA XML string. Writers prefer this
+  over ``gdal_metadata`` when both are present.
 - ``x_resolution``, ``y_resolution``, ``resolution_unit``: TIFF
   XResolution / YResolution / ResolutionUnit values.
 - ``_xrspatial_geotiff_contract``: integer version of this contract.
